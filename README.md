@@ -7,7 +7,7 @@
 [![Contributors](https://img.shields.io/github/contributors/exochain/exochain)](https://github.com/exochain/exochain/graphs/contributors)
 [![Stars](https://img.shields.io/github/stars/exochain/exochain?style=social)](https://github.com/exochain/exochain/stargazers)
 
-The constitutional substrate for aligned superintelligence: EXOCHAIN enables adjudicated 0dentity, bailments, merits, and Holon agents with mathematical safety invariants. Deterministic finality, forensic audits, no PII on-ledger. Dive into our 65-page v2.1 spec PDF. Join the mission—Apache 2.0 licensed.
+The constitutional substrate for aligned superintelligence: EXOCHAIN enables adjudicated 0dentity, bailments, merits, and Holon agents with mathematical safety invariants. Deterministic finality, forensic audits, no PII on-ledger. Dive into our 76-page v2.2 spec PDF. Join the mission—Apache 2.0 licensed.
 
 EXOCHAIN is a Rust-powered DAG-BFT platform for privacy-preserving identity, consented data sharing, and verifiable AI governance. Built for excellence and safety in the ASI era, it provides a trust fabric where actions are provably aligned via the CGR kernel—ensuring recursive self-improvement stays safe by design.
 
@@ -30,8 +30,8 @@ Get a local node running in minutes:
 3. **Build & Run**: `cargo build --release && cargo run --bin exo-node`
 4. **Test an Event**: Use the CLI to create a sample IdentityCreated event: `cargo run --bin exo-cli -- create-identity --did did:exo:example`
 
-For full setup, see [docs/QUICKSTART.md](docs/QUICKSTART.md). Dive deeper with our [v2.1 Specification PDF](docs/EXOCHAIN_Specification_v2.1_COMPLETE.pdf)—your guide to the architecture.
-
+For full setup, see [docs/QUICKSTART.md](docs/QUICKSTART.md).  <-forthcoming
+Dive deeper with our [v2.2 Specification PDF]((https://github.com/exochain/exochain/blob/main/EXOCHAIN_Specification_v2.2.pdf))—your guide to the architecture.
 ## Features
 - **Ledger Core**: Merkle-DAG events with BFT finality (exo-core, exo-dag crates).
 - **Identity & Governance**: Adjudicated 0dentity scoring, PACE recovery, AI-IRB integrations.
@@ -42,21 +42,21 @@ For full setup, see [docs/QUICKSTART.md](docs/QUICKSTART.md). Dive deeper with o
 See the [Roadmap](#roadmap) for upcoming phases.
 
 ## Documentation
-- **[Full Specification (PDF)](docs/EXOCHAIN_Specification_v2.1_COMPLETE.pdf)**: 65-page normative bible—start here.
-- **[API Reference](docs/API.md)**: GraphQL/REST endpoints with OpenAPI spec.
-- **[Developer Guide](docs/DEVELOPER.md)**: Tutorials for building Holons and extending the kernel.
-- **[Security Overview](SECURITY.md)**: Reporting vulns and our hardening practices.
+- **[Full Specification (PDF)](https://github.com/exochain/exochain/blob/main/EXOCHAIN_Specification_v2.2.pdf)**: 76-page normative bible—start here.
+- **[API Reference](docs/API.md)**: GraphQL/REST endpoints with OpenAPI spec. <-forthcoming
+- **[Developer Guide](docs/DEVELOPER.md)**: Tutorials for building Holons and extending the kernel. <-forthcoming
+- **[Security Overview](SECURITY.md)**: Reporting vulns and our hardening practices. <-forthcoming
 - Hosted Docs: Coming soon via mdBook at exochain.ai/docs.
 
 ## Community
 We're a mission-driven community forging the future of safe ASI. Join us:
 - **Discord**: [discord.gg/exochain](https://discord.gg/exochain) — chat with devs, share ideas.
-- **Discussions**: [github.com/exochain/exochain/discussions](https://github.com/exochain/exochain/discussions) — Q&A, feature requests.
-- **Issues**: [Report bugs or suggest features](https://github.com/exochain/exochain/issues/new/choose).
+- **Discussions**: [github.com/exochain/exochain/discussions](https://github.com/exochain/exochain/discussions) — Q&A, feature requests. <-forthcoming
+- **Issues**: [Report bugs or suggest features](https://github.com/exochain/exochain/issues/new/choose). <-forthcoming
 - **Twitter/X**: [@exochain_ai](https://twitter.com/exochain) — updates and announcements.
 - **Reddit**: r/exochain — deeper dives into ASI safety.
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. First-timers: Start with docs fixes or small tests—your merit awaits.
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. First-timers: Start with docs fixes or small tests—your merit awaits. <-forthcoming
 
 ## Roadmap
 Phased from the spec:
@@ -65,7 +65,7 @@ Phased from the spec:
 - **Phase 5 (Hardening)**: Audits, PACE full impl.
 - **Phase 6+ (Extensions)**: MCP mesh, optional tokenomics.
 
-Track progress in [docs/ROADMAP.md](docs/ROADMAP.md) or issues labeled "roadmap."
+Track progress in [docs/ROADMAP.md](docs/ROADMAP.md) or issues labeled "roadmap." <-forthcoming
 
 ## License
 Licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
