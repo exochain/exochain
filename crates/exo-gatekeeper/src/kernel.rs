@@ -143,7 +143,7 @@ impl Kernel {
 mod tests {
     use super::*;
     use crate::types::{AuthorityLink, GovernmentBranch, Permission, QuorumVote};
-    use exo_core::{PublicKey, Signature, crypto::KeyPair};
+    use exo_core::{Signature, crypto::KeyPair};
 
     const CONSTITUTION: &[u8] = b"We the people of the EXOCHAIN...";
 

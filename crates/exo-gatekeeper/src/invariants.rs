@@ -370,7 +370,7 @@ fn check_provenance_verifiable(ctx: &InvariantContext) -> Result<(), InvariantVi
 #[cfg(test)]
 mod tests {
     use exo_core::{
-        crypto::{sign, KeyPair},
+        crypto::KeyPair,
         types::{PublicKey, Signature},
     };
 

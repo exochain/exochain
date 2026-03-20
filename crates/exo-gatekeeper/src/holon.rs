@@ -155,7 +155,7 @@ mod tests {
         invariants::InvariantSet,
         types::*,
     };
-    use exo_core::{PublicKey, Signature, crypto::KeyPair};
+    use exo_core::{Signature, crypto::KeyPair};
 
     fn did(s: &str) -> Did {
         Did::new(s).expect("valid DID")
