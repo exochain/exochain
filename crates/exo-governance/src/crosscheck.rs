@@ -142,7 +142,7 @@ pub fn detect_coordination(actions: &[TimestampedAction]) -> Vec<CoordinationSig
             }
             let t1 = actions[i].timestamp.physical_ms;
             let t2 = actions[j].timestamp.physical_ms;
-            let diff = if t1 > t2 { t1 - t2 } else { t2 - t1 };
+            let diff = t1.abs_diff(t2);
             if diff <= threshold_ms && actions[i].action_hash == actions[j].action_hash {
                 signals.push(CoordinationSignal {
                     actors: vec![actions[i].actor.clone(), actions[j].actor.clone()],
