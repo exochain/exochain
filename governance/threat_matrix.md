@@ -22,12 +22,17 @@ Based on Spec Section 13. Updated 2026-03-19 after council-driven implementation
 | **T-12** | **Holon Key Theft** | TEE attestation with `TeeEnvironment` production gate; `Simulated` rejected in Production; `#[cfg(not(feature = "allow-simulated-tee"))]` compile-time strip; secure-by-default | `exo-gatekeeper/tee.rs` | 28 unit | 🟢 Implemented |
 | **T-13** | **Capability Esc.** | CGR Kernel `adjudicate()` with `NoSelfGrant` invariant; authority chain scope narrowing; AI delegation ceiling (`TNC-09`) | `exo-gatekeeper/kernel.rs`, `exo-authority/chain.rs`, `decision-forum/tnc_enforcer.rs` | 14 + 19 + 13 unit | 🟢 Implemented |
 
+| **T-14** | **Auth Chain Sig Forgery** | Ed25519 signature verification on every `AuthorityLink` in `check_authority_chain_valid()`; `signable_payload()` commits grantor/grantee/permissions; forged, empty, or wrong-key signatures produce `InvariantViolation` | `exo-gatekeeper/invariants.rs`, `exo-gatekeeper/types.rs` | 5 adversarial (forged sig, empty sig, wrong key, tampered payload, valid chain accepted) | 🟢 Implemented |
+| **T-15** | **Emergency Per-Actor Bypass** | `check_per_actor_limit()` hard gate; `EmergencyPolicy.max_per_quarter_per_actor` (default 1); expired actions excluded; different actors unaffected; limit=0 disables | `decision-forum/emergency.rs` | 5 unit (first ok, second blocked, different actor ok, expired excluded, zero=unlimited) | 🟢 Implemented |
+| **T-16** | **AI Self-Declared Ceiling** | `TncContext.ai_ceilings_externally_verified` flag; when false, TNC-09 restricts all AI signers to Routine (fail-closed); when true, delegation-registry ceiling is enforced | `decision-forum/tnc_enforcer.rs` | 4 adversarial (unverified blocks non-routine, unverified allows routine, verified allows declared, verified blocks over-ceiling) | 🟢 Implemented |
+| **T-17** | **Post-Quantum Harvest** | `Signature::PostQuantum` and Hybrid PQ component are stub-level; SECURITY-NOTE added to `crypto::verify()` documenting gap; ML-DSA (NIST FIPS 204) implementation required for production readiness | `exo-core/crypto.rs` | — | 🟡 Partial |
+
 ## Summary
 
 | Status | Count | Threats |
 |--------|-------|---------|
-| 🟢 Implemented | 13 | T-01, T-02, T-03, T-04, T-05, T-06, T-07, T-08, T-09, T-10, T-11, T-12, T-13 |
-| 🟡 Partial | 0 | — |
+| 🟢 Implemented | 16 | T-01, T-02, T-03, T-04, T-05, T-06, T-07, T-08, T-09, T-10, T-11, T-12, T-13, T-14, T-15, T-16 |
+| 🟡 Partial | 1 | T-17 |
 | 🔴 Planned | 0 | — |
 
 ## Resolved Remediation Tickets

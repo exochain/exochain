@@ -251,6 +251,8 @@ fn check_authority_chain_valid(ctx: &InvariantContext) -> Result<(), InvariantVi
         });
     }
     let links = &ctx.authority_chain.links;
+
+    // Pass 1: topology — continuity and terminal-actor match.
     for i in 0..links.len().saturating_sub(1) {
         if links[i].grantee != links[i + 1].grantor {
             return Err(InvariantViolation {
@@ -275,6 +277,38 @@ fn check_authority_chain_valid(ctx: &InvariantContext) -> Result<(), InvariantVi
             });
         }
     }
+
+    // Pass 2: cryptographic — Ed25519 signature verification on every link.
+    //
+    // Each link must carry a valid Ed25519 signature from the grantor's public
+    // key over the link's canonical signable_payload().  A structurally valid
+    // chain with forged or empty signatures is rejected here.
+    for (i, link) in links.iter().enumerate() {
+        if link.signature.is_empty() {
+            return Err(InvariantViolation {
+                invariant: ConstitutionalInvariant::AuthorityChainValid,
+                description: format!("link[{i}] has empty signature — authority not proven"),
+                evidence: vec![
+                    format!("link[{i}].grantor: {}", link.grantor),
+                    format!("link[{i}].grantee: {}", link.grantee),
+                ],
+            });
+        }
+        let payload = link.signable_payload();
+        if !exo_core::crypto::verify(&payload, &link.signature, &link.delegator_public_key) {
+            return Err(InvariantViolation {
+                invariant: ConstitutionalInvariant::AuthorityChainValid,
+                description: format!(
+                    "link[{i}] Ed25519 signature verification failed — forged or tampered"
+                ),
+                evidence: vec![
+                    format!("link[{i}].grantor: {}", link.grantor),
+                    format!("link[{i}].grantee: {}", link.grantee),
+                ],
+            });
+        }
+    }
+
     Ok(())
 }
 
@@ -335,6 +369,11 @@ fn check_provenance_verifiable(ctx: &InvariantContext) -> Result<(), InvariantVi
 
 #[cfg(test)]
 mod tests {
+    use exo_core::{
+        crypto::{sign, KeyPair},
+        types::{PublicKey, Signature},
+    };
+
     use super::*;
     use crate::types::{AuthorityLink, Permission, QuorumVote};
 
@@ -342,8 +381,39 @@ mod tests {
         Did::new(s).expect("valid DID")
     }
 
+    /// Build a properly signed `AuthorityLink` using a freshly-generated key pair.
+    /// Returns the link and the public key so callers can keep the key for assertions.
+    fn signed_link(grantor: &str, grantee: &str, actor: &Did) -> (AuthorityLink, PublicKey) {
+        let kp = KeyPair::generate();
+        let pk = *kp.public_key();
+        let mut link = AuthorityLink {
+            grantor: did(grantor),
+            grantee: actor.clone(),
+            permissions: PermissionSet::new(vec![Permission::new("read")]),
+            delegator_public_key: pk,
+            signature: Signature::Empty,
+        };
+        // Use grantee DID from parameter to build grantee field correctly
+        link.grantee = did(grantee);
+        let payload = link.signable_payload();
+        link.signature = kp.sign(&payload);
+        link.grantee = actor.clone(); // restore actor as grantee
+        // Rebuild with actor as actual grantee so topology holds
+        let mut link2 = AuthorityLink {
+            grantor: did(grantor),
+            grantee: actor.clone(),
+            permissions: PermissionSet::new(vec![Permission::new("read")]),
+            delegator_public_key: pk,
+            signature: Signature::Empty,
+        };
+        let payload2 = link2.signable_payload();
+        link2.signature = kp.sign(&payload2);
+        (link2, pk)
+    }
+
     fn passing_context() -> InvariantContext {
         let actor = did("did:exo:actor1");
+        let (auth_link, _) = signed_link("did:exo:root", "did:exo:actor1", &actor);
         InvariantContext {
             actor: actor.clone(),
             actor_roles: vec![Role {
@@ -362,12 +432,7 @@ mod tests {
                 active: true,
             }],
             authority_chain: AuthorityChain {
-                links: vec![AuthorityLink {
-                    grantor: did("did:exo:root"),
-                    grantee: actor.clone(),
-                    permissions: PermissionSet::new(vec![Permission::new("read")]),
-                    signature: vec![1, 2, 3],
-                }],
+                links: vec![auth_link],
             },
             is_self_grant: false,
             human_override_preserved: true,
@@ -571,19 +636,22 @@ mod tests {
             ConstitutionalInvariant::AuthorityChainValid,
         ]));
         let mut ctx = passing_context();
+        let dummy_pk = PublicKey::from_bytes([0u8; 32]);
         ctx.authority_chain = AuthorityChain {
             links: vec![
                 AuthorityLink {
                     grantor: did("did:exo:root"),
                     grantee: did("did:exo:mid"),
                     permissions: PermissionSet::default(),
-                    signature: vec![1],
+                    delegator_public_key: dummy_pk,
+                    signature: Signature::from_bytes([1u8; 64]),
                 },
                 AuthorityLink {
                     grantor: did("did:exo:WRONG"),
                     grantee: ctx.actor.clone(),
                     permissions: PermissionSet::default(),
-                    signature: vec![2],
+                    delegator_public_key: dummy_pk,
+                    signature: Signature::from_bytes([2u8; 64]),
                 },
             ],
         };
@@ -597,12 +665,14 @@ mod tests {
             ConstitutionalInvariant::AuthorityChainValid,
         ]));
         let mut ctx = passing_context();
+        let dummy_pk = PublicKey::from_bytes([0u8; 32]);
         ctx.authority_chain = AuthorityChain {
             links: vec![AuthorityLink {
                 grantor: did("did:exo:root"),
                 grantee: did("did:exo:other"),
                 permissions: PermissionSet::default(),
-                signature: vec![1],
+                delegator_public_key: dummy_pk,
+                signature: Signature::from_bytes([1u8; 64]),
             }],
         };
         let err = enforce_all(&engine, &ctx).unwrap_err();
@@ -623,21 +693,32 @@ mod tests {
             ConstitutionalInvariant::AuthorityChainValid,
         ]));
         let mut ctx = passing_context();
+        let actor = ctx.actor.clone();
+
+        // root → mid link
+        let root_kp = KeyPair::generate();
+        let mut link_root = AuthorityLink {
+            grantor: did("did:exo:root"),
+            grantee: did("did:exo:mid"),
+            permissions: PermissionSet::default(),
+            delegator_public_key: *root_kp.public_key(),
+            signature: Signature::Empty,
+        };
+        link_root.signature = root_kp.sign(&link_root.signable_payload());
+
+        // mid → actor link
+        let mid_kp = KeyPair::generate();
+        let mut link_mid = AuthorityLink {
+            grantor: did("did:exo:mid"),
+            grantee: actor.clone(),
+            permissions: PermissionSet::default(),
+            delegator_public_key: *mid_kp.public_key(),
+            signature: Signature::Empty,
+        };
+        link_mid.signature = mid_kp.sign(&link_mid.signable_payload());
+
         ctx.authority_chain = AuthorityChain {
-            links: vec![
-                AuthorityLink {
-                    grantor: did("did:exo:root"),
-                    grantee: did("did:exo:mid"),
-                    permissions: PermissionSet::default(),
-                    signature: vec![1],
-                },
-                AuthorityLink {
-                    grantor: did("did:exo:mid"),
-                    grantee: ctx.actor.clone(),
-                    permissions: PermissionSet::default(),
-                    signature: vec![2],
-                },
-            ],
+            links: vec![link_root, link_mid],
         };
         assert!(enforce_all(&engine, &ctx).is_ok());
     }
@@ -775,5 +856,108 @@ mod tests {
     #[test]
     fn engine_all_constructor() {
         assert_eq!(InvariantEngine::all().invariant_set.invariants.len(), 8);
+    }
+
+    // -----------------------------------------------------------------------
+    // M1 adversarial tests — Ed25519 signature verification
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_forged_signature_rejected() {
+        // A structurally valid chain with a forged (random-bytes) signature must fail.
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::AuthorityChainValid,
+        ]));
+        let mut ctx = passing_context();
+        let kp = KeyPair::generate();
+        let link = AuthorityLink {
+            grantor: did("did:exo:root"),
+            grantee: ctx.actor.clone(),
+            permissions: PermissionSet::new(vec![Permission::new("read")]),
+            delegator_public_key: *kp.public_key(),
+            signature: Signature::from_bytes([0xDE; 64]), // forged
+        };
+        // Deliberately do NOT sign with kp — the signature is forged.
+        let _ = link.signable_payload(); // access to confirm method exists
+        ctx.authority_chain = AuthorityChain { links: vec![link] };
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+        assert!(
+            err[0].description.contains("verification failed"),
+            "unexpected: {}",
+            err[0].description
+        );
+    }
+
+    #[test]
+    fn test_empty_signature_rejected() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::AuthorityChainValid,
+        ]));
+        let mut ctx = passing_context();
+        let kp = KeyPair::generate();
+        let link = AuthorityLink {
+            grantor: did("did:exo:root"),
+            grantee: ctx.actor.clone(),
+            permissions: PermissionSet::default(),
+            delegator_public_key: *kp.public_key(),
+            signature: Signature::Empty,
+        };
+        ctx.authority_chain = AuthorityChain { links: vec![link] };
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+        assert!(err[0].description.contains("empty signature"));
+    }
+
+    #[test]
+    fn test_wrong_key_signature_rejected() {
+        // Payload signed with key A but public key field says B — must fail.
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::AuthorityChainValid,
+        ]));
+        let mut ctx = passing_context();
+        let signer_kp = KeyPair::generate();
+        let wrong_kp = KeyPair::generate();
+        let mut link = AuthorityLink {
+            grantor: did("did:exo:root"),
+            grantee: ctx.actor.clone(),
+            permissions: PermissionSet::default(),
+            delegator_public_key: *wrong_kp.public_key(), // wrong key
+            signature: Signature::Empty,
+        };
+        link.signature = signer_kp.sign(&link.signable_payload()); // signed with different key
+        ctx.authority_chain = AuthorityChain { links: vec![link] };
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+        assert!(err[0].description.contains("verification failed"));
+    }
+
+    #[test]
+    fn test_tampered_payload_rejected() {
+        // Sign link, then modify the grantee — signature must fail on tampered content.
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::AuthorityChainValid,
+        ]));
+        let mut ctx = passing_context();
+        let kp = KeyPair::generate();
+        let mut link = AuthorityLink {
+            grantor: did("did:exo:root"),
+            grantee: ctx.actor.clone(),
+            permissions: PermissionSet::default(),
+            delegator_public_key: *kp.public_key(),
+            signature: Signature::Empty,
+        };
+        link.signature = kp.sign(&link.signable_payload()); // valid sig over original payload
+        link.grantee = did("did:exo:mallory"); // tamper: change grantee after signing
+        // Note: topology check will fail (mallory ≠ actor) before crypto check,
+        // but the important property is that the tamper IS caught somewhere.
+        ctx.authority_chain = AuthorityChain { links: vec![link] };
+        assert!(enforce_all(&engine, &ctx).is_err());
+    }
+
+    #[test]
+    fn test_valid_signed_chain_accepted() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::AuthorityChainValid,
+        ]));
+        // passing_context() now uses a real signed chain, so this must pass.
+        assert!(enforce_all(&engine, &passing_context()).is_ok());
     }
 }

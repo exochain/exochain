@@ -2,7 +2,7 @@
 //!
 //! Types specific to the judicial branch that are not part of exo-core.
 
-use exo_core::Did;
+use exo_core::{Did, PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -121,12 +121,37 @@ impl AuthorityChain {
 }
 
 /// A single link in an authority chain.
+///
+/// `delegator_public_key` is the Ed25519 public key of the grantor.  The
+/// `signature` is an Ed25519 signature over `signable_payload()` produced by
+/// that key.  The invariant engine verifies this signature cryptographically
+/// before accepting the link as valid.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthorityLink {
     pub grantor: Did,
     pub grantee: Did,
     pub permissions: PermissionSet,
-    pub signature: Vec<u8>,
+    /// Ed25519 public key of the grantor — used to verify `signature`.
+    pub delegator_public_key: PublicKey,
+    /// Ed25519 signature over `signable_payload()`.
+    pub signature: Signature,
+}
+
+impl AuthorityLink {
+    /// Canonical byte payload that must be signed by the grantor.
+    ///
+    /// The payload commits to all mutable fields of the link so that any
+    /// tampering with grantor, grantee, or permissions is detectable.
+    #[must_use]
+    pub fn signable_payload(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(self.grantor.as_str().as_bytes());
+        data.extend_from_slice(self.grantee.as_str().as_bytes());
+        for p in &self.permissions.permissions {
+            data.extend_from_slice(p.0.as_bytes());
+        }
+        data
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -225,19 +250,22 @@ mod tests {
 
     #[test]
     fn authority_chain_depth() {
+        let dummy_pk = PublicKey::from_bytes([0u8; 32]);
         let chain = AuthorityChain {
             links: vec![
                 AuthorityLink {
                     grantor: did("did:exo:root"),
                     grantee: did("did:exo:mid"),
                     permissions: PermissionSet::default(),
-                    signature: vec![1],
+                    delegator_public_key: dummy_pk,
+                    signature: Signature::from_bytes([1u8; 64]),
                 },
                 AuthorityLink {
                     grantor: did("did:exo:mid"),
                     grantee: did("did:exo:leaf"),
                     permissions: PermissionSet::default(),
-                    signature: vec![2],
+                    delegator_public_key: dummy_pk,
+                    signature: Signature::from_bytes([2u8; 64]),
                 },
             ],
         };

@@ -53,8 +53,12 @@ pub struct EmergencyPolicy {
     pub allowed_actions: Vec<EmergencyActionType>,
     /// Ratification deadline offset in milliseconds from creation.
     pub ratification_window_ms: u64,
-    /// Maximum emergencies per quarter before governance review is triggered.
+    /// Maximum emergencies per quarter (global) before governance review is triggered.
     pub max_per_quarter: usize,
+    /// Hard per-actor limit per quarter.  An actor who reaches this count is
+    /// denied further emergency invocations for the remainder of the quarter.
+    /// Set to 0 to disable (unlimited — not recommended for production).
+    pub max_per_quarter_per_actor: usize,
 }
 
 impl Default for EmergencyPolicy {
@@ -70,6 +74,7 @@ impl Default for EmergencyPolicy {
             ],
             ratification_window_ms: 72 * 60 * 60 * 1000, // 72 hours
             max_per_quarter: 3,
+            max_per_quarter_per_actor: 1,
         }
     }
 }
@@ -114,6 +119,43 @@ pub fn create_emergency_action(
         ratification_decision_id: None,
         evidence_hash,
     })
+}
+
+/// Enforce the per-actor emergency invocation limit (hard gate).
+///
+/// Call this **before** [`create_emergency_action`] to enforce the constitutional
+/// limit (`policy.max_per_quarter_per_actor`).  Returns `Ok(())` if the actor
+/// is permitted to invoke another emergency action given the slice of existing
+/// actions in the current quarter.
+///
+/// # Errors
+///
+/// Returns [`ForumError::EmergencyInvalid`] when the actor has already reached
+/// the per-actor limit.  The caller must deny the action.
+pub fn check_per_actor_limit(
+    prior_actions: &[EmergencyAction],
+    actor: &Did,
+    policy: &EmergencyPolicy,
+) -> Result<()> {
+    // A limit of 0 means disabled.
+    if policy.max_per_quarter_per_actor == 0 {
+        return Ok(());
+    }
+    let actor_count = prior_actions
+        .iter()
+        .filter(|a| {
+            &a.actor_did == actor && a.ratification_status != RatificationStatus::Expired
+        })
+        .count();
+    if actor_count >= policy.max_per_quarter_per_actor {
+        return Err(ForumError::EmergencyInvalid {
+            reason: format!(
+                "per-actor emergency limit reached: {actor_count}/{} this quarter",
+                policy.max_per_quarter_per_actor
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Ratify an emergency action.
@@ -299,6 +341,98 @@ mod tests {
             .collect();
         assert!(needs_governance_review(&actions, &p));
         assert!(!needs_governance_review(&actions[..3], &p));
+    }
+
+    // -- M2: per-actor limit tests --
+
+    #[test]
+    fn per_actor_limit_allows_first_invocation() {
+        let p = policy();
+        assert!(check_per_actor_limit(&[], &did(), &p).is_ok());
+    }
+
+    #[test]
+    fn per_actor_limit_blocks_second_invocation_same_actor() {
+        let p = policy(); // max_per_quarter_per_actor = 1
+        let first = create_emergency_action(
+            EmergencyActionType::SystemHalt,
+            &did(),
+            "first",
+            0,
+            Hash256::ZERO,
+            &p,
+            ts(),
+        )
+        .expect("ok");
+        let err = check_per_actor_limit(&[first], &did(), &p).unwrap_err();
+        assert!(
+            matches!(err, ForumError::EmergencyInvalid { .. }),
+            "expected EmergencyInvalid, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn per_actor_limit_allows_different_actor() {
+        let p = policy(); // max_per_quarter_per_actor = 1
+        let actor_a = Did::new("did:exo:actor-a").expect("ok");
+        let actor_b = Did::new("did:exo:actor-b").expect("ok");
+        let action_a = create_emergency_action(
+            EmergencyActionType::SystemHalt,
+            &actor_a,
+            "actor a",
+            0,
+            Hash256::ZERO,
+            &p,
+            ts(),
+        )
+        .expect("ok");
+        // actor_b is unaffected by actor_a's invocation
+        assert!(check_per_actor_limit(&[action_a], &actor_b, &p).is_ok());
+    }
+
+    #[test]
+    fn per_actor_limit_excludes_expired_actions() {
+        let p = policy(); // max_per_quarter_per_actor = 1
+        let mut expired = create_emergency_action(
+            EmergencyActionType::SystemHalt,
+            &did(),
+            "old",
+            0,
+            Hash256::ZERO,
+            &p,
+            ts(),
+        )
+        .expect("ok");
+        // Mark as expired (missed ratification window)
+        let now_past = Timestamp::new(expired.ratification_deadline.physical_ms + 1000, 0);
+        check_expiry(&mut expired, &now_past);
+        assert_eq!(expired.ratification_status, RatificationStatus::Expired);
+        // Expired action does not count toward the per-actor limit
+        assert!(check_per_actor_limit(&[expired], &did(), &p).is_ok());
+    }
+
+    #[test]
+    fn per_actor_limit_zero_means_unlimited() {
+        let p = EmergencyPolicy {
+            max_per_quarter_per_actor: 0,
+            ..policy()
+        };
+        // Create many actions for the same actor — all should pass
+        let actions: Vec<EmergencyAction> = (0..10)
+            .map(|_| {
+                create_emergency_action(
+                    EmergencyActionType::SystemHalt,
+                    &did(),
+                    "unlimited",
+                    0,
+                    Hash256::ZERO,
+                    &p,
+                    ts(),
+                )
+                .expect("ok")
+            })
+            .collect();
+        assert!(check_per_actor_limit(&actions, &did(), &p).is_ok());
     }
 
     #[test]

@@ -28,7 +28,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 - **Format clean** under `cargo +nightly fmt --all -- --check`
 - **9 CI quality gates** defined and enforced (build, test, coverage, lint, format, audit, deny, doc, hygiene)
 - **Traceability matrix** maps 80 requirements: 76 implemented, 2 partial, 2 planned
-- **Threat model** covers 19 threats: 15 mitigated, 2 partial, 2 planned
+- **Threat model** covers 17 threats tracked: 16 mitigated, 1 partial (T-17 post-quantum ML-DSA), 0 planned — see `governance/threat_matrix.md`
 - **Constitutional invariants** enforced via the CGR kernel in all governance paths
 - **No floating-point arithmetic** — denied workspace-wide via `#[deny(clippy::float_arithmetic)]`
 

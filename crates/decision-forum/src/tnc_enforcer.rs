@@ -19,6 +19,17 @@ pub struct TncContext<'a> {
     pub quorum_met: bool,
     pub human_gate_satisfied: bool,
     pub authority_chain_verified: bool,
+    /// Whether AI signer delegation ceilings have been verified externally
+    /// against the delegation registry (not self-declared by the AI agent).
+    ///
+    /// When `false` (default), TNC-09 restricts ALL AI signers to `Routine`
+    /// decisions only — a fail-closed posture that prevents AI agents from
+    /// bypassing human oversight by self-declaring an elevated ceiling.
+    ///
+    /// Set to `true` only after looking up each AI signer's `delegation_id`
+    /// in the delegation registry and confirming the `ceiling_class` in the
+    /// vote matches the registry-granted ceiling (not self-asserted).
+    pub ai_ceilings_externally_verified: bool,
 }
 
 /// TNC-01: Every action must have a verified authority chain.
@@ -118,16 +129,40 @@ pub fn enforce_tnc_08(ctx: &TncContext<'_>) -> Result<()> {
 }
 
 /// TNC-09: AI delegation ceiling — AI cannot exceed its ceiling class.
+///
+/// When `ctx.ai_ceilings_externally_verified` is `false`, all AI signers are
+/// restricted to `Routine` decisions regardless of their self-declared
+/// `ceiling_class`.  This prevents AI agents from bypassing governance controls
+/// by self-asserting an elevated ceiling (M3 Phase 1 mitigation).
 pub fn enforce_tnc_09(ctx: &TncContext<'_>) -> Result<()> {
+    use crate::decision_object::DecisionClass;
     for vote in &ctx.decision.votes {
-        if let ActorKind::AiAgent { ceiling_class, .. } = &vote.actor_kind {
-            if ctx.decision.class > *ceiling_class {
+        if let ActorKind::AiAgent {
+            ceiling_class,
+            delegation_id,
+        } = &vote.actor_kind
+        {
+            // Fail-closed: when ceilings have not been externally verified
+            // via the delegation registry, restrict all AI signers to Routine.
+            let effective_ceiling = if ctx.ai_ceilings_externally_verified {
+                *ceiling_class
+            } else {
+                DecisionClass::Routine
+            };
+            if ctx.decision.class > effective_ceiling {
                 return Err(ForumError::TncViolation {
                     tnc_id: 9,
-                    reason: format!(
-                        "AI agent vote on {:?} exceeds ceiling {:?}",
-                        ctx.decision.class, ceiling_class
-                    ),
+                    reason: if ctx.ai_ceilings_externally_verified {
+                        format!(
+                            "AI agent '{}' vote on {:?} exceeds delegation-registry ceiling {:?}",
+                            delegation_id, ctx.decision.class, ceiling_class
+                        )
+                    } else {
+                        format!(
+                            "AI agent '{}' ceiling unverified — restricted to Routine, got {:?}",
+                            delegation_id, ctx.decision.class,
+                        )
+                    },
                 });
             }
         }
@@ -206,6 +241,7 @@ mod tests {
             quorum_met: true,
             human_gate_satisfied: true,
             authority_chain_verified: true,
+            ai_ceilings_externally_verified: true,
         }
     }
 
@@ -369,6 +405,7 @@ mod tests {
             quorum_met: false,
             human_gate_satisfied: false,
             authority_chain_verified: false,
+            ai_ceilings_externally_verified: false,
         };
         let violations = collect_violations(&ctx);
         assert!(violations.len() > 1);
@@ -381,5 +418,134 @@ mod tests {
         let ctx = passing_ctx(&d);
         let violations = collect_violations(&ctx);
         assert!(violations.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // M3 adversarial tests — AI ceiling external verification
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ai_ceiling_unverified_blocks_non_routine() {
+        // Without external ceiling verification, an AI signer on an Operational
+        // decision must be rejected even if it self-declares Operational ceiling.
+        let mut clock = test_clock();
+        let mut d =
+            DecisionObject::new("test", DecisionClass::Operational, Hash256::ZERO, &mut clock);
+        d.add_authority_link(AuthorityLink {
+            actor_did: Did::new("did:exo:human-root").expect("ok"),
+            actor_kind: ActorKind::Human,
+            delegation_hash: Hash256::ZERO,
+            timestamp: clock.now(),
+        })
+        .expect("ok");
+        d.add_vote(Vote {
+            voter_did: Did::new("did:exo:ai-agent").expect("ok"),
+            choice: VoteChoice::Approve,
+            actor_kind: ActorKind::AiAgent {
+                delegation_id: "del-001".into(),
+                ceiling_class: DecisionClass::Operational, // self-declared
+            },
+            timestamp: clock.now(),
+            signature_hash: Hash256::ZERO,
+        })
+        .expect("ok");
+        let mut ctx = passing_ctx(&d);
+        ctx.ai_ceilings_externally_verified = false; // not verified — fail-closed
+        let err = enforce_tnc_09(&ctx).unwrap_err();
+        assert!(
+            matches!(err, ForumError::TncViolation { tnc_id: 9, .. }),
+            "expected TNC-09, got {err:?}"
+        );
+        assert!(err.to_string().contains("unverified"));
+    }
+
+    #[test]
+    fn test_ai_ceiling_unverified_allows_routine() {
+        // Without external verification, AI signers are still allowed on Routine.
+        let mut clock = test_clock();
+        let mut d =
+            DecisionObject::new("test", DecisionClass::Routine, Hash256::ZERO, &mut clock);
+        d.add_authority_link(AuthorityLink {
+            actor_did: Did::new("did:exo:human-root").expect("ok"),
+            actor_kind: ActorKind::Human,
+            delegation_hash: Hash256::ZERO,
+            timestamp: clock.now(),
+        })
+        .expect("ok");
+        d.add_vote(Vote {
+            voter_did: Did::new("did:exo:ai-agent").expect("ok"),
+            choice: VoteChoice::Approve,
+            actor_kind: ActorKind::AiAgent {
+                delegation_id: "del-001".into(),
+                ceiling_class: DecisionClass::Routine,
+            },
+            timestamp: clock.now(),
+            signature_hash: Hash256::ZERO,
+        })
+        .expect("ok");
+        let mut ctx = passing_ctx(&d);
+        ctx.ai_ceilings_externally_verified = false;
+        assert!(enforce_tnc_09(&ctx).is_ok());
+    }
+
+    #[test]
+    fn test_ai_ceiling_verified_allows_declared_class() {
+        // With external verification, the declared ceiling_class is trusted.
+        let mut clock = test_clock();
+        let mut d =
+            DecisionObject::new("test", DecisionClass::Operational, Hash256::ZERO, &mut clock);
+        d.add_authority_link(AuthorityLink {
+            actor_did: Did::new("did:exo:human-root").expect("ok"),
+            actor_kind: ActorKind::Human,
+            delegation_hash: Hash256::ZERO,
+            timestamp: clock.now(),
+        })
+        .expect("ok");
+        d.add_vote(Vote {
+            voter_did: Did::new("did:exo:ai-agent").expect("ok"),
+            choice: VoteChoice::Approve,
+            actor_kind: ActorKind::AiAgent {
+                delegation_id: "del-001".into(),
+                ceiling_class: DecisionClass::Operational,
+            },
+            timestamp: clock.now(),
+            signature_hash: Hash256::ZERO,
+        })
+        .expect("ok");
+        let mut ctx = passing_ctx(&d);
+        ctx.ai_ceilings_externally_verified = true;
+        assert!(enforce_tnc_09(&ctx).is_ok());
+    }
+
+    #[test]
+    fn test_ai_self_declared_strategic_blocked_when_verified_ceiling_is_operational() {
+        // Even when externally verified, AI cannot exceed its actual registry ceiling.
+        let mut clock = test_clock();
+        let mut d =
+            DecisionObject::new("test", DecisionClass::Strategic, Hash256::ZERO, &mut clock);
+        d.add_authority_link(AuthorityLink {
+            actor_did: Did::new("did:exo:human-root").expect("ok"),
+            actor_kind: ActorKind::Human,
+            delegation_hash: Hash256::ZERO,
+            timestamp: clock.now(),
+        })
+        .expect("ok");
+        d.add_vote(Vote {
+            voter_did: Did::new("did:exo:ai-agent").expect("ok"),
+            choice: VoteChoice::Approve,
+            actor_kind: ActorKind::AiAgent {
+                delegation_id: "del-001".into(),
+                ceiling_class: DecisionClass::Operational, // registry says Operational
+            },
+            timestamp: clock.now(),
+            signature_hash: Hash256::ZERO,
+        })
+        .expect("ok");
+        let mut ctx = passing_ctx(&d);
+        ctx.ai_ceilings_externally_verified = true;
+        let err = enforce_tnc_09(&ctx).unwrap_err();
+        assert!(matches!(err, ForumError::TncViolation { tnc_id: 9, .. }));
+        // Error mentions the registry ceiling
+        assert!(err.to_string().contains("Operational"));
     }
 }

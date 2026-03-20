@@ -105,14 +105,26 @@ pub fn sign(message: &[u8], secret: &SecretKey) -> Signature {
 /// Verify a signature against a public key.
 ///
 /// For Ed25519 and Hybrid signatures, verifies the classical Ed25519 component.
-/// PostQuantum-only signatures return `false` (no PQ verifier yet).
 /// Empty signatures always return `false`.
+///
+/// # SECURITY NOTE — Post-Quantum Gap (T-17 / M4, tracked in threat_matrix.md)
+///
+/// `Signature::PostQuantum` and the PQ component of `Signature::Hybrid` are
+/// **not yet verified** — ML-DSA (NIST FIPS 204) implementation is planned.
+///
+/// - `PostQuantum(_)` is rejected outright (returns `false`).
+/// - `Hybrid { classical, pq }` only verifies Ed25519; the PQ component is
+///   ignored, so hybrid signatures do NOT provide AND-security until M4 ships.
+///
+/// Current chains use `Ed25519` exclusively.  Records with 50-year retention
+/// requirements are vulnerable to harvest-now-decrypt-later until M4 is
+/// implemented and audited.
 #[must_use]
 pub fn verify(message: &[u8], signature: &Signature, public: &PublicKey) -> bool {
     let sig_bytes = match signature {
         Signature::Ed25519(b) => b,
-        Signature::Hybrid { classical, .. } => classical,
-        Signature::PostQuantum(_) => return false, // PQ verifier not yet implemented
+        Signature::Hybrid { classical, .. } => classical, // PQ component not yet verified — T-17
+        Signature::PostQuantum(_) => return false,        // PQ verifier not yet implemented — T-17
         Signature::Empty => return false,
     };
     let Ok(verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(public.as_bytes()) else {

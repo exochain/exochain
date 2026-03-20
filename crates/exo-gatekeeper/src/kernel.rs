@@ -143,6 +143,7 @@ impl Kernel {
 mod tests {
     use super::*;
     use crate::types::{AuthorityLink, GovernmentBranch, Permission, QuorumVote};
+    use exo_core::{PublicKey, Signature, crypto::KeyPair};
 
     const CONSTITUTION: &[u8] = b"We the people of the EXOCHAIN...";
 
@@ -163,6 +164,20 @@ mod tests {
         }
     }
 
+    fn signed_link(grantor: &str, actor: &Did) -> AuthorityLink {
+        let kp = KeyPair::generate();
+        let mut link = AuthorityLink {
+            grantor: did(grantor),
+            grantee: actor.clone(),
+            permissions: PermissionSet::new(vec![Permission::new("read")]),
+            delegator_public_key: *kp.public_key(),
+            signature: Signature::Empty,
+        };
+        let payload = link.signable_payload();
+        link.signature = kp.sign(&payload);
+        link
+    }
+
     fn valid_context(actor: &Did) -> AdjudicationContext {
         AdjudicationContext {
             actor_roles: vec![Role {
@@ -170,12 +185,7 @@ mod tests {
                 branch: GovernmentBranch::Judicial,
             }],
             authority_chain: AuthorityChain {
-                links: vec![AuthorityLink {
-                    grantor: did("did:exo:root"),
-                    grantee: actor.clone(),
-                    permissions: PermissionSet::new(vec![Permission::new("read")]),
-                    signature: vec![1, 2, 3],
-                }],
+                links: vec![signed_link("did:exo:root", actor)],
             },
             consent_records: vec![ConsentRecord {
                 subject: did("did:exo:bailor"),
