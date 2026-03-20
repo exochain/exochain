@@ -54,3 +54,63 @@ pub fn wasm_check_completeness(case_json: &str) -> Result<JsValue, JsValue> {
         "details": format!("{result:?}"),
     }))
 }
+
+/// Triage a threat assessment to produce a response decision.
+///
+/// `assessment_json` — JSON `ThreatAssessment` (as returned by `wasm_evaluate_signals`).
+/// Returns `{level, actions, timeout_ms, escalation_path}`.
+#[wasm_bindgen]
+pub fn wasm_triage(assessment_json: &str) -> Result<JsValue, JsValue> {
+    let assessment: exo_escalation::detector::ThreatAssessment = from_json_str(assessment_json)?;
+    let decision = exo_escalation::triage::triage(&assessment);
+    // TriageDecision may not implement Serialize — flatten manually.
+    let path = decision
+        .escalation_path
+        .as_ref()
+        .map(|p| p.name.as_str())
+        .unwrap_or("");
+    to_js_value(&serde_json::json!({
+        "level": format!("{:?}", decision.level),
+        "actions": decision.actions.iter().map(|a| format!("{a:?}")).collect::<Vec<_>>(),
+        "timeout_ms": decision.timeout.physical_ms,
+        "escalation_path": path,
+    }))
+}
+
+/// Sort a flat list of escalation cases by priority (highest first).
+///
+/// `KanbanBoard` is a runtime-only type and cannot be serialized across
+/// the WASM boundary. This binding operates on a flat JSON array of
+/// `EscalationCase` objects and returns them sorted by priority.
+#[wasm_bindgen]
+pub fn wasm_cases_by_priority(cases_json: &str) -> Result<JsValue, JsValue> {
+    use exo_escalation::escalation::CasePriority;
+
+    let mut cases: Vec<exo_escalation::escalation::EscalationCase> =
+        from_json_str(cases_json)?;
+    // Sort descending so highest priority comes first.
+    cases.sort_by(|a, b| {
+        let ord = |p: &CasePriority| match p {
+            CasePriority::Critical => 3u8,
+            CasePriority::High => 2,
+            CasePriority::Medium => 1,
+            CasePriority::Low => 0,
+        };
+        ord(&b.priority).cmp(&ord(&a.priority))
+    });
+    to_js_value(&cases)
+}
+
+/// Validate the kanban column value (introspection helper).
+///
+/// Returns `{valid: true}` if `column_json` is a known `KanbanColumn` variant,
+/// otherwise `{valid: false, error: "..."}`.
+#[wasm_bindgen]
+pub fn wasm_validate_kanban_column(column_json: &str) -> Result<JsValue, JsValue> {
+    let result: Result<exo_escalation::kanban::KanbanColumn, _> =
+        serde_json::from_str(column_json);
+    match result {
+        Ok(col) => to_js_value(&serde_json::json!({"valid": true, "column": format!("{col:?}")})),
+        Err(e) => to_js_value(&serde_json::json!({"valid": false, "error": e.to_string()})),
+    }
+}

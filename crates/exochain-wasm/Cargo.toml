@@ -46,3 +46,6 @@ hex = "0.4"
 
 # UUID
 uuid = { workspace = true }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

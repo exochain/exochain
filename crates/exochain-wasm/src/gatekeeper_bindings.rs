@@ -14,11 +14,9 @@ pub fn wasm_reduce_combinator(combinator_json: &str, input_json: &str) -> Result
     to_js_value(&output)
 }
 
-/// Enforce all constitutional invariants against a context
+/// List all constitutional invariant names (introspection).
 #[wasm_bindgen]
-pub fn wasm_enforce_invariants(context_json: &str) -> Result<JsValue, JsValue> {
-    let context: serde_json::Value = from_json_str(context_json)?;
-    // Return the available invariant types for inspection
+pub fn wasm_list_invariants() -> Result<JsValue, JsValue> {
     let invariants = vec![
         "DemocraticLegitimacy",
         "DelegationGovernance",
@@ -29,10 +27,7 @@ pub fn wasm_enforce_invariants(context_json: &str) -> Result<JsValue, JsValue> {
         "TechnologicalHumility",
         "ExistentialSafeguard",
     ];
-    to_js_value(&serde_json::json!({
-        "invariants": invariants,
-        "context": context,
-    }))
+    to_js_value(&invariants)
 }
 
 /// Spawn a Holon (governed agent runtime)
@@ -50,19 +45,24 @@ pub fn wasm_spawn_holon(did: &str, program_json: &str) -> Result<JsValue, JsValu
     }))
 }
 
-/// Step a Holon forward with input (simplified — no kernel context in WASM)
+/// List the valid Holon state transitions (introspection).
+///
+/// `Holon` is a runtime-only type and cannot be serialized across the WASM
+/// boundary.  This binding exposes the state machine topology so the frontend
+/// can reason about legal transitions without holding a live Holon reference.
 #[wasm_bindgen]
-pub fn wasm_step_combinator(combinator_json: &str, input_json: &str) -> Result<JsValue, JsValue> {
-    let combinator: exo_gatekeeper::Combinator = from_json_str(combinator_json)?;
-    let input: exo_gatekeeper::CombinatorInput = from_json_str(input_json)?;
-    let output = exo_gatekeeper::combinator::reduce(&combinator, &input)
-        .map_err(|e| JsValue::from_str(&format!("Step error: {e}")))?;
-    to_js_value(&output)
+pub fn wasm_holon_state_transitions() -> Result<JsValue, JsValue> {
+    to_js_value(&serde_json::json!({
+        "Idle":       ["Executing", "Terminated"],
+        "Executing":  ["Idle", "Suspended", "Terminated"],
+        "Suspended":  ["Executing", "Terminated"],
+        "Terminated": [],
+    }))
 }
 
-/// Check MCP (Model Context Protocol) rule descriptions
+/// List all MCP (Model Context Protocol) rule descriptions (introspection).
 #[wasm_bindgen]
-pub fn wasm_mcp_rules() -> Result<JsValue, JsValue> {
+pub fn wasm_list_mcp_rules() -> Result<JsValue, JsValue> {
     let rules = exo_gatekeeper::McpRule::all();
     let descriptions: Vec<serde_json::Value> = rules
         .iter()

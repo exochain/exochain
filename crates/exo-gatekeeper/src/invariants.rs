@@ -3,7 +3,7 @@
 //! Every action in the constitutional fabric must satisfy a set of invariants.
 //! Failed invariants produce detailed violation reports with evidence.
 
-use exo_core::Did;
+use exo_core::{Did, Hash256};
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
@@ -251,6 +251,8 @@ fn check_authority_chain_valid(ctx: &InvariantContext) -> Result<(), InvariantVi
         });
     }
     let links = &ctx.authority_chain.links;
+
+    // Topology: each link's grantee must be the next link's grantor.
     for i in 0..links.len().saturating_sub(1) {
         if links[i].grantee != links[i + 1].grantor {
             return Err(InvariantViolation {
@@ -263,6 +265,8 @@ fn check_authority_chain_valid(ctx: &InvariantContext) -> Result<(), InvariantVi
             });
         }
     }
+
+    // Terminal link must end at the actor.
     if let Some(last) = links.last() {
         if last.grantee != ctx.actor {
             return Err(InvariantViolation {
@@ -275,6 +279,77 @@ fn check_authority_chain_valid(ctx: &InvariantContext) -> Result<(), InvariantVi
             });
         }
     }
+
+    // TNC-01: Cryptographic signature verification (if grantor_public_key is provided).
+    // For each link that carries a public key, verify the Ed25519 signature over the
+    // canonical payload: Hash256(grantor_bytes || 0x00 || grantee_bytes || 0x00 ||
+    // permission_bytes).  Links without a public key fall back to non-emptiness check.
+    for (idx, link) in links.iter().enumerate() {
+        match &link.grantor_public_key {
+            Some(pk_bytes) => {
+                // Validate key length.
+                let pk_arr: [u8; 32] = pk_bytes.as_slice().try_into().map_err(|_| {
+                    InvariantViolation {
+                        invariant: ConstitutionalInvariant::AuthorityChainValid,
+                        description: format!(
+                            "link[{idx}] grantor_public_key is not 32 bytes"
+                        ),
+                        evidence: vec![format!("key_len: {}", pk_bytes.len())],
+                    }
+                })?;
+
+                // Validate signature length.
+                let sig_arr: [u8; 64] = link.signature.as_slice().try_into().map_err(|_| {
+                    InvariantViolation {
+                        invariant: ConstitutionalInvariant::AuthorityChainValid,
+                        description: format!(
+                            "link[{idx}] signature is not 64 bytes (required for Ed25519)"
+                        ),
+                        evidence: vec![format!("sig_len: {}", link.signature.len())],
+                    }
+                })?;
+
+                // Compute canonical payload.
+                let mut payload = Vec::new();
+                payload.extend_from_slice(link.grantor.as_str().as_bytes());
+                payload.push(0x00);
+                payload.extend_from_slice(link.grantee.as_str().as_bytes());
+                payload.push(0x00);
+                for perm in &link.permissions.permissions {
+                    payload.extend_from_slice(perm.0.as_bytes());
+                    payload.push(0x00);
+                }
+                let message = Hash256::digest(&payload);
+
+                let pubkey = exo_core::PublicKey::from_bytes(pk_arr);
+                let sig = exo_core::Signature::from_bytes(sig_arr);
+
+                if !exo_core::crypto::verify(message.as_bytes(), &sig, &pubkey) {
+                    return Err(InvariantViolation {
+                        invariant: ConstitutionalInvariant::AuthorityChainValid,
+                        description: format!(
+                            "link[{idx}] Ed25519 signature is cryptographically invalid"
+                        ),
+                        evidence: vec![
+                            format!("grantor: {}", link.grantor),
+                            format!("grantee: {}", link.grantee),
+                        ],
+                    });
+                }
+            }
+            None => {
+                // Legacy: at minimum the signature must be non-empty.
+                if link.signature.is_empty() {
+                    return Err(InvariantViolation {
+                        invariant: ConstitutionalInvariant::AuthorityChainValid,
+                        description: format!("link[{idx}] has empty signature"),
+                        evidence: vec![format!("grantor: {}", link.grantor)],
+                    });
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -337,6 +412,7 @@ fn check_provenance_verifiable(ctx: &InvariantContext) -> Result<(), InvariantVi
 mod tests {
     use super::*;
     use crate::types::{AuthorityLink, Permission, QuorumVote};
+    use exo_core::Hash256;
 
     fn did(s: &str) -> Did {
         Did::new(s).expect("valid DID")
@@ -775,5 +851,128 @@ mod tests {
     #[test]
     fn engine_all_constructor() {
         assert_eq!(InvariantEngine::all().invariant_set.invariants.len(), 8);
+    }
+
+    // ── TNC-01: Ed25519 signature verification ───────────────────────────
+
+    /// Build a properly signed AuthorityLink for the given grantor→grantee.
+    fn signed_link(grantor_str: &str, grantee_str: &str) -> (AuthorityLink, exo_core::PublicKey) {
+        let (pk, sk) = exo_core::crypto::generate_keypair();
+        let grantor = did(grantor_str);
+        let grantee = did(grantee_str);
+        let perms = PermissionSet::new(vec![Permission::new("read")]);
+
+        // Canonical payload matches invariant engine computation.
+        let mut payload = Vec::new();
+        payload.extend_from_slice(grantor.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(grantee.as_str().as_bytes());
+        payload.push(0x00);
+        for p in &perms.permissions {
+            payload.extend_from_slice(p.0.as_bytes());
+            payload.push(0x00);
+        }
+        let message = Hash256::digest(&payload);
+        let sig = exo_core::crypto::sign(message.as_bytes(), &sk);
+
+        let link = AuthorityLink {
+            grantor,
+            grantee,
+            permissions: perms,
+            signature: sig.to_bytes().to_vec(),
+            grantor_public_key: Some(pk.as_bytes().to_vec()),
+        };
+        (link, pk)
+    }
+
+    #[test]
+    fn authority_chain_passes_with_valid_ed25519_signature() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::AuthorityChainValid,
+        ]));
+        let mut ctx = passing_context();
+        let (link, _pk) = signed_link("did:exo:root", "did:exo:actor1");
+        ctx.authority_chain = AuthorityChain { links: vec![link] };
+        assert!(enforce_all(&engine, &ctx).is_ok());
+    }
+
+    #[test]
+    fn authority_chain_fails_with_tampered_signature() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::AuthorityChainValid,
+        ]));
+        let mut ctx = passing_context();
+        let (mut link, _pk) = signed_link("did:exo:root", "did:exo:actor1");
+        // Flip a byte in the signature to corrupt it.
+        link.signature[0] ^= 0xFF;
+        ctx.authority_chain = AuthorityChain { links: vec![link] };
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+        assert!(err[0].description.contains("cryptographically invalid"));
+    }
+
+    #[test]
+    fn authority_chain_fails_with_wrong_public_key() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::AuthorityChainValid,
+        ]));
+        let mut ctx = passing_context();
+        let (mut link, _pk) = signed_link("did:exo:root", "did:exo:actor1");
+        // Replace public key with a different one.
+        let (other_pk, _other_sk) = exo_core::crypto::generate_keypair();
+        link.grantor_public_key = Some(other_pk.as_bytes().to_vec());
+        ctx.authority_chain = AuthorityChain { links: vec![link] };
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+        assert!(err[0].description.contains("cryptographically invalid"));
+    }
+
+    #[test]
+    fn authority_chain_fails_with_malformed_key() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::AuthorityChainValid,
+        ]));
+        let mut ctx = passing_context();
+        let mut link = AuthorityLink {
+            grantor: did("did:exo:root"),
+            grantee: did("did:exo:actor1"),
+            permissions: PermissionSet::default(),
+            signature: vec![0u8; 64],
+            grantor_public_key: Some(vec![0u8; 16]), // wrong length
+        };
+        ctx.authority_chain = AuthorityChain { links: vec![link] };
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+        assert!(err[0].description.contains("not 32 bytes"));
+    }
+
+    #[test]
+    fn authority_chain_fails_empty_signature_no_key() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::AuthorityChainValid,
+        ]));
+        let mut ctx = passing_context();
+        ctx.authority_chain = AuthorityChain {
+            links: vec![AuthorityLink {
+                grantor: did("did:exo:root"),
+                grantee: did("did:exo:actor1"),
+                permissions: PermissionSet::default(),
+                signature: vec![], // empty — legacy check fails
+                grantor_public_key: None,
+            }],
+        };
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+        assert!(err[0].description.contains("empty signature"));
+    }
+
+    #[test]
+    fn authority_chain_passes_multi_link_with_ed25519() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::AuthorityChainValid,
+        ]));
+        let mut ctx = passing_context();
+        let (link1, _) = signed_link("did:exo:root", "did:exo:mid");
+        let (link2, _) = signed_link("did:exo:mid", "did:exo:actor1");
+        ctx.authority_chain = AuthorityChain {
+            links: vec![link1, link2],
+        };
+        assert!(enforce_all(&engine, &ctx).is_ok());
     }
 }

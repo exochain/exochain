@@ -127,6 +127,14 @@ pub struct AuthorityLink {
     pub grantee: Did,
     pub permissions: PermissionSet,
     pub signature: Vec<u8>,
+    /// Ed25519 public key (32 bytes) of the grantor.
+    ///
+    /// When present, `check_authority_chain_valid` performs full cryptographic
+    /// Ed25519 signature verification over the canonical link payload
+    /// (grantor || grantee || permissions). When absent, only non-emptiness of
+    /// `signature` is checked (legacy path for links without embedded keys).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grantor_public_key: Option<Vec<u8>>,
 }
 
 // ---------------------------------------------------------------------------

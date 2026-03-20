@@ -131,6 +131,213 @@ pub fn wasm_audit_verify(entries_json: &str) -> Result<JsValue, JsValue> {
     }
 }
 
+// ── Deliberation ─────────────────────────────────────────────────
+
+/// Open a new deliberation on a proposal.
+///
+/// `proposal_hex`      — hex-encoded raw proposal bytes.
+/// `participants_json` — JSON array of DID strings.
+#[wasm_bindgen]
+pub fn wasm_open_deliberation(
+    proposal_hex: &str,
+    participants_json: &str,
+) -> Result<JsValue, JsValue> {
+    let proposal =
+        hex::decode(proposal_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
+    let did_strs: Vec<String> = from_json_str(participants_json)?;
+    let mut participants = Vec::with_capacity(did_strs.len());
+    for s in &did_strs {
+        participants.push(
+            exo_core::Did::new(s)
+                .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?,
+        );
+    }
+    let delib = exo_governance::deliberation::open_deliberation(&proposal, &participants);
+    to_js_value(&delib)
+}
+
+/// Cast a vote in a deliberation.
+#[wasm_bindgen]
+pub fn wasm_cast_vote(deliberation_json: &str, vote_json: &str) -> Result<JsValue, JsValue> {
+    let mut delib: exo_governance::deliberation::Deliberation =
+        from_json_str(deliberation_json)?;
+    let vote: exo_governance::deliberation::Vote = from_json_str(vote_json)?;
+    exo_governance::deliberation::cast_vote(&mut delib, vote)
+        .map_err(|e| JsValue::from_str(&format!("Vote error: {e}")))?;
+    to_js_value(&delib)
+}
+
+/// Close a deliberation and compute its result.
+///
+/// Returns `{result, votes_for, votes_against, abstentions}` or `{result, reason}`.
+#[wasm_bindgen]
+pub fn wasm_close_deliberation(
+    deliberation_json: &str,
+    quorum_policy_json: &str,
+) -> Result<JsValue, JsValue> {
+    use exo_governance::deliberation::DeliberationResult;
+
+    let mut delib: exo_governance::deliberation::Deliberation =
+        from_json_str(deliberation_json)?;
+    let policy: exo_governance::quorum::QuorumPolicy = from_json_str(quorum_policy_json)?;
+    let result = exo_governance::deliberation::close(&mut delib, &policy);
+
+    let json = match result {
+        DeliberationResult::Approved {
+            votes_for,
+            votes_against,
+            abstentions,
+        } => serde_json::json!({
+            "result": "Approved",
+            "votes_for": votes_for,
+            "votes_against": votes_against,
+            "abstentions": abstentions,
+        }),
+        DeliberationResult::Rejected {
+            votes_for,
+            votes_against,
+            abstentions,
+        } => serde_json::json!({
+            "result": "Rejected",
+            "votes_for": votes_for,
+            "votes_against": votes_against,
+            "abstentions": abstentions,
+        }),
+        DeliberationResult::NoQuorum { reason } => serde_json::json!({
+            "result": "NoQuorum",
+            "reason": reason,
+        }),
+    };
+    to_js_value(&json)
+}
+
+// ── Succession ───────────────────────────────────────────────────
+
+/// Activate a succession plan with a trigger.
+#[wasm_bindgen]
+pub fn wasm_activate_succession(
+    plan_json: &str,
+    trigger_json: &str,
+    now_ms: u64,
+) -> Result<JsValue, JsValue> {
+    let plan: exo_governance::succession::SuccessionPlan = from_json_str(plan_json)?;
+    let trigger: exo_governance::succession::SuccessionTrigger = from_json_str(trigger_json)?;
+    let now = exo_core::types::Timestamp::new(now_ms, 0);
+    let result = exo_governance::succession::activate_succession(&plan, trigger, &now)
+        .map_err(|e| JsValue::from_str(&format!("Succession error: {e}")))?;
+    to_js_value(&result)
+}
+
+// ── Crosscheck (Independence / Sybil) ────────────────────────────
+
+/// Verify actor independence against the identity registry.
+///
+/// `registry_json` — JSON object:
+/// ```json
+/// {
+///   "signing_keys": [["did:exo:a", "keyHex"], ...],
+///   "attestation_roots": [["did:exo:a", "did:exo:root"], ...],
+///   "control_metadata": [["did:exo:a", "note"], ...]
+/// }
+/// ```
+#[wasm_bindgen]
+pub fn wasm_verify_independence(
+    actors_json: &str,
+    registry_json: &str,
+) -> Result<JsValue, JsValue> {
+    use std::collections::HashMap;
+
+    let did_strs: Vec<String> = from_json_str(actors_json)?;
+    let mut actors = Vec::with_capacity(did_strs.len());
+    for s in &did_strs {
+        actors.push(
+            exo_core::Did::new(s)
+                .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?,
+        );
+    }
+
+    // Manually deserialize the registry since IdentityRegistry doesn't implement Deserialize.
+    #[derive(serde::Deserialize)]
+    struct RegistryInput {
+        #[serde(default)]
+        signing_keys: Vec<(String, String)>,
+        #[serde(default)]
+        attestation_roots: Vec<(String, String)>,
+        #[serde(default)]
+        control_metadata: Vec<(String, String)>,
+    }
+    let input: RegistryInput = from_json_str(registry_json)?;
+
+    let mut signing_keys = HashMap::new();
+    for (did_str, key) in &input.signing_keys {
+        let did = exo_core::Did::new(did_str)
+            .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
+        signing_keys.insert(did, key.clone());
+    }
+    let mut attestation_roots = HashMap::new();
+    for (did_str, root_str) in &input.attestation_roots {
+        let did = exo_core::Did::new(did_str)
+            .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
+        let root = exo_core::Did::new(root_str)
+            .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
+        attestation_roots.insert(did, root);
+    }
+    let mut control_metadata = HashMap::new();
+    for (did_str, meta) in &input.control_metadata {
+        let did = exo_core::Did::new(did_str)
+            .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
+        control_metadata.insert(did, meta.clone());
+    }
+
+    let registry = exo_governance::crosscheck::IdentityRegistry {
+        signing_keys,
+        attestation_roots,
+        control_metadata,
+    };
+    let result = exo_governance::crosscheck::verify_independence(&actors, &registry);
+    // IndependenceResult may not implement Serialize — manually flatten.
+    let clusters: Vec<serde_json::Value> = result
+        .clusters
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "reason": c.reason,
+                "members": c.members.iter().map(|d| d.as_str()).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let suspicious: Vec<serde_json::Value> = result
+        .suspicious_pairs
+        .iter()
+        .map(|(a, b)| serde_json::json!([a.as_str(), b.as_str()]))
+        .collect();
+    to_js_value(&serde_json::json!({
+        "independent_count": result.independent_count,
+        "clusters": clusters,
+        "suspicious_pairs": suspicious,
+    }))
+}
+
+/// Detect coordination patterns in a set of timestamped actions.
+#[wasm_bindgen]
+pub fn wasm_detect_coordination(actions_json: &str) -> Result<JsValue, JsValue> {
+    let actions: Vec<exo_governance::crosscheck::TimestampedAction> =
+        from_json_str(actions_json)?;
+    let signals = exo_governance::crosscheck::detect_coordination(&actions);
+    // CoordinationSignal may not implement Serialize — manually flatten.
+    let json: Vec<serde_json::Value> = signals
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "actors": s.actors.iter().map(|d| d.as_str()).collect::<Vec<_>>(),
+                "reason": s.reason,
+                "confidence": s.confidence,
+            })
+        })
+        .collect();
+    to_js_value(&json)
+}
+
 /// File a governance challenge
 #[wasm_bindgen]
 pub fn wasm_file_governance_challenge(

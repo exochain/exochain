@@ -53,6 +53,23 @@ pub fn wasm_pace_escalate(state_json: &str) -> Result<JsValue, JsValue> {
     to_js_value(&new_state)
 }
 
+/// De-escalate PACE state (Emergency -> Contingency -> Alternate -> Normal).
+#[wasm_bindgen]
+pub fn wasm_pace_deescalate(state_json: &str) -> Result<JsValue, JsValue> {
+    let mut state: exo_identity::pace::PaceState = from_json_str(state_json)?;
+    let new_state = exo_identity::pace::deescalate(&mut state)
+        .map_err(|e| JsValue::from_str(&format!("PACE de-escalation error: {e}")))?;
+    to_js_value(&new_state)
+}
+
+/// Check whether a risk attestation has expired relative to the current time.
+#[wasm_bindgen]
+pub fn wasm_is_expired(attestation_json: &str, now_ms: u64) -> Result<bool, JsValue> {
+    let attestation: exo_identity::risk::RiskAttestation = from_json_str(attestation_json)?;
+    let now = exo_core::types::Timestamp::new(now_ms, 0);
+    Ok(exo_identity::risk::is_expired(&attestation, &now))
+}
+
 /// Assess risk for an identity (creates a signed risk attestation)
 #[wasm_bindgen]
 pub fn wasm_assess_risk(
