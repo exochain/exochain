@@ -299,7 +299,7 @@ pub async fn resolve_mutation_db(mutation: &LiveSafeMutation, pool: &sqlx::PgPoo
     match mutation {
         LiveSafeMutation::AnchorScan { input } => {
             let scan_id = format!("scan-{}", uuid::Uuid::new_v4());
-            let audit_hash = hex::encode(exo_core::hash_bytes(input.subscriber_did.as_bytes()).0);
+            let audit_hash = hex::encode(exo_core::Hash256::digest(input.subscriber_did.as_bytes()).0);
             let anchor = format!("anchor_{}", uuid::Uuid::new_v4());
             let _ = db::insert_scan_receipt(
                 pool, &scan_id, &input.subscriber_did, &input.responder_did,
@@ -315,7 +315,7 @@ pub async fn resolve_mutation_db(mutation: &LiveSafeMutation, pool: &sqlx::PgPoo
         }
         LiveSafeMutation::AnchorConsent { input } => {
             let consent_id = format!("consent-{}", uuid::Uuid::new_v4());
-            let audit_hash = hex::encode(exo_core::hash_bytes(input.subscriber_did.as_bytes()).0);
+            let audit_hash = hex::encode(exo_core::Hash256::digest(input.subscriber_did.as_bytes()).0);
             let scope_json = serde_json::to_value(&input.scope).unwrap_or_default();
             let _ = db::insert_consent_anchor(
                 pool, &consent_id, &input.subscriber_did, &input.provider_did,
@@ -341,7 +341,7 @@ pub async fn resolve_mutation_db(mutation: &LiveSafeMutation, pool: &sqlx::PgPoo
         }
         LiveSafeMutation::AnchorAuditReceipt { subscriber_did, receipt_hash, event_type } => {
             let combined = format!("{}:{}:{}", subscriber_did, receipt_hash, event_type);
-            let anchor_hash = hex::encode(exo_core::hash_bytes(combined.as_bytes()).0);
+            let anchor_hash = hex::encode(exo_core::Hash256::digest(combined.as_bytes()).0);
             serde_json::to_value(&anchor_hash).unwrap_or_default()
         }
     }
@@ -355,7 +355,7 @@ fn resolve_mutation_mock(mutation: &LiveSafeMutation) -> serde_json::Value {
                 subscriber_did: input.subscriber_did.clone(),
                 responder_did: input.responder_did.clone(), location: input.location.clone(),
                 scanned_at_ms: now_ms(), consent_expires_at_ms: input.consent_expires_at_ms,
-                audit_receipt_hash: hex::encode(exo_core::hash_bytes(input.subscriber_did.as_bytes()).0),
+                audit_receipt_hash: hex::encode(exo_core::Hash256::digest(input.subscriber_did.as_bytes()).0),
                 anchor_receipt: Some(format!("anchor_{}", uuid::Uuid::new_v4())),
             }).unwrap_or_default()
         }
@@ -365,7 +365,7 @@ fn resolve_mutation_mock(mutation: &LiveSafeMutation) -> serde_json::Value {
                 subscriber_did: input.subscriber_did.clone(),
                 provider_did: input.provider_did.clone(), scope: input.scope.clone(),
                 granted_at_ms: now_ms(), expires_at_ms: input.expires_at_ms, revoked_at_ms: None,
-                audit_receipt_hash: hex::encode(exo_core::hash_bytes(input.subscriber_did.as_bytes()).0),
+                audit_receipt_hash: hex::encode(exo_core::Hash256::digest(input.subscriber_did.as_bytes()).0),
             }).unwrap_or_default()
         }
         LiveSafeMutation::RegisterIdentity { did } => {
@@ -377,7 +377,7 @@ fn resolve_mutation_mock(mutation: &LiveSafeMutation) -> serde_json::Value {
         }
         LiveSafeMutation::AnchorAuditReceipt { subscriber_did, receipt_hash, event_type } => {
             let combined = format!("{}:{}:{}", subscriber_did, receipt_hash, event_type);
-            serde_json::to_value(hex::encode(exo_core::hash_bytes(combined.as_bytes()).0)).unwrap_or_default()
+            serde_json::to_value(hex::encode(exo_core::Hash256::digest(combined.as_bytes()).0)).unwrap_or_default()
         }
     }
 }

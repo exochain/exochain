@@ -47,6 +47,17 @@ indexmap = { version = "2", features = ["serde"] }
 # Async runtime (deterministic task ordering where possible)
 tokio = { version = "1", features = ["full"] }
 
+# HTTP server
+axum = { version = "0.7", features = ["json", "macros"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["trace", "cors"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "json", "macros", "migrate"] }
+
+# Encoding
+hex = "0.4"
+
 # Error handling
 thiserror = "2"
 anyhow = "1"
