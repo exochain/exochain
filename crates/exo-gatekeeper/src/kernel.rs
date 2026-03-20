@@ -175,6 +175,7 @@ mod tests {
                     grantee: actor.clone(),
                     permissions: PermissionSet::new(vec![Permission::new("read")]),
                     signature: vec![1, 2, 3],
+                    grantor_public_key: None,
                 }],
             },
             consent_records: vec![ConsentRecord {

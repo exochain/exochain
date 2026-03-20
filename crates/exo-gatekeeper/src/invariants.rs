@@ -443,6 +443,7 @@ mod tests {
                     grantee: actor.clone(),
                     permissions: PermissionSet::new(vec![Permission::new("read")]),
                     signature: vec![1, 2, 3],
+                    grantor_public_key: None,
                 }],
             },
             is_self_grant: false,
@@ -654,12 +655,14 @@ mod tests {
                     grantee: did("did:exo:mid"),
                     permissions: PermissionSet::default(),
                     signature: vec![1],
+                    grantor_public_key: None,
                 },
                 AuthorityLink {
                     grantor: did("did:exo:WRONG"),
                     grantee: ctx.actor.clone(),
                     permissions: PermissionSet::default(),
                     signature: vec![2],
+                    grantor_public_key: None,
                 },
             ],
         };
@@ -679,6 +682,7 @@ mod tests {
                 grantee: did("did:exo:other"),
                 permissions: PermissionSet::default(),
                 signature: vec![1],
+                grantor_public_key: None,
             }],
         };
         let err = enforce_all(&engine, &ctx).unwrap_err();
@@ -706,12 +710,14 @@ mod tests {
                     grantee: did("did:exo:mid"),
                     permissions: PermissionSet::default(),
                     signature: vec![1],
+                    grantor_public_key: None,
                 },
                 AuthorityLink {
                     grantor: did("did:exo:mid"),
                     grantee: ctx.actor.clone(),
                     permissions: PermissionSet::default(),
                     signature: vec![2],
+                    grantor_public_key: None,
                 },
             ],
         };
@@ -931,7 +937,7 @@ mod tests {
             ConstitutionalInvariant::AuthorityChainValid,
         ]));
         let mut ctx = passing_context();
-        let mut link = AuthorityLink {
+        let link = AuthorityLink {
             grantor: did("did:exo:root"),
             grantee: did("did:exo:actor1"),
             permissions: PermissionSet::default(),

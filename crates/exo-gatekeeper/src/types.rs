@@ -240,12 +240,14 @@ mod tests {
                     grantee: did("did:exo:mid"),
                     permissions: PermissionSet::default(),
                     signature: vec![1],
+                    grantor_public_key: None,
                 },
                 AuthorityLink {
                     grantor: did("did:exo:mid"),
                     grantee: did("did:exo:leaf"),
                     permissions: PermissionSet::default(),
                     signature: vec![2],
+                    grantor_public_key: None,
                 },
             ],
         };
