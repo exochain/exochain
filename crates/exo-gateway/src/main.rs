@@ -20,8 +20,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     // Build config from environment, falling back to defaults.
-    let bind_address = std::env::var("BIND_ADDRESS")
-        .unwrap_or_else(|_| "127.0.0.1:8443".into());
+    let bind_address = std::env::var("BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8443".into());
 
     let config = GatewayConfig {
         bind_address,

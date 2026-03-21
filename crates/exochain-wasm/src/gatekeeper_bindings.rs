@@ -304,8 +304,10 @@ mod tests {
             }],
             "authority_chain": { "links": [] }
         });
-        let result: Result<super::WasmInvariantRequest, _> =
-            serde_json::from_value(json);
-        assert!(result.is_ok(), "WasmInvariantRequest must deserialize from valid JSON");
+        let result: Result<super::WasmInvariantRequest, _> = serde_json::from_value(json);
+        assert!(
+            result.is_ok(),
+            "WasmInvariantRequest must deserialize from valid JSON"
+        );
     }
 }

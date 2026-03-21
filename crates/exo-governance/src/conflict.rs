@@ -29,7 +29,10 @@ use thiserror::Error;
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ConflictError {
     #[error("recusal required: actor {actor} has {severity:?} conflict — vote blocked")]
-    RecusalRequired { actor: String, severity: ConflictSeverity },
+    RecusalRequired {
+        actor: String,
+        severity: ConflictSeverity,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +135,9 @@ impl StandingConflictRegister {
             .iter()
             .filter(|d| {
                 d.declarant_did == action.actor_did
-                    && d.related_dids.iter().any(|r| action.affected_dids.contains(r))
+                    && d.related_dids
+                        .iter()
+                        .any(|r| action.affected_dids.contains(r))
             })
             .collect()
     }
@@ -215,8 +220,7 @@ pub fn must_recuse(conflicts: &[Conflict]) -> bool {
 #[must_use = "conflict enforcement result must be handled — do not silently discard"]
 pub fn check_and_block(actor: &Did, conflicts: &[Conflict]) -> Result<(), ConflictError> {
     for c in conflicts {
-        if c.severity == ConflictSeverity::Disqualifying
-            || c.severity == ConflictSeverity::Material
+        if c.severity == ConflictSeverity::Disqualifying || c.severity == ConflictSeverity::Material
         {
             return Err(ConflictError::RecusalRequired {
                 actor: actor.to_string(),
@@ -452,7 +456,11 @@ mod tests {
         };
 
         let relevant = register.declarations_for_action(&action_b);
-        assert_eq!(relevant.len(), 1, "Cross-decision conflict must be detected");
+        assert_eq!(
+            relevant.len(),
+            1,
+            "Cross-decision conflict must be detected"
+        );
     }
 
     #[test]

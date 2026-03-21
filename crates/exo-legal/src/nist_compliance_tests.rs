@@ -9,15 +9,13 @@ mod nist_compliance {
     use exo_authority::DelegateeKind;
     use exo_core::{Did, Timestamp};
     use exo_gatekeeper::{
-        InvariantEngine,
-        invariants::{ConstitutionalInvariant, enforce_all},
+        InvariantEngine, McpRule,
+        invariants::{ConstitutionalInvariant, InvariantContext, enforce_all},
         mcp_audit::{McpAuditLog, McpEnforcementOutcome, append, create_record, verify_chain},
-        McpRule,
         types::{
             AuthorityChain, AuthorityLink, BailmentState, ConsentRecord, GovernmentBranch,
             Permission, PermissionSet, Provenance, Role,
         },
-        invariants::InvariantContext,
     };
     use exo_governance::audit::{self as gov_audit, AuditLog};
 
@@ -124,8 +122,8 @@ mod nist_compliance {
         // 3. Invariant FAILS detectably when human override is removed.
         let mut ctx_bad = passing_context(&actor);
         ctx_bad.human_override_preserved = false;
-        let violations = enforce_all(&engine, &ctx_bad)
-            .expect_err("HumanOverride violation must be detected");
+        let violations =
+            enforce_all(&engine, &ctx_bad).expect_err("HumanOverride violation must be detected");
         assert!(
             violations
                 .iter()
@@ -302,7 +300,10 @@ mod nist_compliance {
             "AuthorityChainValid must map to NIST subcategory GV.6"
         );
         assert!(
-            entry.regulatory_refs.iter().any(|r| r.contains("Art. 5(2)")),
+            entry
+                .regulatory_refs
+                .iter()
+                .any(|r| r.contains("Art. 5(2)")),
             "AuthorityChainValid mapping must reference GDPR Art. 5(2) (accountability)"
         );
 
@@ -366,8 +367,7 @@ mod nist_compliance {
         assert_eq!(report.ai_delegation_revocations, 1);
 
         // 5. Full mode preserves plaintext model_id.
-        let result_full =
-            redact_model_id(&tenant, model_id, &ComplianceReportMode::Full);
+        let result_full = redact_model_id(&tenant, model_id, &ComplianceReportMode::Full);
         assert_eq!(result_full, model_id);
 
         // 6. Redacted mode produces a 64-char hex BLAKE3 hash.
@@ -375,7 +375,9 @@ mod nist_compliance {
         let redacted = redact_model_id(
             &tenant,
             model_id,
-            &ComplianceReportMode::Redacted { redaction_salt: salt },
+            &ComplianceReportMode::Redacted {
+                redaction_salt: salt,
+            },
         );
         assert_eq!(redacted.len(), 64, "Redacted model_id must be 64-char hex");
         assert_ne!(redacted, model_id, "Redacted must differ from plaintext");
@@ -386,7 +388,9 @@ mod nist_compliance {
         let redacted2 = redact_model_id(
             &tenant2,
             model_id,
-            &ComplianceReportMode::Redacted { redaction_salt: salt },
+            &ComplianceReportMode::Redacted {
+                redaction_salt: salt,
+            },
         );
         assert_ne!(
             redacted, redacted2,
@@ -396,7 +400,9 @@ mod nist_compliance {
         // 8. AuthorityChainValid attestation is Compliant in the report.
         let cr = build_report(
             &report,
-            &ComplianceReportMode::Redacted { redaction_salt: salt },
+            &ComplianceReportMode::Redacted {
+                redaction_salt: salt,
+            },
             ts(5000),
         );
         let acv = cr

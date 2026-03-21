@@ -191,7 +191,11 @@ mod tests {
     #[test]
     fn single_record_appended() {
         let mut log = McpAuditLog::new();
-        append_ok(&mut log, McpRule::Mcp001BctsScope, McpEnforcementOutcome::Allowed);
+        append_ok(
+            &mut log,
+            McpRule::Mcp001BctsScope,
+            McpEnforcementOutcome::Allowed,
+        );
         assert_eq!(log.len(), 1);
         assert!(!log.is_empty());
         assert!(verify_chain(&log).is_ok());
@@ -220,7 +224,11 @@ mod tests {
     #[test]
     fn wrong_chain_hash_rejected() {
         let mut log = McpAuditLog::new();
-        append_ok(&mut log, McpRule::Mcp001BctsScope, McpEnforcementOutcome::Allowed);
+        append_ok(
+            &mut log,
+            McpRule::Mcp001BctsScope,
+            McpEnforcementOutcome::Allowed,
+        );
         let bad = McpAuditRecord {
             id: Uuid::new_v4(),
             timestamp: Timestamp::new(9000, 0),
@@ -238,7 +246,11 @@ mod tests {
         let mut log = McpAuditLog::new();
         let h0 = log.head_hash();
         assert_eq!(h0, [0u8; 32]);
-        append_ok(&mut log, McpRule::Mcp003ProvenanceRequired, McpEnforcementOutcome::Allowed);
+        append_ok(
+            &mut log,
+            McpRule::Mcp003ProvenanceRequired,
+            McpEnforcementOutcome::Allowed,
+        );
         assert_ne!(log.head_hash(), h0);
     }
 
@@ -274,7 +286,11 @@ mod tests {
     #[test]
     fn blocked_outcome_recorded() {
         let mut log = McpAuditLog::new();
-        append_ok(&mut log, McpRule::Mcp002NoSelfEscalation, McpEnforcementOutcome::Blocked);
+        append_ok(
+            &mut log,
+            McpRule::Mcp002NoSelfEscalation,
+            McpEnforcementOutcome::Blocked,
+        );
         assert_eq!(log.records[0].outcome, McpEnforcementOutcome::Blocked);
     }
 }

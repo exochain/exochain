@@ -429,8 +429,12 @@ mod tests {
         // Without external ceiling verification, an AI signer on an Operational
         // decision must be rejected even if it self-declares Operational ceiling.
         let mut clock = test_clock();
-        let mut d =
-            DecisionObject::new("test", DecisionClass::Operational, Hash256::ZERO, &mut clock);
+        let mut d = DecisionObject::new(
+            "test",
+            DecisionClass::Operational,
+            Hash256::ZERO,
+            &mut clock,
+        );
         d.add_authority_link(AuthorityLink {
             actor_did: Did::new("did:exo:human-root").expect("ok"),
             actor_kind: ActorKind::Human,
@@ -463,8 +467,7 @@ mod tests {
     fn test_ai_ceiling_unverified_allows_routine() {
         // Without external verification, AI signers are still allowed on Routine.
         let mut clock = test_clock();
-        let mut d =
-            DecisionObject::new("test", DecisionClass::Routine, Hash256::ZERO, &mut clock);
+        let mut d = DecisionObject::new("test", DecisionClass::Routine, Hash256::ZERO, &mut clock);
         d.add_authority_link(AuthorityLink {
             actor_did: Did::new("did:exo:human-root").expect("ok"),
             actor_kind: ActorKind::Human,
@@ -492,8 +495,12 @@ mod tests {
     fn test_ai_ceiling_verified_allows_declared_class() {
         // With external verification, the declared ceiling_class is trusted.
         let mut clock = test_clock();
-        let mut d =
-            DecisionObject::new("test", DecisionClass::Operational, Hash256::ZERO, &mut clock);
+        let mut d = DecisionObject::new(
+            "test",
+            DecisionClass::Operational,
+            Hash256::ZERO,
+            &mut clock,
+        );
         d.add_authority_link(AuthorityLink {
             actor_did: Did::new("did:exo:human-root").expect("ok"),
             actor_kind: ActorKind::Human,

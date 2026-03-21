@@ -23,7 +23,10 @@ fn did(id: &str) -> Did {
 #[test]
 fn api_request_all_variants_serde() {
     let reqs: Vec<ApiRequest> = vec![
-        ApiRequest::CreateTransaction { actor: did("alice"), scope: "governance".into() },
+        ApiRequest::CreateTransaction {
+            actor: did("alice"),
+            scope: "governance".into(),
+        },
         ApiRequest::TransitionState {
             tx_id: Uuid::nil(),
             target_state: "DELIBERATION".into(),
@@ -35,9 +38,20 @@ fn api_request_all_variants_serde() {
             did: did("alice"),
             public_key_hash: Hash256::ZERO,
         },
-        ApiRequest::Deliberate { proposal_hash: Hash256::ZERO, actor: did("alice") },
-        ApiRequest::Vote { proposal_id: Uuid::nil(), approve: true, actor: did("alice") },
-        ApiRequest::Vote { proposal_id: Uuid::nil(), approve: false, actor: did("bob") },
+        ApiRequest::Deliberate {
+            proposal_hash: Hash256::ZERO,
+            actor: did("alice"),
+        },
+        ApiRequest::Vote {
+            proposal_id: Uuid::nil(),
+            approve: true,
+            actor: did("alice"),
+        },
+        ApiRequest::Vote {
+            proposal_id: Uuid::nil(),
+            approve: false,
+            actor: did("bob"),
+        },
         ApiRequest::Challenge {
             target_id: Uuid::nil(),
             grounds: "procedural violation".into(),
@@ -58,11 +72,26 @@ fn api_request_all_variants_serde() {
 #[test]
 fn api_response_all_variants_serde() {
     let resps: Vec<ApiResponse> = vec![
-        ApiResponse::Success { correlation_id: Uuid::nil(), timestamp: Timestamp::ZERO },
-        ApiResponse::Error { code: 400, message: "bad request".into() },
-        ApiResponse::TransactionState { tx_id: Uuid::nil(), state: "CREATED".into() },
-        ApiResponse::Identity { did: did("alice"), verified: true },
-        ApiResponse::Receipt { hash: Hash256::ZERO, timestamp: Timestamp::ZERO },
+        ApiResponse::Success {
+            correlation_id: Uuid::nil(),
+            timestamp: Timestamp::ZERO,
+        },
+        ApiResponse::Error {
+            code: 400,
+            message: "bad request".into(),
+        },
+        ApiResponse::TransactionState {
+            tx_id: Uuid::nil(),
+            state: "CREATED".into(),
+        },
+        ApiResponse::Identity {
+            did: did("alice"),
+            verified: true,
+        },
+        ApiResponse::Receipt {
+            hash: Hash256::ZERO,
+            timestamp: Timestamp::ZERO,
+        },
     ];
     for r in &resps {
         let json = serde_json::to_string(r).expect("serialize");
@@ -77,35 +106,71 @@ fn api_response_all_variants_serde() {
 
 #[test]
 fn canonical_hash_deterministic() {
-    let r = ApiRequest::CreateTransaction { actor: did("alice"), scope: "s".into() };
+    let r = ApiRequest::CreateTransaction {
+        actor: did("alice"),
+        scope: "s".into(),
+    };
     assert_eq!(canonical_request_hash(&r), canonical_request_hash(&r));
 }
 
 #[test]
 fn canonical_hash_scope_differs() {
-    let r1 = ApiRequest::CreateTransaction { actor: did("alice"), scope: "s1".into() };
-    let r2 = ApiRequest::CreateTransaction { actor: did("alice"), scope: "s2".into() };
+    let r1 = ApiRequest::CreateTransaction {
+        actor: did("alice"),
+        scope: "s1".into(),
+    };
+    let r2 = ApiRequest::CreateTransaction {
+        actor: did("alice"),
+        scope: "s2".into(),
+    };
     assert_ne!(canonical_request_hash(&r1), canonical_request_hash(&r2));
 }
 
 #[test]
 fn canonical_hash_actor_differs() {
-    let r1 = ApiRequest::CreateTransaction { actor: did("alice"), scope: "s".into() };
-    let r2 = ApiRequest::CreateTransaction { actor: did("bob"), scope: "s".into() };
+    let r1 = ApiRequest::CreateTransaction {
+        actor: did("alice"),
+        scope: "s".into(),
+    };
+    let r2 = ApiRequest::CreateTransaction {
+        actor: did("bob"),
+        scope: "s".into(),
+    };
     assert_ne!(canonical_request_hash(&r1), canonical_request_hash(&r2));
 }
 
 #[test]
 fn canonical_hash_no_collisions_across_variants() {
     let reqs: Vec<ApiRequest> = vec![
-        ApiRequest::CreateTransaction { actor: did("a"), scope: "s".into() },
-        ApiRequest::TransitionState { tx_id: Uuid::nil(), target_state: "t".into(), actor: did("a") },
+        ApiRequest::CreateTransaction {
+            actor: did("a"),
+            scope: "s".into(),
+        },
+        ApiRequest::TransitionState {
+            tx_id: Uuid::nil(),
+            target_state: "t".into(),
+            actor: did("a"),
+        },
         ApiRequest::QueryTransaction { tx_id: Uuid::nil() },
         ApiRequest::ResolveIdentity { did: did("a") },
-        ApiRequest::RegisterIdentity { did: did("a"), public_key_hash: Hash256::ZERO },
-        ApiRequest::Deliberate { proposal_hash: Hash256::ZERO, actor: did("a") },
-        ApiRequest::Vote { proposal_id: Uuid::nil(), approve: true, actor: did("a") },
-        ApiRequest::Challenge { target_id: Uuid::nil(), grounds: "g".into(), actor: did("a") },
+        ApiRequest::RegisterIdentity {
+            did: did("a"),
+            public_key_hash: Hash256::ZERO,
+        },
+        ApiRequest::Deliberate {
+            proposal_hash: Hash256::ZERO,
+            actor: did("a"),
+        },
+        ApiRequest::Vote {
+            proposal_id: Uuid::nil(),
+            approve: true,
+            actor: did("a"),
+        },
+        ApiRequest::Challenge {
+            target_id: Uuid::nil(),
+            grounds: "g".into(),
+            actor: did("a"),
+        },
     ];
     let hashes: Vec<_> = reqs.iter().map(canonical_request_hash).collect();
     for (i, h1) in hashes.iter().enumerate() {

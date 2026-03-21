@@ -230,11 +230,11 @@ mod tests {
         let entry = mapping
             .entry_for(ConstitutionalInvariant::HumanOverride)
             .expect("HumanOverride must have a mapping");
-        let has_art22 = entry
-            .regulatory_refs
-            .iter()
-            .any(|r| r.contains("Art. 22"));
-        assert!(has_art22, "HumanOverride mapping must reference GDPR Art. 22");
+        let has_art22 = entry.regulatory_refs.iter().any(|r| r.contains("Art. 22"));
+        assert!(
+            has_art22,
+            "HumanOverride mapping must reference GDPR Art. 22"
+        );
     }
 
     #[test]
@@ -243,11 +243,11 @@ mod tests {
         let entry = mapping
             .entry_for(ConstitutionalInvariant::ProvenanceVerifiable)
             .expect("ProvenanceVerifiable must have a mapping");
-        let has_art5 = entry
-            .regulatory_refs
-            .iter()
-            .any(|r| r.contains("5(1)(f)"));
-        assert!(has_art5, "ProvenanceVerifiable must reference GDPR Art. 5(1)(f)");
+        let has_art5 = entry.regulatory_refs.iter().any(|r| r.contains("5(1)(f)"));
+        assert!(
+            has_art5,
+            "ProvenanceVerifiable must reference GDPR Art. 5(1)(f)"
+        );
     }
 
     #[test]

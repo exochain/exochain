@@ -56,8 +56,7 @@ fn test_hash_structured_round_trip() {
 fn test_merkle_root_single_leaf() {
     let leaf = exochain_wasm::wasm_hash_bytes(b"leaf0");
     let leaves_json = format!(r#"["{}"]"#, leaf);
-    let root = exochain_wasm::wasm_merkle_root(&leaves_json)
-        .expect("merkle_root should succeed");
+    let root = exochain_wasm::wasm_merkle_root(&leaves_json).expect("merkle_root should succeed");
     assert_eq!(root.len(), 64);
 }
 
@@ -71,11 +70,11 @@ fn test_merkle_proof_and_verify() {
     let root = exochain_wasm::wasm_merkle_root(&leaves_json).expect("root");
 
     for index in 0..4usize {
-        let proof_json = exochain_wasm::wasm_merkle_proof(&leaves_json, index)
-            .expect("proof");
+        let proof_json = exochain_wasm::wasm_merkle_proof(&leaves_json, index).expect("proof");
 
-        let valid = exochain_wasm::wasm_verify_merkle_proof(&root, &leaves[index], &proof_json, index)
-            .expect("verify");
+        let valid =
+            exochain_wasm::wasm_verify_merkle_proof(&root, &leaves[index], &proof_json, index)
+                .expect("verify");
         assert!(valid, "proof should be valid for leaf {index}");
 
         let wrong_index = (index + 1) % 4;
@@ -96,7 +95,10 @@ fn test_merkle_proof_and_verify() {
 fn test_generate_keypair_no_secret_key() {
     let result = exochain_wasm::wasm_generate_keypair().expect("generate_keypair");
     let json = js_to_json(result);
-    assert!(json.get("public_key").is_some(), "public_key must be present");
+    assert!(
+        json.get("public_key").is_some(),
+        "public_key must be present"
+    );
     assert!(
         json.get("secret_key").is_none(),
         "secret_key must NOT be returned (KEY TRANSIT)"
@@ -146,11 +148,16 @@ fn test_compute_event_id_is_unique() {
 fn test_bcts_valid_transitions_from_draft() {
     let result = exochain_wasm::wasm_bcts_valid_transitions(r#""Draft""#).expect("transitions");
     let json = js_to_json(result);
-    let states: Vec<&str> = json.as_array().unwrap()
+    let states: Vec<&str> = json
+        .as_array()
+        .unwrap()
         .iter()
         .map(|v| v.as_str().unwrap())
         .collect();
-    assert!(states.contains(&"Submitted"), "Draft → Submitted must be valid");
+    assert!(
+        states.contains(&"Submitted"),
+        "Draft → Submitted must be valid"
+    );
 }
 
 #[wasm_bindgen_test]
@@ -187,8 +194,7 @@ fn test_decision_is_not_terminal_after_creation() {
 fn test_decision_content_hash_is_deterministic() {
     let hash_hex = "c".repeat(64);
     let decision_json = js_str(
-        exochain_wasm::wasm_create_decision("Stable", r#""Routine""#, &hash_hex)
-            .expect("create"),
+        exochain_wasm::wasm_create_decision("Stable", r#""Routine""#, &hash_hex).expect("create"),
     );
     let h1 = exochain_wasm::wasm_decision_content_hash(&decision_json).expect("h1");
     let h2 = exochain_wasm::wasm_decision_content_hash(&decision_json).expect("h2");
@@ -294,8 +300,8 @@ fn test_enforce_all_tnc_passes_when_all_flags_set() {
         "human_gate_satisfied": true,
         "authority_chain_verified": true
     }"#;
-    let result = exochain_wasm::wasm_enforce_all_tnc(&decision_json, flags)
-        .expect("enforce_all_tnc");
+    let result =
+        exochain_wasm::wasm_enforce_all_tnc(&decision_json, flags).expect("enforce_all_tnc");
     let json = js_to_json(result);
     assert!(json["ok"].as_bool().unwrap());
 }
@@ -394,7 +400,10 @@ fn test_create_emergency_action_round_trip() {
     )
     .expect("create_emergency_action");
     let json = js_to_json(result);
-    assert_eq!(json["justification"].as_str().unwrap(), "Network anomaly detected");
+    assert_eq!(
+        json["justification"].as_str().unwrap(),
+        "Network anomaly detected"
+    );
     assert_eq!(json["ratification_status"].as_str().unwrap(), "Required");
 }
 
@@ -402,9 +411,8 @@ fn test_create_emergency_action_round_trip() {
 
 #[wasm_bindgen_test]
 fn test_create_record_active_disposition() {
-    let result =
-        exochain_wasm::wasm_create_record(b"document contents", "Confidential", 365)
-            .expect("create_record");
+    let result = exochain_wasm::wasm_create_record(b"document contents", "Confidential", 365)
+        .expect("create_record");
     let json = js_to_json(result);
     assert_eq!(json["retention_period_days"].as_u64().unwrap(), 365);
     assert_eq!(json["disposition"].as_str().unwrap(), "Active");

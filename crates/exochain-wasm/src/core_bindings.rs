@@ -147,15 +147,13 @@ pub fn wasm_verify_merkle_proof(
     proof_json: &str,
     index: usize,
 ) -> Result<bool, JsValue> {
-    let root_bytes =
-        hex::decode(root_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
+    let root_bytes = hex::decode(root_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
     let root_arr: [u8; 32] = root_bytes
         .try_into()
         .map_err(|_| JsValue::from_str("root must be 32 bytes"))?;
     let root = exo_core::Hash256::from_bytes(root_arr);
 
-    let leaf_bytes =
-        hex::decode(leaf_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
+    let leaf_bytes = hex::decode(leaf_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
     let leaf_arr: [u8; 32] = leaf_bytes
         .try_into()
         .map_err(|_| JsValue::from_str("leaf must be 32 bytes"))?;
@@ -172,7 +170,9 @@ pub fn wasm_verify_merkle_proof(
         .collect::<Result<Vec<_>, String>>()
         .map_err(|e| JsValue::from_str(&e))?;
 
-    Ok(exo_core::hash::verify_merkle_proof(&root, &leaf, &proof, index))
+    Ok(exo_core::hash::verify_merkle_proof(
+        &root, &leaf, &proof, index,
+    ))
 }
 
 // ── Events ─────────────────────────────────────────────────────────
@@ -190,8 +190,7 @@ pub fn wasm_compute_event_id() -> String {
 #[wasm_bindgen]
 pub fn wasm_verify_event(event_json: &str, public_hex: &str) -> Result<bool, JsValue> {
     let event: exo_core::events::Event = from_json_str(event_json)?;
-    let pub_bytes =
-        hex::decode(public_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
+    let pub_bytes = hex::decode(public_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
     let arr: [u8; 32] = pub_bytes
         .try_into()
         .map_err(|_| JsValue::from_str("public key must be 32 bytes"))?;

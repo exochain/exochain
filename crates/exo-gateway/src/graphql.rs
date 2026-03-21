@@ -16,15 +16,16 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
-use async_graphql::{Context, InputObject, Object, Result as GqlResult, Schema, SimpleObject, Subscription, ID};
+use async_graphql::{
+    Context, ID, InputObject, Object, Result as GqlResult, Schema, SimpleObject, Subscription,
+    futures_util::Stream,
+};
 use async_graphql_axum::{GraphQL, GraphQLSubscription};
 use async_stream::stream;
 use axum::{Router, routing::get};
-use async_graphql::futures_util::Stream;
+use exo_core::{Hash256, Timestamp};
 use tokio::sync::{Mutex, broadcast};
 use uuid::Uuid;
-
-use exo_core::{Hash256, Timestamp};
 
 // ---------------------------------------------------------------------------
 // GraphQL output types
@@ -218,10 +219,9 @@ impl AppState {
                 .last()
                 .map(|e| e.receipt_hash.clone())
                 .unwrap_or_else(|| Hash256::ZERO.to_string());
-            let receipt_hash = Hash256::digest(
-                format!("{prev_hash}|{event_type}|{actor}|{seq}").as_bytes(),
-            )
-            .to_string();
+            let receipt_hash =
+                Hash256::digest(format!("{prev_hash}|{event_type}|{actor}|{seq}").as_bytes())
+                    .to_string();
             rec.audit_trail.push(GqlAuditEntry {
                 sequence: seq,
                 event_type: event_type.into(),
@@ -233,10 +233,8 @@ impl AppState {
     }
 
     fn compute_decision_hash(d: &GqlDecision) -> String {
-        Hash256::digest(
-            format!("{}|{}|{}", d.id.as_str(), d.status, d.votes.len()).as_bytes(),
-        )
-        .to_string()
+        Hash256::digest(format!("{}|{}|{}", d.id.as_str(), d.status, d.votes.len()).as_bytes())
+            .to_string()
     }
 }
 
@@ -282,9 +280,7 @@ impl QueryRoot {
             .decisions
             .values()
             .filter(|r| r.decision.tenant_id == tenant_id.as_str())
-            .filter(|r| {
-                status.as_ref().is_none_or(|s| *s == r.decision.status)
-            })
+            .filter(|r| status.as_ref().is_none_or(|s| *s == r.decision.status))
             .map(|r| r.decision.clone())
             .skip(offset)
             .take(limit)
@@ -420,7 +416,9 @@ impl MutationRoot {
             challenges: Vec::new(),
             content_hash: body_hash,
         };
-        let _ = guard.event_tx.send(GovEvent::DecisionUpdated(decision.clone()));
+        let _ = guard
+            .event_tx
+            .send(GovEvent::DecisionUpdated(decision.clone()));
         guard.decisions.insert(
             id.clone(),
             DecisionRecord {
@@ -454,7 +452,9 @@ impl MutationRoot {
         };
         let actor = reason.as_deref().unwrap_or("system");
         guard.append_audit(&id_str, &format!("StatusAdvanced:{new_status}"), actor);
-        let _ = guard.event_tx.send(GovEvent::DecisionUpdated(decision.clone()));
+        let _ = guard
+            .event_tx
+            .send(GovEvent::DecisionUpdated(decision.clone()));
         Ok(decision)
     }
 
@@ -514,7 +514,9 @@ impl MutationRoot {
         let id = Uuid::new_v4().to_string();
         let now = Timestamp::now_utc();
         let expires_ms = now.physical_ms.saturating_add(
-            u64::try_from(input.expires_in_hours).unwrap_or(0).saturating_mul(3_600_000),
+            u64::try_from(input.expires_in_hours)
+                .unwrap_or(0)
+                .saturating_mul(3_600_000),
         );
         let delegation = GqlDelegation {
             id: ID::from(id.clone()),
@@ -529,11 +531,7 @@ impl MutationRoot {
     }
 
     /// Revoke an existing delegation by ID.
-    async fn revoke_delegation(
-        &self,
-        ctx: &Context<'_>,
-        id: ID,
-    ) -> GqlResult<GqlDelegation> {
+    async fn revoke_delegation(&self, ctx: &Context<'_>, id: ID) -> GqlResult<GqlDelegation> {
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let mut guard = state.lock().await;
         let id_str = id.to_string();
@@ -570,7 +568,11 @@ impl MutationRoot {
             rec.decision.content_hash = AppState::compute_decision_hash(&rec.decision);
             (challenge, rec.decision.clone())
         };
-        guard.append_audit(&id_str, &format!("ChallengeRaised:{grounds}"), "did:exo:caller");
+        guard.append_audit(
+            &id_str,
+            &format!("ChallengeRaised:{grounds}"),
+            "did:exo:caller",
+        );
         let _ = guard.event_tx.send(GovEvent::DecisionUpdated(decision));
         Ok(challenge)
     }
@@ -608,9 +610,17 @@ impl MutationRoot {
                 .map(|r| r.decision.tenant_id.clone())
                 .unwrap_or_default(),
         };
-        guard.emergency_actions.insert(action_id.clone(), action.clone());
-        guard.append_audit(&id_str, &format!("EmergencyAction:{justification}"), "did:exo:caller");
-        let _ = guard.event_tx.send(GovEvent::EmergencyActionCreated(action.clone()));
+        guard
+            .emergency_actions
+            .insert(action_id.clone(), action.clone());
+        guard.append_audit(
+            &id_str,
+            &format!("EmergencyAction:{justification}"),
+            "did:exo:caller",
+        );
+        let _ = guard
+            .event_tx
+            .send(GovEvent::EmergencyActionCreated(action.clone()));
         Ok(action)
     }
 
@@ -815,14 +825,23 @@ mod tests {
                 }"#,
             )
             .await;
-        assert!(create.errors.is_empty(), "create errors: {:?}", create.errors);
+        assert!(
+            create.errors.is_empty(),
+            "create errors: {:?}",
+            create.errors
+        );
         let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"].as_str().expect("id").to_string();
+        let id = data["createDecision"]["id"]
+            .as_str()
+            .expect("id")
+            .to_string();
         assert_eq!(data["createDecision"]["status"], "CREATED");
 
         // Query it back.
         let query = schema
-            .execute(format!(r#"{{ decision(id: "{id}") {{ id status title }} }}"#))
+            .execute(format!(
+                r#"{{ decision(id: "{id}") {{ id status title }} }}"#
+            ))
             .await;
         assert!(query.errors.is_empty(), "query errors: {:?}", query.errors);
         let qdata = query.data.into_json().expect("data");
@@ -844,7 +863,10 @@ mod tests {
             )
             .await;
         let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"].as_str().expect("id").to_string();
+        let id = data["createDecision"]["id"]
+            .as_str()
+            .expect("id")
+            .to_string();
 
         let vote = schema
             .execute(format!(
@@ -869,7 +891,10 @@ mod tests {
             )
             .await;
         let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"].as_str().expect("id").to_string();
+        let id = data["createDecision"]["id"]
+            .as_str()
+            .expect("id")
+            .to_string();
 
         let vote = schema
             .execute(format!(
@@ -892,7 +917,10 @@ mod tests {
             )
             .await;
         let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"].as_str().expect("id").to_string();
+        let id = data["createDecision"]["id"]
+            .as_str()
+            .expect("id")
+            .to_string();
 
         let adv = schema
             .execute(format!(
@@ -920,17 +948,32 @@ mod tests {
             .await;
         assert!(grant.errors.is_empty(), "grant errors: {:?}", grant.errors);
         let gdata = grant.data.into_json().expect("data");
-        let del_id = gdata["grantDelegation"]["id"].as_str().expect("id").to_string();
-        assert!(gdata["grantDelegation"]["active"].as_bool().unwrap_or(false));
+        let del_id = gdata["grantDelegation"]["id"]
+            .as_str()
+            .expect("id")
+            .to_string();
+        assert!(
+            gdata["grantDelegation"]["active"]
+                .as_bool()
+                .unwrap_or(false)
+        );
 
         let revoke = schema
             .execute(format!(
                 r#"mutation {{ revokeDelegation(id: "{del_id}") {{ id active }} }}"#
             ))
             .await;
-        assert!(revoke.errors.is_empty(), "revoke errors: {:?}", revoke.errors);
+        assert!(
+            revoke.errors.is_empty(),
+            "revoke errors: {:?}",
+            revoke.errors
+        );
         let rdata = revoke.data.into_json().expect("data");
-        assert!(!rdata["revokeDelegation"]["active"].as_bool().unwrap_or(true));
+        assert!(
+            !rdata["revokeDelegation"]["active"]
+                .as_bool()
+                .unwrap_or(true)
+        );
     }
 
     #[tokio::test]
@@ -946,7 +989,10 @@ mod tests {
             )
             .await;
         let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"].as_str().expect("id").to_string();
+        let id = data["createDecision"]["id"]
+            .as_str()
+            .expect("id")
+            .to_string();
 
         // Cast a vote to add a second audit entry.
         schema
@@ -981,14 +1027,21 @@ mod tests {
             )
             .await;
         let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"].as_str().expect("id").to_string();
+        let id = data["createDecision"]["id"]
+            .as_str()
+            .expect("id")
+            .to_string();
 
         let challenge = schema
             .execute(format!(
                 r#"mutation {{ raiseChallenge(decisionId: "{id}", grounds: "procedural error") {{ id grounds status }} }}"#
             ))
             .await;
-        assert!(challenge.errors.is_empty(), "challenge errors: {:?}", challenge.errors);
+        assert!(
+            challenge.errors.is_empty(),
+            "challenge errors: {:?}",
+            challenge.errors
+        );
         let cdata = challenge.data.into_json().expect("data");
         assert_eq!(cdata["raiseChallenge"]["status"], "OPEN");
 
@@ -1042,7 +1095,10 @@ mod tests {
             )
             .await;
         let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"].as_str().expect("id").to_string();
+        let id = data["createDecision"]["id"]
+            .as_str()
+            .expect("id")
+            .to_string();
 
         let ea = schema
             .execute(format!(
@@ -1057,10 +1113,12 @@ mod tests {
     #[tokio::test]
     async fn schema_introspection_has_required_types() {
         let schema = build_test_schema();
-        let res = schema
-            .execute(r#"{ __schema { types { name } } }"#)
-            .await;
-        assert!(res.errors.is_empty(), "introspection errors: {:?}", res.errors);
+        let res = schema.execute(r#"{ __schema { types { name } } }"#).await;
+        assert!(
+            res.errors.is_empty(),
+            "introspection errors: {:?}",
+            res.errors
+        );
         let data = res.data.into_json().expect("data");
         let type_names: Vec<String> = data["__schema"]["types"]
             .as_array()

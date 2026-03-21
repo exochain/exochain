@@ -148,8 +148,7 @@ pub fn wasm_open_deliberation(
     let mut participants = Vec::with_capacity(did_strs.len());
     for s in &did_strs {
         participants.push(
-            exo_core::Did::new(s)
-                .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?,
+            exo_core::Did::new(s).map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?,
         );
     }
     let delib = exo_governance::deliberation::open_deliberation(&proposal, &participants);
@@ -159,8 +158,7 @@ pub fn wasm_open_deliberation(
 /// Cast a vote in a deliberation.
 #[wasm_bindgen]
 pub fn wasm_cast_vote(deliberation_json: &str, vote_json: &str) -> Result<JsValue, JsValue> {
-    let mut delib: exo_governance::deliberation::Deliberation =
-        from_json_str(deliberation_json)?;
+    let mut delib: exo_governance::deliberation::Deliberation = from_json_str(deliberation_json)?;
     let vote: exo_governance::deliberation::Vote = from_json_str(vote_json)?;
     exo_governance::deliberation::cast_vote(&mut delib, vote)
         .map_err(|e| JsValue::from_str(&format!("Vote error: {e}")))?;
@@ -177,8 +175,7 @@ pub fn wasm_close_deliberation(
 ) -> Result<JsValue, JsValue> {
     use exo_governance::deliberation::DeliberationResult;
 
-    let mut delib: exo_governance::deliberation::Deliberation =
-        from_json_str(deliberation_json)?;
+    let mut delib: exo_governance::deliberation::Deliberation = from_json_str(deliberation_json)?;
     let policy: exo_governance::quorum::QuorumPolicy = from_json_str(quorum_policy_json)?;
     let result = exo_governance::deliberation::close(&mut delib, &policy);
 
@@ -251,8 +248,7 @@ pub fn wasm_verify_independence(
     let mut actors = Vec::with_capacity(did_strs.len());
     for s in &did_strs {
         actors.push(
-            exo_core::Did::new(s)
-                .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?,
+            exo_core::Did::new(s).map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?,
         );
     }
 
@@ -321,8 +317,7 @@ pub fn wasm_verify_independence(
 /// Detect coordination patterns in a set of timestamped actions.
 #[wasm_bindgen]
 pub fn wasm_detect_coordination(actions_json: &str) -> Result<JsValue, JsValue> {
-    let actions: Vec<exo_governance::crosscheck::TimestampedAction> =
-        from_json_str(actions_json)?;
+    let actions: Vec<exo_governance::crosscheck::TimestampedAction> = from_json_str(actions_json)?;
     let signals = exo_governance::crosscheck::detect_coordination(&actions);
     // CoordinationSignal may not implement Serialize — manually flatten.
     let json: Vec<serde_json::Value> = signals

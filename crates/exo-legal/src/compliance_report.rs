@@ -156,16 +156,10 @@ fn build_attestation(
             e.nist_subcategories.clone(),
             e.regulatory_refs.clone(),
         ),
-        None => (
-            format!("{invariant:?}"),
-            vec![],
-            vec![],
-            vec![],
-        ),
+        None => (format!("{invariant:?}"), vec![], vec![], vec![]),
     };
 
-    let (status, evidence_summary) =
-        derive_status_and_evidence(invariant, report, mode);
+    let (status, evidence_summary) = derive_status_and_evidence(invariant, report, mode);
 
     InvariantAttestation {
         invariant: format!("{invariant:?}"),
@@ -197,7 +191,11 @@ fn derive_status_and_evidence(
         }
 
         ConstitutionalInvariant::ProvenanceVerifiable => {
-            let mcp_count: u64 = report.mcp_rule_outcomes.iter().map(|o| o.allowed + o.blocked + o.escalated).sum();
+            let mcp_count: u64 = report
+                .mcp_rule_outcomes
+                .iter()
+                .map(|o| o.allowed + o.blocked + o.escalated)
+                .sum();
             (
                 AttestationStatus::Compliant,
                 format!(
@@ -217,8 +215,7 @@ fn derive_status_and_evidence(
                     "Authority chain verified for all actions. \
                      {} AI agent delegation grants recorded (DelegateeKind::AiAgent tagged). \
                      {} revocations. GDPR Art. 5(2) accountability chain intact.",
-                    ai_grants,
-                    report.ai_delegation_revocations
+                    ai_grants, report.ai_delegation_revocations
                 ),
             )
         }
@@ -347,7 +344,9 @@ mod tests {
         let tr = empty_report(&tenant);
         let report = build_report(
             &tr,
-            &ComplianceReportMode::Redacted { redaction_salt: [0u8; 32] },
+            &ComplianceReportMode::Redacted {
+                redaction_salt: [0u8; 32],
+            },
             ts(10000),
         );
         assert_eq!(report.report_mode, "Redacted");
@@ -399,7 +398,9 @@ mod tests {
         let result = redact_model_id(
             &tenant,
             "claude-sonnet-4-6",
-            &ComplianceReportMode::Redacted { redaction_salt: [1u8; 32] },
+            &ComplianceReportMode::Redacted {
+                redaction_salt: [1u8; 32],
+            },
         );
         // Must be a 64-char hex string (32 bytes)
         assert_eq!(result.len(), 64);
@@ -412,12 +413,16 @@ mod tests {
         let r1 = redact_model_id(
             &tenant,
             "model-x",
-            &ComplianceReportMode::Redacted { redaction_salt: [1u8; 32] },
+            &ComplianceReportMode::Redacted {
+                redaction_salt: [1u8; 32],
+            },
         );
         let r2 = redact_model_id(
             &tenant,
             "model-x",
-            &ComplianceReportMode::Redacted { redaction_salt: [2u8; 32] },
+            &ComplianceReportMode::Redacted {
+                redaction_salt: [2u8; 32],
+            },
         );
         assert_ne!(r1, r2);
     }
@@ -429,12 +434,16 @@ mod tests {
         let r1 = redact_model_id(
             &tenant,
             "model-a",
-            &ComplianceReportMode::Redacted { redaction_salt: salt },
+            &ComplianceReportMode::Redacted {
+                redaction_salt: salt,
+            },
         );
         let r2 = redact_model_id(
             &tenant,
             "model-b",
-            &ComplianceReportMode::Redacted { redaction_salt: salt },
+            &ComplianceReportMode::Redacted {
+                redaction_salt: salt,
+            },
         );
         assert_ne!(r1, r2);
     }

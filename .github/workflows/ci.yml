@@ -132,7 +132,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
 
@@ -182,7 +183,7 @@ jobs:
           echo "✓ build artifacts not tracked"
       - name: No .env files tracked
         run: |
-          if git ls-files '*.env' '.env*' | grep -q .; then
+          if git ls-files '*.env' '.env*' | grep -v '\.example$' | grep -q .; then
             echo "::error::.env files are tracked in git"
             exit 1
           fi

@@ -59,7 +59,10 @@ pub fn default_deny_check(actor: &Did, action: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use exo_core::{Hash256, Timestamp, crypto::{generate_keypair, sign}};
+    use exo_core::{
+        Hash256, Timestamp,
+        crypto::{generate_keypair, sign},
+    };
 
     use super::*;
 

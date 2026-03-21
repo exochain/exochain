@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use exo_core::{Did, Hash256, Signature, Timestamp};
 
 use crate::{
-    chain::{self, AuthorityChain, AuthorityLink, DelegateeKind, DEFAULT_MAX_DEPTH},
+    chain::{self, AuthorityChain, AuthorityLink, DEFAULT_MAX_DEPTH, DelegateeKind},
     error::AuthorityError,
     permission::Permission,
 };

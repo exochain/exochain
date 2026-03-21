@@ -143,9 +143,7 @@ pub fn check_per_actor_limit(
     }
     let actor_count = prior_actions
         .iter()
-        .filter(|a| {
-            &a.actor_did == actor && a.ratification_status != RatificationStatus::Expired
-        })
+        .filter(|a| &a.actor_did == actor && a.ratification_status != RatificationStatus::Expired)
         .count();
     if actor_count >= policy.max_per_quarter_per_actor {
         return Err(ForumError::EmergencyInvalid {

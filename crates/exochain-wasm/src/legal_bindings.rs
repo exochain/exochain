@@ -174,8 +174,8 @@ pub fn wasm_record_disinterested_vote(
     now_ms: u64,
 ) -> Result<JsValue, JsValue> {
     let mut txn: exo_legal::dgcl144::InterestedTransaction = from_json_str(txn_json)?;
-    let voter = exo_core::Did::new(voter_did)
-        .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
+    let voter =
+        exo_core::Did::new(voter_did).map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
     let now = exo_core::types::Timestamp::new(now_ms, 0);
     exo_legal::dgcl144::record_disinterested_vote(&mut txn, &voter, approved, now)
         .map_err(|e| JsValue::from_str(&format!("Vote error: {e}")))?;

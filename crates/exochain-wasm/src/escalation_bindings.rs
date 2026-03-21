@@ -86,8 +86,7 @@ pub fn wasm_triage(assessment_json: &str) -> Result<JsValue, JsValue> {
 pub fn wasm_cases_by_priority(cases_json: &str) -> Result<JsValue, JsValue> {
     use exo_escalation::escalation::CasePriority;
 
-    let mut cases: Vec<exo_escalation::escalation::EscalationCase> =
-        from_json_str(cases_json)?;
+    let mut cases: Vec<exo_escalation::escalation::EscalationCase> = from_json_str(cases_json)?;
     // Sort descending so highest priority comes first.
     cases.sort_by(|a, b| {
         let ord = |p: &CasePriority| match p {
@@ -107,8 +106,7 @@ pub fn wasm_cases_by_priority(cases_json: &str) -> Result<JsValue, JsValue> {
 /// otherwise `{valid: false, error: "..."}`.
 #[wasm_bindgen]
 pub fn wasm_validate_kanban_column(column_json: &str) -> Result<JsValue, JsValue> {
-    let result: Result<exo_escalation::kanban::KanbanColumn, _> =
-        serde_json::from_str(column_json);
+    let result: Result<exo_escalation::kanban::KanbanColumn, _> = serde_json::from_str(column_json);
     match result {
         Ok(col) => to_js_value(&serde_json::json!({"valid": true, "column": format!("{col:?}")})),
         Err(e) => to_js_value(&serde_json::json!({"valid": false, "error": e.to_string()})),

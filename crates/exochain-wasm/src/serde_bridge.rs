@@ -28,7 +28,9 @@ mod tests {
 
     /// Call the deserialization half of the bridge through serde_json,
     /// exercising the same error path as `from_json_str`.
-    fn round_trip_deserialize<T: for<'de> Deserialize<'de> + Serialize + PartialEq + std::fmt::Debug>(
+    fn round_trip_deserialize<
+        T: for<'de> Deserialize<'de> + Serialize + PartialEq + std::fmt::Debug,
+    >(
         value: &T,
     ) -> T {
         let json = serde_json::to_string(value).expect("serialize");
@@ -66,7 +68,10 @@ mod tests {
     #[test]
     fn deserialize_missing_field_returns_error() {
         let result: Result<Simple, _> = serde_json::from_str(r#"{"name":"x"}"#);
-        assert!(result.is_err(), "missing required field must return an error");
+        assert!(
+            result.is_err(),
+            "missing required field must return an error"
+        );
     }
 
     #[test]
@@ -84,15 +89,24 @@ mod tests {
     #[test]
     fn round_trip_vec_of_structs() {
         let items = vec![
-            Simple { name: "a".into(), value: 1 },
-            Simple { name: "b".into(), value: 2 },
+            Simple {
+                name: "a".into(),
+                value: 1,
+            },
+            Simple {
+                name: "b".into(),
+                value: 2,
+            },
         ];
         assert_eq!(round_trip_deserialize(&items), items);
     }
 
     #[test]
     fn round_trip_option_some() {
-        let val: Option<Simple> = Some(Simple { name: "x".into(), value: 0 });
+        let val: Option<Simple> = Some(Simple {
+            name: "x".into(),
+            value: 0,
+        });
         assert_eq!(round_trip_deserialize(&val), val);
     }
 
@@ -107,10 +121,7 @@ mod tests {
     #[test]
     fn gatekeeper_permission_set_round_trips() {
         use exo_gatekeeper::types::{Permission, PermissionSet};
-        let ps = PermissionSet::new(vec![
-            Permission::new("read"),
-            Permission::new("write"),
-        ]);
+        let ps = PermissionSet::new(vec![Permission::new("read"), Permission::new("write")]);
         let json = serde_json::to_string(&ps).expect("serialize");
         let restored: PermissionSet = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(ps, restored);

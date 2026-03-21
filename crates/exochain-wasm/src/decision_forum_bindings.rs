@@ -194,8 +194,7 @@ pub fn wasm_ratify_constitution(
     quorum_json: &str,
     timestamp_ms: u64,
 ) -> Result<JsValue, JsValue> {
-    let mut corpus: decision_forum::constitution::ConstitutionCorpus =
-        from_json_str(corpus_json)?;
+    let mut corpus: decision_forum::constitution::ConstitutionCorpus = from_json_str(corpus_json)?;
     let quorum: decision_forum::constitution::ConstitutionQuorum = from_json_str(quorum_json)?;
     let sig_pairs: Vec<(String, String)> = from_json_str(signatures_json)?;
 
@@ -227,8 +226,7 @@ pub fn wasm_amend_constitution(
     amendment_json: &str,
     signatures_json: &str,
 ) -> Result<JsValue, JsValue> {
-    let mut corpus: decision_forum::constitution::ConstitutionCorpus =
-        from_json_str(corpus_json)?;
+    let mut corpus: decision_forum::constitution::ConstitutionCorpus = from_json_str(corpus_json)?;
     let amendment: decision_forum::constitution::Article = from_json_str(amendment_json)?;
     let sig_pairs: Vec<(String, String)> = from_json_str(signatures_json)?;
 
@@ -251,10 +249,7 @@ pub fn wasm_amend_constitution(
 
 /// Dry-run a constitutional amendment — returns conflict descriptions.
 #[wasm_bindgen]
-pub fn wasm_dry_run_amendment(
-    corpus_json: &str,
-    proposed_json: &str,
-) -> Result<JsValue, JsValue> {
+pub fn wasm_dry_run_amendment(corpus_json: &str, proposed_json: &str) -> Result<JsValue, JsValue> {
     let corpus: decision_forum::constitution::ConstitutionCorpus = from_json_str(corpus_json)?;
     let proposed: decision_forum::constitution::Article = from_json_str(proposed_json)?;
     let conflicts = decision_forum::constitution::dry_run_amendment(&corpus, &proposed)
@@ -321,7 +316,9 @@ fn tnc_result(r: decision_forum::error::Result<()>) -> Result<JsValue, JsValue> 
 pub fn wasm_enforce_tnc_01(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
     let flags: TncFlags = from_json_str(flags_json)?;
-    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_01(&build_tnc_ctx(&decision, &flags)))
+    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_01(
+        &build_tnc_ctx(&decision, &flags),
+    ))
 }
 
 /// Enforce TNC-02: human gate satisfied.
@@ -329,7 +326,9 @@ pub fn wasm_enforce_tnc_01(decision_json: &str, flags_json: &str) -> Result<JsVa
 pub fn wasm_enforce_tnc_02(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
     let flags: TncFlags = from_json_str(flags_json)?;
-    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_02(&build_tnc_ctx(&decision, &flags)))
+    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_02(
+        &build_tnc_ctx(&decision, &flags),
+    ))
 }
 
 /// Enforce TNC-03: consent verified.
@@ -337,7 +336,9 @@ pub fn wasm_enforce_tnc_02(decision_json: &str, flags_json: &str) -> Result<JsVa
 pub fn wasm_enforce_tnc_03(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
     let flags: TncFlags = from_json_str(flags_json)?;
-    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_03(&build_tnc_ctx(&decision, &flags)))
+    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_03(
+        &build_tnc_ctx(&decision, &flags),
+    ))
 }
 
 /// Enforce TNC-04: identity verified.
@@ -345,7 +346,9 @@ pub fn wasm_enforce_tnc_03(decision_json: &str, flags_json: &str) -> Result<JsVa
 pub fn wasm_enforce_tnc_04(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
     let flags: TncFlags = from_json_str(flags_json)?;
-    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_04(&build_tnc_ctx(&decision, &flags)))
+    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_04(
+        &build_tnc_ctx(&decision, &flags),
+    ))
 }
 
 /// Enforce TNC-05: delegation expiry enforced.
@@ -353,7 +356,9 @@ pub fn wasm_enforce_tnc_04(decision_json: &str, flags_json: &str) -> Result<JsVa
 pub fn wasm_enforce_tnc_05(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
     let flags: TncFlags = from_json_str(flags_json)?;
-    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_05(&build_tnc_ctx(&decision, &flags)))
+    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_05(
+        &build_tnc_ctx(&decision, &flags),
+    ))
 }
 
 /// Enforce TNC-06: constitutional binding valid.
@@ -361,7 +366,9 @@ pub fn wasm_enforce_tnc_05(decision_json: &str, flags_json: &str) -> Result<JsVa
 pub fn wasm_enforce_tnc_06(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
     let flags: TncFlags = from_json_str(flags_json)?;
-    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_06(&build_tnc_ctx(&decision, &flags)))
+    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_06(
+        &build_tnc_ctx(&decision, &flags),
+    ))
 }
 
 /// Enforce TNC-07: quorum verified.
@@ -369,7 +376,9 @@ pub fn wasm_enforce_tnc_06(decision_json: &str, flags_json: &str) -> Result<JsVa
 pub fn wasm_enforce_tnc_07(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
     let flags: TncFlags = from_json_str(flags_json)?;
-    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_07(&build_tnc_ctx(&decision, &flags)))
+    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_07(
+        &build_tnc_ctx(&decision, &flags),
+    ))
 }
 
 /// Enforce TNC-08: terminal decisions immutable.
@@ -377,7 +386,9 @@ pub fn wasm_enforce_tnc_07(decision_json: &str, flags_json: &str) -> Result<JsVa
 pub fn wasm_enforce_tnc_08(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
     let flags: TncFlags = from_json_str(flags_json)?;
-    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_08(&build_tnc_ctx(&decision, &flags)))
+    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_08(
+        &build_tnc_ctx(&decision, &flags),
+    ))
 }
 
 /// Enforce TNC-09: AI delegation ceiling enforced.
@@ -385,7 +396,9 @@ pub fn wasm_enforce_tnc_08(decision_json: &str, flags_json: &str) -> Result<JsVa
 pub fn wasm_enforce_tnc_09(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
     let flags: TncFlags = from_json_str(flags_json)?;
-    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_09(&build_tnc_ctx(&decision, &flags)))
+    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_09(
+        &build_tnc_ctx(&decision, &flags),
+    ))
 }
 
 /// Enforce TNC-10: evidence bundle complete.
@@ -393,7 +406,9 @@ pub fn wasm_enforce_tnc_09(decision_json: &str, flags_json: &str) -> Result<JsVa
 pub fn wasm_enforce_tnc_10(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
     let flags: TncFlags = from_json_str(flags_json)?;
-    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_10(&build_tnc_ctx(&decision, &flags)))
+    tnc_result(decision_forum::tnc_enforcer::enforce_tnc_10(
+        &build_tnc_ctx(&decision, &flags),
+    ))
 }
 
 /// Enforce all 10 TNCs — returns Ok or the first violation.
@@ -428,10 +443,7 @@ pub fn wasm_collect_tnc_violations(
 /// Enforce the human gate for a decision — Err if human approval is required
 /// but not present in the vote set.
 #[wasm_bindgen]
-pub fn wasm_enforce_human_gate(
-    policy_json: &str,
-    decision_json: &str,
-) -> Result<JsValue, JsValue> {
+pub fn wasm_enforce_human_gate(policy_json: &str, decision_json: &str) -> Result<JsValue, JsValue> {
     let policy: decision_forum::human_gate::HumanGatePolicy = from_json_str(policy_json)?;
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
     match decision_forum::human_gate::enforce_human_gate(&policy, &decision) {
@@ -442,13 +454,12 @@ pub fn wasm_enforce_human_gate(
 
 /// Return true if the given decision class requires human approval under the policy.
 #[wasm_bindgen]
-pub fn wasm_requires_human_approval(
-    policy_json: &str,
-    class_json: &str,
-) -> Result<bool, JsValue> {
+pub fn wasm_requires_human_approval(policy_json: &str, class_json: &str) -> Result<bool, JsValue> {
     let policy: decision_forum::human_gate::HumanGatePolicy = from_json_str(policy_json)?;
     let class: decision_forum::decision_object::DecisionClass = from_json_str(class_json)?;
-    Ok(decision_forum::human_gate::requires_human_approval(&policy, class))
+    Ok(decision_forum::human_gate::requires_human_approval(
+        &policy, class,
+    ))
 }
 
 /// Return true if the given decision class is within the AI delegation ceiling.
@@ -456,7 +467,9 @@ pub fn wasm_requires_human_approval(
 pub fn wasm_ai_within_ceiling(policy_json: &str, class_json: &str) -> Result<bool, JsValue> {
     let policy: decision_forum::human_gate::HumanGatePolicy = from_json_str(policy_json)?;
     let class: decision_forum::decision_object::DecisionClass = from_json_str(class_json)?;
-    Ok(decision_forum::human_gate::ai_within_ceiling(&policy, class))
+    Ok(decision_forum::human_gate::ai_within_ceiling(
+        &policy, class,
+    ))
 }
 
 /// Return true if the given vote was cast by a human actor.
@@ -546,8 +559,8 @@ pub fn wasm_create_emergency_action(
 ) -> Result<JsValue, JsValue> {
     let action_type: decision_forum::emergency::EmergencyActionType =
         from_json_str(action_type_json)?;
-    let actor = exo_core::Did::new(actor_did)
-        .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
+    let actor =
+        exo_core::Did::new(actor_did).map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
     let evidence_bytes =
         hex::decode(evidence_hash_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
     let arr: [u8; 32] = evidence_bytes
@@ -606,7 +619,9 @@ pub fn wasm_needs_governance_review(
 ) -> Result<bool, JsValue> {
     let actions: Vec<decision_forum::emergency::EmergencyAction> = from_json_str(actions_json)?;
     let policy: decision_forum::emergency::EmergencyPolicy = from_json_str(policy_json)?;
-    Ok(decision_forum::emergency::needs_governance_review(&actions, &policy))
+    Ok(decision_forum::emergency::needs_governance_review(
+        &actions, &policy,
+    ))
 }
 
 // ── Contestation ─────────────────────────────────────────────────
@@ -633,10 +648,7 @@ pub fn wasm_withdraw_challenge(challenge_json: &str) -> Result<JsValue, JsValue>
 
 /// Return true if the given decision is currently contested (has an active challenge).
 #[wasm_bindgen]
-pub fn wasm_is_contested(
-    challenges_json: &str,
-    decision_id: &str,
-) -> Result<bool, JsValue> {
+pub fn wasm_is_contested(challenges_json: &str, decision_id: &str) -> Result<bool, JsValue> {
     let challenges: Vec<decision_forum::contestation::ChallengeObject> =
         from_json_str(challenges_json)?;
     let id: uuid::Uuid = decision_id
@@ -688,10 +700,11 @@ pub fn wasm_reverse_accountability(action_json: &str) -> Result<JsValue, JsValue
 /// Return true if the due-process deadline has passed for an action.
 #[wasm_bindgen]
 pub fn wasm_is_due_process_expired(action_json: &str, now_ms: u64) -> Result<bool, JsValue> {
-    let action: decision_forum::accountability::AccountabilityAction =
-        from_json_str(action_json)?;
+    let action: decision_forum::accountability::AccountabilityAction = from_json_str(action_json)?;
     let now = exo_core::types::Timestamp::new(now_ms, 0);
-    Ok(decision_forum::accountability::is_due_process_expired(&action, &now))
+    Ok(decision_forum::accountability::is_due_process_expired(
+        &action, &now,
+    ))
 }
 
 // ── Forum Authority ──────────────────────────────────────────────

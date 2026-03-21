@@ -288,26 +288,28 @@ fn check_authority_chain_valid(ctx: &InvariantContext) -> Result<(), InvariantVi
         match &link.grantor_public_key {
             Some(pk_bytes) => {
                 // Validate key length.
-                let pk_arr: [u8; 32] = pk_bytes.as_slice().try_into().map_err(|_| {
-                    InvariantViolation {
-                        invariant: ConstitutionalInvariant::AuthorityChainValid,
-                        description: format!(
-                            "link[{idx}] grantor_public_key is not 32 bytes"
-                        ),
-                        evidence: vec![format!("key_len: {}", pk_bytes.len())],
-                    }
-                })?;
+                let pk_arr: [u8; 32] =
+                    pk_bytes
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| InvariantViolation {
+                            invariant: ConstitutionalInvariant::AuthorityChainValid,
+                            description: format!("link[{idx}] grantor_public_key is not 32 bytes"),
+                            evidence: vec![format!("key_len: {}", pk_bytes.len())],
+                        })?;
 
                 // Validate signature length.
-                let sig_arr: [u8; 64] = link.signature.as_slice().try_into().map_err(|_| {
-                    InvariantViolation {
-                        invariant: ConstitutionalInvariant::AuthorityChainValid,
-                        description: format!(
-                            "link[{idx}] signature is not 64 bytes (required for Ed25519)"
-                        ),
-                        evidence: vec![format!("sig_len: {}", link.signature.len())],
-                    }
-                })?;
+                let sig_arr: [u8; 64] =
+                    link.signature
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| InvariantViolation {
+                            invariant: ConstitutionalInvariant::AuthorityChainValid,
+                            description: format!(
+                                "link[{idx}] signature is not 64 bytes (required for Ed25519)"
+                            ),
+                            evidence: vec![format!("sig_len: {}", link.signature.len())],
+                        })?;
 
                 // Compute canonical payload.
                 let mut payload = Vec::new();
@@ -410,9 +412,10 @@ fn check_provenance_verifiable(ctx: &InvariantContext) -> Result<(), InvariantVi
 
 #[cfg(test)]
 mod tests {
+    use exo_core::Hash256;
+
     use super::*;
     use crate::types::{AuthorityLink, Permission, QuorumVote};
-    use exo_core::Hash256;
 
     fn did(s: &str) -> Did {
         Did::new(s).expect("valid DID")

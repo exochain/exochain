@@ -23,6 +23,9 @@ uuid = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
+async-graphql = { workspace = true }
+async-graphql-axum = { workspace = true }
+async-stream = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 sqlx = { workspace = true }

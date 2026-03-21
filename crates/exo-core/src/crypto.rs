@@ -263,8 +263,10 @@ pub fn generate_pq_keypair() -> (PqPublicKey, PqSecretKey) {
 /// Returns `ExoError::CryptoError` if `secret` bytes are not exactly 32 bytes
 /// (the ML-DSA seed size) or if ML-DSA signing fails internally.
 pub fn sign_pq(message: &[u8], secret: &PqSecretKey) -> Result<Signature> {
-    let seed_arr: [u8; 32] =
-        secret.as_bytes().try_into().map_err(|_| ExoError::CryptoError {
+    let seed_arr: [u8; 32] = secret
+        .as_bytes()
+        .try_into()
+        .map_err(|_| ExoError::CryptoError {
             reason: format!(
                 "ML-DSA seed must be 32 bytes, got {}",
                 secret.as_bytes().len()
@@ -549,8 +551,16 @@ mod tests {
     fn pq_generate_keypair_produces_valid_sizes() {
         let (pk, sk) = generate_pq_keypair();
         // ML-DSA-65: verifying key = 1952 bytes, seed = 32 bytes
-        assert_eq!(pk.as_bytes().len(), 1952, "PQ public key should be 1952 bytes");
-        assert_eq!(sk.as_bytes().len(), 32, "PQ secret key (seed) should be 32 bytes");
+        assert_eq!(
+            pk.as_bytes().len(),
+            1952,
+            "PQ public key should be 1952 bytes"
+        );
+        assert_eq!(
+            sk.as_bytes().len(),
+            32,
+            "PQ secret key (seed) should be 32 bytes"
+        );
     }
 
     #[test]
@@ -611,7 +621,11 @@ mod tests {
             panic!("expected PostQuantum variant");
         };
         // ML-DSA-65 signature is 3309 bytes (FIPS 204 §Table 1)
-        assert_eq!(bytes.len(), 3309, "ML-DSA-65 signature should be 3309 bytes");
+        assert_eq!(
+            bytes.len(),
+            3309,
+            "ML-DSA-65 signature should be 3309 bytes"
+        );
     }
 
     #[test]
@@ -620,7 +634,10 @@ mod tests {
         let msg = b"determinism";
         let sig1 = sign_pq(msg, &sk).expect("sign_pq");
         let sig2 = sign_pq(msg, &sk).expect("sign_pq");
-        assert_eq!(sig1, sig2, "ML-DSA-65 deterministic signing must be reproducible");
+        assert_eq!(
+            sig1, sig2,
+            "ML-DSA-65 deterministic signing must be reproducible"
+        );
     }
 
     #[test]
@@ -643,7 +660,10 @@ mod tests {
     fn pq_invalid_sk_bytes_returns_error() {
         let bad_sk = PqSecretKey::from_bytes(vec![0u8; 8]); // wrong size
         let result = sign_pq(b"msg", &bad_sk);
-        assert!(result.is_err(), "sign_pq with wrong-length seed should fail");
+        assert!(
+            result.is_err(),
+            "sign_pq with wrong-length seed should fail"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -732,7 +752,12 @@ mod tests {
     fn hybrid_verify_rejects_wrong_variant() {
         let (classical_pk, _) = generate_keypair();
         let (pq_pk, _) = generate_pq_keypair();
-        assert!(!verify_hybrid(b"msg", &Signature::Empty, &classical_pk, &pq_pk));
+        assert!(!verify_hybrid(
+            b"msg",
+            &Signature::Empty,
+            &classical_pk,
+            &pq_pk
+        ));
         assert!(!verify_hybrid(
             b"msg",
             &Signature::PostQuantum(vec![0u8; 32]),

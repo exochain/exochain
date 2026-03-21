@@ -9,8 +9,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
-use crate::error::{GatewayError, Result};
-use crate::rest::HealthResponse;
+use crate::{
+    error::{GatewayError, Result},
+    rest::HealthResponse,
+};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -117,9 +119,7 @@ async fn handle_health(State(state): State<AppState>) -> Json<HealthResponse> {
 }
 
 /// GET /ready — returns 200 when the DB pool is reachable, 503 otherwise.
-async fn handle_ready(
-    State(state): State<AppState>,
-) -> (StatusCode, Json<HealthResponse>) {
+async fn handle_ready(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
     let (status_str, http_status) = match &state.pool {
         Some(pool) => match sqlx::query("SELECT 1").fetch_one(pool).await {
             Ok(_) => ("ok", StatusCode::OK),
@@ -174,18 +174,27 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/agents/enroll", post(handle_not_implemented))
         .route("/api/v1/agents", get(handle_not_implemented))
         .route("/api/v1/agents/:did", get(handle_not_implemented))
-        .route("/api/v1/agents/:did/advance-pace", post(handle_not_implemented))
+        .route(
+            "/api/v1/agents/:did/advance-pace",
+            post(handle_not_implemented),
+        )
         // Identity
         .route("/api/v1/identity/:did/score", get(handle_not_implemented))
         // Tenant
-        .route("/api/v1/tenants/:id/constitution", get(handle_not_implemented))
+        .route(
+            "/api/v1/tenants/:id/constitution",
+            get(handle_not_implemented),
+        )
         // Legal
         .route("/api/v1/ediscovery/export", post(handle_not_implemented))
         // Audit
         .route("/api/v1/audit/:decision_id", get(handle_not_implemented))
         // Users
         .route("/api/v1/users", get(handle_not_implemented))
-        .route("/api/v1/users/:did/advance-pace", post(handle_not_implemented))
+        .route(
+            "/api/v1/users/:did/advance-pace",
+            post(handle_not_implemented),
+        )
         .with_state(state)
 }
 
@@ -200,9 +209,8 @@ async fn shutdown_signal() {
 
     #[cfg(unix)]
     let sigterm = async {
-        let mut stream =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .unwrap_or_else(|_| panic!("failed to install SIGTERM handler"));
+        let mut stream = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .unwrap_or_else(|_| panic!("failed to install SIGTERM handler"));
         stream.recv().await;
     };
 
@@ -249,10 +257,10 @@ pub async fn serve(config: GatewayConfig, pool: Option<sqlx::PgPool>) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use axum::body::Body;
-    use axum::http::Request;
-    use tower::ServiceExt; // for .oneshot()
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+
+    use super::*; // for .oneshot()
 
     fn state() -> AppState {
         AppState::new(None)

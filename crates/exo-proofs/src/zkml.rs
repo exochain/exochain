@@ -155,7 +155,11 @@ impl AiDelta {
         let ai_output_hash = Hash256::digest(ai_output);
         let human_output_hash = Hash256::digest(human_output);
         let divergence_detected = ai_output_hash != human_output_hash;
-        Self { ai_output_hash, human_output_hash, divergence_detected }
+        Self {
+            ai_output_hash,
+            human_output_hash,
+            divergence_detected,
+        }
     }
 }
 
@@ -210,7 +214,6 @@ pub struct InferenceProof {
     pub verification_tag: Hash256,
 
     // ---- LEG-007 provenance extensions (backward-compatible) ----
-
     /// Hash of the system/user prompt (distinct from `input_hash`).
     ///
     /// Separating prompt from context allows courts to assess whether the
@@ -506,8 +509,7 @@ mod tests {
     #[test]
     fn prove_inference_with_provenance_verifies() {
         let model = make_model();
-        let proof =
-            prove_inference_with_provenance(&model, b"prompt", b"context", b"output");
+        let proof = prove_inference_with_provenance(&model, b"prompt", b"context", b"output");
         assert!(verify_inference(&proof));
     }
 
@@ -538,7 +540,10 @@ mod tests {
     #[test]
     fn human_attestation_signature_verifies() {
         let (att, _) = make_attestation(AttestationDecision::Rejected);
-        assert!(att.verify_signature(), "Valid Ed25519 attestation must verify");
+        assert!(
+            att.verify_signature(),
+            "Valid Ed25519 attestation must verify"
+        );
     }
 
     #[test]
@@ -546,7 +551,10 @@ mod tests {
         let (mut att, _) = make_attestation(AttestationDecision::Rejected);
         // Swap the decision after signing — signature must fail.
         att.decision = AttestationDecision::Adopted;
-        assert!(!att.verify_signature(), "Tampered decision must fail verification");
+        assert!(
+            !att.verify_signature(),
+            "Tampered decision must fail verification"
+        );
     }
 
     #[test]
@@ -611,8 +619,11 @@ mod tests {
     #[test]
     fn daubert_checklist_completeness_all_fields_required() {
         // Each false flag independently makes the checklist incomplete.
-        for (doc, peer, accepted) in [(false, true, true), (true, false, true), (true, true, false)]
-        {
+        for (doc, peer, accepted) in [
+            (false, true, true),
+            (true, false, true),
+            (true, true, false),
+        ] {
             let c = DaubertChecklist {
                 methodology_documented: doc,
                 peer_reviewable: peer,

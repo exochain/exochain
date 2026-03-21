@@ -47,6 +47,7 @@ pub struct ProngDisinterestedness {
 impl ProngDisinterestedness {
     /// Score: ratio of disinterested voters to total eligible voters (0.0–1.0).
     #[must_use]
+    #[allow(clippy::float_arithmetic, clippy::as_conversions)]
     pub fn score(&self) -> f64 {
         let eligible = self.total_members.saturating_sub(self.recused_count);
         if eligible == 0 {
@@ -74,6 +75,7 @@ pub struct ProngInformedBasis {
 impl ProngInformedBasis {
     /// Score: fraction of voters who reviewed materials (0.0–1.0).
     #[must_use]
+    #[allow(clippy::float_arithmetic, clippy::as_conversions)]
     pub fn score(&self) -> f64 {
         if self.total_voters == 0 {
             return 0.0;
@@ -101,8 +103,13 @@ impl ProngGoodFaith {
     /// Score: composite of alternatives (≥2 = full credit), process compliance, and
     /// dissent capture (any dissent captured = full credit for that element).
     #[must_use]
+    #[allow(clippy::float_arithmetic, clippy::as_conversions)]
     pub fn score(&self) -> f64 {
-        let alt_score = if self.alternatives_count >= 2 { 1.0 } else { self.alternatives_count as f64 / 2.0 };
+        let alt_score = if self.alternatives_count >= 2 {
+            1.0
+        } else {
+            self.alternatives_count as f64 / 2.0
+        };
         let process_score = if self.process_compliant { 1.0 } else { 0.0 };
         // Dissent: presence of captured dissent is a good-faith signal.
         let dissent_score = if self.dissent_records > 0 || self.deliberation_hashes.len() > 1 {
@@ -174,8 +181,7 @@ pub struct FiduciaryDefensePackage {
 
 impl FiduciaryDefensePackage {
     /// Legal disclaimer text included in every package.
-    pub const DISCLAIMER: &'static str =
-        "This package is a structured evidentiary aid, not a legal opinion. \
+    pub const DISCLAIMER: &'static str = "This package is a structured evidentiary aid, not a legal opinion. \
          Review by qualified counsel is required before use in litigation.";
 
     /// Generate a FiduciaryDefensePackage for a decision.
@@ -215,6 +221,7 @@ impl FiduciaryDefensePackage {
     /// - 0.5–0.8 : moderate — counsel should review gaps
     /// - < 0.5 : significant exposure
     #[must_use]
+    #[allow(clippy::float_arithmetic)]
     pub fn bjr_defensibility_score(&self) -> f64 {
         let sum = self.prong_disinterestedness.score()
             + self.prong_informed_basis.score()
@@ -361,7 +368,10 @@ mod tests {
         );
         let score = pkg.bjr_defensibility_score();
         assert!((0.0..=1.0).contains(&score), "score must be in [0.0, 1.0]");
-        assert!(score >= 0.8, "fully-evidenced decision must score ≥ 0.8, got {score}");
+        assert!(
+            score >= 0.8,
+            "fully-evidenced decision must score ≥ 0.8, got {score}"
+        );
     }
 
     #[test]
@@ -373,7 +383,10 @@ mod tests {
             full_prong3(),
             full_prong4(),
         );
-        assert!(pkg.verify(), "package must verify immediately after generation");
+        assert!(
+            pkg.verify(),
+            "package must verify immediately after generation"
+        );
     }
 
     #[test]
