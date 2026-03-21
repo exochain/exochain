@@ -452,6 +452,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_arithmetic)]
     fn bjr_disinterestedness_score_two_thirds() {
         // 2 out of 3 disinterested voters → score ≈ 0.67
         let p1 = ProngDisinterestedness {
@@ -466,6 +467,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_arithmetic)]
     fn bjr_informed_basis_all_reviewed() {
         let p2 = ProngInformedBasis {
             voters_who_reviewed: 5,
