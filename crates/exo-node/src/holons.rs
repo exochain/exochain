@@ -39,7 +39,9 @@ use exo_gatekeeper::{
 use tokio::sync::mpsc;
 
 use crate::network::NetworkHandle;
-use crate::reactor::SharedReactorState;
+use crate::reactor::{self, SharedReactorState};
+use crate::store::SqliteDagStore;
+use crate::wire::{GovernanceEventType, ValidatorChange};
 
 // ---------------------------------------------------------------------------
 // Holon events (sent to application layer)
@@ -387,6 +389,35 @@ fn analyze_health(
 }
 
 // ---------------------------------------------------------------------------
+// Holon action execution
+// ---------------------------------------------------------------------------
+
+/// Execute a governance action on behalf of a Holon.
+///
+/// This submits a DAG proposal for BFT consensus and broadcasts the
+/// governance event. The action must have been validated by kernel
+/// adjudication before calling this function.
+async fn execute_governance_action(
+    state: &SharedReactorState,
+    store: &std::sync::Arc<std::sync::Mutex<SqliteDagStore>>,
+    net_handle: &NetworkHandle,
+    action_type: GovernanceEventType,
+    payload: &[u8],
+) -> anyhow::Result<()> {
+    // Submit as a DAG proposal for BFT consensus.
+    reactor::submit_proposal(state, store, net_handle, payload).await?;
+
+    // Broadcast the governance event.
+    reactor::broadcast_governance_event(
+        state,
+        net_handle,
+        action_type,
+        payload.to_vec(),
+    )
+    .await
+}
+
+// ---------------------------------------------------------------------------
 // Holon manager — runs all infrastructure Holons as a background task
 // ---------------------------------------------------------------------------
 
@@ -397,6 +428,7 @@ fn analyze_health(
 pub async fn run_holon_manager(
     config: HolonManagerConfig,
     reactor_state: SharedReactorState,
+    shared_store: std::sync::Arc<std::sync::Mutex<SqliteDagStore>>,
     net_handle: NetworkHandle,
     event_tx: mpsc::Sender<HolonEvent>,
 ) {
@@ -490,8 +522,55 @@ pub async fn run_holon_manager(
                         let _ = event_tx.send(HolonEvent::ScalingRecommendation {
                             validator_count,
                             node_count,
-                            recommendation,
+                            recommendation: recommendation.clone(),
                         }).await;
+
+                        // Auto-action: if validator count is critical (< 3) and
+                        // we're a validator, attempt to propose validator promotion
+                        // for an eligible peer via a governance action.
+                        if validator_count < 3 && node_count > validator_count {
+                            let is_validator = {
+                                let s = reactor_state.lock().expect("lock");
+                                s.is_validator
+                            };
+                            if is_validator {
+                                // Build a candidate DID — in production, this would
+                                // query PeerRegistry for an eligible non-validator.
+                                let candidate = Did::new(&format!(
+                                    "did:exo:auto-promoted-{node_count}"
+                                ))
+                                .unwrap_or_else(|_| {
+                                    Did::new("did:exo:candidate").expect("fallback DID")
+                                });
+
+                                let change = ValidatorChange::AddValidator {
+                                    did: candidate.clone(),
+                                };
+                                let mut buf = Vec::new();
+                                if ciborium::into_writer(&change, &mut buf).is_ok() {
+                                    if let Err(e) = execute_governance_action(
+                                        &reactor_state,
+                                        &shared_store,
+                                        &net_handle,
+                                        GovernanceEventType::ValidatorSetChange,
+                                        &buf,
+                                    )
+                                    .await
+                                    {
+                                        tracing::warn!(
+                                            err = %e,
+                                            candidate = %candidate,
+                                            "Scaling Holon: auto-promotion failed"
+                                        );
+                                    } else {
+                                        tracing::info!(
+                                            candidate = %candidate,
+                                            "Scaling Holon: auto-promoted candidate"
+                                        );
+                                    }
+                                }
+                            }
+                        }
 
                         tracing::debug!(
                             validator_count,
@@ -789,7 +868,7 @@ mod tests {
         };
         let sign_fn: Arc<dyn Fn(&[u8]) -> Signature + Send + Sync> =
             Arc::new(|_| Signature::from_bytes([0u8; 64]));
-        let reactor_state = crate::reactor::create_reactor_state(&reactor_config, sign_fn);
+        let reactor_state = crate::reactor::create_reactor_state(&reactor_config, sign_fn, None);
 
         let (cmd_tx, mut cmd_rx) = mpsc::channel(256);
         let net_handle = NetworkHandle::new(cmd_tx);
@@ -817,10 +896,17 @@ mod tests {
             }
         });
 
+        // Create a temporary store for the test.
+        let dir = tempfile::tempdir().unwrap();
+        let shared_store = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::store::SqliteDagStore::open(dir.path()).unwrap(),
+        ));
+
         // Spawn manager with short health interval.
         let manager = tokio::spawn(run_holon_manager(
             config,
             reactor_state,
+            shared_store,
             net_handle,
             event_tx,
         ));

@@ -14,6 +14,7 @@
 //! exochain peers                           # list connected peers
 //! ```
 
+mod api;
 mod cli;
 mod config;
 mod holons;
@@ -192,7 +193,11 @@ async fn start_node(
         Arc::new(move |data: &[u8]| identity.sign(data))
     };
 
-    let reactor_state = reactor::create_reactor_state(&reactor_config, sign_fn);
+    let reactor_state = reactor::create_reactor_state(
+        &reactor_config,
+        sign_fn,
+        Some(&shared_store),
+    );
     let (reactor_tx, mut reactor_rx) = mpsc::channel::<ReactorEvent>(256);
     let (reactor_event_tx, reactor_event_rx) = mpsc::channel::<NetworkEvent>(256);
 
@@ -352,8 +357,9 @@ async fn start_node(
 
     tokio::spawn(holons::run_holon_manager(
         holon_config,
-        reactor_state,
-        net_handle,
+        Arc::clone(&reactor_state),
+        Arc::clone(&shared_store),
+        net_handle.clone(),
         holon_event_tx,
     ));
     tracing::info!("Infrastructure Holons started (topology, scaling, health)");
@@ -453,6 +459,17 @@ async fn start_node(
         }),
     );
 
+    // Build the governance API router.
+    let api_state = Arc::new(api::NodeApiState {
+        reactor_state: Arc::clone(&reactor_state),
+        store: Arc::clone(&shared_store),
+        net_handle: net_handle.clone(),
+    });
+    let governance_router = api::governance_router(api_state);
+
+    // Merge metrics + governance into a single extra router.
+    let extra_router = metrics_router.merge(governance_router);
+
     // Start the gateway HTTP server (blocks).
     let bind_address = format!("0.0.0.0:{api_port}");
     let gateway_config = exo_gateway::server::GatewayConfig {
@@ -475,7 +492,7 @@ async fn start_node(
     exo_gateway::server::serve_with_extra_routes(
         gateway_config,
         None,
-        Some(metrics_router),
+        Some(extra_router),
     )
     .await?;
     Ok(())

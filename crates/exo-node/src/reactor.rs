@@ -97,16 +97,68 @@ pub struct ReactorConfig {
 // Reactor construction
 // ---------------------------------------------------------------------------
 
-/// Create the initial reactor state.
+/// Create the initial reactor state, restoring persisted round and
+/// committed certificates from the store if available.
 pub fn create_reactor_state(
     config: &ReactorConfig,
     sign_fn: Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>,
+    store: Option<&Arc<Mutex<SqliteDagStore>>>,
 ) -> SharedReactorState {
     let consensus_config = ConsensusConfig::new(
         config.validators.clone(),
         config.round_timeout_ms,
     );
-    let consensus_state = ConsensusState::new(consensus_config);
+    let mut consensus_state = ConsensusState::new(consensus_config);
+
+    // Restore persisted consensus state if a store is provided.
+    if let Some(store_arc) = store {
+        let st = store_arc.lock().expect("store lock for restore");
+
+        // Restore the round number.
+        if let Ok(round) = st.load_consensus_round() {
+            if round > 0 {
+                while consensus_state.current_round < round {
+                    consensus_state.advance_round();
+                }
+                tracing::info!(round, "Restored consensus round from store");
+            }
+        }
+
+        // Restore commit certificates.
+        if let Ok(certs) = st.load_certificates() {
+            let count = certs.len();
+            for cert in certs {
+                if !consensus::is_finalized(&consensus_state, &cert.node_hash) {
+                    consensus::commit(&mut consensus_state, cert);
+                }
+            }
+            if count > 0 {
+                tracing::info!(count, "Restored commit certificates from store");
+            }
+        }
+
+        // Restore votes for the current round (pending quorum).
+        if let Ok(votes) = st.load_votes_for_round(consensus_state.current_round) {
+            let count = votes.len();
+            for vote in votes {
+                let _ = consensus::vote(&mut consensus_state, vote);
+            }
+            if count > 0 {
+                tracing::info!(count, round = consensus_state.current_round, "Restored pending votes");
+            }
+        }
+
+        // Restore persisted validator set (may have been changed via governance).
+        if let Ok(persisted_validators) = st.load_validator_set() {
+            if !persisted_validators.is_empty() {
+                consensus_state.config.validators = persisted_validators;
+                tracing::info!(
+                    validators = consensus_state.config.validators.len(),
+                    "Restored validator set from store"
+                );
+            }
+        }
+    }
 
     Arc::new(Mutex::new(ReactorState {
         consensus: consensus_state,
@@ -166,6 +218,14 @@ pub async fn run_reactor(
                     s.consensus.advance_round();
                     s.consensus.current_round
                 };
+
+                // Persist the new round number.
+                {
+                    let mut st = store.lock().expect("store lock");
+                    if let Err(e) = st.save_consensus_round(round) {
+                        tracing::warn!(err = %e, "Failed to persist round");
+                    }
+                }
 
                 tracing::debug!(round, "Consensus round advanced");
                 let _ = reactor_tx.send(ReactorEvent::RoundAdvanced { round }).await;
@@ -298,6 +358,14 @@ async fn handle_vote(
         );
     }
 
+    // Persist the vote.
+    {
+        let mut st = store.lock().expect("store lock");
+        if let Err(e) = st.save_vote(&msg.vote) {
+            tracing::warn!(err = %e, "Failed to persist vote");
+        }
+    }
+
     // Check if this vote completed a quorum.
     check_and_commit(state, store, net_handle, reactor_tx, &msg.vote.node_hash).await;
 }
@@ -384,6 +452,9 @@ async fn check_and_commit(
             let mut st = store.lock().expect("store lock");
             if let Err(e) = st.mark_committed(&hash, height) {
                 tracing::warn!(err = %e, "Failed to mark committed");
+            }
+            if let Err(e) = st.save_certificate(&cert) {
+                tracing::warn!(err = %e, "Failed to persist certificate");
             }
         }
 
@@ -554,7 +625,7 @@ mod tests {
             round_timeout_ms: 5000,
         };
 
-        let state = create_reactor_state(&config, make_sign_fn());
+        let state = create_reactor_state(&config, make_sign_fn(), None);
         let s = state.lock().unwrap();
         assert_eq!(s.consensus.current_round, 0);
         assert_eq!(s.consensus.config.validators.len(), 4);
@@ -571,7 +642,7 @@ mod tests {
             round_timeout_ms: 5000,
         };
 
-        let state = create_reactor_state(&config, make_sign_fn());
+        let state = create_reactor_state(&config, make_sign_fn(), None);
         {
             let mut s = state.lock().unwrap();
             assert_eq!(s.consensus.current_round, 0);
@@ -590,7 +661,7 @@ mod tests {
             round_timeout_ms: 5000,
         };
 
-        let state = create_reactor_state(&config, make_sign_fn());
+        let state = create_reactor_state(&config, make_sign_fn(), None);
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(Mutex::new(SqliteDagStore::open(dir.path()).unwrap()));
 
@@ -621,7 +692,7 @@ mod tests {
             round_timeout_ms: 5000,
         };
 
-        let state = create_reactor_state(&config, make_sign_fn());
+        let state = create_reactor_state(&config, make_sign_fn(), None);
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(Mutex::new(SqliteDagStore::open(dir.path()).unwrap()));
 

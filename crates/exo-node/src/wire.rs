@@ -152,6 +152,17 @@ pub enum GovernanceEventType {
     EntityEnrolled,
     /// An audit entry was appended.
     AuditEntry,
+    /// Validator set change — add or remove a validator.
+    ValidatorSetChange,
+}
+
+/// A request to change the validator set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ValidatorChange {
+    /// Promote a node to validator status.
+    AddValidator { did: Did },
+    /// Remove a node from the validator set.
+    RemoveValidator { did: Did },
 }
 
 // ---------------------------------------------------------------------------

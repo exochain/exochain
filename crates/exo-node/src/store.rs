@@ -4,10 +4,12 @@
 //! This implementation mirrors `MemoryStore` from `exo-dag` but uses durable
 //! storage so state survives restarts.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
-use exo_core::types::Hash256;
+use exo_core::types::{Did, Hash256};
 use exo_dag::{
+    consensus::{CommitCertificate, Vote},
     dag::DagNode,
     error::{DagError, Result as DagResult},
     store::DagStore,
@@ -53,7 +55,31 @@ impl SqliteDagStore {
             );
 
             CREATE INDEX IF NOT EXISTS idx_parents_parent ON dag_parents(parent_hash);
-            CREATE INDEX IF NOT EXISTS idx_committed_height ON committed(height);",
+            CREATE INDEX IF NOT EXISTS idx_committed_height ON committed(height);
+
+            -- Persistent consensus state: survives restarts.
+            CREATE TABLE IF NOT EXISTS consensus_meta (
+                key   TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS consensus_votes (
+                round     INTEGER NOT NULL,
+                node_hash BLOB    NOT NULL,
+                voter_did TEXT    NOT NULL,
+                signature BLOB   NOT NULL,
+                PRIMARY KEY (round, node_hash, voter_did)
+            );
+
+            CREATE TABLE IF NOT EXISTS commit_certificates (
+                node_hash BLOB PRIMARY KEY NOT NULL,
+                round     INTEGER NOT NULL,
+                cbor_data BLOB    NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS validators (
+                did TEXT PRIMARY KEY NOT NULL
+            );",
         )?;
 
         Ok(Self { conn })
@@ -113,6 +139,184 @@ impl SqliteDagStore {
             result.push(row.map_err(store_err)?);
         }
         Ok(result)
+    }
+
+    // -----------------------------------------------------------------
+    // Consensus state persistence
+    // -----------------------------------------------------------------
+
+    /// Save the current consensus round number.
+    pub fn save_consensus_round(&mut self, round: u64) -> DagResult<()> {
+        #[allow(clippy::as_conversions)]
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO consensus_meta (key, value) VALUES ('round', ?1)",
+                params![round.to_string()],
+            )
+            .map_err(store_err)?;
+        Ok(())
+    }
+
+    /// Load the persisted consensus round number (0 if none).
+    pub fn load_consensus_round(&self) -> DagResult<u64> {
+        let result: Result<String, _> = self
+            .conn
+            .query_row(
+                "SELECT value FROM consensus_meta WHERE key = 'round'",
+                [],
+                |row| row.get(0),
+            );
+        match result {
+            Ok(s) => s.parse::<u64>().map_err(|e| store_err(e)),
+            Err(_) => Ok(0),
+        }
+    }
+
+    /// Persist a consensus vote.
+    pub fn save_vote(&mut self, vote: &Vote) -> DagResult<()> {
+        #[allow(clippy::as_conversions)]
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO consensus_votes (round, node_hash, voter_did, signature) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    vote.round as i64,
+                    vote.node_hash.0.as_slice(),
+                    vote.voter.to_string(),
+                    vote.signature.as_bytes(),
+                ],
+            )
+            .map_err(store_err)?;
+        Ok(())
+    }
+
+    /// Load all votes for a given round.
+    pub fn load_votes_for_round(&self, round: u64) -> DagResult<Vec<Vote>> {
+        #[allow(clippy::as_conversions)]
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT node_hash, voter_did, signature FROM consensus_votes WHERE round = ?1",
+            )
+            .map_err(store_err)?;
+
+        #[allow(clippy::as_conversions)]
+        let rows = stmt
+            .query_map(params![round as i64], |row| {
+                let hash_bytes: Vec<u8> = row.get(0)?;
+                let voter_str: String = row.get(1)?;
+                let sig_bytes: Vec<u8> = row.get(2)?;
+
+                let mut hash_arr = [0u8; 32];
+                hash_arr.copy_from_slice(&hash_bytes);
+                let mut sig_arr = [0u8; 64];
+                if sig_bytes.len() == 64 {
+                    sig_arr.copy_from_slice(&sig_bytes);
+                }
+
+                Ok(Vote {
+                    voter: Did::new(&voter_str).unwrap_or_else(|_| {
+                        Did::new("did:exo:unknown").expect("fallback DID")
+                    }),
+                    round,
+                    node_hash: Hash256::from_bytes(hash_arr),
+                    signature: exo_core::types::Signature::from_bytes(sig_arr),
+                })
+            })
+            .map_err(store_err)?;
+
+        let mut votes = Vec::new();
+        for row in rows {
+            votes.push(row.map_err(store_err)?);
+        }
+        Ok(votes)
+    }
+
+    /// Persist a commit certificate.
+    pub fn save_certificate(&mut self, cert: &CommitCertificate) -> DagResult<()> {
+        let mut cbor_buf = Vec::new();
+        ciborium::into_writer(cert, &mut cbor_buf)
+            .map_err(|e| store_err(format!("CBOR encode certificate: {e}")))?;
+
+        #[allow(clippy::as_conversions)]
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO commit_certificates (node_hash, round, cbor_data) VALUES (?1, ?2, ?3)",
+                params![
+                    cert.node_hash.0.as_slice(),
+                    cert.round as i64,
+                    cbor_buf,
+                ],
+            )
+            .map_err(store_err)?;
+        Ok(())
+    }
+
+    /// Load all persisted commit certificates.
+    pub fn load_certificates(&self) -> DagResult<Vec<CommitCertificate>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT cbor_data FROM commit_certificates ORDER BY round ASC")
+            .map_err(store_err)?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let bytes: Vec<u8> = row.get(0)?;
+                Ok(bytes)
+            })
+            .map_err(store_err)?;
+
+        let mut certs = Vec::new();
+        for row in rows {
+            let bytes = row.map_err(store_err)?;
+            let cert: CommitCertificate = ciborium::from_reader(bytes.as_slice())
+                .map_err(|e| store_err(format!("CBOR decode certificate: {e}")))?;
+            certs.push(cert);
+        }
+        Ok(certs)
+    }
+
+    // -----------------------------------------------------------------
+    // Validator set persistence
+    // -----------------------------------------------------------------
+
+    /// Save the current validator set to the database.
+    pub fn save_validator_set(&mut self, validators: &BTreeSet<Did>) -> DagResult<()> {
+        self.conn
+            .execute("DELETE FROM validators", [])
+            .map_err(store_err)?;
+        for did in validators {
+            self.conn
+                .execute(
+                    "INSERT INTO validators (did) VALUES (?1)",
+                    params![did.to_string()],
+                )
+                .map_err(store_err)?;
+        }
+        Ok(())
+    }
+
+    /// Load the persisted validator set (empty if none saved).
+    pub fn load_validator_set(&self) -> DagResult<BTreeSet<Did>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT did FROM validators ORDER BY did ASC")
+            .map_err(store_err)?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let did_str: String = row.get(0)?;
+                Ok(did_str)
+            })
+            .map_err(store_err)?;
+
+        let mut set = BTreeSet::new();
+        for row in rows {
+            let did_str = row.map_err(store_err)?;
+            if let Ok(did) = Did::new(&did_str) {
+                set.insert(did);
+            }
+        }
+        Ok(set)
     }
 
     /// Get all committed nodes with their full DagNode data, ordered by height.
@@ -249,6 +453,8 @@ impl DagStore for SqliteDagStore {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use exo_core::types::{Did, Signature};
     use exo_dag::dag::{Dag, HybridClock, append};
 
@@ -365,6 +571,92 @@ mod tests {
         let mut store = temp_store();
         let err = store.mark_committed(&Hash256::ZERO, 1).unwrap_err();
         assert!(matches!(err, DagError::NodeNotFound(_)));
+    }
+
+    #[test]
+    fn consensus_round_persistence() {
+        let mut store = temp_store();
+        assert_eq!(store.load_consensus_round().unwrap(), 0);
+        store.save_consensus_round(42).unwrap();
+        assert_eq!(store.load_consensus_round().unwrap(), 42);
+        store.save_consensus_round(100).unwrap();
+        assert_eq!(store.load_consensus_round().unwrap(), 100);
+    }
+
+    #[test]
+    fn vote_persistence_roundtrip() {
+        use exo_core::types::Signature;
+        let mut store = temp_store();
+        let did = Did::new("did:exo:voter1").unwrap();
+        let mut hash = [0u8; 32];
+        hash[0] = 0xAB;
+        let vote = Vote {
+            voter: did.clone(),
+            round: 5,
+            node_hash: Hash256::from_bytes(hash),
+            signature: Signature::from_bytes([7u8; 64]),
+        };
+        store.save_vote(&vote).unwrap();
+
+        let loaded = store.load_votes_for_round(5).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].voter, did);
+        assert_eq!(loaded[0].round, 5);
+        assert_eq!(loaded[0].node_hash, Hash256::from_bytes(hash));
+
+        // Different round returns empty.
+        let empty = store.load_votes_for_round(6).unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn certificate_persistence_roundtrip() {
+        use exo_core::types::Signature;
+        let mut store = temp_store();
+        let mut hash = [0u8; 32];
+        hash[0] = 0xCD;
+        let cert = CommitCertificate {
+            node_hash: Hash256::from_bytes(hash),
+            round: 3,
+            votes: vec![Vote {
+                voter: Did::new("did:exo:v0").unwrap(),
+                round: 3,
+                node_hash: Hash256::from_bytes(hash),
+                signature: Signature::from_bytes([1u8; 64]),
+            }],
+        };
+        store.save_certificate(&cert).unwrap();
+
+        let loaded = store.load_certificates().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].round, 3);
+        assert_eq!(loaded[0].node_hash, Hash256::from_bytes(hash));
+        assert_eq!(loaded[0].votes.len(), 1);
+    }
+
+    #[test]
+    fn validator_set_persistence() {
+        let mut store = temp_store();
+        let empty = store.load_validator_set().unwrap();
+        assert!(empty.is_empty());
+
+        let mut set = BTreeSet::new();
+        set.insert(Did::new("did:exo:v0").unwrap());
+        set.insert(Did::new("did:exo:v1").unwrap());
+        set.insert(Did::new("did:exo:v2").unwrap());
+        store.save_validator_set(&set).unwrap();
+
+        let loaded = store.load_validator_set().unwrap();
+        assert_eq!(loaded.len(), 3);
+        assert!(loaded.contains(&Did::new("did:exo:v0").unwrap()));
+        assert!(loaded.contains(&Did::new("did:exo:v2").unwrap()));
+
+        // Overwrite with smaller set.
+        let mut smaller = BTreeSet::new();
+        smaller.insert(Did::new("did:exo:v0").unwrap());
+        store.save_validator_set(&smaller).unwrap();
+        let loaded2 = store.load_validator_set().unwrap();
+        assert_eq!(loaded2.len(), 1);
     }
 
     #[test]
