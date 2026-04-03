@@ -49,6 +49,7 @@ pub enum NetworkCommand {
     /// Publish a wire message to a gossipsub topic.
     Publish { topic: String, message: WireMessage },
     /// Dial a peer at a multiaddr.
+    #[allow(dead_code)] // Wired in governance API
     Dial { addr: Multiaddr },
     /// Request the current peer count.
     PeerCount { reply: tokio::sync::oneshot::Sender<usize> },
@@ -84,6 +85,7 @@ pub struct NetworkConfig {
 
 /// Build the libp2p swarm with all behaviours composed.
 pub fn build_swarm(config: &NetworkConfig) -> anyhow::Result<Swarm<ExochainBehaviour>> {
+    let node_did_for_identify = config.node_did.to_string();
     let swarm = SwarmBuilder::with_new_identity()
         .with_tokio()
         .with_tcp(
@@ -143,12 +145,14 @@ pub fn build_swarm(config: &NetworkConfig) -> anyhow::Result<Swarm<ExochainBehav
             )
             .map_err(|e| std::io::Error::other(format!("mdns: {e}")))?;
 
-            // Identify protocol for exchanging metadata
+            // Identify protocol for exchanging metadata.
+            // Include the node DID in the agent version for diagnostics.
             let identify = identify::Behaviour::new(
                 identify::Config::new(
                     "/exochain/1.0.0".into(),
                     keypair.public(),
                 )
+                .with_agent_version(format!("exochain/1.0 {node_did_for_identify}"))
                 .with_push_listen_addr_updates(true),
             );
 
@@ -438,6 +442,7 @@ impl NetworkHandle {
     }
 
     /// Dial a peer at a multiaddr.
+    #[allow(dead_code)] // Wired in governance API
     pub async fn dial(&self, addr: Multiaddr) -> anyhow::Result<()> {
         self.cmd_tx
             .send(NetworkCommand::Dial { addr })

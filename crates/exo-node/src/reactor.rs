@@ -38,9 +38,11 @@ use crate::wire::{
 pub struct ReactorState {
     /// The BFT consensus state (rounds, votes, certificates).
     pub consensus: ConsensusState,
-    /// The local DAG.
+    /// The local DAG — used by submit_proposal via struct destructuring.
+    #[allow(dead_code)]
     pub dag: Dag,
-    /// The hybrid logical clock.
+    /// The hybrid logical clock — used by submit_proposal via struct destructuring.
+    #[allow(dead_code)]
     pub clock: HybridClock,
     /// This node's DID.
     pub node_did: Did,
@@ -408,6 +410,7 @@ async fn check_and_commit(
 /// Submit a governance mutation as a DAG node and propose it for consensus.
 ///
 /// Called by the API layer when a new governance action is requested.
+#[allow(dead_code)] // Wired in governance API
 pub async fn submit_proposal(
     state: &SharedReactorState,
     store: &Arc<Mutex<SqliteDagStore>>,
@@ -490,6 +493,7 @@ pub async fn submit_proposal(
 }
 
 /// Broadcast a governance event to the network.
+#[allow(dead_code)] // Wired in governance API
 pub async fn broadcast_governance_event(
     state: &SharedReactorState,
     net_handle: &NetworkHandle,

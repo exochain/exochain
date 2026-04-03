@@ -14,8 +14,17 @@ use exo_core::{
 /// A node's persistent identity.
 pub struct NodeIdentity {
     pub did: Did,
+    /// The node's public key — used for identity verification and governance.
     pub public_key: PublicKey,
     keypair: KeyPair,
+}
+
+impl NodeIdentity {
+    /// Returns a reference to this node's public key bytes.
+    #[must_use]
+    pub fn public_key_bytes(&self) -> &[u8; 32] {
+        &self.public_key.0
+    }
 }
 
 impl NodeIdentity {
@@ -23,6 +32,13 @@ impl NodeIdentity {
     #[must_use]
     pub fn sign(&self, message: &[u8]) -> exo_core::types::Signature {
         self.keypair.sign(message)
+    }
+
+    /// Returns the Ed25519 public key.
+    #[must_use]
+    #[allow(dead_code)] // Wired in governance API
+    pub fn public_key(&self) -> &PublicKey {
+        &self.public_key
     }
 }
 

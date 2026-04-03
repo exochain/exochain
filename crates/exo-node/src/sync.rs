@@ -427,6 +427,7 @@ impl SyncEngine {
     }
 
     /// Check if this node needs syncing (called periodically).
+    #[allow(dead_code)] // Used in tests; will be wired into health monitor
     pub fn needs_sync(&self) -> bool {
         self.syncing
     }
