@@ -20,6 +20,10 @@ primary_region = "iad"
 [env]
   RUST_LOG = "info"
   EXOCHAIN_DATA_DIR = "/data"
+  IS_VALIDATOR = "true"
+  # Non-seed machines join via the first machine's Fly internal DNS.
+  # Leave empty for the seed (first deployed) machine.
+  # SEED_ADDR = "exochain-seed.internal:4001"
 
 # Persistent volume for identity key + DAG database.
 [mounts]

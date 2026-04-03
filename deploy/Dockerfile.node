@@ -3,9 +3,12 @@
 # Build:
 #   docker build -f deploy/Dockerfile.node -t exochain/node .
 #
-# Run:
+# Run (seed node):
+#   docker run -d -p 4001:4001 -p 8080:8080 -v exochain:/data exochain/node
+#
+# Run (join existing network):
 #   docker run -d -p 4001:4001 -p 8080:8080 -v exochain:/data \
-#     exochain/node join --seed=seed1.exochain.io:4001
+#     -e SEED_ADDR=seed1.exochain.io:4001 exochain/node
 
 FROM rust:1.86-slim-bookworm AS builder
 WORKDIR /app
@@ -16,11 +19,13 @@ RUN cargo build --release --bin exochain
 
 FROM debian:bookworm-slim
 RUN apt-get update && \
-    apt-get install -y ca-certificates libssl3 && \
+    apt-get install -y ca-certificates libssl3 curl && \
     rm -rf /var/lib/apt/lists/* && \
-    useradd --system --create-home --shell /usr/sbin/nologin exochain
+    useradd --system --create-home --shell /usr/sbin/nologin exochain && \
+    mkdir -p /data && chown exochain:exochain /data
 
 COPY --from=builder /app/target/release/exochain /usr/local/bin/exochain
+COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 USER exochain
 ENV EXOCHAIN_DATA_DIR=/data
@@ -29,5 +34,7 @@ ENV RUST_LOG=info
 EXPOSE 4001 4002 8080
 VOLUME ["/data"]
 
-ENTRYPOINT ["exochain"]
-CMD ["start"]
+HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
+    CMD curl -sf http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["entrypoint.sh"]

@@ -1,0 +1,109 @@
+# Multi-node local smoke test.
+#
+# Usage:
+#   docker compose -f docker-compose.multinode.yml up --build
+#
+# This spins up 3 exochain validator nodes that discover each other via
+# direct dial (--seed) and run BFT consensus. All nodes share a Docker
+# bridge network; mDNS is unavailable, so seeds are used for discovery.
+#
+# Verify:
+#   curl http://localhost:8081/health          # node1 health
+#   curl http://localhost:8082/health          # node2 health
+#   curl http://localhost:8083/health          # node3 health
+#   curl http://localhost:8081/metrics         # Prometheus metrics
+#   curl http://localhost:8081/api/v1/governance/status  # consensus state
+
+services:
+  # Node 1: seed / bootstrap node (starts first).
+  node1:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.node
+    container_name: exochain-node1
+    environment:
+      RUST_LOG: "info,exo_node=debug"
+      EXOCHAIN_DATA_DIR: /data
+      IS_VALIDATOR: "true"
+      API_PORT: "8080"
+      P2P_PORT: "4001"
+    ports:
+      - "8081:8080"
+      - "4011:4001"
+    volumes:
+      - node1_data:/data
+    networks:
+      exochain:
+        ipv4_address: 172.28.0.10
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+  # Node 2: joins node1 as seed.
+  node2:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.node
+    container_name: exochain-node2
+    environment:
+      RUST_LOG: "info,exo_node=debug"
+      EXOCHAIN_DATA_DIR: /data
+      IS_VALIDATOR: "true"
+      SEED_ADDR: "/ip4/172.28.0.10/tcp/4001"
+      API_PORT: "8080"
+      P2P_PORT: "4001"
+    ports:
+      - "8082:8080"
+      - "4012:4001"
+    volumes:
+      - node2_data:/data
+    networks:
+      exochain:
+        ipv4_address: 172.28.0.11
+    depends_on:
+      node1:
+        condition: service_healthy
+
+  # Node 3: joins node1 as seed.
+  node3:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.node
+    container_name: exochain-node3
+    environment:
+      RUST_LOG: "info,exo_node=debug"
+      EXOCHAIN_DATA_DIR: /data
+      IS_VALIDATOR: "true"
+      SEED_ADDR: "/ip4/172.28.0.10/tcp/4001"
+      API_PORT: "8080"
+      P2P_PORT: "4001"
+    ports:
+      - "8083:8080"
+      - "4013:4001"
+    volumes:
+      - node3_data:/data
+    networks:
+      exochain:
+        ipv4_address: 172.28.0.12
+    depends_on:
+      node1:
+        condition: service_healthy
+
+volumes:
+  node1_data:
+  node2_data:
+  node3_data:
+
+networks:
+  exochain:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          gateway: 172.28.0.1
+    driver_opts:
+      # Assign node1 a fixed IP for seed discovery.
+      com.docker.network.bridge.name: exochain0
