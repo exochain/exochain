@@ -27,10 +27,13 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+use exo_core::types::Did;
+
 use crate::challenges::SharedChallengeStore;
 use crate::reactor::SharedReactorState;
-use crate::sentinels::{AlertReceiver, SentinelAlert, SharedSentinelState};
+use crate::sentinels::{AlertReceiver, SentinelAlert, SharedSentinelState, now_ms};
 use crate::store::SqliteDagStore;
+use crate::zerodentity::store::SharedZerodentityStore;
 
 // ---------------------------------------------------------------------------
 // Telegram API types (minimal subset)
@@ -240,6 +243,173 @@ impl Adjutant {
 // Message builders
 // ---------------------------------------------------------------------------
 
+/// Format basis-point value as "XX.YY" (e.g. 5250 → "52.50").
+fn fmt_bp(bp: u32) -> String {
+    format!("{}.{:02}", bp / 100, bp % 100)
+}
+
+/// Build the `/0dentity <did>` response.
+///
+/// Shows the 8-axis polar table, composite, symmetry and claim count.
+/// Spec §10.5.
+pub fn build_zerodentity_score_message(
+    zerodentity: &SharedZerodentityStore,
+    did_str: &str,
+) -> (String, Vec<Vec<(&'static str, &'static str)>>) {
+    let did = match Did::new(did_str) {
+        Ok(d) => d,
+        Err(_) => {
+            return (
+                format!("\u{274c} Invalid DID: <code>{did_str}</code>"),
+                vec![],
+            )
+        }
+    };
+
+    let zstore = zerodentity.lock().expect("zerodentity lock");
+    let score = match zstore.get_score(&did) {
+        Some(s) => s.clone(),
+        None => {
+            return (
+                format!(
+                    "\u{1f194} <b>0dentity Score</b>\n\
+                     No score data for <code>{did_str}</code>"
+                ),
+                vec![],
+            )
+        }
+    };
+    drop(zstore);
+
+    let a = &score.axes;
+    let text = format!(
+        "\u{1f194} <b>0dentity Score</b>\n\
+         <code>{did_str}</code>\n\
+         \u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n\
+         Communication:       {}\n\
+         CredentialDepth:     {}\n\
+         DeviceTrust:         {}\n\
+         Behavioral:          {}\n\
+         NetworkReputation:   {}\n\
+         TemporalStability:   {}\n\
+         CryptographicStr:    {}\n\
+         Constitutional:      {}\n\
+         \u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n\
+         Composite: <b>{}</b> | Symmetry: {}\n\
+         Claims: {} verified",
+        fmt_bp(a.communication),
+        fmt_bp(a.credential_depth),
+        fmt_bp(a.device_trust),
+        fmt_bp(a.behavioral_signature),
+        fmt_bp(a.network_reputation),
+        fmt_bp(a.temporal_stability),
+        fmt_bp(a.cryptographic_strength),
+        fmt_bp(a.constitutional_standing),
+        fmt_bp(score.composite),
+        fmt_bp(score.symmetry),
+        score.claim_count,
+    );
+
+    let keyboard = vec![vec![
+        ("\u{1f504} Refresh", "cmd:sentinels"),
+        ("\u{1f6e1}\u{fe0f} Sentinels", "cmd:sentinels"),
+    ]];
+
+    (text, keyboard)
+}
+
+/// Severity threshold constants for `/0dentity-alerts`.
+/// Composite drop > 1500 bp (= 15.00 pts).
+const ALERT_COMPOSITE_DROP_BP: u32 = 1_500;
+/// Fingerprint consistency below 2000 bp (= 20.00%).
+const ALERT_FINGERPRINT_LOW_BP: u32 = 2_000;
+/// OTP lockout window: 24 hours in ms.
+const ALERT_OTP_WINDOW_MS: u64 = 86_400_000;
+
+/// Build the `/0dentity-alerts` response.
+///
+/// Scans all scored DIDs and flags:
+/// - Composite drop > 15 pts (1500 bp) since last snapshot
+/// - Fingerprint consistency < 20% (2000 bp)
+/// - OTP lockout in the last 24 h
+///
+/// Spec §10.5.
+pub fn build_zerodentity_alerts_message(
+    zerodentity: &SharedZerodentityStore,
+) -> (String, Vec<Vec<(&'static str, &'static str)>>) {
+    let zstore = zerodentity.lock().expect("zerodentity lock");
+    let dids = zstore.sample_scored_dids(usize::MAX);
+
+    let since_ms = now_ms().saturating_sub(ALERT_OTP_WINDOW_MS);
+    let mut alerts: Vec<String> = Vec::new();
+
+    for did in &dids {
+        // 1. Score regression.
+        if let (Some(curr), Some(prev)) =
+            (zstore.get_score(did), zstore.get_previous_score(did))
+        {
+            if prev.composite > curr.composite
+                && prev.composite - curr.composite > ALERT_COMPOSITE_DROP_BP
+            {
+                alerts.push(format!(
+                    "\u{26a0}\u{fe0f} <code>{}</code> score dropped {} bp ({}\u{2192}{})",
+                    did.as_str(),
+                    prev.composite - curr.composite,
+                    fmt_bp(prev.composite),
+                    fmt_bp(curr.composite),
+                ));
+            }
+        }
+
+        // 2. Fingerprint consistency.
+        let fps = zstore.get_fingerprints(did).unwrap_or_default();
+        if let Some(latest) = fps.last() {
+            if let Some(consistency) = latest.consistency_score_bp {
+                if consistency < ALERT_FINGERPRINT_LOW_BP {
+                    alerts.push(format!(
+                        "\u{26a0}\u{fe0f} <code>{}</code> fingerprint consistency low: {}",
+                        did.as_str(),
+                        fmt_bp(consistency),
+                    ));
+                }
+            }
+        }
+
+        // 3. OTP lockout in last 24h.
+        if zstore.has_otp_lockout_since(did, since_ms) {
+            alerts.push(format!(
+                "\u{1f512} <code>{}</code> OTP lockout in last 24h",
+                did.as_str(),
+            ));
+        }
+    }
+
+    let text = if alerts.is_empty() {
+        String::from(
+            "\u{2705} <b>0dentity Alerts</b>\n\
+             \u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n\
+             No 0dentity alerts.",
+        )
+    } else {
+        let count = alerts.len();
+        let body = alerts.join("\n");
+        format!(
+            "\u{1f6a8} <b>0dentity Alerts</b>\n\
+             \u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n\
+             {body}\n\
+             \u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n\
+             {count} alert(s) found."
+        )
+    };
+
+    let keyboard = vec![vec![
+        ("\u{1f504} Refresh", "0d_alerts"),
+        ("\u{1f6e1}\u{fe0f} Sentinels", "cmd:sentinels"),
+    ]];
+
+    (text, keyboard)
+}
+
 /// Build the /status response.
 pub fn build_status_message(
     reactor: &SharedReactorState,
@@ -357,6 +527,7 @@ pub async fn run_adjutant(
     store: Arc<Mutex<SqliteDagStore>>,
     challenge_store: SharedChallengeStore,
     sentinel_state: SharedSentinelState,
+    zerodentity: SharedZerodentityStore,
 ) {
     // Announce startup.
     let _ = adjutant
@@ -389,6 +560,7 @@ pub async fn run_adjutant(
                                 &store,
                                 &challenge_store,
                                 &sentinel_state,
+                                &zerodentity,
                             )
                             .await;
                         }
@@ -405,6 +577,7 @@ pub async fn run_adjutant(
                                 &store,
                                 &challenge_store,
                                 &sentinel_state,
+                                &zerodentity,
                             )
                             .await;
                         }
@@ -422,8 +595,10 @@ async fn handle_command(
     store: &Arc<Mutex<SqliteDagStore>>,
     challenge_store: &SharedChallengeStore,
     sentinel_state: &SharedSentinelState,
+    zerodentity: &SharedZerodentityStore,
 ) {
-    let cmd = text.trim().split_whitespace().next().unwrap_or("");
+    let mut parts = text.trim().split_whitespace();
+    let cmd = parts.next().unwrap_or("");
     match cmd {
         "/status" | "/start" => {
             let (msg, kb) = build_status_message(reactor, store);
@@ -437,6 +612,24 @@ async fn handle_command(
             let (msg, kb) = build_challenges_message(challenge_store);
             let _ = adjutant.send_message(&msg, Some(kb)).await;
         }
+        "/0dentity" => {
+            let did_str = parts.next().unwrap_or("");
+            if did_str.is_empty() {
+                let _ = adjutant
+                    .send_message(
+                        "Usage: /0dentity &lt;did&gt;\nExample: /0dentity did:exo:alice",
+                        None,
+                    )
+                    .await;
+            } else {
+                let (msg, kb) = build_zerodentity_score_message(zerodentity, did_str);
+                let _ = adjutant.send_message(&msg, Some(kb)).await;
+            }
+        }
+        "/0dentity-alerts" => {
+            let (msg, kb) = build_zerodentity_alerts_message(zerodentity);
+            let _ = adjutant.send_message(&msg, Some(kb)).await;
+        }
         "/help" => {
             let _ = adjutant
                 .send_message(
@@ -444,6 +637,8 @@ async fn handle_command(
                      /status — Node overview\n\
                      /sentinels — Health checks\n\
                      /challenges — Active disputes\n\
+                     /0dentity &lt;did&gt; — Identity score for a DID\n\
+                     /0dentity-alerts — Active 0dentity alerts\n\
                      /help — This message",
                     None,
                 )
@@ -460,7 +655,13 @@ async fn handle_callback(
     store: &Arc<Mutex<SqliteDagStore>>,
     challenge_store: &SharedChallengeStore,
     sentinel_state: &SharedSentinelState,
+    zerodentity: &SharedZerodentityStore,
 ) {
+    if let Some(did_str) = data.strip_prefix("0d_score:") {
+        let (msg, kb) = build_zerodentity_score_message(zerodentity, did_str);
+        let _ = adjutant.send_message(&msg, Some(kb)).await;
+        return;
+    }
     match data {
         "cmd:status" => {
             let (msg, kb) = build_status_message(reactor, store);
@@ -472,6 +673,10 @@ async fn handle_callback(
         }
         "cmd:challenges" => {
             let (msg, kb) = build_challenges_message(challenge_store);
+            let _ = adjutant.send_message(&msg, Some(kb)).await;
+        }
+        "0d_alerts" => {
+            let (msg, kb) = build_zerodentity_alerts_message(zerodentity);
             let _ = adjutant.send_message(&msg, Some(kb)).await;
         }
         "sentinel:ack" => {

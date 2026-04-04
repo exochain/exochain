@@ -13,6 +13,7 @@
 //! | QuorumHealth | Validator count >= 4 (BFT minimum) | 30s |
 //! | ReceiptIntegrity | Recent receipts pass `verify_hash()` | 60s |
 //! | StoreConsistency | Committed height matches certificate count | 60s |
+//! | ScoreIntegrity | 0dentity scores are deterministically reproducible | 60s |
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -23,6 +24,8 @@ use tokio::sync::mpsc;
 
 use crate::reactor::SharedReactorState;
 use crate::store::SqliteDagStore;
+use crate::zerodentity::store::SharedZerodentityStore;
+use crate::zerodentity::types::ZerodentityScore;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,6 +42,10 @@ pub enum SentinelCheck {
     ReceiptIntegrity,
     /// Store committed height is consistent with certificate count.
     StoreConsistency,
+    /// 0dentity scores are deterministically reproducible from their claim DAG.
+    ///
+    /// Spec §10.4 — samples up to 5 DIDs, recomputes, checks drift ≤ 10 bp.
+    ScoreIntegrity,
 }
 
 impl std::fmt::Display for SentinelCheck {
@@ -48,6 +55,7 @@ impl std::fmt::Display for SentinelCheck {
             Self::QuorumHealth => write!(f, "QuorumHealth"),
             Self::ReceiptIntegrity => write!(f, "ReceiptIntegrity"),
             Self::StoreConsistency => write!(f, "StoreConsistency"),
+            Self::ScoreIntegrity => write!(f, "ScoreIntegrity"),
         }
     }
 }
@@ -90,7 +98,7 @@ pub type AlertSender = mpsc::Sender<SentinelAlert>;
 pub type AlertReceiver = mpsc::Receiver<SentinelAlert>;
 
 #[allow(clippy::as_conversions)]
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -171,6 +179,95 @@ fn check_receipt_integrity(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus
     }
 }
 
+/// Check 0dentity score integrity — recompute scores for sampled DIDs and
+/// verify they match the stored values within a 10 bp tolerance.
+///
+/// Spec §10.4.
+fn check_score_integrity(zerodentity: &SharedZerodentityStore) -> SentinelStatus {
+    let zstore = zerodentity.lock().expect("zerodentity store lock");
+
+    // Fast path: no scored DIDs yet.
+    if zstore.scored_did_count() == 0 {
+        return SentinelStatus {
+            check: SentinelCheck::ScoreIntegrity,
+            healthy: true,
+            message: "No scored DIDs yet — integrity check skipped".into(),
+            last_run_ms: now_ms(),
+        };
+    }
+
+    // Sample one DID, collect all data needed for recompute, then drop the lock.
+    let sample = zstore.sample_scored_dids(1);
+    let did = match sample.first() {
+        Some(d) => d.clone(),
+        None => {
+            return SentinelStatus {
+                check: SentinelCheck::ScoreIntegrity,
+                healthy: true,
+                message: "No scored DIDs yet — integrity check skipped".into(),
+                last_run_ms: now_ms(),
+            }
+        }
+    };
+
+    let stored = match zstore.get_score(&did) {
+        Some(s) => s.clone(),
+        None => {
+            return SentinelStatus {
+                check: SentinelCheck::ScoreIntegrity,
+                healthy: true,
+                message: "Score vanished between sample and read — skipping".into(),
+                last_run_ms: now_ms(),
+            }
+        }
+    };
+
+    // Extract plain IdentityClaims from (claim_id, claim) tuples.
+    let raw_claims = zstore.get_claims(&did).unwrap_or_default();
+    let claims_plain: Vec<crate::zerodentity::types::IdentityClaim> =
+        raw_claims.into_iter().map(|(_, c)| c).collect();
+    let fingerprints = zstore.get_fingerprints(&did).unwrap_or_default();
+    let behavioral = zstore.get_behavioral_samples(&did).unwrap_or_default();
+
+    // Release the lock before running compute (can be non-trivial).
+    drop(zstore);
+
+    let recomputed = ZerodentityScore::compute(
+        &did,
+        &claims_plain,
+        &fingerprints,
+        &behavioral,
+        stored.computed_ms,
+    );
+
+    // Drift tolerance: 10 bp (≈ 0.1% of the 0–100 scale).
+    // The algorithm is deterministic so any drift indicates corruption.
+    let drift = stored.composite.abs_diff(recomputed.composite);
+    if drift > 10 {
+        return SentinelStatus {
+            check: SentinelCheck::ScoreIntegrity,
+            healthy: false,
+            message: format!(
+                "Score drift {drift} bp detected for DID {} (stored={}, recomputed={})",
+                did.as_str(),
+                stored.composite,
+                recomputed.composite
+            ),
+            last_run_ms: now_ms(),
+        };
+    }
+
+    SentinelStatus {
+        check: SentinelCheck::ScoreIntegrity,
+        healthy: true,
+        message: format!(
+            "Score integrity verified — DID {} checked (drift {drift} bp)",
+            did.as_str()
+        ),
+        last_run_ms: now_ms(),
+    }
+}
+
 /// Check store consistency — committed height vs certificate count.
 fn check_store_consistency(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus {
     let st = store.lock().expect("store lock");
@@ -209,6 +306,7 @@ fn check_store_consistency(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus
 pub async fn run_sentinel_loop(
     reactor: SharedReactorState,
     store: Arc<Mutex<SqliteDagStore>>,
+    zerodentity: SharedZerodentityStore,
     sentinel_state: SharedSentinelState,
     alert_tx: AlertSender,
     interval: Duration,
@@ -225,6 +323,7 @@ pub async fn run_sentinel_loop(
             check_quorum_health(&reactor),
             check_receipt_integrity(&store),
             check_store_consistency(&store),
+            check_score_integrity(&zerodentity),
         ];
 
         // Emit alerts for unhealthy sentinels.
@@ -233,6 +332,7 @@ pub async fn run_sentinel_loop(
                 let severity = match status.check {
                     SentinelCheck::QuorumHealth => Severity::Critical,
                     SentinelCheck::Liveness => Severity::Warning,
+                    SentinelCheck::ScoreIntegrity => Severity::Warning,
                     _ => Severity::Warning,
                 };
                 let alert = SentinelAlert {

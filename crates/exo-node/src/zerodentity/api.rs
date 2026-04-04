@@ -1,0 +1,531 @@
+//! 0dentity Score & Identity API handlers.
+//!
+//! Implements read and attestation endpoints:
+//!
+//! - `GET /api/v1/0dentity/:did/score`         — current score (public)
+//! - `GET /api/v1/0dentity/:did/claims`         — claim list (owner only)
+//! - `GET /api/v1/0dentity/:did/score/history`  — score history (public)
+//! - `GET /api/v1/0dentity/:did/fingerprints`   — fingerprint timeline (owner only)
+//! - `POST /api/v1/0dentity/:did/attest`        — peer attestation
+//! - `GET /api/v1/0dentity/server-key`          — server RSA-OAEP public key
+//!
+//! Spec reference: §7.2, §7.3.
+
+use std::sync::{Arc, Mutex};
+
+use axum::{
+    Json, Router,
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    routing::{get, post},
+};
+use serde::{Deserialize, Serialize};
+
+use exo_core::types::{Did, Hash256};
+
+use super::attestation::{
+    attester_score_impact, build_target_claim, create_attestation, target_score_impact,
+    validate_attestation,
+};
+use super::store::ZerodentityStore;
+use super::types::{AttestationType, IdentityClaim, ZerodentityScore};
+
+// ---------------------------------------------------------------------------
+// Shared state
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub struct ApiState {
+    pub store: Arc<Mutex<ZerodentityStore>>,
+}
+
+// ---------------------------------------------------------------------------
+// Query params
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ClaimsQuery {
+    pub status: Option<String>,
+    #[serde(rename = "type")]
+    pub claim_type: Option<String>,
+    pub limit: Option<u64>,
+    pub offset: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HistoryQuery {
+    pub from_ms: Option<u64>,
+    pub to_ms: Option<u64>,
+}
+
+// ---------------------------------------------------------------------------
+// Response types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct ScoreResponse {
+    pub subject_did: String,
+    pub composite: u32,
+    pub symmetry: u32,
+    pub axes: AxesResponse,
+    pub computed_ms: u64,
+    pub dag_state_hash: String,
+    pub claim_count: u32,
+    pub history_available: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AxesResponse {
+    pub communication: u32,
+    pub credential_depth: u32,
+    pub device_trust: u32,
+    pub behavioral_signature: u32,
+    pub network_reputation: u32,
+    pub temporal_stability: u32,
+    pub cryptographic_strength: u32,
+    pub constitutional_standing: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClaimItem {
+    pub claim_id: String,
+    pub claim_type: String,
+    pub claim_hash: String,
+    pub status: String,
+    pub created_ms: u64,
+    pub verified_ms: Option<u64>,
+    pub expires_ms: Option<u64>,
+    pub dag_node_hash: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClaimsResponse {
+    pub claims: Vec<ClaimItem>,
+    pub total: usize,
+    pub limit: u64,
+    pub offset: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HistorySnapshot {
+    pub computed_ms: u64,
+    pub composite: u32,
+    pub axes: AxesResponse,
+    pub claim_count: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HistoryResponse {
+    pub snapshots: Vec<HistorySnapshot>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FingerprintItem {
+    pub composite_hash: String,
+    pub captured_ms: u64,
+    pub consistency_score: Option<u32>,
+    pub signal_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FingerprintsResponse {
+    pub fingerprints: Vec<FingerprintItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AttestRequest {
+    pub target_did: String,
+    pub attestation_type: String,
+    pub message_hash: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AttestResponse {
+    pub attestation_id: String,
+    pub receipt_hash: String,
+    pub attester_score_impact: serde_json::Value,
+    pub target_score_impact: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServerKeyResponse {
+    pub algorithm: String,
+    pub key_size: u32,
+    pub public_key_pem: String,
+    pub key_hash: String,
+    pub rotated_ms: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Helper: extract session token from Authorization header
+// ---------------------------------------------------------------------------
+
+fn extract_session_token(headers: &HeaderMap) -> Option<String> {
+    headers.get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+}
+
+fn parse_did(did_str: &str) -> Result<Did, (StatusCode, Json<serde_json::Value>)> {
+    Did::new(did_str).map_err(|_| (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({"error": "Invalid DID format"})),
+    ))
+}
+
+fn hex_hash(h: &Hash256) -> String {
+    hex::encode(h.as_bytes())
+}
+
+fn axes_from_score(s: &ZerodentityScore) -> AxesResponse {
+    AxesResponse {
+        communication: s.axes.communication,
+        credential_depth: s.axes.credential_depth,
+        device_trust: s.axes.device_trust,
+        behavioral_signature: s.axes.behavioral_signature,
+        network_reputation: s.axes.network_reputation,
+        temporal_stability: s.axes.temporal_stability,
+        cryptographic_strength: s.axes.cryptographic_strength,
+        constitutional_standing: s.axes.constitutional_standing,
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/0dentity/:did/score
+// ---------------------------------------------------------------------------
+
+pub async fn get_score(
+    State(state): State<ApiState>,
+    Path(did_str): Path<String>,
+) -> Result<Json<ScoreResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let did = parse_did(&did_str)?;
+    let now = now_ms();
+
+    let store = state.store.lock().unwrap();
+
+    // Check if DID exists
+    let claims_raw = store.get_claims(&did).unwrap_or_default();
+    if claims_raw.is_empty() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "DID not found"})),
+        ));
+    }
+
+    let claims: Vec<IdentityClaim> = claims_raw.into_iter().map(|(_, c)| c).collect();
+    let fingerprints = store.get_fingerprints(&did).unwrap_or_default();
+    let behavioral = store.get_behavioral_samples(&did).unwrap_or_default();
+
+    let score = ZerodentityScore::compute(&did, &claims, &fingerprints, &behavioral, now);
+
+    let history = store.get_score_history(&did, None, None).unwrap_or_default();
+
+    Ok(Json(ScoreResponse {
+        subject_did: did.to_string(),
+        composite: score.composite,
+        symmetry: score.symmetry,
+        axes: axes_from_score(&score),
+        computed_ms: score.computed_ms,
+        dag_state_hash: hex_hash(&score.dag_state_hash),
+        claim_count: score.claim_count,
+        history_available: !history.is_empty(),
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/0dentity/:did/claims
+// ---------------------------------------------------------------------------
+
+pub async fn list_claims(
+    State(state): State<ApiState>,
+    Path(did_str): Path<String>,
+    Query(params): Query<ClaimsQuery>,
+    headers: HeaderMap,
+) -> Result<Json<ClaimsResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let did = parse_did(&did_str)?;
+
+    // Auth: session token required for claim listing
+    let token = extract_session_token(&headers).ok_or_else(|| (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({"error": "Bearer session token required"})),
+    ))?;
+
+    // Verify session belongs to this DID
+    {
+        let store = state.store.lock().unwrap();
+        let session = store.get_session(&token).ok().flatten().ok_or_else(|| (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Invalid or expired session"})),
+        ))?;
+        if session.subject_did.as_str() != did.as_str() {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "Access denied"})),
+            ));
+        }
+    }
+
+    let store = state.store.lock().unwrap();
+    let all_claims = store.get_claims(&did).unwrap_or_default();
+
+    // Filter by status
+    let filtered: Vec<(String, IdentityClaim)> = all_claims.into_iter()
+        .filter(|(_, c)| {
+            if let Some(ref s) = params.status {
+                return c.status.to_string().to_lowercase() == s.to_lowercase();
+            }
+            true
+        })
+        .filter(|(_, c)| {
+            if let Some(ref t) = params.claim_type {
+                return c.claim_type.to_string().to_lowercase().contains(&t.to_lowercase());
+            }
+            true
+        })
+        .collect();
+
+    let total = filtered.len();
+    let offset = params.offset.unwrap_or(0) as usize;
+    let limit = params.limit.unwrap_or(50) as usize;
+
+    let page: Vec<ClaimItem> = filtered.into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|(cid, c)| ClaimItem {
+            claim_id: cid,
+            claim_type: c.claim_type.to_string(),
+            claim_hash: hex::encode(c.claim_hash.as_bytes()),
+            status: c.status.to_string(),
+            created_ms: c.created_ms,
+            verified_ms: c.verified_ms,
+            expires_ms: c.expires_ms,
+            dag_node_hash: hex::encode(c.dag_node_hash.as_bytes()),
+        })
+        .collect();
+
+    Ok(Json(ClaimsResponse {
+        claims: page,
+        total,
+        limit: params.limit.unwrap_or(50),
+        offset: params.offset.unwrap_or(0),
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/0dentity/:did/score/history
+// ---------------------------------------------------------------------------
+
+pub async fn score_history(
+    State(state): State<ApiState>,
+    Path(did_str): Path<String>,
+    Query(params): Query<HistoryQuery>,
+) -> Result<Json<HistoryResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let did = parse_did(&did_str)?;
+
+    let store = state.store.lock().unwrap();
+    let snapshots = store.get_score_history(&did, params.from_ms, params.to_ms)
+        .unwrap_or_default();
+
+    let items: Vec<HistorySnapshot> = snapshots.iter()
+        .map(|s| HistorySnapshot {
+            computed_ms: s.computed_ms,
+            composite: s.composite,
+            axes: axes_from_score(s),
+            claim_count: s.claim_count,
+        })
+        .collect();
+
+    Ok(Json(HistoryResponse { snapshots: items }))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/0dentity/:did/fingerprints
+// ---------------------------------------------------------------------------
+
+pub async fn list_fingerprints(
+    State(state): State<ApiState>,
+    Path(did_str): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<FingerprintsResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let did = parse_did(&did_str)?;
+
+    // Auth required
+    let token = extract_session_token(&headers).ok_or_else(|| (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({"error": "Bearer session token required"})),
+    ))?;
+
+    {
+        let store = state.store.lock().unwrap();
+        let session = store.get_session(&token).ok().flatten().ok_or_else(|| (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Invalid or expired session"})),
+        ))?;
+        if session.subject_did.as_str() != did.as_str() {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Access denied"}))));
+        }
+    }
+
+    let store = state.store.lock().unwrap();
+    let fps = store.get_fingerprints(&did).unwrap_or_default();
+    let items: Vec<FingerprintItem> = fps.iter().map(|fp| FingerprintItem {
+        composite_hash: hex::encode(fp.composite_hash.as_bytes()),
+        captured_ms: fp.captured_ms,
+        consistency_score: fp.consistency_score_bp,
+        signal_count: fp.signal_hashes.len(),
+    }).collect();
+
+    Ok(Json(FingerprintsResponse { fingerprints: items }))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/0dentity/:did/attest
+// ---------------------------------------------------------------------------
+
+pub async fn create_peer_attestation(
+    State(state): State<ApiState>,
+    Path(did_str): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<AttestRequest>,
+) -> Result<(StatusCode, Json<AttestResponse>), (StatusCode, Json<serde_json::Value>)> {
+    let attester_did = parse_did(&did_str)?;
+    let target_did = parse_did(&req.target_did)?;
+    let now = now_ms();
+
+    // Auth required
+    let token = extract_session_token(&headers).ok_or_else(|| (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({"error": "Bearer session token required"})),
+    ))?;
+
+    {
+        let store = state.store.lock().unwrap();
+        let session = store.get_session(&token).ok().flatten().ok_or_else(|| (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Invalid or expired session"})),
+        ))?;
+        if session.subject_did.as_str() != attester_did.as_str() {
+            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Access denied"}))));
+        }
+    }
+
+    let attestation_type = AttestationType::from_str(&req.attestation_type).map_err(|_| (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({"error": "Invalid attestation_type"})),
+    ))?;
+
+    let message_hash = req.message_hash.as_deref()
+        .and_then(|s| {
+            hex::decode(s).ok().and_then(|b| {
+                if b.len() >= 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&b[..32]);
+                    Some(Hash256::from_bytes(arr))
+                } else {
+                    None
+                }
+            })
+        });
+
+    // Validate
+    let (attester_claims, already_exists) = {
+        let store = state.store.lock().unwrap();
+        let claims: Vec<IdentityClaim> = store.get_claims(&attester_did)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, c)| c)
+            .collect();
+        let exists = store.attestation_exists(&attester_did, &target_did).unwrap_or(false);
+        (claims, exists)
+    };
+
+    validate_attestation(&attester_did, &target_did, &attester_claims, already_exists)
+        .map_err(|e| (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": e.to_string()})),
+        ))?;
+
+    // Synthetic DAG node hash
+    let dag_node_hash = Hash256::digest(
+        format!("attest:{}:{}", attester_did.as_str(), target_did.as_str()).as_bytes()
+    );
+
+    let attestation = create_attestation(
+        &attester_did,
+        &target_did,
+        attestation_type,
+        message_hash,
+        dag_node_hash,
+        now,
+    );
+
+    // Persist attestation
+    {
+        let mut store = state.store.lock().unwrap();
+        store.insert_attestation(&attestation).map_err(|e| (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Store error: {e}")})),
+        ))?;
+
+        // Add PeerAttestation claim to target's claim set
+        let target_claim = build_target_claim(&attestation, dag_node_hash, now);
+        let claim_id = uuid::Uuid::new_v4().to_string();
+        let _ = store.insert_claim(&claim_id, &target_claim);
+    }
+
+    let receipt_hash = hex::encode(
+        Hash256::digest(format!("attest-receipt:{}", &attestation.attestation_id).as_bytes()).as_bytes()
+    );
+
+    let att_id = attestation.attestation_id.clone();
+
+    Ok((StatusCode::CREATED, Json(AttestResponse {
+        attestation_id: att_id,
+        receipt_hash,
+        attester_score_impact: serde_json::json!({
+            "network_reputation": format!("+{}", attester_score_impact())
+        }),
+        target_score_impact: serde_json::json!({
+            "network_reputation": format!("+{}", target_score_impact())
+        }),
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/0dentity/server-key
+// ---------------------------------------------------------------------------
+
+pub async fn get_server_key() -> Json<ServerKeyResponse> {
+    // Stub: in production this returns the live RSA-OAEP public key.
+    // The actual key rotation service is configured separately.
+    Json(ServerKeyResponse {
+        algorithm: "RSA-OAEP".into(),
+        key_size: 4096,
+        public_key_pem: "-----BEGIN PUBLIC KEY-----\n[key material rotated at startup]\n-----END PUBLIC KEY-----".into(),
+        key_hash: hex::encode(Hash256::digest(b"server-key-placeholder").as_bytes()),
+        rotated_ms: 0,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+pub fn zerodentity_api_router(state: ApiState) -> Router {
+    Router::new()
+        .route("/api/v1/0dentity/server-key", get(get_server_key))
+        .route("/api/v1/0dentity/:did/score", get(get_score))
+        .route("/api/v1/0dentity/:did/claims", get(list_claims))
+        .route("/api/v1/0dentity/:did/score/history", get(score_history))
+        .route("/api/v1/0dentity/:did/fingerprints", get(list_fingerprints))
+        .route("/api/v1/0dentity/:did/attest", post(create_peer_attestation))
+        .with_state(state)
+}
