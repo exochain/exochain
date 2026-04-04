@@ -12,22 +12,23 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 
 | Metric | Value | Source |
 |--------|-------|--------|
-| Rust crates | 15 | `ls -d crates/*/` |
-| Rust source files | 148 | `find crates -name '*.rs'` |
-| Rust LOC | ~31,000 | `wc -l` |
-| Library tests | 1,116 passing, 0 failing | `cargo test --workspace --lib` |
-| CI quality gates | 10 | `.github/workflows/ci.yml` |
+| Rust crates | 16 | `ls -d crates/*/` |
+| Rust source files | 178 | `find crates -name '*.rs'` |
+| Rust LOC | ~112,000 | `wc -l` |
+| Workspace tests | 1,603 passing, 0 failing | `cargo test --workspace` |
+| CI quality gates | 16 | `.github/workflows/ci.yml` |
 | Published releases | None (pre-release) | `git tag -l` |
-| License | Apache-2.0 | `LICENSE`, `Cargo.toml` |
+| License | AGPL-3.0-or-later | `Cargo.toml` |
+| Live node | https://exochain.io | Fly.io deployment |
 
 ### What is verified today
 
-- **1,116 library tests pass** with zero failures (`cargo test --workspace --lib`)
+- **1,603 workspace tests pass** with zero failures (`cargo test --workspace`)
 - **Build succeeds** for all library crates, binaries, tests, and benchmarks
 - **Clippy clean** under `-D warnings` for production code
 - **Format clean** under `cargo +nightly fmt --all -- --check`
-- **10 CI quality gates** defined and enforced (build, test, coverage, lint, format, audit, deny, doc, hygiene, demo-coverage)
-- **Traceability matrix** maps 80 requirements: 76 implemented, 2 partial, 2 planned
+- **16 CI quality gates** defined and enforced (build, test, coverage, lint, format, audit, deny, doc, hygiene, SBOM, machete, integration, DB integration, consensus integration, sync/join, cross-platform)
+- **Traceability matrix** maps 87 requirements — see `governance/traceability_matrix.md`
 - **Threat model** covers 14 threats tracked: 14 mitigated, 0 partial, 0 planned — see `governance/threat_matrix.md`
 - **Constitutional invariants** enforced via the CGR kernel in all governance paths
 - **No floating-point arithmetic** — denied workspace-wide via `#[deny(clippy::float_arithmetic)]`
@@ -35,7 +36,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 ### What is supported by design but not yet production-hardened
 
 - **90% coverage threshold** — configured in CI via cargo-tarpaulin; not independently verified outside CI
-- **exo-gateway binary** — library compiles and tests pass; binary is a placeholder (HTTP server runtime not yet integrated)
+- **exo-gateway binary** — operational HTTP server with 28 endpoints (REST, GraphQL, health probes); production hardening ongoing
 - **GraphQL API** — types and schema stubs exist in `exo-api`; async runtime integration pending
 - **exo-dag benchmark** — disabled; needs rewrite against current API
 - **Post-quantum signatures** — `Signature` enum supports Ed25519/PostQuantum/Hybrid; PQ implementation is stub-level
@@ -48,7 +49,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 
 - First versioned release (see `.github/workflows/release.yml` for the dry-run workflow)
 - SBOM generation and supply-chain attestation
-- Production HTTP server in `exo-gateway` (currently served via Node.js demo)
+- Agent passport API and trust receipt endpoints on exo-node
 - National AI Policy Framework compliance extensions
 
 ## The Five Axioms
@@ -61,7 +62,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 
 ## Repository Structure
 
-### Core Crates (15)
+### Core Crates (16)
 
 | Crate | Description |
 |-------|-------------|
@@ -69,7 +70,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 | `exo-governance` | Constitutional governance engine, AEGIS framework, council process |
 | `exo-gatekeeper` | TEE/Enclave interfaces, attestation verification, kernel invariants, holon, MCP |
 | `exo-dag` | Directed Acyclic Graph engine, BFT consensus adapter, checkpointing, HLC |
-| `exo-gateway` | External gateway interfaces and API routing (library; binary is placeholder) |
+| `exo-gateway` | External gateway: REST, GraphQL, auth, health probes (28 endpoints) |
 | `exo-identity` | Decentralized Identity (DID), key management, Shamir secret sharing, vault |
 | `exo-proofs` | SNARK, STARK, ZKML proof systems, verifier infrastructure |
 | `exo-authority` | Authority delegation, role-based access, attestation chains |
@@ -80,24 +81,26 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 | `exo-api` | Public API surface and type exports |
 | `decision-forum` | Governance application: council-driven decision making |
 | `exochain-wasm` | WASM compilation target for browser/Node.js integration |
+| `exo-node` | Distributed P2P node: BFT consensus, networking, governance API, live dashboard |
 
 ### Governance & Infrastructure
 
 * **`governance/`** — Council resolutions, sub-agent charters, traceability matrices, quality gates
 * **`docs/`** — Architecture, guides, council panel reports, proofs, reference documentation
-* **`.github/workflows/`** — CI pipeline (9 quality gates), release workflow, ExoForge triage
+* **`.github/workflows/`** — CI pipeline (16 quality gates), release workflow, ExoForge triage
 
 ## Governance & Compliance
 
-This repository is managed under strict **Judicial Build Governance**. All contributions must align with `EXOCHAIN_Specification_v2.2.pdf`. CR-001 (AEGIS/SYBIL/Authentic Plurality) is **RATIFIED**.
+This repository is managed under strict **Judicial Build Governance**. All contributions must align with `EXOCHAIN_Specification_v2.2.pdf`. CR-001 (AEGIS/SYBIL/Authentic Plurality) is **DRAFT — pending council ratification**.
 
 ### Key Governance Artifacts
 
-* [Traceability Matrix](governance/traceability_matrix.md) — 76 implemented, 2 partial, 2 planned
+* [Traceability Matrix](governance/traceability_matrix.md) — 87 requirements tracked
 * [Threat Model](governance/threat_matrix.md) — 14 mitigated, 0 partial, 0 planned
-* [Quality Gates](governance/quality_gates.md) — 8 CI-enforced gates
+* [Quality Gates](governance/quality_gates.md) — 16 CI-enforced gates
 * [Sub-Agent Charters](governance/sub_agents.md) — 11 agent charters documented
-* [Council Resolutions](governance/resolutions/INDEX.md) — CR-001 RATIFIED
+* [Council Resolutions](governance/resolutions/INDEX.md) — CR-001 DRAFT
+* [Tier-One Readiness Audit](docs/audit/TIER-ONE-READINESS-AUDIT.md) — capability model, gap analysis, exit checklist
 * [Refactor Plan](governance/EXOCHAIN-REFACTOR-PLAN.md)
 
 ### Documentation
