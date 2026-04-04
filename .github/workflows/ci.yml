@@ -417,6 +417,41 @@ jobs:
           retention-days: 30
 
   # -----------------------------------------------------------------------
+  # Gate 17: 0dentity Module Coverage (≥ 80% line coverage)
+  #
+  # Scoped to crates/exo-node/src/zerodentity/** only.
+  # Uses --include-files to restrict tarpaulin reporting to that subtree,
+  # then fails if the measured line coverage falls below 80%.
+  # -----------------------------------------------------------------------
+  zerodentity-coverage:
+    name: "Gate 17 — 0dentity Module Coverage (>= 80%)"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin
+      - name: Run 0dentity module coverage
+        run: |
+          cargo tarpaulin \
+            --packages exo-node \
+            --include-files "crates/exo-node/src/zerodentity/**" \
+            --out xml \
+            --output-dir coverage-zerodentity \
+            --skip-clean \
+            --engine llvm \
+            --timeout 120 \
+            --fail-under 80
+      - name: Upload 0dentity coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: zerodentity-coverage-${{ github.sha }}
+          path: coverage-zerodentity/cobertura.xml
+          retention-days: 30
+
+  # -----------------------------------------------------------------------
   # Constitutional gate: all must pass
   # -----------------------------------------------------------------------
   all-gates:
@@ -439,6 +474,7 @@ jobs:
       - consensus-integration
       - state-sync-integration
       - cross-platform
+      - zerodentity-coverage
     steps:
       - name: All quality gates passed
         run: echo "All CR-001 Section 8.8 quality gates satisfied."
