@@ -34,6 +34,7 @@ mod store;
 mod sync;
 mod telegram;
 mod wire;
+mod zerodentity;
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
@@ -148,6 +149,11 @@ async fn start_node(
     let dag_store = store::SqliteDagStore::open(data_dir)?;
     let height = dag_store.committed_height_value();
     tracing::info!(height, "DAG store opened");
+
+    // Open 0dentity store (shares the same dag.db, applies zerodentity migration).
+    let zerodentity_store = zerodentity::store::ZerodentityStore::open(data_dir)?;
+    let zerodentity_store = std::sync::Arc::new(Mutex::new(zerodentity_store));
+    tracing::info!("0dentity store ready");
 
     tracing::info!(
         api_port,
@@ -548,6 +554,19 @@ async fn start_node(
         token: Arc::new(admin_token),
     };
 
+    // Build 0dentity routers.
+    let zd_onboarding_state = zerodentity::onboarding::OnboardingState {
+        store: std::sync::Arc::clone(&zerodentity_store),
+    };
+    let zd_api_state = zerodentity::api::ApiState {
+        store: std::sync::Arc::clone(&zerodentity_store),
+    };
+    let zerodentity_onboarding_router = zerodentity::onboarding::onboarding_router(zd_onboarding_state);
+    let zerodentity_api_router = zerodentity::api::zerodentity_api_router(zd_api_state);
+    let zerodentity_dashboard_router = zerodentity::dashboard::zerodentity_dashboard_router();
+    let zerodentity_onboarding_ui_router = zerodentity::onboarding_ui::zerodentity_onboarding_router();
+    tracing::info!("0dentity routers ready — /0dentity, /0dentity/dashboard/:did, /api/v1/0dentity/*");
+
     // Merge metrics + governance + passport + dashboard into a single extra router
     // and apply bearer-token auth middleware (protects POST, allows GET).
     let extra_router = metrics_router
@@ -559,6 +578,10 @@ async fn start_node(
         .merge(receipt_dashboard_router)
         .merge(sentinel_router)
         .merge(forge_router)
+        .merge(zerodentity_onboarding_router)
+        .merge(zerodentity_api_router)
+        .merge(zerodentity_dashboard_router)
+        .merge(zerodentity_onboarding_ui_router)
         .layer(axum::middleware::from_fn(move |req, next| {
             let a = bearer_auth.clone();
             auth::require_bearer_on_writes(a, req, next)
