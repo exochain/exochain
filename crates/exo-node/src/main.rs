@@ -22,6 +22,7 @@ mod holons;
 mod identity;
 mod metrics;
 mod network;
+mod passport;
 mod reactor;
 mod store;
 mod sync;
@@ -468,11 +469,21 @@ async fn start_node(
     });
     let governance_router = api::governance_router(api_state);
 
+    // Build the agent passport API router.
+    let passport_state = Arc::new(passport::PassportApiState {
+        reactor_state: Arc::clone(&reactor_state),
+        store: Arc::clone(&shared_store),
+    });
+    let passport_router = passport::passport_router(passport_state);
+
     // Build the dashboard router (serves GET /).
     let dashboard_router = dashboard::dashboard_router();
 
-    // Merge metrics + governance + dashboard into a single extra router.
-    let extra_router = metrics_router.merge(governance_router).merge(dashboard_router);
+    // Merge metrics + governance + passport + dashboard into a single extra router.
+    let extra_router = metrics_router
+        .merge(governance_router)
+        .merge(passport_router)
+        .merge(dashboard_router);
 
     // Start the gateway HTTP server (blocks).
     let bind_address = format!("0.0.0.0:{api_port}");
