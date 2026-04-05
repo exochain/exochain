@@ -756,4 +756,90 @@ mod tests {
         assert_eq!(axes["cryptographic_strength"], 7000);
         assert_eq!(axes["constitutional_standing"], 3000);
     }
+
+    #[tokio::test]
+    async fn standing_shows_risk_level_from_score() {
+        use crate::zerodentity::types::{PolarAxes, ZerodentityScore};
+
+        let state = test_passport_state();
+
+        // Insert a high composite score (8000+ = minimal risk).
+        {
+            let mut zd = state.zerodentity_store.lock().unwrap();
+            zd.put_score(ZerodentityScore {
+                subject_did: Did::new("did:exo:v1").unwrap(),
+                axes: PolarAxes {
+                    communication: 9000,
+                    credential_depth: 9000,
+                    device_trust: 9000,
+                    behavioral_signature: 9000,
+                    network_reputation: 9000,
+                    temporal_stability: 9000,
+                    cryptographic_strength: 9000,
+                    constitutional_standing: 9000,
+                },
+                composite: 9000,
+                computed_ms: 1_700_000_000_000,
+                dag_state_hash: exo_core::types::Hash256::digest(b"test"),
+                claim_count: 20,
+                symmetry: 10_000,
+            });
+        }
+
+        let app = passport_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/agents/did:exo:v1/standing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result["risk_level"], "minimal");
+    }
+
+    #[tokio::test]
+    async fn standing_shows_revoked_when_all_claims_revoked() {
+        use crate::zerodentity::types::{ClaimStatus, ClaimType, IdentityClaim};
+
+        let state = test_passport_state();
+
+        // Insert revoked claims for a DID.
+        {
+            let mut zd = state.zerodentity_store.lock().unwrap();
+            let did = Did::new("did:exo:v2").unwrap();
+            let claim = IdentityClaim {
+                claim_hash: exo_core::types::Hash256::digest(b"email"),
+                subject_did: did.clone(),
+                claim_type: ClaimType::Email,
+                status: ClaimStatus::Revoked,
+                created_ms: 1000,
+                verified_ms: Some(2000),
+                expires_ms: None,
+                signature: exo_core::types::Signature::Empty,
+                dag_node_hash: exo_core::types::Hash256::digest(b"dag"),
+            };
+            zd.insert_claim("claim-rev", &claim).unwrap();
+        }
+
+        let app = passport_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/agents/did:exo:v2/standing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result["status"], "revoked");
+        assert_eq!(result["revoked"], true);
+    }
 }
