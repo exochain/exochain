@@ -429,7 +429,7 @@ async function apiPost(path, body) {
     headers: authHeaders(),
     body: JSON.stringify(body),
   });
-  const data = await res.json().catch(() => ({}));
+  const data = await res.json().catch(e => { console.warn('JSON parse failed:', e.message); return {}; });
   if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { status: res.status, data });
   return data;
 }

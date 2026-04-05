@@ -142,7 +142,10 @@ async fn handle_propose(
             node_hash: hex::encode(node.hash.0),
             height: None,
         })),
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+        Err(e) => {
+            tracing::error!(err = %e, "Proposal submission failed");
+            Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+        }
     }
 }
 
@@ -271,19 +274,27 @@ async fn handle_validator_change(
         buf
     };
 
-    let _ = reactor::broadcast_governance_event(
+    let broadcast_ok = match reactor::broadcast_governance_event(
         &api.reactor_state,
         &api.net_handle,
         GovernanceEventType::ValidatorSetChange,
         payload,
     )
-    .await;
+    .await
+    {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!(err = %e, "Validator change applied locally but broadcast failed — peers will sync on next round");
+            false
+        }
+    };
 
     Ok(Json(serde_json::json!({
         "validator_count": new_count,
         "quorum_size": quorum,
         "action": req.action,
         "did": req.did,
+        "broadcast": broadcast_ok,
     })))
 }
 
