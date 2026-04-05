@@ -5,6 +5,10 @@
 //! computations remain fully deterministic across platforms.
 //!
 //! Spec reference: §2 (Foundational Types).
+//!
+//! Helper methods (`from_str`, `ttl_ms`) are used by downstream modules
+//! (APE-73/74). Dead-code suppression is intentional.
+#![allow(dead_code)]
 
 use std::{collections::BTreeMap, fmt};
 
