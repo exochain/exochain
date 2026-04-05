@@ -456,6 +456,23 @@ async fn start_node(
         }
     });
 
+    // Build the health endpoint (used by the dashboard and external monitors).
+    let health_start = std::time::Instant::now();
+    let health_router = axum::Router::new().route(
+        "/health",
+        axum::routing::get(move || {
+            let uptime = health_start.elapsed().as_secs();
+            async move {
+                axum::Json(serde_json::json!({
+                    "status": "ok",
+                    "uptime_seconds": uptime,
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "node": "exochain",
+                }))
+            }
+        }),
+    );
+
     // Build the metrics HTTP route.
     let metrics_handle = Arc::clone(&node_metrics);
     let metrics_router = axum::Router::new().route(
@@ -582,9 +599,10 @@ async fn start_node(
         "0dentity routers ready — /0dentity, /0dentity/dashboard/:did, /api/v1/0dentity/*"
     );
 
-    // Merge metrics + governance + passport + dashboard into a single extra router
+    // Merge health + metrics + governance + passport + dashboard into a single extra router
     // and apply bearer-token auth middleware (protects POST, allows GET).
-    let extra_router = metrics_router
+    let extra_router = health_router
+        .merge(metrics_router)
         .merge(governance_router)
         .merge(passport_router)
         .merge(dashboard_router)
