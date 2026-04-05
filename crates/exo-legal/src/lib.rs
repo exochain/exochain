@@ -3,6 +3,7 @@
 //! management, and conflict-of-interest disclosure.
 
 pub mod ai_transparency;
+pub mod cert_902_11;
 pub mod compliance_report;
 pub mod conflict_disclosure;
 pub mod dgcl144;
