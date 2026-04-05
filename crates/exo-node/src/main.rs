@@ -619,8 +619,9 @@ async fn start_node(
     // Layers (outermost first):
     //   1. TraceLayer — structured request/response spans for observability
     //   2. Timeout — 30s hard limit prevents resource exhaustion
-    //   3. Rate limiter — 60 writes/min per IP (protects governance API)
-    //   4. Bearer auth — protects POST/PUT/DELETE, allows GET
+    //   3. Body limit — 1 MiB max request body prevents memory exhaustion
+    //   4. Rate limiter — 60 writes/min per IP (protects governance API)
+    //   5. Bearer auth — protects POST/PUT/DELETE, allows GET
     // NOTE: /health and /ready are provided by the gateway's own router.
     let write_limiter = auth::WriteRateLimiter::new(60, 60);
     let extra_router = metrics_router
@@ -644,6 +645,9 @@ async fn start_node(
             let l = write_limiter.clone();
             auth::rate_limit_writes(l, req, next)
         }))
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            1024 * 1024, // 1 MiB
+        ))
         .layer(tower_http::timeout::TimeoutLayer::new(
             std::time::Duration::from_secs(30),
         ))
