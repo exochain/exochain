@@ -16,8 +16,14 @@ use exo_gateway::server::{GatewayConfig, serve};
 
 #[tokio::main]
 async fn main() {
-    // Initialise structured logging.
-    tracing_subscriber::fmt::init();
+    // Structured logging with RUST_LOG env filter support.
+    // Default: info for gateway, warn for everything else.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "warn,exo_gateway=info".parse().expect("valid filter")),
+        )
+        .init();
 
     // Build config from environment, falling back to defaults.
     let bind_address = std::env::var("BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8443".into());
