@@ -15,33 +15,37 @@
 //! - **dashboard**    — GET /0dentity/dashboard/:did
 //! - **onboarding_ui**— GET /0dentity (onboarding flow HTML)
 
-// Core modules (APE-72)
+// Core modules
 pub mod otp;
 pub mod scoring;
 pub mod store;
 pub mod types;
 
-// Signal modules (APE-74)
+// Feature modules
+pub mod api;
 pub mod attestation;
 pub mod behavioral;
-pub mod fingerprint;
-
-// API + UI modules (APE-73)
-pub mod api;
 pub mod dashboard;
+pub mod fingerprint;
 pub mod onboarding;
 pub mod onboarding_ui;
+
+#[cfg(test)]
+mod tests;
 
 // ---------------------------------------------------------------------------
 // Re-exports — the public surface of the 0dentity module
 // ---------------------------------------------------------------------------
 
+#[allow(unused_imports)]
 pub use otp::{
-    OtpError, OtpResult, OTP_LOCKOUT_MS, OTP_MAX_ATTEMPTS, OTP_RESEND_COOLDOWN_MS, OTP_TTL_MS,
+    OTP_LOCKOUT_MS, OTP_MAX_ATTEMPTS, OTP_RESEND_COOLDOWN_MS, OTP_TTL_MS, OtpError, OtpResult,
 };
+#[allow(unused_imports)]
 pub use store::{SharedZerodentityStore, ZerodentityStore};
+#[allow(unused_imports)]
 pub use types::{
     AttestationType, BehavioralSample, BehavioralSignalType, ClaimStatus, ClaimType,
-    DeviceFingerprint, FingerprintSignal, IdentityClaim, IdentitySession, OtpChallenge,
-    OtpChannel, OtpState, PeerAttestation, PolarAxes, Signature, ZerodentityScore,
+    DeviceFingerprint, FingerprintSignal, IdentityClaim, IdentitySession, OtpChallenge, OtpChannel,
+    OtpState, PeerAttestation, PolarAxes, Signature, ZerodentityScore,
 };

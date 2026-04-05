@@ -8,19 +8,19 @@
 use std::sync::{Arc, Mutex};
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
+use exo_core::types::{Did, Hash256, Signature};
 use getrandom::getrandom;
-use rand::SeedableRng;
-use rand::rngs::StdRng;
+use rand::{SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use exo_core::types::{Did, Hash256, Signature};
-
-use super::otp::OtpResult;
-use super::store::ZerodentityStore;
-use super::types::{
-    ClaimStatus, ClaimType, IdentityClaim, IdentitySession, OtpChallenge, OtpChannel,
-    ZerodentityScore,
+use super::{
+    otp::OtpResult,
+    store::ZerodentityStore,
+    types::{
+        ClaimStatus, ClaimType, IdentityClaim, IdentitySession, OtpChallenge, OtpChannel,
+        ZerodentityScore,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -39,6 +39,7 @@ pub struct OnboardingState {
 
 /// A compact score summary for API responses.
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 pub struct ScoreSummary {
     pub composite: u32,
     pub symmetry: u32,
@@ -47,6 +48,7 @@ pub struct ScoreSummary {
 
 /// Build a `ScoreSummary` from a full score.
 #[must_use]
+#[allow(dead_code)]
 pub fn score_summary_from(score: &ZerodentityScore) -> ScoreSummary {
     ScoreSummary {
         composite: score.composite,
@@ -116,23 +118,22 @@ fn build_rng() -> StdRng {
 }
 
 fn parse_did(s: &str) -> Result<Did, (StatusCode, Json<serde_json::Value>)> {
-    Did::new(s).map_err(|_| (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({"error": "Invalid DID format"})),
-    ))
+    Did::new(s).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Invalid DID format"})),
+        )
+    })
 }
 
-fn parse_claim_type(
-    ct: &str,
-    provider: Option<&str>,
-) -> Option<ClaimType> {
+fn parse_claim_type(ct: &str, provider: Option<&str>) -> Option<ClaimType> {
     match ct {
-        "Email"                => Some(ClaimType::Email),
-        "Phone"                => Some(ClaimType::Phone),
-        "DisplayName"          => Some(ClaimType::DisplayName),
-        "GovernmentId"         => Some(ClaimType::GovernmentId),
-        "BiometricLiveness"    => Some(ClaimType::BiometricLiveness),
-        "EntropyAttestation"   => Some(ClaimType::EntropyAttestation),
+        "Email" => Some(ClaimType::Email),
+        "Phone" => Some(ClaimType::Phone),
+        "DisplayName" => Some(ClaimType::DisplayName),
+        "GovernmentId" => Some(ClaimType::GovernmentId),
+        "BiometricLiveness" => Some(ClaimType::BiometricLiveness),
+        "EntropyAttestation" => Some(ClaimType::EntropyAttestation),
         "ProfessionalCredential" => Some(ClaimType::ProfessionalCredential {
             provider: provider.unwrap_or("").to_owned(),
         }),
@@ -151,11 +152,13 @@ pub async fn submit_claim(
     let subject_did = parse_did(&req.subject_did)?;
     let now = now_ms();
 
-    let claim_type = parse_claim_type(&req.claim_type, req.provider.as_deref())
-        .ok_or_else(|| (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "Unrecognised claim_type"})),
-        ))?;
+    let claim_type =
+        parse_claim_type(&req.claim_type, req.provider.as_deref()).ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Unrecognised claim_type"})),
+            )
+        })?;
 
     // Build claim payload hash
     let payload = format!("{}:{}", req.subject_did, req.claim_type);
@@ -176,14 +179,18 @@ pub async fn submit_claim(
     };
 
     {
-        let mut store = state.store.lock().map_err(|_| (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": "Store lock error"})),
-        ))?;
-        store.insert_claim(&claim_id, &claim).map_err(|e| (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": format!("Store error: {e}")})),
-        ))?;
+        let mut store = state.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Store lock error"})),
+            )
+        })?;
+        store.insert_claim(&claim_id, &claim).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Store error: {e}")})),
+            )
+        })?;
     }
 
     // Optionally create OTP challenge for email/phone claims
@@ -192,18 +199,22 @@ pub async fn submit_claim(
         let ttl = channel.ttl_ms();
 
         let mut rng = build_rng();
-        let (challenge, _code) = OtpChallenge::new(&subject_did, channel, now, &mut rng)
-            .map_err(|_| (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "OTP generation failed"})),
-            ))?;
+        let (challenge, _code) =
+            OtpChallenge::new(&subject_did, channel, now, &mut rng).map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "OTP generation failed"})),
+                )
+            })?;
 
         let cid = challenge.challenge_id.clone();
         {
-            let mut store = state.store.lock().map_err(|_| (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "Store lock error"})),
-            ))?;
+            let mut store = state.store.lock().map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "Store lock error"})),
+                )
+            })?;
             let _ = store.insert_otp_challenge(&challenge);
         }
         (Some(cid), Some(ttl))
@@ -230,28 +241,37 @@ pub async fn verify_otp(
     let now = now_ms();
 
     let mut challenge = {
-        let store = state.store.lock().map_err(|_| (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": "Store lock error"})),
-        ))?;
-        store.get_otp_challenge(&req.challenge_id)
-            .map_err(|e| (
+        let store = state.store.lock().map_err(|_| {
+            (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("Store error: {e}")})),
-            ))?
-            .ok_or_else(|| (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": "Challenge not found"})),
-            ))?
+                Json(serde_json::json!({"error": "Store lock error"})),
+            )
+        })?;
+        store
+            .get_otp_challenge(&req.challenge_id)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("Store error: {e}")})),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({"error": "Challenge not found"})),
+                )
+            })?
     };
 
     let result = challenge.verify(&req.code, now);
 
     {
-        let mut store = state.store.lock().map_err(|_| (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": "Store lock error"})),
-        ))?;
+        let mut store = state.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Store lock error"})),
+            )
+        })?;
         let _ = store.update_otp_challenge(&challenge);
     }
 
@@ -267,10 +287,12 @@ pub async fn verify_otp(
                 revoked: false,
             };
             {
-                let mut store = state.store.lock().map_err(|_| (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": "Store lock error"})),
-                ))?;
+                let mut store = state.store.lock().map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": "Store lock error"})),
+                    )
+                })?;
                 let _ = store.insert_session(&session);
             }
             Ok(Json(VerifyOtpResponse {
@@ -280,14 +302,12 @@ pub async fn verify_otp(
                 message: "Verification successful".into(),
             }))
         }
-        OtpResult::WrongCode { attempts_remaining } => {
-            Ok(Json(VerifyOtpResponse {
-                verified: false,
-                session_token: None,
-                attempts_remaining: Some(attempts_remaining),
-                message: "Incorrect code".into(),
-            }))
-        }
+        OtpResult::WrongCode { attempts_remaining } => Ok(Json(VerifyOtpResponse {
+            verified: false,
+            session_token: None,
+            attempts_remaining: Some(attempts_remaining),
+            message: "Incorrect code".into(),
+        })),
         OtpResult::Expired => Err((
             StatusCode::GONE,
             Json(serde_json::json!({"error": "Challenge has expired"})),
@@ -310,19 +330,26 @@ pub async fn resend_otp(
     let now = now_ms();
 
     let challenge = {
-        let store = state.store.lock().map_err(|_| (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": "Store lock error"})),
-        ))?;
-        store.get_otp_challenge(&req.challenge_id)
-            .map_err(|e| (
+        let store = state.store.lock().map_err(|_| {
+            (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("Store error: {e}")})),
-            ))?
-            .ok_or_else(|| (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": "Challenge not found"})),
-            ))?
+                Json(serde_json::json!({"error": "Store lock error"})),
+            )
+        })?;
+        store
+            .get_otp_challenge(&req.challenge_id)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("Store error: {e}")})),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({"error": "Challenge not found"})),
+                )
+            })?
     };
 
     if !challenge.can_resend(now) {
@@ -339,19 +366,24 @@ pub async fn resend_otp(
         challenge.channel.clone(),
         now,
         &mut rng,
-    ).map_err(|_| (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({"error": "OTP generation failed"})),
-    ))?;
+    )
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "OTP generation failed"})),
+        )
+    })?;
 
     let ttl = new_challenge.ttl_ms;
     let new_id = new_challenge.challenge_id.clone();
 
     {
-        let mut store = state.store.lock().map_err(|_| (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": "Store lock error"})),
-        ))?;
+        let mut store = state.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Store lock error"})),
+            )
+        })?;
         let _ = store.insert_otp_challenge(&new_challenge);
     }
 

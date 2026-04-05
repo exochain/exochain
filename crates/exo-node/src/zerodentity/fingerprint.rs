@@ -22,10 +22,11 @@ use super::types::{DeviceFingerprint, FingerprintSignal};
 ///
 /// Signal hashes are fed to BLAKE3 in sorted key order (BTreeMap iteration)
 /// to guarantee determinism.
+#[allow(dead_code)]
 pub fn compute_composite_hash(signal_hashes: &BTreeMap<FingerprintSignal, Hash256>) -> Hash256 {
     let mut hasher = blake3::Hasher::new();
     // BTreeMap guarantees sorted iteration — deterministic
-    for (_signal, hash) in signal_hashes {
+    for hash in signal_hashes.values() {
         hasher.update(hash.as_bytes());
     }
     Hash256::from_bytes(*hasher.finalize().as_bytes())
@@ -44,6 +45,7 @@ pub fn compute_composite_hash(signal_hashes: &BTreeMap<FingerprintSignal, Hash25
 /// 3. score_bp = (matching / total) * 10_000
 ///
 /// Spec property: identical → 1.0, completely different → 0.0, partial → intermediate.
+#[allow(dead_code)]
 pub fn compute_consistency(
     previous: &DeviceFingerprint,
     new_signals: &BTreeMap<FingerprintSignal, Hash256>,
@@ -54,27 +56,32 @@ pub fn compute_consistency(
         return 10_000; // both empty = trivially identical
     }
 
-    let total_keys: std::collections::BTreeSet<&FingerprintSignal> = prev_signals
-        .keys()
-        .chain(new_signals.keys())
-        .collect();
-    let total = total_keys.len() as u64;
+    let total_keys: std::collections::BTreeSet<&FingerprintSignal> =
+        prev_signals.keys().chain(new_signals.keys()).collect();
+    let total = u64::try_from(total_keys.len()).unwrap_or(0);
     if total == 0 {
         return 10_000;
     }
 
-    let matching = total_keys.iter().filter(|&&k| {
-        prev_signals.get(k) == new_signals.get(k)
-            && prev_signals.contains_key(k)
-            && new_signals.contains_key(k)
-    }).count() as u64;
+    let matching = u64::try_from(
+        total_keys
+            .iter()
+            .filter(|&&k| {
+                prev_signals.get(k) == new_signals.get(k)
+                    && prev_signals.contains_key(k)
+                    && new_signals.contains_key(k)
+            })
+            .count(),
+    )
+    .unwrap_or(0);
 
-    ((matching * 10_000) / total) as u32
+    u32::try_from((matching * 10_000) / total).unwrap_or(u32::MAX)
 }
 
 /// Build a new `DeviceFingerprint` from raw signal hashes.
 ///
 /// If a previous fingerprint is provided, computes the consistency score.
+#[allow(dead_code)]
 pub fn build_fingerprint(
     signal_hashes: BTreeMap<FingerprintSignal, Hash256>,
     previous: Option<&DeviceFingerprint>,
@@ -99,16 +106,18 @@ pub fn build_fingerprint(
 mod tests {
     use super::*;
 
-    fn hash(b: &[u8]) -> Hash256 { Hash256::digest(b) }
+    fn hash(b: &[u8]) -> Hash256 {
+        Hash256::digest(b)
+    }
 
     fn sig(name: &str) -> FingerprintSignal {
         match name {
-            "Canvas"   => FingerprintSignal::CanvasRendering,
-            "UserAgent"=> FingerprintSignal::UserAgent,
-            "Screen"   => FingerprintSignal::ScreenGeometry,
-            "WebGL"    => FingerprintSignal::WebGLParameters,
-            "Audio"    => FingerprintSignal::AudioContext,
-            _          => FingerprintSignal::Platform,
+            "Canvas" => FingerprintSignal::CanvasRendering,
+            "UserAgent" => FingerprintSignal::UserAgent,
+            "Screen" => FingerprintSignal::ScreenGeometry,
+            "WebGL" => FingerprintSignal::WebGLParameters,
+            "Audio" => FingerprintSignal::AudioContext,
+            _ => FingerprintSignal::Platform,
         }
     }
 
@@ -153,13 +162,10 @@ mod tests {
 
     #[test]
     fn consistency_partial_overlap_is_intermediate() {
-        let prev = fp(vec![
-            ("Canvas", b"data"),
-            ("UserAgent", b"ua"),
-        ]);
+        let prev = fp(vec![("Canvas", b"data"), ("UserAgent", b"ua")]);
         // Same Canvas, different UserAgent
         let mut new_map = BTreeMap::new();
-        new_map.insert(sig("Canvas"), hash(b"data"));     // matches
+        new_map.insert(sig("Canvas"), hash(b"data")); // matches
         new_map.insert(sig("UserAgent"), hash(b"ua-new")); // different
         let score = compute_consistency(&prev, &new_map);
         // 1 match out of 2 total = 5000
@@ -223,7 +229,10 @@ mod tests {
         let mut signals = BTreeMap::new();
         signals.insert(sig("Canvas"), hash(b"canvas-data"));
         let fp = build_fingerprint(signals, None, 1_000_000);
-        assert!(fp.consistency_score_bp.is_none(), "first session has no consistency");
+        assert!(
+            fp.consistency_score_bp.is_none(),
+            "first session has no consistency"
+        );
     }
 
     #[test]

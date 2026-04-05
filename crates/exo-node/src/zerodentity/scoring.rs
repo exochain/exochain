@@ -11,6 +11,11 @@
 //! - Distinct-DID / distinct-signal-type counts use `BTreeSet`, not `HashSet`.
 //! - Input slices must be sorted by `created_ms` ascending before calling
 //!   `compute()`.  The caller is responsible for this invariant.
+// The scoring engine performs extensive integer arithmetic with safe `as`
+// casts between bounded integer types (e.g. `usize` → `u32` for counts
+// that are capped by `.min()` before conversion).  All values are in
+// basis-points (0–10_000) so overflow is impossible in practice.
+#![allow(clippy::as_conversions, clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
 
@@ -52,7 +57,7 @@ fn isqrt(n: u64) -> u64 {
         return 0;
     }
     let mut x = n;
-    let mut y = (x + 1) / 2;
+    let mut y = x.div_ceil(2);
     while y < x {
         x = y;
         y = (x + n / x) / 2;
@@ -153,17 +158,22 @@ fn score_communication(claims: &[IdentityClaim]) -> u32 {
 fn score_credential_depth(claims: &[IdentityClaim]) -> u32 {
     let mut score: u32 = 0;
 
-    if claims.iter().any(|c| c.claim_type == ClaimType::DisplayName) {
+    if claims
+        .iter()
+        .any(|c| c.claim_type == ClaimType::DisplayName)
+    {
         score += 500;
     }
-    if claims.iter().any(|c| {
-        c.claim_type == ClaimType::GovernmentId && c.status == ClaimStatus::Verified
-    }) {
+    if claims
+        .iter()
+        .any(|c| c.claim_type == ClaimType::GovernmentId && c.status == ClaimStatus::Verified)
+    {
         score += 3500;
     }
-    if claims.iter().any(|c| {
-        c.claim_type == ClaimType::BiometricLiveness && c.status == ClaimStatus::Verified
-    }) {
+    if claims
+        .iter()
+        .any(|c| c.claim_type == ClaimType::BiometricLiveness && c.status == ClaimStatus::Verified)
+    {
         score += 3000;
     }
     let pro_count = claims
@@ -256,9 +266,7 @@ fn score_network_reputation(claims: &[IdentityClaim]) -> u32 {
     let attesters: BTreeSet<&Did> = claims
         .iter()
         .filter_map(|c| match &c.claim_type {
-            ClaimType::PeerAttestation { attester_did }
-                if c.status == ClaimStatus::Verified =>
-            {
+            ClaimType::PeerAttestation { attester_did } if c.status == ClaimStatus::Verified => {
                 Some(attester_did)
             }
             _ => None,
@@ -314,7 +322,7 @@ fn score_temporal_stability(claims: &[IdentityClaim], now_ms: u64) -> u32 {
     if total_verified > 0 {
         let fresh = verified
             .iter()
-            .filter(|c| c.expires_ms.map_or(true, |exp| exp > now_ms))
+            .filter(|c| c.expires_ms.is_none_or(|exp| exp > now_ms))
             .count() as u32;
         let freshness_bp = fresh * 10_000 / total_verified;
         score += freshness_bp * 30 / 100;
@@ -323,7 +331,7 @@ fn score_temporal_stability(claims: &[IdentityClaim], now_ms: u64) -> u32 {
     // Claim renewal activity.
     let renewals = claims
         .iter()
-        .filter(|c| c.verified_ms.map_or(false, |v| v != c.created_ms))
+        .filter(|c| c.verified_ms.is_some_and(|v| v != c.created_ms))
         .count() as u32;
     score += (renewals * 500).min(2000);
 
@@ -426,7 +434,7 @@ pub(crate) fn compute_symmetry(axes: &[u32; 8]) -> u32 {
     let variance: u64 = axes
         .iter()
         .map(|&a| {
-            let diff = if a >= mean { a - mean } else { mean - a };
+            let diff = a.abs_diff(mean);
             (diff as u64) * (diff as u64)
         })
         .sum::<u64>()
@@ -547,7 +555,9 @@ mod tests {
         ];
         for i in 0..20u32 {
             claims.push(claim(
-                ClaimType::ProfessionalCredential { provider: format!("p{i}") },
+                ClaimType::ProfessionalCredential {
+                    provider: format!("p{i}"),
+                },
                 ClaimStatus::Verified,
             ));
         }
@@ -664,8 +674,7 @@ mod tests {
             claim(ClaimType::GovernmentId, ClaimStatus::Verified),
         ];
         let stored = ZerodentityScore::compute(&d, &claims, &[], &[], 5_000_000);
-        let recomputed =
-            ZerodentityScore::compute(&d, &claims, &[], &[], stored.computed_ms);
+        let recomputed = ZerodentityScore::compute(&d, &claims, &[], &[], stored.computed_ms);
         let drift = stored.composite.abs_diff(recomputed.composite);
         assert_eq!(drift, 0, "deterministic algorithm must produce zero drift");
     }

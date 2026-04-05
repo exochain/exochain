@@ -9,14 +9,17 @@
 //!
 //! Spec reference: §9, §12.1.
 
-use std::collections::BTreeMap;
-use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
-use exo_core::types::Did;
+use exo_core::types::{Did, Hash256, ReceiptOutcome, Signature, Timestamp, TrustReceipt};
+use exo_dag::dag::DagNode;
 
 use super::types::{
-    BehavioralSample, DeviceFingerprint, IdentityClaim, IdentitySession, OtpChallenge,
+    BehavioralSample, ClaimStatus, DeviceFingerprint, IdentityClaim, IdentitySession, OtpChallenge,
     PeerAttestation, ZerodentityScore,
 };
 
@@ -53,6 +56,10 @@ pub struct ZerodentityStore {
     attestations: BTreeMap<(String, String), PeerAttestation>,
     /// Identity sessions by session token.
     sessions: BTreeMap<String, IdentitySession>,
+    /// DAG nodes recorded for claim operations (APE-72).
+    dag_nodes: Vec<DagNode>,
+    /// Trust receipts emitted for claim verification events (APE-72).
+    trust_receipts: Vec<TrustReceipt>,
 }
 
 impl ZerodentityStore {
@@ -85,13 +92,11 @@ impl ZerodentityStore {
     }
 
     /// Append a claim for a DID (mutable convenience method).
+    #[allow(dead_code)]
     pub fn put_claim(&mut self, claim: IdentityClaim) {
         let key = claim.subject_did.as_str().to_owned();
         let claim_id = hex::encode(claim.claim_hash.as_bytes());
-        self.claims
-            .entry(key)
-            .or_default()
-            .push((claim_id, claim));
+        self.claims.entry(key).or_default().push((claim_id, claim));
     }
 
     // -----------------------------------------------------------------------
@@ -99,6 +104,7 @@ impl ZerodentityStore {
     // -----------------------------------------------------------------------
 
     /// Append a device fingerprint for a DID.
+    #[allow(dead_code)]
     pub fn put_fingerprint(&mut self, did: &Did, fp: DeviceFingerprint) {
         self.fingerprints
             .entry(did.as_str().to_owned())
@@ -107,6 +113,7 @@ impl ZerodentityStore {
     }
 
     /// Append a behavioral sample for a DID.
+    #[allow(dead_code)]
     pub fn put_behavioral(&mut self, did: &Did, sample: BehavioralSample) {
         self.behavioral
             .entry(did.as_str().to_owned())
@@ -119,6 +126,7 @@ impl ZerodentityStore {
     // -----------------------------------------------------------------------
 
     /// Store a new score snapshot, shifting the current to `prev_scores`.
+    #[allow(dead_code)]
     pub fn put_score(&mut self, score: ZerodentityScore) {
         let key = score.subject_did.as_str().to_owned();
         if let Some(existing) = self.scores.remove(&key) {
@@ -136,6 +144,7 @@ impl ZerodentityStore {
     // -----------------------------------------------------------------------
 
     /// Record an OTP lockout event at `timestamp_ms` for a DID.
+    #[allow(dead_code)]
     pub fn record_otp_lockout(&mut self, did: &Did, timestamp_ms: u64) {
         self.otp_lockouts
             .entry(did.as_str().to_owned())
@@ -192,11 +201,7 @@ impl ZerodentityStore {
     ///
     /// Returns an empty `Vec` (not an error) when the DID has no claims.
     pub fn get_claims(&self, did: &Did) -> anyhow::Result<Vec<(String, IdentityClaim)>> {
-        Ok(self
-            .claims
-            .get(did.as_str())
-            .cloned()
-            .unwrap_or_default())
+        Ok(self.claims.get(did.as_str()).cloned().unwrap_or_default())
     }
 
     /// Return all claims for a DID as a plain slice (no claim IDs).
@@ -204,6 +209,7 @@ impl ZerodentityStore {
     /// Convenience method for callers that only need the claims themselves
     /// (e.g., sentinels and scoring).
     #[must_use]
+    #[allow(dead_code)]
     pub fn get_claims_slice(&self, did: &Did) -> Vec<IdentityClaim> {
         self.claims
             .get(did.as_str())
@@ -263,8 +269,8 @@ impl ZerodentityStore {
         let filtered: Vec<ZerodentityScore> = history
             .iter()
             .filter(|s| {
-                let after = from_ms.map_or(true, |f| s.computed_ms >= f);
-                let before = to_ms.map_or(true, |t| s.computed_ms <= t);
+                let after = from_ms.is_none_or(|f| s.computed_ms >= f);
+                let before = to_ms.is_none_or(|t| s.computed_ms <= t);
                 after && before
             })
             .cloned()
@@ -282,7 +288,7 @@ impl ZerodentityStore {
     pub fn has_otp_lockout_since(&self, did: &Did, since_ms: u64) -> bool {
         self.otp_lockouts
             .get(did.as_str())
-            .map_or(false, |events| events.iter().any(|&t| t >= since_ms))
+            .is_some_and(|events| events.iter().any(|&t| t >= since_ms))
     }
 
     /// Retrieve an OTP challenge by ID.
@@ -296,10 +302,7 @@ impl ZerodentityStore {
 
     /// Return `true` if an attestation from `attester` to `target` already exists.
     pub fn attestation_exists(&self, attester: &Did, target: &Did) -> anyhow::Result<bool> {
-        let key = (
-            attester.as_str().to_owned(),
-            target.as_str().to_owned(),
-        );
+        let key = (attester.as_str().to_owned(), target.as_str().to_owned());
         Ok(self.attestations.contains_key(&key))
     }
 
@@ -337,6 +340,90 @@ impl ZerodentityStore {
     pub fn scored_did_count(&self) -> usize {
         self.scores.len()
     }
+
+    // -----------------------------------------------------------------------
+    // APE-72 — CRUD API + DAG/TrustReceipt integration
+    // -----------------------------------------------------------------------
+
+    /// Run schema migrations — no-op for the in-memory implementation.
+    ///
+    /// Idempotent; always returns `Ok(())`.
+    #[allow(dead_code)]
+    pub fn run_migrations(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Persist a claim, record a DAG node entry, and optionally emit a
+    /// `TrustReceipt` when the claim is already `Verified`.
+    ///
+    /// - A `DagNode` is appended to `self.dag_nodes` on every call.
+    /// - A `TrustReceipt` (outcome `Executed`) is pushed to
+    ///   `self.trust_receipts` when `claim.status == Verified`.
+    #[allow(dead_code)]
+    pub fn save_claim(&mut self, claim_id: &str, claim: &IdentityClaim) -> anyhow::Result<()> {
+        self.insert_claim(claim_id, claim)?;
+
+        // Record DAG node for this claim.
+        let node = DagNode {
+            hash: claim.dag_node_hash,
+            parents: vec![],
+            payload_hash: claim.claim_hash,
+            creator_did: claim.subject_did.clone(),
+            timestamp: Timestamp::new(claim.created_ms, 0),
+            signature: Signature::Empty,
+        };
+        self.dag_nodes.push(node);
+
+        // Emit TrustReceipt for verified claims.
+        if claim.status == ClaimStatus::Verified {
+            let verified_ms = claim.verified_ms.unwrap_or(claim.created_ms);
+            let receipt = TrustReceipt::new(
+                claim.subject_did.clone(),
+                Hash256::ZERO,
+                None,
+                "zerodentity.claim_verified".to_string(),
+                claim.claim_hash,
+                ReceiptOutcome::Executed,
+                Timestamp::new(verified_ms, 0),
+                &|_payload| Signature::Empty,
+            );
+            self.trust_receipts.push(receipt);
+        }
+
+        Ok(())
+    }
+
+    /// Persist an OTP challenge (APE-72 alias for `insert_otp_challenge`).
+    #[allow(dead_code)]
+    pub fn save_otp(&mut self, challenge: &OtpChallenge) -> anyhow::Result<()> {
+        self.insert_otp_challenge(challenge)
+    }
+
+    /// Retrieve an OTP challenge by ID (APE-72 alias for `get_otp_challenge`).
+    #[allow(dead_code)]
+    pub fn get_otp(&self, challenge_id: &str) -> anyhow::Result<Option<OtpChallenge>> {
+        self.get_otp_challenge(challenge_id)
+    }
+
+    /// Persist a new score snapshot (APE-72 alias for `put_score`).
+    #[allow(dead_code)]
+    pub fn save_score(&mut self, score: ZerodentityScore) {
+        self.put_score(score);
+    }
+
+    /// Return all recorded DAG nodes (APE-72 audit accessor).
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn dag_nodes(&self) -> &[DagNode] {
+        &self.dag_nodes
+    }
+
+    /// Return all recorded trust receipts (APE-72 audit accessor).
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn trust_receipts(&self) -> &[TrustReceipt] {
+        &self.trust_receipts
+    }
 }
 
 /// Thread-safe shared handle to the 0dentity store.
@@ -344,6 +431,7 @@ pub type SharedZerodentityStore = Arc<Mutex<ZerodentityStore>>;
 
 /// Create a new empty shared store.
 #[must_use]
+#[allow(dead_code)]
 pub fn new_shared_store() -> SharedZerodentityStore {
     Arc::new(Mutex::new(ZerodentityStore::new()))
 }
@@ -490,5 +578,86 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = ZerodentityStore::open(tmp.path()).unwrap();
         assert_eq!(store.scored_did_count(), 0);
+    }
+
+    // ---- APE-72 tests ----
+
+    #[test]
+    fn run_migrations_is_idempotent() {
+        let store = ZerodentityStore::new();
+        store.run_migrations().unwrap();
+        store.run_migrations().unwrap();
+    }
+
+    #[test]
+    fn save_claim_stores_claim_and_dag_node() {
+        let mut store = ZerodentityStore::new();
+        let d = did("did:exo:grace");
+        let c = claim(&d, ClaimType::Email);
+        store.save_claim("apg-001", &c).unwrap();
+
+        let claims = store.get_claims(&d).unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].0, "apg-001");
+
+        assert_eq!(store.dag_nodes().len(), 1);
+        assert_eq!(store.dag_nodes()[0].payload_hash, c.claim_hash);
+        assert_eq!(store.dag_nodes()[0].creator_did, d);
+    }
+
+    #[test]
+    fn save_verified_claim_emits_trust_receipt() {
+        let mut store = ZerodentityStore::new();
+        let d = did("did:exo:heidi");
+        let c = claim(&d, ClaimType::Phone); // claim() sets status=Verified
+        store.save_claim("apg-002", &c).unwrap();
+
+        assert_eq!(store.trust_receipts().len(), 1);
+        let r = &store.trust_receipts()[0];
+        assert_eq!(r.actor_did, d);
+        assert_eq!(r.action_hash, c.claim_hash);
+        assert_eq!(r.action_type, "zerodentity.claim_verified");
+    }
+
+    #[test]
+    fn save_pending_claim_no_trust_receipt() {
+        let mut store = ZerodentityStore::new();
+        let d = did("did:exo:ivan");
+        let mut c = claim(&d, ClaimType::GovernmentId);
+        c.status = ClaimStatus::Pending;
+        store.save_claim("apg-003", &c).unwrap();
+
+        assert_eq!(store.dag_nodes().len(), 1);
+        assert_eq!(store.trust_receipts().len(), 0);
+    }
+
+    #[test]
+    fn save_and_get_otp() {
+        use crate::zerodentity::types::{OtpChannel, OtpState};
+        let mut store = ZerodentityStore::new();
+        let d = did("did:exo:judy");
+        let challenge = super::OtpChallenge {
+            challenge_id: "ch-001".to_string(),
+            subject_did: d,
+            channel: OtpChannel::Email,
+            hmac_secret: [0u8; 32],
+            dispatched_ms: 1_000_000,
+            ttl_ms: 600_000,
+            attempts: 0,
+            max_attempts: 5,
+            state: OtpState::Pending,
+        };
+        store.save_otp(&challenge).unwrap();
+        let fetched = store.get_otp("ch-001").unwrap();
+        assert!(fetched.is_some());
+        assert_eq!(fetched.unwrap().challenge_id, "ch-001");
+    }
+
+    #[test]
+    fn save_score_and_retrieve() {
+        let mut store = ZerodentityStore::new();
+        let d = did("did:exo:karen");
+        store.save_score(score_for(d.clone(), 7500));
+        assert_eq!(store.get_score(&d).unwrap().composite, 7500);
     }
 }

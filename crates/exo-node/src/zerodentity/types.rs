@@ -6,13 +6,11 @@
 //!
 //! Spec reference: §2 (Foundational Types).
 
-use std::collections::BTreeMap;
-use std::fmt;
-
-use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, fmt};
 
 pub use exo_core::types::Signature;
 use exo_core::types::{Did, Hash256};
+use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // ClaimType
@@ -317,21 +315,21 @@ pub enum FingerprintSignal {
 impl fmt::Display for FingerprintSignal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            Self::AudioContext        => "AudioContext",
-            Self::BatteryStatus      => "BatteryStatus",
-            Self::CanvasRendering    => "CanvasRendering",
-            Self::ColorDepthDPR      => "ColorDepthDPR",
-            Self::DeviceMemory       => "DeviceMemory",
-            Self::DoNotTrack         => "DoNotTrack",
-            Self::FontEnumeration    => "FontEnumeration",
-            Self::HardwareConcurrency=> "HardwareConcurrency",
-            Self::Platform           => "Platform",
-            Self::ScreenGeometry     => "ScreenGeometry",
-            Self::TimezoneLocale     => "TimezoneLocale",
-            Self::TouchSupport       => "TouchSupport",
-            Self::UserAgent          => "UserAgent",
-            Self::WebGLParameters    => "WebGLParameters",
-            Self::WebRTCLocalIPs     => "WebRTCLocalIPs",
+            Self::AudioContext => "AudioContext",
+            Self::BatteryStatus => "BatteryStatus",
+            Self::CanvasRendering => "CanvasRendering",
+            Self::ColorDepthDPR => "ColorDepthDPR",
+            Self::DeviceMemory => "DeviceMemory",
+            Self::DoNotTrack => "DoNotTrack",
+            Self::FontEnumeration => "FontEnumeration",
+            Self::HardwareConcurrency => "HardwareConcurrency",
+            Self::Platform => "Platform",
+            Self::ScreenGeometry => "ScreenGeometry",
+            Self::TimezoneLocale => "TimezoneLocale",
+            Self::TouchSupport => "TouchSupport",
+            Self::UserAgent => "UserAgent",
+            Self::WebGLParameters => "WebGLParameters",
+            Self::WebRTCLocalIPs => "WebRTCLocalIPs",
         };
         f.write_str(s)
     }
@@ -358,10 +356,10 @@ pub enum AttestationType {
 impl fmt::Display for AttestationType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            Self::Identity    => "Identity",
+            Self::Identity => "Identity",
             Self::Trustworthy => "Trustworthy",
-            Self::Professional=> "Professional",
-            Self::Character   => "Character",
+            Self::Professional => "Professional",
+            Self::Character => "Character",
         };
         f.write_str(s)
     }
@@ -371,11 +369,11 @@ impl AttestationType {
     /// Parse from string representation.
     pub fn from_str(s: &str) -> Result<Self, ()> {
         match s {
-            "Identity"    => Ok(Self::Identity),
+            "Identity" => Ok(Self::Identity),
             "Trustworthy" => Ok(Self::Trustworthy),
-            "Professional"=> Ok(Self::Professional),
-            "Character"   => Ok(Self::Character),
-            _             => Err(()),
+            "Professional" => Ok(Self::Professional),
+            "Character" => Ok(Self::Character),
+            _ => Err(()),
         }
     }
 }
@@ -432,32 +430,44 @@ pub struct IdentitySession {
 impl fmt::Display for ClaimType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DisplayName           => f.write_str("DisplayName"),
-            Self::Email                 => f.write_str("Email"),
-            Self::Phone                 => f.write_str("Phone"),
-            Self::GovernmentId          => f.write_str("GovernmentId"),
-            Self::BiometricLiveness     => f.write_str("BiometricLiveness"),
-            Self::ProfessionalCredential { provider } =>
-                write!(f, "ProfessionalCredential:{provider}"),
-            Self::DeviceFingerprint     => f.write_str("DeviceFingerprint"),
-            Self::BehavioralSignature   => f.write_str("BehavioralSignature"),
+            Self::DisplayName => f.write_str("DisplayName"),
+            Self::Email => f.write_str("Email"),
+            Self::Phone => f.write_str("Phone"),
+            Self::GovernmentId => f.write_str("GovernmentId"),
+            Self::BiometricLiveness => f.write_str("BiometricLiveness"),
+            Self::ProfessionalCredential { provider } => {
+                write!(f, "ProfessionalCredential:{provider}")
+            }
+            Self::DeviceFingerprint => f.write_str("DeviceFingerprint"),
+            Self::BehavioralSignature => f.write_str("BehavioralSignature"),
             Self::GeographicConsistency => f.write_str("GeographicConsistency"),
-            Self::SessionContinuity     => f.write_str("SessionContinuity"),
-            Self::PeerAttestation { attester_did } =>
-                write!(f, "PeerAttestation:{}", attester_did.as_str()),
-            Self::DelegationGrant { delegator_did } =>
-                write!(f, "DelegationGrant:{}", delegator_did.as_str()),
-            Self::SybilChallengeResolution { challenge_id } =>
-                write!(f, "SybilChallengeResolution:{challenge_id}"),
-            Self::GovernanceVote { proposal_hash } =>
-                write!(f, "GovernanceVote:{}", hex::encode(proposal_hash.as_bytes())),
-            Self::ProposalAuthored { proposal_hash } =>
-                write!(f, "ProposalAuthored:{}", hex::encode(proposal_hash.as_bytes())),
-            Self::ValidatorService { round_range: (start, end) } =>
-                write!(f, "ValidatorService:{start}:{end}"),
-            Self::KeyRotation { old_key_hash } =>
-                write!(f, "KeyRotation:{}", hex::encode(old_key_hash.as_bytes())),
-            Self::EntropyAttestation    => f.write_str("EntropyAttestation"),
+            Self::SessionContinuity => f.write_str("SessionContinuity"),
+            Self::PeerAttestation { attester_did } => {
+                write!(f, "PeerAttestation:{}", attester_did.as_str())
+            }
+            Self::DelegationGrant { delegator_did } => {
+                write!(f, "DelegationGrant:{}", delegator_did.as_str())
+            }
+            Self::SybilChallengeResolution { challenge_id } => {
+                write!(f, "SybilChallengeResolution:{challenge_id}")
+            }
+            Self::GovernanceVote { proposal_hash } => write!(
+                f,
+                "GovernanceVote:{}",
+                hex::encode(proposal_hash.as_bytes())
+            ),
+            Self::ProposalAuthored { proposal_hash } => write!(
+                f,
+                "ProposalAuthored:{}",
+                hex::encode(proposal_hash.as_bytes())
+            ),
+            Self::ValidatorService {
+                round_range: (start, end),
+            } => write!(f, "ValidatorService:{start}:{end}"),
+            Self::KeyRotation { old_key_hash } => {
+                write!(f, "KeyRotation:{}", hex::encode(old_key_hash.as_bytes()))
+            }
+            Self::EntropyAttestation => f.write_str("EntropyAttestation"),
         }
     }
 }
@@ -465,10 +475,10 @@ impl fmt::Display for ClaimType {
 impl fmt::Display for ClaimStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            Self::Pending    => "Pending",
-            Self::Verified   => "Verified",
-            Self::Expired    => "Expired",
-            Self::Revoked    => "Revoked",
+            Self::Pending => "Pending",
+            Self::Verified => "Verified",
+            Self::Expired => "Expired",
+            Self::Revoked => "Revoked",
             Self::Challenged => "Challenged",
         };
         f.write_str(s)
@@ -477,14 +487,15 @@ impl fmt::Display for ClaimStatus {
 
 impl ClaimStatus {
     /// Parse a `ClaimStatus` from its string representation.
+    #[allow(dead_code)]
     pub fn from_str(s: &str) -> Result<Self, ()> {
         match s {
-            "Pending"    => Ok(Self::Pending),
-            "Verified"   => Ok(Self::Verified),
-            "Expired"    => Ok(Self::Expired),
-            "Revoked"    => Ok(Self::Revoked),
+            "Pending" => Ok(Self::Pending),
+            "Verified" => Ok(Self::Verified),
+            "Expired" => Ok(Self::Expired),
+            "Revoked" => Ok(Self::Revoked),
             "Challenged" => Ok(Self::Challenged),
-            _            => Err(()),
+            _ => Err(()),
         }
     }
 }
@@ -492,11 +503,11 @@ impl ClaimStatus {
 impl fmt::Display for BehavioralSignalType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            Self::KeystrokeDynamics    => "KeystrokeDynamics",
-            Self::MouseDynamics        => "MouseDynamics",
-            Self::TouchDynamics        => "TouchDynamics",
-            Self::ScrollBehavior       => "ScrollBehavior",
-            Self::FormNavigationCadence=> "FormNavigationCadence",
+            Self::KeystrokeDynamics => "KeystrokeDynamics",
+            Self::MouseDynamics => "MouseDynamics",
+            Self::TouchDynamics => "TouchDynamics",
+            Self::ScrollBehavior => "ScrollBehavior",
+            Self::FormNavigationCadence => "FormNavigationCadence",
         };
         f.write_str(s)
     }
@@ -504,14 +515,15 @@ impl fmt::Display for BehavioralSignalType {
 
 impl BehavioralSignalType {
     /// Parse from string representation.
+    #[allow(dead_code)]
     pub fn from_str(s: &str) -> Result<Self, ()> {
         match s {
-            "KeystrokeDynamics"    => Ok(Self::KeystrokeDynamics),
-            "MouseDynamics"        => Ok(Self::MouseDynamics),
-            "TouchDynamics"        => Ok(Self::TouchDynamics),
-            "ScrollBehavior"       => Ok(Self::ScrollBehavior),
-            "FormNavigationCadence"=> Ok(Self::FormNavigationCadence),
-            _                      => Err(()),
+            "KeystrokeDynamics" => Ok(Self::KeystrokeDynamics),
+            "MouseDynamics" => Ok(Self::MouseDynamics),
+            "TouchDynamics" => Ok(Self::TouchDynamics),
+            "ScrollBehavior" => Ok(Self::ScrollBehavior),
+            "FormNavigationCadence" => Ok(Self::FormNavigationCadence),
+            _ => Err(()),
         }
     }
 }
@@ -520,7 +532,7 @@ impl fmt::Display for OtpChannel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
             Self::Email => "Email",
-            Self::Sms   => "Sms",
+            Self::Sms => "Sms",
         };
         f.write_str(s)
     }
@@ -531,8 +543,8 @@ impl OtpChannel {
     pub fn from_str(s: &str) -> Result<Self, ()> {
         match s {
             "Email" => Ok(Self::Email),
-            "Sms"   => Ok(Self::Sms),
-            _       => Err(()),
+            "Sms" => Ok(Self::Sms),
+            _ => Err(()),
         }
     }
 
@@ -544,7 +556,7 @@ impl OtpChannel {
     pub fn ttl_ms(&self) -> u64 {
         match self {
             Self::Email => 300_000,
-            Self::Sms   => 180_000,
+            Self::Sms => 180_000,
         }
     }
 }
@@ -552,9 +564,9 @@ impl OtpChannel {
 impl fmt::Display for OtpState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            Self::Pending   => "Pending",
-            Self::Verified  => "Verified",
-            Self::Expired   => "Expired",
+            Self::Pending => "Pending",
+            Self::Verified => "Verified",
+            Self::Expired => "Expired",
             Self::LockedOut => "LockedOut",
         };
         f.write_str(s)
@@ -563,13 +575,14 @@ impl fmt::Display for OtpState {
 
 impl OtpState {
     /// Parse from string representation.
+    #[allow(dead_code)]
     pub fn from_str(s: &str) -> Result<Self, ()> {
         match s {
-            "Pending"   => Ok(Self::Pending),
-            "Verified"  => Ok(Self::Verified),
-            "Expired"   => Ok(Self::Expired),
+            "Pending" => Ok(Self::Pending),
+            "Verified" => Ok(Self::Verified),
+            "Expired" => Ok(Self::Expired),
             "LockedOut" => Ok(Self::LockedOut),
-            _           => Err(()),
+            _ => Err(()),
         }
     }
 }

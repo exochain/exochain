@@ -7,10 +7,9 @@
 //!
 //! Spec reference: §7.2 (POST /api/v1/0dentity/:did/attest).
 
+use exo_core::types::{Did, Hash256};
 use thiserror::Error;
 use uuid::Uuid;
-
-use exo_core::types::{Did, Hash256};
 
 use super::types::{AttestationType, ClaimStatus, ClaimType, IdentityClaim, PeerAttestation};
 
@@ -50,7 +49,9 @@ pub fn validate_attestation(
     }
 
     // Rule 2: attester must have at least one verified claim
-    let attester_is_verified = attester_claims.iter().any(|c| c.status == ClaimStatus::Verified);
+    let attester_is_verified = attester_claims
+        .iter()
+        .any(|c| c.status == ClaimStatus::Verified);
     if !attester_is_verified {
         return Err(AttestationError::AttesterUnverified);
     }
@@ -133,11 +134,16 @@ pub fn build_target_claim(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use exo_core::types::Signature;
 
-    fn did(s: &str) -> Did { Did::new(s).expect("did") }
-    fn hash(b: &[u8]) -> Hash256 { Hash256::digest(b) }
+    use super::*;
+
+    fn did(s: &str) -> Did {
+        Did::new(s).expect("did")
+    }
+    fn hash(b: &[u8]) -> Hash256 {
+        Hash256::digest(b)
+    }
 
     fn verified_claim(d: &Did) -> IdentityClaim {
         IdentityClaim {
@@ -232,10 +238,20 @@ mod tests {
     fn build_target_claim_is_verified_peer_attestation() {
         let attester = did("did:exo:attester");
         let target = did("did:exo:target");
-        let att = create_attestation(&attester, &target, AttestationType::Trustworthy, None, hash(b"dag"), 500);
+        let att = create_attestation(
+            &attester,
+            &target,
+            AttestationType::Trustworthy,
+            None,
+            hash(b"dag"),
+            500,
+        );
         let claim = build_target_claim(&att, hash(b"dag2"), 600);
         assert_eq!(claim.subject_did.as_str(), target.as_str());
         assert_eq!(claim.status, ClaimStatus::Verified);
-        assert!(matches!(claim.claim_type, ClaimType::PeerAttestation { .. }));
+        assert!(matches!(
+            claim.claim_type,
+            ClaimType::PeerAttestation { .. }
+        ));
     }
 }
