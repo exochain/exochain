@@ -23,11 +23,13 @@ use exo_core::types::Did;
 use exo_dag::store::DagStore;
 use tokio::sync::mpsc;
 
-use crate::network::{NetworkEvent, NetworkHandle};
-use crate::store::SqliteDagStore;
-use crate::wire::{
-    DagSyncRequestMsg, DagSyncResponseMsg, StateSnapshotChunkMsg,
-    StateSnapshotRequestMsg, WireMessage, topics,
+use crate::{
+    network::{NetworkEvent, NetworkHandle},
+    store::SqliteDagStore,
+    wire::{
+        DagSyncRequestMsg, DagSyncResponseMsg, StateSnapshotChunkMsg, StateSnapshotRequestMsg,
+        WireMessage, topics,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -71,7 +73,11 @@ pub enum SyncEvent {
     /// Sync completed — node is caught up.
     Complete { committed_height: u64 },
     /// A sync request was served to a peer.
-    ServedSnapshot { peer: Did, from_height: u64, nodes_sent: usize },
+    ServedSnapshot {
+        peer: Did,
+        from_height: u64,
+        nodes_sent: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -117,10 +123,7 @@ impl SyncEngine {
             st.committed_height_value()
         };
 
-        tracing::info!(
-            local_height,
-            "Requesting state snapshot from network"
-        );
+        tracing::info!(local_height, "Requesting state snapshot from network");
 
         self.syncing = true;
 
@@ -246,11 +249,14 @@ impl SyncEngine {
                 "Sent snapshot chunk"
             );
 
-            let _ = self.event_tx.send(SyncEvent::ServedSnapshot {
-                peer: msg.sender.clone(),
-                from_height: current_from,
-                nodes_sent: nodes_count,
-            }).await;
+            let _ = self
+                .event_tx
+                .send(SyncEvent::ServedSnapshot {
+                    peer: msg.sender.clone(),
+                    from_height: current_from,
+                    nodes_sent: nodes_count,
+                })
+                .await;
 
             if !has_more {
                 break;
@@ -297,11 +303,14 @@ impl SyncEngine {
             self.sync_target_height = msg.to_height;
         }
 
-        let _ = self.event_tx.send(SyncEvent::Progress {
-            from_height: msg.from_height,
-            to_height: msg.to_height,
-            total_nodes: nodes_count,
-        }).await;
+        let _ = self
+            .event_tx
+            .send(SyncEvent::Progress {
+                from_height: msg.from_height,
+                to_height: msg.to_height,
+                total_nodes: nodes_count,
+            })
+            .await;
 
         if !msg.has_more {
             self.syncing = false;
@@ -311,14 +320,12 @@ impl SyncEngine {
                 st.committed_height_value()
             };
 
-            tracing::info!(
-                committed_height,
-                "State sync complete"
-            );
+            tracing::info!(committed_height, "State sync complete");
 
-            let _ = self.event_tx.send(SyncEvent::Complete {
-                committed_height,
-            }).await;
+            let _ = self
+                .event_tx
+                .send(SyncEvent::Complete { committed_height })
+                .await;
         }
     }
 
@@ -381,7 +388,11 @@ impl SyncEngine {
             has_more,
         });
 
-        if let Err(e) = self.net_handle.publish(topics::PEER_EXCHANGE, response).await {
+        if let Err(e) = self
+            .net_handle
+            .publish(topics::PEER_EXCHANGE, response)
+            .await
+        {
             tracing::warn!(err = %e, "Failed to send sync response");
             return;
         }
@@ -436,10 +447,7 @@ impl SyncEngine {
 /// Run the sync engine as a background task.
 ///
 /// Listens for sync-related network events and processes them.
-pub async fn run_sync_engine(
-    mut engine: SyncEngine,
-    mut net_events: mpsc::Receiver<NetworkEvent>,
-) {
+pub async fn run_sync_engine(mut engine: SyncEngine, mut net_events: mpsc::Receiver<NetworkEvent>) {
     loop {
         match net_events.recv().await {
             Some(NetworkEvent::MessageReceived { message, .. }) => {
@@ -470,10 +478,11 @@ pub async fn run_sync_engine(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
     use exo_core::types::{Did, Signature};
-    use exo_dag::dag::{append, Dag, HybridClock};
+    use exo_dag::dag::{Dag, HybridClock, append};
     use tokio::sync::mpsc;
+
+    use super::*;
 
     fn make_sign_fn() -> Box<dyn Fn(&[u8]) -> Signature> {
         Box::new(|data: &[u8]| {
@@ -489,7 +498,9 @@ mod tests {
     }
 
     /// Build a store with `n` committed DAG nodes and return it.
-    fn build_store_with_committed_nodes(n: usize) -> (SqliteDagStore, Vec<exo_core::types::Hash256>) {
+    fn build_store_with_committed_nodes(
+        n: usize,
+    ) -> (SqliteDagStore, Vec<exo_core::types::Hash256>) {
         let dir = tempfile::tempdir().unwrap();
         let mut store = SqliteDagStore::open(dir.path()).unwrap();
         let sign_fn = make_sign_fn();
@@ -597,7 +608,11 @@ mod tests {
         }
 
         // Should have 2 chunks (5 nodes each, total 10).
-        assert_eq!(published.len(), 2, "Should send 2 chunks for 10 nodes with chunk_size=5");
+        assert_eq!(
+            published.len(),
+            2,
+            "Should send 2 chunks for 10 nodes with chunk_size=5"
+        );
 
         // First chunk: heights 1-5
         match &published[0] {
@@ -698,7 +713,9 @@ mod tests {
         assert!(events.len() >= 2); // Progress + Complete
 
         // Should have a Complete event.
-        let complete = events.iter().any(|e| matches!(e, SyncEvent::Complete { .. }));
+        let complete = events
+            .iter()
+            .any(|e| matches!(e, SyncEvent::Complete { .. }));
         assert!(complete, "Should emit SyncEvent::Complete");
     }
 
@@ -733,7 +750,10 @@ mod tests {
         engine.handle_snapshot_request(request).await;
 
         // Should not publish anything since we're behind.
-        assert!(cmd_rx.try_recv().is_err(), "Should not serve snapshot when behind");
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "Should not serve snapshot when behind"
+        );
     }
 
     #[tokio::test]
@@ -808,15 +828,13 @@ mod tests {
         // Should respond with some nodes.
         let cmd = cmd_rx.try_recv().unwrap();
         match cmd {
-            crate::network::NetworkCommand::Publish { message, .. } => {
-                match message {
-                    WireMessage::DagSyncResponse(resp) => {
-                        assert!(!resp.nodes.is_empty(), "Should send some nodes");
-                        assert!(resp.nodes.len() <= 10);
-                    }
-                    _ => panic!("Expected DagSyncResponse"),
+            crate::network::NetworkCommand::Publish { message, .. } => match message {
+                WireMessage::DagSyncResponse(resp) => {
+                    assert!(!resp.nodes.is_empty(), "Should send some nodes");
+                    assert!(resp.nodes.len() <= 10);
                 }
-            }
+                _ => panic!("Expected DagSyncResponse"),
+            },
             _ => panic!("Expected Publish command"),
         }
     }

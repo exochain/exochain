@@ -18,7 +18,10 @@
 //!
 //! Subscriptions use `tokio::sync::broadcast` for real-time event delivery.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, RwLock},
+};
 
 use async_graphql::{
     Context, ID, InputObject, Object, Result as GqlResult, Schema, SimpleObject, Subscription,
@@ -36,7 +39,6 @@ use exo_consent::{
 };
 use exo_core::{Did, Hash256, Timestamp};
 use exo_identity::did::DidRegistry;
-use std::sync::RwLock;
 use tokio::sync::{Mutex, broadcast};
 use uuid::Uuid;
 

@@ -6,12 +6,7 @@
 //!
 //! Spec reference: §8 (Dashboard).
 
-use axum::{
-    Router,
-    extract::Path,
-    response::Html,
-    routing::get,
-};
+use axum::{Router, extract::Path, response::Html, routing::get};
 
 /// Route: `GET /0dentity/dashboard/:did`
 pub async fn zerodentity_dashboard(Path(did): Path<String>) -> Html<String> {
@@ -624,8 +619,14 @@ mod tests {
     async fn test_dashboard_contains_css_variables() {
         let response = zerodentity_dashboard(Path("did:exo:test123".to_string())).await;
         let html = response.0;
-        assert!(html.contains("--primary"), "dashboard must contain --primary CSS variable");
-        assert!(html.contains("--bg"), "dashboard must contain --bg CSS variable");
+        assert!(
+            html.contains("--primary"),
+            "dashboard must contain --primary CSS variable"
+        );
+        assert!(
+            html.contains("--bg"),
+            "dashboard must contain --bg CSS variable"
+        );
     }
 
     #[tokio::test]

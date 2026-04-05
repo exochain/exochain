@@ -25,15 +25,16 @@
 
 use std::sync::{Arc, Mutex};
 
+use exo_core::types::Did;
 use serde::{Deserialize, Serialize};
 
-use exo_core::types::Did;
-
-use crate::challenges::SharedChallengeStore;
-use crate::reactor::SharedReactorState;
-use crate::sentinels::{AlertReceiver, SentinelAlert, SharedSentinelState, now_ms};
-use crate::store::SqliteDagStore;
-use crate::zerodentity::store::SharedZerodentityStore;
+use crate::{
+    challenges::SharedChallengeStore,
+    reactor::SharedReactorState,
+    sentinels::{AlertReceiver, SentinelAlert, SharedSentinelState, now_ms},
+    store::SqliteDagStore,
+    zerodentity::store::SharedZerodentityStore,
+};
 
 // ---------------------------------------------------------------------------
 // Telegram API types (minimal subset)
@@ -252,6 +253,7 @@ fn fmt_bp(bp: u32) -> String {
 ///
 /// Shows the 8-axis polar table, composite, symmetry and claim count.
 /// Spec §10.5.
+#[allow(clippy::expect_used, clippy::as_conversions)]
 pub fn build_zerodentity_score_message(
     zerodentity: &SharedZerodentityStore,
     did_str: &str,
@@ -262,7 +264,7 @@ pub fn build_zerodentity_score_message(
             return (
                 format!("\u{274c} Invalid DID: <code>{did_str}</code>"),
                 vec![],
-            )
+            );
         }
     };
 
@@ -276,7 +278,7 @@ pub fn build_zerodentity_score_message(
                      No score data for <code>{did_str}</code>"
                 ),
                 vec![],
-            )
+            );
         }
     };
     drop(zstore);
@@ -334,6 +336,7 @@ const ALERT_OTP_WINDOW_MS: u64 = 86_400_000;
 /// - OTP lockout in the last 24 h
 ///
 /// Spec §10.5.
+#[allow(clippy::expect_used, clippy::as_conversions)]
 pub fn build_zerodentity_alerts_message(
     zerodentity: &SharedZerodentityStore,
 ) -> (String, Vec<Vec<(&'static str, &'static str)>>) {
@@ -345,9 +348,7 @@ pub fn build_zerodentity_alerts_message(
 
     for did in &dids {
         // 1. Score regression.
-        if let (Some(curr), Some(prev)) =
-            (zstore.get_score(did), zstore.get_previous_score(did))
-        {
+        if let (Some(curr), Some(prev)) = (zstore.get_score(did), zstore.get_previous_score(did)) {
             if prev.composite > curr.composite
                 && prev.composite - curr.composite > ALERT_COMPOSITE_DROP_BP
             {
@@ -411,6 +412,7 @@ pub fn build_zerodentity_alerts_message(
 }
 
 /// Build the /status response.
+#[allow(clippy::expect_used, clippy::as_conversions)]
 pub fn build_status_message(
     reactor: &SharedReactorState,
     store: &Arc<Mutex<SqliteDagStore>>,
@@ -430,7 +432,11 @@ pub fn build_status_message(
         st.committed_height_value()
     };
 
-    let role = if is_validator { "Validator" } else { "Observer" };
+    let role = if is_validator {
+        "Validator"
+    } else {
+        "Observer"
+    };
 
     let text = format!(
         "\u{1f4ca} <b>EXOCHAIN Node Status</b>\n\
@@ -455,12 +461,15 @@ pub fn build_status_message(
 }
 
 /// Build the /sentinels response.
+#[allow(clippy::expect_used)]
 pub fn build_sentinels_message(
     sentinel_state: &SharedSentinelState,
 ) -> (String, Vec<Vec<(&'static str, &'static str)>>) {
     let statuses = sentinel_state.lock().expect("sentinel lock");
 
-    let mut text = String::from("\u{1f6e1}\u{fe0f} <b>Sentinel Status</b>\n\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n");
+    let mut text = String::from(
+        "\u{1f6e1}\u{fe0f} <b>Sentinel Status</b>\n\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n",
+    );
 
     if statuses.is_empty() {
         text.push_str("No sentinel data yet — checks run every 30s.");
@@ -480,13 +489,16 @@ pub fn build_sentinels_message(
 }
 
 /// Build the /challenges response.
+#[allow(clippy::expect_used)]
 pub fn build_challenges_message(
     challenge_store: &SharedChallengeStore,
 ) -> (String, Vec<Vec<(&'static str, &'static str)>>) {
     let st = challenge_store.lock().expect("challenge lock");
     let holds = st.list();
 
-    let mut text = String::from("\u{26a0}\u{fe0f} <b>Active Challenges</b>\n\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n");
+    let mut text = String::from(
+        "\u{26a0}\u{fe0f} <b>Active Challenges</b>\n\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n",
+    );
 
     if holds.is_empty() {
         text.push_str("No active challenges.");
@@ -597,7 +609,7 @@ async fn handle_command(
     sentinel_state: &SharedSentinelState,
     zerodentity: &SharedZerodentityStore,
 ) {
-    let mut parts = text.trim().split_whitespace();
+    let mut parts = text.split_whitespace();
     let cmd = parts.next().unwrap_or("");
     match cmd {
         "/status" | "/start" => {
@@ -702,10 +714,12 @@ mod tests {
     use exo_core::types::{Did, Signature};
 
     use super::*;
-    use crate::challenges::ChallengeStore;
-    use crate::reactor::{ReactorConfig, create_reactor_state};
-    use crate::sentinels::{SentinelCheck, SentinelStatus};
-    use crate::store::SqliteDagStore;
+    use crate::{
+        challenges::ChallengeStore,
+        reactor::{ReactorConfig, create_reactor_state},
+        sentinels::{SentinelCheck, SentinelStatus},
+        store::SqliteDagStore,
+    };
 
     fn make_sign_fn() -> Arc<dyn Fn(&[u8]) -> Signature + Send + Sync> {
         Arc::new(|data: &[u8]| {
@@ -751,14 +765,12 @@ mod tests {
 
     #[test]
     fn sentinels_message_shows_statuses() {
-        let state: SharedSentinelState = Arc::new(Mutex::new(vec![
-            SentinelStatus {
-                check: SentinelCheck::Liveness,
-                healthy: true,
-                message: "ok".into(),
-                last_run_ms: 0,
-            },
-        ]));
+        let state: SharedSentinelState = Arc::new(Mutex::new(vec![SentinelStatus {
+            check: SentinelCheck::Liveness,
+            healthy: true,
+            message: "ok".into(),
+            last_run_ms: 0,
+        }]));
         let (text, _) = build_sentinels_message(&state);
         assert!(text.contains("Liveness"));
         assert!(text.contains("ok"));
@@ -766,8 +778,7 @@ mod tests {
 
     #[test]
     fn challenges_message_empty() {
-        let store: SharedChallengeStore =
-            Arc::new(Mutex::new(ChallengeStore::new()));
+        let store: SharedChallengeStore = Arc::new(Mutex::new(ChallengeStore::new()));
         let (text, _) = build_challenges_message(&store);
         assert!(text.contains("No active challenges"));
     }
@@ -776,8 +787,7 @@ mod tests {
     fn challenges_message_with_hold() {
         use exo_escalation::challenge::{self, SybilChallengeGround};
 
-        let store: SharedChallengeStore =
-            Arc::new(Mutex::new(ChallengeStore::new()));
+        let store: SharedChallengeStore = Arc::new(Mutex::new(ChallengeStore::new()));
         {
             let mut st = store.lock().unwrap();
             let hold = challenge::admit_challenge(

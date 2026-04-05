@@ -27,8 +27,7 @@ use axum::{
 };
 use serde::Serialize;
 
-use crate::reactor::SharedReactorState;
-use crate::store::SqliteDagStore;
+use crate::{reactor::SharedReactorState, store::SqliteDagStore};
 
 // ---------------------------------------------------------------------------
 // Shared state
@@ -230,7 +229,11 @@ async fn handle_standing(
 
     Ok(Json(StandingResponse {
         did,
-        status: if known { "active".into() } else { "unknown".into() },
+        status: if known {
+            "active".into()
+        } else {
+            "unknown".into()
+        },
         revoked: false,
         sanctioned: false,
         sybil_challenge_hold: false,
@@ -246,7 +249,11 @@ fn build_identity_profile(did: &str, known: bool) -> IdentityProfile {
     IdentityProfile {
         did: did.to_string(),
         verification_capable: known,
-        key_state: if known { "active".into() } else { "unknown".into() },
+        key_state: if known {
+            "active".into()
+        } else {
+            "unknown".into()
+        },
         known_since_seconds: None,
     }
 }
@@ -273,7 +280,11 @@ fn build_consent_profile() -> ConsentProfile {
 
 fn build_standing_profile(known: bool) -> StandingProfile {
     StandingProfile {
-        status: if known { "active".into() } else { "unknown".into() },
+        status: if known {
+            "active".into()
+        } else {
+            "unknown".into()
+        },
         revoked: false,
         sanctioned: false,
         sybil_challenge_hold: false,
@@ -302,16 +313,20 @@ pub fn passport_router(state: Arc<PassportApiState>) -> Router {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use std::collections::BTreeSet;
-    use std::sync::{Arc, Mutex};
+    use std::{
+        collections::BTreeSet,
+        sync::{Arc, Mutex},
+    };
 
     use axum::{body::Body, http::Request};
     use exo_core::types::{Did, Signature};
     use tower::ServiceExt;
 
     use super::*;
-    use crate::reactor::{ReactorConfig, create_reactor_state};
-    use crate::store::SqliteDagStore;
+    use crate::{
+        reactor::{ReactorConfig, create_reactor_state},
+        store::SqliteDagStore,
+    };
 
     fn make_sign_fn() -> Arc<dyn Fn(&[u8]) -> Signature + Send + Sync> {
         Arc::new(|data: &[u8]| {

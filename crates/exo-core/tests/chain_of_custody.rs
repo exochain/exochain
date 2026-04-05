@@ -16,7 +16,9 @@ use exo_core::{
     events::{EventType, create_signed_event, verify_event},
     hash::{canonical_hash, hash_structured, merkle_proof, merkle_root, verify_merkle_proof},
     hlc::HybridClock,
-    types::{CorrelationId, DeterministicMap, Did, Hash256, Signature, SignerType, Timestamp, Version},
+    types::{
+        CorrelationId, DeterministicMap, Did, Hash256, Signature, SignerType, Timestamp, Version,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -430,7 +432,10 @@ fn governance_metadata_hash_determinism() {
 
     let h1 = hash_structured(&map1).expect("ok");
     let h2 = hash_structured(&map2).expect("ok");
-    assert_eq!(h1, h2, "deterministic map hash must be insertion-order independent");
+    assert_eq!(
+        h1, h2,
+        "deterministic map hash must be insertion-order independent"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -461,7 +466,10 @@ fn signature_variant_coverage() {
     assert!(!verify_hybrid(msg, &Signature::Empty, &pk, &pq_pk));
 
     // Cross-variant rejection
-    assert!(!verify(msg, &pq_sig, &pk), "PQ sig must be rejected by Ed25519 verify");
+    assert!(
+        !verify(msg, &pq_sig, &pk),
+        "PQ sig must be rejected by Ed25519 verify"
+    );
     assert!(
         !verify_pq(msg, &ed_sig, &pq_pk),
         "Ed25519 sig must be rejected by PQ verify"
@@ -582,7 +590,10 @@ fn timestamp_ordering_and_fields() {
     let t3 = Timestamp::new(1001, 0);
 
     assert!(t1 < t2, "same physical, higher logical should be greater");
-    assert!(t2 < t3, "higher physical should be greater regardless of logical");
+    assert!(
+        t2 < t3,
+        "higher physical should be greater regardless of logical"
+    );
 
     // Access fields
     assert_eq!(t1.physical_ms, 1000);
@@ -660,12 +671,8 @@ fn canonical_hash_consistency() {
 
 #[test]
 fn independent_merkle_trees() {
-    let leaves_a: Vec<Hash256> = (0..4u8)
-        .map(|i| canonical_hash(&[i]))
-        .collect();
-    let leaves_b: Vec<Hash256> = (10..14u8)
-        .map(|i| canonical_hash(&[i]))
-        .collect();
+    let leaves_a: Vec<Hash256> = (0..4u8).map(|i| canonical_hash(&[i])).collect();
+    let leaves_b: Vec<Hash256> = (10..14u8).map(|i| canonical_hash(&[i])).collect();
 
     let root_a = merkle_root(&leaves_a);
     let root_b = merkle_root(&leaves_b);

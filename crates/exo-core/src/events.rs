@@ -143,13 +143,9 @@ pub fn create_signed_event(
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventPayload {
     /// Genesis event for a new network.
-    Genesis {
-        network_id: String,
-    },
+    Genesis { network_id: String },
     /// A new DID document was created.
-    IdentityCreated {
-        did_doc_cid: String,
-    },
+    IdentityCreated { did_doc_cid: String },
     // --- decision.forum governance events ---
     /// A new decision record was created.
     DecisionCreated {

@@ -200,15 +200,13 @@ pub struct StateSnapshotChunkMsg {
 /// Encode a wire message to CBOR bytes (deterministic).
 pub fn encode(msg: &WireMessage) -> Result<Vec<u8>, String> {
     let mut buf = Vec::new();
-    ciborium::into_writer(msg, &mut buf)
-        .map_err(|e| format!("CBOR encode: {e}"))?;
+    ciborium::into_writer(msg, &mut buf).map_err(|e| format!("CBOR encode: {e}"))?;
     Ok(buf)
 }
 
 /// Decode a wire message from CBOR bytes.
 pub fn decode(bytes: &[u8]) -> Result<WireMessage, String> {
-    ciborium::from_reader(bytes)
-        .map_err(|e| format!("CBOR decode: {e}"))
+    ciborium::from_reader(bytes).map_err(|e| format!("CBOR decode: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -232,8 +230,9 @@ pub mod topics {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
     use exo_core::types::{Did, Hash256, Signature, Timestamp};
+
+    use super::*;
 
     fn test_did() -> Did {
         Did::new("did:exo:test-node").unwrap()
@@ -293,7 +292,10 @@ mod tests {
         match decoded {
             WireMessage::GovernanceEvent(ge) => {
                 assert_eq!(ge.payload, b"test payload");
-                assert!(matches!(ge.event_type, GovernanceEventType::DecisionCreated));
+                assert!(matches!(
+                    ge.event_type,
+                    GovernanceEventType::DecisionCreated
+                ));
             }
             _ => panic!("wrong variant"),
         }

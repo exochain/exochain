@@ -167,8 +167,7 @@ mod tests {
         let creator = Did::new("did:exo:test").unwrap();
         let sign_fn = make_sign_fn();
 
-        let genesis =
-            append(&mut dag, &[], b"genesis", &creator, &*sign_fn, &mut clock).unwrap();
+        let genesis = append(&mut dag, &[], b"genesis", &creator, &*sign_fn, &mut clock).unwrap();
         let child = append(
             &mut dag,
             &[genesis.hash],
@@ -200,10 +199,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!(
-                        "/api/v1/provenance/{}",
-                        hex::encode(child_hash.0)
-                    ))
+                    .uri(&format!("/api/v1/provenance/{}", hex::encode(child_hash.0)))
                     .body(Body::empty())
                     .unwrap(),
             )

@@ -6,8 +6,10 @@
 use exo_core::{Did, Signature, Timestamp};
 use serde::{Deserialize, Serialize};
 
-use crate::challenge::{Challenge, ChallengeStatus};
-use crate::errors::GovernanceError;
+use crate::{
+    challenge::{Challenge, ChallengeStatus},
+    errors::GovernanceError,
+};
 
 /// Roles that can participate in governance actions.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -354,7 +356,7 @@ mod tests {
     // ── WO-004: challenge-blocked quorum ──────────────────────────────────────
 
     use crate::challenge::{
-        adjudicate, file_challenge, ChallengeGround, ChallengeStatus, ChallengeVerdict,
+        ChallengeGround, ChallengeStatus, ChallengeVerdict, adjudicate, file_challenge,
     };
 
     fn target() -> [u8; 32] {

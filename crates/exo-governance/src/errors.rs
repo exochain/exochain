@@ -1,8 +1,9 @@
 //! Governance error types (canonical, TNC-aware).
 
-use crate::types::{DecisionClass, SemVer};
 use exo_core::{Did, Hash256};
 use thiserror::Error;
+
+use crate::types::{DecisionClass, SemVer};
 
 #[derive(Error, Debug)]
 pub enum GovernanceError {

@@ -194,7 +194,10 @@ pub fn receipt_dashboard_router() -> Router {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use axum::{body::Body, http::Request, http::StatusCode};
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
     use tower::ServiceExt;
 
     use super::*;

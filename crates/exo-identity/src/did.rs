@@ -226,12 +226,11 @@ impl DidRegistry {
 
 #[cfg(test)]
 mod tests {
+    // bs58 is available as a dependency of this crate
+    use bs58;
     use exo_core::crypto::{generate_keypair, sign};
 
     use super::*;
-
-    // bs58 is available as a dependency of this crate
-    use bs58;
 
     fn make_did(label: &str) -> Did {
         Did::new(&format!("did:exo:{label}")).expect("valid did")
@@ -454,7 +453,11 @@ mod tests {
     // HybridVerificationMethod tests
     // -----------------------------------------------------------------------
 
-    fn make_hybrid_method(did: &Did, pk: PublicKey, pq_pk: PqPublicKey) -> HybridVerificationMethod {
+    fn make_hybrid_method(
+        did: &Did,
+        pk: PublicKey,
+        pq_pk: PqPublicKey,
+    ) -> HybridVerificationMethod {
         let classical_mb = format!("z{}", bs58::encode(pk.as_bytes()).into_string());
         let pq_mb = format!("z{}", bs58::encode(pq_pk.as_bytes()).into_string());
         HybridVerificationMethod {

@@ -15,17 +15,20 @@
 //! | StoreConsistency | Committed height matches certificate count | 60s |
 //! | ScoreIntegrity | 0dentity scores are deterministically reproducible | 60s |
 
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use axum::{Json, Router, extract::State, routing::get};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use crate::reactor::SharedReactorState;
-use crate::store::SqliteDagStore;
-use crate::zerodentity::store::SharedZerodentityStore;
-use crate::zerodentity::types::ZerodentityScore;
+use crate::{
+    reactor::SharedReactorState,
+    store::SqliteDagStore,
+    zerodentity::{store::SharedZerodentityStore, types::ZerodentityScore},
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -110,10 +113,7 @@ pub(crate) fn now_ms() -> u64 {
 // ---------------------------------------------------------------------------
 
 /// Check consensus liveness — round should be advancing.
-fn check_liveness(
-    reactor: &SharedReactorState,
-    prev_round: &mut u64,
-) -> SentinelStatus {
+fn check_liveness(reactor: &SharedReactorState, prev_round: &mut u64) -> SentinelStatus {
     let current_round = {
         let s = reactor.lock().expect("reactor state lock");
         s.consensus.current_round
@@ -123,9 +123,7 @@ fn check_liveness(
     let message = if healthy {
         format!("Consensus round {current_round} — advancing normally")
     } else {
-        format!(
-            "Consensus round {current_round} < previous {prev_round} — possible regression"
-        )
+        format!("Consensus round {current_round} < previous {prev_round} — possible regression")
     };
     *prev_round = current_round;
 
@@ -148,9 +146,7 @@ fn check_quorum_health(reactor: &SharedReactorState) -> SentinelStatus {
     let message = if healthy {
         format!("{validator_count} validators — quorum healthy")
     } else {
-        format!(
-            "{validator_count} validators — BELOW BFT MINIMUM (need >= 4)"
-        )
+        format!("{validator_count} validators — BELOW BFT MINIMUM (need >= 4)")
     };
 
     SentinelStatus {
@@ -183,6 +179,7 @@ fn check_receipt_integrity(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus
 /// verify they match the stored values within a 10 bp tolerance.
 ///
 /// Spec §10.4.
+#[allow(clippy::expect_used, clippy::as_conversions)]
 fn check_score_integrity(zerodentity: &SharedZerodentityStore) -> SentinelStatus {
     let zstore = zerodentity.lock().expect("zerodentity store lock");
 
@@ -206,7 +203,7 @@ fn check_score_integrity(zerodentity: &SharedZerodentityStore) -> SentinelStatus
                 healthy: true,
                 message: "No scored DIDs yet — integrity check skipped".into(),
                 last_run_ms: now_ms(),
-            }
+            };
         }
     };
 
@@ -218,7 +215,7 @@ fn check_score_integrity(zerodentity: &SharedZerodentityStore) -> SentinelStatus
                 healthy: true,
                 message: "Score vanished between sample and read — skipping".into(),
                 last_run_ms: now_ms(),
-            }
+            };
         }
     };
 
@@ -303,6 +300,7 @@ fn check_store_consistency(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus
 ///
 /// Checks run every `interval` and update `sentinel_state`.  Unhealthy
 /// results are forwarded to `alert_tx` for the Telegram adjutant.
+#[allow(clippy::expect_used)]
 pub async fn run_sentinel_loop(
     reactor: SharedReactorState,
     store: Arc<Mutex<SqliteDagStore>>,
@@ -381,13 +379,18 @@ pub fn sentinel_router(state: SharedSentinelState) -> Router {
 mod tests {
     use std::collections::BTreeSet;
 
-    use axum::{body::Body, http::Request, http::StatusCode};
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
     use exo_core::types::{Did, Signature};
     use tower::ServiceExt;
 
     use super::*;
-    use crate::reactor::{ReactorConfig, create_reactor_state};
-    use crate::store::SqliteDagStore;
+    use crate::{
+        reactor::{ReactorConfig, create_reactor_state},
+        store::SqliteDagStore,
+    };
 
     fn make_sign_fn() -> Arc<dyn Fn(&[u8]) -> Signature + Send + Sync> {
         Arc::new(|data: &[u8]| {

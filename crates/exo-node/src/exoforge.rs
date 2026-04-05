@@ -18,11 +18,13 @@
 
 use std::sync::{Arc, Mutex};
 
-use axum::extract::{Path, State};
-use axum::http::StatusCode;
-use axum::response::Html;
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    http::StatusCode,
+    response::Html,
+    routing::{get, post},
+};
 use serde::{Deserialize, Serialize};
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -168,35 +170,85 @@ impl ForgeState {
 
     pub fn stats(&self) -> ForgeStats {
         let total = self.tasks.len() as u32;
-        let queued = self.tasks.iter().filter(|t| t.status == TaskStatus::Queued).count() as u32;
-        let assigned = self.tasks.iter().filter(|t| t.status == TaskStatus::Assigned).count() as u32;
-        let in_progress = self.tasks.iter().filter(|t| t.status == TaskStatus::InProgress).count() as u32;
-        let review = self.tasks.iter().filter(|t| t.status == TaskStatus::Review).count() as u32;
-        let complete = self.tasks.iter().filter(|t| t.status == TaskStatus::Complete).count() as u32;
-        let blocked = self.tasks.iter().filter(|t| t.status == TaskStatus::Blocked).count() as u32;
-        let escalated = self.tasks.iter().filter(|t| t.status == TaskStatus::Escalated).count() as u32;
-        let percent_complete = if total > 0 { (complete as f64 / total as f64) * 100.0 } else { 0.0 };
+        let queued = self
+            .tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Queued)
+            .count() as u32;
+        let assigned = self
+            .tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Assigned)
+            .count() as u32;
+        let in_progress = self
+            .tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::InProgress)
+            .count() as u32;
+        let review = self
+            .tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Review)
+            .count() as u32;
+        let complete = self
+            .tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Complete)
+            .count() as u32;
+        let blocked = self
+            .tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Blocked)
+            .count() as u32;
+        let escalated = self
+            .tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Escalated)
+            .count() as u32;
+        let percent_complete = if total > 0 {
+            (complete as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
 
         // Per-phase stats
-        let mut phase_map: std::collections::BTreeMap<u32, (String, u32, u32)> = std::collections::BTreeMap::new();
+        let mut phase_map: std::collections::BTreeMap<u32, (String, u32, u32)> =
+            std::collections::BTreeMap::new();
         for t in &self.tasks {
-            let entry = phase_map.entry(t.phase).or_insert_with(|| (t.phase_name.clone(), 0, 0));
+            let entry = phase_map
+                .entry(t.phase)
+                .or_insert_with(|| (t.phase_name.clone(), 0, 0));
             entry.1 += 1;
-            if t.status == TaskStatus::Complete { entry.2 += 1; }
+            if t.status == TaskStatus::Complete {
+                entry.2 += 1;
+            }
         }
-        let phases: Vec<PhaseStats> = phase_map.into_iter().map(|(phase, (name, tot, comp))| {
-            PhaseStats {
+        let phases: Vec<PhaseStats> = phase_map
+            .into_iter()
+            .map(|(phase, (name, tot, comp))| PhaseStats {
                 phase,
                 name,
                 total: tot,
                 complete: comp,
-                percent: if tot > 0 { (comp as f64 / tot as f64) * 100.0 } else { 0.0 },
-            }
-        }).collect();
+                percent: if tot > 0 {
+                    (comp as f64 / tot as f64) * 100.0
+                } else {
+                    0.0
+                },
+            })
+            .collect();
 
         ForgeStats {
-            total, queued, assigned, in_progress, review, complete, blocked, escalated,
-            percent_complete, phases,
+            total,
+            queued,
+            assigned,
+            in_progress,
+            review,
+            complete,
+            blocked,
+            escalated,
+            percent_complete,
+            phases,
         }
     }
 }
@@ -227,205 +279,483 @@ fn build_zerodentity_tasks() -> Vec<ForgeTask> {
     }
 
     // Phase 1: Foundation Types (§2)
-    task!(1, "Foundation Types", "IdentityClaim + ClaimType + ClaimStatus",
+    task!(
+        1,
+        "Foundation Types",
+        "IdentityClaim + ClaimType + ClaimStatus",
         "Create core identity claim types with 18 ClaimType variants and ClaimStatus enum",
-        "§2.2", None);
-    task!(1, "Foundation Types", "ZerodentityScore + PolarAxes",
+        "§2.2",
+        None
+    );
+    task!(
+        1,
+        "Foundation Types",
+        "ZerodentityScore + PolarAxes",
         "Create the 8-axis polar decomposition score struct with composite and symmetry fields",
-        "§2.2", None);
-    task!(1, "Foundation Types", "DeviceFingerprint + FingerprintSignal",
+        "§2.2",
+        None
+    );
+    task!(
+        1,
+        "Foundation Types",
+        "DeviceFingerprint + FingerprintSignal",
         "Create device fingerprint composite type with 15 FingerprintSignal variants",
-        "§2.2", None);
-    task!(1, "Foundation Types", "BehavioralSample + BehavioralSignalType",
+        "§2.2",
+        None
+    );
+    task!(
+        1,
+        "Foundation Types",
+        "BehavioralSample + BehavioralSignalType",
         "Create behavioral biometric sample types with 5 signal type variants",
-        "§2.2", None);
-    task!(1, "Foundation Types", "OtpChallenge + OtpChannel + OtpState",
+        "§2.2",
+        None
+    );
+    task!(
+        1,
+        "Foundation Types",
+        "OtpChallenge + OtpChannel + OtpState",
         "Create OTP verification state machine types",
-        "§2.2", None);
+        "§2.2",
+        None
+    );
 
     // Phase 2: Persistence (§9)
-    task!(2, "Persistence Layer", "SQLite schema + migrations",
+    task!(
+        2,
+        "Persistence Layer",
+        "SQLite schema + migrations",
         "Create 7 new tables: identity_claims, device_fingerprints, behavioral_samples, score_snapshots, otp_challenges, peer_attestations, identity_sessions",
-        "§9.1", Some(1));
-    task!(2, "Persistence Layer", "CRUD operations for all tables",
+        "§9.1",
+        Some(1)
+    );
+    task!(
+        2,
+        "Persistence Layer",
+        "CRUD operations for all tables",
         "Implement insert/query/update/delete for each 0dentity table on SqliteDagStore",
-        "§9.1", Some(1));
+        "§9.1",
+        Some(1)
+    );
 
     // Phase 3: Scoring Engine (§5)
-    task!(3, "Scoring Engine", "score_communication()",
+    task!(
+        3,
+        "Scoring Engine",
+        "score_communication()",
         "Email=35, Phone=37, both-bonus=15, extra channels capped at 13. Returns 0-100",
-        "§5.2", Some(1));
-    task!(3, "Scoring Engine", "score_credential_depth()",
+        "§5.2",
+        Some(1)
+    );
+    task!(
+        3,
+        "Scoring Engine",
+        "score_credential_depth()",
         "DisplayName=5, GovID=35, BiometricLiveness=30, ProfessionalCred=10 each (cap 30)",
-        "§5.2", Some(1));
-    task!(3, "Scoring Engine", "score_device_trust()",
+        "§5.2",
+        Some(1)
+    );
+    task!(
+        3,
+        "Scoring Engine",
+        "score_device_trust()",
         "Base=20, signal coverage (25 max), consistency score (40 max), multi-session bonus (15)",
-        "§5.2", Some(1));
-    task!(3, "Scoring Engine", "score_behavioral()",
+        "§5.2",
+        Some(1)
+    );
+    task!(
+        3,
+        "Scoring Engine",
+        "score_behavioral()",
         "Base=10, signal diversity (18 max), baseline similarity (40 max), volume logarithmic (16)",
-        "§5.2", Some(1));
-    task!(3, "Scoring Engine", "score_network_reputation()",
+        "§5.2",
+        Some(1)
+    );
+    task!(
+        3,
+        "Scoring Engine",
+        "score_network_reputation()",
         "Attestations=5 each (cap 40), delegations=8 each (cap 24), challenges=12 each (cap 36)",
-        "§5.2", Some(1));
-    task!(3, "Scoring Engine", "score_temporal_stability()",
+        "§5.2",
+        Some(1)
+    );
+    task!(
+        3,
+        "Scoring Engine",
+        "score_temporal_stability()",
         "Age logarithmic (cap 35), verification freshness ratio (30), renewals (20), sessions (15)",
-        "§5.2", Some(1));
-    task!(3, "Scoring Engine", "score_cryptographic_strength()",
+        "§5.2",
+        Some(1)
+    );
+    task!(
+        3,
+        "Scoring Engine",
+        "score_cryptographic_strength()",
         "Base=15, Ed25519=25/Hybrid=40/PQ=35, rotations=8 each (cap 24), entropy=10, stale key penalty",
-        "§5.2", Some(1));
-    task!(3, "Scoring Engine", "score_constitutional_standing()",
+        "§5.2",
+        Some(1)
+    );
+    task!(
+        3,
+        "Scoring Engine",
+        "score_constitutional_standing()",
         "Base=10, votes=4 each (cap 20), proposals=7 each (cap 21), validator=5 each (cap 25), challenges=8 each (cap 24)",
-        "§5.2", Some(1));
-    task!(3, "Scoring Engine", "Composite + symmetry computation",
+        "§5.2",
+        Some(1)
+    );
+    task!(
+        3,
+        "Scoring Engine",
+        "Composite + symmetry computation",
         "Unweighted mean of 8 axes. Symmetry = 1 - (σ/μ). ZerodentityScore::compute() entry point",
-        "§5.3-§5.4", Some(1));
+        "§5.3-§5.4",
+        Some(1)
+    );
 
     // Phase 4: Signal Collection (§3)
-    task!(4, "Signal Collection", "Client-side hashing protocol",
+    task!(
+        4,
+        "Signal Collection",
+        "Client-side hashing protocol",
         "BLAKE3 hash-then-discard pipeline: collect → hash → store hash → zero raw → composite",
-        "§3.3", None);
-    task!(4, "Signal Collection", "Fingerprint signal collectors (JS)",
+        "§3.3",
+        None
+    );
+    task!(
+        4,
+        "Signal Collection",
+        "Fingerprint signal collectors (JS)",
         "15 JavaScript collectors: Canvas, WebGL, Screen, Timezone, UserAgent, Audio, Fonts, Battery, Hardware, Memory, WebRTC, Touch, Platform, DNT, ColorDepth",
-        "§3.4", None);
-    task!(4, "Signal Collection", "Behavioral biometric collector (JS)",
+        "§3.4",
+        None
+    );
+    task!(
+        4,
+        "Signal Collection",
+        "Behavioral biometric collector (JS)",
         "BehavioralCollector class: keystroke dynamics (μs), mouse velocity, touch pressure, scroll, form navigation cadence. Histogram quantization + stddev",
-        "§3.5", None);
+        "§3.5",
+        None
+    );
 
     // Phase 5: Onboarding API (§4 + §7)
-    task!(5, "Onboarding API", "POST /claims — create identity claim",
+    task!(
+        5,
+        "Onboarding API",
+        "POST /claims — create identity claim",
         "First claim creates DID + session token. Validates claim_hash format, stores in DAG, emits TrustReceipt. Dispatches OTP if verification_channel set",
-        "§7.1", Some(2));
-    task!(5, "Onboarding API", "POST /verify — OTP verification",
+        "§7.1",
+        Some(2)
+    );
+    task!(
+        5,
+        "Onboarding API",
+        "POST /verify — OTP verification",
         "HMAC comparison, attempt counting, TTL check, lockout. On success: emit VerifiedEmail/VerifiedPhone receipt, update score",
-        "§7.1", Some(2));
-    task!(5, "Onboarding API", "POST /verify/resend — resend OTP",
+        "§7.1",
+        Some(2)
+    );
+    task!(
+        5,
+        "Onboarding API",
+        "POST /verify/resend — resend OTP",
         "60-second cooldown, new challenge_id, preserve attempt count across resends",
-        "§7.1", Some(2));
-    task!(5, "Onboarding API", "GET /server-key — RSA-OAEP public key",
+        "§7.1",
+        Some(2)
+    );
+    task!(
+        5,
+        "Onboarding API",
+        "GET /server-key — RSA-OAEP public key",
         "Serve 4096-bit RSA-OAEP public key PEM for channel address encryption. Include key_hash for pinning",
-        "§7.3", None);
+        "§7.3",
+        None
+    );
 
     // Phase 6: Identity API (§7)
-    task!(6, "Identity API", "GET /score — retrieve 0dentity score",
+    task!(
+        6,
+        "Identity API",
+        "GET /score — retrieve 0dentity score",
         "Public endpoint (constitutional transparency). Returns full PolarAxes, composite, symmetry, claim_count",
-        "§7.2", Some(3));
-    task!(6, "Identity API", "GET /claims — list claims with filters",
+        "§7.2",
+        Some(3)
+    );
+    task!(
+        6,
+        "Identity API",
+        "GET /claims — list claims with filters",
         "Owner-only (bearer token). Filter by status, type. Pagination via limit/offset",
-        "§7.2", Some(2));
-    task!(6, "Identity API", "GET /score/history — score timeline",
+        "§7.2",
+        Some(2)
+    );
+    task!(
+        6,
+        "Identity API",
+        "GET /score/history — score timeline",
         "Public. Query by time range + resolution (daily/weekly/monthly). Returns score snapshots array",
-        "§7.2", Some(2));
-    task!(6, "Identity API", "GET /fingerprints — consistency timeline",
+        "§7.2",
+        Some(2)
+    );
+    task!(
+        6,
+        "Identity API",
+        "GET /fingerprints — consistency timeline",
         "Owner-only. Returns composite_hash, captured_ms, consistency_score, signal_count per session",
-        "§7.2", Some(2));
-    task!(6, "Identity API", "POST /attest — peer attestation",
+        "§7.2",
+        Some(2)
+    );
+    task!(
+        6,
+        "Identity API",
+        "POST /attest — peer attestation",
         "Create attestation from verified DID to target DID. Reject self-attestation, duplicate. Compute score impact",
-        "§7.2", Some(5));
-    task!(6, "Identity API", "DELETE /:did — right to erasure",
+        "§7.2",
+        Some(5)
+    );
+    task!(
+        6,
+        "Identity API",
+        "DELETE /:did — right to erasure",
         "Revoke sessions, mark claims Revoked, zero score snapshots, tombstone DAG nodes, emit erasure receipt",
-        "§11.4", Some(5));
+        "§11.4",
+        Some(5)
+    );
 
     // Phase 7: Onboarding UI (§4)
-    task!(7, "Onboarding UI", "Landing page + onboarding shell",
+    task!(
+        7,
+        "Onboarding UI",
+        "Landing page + onboarding shell",
         "Self-contained HTML at /0dentity. Dark theme, progress indicator, CTA 'Begin your proof'",
-        "§4.1", Some(4));
-    task!(7, "Onboarding UI", "Name input step",
+        "§4.1",
+        Some(4)
+    );
+    task!(
+        7,
+        "Onboarding UI",
+        "Name input step",
         "Form with name field, BLAKE3 client-hash, Ed25519 session key generation, behavioral capture, mini polar graph",
-        "§4.2", Some(4));
-    task!(7, "Onboarding UI", "Email input + OTP steps",
+        "§4.2",
+        Some(4)
+    );
+    task!(
+        7,
+        "Onboarding UI",
+        "Email input + OTP steps",
         "Email form → RSA-OAEP encrypt → dispatch OTP. 6-digit auto-advance input, countdown timer, resend cooldown",
-        "§4.3-§4.4", Some(4));
-    task!(7, "Onboarding UI", "Phone input + OTP steps",
+        "§4.3-§4.4",
+        Some(4)
+    );
+    task!(
+        7,
+        "Onboarding UI",
+        "Phone input + OTP steps",
         "Country picker, E.164 format, SMS OTP with 3-min TTL, metadata disclosure table on completion",
-        "§4.5-§4.6", Some(4));
-    task!(7, "Onboarding UI", "Score reveal with animated polar graph",
+        "§4.5-§4.6",
+        Some(4)
+    );
+    task!(
+        7,
+        "Onboarding UI",
+        "Score reveal with animated polar graph",
         "Full-bleed animated radar graph, sequential axis animation (200ms each), composite counter, 'View My Dashboard' CTA",
-        "§4.7", Some(8));
+        "§4.7",
+        Some(8)
+    );
 
     // Phase 8: Polar Graph Renderer (§6)
-    task!(8, "Polar Graph", "SVG radar chart renderer",
+    task!(
+        8,
+        "Polar Graph",
+        "SVG radar chart renderer",
         "PolarGraph class: 8-axis SVG with concentric grid rings, axis labels, max polygon outline, score polygon fill, vertex dots",
-        "§6.1", None);
-    task!(8, "Polar Graph", "Animation engine",
+        "§6.1",
+        None
+    );
+    task!(
+        8,
+        "Polar Graph",
+        "Animation engine",
         "animateTo() with cubic ease-in-out, per-axis interpolation, requestAnimationFrame loop, configurable duration",
-        "§6.1", None);
-    task!(8, "Polar Graph", "Interactive behaviors",
+        "§6.1",
+        None
+    );
+    task!(
+        8,
+        "Polar Graph",
+        "Interactive behaviors",
         "Hover axis → tooltip with score + contributing claims. Click axis → detail panel. Hover polygon → composite + symmetry. Responsive breakpoints",
-        "§6.1", None);
+        "§6.1",
+        None
+    );
 
     // Phase 9: Dashboard (§8)
-    task!(9, "Dashboard", "Dashboard layout + structure",
+    task!(
+        9,
+        "Dashboard",
+        "Dashboard layout + structure",
         "Self-contained HTML at /0dentity/dashboard. Grid layout: polar graph | score breakdown | claims | history | growth | fingerprints",
-        "§8.1-§8.2", Some(8));
-    task!(9, "Dashboard", "Polar graph integration",
+        "§8.1-§8.2",
+        Some(8)
+    );
+    task!(
+        9,
+        "Dashboard",
+        "Polar graph integration",
         "Embed PolarGraph instance, poll /score every 5s, animate to new values on change",
-        "§8.3-§8.4", Some(8));
-    task!(9, "Dashboard", "Claims table",
+        "§8.3-§8.4",
+        Some(8)
+    );
+    task!(
+        9,
+        "Dashboard",
+        "Claims table",
         "Sortable table: type, hash (truncated), status (colored badge), verified timestamp (relative), expiry. Click for detail",
-        "§8.2", Some(6));
-    task!(9, "Dashboard", "Score history sparkline",
+        "§8.2",
+        Some(6)
+    );
+    task!(
+        9,
+        "Dashboard",
+        "Score history sparkline",
         "Inline SVG sparkline showing composite score over time. Poll /score/history with daily resolution",
-        "§8.2", Some(6));
-    task!(9, "Dashboard", "Growth actions panel",
+        "§8.2",
+        Some(6)
+    );
+    task!(
+        9,
+        "Dashboard",
+        "Growth actions panel",
         "Four action cards: Add Gov ID (+35 cred), Request Attestation (+5 network), Cast Vote (+4 constitutional), Rotate Key (+8 crypto). Each links to relevant flow",
-        "§8.5", Some(6));
-    task!(9, "Dashboard", "Fingerprint consistency panel",
+        "§8.5",
+        Some(6)
+    );
+    task!(
+        9,
+        "Dashboard",
+        "Fingerprint consistency panel",
         "Session-over-session consistency bars. Poll /fingerprints endpoint. Show composite hash (truncated) per session",
-        "§8.2", Some(6));
+        "§8.2",
+        Some(6)
+    );
 
     // Phase 10: ExoChain Integration (§10)
-    task!(10, "Integration", "Claim → DAG node pipeline",
+    task!(
+        10,
+        "Integration",
+        "Claim → DAG node pipeline",
         "Every IdentityClaim creates a DagNode: CBOR-encode claim, BLAKE3 hash, link to DAG tips, sign with session key, store.put()",
-        "§10.1", Some(5));
-    task!(10, "Integration", "Verification → TrustReceipt emission",
+        "§10.1",
+        Some(5)
+    );
+    task!(
+        10,
+        "Integration",
+        "Verification → TrustReceipt emission",
         "On OTP success: TrustReceipt with action_type 'claim_verified:<type>', outcome Executed, authority chain hash",
-        "§10.2", Some(5));
-    task!(10, "Integration", "Passport API extension",
+        "§10.2",
+        Some(5)
+    );
+    task!(
+        10,
+        "Integration",
+        "Passport API extension",
         "Add zerodentity_score: Option<ZerodentityScore> to PassportResponse. Populate from latest score snapshot",
-        "§10.3", Some(6));
-    task!(10, "Integration", "Sentinel checks: ScoreIntegrity + OtpCleanup",
+        "§10.3",
+        Some(6)
+    );
+    task!(
+        10,
+        "Integration",
+        "Sentinel checks: ScoreIntegrity + OtpCleanup",
         "ScoreIntegrity: random DID recomputation ε=0.001. OtpCleanup: expired challenges state != Pending",
-        "§10.4", Some(3));
-    task!(10, "Integration", "Telegram adjutant commands",
+        "§10.4",
+        Some(3)
+    );
+    task!(
+        10,
+        "Integration",
+        "Telegram adjutant commands",
         "/0dentity <did> summary, /0dentity-alerts anomalies, inline button [View Full Score]",
-        "§10.5", Some(6));
+        "§10.5",
+        Some(6)
+    );
 
     // Phase 11: Test Suite (§12)
-    task!(11, "Test Suite", "Type serialization roundtrip tests",
+    task!(
+        11,
+        "Test Suite",
+        "Type serialization roundtrip tests",
         "Serde roundtrip for every 0dentity type. ClaimType equality. ClaimStatus transition validity",
-        "§12.2", Some(1));
-    task!(11, "Test Suite", "Scoring engine determinism tests",
+        "§12.2",
+        Some(1)
+    );
+    task!(
+        11,
+        "Test Suite",
+        "Scoring engine determinism tests",
         "Same claims → same score. Each axis: zero/minimal/maximal claims. Composite arithmetic. Symmetry for uniform/skewed/zero",
-        "§12.2", Some(3));
-    task!(11, "Test Suite", "API endpoint integration tests",
+        "§12.2",
+        Some(3)
+    );
+    task!(
+        11,
+        "Test Suite",
+        "API endpoint integration tests",
         "POST /claims creates DID. POST /verify success/failure/expiry/lockout. GET /score found/404. GET /claims with filters",
-        "§12.2", Some(6));
-    task!(11, "Test Suite", "Store + migration tests",
+        "§12.2",
+        Some(6)
+    );
+    task!(
+        11,
+        "Test Suite",
+        "Store + migration tests",
         "CRUD all tables. Index usage. Migration idempotency. Schema version check",
-        "§12.2", Some(2));
-    task!(11, "Test Suite", "Fingerprint + behavioral tests",
+        "§12.2",
+        Some(2)
+    );
+    task!(
+        11,
+        "Test Suite",
+        "Fingerprint + behavioral tests",
         "Consistency: identical=1.0, different=0.0, partial=intermediate. Histogram quantization. Empty sample handling",
-        "§12.2", Some(4));
+        "§12.2",
+        Some(4)
+    );
 
     // Phase 12: Operational Readiness (§13)
-    task!(12, "Ops Readiness", "Environment variable configuration",
+    task!(
+        12,
+        "Ops Readiness",
+        "Environment variable configuration",
         "17 env vars: ZERODENTITY_ENABLED, OTP TTLs, snapshot interval, SMTP config, SMS provider config",
-        "§13.1", Some(5));
-    task!(12, "Ops Readiness", "Prometheus metrics integration",
+        "§13.1",
+        Some(5)
+    );
+    task!(
+        12,
+        "Ops Readiness",
+        "Prometheus metrics integration",
         "Counters: claims_total, otp_verifications_total. Histogram: score_composite. Gauge: fingerprint_consistency_avg, onboarding_completion_rate",
-        "§13.2", Some(10));
-    task!(12, "Ops Readiness", "main.rs wiring + startup",
+        "§13.2",
+        Some(10)
+    );
+    task!(
+        12,
+        "Ops Readiness",
+        "main.rs wiring + startup",
         "Module declaration, ZerodentityState construction, router merge, schema migration on startup, config loading",
-        "§10.6", Some(10));
+        "§10.6",
+        Some(10)
+    );
 
     tasks
 }
 
 // ─── API Handlers ───────────────────────────────────────────────────
 
-async fn list_tasks(
-    State(state): State<SharedForgeState>,
-) -> Json<serde_json::Value> {
+async fn list_tasks(State(state): State<SharedForgeState>) -> Json<serde_json::Value> {
     let s = state.lock().unwrap();
     Json(serde_json::json!({
         "spec_name": s.spec_name,
@@ -434,16 +764,12 @@ async fn list_tasks(
     }))
 }
 
-async fn get_stats(
-    State(state): State<SharedForgeState>,
-) -> Json<ForgeStats> {
+async fn get_stats(State(state): State<SharedForgeState>) -> Json<ForgeStats> {
     let s = state.lock().unwrap();
     Json(s.stats())
 }
 
-async fn get_activity(
-    State(state): State<SharedForgeState>,
-) -> Json<Vec<ActivityEntry>> {
+async fn get_activity(State(state): State<SharedForgeState>) -> Json<Vec<ActivityEntry>> {
     let s = state.lock().unwrap();
     Json(s.activity_log.clone())
 }
@@ -454,7 +780,10 @@ async fn update_task_status(
     Json(body): Json<StatusUpdate>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let mut s = state.lock().unwrap();
-    let task = s.tasks.iter_mut().find(|t| t.id == task_id)
+    let task = s
+        .tasks
+        .iter_mut()
+        .find(|t| t.id == task_id)
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let old_status = task.status.clone();
@@ -470,7 +799,10 @@ async fn update_task_status(
 
     s.activity_log.push(ActivityEntry {
         timestamp_ms: now_ms(),
-        message: format!("Task #{} '{}' status: {:?} → {:?}", task_id, task_title, old_status, body.status),
+        message: format!(
+            "Task #{} '{}' status: {:?} → {:?}",
+            task_id, task_title, old_status, body.status
+        ),
         task_id: Some(task_id),
     });
 
@@ -483,7 +815,10 @@ async fn assign_agent(
     Json(body): Json<AgentAssignment>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let mut s = state.lock().unwrap();
-    let task = s.tasks.iter_mut().find(|t| t.id == task_id)
+    let task = s
+        .tasks
+        .iter_mut()
+        .find(|t| t.id == task_id)
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let task_title = task.title.clone();
@@ -494,11 +829,16 @@ async fn assign_agent(
 
     s.activity_log.push(ActivityEntry {
         timestamp_ms: now_ms(),
-        message: format!("Task #{} '{}' assigned to {}", task_id, task_title, body.agent),
+        message: format!(
+            "Task #{} '{}' assigned to {}",
+            task_id, task_title, body.agent
+        ),
         task_id: Some(task_id),
     });
 
-    Ok(Json(serde_json::json!({ "ok": true, "task_id": task_id, "agent": body.agent })))
+    Ok(Json(
+        serde_json::json!({ "ok": true, "task_id": task_id, "agent": body.agent }),
+    ))
 }
 
 async fn escalate_task(
@@ -507,7 +847,10 @@ async fn escalate_task(
     Json(body): Json<EscalateRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let mut s = state.lock().unwrap();
-    let task = s.tasks.iter_mut().find(|t| t.id == task_id)
+    let task = s
+        .tasks
+        .iter_mut()
+        .find(|t| t.id == task_id)
         .ok_or(StatusCode::NOT_FOUND)?;
 
     task.escalation = body.level.clone();
@@ -522,11 +865,16 @@ async fn escalate_task(
 
     s.activity_log.push(ActivityEntry {
         timestamp_ms: now_ms(),
-        message: format!("Task #{} ESCALATED to {} — {}", task_id, level_str, body.reason),
+        message: format!(
+            "Task #{} ESCALATED to {} — {}",
+            task_id, level_str, body.reason
+        ),
         task_id: Some(task_id),
     });
 
-    Ok(Json(serde_json::json!({ "ok": true, "task_id": task_id, "escalation": level_str })))
+    Ok(Json(
+        serde_json::json!({ "ok": true, "task_id": task_id, "escalation": level_str }),
+    ))
 }
 
 async fn append_log(
@@ -544,16 +892,15 @@ async fn append_log(
 
 // ─── Dashboard HTML ─────────────────────────────────────────────────
 
-async fn serve_dashboard(
-    State(state): State<SharedForgeState>,
-) -> Html<String> {
+async fn serve_dashboard(State(state): State<SharedForgeState>) -> Html<String> {
     let s = state.lock().unwrap();
     let tasks_json = serde_json::to_string(&s.tasks).unwrap_or_default();
     let stats_json = serde_json::to_string(&s.stats()).unwrap_or_default();
     let log_json = serde_json::to_string(&s.activity_log).unwrap_or_default();
     drop(s);
 
-    Html(format!(r##"<!DOCTYPE html>
+    Html(format!(
+        r##"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -1073,7 +1420,8 @@ setInterval(async () => {{
 </script>
 
 </body>
-</html>"##))
+</html>"##
+    ))
 }
 
 // ─── Router ─────────────────────────────────────────────────────────
@@ -1155,7 +1503,9 @@ mod tests {
         let resp = tower::ServiceExt::oneshot(router, req).await.unwrap();
         assert_eq!(resp.status(), 200);
 
-        let body = axum::body::to_bytes(resp.into_body(), 1_000_000).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), 1_000_000)
+            .await
+            .unwrap();
         let html = String::from_utf8_lossy(&body);
         assert!(html.contains("EXOFORGE"));
         assert!(html.contains("0DENTITY-APP-SPEC.md"));
@@ -1176,7 +1526,9 @@ mod tests {
         let resp = tower::ServiceExt::oneshot(router, req).await.unwrap();
         assert_eq!(resp.status(), 200);
 
-        let body = axum::body::to_bytes(resp.into_body(), 1_000_000).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), 1_000_000)
+            .await
+            .unwrap();
         let data: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(data["stats"]["total"], 56);
     }

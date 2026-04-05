@@ -9,14 +9,13 @@
 //! - Resend cooldown: 60_000ms (1 min)
 //! - Code format: 6-digit decimal string (leading zeros preserved)
 
+use exo_core::types::{Did, Hash256};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use sha2::Sha256;
 use thiserror::Error;
 
-use exo_core::types::{Did, Hash256};
-
-use super::types::{OtpChannel, OtpChallenge, OtpState};
+use super::types::{OtpChallenge, OtpChannel, OtpState};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -129,7 +128,9 @@ impl OtpChallenge {
             OtpState::LockedOut => {
                 // Compute when lock expires
                 let locked_until = self.dispatched_ms + self.ttl_ms + OTP_LOCKOUT_MS;
-                return OtpResult::Locked { locked_until_ms: locked_until };
+                return OtpResult::Locked {
+                    locked_until_ms: locked_until,
+                };
             }
             OtpState::Expired => return OtpResult::Expired,
             OtpState::Pending => {}
@@ -144,7 +145,9 @@ impl OtpChallenge {
         // Check lockout
         if self.is_locked(now_ms) {
             let locked_until = self.dispatched_ms + self.ttl_ms + OTP_LOCKOUT_MS;
-            return OtpResult::Locked { locked_until_ms: locked_until };
+            return OtpResult::Locked {
+                locked_until_ms: locked_until,
+            };
         }
 
         // Derive expected code
@@ -165,7 +168,9 @@ impl OtpChallenge {
         } else if self.attempts >= self.max_attempts {
             self.state = OtpState::LockedOut;
             let locked_until = self.dispatched_ms + self.ttl_ms + OTP_LOCKOUT_MS;
-            OtpResult::Locked { locked_until_ms: locked_until }
+            OtpResult::Locked {
+                locked_until_ms: locked_until,
+            }
         } else {
             OtpResult::WrongCode {
                 attempts_remaining: self.max_attempts - self.attempts,
@@ -187,8 +192,7 @@ impl OtpChallenge {
     /// Whether the challenge can be re-dispatched (resend cooldown has elapsed).
     #[must_use]
     pub fn can_resend(&self, now_ms: u64) -> bool {
-        self.state == OtpState::Pending
-            && now_ms >= self.dispatched_ms + OTP_RESEND_COOLDOWN_MS
+        self.state == OtpState::Pending && now_ms >= self.dispatched_ms + OTP_RESEND_COOLDOWN_MS
     }
 }
 
@@ -199,13 +203,8 @@ impl OtpChallenge {
 /// Derive a 6-digit OTP code from the HMAC secret.
 ///
 /// HMAC-SHA256(secret, subject_did || dispatched_ms) → u32 mod 1_000_000.
-fn derive_code(
-    secret: &[u8; 32],
-    subject_did: &str,
-    dispatched_ms: u64,
-) -> Result<u32, OtpError> {
-    let mut mac =
-        HmacSha256::new_from_slice(secret).map_err(|_| OtpError::InvalidKeyLength)?;
+fn derive_code(secret: &[u8; 32], subject_did: &str, dispatched_ms: u64) -> Result<u32, OtpError> {
+    let mut mac = HmacSha256::new_from_slice(secret).map_err(|_| OtpError::InvalidKeyLength)?;
 
     // Message: subject_did bytes || dispatched_ms as little-endian u64
     mac.update(subject_did.as_bytes());
@@ -223,9 +222,9 @@ fn derive_code(
 
 #[cfg(test)]
 mod tests {
+    use rand::{SeedableRng, rngs::StdRng};
+
     use super::*;
-    use rand::SeedableRng;
-    use rand::rngs::StdRng;
 
     fn test_rng() -> impl RngCore {
         // Seeded RNG for reproducible tests
@@ -269,14 +268,17 @@ mod tests {
     fn new_creates_pending_challenge() {
         let mut rng = test_rng();
         let did = test_did();
-        let (challenge, code) = OtpChallenge::new(&did, OtpChannel::Email, 0, &mut rng)
-            .expect("new ok");
+        let (challenge, code) =
+            OtpChallenge::new(&did, OtpChannel::Email, 0, &mut rng).expect("new ok");
         assert_eq!(challenge.state, OtpState::Pending);
         assert_eq!(challenge.attempts, 0);
         assert_eq!(challenge.ttl_ms, OTP_TTL_MS);
         assert_eq!(challenge.max_attempts, OTP_MAX_ATTEMPTS);
         assert_eq!(code.len(), 6, "code must be 6 digits");
-        assert!(code.chars().all(|c| c.is_ascii_digit()), "code must be digits");
+        assert!(
+            code.chars().all(|c| c.is_ascii_digit()),
+            "code must be digits"
+        );
     }
 
     #[test]
@@ -284,11 +286,19 @@ mod tests {
         let did = test_did();
         // Two challenges created with same seed → same code
         let (_, code1) = OtpChallenge::new(
-            &did, OtpChannel::Email, 1_000, &mut StdRng::seed_from_u64(0)
-        ).expect("ok");
+            &did,
+            OtpChannel::Email,
+            1_000,
+            &mut StdRng::seed_from_u64(0),
+        )
+        .expect("ok");
         let (_, code2) = OtpChallenge::new(
-            &did, OtpChannel::Email, 1_000, &mut StdRng::seed_from_u64(0)
-        ).expect("ok");
+            &did,
+            OtpChannel::Email,
+            1_000,
+            &mut StdRng::seed_from_u64(0),
+        )
+        .expect("ok");
         assert_eq!(code1, code2);
     }
 
@@ -299,8 +309,8 @@ mod tests {
         let mut rng = test_rng();
         let did = test_did();
         let now = 0u64;
-        let (mut challenge, code) = OtpChallenge::new(&did, OtpChannel::Email, now, &mut rng)
-            .expect("new ok");
+        let (mut challenge, code) =
+            OtpChallenge::new(&did, OtpChannel::Email, now, &mut rng).expect("new ok");
         let result = challenge.verify(&code, now + 1_000);
         assert_eq!(result, OtpResult::Success);
         assert_eq!(challenge.state, OtpState::Verified);
@@ -312,12 +322,14 @@ mod tests {
     fn verify_wrong_code_decrements_attempts() {
         let mut rng = test_rng();
         let did = test_did();
-        let (mut challenge, _code) = OtpChallenge::new(&did, OtpChannel::Email, 0, &mut rng)
-            .expect("new ok");
+        let (mut challenge, _code) =
+            OtpChallenge::new(&did, OtpChannel::Email, 0, &mut rng).expect("new ok");
         let result = challenge.verify("000000", 1_000);
         assert_eq!(
             result,
-            OtpResult::WrongCode { attempts_remaining: 4 }
+            OtpResult::WrongCode {
+                attempts_remaining: 4
+            }
         );
         assert_eq!(challenge.attempts, 1);
     }
@@ -329,8 +341,8 @@ mod tests {
         let mut rng = test_rng();
         let did = test_did();
         let now = 0u64;
-        let (mut challenge, code) = OtpChallenge::new(&did, OtpChannel::Email, now, &mut rng)
-            .expect("new ok");
+        let (mut challenge, code) =
+            OtpChallenge::new(&did, OtpChannel::Email, now, &mut rng).expect("new ok");
         // Advance past TTL
         let result = challenge.verify(&code, now + OTP_TTL_MS + 1);
         assert_eq!(result, OtpResult::Expired);
@@ -343,8 +355,8 @@ mod tests {
     fn verify_lockout_after_max_attempts() {
         let mut rng = test_rng();
         let did = test_did();
-        let (mut challenge, _code) = OtpChallenge::new(&did, OtpChannel::Email, 0, &mut rng)
-            .expect("new ok");
+        let (mut challenge, _code) =
+            OtpChallenge::new(&did, OtpChannel::Email, 0, &mut rng).expect("new ok");
 
         // Make max_attempts wrong guesses
         for i in 0..OTP_MAX_ATTEMPTS {
@@ -364,8 +376,8 @@ mod tests {
     fn is_locked_false_for_fresh_challenge() {
         let mut rng = test_rng();
         let did = test_did();
-        let (challenge, _) = OtpChallenge::new(&did, OtpChannel::Email, 0, &mut rng)
-            .expect("new ok");
+        let (challenge, _) =
+            OtpChallenge::new(&did, OtpChannel::Email, 0, &mut rng).expect("new ok");
         assert!(!challenge.is_locked(1_000));
     }
 
@@ -376,8 +388,8 @@ mod tests {
         let mut rng = test_rng();
         let did = test_did();
         let now = 1_000_000u64;
-        let (challenge, _) = OtpChallenge::new(&did, OtpChannel::Email, now, &mut rng)
-            .expect("new ok");
+        let (challenge, _) =
+            OtpChallenge::new(&did, OtpChannel::Email, now, &mut rng).expect("new ok");
         assert!(!challenge.can_resend(now + OTP_RESEND_COOLDOWN_MS - 1));
     }
 
@@ -386,8 +398,8 @@ mod tests {
         let mut rng = test_rng();
         let did = test_did();
         let now = 1_000_000u64;
-        let (challenge, _) = OtpChallenge::new(&did, OtpChannel::Email, now, &mut rng)
-            .expect("new ok");
+        let (challenge, _) =
+            OtpChallenge::new(&did, OtpChannel::Email, now, &mut rng).expect("new ok");
         assert!(challenge.can_resend(now + OTP_RESEND_COOLDOWN_MS));
     }
 }

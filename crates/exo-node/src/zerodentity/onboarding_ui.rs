@@ -944,7 +944,10 @@ mod tests {
     async fn test_onboarding_contains_css_variables() {
         let response = zerodentity_onboarding().await;
         let html = response.0;
-        assert!(html.contains("--primary"), "must contain --primary CSS variable");
+        assert!(
+            html.contains("--primary"),
+            "must contain --primary CSS variable"
+        );
         assert!(html.contains("--bg"), "must contain --bg CSS variable");
     }
 

@@ -16,10 +16,12 @@ use axum::{
 use exo_core::types::{Did, Hash256};
 use serde::{Deserialize, Serialize};
 
-use crate::network::NetworkHandle;
-use crate::reactor::{self, SharedReactorState};
-use crate::store::SqliteDagStore;
-use crate::wire::{GovernanceEventType, ValidatorChange};
+use crate::{
+    network::NetworkHandle,
+    reactor::{self, SharedReactorState},
+    store::SqliteDagStore,
+    wire::{GovernanceEventType, ValidatorChange},
+};
 
 // ---------------------------------------------------------------------------
 // Shared application state for the governance API
@@ -63,7 +65,7 @@ pub struct BroadcastRequest {
 /// Request body for `POST /api/v1/governance/validators`.
 #[derive(Debug, Deserialize)]
 pub struct ValidatorChangeRequest {
-    pub action: String,  // "add" or "remove"
+    pub action: String, // "add" or "remove"
     pub did: String,
 }
 
@@ -128,8 +130,7 @@ async fn handle_propose(
     let payload = hex::decode(&req.payload_hex)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid hex payload: {e}")))?;
 
-    match reactor::submit_proposal(&api.reactor_state, &api.store, &api.net_handle, &payload)
-        .await
+    match reactor::submit_proposal(&api.reactor_state, &api.store, &api.net_handle, &payload).await
     {
         Ok(node) => Ok(Json(ProposeResponse {
             node_hash: hex::encode(node.hash.0),
@@ -160,7 +161,7 @@ async fn handle_broadcast(
             return Err((
                 StatusCode::BAD_REQUEST,
                 format!("Unknown event type: {other}"),
-            ))
+            ));
         }
     };
 
@@ -172,9 +173,7 @@ async fn handle_broadcast(
 }
 
 /// `GET /api/v1/governance/status` — return current node and consensus state.
-async fn handle_status(
-    State(api): State<Arc<NodeApiState>>,
-) -> Json<NodeStatusResponse> {
+async fn handle_status(State(api): State<Arc<NodeApiState>>) -> Json<NodeStatusResponse> {
     let (round, height, validators, is_validator) = {
         let s = api.reactor_state.lock().expect("reactor state lock");
         (
@@ -208,8 +207,8 @@ async fn handle_validator_change(
     State(api): State<Arc<NodeApiState>>,
     Json(req): Json<ValidatorChangeRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let did = Did::new(&req.did)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid DID: {e}")))?;
+    let did =
+        Did::new(&req.did).map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid DID: {e}")))?;
 
     let change = match req.action.as_str() {
         "add" => ValidatorChange::AddValidator { did },
@@ -218,7 +217,7 @@ async fn handle_validator_change(
             return Err((
                 StatusCode::BAD_REQUEST,
                 format!("Invalid action '{other}', expected 'add' or 'remove'"),
-            ))
+            ));
         }
     };
 
@@ -257,8 +256,12 @@ async fn handle_validator_change(
     // Broadcast the change to the network.
     let payload = {
         let mut buf = Vec::new();
-        ciborium::into_writer(&change, &mut buf)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("CBOR encode: {e}")))?;
+        ciborium::into_writer(&change, &mut buf).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("CBOR encode: {e}"),
+            )
+        })?;
         buf
     };
 
@@ -346,7 +349,10 @@ pub fn governance_router(state: Arc<NodeApiState>) -> Router {
         .route("/api/v1/governance/propose", post(handle_propose))
         .route("/api/v1/governance/broadcast", post(handle_broadcast))
         .route("/api/v1/governance/status", get(handle_status))
-        .route("/api/v1/governance/validators", post(handle_validator_change))
+        .route(
+            "/api/v1/governance/validators",
+            post(handle_validator_change),
+        )
         .route("/api/v1/receipts/:hash", get(handle_receipt_by_hash))
         .route("/api/v1/receipts", get(handle_receipts_list))
         .with_state(state)
@@ -359,16 +365,20 @@ pub fn governance_router(state: Arc<NodeApiState>) -> Router {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use std::collections::BTreeSet;
-    use std::sync::{Arc, Mutex};
+    use std::{
+        collections::BTreeSet,
+        sync::{Arc, Mutex},
+    };
 
     use axum::{body::Body, http::Request};
     use exo_core::types::Signature;
     use tower::ServiceExt;
 
     use super::*;
-    use crate::reactor::{ReactorConfig, create_reactor_state};
-    use crate::store::SqliteDagStore;
+    use crate::{
+        reactor::{ReactorConfig, create_reactor_state},
+        store::SqliteDagStore,
+    };
 
     fn make_sign_fn() -> Arc<dyn Fn(&[u8]) -> Signature + Send + Sync> {
         Arc::new(|data: &[u8]| {
@@ -540,9 +550,10 @@ mod tests {
         // First add validators to reach 5+
         {
             let mut s = state.reactor_state.lock().unwrap();
-            s.consensus.config.validators.insert(
-                Did::new("did:exo:v4").unwrap(),
-            );
+            s.consensus
+                .config
+                .validators
+                .insert(Did::new("did:exo:v4").unwrap());
         }
 
         let app = governance_router(state);

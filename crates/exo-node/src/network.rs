@@ -3,16 +3,17 @@
 //! This module bridges the existing `exo-api::p2p` abstractions (PeerRegistry,
 //! ASN diversity, rate limiting) with a real libp2p transport layer.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::time::Duration;
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    time::Duration,
+};
 
 use exo_api::p2p::{PeerId as ExoPeerId, PeerInfo, PeerRegistry, RateLimiter};
 use exo_core::types::{Did, Hash256, Timestamp};
 use futures::StreamExt;
 use libp2p::{
-    Multiaddr, PeerId, Swarm, SwarmBuilder,
-    gossipsub, identify, kad, mdns, noise, ping,
+    Multiaddr, PeerId, Swarm, SwarmBuilder, gossipsub, identify, kad, mdns, noise, ping,
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux,
 };
@@ -52,7 +53,9 @@ pub enum NetworkCommand {
     #[allow(dead_code)] // Wired in governance API
     Dial { addr: Multiaddr },
     /// Request the current peer count.
-    PeerCount { reply: tokio::sync::oneshot::Sender<usize> },
+    PeerCount {
+        reply: tokio::sync::oneshot::Sender<usize>,
+    },
 }
 
 /// Events emitted from the network task to the application layer.
@@ -133,27 +136,18 @@ pub fn build_swarm(config: &NetworkConfig) -> anyhow::Result<Swarm<ExochainBehav
 
             // Kademlia DHT for peer discovery
             let peer_id = keypair.public().to_peer_id();
-            let kademlia = kad::Behaviour::new(
-                peer_id,
-                kad::store::MemoryStore::new(peer_id),
-            );
+            let kademlia = kad::Behaviour::new(peer_id, kad::store::MemoryStore::new(peer_id));
 
             // mDNS for local network discovery
-            let mdns = mdns::tokio::Behaviour::new(
-                mdns::Config::default(),
-                peer_id,
-            )
-            .map_err(|e| std::io::Error::other(format!("mdns: {e}")))?;
+            let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)
+                .map_err(|e| std::io::Error::other(format!("mdns: {e}")))?;
 
             // Identify protocol for exchanging metadata.
             // Include the node DID in the agent version for diagnostics.
             let identify = identify::Behaviour::new(
-                identify::Config::new(
-                    "/exochain/1.0.0".into(),
-                    keypair.public(),
-                )
-                .with_agent_version(format!("exochain/1.0 {node_did_for_identify}"))
-                .with_push_listen_addr_updates(true),
+                identify::Config::new("/exochain/1.0.0".into(), keypair.public())
+                    .with_agent_version(format!("exochain/1.0 {node_did_for_identify}"))
+                    .with_push_listen_addr_updates(true),
             );
 
             // Ping for keepalive
@@ -167,9 +161,7 @@ pub fn build_swarm(config: &NetworkConfig) -> anyhow::Result<Swarm<ExochainBehav
                 ping,
             })
         })?
-        .with_swarm_config(|cfg| {
-            cfg.with_idle_connection_timeout(Duration::from_secs(120))
-        })
+        .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(120)))
         .build();
 
     Ok(swarm)
@@ -394,8 +386,11 @@ fn libp2p_peer_to_exo(peer_id: &PeerId) -> ExoPeerId {
     ExoPeerId(Did::new(&did_str).unwrap_or_else(|_| {
         // Fallback: use the hash of the peer ID
         let hash = blake3::hash(peer_id.to_bytes().as_slice());
-        Did::new(&format!("did:exo:peer-{}", hex::encode(&hash.as_bytes()[..16])))
-            .expect("fallback DID must be valid")
+        Did::new(&format!(
+            "did:exo:peer-{}",
+            hex::encode(&hash.as_bytes()[..16])
+        ))
+        .expect("fallback DID must be valid")
     }))
 }
 
@@ -521,7 +516,9 @@ mod tests {
         let mut swarm = build_swarm(&config).unwrap();
 
         // Listen on random ports
-        swarm.listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap()).unwrap();
+        swarm
+            .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+            .unwrap();
 
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
         let (event_tx, _event_rx) = mpsc::channel(32);
@@ -559,16 +556,19 @@ mod tests {
         let mut swarm2 = build_swarm(&config2).unwrap();
 
         // Listen on random TCP ports on loopback
-        swarm1.listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap()).unwrap();
-        swarm2.listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap()).unwrap();
+        swarm1
+            .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+            .unwrap();
+        swarm2
+            .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+            .unwrap();
 
         // Pump swarm2 briefly to capture its listen address
         let mut addr2: Option<Multiaddr> = None;
         for _ in 0..20 {
-            if let Ok(Some(event)) = tokio::time::timeout(
-                Duration::from_millis(50),
-                swarm2.next(),
-            ).await {
+            if let Ok(Some(event)) =
+                tokio::time::timeout(Duration::from_millis(50), swarm2.next()).await
+            {
                 if let SwarmEvent::NewListenAddr { address, .. } = event {
                     if address.to_string().contains("tcp") {
                         addr2 = Some(address);
@@ -622,19 +622,27 @@ mod tests {
     #[ignore]
     async fn two_nodes_discover_via_mdns() {
         let config1 = NetworkConfig {
-            tcp_port: 0, quic_port: 0, seed_addrs: vec![],
+            tcp_port: 0,
+            quic_port: 0,
+            seed_addrs: vec![],
             node_did: Did::new("did:exo:mdns1").unwrap(),
         };
         let config2 = NetworkConfig {
-            tcp_port: 0, quic_port: 0, seed_addrs: vec![],
+            tcp_port: 0,
+            quic_port: 0,
+            seed_addrs: vec![],
             node_did: Did::new("did:exo:mdns2").unwrap(),
         };
 
         let mut swarm1 = build_swarm(&config1).unwrap();
         let mut swarm2 = build_swarm(&config2).unwrap();
 
-        swarm1.listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap()).unwrap();
-        swarm2.listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap()).unwrap();
+        swarm1
+            .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+            .unwrap();
+        swarm2
+            .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+            .unwrap();
 
         let (_cmd_tx1, cmd_rx1) = mpsc::channel(32);
         let (event_tx1, mut event_rx1) = mpsc::channel(32);
@@ -651,7 +659,8 @@ mod tests {
                 }
             }
             false
-        }).await;
+        })
+        .await;
 
         assert!(discovered.unwrap_or(false), "mDNS discovery should work");
     }

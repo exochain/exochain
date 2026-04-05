@@ -11,23 +11,27 @@
 //! `vote()`, `check_commit()`, `commit()`) into a network-aware reactor
 //! without modifying the consensus protocol itself.
 
-use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    collections::BTreeSet,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use exo_core::types::{Did, Hash256, ReceiptOutcome, Signature, Timestamp, TrustReceipt};
 use exo_dag::{
     consensus::{self, ConsensusConfig, ConsensusState, Vote},
-    dag::{append, Dag, DagNode, HybridClock},
+    dag::{Dag, DagNode, HybridClock, append},
     store::DagStore,
 };
 use tokio::sync::mpsc;
 
-use crate::network::NetworkHandle;
-use crate::store::SqliteDagStore;
-use crate::wire::{
-    ConsensusCommitMsg, ConsensusProposalMsg, ConsensusVoteMsg, GovernanceEventMsg,
-    GovernanceEventType, WireMessage, topics,
+use crate::{
+    network::NetworkHandle,
+    store::SqliteDagStore,
+    wire::{
+        ConsensusCommitMsg, ConsensusProposalMsg, ConsensusVoteMsg, GovernanceEventMsg,
+        GovernanceEventType, WireMessage, topics,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -104,10 +108,7 @@ pub fn create_reactor_state(
     sign_fn: Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>,
     store: Option<&Arc<Mutex<SqliteDagStore>>>,
 ) -> SharedReactorState {
-    let consensus_config = ConsensusConfig::new(
-        config.validators.clone(),
-        config.round_timeout_ms,
-    );
+    let consensus_config = ConsensusConfig::new(config.validators.clone(), config.round_timeout_ms);
     let mut consensus_state = ConsensusState::new(consensus_config);
 
     // Restore persisted consensus state if a store is provided.
@@ -144,7 +145,11 @@ pub fn create_reactor_state(
                 let _ = consensus::vote(&mut consensus_state, vote);
             }
             if count > 0 {
-                tracing::info!(count, round = consensus_state.current_round, "Restored pending votes");
+                tracing::info!(
+                    count,
+                    round = consensus_state.current_round,
+                    "Restored pending votes"
+                );
             }
         }
 
@@ -242,10 +247,7 @@ pub async fn run_reactor(
 ///
 /// Checks: proposer is a known validator, signature is non-empty,
 /// and the node hash in the proposal matches the attached DAG node.
-fn validate_proposal(
-    msg: &ConsensusProposalMsg,
-    validators: &BTreeSet<Did>,
-) -> Result<(), String> {
+fn validate_proposal(msg: &ConsensusProposalMsg, validators: &BTreeSet<Did>) -> Result<(), String> {
     if !validators.contains(&msg.proposal.proposer) {
         return Err(format!(
             "proposer {} is not in the validator set",
@@ -267,10 +269,7 @@ fn validate_proposal(
 /// Validate a consensus vote before processing.
 ///
 /// Checks: voter is a known validator and signature is non-empty.
-fn validate_vote(
-    msg: &ConsensusVoteMsg,
-    validators: &BTreeSet<Did>,
-) -> Result<(), String> {
+fn validate_vote(msg: &ConsensusVoteMsg, validators: &BTreeSet<Did>) -> Result<(), String> {
     if !validators.contains(&msg.vote.voter) {
         return Err(format!(
             "voter {} is not in the validator set",
@@ -288,10 +287,7 @@ fn validate_vote(
 /// Checks: every vote in the certificate is from a known validator,
 /// carries a non-empty signature, and references the certificate's
 /// node hash.
-fn validate_commit(
-    msg: &ConsensusCommitMsg,
-    validators: &BTreeSet<Did>,
-) -> Result<(), String> {
+fn validate_commit(msg: &ConsensusCommitMsg, validators: &BTreeSet<Did>) -> Result<(), String> {
     for vote in &msg.certificate.votes {
         if !validators.contains(&vote.voter) {
             return Err(format!(
@@ -400,9 +396,7 @@ async fn handle_proposal(
                 return;
             }
 
-            Some(WireMessage::ConsensusVote(ConsensusVoteMsg {
-                vote,
-            }))
+            Some(WireMessage::ConsensusVote(ConsensusVoteMsg { vote }))
         } else {
             None
         }
@@ -521,7 +515,10 @@ async fn handle_commit(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        let ts = Timestamp { physical_ms: now_ms, logical: 0 };
+        let ts = Timestamp {
+            physical_ms: now_ms,
+            logical: 0,
+        };
         TrustReceipt::new(
             s.node_did.clone(),
             Hash256::ZERO,
@@ -548,7 +545,11 @@ async fn handle_commit(
     );
 
     let _ = reactor_tx
-        .send(ReactorEvent::NodeCommitted { hash, height, round })
+        .send(ReactorEvent::NodeCommitted {
+            hash,
+            height,
+            round,
+        })
         .await;
 }
 
@@ -601,7 +602,10 @@ async fn check_and_commit(
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
-            let ts = Timestamp { physical_ms: now_ms, logical: 0 };
+            let ts = Timestamp {
+                physical_ms: now_ms,
+                logical: 0,
+            };
             TrustReceipt::new(
                 s.node_did.clone(),
                 Hash256::ZERO,
@@ -623,15 +627,17 @@ async fn check_and_commit(
         tracing::info!(%hash, height, round, "Node committed — quorum reached");
 
         // Broadcast the commit certificate so all nodes learn.
-        let commit_msg = WireMessage::ConsensusCommit(ConsensusCommitMsg {
-            certificate: cert,
-        });
+        let commit_msg = WireMessage::ConsensusCommit(ConsensusCommitMsg { certificate: cert });
         if let Err(e) = net_handle.publish(topics::CONSENSUS, commit_msg).await {
             tracing::warn!(err = %e, "Failed to broadcast commit certificate");
         }
 
         let _ = reactor_tx
-            .send(ReactorEvent::NodeCommitted { hash, height, round })
+            .send(ReactorEvent::NodeCommitted {
+                hash,
+                height,
+                round,
+            })
             .await;
     }
 }
@@ -701,8 +707,7 @@ pub async fn submit_proposal(
             node_hash: node.hash,
             signature: (s.sign_fn)(node.hash.0.as_slice()),
         };
-        consensus::vote(&mut s.consensus, vote)
-            .map_err(|e| anyhow::anyhow!("self-vote: {e}"))?;
+        consensus::vote(&mut s.consensus, vote).map_err(|e| anyhow::anyhow!("self-vote: {e}"))?;
 
         let sig = (s.sign_fn)(node.hash.0.as_slice());
         (node, proposal, sig)
@@ -889,7 +894,8 @@ mod tests {
             &v[0],
             &*sign_fn,
             &mut clock,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Propose
         let _proposal = consensus::propose(&mut consensus_state, &node, &v[0]).unwrap();
@@ -927,7 +933,8 @@ mod tests {
             &v[1],
             &*sign_fn,
             &mut clock,
-        ).unwrap();
+        )
+        .unwrap();
 
         let _proposal2 = consensus::propose(&mut consensus_state, &node2, &v[1]).unwrap();
         for voter in v.iter().take(4) {
@@ -961,11 +968,24 @@ mod tests {
         let mut byzantine_dag = Dag::new();
         let mut byzantine_clock = HybridClock::new();
 
-        let honest_node =
-            append(&mut honest_dag, &[], b"honest", &v[0], &*sign_fn, &mut honest_clock).unwrap();
-        let byzantine_node =
-            append(&mut byzantine_dag, &[], b"evil", &v[5], &*sign_fn, &mut byzantine_clock)
-                .unwrap();
+        let honest_node = append(
+            &mut honest_dag,
+            &[],
+            b"honest",
+            &v[0],
+            &*sign_fn,
+            &mut honest_clock,
+        )
+        .unwrap();
+        let byzantine_node = append(
+            &mut byzantine_dag,
+            &[],
+            b"evil",
+            &v[5],
+            &*sign_fn,
+            &mut byzantine_clock,
+        )
+        .unwrap();
 
         // Both get proposed
         consensus::propose(&mut state, &honest_node, &v[0]).unwrap();

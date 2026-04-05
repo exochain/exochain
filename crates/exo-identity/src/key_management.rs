@@ -567,7 +567,10 @@ mod tests {
         let keys = store.get_keys(&did).unwrap();
         assert_eq!(keys.len(), 2);
         assert_eq!(keys[0].status, HybridKeyStatus::Rotated);
-        assert_eq!(keys[0].rotated_to.as_ref(), Some(&keys[1].public_keys.classical));
+        assert_eq!(
+            keys[0].rotated_to.as_ref(),
+            Some(&keys[1].public_keys.classical)
+        );
         assert_eq!(keys[1].status, HybridKeyStatus::Active);
         assert!(store.active_keys(&did).is_some());
     }
@@ -601,7 +604,9 @@ mod tests {
         let mut store = HybridKeyStore::new();
         store.create_key(&did).expect("create_key");
         let old_classical = store.get_keys(&did).unwrap()[0].public_keys.classical;
-        store.rotate_key(&did, &old_classical).expect("first rotate");
+        store
+            .rotate_key(&did, &old_classical)
+            .expect("first rotate");
         assert!(matches!(
             store.rotate_key(&did, &old_classical).unwrap_err(),
             IdentityError::KeyAlreadyRotated
@@ -614,7 +619,9 @@ mod tests {
         let mut store = HybridKeyStore::new();
         store.create_key(&did).expect("create_key");
         let classical = store.get_keys(&did).unwrap()[0].public_keys.classical;
-        store.revoke_key(&did, &classical, "compromised").expect("revoke_key");
+        store
+            .revoke_key(&did, &classical, "compromised")
+            .expect("revoke_key");
 
         let keys = store.get_keys(&did).unwrap();
         assert_eq!(keys[0].status, HybridKeyStatus::Revoked);
@@ -628,7 +635,9 @@ mod tests {
         let mut store = HybridKeyStore::new();
         store.create_key(&did).expect("create_key");
         let classical = store.get_keys(&did).unwrap()[0].public_keys.classical;
-        store.revoke_key(&did, &classical, "first").expect("first revoke");
+        store
+            .revoke_key(&did, &classical, "first")
+            .expect("first revoke");
         assert!(matches!(
             store.revoke_key(&did, &classical, "second").unwrap_err(),
             IdentityError::KeyAlreadyRevoked

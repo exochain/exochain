@@ -9,8 +9,7 @@
 //!   4. Ed25519 signature via `exo_identity::did_verification::verify_did_signature`
 //!      against the first active verification method in the resolved DID document
 use exo_core::{Did, Hash256, Signature, Timestamp};
-use exo_identity::did::DidRegistry;
-use exo_identity::did_verification::verify_did_signature;
+use exo_identity::{did::DidRegistry, did_verification::verify_did_signature};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GatewayError, Result};
@@ -120,9 +119,10 @@ fn check_freshness(ts: &Timestamp) -> Result<()> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
     use exo_core::crypto::{generate_keypair, sign};
     use exo_identity::did::{DidDocument, DidRegistry, VerificationMethod};
+
+    use super::*;
 
     // In test mode, freshness check is disabled, so Timestamp::ZERO is
     // accepted.  Production code uses check_freshness() via #[cfg(not(test))].

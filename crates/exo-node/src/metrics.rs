@@ -15,9 +15,13 @@
 //! - `exochain_uptime_seconds` — node uptime in seconds
 //! - `exochain_sync_in_progress` — whether state sync is active (0 or 1)
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Instant;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Instant,
+};
 
 /// Thread-safe metrics registry for the node.
 #[derive(Debug)]

@@ -8,8 +8,9 @@
 //! - [`rotate_verification_key`] for proper lifecycle management of verification
 //!   methods (deactivate old, add new with version increment)
 
-use crate::did::{DidDocument, VerificationMethod};
 use exo_core::{Did, PublicKey, crypto};
+
+use crate::did::{DidDocument, VerificationMethod};
 
 /// Errors specific to DID verification operations.
 #[derive(Debug, thiserror::Error)]
@@ -39,11 +40,7 @@ pub enum DidVerificationError {
 /// an in-memory implementation suffices.
 pub trait KeyVault {
     /// Retrieve a public key for a DID at a specific version.
-    fn get_public_key(
-        &self,
-        did: &Did,
-        version: u64,
-    ) -> Result<PublicKey, DidVerificationError>;
+    fn get_public_key(&self, did: &Did, version: u64) -> Result<PublicKey, DidVerificationError>;
 
     /// Store a public key for a DID at a specific version.
     fn store_public_key(
@@ -93,9 +90,9 @@ pub fn verify_did_signature(
         ));
     };
 
-    let pub_key_array: [u8; 32] = pub_key_bytes
-        .try_into()
-        .map_err(|_| DidVerificationError::CryptoError("public key must be 32 bytes".to_string()))?;
+    let pub_key_array: [u8; 32] = pub_key_bytes.try_into().map_err(|_| {
+        DidVerificationError::CryptoError("public key must be 32 bytes".to_string())
+    })?;
 
     let public_key = PublicKey::from_bytes(pub_key_array);
 
@@ -170,8 +167,12 @@ pub fn rotate_verification_key(
 
 #[cfg(test)]
 mod tests {
+    use exo_core::{
+        Timestamp,
+        crypto::{generate_keypair, sign},
+    };
+
     use super::*;
-    use exo_core::{Timestamp, crypto::{generate_keypair, sign}};
 
     fn test_did() -> Did {
         Did::new("did:exo:test-verification").expect("valid")
@@ -238,7 +239,8 @@ mod tests {
         let message = b"test";
         let signature = sign(message, &sk);
 
-        let err = verify_did_signature(&doc, "nonexistent#key-99", message, &signature).unwrap_err();
+        let err =
+            verify_did_signature(&doc, "nonexistent#key-99", message, &signature).unwrap_err();
         assert!(matches!(err, DidVerificationError::MethodNotFound(_)));
     }
 
@@ -266,7 +268,8 @@ mod tests {
         let mut doc = make_doc_with_verification(did.clone(), pk);
 
         // Set unsupported multibase prefix
-        doc.verification_methods[0].public_key_multibase = format!("m{}", bs58::encode(pk.as_bytes()).into_string());
+        doc.verification_methods[0].public_key_multibase =
+            format!("m{}", bs58::encode(pk.as_bytes()).into_string());
 
         let message = b"test";
         let signature = sign(message, &sk);

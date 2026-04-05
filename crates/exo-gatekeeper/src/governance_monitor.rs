@@ -311,8 +311,9 @@ pub fn requires_approval_gate(critical_count: u64, high_count: u64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use exo_core::crypto::{generate_keypair, sign};
+
+    use super::*;
 
     fn test_did(name: &str) -> Did {
         Did::new(&format!("did:exo:{name}")).expect("valid")

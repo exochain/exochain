@@ -6,9 +6,10 @@
 //!
 //! Satisfies: GOV-005 (authority chain), TNC-03 (audit continuity), LEG-001 (business records)
 
-use crate::types::GovernanceSignature;
 use exo_core::{Did, Hash256, Timestamp};
 use serde::{Deserialize, Serialize};
+
+use crate::types::GovernanceSignature;
 
 /// Actions that produce CustodyEvents.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

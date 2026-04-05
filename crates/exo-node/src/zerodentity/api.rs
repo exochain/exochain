@@ -19,16 +19,17 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
+use exo_core::types::{Did, Hash256};
 use serde::{Deserialize, Serialize};
 
-use exo_core::types::{Did, Hash256};
-
-use super::attestation::{
-    attester_score_impact, build_target_claim, create_attestation, target_score_impact,
-    validate_attestation,
+use super::{
+    attestation::{
+        attester_score_impact, build_target_claim, create_attestation, target_score_impact,
+        validate_attestation,
+    },
+    store::ZerodentityStore,
+    types::{AttestationType, IdentityClaim, ZerodentityScore},
 };
-use super::store::ZerodentityStore;
-use super::types::{AttestationType, IdentityClaim, ZerodentityScore};
 
 // ---------------------------------------------------------------------------
 // Shared state
@@ -161,17 +162,20 @@ pub struct ServerKeyResponse {
 // ---------------------------------------------------------------------------
 
 fn extract_session_token(headers: &HeaderMap) -> Option<String> {
-    headers.get("authorization")
+    headers
+        .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
         .map(|s| s.to_string())
 }
 
 fn parse_did(did_str: &str) -> Result<Did, (StatusCode, Json<serde_json::Value>)> {
-    Did::new(did_str).map_err(|_| (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({"error": "Invalid DID format"})),
-    ))
+    Did::new(did_str).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Invalid DID format"})),
+        )
+    })
 }
 
 fn hex_hash(h: &Hash256) -> String {
@@ -206,7 +210,12 @@ pub async fn get_score(
     let did = parse_did(&did_str)?;
     let now = now_ms();
 
-    let store = state.store.lock().unwrap();
+    let store = state.store.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "lock poisoned"})),
+        )
+    })?;
 
     // Check if DID exists
     let claims_raw = store.get_claims(&did).unwrap_or_default();
@@ -223,7 +232,9 @@ pub async fn get_score(
 
     let score = ZerodentityScore::compute(&did, &claims, &fingerprints, &behavioral, now);
 
-    let history = store.get_score_history(&did, None, None).unwrap_or_default();
+    let history = store
+        .get_score_history(&did, None, None)
+        .unwrap_or_default();
 
     Ok(Json(ScoreResponse {
         subject_did: did.to_string(),
@@ -241,6 +252,7 @@ pub async fn get_score(
 // GET /api/v1/0dentity/:did/claims
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::as_conversions)]
 pub async fn list_claims(
     State(state): State<ApiState>,
     Path(did_str): Path<String>,
@@ -250,18 +262,27 @@ pub async fn list_claims(
     let did = parse_did(&did_str)?;
 
     // Auth: session token required for claim listing
-    let token = extract_session_token(&headers).ok_or_else(|| (
-        StatusCode::UNAUTHORIZED,
-        Json(serde_json::json!({"error": "Bearer session token required"})),
-    ))?;
+    let token = extract_session_token(&headers).ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Bearer session token required"})),
+        )
+    })?;
 
     // Verify session belongs to this DID
     {
-        let store = state.store.lock().unwrap();
-        let session = store.get_session(&token).ok().flatten().ok_or_else(|| (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error": "Invalid or expired session"})),
-        ))?;
+        let store = state.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "lock poisoned"})),
+            )
+        })?;
+        let session = store.get_session(&token).ok().flatten().ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Invalid or expired session"})),
+            )
+        })?;
         if session.subject_did.as_str() != did.as_str() {
             return Err((
                 StatusCode::FORBIDDEN,
@@ -270,11 +291,17 @@ pub async fn list_claims(
         }
     }
 
-    let store = state.store.lock().unwrap();
+    let store = state.store.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "lock poisoned"})),
+        )
+    })?;
     let all_claims = store.get_claims(&did).unwrap_or_default();
 
     // Filter by status
-    let filtered: Vec<(String, IdentityClaim)> = all_claims.into_iter()
+    let filtered: Vec<(String, IdentityClaim)> = all_claims
+        .into_iter()
         .filter(|(_, c)| {
             if let Some(ref s) = params.status {
                 return c.status.to_string().to_lowercase() == s.to_lowercase();
@@ -283,7 +310,11 @@ pub async fn list_claims(
         })
         .filter(|(_, c)| {
             if let Some(ref t) = params.claim_type {
-                return c.claim_type.to_string().to_lowercase().contains(&t.to_lowercase());
+                return c
+                    .claim_type
+                    .to_string()
+                    .to_lowercase()
+                    .contains(&t.to_lowercase());
             }
             true
         })
@@ -293,7 +324,8 @@ pub async fn list_claims(
     let offset = params.offset.unwrap_or(0) as usize;
     let limit = params.limit.unwrap_or(50) as usize;
 
-    let page: Vec<ClaimItem> = filtered.into_iter()
+    let page: Vec<ClaimItem> = filtered
+        .into_iter()
         .skip(offset)
         .take(limit)
         .map(|(cid, c)| ClaimItem {
@@ -327,11 +359,18 @@ pub async fn score_history(
 ) -> Result<Json<HistoryResponse>, (StatusCode, Json<serde_json::Value>)> {
     let did = parse_did(&did_str)?;
 
-    let store = state.store.lock().unwrap();
-    let snapshots = store.get_score_history(&did, params.from_ms, params.to_ms)
+    let store = state.store.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "lock poisoned"})),
+        )
+    })?;
+    let snapshots = store
+        .get_score_history(&did, params.from_ms, params.to_ms)
         .unwrap_or_default();
 
-    let items: Vec<HistorySnapshot> = snapshots.iter()
+    let items: Vec<HistorySnapshot> = snapshots
+        .iter()
         .map(|s| HistorySnapshot {
             computed_ms: s.computed_ms,
             composite: s.composite,
@@ -355,32 +394,54 @@ pub async fn list_fingerprints(
     let did = parse_did(&did_str)?;
 
     // Auth required
-    let token = extract_session_token(&headers).ok_or_else(|| (
-        StatusCode::UNAUTHORIZED,
-        Json(serde_json::json!({"error": "Bearer session token required"})),
-    ))?;
+    let token = extract_session_token(&headers).ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Bearer session token required"})),
+        )
+    })?;
 
     {
-        let store = state.store.lock().unwrap();
-        let session = store.get_session(&token).ok().flatten().ok_or_else(|| (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error": "Invalid or expired session"})),
-        ))?;
+        let store = state.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "lock poisoned"})),
+            )
+        })?;
+        let session = store.get_session(&token).ok().flatten().ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Invalid or expired session"})),
+            )
+        })?;
         if session.subject_did.as_str() != did.as_str() {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Access denied"}))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "Access denied"})),
+            ));
         }
     }
 
-    let store = state.store.lock().unwrap();
+    let store = state.store.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "lock poisoned"})),
+        )
+    })?;
     let fps = store.get_fingerprints(&did).unwrap_or_default();
-    let items: Vec<FingerprintItem> = fps.iter().map(|fp| FingerprintItem {
-        composite_hash: hex::encode(fp.composite_hash.as_bytes()),
-        captured_ms: fp.captured_ms,
-        consistency_score: fp.consistency_score_bp,
-        signal_count: fp.signal_hashes.len(),
-    }).collect();
+    let items: Vec<FingerprintItem> = fps
+        .iter()
+        .map(|fp| FingerprintItem {
+            composite_hash: hex::encode(fp.composite_hash.as_bytes()),
+            captured_ms: fp.captured_ms,
+            consistency_score: fp.consistency_score_bp,
+            signal_count: fp.signal_hashes.len(),
+        })
+        .collect();
 
-    Ok(Json(FingerprintsResponse { fingerprints: items }))
+    Ok(Json(FingerprintsResponse {
+        fingerprints: items,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -398,61 +459,85 @@ pub async fn create_peer_attestation(
     let now = now_ms();
 
     // Auth required
-    let token = extract_session_token(&headers).ok_or_else(|| (
-        StatusCode::UNAUTHORIZED,
-        Json(serde_json::json!({"error": "Bearer session token required"})),
-    ))?;
+    let token = extract_session_token(&headers).ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Bearer session token required"})),
+        )
+    })?;
 
     {
-        let store = state.store.lock().unwrap();
-        let session = store.get_session(&token).ok().flatten().ok_or_else(|| (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error": "Invalid or expired session"})),
-        ))?;
+        let store = state.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "lock poisoned"})),
+            )
+        })?;
+        let session = store.get_session(&token).ok().flatten().ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Invalid or expired session"})),
+            )
+        })?;
         if session.subject_did.as_str() != attester_did.as_str() {
-            return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Access denied"}))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "Access denied"})),
+            ));
         }
     }
 
-    let attestation_type = AttestationType::from_str(&req.attestation_type).map_err(|_| (
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({"error": "Invalid attestation_type"})),
-    ))?;
+    let attestation_type = AttestationType::from_str(&req.attestation_type).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Invalid attestation_type"})),
+        )
+    })?;
 
-    let message_hash = req.message_hash.as_deref()
-        .and_then(|s| {
-            hex::decode(s).ok().and_then(|b| {
-                if b.len() >= 32 {
-                    let mut arr = [0u8; 32];
-                    arr.copy_from_slice(&b[..32]);
-                    Some(Hash256::from_bytes(arr))
-                } else {
-                    None
-                }
-            })
-        });
+    let message_hash = req.message_hash.as_deref().and_then(|s| {
+        hex::decode(s).ok().and_then(|b| {
+            if b.len() >= 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&b[..32]);
+                Some(Hash256::from_bytes(arr))
+            } else {
+                None
+            }
+        })
+    });
 
     // Validate
     let (attester_claims, already_exists) = {
-        let store = state.store.lock().unwrap();
-        let claims: Vec<IdentityClaim> = store.get_claims(&attester_did)
+        let store = state.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "lock poisoned"})),
+            )
+        })?;
+        let claims: Vec<IdentityClaim> = store
+            .get_claims(&attester_did)
             .unwrap_or_default()
             .into_iter()
             .map(|(_, c)| c)
             .collect();
-        let exists = store.attestation_exists(&attester_did, &target_did).unwrap_or(false);
+        let exists = store
+            .attestation_exists(&attester_did, &target_did)
+            .unwrap_or(false);
         (claims, exists)
     };
 
-    validate_attestation(&attester_did, &target_did, &attester_claims, already_exists)
-        .map_err(|e| (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": e.to_string()})),
-        ))?;
+    validate_attestation(&attester_did, &target_did, &attester_claims, already_exists).map_err(
+        |e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+        },
+    )?;
 
     // Synthetic DAG node hash
     let dag_node_hash = Hash256::digest(
-        format!("attest:{}:{}", attester_did.as_str(), target_did.as_str()).as_bytes()
+        format!("attest:{}:{}", attester_did.as_str(), target_did.as_str()).as_bytes(),
     );
 
     let attestation = create_attestation(
@@ -466,11 +551,18 @@ pub async fn create_peer_attestation(
 
     // Persist attestation
     {
-        let mut store = state.store.lock().unwrap();
-        store.insert_attestation(&attestation).map_err(|e| (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": format!("Store error: {e}")})),
-        ))?;
+        let mut store = state.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "lock poisoned"})),
+            )
+        })?;
+        store.insert_attestation(&attestation).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Store error: {e}")})),
+            )
+        })?;
 
         // Add PeerAttestation claim to target's claim set
         let target_claim = build_target_claim(&attestation, dag_node_hash, now);
@@ -479,21 +571,25 @@ pub async fn create_peer_attestation(
     }
 
     let receipt_hash = hex::encode(
-        Hash256::digest(format!("attest-receipt:{}", &attestation.attestation_id).as_bytes()).as_bytes()
+        Hash256::digest(format!("attest-receipt:{}", &attestation.attestation_id).as_bytes())
+            .as_bytes(),
     );
 
     let att_id = attestation.attestation_id.clone();
 
-    Ok((StatusCode::CREATED, Json(AttestResponse {
-        attestation_id: att_id,
-        receipt_hash,
-        attester_score_impact: serde_json::json!({
-            "network_reputation": format!("+{}", attester_score_impact())
+    Ok((
+        StatusCode::CREATED,
+        Json(AttestResponse {
+            attestation_id: att_id,
+            receipt_hash,
+            attester_score_impact: serde_json::json!({
+                "network_reputation": format!("+{}", attester_score_impact())
+            }),
+            target_score_impact: serde_json::json!({
+                "network_reputation": format!("+{}", target_score_impact())
+            }),
         }),
-        target_score_impact: serde_json::json!({
-            "network_reputation": format!("+{}", target_score_impact())
-        }),
-    })))
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -523,6 +619,9 @@ pub fn zerodentity_api_router(state: ApiState) -> Router {
         .route("/api/v1/0dentity/:did/claims", get(list_claims))
         .route("/api/v1/0dentity/:did/score/history", get(score_history))
         .route("/api/v1/0dentity/:did/fingerprints", get(list_fingerprints))
-        .route("/api/v1/0dentity/:did/attest", post(create_peer_attestation))
+        .route(
+            "/api/v1/0dentity/:did/attest",
+            post(create_peer_attestation),
+        )
         .with_state(state)
 }

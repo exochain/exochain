@@ -407,8 +407,7 @@ mod tests {
     // Violation 1: must_recuse returns true for financial conflict
     #[test]
     fn financial_conflict_blocks_vote() {
-        use exo_core::Did;
-        use exo_core::Timestamp;
+        use exo_core::{Did, Timestamp};
         use exo_governance::conflict::{
             ActionRequest, ConflictDeclaration, check_conflicts, must_recuse,
         };

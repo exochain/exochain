@@ -492,8 +492,15 @@ mod tests {
         let sign_fn = make_sign_fn();
 
         let node_a = append(&mut dag, &[], b"event-A", &creator, &*sign_fn, &mut clock).unwrap();
-        let node_b =
-            append(&mut dag, &[node_a.hash], b"event-B", &creator, &*sign_fn, &mut clock).unwrap();
+        let node_b = append(
+            &mut dag,
+            &[node_a.hash],
+            b"event-B",
+            &creator,
+            &*sign_fn,
+            &mut clock,
+        )
+        .unwrap();
 
         let v: Vec<Did> = validators.iter().cloned().collect();
 
@@ -540,8 +547,15 @@ mod tests {
         let sign_fn = make_sign_fn();
 
         let node_x = append(&mut dag, &[], b"event-X", &creator, &*sign_fn, &mut clock).unwrap();
-        let node_y =
-            append(&mut dag, &[node_x.hash], b"event-Y", &creator, &*sign_fn, &mut clock).unwrap();
+        let node_y = append(
+            &mut dag,
+            &[node_x.hash],
+            b"event-Y",
+            &creator,
+            &*sign_fn,
+            &mut clock,
+        )
+        .unwrap();
 
         let v: Vec<Did> = validators.iter().cloned().collect();
 
@@ -583,8 +597,15 @@ mod tests {
         let sign_fn = make_sign_fn();
 
         let node_x = append(&mut dag, &[], b"event-X", &creator, &*sign_fn, &mut clock).unwrap();
-        let node_r1 =
-            append(&mut dag, &[node_x.hash], b"round1", &creator, &*sign_fn, &mut clock).unwrap();
+        let node_r1 = append(
+            &mut dag,
+            &[node_x.hash],
+            b"round1",
+            &creator,
+            &*sign_fn,
+            &mut clock,
+        )
+        .unwrap();
 
         let v: Vec<Did> = validators.iter().cloned().collect();
 

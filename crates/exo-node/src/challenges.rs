@@ -13,8 +13,10 @@
 //! - `POST /api/v1/challenges/:id/resolve` — resolve a challenge
 //! - `POST /api/v1/challenges/:id/dismiss` — dismiss a challenge
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 
 use axum::{
     Json, Router,
@@ -23,9 +25,7 @@ use axum::{
     routing::{get, post},
 };
 use exo_core::types::Timestamp;
-use exo_escalation::challenge::{
-    self, ContestHold, SybilChallengeGround,
-};
+use exo_escalation::challenge::{self, ContestHold, SybilChallengeGround};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -147,15 +147,21 @@ fn now_timestamp() -> Timestamp {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-    Timestamp { physical_ms: ms, logical: 0 }
+    Timestamp {
+        physical_ms: ms,
+        logical: 0,
+    }
 }
 
 /// `GET /api/v1/challenges` — list all challenge holds.
-async fn handle_list(
-    State(store): State<SharedChallengeStore>,
-) -> Json<Vec<ChallengeResponse>> {
+async fn handle_list(State(store): State<SharedChallengeStore>) -> Json<Vec<ChallengeResponse>> {
     let st = store.lock().expect("challenge store lock");
-    Json(st.list().iter().map(|h| ChallengeResponse::from(*h)).collect())
+    Json(
+        st.list()
+            .iter()
+            .map(|h| ChallengeResponse::from(*h))
+            .collect(),
+    )
 }
 
 /// `GET /api/v1/challenges/:id` — get a single challenge.
@@ -188,8 +194,7 @@ async fn handle_file(
     let mut action_id = [0u8; 32];
     action_id.copy_from_slice(&action_bytes);
 
-    let ground = parse_ground(&req.ground)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let ground = parse_ground(&req.ground).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     let hold = challenge::admit_challenge(&action_id, ground, now_timestamp());
     let resp = ChallengeResponse::from(&hold);
@@ -211,7 +216,8 @@ async fn handle_begin_review(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid UUID: {e}")))?;
 
     let mut st = store.lock().expect("challenge store lock");
-    let hold = st.get_mut(&id)
+    let hold = st
+        .get_mut(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "challenge not found".into()))?;
 
     challenge::begin_review(hold, now_timestamp())
@@ -230,7 +236,8 @@ async fn handle_resolve(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid UUID: {e}")))?;
 
     let mut st = store.lock().expect("challenge store lock");
-    let hold = st.get_mut(&id)
+    let hold = st
+        .get_mut(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "challenge not found".into()))?;
 
     challenge::resolve_hold(hold, now_timestamp(), &req.outcome)
@@ -249,7 +256,8 @@ async fn handle_dismiss(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid UUID: {e}")))?;
 
     let mut st = store.lock().expect("challenge store lock");
-    let hold = st.get_mut(&id)
+    let hold = st
+        .get_mut(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "challenge not found".into()))?;
 
     challenge::dismiss_hold(hold, now_timestamp(), &req.reason)
@@ -339,8 +347,7 @@ mod tests {
 
         assert_eq!(resp.status(), StatusCode::CREATED);
         let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
-        let result: ChallengeResponse =
-            serde_json::from_slice(&body_bytes).unwrap();
+        let result: ChallengeResponse = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(result.ground, "QuorumContamination");
         assert_eq!(result.status, "PauseEligible");
         assert!(!result.audit_log.is_empty());

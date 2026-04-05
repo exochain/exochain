@@ -37,12 +37,15 @@ mod tests;
 // Re-exports — the public surface of the 0dentity module
 // ---------------------------------------------------------------------------
 
+#[allow(unused_imports)]
 pub use otp::{
-    OtpError, OtpResult, OTP_LOCKOUT_MS, OTP_MAX_ATTEMPTS, OTP_RESEND_COOLDOWN_MS, OTP_TTL_MS,
+    OTP_LOCKOUT_MS, OTP_MAX_ATTEMPTS, OTP_RESEND_COOLDOWN_MS, OTP_TTL_MS, OtpError, OtpResult,
 };
+#[allow(unused_imports)]
 pub use store::{SharedZerodentityStore, ZerodentityStore};
+#[allow(unused_imports)]
 pub use types::{
     AttestationType, BehavioralSample, BehavioralSignalType, ClaimStatus, ClaimType,
-    DeviceFingerprint, FingerprintSignal, IdentityClaim, IdentitySession, OtpChallenge,
-    OtpChannel, OtpState, PeerAttestation, PolarAxes, Signature, ZerodentityScore,
+    DeviceFingerprint, FingerprintSignal, IdentityClaim, IdentitySession, OtpChallenge, OtpChannel,
+    OtpState, PeerAttestation, PolarAxes, Signature, ZerodentityScore,
 };

@@ -36,8 +36,10 @@ mod telegram;
 mod wire;
 mod zerodentity;
 
-use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeSet,
+    sync::{Arc, Mutex},
+};
 
 use clap::Parser;
 use cli::{Cli, Command};
@@ -61,10 +63,7 @@ async fn main() {
 }
 
 /// Parse a list of validator DID strings, falling back to just this node's DID.
-fn parse_validator_set(
-    cli_validators: &Option<Vec<String>>,
-    node_did: &Did,
-) -> BTreeSet<Did> {
+fn parse_validator_set(cli_validators: &Option<Vec<String>>, node_did: &Did) -> BTreeSet<Did> {
     if let Some(vals) = cli_validators {
         vals.iter()
             .filter_map(|s| match Did::new(s) {
@@ -208,11 +207,8 @@ async fn start_node(
         Arc::new(move |data: &[u8]| identity.sign(data))
     };
 
-    let reactor_state = reactor::create_reactor_state(
-        &reactor_config,
-        sign_fn,
-        Some(&shared_store),
-    );
+    let reactor_state =
+        reactor::create_reactor_state(&reactor_config, sign_fn, Some(&shared_store));
     let (reactor_tx, mut reactor_rx) = mpsc::channel::<ReactorEvent>(256);
     let (reactor_event_tx, reactor_event_rx) = mpsc::channel::<NetworkEvent>(256);
 
@@ -225,10 +221,9 @@ async fn start_node(
     ));
 
     // Set initial metrics from configuration.
-    node_metrics.is_validator.store(
-        u64::from(validator),
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    node_metrics
+        .is_validator
+        .store(u64::from(validator), std::sync::atomic::Ordering::Relaxed);
     node_metrics.validator_count.store(
         validator_set.len() as u64,
         std::sync::atomic::Ordering::Relaxed,
@@ -298,7 +293,11 @@ async fn start_node(
     tokio::spawn(async move {
         while let Some(event) = reactor_rx.recv().await {
             match event {
-                ReactorEvent::NodeCommitted { hash, height, round } => {
+                ReactorEvent::NodeCommitted {
+                    hash,
+                    height,
+                    round,
+                } => {
                     reactor_metrics
                         .committed_height
                         .store(height, std::sync::atomic::Ordering::Relaxed);
@@ -331,14 +330,15 @@ async fn start_node(
     tokio::spawn(async move {
         while let Some(event) = sync_event_rx.recv().await {
             match event {
-                SyncEvent::Progress { from_height, to_height, total_nodes } => {
+                SyncEvent::Progress {
+                    from_height,
+                    to_height,
+                    total_nodes,
+                } => {
                     sync_metrics
                         .sync_in_progress
                         .store(1, std::sync::atomic::Ordering::Relaxed);
-                    tracing::info!(
-                        from_height, to_height, total_nodes,
-                        "Sync progress"
-                    );
+                    tracing::info!(from_height, to_height, total_nodes, "Sync progress");
                 }
                 SyncEvent::Complete { committed_height } => {
                     sync_metrics
@@ -349,7 +349,11 @@ async fn start_node(
                         .store(committed_height, std::sync::atomic::Ordering::Relaxed);
                     tracing::info!(committed_height, "Sync complete — node is caught up");
                 }
-                SyncEvent::ServedSnapshot { peer, from_height, nodes_sent } => {
+                SyncEvent::ServedSnapshot {
+                    peer,
+                    from_height,
+                    nodes_sent,
+                } => {
                     tracing::debug!(
                         %peer, from_height, nodes_sent,
                         "Served snapshot to peer"
@@ -418,33 +422,27 @@ async fn start_node(
                     consensus_round,
                     committed_height,
                     status,
-                } => {
-                    match &status {
-                        holons::HealthStatus::Healthy => {
-                            tracing::debug!(
-                                consensus_round,
-                                committed_height,
-                                "Health Holon: healthy"
-                            );
-                        }
-                        holons::HealthStatus::Degraded { reason } => {
-                            tracing::warn!(
-                                consensus_round,
-                                committed_height,
-                                %reason,
-                                "Health Holon: degraded"
-                            );
-                        }
-                        holons::HealthStatus::Critical { reason } => {
-                            tracing::error!(
-                                consensus_round,
-                                committed_height,
-                                %reason,
-                                "Health Holon: CRITICAL"
-                            );
-                        }
+                } => match &status {
+                    holons::HealthStatus::Healthy => {
+                        tracing::debug!(consensus_round, committed_height, "Health Holon: healthy");
                     }
-                }
+                    holons::HealthStatus::Degraded { reason } => {
+                        tracing::warn!(
+                            consensus_round,
+                            committed_height,
+                            %reason,
+                            "Health Holon: degraded"
+                        );
+                    }
+                    holons::HealthStatus::Critical { reason } => {
+                        tracing::error!(
+                            consensus_round,
+                            committed_height,
+                            %reason,
+                            "Health Holon: CRITICAL"
+                        );
+                    }
+                },
                 HolonEvent::HolonTerminated { holon_id, reason } => {
                     tracing::error!(
                         %holon_id,
@@ -541,7 +539,9 @@ async fn start_node(
             Arc::clone(&zerodentity_store),
         ));
     } else {
-        tracing::info!("Telegram adjutant not configured — set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable");
+        tracing::info!(
+            "Telegram adjutant not configured — set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable"
+        );
         // Drop the alert receiver so sentinels don't block.
         drop(alert_rx);
     }
@@ -563,11 +563,15 @@ async fn start_node(
     let zd_api_state = zerodentity::api::ApiState {
         store: std::sync::Arc::clone(&zerodentity_store),
     };
-    let zerodentity_onboarding_router = zerodentity::onboarding::onboarding_router(zd_onboarding_state);
+    let zerodentity_onboarding_router =
+        zerodentity::onboarding::onboarding_router(zd_onboarding_state);
     let zerodentity_api_router = zerodentity::api::zerodentity_api_router(zd_api_state);
     let zerodentity_dashboard_router = zerodentity::dashboard::zerodentity_dashboard_router();
-    let zerodentity_onboarding_ui_router = zerodentity::onboarding_ui::zerodentity_onboarding_router();
-    tracing::info!("0dentity routers ready — /0dentity, /0dentity/dashboard/:did, /api/v1/0dentity/*");
+    let zerodentity_onboarding_ui_router =
+        zerodentity::onboarding_ui::zerodentity_onboarding_router();
+    tracing::info!(
+        "0dentity routers ready — /0dentity, /0dentity/dashboard/:did, /api/v1/0dentity/*"
+    );
 
     // Merge metrics + governance + passport + dashboard into a single extra router
     // and apply bearer-token auth middleware (protects POST, allows GET).
@@ -608,12 +612,7 @@ async fn start_node(
         );
     }
 
-    exo_gateway::server::serve_with_extra_routes(
-        gateway_config,
-        None,
-        Some(extra_router),
-    )
-    .await?;
+    exo_gateway::server::serve_with_extra_routes(gateway_config, None, Some(extra_router)).await?;
     Ok(())
 }
 

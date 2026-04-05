@@ -8,12 +8,13 @@
 //! These checks implement the normative HLC check (EXOCHAIN Specification v2.2): event > parent,
 //! preventing Byzantine clock manipulation in the trust fabric.
 
+use exo_core::types::Hash256;
+
 use crate::{
     dag::compute_node_hash,
     error::{DagError, Result},
     store::DagStore,
 };
-use exo_core::types::Hash256;
 
 /// Maximum allowed clock skew between nodes (500ms).
 ///
@@ -31,10 +32,7 @@ const MAX_CLOCK_SKEW_MS: u64 = 500;
 /// This is the normative append path for persistent deployments (EXOCHAIN Specification v2.2).
 /// The in-memory [`dag::append`](crate::dag::append) handles local construction;
 /// this function handles validation for nodes received from external sources.
-pub fn validated_append(
-    store: &mut impl DagStore,
-    node: crate::dag::DagNode,
-) -> Result<()> {
+pub fn validated_append(store: &mut impl DagStore, node: crate::dag::DagNode) -> Result<()> {
     // 1. Wall-clock skew check: reject future-dated nodes
     if node.timestamp.physical_ms > 0 {
         let now_ms = std::time::SystemTime::now()
@@ -105,12 +103,13 @@ pub fn verify_stored_integrity(store: &impl DagStore, hash: &Hash256) -> Result<
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use exo_core::types::{Did, Signature, Timestamp};
+
     use super::*;
     use crate::{
         dag::{Dag, DagNode, HybridClock, append},
         store::MemoryStore,
     };
-    use exo_core::types::{Did, Signature, Timestamp};
 
     fn test_did() -> Did {
         Did::new("did:exo:test").expect("valid")
@@ -132,8 +131,7 @@ mod tests {
         let mut clock = HybridClock::new();
         let creator = test_did();
         let sign_fn = make_sign_fn();
-        append(&mut dag, &[], b"genesis", &creator, &*sign_fn, &mut clock)
-            .expect("genesis")
+        append(&mut dag, &[], b"genesis", &creator, &*sign_fn, &mut clock).expect("genesis")
     }
 
     fn make_child_node(parent: &DagNode) -> DagNode {
@@ -143,8 +141,8 @@ mod tests {
         let sign_fn = make_sign_fn();
 
         // Insert parent first so we can create a child
-        let _g = append(&mut dag, &[], b"genesis", &creator, &*sign_fn, &mut clock)
-            .expect("genesis");
+        let _g =
+            append(&mut dag, &[], b"genesis", &creator, &*sign_fn, &mut clock).expect("genesis");
 
         // Build child manually with proper parent reference
         let payload_hash = Hash256::digest(b"child-payload");
@@ -152,12 +150,7 @@ mod tests {
             parent.timestamp.physical_ms + 1,
             parent.timestamp.logical + 1,
         );
-        let hash = compute_node_hash(
-            &[parent.hash],
-            &payload_hash,
-            &creator,
-            &timestamp,
-        );
+        let hash = compute_node_hash(&[parent.hash], &payload_hash, &creator, &timestamp);
         let signature = (*sign_fn)(hash.as_bytes());
 
         DagNode {
@@ -203,12 +196,7 @@ mod tests {
         let creator = test_did();
         let payload_hash = Hash256::digest(b"bad-child");
         let timestamp = Timestamp::new(0, 0); // Before genesis
-        let hash = compute_node_hash(
-            &[genesis.hash],
-            &payload_hash,
-            &creator,
-            &timestamp,
-        );
+        let hash = compute_node_hash(&[genesis.hash], &payload_hash, &creator, &timestamp);
         let sign_fn = make_sign_fn();
         let signature = (*sign_fn)(hash.as_bytes());
 

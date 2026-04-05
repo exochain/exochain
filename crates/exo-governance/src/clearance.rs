@@ -301,8 +301,9 @@ mod tests {
 
     #[test]
     fn independence_required_with_zero_min_independent_returns_insufficient() {
-        use crate::quorum::{QuorumPolicy, Role};
         use exo_core::Timestamp;
+
+        use crate::quorum::{QuorumPolicy, Role};
         let mut p = ClearancePolicy::default();
         p.actions.insert(
             "critical".into(),
@@ -327,8 +328,9 @@ mod tests {
 
     #[test]
     fn independence_required_with_valid_quorum_policy_grants() {
-        use crate::quorum::{QuorumPolicy, Role};
         use exo_core::Timestamp;
+
+        use crate::quorum::{QuorumPolicy, Role};
         let hash = [1u8; 32];
         let mut p = ClearancePolicy {
             actions: BTreeMap::new(),

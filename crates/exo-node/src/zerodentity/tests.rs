@@ -9,24 +9,24 @@
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use axum::Router;
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode, header};
-    use rand::SeedableRng;
-    use rand::rngs::StdRng;
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode, header},
+    };
+    use exo_core::types::{Did, Hash256, Signature};
+    use rand::{SeedableRng, rngs::StdRng};
     use serde_json::Value;
     use tower::ServiceExt;
 
-    use exo_core::types::{Did, Hash256, Signature};
-
     use crate::zerodentity::{
-        ClaimStatus, ClaimType, IdentityClaim, IdentitySession, OTP_MAX_ATTEMPTS,
-        OtpChallenge, OtpChannel, OtpState, PolarAxes, ZerodentityScore,
+        ClaimStatus, ClaimType, IdentityClaim, IdentitySession, OTP_MAX_ATTEMPTS, OtpChallenge,
+        OtpChannel, OtpState, PolarAxes, ZerodentityScore,
+        api::{ApiState, zerodentity_api_router},
+        onboarding::{OnboardingState, onboarding_router},
+        scoring::compute_symmetry,
+        store::{SharedZerodentityStore, ZerodentityStore, new_shared_store},
     };
-    use crate::zerodentity::api::{ApiState, zerodentity_api_router};
-    use crate::zerodentity::onboarding::{OnboardingState, onboarding_router};
-    use crate::zerodentity::scoring::compute_symmetry;
-    use crate::zerodentity::store::{ZerodentityStore, new_shared_store, SharedZerodentityStore};
 
     // -----------------------------------------------------------------------
     // Test helpers
@@ -46,7 +46,11 @@ mod tests {
 
     fn make_claim(did: &Did, ct: ClaimType, status: ClaimStatus, ms: u64) -> IdentityClaim {
         let key = format!("{ct:?}-{ms}");
-        let verified_ms = if status == ClaimStatus::Verified { Some(ms + 500) } else { None };
+        let verified_ms = if status == ClaimStatus::Verified {
+            Some(ms + 500)
+        } else {
+            None
+        };
         IdentityClaim {
             claim_hash: h(&key),
             subject_did: did.clone(),
@@ -130,7 +134,9 @@ mod tests {
     }
 
     async fn body_json(resp: axum::response::Response) -> Value {
-        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         serde_json::from_slice(&bytes).unwrap()
     }
 
@@ -141,7 +147,12 @@ mod tests {
     #[test]
     fn score_email_only_gives_3500_communication() {
         let did = td("score-01");
-        let claims = vec![make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000)];
+        let claims = vec![make_claim(
+            &did,
+            ClaimType::Email,
+            ClaimStatus::Verified,
+            1_000,
+        )];
         let score = ZerodentityScore::compute(&did, &claims, &[], &[], 1_000_000);
         assert_eq!(score.axes.communication, 3_500);
     }
@@ -149,7 +160,12 @@ mod tests {
     #[test]
     fn score_phone_only_gives_3700_communication() {
         let did = td("score-02");
-        let claims = vec![make_claim(&did, ClaimType::Phone, ClaimStatus::Verified, 1_000)];
+        let claims = vec![make_claim(
+            &did,
+            ClaimType::Phone,
+            ClaimStatus::Verified,
+            1_000,
+        )];
         let score = ZerodentityScore::compute(&did, &claims, &[], &[], 1_000_000);
         assert_eq!(score.axes.communication, 3_700);
     }
@@ -233,8 +249,15 @@ mod tests {
         let did = td("score-09");
         let s1 = ZerodentityScore::compute(
             &did,
-            &[make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000)],
-            &[], &[], 1_000_000,
+            &[make_claim(
+                &did,
+                ClaimType::Email,
+                ClaimStatus::Verified,
+                1_000,
+            )],
+            &[],
+            &[],
+            1_000_000,
         );
         let s2 = ZerodentityScore::compute(
             &did,
@@ -242,9 +265,14 @@ mod tests {
                 make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
                 make_claim(&did, ClaimType::Phone, ClaimStatus::Verified, 2_000),
             ],
-            &[], &[], 1_000_000,
+            &[],
+            &[],
+            1_000_000,
         );
-        assert_ne!(s1.dag_state_hash, s2.dag_state_hash, "different claims → different dag_state_hash");
+        assert_ne!(
+            s1.dag_state_hash, s2.dag_state_hash,
+            "different claims → different dag_state_hash"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -265,7 +293,10 @@ mod tests {
     fn symmetry_highly_skewed_is_low() {
         let mut axes = [0u32; 8];
         axes[0] = 10_000;
-        assert!(compute_symmetry(&axes) < 3_000, "one dominant axis → low symmetry");
+        assert!(
+            compute_symmetry(&axes) < 3_000,
+            "one dominant axis → low symmetry"
+        );
     }
 
     #[test]
@@ -273,7 +304,10 @@ mod tests {
         // One axis slightly off — symmetry should still be high
         let mut axes = [5_000u32; 8];
         axes[0] = 5_100;
-        assert!(compute_symmetry(&axes) > 8_000, "slight imbalance → high symmetry");
+        assert!(
+            compute_symmetry(&axes) > 8_000,
+            "slight imbalance → high symmetry"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -321,7 +355,9 @@ mod tests {
             store.put_score(s);
         }
 
-        let filtered = store.get_score_history(&did, Some(2_000), Some(8_000)).unwrap();
+        let filtered = store
+            .get_score_history(&did, Some(2_000), Some(8_000))
+            .unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].composite, 2_000);
     }
@@ -358,14 +394,19 @@ mod tests {
         let mut store = ZerodentityStore::new();
         let token = "revoke-test-token";
 
-        store.insert_session(&make_session(&did, token, 1_000_000)).unwrap();
+        store
+            .insert_session(&make_session(&did, token, 1_000_000))
+            .unwrap();
         assert!(store.get_session(token).unwrap().is_some());
 
         let mut revoked = make_session(&did, token, 1_000_000);
         revoked.revoked = true;
         store.insert_session(&revoked).unwrap();
 
-        assert!(store.get_session(token).unwrap().is_none(), "revoked session must be hidden");
+        assert!(
+            store.get_session(token).unwrap().is_none(),
+            "revoked session must be hidden"
+        );
     }
 
     #[test]
@@ -373,14 +414,18 @@ mod tests {
         let did = td("store-claims-01");
         let mut store = ZerodentityStore::new();
 
-        store.insert_claim(
-            "c1",
-            &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
-        ).unwrap();
-        store.insert_claim(
-            "c2",
-            &make_claim(&did, ClaimType::Phone, ClaimStatus::Pending, 2_000),
-        ).unwrap();
+        store
+            .insert_claim(
+                "c1",
+                &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
+            )
+            .unwrap();
+        store
+            .insert_claim(
+                "c2",
+                &make_claim(&did, ClaimType::Phone, ClaimStatus::Pending, 2_000),
+            )
+            .unwrap();
 
         let tuples = store.get_claims(&did).unwrap();
         let slice = store.get_claims_slice(&did);
@@ -398,10 +443,15 @@ mod tests {
     async fn submit_claim_returns_200_and_claim_id() {
         let app = onboarding_app(new_shared_store());
 
-        let resp = post_json(&app, "/api/v1/0dentity/claims", serde_json::json!({
-            "subject_did": "did:exo:alice",
-            "claim_type": "DisplayName"
-        })).await;
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/claims",
+            serde_json::json!({
+                "subject_did": "did:exo:alice",
+                "claim_type": "DisplayName"
+            }),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
@@ -413,10 +463,15 @@ mod tests {
     async fn submit_claim_invalid_did_returns_400() {
         let app = onboarding_app(new_shared_store());
 
-        let resp = post_json(&app, "/api/v1/0dentity/claims", serde_json::json!({
-            "subject_did": "not-a-valid-did",
-            "claim_type": "Email"
-        })).await;
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/claims",
+            serde_json::json!({
+                "subject_did": "not-a-valid-did",
+                "claim_type": "Email"
+            }),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
@@ -425,10 +480,15 @@ mod tests {
     async fn submit_claim_unknown_type_returns_400() {
         let app = onboarding_app(new_shared_store());
 
-        let resp = post_json(&app, "/api/v1/0dentity/claims", serde_json::json!({
-            "subject_did": "did:exo:alice",
-            "claim_type": "Nonexistent"
-        })).await;
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/claims",
+            serde_json::json!({
+                "subject_did": "did:exo:alice",
+                "claim_type": "Nonexistent"
+            }),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
@@ -437,11 +497,16 @@ mod tests {
     async fn submit_claim_with_otp_channel_returns_challenge_id_and_ttl() {
         let app = onboarding_app(new_shared_store());
 
-        let resp = post_json(&app, "/api/v1/0dentity/claims", serde_json::json!({
-            "subject_did": "did:exo:alice",
-            "claim_type": "Email",
-            "verification_channel": "Email"
-        })).await;
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/claims",
+            serde_json::json!({
+                "subject_did": "did:exo:alice",
+                "claim_type": "Email",
+                "verification_channel": "Email"
+            }),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
@@ -455,10 +520,15 @@ mod tests {
         let app = onboarding_app(store.clone());
         let did = td("onb-store-check");
 
-        post_json(&app, "/api/v1/0dentity/claims", serde_json::json!({
-            "subject_did": did.as_str(),
-            "claim_type": "Phone"
-        })).await;
+        post_json(
+            &app,
+            "/api/v1/0dentity/claims",
+            serde_json::json!({
+                "subject_did": did.as_str(),
+                "claim_type": "Phone"
+            }),
+        )
+        .await;
 
         let claims = store.lock().unwrap().get_claims(&did).unwrap();
         assert_eq!(claims.len(), 1);
@@ -477,17 +547,30 @@ mod tests {
         let (challenge, code) =
             OtpChallenge::new(&did, OtpChannel::Email, dispatched_ms, &mut rng).unwrap();
         let cid = challenge.challenge_id.clone();
-        store.lock().unwrap().insert_otp_challenge(&challenge).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .insert_otp_challenge(&challenge)
+            .unwrap();
 
-        let resp = post_json(&app, "/api/v1/0dentity/verify", serde_json::json!({
-            "challenge_id": cid,
-            "code": code
-        })).await;
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/verify",
+            serde_json::json!({
+                "challenge_id": cid,
+                "code": code
+            }),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
         assert_eq!(body["verified"], true);
-        assert!(body["session_token"].as_str().is_some_and(|s| !s.is_empty()));
+        assert!(
+            body["session_token"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
+        );
     }
 
     #[tokio::test]
@@ -501,12 +584,21 @@ mod tests {
         let (challenge, _code) =
             OtpChallenge::new(&did, OtpChannel::Email, dispatched_ms, &mut rng).unwrap();
         let cid = challenge.challenge_id.clone();
-        store.lock().unwrap().insert_otp_challenge(&challenge).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .insert_otp_challenge(&challenge)
+            .unwrap();
 
-        let resp = post_json(&app, "/api/v1/0dentity/verify", serde_json::json!({
-            "challenge_id": cid,
-            "code": "000000"
-        })).await;
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/verify",
+            serde_json::json!({
+                "challenge_id": cid,
+                "code": "000000"
+            }),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
@@ -529,12 +621,21 @@ mod tests {
         let (challenge, _code) =
             OtpChallenge::new(&did, OtpChannel::Email, dispatched_ms, &mut rng).unwrap();
         let cid = challenge.challenge_id.clone();
-        store.lock().unwrap().insert_otp_challenge(&challenge).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .insert_otp_challenge(&challenge)
+            .unwrap();
 
-        let resp = post_json(&app, "/api/v1/0dentity/verify", serde_json::json!({
-            "challenge_id": cid,
-            "code": "123456"
-        })).await;
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/verify",
+            serde_json::json!({
+                "challenge_id": cid,
+                "code": "123456"
+            }),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::GONE);
     }
@@ -543,10 +644,15 @@ mod tests {
     async fn verify_otp_not_found_returns_404() {
         let app = onboarding_app(new_shared_store());
 
-        let resp = post_json(&app, "/api/v1/0dentity/verify", serde_json::json!({
-            "challenge_id": "does-not-exist",
-            "code": "000000"
-        })).await;
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/verify",
+            serde_json::json!({
+                "challenge_id": "does-not-exist",
+                "code": "000000"
+            }),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
@@ -562,18 +668,31 @@ mod tests {
         let (challenge, _code) =
             OtpChallenge::new(&did, OtpChannel::Email, dispatched_ms, &mut rng).unwrap();
         let cid = challenge.challenge_id.clone();
-        store.lock().unwrap().insert_otp_challenge(&challenge).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .insert_otp_challenge(&challenge)
+            .unwrap();
 
         for attempt in 0..OTP_MAX_ATTEMPTS {
-            let resp = post_json(&app, "/api/v1/0dentity/verify", serde_json::json!({
-                "challenge_id": cid,
-                "code": "999999"
-            })).await;
+            let resp = post_json(
+                &app,
+                "/api/v1/0dentity/verify",
+                serde_json::json!({
+                    "challenge_id": cid,
+                    "code": "999999"
+                }),
+            )
+            .await;
 
             if attempt < OTP_MAX_ATTEMPTS - 1 {
                 assert_eq!(resp.status(), StatusCode::OK, "attempt {attempt}");
             } else {
-                assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS, "final attempt");
+                assert_eq!(
+                    resp.status(),
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "final attempt"
+                );
             }
         }
     }
@@ -590,11 +709,20 @@ mod tests {
         let (challenge, _) =
             OtpChallenge::new(&did, OtpChannel::Email, dispatched_ms, &mut rng).unwrap();
         let cid = challenge.challenge_id.clone();
-        store.lock().unwrap().insert_otp_challenge(&challenge).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .insert_otp_challenge(&challenge)
+            .unwrap();
 
-        let resp = post_json(&app, "/api/v1/0dentity/verify/resend", serde_json::json!({
-            "challenge_id": cid
-        })).await;
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/verify/resend",
+            serde_json::json!({
+                "challenge_id": cid
+            }),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     }
@@ -611,11 +739,20 @@ mod tests {
         let (challenge, _) =
             OtpChallenge::new(&did, OtpChannel::Email, dispatched_ms, &mut rng).unwrap();
         let cid = challenge.challenge_id.clone();
-        store.lock().unwrap().insert_otp_challenge(&challenge).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .insert_otp_challenge(&challenge)
+            .unwrap();
 
-        let resp = post_json(&app, "/api/v1/0dentity/verify/resend", serde_json::json!({
-            "challenge_id": cid
-        })).await;
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/verify/resend",
+            serde_json::json!({
+                "challenge_id": cid
+            }),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
@@ -628,9 +765,14 @@ mod tests {
     async fn resend_otp_not_found_returns_404() {
         let app = onboarding_app(new_shared_store());
 
-        let resp = post_json(&app, "/api/v1/0dentity/verify/resend", serde_json::json!({
-            "challenge_id": "ghost-challenge"
-        })).await;
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/verify/resend",
+            serde_json::json!({
+                "challenge_id": "ghost-challenge"
+            }),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
@@ -658,11 +800,13 @@ mod tests {
             s.insert_claim(
                 "e1",
                 &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
-            ).unwrap();
+            )
+            .unwrap();
             s.insert_claim(
                 "p1",
                 &make_claim(&did, ClaimType::Phone, ClaimStatus::Verified, 2_000),
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let resp = get_req(&app, &format!("/api/v1/0dentity/{}/score", did.as_str())).await;
@@ -679,10 +823,14 @@ mod tests {
         let app = api_app(store.clone());
         let did = td("api-score-02");
 
-        store.lock().unwrap().insert_claim(
-            "c1",
-            &make_claim(&did, ClaimType::DisplayName, ClaimStatus::Verified, 1_000),
-        ).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .insert_claim(
+                "c1",
+                &make_claim(&did, ClaimType::DisplayName, ClaimStatus::Verified, 1_000),
+            )
+            .unwrap();
 
         let resp = get_req(&app, &format!("/api/v1/0dentity/{}/score", did.as_str())).await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -698,10 +846,14 @@ mod tests {
         let app = api_app(store.clone());
         let did = td("api-claims-noauth");
 
-        store.lock().unwrap().insert_claim(
-            "c1",
-            &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
-        ).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .insert_claim(
+                "c1",
+                &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
+            )
+            .unwrap();
 
         let resp = get_req(&app, &format!("/api/v1/0dentity/{}/claims", did.as_str())).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -719,19 +871,23 @@ mod tests {
             s.insert_claim(
                 "c1",
                 &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
-            ).unwrap();
+            )
+            .unwrap();
             s.insert_claim(
                 "c2",
                 &make_claim(&did, ClaimType::Phone, ClaimStatus::Pending, 2_000),
-            ).unwrap();
-            s.insert_session(&make_session(&did, token, 1_000_000)).unwrap();
+            )
+            .unwrap();
+            s.insert_session(&make_session(&did, token, 1_000_000))
+                .unwrap();
         }
 
         let resp = get_with_auth(
             &app,
             &format!("/api/v1/0dentity/{}/claims", did.as_str()),
             token,
-        ).await;
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
         assert_eq!(body["total"].as_u64().unwrap(), 2);
@@ -751,8 +907,10 @@ mod tests {
             s.insert_claim(
                 "a-c1",
                 &make_claim(&alice, ClaimType::Email, ClaimStatus::Verified, 1_000),
-            ).unwrap();
-            s.insert_session(&make_session(&bob, bob_token, 1_000_000)).unwrap();
+            )
+            .unwrap();
+            s.insert_session(&make_session(&bob, bob_token, 1_000_000))
+                .unwrap();
         }
 
         // Bob's token cannot access Alice's claims
@@ -760,7 +918,8 @@ mod tests {
             &app,
             &format!("/api/v1/0dentity/{}/claims", alice.as_str()),
             bob_token,
-        ).await;
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
@@ -789,14 +948,24 @@ mod tests {
             }
         }
 
-        let resp = get_req(&app, &format!("/api/v1/0dentity/{}/score/history", did.as_str())).await;
+        let resp = get_req(
+            &app,
+            &format!("/api/v1/0dentity/{}/score/history", did.as_str()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
         let snaps = body["snapshots"].as_array().unwrap();
         assert_eq!(snaps.len(), 3);
         // Timestamps must be non-decreasing
-        let times: Vec<u64> = snaps.iter().map(|s| s["computed_ms"].as_u64().unwrap()).collect();
-        assert!(times.windows(2).all(|w| w[0] <= w[1]), "history must be chronological");
+        let times: Vec<u64> = snaps
+            .iter()
+            .map(|s| s["computed_ms"].as_u64().unwrap())
+            .collect();
+        assert!(
+            times.windows(2).all(|w| w[0] <= w[1]),
+            "history must be chronological"
+        );
     }
 
     #[tokio::test]
@@ -814,13 +983,18 @@ mod tests {
         let did = td("api-fp-ok");
         let token = "fp-session-token";
 
-        store.lock().unwrap().insert_session(&make_session(&did, token, 1_000_000)).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .insert_session(&make_session(&did, token, 1_000_000))
+            .unwrap();
 
         let resp = get_with_auth(
             &app,
             &format!("/api/v1/0dentity/{}/fingerprints", did.as_str()),
             token,
-        ).await;
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
         // No fingerprints stored → empty list
@@ -843,24 +1017,35 @@ mod tests {
         let did_str = did.as_str();
 
         // ── 1. DisplayName claim ──────────────────────────────────────────
-        let resp = post_json(&onb, "/api/v1/0dentity/claims", serde_json::json!({
-            "subject_did": did_str,
-            "claim_type": "DisplayName"
-        })).await;
+        let resp = post_json(
+            &onb,
+            "/api/v1/0dentity/claims",
+            serde_json::json!({
+                "subject_did": did_str,
+                "claim_type": "DisplayName"
+            }),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let b = body_json(resp).await;
         assert_eq!(b["status"], "Pending");
 
         assert_eq!(
-            store.lock().unwrap().get_claims(&did).unwrap().len(), 1,
+            store.lock().unwrap().get_claims(&did).unwrap().len(),
+            1,
             "DisplayName claim should be stored"
         );
 
         // ── 2. Email claim (HTTP) ─────────────────────────────────────────
-        let resp = post_json(&onb, "/api/v1/0dentity/claims", serde_json::json!({
-            "subject_did": did_str,
-            "claim_type": "Email"
-        })).await;
+        let resp = post_json(
+            &onb,
+            "/api/v1/0dentity/claims",
+            serde_json::json!({
+                "subject_did": did_str,
+                "claim_type": "Email"
+            }),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
 
         // ── 3. Email OTP — inject known challenge + verify via HTTP ───────
@@ -870,12 +1055,21 @@ mod tests {
         let (email_ch, email_code) =
             OtpChallenge::new(&did, OtpChannel::Email, dispatched_ms, &mut rng1).unwrap();
         let email_cid = email_ch.challenge_id.clone();
-        store.lock().unwrap().insert_otp_challenge(&email_ch).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .insert_otp_challenge(&email_ch)
+            .unwrap();
 
-        let resp = post_json(&onb, "/api/v1/0dentity/verify", serde_json::json!({
-            "challenge_id": email_cid,
-            "code": email_code
-        })).await;
+        let resp = post_json(
+            &onb,
+            "/api/v1/0dentity/verify",
+            serde_json::json!({
+                "challenge_id": email_cid,
+                "code": email_code
+            }),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let b = body_json(resp).await;
         assert!(b["verified"].as_bool().unwrap(), "email OTP must verify");
@@ -888,7 +1082,8 @@ mod tests {
             s.insert_claim(
                 "email-verified",
                 &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, dispatched_ms),
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         // ── 5. GET /score → communication = 3500 (email only) ────────────
@@ -896,27 +1091,42 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let b = body_json(resp).await;
         assert_eq!(
-            b["axes"]["communication"].as_u64().unwrap(), 3_500,
+            b["axes"]["communication"].as_u64().unwrap(),
+            3_500,
             "email-only communication axis must be 3500bp"
         );
 
         // ── 6. Phone claim + OTP ──────────────────────────────────────────
-        let resp = post_json(&onb, "/api/v1/0dentity/claims", serde_json::json!({
-            "subject_did": did_str,
-            "claim_type": "Phone"
-        })).await;
+        let resp = post_json(
+            &onb,
+            "/api/v1/0dentity/claims",
+            serde_json::json!({
+                "subject_did": did_str,
+                "claim_type": "Phone"
+            }),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
 
         let mut rng2 = seeded_rng(0xABC1_0002);
         let (phone_ch, phone_code) =
             OtpChallenge::new(&did, OtpChannel::Sms, dispatched_ms + 1, &mut rng2).unwrap();
         let phone_cid = phone_ch.challenge_id.clone();
-        store.lock().unwrap().insert_otp_challenge(&phone_ch).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .insert_otp_challenge(&phone_ch)
+            .unwrap();
 
-        let resp = post_json(&onb, "/api/v1/0dentity/verify", serde_json::json!({
-            "challenge_id": phone_cid,
-            "code": phone_code
-        })).await;
+        let resp = post_json(
+            &onb,
+            "/api/v1/0dentity/verify",
+            serde_json::json!({
+                "challenge_id": phone_cid,
+                "code": phone_code
+            }),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let b = body_json(resp).await;
         assert!(b["verified"].as_bool().unwrap(), "phone OTP must verify");
@@ -926,8 +1136,14 @@ mod tests {
             let mut s = store.lock().unwrap();
             s.insert_claim(
                 "phone-verified",
-                &make_claim(&did, ClaimType::Phone, ClaimStatus::Verified, dispatched_ms + 1),
-            ).unwrap();
+                &make_claim(
+                    &did,
+                    ClaimType::Phone,
+                    ClaimStatus::Verified,
+                    dispatched_ms + 1,
+                ),
+            )
+            .unwrap();
         }
 
         // ── 7. GET /score → communication = 8700 (email+phone+bonus) ─────
@@ -935,10 +1151,14 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let b = body_json(resp).await;
         assert_eq!(
-            b["axes"]["communication"].as_u64().unwrap(), 8_700,
+            b["axes"]["communication"].as_u64().unwrap(),
+            8_700,
             "email+phone communication axis must be 8700bp"
         );
-        assert!(b["composite"].as_u64().unwrap() > 0, "composite must be positive");
+        assert!(
+            b["composite"].as_u64().unwrap() > 0,
+            "composite must be positive"
+        );
 
         // ── 8. Store a score snapshot and check history ───────────────────
         {
@@ -961,7 +1181,8 @@ mod tests {
             &api,
             &format!("/api/v1/0dentity/{did_str}/claims"),
             &session_token,
-        ).await;
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let b = body_json(resp).await;
         assert!(
