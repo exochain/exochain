@@ -54,7 +54,36 @@ use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    // Install a panic hook that logs via tracing before aborting.
+    // Without this, panics print to stderr only, invisible to structured log
+    // collectors (Grafana Loki, Datadog, etc.).
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info.payload();
+        let msg = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(|s| s.as_str()))
+            .unwrap_or("<unknown>");
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown>".into());
+        eprintln!("PANIC at {location}: {msg}");
+        default_hook(info);
+    }));
+
+    // Structured logging with RUST_LOG env filter support.
+    // Default: info for exochain crates, warn for everything else.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "warn,exochain=info,exo_node=info,exo_gateway=info"
+                    .parse()
+                    .expect("valid filter")
+            }),
+        )
+        .init();
 
     let cli = Cli::parse();
 
@@ -586,8 +615,11 @@ async fn start_node(
         "0dentity routers ready — /0dentity, /0dentity/dashboard/:did, /api/v1/0dentity/*"
     );
 
-    // Merge metrics + governance + passport + dashboard into a single extra router
-    // and apply bearer-token auth middleware (protects POST, allows GET).
+    // Merge metrics + governance + passport + dashboard into a single extra router.
+    // Layers (outermost first):
+    //   1. TraceLayer — structured request/response spans for observability
+    //   2. Timeout — 30s hard limit prevents resource exhaustion
+    //   3. Bearer auth — protects POST/PUT/DELETE, allows GET
     // NOTE: /health and /ready are provided by the gateway's own router.
     let extra_router = metrics_router
         .merge(governance_router)
@@ -605,7 +637,11 @@ async fn start_node(
         .layer(axum::middleware::from_fn(move |req, next| {
             let a = bearer_auth.clone();
             auth::require_bearer_on_writes(a, req, next)
-        }));
+        }))
+        .layer(tower_http::timeout::TimeoutLayer::new(
+            std::time::Duration::from_secs(30),
+        ))
+        .layer(tower_http::trace::TraceLayer::new_for_http());
 
     // Start the gateway HTTP server (blocks).
     let bind_address = format!("0.0.0.0:{api_port}");

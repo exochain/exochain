@@ -58,8 +58,9 @@ directories = "6"
 # Serialization (CBOR for DagNode persistence)
 ciborium = { workspace = true }
 
-# HTTP (metrics route)
+# HTTP (metrics route + middleware)
 axum = { workspace = true }
+tower-http = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
