@@ -404,6 +404,8 @@ const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
       &middot;
       <a href="/health">/health</a>
       &middot;
+      <a href="/ready">/ready</a>
+      &middot;
       <a href="/metrics">/metrics</a>
       &middot;
       <a href="/api/v1/governance/status">/api</a>
