@@ -1101,10 +1101,12 @@ mod tests {
         let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(result["claims_revoked"], 1);
         assert!(result["receipt_hash"].as_str().is_some());
-        assert!(result["message"]
-            .as_str()
-            .unwrap()
-            .contains("Identity erased"));
+        assert!(
+            result["message"]
+                .as_str()
+                .unwrap()
+                .contains("Identity erased")
+        );
     }
 
     #[tokio::test]

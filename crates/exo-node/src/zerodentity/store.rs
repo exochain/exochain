@@ -813,8 +813,11 @@ mod tests {
 
     #[test]
     fn erase_did_removes_fingerprints_and_behavioral() {
-        use crate::zerodentity::types::{BehavioralSample, BehavioralSignalType, DeviceFingerprint};
         use std::collections::BTreeMap;
+
+        use crate::zerodentity::types::{
+            BehavioralSample, BehavioralSignalType, DeviceFingerprint,
+        };
 
         let mut store = ZerodentityStore::new();
         let d = did("did:exo:fptest");
