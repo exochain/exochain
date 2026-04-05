@@ -473,6 +473,42 @@ async fn start_node(
         }),
     );
 
+    // Build the readiness probe (used by container orchestrators and load balancers).
+    // Unlike /health (always 200), /ready returns 503 until the node is fully operational.
+    let ready_reactor = Arc::clone(&reactor_state);
+    let ready_store = Arc::clone(&shared_store);
+    let ready_router = axum::Router::new().route(
+        "/ready",
+        axum::routing::get(move || {
+            let r = Arc::clone(&ready_reactor);
+            let s = Arc::clone(&ready_store);
+            async move {
+                let reactor_ok = r.lock().map(|_| true).unwrap_or(false);
+                let store_ok = s.lock().map(|_| true).unwrap_or(false);
+
+                if reactor_ok && store_ok {
+                    (
+                        axum::http::StatusCode::OK,
+                        axum::Json(serde_json::json!({
+                            "ready": true,
+                            "reactor": "ok",
+                            "store": "ok",
+                        })),
+                    )
+                } else {
+                    (
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                        axum::Json(serde_json::json!({
+                            "ready": false,
+                            "reactor": if reactor_ok { "ok" } else { "unavailable" },
+                            "store": if store_ok { "ok" } else { "unavailable" },
+                        })),
+                    )
+                }
+            }
+        }),
+    );
+
     // Build the metrics HTTP route.
     let metrics_handle = Arc::clone(&node_metrics);
     let metrics_router = axum::Router::new().route(
@@ -599,9 +635,10 @@ async fn start_node(
         "0dentity routers ready — /0dentity, /0dentity/dashboard/:did, /api/v1/0dentity/*"
     );
 
-    // Merge health + metrics + governance + passport + dashboard into a single extra router
-    // and apply bearer-token auth middleware (protects POST, allows GET).
+    // Merge health + ready + metrics + governance + passport + dashboard into a single
+    // extra router and apply bearer-token auth middleware (protects POST, allows GET).
     let extra_router = health_router
+        .merge(ready_router)
         .merge(metrics_router)
         .merge(governance_router)
         .merge(passport_router)

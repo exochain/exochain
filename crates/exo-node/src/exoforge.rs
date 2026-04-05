@@ -1416,7 +1416,10 @@ setInterval(async () => {{
     }}
     render();
   }} catch (e) {{
-    // Server not responding, skip this poll
+    console.warn('ExoForge poll failed:', e.message);
+    const hdr = document.querySelector('.forge-header');
+    if (hdr) hdr.style.borderBottom = '2px solid #ef4444';
+    setTimeout(() => {{ if (hdr) hdr.style.borderBottom = ''; }}, 2000);
   }}
 }}, 3000);
 </script>
