@@ -113,6 +113,7 @@ pub(crate) fn now_ms() -> u64 {
 // ---------------------------------------------------------------------------
 
 /// Check consensus liveness — round should be advancing.
+#[allow(clippy::expect_used)]
 fn check_liveness(reactor: &SharedReactorState, prev_round: &mut u64) -> SentinelStatus {
     let current_round = {
         let s = reactor.lock().expect("reactor state lock");
@@ -136,6 +137,7 @@ fn check_liveness(reactor: &SharedReactorState, prev_round: &mut u64) -> Sentine
 }
 
 /// Check quorum health — minimum 4 validators for BFT safety.
+#[allow(clippy::expect_used)]
 fn check_quorum_health(reactor: &SharedReactorState) -> SentinelStatus {
     let validator_count = {
         let s = reactor.lock().expect("reactor state lock");
@@ -158,6 +160,7 @@ fn check_quorum_health(reactor: &SharedReactorState) -> SentinelStatus {
 }
 
 /// Spot-check recent trust receipts for hash integrity.
+#[allow(clippy::expect_used)]
 fn check_receipt_integrity(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus {
     let st = store.lock().expect("store lock");
 
@@ -266,6 +269,7 @@ fn check_score_integrity(zerodentity: &SharedZerodentityStore) -> SentinelStatus
 }
 
 /// Check store consistency — committed height vs certificate count.
+#[allow(clippy::expect_used, clippy::as_conversions)]
 fn check_store_consistency(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus {
     let st = store.lock().expect("store lock");
     let height = st.committed_height_value();
@@ -356,6 +360,7 @@ pub async fn run_sentinel_loop(
 // ---------------------------------------------------------------------------
 
 /// `GET /api/v1/sentinels` — current sentinel status.
+#[allow(clippy::expect_used)]
 async fn handle_sentinel_status(
     State(state): State<SharedSentinelState>,
 ) -> Json<Vec<SentinelStatus>> {

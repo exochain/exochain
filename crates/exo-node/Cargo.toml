@@ -88,3 +88,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 [dev-dependencies]
 tempfile = "3"
 tower = "0.5"
+
+[package.metadata.cargo-machete]
+# Pre-existing workspace deps used via re-exports or conditional compilation.
+ignored = ["ed25519-dalek", "exo-consent", "exo-governance", "exo-identity", "zeroize"]

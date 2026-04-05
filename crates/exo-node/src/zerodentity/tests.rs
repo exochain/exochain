@@ -1002,6 +1002,242 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // §12.2.7 — server-key and peer attestation
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn get_server_key_returns_rsa_oaep() {
+        let app = api_app(new_shared_store());
+        let resp = get_req(&app, "/api/v1/0dentity/server-key").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        assert_eq!(body["algorithm"].as_str().unwrap(), "RSA-OAEP");
+        assert_eq!(body["key_size"].as_u64().unwrap(), 4096);
+        assert!(
+            body["public_key_pem"]
+                .as_str()
+                .unwrap()
+                .contains("BEGIN PUBLIC KEY"),
+        );
+        let hash_str = body["key_hash"].as_str().unwrap();
+        assert_eq!(hash_str.len(), 64, "key_hash must be 64 hex chars");
+    }
+
+    async fn post_with_auth(
+        app: &Router,
+        uri: &str,
+        token: &str,
+        body: serde_json::Value,
+    ) -> axum::response::Response {
+        let req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn attest_without_auth_returns_401() {
+        let app = api_app(new_shared_store());
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/did:exo:attester/attest",
+            serde_json::json!({
+                "target_did": "did:exo:target",
+                "attestation_type": "Identity"
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn attest_invalid_attestation_type_returns_400() {
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let attester = td("attest-type-err");
+        let token = "attest-type-token";
+
+        {
+            let mut s = store.lock().unwrap();
+            s.insert_claim(
+                "e1",
+                &make_claim(&attester, ClaimType::Email, ClaimStatus::Verified, 1_000),
+            )
+            .unwrap();
+            s.insert_session(&make_session(&attester, token, 1_000_000))
+                .unwrap();
+        }
+
+        let resp = post_with_auth(
+            &app,
+            &format!("/api/v1/0dentity/{}/attest", attester.as_str()),
+            token,
+            serde_json::json!({
+                "target_did": "did:exo:target",
+                "attestation_type": "NotAType"
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn attest_valid_creates_attestation_201() {
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let attester = td("attest-ok-a");
+        let target = td("attest-ok-b");
+        let token = "attest-ok-token";
+
+        {
+            let mut s = store.lock().unwrap();
+            s.insert_claim(
+                "e1",
+                &make_claim(&attester, ClaimType::Email, ClaimStatus::Verified, 1_000),
+            )
+            .unwrap();
+            s.insert_session(&make_session(&attester, token, 1_000_000))
+                .unwrap();
+        }
+
+        let resp = post_with_auth(
+            &app,
+            &format!("/api/v1/0dentity/{}/attest", attester.as_str()),
+            token,
+            serde_json::json!({
+                "target_did": target.as_str(),
+                "attestation_type": "Identity"
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let body = body_json(resp).await;
+        assert!(
+            body["attestation_id"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
+        );
+        assert!(
+            body["receipt_hash"]
+                .as_str()
+                .is_some_and(|s| s.len() == 64)
+        );
+    }
+
+    #[tokio::test]
+    async fn attest_self_returns_400() {
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let did = td("attest-self");
+        let token = "attest-self-token";
+
+        {
+            let mut s = store.lock().unwrap();
+            s.insert_claim(
+                "e1",
+                &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
+            )
+            .unwrap();
+            s.insert_session(&make_session(&did, token, 1_000_000))
+                .unwrap();
+        }
+
+        let resp = post_with_auth(
+            &app,
+            &format!("/api/v1/0dentity/{}/attest", did.as_str()),
+            token,
+            serde_json::json!({
+                "target_did": did.as_str(),
+                "attestation_type": "Identity"
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_claims_filters_by_status() {
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let did = td("api-filter-status");
+        let token = "filter-token";
+
+        {
+            let mut s = store.lock().unwrap();
+            s.insert_claim(
+                "c1",
+                &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
+            )
+            .unwrap();
+            s.insert_claim(
+                "c2",
+                &make_claim(&did, ClaimType::Phone, ClaimStatus::Pending, 2_000),
+            )
+            .unwrap();
+            s.insert_session(&make_session(&did, token, 1_000_000))
+                .unwrap();
+        }
+
+        let resp = get_with_auth(
+            &app,
+            &format!(
+                "/api/v1/0dentity/{}/claims?status=verified",
+                did.as_str()
+            ),
+            token,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        assert_eq!(
+            body["total"].as_u64().unwrap(),
+            1,
+            "only verified claims after filter"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_score_invalid_did_returns_400() {
+        let app = api_app(new_shared_store());
+        let resp = get_req(&app, "/api/v1/0dentity/not-a-did/score").await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn score_history_with_time_filter() {
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let did = td("api-hist-filter");
+
+        {
+            let mut s = store.lock().unwrap();
+            for (bp, ms) in [(1_000u32, 1_000u64), (2_000, 5_000), (3_000, 10_000)] {
+                let mut score = make_score(&did, bp, ms);
+                score.computed_ms = ms;
+                s.put_score(score);
+            }
+        }
+
+        let resp = get_req(
+            &app,
+            &format!(
+                "/api/v1/0dentity/{}/score/history?from_ms=3000&to_ms=7000",
+                did.as_str()
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        let snaps = body["snapshots"].as_array().unwrap();
+        assert_eq!(snaps.len(), 1);
+        assert_eq!(snaps[0]["composite"].as_u64().unwrap(), 2_000);
+    }
+
+    // -----------------------------------------------------------------------
     // §12.2.6 — Full onboarding arc (end-to-end)
     //
     // Exercises: DisplayName → Email OTP → verify → score 3500 →

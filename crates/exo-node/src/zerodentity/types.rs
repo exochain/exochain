@@ -586,3 +586,197 @@ impl OtpState {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    // ---- AttestationType ----
+
+    #[test]
+    fn attestation_type_from_str_roundtrips() {
+        for s in ["Identity", "Trustworthy", "Professional", "Character"] {
+            let t = AttestationType::from_str(s).unwrap();
+            assert_eq!(t.to_string(), s);
+        }
+        assert!(AttestationType::from_str("Unknown").is_err());
+    }
+
+    // ---- ClaimStatus ----
+
+    #[test]
+    fn claim_status_from_str_roundtrips() {
+        for s in ["Pending", "Verified", "Expired", "Revoked", "Challenged"] {
+            let t = ClaimStatus::from_str(s).unwrap();
+            assert_eq!(t.to_string(), s);
+        }
+        assert!(ClaimStatus::from_str("X").is_err());
+    }
+
+    // ---- BehavioralSignalType ----
+
+    #[test]
+    fn behavioral_signal_type_from_str_roundtrips() {
+        for s in [
+            "KeystrokeDynamics",
+            "MouseDynamics",
+            "TouchDynamics",
+            "ScrollBehavior",
+            "FormNavigationCadence",
+        ] {
+            let t = BehavioralSignalType::from_str(s).unwrap();
+            assert_eq!(t.to_string(), s);
+        }
+        assert!(BehavioralSignalType::from_str("Unknown").is_err());
+    }
+
+    // ---- OtpChannel ----
+
+    #[test]
+    fn otp_channel_from_str_roundtrips() {
+        assert_eq!(OtpChannel::from_str("Email").unwrap(), OtpChannel::Email);
+        assert_eq!(OtpChannel::from_str("Sms").unwrap(), OtpChannel::Sms);
+        assert!(OtpChannel::from_str("Unknown").is_err());
+    }
+
+    #[test]
+    fn otp_channel_ttl_ms_email_5_min() {
+        assert_eq!(OtpChannel::Email.ttl_ms(), 300_000);
+    }
+
+    #[test]
+    fn otp_channel_ttl_ms_sms_3_min() {
+        assert_eq!(OtpChannel::Sms.ttl_ms(), 180_000);
+    }
+
+    // ---- OtpState ----
+
+    #[test]
+    fn otp_state_from_str_roundtrips() {
+        for s in ["Pending", "Verified", "Expired", "LockedOut"] {
+            let t = OtpState::from_str(s).unwrap();
+            assert_eq!(t.to_string(), s);
+        }
+        assert!(OtpState::from_str("X").is_err());
+    }
+
+    // ---- FingerprintSignal Display ----
+
+    #[test]
+    fn fingerprint_signal_display_all_variants() {
+        let variants = [
+            (FingerprintSignal::AudioContext, "AudioContext"),
+            (FingerprintSignal::BatteryStatus, "BatteryStatus"),
+            (FingerprintSignal::CanvasRendering, "CanvasRendering"),
+            (FingerprintSignal::ColorDepthDPR, "ColorDepthDPR"),
+            (FingerprintSignal::DeviceMemory, "DeviceMemory"),
+            (FingerprintSignal::DoNotTrack, "DoNotTrack"),
+            (FingerprintSignal::FontEnumeration, "FontEnumeration"),
+            (FingerprintSignal::HardwareConcurrency, "HardwareConcurrency"),
+            (FingerprintSignal::Platform, "Platform"),
+            (FingerprintSignal::ScreenGeometry, "ScreenGeometry"),
+            (FingerprintSignal::TimezoneLocale, "TimezoneLocale"),
+            (FingerprintSignal::TouchSupport, "TouchSupport"),
+            (FingerprintSignal::UserAgent, "UserAgent"),
+            (FingerprintSignal::WebGLParameters, "WebGLParameters"),
+            (FingerprintSignal::WebRTCLocalIPs, "WebRTCLocalIPs"),
+        ];
+        for (v, expected) in &variants {
+            assert_eq!(v.to_string(), *expected);
+        }
+    }
+
+    // ---- ClaimType Display ----
+
+    #[test]
+    fn claim_type_display_simple_variants() {
+        assert_eq!(ClaimType::DisplayName.to_string(), "DisplayName");
+        assert_eq!(ClaimType::Email.to_string(), "Email");
+        assert_eq!(ClaimType::Phone.to_string(), "Phone");
+        assert_eq!(ClaimType::GovernmentId.to_string(), "GovernmentId");
+        assert_eq!(ClaimType::BiometricLiveness.to_string(), "BiometricLiveness");
+        assert_eq!(ClaimType::DeviceFingerprint.to_string(), "DeviceFingerprint");
+        assert_eq!(
+            ClaimType::BehavioralSignature.to_string(),
+            "BehavioralSignature"
+        );
+        assert_eq!(
+            ClaimType::GeographicConsistency.to_string(),
+            "GeographicConsistency"
+        );
+        assert_eq!(ClaimType::SessionContinuity.to_string(), "SessionContinuity");
+        assert_eq!(ClaimType::EntropyAttestation.to_string(), "EntropyAttestation");
+    }
+
+    #[test]
+    fn claim_type_display_parameterised_variants() {
+        let did = Did::new("did:exo:x").unwrap();
+
+        let pc = ClaimType::ProfessionalCredential {
+            provider: "ACME".into(),
+        };
+        assert_eq!(pc.to_string(), "ProfessionalCredential:ACME");
+
+        let pa = ClaimType::PeerAttestation {
+            attester_did: did.clone(),
+        };
+        assert!(pa.to_string().starts_with("PeerAttestation:did:exo:x"));
+
+        let dg = ClaimType::DelegationGrant {
+            delegator_did: did,
+        };
+        assert!(dg.to_string().starts_with("DelegationGrant:did:exo:x"));
+
+        let scr = ClaimType::SybilChallengeResolution {
+            challenge_id: "ch1".into(),
+        };
+        assert_eq!(scr.to_string(), "SybilChallengeResolution:ch1");
+
+        let vs = ClaimType::ValidatorService {
+            round_range: (10, 20),
+        };
+        assert_eq!(vs.to_string(), "ValidatorService:10:20");
+    }
+
+    #[test]
+    fn claim_type_display_hash_variants() {
+        let hash = Hash256::digest(b"test");
+
+        let gv = ClaimType::GovernanceVote {
+            proposal_hash: hash,
+        };
+        assert!(gv.to_string().starts_with("GovernanceVote:"));
+
+        let prop = ClaimType::ProposalAuthored {
+            proposal_hash: hash,
+        };
+        assert!(prop.to_string().starts_with("ProposalAuthored:"));
+
+        let kr = ClaimType::KeyRotation {
+            old_key_hash: hash,
+        };
+        assert!(kr.to_string().starts_with("KeyRotation:"));
+    }
+
+    // ---- PolarAxes ----
+
+    #[test]
+    fn polar_axes_as_array_returns_correct_order() {
+        let axes = PolarAxes {
+            communication: 1,
+            credential_depth: 2,
+            device_trust: 3,
+            behavioral_signature: 4,
+            network_reputation: 5,
+            temporal_stability: 6,
+            cryptographic_strength: 7,
+            constitutional_standing: 8,
+        };
+        assert_eq!(axes.as_array(), [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+}

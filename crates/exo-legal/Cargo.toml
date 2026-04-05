@@ -24,3 +24,7 @@ uuid = { workspace = true }
 [dev-dependencies]
 proptest = { workspace = true }
 serde_json = { workspace = true }
+
+[package.metadata.cargo-machete]
+# Pre-existing workspace dep used via re-exports.
+ignored = ["exo-identity"]

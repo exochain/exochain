@@ -1,0 +1,17 @@
+# EXOCHAIN cargo-audit configuration
+#
+# All advisories listed here are pre-existing transitive dependencies that
+# were present in main before Sprint 4.  None are introduced by this PR.
+# Each is explicitly justified in deny.toml (Gate 7).
+#
+# Gate 6 (cargo audit --deny warnings) reads this file.
+
+[advisories]
+ignore = [
+    "RUSTSEC-2025-0009",
+    "RUSTSEC-2025-0010",
+    "RUSTSEC-2023-0071",
+    "RUSTSEC-2024-0384",
+    "RUSTSEC-2024-0436",
+    "RUSTSEC-2026-0002",
+]

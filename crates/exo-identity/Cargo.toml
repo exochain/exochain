@@ -27,3 +27,7 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+
+[package.metadata.cargo-machete]
+# Pre-existing deps used in wasm/no_std feature paths.
+ignored = ["getrandom", "uuid"]

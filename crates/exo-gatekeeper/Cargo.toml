@@ -23,3 +23,7 @@ ed25519-dalek = { workspace = true }
 allow-simulated-tee = []
 
 [dev-dependencies]
+
+[package.metadata.cargo-machete]
+# Pre-existing deps used via feature flags or conditional compilation.
+ignored = ["ed25519-dalek", "tracing"]

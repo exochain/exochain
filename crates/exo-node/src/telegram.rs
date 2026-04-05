@@ -165,7 +165,7 @@ impl Adjutant {
         };
 
         self.client
-            .post(&self.api_url("sendMessage"))
+            .post(self.api_url("sendMessage"))
             .json(&body)
             .send()
             .await
@@ -182,7 +182,7 @@ impl Adjutant {
             self.last_update_id + 1
         );
 
-        let resp = match self.client.get(&url).send().await {
+        let resp = match self.client.get(url).send().await {
             Ok(r) => r,
             Err(e) => {
                 tracing::debug!(err = %e, "Telegram poll failed");
@@ -212,7 +212,7 @@ impl Adjutant {
     pub async fn answer_callback(&self, callback_id: &str) {
         let _ = self
             .client
-            .post(&self.api_url("answerCallbackQuery"))
+            .post(self.api_url("answerCallbackQuery"))
             .json(&serde_json::json!({ "callback_query_id": callback_id }))
             .send()
             .await;
