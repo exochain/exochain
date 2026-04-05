@@ -71,6 +71,7 @@ pub enum ApiResponse {
 /// Panics if CBOR serialization fails — all `ApiRequest` variants are
 /// composed of deterministically-serializable types.
 #[must_use]
+#[allow(clippy::expect_used)] // Infallible for Serialize-derived types.
 pub fn canonical_request_hash(request: &ApiRequest) -> Hash256 {
     let mut buf = Vec::new();
     ciborium::into_writer(request, &mut buf)

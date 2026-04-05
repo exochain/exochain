@@ -18,6 +18,7 @@ use exo_gateway::server::{GatewayConfig, serve};
 async fn main() {
     // Structured logging with RUST_LOG env filter support.
     // Default: info for gateway, warn for everything else.
+    #[allow(clippy::expect_used)] // Constant string, parse cannot fail.
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
