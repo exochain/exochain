@@ -1425,4 +1425,67 @@ mod tests {
             "claims list must be non-empty"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // GET /api/v1/0dentity/:did/score — happy path & 404
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn get_score_returns_composite_and_all_axes() {
+        let store = new_shared_store();
+        let did = td("scored-user");
+
+        // Seed a verified claim so the DID exists in the store.
+        let claim = make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000);
+        {
+            let mut s = store.lock().unwrap();
+            s.put_claim(claim);
+        }
+
+        let app = api_app(store);
+        let resp = get_req(&app, "/api/v1/0dentity/did:exo:scored-user/score").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let b = body_json(resp).await;
+        assert_eq!(b["subject_did"], "did:exo:scored-user");
+        assert!(b["composite"].as_u64().is_some(), "composite must be present");
+        assert!(b["symmetry"].as_u64().is_some(), "symmetry must be present");
+        assert!(b["axes"]["communication"].as_u64().is_some());
+        assert!(b["axes"]["credential_depth"].as_u64().is_some());
+        assert!(b["axes"]["device_trust"].as_u64().is_some());
+        assert!(b["axes"]["behavioral_signature"].as_u64().is_some());
+        assert!(b["axes"]["network_reputation"].as_u64().is_some());
+        assert!(b["axes"]["temporal_stability"].as_u64().is_some());
+        assert!(b["axes"]["cryptographic_strength"].as_u64().is_some());
+        assert!(b["axes"]["constitutional_standing"].as_u64().is_some());
+        assert!(b["dag_state_hash"].as_str().is_some());
+        assert!(b["claim_count"].as_u64().unwrap() >= 1);
+    }
+
+    #[tokio::test]
+    async fn get_score_returns_404_for_unknown_did() {
+        let store = new_shared_store();
+        let app = api_app(store);
+        let resp = get_req(&app, "/api/v1/0dentity/did:exo:nobody/score").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // -----------------------------------------------------------------------
+    // GET /api/v1/0dentity/server-key — determinism
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn get_server_key_is_deterministic_for_same_node() {
+        let store = new_shared_store();
+        let app = api_app(store);
+
+        let r1 = body_json(get_req(&app, "/api/v1/0dentity/server-key").await).await;
+        let r2 = body_json(get_req(&app, "/api/v1/0dentity/server-key").await).await;
+
+        assert_eq!(
+            r1["key_hash"], r2["key_hash"],
+            "Key hash must be deterministic for the same node DID"
+        );
+        assert_eq!(r1["algorithm"], r2["algorithm"]);
+    }
 }
