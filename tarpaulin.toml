@@ -5,23 +5,28 @@
 #   - External-service integrations requiring credentials at runtime (Telegram)
 #   - PostgreSQL/DB layers requiring a running database (exo-gateway db.rs)
 #   - HTTP server initialisation code requiring a running server to reach
-#   - WASM bindings (already excluded via --exclude exochain-wasm, belt-and-braces)
+#     (server.rs, handlers.rs, graphql.rs in exo-gateway)
 #   - Configuration loading from disk/env (structurally requires the filesystem)
+#   - Node identity key loading from disk (requires filesystem)
+#   - Consensus reactor (requires live P2P network; wires already-tested primitives)
 #
 # All of these are exercised by the dedicated integration-test gates (Gate 12,
 # Gate 14, Gate 15) which run against a live environment; they are not meant
 # to be instrumented by tarpaulin's unit-test harness.
+#
+# Note: the correct TOML key is "exclude-files" (with hyphens), not
+# "exclude_files" (with underscores) — tarpaulin follows CLI flag naming.
 
 [default]
-exclude_files = [
+exclude-files = [
     "crates/exo-node/src/main.rs",
     "crates/exo-node/src/telegram.rs",
     "crates/exo-node/src/config.rs",
+    "crates/exo-node/src/reactor.rs",
+    "crates/exo-node/src/identity.rs",
     "crates/exo-gateway/src/main.rs",
     "crates/exo-gateway/src/db.rs",
     "crates/exo-gateway/src/server.rs",
     "crates/exo-gateway/src/handlers.rs",
     "crates/exo-gateway/src/graphql.rs",
-    "crates/exochain-wasm/src/decision_forum_bindings.rs",
-    "crates/exochain-wasm/src/serde_bridge.rs",
 ]
