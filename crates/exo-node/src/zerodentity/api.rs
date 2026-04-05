@@ -609,6 +609,90 @@ pub async fn get_server_key() -> Json<ServerKeyResponse> {
 }
 
 // ---------------------------------------------------------------------------
+// DELETE /api/v1/0dentity/:did — right to erasure (§11.4)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct ErasureResponse {
+    pub subject_did: String,
+    pub claims_revoked: u32,
+    pub receipt_hash: String,
+    pub message: String,
+}
+
+/// Delete all 0dentity data for a DID.
+///
+/// Implements the right to erasure (§11.4):
+/// - Revokes all sessions
+/// - Marks all claims as Revoked
+/// - Zeroes score snapshots
+/// - Removes fingerprints and behavioral data
+/// - Tombstones DAG nodes
+/// - Emits an erasure TrustReceipt
+pub async fn delete_identity(
+    State(state): State<ApiState>,
+    Path(did_str): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ErasureResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let did = parse_did(&did_str)?;
+
+    // Auth: session token required — must own the DID
+    let token = extract_session_token(&headers).ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Bearer session token required"})),
+        )
+    })?;
+
+    {
+        let store = state.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "lock poisoned"})),
+            )
+        })?;
+        let session = store.get_session(&token).ok().flatten().ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Invalid or expired session"})),
+            )
+        })?;
+        if session.subject_did.as_str() != did.as_str() {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "Access denied — can only erase own identity"})),
+            ));
+        }
+    }
+
+    let claims_revoked = {
+        let mut store = state.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "lock poisoned"})),
+            )
+        })?;
+        store.erase_did(&did).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Erasure failed: {e}")})),
+            )
+        })?
+    };
+
+    let receipt_hash = hex::encode(
+        Hash256::digest(format!("erasure-receipt:{}", did.as_str()).as_bytes()).as_bytes(),
+    );
+
+    Ok(Json(ErasureResponse {
+        subject_did: did.to_string(),
+        claims_revoked,
+        receipt_hash,
+        message: "Identity erased. All sessions revoked, claims marked Revoked, scores zeroed, fingerprints removed, DAG nodes tombstoned.".into(),
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -622,6 +706,10 @@ pub fn zerodentity_api_router(state: ApiState) -> Router {
         .route(
             "/api/v1/0dentity/:did/attest",
             post(create_peer_attestation),
+        )
+        .route(
+            "/api/v1/0dentity/:did",
+            axum::routing::delete(delete_identity),
         )
         .with_state(state)
 }
@@ -955,5 +1043,84 @@ mod tests {
         // 1 claim total, offset=1 → empty page
         assert_eq!(result["claims"].as_array().unwrap().len(), 0);
         assert_eq!(result["total"], 1);
+    }
+
+    // --- delete_identity (§11.4) ---
+
+    #[tokio::test]
+    async fn delete_identity_no_token_returns_401() {
+        let app = zerodentity_api_router(make_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/0dentity/did%3Aexo%3Aalice")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn delete_identity_wrong_did_returns_403() {
+        let state = make_state_with_session("tok-bob", "did:exo:bob");
+        let app = zerodentity_api_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/0dentity/did%3Aexo%3Aalice")
+                    .header("authorization", "Bearer tok-bob")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn delete_identity_success_returns_erasure_receipt() {
+        let state = make_state_with_session_and_claim("tok-alice", "did:exo:alice");
+        let app = zerodentity_api_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/0dentity/did%3Aexo%3Aalice")
+                    .header("authorization", "Bearer tok-alice")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result["claims_revoked"], 1);
+        assert!(result["receipt_hash"].as_str().is_some());
+        assert!(result["message"]
+            .as_str()
+            .unwrap()
+            .contains("Identity erased"));
+    }
+
+    #[tokio::test]
+    async fn delete_identity_invalid_did_returns_400() {
+        let app = zerodentity_api_router(make_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/v1/0dentity/notadid")
+                    .header("authorization", "Bearer tok")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

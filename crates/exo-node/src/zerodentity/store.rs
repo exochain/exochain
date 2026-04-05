@@ -424,6 +424,104 @@ impl ZerodentityStore {
     pub fn trust_receipts(&self) -> &[TrustReceipt] {
         &self.trust_receipts
     }
+
+    // -----------------------------------------------------------------------
+    // Write — erasure (§11.4 Right to Erasure)
+    // -----------------------------------------------------------------------
+
+    /// Erase all data associated with a DID.
+    ///
+    /// Implements §11.4 — right to erasure:
+    /// 1. Revoke all sessions for this DID.
+    /// 2. Mark all claims as `Revoked`.
+    /// 3. Remove score snapshots (current, previous, history).
+    /// 4. Remove fingerprints and behavioral samples.
+    /// 5. Remove OTP challenges belonging to this DID.
+    /// 6. Tombstone DAG nodes — zero payload hash, keep structural links.
+    /// 7. Emit an erasure receipt.
+    ///
+    /// Returns the number of claims revoked.
+    pub fn erase_did(&mut self, did: &Did) -> anyhow::Result<u32> {
+        let key = did.as_str().to_owned();
+        let mut revoked_count = 0u32;
+
+        // 1. Revoke sessions
+        for session in self.sessions.values_mut() {
+            if session.subject_did.as_str() == did.as_str() {
+                session.revoked = true;
+            }
+        }
+
+        // 2. Mark claims Revoked
+        if let Some(claims) = self.claims.get_mut(&key) {
+            for (_, claim) in claims.iter_mut() {
+                if claim.status != ClaimStatus::Revoked {
+                    claim.status = ClaimStatus::Revoked;
+                    revoked_count += 1;
+                }
+            }
+        }
+
+        // 3. Zero score snapshots
+        self.scores.remove(&key);
+        self.prev_scores.remove(&key);
+        self.score_history.remove(&key);
+
+        // 4. Remove fingerprints and behavioral samples
+        self.fingerprints.remove(&key);
+        self.behavioral.remove(&key);
+
+        // 5. Remove OTP challenges for this DID
+        self.otp_challenges
+            .retain(|_, ch| ch.subject_did.as_str() != did.as_str());
+
+        // 6. Tombstone DAG nodes — zero the payload hash
+        for node in &mut self.dag_nodes {
+            if node.creator_did.as_str() == did.as_str() {
+                node.payload_hash = Hash256::ZERO;
+            }
+        }
+
+        // 7. Emit erasure receipt
+        let now_ms = crate::sentinels::now_ms();
+        let receipt = TrustReceipt::new(
+            did.clone(),
+            Hash256::ZERO,
+            None,
+            "zerodentity.identity_erased".to_string(),
+            Hash256::digest(format!("erase:{}", did.as_str()).as_bytes()),
+            ReceiptOutcome::Executed,
+            Timestamp::new(now_ms, 0),
+            &|_payload| Signature::Empty,
+        );
+        self.trust_receipts.push(receipt);
+
+        Ok(revoked_count)
+    }
+
+    // -----------------------------------------------------------------------
+    // Read — OTP challenges (sentinel support)
+    // -----------------------------------------------------------------------
+
+    /// Return all OTP challenges (for sentinel cleanup checks).
+    #[must_use]
+    pub fn all_otp_challenges(&self) -> Vec<&OtpChallenge> {
+        self.otp_challenges.values().collect()
+    }
+
+    /// Remove expired OTP challenges that are still in `Pending` state.
+    ///
+    /// Returns the number of challenges cleaned up.
+    pub fn cleanup_expired_otp(&mut self, now_ms: u64) -> u32 {
+        let before = self.otp_challenges.len();
+        self.otp_challenges.retain(|_, ch| {
+            let expired = now_ms > ch.dispatched_ms.saturating_add(ch.ttl_ms);
+            let pending = ch.state == super::types::OtpState::Pending;
+            // Remove if both expired and still pending
+            !(expired && pending)
+        });
+        (before - self.otp_challenges.len()) as u32
+    }
 }
 
 /// Thread-safe shared handle to the 0dentity store.
@@ -659,5 +757,164 @@ mod tests {
         let d = did("did:exo:karen");
         store.save_score(score_for(d.clone(), 7500));
         assert_eq!(store.get_score(&d).unwrap().composite, 7500);
+    }
+
+    // ---- Erasure tests (§11.4) ----
+
+    #[test]
+    fn erase_did_revokes_claims_and_zeroes_scores() {
+        use crate::zerodentity::types::IdentitySession;
+
+        let mut store = ZerodentityStore::new();
+        let d = did("did:exo:eraseme");
+
+        // Set up: claim, score, session
+        store.put_claim(claim(&d, ClaimType::Email));
+        store.put_claim(claim(&d, ClaimType::Phone));
+        store.put_score(score_for(d.clone(), 7000));
+        store
+            .insert_session(&IdentitySession {
+                session_token: "tok-erase".into(),
+                subject_did: d.clone(),
+                public_key: vec![],
+                created_ms: 0,
+                last_active_ms: 0,
+                revoked: false,
+            })
+            .unwrap();
+
+        // Erase
+        let revoked = store.erase_did(&d).unwrap();
+        assert_eq!(revoked, 2);
+
+        // Score gone
+        assert!(store.get_score(&d).is_none());
+        assert!(store.get_previous_score(&d).is_none());
+        assert!(store.get_score_history(&d, None, None).unwrap().is_empty());
+
+        // Claims still exist but all Revoked
+        let claims = store.get_claims(&d).unwrap();
+        assert_eq!(claims.len(), 2);
+        for (_, c) in &claims {
+            assert_eq!(c.status, ClaimStatus::Revoked);
+        }
+
+        // Session revoked
+        assert!(store.get_session("tok-erase").unwrap().is_none());
+
+        // Erasure receipt emitted
+        let receipts: Vec<_> = store
+            .trust_receipts()
+            .iter()
+            .filter(|r| r.action_type == "zerodentity.identity_erased")
+            .collect();
+        assert_eq!(receipts.len(), 1);
+    }
+
+    #[test]
+    fn erase_did_removes_fingerprints_and_behavioral() {
+        use crate::zerodentity::types::{BehavioralSample, BehavioralSignalType, DeviceFingerprint};
+        use std::collections::BTreeMap;
+
+        let mut store = ZerodentityStore::new();
+        let d = did("did:exo:fptest");
+
+        store.put_fingerprint(
+            &d,
+            DeviceFingerprint {
+                composite_hash: h(),
+                signal_hashes: BTreeMap::new(),
+                captured_ms: 1000,
+                consistency_score_bp: Some(9500),
+            },
+        );
+        store.put_behavioral(
+            &d,
+            BehavioralSample {
+                sample_hash: h(),
+                signal_type: BehavioralSignalType::KeystrokeDynamics,
+                captured_ms: 1000,
+                baseline_similarity_bp: Some(8000),
+            },
+        );
+
+        assert!(!store.get_fingerprints(&d).unwrap().is_empty());
+        assert!(!store.get_behavioral_samples(&d).unwrap().is_empty());
+
+        store.erase_did(&d).unwrap();
+
+        assert!(store.get_fingerprints(&d).unwrap().is_empty());
+        assert!(store.get_behavioral_samples(&d).unwrap().is_empty());
+    }
+
+    #[test]
+    fn erase_did_tombstones_dag_nodes() {
+        let mut store = ZerodentityStore::new();
+        let d = did("did:exo:dagtest");
+        let c = claim(&d, ClaimType::Email);
+        store.save_claim("dag-001", &c).unwrap();
+
+        assert_ne!(store.dag_nodes()[0].payload_hash, Hash256::ZERO);
+        store.erase_did(&d).unwrap();
+        assert_eq!(store.dag_nodes()[0].payload_hash, Hash256::ZERO);
+    }
+
+    // ---- OTP cleanup tests ----
+
+    #[test]
+    fn cleanup_expired_otp_removes_pending() {
+        use crate::zerodentity::types::{OtpChannel, OtpState};
+
+        let mut store = ZerodentityStore::new();
+        let d = did("did:exo:otptest");
+
+        // Expired pending challenge
+        let expired = OtpChallenge {
+            challenge_id: "exp-001".into(),
+            subject_did: d.clone(),
+            channel: OtpChannel::Email,
+            hmac_secret: [0u8; 32],
+            dispatched_ms: 1_000_000,
+            ttl_ms: 300_000, // 5 min
+            attempts: 0,
+            max_attempts: 5,
+            state: OtpState::Pending,
+        };
+        store.insert_otp_challenge(&expired).unwrap();
+
+        // Non-expired pending challenge
+        let fresh = OtpChallenge {
+            challenge_id: "fresh-001".into(),
+            subject_did: d.clone(),
+            channel: OtpChannel::Sms,
+            hmac_secret: [0u8; 32],
+            dispatched_ms: 100_000_000, // far future
+            ttl_ms: 300_000,
+            attempts: 0,
+            max_attempts: 5,
+            state: OtpState::Pending,
+        };
+        store.insert_otp_challenge(&fresh).unwrap();
+
+        // Verified challenge (should not be removed even if "expired")
+        let verified = OtpChallenge {
+            challenge_id: "ver-001".into(),
+            subject_did: d,
+            channel: OtpChannel::Email,
+            hmac_secret: [0u8; 32],
+            dispatched_ms: 1_000_000,
+            ttl_ms: 300_000,
+            attempts: 1,
+            max_attempts: 5,
+            state: OtpState::Verified,
+        };
+        store.insert_otp_challenge(&verified).unwrap();
+
+        let cleaned = store.cleanup_expired_otp(2_000_000);
+        assert_eq!(cleaned, 1); // Only expired + pending
+
+        assert!(store.get_otp_challenge("exp-001").unwrap().is_none());
+        assert!(store.get_otp_challenge("fresh-001").unwrap().is_some());
+        assert!(store.get_otp_challenge("ver-001").unwrap().is_some());
     }
 }

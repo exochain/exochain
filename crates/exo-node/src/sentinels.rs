@@ -49,6 +49,10 @@ pub enum SentinelCheck {
     ///
     /// Spec §10.4 — samples up to 5 DIDs, recomputes, checks drift ≤ 10 bp.
     ScoreIntegrity,
+    /// Expired OTP challenges still in `Pending` state are cleaned up.
+    ///
+    /// Spec §10.4 — ensures no stale challenges linger.
+    OtpCleanup,
 }
 
 impl std::fmt::Display for SentinelCheck {
@@ -59,6 +63,7 @@ impl std::fmt::Display for SentinelCheck {
             Self::ReceiptIntegrity => write!(f, "ReceiptIntegrity"),
             Self::StoreConsistency => write!(f, "StoreConsistency"),
             Self::ScoreIntegrity => write!(f, "ScoreIntegrity"),
+            Self::OtpCleanup => write!(f, "OtpCleanup"),
         }
     }
 }
@@ -268,6 +273,44 @@ fn check_score_integrity(zerodentity: &SharedZerodentityStore) -> SentinelStatus
     }
 }
 
+/// Check for expired OTP challenges still in `Pending` state and clean them up.
+///
+/// Spec §10.4 — ensures no stale challenges linger in memory.
+#[allow(clippy::expect_used, clippy::as_conversions)]
+fn check_otp_cleanup(zerodentity: &SharedZerodentityStore) -> SentinelStatus {
+    let mut zstore = zerodentity.lock().expect("zerodentity store lock");
+    let now = now_ms();
+
+    // Count expired-but-pending challenges before cleanup
+    let expired_pending = zstore
+        .all_otp_challenges()
+        .iter()
+        .filter(|ch| {
+            let expired = now > ch.dispatched_ms.saturating_add(ch.ttl_ms);
+            let pending = ch.state == crate::zerodentity::types::OtpState::Pending;
+            expired && pending
+        })
+        .count();
+
+    if expired_pending == 0 {
+        return SentinelStatus {
+            check: SentinelCheck::OtpCleanup,
+            healthy: true,
+            message: "No expired pending OTP challenges".into(),
+            last_run_ms: now,
+        };
+    }
+
+    let cleaned = zstore.cleanup_expired_otp(now);
+
+    SentinelStatus {
+        check: SentinelCheck::OtpCleanup,
+        healthy: true,
+        message: format!("Cleaned up {cleaned} expired OTP challenge(s)"),
+        last_run_ms: now,
+    }
+}
+
 /// Check store consistency — committed height vs certificate count.
 #[allow(clippy::expect_used, clippy::as_conversions)]
 fn check_store_consistency(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus {
@@ -326,6 +369,7 @@ pub async fn run_sentinel_loop(
             check_receipt_integrity(&store),
             check_store_consistency(&store),
             check_score_integrity(&zerodentity),
+            check_otp_cleanup(&zerodentity),
         ];
 
         // Emit alerts for unhealthy sentinels.
@@ -335,6 +379,7 @@ pub async fn run_sentinel_loop(
                     SentinelCheck::QuorumHealth => Severity::Critical,
                     SentinelCheck::Liveness => Severity::Warning,
                     SentinelCheck::ScoreIntegrity => Severity::Warning,
+                    SentinelCheck::OtpCleanup => Severity::Info,
                     _ => Severity::Warning,
                 };
                 let alert = SentinelAlert {

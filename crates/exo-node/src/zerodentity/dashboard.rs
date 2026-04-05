@@ -164,6 +164,37 @@ const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
   .history-score { color: var(--primary); font-weight: 600; width: 48px; }
   .history-claims { color: var(--dim); font-size: 0.7rem; }
 
+  /* Growth actions */
+  .growth-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+  @media (max-width: 600px) { .growth-grid { grid-template-columns: 1fr; } }
+  .growth-card {
+    background: rgba(30,41,64,0.5);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .growth-card:hover { border-color: var(--primary); background: rgba(56,189,248,0.05); }
+  .growth-icon { font-size: 1.3rem; margin-bottom: 0.4rem; }
+  .growth-title { font-size: 0.78rem; font-weight: 600; color: var(--text); margin-bottom: 0.2rem; }
+  .growth-desc { font-size: 0.68rem; color: var(--dim); line-height: 1.4; }
+  .growth-impact { font-size: 0.65rem; color: var(--green); font-weight: 600; margin-top: 0.4rem; }
+
+  /* Fingerprint consistency */
+  .fp-list { display: flex; flex-direction: column; gap: 0.5rem; }
+  .fp-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid rgba(30,41,64,0.5); }
+  .fp-item:last-child { border-bottom: none; }
+  .fp-hash { font-size: 0.7rem; color: var(--primary); width: 80px; flex-shrink: 0; }
+  .fp-bar-wrap { flex: 1; height: 6px; background: rgba(30,41,64,1); border-radius: 3px; overflow: hidden; }
+  .fp-bar { height: 100%; border-radius: 3px; transition: width 0.8s ease; }
+  .fp-bar-high { background: var(--green); }
+  .fp-bar-med { background: var(--amber); }
+  .fp-bar-low { background: var(--red); }
+  .fp-value { width: 40px; text-align: right; font-size: 0.75rem; color: var(--text); flex-shrink: 0; }
+  .fp-signals { font-size: 0.65rem; color: var(--dim); width: 60px; text-align: right; flex-shrink: 0; }
+  .fp-time { font-size: 0.65rem; color: var(--dim); width: 60px; flex-shrink: 0; }
+
   /* Empty state */
   .empty { text-align: center; padding: 2rem; color: var(--dim); font-size: 0.8rem; }
 
@@ -233,11 +264,50 @@ const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
     <div id="claimsWrap"><div class="empty">Loading claims…</div></div>
   </div>
 
-  <!-- Score history — full width -->
-  <div class="card full-width">
+  <!-- Score history -->
+  <div class="card">
     <div class="card-title">Score History</div>
     <div class="history-timeline" id="historyList">
       <div class="empty">Loading history…</div>
+    </div>
+  </div>
+
+  <!-- Fingerprint consistency -->
+  <div class="card">
+    <div class="card-title">Fingerprint Consistency</div>
+    <div class="fp-list" id="fpList">
+      <div class="empty">Loading fingerprints…</div>
+    </div>
+  </div>
+
+  <!-- Growth actions — full width -->
+  <div class="card full-width">
+    <div class="card-title">Grow Your Score</div>
+    <div class="growth-grid" id="growthGrid">
+      <div class="growth-card" onclick="alert('Navigate to identity verification to add a Government ID claim.')">
+        <div class="growth-icon">🪪</div>
+        <div class="growth-title">Add Government ID</div>
+        <div class="growth-desc">Submit a government-issued identification for credential depth verification.</div>
+        <div class="growth-impact">+35 credential depth</div>
+      </div>
+      <div class="growth-card" onclick="alert('Ask a verified peer to attest your identity.')">
+        <div class="growth-icon">🤝</div>
+        <div class="growth-title">Request Peer Attestation</div>
+        <div class="growth-desc">Have a verified peer vouch for your identity to boost network reputation.</div>
+        <div class="growth-impact">+5 network reputation</div>
+      </div>
+      <div class="growth-card" onclick="alert('Participate in governance to boost your constitutional standing.')">
+        <div class="growth-icon">🗳️</div>
+        <div class="growth-title">Cast a Governance Vote</div>
+        <div class="growth-desc">Participate in governance decisions to demonstrate constitutional engagement.</div>
+        <div class="growth-impact">+4 constitutional standing</div>
+      </div>
+      <div class="growth-card" onclick="alert('Rotate your Ed25519 key pair to improve cryptographic strength.')">
+        <div class="growth-icon">🔑</div>
+        <div class="growth-title">Rotate Cryptographic Key</div>
+        <div class="growth-desc">Rotate your Ed25519 key pair to demonstrate key hygiene and freshness.</div>
+        <div class="growth-impact">+8 cryptographic strength</div>
+      </div>
     </div>
   </div>
 
@@ -563,17 +633,55 @@ const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
       </div>`).join('');
   }
 
+  async function fetchFingerprints() {
+    // Fingerprints require auth — try without token first; if 401, skip gracefully
+    const res = await fetch(`/api/v1/0dentity/${encodeURIComponent(DID)}/fingerprints`);
+    if (res.status === 401 || res.status === 403) return { fingerprints: [] };
+    if (!res.ok) return { fingerprints: [] };
+    return res.json();
+  }
+
+  function renderFingerprints(data) {
+    const fps = (data && data.fingerprints) ? data.fingerprints : [];
+    const listEl = document.getElementById('fpList');
+    if (fps.length === 0) {
+      listEl.innerHTML = '<div class="empty">No fingerprint sessions recorded yet.</div>';
+      return;
+    }
+    // Sort most recent first
+    const sorted = [...fps].sort((a, b) => (b.captured_ms || 0) - (a.captured_ms || 0));
+    listEl.innerHTML = sorted.map(fp => {
+      const score = fp.consistency_score != null ? fp.consistency_score : null;
+      const pct = score != null ? Math.min(Math.max(score / 100, 0), 100) : 0;
+      const barClass = pct >= 70 ? 'fp-bar-high' : pct >= 40 ? 'fp-bar-med' : 'fp-bar-low';
+      const scoreText = score != null ? (score / 100).toFixed(0) + '%' : 'N/A';
+      const hash = fp.composite_hash || '—';
+      const shortH = hash.length > 10 ? hash.slice(0, 6) + '…' + hash.slice(-4) : hash;
+      const signals = fp.signal_count != null ? fp.signal_count + ' sig' : '';
+      const time = fp.captured_ms ? relativeTime(fp.captured_ms) : '—';
+      return `<div class="fp-item">
+        <div class="fp-hash">${shortH}</div>
+        <div class="fp-bar-wrap"><div class="fp-bar ${barClass}" style="width:${pct}%"></div></div>
+        <div class="fp-value">${scoreText}</div>
+        <div class="fp-signals">${signals}</div>
+        <div class="fp-time">${time}</div>
+      </div>`;
+    }).join('');
+  }
+
   async function poll() {
     try {
-      const [scoreData, claimsData, historyData] = await Promise.all([
+      const [scoreData, claimsData, historyData, fpData] = await Promise.all([
         fetchScore(),
         fetchClaims(),
         fetchHistory(),
+        fetchFingerprints(),
       ]);
       setError(null);
       renderScore(scoreData);
       renderClaims(claimsData);
       renderHistory(historyData);
+      renderFingerprints(fpData);
     } catch (err) {
       setError(`Failed to refresh: ${err.message}`);
     }
@@ -647,5 +755,49 @@ mod tests {
     #[test]
     fn test_dashboard_router_builds() {
         let _ = zerodentity_dashboard_router();
+    }
+
+    #[tokio::test]
+    async fn test_dashboard_contains_growth_actions() {
+        let response = zerodentity_dashboard(Path("did:exo:test123".to_string())).await;
+        let html = response.0;
+        assert!(
+            html.contains("Grow Your Score"),
+            "dashboard must contain growth actions panel"
+        );
+        assert!(
+            html.contains("Add Government ID"),
+            "dashboard must contain Gov ID growth action"
+        );
+        assert!(
+            html.contains("Request Peer Attestation"),
+            "dashboard must contain attestation growth action"
+        );
+        assert!(
+            html.contains("Cast a Governance Vote"),
+            "dashboard must contain vote growth action"
+        );
+        assert!(
+            html.contains("Rotate Cryptographic Key"),
+            "dashboard must contain key rotation growth action"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dashboard_contains_fingerprint_panel() {
+        let response = zerodentity_dashboard(Path("did:exo:test123".to_string())).await;
+        let html = response.0;
+        assert!(
+            html.contains("Fingerprint Consistency"),
+            "dashboard must contain fingerprint consistency panel"
+        );
+        assert!(
+            html.contains("fetchFingerprints"),
+            "dashboard must contain fingerprint fetch function"
+        );
+        assert!(
+            html.contains("renderFingerprints"),
+            "dashboard must contain fingerprint render function"
+        );
     }
 }
