@@ -486,6 +486,7 @@ async fn start_node(
     let passport_state = Arc::new(passport::PassportApiState {
         reactor_state: Arc::clone(&reactor_state),
         store: Arc::clone(&shared_store),
+        zerodentity_store: Arc::clone(&zerodentity_store),
     });
     let passport_router = passport::passport_router(passport_state);
 

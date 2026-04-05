@@ -29,7 +29,11 @@ use axum::{
 };
 use serde::Serialize;
 
-use crate::{reactor::SharedReactorState, store::SqliteDagStore};
+use crate::{
+    reactor::SharedReactorState,
+    store::SqliteDagStore,
+    zerodentity::store::SharedZerodentityStore,
+};
 
 // ---------------------------------------------------------------------------
 // Shared state
@@ -42,6 +46,8 @@ pub struct PassportApiState {
     /// Store for future delegation/consent/attestation persistence queries.
     #[allow(dead_code)]
     pub store: Arc<Mutex<SqliteDagStore>>,
+    /// 0dentity store for sovereign identity score lookup.
+    pub zerodentity_store: SharedZerodentityStore,
 }
 
 // ---------------------------------------------------------------------------
@@ -65,6 +71,8 @@ pub struct AgentPassport {
     pub consent: ConsentProfile,
     /// Trust standing (sanctions, revocation, risk).
     pub standing: StandingProfile,
+    /// 0dentity sovereign identity score, if available for this DID.
+    pub zerodentity: Option<ZerodentityProfile>,
 }
 
 /// Identity portion of the passport.
@@ -117,6 +125,36 @@ pub struct StandingProfile {
     pub risk_level: String,
 }
 
+/// 0dentity sovereign identity score profile.
+///
+/// All scores are in **basis points** (0–10_000 = 0%–100.00%).
+#[derive(Debug, Serialize)]
+pub struct ZerodentityProfile {
+    /// Composite score: unweighted mean of all 8 polar axes (basis points).
+    pub composite_bp: u32,
+    /// Per-axis polar scores (each in basis points).
+    pub axes: ZerodentityAxes,
+    /// Number of verified claims contributing to this score.
+    pub claim_count: u32,
+    /// Shape symmetry index (0–10_000 bp; 10_000 = perfect octagon).
+    pub symmetry_bp: u32,
+    /// When this score was last computed (epoch ms).
+    pub computed_ms: u64,
+}
+
+/// Per-axis 0dentity polar graph scores (basis points, 0–10_000).
+#[derive(Debug, Serialize)]
+pub struct ZerodentityAxes {
+    pub communication: u32,
+    pub credential_depth: u32,
+    pub device_trust: u32,
+    pub behavioral_signature: u32,
+    pub network_reputation: u32,
+    pub temporal_stability: u32,
+    pub cryptographic_strength: u32,
+    pub constitutional_standing: u32,
+}
+
 /// Delegation list response.
 #[derive(Debug, Serialize)]
 pub struct DelegationListResponse {
@@ -165,6 +203,28 @@ async fn handle_passport(
         (known, is_val)
     };
 
+    // Look up 0dentity score if available.
+    let zerodentity = {
+        let did_obj = exo_core::types::Did::new(&did).expect("already validated");
+        let zd = state.zerodentity_store.lock().expect("zerodentity store lock");
+        zd.get_score(&did_obj).map(|s| ZerodentityProfile {
+            composite_bp: s.composite,
+            axes: ZerodentityAxes {
+                communication: s.axes.communication,
+                credential_depth: s.axes.credential_depth,
+                device_trust: s.axes.device_trust,
+                behavioral_signature: s.axes.behavioral_signature,
+                network_reputation: s.axes.network_reputation,
+                temporal_stability: s.axes.temporal_stability,
+                cryptographic_strength: s.axes.cryptographic_strength,
+                constitutional_standing: s.axes.constitutional_standing,
+            },
+            claim_count: s.claim_count,
+            symmetry_bp: s.symmetry,
+            computed_ms: s.computed_ms,
+        })
+    };
+
     let passport = AgentPassport {
         did: did.clone(),
         known,
@@ -173,6 +233,7 @@ async fn handle_passport(
         delegations: build_delegation_profile(),
         consent: build_consent_profile(),
         standing: build_standing_profile(known),
+        zerodentity,
     };
 
     Ok(Json(passport))
@@ -328,6 +389,7 @@ mod tests {
     use crate::{
         reactor::{ReactorConfig, create_reactor_state},
         store::SqliteDagStore,
+        zerodentity::store::new_shared_store,
     };
 
     fn make_sign_fn() -> Arc<dyn Fn(&[u8]) -> Signature + Send + Sync> {
@@ -358,6 +420,7 @@ mod tests {
         Arc::new(PassportApiState {
             reactor_state,
             store,
+            zerodentity_store: new_shared_store(),
         })
     }
 
@@ -536,12 +599,14 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
         let passport: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        // Verify all 5 top-level trust dimensions are present.
+        // Verify all 6 top-level trust dimensions are present.
         assert!(passport.get("did").is_some());
         assert!(passport.get("identity").is_some());
         assert!(passport.get("delegations").is_some());
         assert!(passport.get("consent").is_some());
         assert!(passport.get("standing").is_some());
+        // zerodentity is Optional — present as null when no score exists.
+        assert!(passport.get("zerodentity").is_some());
 
         // Verify identity sub-fields.
         let id = &passport["identity"];
@@ -556,5 +621,91 @@ mod tests {
         assert!(st.get("sanctioned").is_some());
         assert!(st.get("sybil_challenge_hold").is_some());
         assert!(st.get("risk_level").is_some());
+    }
+
+    #[tokio::test]
+    async fn passport_returns_null_zerodentity_when_no_score() {
+        let state = test_passport_state();
+        let app = passport_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/agents/did:exo:v0/passport")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), 200);
+        let body = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        let passport: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(passport["zerodentity"].is_null());
+    }
+
+    #[tokio::test]
+    async fn passport_includes_zerodentity_score_when_present() {
+        use crate::zerodentity::types::{PolarAxes, ZerodentityScore};
+
+        let state = test_passport_state();
+
+        // Insert a score for validator v0.
+        {
+            let mut zd = state.zerodentity_store.lock().unwrap();
+            let score = ZerodentityScore {
+                subject_did: Did::new("did:exo:v0").unwrap(),
+                axes: PolarAxes {
+                    communication: 7500,
+                    credential_depth: 6000,
+                    device_trust: 8000,
+                    behavioral_signature: 5500,
+                    network_reputation: 4000,
+                    temporal_stability: 9000,
+                    cryptographic_strength: 7000,
+                    constitutional_standing: 3000,
+                },
+                composite: 6250,
+                computed_ms: 1_700_000_000_000,
+                dag_state_hash: exo_core::types::Hash256::digest(b"test"),
+                claim_count: 12,
+                symmetry: 6800,
+            };
+            zd.put_score(score);
+        }
+
+        let app = passport_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/agents/did:exo:v0/passport")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), 200);
+        let body = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        let passport: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let zd = &passport["zerodentity"];
+        assert!(!zd.is_null(), "zerodentity should be present");
+        assert_eq!(zd["composite_bp"], 6250);
+        assert_eq!(zd["claim_count"], 12);
+        assert_eq!(zd["symmetry_bp"], 6800);
+        assert_eq!(zd["computed_ms"], 1_700_000_000_000_u64);
+
+        // Verify all 8 polar axes.
+        let axes = &zd["axes"];
+        assert_eq!(axes["communication"], 7500);
+        assert_eq!(axes["credential_depth"], 6000);
+        assert_eq!(axes["device_trust"], 8000);
+        assert_eq!(axes["behavioral_signature"], 5500);
+        assert_eq!(axes["network_reputation"], 4000);
+        assert_eq!(axes["temporal_stability"], 9000);
+        assert_eq!(axes["cryptographic_strength"], 7000);
+        assert_eq!(axes["constitutional_standing"], 3000);
     }
 }
