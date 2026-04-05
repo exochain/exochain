@@ -563,8 +563,14 @@ async fn start_node(
     let zd_onboarding_state = zerodentity::onboarding::OnboardingState {
         store: std::sync::Arc::clone(&zerodentity_store),
     };
+    let started_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
     let zd_api_state = zerodentity::api::ApiState {
         store: std::sync::Arc::clone(&zerodentity_store),
+        node_did: node_identity.did.clone(),
+        started_ms,
     };
     let zerodentity_onboarding_router =
         zerodentity::onboarding::onboarding_router(zd_onboarding_state);

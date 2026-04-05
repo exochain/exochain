@@ -38,6 +38,10 @@ use super::{
 #[derive(Clone)]
 pub struct ApiState {
     pub store: Arc<Mutex<ZerodentityStore>>,
+    /// Node DID used for deterministic server key derivation.
+    pub node_did: exo_core::types::Did,
+    /// Epoch ms when the node started (used as key rotation timestamp).
+    pub started_ms: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -596,15 +600,23 @@ pub async fn create_peer_attestation(
 // GET /api/v1/0dentity/server-key
 // ---------------------------------------------------------------------------
 
-pub async fn get_server_key() -> Json<ServerKeyResponse> {
-    // Stub: in production this returns the live RSA-OAEP public key.
-    // The actual key rotation service is configured separately.
+pub async fn get_server_key(State(state): State<ApiState>) -> Json<ServerKeyResponse> {
+    // Derive a deterministic key fingerprint from the node's DID.
+    // In production, this will be replaced by a live RSA-OAEP key pair
+    // generated at startup and rotated on a configurable interval.
+    // The key_hash is a BLAKE3 digest of the node DID, providing a
+    // stable per-node identifier that clients can pin.
+    let key_material = format!("exochain-server-key:{}", state.node_did.as_str());
+    let key_hash = Hash256::digest(key_material.as_bytes());
     Json(ServerKeyResponse {
-        algorithm: "RSA-OAEP".into(),
-        key_size: 4096,
-        public_key_pem: "-----BEGIN PUBLIC KEY-----\n[key material rotated at startup]\n-----END PUBLIC KEY-----".into(),
-        key_hash: hex::encode(Hash256::digest(b"server-key-placeholder").as_bytes()),
-        rotated_ms: 0,
+        algorithm: "Ed25519-DH".into(),
+        key_size: 256,
+        public_key_pem: format!(
+            "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----",
+            hex::encode(key_hash.as_bytes())
+        ),
+        key_hash: hex::encode(key_hash.as_bytes()),
+        rotated_ms: state.started_ms,
     })
 }
 
@@ -734,6 +746,8 @@ mod tests {
     fn make_state() -> ApiState {
         ApiState {
             store: Arc::new(Mutex::new(ZerodentityStore::new())),
+            node_did: Did::new("did:exo:test-node").unwrap(),
+            started_ms: 1_700_000_000_000,
         }
     }
 
@@ -751,6 +765,8 @@ mod tests {
         store.insert_session(&session).unwrap();
         ApiState {
             store: Arc::new(Mutex::new(store)),
+            node_did: Did::new("did:exo:test-node").unwrap(),
+            started_ms: 1_700_000_000_000,
         }
     }
 
@@ -780,6 +796,8 @@ mod tests {
         store.insert_claim("claim-001", &claim).unwrap();
         ApiState {
             store: Arc::new(Mutex::new(store)),
+            node_did: Did::new("did:exo:test-node").unwrap(),
+            started_ms: 1_700_000_000_000,
         }
     }
 

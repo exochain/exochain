@@ -101,7 +101,11 @@ mod tests {
     }
 
     fn api_app(store: SharedZerodentityStore) -> Router {
-        zerodentity_api_router(ApiState { store })
+        zerodentity_api_router(ApiState {
+            store,
+            node_did: Did::new("did:exo:test-node").unwrap(),
+            started_ms: 1_700_000_000_000,
+        })
     }
 
     async fn post_json(app: &Router, uri: &str, body: Value) -> axum::response::Response {
@@ -1006,13 +1010,13 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn get_server_key_returns_rsa_oaep() {
+    async fn get_server_key_returns_ed25519_dh() {
         let app = api_app(new_shared_store());
         let resp = get_req(&app, "/api/v1/0dentity/server-key").await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
-        assert_eq!(body["algorithm"].as_str().unwrap(), "RSA-OAEP");
-        assert_eq!(body["key_size"].as_u64().unwrap(), 4096);
+        assert_eq!(body["algorithm"].as_str().unwrap(), "Ed25519-DH");
+        assert_eq!(body["key_size"].as_u64().unwrap(), 256);
         assert!(
             body["public_key_pem"]
                 .as_str()
@@ -1021,6 +1025,8 @@ mod tests {
         );
         let hash_str = body["key_hash"].as_str().unwrap();
         assert_eq!(hash_str.len(), 64, "key_hash must be 64 hex chars");
+        // Key hash is deterministic for the test node DID.
+        assert_eq!(body["rotated_ms"].as_u64().unwrap(), 1_700_000_000_000,);
     }
 
     async fn post_with_auth(

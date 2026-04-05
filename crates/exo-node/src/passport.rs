@@ -30,9 +30,7 @@ use axum::{
 use serde::Serialize;
 
 use crate::{
-    reactor::SharedReactorState,
-    store::SqliteDagStore,
-    zerodentity::store::SharedZerodentityStore,
+    reactor::SharedReactorState, store::SqliteDagStore, zerodentity::store::SharedZerodentityStore,
 };
 
 // ---------------------------------------------------------------------------
@@ -203,11 +201,15 @@ async fn handle_passport(
         (known, is_val)
     };
 
-    // Look up 0dentity score if available.
-    let zerodentity = {
-        let did_obj = exo_core::types::Did::new(&did).expect("already validated");
-        let zd = state.zerodentity_store.lock().expect("zerodentity store lock");
-        zd.get_score(&did_obj).map(|s| ZerodentityProfile {
+    // Look up 0dentity data: score and claims.
+    let did_obj = exo_core::types::Did::new(&did).expect("already validated");
+    let (zerodentity, standing) = {
+        let zd = state
+            .zerodentity_store
+            .lock()
+            .expect("zerodentity store lock");
+
+        let score_profile = zd.get_score(&did_obj).map(|s| ZerodentityProfile {
             composite_bp: s.composite,
             axes: ZerodentityAxes {
                 communication: s.axes.communication,
@@ -222,7 +224,11 @@ async fn handle_passport(
             claim_count: s.claim_count,
             symmetry_bp: s.symmetry,
             computed_ms: s.computed_ms,
-        })
+        });
+
+        let standing = build_standing_profile(known, &did_obj, &zd);
+
+        (score_profile, standing)
     };
 
     let passport = AgentPassport {
@@ -232,7 +238,7 @@ async fn handle_passport(
         identity: build_identity_profile(&did, known),
         delegations: build_delegation_profile(),
         consent: build_consent_profile(),
-        standing: build_standing_profile(known),
+        standing,
         zerodentity,
     };
 
@@ -281,26 +287,27 @@ async fn handle_standing(
     State(state): State<Arc<PassportApiState>>,
     Path(did): Path<String>,
 ) -> Result<Json<StandingResponse>, (StatusCode, String)> {
-    let _did_obj = exo_core::types::Did::new(&did)
+    let did_obj = exo_core::types::Did::new(&did)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid DID: {e}")))?;
 
     let known = {
         let s = state.reactor_state.lock().expect("reactor state lock");
-        let did_obj = exo_core::types::Did::new(&did).expect("already validated");
         s.consensus.config.validators.contains(&did_obj) || s.node_did.to_string() == did
     };
 
+    let zd = state
+        .zerodentity_store
+        .lock()
+        .expect("zerodentity store lock");
+    let standing = build_standing_profile(known, &did_obj, &zd);
+
     Ok(Json(StandingResponse {
         did,
-        status: if known {
-            "active".into()
-        } else {
-            "unknown".into()
-        },
-        revoked: false,
-        sanctioned: false,
-        sybil_challenge_hold: false,
-        risk_level: "unassessed".into(),
+        status: standing.status,
+        revoked: standing.revoked,
+        sanctioned: standing.sanctioned,
+        sybil_challenge_hold: standing.sybil_challenge_hold,
+        risk_level: standing.risk_level,
     }))
 }
 
@@ -341,17 +348,54 @@ fn build_consent_profile() -> ConsentProfile {
     }
 }
 
-fn build_standing_profile(known: bool) -> StandingProfile {
-    StandingProfile {
-        status: if known {
-            "active".into()
-        } else {
-            "unknown".into()
+fn build_standing_profile(
+    known: bool,
+    did: &exo_core::types::Did,
+    zd_store: &crate::zerodentity::store::ZerodentityStore,
+) -> StandingProfile {
+    use crate::zerodentity::types::{ClaimStatus, ClaimType};
+
+    let claims = zd_store.get_claims(did).unwrap_or_default();
+
+    // Check if all claims are revoked (identity erased).
+    let all_revoked =
+        !claims.is_empty() && claims.iter().all(|(_, c)| c.status == ClaimStatus::Revoked);
+
+    // Check for any active sybil challenge.
+    let sybil_hold = claims.iter().any(|(_, c)| {
+        matches!(c.claim_type, ClaimType::SybilChallengeResolution { .. })
+            && c.status == ClaimStatus::Challenged
+    });
+
+    // Derive risk level from composite score if available.
+    let risk_level = match zd_store.get_score(did) {
+        Some(s) => match s.composite {
+            8000.. => "minimal",
+            6000..=7999 => "low",
+            4000..=5999 => "medium",
+            2000..=3999 => "high",
+            _ => "critical",
         },
-        revoked: false,
+        None => "unassessed",
+    };
+
+    // Determine overall status.
+    let status = if all_revoked {
+        "revoked"
+    } else if sybil_hold {
+        "quarantined"
+    } else if known || !claims.is_empty() {
+        "active"
+    } else {
+        "unknown"
+    };
+
+    StandingProfile {
+        status: status.into(),
+        revoked: all_revoked,
         sanctioned: false,
-        sybil_challenge_hold: false,
-        risk_level: "unassessed".into(),
+        sybil_challenge_hold: sybil_hold,
+        risk_level: risk_level.into(),
     }
 }
 
