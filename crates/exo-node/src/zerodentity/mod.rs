@@ -1,24 +1,40 @@
 //! 0dentity — sovereign identity scoring application.
 //!
-//! This module implements the foundational 0dentity system as specified in
+//! This module implements the 0dentity system as specified in
 //! `docs/0DENTITY-APP-SPEC.md`. It is split across several sub-modules:
 //!
-//! - **types**        — foundational types (claims, axes, scores, OTP)
+//! - **types**        — foundational types (claims, axes, scores, fingerprints)
 //! - **scoring**      — `ZerodentityScore::compute()` + 8 axis functions
 //! - **store**        — `ZerodentityStore` + `SharedZerodentityStore`
 //! - **otp**          — HMAC-SHA256 OTP challenge state machine
-//!
-//! Downstream crates (APE-73, APE-74) extend this core with signal collection,
-//! API handlers, and the onboarding UI.
+//! - **fingerprint**  — Jaccard-similarity device consistency scoring
+//! - **behavioral**   — histogram baseline similarity
+//! - **attestation**  — peer attestation validation
+//! - **onboarding**   — POST /api/v1/0dentity/claims, /verify, /verify/resend
+//! - **api**          — GET /api/v1/0dentity/:did/score, /claims, /history
+//! - **dashboard**    — GET /0dentity/dashboard/:did
+//! - **onboarding_ui**— GET /0dentity (onboarding flow HTML)
 
-// Core modules (APE-72)
+// Core modules
 pub mod otp;
 pub mod scoring;
 pub mod store;
 pub mod types;
 
+// Feature modules
+pub mod api;
+pub mod attestation;
+pub mod behavioral;
+pub mod dashboard;
+pub mod fingerprint;
+pub mod onboarding;
+pub mod onboarding_ui;
+
+#[cfg(test)]
+mod tests;
+
 // ---------------------------------------------------------------------------
-// Re-exports — the public surface of the 0dentity core
+// Re-exports — the public surface of the 0dentity module
 // ---------------------------------------------------------------------------
 
 #[allow(unused_imports)]
