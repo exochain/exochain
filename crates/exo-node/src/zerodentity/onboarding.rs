@@ -405,3 +405,84 @@ pub fn onboarding_router(state: OnboardingState) -> Router {
         .route("/api/v1/0dentity/verify/resend", post(resend_otp))
         .with_state(state)
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use exo_core::types::{Did, Hash256};
+
+    use super::*;
+    use crate::zerodentity::types::{ClaimType, PolarAxes, ZerodentityScore};
+
+    #[test]
+    fn parse_claim_type_biometric_liveness() {
+        assert_eq!(
+            parse_claim_type("BiometricLiveness", None),
+            Some(ClaimType::BiometricLiveness)
+        );
+    }
+
+    #[test]
+    fn parse_claim_type_entropy_attestation() {
+        assert_eq!(
+            parse_claim_type("EntropyAttestation", None),
+            Some(ClaimType::EntropyAttestation)
+        );
+    }
+
+    #[test]
+    fn parse_claim_type_professional_credential_with_provider() {
+        assert_eq!(
+            parse_claim_type("ProfessionalCredential", Some("Acme")),
+            Some(ClaimType::ProfessionalCredential {
+                provider: "Acme".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn parse_claim_type_professional_credential_no_provider() {
+        assert_eq!(
+            parse_claim_type("ProfessionalCredential", None),
+            Some(ClaimType::ProfessionalCredential {
+                provider: "".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn parse_claim_type_unknown_returns_none() {
+        assert_eq!(parse_claim_type("Foobar", None), None);
+    }
+
+    #[test]
+    fn score_summary_from_extracts_fields() {
+        let did = Did::new("did:exo:test").unwrap();
+        let score = ZerodentityScore {
+            subject_did: did,
+            axes: PolarAxes {
+                communication: 100,
+                credential_depth: 200,
+                device_trust: 300,
+                behavioral_signature: 400,
+                network_reputation: 500,
+                temporal_stability: 600,
+                cryptographic_strength: 700,
+                constitutional_standing: 800,
+            },
+            composite: 5000,
+            computed_ms: 1_000_000,
+            dag_state_hash: Hash256::digest(b"test"),
+            claim_count: 3,
+            symmetry: 9000,
+        };
+        let summary = score_summary_from(&score);
+        assert_eq!(summary.composite, 5000);
+        assert_eq!(summary.symmetry, 9000);
+        assert_eq!(summary.claim_count, 3);
+    }
+}

@@ -3,7 +3,11 @@
 //! This module bridges the existing `exo-api::p2p` abstractions (PeerRegistry,
 //! ASN diversity, rate limiting) with a real libp2p transport layer.
 
-#![allow(clippy::expect_used, clippy::large_enum_variant, clippy::collapsible_match)]
+#![allow(
+    clippy::expect_used,
+    clippy::large_enum_variant,
+    clippy::collapsible_match
+)]
 
 use std::{
     collections::hash_map::DefaultHasher,

@@ -625,3 +625,335 @@ pub fn zerodentity_api_router(state: ApiState) -> Router {
         )
         .with_state(state)
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::needless_borrows_for_generic_args)]
+mod tests {
+    use axum::{body::Body, http::Request};
+    use exo_core::types::{Did, Hash256, Signature};
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::zerodentity::{
+        store::ZerodentityStore,
+        types::{ClaimStatus, ClaimType, IdentityClaim, IdentitySession},
+    };
+
+    fn make_state() -> ApiState {
+        ApiState {
+            store: Arc::new(Mutex::new(ZerodentityStore::new())),
+        }
+    }
+
+    fn make_state_with_session(token: &str, did_str: &str) -> ApiState {
+        let mut store = ZerodentityStore::new();
+        let did = Did::new(did_str).unwrap();
+        let session = IdentitySession {
+            session_token: token.to_owned(),
+            subject_did: did,
+            public_key: vec![],
+            created_ms: 0,
+            last_active_ms: 0,
+            revoked: false,
+        };
+        store.insert_session(&session).unwrap();
+        ApiState {
+            store: Arc::new(Mutex::new(store)),
+        }
+    }
+
+    fn make_state_with_session_and_claim(token: &str, did_str: &str) -> ApiState {
+        let mut store = ZerodentityStore::new();
+        let did = Did::new(did_str).unwrap();
+        let session = IdentitySession {
+            session_token: token.to_owned(),
+            subject_did: did.clone(),
+            public_key: vec![],
+            created_ms: 0,
+            last_active_ms: 0,
+            revoked: false,
+        };
+        store.insert_session(&session).unwrap();
+        let claim = IdentityClaim {
+            claim_hash: Hash256::digest(b"email-claim"),
+            subject_did: did,
+            claim_type: ClaimType::Email,
+            status: ClaimStatus::Verified,
+            created_ms: 1000,
+            verified_ms: Some(2000),
+            expires_ms: None,
+            signature: Signature::Empty,
+            dag_node_hash: Hash256::digest(b"dag-node"),
+        };
+        store.insert_claim("claim-001", &claim).unwrap();
+        ApiState {
+            store: Arc::new(Mutex::new(store)),
+        }
+    }
+
+    // --- list_fingerprints ---
+
+    #[tokio::test]
+    async fn list_fingerprints_invalid_did_returns_400() {
+        let app = zerodentity_api_router(make_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/0dentity/notadid/fingerprints")
+                    .header("authorization", "Bearer tok")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn list_fingerprints_no_token_returns_401() {
+        let app = zerodentity_api_router(make_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/0dentity/did%3Aexo%3Aalice/fingerprints")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn list_fingerprints_unknown_session_returns_401() {
+        let app = zerodentity_api_router(make_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/0dentity/did%3Aexo%3Aalice/fingerprints")
+                    .header("authorization", "Bearer unknown-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn list_fingerprints_wrong_did_returns_403() {
+        let state = make_state_with_session("tok-bob", "did:exo:bob");
+        let app = zerodentity_api_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/0dentity/did%3Aexo%3Aalice/fingerprints")
+                    .header("authorization", "Bearer tok-bob")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn list_fingerprints_returns_empty_list() {
+        let state = make_state_with_session("tok-alice", "did:exo:alice");
+        let app = zerodentity_api_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/0dentity/did%3Aexo%3Aalice/fingerprints")
+                    .header("authorization", "Bearer tok-alice")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result["fingerprints"].as_array().unwrap().len(), 0);
+    }
+
+    // --- score_history ---
+
+    #[tokio::test]
+    async fn score_history_invalid_did_returns_400() {
+        let app = zerodentity_api_router(make_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/0dentity/notadid/score/history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn score_history_returns_empty_for_unknown_did() {
+        let app = zerodentity_api_router(make_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/0dentity/did%3Aexo%3Anobody/score/history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result["snapshots"].as_array().unwrap().len(), 0);
+    }
+
+    // --- create_peer_attestation ---
+
+    #[tokio::test]
+    async fn create_peer_attestation_invalid_target_did_returns_400() {
+        // target_did is parsed before auth; no session needed
+        let app = zerodentity_api_router(make_state());
+        let body = serde_json::json!({
+            "target_did": "notadid",
+            "attestation_type": "Identity"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/0dentity/did%3Aexo%3Aalice/attest")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer tok")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn create_peer_attestation_wrong_session_returns_403() {
+        let state = make_state_with_session("tok-bob", "did:exo:bob");
+        let app = zerodentity_api_router(state);
+        let body = serde_json::json!({
+            "target_did": "did:exo:carol",
+            "attestation_type": "Identity"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/0dentity/did%3Aexo%3Aalice/attest")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer tok-bob")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn create_peer_attestation_success_with_message_hash() {
+        let state = make_state_with_session_and_claim("tok-alice", "did:exo:alice");
+        let app = zerodentity_api_router(state);
+        let body = serde_json::json!({
+            "target_did": "did:exo:carol",
+            "attestation_type": "Identity",
+            "message_hash": hex::encode([0u8; 32])
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/0dentity/did%3Aexo%3Aalice/attest")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer tok-alice")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn create_peer_attestation_short_message_hash_succeeds() {
+        // message_hash < 32 bytes → parsed as None (covers the else branch)
+        let state = make_state_with_session_and_claim("tok-alice", "did:exo:alice");
+        let app = zerodentity_api_router(state);
+        let body = serde_json::json!({
+            "target_did": "did:exo:dave",
+            "attestation_type": "Trustworthy",
+            "message_hash": hex::encode([0u8; 16])
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/0dentity/did%3Aexo%3Aalice/attest")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer tok-alice")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    // --- list_claims ---
+
+    #[tokio::test]
+    async fn list_claims_filters_by_type() {
+        let state = make_state_with_session_and_claim("tok-alice", "did:exo:alice");
+        let app = zerodentity_api_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/0dentity/did%3Aexo%3Aalice/claims?type=email")
+                    .header("authorization", "Bearer tok-alice")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result["claims"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_claims_pagination_with_offset() {
+        let state = make_state_with_session_and_claim("tok-alice", "did:exo:alice");
+        let app = zerodentity_api_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/0dentity/did%3Aexo%3Aalice/claims?offset=1&limit=10")
+                    .header("authorization", "Bearer tok-alice")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        // 1 claim total, offset=1 → empty page
+        assert_eq!(result["claims"].as_array().unwrap().len(), 0);
+        assert_eq!(result["total"], 1);
+    }
+}

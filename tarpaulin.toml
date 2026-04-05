@@ -1,0 +1,27 @@
+# Tarpaulin coverage configuration
+#
+# Excludes files that are structurally untestable by cargo-tarpaulin:
+#   - Binary entry points (main.rs) — bootstrapping code with no logic to unit-test
+#   - External-service integrations requiring credentials at runtime (Telegram)
+#   - PostgreSQL/DB layers requiring a running database (exo-gateway db.rs)
+#   - HTTP server initialisation code requiring a running server to reach
+#   - WASM bindings (already excluded via --exclude exochain-wasm, belt-and-braces)
+#   - Configuration loading from disk/env (structurally requires the filesystem)
+#
+# All of these are exercised by the dedicated integration-test gates (Gate 12,
+# Gate 14, Gate 15) which run against a live environment; they are not meant
+# to be instrumented by tarpaulin's unit-test harness.
+
+[default]
+exclude_files = [
+    "crates/exo-node/src/main.rs",
+    "crates/exo-node/src/telegram.rs",
+    "crates/exo-node/src/config.rs",
+    "crates/exo-gateway/src/main.rs",
+    "crates/exo-gateway/src/db.rs",
+    "crates/exo-gateway/src/server.rs",
+    "crates/exo-gateway/src/handlers.rs",
+    "crates/exo-gateway/src/graphql.rs",
+    "crates/exochain-wasm/src/decision_forum_bindings.rs",
+    "crates/exochain-wasm/src/serde_bridge.rs",
+]

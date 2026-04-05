@@ -402,4 +402,94 @@ mod tests {
             OtpChallenge::new(&did, OtpChannel::Email, now, &mut rng).expect("new ok");
         assert!(challenge.can_resend(now + OTP_RESEND_COOLDOWN_MS));
     }
+
+    // ---- verify: early-return branches for terminal states ----
+
+    #[test]
+    fn verify_on_already_verified_returns_success_without_incrementing_attempts() {
+        let mut rng = test_rng();
+        let did = test_did();
+        let now = 0u64;
+        let (mut ch, code) =
+            OtpChallenge::new(&did, OtpChannel::Email, now, &mut rng).expect("new ok");
+        // First verify transitions Pending → Verified
+        assert_eq!(ch.verify(&code, now + 1_000), OtpResult::Success);
+        assert_eq!(ch.state, OtpState::Verified);
+        let attempts_before = ch.attempts;
+        // Second verify hits the Verified early-return (line 127)
+        assert_eq!(ch.verify("wrong", now + 2_000), OtpResult::Success);
+        assert_eq!(
+            ch.attempts, attempts_before,
+            "attempts must not change on re-verify"
+        );
+    }
+
+    #[test]
+    fn verify_on_already_locked_out_returns_locked_without_incrementing_attempts() {
+        let mut rng = test_rng();
+        let did = test_did();
+        let (mut ch, _) = OtpChallenge::new(&did, OtpChannel::Email, 0, &mut rng).expect("new ok");
+        // Drive to lockout
+        for _ in 0..OTP_MAX_ATTEMPTS {
+            let _ = ch.verify("000000", 1_000);
+        }
+        assert_eq!(ch.state, OtpState::LockedOut);
+        let attempts_at_lockout = ch.attempts;
+        // Verify again — hits LockedOut early-return (lines 128-133)
+        let result = ch.verify("000000", 2_000);
+        assert!(
+            matches!(result, OtpResult::Locked { .. }),
+            "expected Locked from early-return"
+        );
+        assert_eq!(ch.attempts, attempts_at_lockout, "attempts must not change");
+    }
+
+    #[test]
+    fn verify_on_already_expired_state_returns_expired_immediately() {
+        let mut rng = test_rng();
+        let did = test_did();
+        let now = 0u64;
+        let (mut ch, _) =
+            OtpChallenge::new(&did, OtpChannel::Email, now, &mut rng).expect("new ok");
+        // Expire via TTL (transitions state to Expired)
+        let _ = ch.verify("wrong", now + OTP_TTL_MS + 1);
+        assert_eq!(ch.state, OtpState::Expired);
+        let attempts_before = ch.attempts;
+        // Verify again — hits Expired early-return (line 135)
+        let result = ch.verify("wrong", now + OTP_TTL_MS + 2);
+        assert_eq!(result, OtpResult::Expired, "should be Expired early-return");
+        assert_eq!(ch.attempts, attempts_before, "attempts must not change");
+    }
+
+    // ---- is_locked: LockedOut state ----
+
+    #[test]
+    fn is_locked_true_inside_window_false_after_window() {
+        let mut rng = test_rng();
+        let did = test_did();
+        let dispatched = 0u64;
+        let (mut ch, _) =
+            OtpChallenge::new(&did, OtpChannel::Email, dispatched, &mut rng).expect("new ok");
+        // Drive to lockout
+        for _ in 0..OTP_MAX_ATTEMPTS {
+            let _ = ch.verify("000000", 1_000);
+        }
+        assert_eq!(ch.state, OtpState::LockedOut);
+        // locked_until = dispatched + OTP_TTL_MS + OTP_LOCKOUT_MS
+        let locked_until = dispatched + OTP_TTL_MS + OTP_LOCKOUT_MS;
+        // Inside the lock window → true (hits lines 184-188)
+        assert!(
+            ch.is_locked(locked_until - 1),
+            "should be locked before window expires"
+        );
+        // At and after locked_until → false (same lines, opposite return)
+        assert!(
+            !ch.is_locked(locked_until),
+            "should not be locked at expiry"
+        );
+        assert!(
+            !ch.is_locked(locked_until + 1),
+            "should not be locked after expiry"
+        );
+    }
 }
