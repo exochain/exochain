@@ -456,58 +456,9 @@ async fn start_node(
         }
     });
 
-    // Build the health endpoint (used by the dashboard and external monitors).
-    let health_start = std::time::Instant::now();
-    let health_router = axum::Router::new().route(
-        "/health",
-        axum::routing::get(move || {
-            let uptime = health_start.elapsed().as_secs();
-            async move {
-                axum::Json(serde_json::json!({
-                    "status": "ok",
-                    "uptime_seconds": uptime,
-                    "version": env!("CARGO_PKG_VERSION"),
-                    "node": "exochain",
-                }))
-            }
-        }),
-    );
-
-    // Build the readiness probe (used by container orchestrators and load balancers).
-    // Unlike /health (always 200), /ready returns 503 until the node is fully operational.
-    let ready_reactor = Arc::clone(&reactor_state);
-    let ready_store = Arc::clone(&shared_store);
-    let ready_router = axum::Router::new().route(
-        "/ready",
-        axum::routing::get(move || {
-            let r = Arc::clone(&ready_reactor);
-            let s = Arc::clone(&ready_store);
-            async move {
-                let reactor_ok = r.lock().map(|_| true).unwrap_or(false);
-                let store_ok = s.lock().map(|_| true).unwrap_or(false);
-
-                if reactor_ok && store_ok {
-                    (
-                        axum::http::StatusCode::OK,
-                        axum::Json(serde_json::json!({
-                            "ready": true,
-                            "reactor": "ok",
-                            "store": "ok",
-                        })),
-                    )
-                } else {
-                    (
-                        axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                        axum::Json(serde_json::json!({
-                            "ready": false,
-                            "reactor": if reactor_ok { "ok" } else { "unavailable" },
-                            "store": if store_ok { "ok" } else { "unavailable" },
-                        })),
-                    )
-                }
-            }
-        }),
-    );
+    // NOTE: /health and /ready are provided by the gateway (exo-gateway)
+    // with uptime tracking and DB readiness checks. Node-specific probes
+    // are available via /api/v1/governance/status and /api/v1/sentinels.
 
     // Build the metrics HTTP route.
     let metrics_handle = Arc::clone(&node_metrics);
@@ -635,11 +586,10 @@ async fn start_node(
         "0dentity routers ready — /0dentity, /0dentity/dashboard/:did, /api/v1/0dentity/*"
     );
 
-    // Merge health + ready + metrics + governance + passport + dashboard into a single
-    // extra router and apply bearer-token auth middleware (protects POST, allows GET).
-    let extra_router = health_router
-        .merge(ready_router)
-        .merge(metrics_router)
+    // Merge metrics + governance + passport + dashboard into a single extra router
+    // and apply bearer-token auth middleware (protects POST, allows GET).
+    // NOTE: /health and /ready are provided by the gateway's own router.
+    let extra_router = metrics_router
         .merge(governance_router)
         .merge(passport_router)
         .merge(dashboard_router)
