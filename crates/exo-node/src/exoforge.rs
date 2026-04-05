@@ -1434,9 +1434,9 @@ pub fn exoforge_router(state: SharedForgeState) -> Router {
         .route("/api/v1/forge/tasks", get(list_tasks))
         .route("/api/v1/forge/stats", get(get_stats))
         .route("/api/v1/forge/activity", get(get_activity))
-        .route("/api/v1/forge/tasks/{id}/status", post(update_task_status))
-        .route("/api/v1/forge/tasks/{id}/assign", post(assign_agent))
-        .route("/api/v1/forge/tasks/{id}/escalate", post(escalate_task))
+        .route("/api/v1/forge/tasks/:id/status", post(update_task_status))
+        .route("/api/v1/forge/tasks/:id/assign", post(assign_agent))
+        .route("/api/v1/forge/tasks/:id/escalate", post(escalate_task))
         .route("/api/v1/forge/log", post(append_log))
         .with_state(state)
 }
