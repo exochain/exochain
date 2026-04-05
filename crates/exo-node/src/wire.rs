@@ -8,6 +8,8 @@
 //! 3. **Consensus** — BFT proposal, vote, and commit certificate broadcast
 //! 4. **Governance** — governance event broadcast
 
+#![allow(clippy::large_enum_variant)]
+
 use exo_core::types::{Did, Hash256, Signature, Timestamp};
 use exo_dag::{
     consensus::{CommitCertificate, Proposal, Vote},

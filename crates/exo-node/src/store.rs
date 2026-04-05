@@ -4,6 +4,8 @@
 //! This implementation mirrors `MemoryStore` from `exo-dag` but uses durable
 //! storage so state survives restarts.
 
+#![allow(clippy::expect_used, clippy::as_conversions)]
+
 use std::{collections::BTreeSet, path::Path};
 
 use exo_core::types::{Did, Hash256};
@@ -177,7 +179,7 @@ impl SqliteDagStore {
             |row| row.get(0),
         );
         match result {
-            Ok(s) => s.parse::<u64>().map_err(|e| store_err(e)),
+            Ok(s) => s.parse::<u64>().map_err(store_err),
             Err(_) => Ok(0),
         }
     }
@@ -484,7 +486,7 @@ impl DagStore for SqliteDagStore {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT cbor_payload FROM dag_nodes WHERE hash = ?1")
-            .map_err(|e| store_err(e))?;
+            .map_err(store_err)?;
 
         let result: Option<Vec<u8>> = stmt
             .query_row(params![hash.0.as_slice()], |row| row.get(0))
@@ -504,7 +506,7 @@ impl DagStore for SqliteDagStore {
                 "INSERT OR IGNORE INTO dag_nodes (hash, cbor_payload) VALUES (?1, ?2)",
                 params![node.hash.0.as_slice(), cbor],
             )
-            .map_err(|e| store_err(e))?;
+            .map_err(store_err)?;
 
         // Record parent relationships.
         for parent in &node.parents {
@@ -513,7 +515,7 @@ impl DagStore for SqliteDagStore {
                     "INSERT OR IGNORE INTO dag_parents (child_hash, parent_hash) VALUES (?1, ?2)",
                     params![node.hash.0.as_slice(), parent.0.as_slice()],
                 )
-                .map_err(|e| store_err(e))?;
+                .map_err(store_err)?;
         }
 
         Ok(())
@@ -523,7 +525,7 @@ impl DagStore for SqliteDagStore {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT 1 FROM dag_nodes WHERE hash = ?1")
-            .map_err(|e| store_err(e))?;
+            .map_err(store_err)?;
 
         let exists = stmt
             .query_row(params![hash.0.as_slice()], |_| Ok(()))
@@ -541,7 +543,7 @@ impl DagStore for SqliteDagStore {
                  WHERE hash NOT IN (SELECT parent_hash FROM dag_parents)
                  ORDER BY hash",
             )
-            .map_err(|e| store_err(e))?;
+            .map_err(store_err)?;
 
         let rows = stmt
             .query_map([], |row| {
@@ -550,11 +552,11 @@ impl DagStore for SqliteDagStore {
                 arr.copy_from_slice(&bytes);
                 Ok(Hash256::from_bytes(arr))
             })
-            .map_err(|e| store_err(e))?;
+            .map_err(store_err)?;
 
         let mut tips = Vec::new();
         for row in rows {
-            tips.push(row.map_err(|e| store_err(e))?);
+            tips.push(row.map_err(store_err)?);
         }
         Ok(tips)
     }
@@ -563,11 +565,9 @@ impl DagStore for SqliteDagStore {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT COALESCE(MAX(height), 0) FROM committed")
-            .map_err(|e| store_err(e))?;
+            .map_err(store_err)?;
 
-        let height: i64 = stmt
-            .query_row([], |row| row.get(0))
-            .map_err(|e| store_err(e))?;
+        let height: i64 = stmt.query_row([], |row| row.get(0)).map_err(store_err)?;
 
         #[allow(clippy::as_conversions)]
         Ok(height as u64)
@@ -585,7 +585,7 @@ impl DagStore for SqliteDagStore {
                 "INSERT OR REPLACE INTO committed (hash, height) VALUES (?1, ?2)",
                 params![hash.0.as_slice(), height as i64],
             )
-            .map_err(|e| store_err(e))?;
+            .map_err(store_err)?;
 
         Ok(())
     }

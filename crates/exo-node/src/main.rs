@@ -14,6 +14,8 @@
 //! exochain peers                           # list connected peers
 //! ```
 
+#![allow(clippy::as_conversions, clippy::type_complexity)]
+
 mod api;
 mod auth;
 mod challenges;

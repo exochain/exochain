@@ -677,7 +677,10 @@ mod tests {
             (FingerprintSignal::DeviceMemory, "DeviceMemory"),
             (FingerprintSignal::DoNotTrack, "DoNotTrack"),
             (FingerprintSignal::FontEnumeration, "FontEnumeration"),
-            (FingerprintSignal::HardwareConcurrency, "HardwareConcurrency"),
+            (
+                FingerprintSignal::HardwareConcurrency,
+                "HardwareConcurrency",
+            ),
             (FingerprintSignal::Platform, "Platform"),
             (FingerprintSignal::ScreenGeometry, "ScreenGeometry"),
             (FingerprintSignal::TimezoneLocale, "TimezoneLocale"),
@@ -699,8 +702,14 @@ mod tests {
         assert_eq!(ClaimType::Email.to_string(), "Email");
         assert_eq!(ClaimType::Phone.to_string(), "Phone");
         assert_eq!(ClaimType::GovernmentId.to_string(), "GovernmentId");
-        assert_eq!(ClaimType::BiometricLiveness.to_string(), "BiometricLiveness");
-        assert_eq!(ClaimType::DeviceFingerprint.to_string(), "DeviceFingerprint");
+        assert_eq!(
+            ClaimType::BiometricLiveness.to_string(),
+            "BiometricLiveness"
+        );
+        assert_eq!(
+            ClaimType::DeviceFingerprint.to_string(),
+            "DeviceFingerprint"
+        );
         assert_eq!(
             ClaimType::BehavioralSignature.to_string(),
             "BehavioralSignature"
@@ -709,8 +718,14 @@ mod tests {
             ClaimType::GeographicConsistency.to_string(),
             "GeographicConsistency"
         );
-        assert_eq!(ClaimType::SessionContinuity.to_string(), "SessionContinuity");
-        assert_eq!(ClaimType::EntropyAttestation.to_string(), "EntropyAttestation");
+        assert_eq!(
+            ClaimType::SessionContinuity.to_string(),
+            "SessionContinuity"
+        );
+        assert_eq!(
+            ClaimType::EntropyAttestation.to_string(),
+            "EntropyAttestation"
+        );
     }
 
     #[test]
@@ -727,9 +742,7 @@ mod tests {
         };
         assert!(pa.to_string().starts_with("PeerAttestation:did:exo:x"));
 
-        let dg = ClaimType::DelegationGrant {
-            delegator_did: did,
-        };
+        let dg = ClaimType::DelegationGrant { delegator_did: did };
         assert!(dg.to_string().starts_with("DelegationGrant:did:exo:x"));
 
         let scr = ClaimType::SybilChallengeResolution {
@@ -757,9 +770,7 @@ mod tests {
         };
         assert!(prop.to_string().starts_with("ProposalAuthored:"));
 
-        let kr = ClaimType::KeyRotation {
-            old_key_hash: hash,
-        };
+        let kr = ClaimType::KeyRotation { old_key_hash: hash };
         assert!(kr.to_string().starts_with("KeyRotation:"));
     }
 

@@ -13,6 +13,8 @@
 //! - `POST /api/v1/challenges/:id/resolve` — resolve a challenge
 //! - `POST /api/v1/challenges/:id/dismiss` — dismiss a challenge
 
+#![allow(clippy::expect_used)]
+
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},

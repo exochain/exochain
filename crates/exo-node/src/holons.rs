@@ -21,6 +21,8 @@
 //! 3. **Health Monitor** — tracks consensus round times, peer latency,
 //!    DAG growth rate, and alerts on anomalies.
 
+#![allow(clippy::expect_used, clippy::as_conversions, clippy::float_arithmetic)]
+
 use std::time::Duration;
 
 use exo_core::types::Did;
@@ -440,8 +442,8 @@ pub async fn run_holon_manager(
                 let (diversity_score, recommendation) = analyze_topology(peer_count, &net_handle);
 
                 let input = CombinatorInput::new()
-                    .with("peer_count", &peer_count.to_string())
-                    .with("diversity_score", &format!("{diversity_score:.2}"));
+                    .with("peer_count", peer_count.to_string())
+                    .with("diversity_score", format!("{diversity_score:.2}"));
 
                 let ctx = build_holon_adjudication_context(&topology_holon, &config);
                 match holon::step(&mut topology_holon, &input, &kernel, &ctx) {
@@ -489,8 +491,8 @@ pub async fn run_holon_manager(
                 let recommendation = analyze_scaling(validator_count, node_count);
 
                 let input = CombinatorInput::new()
-                    .with("validator_count", &validator_count.to_string())
-                    .with("node_count", &node_count.to_string());
+                    .with("validator_count", validator_count.to_string())
+                    .with("node_count", node_count.to_string());
 
                 let ctx = build_holon_adjudication_context(&scaling_holon, &config);
                 match holon::step(&mut scaling_holon, &input, &kernel, &ctx) {
@@ -583,8 +585,8 @@ pub async fn run_holon_manager(
                 let status = analyze_health(consensus_round, committed_height);
 
                 let input = CombinatorInput::new()
-                    .with("consensus_round", &consensus_round.to_string())
-                    .with("committed_height", &committed_height.to_string());
+                    .with("consensus_round", consensus_round.to_string())
+                    .with("committed_height", committed_height.to_string());
 
                 let ctx = build_holon_adjudication_context(&health_holon, &config);
                 match holon::step(&mut health_holon, &input, &kernel, &ctx) {

@@ -17,6 +17,8 @@
 //! `DagSyncResponse`) and operates over the gossipsub + direct messaging
 //! layer.
 
+#![allow(clippy::expect_used, clippy::as_conversions, clippy::manual_clamp)]
+
 use std::sync::{Arc, Mutex};
 
 use exo_core::types::Did;

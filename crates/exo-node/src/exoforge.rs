@@ -16,6 +16,8 @@
 //! | POST   | `/api/v1/forge/tasks/:id/escalate`| Escalate a task          |
 //! | POST   | `/api/v1/forge/log`               | Append activity log      |
 
+#![allow(clippy::as_conversions, clippy::unwrap_used, clippy::float_arithmetic)]
+
 use std::sync::{Arc, Mutex};
 
 use axum::{

@@ -1121,11 +1121,7 @@ mod tests {
                 .as_str()
                 .is_some_and(|s| !s.is_empty())
         );
-        assert!(
-            body["receipt_hash"]
-                .as_str()
-                .is_some_and(|s| s.len() == 64)
-        );
+        assert!(body["receipt_hash"].as_str().is_some_and(|s| s.len() == 64));
     }
 
     #[tokio::test]
@@ -1184,10 +1180,7 @@ mod tests {
 
         let resp = get_with_auth(
             &app,
-            &format!(
-                "/api/v1/0dentity/{}/claims?status=verified",
-                did.as_str()
-            ),
+            &format!("/api/v1/0dentity/{}/claims?status=verified", did.as_str()),
             token,
         )
         .await;

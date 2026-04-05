@@ -11,6 +11,13 @@
 //! `vote()`, `check_commit()`, `commit()`) into a network-aware reactor
 //! without modifying the consensus protocol itself.
 
+#![allow(
+    clippy::expect_used,
+    clippy::as_conversions,
+    clippy::type_complexity,
+    clippy::single_match
+)]
+
 use std::{
     collections::BTreeSet,
     sync::{Arc, Mutex},

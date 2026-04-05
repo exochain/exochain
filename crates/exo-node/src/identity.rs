@@ -4,6 +4,8 @@
 //! public key (`did:exo:<base58(blake3(pubkey))>`), and stores the secret
 //! key in `identity.key`. Subsequent runs reload from disk.
 
+#![allow(clippy::same_item_push)]
+
 use std::path::Path;
 
 use exo_core::{

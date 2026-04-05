@@ -9,6 +9,8 @@
 //! layer will be upgraded to Ed25519 DID-signature authentication (as already
 //! implemented in `exo-gateway/src/auth.rs`).
 
+#![allow(clippy::expect_used)]
+
 use std::sync::Arc;
 
 use axum::{

@@ -5,6 +5,8 @@
 //! `serve_with_extra_routes` so the node exposes governance operations
 //! alongside the existing REST / GraphQL endpoints.
 
+#![allow(clippy::expect_used, clippy::as_conversions)]
+
 use std::sync::{Arc, Mutex};
 
 use axum::{

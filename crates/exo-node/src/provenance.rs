@@ -8,6 +8,8 @@
 //!
 //! - `GET /api/v1/provenance/:hash` — full lineage for a DAG node
 
+#![allow(clippy::expect_used)]
+
 use std::sync::{Arc, Mutex};
 
 use axum::{

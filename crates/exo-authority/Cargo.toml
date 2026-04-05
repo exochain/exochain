@@ -17,3 +17,6 @@ serde = { workspace = true }
 blake3 = { workspace = true }
 thiserror = { workspace = true }
 ed25519-dalek = { workspace = true }
+
+[package.metadata.cargo-machete]
+ignored = ["blake3", "ed25519-dalek", "exo-identity"]

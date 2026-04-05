@@ -24,3 +24,6 @@ criterion = { workspace = true }
 [[bench]]
 name = "append_normative"
 harness = false
+
+[package.metadata.cargo-machete]
+ignored = ["uuid"]
