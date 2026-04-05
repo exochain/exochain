@@ -5,7 +5,11 @@
 //! `serve_with_extra_routes` so the node exposes governance operations
 //! alongside the existing REST / GraphQL endpoints.
 
-#![allow(clippy::expect_used, clippy::as_conversions)]
+#![allow(
+    clippy::expect_used,
+    clippy::as_conversions,
+    clippy::needless_borrows_for_generic_args
+)]
 
 use std::sync::{Arc, Mutex};
 

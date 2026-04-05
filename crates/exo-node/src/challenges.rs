@@ -13,7 +13,7 @@
 //! - `POST /api/v1/challenges/:id/resolve` — resolve a challenge
 //! - `POST /api/v1/challenges/:id/dismiss` — dismiss a challenge
 
-#![allow(clippy::expect_used)]
+#![allow(clippy::expect_used, clippy::needless_borrows_for_generic_args)]
 
 use std::{
     collections::BTreeMap,

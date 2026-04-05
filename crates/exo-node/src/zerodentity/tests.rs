@@ -7,7 +7,7 @@
 //! All HTTP tests drive axum routers via `tower::ServiceExt::oneshot`.
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::module_inception)]
 mod tests {
     use axum::{
         Router,

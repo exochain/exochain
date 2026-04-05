@@ -21,7 +21,13 @@
 //! 3. **Health Monitor** — tracks consensus round times, peer latency,
 //!    DAG growth rate, and alerts on anomalies.
 
-#![allow(clippy::expect_used, clippy::as_conversions, clippy::float_arithmetic)]
+#![allow(
+    clippy::expect_used,
+    clippy::as_conversions,
+    clippy::float_arithmetic,
+    clippy::float_cmp,
+    clippy::single_match
+)]
 
 use std::time::Duration;
 

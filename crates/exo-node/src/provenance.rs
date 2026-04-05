@@ -8,7 +8,7 @@
 //!
 //! - `GET /api/v1/provenance/:hash` — full lineage for a DAG node
 
-#![allow(clippy::expect_used)]
+#![allow(clippy::expect_used, clippy::needless_borrows_for_generic_args)]
 
 use std::sync::{Arc, Mutex};
 
