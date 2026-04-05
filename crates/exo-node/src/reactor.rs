@@ -656,7 +656,6 @@ async fn check_and_commit(
 /// Submit a governance mutation as a DAG node and propose it for consensus.
 ///
 /// Called by the API layer when a new governance action is requested.
-#[allow(dead_code)] // Wired in governance API
 pub async fn submit_proposal(
     state: &SharedReactorState,
     store: &Arc<Mutex<SqliteDagStore>>,
@@ -738,7 +737,6 @@ pub async fn submit_proposal(
 }
 
 /// Broadcast a governance event to the network.
-#[allow(dead_code)] // Wired in governance API
 pub async fn broadcast_governance_event(
     state: &SharedReactorState,
     net_handle: &NetworkHandle,

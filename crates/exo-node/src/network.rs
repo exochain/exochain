@@ -56,7 +56,7 @@ pub enum NetworkCommand {
     /// Publish a wire message to a gossipsub topic.
     Publish { topic: String, message: WireMessage },
     /// Dial a peer at a multiaddr.
-    #[allow(dead_code)] // Wired in governance API
+    #[allow(dead_code)] // Used when governance API enables dynamic peer dialing
     Dial { addr: Multiaddr },
     /// Request the current peer count.
     PeerCount {
@@ -443,7 +443,7 @@ impl NetworkHandle {
     }
 
     /// Dial a peer at a multiaddr.
-    #[allow(dead_code)] // Wired in governance API
+    #[allow(dead_code)] // Used when governance API enables dynamic peer dialing
     pub async fn dial(&self, addr: Multiaddr) -> anyhow::Result<()> {
         self.cmd_tx
             .send(NetworkCommand::Dial { addr })

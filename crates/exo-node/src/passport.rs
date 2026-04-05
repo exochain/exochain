@@ -329,8 +329,10 @@ fn build_identity_profile(did: &str, known: bool) -> IdentityProfile {
 }
 
 fn build_delegation_profile() -> DelegationProfile {
-    // Delegation registry is in-memory in exo-authority; will be wired
-    // when the node integrates delegation persistence.
+    // The DelegationRegistry in exo-authority and DelegatedAuthority in
+    // decision-forum track live delegation chains. These are in-memory
+    // per-crate structures; wiring them here requires a shared delegation
+    // persistence layer (planned for the Phase 4 state-sync milestone).
     DelegationProfile {
         delegations_granted: 0,
         delegations_received: 0,
@@ -339,8 +341,10 @@ fn build_delegation_profile() -> DelegationProfile {
 }
 
 fn build_consent_profile() -> ConsentProfile {
-    // Consent/bailment records will be wired when the node integrates
-    // bailment persistence from exo-consent.
+    // Bailment lifecycle (propose → accept → terminate) is implemented in
+    // exo-consent and gatekeeper.  Wiring requires a shared consent store
+    // that persists bailment state across the node (planned for Phase 4).
+    // Default-deny is always enforced by the constitutional kernel.
     ConsentProfile {
         bailments_as_bailor: 0,
         bailments_as_bailee: 0,

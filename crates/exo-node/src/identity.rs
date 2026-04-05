@@ -38,7 +38,7 @@ impl NodeIdentity {
 
     /// Returns the Ed25519 public key.
     #[must_use]
-    #[allow(dead_code)] // Wired in governance API
+    #[allow(dead_code)] // Accessor for delegation/attestation flows
     pub fn public_key(&self) -> &PublicKey {
         &self.public_key
     }
