@@ -222,4 +222,48 @@ mod tests {
         assert!(html.contains("/api/v1/receipts"));
         assert!(html.contains("showDetail"));
     }
+
+    #[tokio::test]
+    async fn receipt_dashboard_contains_filter_controls() {
+        let app = receipt_dashboard_router();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/receipts")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body = axum::body::to_bytes(resp.into_body(), 16384).await.unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        // Verify filter UI elements exist.
+        assert!(html.contains("controls"));
+        assert!(html.contains("detail-panel"));
+        assert!(html.contains("outcome-executed"));
+        assert!(html.contains("outcome-denied"));
+    }
+
+    #[tokio::test]
+    async fn receipt_dashboard_content_type_is_html() {
+        let app = receipt_dashboard_router();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/receipts")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(ct.contains("text/html"));
+    }
 }
