@@ -23,6 +23,7 @@ mod cli;
 mod config;
 mod dashboard;
 mod exoforge;
+mod governance_feedback;
 mod holons;
 mod identity;
 mod metrics;
@@ -405,6 +406,7 @@ async fn start_node(
     };
 
     let (holon_event_tx, mut holon_event_rx) = mpsc::channel::<HolonEvent>(256);
+    let (holon_feedback_tx, holon_feedback_rx) = mpsc::channel::<HolonEvent>(256);
 
     tokio::spawn(holons::run_holon_manager(
         holon_config,
@@ -415,10 +417,13 @@ async fn start_node(
     ));
     tracing::info!("Infrastructure Holons started (topology, scaling, health)");
 
-    // Holon event logger (with metrics updates).
+    // Holon event fan-out: logs + metrics, then forwards to governance feedback.
     let holon_metrics = Arc::clone(&node_metrics);
     tokio::spawn(async move {
         while let Some(event) = holon_event_rx.recv().await {
+            // Forward to governance feedback loop (non-blocking).
+            let _ = holon_feedback_tx.try_send(event.clone());
+
             match event {
                 HolonEvent::TopologyAnalysis {
                     peer_count,
@@ -453,8 +458,8 @@ async fn start_node(
                 HolonEvent::HealthCheck {
                     consensus_round,
                     committed_height,
-                    status,
-                } => match &status {
+                    ref status,
+                } => match status {
                     holons::HealthStatus::Healthy => {
                         tracing::debug!(consensus_round, committed_height, "Health Holon: healthy");
                     }
@@ -475,7 +480,10 @@ async fn start_node(
                         );
                     }
                 },
-                HolonEvent::HolonTerminated { holon_id, reason } => {
+                HolonEvent::HolonTerminated {
+                    ref holon_id,
+                    ref reason,
+                } => {
                     tracing::error!(
                         %holon_id,
                         %reason,
@@ -550,7 +558,9 @@ async fn start_node(
     let sentinel_state: sentinels::SharedSentinelState =
         Arc::new(std::sync::Mutex::new(Vec::new()));
     let sentinel_router = sentinels::sentinel_router(Arc::clone(&sentinel_state));
-    let (alert_tx, alert_rx) = tokio::sync::mpsc::channel::<sentinels::SentinelAlert>(64);
+    let (alert_tx, mut alert_rx) = tokio::sync::mpsc::channel::<sentinels::SentinelAlert>(64);
+    let (alert_feedback_tx, alert_feedback_rx) =
+        tokio::sync::mpsc::channel::<sentinels::SentinelAlert>(64);
 
     // Spawn sentinel background loop.
     tokio::spawn(sentinels::run_sentinel_loop(
@@ -563,12 +573,21 @@ async fn start_node(
     ));
 
     // Start the Telegram adjutant if configured.
+    // Fan-out: alerts go to both Telegram (human) and governance feedback (autonomous).
     if let Some(tg_config) = telegram::AdjutantConfig::from_env() {
         tracing::info!("Telegram adjutant configured — starting bot");
         let adjutant = telegram::Adjutant::new(tg_config);
+        let (tg_alert_tx, tg_alert_rx) = tokio::sync::mpsc::channel::<sentinels::SentinelAlert>(64);
+        // Fan-out task: duplicates alerts to both Telegram and governance feedback.
+        tokio::spawn(async move {
+            while let Some(alert) = alert_rx.recv().await {
+                let _ = tg_alert_tx.try_send(alert.clone());
+                let _ = alert_feedback_tx.try_send(alert);
+            }
+        });
         tokio::spawn(telegram::run_adjutant(
             adjutant,
-            alert_rx,
+            tg_alert_rx,
             Arc::clone(&reactor_state),
             Arc::clone(&shared_store),
             Arc::clone(&challenge_store),
@@ -577,11 +596,26 @@ async fn start_node(
         ));
     } else {
         tracing::info!(
-            "Telegram adjutant not configured — set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable"
+            "Telegram adjutant not configured — governance feedback loop will receive alerts directly"
         );
-        // Drop the alert receiver so sentinels don't block.
-        drop(alert_rx);
+        // Fan-out without Telegram: only governance feedback gets alerts.
+        tokio::spawn(async move {
+            while let Some(alert) = alert_rx.recv().await {
+                let _ = alert_feedback_tx.try_send(alert);
+            }
+        });
     }
+
+    // Spawn the governance feedback loop — closes the self-improvement circuit.
+    // Sentinel alerts and holon events feed into auto-proposals with trust receipts.
+    tokio::spawn(governance_feedback::run_feedback_loop(
+        alert_feedback_rx,
+        holon_feedback_rx,
+        Arc::clone(&reactor_state),
+        Arc::clone(&shared_store),
+        net_handle.clone(),
+    ));
+    tracing::info!("Governance feedback loop active — autonomous self-improvement enabled");
 
     // Generate admin token for write-endpoint authentication.
     let admin_token = auth::generate_admin_token();

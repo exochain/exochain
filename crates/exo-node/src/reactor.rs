@@ -63,6 +63,16 @@ pub struct ReactorState {
     sign_fn: Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>,
 }
 
+impl ReactorState {
+    /// Sign arbitrary data using this node's key.
+    ///
+    /// Used by the governance feedback loop to create trust receipts
+    /// for autonomous actions.
+    pub fn sign(&self, data: &[u8]) -> Signature {
+        (self.sign_fn)(data)
+    }
+}
+
 impl std::fmt::Debug for ReactorState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ReactorState")
