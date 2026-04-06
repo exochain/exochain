@@ -53,6 +53,7 @@ impl NotificationService {
     }
 
     /// Send a notification, respecting fatigue controls.
+    #[allow(clippy::expect_used)] // Safety: vec.last() after vec.push() is always Some.
     pub fn send(
         &mut self,
         tenant_id: String,
