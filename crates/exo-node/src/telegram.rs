@@ -174,6 +174,17 @@ impl Adjutant {
         Ok(())
     }
 
+    /// Send a message and log on failure (fire-and-forget pattern).
+    ///
+    /// Most Telegram sends are best-effort — the operator will see the
+    /// next message even if one is lost. But we should know when delivery
+    /// fails for debugging.
+    pub async fn send_or_log(&self, text: &str, keyboard: Option<Vec<Vec<(&str, &str)>>>) {
+        if let Err(e) = self.send_message(text, keyboard).await {
+            tracing::warn!(err = %e, "Telegram message delivery failed");
+        }
+    }
+
     /// Poll for new updates (long-poll, 10s timeout).
     pub async fn poll_updates(&mut self) -> Vec<Update> {
         let url = format!(
@@ -236,7 +247,7 @@ impl Adjutant {
             ("\u{1f50d} Details", "cmd:sentinels"),
         ]];
 
-        let _ = self.send_message(&text, Some(keyboard)).await;
+        self.send_or_log(&text, Some(keyboard)).await;
     }
 }
 
@@ -542,8 +553,8 @@ pub async fn run_adjutant(
     zerodentity: SharedZerodentityStore,
 ) {
     // Announce startup.
-    let _ = adjutant
-        .send_message(
+    adjutant
+        .send_or_log(
             "\u{1f916} <b>EXOCHAIN Adjutant Online</b>\n\nType /status for node overview.",
             Some(vec![vec![
                 ("\u{1f4ca} Status", "cmd:status"),
@@ -614,37 +625,37 @@ async fn handle_command(
     match cmd {
         "/status" | "/start" => {
             let (msg, kb) = build_status_message(reactor, store);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "/sentinels" => {
             let (msg, kb) = build_sentinels_message(sentinel_state);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "/challenges" => {
             let (msg, kb) = build_challenges_message(challenge_store);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "/0dentity" => {
             let did_str = parts.next().unwrap_or("");
             if did_str.is_empty() {
-                let _ = adjutant
-                    .send_message(
+                adjutant
+                    .send_or_log(
                         "Usage: /0dentity &lt;did&gt;\nExample: /0dentity did:exo:alice",
                         None,
                     )
                     .await;
             } else {
                 let (msg, kb) = build_zerodentity_score_message(zerodentity, did_str);
-                let _ = adjutant.send_message(&msg, Some(kb)).await;
+                adjutant.send_or_log(&msg, Some(kb)).await;
             }
         }
         "/0dentity-alerts" => {
             let (msg, kb) = build_zerodentity_alerts_message(zerodentity);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "/help" => {
-            let _ = adjutant
-                .send_message(
+            adjutant
+                .send_or_log(
                     "\u{1f4d6} <b>Commands</b>\n\
                      /status — Node overview\n\
                      /sentinels — Health checks\n\
@@ -671,29 +682,29 @@ async fn handle_callback(
 ) {
     if let Some(did_str) = data.strip_prefix("0d_score:") {
         let (msg, kb) = build_zerodentity_score_message(zerodentity, did_str);
-        let _ = adjutant.send_message(&msg, Some(kb)).await;
+        adjutant.send_or_log(&msg, Some(kb)).await;
         return;
     }
     match data {
         "cmd:status" => {
             let (msg, kb) = build_status_message(reactor, store);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "cmd:sentinels" => {
             let (msg, kb) = build_sentinels_message(sentinel_state);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "cmd:challenges" => {
             let (msg, kb) = build_challenges_message(challenge_store);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "0d_alerts" => {
             let (msg, kb) = build_zerodentity_alerts_message(zerodentity);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "sentinel:ack" => {
-            let _ = adjutant
-                .send_message("\u{2705} Alert acknowledged.", None)
+            adjutant
+                .send_or_log("\u{2705} Alert acknowledged.", None)
                 .await;
         }
         _ => {

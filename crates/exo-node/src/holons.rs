@@ -422,6 +422,15 @@ pub async fn run_holon_manager(
 ) {
     let kernel = create_infrastructure_kernel();
 
+    // Helper: emit holon event, logging if the receiver is gone.
+    macro_rules! emit {
+        ($tx:expr, $event:expr) => {
+            if $tx.send($event).await.is_err() {
+                tracing::warn!("Holon event channel closed — event logger stopped");
+            }
+        };
+    }
+
     let mut topology_holon = create_topology_holon(&config.node_did);
     let mut scaling_holon = create_scaling_holon(&config.node_did);
     let mut health_holon = create_health_holon(&config.node_did);
@@ -454,11 +463,11 @@ pub async fn run_holon_manager(
                 let ctx = build_holon_adjudication_context(&topology_holon, &config);
                 match holon::step(&mut topology_holon, &input, &kernel, &ctx) {
                     Ok(_output) => {
-                        let _ = event_tx.send(HolonEvent::TopologyAnalysis {
+                        emit!(event_tx,HolonEvent::TopologyAnalysis {
                             peer_count,
                             diversity_score,
                             recommendation,
-                        }).await;
+                        });
 
                         tracing::debug!(
                             peer_count,
@@ -473,10 +482,10 @@ pub async fn run_holon_manager(
                             "Topology Holon step failed"
                         );
                         if topology_holon.state == HolonState::Terminated {
-                            let _ = event_tx.send(HolonEvent::HolonTerminated {
+                            emit!(event_tx,HolonEvent::HolonTerminated {
                                 holon_id: topology_holon.id.clone(),
                                 reason: e.to_string(),
-                            }).await;
+                            });
                         }
                     }
                 }
@@ -503,11 +512,11 @@ pub async fn run_holon_manager(
                 let ctx = build_holon_adjudication_context(&scaling_holon, &config);
                 match holon::step(&mut scaling_holon, &input, &kernel, &ctx) {
                     Ok(_output) => {
-                        let _ = event_tx.send(HolonEvent::ScalingRecommendation {
+                        emit!(event_tx,HolonEvent::ScalingRecommendation {
                             validator_count,
                             node_count,
                             recommendation: recommendation.clone(),
-                        }).await;
+                        });
 
                         // Auto-action: if validator count is critical (< 3) and
                         // we're a validator, attempt to propose validator promotion
@@ -569,10 +578,10 @@ pub async fn run_holon_manager(
                             "Scaling Holon step failed"
                         );
                         if scaling_holon.state == HolonState::Terminated {
-                            let _ = event_tx.send(HolonEvent::HolonTerminated {
+                            emit!(event_tx,HolonEvent::HolonTerminated {
                                 holon_id: scaling_holon.id.clone(),
                                 reason: e.to_string(),
-                            }).await;
+                            });
                         }
                     }
                 }
@@ -597,11 +606,11 @@ pub async fn run_holon_manager(
                 let ctx = build_holon_adjudication_context(&health_holon, &config);
                 match holon::step(&mut health_holon, &input, &kernel, &ctx) {
                     Ok(_output) => {
-                        let _ = event_tx.send(HolonEvent::HealthCheck {
+                        emit!(event_tx,HolonEvent::HealthCheck {
                             consensus_round,
                             committed_height,
                             status,
-                        }).await;
+                        });
 
                         tracing::debug!(
                             consensus_round,
@@ -616,10 +625,10 @@ pub async fn run_holon_manager(
                             "Health Holon step failed"
                         );
                         if health_holon.state == HolonState::Terminated {
-                            let _ = event_tx.send(HolonEvent::HolonTerminated {
+                            emit!(event_tx,HolonEvent::HolonTerminated {
                                 holon_id: health_holon.id.clone(),
                                 reason: e.to_string(),
-                            }).await;
+                            });
                         }
                     }
                 }
