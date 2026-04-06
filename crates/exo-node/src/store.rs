@@ -94,7 +94,15 @@ impl SqliteDagStore {
             CREATE INDEX IF NOT EXISTS idx_receipts_actor
                 ON trust_receipts(actor_did);
             CREATE INDEX IF NOT EXISTS idx_receipts_ts
-                ON trust_receipts(timestamp_ms);",
+                ON trust_receipts(timestamp_ms);
+
+            -- Governance payloads: raw bytes keyed by payload_hash.
+            -- Enables decision execution after consensus commit.
+            CREATE TABLE IF NOT EXISTS governance_payloads (
+                payload_hash BLOB PRIMARY KEY NOT NULL,
+                raw_payload  BLOB NOT NULL,
+                stored_at_ms INTEGER NOT NULL
+            );",
         )?;
 
         Ok(Self { conn })
@@ -408,6 +416,46 @@ impl SqliteDagStore {
             receipts.push(receipt);
         }
         Ok(receipts)
+    }
+
+    // -----------------------------------------------------------------
+    // Governance payload persistence
+    // -----------------------------------------------------------------
+
+    /// Store a governance payload keyed by its content hash.
+    ///
+    /// This preserves the raw payload bytes so committed proposals can
+    /// be parsed and executed by the decision execution connector.
+    pub fn save_governance_payload(
+        &mut self,
+        payload_hash: &Hash256,
+        raw_payload: &[u8],
+    ) -> DagResult<()> {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO governance_payloads (payload_hash, raw_payload, stored_at_ms) VALUES (?1, ?2, ?3)",
+                params![payload_hash.0.as_slice(), raw_payload, now_ms],
+            )
+            .map_err(store_err)?;
+        Ok(())
+    }
+
+    /// Load a governance payload by its hash.
+    pub fn load_governance_payload(&self, payload_hash: &Hash256) -> DagResult<Option<Vec<u8>>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT raw_payload FROM governance_payloads WHERE payload_hash = ?1")
+            .map_err(store_err)?;
+
+        let result: Option<Vec<u8>> = stmt
+            .query_row(params![payload_hash.0.as_slice()], |row| row.get(0))
+            .ok();
+
+        Ok(result)
     }
 
     /// Find all child nodes of a given parent hash.

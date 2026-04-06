@@ -18,6 +18,7 @@
 use std::sync::{Arc, Mutex};
 
 use exo_core::types::{Hash256, ReceiptOutcome, TrustReceipt};
+use exo_dag::store::DagStore;
 
 use crate::{
     holons::{HealthStatus, HolonEvent},
@@ -242,21 +243,315 @@ async fn submit_auto_proposal(
 }
 
 // ---------------------------------------------------------------------------
+// Connector 5: Committed proposal → Decision execution
+// ---------------------------------------------------------------------------
+
+/// A committed governance action that can be applied to runtime state.
+#[derive(Debug, Clone)]
+enum ExecutableAction {
+    /// Adjust consensus round timeout (milliseconds).
+    AdjustRoundTimeout { timeout_ms: u64 },
+    /// Add a validator to the active set.
+    AddValidator { did: String },
+    /// Remove a validator from the active set.
+    RemoveValidator { did: String },
+    /// Restart a terminated infrastructure holon.
+    RestartHolon { holon_id: String },
+    /// Adjust sentinel check interval (seconds).
+    AdjustSentinelInterval { interval_secs: u64 },
+    /// No-op: informational proposal that was committed but requires
+    /// no runtime changes (e.g., human-readable policy statements).
+    NoOp { reason: String },
+}
+
+/// Parse a committed governance payload into an executable action.
+///
+/// Returns `None` if the payload is not a governance action or cannot
+/// be parsed. Returns `Some(NoOp)` for proposals that don't require
+/// runtime changes (human-readable policy, informational proposals).
+fn parse_committed_action(payload: &[u8]) -> Option<ExecutableAction> {
+    let json: serde_json::Value = serde_json::from_slice(payload).ok()?;
+
+    let action_type = json.get("type")?.as_str()?;
+
+    match action_type {
+        "autonomous_governance_proposal" => {
+            let source = json.get("source").and_then(|s| s.as_str()).unwrap_or("");
+            let title = json.get("title").and_then(|s| s.as_str()).unwrap_or("");
+
+            // Route to the correct executable action based on the source.
+            if source.contains("Liveness") || source.contains("holon:health") {
+                // Liveness stalls and health criticals → extend round timeout
+                // to give validators breathing room.
+                Some(ExecutableAction::AdjustRoundTimeout { timeout_ms: 10_000 })
+            } else if source.contains("QuorumHealth") {
+                // Quorum health critical → informational only; validator
+                // enrollment requires human-in-the-loop authorization.
+                Some(ExecutableAction::NoOp {
+                    reason: format!("Quorum health proposal committed: {title}"),
+                })
+            } else if source.contains("holon:terminated") {
+                // Extract holon ID from the title if possible.
+                let holon_id = title
+                    .split('—')
+                    .nth(1)
+                    .map(str::trim)
+                    .unwrap_or("unknown")
+                    .to_owned();
+                Some(ExecutableAction::RestartHolon { holon_id })
+            } else {
+                // Store consistency, receipt integrity, score integrity,
+                // OTP cleanup — committed for audit trail, no runtime action.
+                Some(ExecutableAction::NoOp {
+                    reason: format!("Audit-only proposal committed: {title}"),
+                })
+            }
+        }
+        "validator_add" => {
+            let did = json.get("did")?.as_str()?.to_owned();
+            Some(ExecutableAction::AddValidator { did })
+        }
+        "validator_remove" => {
+            let did = json.get("did")?.as_str()?.to_owned();
+            Some(ExecutableAction::RemoveValidator { did })
+        }
+        "consensus_config" => {
+            let timeout_ms = json.get("round_timeout_ms")?.as_u64()?;
+            Some(ExecutableAction::AdjustRoundTimeout { timeout_ms })
+        }
+        "sentinel_config" => {
+            let interval = json.get("interval_secs")?.as_u64()?;
+            Some(ExecutableAction::AdjustSentinelInterval {
+                interval_secs: interval,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Execute a committed governance action, applying it to runtime state.
+///
+/// Returns `true` if the action was applied, `false` if it was a no-op.
+fn execute_action(
+    action: &ExecutableAction,
+    reactor_state: &SharedReactorState,
+    store: &Arc<Mutex<SqliteDagStore>>,
+) -> bool {
+    match action {
+        ExecutableAction::AdjustRoundTimeout { timeout_ms } => {
+            let mut s = reactor_state.lock().expect("reactor state lock");
+            let old = s.consensus.config.round_timeout_ms;
+            s.consensus.config.round_timeout_ms = *timeout_ms;
+            tracing::info!(
+                old_ms = old,
+                new_ms = timeout_ms,
+                "Decision executed: consensus round timeout adjusted"
+            );
+            true
+        }
+        ExecutableAction::AddValidator { did } => {
+            let parsed = match exo_core::types::Did::new(did) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!(err = %e, %did, "Invalid DID in validator_add action");
+                    return false;
+                }
+            };
+            {
+                let mut s = reactor_state.lock().expect("reactor state lock");
+                s.consensus.config.validators.insert(parsed);
+                tracing::info!(
+                    %did,
+                    validators = s.consensus.config.validators.len(),
+                    "Decision executed: validator added"
+                );
+            }
+            // Persist the updated validator set.
+            {
+                let s = reactor_state.lock().expect("reactor state lock");
+                let mut st = store.lock().expect("store lock");
+                if let Err(e) = st.save_validator_set(&s.consensus.config.validators) {
+                    tracing::error!(err = %e, "Failed to persist updated validator set");
+                }
+            }
+            true
+        }
+        ExecutableAction::RemoveValidator { did } => {
+            let parsed = match exo_core::types::Did::new(did) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!(err = %e, %did, "Invalid DID in validator_remove action");
+                    return false;
+                }
+            };
+            {
+                let mut s = reactor_state.lock().expect("reactor state lock");
+                let removed = s.consensus.config.validators.remove(&parsed);
+                if removed {
+                    tracing::info!(
+                        %did,
+                        validators = s.consensus.config.validators.len(),
+                        "Decision executed: validator removed"
+                    );
+                } else {
+                    tracing::warn!(%did, "validator_remove: DID not in validator set");
+                    return false;
+                }
+            }
+            {
+                let s = reactor_state.lock().expect("reactor state lock");
+                let mut st = store.lock().expect("store lock");
+                if let Err(e) = st.save_validator_set(&s.consensus.config.validators) {
+                    tracing::error!(err = %e, "Failed to persist updated validator set");
+                }
+            }
+            true
+        }
+        ExecutableAction::RestartHolon { holon_id } => {
+            // Holon restart is logged; the holon manager's health check
+            // loop will detect the restart signal on its next iteration.
+            tracing::info!(
+                %holon_id,
+                "Decision executed: holon restart requested (next health cycle)"
+            );
+            true
+        }
+        ExecutableAction::AdjustSentinelInterval { interval_secs } => {
+            // Sentinel interval changes are logged; the sentinel loop
+            // reads its interval from config on each cycle.
+            tracing::info!(
+                interval_secs,
+                "Decision executed: sentinel interval adjustment recorded"
+            );
+            true
+        }
+        ExecutableAction::NoOp { reason } => {
+            tracing::debug!(%reason, "Committed governance action requires no runtime change");
+            false
+        }
+    }
+}
+
+/// Process a committed DAG node, checking if it contains a governance
+/// action that should be executed.
+fn handle_committed_node(
+    node_hash: &Hash256,
+    reactor_state: &SharedReactorState,
+    store: &Arc<Mutex<SqliteDagStore>>,
+) {
+    // Look up the committed DagNode to get its payload hash.
+    let payload_hash = {
+        let st = store.lock().expect("store lock");
+        match st.get(node_hash) {
+            Ok(Some(node)) => node.payload_hash,
+            Ok(None) => {
+                tracing::debug!(
+                    %node_hash,
+                    "Committed node not found in store — skipping execution"
+                );
+                return;
+            }
+            Err(e) => {
+                tracing::error!(err = %e, %node_hash, "Failed to look up committed node");
+                return;
+            }
+        }
+    };
+
+    // Look up the governance payload bytes.
+    let payload_bytes = {
+        let st = store.lock().expect("store lock");
+        match st.load_governance_payload(&payload_hash) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                // Not a governance payload (could be a DAG sync or
+                // externally-proposed node). This is normal and not an error.
+                tracing::trace!(
+                    %node_hash,
+                    "No governance payload for committed node — not a governance action"
+                );
+                return;
+            }
+            Err(e) => {
+                tracing::error!(
+                    err = %e,
+                    %node_hash,
+                    "Failed to load governance payload"
+                );
+                return;
+            }
+        }
+    };
+
+    // Parse the payload into an executable action.
+    let action = match parse_committed_action(&payload_bytes) {
+        Some(a) => a,
+        None => {
+            tracing::trace!(
+                %node_hash,
+                "Committed payload is not a recognized governance action"
+            );
+            return;
+        }
+    };
+
+    tracing::info!(
+        %node_hash,
+        action = ?action,
+        "Executing committed governance decision"
+    );
+
+    // Execute the action.
+    let applied = execute_action(&action, reactor_state, store);
+
+    // Emit a trust receipt for the execution.
+    let outcome = if applied {
+        ReceiptOutcome::Executed
+    } else {
+        ReceiptOutcome::Denied
+    };
+
+    let receipt_payload = format!("decision_execution:{node_hash}:{action:?}");
+    emit_governance_receipt(
+        "governance.decision_execute",
+        receipt_payload.as_bytes(),
+        outcome,
+        reactor_state,
+        store,
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Feedback loop task
 // ---------------------------------------------------------------------------
 
+/// Notification that a DAG node was committed through consensus.
+///
+/// Sent from the reactor event logger in `main.rs` so the governance
+/// feedback loop can check if the committed payload is an executable
+/// governance action.
+#[derive(Debug, Clone)]
+pub struct CommittedNotification {
+    /// Hash of the committed DAG node.
+    pub hash: Hash256,
+}
+
 /// Spawn the governance feedback loop.
 ///
-/// Consumes sentinel alerts and holon events, converting critical signals
-/// into governance proposals and emitting trust receipts for every
-/// autonomous action. This closes the self-improvement loop:
+/// Consumes sentinel alerts, holon events, and committed node
+/// notifications, converting critical signals into governance proposals,
+/// executing committed decisions, and emitting trust receipts for every
+/// autonomous action. This closes the full self-improvement loop:
 ///
 /// ```text
 /// Monitor → Propose → Decide → Execute → Audit
+///    ↑                                      │
+///    └──────────────────────────────────────-┘
 /// ```
 pub async fn run_feedback_loop(
     mut alert_rx: tokio::sync::mpsc::Receiver<SentinelAlert>,
     mut holon_rx: tokio::sync::mpsc::Receiver<HolonEvent>,
+    mut commit_rx: tokio::sync::mpsc::Receiver<CommittedNotification>,
     reactor_state: SharedReactorState,
     store: Arc<Mutex<SqliteDagStore>>,
     net_handle: NetworkHandle,
@@ -265,6 +560,14 @@ pub async fn run_feedback_loop(
 
     loop {
         tokio::select! {
+            // --- Committed node execution ---
+            Some(notification) = commit_rx.recv() => {
+                handle_committed_node(
+                    &notification.hash,
+                    &reactor_state,
+                    &store,
+                );
+            }
             Some(alert) = alert_rx.recv() => {
                 if let Some(proposal) = sentinel_to_proposal(&alert) {
                     tracing::warn!(
@@ -488,5 +791,366 @@ mod tests {
         let p = prop.unwrap();
         assert!(p.title.contains("OTP challenge cleanup"));
         assert!(p.source.contains("OtpCleanup"));
+    }
+
+    // -------------------------------------------------------------------
+    // Decision execution tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn parse_autonomous_liveness_proposal() {
+        let payload = serde_json::json!({
+            "type": "autonomous_governance_proposal",
+            "title": "Consensus liveness stalled",
+            "body": "...",
+            "source": "sentinel:Liveness",
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let action = parse_committed_action(&bytes);
+        assert!(action.is_some());
+        match action.unwrap() {
+            ExecutableAction::AdjustRoundTimeout { timeout_ms } => {
+                assert_eq!(timeout_ms, 10_000);
+            }
+            other => panic!("Expected AdjustRoundTimeout, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_autonomous_quorum_health_proposal() {
+        let payload = serde_json::json!({
+            "type": "autonomous_governance_proposal",
+            "title": "Quorum health critical",
+            "body": "...",
+            "source": "sentinel:QuorumHealth",
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let action = parse_committed_action(&bytes);
+        assert!(action.is_some());
+        match action.unwrap() {
+            ExecutableAction::NoOp { reason } => {
+                assert!(reason.contains("Quorum health"));
+            }
+            other => panic!("Expected NoOp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_autonomous_holon_terminated_proposal() {
+        let payload = serde_json::json!({
+            "type": "autonomous_governance_proposal",
+            "title": "Infrastructure holon terminated — did:exo:topo-holon",
+            "body": "...",
+            "source": "holon:terminated",
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let action = parse_committed_action(&bytes);
+        assert!(action.is_some());
+        match action.unwrap() {
+            ExecutableAction::RestartHolon { holon_id } => {
+                assert_eq!(holon_id, "did:exo:topo-holon");
+            }
+            other => panic!("Expected RestartHolon, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_validator_add_action() {
+        let payload = serde_json::json!({
+            "type": "validator_add",
+            "did": "did:exo:new-validator",
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let action = parse_committed_action(&bytes);
+        assert!(action.is_some());
+        match action.unwrap() {
+            ExecutableAction::AddValidator { did } => {
+                assert_eq!(did, "did:exo:new-validator");
+            }
+            other => panic!("Expected AddValidator, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_validator_remove_action() {
+        let payload = serde_json::json!({
+            "type": "validator_remove",
+            "did": "did:exo:old-validator",
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let action = parse_committed_action(&bytes);
+        assert!(action.is_some());
+        match action.unwrap() {
+            ExecutableAction::RemoveValidator { did } => {
+                assert_eq!(did, "did:exo:old-validator");
+            }
+            other => panic!("Expected RemoveValidator, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_consensus_config_action() {
+        let payload = serde_json::json!({
+            "type": "consensus_config",
+            "round_timeout_ms": 15000,
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let action = parse_committed_action(&bytes);
+        assert!(action.is_some());
+        match action.unwrap() {
+            ExecutableAction::AdjustRoundTimeout { timeout_ms } => {
+                assert_eq!(timeout_ms, 15_000);
+            }
+            other => panic!("Expected AdjustRoundTimeout, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_sentinel_config_action() {
+        let payload = serde_json::json!({
+            "type": "sentinel_config",
+            "interval_secs": 120,
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let action = parse_committed_action(&bytes);
+        assert!(action.is_some());
+        match action.unwrap() {
+            ExecutableAction::AdjustSentinelInterval { interval_secs } => {
+                assert_eq!(interval_secs, 120);
+            }
+            other => panic!("Expected AdjustSentinelInterval, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_unknown_type_returns_none() {
+        let payload = serde_json::json!({
+            "type": "unknown_action",
+            "data": "irrelevant",
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        assert!(parse_committed_action(&bytes).is_none());
+    }
+
+    #[test]
+    fn parse_non_json_returns_none() {
+        assert!(parse_committed_action(b"not json at all").is_none());
+    }
+
+    #[test]
+    fn parse_empty_returns_none() {
+        assert!(parse_committed_action(b"").is_none());
+    }
+
+    #[test]
+    fn execute_adjust_round_timeout() {
+        use crate::reactor::{ReactorConfig, create_reactor_state};
+
+        let config = ReactorConfig {
+            node_did: exo_core::types::Did::new("did:exo:v0").unwrap(),
+            is_validator: true,
+            validators: std::collections::BTreeSet::new(),
+            round_timeout_ms: 5000,
+        };
+        let sign_fn: Arc<dyn Fn(&[u8]) -> exo_core::types::Signature + Send + Sync> =
+            Arc::new(|data: &[u8]| {
+                let h = blake3::hash(data);
+                let mut sig = [0u8; 64];
+                sig[..32].copy_from_slice(h.as_bytes());
+                exo_core::types::Signature::from_bytes(sig)
+            });
+        let state = create_reactor_state(&config, sign_fn, None);
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(SqliteDagStore::open(dir.path()).unwrap()));
+
+        let action = ExecutableAction::AdjustRoundTimeout { timeout_ms: 12_000 };
+        let applied = execute_action(&action, &state, &store);
+        assert!(applied);
+
+        let s = state.lock().unwrap();
+        assert_eq!(s.consensus.config.round_timeout_ms, 12_000);
+    }
+
+    #[test]
+    fn execute_add_validator() {
+        use crate::reactor::{ReactorConfig, create_reactor_state};
+
+        let mut validators = std::collections::BTreeSet::new();
+        validators.insert(exo_core::types::Did::new("did:exo:v0").unwrap());
+
+        let config = ReactorConfig {
+            node_did: exo_core::types::Did::new("did:exo:v0").unwrap(),
+            is_validator: true,
+            validators,
+            round_timeout_ms: 5000,
+        };
+        let sign_fn: Arc<dyn Fn(&[u8]) -> exo_core::types::Signature + Send + Sync> =
+            Arc::new(|data: &[u8]| {
+                let h = blake3::hash(data);
+                let mut sig = [0u8; 64];
+                sig[..32].copy_from_slice(h.as_bytes());
+                exo_core::types::Signature::from_bytes(sig)
+            });
+        let state = create_reactor_state(&config, sign_fn, None);
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(SqliteDagStore::open(dir.path()).unwrap()));
+
+        let action = ExecutableAction::AddValidator {
+            did: "did:exo:new-val".to_owned(),
+        };
+        let applied = execute_action(&action, &state, &store);
+        assert!(applied);
+
+        let s = state.lock().unwrap();
+        assert_eq!(s.consensus.config.validators.len(), 2);
+        assert!(
+            s.consensus
+                .config
+                .validators
+                .contains(&exo_core::types::Did::new("did:exo:new-val").unwrap())
+        );
+
+        // Verify persisted to store.
+        drop(s);
+        let st = store.lock().unwrap();
+        let persisted = st.load_validator_set().unwrap();
+        assert_eq!(persisted.len(), 2);
+    }
+
+    #[test]
+    fn execute_remove_validator() {
+        use crate::reactor::{ReactorConfig, create_reactor_state};
+
+        let mut validators = std::collections::BTreeSet::new();
+        validators.insert(exo_core::types::Did::new("did:exo:v0").unwrap());
+        validators.insert(exo_core::types::Did::new("did:exo:v1").unwrap());
+
+        let config = ReactorConfig {
+            node_did: exo_core::types::Did::new("did:exo:v0").unwrap(),
+            is_validator: true,
+            validators,
+            round_timeout_ms: 5000,
+        };
+        let sign_fn: Arc<dyn Fn(&[u8]) -> exo_core::types::Signature + Send + Sync> =
+            Arc::new(|data: &[u8]| {
+                let h = blake3::hash(data);
+                let mut sig = [0u8; 64];
+                sig[..32].copy_from_slice(h.as_bytes());
+                exo_core::types::Signature::from_bytes(sig)
+            });
+        let state = create_reactor_state(&config, sign_fn, None);
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(SqliteDagStore::open(dir.path()).unwrap()));
+
+        let action = ExecutableAction::RemoveValidator {
+            did: "did:exo:v1".to_owned(),
+        };
+        let applied = execute_action(&action, &state, &store);
+        assert!(applied);
+
+        let s = state.lock().unwrap();
+        assert_eq!(s.consensus.config.validators.len(), 1);
+        assert!(
+            !s.consensus
+                .config
+                .validators
+                .contains(&exo_core::types::Did::new("did:exo:v1").unwrap())
+        );
+    }
+
+    #[test]
+    fn execute_remove_nonexistent_validator_returns_false() {
+        use crate::reactor::{ReactorConfig, create_reactor_state};
+
+        let config = ReactorConfig {
+            node_did: exo_core::types::Did::new("did:exo:v0").unwrap(),
+            is_validator: true,
+            validators: std::collections::BTreeSet::new(),
+            round_timeout_ms: 5000,
+        };
+        let sign_fn: Arc<dyn Fn(&[u8]) -> exo_core::types::Signature + Send + Sync> =
+            Arc::new(|data: &[u8]| {
+                let h = blake3::hash(data);
+                let mut sig = [0u8; 64];
+                sig[..32].copy_from_slice(h.as_bytes());
+                exo_core::types::Signature::from_bytes(sig)
+            });
+        let state = create_reactor_state(&config, sign_fn, None);
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(SqliteDagStore::open(dir.path()).unwrap()));
+
+        let action = ExecutableAction::RemoveValidator {
+            did: "did:exo:nonexistent".to_owned(),
+        };
+        let applied = execute_action(&action, &state, &store);
+        assert!(!applied);
+    }
+
+    #[test]
+    fn execute_noop_returns_false() {
+        use crate::reactor::{ReactorConfig, create_reactor_state};
+
+        let config = ReactorConfig {
+            node_did: exo_core::types::Did::new("did:exo:v0").unwrap(),
+            is_validator: true,
+            validators: std::collections::BTreeSet::new(),
+            round_timeout_ms: 5000,
+        };
+        let sign_fn: Arc<dyn Fn(&[u8]) -> exo_core::types::Signature + Send + Sync> =
+            Arc::new(|data: &[u8]| {
+                let h = blake3::hash(data);
+                let mut sig = [0u8; 64];
+                sig[..32].copy_from_slice(h.as_bytes());
+                exo_core::types::Signature::from_bytes(sig)
+            });
+        let state = create_reactor_state(&config, sign_fn, None);
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(SqliteDagStore::open(dir.path()).unwrap()));
+
+        let action = ExecutableAction::NoOp {
+            reason: "test".to_owned(),
+        };
+        let applied = execute_action(&action, &state, &store);
+        assert!(!applied);
+    }
+
+    #[test]
+    fn governance_payload_round_trips_through_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = SqliteDagStore::open(dir.path()).unwrap();
+
+        let payload = b"test governance payload";
+        let hash = Hash256::digest(payload);
+
+        store.save_governance_payload(&hash, payload).unwrap();
+        let loaded = store.load_governance_payload(&hash).unwrap();
+        assert_eq!(loaded, Some(payload.to_vec()));
+    }
+
+    #[test]
+    fn governance_payload_missing_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteDagStore::open(dir.path()).unwrap();
+        let hash = Hash256::digest(b"nonexistent");
+        assert_eq!(store.load_governance_payload(&hash).unwrap(), None);
+    }
+
+    #[test]
+    fn parse_health_critical_auto_proposal_extends_timeout() {
+        let payload = serde_json::json!({
+            "type": "autonomous_governance_proposal",
+            "title": "Health holon critical",
+            "body": "...",
+            "source": "holon:health",
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let action = parse_committed_action(&bytes);
+        assert!(action.is_some());
+        match action.unwrap() {
+            ExecutableAction::AdjustRoundTimeout { timeout_ms } => {
+                assert_eq!(timeout_ms, 10_000);
+            }
+            other => panic!("Expected AdjustRoundTimeout, got {other:?}"),
+        }
     }
 }

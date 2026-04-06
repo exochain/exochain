@@ -704,11 +704,16 @@ pub async fn submit_proposal(
         let node = append(dag, &parents, payload, node_did, &**sign_fn, clock)
             .map_err(|e| anyhow::anyhow!("append: {e}"))?;
 
-        // Store it locally.
+        // Store the DAG node and its governance payload locally.
         {
             let mut st = store.lock().expect("store lock");
             st.put(node.clone())
                 .map_err(|e| anyhow::anyhow!("put: {e}"))?;
+            // Persist the raw payload so decision execution can parse it
+            // after the node is committed through consensus.
+            if let Err(e) = st.save_governance_payload(&node.payload_hash, payload) {
+                tracing::warn!(err = %e, "Failed to persist governance payload");
+            }
         }
 
         // Create the proposal.

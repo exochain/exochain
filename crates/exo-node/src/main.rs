@@ -322,6 +322,11 @@ async fn start_node(
     );
 
     // --- Event loggers (with metrics updates) ---
+    // Committed node notifications forwarded to the governance feedback loop
+    // so decision execution can apply approved governance changes.
+    let (commit_feedback_tx, commit_feedback_rx) =
+        mpsc::channel::<governance_feedback::CommittedNotification>(256);
+
     let reactor_metrics = Arc::clone(&node_metrics);
     tokio::spawn(async move {
         while let Some(event) = reactor_rx.recv().await {
@@ -341,6 +346,10 @@ async fn start_node(
                         .dag_nodes_total
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     tracing::info!(%hash, height, round, "Committed");
+
+                    // Forward to governance feedback for decision execution.
+                    let _ = commit_feedback_tx
+                        .try_send(governance_feedback::CommittedNotification { hash });
                 }
                 ReactorEvent::RoundAdvanced { round } => {
                     reactor_metrics
@@ -607,10 +616,12 @@ async fn start_node(
     }
 
     // Spawn the governance feedback loop — closes the self-improvement circuit.
-    // Sentinel alerts and holon events feed into auto-proposals with trust receipts.
+    // Sentinel alerts, holon events, and committed node notifications feed into
+    // auto-proposals and decision execution, with trust receipts for every action.
     tokio::spawn(governance_feedback::run_feedback_loop(
         alert_feedback_rx,
         holon_feedback_rx,
+        commit_feedback_rx,
         Arc::clone(&reactor_state),
         Arc::clone(&shared_store),
         net_handle.clone(),
