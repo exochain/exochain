@@ -174,6 +174,13 @@ impl Adjutant {
         Ok(())
     }
 
+    /// Send a message, logging a warning on failure instead of silently dropping.
+    pub async fn send_or_log(&self, text: &str, keyboard: Option<Vec<Vec<(&str, &str)>>>) {
+        if let Err(e) = self.send_message(text, keyboard).await {
+            tracing::warn!(err = %e, "Telegram message delivery failed");
+        }
+    }
+
     /// Poll for new updates (long-poll, 10s timeout).
     pub async fn poll_updates(&mut self) -> Vec<Update> {
         let url = format!(
@@ -236,7 +243,7 @@ impl Adjutant {
             ("\u{1f50d} Details", "cmd:sentinels"),
         ]];
 
-        let _ = self.send_message(&text, Some(keyboard)).await;
+        self.send_or_log(&text, Some(keyboard)).await;
     }
 }
 
@@ -268,7 +275,15 @@ pub fn build_zerodentity_score_message(
         }
     };
 
-    let zstore = zerodentity.lock().expect("zerodentity lock");
+    let zstore = match zerodentity.lock() {
+        Ok(s) => s,
+        Err(_) => {
+            return (
+                "\u{274c} 0dentity store temporarily unavailable".to_string(),
+                vec![],
+            );
+        }
+    };
     let score = match zstore.get_score(&did) {
         Some(s) => s.clone(),
         None => {
@@ -336,11 +351,19 @@ const ALERT_OTP_WINDOW_MS: u64 = 86_400_000;
 /// - OTP lockout in the last 24 h
 ///
 /// Spec §10.5.
-#[allow(clippy::expect_used, clippy::as_conversions)]
+#[allow(clippy::as_conversions)]
 pub fn build_zerodentity_alerts_message(
     zerodentity: &SharedZerodentityStore,
 ) -> (String, Vec<Vec<(&'static str, &'static str)>>) {
-    let zstore = zerodentity.lock().expect("zerodentity lock");
+    let zstore = match zerodentity.lock() {
+        Ok(s) => s,
+        Err(_) => {
+            return (
+                "\u{274c} 0dentity store temporarily unavailable".to_string(),
+                vec![],
+            );
+        }
+    };
     let dids = zstore.sample_scored_dids(usize::MAX);
 
     let since_ms = now_ms().saturating_sub(ALERT_OTP_WINDOW_MS);
@@ -412,24 +435,29 @@ pub fn build_zerodentity_alerts_message(
 }
 
 /// Build the /status response.
-#[allow(clippy::expect_used, clippy::as_conversions)]
+#[allow(clippy::as_conversions)]
 pub fn build_status_message(
     reactor: &SharedReactorState,
     store: &Arc<Mutex<SqliteDagStore>>,
 ) -> (String, Vec<Vec<(&'static str, &'static str)>>) {
-    let (round, height, validator_count, is_validator) = {
-        let s = reactor.lock().expect("reactor lock");
-        (
+    let (round, height, validator_count, is_validator) = match reactor.lock() {
+        Ok(s) => (
             s.consensus.current_round,
             s.consensus.committed.len() as u64,
             s.consensus.config.validators.len(),
             s.is_validator,
-        )
+        ),
+        Err(_) => {
+            return (
+                "\u{274c} Reactor state temporarily unavailable".to_string(),
+                vec![],
+            );
+        }
     };
 
-    let store_height = {
-        let st = store.lock().expect("store lock");
-        st.committed_height_value()
+    let store_height = match store.lock() {
+        Ok(st) => st.committed_height_value(),
+        Err(_) => 0,
     };
 
     let role = if is_validator {
@@ -461,11 +489,18 @@ pub fn build_status_message(
 }
 
 /// Build the /sentinels response.
-#[allow(clippy::expect_used)]
 pub fn build_sentinels_message(
     sentinel_state: &SharedSentinelState,
 ) -> (String, Vec<Vec<(&'static str, &'static str)>>) {
-    let statuses = sentinel_state.lock().expect("sentinel lock");
+    let statuses = match sentinel_state.lock() {
+        Ok(s) => s,
+        Err(_) => {
+            return (
+                "\u{274c} Sentinel state temporarily unavailable".to_string(),
+                vec![],
+            );
+        }
+    };
 
     let mut text = String::from(
         "\u{1f6e1}\u{fe0f} <b>Sentinel Status</b>\n\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n",
@@ -489,11 +524,18 @@ pub fn build_sentinels_message(
 }
 
 /// Build the /challenges response.
-#[allow(clippy::expect_used)]
 pub fn build_challenges_message(
     challenge_store: &SharedChallengeStore,
 ) -> (String, Vec<Vec<(&'static str, &'static str)>>) {
-    let st = challenge_store.lock().expect("challenge lock");
+    let st = match challenge_store.lock() {
+        Ok(s) => s,
+        Err(_) => {
+            return (
+                "\u{274c} Challenge store temporarily unavailable".to_string(),
+                vec![],
+            );
+        }
+    };
     let holds = st.list();
 
     let mut text = String::from(
@@ -614,15 +656,15 @@ async fn handle_command(
     match cmd {
         "/status" | "/start" => {
             let (msg, kb) = build_status_message(reactor, store);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "/sentinels" => {
             let (msg, kb) = build_sentinels_message(sentinel_state);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "/challenges" => {
             let (msg, kb) = build_challenges_message(challenge_store);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "/0dentity" => {
             let did_str = parts.next().unwrap_or("");
@@ -635,12 +677,12 @@ async fn handle_command(
                     .await;
             } else {
                 let (msg, kb) = build_zerodentity_score_message(zerodentity, did_str);
-                let _ = adjutant.send_message(&msg, Some(kb)).await;
+                adjutant.send_or_log(&msg, Some(kb)).await;
             }
         }
         "/0dentity-alerts" => {
             let (msg, kb) = build_zerodentity_alerts_message(zerodentity);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "/help" => {
             let _ = adjutant
@@ -677,19 +719,19 @@ async fn handle_callback(
     match data {
         "cmd:status" => {
             let (msg, kb) = build_status_message(reactor, store);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "cmd:sentinels" => {
             let (msg, kb) = build_sentinels_message(sentinel_state);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "cmd:challenges" => {
             let (msg, kb) = build_challenges_message(challenge_store);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "0d_alerts" => {
             let (msg, kb) = build_zerodentity_alerts_message(zerodentity);
-            let _ = adjutant.send_message(&msg, Some(kb)).await;
+            adjutant.send_or_log(&msg, Some(kb)).await;
         }
         "sentinel:ack" => {
             let _ = adjutant
