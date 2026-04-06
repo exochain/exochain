@@ -11,12 +11,7 @@
 //! `vote()`, `check_commit()`, `commit()`) into a network-aware reactor
 //! without modifying the consensus protocol itself.
 
-#![allow(
-    clippy::expect_used,
-    clippy::as_conversions,
-    clippy::type_complexity,
-    clippy::single_match
-)]
+#![allow(clippy::as_conversions, clippy::type_complexity, clippy::single_match)]
 
 use std::{
     collections::BTreeSet,
@@ -120,7 +115,20 @@ pub fn create_reactor_state(
 
     // Restore persisted consensus state if a store is provided.
     if let Some(store_arc) = store {
-        let st = store_arc.lock().expect("store lock for restore");
+        let st = match store_arc.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::error!("Store mutex poisoned during reactor state restore");
+                return Arc::new(Mutex::new(ReactorState {
+                    consensus: consensus_state,
+                    dag: Dag::new(),
+                    clock: HybridClock::new(),
+                    node_did: config.node_did.clone(),
+                    is_validator: config.is_validator,
+                    sign_fn,
+                }));
+            }
+        };
 
         // Restore the round number.
         if let Ok(round) = st.load_consensus_round() {
@@ -197,7 +205,13 @@ pub async fn run_reactor(
     reactor_tx: mpsc::Sender<ReactorEvent>,
 ) {
     let round_timeout = {
-        let s = state.lock().expect("reactor state lock");
+        let s = match state.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::error!("Reactor state mutex poisoned — cannot start reactor");
+                return;
+            }
+        };
         Duration::from_millis(s.consensus.config.round_timeout_ms)
     };
 
@@ -226,21 +240,33 @@ pub async fn run_reactor(
             // Round timeout — advance to next round
             _ = round_timer.tick() => {
                 let round = {
-                    let mut s = state.lock().expect("reactor state lock");
+                    let Ok(mut s) = state.lock() else {
+                        tracing::error!("Reactor state mutex poisoned in round tick");
+                        continue;
+                    };
                     s.consensus.advance_round();
                     s.consensus.current_round
                 };
 
                 // Persist the new round number.
                 {
-                    let mut st = store.lock().expect("store lock");
+                    let Ok(mut st) = store.lock() else {
+                        tracing::error!("Store mutex poisoned in round persist");
+                        continue;
+                    };
                     if let Err(e) = st.save_consensus_round(round) {
                         tracing::warn!(err = %e, "Failed to persist round");
                     }
                 }
 
                 tracing::debug!(round, "Consensus round advanced");
-                let _ = reactor_tx.send(ReactorEvent::RoundAdvanced { round }).await;
+                if reactor_tx
+                    .send(ReactorEvent::RoundAdvanced { round })
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!("Reactor event receiver dropped (RoundAdvanced)");
+                }
             }
         }
     }
@@ -337,9 +363,13 @@ async fn handle_wire_message(
             handle_commit(state, store, reactor_tx, msg).await;
         }
         WireMessage::GovernanceEvent(msg) => {
-            let _ = reactor_tx
+            if reactor_tx
                 .send(ReactorEvent::GovernanceEventReceived { event: msg })
-                .await;
+                .await
+                .is_err()
+            {
+                tracing::warn!("Reactor event receiver dropped (GovernanceEvent)");
+            }
         }
         // DAG sync and state snapshot handled by Phase 4
         _ => {}
@@ -356,7 +386,10 @@ async fn handle_proposal(
 ) {
     // Validate the proposal before any processing.
     {
-        let s = state.lock().expect("reactor state lock");
+        let Ok(s) = state.lock() else {
+            tracing::error!("Reactor state mutex poisoned in handle_proposal (validate)");
+            return;
+        };
         if let Err(reason) = validate_proposal(&msg, &s.consensus.config.validators) {
             tracing::warn!(err = %reason, "Rejected invalid proposal from network");
             return;
@@ -365,11 +398,17 @@ async fn handle_proposal(
 
     // All synchronous work in a block so MutexGuard is dropped before any .await.
     let vote_msg_opt = {
-        let mut s = state.lock().expect("reactor state lock");
+        let Ok(mut s) = state.lock() else {
+            tracing::error!("Reactor state mutex poisoned in handle_proposal (process)");
+            return;
+        };
 
         // Store the proposed DAG node locally.
         {
-            let mut st = store.lock().expect("store lock");
+            let Ok(mut st) = store.lock() else {
+                tracing::error!("Store mutex poisoned in handle_proposal");
+                return;
+            };
             if let Err(e) = st.put(msg.node.clone()) {
                 tracing::warn!(err = %e, "Failed to store proposed node");
                 return;
@@ -430,7 +469,10 @@ async fn handle_vote(
 ) {
     // Validate the vote before processing.
     {
-        let s = state.lock().expect("reactor state lock");
+        let Ok(s) = state.lock() else {
+            tracing::error!("Reactor state mutex poisoned in handle_vote (validate)");
+            return;
+        };
         if let Err(reason) = validate_vote(&msg, &s.consensus.config.validators) {
             tracing::warn!(err = %reason, "Rejected invalid vote from network");
             return;
@@ -438,7 +480,10 @@ async fn handle_vote(
     }
 
     {
-        let mut s = state.lock().expect("reactor state lock");
+        let Ok(mut s) = state.lock() else {
+            tracing::error!("Reactor state mutex poisoned in handle_vote (process)");
+            return;
+        };
 
         if let Err(e) = consensus::vote(&mut s.consensus, msg.vote.clone()) {
             tracing::debug!(
@@ -460,7 +505,10 @@ async fn handle_vote(
 
     // Persist the vote.
     {
-        let mut st = store.lock().expect("store lock");
+        let Ok(mut st) = store.lock() else {
+            tracing::error!("Store mutex poisoned in handle_vote (persist)");
+            return;
+        };
         if let Err(e) = st.save_vote(&msg.vote) {
             tracing::warn!(err = %e, "Failed to persist vote");
         }
@@ -479,7 +527,10 @@ async fn handle_commit(
 ) {
     // Validate the commit certificate before processing.
     {
-        let s = state.lock().expect("reactor state lock");
+        let Ok(s) = state.lock() else {
+            tracing::error!("Reactor state mutex poisoned in handle_commit (validate)");
+            return;
+        };
         if let Err(reason) = validate_commit(&msg, &s.consensus.config.validators) {
             tracing::warn!(err = %reason, "Rejected invalid commit certificate from network");
             return;
@@ -487,7 +538,10 @@ async fn handle_commit(
     }
 
     let commit_info = {
-        let mut s = state.lock().expect("reactor state lock");
+        let Ok(mut s) = state.lock() else {
+            tracing::error!("Reactor state mutex poisoned in handle_commit (process)");
+            return;
+        };
         let cert = msg.certificate;
 
         // Skip if already finalized.
@@ -508,7 +562,10 @@ async fn handle_commit(
 
     // Mark committed in the persistent store.
     {
-        let mut st = store.lock().expect("store lock");
+        let Ok(mut st) = store.lock() else {
+            tracing::error!("Store mutex poisoned in handle_commit (mark)");
+            return;
+        };
         if let Err(e) = st.mark_committed(&hash, height) {
             tracing::warn!(err = %e, "Failed to mark committed in store");
         }
@@ -516,7 +573,10 @@ async fn handle_commit(
 
     // Emit a trust receipt for the network-received commit.
     let receipt = {
-        let s = state.lock().expect("reactor state lock");
+        let Ok(s) = state.lock() else {
+            tracing::error!("Reactor state mutex poisoned in handle_commit (receipt)");
+            return;
+        };
         #[allow(clippy::as_conversions)]
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -538,7 +598,10 @@ async fn handle_commit(
         )
     };
     {
-        let mut st = store.lock().expect("store lock");
+        let Ok(mut st) = store.lock() else {
+            tracing::error!("Store mutex poisoned in handle_commit (save receipt)");
+            return;
+        };
         if let Err(e) = st.save_receipt(&receipt) {
             tracing::warn!(err = %e, "Failed to persist trust receipt for network commit");
         }
@@ -551,13 +614,17 @@ async fn handle_commit(
         "Node committed via network certificate"
     );
 
-    let _ = reactor_tx
+    if reactor_tx
         .send(ReactorEvent::NodeCommitted {
             hash,
             height,
             round,
         })
-        .await;
+        .await
+        .is_err()
+    {
+        tracing::warn!("Reactor event receiver dropped (NodeCommitted via network)");
+    }
 }
 
 /// Check if a node has reached quorum and commit if so.
@@ -569,7 +636,10 @@ async fn check_and_commit(
     node_hash: &Hash256,
 ) {
     let cert = {
-        let s = state.lock().expect("reactor state lock");
+        let Ok(s) = state.lock() else {
+            tracing::error!("Reactor state mutex poisoned in check_and_commit");
+            return;
+        };
         consensus::check_commit(&s.consensus, node_hash)
     };
 
@@ -579,20 +649,29 @@ async fn check_and_commit(
 
         // Commit locally.
         {
-            let mut s = state.lock().expect("reactor state lock");
+            let Ok(mut s) = state.lock() else {
+                tracing::error!("Reactor state mutex poisoned in check_and_commit (commit)");
+                return;
+            };
             if !consensus::is_finalized(&s.consensus, &hash) {
                 consensus::commit(&mut s.consensus, cert.clone());
             }
         }
 
         let height = {
-            let s = state.lock().expect("reactor state lock");
+            let Ok(s) = state.lock() else {
+                tracing::error!("Reactor state mutex poisoned in check_and_commit (height)");
+                return;
+            };
             s.consensus.committed.len() as u64
         };
 
         // Persist to store.
         {
-            let mut st = store.lock().expect("store lock");
+            let Ok(mut st) = store.lock() else {
+                tracing::error!("Store mutex poisoned in check_and_commit (persist)");
+                return;
+            };
             if let Err(e) = st.mark_committed(&hash, height) {
                 tracing::warn!(err = %e, "Failed to mark committed");
             }
@@ -603,7 +682,10 @@ async fn check_and_commit(
 
         // Emit a trust receipt recording the commit action.
         let receipt = {
-            let s = state.lock().expect("reactor state lock");
+            let Ok(s) = state.lock() else {
+                tracing::error!("Reactor state mutex poisoned in check_and_commit (receipt)");
+                return;
+            };
             #[allow(clippy::as_conversions)]
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -625,7 +707,10 @@ async fn check_and_commit(
             )
         };
         {
-            let mut st = store.lock().expect("store lock");
+            let Ok(mut st) = store.lock() else {
+                tracing::error!("Store mutex poisoned in check_and_commit (save receipt)");
+                return;
+            };
             if let Err(e) = st.save_receipt(&receipt) {
                 tracing::warn!(err = %e, "Failed to persist trust receipt for commit");
             }
@@ -639,13 +724,17 @@ async fn check_and_commit(
             tracing::warn!(err = %e, "Failed to broadcast commit certificate");
         }
 
-        let _ = reactor_tx
+        if reactor_tx
             .send(ReactorEvent::NodeCommitted {
                 hash,
                 height,
                 round,
             })
-            .await;
+            .await
+            .is_err()
+        {
+            tracing::warn!("Reactor event receiver dropped (NodeCommitted via quorum)");
+        }
     }
 }
 
@@ -663,7 +752,9 @@ pub async fn submit_proposal(
     payload: &[u8],
 ) -> anyhow::Result<DagNode> {
     let (node, proposal, signature) = {
-        let mut s = state.lock().expect("reactor state lock");
+        let mut s = state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Reactor state mutex poisoned in submit_proposal"))?;
 
         if !s.is_validator {
             anyhow::bail!("This node is not a validator — cannot propose");
@@ -671,7 +762,9 @@ pub async fn submit_proposal(
 
         // Get current tips as parents.
         let tips = {
-            let st = store.lock().expect("store lock");
+            let st = store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Store mutex poisoned in submit_proposal (tips)"))?;
             st.tips().map_err(|e| anyhow::anyhow!("tips: {e}"))?
         };
         let parents: Vec<Hash256> = if tips.is_empty() {
@@ -696,7 +789,9 @@ pub async fn submit_proposal(
 
         // Store it locally.
         {
-            let mut st = store.lock().expect("store lock");
+            let mut st = store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Store mutex poisoned in submit_proposal (put)"))?;
             st.put(node.clone())
                 .map_err(|e| anyhow::anyhow!("put: {e}"))?;
         }
@@ -744,7 +839,9 @@ pub async fn broadcast_governance_event(
     payload: Vec<u8>,
 ) -> anyhow::Result<()> {
     let (sender, timestamp, signature) = {
-        let s = state.lock().expect("reactor state lock");
+        let s = state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Reactor state mutex poisoned in broadcast_governance"))?;
         let sig = (s.sign_fn)(&payload);
         (s.node_did.clone(), Timestamp::ZERO, sig)
     };

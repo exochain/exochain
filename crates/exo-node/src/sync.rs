@@ -17,12 +17,7 @@
 //! `DagSyncResponse`) and operates over the gossipsub + direct messaging
 //! layer.
 
-#![allow(
-    clippy::expect_used,
-    clippy::as_conversions,
-    clippy::manual_clamp,
-    clippy::single_match
-)]
+#![allow(clippy::as_conversions, clippy::manual_clamp, clippy::single_match)]
 
 use std::sync::{Arc, Mutex};
 
@@ -55,9 +50,10 @@ pub struct SyncConfig {
 }
 
 impl Default for SyncConfig {
+    #[allow(clippy::expect_used)] // Hardcoded constant — always valid.
     fn default() -> Self {
         Self {
-            node_did: Did::new("did:exo:default").expect("default DID"),
+            node_did: Did::new("did:exo:default").expect("hardcoded DID is valid"),
             chunk_size: 100,
             max_sync_nodes: 200,
         }
@@ -126,7 +122,10 @@ impl SyncEngine {
     /// Called when a node first joins or detects it's behind.
     pub async fn request_sync(&mut self) -> anyhow::Result<()> {
         let local_height = {
-            let st = self.store.lock().expect("store lock");
+            let st = self
+                .store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Store mutex poisoned in request_sync"))?;
             st.committed_height_value()
         };
 
@@ -152,7 +151,10 @@ impl SyncEngine {
     /// Request incremental DAG sync by exchanging tip hashes.
     pub async fn request_dag_sync(&self) -> anyhow::Result<()> {
         let tips = {
-            let st = self.store.lock().expect("store lock");
+            let st = self
+                .store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Store mutex poisoned in request_dag_sync"))?;
             st.tips().map_err(|e| anyhow::anyhow!("tips: {e}"))?
         };
 
@@ -192,7 +194,10 @@ impl SyncEngine {
     /// Serve a state snapshot to a requesting peer.
     async fn handle_snapshot_request(&self, msg: StateSnapshotRequestMsg) {
         let local_height = {
-            let st = self.store.lock().expect("store lock");
+            let Ok(st) = self.store.lock() else {
+                tracing::error!("Store mutex poisoned in handle_snapshot_request");
+                return;
+            };
             st.committed_height_value()
         };
 
@@ -222,7 +227,10 @@ impl SyncEngine {
             let to_height = (current_from + u64::from(chunk_size) - 1).min(local_height);
 
             let nodes = {
-                let st = self.store.lock().expect("store lock");
+                let Ok(st) = self.store.lock() else {
+                    tracing::error!("Store mutex poisoned in handle_snapshot_request (chunk)");
+                    return;
+                };
                 match st.committed_dag_nodes_in_range(current_from, to_height) {
                     Ok(n) => n,
                     Err(e) => {
@@ -256,14 +264,18 @@ impl SyncEngine {
                 "Sent snapshot chunk"
             );
 
-            let _ = self
+            if self
                 .event_tx
                 .send(SyncEvent::ServedSnapshot {
                     peer: msg.sender.clone(),
                     from_height: current_from,
                     nodes_sent: nodes_count,
                 })
-                .await;
+                .await
+                .is_err()
+            {
+                tracing::warn!("Sync event receiver dropped (ServedSnapshot)");
+            }
 
             if !has_more {
                 break;
@@ -290,7 +302,10 @@ impl SyncEngine {
 
         // Store the nodes and mark them as committed.
         {
-            let mut st = self.store.lock().expect("store lock");
+            let Ok(mut st) = self.store.lock() else {
+                tracing::error!("Store mutex poisoned in handle_snapshot_chunk");
+                return;
+            };
             for (i, node) in msg.nodes.into_iter().enumerate() {
                 let hash = node.hash;
 
@@ -310,36 +325,50 @@ impl SyncEngine {
             self.sync_target_height = msg.to_height;
         }
 
-        let _ = self
+        if self
             .event_tx
             .send(SyncEvent::Progress {
                 from_height: msg.from_height,
                 to_height: msg.to_height,
                 total_nodes: nodes_count,
             })
-            .await;
+            .await
+            .is_err()
+        {
+            tracing::warn!("Sync event receiver dropped (Progress)");
+        }
 
         if !msg.has_more {
             self.syncing = false;
 
             let committed_height = {
-                let st = self.store.lock().expect("store lock");
+                let Ok(st) = self.store.lock() else {
+                    tracing::error!("Store mutex poisoned in handle_snapshot_chunk (complete)");
+                    return;
+                };
                 st.committed_height_value()
             };
 
             tracing::info!(committed_height, "State sync complete");
 
-            let _ = self
+            if self
                 .event_tx
                 .send(SyncEvent::Complete { committed_height })
-                .await;
+                .await
+                .is_err()
+            {
+                tracing::warn!("Sync event receiver dropped (Complete)");
+            }
         }
     }
 
     /// Serve missing DAG nodes to a requesting peer.
     async fn handle_dag_sync_request(&self, msg: DagSyncRequestMsg) {
         let (nodes, has_more) = {
-            let st = self.store.lock().expect("store lock");
+            let Ok(st) = self.store.lock() else {
+                tracing::error!("Store mutex poisoned in handle_dag_sync_request");
+                return;
+            };
 
             // Find nodes the requester is missing by comparing tips.
             // Strategy: send all our committed nodes that are not in the
@@ -427,7 +456,10 @@ impl SyncEngine {
         );
 
         {
-            let mut st = self.store.lock().expect("store lock");
+            let Ok(mut st) = self.store.lock() else {
+                tracing::error!("Store mutex poisoned in handle_dag_sync_response");
+                return;
+            };
             for node in msg.nodes {
                 let hash = node.hash;
                 if let Err(e) = st.put(node) {
