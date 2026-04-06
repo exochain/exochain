@@ -474,13 +474,16 @@ pub async fn run_holon_manager(
                             holon = %topology_holon.id,
                             "Topology Holon step failed"
                         );
-                        if topology_holon.state == HolonState::Terminated {
-                            if event_tx.send(HolonEvent::HolonTerminated {
-                                holon_id: topology_holon.id.clone(),
-                                reason: e.to_string(),
-                            }).await.is_err() {
-                                tracing::warn!("Holon event channel closed — HolonTerminated dropped");
-                            }
+                        if topology_holon.state == HolonState::Terminated
+                            && event_tx
+                                .send(HolonEvent::HolonTerminated {
+                                    holon_id: topology_holon.id.clone(),
+                                    reason: e.to_string(),
+                                })
+                                .await
+                                .is_err()
+                        {
+                            tracing::warn!("Holon event channel closed — HolonTerminated dropped");
                         }
                     }
                 }
@@ -580,13 +583,16 @@ pub async fn run_holon_manager(
                             holon = %scaling_holon.id,
                             "Scaling Holon step failed"
                         );
-                        if scaling_holon.state == HolonState::Terminated {
-                            if event_tx.send(HolonEvent::HolonTerminated {
-                                holon_id: scaling_holon.id.clone(),
-                                reason: e.to_string(),
-                            }).await.is_err() {
-                                tracing::warn!("Holon event channel closed — HolonTerminated dropped");
-                            }
+                        if scaling_holon.state == HolonState::Terminated
+                            && event_tx
+                                .send(HolonEvent::HolonTerminated {
+                                    holon_id: scaling_holon.id.clone(),
+                                    reason: e.to_string(),
+                                })
+                                .await
+                                .is_err()
+                        {
+                            tracing::warn!("Holon event channel closed — HolonTerminated dropped");
                         }
                     }
                 }
@@ -634,13 +640,16 @@ pub async fn run_holon_manager(
                             holon = %health_holon.id,
                             "Health Holon step failed"
                         );
-                        if health_holon.state == HolonState::Terminated {
-                            if event_tx.send(HolonEvent::HolonTerminated {
-                                holon_id: health_holon.id.clone(),
-                                reason: e.to_string(),
-                            }).await.is_err() {
-                                tracing::warn!("Holon event channel closed — HolonTerminated dropped");
-                            }
+                        if health_holon.state == HolonState::Terminated
+                            && event_tx
+                                .send(HolonEvent::HolonTerminated {
+                                    holon_id: health_holon.id.clone(),
+                                    reason: e.to_string(),
+                                })
+                                .await
+                                .is_err()
+                        {
+                            tracing::warn!("Holon event channel closed — HolonTerminated dropped");
                         }
                     }
                 }
