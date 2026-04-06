@@ -182,9 +182,16 @@ async fn handle_broadcast(
 }
 
 /// `GET /api/v1/governance/status` — return current node and consensus state.
-async fn handle_status(State(api): State<Arc<NodeApiState>>) -> Json<NodeStatusResponse> {
+async fn handle_status(
+    State(api): State<Arc<NodeApiState>>,
+) -> Result<Json<NodeStatusResponse>, (StatusCode, String)> {
     let (round, height, validators, is_validator) = {
-        let s = api.reactor_state.lock().expect("reactor state lock");
+        let s = api.reactor_state.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Reactor state unavailable".to_string(),
+            )
+        })?;
         (
             s.consensus.current_round,
             s.consensus.committed.len() as u64,
@@ -198,13 +205,13 @@ async fn handle_status(State(api): State<Arc<NodeApiState>>) -> Json<NodeStatusR
         )
     };
 
-    Json(NodeStatusResponse {
+    Ok(Json(NodeStatusResponse {
         consensus_round: round,
         committed_height: height,
         validator_count: validators.len(),
         is_validator,
         validators,
-    })
+    }))
 }
 
 /// `POST /api/v1/governance/validators` — add or remove a validator.
@@ -232,7 +239,12 @@ async fn handle_validator_change(
 
     // Apply the validator change.
     let (new_count, quorum) = {
-        let mut s = api.reactor_state.lock().expect("reactor state lock");
+        let mut s = api.reactor_state.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Reactor state unavailable".to_string(),
+            )
+        })?;
         match &change {
             ValidatorChange::AddValidator { did } => {
                 s.consensus.config.validators.insert(did.clone());
@@ -255,8 +267,18 @@ async fn handle_validator_change(
 
     // Persist the updated validator set.
     {
-        let s = api.reactor_state.lock().expect("reactor state lock");
-        let mut st = api.store.lock().expect("store lock");
+        let s = api.reactor_state.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Reactor state unavailable".to_string(),
+            )
+        })?;
+        let mut st = api.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Store unavailable".to_string(),
+            )
+        })?;
         if let Err(e) = st.save_validator_set(&s.consensus.config.validators) {
             tracing::warn!(err = %e, "Failed to persist validator set");
         }
@@ -320,7 +342,12 @@ async fn handle_receipt_by_hash(
     let hash = Hash256::from_bytes(arr);
 
     let receipt = {
-        let st = api.store.lock().expect("store lock");
+        let st = api.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Store unavailable".to_string(),
+            )
+        })?;
         st.load_receipt(&hash)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     };
@@ -346,7 +373,12 @@ async fn handle_receipts_list(
     let limit = q.limit.unwrap_or(50).min(500);
 
     let receipts = {
-        let st = api.store.lock().expect("store lock");
+        let st = api.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Store unavailable".to_string(),
+            )
+        })?;
         st.load_receipts_by_actor(&actor, limit)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     };

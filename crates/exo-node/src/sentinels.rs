@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 
-use axum::{Json, Router, extract::State, routing::get};
+use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -70,7 +70,6 @@ impl std::fmt::Display for SentinelCheck {
 
 /// Severity of a sentinel alert.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[allow(dead_code)]
 pub enum Severity {
     /// Informational — no action needed.
     Info,
@@ -118,11 +117,18 @@ pub(crate) fn now_ms() -> u64 {
 // ---------------------------------------------------------------------------
 
 /// Check consensus liveness — round should be advancing.
-#[allow(clippy::expect_used)]
 fn check_liveness(reactor: &SharedReactorState, prev_round: &mut u64) -> SentinelStatus {
-    let current_round = {
-        let s = reactor.lock().expect("reactor state lock");
-        s.consensus.current_round
+    let current_round = match reactor.lock() {
+        Ok(s) => s.consensus.current_round,
+        Err(_) => {
+            tracing::error!("Reactor state mutex poisoned in liveness sentinel");
+            return SentinelStatus {
+                check: SentinelCheck::Liveness,
+                healthy: false,
+                message: "Reactor state mutex poisoned".into(),
+                last_run_ms: now_ms(),
+            };
+        }
     };
 
     let healthy = current_round >= *prev_round;
@@ -142,11 +148,18 @@ fn check_liveness(reactor: &SharedReactorState, prev_round: &mut u64) -> Sentine
 }
 
 /// Check quorum health — minimum 4 validators for BFT safety.
-#[allow(clippy::expect_used)]
 fn check_quorum_health(reactor: &SharedReactorState) -> SentinelStatus {
-    let validator_count = {
-        let s = reactor.lock().expect("reactor state lock");
-        s.consensus.config.validators.len()
+    let validator_count = match reactor.lock() {
+        Ok(s) => s.consensus.config.validators.len(),
+        Err(_) => {
+            tracing::error!("Reactor state mutex poisoned in quorum sentinel");
+            return SentinelStatus {
+                check: SentinelCheck::QuorumHealth,
+                healthy: false,
+                message: "Reactor state mutex poisoned".into(),
+                last_run_ms: now_ms(),
+            };
+        }
     };
 
     let healthy = validator_count >= 4;
@@ -165,9 +178,19 @@ fn check_quorum_health(reactor: &SharedReactorState) -> SentinelStatus {
 }
 
 /// Spot-check recent trust receipts for hash integrity.
-#[allow(clippy::expect_used)]
 fn check_receipt_integrity(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus {
-    let st = store.lock().expect("store lock");
+    let st = match store.lock() {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::error!("Store mutex poisoned in receipt integrity sentinel");
+            return SentinelStatus {
+                check: SentinelCheck::ReceiptIntegrity,
+                healthy: false,
+                message: "Store mutex poisoned".into(),
+                last_run_ms: now_ms(),
+            };
+        }
+    };
 
     // Load the 10 most recent receipts across all actors.
     // We query via a raw SQL since load_receipts_by_actor requires an actor.
@@ -187,9 +210,20 @@ fn check_receipt_integrity(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus
 /// verify they match the stored values within a 10 bp tolerance.
 ///
 /// Spec §10.4.
-#[allow(clippy::expect_used, clippy::as_conversions)]
+#[allow(clippy::as_conversions)]
 fn check_score_integrity(zerodentity: &SharedZerodentityStore) -> SentinelStatus {
-    let zstore = zerodentity.lock().expect("zerodentity store lock");
+    let zstore = match zerodentity.lock() {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::error!("Zerodentity store mutex poisoned in score integrity sentinel");
+            return SentinelStatus {
+                check: SentinelCheck::ScoreIntegrity,
+                healthy: false,
+                message: "Zerodentity store mutex poisoned".into(),
+                last_run_ms: now_ms(),
+            };
+        }
+    };
 
     // Fast path: no scored DIDs yet.
     if zstore.scored_did_count() == 0 {
@@ -276,9 +310,20 @@ fn check_score_integrity(zerodentity: &SharedZerodentityStore) -> SentinelStatus
 /// Check for expired OTP challenges still in `Pending` state and clean them up.
 ///
 /// Spec §10.4 — ensures no stale challenges linger in memory.
-#[allow(clippy::expect_used, clippy::as_conversions)]
+#[allow(clippy::as_conversions)]
 fn check_otp_cleanup(zerodentity: &SharedZerodentityStore) -> SentinelStatus {
-    let mut zstore = zerodentity.lock().expect("zerodentity store lock");
+    let mut zstore = match zerodentity.lock() {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::error!("Zerodentity store mutex poisoned in OTP cleanup sentinel");
+            return SentinelStatus {
+                check: SentinelCheck::OtpCleanup,
+                healthy: false,
+                message: "Zerodentity store mutex poisoned".into(),
+                last_run_ms: now_ms(),
+            };
+        }
+    };
     let now = now_ms();
 
     // Count expired-but-pending challenges before cleanup
@@ -312,9 +357,20 @@ fn check_otp_cleanup(zerodentity: &SharedZerodentityStore) -> SentinelStatus {
 }
 
 /// Check store consistency — committed height vs certificate count.
-#[allow(clippy::expect_used, clippy::as_conversions)]
+#[allow(clippy::as_conversions)]
 fn check_store_consistency(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus {
-    let st = store.lock().expect("store lock");
+    let st = match store.lock() {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::error!("Store mutex poisoned in consistency sentinel");
+            return SentinelStatus {
+                check: SentinelCheck::StoreConsistency,
+                healthy: false,
+                message: "Store mutex poisoned".into(),
+                last_run_ms: now_ms(),
+            };
+        }
+    };
     let height = st.committed_height_value();
     let certs = st.load_certificates().unwrap_or_default();
 
@@ -347,7 +403,6 @@ fn check_store_consistency(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus
 ///
 /// Checks run every `interval` and update `sentinel_state`.  Unhealthy
 /// results are forwarded to `alert_tx` for the Telegram adjutant.
-#[allow(clippy::expect_used)]
 pub async fn run_sentinel_loop(
     reactor: SharedReactorState,
     store: Arc<Mutex<SqliteDagStore>>,
@@ -388,14 +443,19 @@ pub async fn run_sentinel_loop(
                     message: status.message.clone(),
                     timestamp_ms: now_ms(),
                 };
-                let _ = alert_tx.send(alert).await;
+                if alert_tx.send(alert).await.is_err() {
+                    tracing::warn!(
+                        check = %status.check,
+                        "Alert channel closed — sentinel alert dropped"
+                    );
+                }
             }
         }
 
         // Update shared state.
-        {
-            let mut ss = sentinel_state.lock().expect("sentinel state lock");
-            *ss = statuses;
+        match sentinel_state.lock() {
+            Ok(mut ss) => *ss = statuses,
+            Err(_) => tracing::error!("Sentinel state mutex poisoned — skipping update"),
         }
     }
 }
@@ -405,12 +465,14 @@ pub async fn run_sentinel_loop(
 // ---------------------------------------------------------------------------
 
 /// `GET /api/v1/sentinels` — current sentinel status.
-#[allow(clippy::expect_used)]
 async fn handle_sentinel_status(
     State(state): State<SharedSentinelState>,
-) -> Json<Vec<SentinelStatus>> {
-    let ss = state.lock().expect("sentinel state lock");
-    Json(ss.clone())
+) -> Result<Json<Vec<SentinelStatus>>, StatusCode> {
+    let ss = state.lock().map_err(|_| {
+        tracing::error!("Sentinel state mutex poisoned in status handler");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(ss.clone()))
 }
 
 /// Build the sentinel API router.

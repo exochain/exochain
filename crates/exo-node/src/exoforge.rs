@@ -16,7 +16,7 @@
 //! | POST   | `/api/v1/forge/tasks/:id/escalate`| Escalate a task          |
 //! | POST   | `/api/v1/forge/log`               | Append activity log      |
 
-#![allow(clippy::as_conversions, clippy::unwrap_used, clippy::float_arithmetic)]
+#![allow(clippy::as_conversions, clippy::float_arithmetic)]
 
 use std::sync::{Arc, Mutex};
 
@@ -757,23 +757,38 @@ fn build_zerodentity_tasks() -> Vec<ForgeTask> {
 
 // ─── API Handlers ───────────────────────────────────────────────────
 
-async fn list_tasks(State(state): State<SharedForgeState>) -> Json<serde_json::Value> {
-    let s = state.lock().unwrap();
-    Json(serde_json::json!({
+async fn list_tasks(
+    State(state): State<SharedForgeState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let s = state.lock().map_err(|_| {
+        tracing::error!("ForgeState mutex poisoned in list_tasks");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(serde_json::json!({
         "spec_name": s.spec_name,
         "tasks": s.tasks,
         "stats": s.stats(),
-    }))
+    })))
 }
 
-async fn get_stats(State(state): State<SharedForgeState>) -> Json<ForgeStats> {
-    let s = state.lock().unwrap();
-    Json(s.stats())
+async fn get_stats(
+    State(state): State<SharedForgeState>,
+) -> Result<Json<ForgeStats>, StatusCode> {
+    let s = state.lock().map_err(|_| {
+        tracing::error!("ForgeState mutex poisoned in get_stats");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(s.stats()))
 }
 
-async fn get_activity(State(state): State<SharedForgeState>) -> Json<Vec<ActivityEntry>> {
-    let s = state.lock().unwrap();
-    Json(s.activity_log.clone())
+async fn get_activity(
+    State(state): State<SharedForgeState>,
+) -> Result<Json<Vec<ActivityEntry>>, StatusCode> {
+    let s = state.lock().map_err(|_| {
+        tracing::error!("ForgeState mutex poisoned in get_activity");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(s.activity_log.clone()))
 }
 
 async fn update_task_status(
@@ -781,7 +796,10 @@ async fn update_task_status(
     Path(task_id): Path<u32>,
     Json(body): Json<StatusUpdate>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut s = state.lock().unwrap();
+    let mut s = state.lock().map_err(|_| {
+        tracing::error!("ForgeState mutex poisoned in update_task_status");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let task = s
         .tasks
         .iter_mut()
@@ -816,7 +834,10 @@ async fn assign_agent(
     Path(task_id): Path<u32>,
     Json(body): Json<AgentAssignment>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut s = state.lock().unwrap();
+    let mut s = state.lock().map_err(|_| {
+        tracing::error!("ForgeState mutex poisoned in assign_agent");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let task = s
         .tasks
         .iter_mut()
@@ -848,7 +869,10 @@ async fn escalate_task(
     Path(task_id): Path<u32>,
     Json(body): Json<EscalateRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let mut s = state.lock().unwrap();
+    let mut s = state.lock().map_err(|_| {
+        tracing::error!("ForgeState mutex poisoned in escalate_task");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let task = s
         .tasks
         .iter_mut()
@@ -882,26 +906,34 @@ async fn escalate_task(
 async fn append_log(
     State(state): State<SharedForgeState>,
     Json(body): Json<LogEntry>,
-) -> Json<serde_json::Value> {
-    let mut s = state.lock().unwrap();
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let mut s = state.lock().map_err(|_| {
+        tracing::error!("ForgeState mutex poisoned in append_log");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     s.activity_log.push(ActivityEntry {
         timestamp_ms: now_ms(),
         message: body.message,
         task_id: body.task_id,
     });
-    Json(serde_json::json!({ "ok": true }))
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 // ─── Dashboard HTML ─────────────────────────────────────────────────
 
-async fn serve_dashboard(State(state): State<SharedForgeState>) -> Html<String> {
-    let s = state.lock().unwrap();
+async fn serve_dashboard(
+    State(state): State<SharedForgeState>,
+) -> Result<Html<String>, StatusCode> {
+    let s = state.lock().map_err(|_| {
+        tracing::error!("ForgeState mutex poisoned in serve_dashboard");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     let tasks_json = serde_json::to_string(&s.tasks).unwrap_or_default();
     let stats_json = serde_json::to_string(&s.stats()).unwrap_or_default();
     let log_json = serde_json::to_string(&s.activity_log).unwrap_or_default();
     drop(s);
 
-    Html(format!(
+    Ok(Html(format!(
         r##"<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1426,7 +1458,7 @@ setInterval(async () => {{
 
 </body>
 </html>"##
-    ))
+    )))
 }
 
 // ─── Router ─────────────────────────────────────────────────────────

@@ -192,7 +192,12 @@ async fn handle_passport(
     Path(did): Path<String>,
 ) -> Result<Json<AgentPassport>, (StatusCode, String)> {
     let (known, is_validator) = {
-        let s = state.reactor_state.lock().expect("reactor state lock");
+        let s = state.reactor_state.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Reactor state unavailable".to_string(),
+            )
+        })?;
         let did_obj = exo_core::types::Did::new(&did)
             .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid DID: {e}")))?;
         let is_val = s.consensus.config.validators.contains(&did_obj);
@@ -202,12 +207,15 @@ async fn handle_passport(
     };
 
     // Look up 0dentity data: score and claims.
-    let did_obj = exo_core::types::Did::new(&did).expect("already validated");
+    let did_obj = exo_core::types::Did::new(&did)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid DID: {e}")))?;
     let (zerodentity, standing) = {
-        let zd = state
-            .zerodentity_store
-            .lock()
-            .expect("zerodentity store lock");
+        let zd = state.zerodentity_store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Zerodentity store unavailable".to_string(),
+            )
+        })?;
 
         let score_profile = zd.get_score(&did_obj).map(|s| ZerodentityProfile {
             composite_bp: s.composite,
@@ -291,14 +299,21 @@ async fn handle_standing(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid DID: {e}")))?;
 
     let known = {
-        let s = state.reactor_state.lock().expect("reactor state lock");
+        let s = state.reactor_state.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Reactor state unavailable".to_string(),
+            )
+        })?;
         s.consensus.config.validators.contains(&did_obj) || s.node_did.to_string() == did
     };
 
-    let zd = state
-        .zerodentity_store
-        .lock()
-        .expect("zerodentity store lock");
+    let zd = state.zerodentity_store.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Zerodentity store unavailable".to_string(),
+        )
+    })?;
     let standing = build_standing_profile(known, &did_obj, &zd);
 
     Ok(Json(StandingResponse {
