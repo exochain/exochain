@@ -1448,7 +1448,10 @@ mod tests {
 
         let b = body_json(resp).await;
         assert_eq!(b["subject_did"], "did:exo:scored-user");
-        assert!(b["composite"].as_u64().is_some(), "composite must be present");
+        assert!(
+            b["composite"].as_u64().is_some(),
+            "composite must be present"
+        );
         assert!(b["symmetry"].as_u64().is_some(), "symmetry must be present");
         assert!(b["axes"]["communication"].as_u64().is_some());
         assert!(b["axes"]["credential_depth"].as_u64().is_some());
