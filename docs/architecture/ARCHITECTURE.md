@@ -1,7 +1,7 @@
 # EXOCHAIN Architecture
 
 > **Version:** 0.1.0 | **Status:** Living Document | **Last verified:** 2026-03-18
-> **Codebase:** 14 crates | 18,705 lines of Rust | 111 source files | 957 tests | 0 failures
+> **Codebase:** 16 crates | 18,705 lines of Rust | 111 source files | 1,846 tests | 0 failures
 
 ---
 
@@ -15,7 +15,7 @@ The key architectural insight: **AEGIS preserves legitimate plurality; SYBIL cou
 
 ### What makes EXOCHAIN different
 
-1. **Governance is code, not commentary.** The nine constitutional invariants are compiled Rust functions evaluated on every state transition. They cannot be bypassed, overridden, or suspended.
+1. **Governance is code, not commentary.** The eight constitutional invariants are compiled Rust functions evaluated on every state transition. They cannot be bypassed, overridden, or suspended.
 2. **Proofs, not promises.** Every permitted action produces a `CgrProof` --- a cryptographic certificate recording which invariants were checked, by which kernel version, against which registry hash.
 3. **Three-branch separation enforced in type system.** Legislative (constitution and amendments), Executive (Holons operating under constraints), and Judicial (the CGR Kernel that accepts or rejects transitions).
 4. **Deterministic execution.** No floating-point, no HashMap, no NTP dependency. The same input always produces the same output, making governance auditable across replicas.
@@ -36,9 +36,16 @@ EXOCHAIN implements separation of powers as a compile-time architectural constra
 
 The separation is enforced structurally: the Judicial branch (CGR Kernel) has no mechanism to modify the invariants it evaluates. The Executive branch (Holons) cannot grant capabilities to themselves (INV-002). The Legislative branch (amendment process) is the sole path to modify constitutional rules, and it requires supermajority ratification.
 
-### 2.2 The 14-Crate Dependency Graph
+### 2.2 The 16-Crate Dependency Graph
 
 ```
+                         Layer 5: Binaries & Targets
+          ┌──────────────────────────┐  ┌───────────────────────────┐
+          │        exo-node          │  │      exochain-wasm        │
+          │  (P2P, BFT, state sync,  │  │  (browser & edge bindings │
+          │   dashboard, CLI)        │  │   for governance prims)   │
+          └──────────┬───────────────┘  └──────────┬────────────────┘
+                     │                             │
                          Layer 4: Integration
                     ┌──────────────────────────┐
                     │       exo-gateway         │
@@ -98,7 +105,7 @@ Every governance action follows the Bailment-Conditioned Transaction Set lifecyc
 
 1. **Propose** --- An actor (human or Holon) creates an `EventEnvelope` with a proposed action.
 2. **Authenticate** --- The event is signed with Ed25519 using domain-separated signatures (`EXOCHAIN-EVENT-SIG-v1`). See [[exo-core/src/crypto.rs]].
-3. **Gate** --- The CGR Kernel evaluates the `TransitionContext` against all 9 invariants. See [[exo-gatekeeper/src/kernel.rs]].
+3. **Gate** --- The CGR Kernel evaluates the `TransitionContext` against all 8 invariants. See [[exo-gatekeeper/src/kernel.rs]].
 4. **Prove** --- If all invariants hold, a `CgrProof` is issued. If any fail, the transition is rejected with `InvariantViolation` evidence.
 5. **Commit** --- The approved event is appended to the append-only DAG, producing a new state root via the Sparse Merkle Tree.
 6. **Anchor** --- The DAG root is periodically anchored to external trust sources via `AnchorReceipt`.
@@ -182,9 +189,9 @@ The Combinator Graph Reduction Kernel is the judicial branch of EXOCHAIN. It is 
 | **Human override preserved** | `ProposedAction::RemoveHumanOverride` is unconditionally rejected | INV-007 |
 | **Kernel immutability** | Kernel binary hash and registry hash verified on every transition | INV-008, INV-009 |
 
-### 4.2 The 9 Constitutional Invariants
+### 4.2 The 8 Constitutional Invariants
 
-Every call to `CgrKernel::verify_transition()` evaluates all 9 invariants. If any fails, the transition is rejected and violation evidence is recorded for the audit trail.
+Every call to `CgrKernel::verify_transition()` evaluates all 8 invariants. If any fails, the transition is rejected and violation evidence is recorded for the audit trail.
 
 | ID | Name | Formal Specification | Code Reference |
 |---|---|---|---|
@@ -202,9 +209,9 @@ The invariant registry is itself content-addressed: each invariant's definition 
 
 ### 4.3 The Proof Lifecycle
 
-When all 9 invariants are satisfied:
+When all 8 invariants are satisfied:
 
-1. A `CgrProof` is issued containing the proof ID, the count of invariants checked (always 9), the registry hash, and the kernel binary hash.
+1. A `CgrProof` is issued containing the proof ID, the count of invariants checked (always 8), the registry hash, and the kernel binary hash.
 2. The proof counter increments monotonically --- proofs are sequentially numbered and cannot be forged retroactively.
 3. The proof is attached to the resulting `LedgerEvent` as cryptographic evidence that the transition was constitutionally valid.
 
@@ -486,7 +493,7 @@ exo-core           (leaf node; no internal dependencies)
 | Dimension | EXOCHAIN | Ethereum |
 |---|---|---|
 | **Finality** | Deterministic. A transition is accepted or rejected by the CGR Kernel before it enters the DAG. There is no probabilistic confirmation window. | Probabilistic. Transactions are included in blocks that may be reorganized within a finality horizon. |
-| **Governance model** | Constitutional. 9 invariants checked on every action. Three-branch separation. | Smart contract autonomy. Governance is application-layer (DAOs, multisigs), not protocol-enforced. |
+| **Governance model** | Constitutional. 8 invariants checked on every action. Three-branch separation. | Smart contract autonomy. Governance is application-layer (DAOs, multisigs), not protocol-enforced. |
 | **Identity** | DID-native. Every actor has a cryptographic identity with key versioning, Shamir recovery, and human/AI type distinction. | Address-based. No built-in identity layer; ENS and other systems are application-layer. |
 | **Consent** | Protocol-level. INV-003 and INV-004 enforce consent-before-access at the kernel level. | No protocol-level consent model. Data access is controlled by smart contract logic. |
 
@@ -527,13 +534,15 @@ exo-core           (leaf node; no internal dependencies)
 | `exo-tenant` | 268 | 41 | 6 | Multi-org isolation, tenant DAG separation |
 | `decision-forum` | 265 | 34 | 6 | Forum protocol, voting, decision lifecycle |
 | `exo-api` | 253 | 22 | 5 | GraphQL, libp2p, external API |
-| **Total** | **18,705** | **957** | **111** | |
+| `exo-node` | — | — | — | Single-binary EXOCHAIN node — P2P networking, BFT consensus reactor, state sync, embedded dashboard, and CLI |
+| `exochain-wasm` | — | — | — | WASM compilation target — browser and edge bindings for EXOCHAIN governance primitives |
+| **Total** | **18,705** | **1,846** | **111** | |
 
 ### Test Coverage by Domain
 
 | Domain | Crates | Tests | Coverage Focus |
 |---|---|---|---|
-| Constitutional enforcement | `exo-gatekeeper` | 133 | All 9 invariants, proof lifecycle, combinator reduction, Holon lifecycle |
+| Constitutional enforcement | `exo-gatekeeper` | 133 | All 8 invariants, proof lifecycle, combinator reduction, Holon lifecycle |
 | Cryptographic foundation | `exo-core`, `exo-proofs`, `exo-dag` | 338 | Signature roundtrips, domain separation, SMT proofs, MMR append, HLC ordering |
 | Governance process | `exo-governance`, `decision-forum`, `exo-authority` | 169 | Decision state machine, quorum verification, crosscheck, delegation chains |
 | Identity and consent | `exo-identity`, `exo-consent` | 121 | DID operations, Shamir split/recover, consent lifecycle |
@@ -548,7 +557,7 @@ exo-core           (leaf node; no internal dependencies)
 | [[exo-core/src/crypto.rs]] | `Blake3Hash`, `compute_signature()`, `verify_signature()`, domain separator |
 | [[exo-core/src/event.rs]] | `EventEnvelope`, `EventPayload` (30+ event types), `LedgerEvent`, `compute_event_id()` |
 | [[exo-core/src/hlc.rs]] | `HybridLogicalClock`, `new_event()` with catch-up semantics |
-| [[exo-gatekeeper/src/kernel.rs]] | `CgrKernel`, `verify_transition()`, all 9 `check_inv*` methods |
+| [[exo-gatekeeper/src/kernel.rs]] | `CgrKernel`, `verify_transition()`, all 8 `check_inv*` methods |
 | [[exo-gatekeeper/src/invariants.rs]] | `InvariantRegistry::canonical()`, content-addressed invariant definitions |
 | [[exo-gatekeeper/src/combinator.rs]] | `CombinatorTerm`, `CombinatorEngine::reduce()`, `encode_invariant()` |
 | [[exo-gatekeeper/src/holon.rs]] | `Holon`, `HolonStatus`, `HolonType`, capability model |

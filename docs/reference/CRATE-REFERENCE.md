@@ -7,9 +7,9 @@ tags: [exochain, reference, api, crates]
 
 # Crate Reference
 
-**Complete API reference for the 14 crates composing the EXOCHAIN constitutional trust fabric.**
+**Complete API reference for the 16 crates composing the EXOCHAIN constitutional trust fabric.**
 
-14 crates · 18,705 lines of Rust · 957 tests · 0 failures
+16 crates · 18,705 lines of Rust · 1,846 tests · 0 failures
 
 > Cross-references: [[ARCHITECTURE]], [[GETTING-STARTED]], [[THREAT-MODEL]], [[CONSTITUTIONAL-PROOFS]]
 
@@ -31,6 +31,8 @@ exo-core (root — all crates depend on this)
 ├── exo-tenant ─────────────── depends on exo-identity
 ├── exo-api ────────────────── depends on exo-identity
 ├── exo-gateway ────────────── depends on exo-identity, exo-consent, exo-gatekeeper, exo-governance
+├── exo-node ──────────────── depends on exo-core, exo-gateway, exo-dag, exo-governance
+├── exochain-wasm ─────────── depends on exo-core, exo-governance
 └── decision-forum ─────────── depends on exo-identity, exo-governance, exo-gatekeeper
 ```
 
@@ -1160,7 +1162,9 @@ P2P networking and external API types. Provides peer-to-peer protocol message ty
 | exo-tenant | 268 | 41 | 6 | Multi-tenant isolation, cold storage, sharding |
 | decision-forum | 265 | 34 | 6 | Decision objects, constitutional enforcement |
 | exo-api | 253 | 22 | 5 | P2P protocol, API types |
-| **Total** | **18,705** | **957** | **104** | |
+| exo-node | — | — | — | Single-binary EXOCHAIN node — P2P networking, BFT consensus reactor, state sync, embedded dashboard, and CLI |
+| exochain-wasm | — | — | — | WASM compilation target — browser and edge bindings for EXOCHAIN governance primitives |
+| **Total** | **18,705** | **1,846** | **104** | |
 
 ---
 

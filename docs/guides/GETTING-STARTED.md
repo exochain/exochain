@@ -56,14 +56,14 @@ cargo install cargo-audit
 git clone https://github.com/exochain/exochain.git
 cd exochain
 
-# Build all 14 crates (debug mode)
+# Build all 16 crates (debug mode)
 cargo build --workspace
 
 # Build in release mode (LTO enabled, may take longer)
 cargo build --workspace --release
 ```
 
-The workspace compiles all 14 crates and their dependencies. The first build downloads and compiles external dependencies (ed25519-dalek, blake3, serde, etc.). Subsequent builds are incremental.
+The workspace compiles all 16 crates and their dependencies. The first build downloads and compiles external dependencies (ed25519-dalek, blake3, serde, etc.). Subsequent builds are incremental.
 
 ### Build Verification
 
@@ -71,7 +71,7 @@ A clean build should produce:
 
 - Zero errors
 - Zero warnings (clippy is set to deny warnings in CI)
-- All 14 crates compiled
+- All 16 crates compiled
 
 ```bash
 # Verify no warnings
@@ -83,7 +83,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 ## 3. Run Tests
 
 ```bash
-# Run all 957 tests across 14 crates
+# Run all 1,846 tests across 16 crates
 cargo test --workspace
 
 # Run tests for a specific crate
@@ -102,10 +102,10 @@ cargo test --workspace -- --include-ignored
 
 ### Expected Output
 
-All 957 tests should pass with 0 failures:
+All 1,846 tests should pass with 0 failures:
 
 ```
-test result: ok. 957 passed; 0 failed; 0 ignored
+test result: ok. 1846 passed; 0 failed; 0 ignored
 ```
 
 ### Coverage
@@ -354,7 +354,7 @@ Before pushing, run all 8 quality gates that CI enforces per [[CR-001-AEGIS-SYBI
 # 1. Build (release mode)
 cargo build --workspace --release
 
-# 2. Test (all 957 tests)
+# 2. Test (all 1,846 tests)
 cargo test --workspace
 
 # 3. Coverage (minimum 90%)

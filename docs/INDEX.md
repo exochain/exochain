@@ -10,7 +10,7 @@ tags: [exochain, documentation, index]
 
 **Constitutional Trust Fabric for Safe Superintelligence Governance**
 
-~31,000 lines of Rust · 15 crates · 1,116 tests · 0 failures
+~31,000 lines of Rust · 16 crates · 1,846 tests · 0 failures
 
 ---
 
@@ -42,7 +42,7 @@ tags: [exochain, documentation, index]
 
 ## Reference
 
-- [[CRATE-REFERENCE]] — Complete API reference for all 15 crates (types, traits, functions, invariants)
+- [[CRATE-REFERENCE]] — Complete API reference for all 16 crates (types, traits, functions, invariants)
 
 ## Guides
 
