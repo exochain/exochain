@@ -6,7 +6,7 @@ created: 2026-03-19
 publication: "The ASI Report — LinkedIn Newsletter"
 tags: [decision-forum, governance, constitutional, asi-safety, exochain]
 status: publication-ready
-codebase: "14 crates | 29,587 LOC Rust | 136 source files | 1,182 tests | 0 failures"
+codebase: "16 crates | 29,587 LOC Rust | 136 source files | 1,846 tests | 0 failures"
 ---
 
 # decision.forum — System Documentation

@@ -163,4 +163,4 @@ Updated 2026-03-20 after EXOCHAIN-REM-009 — continuous governance monitoring a
 | **TOTAL** | **87** | **84** | **1** | **2** |
 
 **Coverage: 84/87 requirements traced to code (97%). 2 planned (ExoForge scheduling + React dashboard). 1 partial (T-14 Rust attestation verification).**
-**Workspace: 1,116 tests, 0 failures across 14 crates (monitoring requirements covered by integration tests — see MON-009).**
+**Workspace: 1,846 tests, 0 failures across 16 crates (monitoring requirements covered by integration tests — see MON-009).**

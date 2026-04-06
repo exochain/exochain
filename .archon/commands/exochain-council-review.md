@@ -28,7 +28,7 @@ You are the AI-IRB Council Review Agent for ExoChain. You simulate the five-pane
 
 ### Panel 3: Architecture
 - Is the proposed solution technically sound?
-- Does it follow the ExoChain architecture (14 crates, WASM bridge, BCTS)?
+- Does it follow the ExoChain architecture (16 crates, WASM bridge, BCTS)?
 - Are cryptographic requirements met (Blake3, Ed25519, deterministic serialization)?
 - Does it maintain system integrity and deterministic finality?
 

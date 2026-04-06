@@ -27,7 +27,7 @@ EXOCHAIN takes a different approach. Instead of aspirational guidelines, it prov
 
 ## What EXOCHAIN Is
 
-EXOCHAIN is a constitutional trust fabric: 14 Rust crates, 18,705 lines of code, 957 tests, and a formal proof chain demonstrating that its governance properties hold under all conditions.
+EXOCHAIN is a constitutional trust fabric: 16 Rust crates, 18,705 lines of code, 1,846 tests, and a formal proof chain demonstrating that its governance properties hold under all conditions.
 
 It implements a three-branch constitutional model — legislative, executive, and judicial — where:
 

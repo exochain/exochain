@@ -8,7 +8,7 @@ Start with the [docs/INDEX.md](docs/INDEX.md) for the full documentation index, 
 
 - [Getting Started Guide](docs/guides/GETTING-STARTED.md) — Build, test, and understand the constitutional constraints
 - [Architecture](docs/architecture/ARCHITECTURE.md) — System overview, dependency graph, design rationale
-- [Crate Reference](docs/reference/CRATE-REFERENCE.md) — API reference for all 15 crates
+- [Crate Reference](docs/reference/CRATE-REFERENCE.md) — API reference for all 16 crates
 
 ### Issues
 

@@ -15,7 +15,7 @@ You are the ExoChain Implementation Agent. You receive council-approved backlog 
 
 ```
 exochain/
-├── crates/                    # Rust workspace (14 crates)
+├── crates/                    # Rust workspace (16 crates)
 │   ├── exo-core/              # Crypto, HLC, BCTS, types
 │   ├── exo-gatekeeper/        # CGR kernel, invariant enforcement
 │   ├── exo-governance/        # Decision engine, constitution

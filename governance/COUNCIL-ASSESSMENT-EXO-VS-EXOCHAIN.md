@@ -20,7 +20,7 @@ links:
 | Dimension | EXOCHAIN (Rust) | EXO (TypeScript) |
 |-----------|----------------|-------------------|
 | Language | Rust | TypeScript + Solidity |
-| Crates/Modules | 14 crates, ~24K LOC | ~3.2K LOC core + 3.9K worktree |
+| Crates/Modules | 16 crates, ~24K LOC | ~3.2K LOC core + 3.9K worktree |
 | Tests | Structured but sparse | ~61 tests, 2K LOC |
 | Governance docs | CR-001 + refactor plan | ADRs, whitepaper, prompts |
 | Deployment | None (library) | Docker Compose 14-container |
@@ -33,7 +33,7 @@ links:
 **Question:** Does this preserve AEGIS invariants?
 
 ### What EXO Got Right
-- **BCTS (Bailment-Conditioned Transaction Set)** — 11-state lifecycle unifying governance actions scattered across exochain's 14 crates into one correlation-tracked, receipt-hashed, version-logged transaction object. This is architecturally superior for audit trails.
+- **BCTS (Bailment-Conditioned Transaction Set)** — 11-state lifecycle unifying governance actions scattered across exochain's 16 crates into one correlation-tracked, receipt-hashed, version-logged transaction object. This is architecturally superior for audit trails.
 - **MCP Enforcement** — 6 named rules (MCP_001–MCP_006) governing every AI interaction. Novel; no exochain equivalent.
 - **Actions-for-Cause** — 10 typed cause-action mappings with severity levels. More structured than exochain's emergency module.
 - **Recursive Council Review** — 5-agent review loop with confidence decay (0.05/pass), precedent lookup, drift detection, convergence detection + human escalation. This is the council-driven governance model made executable.

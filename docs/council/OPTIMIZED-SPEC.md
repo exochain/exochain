@@ -3,7 +3,7 @@
 **Synthesized from:** 5 Council Panel Reviews (Governance, Legal, Architecture, Security, Operations)
 **Date:** 2026-03-19
 **Status:** Post-implementation -- all critical fixes applied and tested
-**Test Results:** 1089 tests passing across 14 crates, 0 failures
+**Test Results:** 1,846 tests passing across 16 crates, 0 failures
 
 ---
 
@@ -44,7 +44,7 @@ Six critical gaps identified by the council have been fixed and tested:
 ### Fix 4: Post-Quantum Ready Signatures (P1 -- Panel 4)
 - **Crate:** `exo-core/src/types.rs`
 - **Change:** `Signature` changed from `[u8; 64]` to enum: `Ed25519([u8; 64])`, `PostQuantum(Vec<u8>)`, `Hybrid { classical: [u8; 64], pq: Vec<u8> }`, `Empty`.
-- **Blast radius:** All 14 crates updated. Custom serde via proxy type.
+- **Blast radius:** All 16 crates updated. Custom serde via proxy type.
 - **Tests proving it:**
   - `signature_post_quantum` -- PQ variant roundtrips
   - `signature_hybrid` -- hybrid variant with classical + PQ bytes

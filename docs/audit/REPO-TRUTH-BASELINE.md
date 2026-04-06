@@ -48,7 +48,7 @@ Method: Manual audit + automated verification
 
 | Claim | Source | Verified | Actual |
 |-------|--------|----------|--------|
-| "14 crates" | README, INDEX | ❌ | **15 crates** (exochain-wasm added) |
+| "14 crates" | README, INDEX | ❌ | **16 crates** (exochain-wasm + exo-node added) |
 | "136 source files" | README | ❌ | **148 source files** |
 | "29,587 lines of Rust" | README | ❌ | **31,094 lines** |
 | "1,116 tests" | README | ✅ | 1,116 lib tests pass |

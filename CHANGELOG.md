@@ -13,7 +13,7 @@ First tagged pre-release of EXOCHAIN.  All 15 workspace crates compile and pass
 the 11-gate CI pipeline.  The gateway REST/GraphQL layer is feature-in-progress
 (see Known Limitations below).
 
-### Architecture — 15 Crates
+### Architecture — 16 Crates
 
 | Crate | Role |
 |---|---|
@@ -75,7 +75,7 @@ the 11-gate CI pipeline.  The gateway REST/GraphQL layer is feature-in-progress
 
 ### Changed
 - README rewritten with three-layer structure: Verified Today / Supported by Design / Roadmap
-- Numeric claims updated to match actual counts (15 crates, 148 files, ~31K LOC)
+- Numeric claims updated to match actual counts (16 crates, 148 files, ~31K LOC)
 - Governance claims downgraded from "all complete" to specific counts with statuses
 - docs/INDEX.md updated to reference all documentation including demo, ExoForge, CI/CD
 - CONTRIBUTING.md updated with ExoForge self-improvement workflow

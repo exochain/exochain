@@ -51,10 +51,10 @@ AEGIS = *Autonomous Entity Governance & Invariant System* (canonical definition:
 | AEGIS as constitutional framework overview | `EXOCHAIN-FABRIC-PLATFORM.md` §3A.1 | **Explanatory** (tier 3) |
 | Separation of Powers model (Legislative / Executive / Judicial) | Platform §3A.2; Architecture §2 | **Explanatory** — implementation detail for normative CR-001 §6 |
 | Constitutional governance flow diagram | Platform §3A.2.4 | **Explanatory** |
-| CGR Kernel architecture and INV-001 through INV-009 invariants | Platform §3A.3; `exo-gatekeeper/src/invariants.rs` | **Normative in code** (`invariants.rs` is authoritative implementation) |
+| CGR Kernel architecture and INV-001 through INV-008 invariants | Platform §3A.3; `exo-gatekeeper/src/invariants.rs` | **Normative in code** (`invariants.rs` is authoritative implementation) |
 | Constitutional Amendment Process | Platform §3A.3.2 | **Pending** — process described, not yet tested end-to-end (CR-001 §8 gap) |
 | AEGIS surface mapping (crate assignments) | CR-001 §7 | **Normative** (tier 1) |
-| INV-008 / INV-009 kernel + registry immutability | Platform §2.1 refinement; `exo-gatekeeper/src/invariants.rs` | **Normative in code** |
+| INV-008 kernel + registry immutability | Platform §2.1 refinement; `exo-gatekeeper/src/invariants.rs` | **Normative in code** |
 | NIST AI RMF alignment | `NIST_AI_RMF_MAPPING.toml` | **Explanatory** |
 
 ## SYBIL Clauses — Status

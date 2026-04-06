@@ -16,7 +16,7 @@ All 11 sub-agent missions are **COMPLETE**. Status updated 2026-03-19.
 * **Inputs**: Spec Phases, Rust Ecosystem Best Practices.
 * **Outputs**: Repo layout, `Cargo.toml` workspace, crate boundaries.
 * **Definition of Done**: Use of `workspace` pattern, circular dependency check pass, clear API boundaries.
-* **Status**: **DONE** — 14 crates established in workspace `Cargo.toml` with clean dependency graph.
+* **Status**: **DONE** — 16 crates established in workspace `Cargo.toml` with clean dependency graph.
 
 ## C) CRYPTO_CANONICAL_AGENT (Judicial) — DONE
 
@@ -72,7 +72,7 @@ All 11 sub-agent missions are **COMPLETE**. Status updated 2026-03-19.
 * **Inputs**: Spec Section 16 (Acceptance Criteria).
 * **Outputs**: Test harnesses, Integration tests, Fuzz targets.
 * **Definition of Done**: Section 16 Acceptance Criteria are automated and passing.
-* **Status**: **DONE** — 1,116 tests, 0 failures across 14 crates and 136 source files.
+* **Status**: **DONE** — 1,846 tests, 0 failures across 16 crates and 136 source files.
 
 ## J) DEVOPS_RELEASE_AGENT (Judicial) — DONE
 

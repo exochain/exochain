@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-Full audit of all 15 crates in the ExoChain workspace for admin-bypass paths. **No bypass paths found.**
+Full audit of all 16 crates in the ExoChain workspace for admin-bypass paths. **No bypass paths found.**
 
 `Kernel::adjudicate` is the single constitutional adjudication codepath. No shortcuts, backdoors, privilege escalations, or routes that circumvent AEGIS invariant checking were identified. The workspace remains in compliance with the constitutional invariant that "no admins" is the definitive security posture.
 
