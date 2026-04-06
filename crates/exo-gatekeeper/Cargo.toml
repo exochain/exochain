@@ -1,6 +1,7 @@
 [package]
 name = "exo-gatekeeper"
 description = "EXOCHAIN judicial branch — CGR kernel, combinator algebra, invariant enforcement, Holon runtime, MCP middleware"
+documentation = "https://docs.exochain.io"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

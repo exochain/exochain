@@ -1,6 +1,7 @@
 [package]
 name = "exo-identity"
 description = "EXOCHAIN constitutional trust fabric — privacy-preserving identity adjudication"
+documentation = "https://docs.exochain.io"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

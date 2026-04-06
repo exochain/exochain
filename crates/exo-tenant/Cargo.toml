@@ -1,6 +1,7 @@
 [package]
 name = "exo-tenant"
 description = "EXOCHAIN constitutional trust fabric — multi-tenant isolation, cold storage, sharding"
+documentation = "https://docs.exochain.io"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,7 @@
 [package]
 name = "exo-api"
 description = "EXOCHAIN constitutional trust fabric — P2P networking and external API types"
+documentation = "https://docs.exochain.io"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

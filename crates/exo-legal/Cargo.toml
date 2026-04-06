@@ -1,6 +1,7 @@
 [package]
 name = "exo-legal"
 description = "EXOCHAIN constitutional trust fabric — litigation-grade evidence, eDiscovery, privilege, fiduciary duty"
+documentation = "https://docs.exochain.io"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

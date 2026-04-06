@@ -1,6 +1,7 @@
 [package]
 name = "exo-dag"
 description = "EXOCHAIN append-only DAG with BFT consensus and Merkle structures"
+documentation = "https://docs.exochain.io"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

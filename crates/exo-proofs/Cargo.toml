@@ -1,6 +1,7 @@
 [package]
 name = "exo-proofs"
 description = "EXOCHAIN zero-knowledge proof system -- SNARK, STARK, ZKML verifier"
+documentation = "https://docs.exochain.io"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

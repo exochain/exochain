@@ -1,6 +1,7 @@
 [package]
 name = "exo-core"
 description = "EXOCHAIN constitutional trust fabric — foundational deterministic types, HLC, crypto, BCTS state machine"
+documentation = "https://docs.exochain.io"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

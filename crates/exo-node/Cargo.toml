@@ -1,6 +1,7 @@
 [package]
 name = "exo-node"
 description = "EXOCHAIN distributed node — single binary for joining and participating in the constitutional governance network"
+documentation = "https://docs.exochain.io"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
