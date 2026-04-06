@@ -180,6 +180,7 @@ jobs:
             exo-api
             exo-gateway
             decision-forum
+            exochain-wasm
           )
           for crate in "${CRATES[@]}"; do
             echo "Publishing $crate..."
@@ -245,3 +246,43 @@ jobs:
             artifacts/**/*.tar.gz
             artifacts/**/*.cdx.json
           draft: ${{ inputs.dry_run }}
+
+  # -----------------------------------------------------------------------
+  # Deploy seed node to Fly.io
+  #
+  # Builds the exo-node Docker image inside Fly's remote builder and
+  # deploys it to the `exochain-seed` app.  Requires FLY_API_TOKEN in
+  # the `release` environment secrets.
+  # -----------------------------------------------------------------------
+  deploy:
+    name: "Deploy to Fly.io"
+    runs-on: ubuntu-latest
+    needs: [github-release]
+    if: ${{ !inputs.dry_run }}
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy seed node
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          echo "Deploying exochain-seed v${{ inputs.version }} to Fly.io..."
+          flyctl deploy \
+            --config deploy/fly.toml \
+            --dockerfile deploy/Dockerfile.node \
+            --image-label "v${{ inputs.version }}" \
+            --strategy rolling \
+            --wait-timeout 300
+
+      - name: Verify deployment health
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          echo "Waiting for health check..."
+          sleep 15
+          flyctl status --config deploy/fly.toml
+          flyctl checks list --config deploy/fly.toml

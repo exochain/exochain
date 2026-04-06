@@ -1,0 +1,54 @@
+# EXOCHAIN Fly.io Deployment
+#
+# Deploys the exochain-seed node to Fly.io on every push to main.
+# Uses Fly's remote Docker builder — no local Docker required.
+#
+# Required secrets (in the `production` environment):
+#   FLY_API_TOKEN — Fly.io deploy token (org-scoped or app-scoped)
+
+name: Deploy to Fly.io
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'deploy/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: "Deploy Seed Node"
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly.io
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          echo "Deploying exochain-seed from $(git rev-parse --short HEAD)..."
+          flyctl deploy \
+            --config deploy/fly.toml \
+            --dockerfile deploy/Dockerfile.node \
+            --image-label "sha-$(git rev-parse --short HEAD)" \
+            --strategy rolling \
+            --wait-timeout 300
+
+      - name: Verify deployment
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          sleep 15
+          flyctl status --config deploy/fly.toml
+          flyctl checks list --config deploy/fly.toml
+          echo "Deployment complete."
