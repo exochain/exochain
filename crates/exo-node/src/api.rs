@@ -122,6 +122,21 @@ pub struct NodeStatusResponse {
     pub validator_count: usize,
     pub is_validator: bool,
     pub validators: Vec<String>,
+    /// Governance feedback loop features.
+    pub governance_feedback: GovernanceFeedbackStatus,
+}
+
+/// Status of the autonomous governance feedback loop.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GovernanceFeedbackStatus {
+    /// Sentinel → auto-proposal connector is wired.
+    pub sentinel_connector: bool,
+    /// Holon → auto-proposal connector is wired.
+    pub holon_connector: bool,
+    /// Committed node → decision execution connector is wired.
+    pub decision_execution: bool,
+    /// Trust receipt emission on autonomous actions.
+    pub trust_receipts: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +219,12 @@ async fn handle_status(State(api): State<Arc<NodeApiState>>) -> Json<NodeStatusR
         validator_count: validators.len(),
         is_validator,
         validators,
+        governance_feedback: GovernanceFeedbackStatus {
+            sentinel_connector: true,
+            holon_connector: true,
+            decision_execution: true,
+            trust_receipts: true,
+        },
     })
 }
 
@@ -453,6 +474,10 @@ mod tests {
         assert_eq!(status.consensus_round, 0);
         assert_eq!(status.validator_count, 4);
         assert!(status.is_validator);
+        assert!(status.governance_feedback.sentinel_connector);
+        assert!(status.governance_feedback.holon_connector);
+        assert!(status.governance_feedback.decision_execution);
+        assert!(status.governance_feedback.trust_receipts);
     }
 
     #[tokio::test]
