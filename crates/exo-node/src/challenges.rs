@@ -156,14 +156,21 @@ fn now_timestamp() -> Timestamp {
 }
 
 /// `GET /api/v1/challenges` — list all challenge holds.
-async fn handle_list(State(store): State<SharedChallengeStore>) -> Json<Vec<ChallengeResponse>> {
-    let st = store.lock().expect("challenge store lock");
-    Json(
+async fn handle_list(
+    State(store): State<SharedChallengeStore>,
+) -> Result<Json<Vec<ChallengeResponse>>, (StatusCode, String)> {
+    let st = store.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Challenge store unavailable".to_string(),
+        )
+    })?;
+    Ok(Json(
         st.list()
             .iter()
             .map(|h| ChallengeResponse::from(*h))
             .collect(),
-    )
+    ))
 }
 
 /// `GET /api/v1/challenges/:id` — get a single challenge.
@@ -173,7 +180,12 @@ async fn handle_get(
 ) -> Result<Json<ChallengeResponse>, (StatusCode, String)> {
     let id = Uuid::parse_str(&id_str)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid UUID: {e}")))?;
-    let st = store.lock().expect("challenge store lock");
+    let st = store.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Challenge store unavailable".to_string(),
+        )
+    })?;
     match st.get(&id) {
         Some(hold) => Ok(Json(ChallengeResponse::from(hold))),
         None => Err((StatusCode::NOT_FOUND, "challenge not found".into())),
@@ -202,7 +214,12 @@ async fn handle_file(
     let resp = ChallengeResponse::from(&hold);
 
     {
-        let mut st = store.lock().expect("challenge store lock");
+        let mut st = store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Challenge store unavailable".to_string(),
+            )
+        })?;
         st.insert(hold);
     }
 
@@ -217,7 +234,12 @@ async fn handle_begin_review(
     let id = Uuid::parse_str(&id_str)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid UUID: {e}")))?;
 
-    let mut st = store.lock().expect("challenge store lock");
+    let mut st = store.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Challenge store unavailable".to_string(),
+        )
+    })?;
     let hold = st
         .get_mut(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "challenge not found".into()))?;
@@ -237,7 +259,12 @@ async fn handle_resolve(
     let id = Uuid::parse_str(&id_str)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid UUID: {e}")))?;
 
-    let mut st = store.lock().expect("challenge store lock");
+    let mut st = store.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Challenge store unavailable".to_string(),
+        )
+    })?;
     let hold = st
         .get_mut(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "challenge not found".into()))?;
@@ -257,7 +284,12 @@ async fn handle_dismiss(
     let id = Uuid::parse_str(&id_str)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid UUID: {e}")))?;
 
-    let mut st = store.lock().expect("challenge store lock");
+    let mut st = store.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Challenge store unavailable".to_string(),
+        )
+    })?;
     let hold = st
         .get_mut(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "challenge not found".into()))?;
