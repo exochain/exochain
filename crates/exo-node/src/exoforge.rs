@@ -771,9 +771,7 @@ async fn list_tasks(
     })))
 }
 
-async fn get_stats(
-    State(state): State<SharedForgeState>,
-) -> Result<Json<ForgeStats>, StatusCode> {
+async fn get_stats(State(state): State<SharedForgeState>) -> Result<Json<ForgeStats>, StatusCode> {
     let s = state.lock().map_err(|_| {
         tracing::error!("ForgeState mutex poisoned in get_stats");
         StatusCode::INTERNAL_SERVER_ERROR

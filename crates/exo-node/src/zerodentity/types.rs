@@ -548,7 +548,6 @@ impl std::str::FromStr for OtpChannel {
 }
 
 impl OtpChannel {
-
     /// Return the default TTL for this channel in milliseconds.
     ///
     /// - Email: 5 minutes (300_000 ms)
