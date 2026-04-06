@@ -4,7 +4,7 @@
 //! This implementation mirrors `MemoryStore` from `exo-dag` but uses durable
 //! storage so state survives restarts.
 
-#![allow(clippy::expect_used, clippy::as_conversions)]
+#![allow(clippy::as_conversions)]
 
 use std::{collections::BTreeSet, path::Path};
 
@@ -226,8 +226,9 @@ impl SqliteDagStore {
                 }
 
                 Ok(Vote {
+                    #[allow(clippy::expect_used)] // Hardcoded constant — always valid.
                     voter: Did::new(&voter_str)
-                        .unwrap_or_else(|_| Did::new("did:exo:unknown").expect("fallback DID")),
+                        .unwrap_or_else(|_| Did::new("did:exo:unknown").expect("hardcoded DID")),
                     round,
                     node_hash: Hash256::from_bytes(hash_arr),
                     signature: exo_core::types::Signature::from_bytes(sig_arr),

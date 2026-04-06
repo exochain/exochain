@@ -9,8 +9,6 @@
 //! layer will be upgraded to Ed25519 DID-signature authentication (as already
 //! implemented in `exo-gateway/src/auth.rs`).
 
-#![allow(clippy::expect_used)]
-
 use std::sync::Arc;
 
 use axum::{
@@ -29,9 +27,10 @@ pub struct BearerAuth {
 
 /// Generate a cryptographically random admin token (hex-encoded 32 bytes).
 #[must_use]
+#[allow(clippy::expect_used)] // OS entropy failure is unrecoverable.
 pub fn generate_admin_token() -> String {
     let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes).expect("entropy source");
+    getrandom::getrandom(&mut bytes).expect("OS entropy source unavailable");
     hex::encode(bytes)
 }
 

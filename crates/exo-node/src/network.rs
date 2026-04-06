@@ -238,12 +238,24 @@ pub async fn run_network_loop(
                     SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                         tracing::info!(%peer_id, "Connection established");
                         register_peer(&mut peer_registry, &peer_id);
-                        let _ = event_tx.send(NetworkEvent::PeerDiscovered { peer_id }).await;
+                        if event_tx
+                            .send(NetworkEvent::PeerDiscovered { peer_id })
+                            .await
+                            .is_err()
+                        {
+                            tracing::warn!("Network event receiver dropped (PeerDiscovered)");
+                        }
                     }
 
                     SwarmEvent::ConnectionClosed { peer_id, .. } => {
                         tracing::info!(%peer_id, "Connection closed");
-                        let _ = event_tx.send(NetworkEvent::PeerLost { peer_id }).await;
+                        if event_tx
+                            .send(NetworkEvent::PeerLost { peer_id })
+                            .await
+                            .is_err()
+                        {
+                            tracing::warn!("Network event receiver dropped (PeerLost)");
+                        }
                     }
 
                     // -- Gossipsub events --
@@ -268,11 +280,19 @@ pub async fn run_network_loop(
                         let topic_str = message.topic.to_string();
                         match wire::decode(&message.data) {
                             Ok(wire_msg) => {
-                                let _ = event_tx.send(NetworkEvent::MessageReceived {
-                                    source: propagation_source,
-                                    topic: topic_str,
-                                    message: wire_msg,
-                                }).await;
+                                if event_tx
+                                    .send(NetworkEvent::MessageReceived {
+                                        source: propagation_source,
+                                        topic: topic_str,
+                                        message: wire_msg,
+                                    })
+                                    .await
+                                    .is_err()
+                                {
+                                    tracing::warn!(
+                                        "Network event receiver dropped (MessageReceived)"
+                                    );
+                                }
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -299,7 +319,15 @@ pub async fn run_network_loop(
                             swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                             swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                             register_peer(&mut peer_registry, &peer_id);
-                            let _ = event_tx.send(NetworkEvent::PeerDiscovered { peer_id }).await;
+                            if event_tx
+                                .send(NetworkEvent::PeerDiscovered { peer_id })
+                                .await
+                                .is_err()
+                            {
+                                tracing::warn!(
+                                    "Network event receiver dropped (mDNS PeerDiscovered)"
+                                );
+                            }
                         }
                     }
 
@@ -374,7 +402,9 @@ pub async fn run_network_loop(
 
                     NetworkCommand::PeerCount { reply } => {
                         let count = swarm.connected_peers().count();
-                        let _ = reply.send(count);
+                        if reply.send(count).is_err() {
+                            tracing::warn!("PeerCount reply receiver dropped");
+                        }
                     }
                 }
             }

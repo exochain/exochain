@@ -121,9 +121,13 @@ fn spawn_event_fanout(
             }
 
             // Dispatch to reactor (consensus + governance messages).
-            let _ = reactor_tx.send(event.clone()).await;
+            if reactor_tx.send(event.clone()).await.is_err() {
+                tracing::warn!("Reactor event receiver dropped");
+            }
             // Dispatch to sync engine (state sync messages).
-            let _ = sync_tx.send(event).await;
+            if sync_tx.send(event).await.is_err() {
+                tracing::warn!("Sync event receiver dropped");
+            }
         }
     });
 }

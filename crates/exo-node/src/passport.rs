@@ -17,8 +17,6 @@
 //! - `GET /api/v1/agents/:did/consent` — active bailments
 //! - `GET /api/v1/agents/:did/standing` — sanctions and revocation status
 
-#![allow(clippy::expect_used)]
-
 use std::sync::{Arc, Mutex};
 
 use axum::{
