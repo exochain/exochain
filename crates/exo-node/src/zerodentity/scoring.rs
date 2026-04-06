@@ -15,13 +15,7 @@
 // casts between bounded integer types (e.g. `usize` → `u32` for counts
 // that are capped by `.min()` before conversion).  All values are in
 // basis-points (0–10_000) so overflow is impossible in practice.
-// All public API consumed by downstream modules (APE-73/74); dead_code is intentional.
-#![allow(
-    clippy::as_conversions,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    dead_code
-)]
+#![allow(clippy::as_conversions, clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
 

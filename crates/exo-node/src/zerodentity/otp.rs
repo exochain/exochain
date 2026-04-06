@@ -8,10 +8,6 @@
 //! - Lockout: after 5 failed attempts, locked for 3_600_000ms (1 hour)
 //! - Resend cooldown: 60_000ms (1 min)
 //! - Code format: 6-digit decimal string (leading zeros preserved)
-//!
-//! All public API is consumed by downstream modules (APE-73 onboarding, APE-74
-//! signal collection). Upstream-only suppression is intentional.
-#![allow(dead_code)]
 
 use hmac::{Hmac, Mac};
 use rand::RngCore;
