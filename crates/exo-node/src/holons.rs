@@ -454,11 +454,13 @@ pub async fn run_holon_manager(
                 let ctx = build_holon_adjudication_context(&topology_holon, &config);
                 match holon::step(&mut topology_holon, &input, &kernel, &ctx) {
                     Ok(_output) => {
-                        let _ = event_tx.send(HolonEvent::TopologyAnalysis {
+                        if event_tx.send(HolonEvent::TopologyAnalysis {
                             peer_count,
                             diversity_score,
                             recommendation,
-                        }).await;
+                        }).await.is_err() {
+                            tracing::warn!("Holon event channel closed — TopologyAnalysis dropped");
+                        }
 
                         tracing::debug!(
                             peer_count,
@@ -473,10 +475,12 @@ pub async fn run_holon_manager(
                             "Topology Holon step failed"
                         );
                         if topology_holon.state == HolonState::Terminated {
-                            let _ = event_tx.send(HolonEvent::HolonTerminated {
+                            if event_tx.send(HolonEvent::HolonTerminated {
                                 holon_id: topology_holon.id.clone(),
                                 reason: e.to_string(),
-                            }).await;
+                            }).await.is_err() {
+                                tracing::warn!("Holon event channel closed — HolonTerminated dropped");
+                            }
                         }
                     }
                 }
@@ -487,9 +491,12 @@ pub async fn run_holon_manager(
                     continue;
                 }
 
-                let validator_count = {
-                    let s = reactor_state.lock().expect("reactor state lock");
-                    s.consensus.config.validators.len()
+                let validator_count = match reactor_state.lock() {
+                    Ok(s) => s.consensus.config.validators.len(),
+                    Err(_) => {
+                        tracing::error!("Reactor state mutex poisoned in scaling holon");
+                        continue;
+                    }
                 };
                 // Estimate node count from peer count + 1 (self).
                 let node_count = net_handle.peer_count().await.unwrap_or(0) + 1;
@@ -503,19 +510,24 @@ pub async fn run_holon_manager(
                 let ctx = build_holon_adjudication_context(&scaling_holon, &config);
                 match holon::step(&mut scaling_holon, &input, &kernel, &ctx) {
                     Ok(_output) => {
-                        let _ = event_tx.send(HolonEvent::ScalingRecommendation {
+                        if event_tx.send(HolonEvent::ScalingRecommendation {
                             validator_count,
                             node_count,
                             recommendation: recommendation.clone(),
-                        }).await;
+                        }).await.is_err() {
+                            tracing::warn!("Holon event channel closed — ScalingRecommendation dropped");
+                        }
 
                         // Auto-action: if validator count is critical (< 3) and
                         // we're a validator, attempt to propose validator promotion
                         // for an eligible peer via a governance action.
                         if validator_count < 3 && node_count > validator_count {
-                            let is_validator = {
-                                let s = reactor_state.lock().expect("lock");
-                                s.is_validator
+                            let is_validator = match reactor_state.lock() {
+                                Ok(s) => s.is_validator,
+                                Err(_) => {
+                                    tracing::error!("Reactor state mutex poisoned in scaling auto-action");
+                                    continue;
+                                }
                             };
                             if is_validator {
                                 // Build a candidate DID — in production, this would
@@ -569,10 +581,12 @@ pub async fn run_holon_manager(
                             "Scaling Holon step failed"
                         );
                         if scaling_holon.state == HolonState::Terminated {
-                            let _ = event_tx.send(HolonEvent::HolonTerminated {
+                            if event_tx.send(HolonEvent::HolonTerminated {
                                 holon_id: scaling_holon.id.clone(),
                                 reason: e.to_string(),
-                            }).await;
+                            }).await.is_err() {
+                                tracing::warn!("Holon event channel closed — HolonTerminated dropped");
+                            }
                         }
                     }
                 }
@@ -583,9 +597,12 @@ pub async fn run_holon_manager(
                     continue;
                 }
 
-                let (consensus_round, committed_height) = {
-                    let s = reactor_state.lock().expect("reactor state lock");
-                    (s.consensus.current_round, s.consensus.committed.len() as u64)
+                let (consensus_round, committed_height) = match reactor_state.lock() {
+                    Ok(s) => (s.consensus.current_round, s.consensus.committed.len() as u64),
+                    Err(_) => {
+                        tracing::error!("Reactor state mutex poisoned in health holon");
+                        continue;
+                    }
                 };
 
                 let status = analyze_health(consensus_round, committed_height);
@@ -597,11 +614,13 @@ pub async fn run_holon_manager(
                 let ctx = build_holon_adjudication_context(&health_holon, &config);
                 match holon::step(&mut health_holon, &input, &kernel, &ctx) {
                     Ok(_output) => {
-                        let _ = event_tx.send(HolonEvent::HealthCheck {
+                        if event_tx.send(HolonEvent::HealthCheck {
                             consensus_round,
                             committed_height,
                             status,
-                        }).await;
+                        }).await.is_err() {
+                            tracing::warn!("Holon event channel closed — HealthCheck dropped");
+                        }
 
                         tracing::debug!(
                             consensus_round,
@@ -616,10 +635,12 @@ pub async fn run_holon_manager(
                             "Health Holon step failed"
                         );
                         if health_holon.state == HolonState::Terminated {
-                            let _ = event_tx.send(HolonEvent::HolonTerminated {
+                            if event_tx.send(HolonEvent::HolonTerminated {
                                 holon_id: health_holon.id.clone(),
                                 reason: e.to_string(),
-                            }).await;
+                            }).await.is_err() {
+                                tracing::warn!("Holon event channel closed — HolonTerminated dropped");
+                            }
                         }
                     }
                 }
