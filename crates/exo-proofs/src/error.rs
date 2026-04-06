@@ -27,4 +27,5 @@ pub enum ProofError {
     DeserializationError(String),
 }
 
+/// Convenience alias for results that may fail with a [`ProofError`].
 pub type Result<T> = std::result::Result<T, ProofError>;

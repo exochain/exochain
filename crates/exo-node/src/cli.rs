@@ -11,12 +11,14 @@ use clap::{Parser, Subcommand};
     version,
     propagate_version = true
 )]
+/// Top-level CLI argument parser for the exochain node.
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
 }
 
 #[derive(Subcommand)]
+/// Subcommands available to the exochain node (start, join, status, peers).
 pub enum Command {
     /// Start a standalone node.
     Start {

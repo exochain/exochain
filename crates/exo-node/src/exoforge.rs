@@ -31,8 +31,10 @@ use serde::{Deserialize, Serialize};
 
 // ─── Types ──────────────────────────────────────────────────────────
 
+/// Thread-safe shared handle to the forge orchestration state.
 pub type SharedForgeState = Arc<Mutex<ForgeState>>;
 
+/// A single task in the build orchestration graph, tracking phase, status, and agent assignment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForgeTask {
     pub id: u32,
@@ -49,6 +51,7 @@ pub struct ForgeTask {
     pub completed_ms: Option<u64>,
 }
 
+/// Lifecycle status of a forge task (Queued -> Assigned -> InProgress -> Review -> Complete).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskStatus {
     Queued,
@@ -60,6 +63,7 @@ pub enum TaskStatus {
     Escalated,
 }
 
+/// Escalation tier for a blocked or contested task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EscalationLevel {
     None,
@@ -68,6 +72,7 @@ pub enum EscalationLevel {
     Human,
 }
 
+/// A timestamped entry in the forge activity log, optionally linked to a task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityEntry {
     pub timestamp_ms: u64,
@@ -75,6 +80,7 @@ pub struct ActivityEntry {
     pub task_id: Option<u32>,
 }
 
+/// Aggregate statistics across all forge tasks, including per-phase breakdowns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForgeStats {
     pub total: u32,
@@ -89,6 +95,7 @@ pub struct ForgeStats {
     pub phases: Vec<PhaseStats>,
 }
 
+/// Completion statistics for a single build phase.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PhaseStats {
     pub phase: u32,
@@ -98,6 +105,7 @@ pub struct PhaseStats {
     pub percent: f64,
 }
 
+/// Mutable state for the forge orchestrator: task graph, activity log, and spec metadata.
 pub struct ForgeState {
     pub spec_name: String,
     #[allow(dead_code)]
@@ -110,22 +118,26 @@ pub struct ForgeState {
 
 // ─── Request / Response bodies ──────────────────────────────────────
 
+/// Request body for updating a task's status.
 #[derive(Deserialize)]
 pub struct StatusUpdate {
     pub status: TaskStatus,
 }
 
+/// Request body for assigning an agent to a task.
 #[derive(Deserialize)]
 pub struct AgentAssignment {
     pub agent: String,
 }
 
+/// Request body for escalating a task to a higher authority tier.
 #[derive(Deserialize)]
 pub struct EscalateRequest {
     pub level: EscalationLevel,
     pub reason: String,
 }
 
+/// Request body for appending a message to the forge activity log.
 #[derive(Deserialize)]
 pub struct LogEntry {
     pub message: String,
@@ -142,6 +154,7 @@ fn now_ms() -> u64 {
 }
 
 impl ForgeState {
+    /// Create a new forge state pre-loaded with the 0DENTITY spec task graph.
     pub fn new_zerodentity() -> Self {
         let tasks = build_zerodentity_tasks();
         let started = now_ms();
@@ -170,6 +183,7 @@ impl ForgeState {
         }
     }
 
+    /// Compute aggregate and per-phase completion statistics from the current task list.
     pub fn stats(&self) -> ForgeStats {
         let total = self.tasks.len() as u32;
         let queued = self
@@ -1469,6 +1483,7 @@ setInterval(async () => {{
 
 // ─── Router ─────────────────────────────────────────────────────────
 
+/// Build the Axum router for all ExoForge API and dashboard routes.
 pub fn exoforge_router(state: SharedForgeState) -> Router {
     Router::new()
         .route("/exoforge", get(serve_dashboard))

@@ -2,6 +2,7 @@
 
 use thiserror::Error;
 
+/// Errors that can occur during authority chain validation and delegation operations.
 #[derive(Debug, Error, PartialEq, Eq, Clone)]
 pub enum AuthorityError {
     #[error("chain broken at index {index}: {reason}")]
