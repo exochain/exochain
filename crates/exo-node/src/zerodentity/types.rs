@@ -365,9 +365,9 @@ impl fmt::Display for AttestationType {
     }
 }
 
-impl AttestationType {
-    /// Parse from string representation.
-    pub fn from_str(s: &str) -> Result<Self, ()> {
+impl std::str::FromStr for AttestationType {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "Identity" => Ok(Self::Identity),
             "Trustworthy" => Ok(Self::Trustworthy),
@@ -485,10 +485,9 @@ impl fmt::Display for ClaimStatus {
     }
 }
 
-impl ClaimStatus {
-    /// Parse a `ClaimStatus` from its string representation.
-    #[allow(dead_code)]
-    pub fn from_str(s: &str) -> Result<Self, ()> {
+impl std::str::FromStr for ClaimStatus {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "Pending" => Ok(Self::Pending),
             "Verified" => Ok(Self::Verified),
@@ -513,10 +512,9 @@ impl fmt::Display for BehavioralSignalType {
     }
 }
 
-impl BehavioralSignalType {
-    /// Parse from string representation.
-    #[allow(dead_code)]
-    pub fn from_str(s: &str) -> Result<Self, ()> {
+impl std::str::FromStr for BehavioralSignalType {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "KeystrokeDynamics" => Ok(Self::KeystrokeDynamics),
             "MouseDynamics" => Ok(Self::MouseDynamics),
@@ -538,15 +536,18 @@ impl fmt::Display for OtpChannel {
     }
 }
 
-impl OtpChannel {
-    /// Parse from string representation.
-    pub fn from_str(s: &str) -> Result<Self, ()> {
+impl std::str::FromStr for OtpChannel {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "Email" => Ok(Self::Email),
             "Sms" => Ok(Self::Sms),
             _ => Err(()),
         }
     }
+}
+
+impl OtpChannel {
 
     /// Return the default TTL for this channel in milliseconds.
     ///
@@ -573,10 +574,9 @@ impl fmt::Display for OtpState {
     }
 }
 
-impl OtpState {
-    /// Parse from string representation.
-    #[allow(dead_code)]
-    pub fn from_str(s: &str) -> Result<Self, ()> {
+impl std::str::FromStr for OtpState {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "Pending" => Ok(Self::Pending),
             "Verified" => Ok(Self::Verified),
@@ -594,6 +594,8 @@ impl OtpState {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
 
     // ---- AttestationType ----

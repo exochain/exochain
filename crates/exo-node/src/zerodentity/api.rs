@@ -11,7 +11,10 @@
 //!
 //! Spec reference: §7.2, §7.3.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 
 use axum::{
     Json, Router,

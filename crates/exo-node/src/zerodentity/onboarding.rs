@@ -5,7 +5,10 @@
 //!
 //! Spec reference: §7.1.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
 use exo_core::types::{Did, Hash256, Signature};
