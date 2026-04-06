@@ -389,10 +389,11 @@ fn resolve_mutation_mock(mutation: &LiveSafeMutation) -> serde_json::Value {
 }
 
 /// Current time in milliseconds since epoch.
+#[allow(clippy::as_conversions)]
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock before epoch")
+        .unwrap_or_default()
         .as_millis() as u64
 }
 
