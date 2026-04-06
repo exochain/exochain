@@ -26,6 +26,7 @@ use thiserror::Error;
 // Error
 // ---------------------------------------------------------------------------
 
+/// Errors returned by conflict-of-interest enforcement checks.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ConflictError {
     #[error("recusal required: actor {actor} has {severity:?} conflict — vote blocked")]
@@ -39,6 +40,7 @@ pub enum ConflictError {
 // Core types
 // ---------------------------------------------------------------------------
 
+/// A participant's self-declaration of a conflict of interest with related parties.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConflictDeclaration {
     pub declarant_did: Did,
@@ -47,6 +49,7 @@ pub struct ConflictDeclaration {
     pub timestamp: Timestamp,
 }
 
+/// A governance action request identifying the actor and affected parties.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionRequest {
     pub action_id: String,
@@ -55,6 +58,7 @@ pub struct ActionRequest {
     pub description: String,
 }
 
+/// A detected conflict between a declaration and an action's affected parties.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Conflict {
     pub declaration: ConflictDeclaration,
@@ -62,6 +66,7 @@ pub struct Conflict {
     pub severity: ConflictSeverity,
 }
 
+/// Severity classification of a conflict of interest: Advisory, Material, or Disqualifying.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConflictSeverity {
     Advisory,
@@ -162,6 +167,7 @@ impl StandingConflictRegister {
 // Detection
 // ---------------------------------------------------------------------------
 
+/// Check an actor's conflict declarations against an action's affected parties.
 #[must_use]
 pub fn check_conflicts(
     actor: &Did,

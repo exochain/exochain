@@ -6,6 +6,7 @@ use exo_core::{Hash256, Timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Lifecycle state of a legal record under the retention policy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Disposition {
     Active,
@@ -14,9 +15,11 @@ pub enum Disposition {
     Destroyed,
 }
 
+/// Opaque classification label used to match records to retention rules.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Classification(pub String);
 
+/// A content-addressed legal record with retention metadata and disposition tracking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
     pub id: Uuid,
@@ -27,6 +30,7 @@ pub struct Record {
     pub disposition: Disposition,
 }
 
+/// Maps classification labels to retention durations (in days).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RetentionPolicy {
     pub rules: BTreeMap<Classification, u64>,
@@ -45,6 +49,7 @@ impl RetentionPolicy {
 
 const MS_PER_DAY: u64 = 86_400_000;
 
+/// Marks records whose retention period has elapsed as `PendingDestruction`.
 pub fn apply_retention(records: &mut [Record], policy: &RetentionPolicy, now: &Timestamp) {
     for rec in records.iter_mut() {
         if rec.disposition == Disposition::Destroyed
@@ -64,6 +69,7 @@ pub fn apply_retention(records: &mut [Record], policy: &RetentionPolicy, now: &T
     }
 }
 
+/// Creates a new active record with a content hash and the given retention period.
 #[must_use]
 pub fn create_record(data: &[u8], classification: &str, retention_days: u64) -> Record {
     Record {

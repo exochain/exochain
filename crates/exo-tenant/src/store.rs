@@ -22,6 +22,7 @@ pub struct TenantStore {
 }
 
 impl TenantStore {
+    /// Create an empty tenant store.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -29,6 +30,7 @@ impl TenantStore {
         }
     }
 
+    /// Store an item under the given tenant, enforcing tenant-ID consistency.
     pub fn put(&mut self, tenant_id: Uuid, item: TenantData) -> Result<()> {
         if item.tenant_id != tenant_id {
             return Err(TenantError::StorageError {
@@ -42,11 +44,13 @@ impl TenantStore {
         Ok(())
     }
 
+    /// Retrieve an item by tenant and item ID.
     #[must_use]
     pub fn get(&self, tenant_id: &Uuid, item_id: &Uuid) -> Option<&TenantData> {
         self.data.get(tenant_id)?.get(item_id)
     }
 
+    /// Remove an item, returning it on success or an error if not found.
     pub fn delete(&mut self, tenant_id: &Uuid, item_id: &Uuid) -> Result<TenantData> {
         self.data
             .get_mut(tenant_id)
@@ -67,6 +71,7 @@ impl TenantStore {
         }
     }
 
+    /// Return the number of items stored for a tenant.
     #[must_use]
     pub fn count(&self, tenant_id: &Uuid) -> usize {
         self.data.get(tenant_id).map_or(0, |m| m.len())

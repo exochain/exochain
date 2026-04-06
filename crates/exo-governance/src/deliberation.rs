@@ -9,6 +9,7 @@ use crate::{
     quorum::{Approval, IndependenceAttestation, QuorumPolicy, QuorumResult, Role, compute_quorum},
 };
 
+/// A participant's stance on a deliberation proposal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Position {
     For,
@@ -16,6 +17,7 @@ pub enum Position {
     Abstain,
 }
 
+/// A signed vote cast by a participant in a deliberation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vote {
     pub voter_did: Did,
@@ -24,6 +26,7 @@ pub struct Vote {
     pub signature: Signature,
 }
 
+/// Lifecycle state of a deliberation: Open, Closed, or Cancelled.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DeliberationStatus {
     Open,
@@ -31,6 +34,7 @@ pub enum DeliberationStatus {
     Cancelled,
 }
 
+/// A structured governance deliberation over a hashed proposal with tracked votes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Deliberation {
     pub id: Uuid,
@@ -41,6 +45,7 @@ pub struct Deliberation {
     pub created: Timestamp,
 }
 
+/// Outcome of closing a deliberation: approved, rejected, or quorum not met.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeliberationResult {
     Approved {
@@ -58,6 +63,7 @@ pub enum DeliberationResult {
     },
 }
 
+/// Open a new deliberation for the given proposal bytes and participant list.
 #[must_use]
 pub fn open_deliberation(proposal: &[u8], participants: &[Did]) -> Deliberation {
     Deliberation {
@@ -70,6 +76,7 @@ pub fn open_deliberation(proposal: &[u8], participants: &[Did]) -> Deliberation 
     }
 }
 
+/// Record a vote in an open deliberation, rejecting duplicates and closed sessions.
 pub fn cast_vote(delib: &mut Deliberation, vote: Vote) -> Result<(), GovernanceError> {
     if delib.status != DeliberationStatus::Open {
         return Err(GovernanceError::DeliberationNotOpen);
@@ -81,6 +88,7 @@ pub fn cast_vote(delib: &mut Deliberation, vote: Vote) -> Result<(), GovernanceE
     Ok(())
 }
 
+/// Close a deliberation, tally votes, and return the result based on quorum policy.
 pub fn close(delib: &mut Deliberation, quorum_policy: &QuorumPolicy) -> DeliberationResult {
     delib.status = DeliberationStatus::Closed;
     let votes_for = delib

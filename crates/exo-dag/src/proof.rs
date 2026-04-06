@@ -1,3 +1,8 @@
+//! Merkle proof types for event inclusion verification.
+//!
+//! Provides [`EventInclusionProof`], which verifies that a given event ID
+//! exists within the MMR component of an event root.
+
 use exo_core::{hash_bytes, Blake3Hash};
 use serde::{Deserialize, Serialize};
 

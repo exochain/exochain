@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::IdentityError;
 
+/// Lifecycle status of a key record in the key store.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KeyStatus {
     Active,
@@ -23,6 +24,7 @@ pub enum KeyStatus {
     Expired,
 }
 
+/// A versioned key record tracking an Ed25519 public key and its lifecycle state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyRecord {
     pub public_key: PublicKey,
@@ -32,6 +34,7 @@ pub struct KeyRecord {
     pub revocation_reason: Option<String>,
 }
 
+/// In-memory key store mapping DIDs to ordered lists of Ed25519 key records.
 #[derive(Debug, Default)]
 pub struct KeyStore {
     records: BTreeMap<String, Vec<KeyRecord>>,
@@ -39,11 +42,13 @@ pub struct KeyStore {
 }
 
 impl KeyStore {
+    /// Create an empty key store.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Generate and store a new Ed25519 key pair for the given DID.
     pub fn create_key(&mut self, did: &Did) -> Result<(PublicKey, SecretKey), IdentityError> {
         let (pk, sk) = generate_keypair();
         self.clock += 1;
@@ -64,6 +69,7 @@ impl KeyStore {
         Ok((pk, sk))
     }
 
+    /// Rotate a key by marking the old key as rotated and generating a new active key.
     pub fn rotate_key(
         &mut self,
         did: &Did,
@@ -105,6 +111,7 @@ impl KeyStore {
         Ok((new_pk, new_sk))
     }
 
+    /// Revoke a key, recording the reason for revocation.
     pub fn revoke_key(
         &mut self,
         did: &Did,
@@ -130,11 +137,13 @@ impl KeyStore {
         Ok(())
     }
 
+    /// Return all key records for the given DID, or `None` if the DID is unknown.
     #[must_use]
     pub fn get_keys(&self, did: &Did) -> Option<&[KeyRecord]> {
         self.records.get(did.as_str()).map(Vec::as_slice)
     }
 
+    /// Return the most recent active public key for the given DID, if any.
     #[must_use]
     pub fn active_key(&self, did: &Did) -> Option<&PublicKey> {
         self.records.get(did.as_str()).and_then(|records| {

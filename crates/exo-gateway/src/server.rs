@@ -32,12 +32,14 @@ use crate::{
 // Configuration
 // ---------------------------------------------------------------------------
 
+/// TLS certificate and key paths for HTTPS termination.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TlsConfig {
     pub cert_path: String,
     pub key_path: String,
 }
 
+/// Gateway server configuration: bind address, TLS, and connection limits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
     pub bind_address: String,
@@ -59,6 +61,7 @@ impl Default for GatewayConfig {
 // Synchronous handle (kept for backward compatibility)
 // ---------------------------------------------------------------------------
 
+/// Handle returned by `start()` representing a validated gateway configuration.
 #[derive(Debug)]
 pub struct GatewayHandle {
     pub config: GatewayConfig,
@@ -103,6 +106,7 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Create a new `AppState` with an optional database pool and a shared DID registry.
     pub fn new(pool: Option<sqlx::PgPool>, registry: Arc<RwLock<DidRegistry>>) -> Self {
         // Bootstrap kernel with the all-invariants set.
         // constitution bytes are hashed for immutability verification.

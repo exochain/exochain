@@ -2,6 +2,7 @@
 
 use crate::escalation::{CaseStatus, EscalationCase, EscalationPath, SybilStage};
 
+/// Outcome of a completeness check on an escalation case.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompletenessResult {
     Complete,

@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::errors::GovernanceError;
 
+/// A single entry in the hash-chained audit log, linking to the previous entry via `chain_hash`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEntry {
     pub id: Uuid,
@@ -17,12 +18,14 @@ pub struct AuditEntry {
     pub chain_hash: [u8; 32],
 }
 
+/// Append-only, hash-chained governance audit log for tamper detection.
 #[derive(Debug, Clone, Default)]
 pub struct AuditLog {
     pub entries: Vec<AuditEntry>,
 }
 
 impl AuditLog {
+    /// Create a new empty audit log.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -30,15 +33,18 @@ impl AuditLog {
         }
     }
 
+    /// Return the hash of the most recent entry, or all-zeros if the log is empty.
     #[must_use]
     pub fn head_hash(&self) -> [u8; 32] {
         self.entries.last().map(hash_entry).unwrap_or([0u8; 32])
     }
 
+    /// Return the number of entries in the audit log.
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
+    /// Return `true` if the audit log contains no entries.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
@@ -58,6 +64,7 @@ fn hash_entry(entry: &AuditEntry) -> [u8; 32] {
     *h.finalize().as_bytes()
 }
 
+/// Append an entry to the audit log, verifying its chain hash matches the current head.
 pub fn append(log: &mut AuditLog, entry: AuditEntry) -> Result<(), GovernanceError> {
     let head = log.head_hash();
     if entry.chain_hash != head {
@@ -71,6 +78,7 @@ pub fn append(log: &mut AuditLog, entry: AuditEntry) -> Result<(), GovernanceErr
     Ok(())
 }
 
+/// Verify the integrity of the entire audit chain, returning an error at the first broken link.
 pub fn verify_chain(log: &AuditLog) -> Result<(), GovernanceError> {
     let mut prev = [0u8; 32];
     for (i, entry) in log.entries.iter().enumerate() {
@@ -86,6 +94,7 @@ pub fn verify_chain(log: &AuditLog) -> Result<(), GovernanceError> {
     Ok(())
 }
 
+/// Create a new audit entry chained to the current log head, ready for appending.
 #[must_use]
 pub fn create_entry(
     log: &AuditLog,

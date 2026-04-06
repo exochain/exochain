@@ -17,6 +17,7 @@ use crate::types::PermissionSet;
 // MCP rules
 // ---------------------------------------------------------------------------
 
+/// Constitutional rules governing AI behavior within the EXOCHAIN fabric.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum McpRule {
     Mcp001BctsScope,
@@ -57,6 +58,7 @@ impl McpRule {
 // MCP context — uses cryptographic SignerType, not a bool flag
 // ---------------------------------------------------------------------------
 
+/// Context describing an AI actor's action, used for MCP rule enforcement.
 #[derive(Debug, Clone)]
 pub struct McpContext {
     pub actor_did: Did,
@@ -86,6 +88,7 @@ impl McpContext {
 // MCP violation
 // ---------------------------------------------------------------------------
 
+/// A violation produced when an AI action breaches an MCP rule.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpViolation {
     pub rule: McpRule,
@@ -98,6 +101,7 @@ pub struct McpViolation {
 // Enforcement
 // ---------------------------------------------------------------------------
 
+/// Check all given MCP rules against the context, returning the first violation (if any).
 pub fn enforce(rules: &[McpRule], context: &McpContext) -> Result<(), McpViolation> {
     if !context.is_ai() {
         return Ok(());

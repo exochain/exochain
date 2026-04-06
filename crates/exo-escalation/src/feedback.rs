@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// A policy improvement recommendation derived from resolved-case feedback.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyRecommendation {
     pub description: String,
@@ -10,6 +11,7 @@ pub struct PolicyRecommendation {
     pub confidence: u8,
 }
 
+/// Record of a resolved case outcome and any lessons learned.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeedbackEntry {
     pub case_id: Uuid,
@@ -18,6 +20,7 @@ pub struct FeedbackEntry {
     pub policy_recommendations: Vec<String>,
 }
 
+/// Classification of a resolved case's detection accuracy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FeedbackOutcome {
     TruePositive,

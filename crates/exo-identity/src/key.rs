@@ -1,8 +1,14 @@
+//! Key management types and DID-based signature operations.
+//!
+//! Defines [`KeyError`], the [`KeyVault`] trait for secure key storage, and
+//! helpers for DID signature verification and key rotation.
+
 use crate::did::{Did, DidDocument, VerificationMethod};
 use ed25519_dalek::{Signature, VerifyingKey};
 use exo_core::{verify_signature, Blake3Hash};
 use thiserror::Error;
 
+/// Errors arising from key operations such as lookup, revocation checks, and signature verification.
 #[derive(Error, Debug)]
 pub enum KeyError {
     #[error("Key not found: {0}")]
@@ -20,7 +26,9 @@ pub enum KeyError {
 /// Abstract Key Vault Interface for storing and retrieving keys securely.
 /// In production, this would interface with a TEE or HSM.
 pub trait KeyVault {
+    /// Retrieve a verifying key for the given DID at a specific version.
     fn get_key(&self, did: &Did, version: u64) -> Result<VerifyingKey, KeyError>;
+    /// Store a verifying key for the given DID at a specific version.
     fn store_key(&mut self, did: &Did, key: VerifyingKey, version: u64) -> Result<(), KeyError>;
 }
 

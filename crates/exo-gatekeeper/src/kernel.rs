@@ -21,6 +21,7 @@ use crate::{
 // Verdict
 // ---------------------------------------------------------------------------
 
+/// Result of kernel adjudication: permitted, denied with violations, or escalated for review.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Verdict {
     Permitted,
@@ -41,6 +42,7 @@ impl Verdict {
 // Action request
 // ---------------------------------------------------------------------------
 
+/// A request submitted to the kernel for adjudication against constitutional invariants.
 #[derive(Debug, Clone)]
 pub struct ActionRequest {
     pub actor: Did,
@@ -54,6 +56,7 @@ pub struct ActionRequest {
 // Adjudication context
 // ---------------------------------------------------------------------------
 
+/// Contextual evidence (roles, authority chain, consent, etc.) supplied alongside an action request.
 #[derive(Debug, Clone)]
 pub struct AdjudicationContext {
     pub actor_roles: Vec<Role>,
@@ -75,6 +78,7 @@ pub struct AdjudicationContext {
 // Kernel
 // ---------------------------------------------------------------------------
 
+/// Immutable constitutional governance kernel that adjudicates actions against invariants.
 #[derive(Debug, Clone)]
 pub struct Kernel {
     constitution_hash: [u8; 32],

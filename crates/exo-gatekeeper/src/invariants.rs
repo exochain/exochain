@@ -102,6 +102,7 @@ pub struct InvariantViolation {
 // Invariant engine
 // ---------------------------------------------------------------------------
 
+/// Runtime engine that checks a configured set of constitutional invariants.
 #[derive(Debug, Clone)]
 pub struct InvariantEngine {
     pub invariant_set: InvariantSet,

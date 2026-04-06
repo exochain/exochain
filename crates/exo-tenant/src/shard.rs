@@ -2,6 +2,7 @@
 use exo_core::Hash256;
 use serde::{Deserialize, Serialize};
 
+/// Configuration for shard count and replication factor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShardConfig {
     pub num_shards: usize,

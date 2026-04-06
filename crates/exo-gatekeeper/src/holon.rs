@@ -17,6 +17,7 @@ use crate::{
 // Holon state
 // ---------------------------------------------------------------------------
 
+/// Lifecycle state of a holon autonomous agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HolonState {
     Idle,
@@ -29,6 +30,7 @@ pub enum HolonState {
 // Checkpoint
 // ---------------------------------------------------------------------------
 
+/// Snapshot of a holon's state, used for suspend/resume.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checkpoint {
     pub id: CheckpointId,
@@ -41,6 +43,7 @@ pub struct Checkpoint {
 // Holon
 // ---------------------------------------------------------------------------
 
+/// An autonomous agent that executes a combinator program under kernel adjudication.
 #[derive(Debug, Clone)]
 pub struct Holon {
     pub id: Did,
@@ -50,6 +53,7 @@ pub struct Holon {
     pub last_output: Option<CombinatorOutput>,
 }
 
+/// Create a new holon in the `Idle` state with the given identity, capabilities, and program.
 #[must_use]
 pub fn spawn(id: Did, capabilities: PermissionSet, program: Combinator) -> Holon {
     Holon {
@@ -61,6 +65,7 @@ pub fn spawn(id: Did, capabilities: PermissionSet, program: Combinator) -> Holon
     }
 }
 
+/// Execute one combinator step after kernel adjudication of the holon's capabilities.
 pub fn step(
     holon: &mut Holon,
     input: &CombinatorInput,
@@ -112,6 +117,7 @@ pub fn step(
     Ok(output)
 }
 
+/// Suspend a running holon and return a checkpoint for later resumption.
 pub fn suspend(holon: &mut Holon) -> Result<Checkpoint, GatekeeperError> {
     if holon.state == HolonState::Terminated {
         return Err(GatekeeperError::HolonError(
@@ -127,6 +133,7 @@ pub fn suspend(holon: &mut Holon) -> Result<Checkpoint, GatekeeperError> {
     })
 }
 
+/// Resume a suspended holon from a previously captured checkpoint.
 pub fn resume(holon: &mut Holon, checkpoint: &Checkpoint) -> Result<(), GatekeeperError> {
     if holon.state != HolonState::Suspended {
         return Err(GatekeeperError::HolonError(

@@ -3,6 +3,7 @@
 use exo_core::{Did, PublicKey, SecretKey, Signature, Timestamp, crypto};
 use serde::{Deserialize, Serialize};
 
+/// Discrete risk severity levels for identity adjudication, ordered from least to most severe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum RiskLevel {
     Minimal,
@@ -13,6 +14,7 @@ pub enum RiskLevel {
     Unassessed,
 }
 
+/// A signed risk assessment binding a subject DID to a risk level with expiry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RiskAttestation {
     pub subject_did: Did,
@@ -58,6 +60,7 @@ impl RiskAttestation {
     }
 }
 
+/// Input parameters for producing a risk attestation.
 #[derive(Debug, Clone)]
 pub struct RiskContext {
     pub attester_did: Did,
@@ -67,21 +70,25 @@ pub struct RiskContext {
     pub level: RiskLevel,
 }
 
+/// Policy that maps operation names to maximum acceptable risk levels.
 #[derive(Debug, Clone, Default)]
 pub struct RiskPolicy {
     thresholds: std::collections::BTreeMap<String, RiskLevel>,
 }
 
 impl RiskPolicy {
+    /// Create an empty risk policy with no thresholds defined.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Set the maximum acceptable risk level for a named operation.
     pub fn set_threshold(&mut self, operation: &str, max_level: RiskLevel) {
         self.thresholds.insert(operation.to_owned(), max_level);
     }
 
+    /// Return `true` if the given risk level is at or below the threshold for the operation.
     #[must_use]
     pub fn is_acceptable(&self, operation: &str, level: RiskLevel) -> bool {
         match self.thresholds.get(operation) {
@@ -91,6 +98,7 @@ impl RiskPolicy {
     }
 }
 
+/// Create a signed risk attestation for a subject DID using the given context and attester key.
 #[must_use]
 pub fn assess_risk(
     subject: &Did,
@@ -122,6 +130,7 @@ pub fn assess_risk(
     }
 }
 
+/// Verify the cryptographic signature on a risk attestation against the attester's public key.
 #[must_use]
 pub fn verify_attestation(attestation: &RiskAttestation, attester_key: &PublicKey) -> bool {
     let payload = RiskAttestation::signing_payload(
@@ -135,6 +144,7 @@ pub fn verify_attestation(attestation: &RiskAttestation, attester_key: &PublicKe
     crypto::verify(&payload, &attestation.signature, attester_key)
 }
 
+/// Check whether a risk attestation has expired relative to the given timestamp.
 #[must_use]
 pub fn is_expired(attestation: &RiskAttestation, now: &Timestamp) -> bool {
     now.physical_ms >= attestation.expiry.physical_ms

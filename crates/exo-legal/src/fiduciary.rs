@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{LegalError, Result};
 
+/// Classification of fiduciary obligations owed by a fiduciary to a principal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DutyType {
     Care,
@@ -14,6 +15,7 @@ pub enum DutyType {
     Confidentiality,
 }
 
+/// A fiduciary duty binding a fiduciary to act in a principal's interest within a defined scope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FiduciaryDuty {
     pub principal_did: Did,
@@ -23,6 +25,7 @@ pub struct FiduciaryDuty {
     pub created: Timestamp,
 }
 
+/// An auditable record of an action taken by an actor, optionally on behalf of a beneficiary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEntry {
     pub actor: Did,
@@ -31,12 +34,14 @@ pub struct AuditEntry {
     pub beneficiary: Option<Did>,
 }
 
+/// Outcome of a fiduciary duty compliance check -- either compliant or listing violations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ComplianceResult {
     Compliant,
     Violation { reasons: Vec<String> },
 }
 
+/// Evaluates a set of audit entries against a fiduciary duty and returns any violations found.
 #[must_use]
 pub fn check_duty_compliance(duty: &FiduciaryDuty, actions: &[AuditEntry]) -> ComplianceResult {
     let mut reasons = Vec::new();
@@ -82,6 +87,7 @@ pub fn check_duty_compliance(duty: &FiduciaryDuty, actions: &[AuditEntry]) -> Co
     }
 }
 
+/// Establishes a fiduciary duty between distinct principal and fiduciary identities.
 pub fn create_duty(
     principal: &Did,
     fiduciary: &Did,

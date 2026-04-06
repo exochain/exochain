@@ -3,6 +3,7 @@
 use thiserror::Error;
 use uuid::Uuid;
 
+/// Errors originating from legal-domain operations (evidence, privilege, fiduciary, discovery).
 #[derive(Debug, Error)]
 pub enum LegalError {
     #[error("evidence not found: {0}")]
@@ -33,6 +34,7 @@ pub enum LegalError {
     InvalidStateTransition { reason: String },
 }
 
+/// Convenience alias for results that carry a [`LegalError`].
 pub type Result<T> = std::result::Result<T, LegalError>;
 
 #[cfg(test)]

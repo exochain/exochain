@@ -3,6 +3,7 @@
 use exo_core::{Did, Timestamp};
 use serde::{Deserialize, Serialize};
 
+/// A conflict-of-interest disclosure filed by a declarant before a governed action.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Disclosure {
     pub declarant: Did,
@@ -21,12 +22,14 @@ const REQUIRED_ACTIONS: &[&str] = &[
     "adjudicate",
 ];
 
+/// Returns `true` if the given action requires a conflict-of-interest disclosure before proceeding.
 #[must_use]
 pub fn require_disclosure(_actor: &Did, action: &str) -> bool {
     let lower = action.to_lowercase();
     REQUIRED_ACTIONS.iter().any(|k| lower.contains(k))
 }
 
+/// Files a new unverified disclosure describing the conflict and the related parties.
 #[must_use]
 pub fn file_disclosure(actor: &Did, nature: &str, related: &[Did]) -> Disclosure {
     Disclosure {
@@ -38,6 +41,7 @@ pub fn file_disclosure(actor: &Did, nature: &str, related: &[Did]) -> Disclosure
     }
 }
 
+/// Marks a previously filed disclosure as verified.
 pub fn verify_disclosure(d: &mut Disclosure) {
     d.verified = true;
 }

@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::error::{Result, TenantError};
 
+/// Tiered storage classification for data lifecycle migration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum StorageTier {
     Hot,
@@ -14,18 +15,21 @@ pub enum StorageTier {
     Archive,
 }
 
+/// A storage record associating an item with its current tier.
 #[derive(Debug, Clone)]
 pub struct StorageRecord {
     pub id: Uuid,
     pub tier: StorageTier,
 }
 
+/// Manages storage tier assignments and enforces migration rules.
 #[derive(Debug, Default)]
 pub struct StorageManager {
     pub records: BTreeMap<Uuid, StorageTier>,
 }
 
 impl StorageManager {
+    /// Create an empty storage manager.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -33,10 +37,12 @@ impl StorageManager {
         }
     }
 
+    /// Register an item at the specified storage tier.
     pub fn register(&mut self, id: Uuid, tier: StorageTier) {
         self.records.insert(id, tier);
     }
 
+    /// Migrate an item from one tier to a colder (or equal) tier.
     pub fn migrate(&mut self, id: &Uuid, from: StorageTier, to: StorageTier) -> Result<()> {
         let current = self.records.get(id).ok_or(TenantError::StorageError {
             reason: format!("record {id} not found"),
@@ -56,10 +62,12 @@ impl StorageManager {
         Ok(())
     }
 
+    /// Return the current storage tier for an item, if registered.
     #[must_use]
     pub fn get_tier(&self, id: &Uuid) -> Option<StorageTier> {
         self.records.get(id).copied()
     }
+    /// Count items currently assigned to the given tier.
     #[must_use]
     pub fn count_by_tier(&self, tier: StorageTier) -> usize {
         self.records.values().filter(|t| **t == tier).count()

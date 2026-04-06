@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::detector::{Severity, ThreatAssessment};
 
+/// Degree of human oversight required for a triaged threat.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TriageLevel {
     Automatic,
@@ -13,6 +14,7 @@ pub enum TriageLevel {
     EmergencyHuman,
 }
 
+/// Concrete action the triage engine can prescribe for a threat.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TriageAction {
     Log,
@@ -23,11 +25,13 @@ pub enum TriageAction {
     Shutdown,
 }
 
+/// Named reference to an escalation pathway used by triage decisions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EscalationPathSpec {
     pub name: String,
 }
 
+/// Output of the triage engine: oversight level, actions, timeout, and optional escalation path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TriageDecision {
     pub level: TriageLevel,

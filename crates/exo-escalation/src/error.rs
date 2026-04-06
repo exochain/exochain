@@ -2,6 +2,7 @@
 
 use thiserror::Error;
 
+/// Errors that can occur during escalation case management.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum EscalationError {
     #[error("case not found: {0}")]

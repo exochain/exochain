@@ -27,19 +27,23 @@ pub struct AuditLog {
     pub entries: Vec<AuditEntry>,
 }
 impl AuditLog {
+    /// Create a new empty audit log.
     #[must_use]
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
         }
     }
+    /// Append an audit entry to the log.
     pub fn record(&mut self, entry: AuditEntry) {
         self.entries.push(entry);
     }
+    /// Return the number of entries in the log.
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
+    /// Return `true` if the log contains no entries.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()

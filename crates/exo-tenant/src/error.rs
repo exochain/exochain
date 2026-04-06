@@ -2,6 +2,7 @@
 use thiserror::Error;
 use uuid::Uuid;
 
+/// Errors returned by tenant management operations.
 #[derive(Debug, Error)]
 pub enum TenantError {
     #[error("tenant not found: {0}")]
@@ -17,6 +18,7 @@ pub enum TenantError {
     #[error("migration error: {reason}")]
     MigrationError { reason: String },
 }
+/// Convenience alias for results with [`TenantError`].
 pub type Result<T> = std::result::Result<T, TenantError>;
 
 #[cfg(test)]

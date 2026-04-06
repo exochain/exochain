@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{evidence::Evidence, privilege::PrivilegeAssertion};
 
+/// Parameters for an eDiscovery search: custodians, date range, and search terms.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryRequest {
     pub requester: Did,
@@ -14,6 +15,7 @@ pub struct DiscoveryRequest {
     pub search_terms: Vec<String>,
 }
 
+/// Result of an eDiscovery search containing matched documents, a privilege log, and a production hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryResponse {
     pub documents: Vec<Evidence>,
@@ -21,6 +23,7 @@ pub struct DiscoveryResponse {
     pub production_hash: Hash256,
 }
 
+/// Filters an evidence corpus by the discovery request criteria and returns a hashed production set.
 #[must_use]
 pub fn search(request: &DiscoveryRequest, corpus: &[Evidence]) -> DiscoveryResponse {
     let documents: Vec<Evidence> = corpus

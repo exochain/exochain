@@ -3,6 +3,7 @@ use exo_core::{Did, Hash256, Timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Incoming API request variants for the EXOCHAIN trust fabric.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ApiRequest {
     CreateTransaction {
@@ -40,6 +41,7 @@ pub enum ApiRequest {
     },
 }
 
+/// Response envelope returned by the API layer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ApiResponse {
     Success {

@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::error::{Result, TenantError};
 
+/// Lifecycle status of a tenant (active, suspended, or archived).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TenantStatus {
     Active,
@@ -14,6 +15,7 @@ pub enum TenantStatus {
     Archived,
 }
 
+/// Resource limits and quota configuration for a tenant.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TenantConfig {
     pub max_storage_bytes: u64,
@@ -28,6 +30,7 @@ impl Default for TenantConfig {
     }
 }
 
+/// A tenant entity with identity, configuration, and lifecycle status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tenant {
     pub id: Uuid,
@@ -37,12 +40,14 @@ pub struct Tenant {
     pub status: TenantStatus,
 }
 
+/// In-memory registry of tenants with CRUD and lifecycle operations.
 #[derive(Debug, Clone, Default)]
 pub struct TenantRegistry {
     pub tenants: BTreeMap<Uuid, Tenant>,
 }
 
 impl TenantRegistry {
+    /// Create an empty tenant registry.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -50,6 +55,7 @@ impl TenantRegistry {
         }
     }
 
+    /// Create a new tenant with the given name and config, returning its UUID.
     pub fn create(&mut self, name: &str, config: TenantConfig) -> Result<Uuid> {
         let id = Uuid::new_v4();
         let t = Tenant {
@@ -63,15 +69,18 @@ impl TenantRegistry {
         Ok(id)
     }
 
+    /// Look up a tenant by ID.
     #[must_use]
     pub fn get(&self, id: &Uuid) -> Option<&Tenant> {
         self.tenants.get(id)
     }
+    /// Look up a tenant by ID, returning a mutable reference.
     #[must_use]
     pub fn get_mut(&mut self, id: &Uuid) -> Option<&mut Tenant> {
         self.tenants.get_mut(id)
     }
 
+    /// Transition a tenant to a new status, validating the state machine rules.
     pub fn update_status(&mut self, id: &Uuid, status: TenantStatus) -> Result<()> {
         let t = self
             .tenants
@@ -93,20 +102,24 @@ impl TenantRegistry {
         Ok(())
     }
 
+    /// Remove a tenant from the registry, returning the removed tenant.
     pub fn delete(&mut self, id: &Uuid) -> Result<Tenant> {
         self.tenants
             .remove(id)
             .ok_or(TenantError::TenantNotFound(*id))
     }
 
+    /// Return the number of registered tenants.
     #[must_use]
     pub fn len(&self) -> usize {
         self.tenants.len()
     }
+    /// Return `true` if no tenants are registered.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.tenants.is_empty()
     }
+    /// List all tenants in the registry.
     #[must_use]
     pub fn list(&self) -> Vec<&Tenant> {
         self.tenants.values().collect()

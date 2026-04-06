@@ -6,9 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{ApiError, Result};
 
+/// Unique identifier for a peer in the P2P mesh, wrapping a DID.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PeerId(pub Did);
 
+/// Metadata describing a known peer (addresses, key hash, reputation).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerInfo {
     pub id: PeerId,
@@ -18,35 +20,42 @@ pub struct PeerInfo {
     pub reputation_score: u32,
 }
 
+/// In-memory registry of known peers in the P2P mesh.
 #[derive(Debug, Clone, Default)]
 pub struct PeerRegistry {
     pub peers: BTreeMap<PeerId, PeerInfo>,
 }
 
 impl PeerRegistry {
+    /// Create an empty peer registry.
     #[must_use]
     pub fn new() -> Self {
         Self {
             peers: BTreeMap::new(),
         }
     }
+    /// Register a peer, replacing any existing entry with the same ID.
     pub fn register(&mut self, info: PeerInfo) {
         self.peers.insert(info.id.clone(), info);
     }
+    /// Look up a peer by its ID.
     #[must_use]
     pub fn get(&self, id: &PeerId) -> Option<&PeerInfo> {
         self.peers.get(id)
     }
+    /// Return the number of registered peers.
     #[must_use]
     pub fn len(&self) -> usize {
         self.peers.len()
     }
+    /// Return `true` if no peers are registered.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.peers.is_empty()
     }
 }
 
+/// A signed peer-to-peer message with optional recipient.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub from: PeerId,
@@ -63,12 +72,14 @@ pub struct RateLimiter {
 }
 impl RateLimiter {
     const MAX_PER_WINDOW: u32 = 100;
+    /// Create a new rate limiter with zero counts.
     #[must_use]
     pub fn new() -> Self {
         Self {
             counts: BTreeMap::new(),
         }
     }
+    /// Increment the request count for a peer, returning an error if the limit is exceeded.
     pub fn check_and_increment(&mut self, peer: &PeerId) -> Result<()> {
         let c = self.counts.entry(peer.clone()).or_insert(0);
         if *c >= Self::MAX_PER_WINDOW {
@@ -79,11 +90,13 @@ impl RateLimiter {
         *c += 1;
         Ok(())
     }
+    /// Reset all peer counters for the next rate-limit window.
     pub fn reset(&mut self) {
         self.counts.clear();
     }
 }
 
+/// Send a message, verifying the recipient exists in the registry (if addressed).
 pub fn send(registry: &PeerRegistry, msg: &Message) -> Result<()> {
     if let Some(ref to) = msg.to {
         if !registry.peers.contains_key(to) {
@@ -118,6 +131,7 @@ pub fn verify_message(msg: &Message) -> Result<()> {
     Ok(())
 }
 
+/// Discover new peers from bootstrap addresses and register them.
 pub fn discover_peers(registry: &mut PeerRegistry, bootstrap: &[String]) -> Result<Vec<PeerId>> {
     let mut discovered = Vec::new();
     for addr in bootstrap {

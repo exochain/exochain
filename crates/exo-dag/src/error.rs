@@ -1,3 +1,7 @@
+//! DAG error types.
+//!
+//! Defines the [`DagError`] enum and a convenience `Result` alias.
+
 use exo_core::types::Hash256;
 use thiserror::Error;
 

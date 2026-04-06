@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::{error::EscalationError, escalation::EscalationCase};
 
+/// Column in the escalation kanban board representing a workflow stage.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum KanbanColumn {
     Backlog,
@@ -22,12 +23,14 @@ impl std::fmt::Display for KanbanColumn {
     }
 }
 
+/// Board that organises escalation cases into workflow columns.
 #[derive(Debug, Clone, Default)]
 pub struct KanbanBoard {
     pub columns: BTreeMap<KanbanColumn, Vec<EscalationCase>>,
 }
 
 impl KanbanBoard {
+    /// Create a new board pre-populated with all five workflow columns.
     #[must_use]
     pub fn new() -> Self {
         let mut columns = BTreeMap::new();

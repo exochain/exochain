@@ -5,6 +5,7 @@ use thiserror::Error;
 
 use crate::types::{DecisionClass, SemVer};
 
+/// Canonical error type for all governance operations, covering TNC compliance violations.
 #[derive(Error, Debug)]
 pub enum GovernanceError {
     // --- Decision lifecycle errors ---

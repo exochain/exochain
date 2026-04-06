@@ -45,6 +45,7 @@ pub struct NotificationService {
 }
 
 impl NotificationService {
+    /// Create a new notification service with the given per-recipient hourly limit.
     pub fn new(max_per_hour: u32) -> Self {
         Self {
             notifications: Vec::new(),

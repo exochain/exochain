@@ -3,6 +3,7 @@
 use exo_core::Timestamp;
 use serde::{Deserialize, Serialize};
 
+/// Classification of anomaly or threat signals detected in governance events.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SignalType {
     SybilSuspicion,
@@ -23,6 +24,7 @@ pub struct DetectionSignal {
     pub timestamp: Timestamp,
 }
 
+/// Severity level assigned to a threat assessment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Severity {
     Low,
@@ -31,6 +33,7 @@ pub enum Severity {
     Critical,
 }
 
+/// Action recommended by the threat evaluation engine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecommendedAction {
     Monitor,
@@ -39,6 +42,7 @@ pub enum RecommendedAction {
     EmergencyShutdown,
 }
 
+/// Aggregated threat assessment produced by evaluating one or more detection signals.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatAssessment {
     pub overall_severity: Severity,

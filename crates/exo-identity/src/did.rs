@@ -139,16 +139,19 @@ pub struct DidRegistry {
 }
 
 impl DidRegistry {
+    /// Create an empty DID registry.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Resolve a DID to its document, returning `None` if not found or revoked.
     #[must_use]
     pub fn resolve(&self, did: &Did) -> Option<&DidDocument> {
         self.documents.get(did.as_str()).filter(|doc| !doc.revoked)
     }
 
+    /// Register a new DID document, returning an error if the DID is already registered.
     pub fn register(&mut self, doc: DidDocument) -> Result<(), IdentityError> {
         if self.documents.contains_key(doc.id.as_str()) {
             return Err(IdentityError::DuplicateDid(doc.id));
@@ -157,6 +160,7 @@ impl DidRegistry {
         Ok(())
     }
 
+    /// Revoke a DID after verifying the revocation proof against a registered public key.
     pub fn revoke(&mut self, did: &Did, proof: &RevocationProof) -> Result<(), IdentityError> {
         let doc = self
             .documents
@@ -177,6 +181,7 @@ impl DidRegistry {
         Ok(())
     }
 
+    /// Append a new public key to the DID document after verifying the rotation proof.
     pub fn rotate_key(
         &mut self,
         did: &Did,
@@ -207,11 +212,13 @@ impl DidRegistry {
         Ok(())
     }
 
+    /// Return the total number of registered DID documents (including revoked).
     #[must_use]
     pub fn len(&self) -> usize {
         self.documents.len()
     }
 
+    /// Return `true` if the registry contains no DID documents.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.documents.is_empty()

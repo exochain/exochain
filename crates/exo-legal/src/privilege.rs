@@ -4,6 +4,7 @@ use exo_core::{Did, Timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Category of legal privilege that may shield evidence from disclosure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrivilegeType {
     AttorneyClient,
@@ -12,6 +13,7 @@ pub enum PrivilegeType {
     TradeSecret,
 }
 
+/// A recorded claim that a piece of evidence is protected by legal privilege.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrivilegeAssertion {
     pub evidence_id: Uuid,
@@ -21,6 +23,7 @@ pub struct PrivilegeAssertion {
     pub timestamp: Timestamp,
 }
 
+/// Resolution status of a privilege challenge.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChallengeStatus {
     Pending,
@@ -28,6 +31,7 @@ pub enum ChallengeStatus {
     Overruled,
 }
 
+/// A formal challenge disputing a privilege assertion on evidence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrivilegeChallenge {
     pub assertion_evidence_id: Uuid,
@@ -37,6 +41,7 @@ pub struct PrivilegeChallenge {
     pub timestamp: Timestamp,
 }
 
+/// Creates a privilege assertion linking an evidence item to a privilege type and legal basis.
 #[must_use]
 pub fn assert_privilege(
     evidence_id: &Uuid,
@@ -53,6 +58,7 @@ pub fn assert_privilege(
     }
 }
 
+/// Files a challenge against an existing privilege assertion with stated grounds.
 #[must_use]
 pub fn challenge_privilege(
     assertion: &PrivilegeAssertion,

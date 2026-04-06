@@ -36,6 +36,7 @@ pub async fn init_pool(database_url: &str) -> PgPool {
 // HLC counter (atomic increment)
 // ---------------------------------------------------------------------------
 
+/// Atomically increment and return the next HLC counter value.
 pub async fn next_hlc(pool: &PgPool) -> Result<i64, sqlx::Error> {
     let row = sqlx::query("UPDATE hlc_state SET counter = counter + 1 RETURNING counter")
         .fetch_one(pool)
@@ -47,6 +48,7 @@ pub async fn next_hlc(pool: &PgPool) -> Result<i64, sqlx::Error> {
 // Users
 // ---------------------------------------------------------------------------
 
+/// Insert a new user record, ignoring conflicts on duplicate DID.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_user(
     pool: &PgPool,
@@ -74,6 +76,7 @@ pub async fn insert_user(
     Ok(())
 }
 
+/// Look up a user by email address, returning `None` if not found.
 pub async fn find_user_by_email(
     pool: &PgPool,
     email: &str,
@@ -83,18 +86,21 @@ pub async fn find_user_by_email(
     ).bind(email).fetch_optional(pool).await
 }
 
+/// Look up a user by DID, returning `None` if not found.
 pub async fn find_user_by_did(pool: &PgPool, did: &str) -> Result<Option<UserRow>, sqlx::Error> {
     sqlx::query_as::<_, UserRow>(
         "SELECT did, display_name, email, roles, tenant_id, created_at, status, pace_status, password_hash, salt, mfa_enabled FROM users WHERE did = $1"
     ).bind(did).fetch_optional(pool).await
 }
 
+/// List all users ordered by creation time.
 pub async fn list_users_db(pool: &PgPool) -> Result<Vec<UserRow>, sqlx::Error> {
     sqlx::query_as::<_, UserRow>(
         "SELECT did, display_name, email, roles, tenant_id, created_at, status, pace_status, password_hash, salt, mfa_enabled FROM users ORDER BY created_at"
     ).fetch_all(pool).await
 }
 
+/// Update a user's PACE enrollment status.
 pub async fn update_user_pace(
     pool: &PgPool,
     did: &str,
@@ -108,6 +114,7 @@ pub async fn update_user_pace(
     Ok(())
 }
 
+/// Check whether a user with the given email exists.
 pub async fn user_exists_by_email(pool: &PgPool, email: &str) -> Result<bool, sqlx::Error> {
     Ok(sqlx::query("SELECT 1 FROM users WHERE email = $1")
         .bind(email)
@@ -116,6 +123,7 @@ pub async fn user_exists_by_email(pool: &PgPool, email: &str) -> Result<bool, sq
         .is_some())
 }
 
+/// Return the total number of registered users.
 pub async fn count_users(pool: &PgPool) -> Result<i64, sqlx::Error> {
     Ok(sqlx::query("SELECT COUNT(*) as cnt FROM users")
         .fetch_one(pool)
@@ -123,6 +131,7 @@ pub async fn count_users(pool: &PgPool) -> Result<i64, sqlx::Error> {
         .get::<i64, _>("cnt"))
 }
 
+/// Row representation of a user record from the `users` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct UserRow {
     pub did: String,
@@ -142,6 +151,7 @@ pub struct UserRow {
 // Agents
 // ---------------------------------------------------------------------------
 
+/// Insert a new agent record, ignoring conflicts on duplicate DID.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_agent(
     pool: &PgPool,
@@ -171,12 +181,14 @@ pub async fn insert_agent(
     Ok(())
 }
 
+/// Look up an agent by DID, returning `None` if not found.
 pub async fn find_agent_by_did(pool: &PgPool, did: &str) -> Result<Option<AgentRow>, sqlx::Error> {
     sqlx::query_as::<_, AgentRow>(
         "SELECT did, agent_name, agent_type, owner_did, tenant_id, capabilities, trust_tier, trust_score, delegation_id, pace_status, created_at, status, max_decision_class FROM agents WHERE did = $1"
     ).bind(did).fetch_optional(pool).await
 }
 
+/// List agents, optionally filtered by tenant ID, ordered by creation time.
 pub async fn list_agents_db(
     pool: &PgPool,
     tenant_id: Option<&str>,
@@ -192,6 +204,7 @@ pub async fn list_agents_db(
     }
 }
 
+/// Update an agent's PACE enrollment status.
 pub async fn update_agent_pace(
     pool: &PgPool,
     did: &str,
@@ -205,6 +218,7 @@ pub async fn update_agent_pace(
     Ok(())
 }
 
+/// Row representation of an agent record from the `agents` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AgentRow {
     pub did: String,
@@ -226,6 +240,7 @@ pub struct AgentRow {
 // Decisions (JSONB payload)
 // ---------------------------------------------------------------------------
 
+/// Insert or update a decision record (upserts on `id_hash` conflict).
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_decision(
     pool: &PgPool,
@@ -279,6 +294,7 @@ pub async fn upsert_decision(
     .await
 }
 
+/// Look up a decision by its content hash, returning `None` if not found.
 pub async fn find_decision(
     pool: &PgPool,
     id_hash: &str,
@@ -288,12 +304,14 @@ pub async fn find_decision(
     ).bind(id_hash).fetch_optional(pool).await
 }
 
+/// List all decisions ordered by creation timestamp.
 pub async fn list_decisions_db(pool: &PgPool) -> Result<Vec<DecisionRow>, sqlx::Error> {
     sqlx::query_as::<_, DecisionRow>(
         "SELECT id_hash, tenant_id, status, title, decision_class, author, created_at_ms, constitution_version, payload FROM decisions ORDER BY created_at_ms"
     ).fetch_all(pool).await
 }
 
+/// Update a decision's status and JSONB payload by its content hash.
 pub async fn update_decision(
     pool: &PgPool,
     id_hash: &str,
@@ -309,6 +327,7 @@ pub async fn update_decision(
     Ok(())
 }
 
+/// Row representation of a governance decision from the `decisions` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct DecisionRow {
     pub id_hash: String,
@@ -326,6 +345,7 @@ pub struct DecisionRow {
 // Delegations (JSONB payload)
 // ---------------------------------------------------------------------------
 
+/// Insert a delegation record, ignoring conflicts on duplicate `id_hash`.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_delegation(
     pool: &PgPool,
@@ -348,12 +368,14 @@ pub async fn insert_delegation(
     Ok(())
 }
 
+/// List all delegations ordered by creation timestamp.
 pub async fn list_delegations_db(pool: &PgPool) -> Result<Vec<DelegationRow>, sqlx::Error> {
     sqlx::query_as::<_, DelegationRow>(
         "SELECT id_hash, tenant_id, delegator, delegatee, created_at_ms, expires_at, revoked_at, constitution_version, payload FROM delegations ORDER BY created_at_ms"
     ).fetch_all(pool).await
 }
 
+/// Check whether the given DID has an active (non-revoked) delegation as delegatee.
 pub async fn has_active_delegation(pool: &PgPool, delegatee: &str) -> Result<bool, sqlx::Error> {
     Ok(
         sqlx::query(
@@ -366,11 +388,13 @@ pub async fn has_active_delegation(pool: &PgPool, delegatee: &str) -> Result<boo
     )
 }
 
+/// Check whether the given DID has an active delegation as either delegator or delegatee.
 pub async fn has_active_delegation_either(pool: &PgPool, did: &str) -> Result<bool, sqlx::Error> {
     Ok(sqlx::query("SELECT 1 FROM delegations WHERE (delegatee = $1 OR delegator = $1) AND revoked_at IS NULL LIMIT 1")
         .bind(did).fetch_optional(pool).await?.is_some())
 }
 
+/// Row representation of a delegation record from the `delegations` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct DelegationRow {
     pub id_hash: String,
@@ -388,6 +412,7 @@ pub struct DelegationRow {
 // Audit entries
 // ---------------------------------------------------------------------------
 
+/// Insert an audit log entry, ignoring conflicts on duplicate sequence number.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_audit_entry(
     pool: &PgPool,
@@ -412,18 +437,21 @@ pub async fn insert_audit_entry(
     Ok(())
 }
 
+/// List all audit entries ordered by sequence number.
 pub async fn list_audit_entries(pool: &PgPool) -> Result<Vec<AuditRow>, sqlx::Error> {
     sqlx::query_as::<_, AuditRow>(
         "SELECT sequence, prev_hash, event_hash, event_type, actor, tenant_id, timestamp_physical_ms, timestamp_logical, entry_hash FROM audit_entries ORDER BY sequence"
     ).fetch_all(pool).await
 }
 
+/// Return the most recent audit entry by sequence number, or `None` if empty.
 pub async fn get_last_audit_entry(pool: &PgPool) -> Result<Option<AuditRow>, sqlx::Error> {
     sqlx::query_as::<_, AuditRow>(
         "SELECT sequence, prev_hash, event_hash, event_type, actor, tenant_id, timestamp_physical_ms, timestamp_logical, entry_hash FROM audit_entries ORDER BY sequence DESC LIMIT 1"
     ).fetch_optional(pool).await
 }
 
+/// Return the total number of audit entries.
 pub async fn count_audit_entries(pool: &PgPool) -> Result<i64, sqlx::Error> {
     Ok(sqlx::query("SELECT COUNT(*) as cnt FROM audit_entries")
         .fetch_one(pool)
@@ -431,6 +459,7 @@ pub async fn count_audit_entries(pool: &PgPool) -> Result<i64, sqlx::Error> {
         .get::<i64, _>("cnt"))
 }
 
+/// Check whether the given actor DID appears in any audit entry.
 pub async fn check_actor_in_audit(pool: &PgPool, actor: &str) -> Result<bool, sqlx::Error> {
     Ok(
         sqlx::query("SELECT 1 FROM audit_entries WHERE actor = $1 LIMIT 1")
@@ -441,6 +470,7 @@ pub async fn check_actor_in_audit(pool: &PgPool, actor: &str) -> Result<bool, sq
     )
 }
 
+/// Check whether the given actor has cast a vote (has a `VoteCast` audit entry).
 pub async fn check_actor_voted(pool: &PgPool, actor: &str) -> Result<bool, sqlx::Error> {
     Ok(sqlx::query(
         "SELECT 1 FROM audit_entries WHERE actor = $1 AND event_type = 'VoteCast' LIMIT 1",
@@ -451,6 +481,7 @@ pub async fn check_actor_voted(pool: &PgPool, actor: &str) -> Result<bool, sqlx:
     .is_some())
 }
 
+/// Row representation of an audit log entry from the `audit_entries` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AuditRow {
     pub sequence: i64,
@@ -468,6 +499,7 @@ pub struct AuditRow {
 // Constitution
 // ---------------------------------------------------------------------------
 
+/// Insert or update a constitutional corpus for a tenant and version.
 pub async fn upsert_constitution(
     pool: &PgPool,
     tenant_id: &str,
@@ -486,6 +518,7 @@ pub async fn upsert_constitution(
     Ok(())
 }
 
+/// Row representation of a constitutional corpus from the `constitutions` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ConstitutionRow {
     pub tenant_id: String,
@@ -497,6 +530,7 @@ pub struct ConstitutionRow {
 // Identity scores
 // ---------------------------------------------------------------------------
 
+/// Insert or update an identity trust score for a DID.
 pub async fn upsert_identity_score(
     pool: &PgPool,
     did: &str,
@@ -513,6 +547,7 @@ pub async fn upsert_identity_score(
     Ok(())
 }
 
+/// Retrieve the identity trust score for a DID, or `None` if not scored.
 pub async fn get_identity_score(
     pool: &PgPool,
     did: &str,
@@ -525,6 +560,7 @@ pub async fn get_identity_score(
     .await
 }
 
+/// Row representation of an identity trust score from the `identity_scores` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct IdentityScoreRow {
     pub did: String,
@@ -538,6 +574,7 @@ pub struct IdentityScoreRow {
 // Enrollment log
 // ---------------------------------------------------------------------------
 
+/// Record an enrollment log entry for a DID (user or agent).
 pub async fn insert_enrollment(
     pool: &PgPool,
     did: &str,
@@ -558,6 +595,7 @@ pub async fn insert_enrollment(
 // LiveSafe tables
 // ---------------------------------------------------------------------------
 
+/// Insert or update a LiveSafe subscriber identity record.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_livesafe_identity(
     pool: &PgPool,
@@ -578,6 +616,7 @@ pub async fn insert_livesafe_identity(
     Ok(())
 }
 
+/// Retrieve a LiveSafe subscriber identity by DID, or `None` if not found.
 pub async fn get_livesafe_identity(
     pool: &PgPool,
     did: &str,
@@ -587,6 +626,7 @@ pub async fn get_livesafe_identity(
     ).bind(did).fetch_optional(pool).await
 }
 
+/// Row representation of a LiveSafe identity from the `livesafe_identities` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct LiveSafeIdentityRow {
     pub did: String,
@@ -597,6 +637,7 @@ pub struct LiveSafeIdentityRow {
     pub exochain_anchor: Option<String>,
 }
 
+/// Insert a LiveSafe scan receipt record.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_scan_receipt(
     pool: &PgPool,
@@ -618,6 +659,7 @@ pub async fn insert_scan_receipt(
     Ok(())
 }
 
+/// List scan receipts for a subscriber, most recent first.
 pub async fn list_scan_receipts(
     pool: &PgPool,
     subscriber_did: &str,
@@ -627,6 +669,7 @@ pub async fn list_scan_receipts(
     ).bind(subscriber_did).fetch_all(pool).await
 }
 
+/// Row representation of a scan receipt from the `scan_receipts` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ScanReceiptRow {
     pub scan_id: String,
@@ -639,6 +682,7 @@ pub struct ScanReceiptRow {
     pub anchor_receipt: Option<String>,
 }
 
+/// Insert a consent anchor record for a subscriber-provider pair.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_consent_anchor(
     pool: &PgPool,
@@ -659,6 +703,7 @@ pub async fn insert_consent_anchor(
     Ok(())
 }
 
+/// List consent anchors for a subscriber, most recent first.
 pub async fn list_consent_anchors(
     pool: &PgPool,
     subscriber_did: &str,
@@ -668,6 +713,7 @@ pub async fn list_consent_anchors(
     ).bind(subscriber_did).fetch_all(pool).await
 }
 
+/// Row representation of a consent anchor from the `consent_anchors` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ConsentAnchorRow {
     pub consent_id: String,
@@ -680,6 +726,7 @@ pub struct ConsentAnchorRow {
     pub audit_receipt_hash: String,
 }
 
+/// Insert a PACE trustee shard status record.
 pub async fn insert_trustee_shard(
     pool: &PgPool,
     subscriber_did: &str,
@@ -695,6 +742,7 @@ pub async fn insert_trustee_shard(
     Ok(())
 }
 
+/// List trustee shard records for a subscriber.
 pub async fn list_trustee_shards(
     pool: &PgPool,
     subscriber_did: &str,
@@ -704,6 +752,7 @@ pub async fn list_trustee_shards(
     ).bind(subscriber_did).fetch_all(pool).await
 }
 
+/// Row representation of a trustee shard from the `trustee_shard_status` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TrusteeShardRow {
     pub subscriber_did: String,

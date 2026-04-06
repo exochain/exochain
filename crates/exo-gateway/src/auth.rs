@@ -18,6 +18,7 @@ use crate::error::{GatewayError, Result};
 /// Requests outside this window are rejected to prevent replay attacks.
 const FRESHNESS_WINDOW_MS: u64 = 300_000; // 5 minutes
 
+/// An incoming gateway request with actor identity and signed payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
     pub actor_did: String,
@@ -27,6 +28,7 @@ pub struct Request {
     pub timestamp: Timestamp,
 }
 
+/// A successfully authenticated actor with their resolved DID and auth timestamp.
 #[derive(Debug, Clone)]
 pub struct AuthenticatedActor {
     pub did: Did,

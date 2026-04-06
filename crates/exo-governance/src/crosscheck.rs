@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use exo_core::{Did, Timestamp};
 use serde::{Deserialize, Serialize};
 
+/// Registry of identity attributes used for Sybil detection and independence verification.
 #[derive(Debug, Clone, Default)]
 pub struct IdentityRegistry {
     pub signing_keys: HashMap<Did, String>,
@@ -12,12 +13,14 @@ pub struct IdentityRegistry {
     pub control_metadata: HashMap<Did, String>,
 }
 
+/// A group of DIDs that share a common identity attribute, indicating potential Sybil collusion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cluster {
     pub reason: String,
     pub members: Vec<Did>,
 }
 
+/// Result of an independence verification: independent count, clusters, and suspicious pairs.
 #[derive(Debug, Clone)]
 pub struct IndependenceResult {
     pub independent_count: usize,
@@ -25,6 +28,7 @@ pub struct IndependenceResult {
     pub suspicious_pairs: Vec<(Did, Did)>,
 }
 
+/// An actor's action with its timestamp, used for coordination detection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimestampedAction {
     pub actor: Did,
@@ -32,6 +36,7 @@ pub struct TimestampedAction {
     pub timestamp: Timestamp,
 }
 
+/// Signal indicating potential coordination between actors based on timing analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoordinationSignal {
     pub actors: Vec<Did>,
@@ -39,6 +44,7 @@ pub struct CoordinationSignal {
     pub confidence: u8,
 }
 
+/// Verify independence of actors by checking for shared keys, attestation roots, and control metadata.
 #[must_use]
 pub fn verify_independence(actors: &[Did], registry: &IdentityRegistry) -> IndependenceResult {
     let mut clusters: Vec<Cluster> = Vec::new();
@@ -130,6 +136,7 @@ pub fn verify_independence(actors: &[Did], registry: &IdentityRegistry) -> Indep
     }
 }
 
+/// Detect near-simultaneous identical actions by different actors as a coordination signal.
 #[must_use]
 pub fn detect_coordination(actions: &[TimestampedAction]) -> Vec<CoordinationSignal> {
     let mut signals = Vec::new();

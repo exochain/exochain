@@ -197,6 +197,7 @@ pub struct GrantDelegationInput {
 // Broadcast events for subscriptions
 // ---------------------------------------------------------------------------
 
+/// Real-time governance events broadcast to subscribers.
 #[derive(Clone, Debug)]
 pub enum GovEvent {
     DecisionUpdated(GqlDecision),
@@ -235,10 +236,12 @@ impl Default for AppState {
 }
 
 impl AppState {
+    /// Create a new `AppState` with a default empty DID registry.
     pub fn new() -> Self {
         Self::with_registry(Arc::new(RwLock::new(DidRegistry::new())))
     }
 
+    /// Create a new `AppState` with the given shared DID registry.
     pub fn with_registry(registry: Arc<RwLock<DidRegistry>>) -> Self {
         let (event_tx, _) = broadcast::channel(256);
         Self {
@@ -257,10 +260,12 @@ impl AppState {
         }
     }
 
+    /// Create a new `AppState` wrapped in `Arc<Mutex<>>` for concurrent access.
     pub fn new_arc() -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self::new()))
     }
 
+    /// Create a new `AppState` with a shared registry, wrapped in `Arc<Mutex<>>`.
     pub fn new_arc_with_registry(registry: Arc<RwLock<DidRegistry>>) -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self::with_registry(registry)))
     }
@@ -303,12 +308,14 @@ fn now_str() -> String {
 // Schema type alias
 // ---------------------------------------------------------------------------
 
+/// Fully-built GraphQL schema type with query, mutation, and subscription roots.
 pub type GovSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
 
 // ---------------------------------------------------------------------------
 // Query resolvers
 // ---------------------------------------------------------------------------
 
+/// GraphQL query root — governance decisions, delegations, identity, and consent.
 pub struct QueryRoot;
 
 #[Object]
@@ -565,6 +572,7 @@ impl QueryRoot {
 // Mutation resolvers
 // ---------------------------------------------------------------------------
 
+/// GraphQL mutation root — decision lifecycle, voting, delegations, and emergency actions.
 pub struct MutationRoot;
 
 #[Object]
@@ -889,6 +897,7 @@ fn bump_version(v: &str) -> String {
 // Subscription resolvers
 // ---------------------------------------------------------------------------
 
+/// GraphQL subscription root — real-time decision, delegation, and emergency events.
 pub struct SubscriptionRoot;
 
 #[Subscription]

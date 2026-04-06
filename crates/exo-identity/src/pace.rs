@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::IdentityError;
 
+/// Configuration defining the operator hierarchy for PACE continuity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaceConfig {
     pub primary: Did,
@@ -16,6 +17,7 @@ pub struct PaceConfig {
 }
 
 impl PaceConfig {
+    /// Validate that all PACE levels are non-empty and contain no duplicate DIDs.
     pub fn validate(&self) -> Result<(), IdentityError> {
         if self.alternates.is_empty() {
             return Err(IdentityError::InvalidPaceConfig(
@@ -49,6 +51,7 @@ impl PaceConfig {
     }
 }
 
+/// Current operational state in the PACE escalation hierarchy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PaceState {
     Normal,
@@ -57,6 +60,7 @@ pub enum PaceState {
     EmergencyActive,
 }
 
+/// Resolve the currently active operator DID for the given PACE state.
 #[must_use]
 pub fn resolve_operator<'a>(config: &'a PaceConfig, state: &PaceState) -> &'a Did {
     match state {
@@ -67,6 +71,7 @@ pub fn resolve_operator<'a>(config: &'a PaceConfig, state: &PaceState) -> &'a Di
     }
 }
 
+/// Escalate the PACE state to the next higher level, returning the new state.
 pub fn escalate(state: &mut PaceState) -> Result<PaceState, IdentityError> {
     let new_state = match *state {
         PaceState::Normal => PaceState::AlternateActive,
@@ -78,6 +83,7 @@ pub fn escalate(state: &mut PaceState) -> Result<PaceState, IdentityError> {
     Ok(new_state)
 }
 
+/// De-escalate the PACE state to the next lower level, returning the new state.
 pub fn deescalate(state: &mut PaceState) -> Result<PaceState, IdentityError> {
     let new_state = match *state {
         PaceState::EmergencyActive => PaceState::ContingencyActive,

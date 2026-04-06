@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::errors::GovernanceError;
 
+/// Legal basis for filing a governance challenge (CR-001 section 8.5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChallengeGround {
     AuthorityChainInvalid,
@@ -16,6 +17,7 @@ pub enum ChallengeGround {
     ConsentViolation,
 }
 
+/// Lifecycle state of a governance challenge.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChallengeStatus {
     Filed,
@@ -25,12 +27,14 @@ pub enum ChallengeStatus {
     Withdrawn,
 }
 
+/// Adjudication outcome for a challenge: sustain or overrule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChallengeVerdict {
     Sustain,
     Overrule,
 }
 
+/// A formal governance challenge contesting a prior action.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Challenge {
     pub id: Uuid,
@@ -42,6 +46,7 @@ pub struct Challenge {
     pub created: Timestamp,
 }
 
+/// Order to pause a contested action while a challenge is adjudicated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PauseOrder {
     pub challenge_id: Uuid,
@@ -50,6 +55,7 @@ pub struct PauseOrder {
     pub issued: Timestamp,
 }
 
+/// File a new governance challenge against a target action with the given ground and evidence.
 #[must_use]
 pub fn file_challenge(
     challenger: &Did,
@@ -68,6 +74,7 @@ pub fn file_challenge(
     }
 }
 
+/// Issue a pause order that halts the challenged action pending adjudication.
 #[must_use]
 pub fn pause_action(challenge: &Challenge) -> PauseOrder {
     PauseOrder {
@@ -78,6 +85,7 @@ pub fn pause_action(challenge: &Challenge) -> PauseOrder {
     }
 }
 
+/// Resolve a challenge by applying the given verdict, transitioning it to a terminal state.
 pub fn adjudicate(
     challenge: &mut Challenge,
     verdict: ChallengeVerdict,
@@ -97,6 +105,7 @@ pub fn adjudicate(
     }
 }
 
+/// Withdraw a challenge, allowed only while it is still Filed or UnderReview.
 pub fn withdraw(challenge: &mut Challenge) -> Result<(), GovernanceError> {
     match challenge.status {
         ChallengeStatus::Filed | ChallengeStatus::UnderReview => {

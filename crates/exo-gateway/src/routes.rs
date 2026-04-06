@@ -10,6 +10,7 @@ use crate::{
     middleware::{AuditLog, Verdict, audit_middleware, consent_middleware, governance_middleware},
 };
 
+/// Gateway route identifiers for the BCTS lifecycle and governance operations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Route {
     CreateTransaction,
@@ -23,6 +24,7 @@ pub enum Route {
     Challenge,
 }
 
+/// Result of processing a request through the middleware chain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteResult {
     pub route: Route,

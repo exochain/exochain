@@ -42,6 +42,7 @@ fn gf256_inv(a: u8) -> u8 {
     gf256_mul(a127, a127)
 }
 
+/// Configuration for a Shamir secret sharing scheme specifying threshold and total share count.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShamirConfig {
     pub threshold: u8,
@@ -49,6 +50,7 @@ pub struct ShamirConfig {
 }
 
 impl ShamirConfig {
+    /// Validate that threshold and shares are non-zero and that threshold does not exceed shares.
     pub fn validate(&self) -> Result<(), IdentityError> {
         if self.threshold == 0 || self.shares == 0 || self.threshold > self.shares {
             return Err(IdentityError::InvalidShamirConfig {
@@ -60,6 +62,7 @@ impl ShamirConfig {
     }
 }
 
+/// A single share produced by Shamir secret splitting, with a blake3 commitment to the original secret.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Share {
     pub index: u8,
@@ -67,6 +70,7 @@ pub struct Share {
     pub commitment: [u8; 32],
 }
 
+/// Split a secret into `config.shares` shares, any `config.threshold` of which can reconstruct it.
 pub fn split(secret: &[u8], config: &ShamirConfig) -> Result<Vec<Share>, IdentityError> {
     config.validate()?;
 
@@ -107,6 +111,7 @@ pub fn split(secret: &[u8], config: &ShamirConfig) -> Result<Vec<Share>, Identit
     Ok(shares)
 }
 
+/// Reconstruct a secret from at least `config.threshold` shares using Lagrange interpolation.
 pub fn reconstruct(shares: &[Share], config: &ShamirConfig) -> Result<Vec<u8>, IdentityError> {
     config.validate()?;
 

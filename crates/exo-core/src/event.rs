@@ -1,3 +1,8 @@
+//! Ledger event types for the append-only DAG event system.
+//!
+//! Defines [`EventEnvelope`], [`EventPayload`], and [`LedgerEvent`] along with
+//! the canonical [`compute_event_id`] hash function.
+
 use crate::crypto::{hash_bytes, Blake3Hash};
 use crate::hlc::HybridLogicalClock;
 use ed25519_dalek::Signature;

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::quorum::QuorumPolicy;
 
+/// Hierarchical clearance level from None (lowest) to Governor (highest).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum ClearanceLevel {
     None,
@@ -56,12 +57,14 @@ pub struct ClearancePolicy {
     pub policy_hash: [u8; 32],
 }
 
+/// Maps DIDs to their assigned clearance levels.
 #[derive(Debug, Clone, Default)]
 pub struct ClearanceRegistry {
     pub entries: BTreeMap<Did, ClearanceLevel>,
 }
 
 impl ClearanceRegistry {
+    /// Return the clearance level for the given actor, defaulting to `None`.
     #[must_use]
     pub fn get_level(&self, actor: &Did) -> ClearanceLevel {
         self.entries
@@ -69,11 +72,13 @@ impl ClearanceRegistry {
             .copied()
             .unwrap_or(ClearanceLevel::None)
     }
+    /// Assign or update the clearance level for the given actor.
     pub fn set_level(&mut self, actor: Did, level: ClearanceLevel) {
         self.entries.insert(actor, level);
     }
 }
 
+/// Result of a clearance check: granted (with policy hash), denied, or insufficient independence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClearanceDecision {
     /// Actor is cleared; `policy_hash` binds this decision to the disclosed policy.

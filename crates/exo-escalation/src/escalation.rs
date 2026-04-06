@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::{detector::DetectionSignal, error::EscalationError};
 
+/// Pathway through which a detected threat is escalated for resolution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EscalationPath {
     Standard,
@@ -26,6 +27,7 @@ pub enum SybilStage {
     AuditLog,
 }
 
+/// Lifecycle status of an escalation case.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CaseStatus {
     Open,
@@ -35,6 +37,7 @@ pub enum CaseStatus {
     Closed,
 }
 
+/// Priority ranking of an escalation case, derived from signal confidence.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum CasePriority {
     Low,
@@ -43,6 +46,7 @@ pub enum CasePriority {
     Critical,
 }
 
+/// A tracked escalation case linking detection signals to resolution stages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EscalationCase {
     pub id: Uuid,

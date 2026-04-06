@@ -1,6 +1,7 @@
 //! Gateway-specific errors.
 use thiserror::Error;
 
+/// Errors returned by gateway operations.
 #[derive(Debug, Error)]
 pub enum GatewayError {
     #[error("authentication failed: {reason}")]
@@ -16,6 +17,7 @@ pub enum GatewayError {
     #[error("bad request: {0}")]
     BadRequest(String),
 }
+/// Convenience alias for `Result<T, GatewayError>`.
 pub type Result<T> = std::result::Result<T, GatewayError>;
 
 #[cfg(test)]

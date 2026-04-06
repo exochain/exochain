@@ -72,6 +72,7 @@ pub struct ColdStorage {
 }
 
 impl ColdStorage {
+    /// Create an empty cold storage tracker.
     pub fn new() -> Self {
         Self { refs: Vec::new() }
     }

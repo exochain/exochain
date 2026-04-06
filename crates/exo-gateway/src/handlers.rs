@@ -63,6 +63,7 @@ async fn write_audit(
 
 // ── Vote handler (decision-forum integration) ─────────────────────────────
 
+/// Request body for casting a vote on a governance decision.
 #[derive(Deserialize)]
 pub struct VoteRequest {
     pub decision_id: String,
@@ -72,6 +73,7 @@ pub struct VoteRequest {
     pub rationale: Option<String>,
 }
 
+/// Handle a vote submission with conflict-of-interest and authority chain checks.
 pub async fn vote_handler(
     State(state): State<AppState>,
     Json(body): Json<VoteRequest>,
@@ -344,6 +346,7 @@ pub async fn vote_handler(
 
 // ── Health handler ────────────────────────────────────────────────────────
 
+/// Health check handler that verifies database connectivity.
 pub async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
     match state.require_db() {
         Ok(pool) => match sqlx::query("SELECT 1").execute(pool).await {

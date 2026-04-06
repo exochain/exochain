@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::error::{LegalError, Result};
 
+/// Whether a piece of evidence has been admitted, challenged, excluded, or is still pending review.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AdmissibilityStatus {
     Admissible,
@@ -14,6 +15,7 @@ pub enum AdmissibilityStatus {
     Pending,
 }
 
+/// A single link in the chain of custody recording a transfer between two parties.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustodyTransfer {
     pub from: Did,
@@ -22,6 +24,7 @@ pub struct CustodyTransfer {
     pub reason: String,
 }
 
+/// Litigation-grade evidence item with content hash, creator provenance, and custody chain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Evidence {
     pub id: Uuid,
@@ -61,6 +64,7 @@ pub fn create_evidence(
     })
 }
 
+/// Transfers custody of evidence from the current holder to a new party, appending to the chain.
 pub fn transfer_custody(evidence: &mut Evidence, from: &Did, to: &Did) -> Result<()> {
     let current = evidence
         .chain_of_custody
@@ -86,6 +90,7 @@ pub fn transfer_custody(evidence: &mut Evidence, from: &Did, to: &Did) -> Result
     Ok(())
 }
 
+/// Validates that every custody transfer forms an unbroken chain from the original creator.
 pub fn verify_chain_of_custody(evidence: &Evidence) -> Result<()> {
     let mut expected = &evidence.creator;
     for (i, transfer) in evidence.chain_of_custody.iter().enumerate() {
