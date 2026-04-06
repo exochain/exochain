@@ -591,9 +591,13 @@ impl MutationRoot {
             challenges: Vec::new(),
             content_hash: body_hash,
         };
-        let _ = guard
+        if guard
             .event_tx
-            .send(GovEvent::DecisionUpdated(decision.clone()));
+            .send(GovEvent::DecisionUpdated(decision.clone()))
+            .is_err()
+        {
+            tracing::warn!("Governance event channel closed — DecisionUpdated dropped");
+        }
         guard.decisions.insert(
             id.clone(),
             DecisionRecord {
@@ -627,9 +631,13 @@ impl MutationRoot {
         };
         let actor = reason.as_deref().unwrap_or("system");
         guard.append_audit(&id_str, &format!("StatusAdvanced:{new_status}"), actor);
-        let _ = guard
+        if guard
             .event_tx
-            .send(GovEvent::DecisionUpdated(decision.clone()));
+            .send(GovEvent::DecisionUpdated(decision.clone()))
+            .is_err()
+        {
+            tracing::warn!("Governance event channel closed — DecisionUpdated dropped");
+        }
         Ok(decision)
     }
 
@@ -671,7 +679,13 @@ impl MutationRoot {
             (vote, rec.decision.clone())
         };
         guard.append_audit(&id_str, "VoteCast", &voter);
-        let _ = guard.event_tx.send(GovEvent::DecisionUpdated(decision));
+        if guard
+            .event_tx
+            .send(GovEvent::DecisionUpdated(decision))
+            .is_err()
+        {
+            tracing::warn!("Governance event channel closed — DecisionUpdated dropped");
+        }
         Ok(vote)
     }
 
@@ -748,7 +762,13 @@ impl MutationRoot {
             &format!("ChallengeRaised:{grounds}"),
             "did:exo:caller",
         );
-        let _ = guard.event_tx.send(GovEvent::DecisionUpdated(decision));
+        if guard
+            .event_tx
+            .send(GovEvent::DecisionUpdated(decision))
+            .is_err()
+        {
+            tracing::warn!("Governance event channel closed — DecisionUpdated dropped");
+        }
         Ok(challenge)
     }
 
@@ -766,10 +786,11 @@ impl MutationRoot {
         let mut guard = state.lock().await;
         let id_str = decision_id.to_string();
         // Verify decision exists before creating emergency action.
-        let _ = guard
-            .decisions
-            .get(&id_str)
-            .ok_or_else(|| async_graphql::Error::new(format!("decision {id_str} not found")))?;
+        if !guard.decisions.contains_key(&id_str) {
+            return Err(async_graphql::Error::new(format!(
+                "decision {id_str} not found"
+            )));
+        }
         let action_id = Uuid::new_v4().to_string();
         let now = Timestamp::now_utc();
         // Ratification deadline: 24 hours from now.
@@ -793,9 +814,13 @@ impl MutationRoot {
             &format!("EmergencyAction:{justification}"),
             "did:exo:caller",
         );
-        let _ = guard
+        if guard
             .event_tx
-            .send(GovEvent::EmergencyActionCreated(action.clone()));
+            .send(GovEvent::EmergencyActionCreated(action.clone()))
+            .is_err()
+        {
+            tracing::warn!("Governance event channel closed — EmergencyActionCreated dropped");
+        }
         Ok(action)
     }
 

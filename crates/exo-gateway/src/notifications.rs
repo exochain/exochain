@@ -85,7 +85,11 @@ impl NotificationService {
         };
 
         self.notifications.push(notification);
-        Ok(self.notifications.last().unwrap())
+        // Safety: we just pushed, so last() is always Some
+        Ok(self
+            .notifications
+            .last()
+            .expect("just pushed, vec is non-empty"))
     }
 
     /// Count recent notifications for a recipient (within the last hour).

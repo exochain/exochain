@@ -301,11 +301,13 @@ pub async fn resolve_mutation_db(mutation: &LiveSafeMutation, pool: &sqlx::PgPoo
             let scan_id = format!("scan-{}", uuid::Uuid::new_v4());
             let audit_hash = hex::encode(exo_core::Hash256::digest(input.subscriber_did.as_bytes()).0);
             let anchor = format!("anchor_{}", uuid::Uuid::new_v4());
-            let _ = db::insert_scan_receipt(
+            if let Err(e) = db::insert_scan_receipt(
                 pool, &scan_id, &input.subscriber_did, &input.responder_did,
                 input.location.as_deref(), now_ms() as i64,
                 input.consent_expires_at_ms as i64, &audit_hash, Some(&anchor),
-            ).await;
+            ).await {
+                tracing::warn!(err = %e, scan_id, "Failed to persist scan receipt");
+            }
             serde_json::to_value(ScanReceipt {
                 scan_id, subscriber_did: input.subscriber_did.clone(),
                 responder_did: input.responder_did.clone(), location: input.location.clone(),
@@ -317,10 +319,12 @@ pub async fn resolve_mutation_db(mutation: &LiveSafeMutation, pool: &sqlx::PgPoo
             let consent_id = format!("consent-{}", uuid::Uuid::new_v4());
             let audit_hash = hex::encode(exo_core::Hash256::digest(input.subscriber_did.as_bytes()).0);
             let scope_json = serde_json::to_value(&input.scope).unwrap_or_default();
-            let _ = db::insert_consent_anchor(
+            if let Err(e) = db::insert_consent_anchor(
                 pool, &consent_id, &input.subscriber_did, &input.provider_did,
                 &scope_json, now_ms() as i64, input.expires_at_ms.map(|v| v as i64), &audit_hash,
-            ).await;
+            ).await {
+                tracing::warn!(err = %e, consent_id, "Failed to persist consent anchor");
+            }
             serde_json::to_value(ConsentAnchor {
                 consent_id, subscriber_did: input.subscriber_did.clone(),
                 provider_did: input.provider_did.clone(), scope: input.scope.clone(),
@@ -330,9 +334,11 @@ pub async fn resolve_mutation_db(mutation: &LiveSafeMutation, pool: &sqlx::PgPoo
         }
         LiveSafeMutation::RegisterIdentity { did } => {
             let anchor = format!("anchor_{}", uuid::Uuid::new_v4());
-            let _ = db::insert_livesafe_identity(
+            if let Err(e) = db::insert_livesafe_identity(
                 pool, did, 0.0, "Incomplete", "NotIssued", now_ms() as i64, Some(&anchor),
-            ).await;
+            ).await {
+                tracing::warn!(err = %e, did, "Failed to persist livesafe identity");
+            }
             serde_json::to_value(LiveSafeIdentity {
                 did: did.clone(), odentity_composite: 0.0,
                 pace_status: PaceStatus::Incomplete, card_status: CardStatus::NotIssued,
