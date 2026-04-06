@@ -757,6 +757,7 @@ fn build_zerodentity_tasks() -> Vec<ForgeTask> {
 
 // ─── API Handlers ───────────────────────────────────────────────────
 
+/// `GET /api/v1/forge/tasks` — list all spec tasks with current stats.
 async fn list_tasks(
     State(state): State<SharedForgeState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
@@ -771,6 +772,7 @@ async fn list_tasks(
     })))
 }
 
+/// `GET /api/v1/forge/stats` — aggregate task statistics.
 async fn get_stats(State(state): State<SharedForgeState>) -> Result<Json<ForgeStats>, StatusCode> {
     let s = state.lock().map_err(|_| {
         tracing::error!("ForgeState mutex poisoned in get_stats");
@@ -779,6 +781,7 @@ async fn get_stats(State(state): State<SharedForgeState>) -> Result<Json<ForgeSt
     Ok(Json(s.stats()))
 }
 
+/// `GET /api/v1/forge/activity` — recent task activity log.
 async fn get_activity(
     State(state): State<SharedForgeState>,
 ) -> Result<Json<Vec<ActivityEntry>>, StatusCode> {
@@ -789,6 +792,7 @@ async fn get_activity(
     Ok(Json(s.activity_log.clone()))
 }
 
+/// `PUT /api/v1/forge/tasks/:id/status` — update a task's status.
 async fn update_task_status(
     State(state): State<SharedForgeState>,
     Path(task_id): Path<u32>,
@@ -827,6 +831,7 @@ async fn update_task_status(
     Ok(Json(serde_json::json!({ "ok": true, "task_id": task_id })))
 }
 
+/// `PUT /api/v1/forge/tasks/:id/assign` — assign an agent to a task.
 async fn assign_agent(
     State(state): State<SharedForgeState>,
     Path(task_id): Path<u32>,
@@ -862,6 +867,7 @@ async fn assign_agent(
     ))
 }
 
+/// `POST /api/v1/forge/tasks/:id/escalate` — escalate a blocked task.
 async fn escalate_task(
     State(state): State<SharedForgeState>,
     Path(task_id): Path<u32>,
@@ -901,6 +907,7 @@ async fn escalate_task(
     ))
 }
 
+/// `POST /api/v1/forge/log` — append an entry to the activity log.
 async fn append_log(
     State(state): State<SharedForgeState>,
     Json(body): Json<LogEntry>,
@@ -919,6 +926,7 @@ async fn append_log(
 
 // ─── Dashboard HTML ─────────────────────────────────────────────────
 
+/// `GET /exoforge` — serve the ExoForge task-board dashboard as HTML.
 async fn serve_dashboard(
     State(state): State<SharedForgeState>,
 ) -> Result<Html<String>, StatusCode> {
