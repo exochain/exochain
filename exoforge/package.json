@@ -1,0 +1,16 @@
+{
+  "name": "@exochain/exoforge",
+  "version": "0.1.0-alpha",
+  "description": "ExoForge — autonomous implementation engine for EXOCHAIN",
+  "type": "module",
+  "bin": {
+    "exoforge-triage": "./bin/exoforge-triage.js",
+    "exoforge-council-review": "./bin/exoforge-council-review.js",
+    "exoforge-implement": "./bin/exoforge-implement.js",
+    "exoforge-validate": "./bin/exoforge-validate.js",
+    "exoforge-monitor": "./bin/exoforge-monitor.js"
+  },
+  "dependencies": {
+    "@exochain/exochain-wasm": "file:../packages/exochain-wasm/wasm"
+  }
+}
