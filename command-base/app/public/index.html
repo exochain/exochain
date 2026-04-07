@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CommandBase.ai — cognitiveplane.ai Hypervisor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap" as="style" crossorigin onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap"></noscript>
+  <link rel="preload" href="app.js" as="script" fetchpriority="high">
+  <link rel="stylesheet" href="styles.css">
+  <script>if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js').catch(function(){}); }</script>
+  <script>
+    // Site is permanently dark — no theme switching needed
+  </script>
+</head>
+<body>
+  <a href="#main" class="skip-nav-link">Skip to main content</a>
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo-mark">C</div>
+      <span class="logo-text">CommandBase.ai</span>
+      <span id="ws-status-dot" class="ws-status-dot" data-status="connecting" title="Live updates: connecting..." data-tooltip="WebSocket status — shows whether live real-time updates are active"></span>
+      <button class="sidebar-collapse-btn" id="sidebar-collapse-btn" title="Collapse sidebar" aria-label="Collapse sidebar" data-tooltip="Collapse sidebar to icon-only mode (more space for content)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sidebar-collapse-icon"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+    </div>
+    <!-- Search trigger -->
+    <button class="sidebar-search" id="sidebar-search-btn" title="Search (⌘K)" aria-label="Search" data-tooltip="Search tasks, notes, and projects (⌘K)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span>Search...</span>
+      <kbd>⌘K</kbd>
+    </button>
+
+    <div class="mode-indicator" id="mode-indicator" data-tooltip="Switch between Terminal Mode and 24/7 Autonomous Mode">
+      <span class="mode-dot" id="mode-dot"></span>
+      <span class="mode-label" id="mode-label">Terminal Mode</span>
+      <svg class="mode-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      <div class="mode-dropdown" id="mode-dropdown" style="display:none">
+        <div class="mode-dropdown-item" data-mode="terminal">
+          <span class="mode-dropdown-dot terminal-dot"></span>
+          <span>Terminal Mode</span>
+        </div>
+        <div class="mode-dropdown-item" data-mode="autonomous">
+          <span class="mode-dropdown-dot autonomous-dot"></span>
+          <span>24/7 Autonomous</span>
+        </div>
+      </div>
+    </div>
+    <div class="notification-bell" id="notification-bell" aria-label="Notifications" data-tooltip="View notifications from your team">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+      <span class="notification-badge" id="notification-badge" style="display:none">0</span>
+    </div>
+
+    <!-- Notification Dropdown -->
+    <div class="notification-dropdown" id="notification-dropdown" style="display:none">
+      <div class="notification-dropdown-header">
+        <span class="notification-dropdown-title">Notifications</span>
+        <div class="notification-header-actions">
+          <button class="notification-mark-all" id="notification-mark-all">Mark all read</button>
+          <button class="notification-settings-btn" id="notification-settings-btn" aria-label="Notification preferences" title="Preferences">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="notification-filter-bar" id="notification-filter-bar" style="display:none"></div>
+      <div class="notification-prefs-panel" id="notification-prefs-panel" style="display:none"></div>
+      <div class="notification-list" id="notification-list"></div>
+    </div>
+    <nav class="sidebar-nav" id="sidebar-nav" role="navigation">
+      <!-- COMMAND — how Max drives the team -->
+      <div class="sidebar-nav-label">Command</div>
+      <div class="sidebar-nav-group">
+        <a href="#board-room" class="nav-item" data-page="board-room" data-tooltip="Send directives to your leadership team and see results">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          <span>Board Room</span>
+        </a>
+        <a href="#inbox" class="nav-item" data-page="inbox" data-tooltip="Deliverables from your team — files, reports, proof of concepts">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>
+          <span>Inbox</span>
+        </a>
+        <a href="#dashboard" class="nav-item active" data-page="dashboard" data-tooltip="Overview of activity, stats, and recent work">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <span>Dashboard</span>
+        </a>
+      </div>
+
+      <div class="sidebar-nav-divider"></div>
+
+      <!-- WORK — what's happening -->
+      <div class="sidebar-nav-label">Work</div>
+      <div class="sidebar-nav-group">
+        <a href="#tasks" class="nav-item" data-page="tasks" data-tooltip="All tasks — filter, sort, monitor live progress">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+          <span>Tasks</span>
+        </a>
+        <a href="#workspace" class="nav-item" data-page="workspace" data-tooltip="Live agents — see who's working, heartbeat, progress">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span>Agents</span>
+        </a>
+        <a href="#projects" class="nav-item" data-page="projects" data-tooltip="Strategic projects and progress tracking">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+          <span>Projects</span>
+        </a>
+        <a href="#task-forces" class="nav-item" data-page="task-forces" data-tooltip="External execution teams — work on projects without being inside them">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          <span>Task Forces</span>
+        </a>
+      </div>
+
+      <div class="sidebar-nav-divider"></div>
+
+      <!-- ORGANIZATION — structure and people -->
+      <div class="sidebar-nav-label">Organization</div>
+      <div class="sidebar-nav-group">
+        <a href="#companies" class="nav-item" data-page="companies" data-tooltip="Companies, their teams, and leadership">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/><path d="M9 9h1"/><path d="M9 13h1"/><path d="M9 17h1"/></svg>
+          <span>Companies</span>
+        </a>
+        <a href="#team" class="nav-item" data-page="team" data-tooltip="Team roster and member profiles">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+          <span>Team</span>
+        </a>
+        <a href="#org-chart" class="nav-item" data-page="org-chart" data-tooltip="Chain of command and reporting lines">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4" r="2.5"/><circle cx="5" cy="14" r="2.5"/><circle cx="19" cy="14" r="2.5"/><line x1="12" y1="6.5" x2="5" y2="11.5"/><line x1="12" y1="6.5" x2="19" y2="11.5"/><circle cx="5" cy="22" r="1.5"/><circle cx="12" cy="22" r="1.5"/><circle cx="19" cy="22" r="1.5"/><line x1="5" y1="16.5" x2="5" y2="20.5"/><line x1="19" y1="16.5" x2="19" y2="20.5"/><line x1="19" y1="16.5" x2="12" y2="20.5"/></svg>
+          <span>Org Chart</span>
+        </a>
+      </div>
+
+      <div class="sidebar-nav-divider"></div>
+
+      <!-- TOOLS — reference and system -->
+      <div class="sidebar-nav-label">Tools</div>
+      <div class="sidebar-nav-group">
+        <a href="#notes" class="nav-item" data-page="notes" data-tooltip="Notes, decisions, and knowledge base">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          <span>Notes</span>
+        </a>
+        <a href="#calendar" class="nav-item" data-page="calendar" data-tooltip="Schedule, events, and deadlines">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <span>Calendar</span>
+        </a>
+        <a href="#resources" class="nav-item" data-page="resources" data-tooltip="Linked repositories, folders, and files">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+          <span>Resources</span>
+        </a>
+        <a href="#analytics" class="nav-item" data-page="analytics" data-tooltip="All metrics — database, system, tokens, team, costs">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/><line x1="17" y1="7" x2="22" y2="2"/><polyline points="22 7 22 2 17 2"/></svg>
+          <span>Analytics</span>
+        </a>
+        <a href="#white-paper" class="nav-item" data-page="white-paper" data-tooltip="Command Base white paper — system overview and documentation">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+          <span>White Paper</span>
+        </a>
+        <a href="#gsd" class="nav-item" data-page="gsd" data-tooltip="GSD Control Panel — governance, identity, agent trust, and constitutional controls">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+          <span>GSD</span>
+        </a>
+        <a href="#settings" class="nav-item" data-page="settings" data-tooltip="Configuration, API keys, and preferences">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span>Settings</span>
+        </a>
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <!-- Theme toggle removed — site is permanently dark -->
+    </div>
+  </aside>
+
+  <main class="main" id="main" role="main" tabindex="-1">
+    <header class="sr-only"><h1>CommandBase.ai — cognitiveplane.ai Hypervisor</h1></header>
+    <button class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Open menu">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <div class="page-content" id="page-content">
+      <!-- Content injected by app.js -->
+    </div>
+
+    <!-- Command Bar removed — Board Room is the primary command interface now -->
+    <footer class="sr-only"><p>CommandBase.ai — cognitiveplane.ai Hypervisor</p></footer>
+  </main>
+
+  <!-- File Drop Overlay -->
+  <div class="drop-overlay" id="drop-overlay">
+    <div class="drop-overlay-content">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <div class="drop-overlay-text">Drop files for the Board</div>
+      <div class="drop-overlay-sub">Any file type accepted</div>
+    </div>
+  </div>
+
+  <!-- Terminal Required Banner -->
+  <div class="terminal-banner" id="terminal-banner" style="display:none">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <span>Terminal Required -- Open Claude Code in your terminal to process tasks</span>
+    <button class="terminal-banner-dismiss" id="terminal-banner-dismiss">&times;</button>
+  </div>
+
+  <!-- Mode Selection Popup -->
+  <div class="mode-popup-overlay" id="mode-popup-overlay" style="display:none">
+    <div class="mode-popup">
+      <h2 class="mode-popup-title">How should the Board work?</h2>
+      <p class="mode-popup-subtitle">Choose how your team executes tasks</p>
+      <div class="mode-popup-options">
+        <div class="mode-option selected recommended" id="mode-option-terminal" data-mode="terminal">
+          <span class="mode-option-badge">Recommended</span>
+          <div class="mode-option-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          </div>
+          <div class="mode-option-title">Terminal Mode</div>
+          <div class="mode-option-desc">Claude Code runs in your terminal. You must have a terminal session open.</div>
+          <div class="mode-option-status" id="mode-option-terminal-status">
+            <span class="mode-option-status-dot"></span>
+            <span class="mode-option-status-text">Checking...</span>
+          </div>
+        </div>
+        <div class="mode-option" id="mode-option-autonomous" data-mode="autonomous">
+          <div class="mode-option-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>
+          </div>
+          <div class="mode-option-title">24/7 Autonomous</div>
+          <div class="mode-option-desc">Background worker runs tasks automatically via Claude API. No terminal needed.</div>
+          <div class="mode-option-status" id="mode-option-autonomous-status">
+            <span class="mode-option-status-dot"></span>
+            <span class="mode-option-status-text">Checking...</span>
+          </div>
+          <div class="mode-option-note">Requires OAuth token setup</div>
+        </div>
+      </div>
+      <div class="mode-popup-footer">
+        <label class="mode-popup-remember">
+          <input type="checkbox" id="mode-remember-checkbox" checked />
+          <span>Remember my choice</span>
+        </label>
+        <button class="mode-popup-continue" id="mode-popup-continue">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Global Search Overlay (Cmd+K) -->
+  <div class="search-overlay" id="search-overlay" style="display:none">
+    <div class="search-modal">
+      <div class="search-input-wrap">
+        <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="search-input" placeholder="Search or type a command..." autocomplete="off" aria-label="Search or run a command" />
+        <kbd class="search-kbd">ESC</kbd>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <!-- Quick-Add FAB -->
+  <!-- FAB removed — Board Room handles all task creation now -->
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container" aria-live="polite" role="status"></div>
+
+  <!-- Screen Reader Announcement Regions -->
+  <!-- Polite: page navigation, task updates, general status changes -->
+  <div id="sr-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+  <!-- Assertive: connection errors, critical alerts that need immediate attention -->
+  <div id="sr-announcer-assertive" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

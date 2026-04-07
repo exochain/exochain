@@ -1,0 +1,23 @@
+{
+  "name": "the-team-dashboard",
+  "version": "1.0.0",
+  "description": "Local dashboard for The Team's SQLite database",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "audit:check": "npm audit --audit-level=high",
+    "audit:fix": "npm audit fix --force --audit-level=high",
+    "audit:report": "npm audit --json > audit-report.json && echo 'Audit report written to audit-report.json'",
+    "audit:moderate": "npm audit --audit-level=moderate",
+    "preinstall": "npm audit --audit-level=critical || true"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "better-sqlite3": "^11.7.0",
+    "compression": "^1.8.1",
+    "express": "^4.21.0",
+    "multer": "^1.4.5-lts.1",
+    "ws": "^8.20.0",
+    "@exochain/exochain-wasm": "file:../../packages/exochain-wasm/wasm"
+  }
+}

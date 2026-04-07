@@ -1,0 +1,2094 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Command Base — White Paper</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <!-- Prism.js syntax highlighting -->
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.css" rel="stylesheet">
+  <style>
+    /* ── Reset & Foundation ──────────────────────────────── */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      --bg: #0F0F0F;
+      --bg-card: #1A1A1A;
+      --bg-code: #141414;
+      --bg-hover: #222;
+      --text: #FFFFFF;
+      --text-2: #999;
+      --text-3: #666;
+      --border: #2A2A2A;
+      --accent: #4A9EFF;
+      --accent-light: rgba(74, 158, 255, 0.1);
+      --green: #4ADE80;
+      --yellow: #FBBF24;
+      --red: #F87171;
+      --blue: #60A5FA;
+      --purple: #A78BFA;
+      --orange: #FB923C;
+      --max-width: 960px;
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      font-size: 15px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Layout ──────────────────────────────────────────── */
+    .wp-wrapper {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* ── Sidebar / Table of Contents ─────────────────────── */
+    .wp-toc {
+      position: fixed;
+      top: 0; left: 0;
+      width: 260px;
+      height: 100vh;
+      overflow-y: auto;
+      background: #111;
+      border-right: 1px solid var(--border);
+      padding: 24px 0;
+      z-index: 10;
+    }
+    .wp-toc::-webkit-scrollbar { width: 4px; }
+    .wp-toc::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+    .wp-toc-header {
+      padding: 0 20px 16px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 12px;
+    }
+    .wp-toc-header h2 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: var(--text-2);
+    }
+    .wp-toc-back {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--accent);
+      text-decoration: none;
+      margin-bottom: 12px;
+    }
+    .wp-toc-back:hover { text-decoration: underline; }
+
+    .wp-toc a {
+      display: block;
+      padding: 6px 20px;
+      font-size: 13px;
+      color: var(--text-2);
+      text-decoration: none;
+      border-left: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .wp-toc a:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+    .wp-toc a.active { color: var(--accent); border-left-color: var(--accent); background: var(--accent-light); }
+    .wp-toc a.toc-sub { padding-left: 36px; font-size: 12px; }
+
+    /* ── Main Content ────────────────────────────────────── */
+    .wp-content {
+      margin-left: 260px;
+      flex: 1;
+      padding: 48px 48px 120px;
+      max-width: calc(var(--max-width) + 260px + 96px);
+    }
+
+    /* ── Title Block ─────────────────────────────────────── */
+    .wp-hero {
+      text-align: center;
+      padding: 60px 0 48px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 48px;
+    }
+    .wp-hero h1 {
+      font-size: 42px;
+      font-weight: 700;
+      letter-spacing: -1px;
+      margin-bottom: 12px;
+    }
+    .wp-hero .wp-subtitle {
+      font-size: 18px;
+      color: var(--text-2);
+      max-width: 600px;
+      margin: 0 auto 20px;
+    }
+    .wp-hero .wp-meta {
+      font-size: 13px;
+      color: var(--text-3);
+    }
+    .wp-hero .wp-meta span { margin: 0 8px; }
+
+    /* ── Sections ────────────────────────────────────────── */
+    .wp-section {
+      margin-bottom: 56px;
+      scroll-margin-top: 24px;
+    }
+    .wp-section h2 {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .wp-section h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 28px 0 12px;
+      color: var(--text);
+    }
+    .wp-section h4 {
+      font-size: 15px;
+      font-weight: 600;
+      margin: 20px 0 8px;
+      color: var(--text-2);
+    }
+    .wp-section p {
+      color: var(--text-2);
+      margin-bottom: 16px;
+    }
+    .wp-section-desc {
+      font-size: 14px;
+      color: var(--text-3);
+      margin-bottom: 24px;
+    }
+
+    /* ── Cards ────────────────────────────────────────────── */
+    .wp-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .wp-card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Stat Cards ──────────────────────────────────────── */
+    .wp-stat {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      text-align: center;
+    }
+    .wp-stat-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .wp-stat-label {
+      font-size: 12px;
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 4px;
+    }
+
+    /* ── Tables ──────────────────────────────────────────── */
+    .wp-table-wrap {
+      overflow-x: auto;
+      margin-bottom: 16px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+    .wp-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .wp-table th {
+      text-align: left;
+      padding: 10px 14px;
+      background: var(--bg-card);
+      color: var(--text-2);
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .wp-table td {
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-2);
+      vertical-align: top;
+    }
+    .wp-table tr:last-child td { border-bottom: none; }
+    .wp-table tr:hover td { background: rgba(255,255,255,0.02); }
+    .wp-table code {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--bg-code);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--accent);
+    }
+
+    /* ── Code Blocks ─────────────────────────────────────── */
+    .wp-code {
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 1.6;
+      color: var(--text-2);
+    }
+    .wp-code .kw { color: var(--purple); }
+    .wp-code .str { color: var(--green); }
+    .wp-code .cmt { color: var(--text-3); font-style: italic; }
+    .wp-code .fn { color: var(--yellow); }
+    .wp-code .num { color: var(--orange); }
+    .wp-code .type { color: var(--blue); }
+
+    /* ── Collapsible Sections ────────────────────────────── */
+    .wp-collapse {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+    .wp-collapse-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      background: var(--bg-card);
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      user-select: none;
+      transition: background 0.15s;
+    }
+    .wp-collapse-header:hover { background: var(--bg-hover); }
+    .wp-collapse-header .chevron {
+      transition: transform 0.2s;
+      color: var(--text-3);
+    }
+    .wp-collapse-header.open .chevron { transform: rotate(90deg); }
+    .wp-collapse-body {
+      display: none;
+      padding: 16px;
+      border-top: 1px solid var(--border);
+    }
+    .wp-collapse-body.open { display: block; }
+
+    /* ── Badges ──────────────────────────────────────────── */
+    .wp-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .wp-badge-blue { background: rgba(96,165,250,0.15); color: var(--blue); }
+    .wp-badge-green { background: rgba(74,222,128,0.15); color: var(--green); }
+    .wp-badge-yellow { background: rgba(251,191,36,0.15); color: var(--yellow); }
+    .wp-badge-red { background: rgba(248,113,113,0.15); color: var(--red); }
+    .wp-badge-purple { background: rgba(167,139,250,0.15); color: var(--purple); }
+
+    /* ── Flow Diagram ────────────────────────────────────── */
+    .wp-flow {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      flex-wrap: wrap;
+      margin: 16px 0;
+    }
+    .wp-flow-step {
+      padding: 8px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .wp-flow-arrow {
+      padding: 0 8px;
+      color: var(--text-3);
+      font-size: 18px;
+    }
+
+    /* ── Org Chart ────────────────────────────────────────── */
+    .wp-org-tier {
+      margin-bottom: 24px;
+    }
+    .wp-org-tier-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-3);
+      margin-bottom: 10px;
+      font-weight: 600;
+    }
+    .wp-member-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 8px;
+    }
+    .wp-member {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    .wp-member-icon {
+      font-size: 20px;
+      flex-shrink: 0;
+      width: 28px;
+      text-align: center;
+    }
+    .wp-member-name { font-weight: 600; color: var(--text); }
+    .wp-member-role { font-size: 11px; color: var(--text-3); }
+
+    /* ── Dept Groups ─────────────────────────────────────── */
+    .wp-dept-group {
+      margin-bottom: 16px;
+    }
+    .wp-dept-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* ── Loading ──────────────────────────────────────────── */
+    .wp-loading {
+      text-align: center;
+      padding: 80px 0;
+      color: var(--text-3);
+    }
+    .wp-loading-spinner {
+      width: 32px; height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: wpspin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes wpspin { to { transform: rotate(360deg); } }
+
+    /* ── Auto-refresh indicator ───────────────────────────── */
+    .wp-refresh-bar {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: #111;
+      border-top: 1px solid var(--border);
+      padding: 8px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-3);
+      z-index: 20;
+    }
+    .wp-refresh-dot {
+      display: inline-block;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      margin-right: 6px;
+    }
+    .wp-refresh-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: var(--font);
+    }
+    .wp-refresh-btn:hover { background: var(--bg-hover); color: var(--text); }
+
+    /* ── Print Styles ────────────────────────────────────── */
+    @media print {
+      .wp-toc, .wp-refresh-bar { display: none !important; }
+      .wp-content { margin-left: 0; padding: 20px; }
+      body { background: #fff; color: #111; font-size: 12px; }
+      .wp-card, .wp-stat, .wp-code, .wp-collapse, .wp-table-wrap {
+        border-color: #ddd;
+        background: #fff;
+        break-inside: avoid;
+      }
+      .wp-hero h1 { font-size: 28px; }
+      .wp-section h2 { font-size: 20px; }
+      .wp-stat-value { color: #111; }
+      .wp-table th { background: #f5f5f5; }
+      .wp-table td, .wp-table th { color: #333; }
+      .wp-code { background: #f5f5f5; color: #333; }
+      .wp-collapse-body { display: block !important; }
+      .wp-collapse-header .chevron { display: none; }
+      a { color: inherit; text-decoration: none; }
+    }
+
+    /* ── Prism.js Overrides (dark theme match) ─────────── */
+    pre[class*="language-"] {
+      background: var(--bg-code) !important;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin: 0;
+      font-family: var(--font-mono) !important;
+      font-size: 12.5px !important;
+      line-height: 1.6 !important;
+      max-height: 600px;
+      overflow: auto;
+    }
+    code[class*="language-"] {
+      font-family: var(--font-mono) !important;
+      font-size: 12.5px !important;
+    }
+    .wp-code-section {
+      margin-bottom: 16px;
+    }
+    .wp-code-section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-bottom: none;
+      border-radius: 10px 10px 0 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .wp-code-section-header .wp-code-file {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--accent);
+      font-weight: 400;
+    }
+    .wp-code-section pre[class*="language-"] {
+      border-radius: 0 0 8px 8px;
+      border-top: none;
+    }
+
+    /* ── Edit Mode ───────────────────────────────────────── */
+    .wp-toolbar {
+      position: fixed;
+      top: 0; left: 260px; right: 0;
+      background: rgba(17,17,17,0.95);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 8px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 15;
+      display: none;
+    }
+    .wp-toolbar.visible { display: flex; }
+    .wp-toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .wp-toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .wp-edit-toggle {
+      position: fixed;
+      top: 12px; right: 24px;
+      z-index: 16;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 14px;
+      cursor: pointer;
+      font-family: var(--font);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-2);
+      transition: all 0.15s;
+    }
+    .wp-edit-toggle:hover { background: var(--bg-hover); color: var(--text); }
+    .wp-edit-toggle.active {
+      background: rgba(74, 158, 255, 0.15);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .wp-editable {
+      position: relative;
+      transition: outline 0.15s;
+    }
+    .wp-editable[contenteditable="true"] {
+      outline: 2px dashed rgba(74, 158, 255, 0.3);
+      outline-offset: 4px;
+      border-radius: 4px;
+      min-height: 1em;
+    }
+    .wp-editable[contenteditable="true"]:focus {
+      outline-color: var(--accent);
+    }
+    .wp-editable[contenteditable="true"]:hover {
+      outline-color: rgba(74, 158, 255, 0.5);
+    }
+
+    .wp-edit-actions {
+      display: none;
+      position: absolute;
+      top: -32px; right: 0;
+      gap: 4px;
+      z-index: 5;
+    }
+    .wp-editable[contenteditable="true"] .wp-edit-actions,
+    .wp-editable.has-custom .wp-edit-actions-view {
+      display: flex;
+    }
+
+    .wp-edit-btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: var(--font);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .wp-edit-btn:hover { background: var(--bg-hover); color: var(--text); }
+    .wp-edit-btn.save { color: var(--green); border-color: rgba(74,222,128,0.3); }
+    .wp-edit-btn.save:hover { background: rgba(74,222,128,0.1); }
+    .wp-edit-btn.reset { color: var(--yellow); border-color: rgba(251,191,36,0.3); }
+    .wp-edit-btn.reset:hover { background: rgba(251,191,36,0.1); }
+
+    .wp-custom-badge {
+      display: none;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      background: rgba(74, 158, 255, 0.15);
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 600;
+      margin-left: 8px;
+    }
+    .wp-editable.has-custom .wp-custom-badge { display: inline-block; }
+
+    .wp-save-toast {
+      position: fixed;
+      bottom: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-card);
+      border: 1px solid var(--green);
+      color: var(--green);
+      padding: 8px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      z-index: 100;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .wp-save-toast.show { opacity: 1; }
+
+    .wp-content.has-toolbar { padding-top: 92px; }
+
+    /* ── Responsive ──────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .wp-toc { display: none; }
+      .wp-content { margin-left: 0; padding: 24px 16px 100px; }
+      .wp-hero h1 { font-size: 28px; }
+      .wp-card-grid { grid-template-columns: repeat(2, 1fr); }
+      .wp-member-grid { grid-template-columns: 1fr 1fr; }
+      .wp-toolbar { left: 0; }
+      .wp-edit-toggle { top: auto; bottom: 56px; right: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Sidebar Table of Contents -->
+  <nav class="wp-toc" id="wp-toc">
+    <div class="wp-toc-header">
+      <a href="/#dashboard" class="wp-toc-back">&larr; Back to Dashboard</a>
+      <h2>White Paper</h2>
+    </div>
+    <a href="#overview">Overview</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#hierarchy" class="toc-sub">Organizational Hierarchy</a>
+    <a href="#roster" class="toc-sub">Current Roster</a>
+    <a href="#chain-of-command">Chain of Command</a>
+    <a href="#task-lifecycle" class="toc-sub">Task Lifecycle</a>
+    <a href="#auto-spawn" class="toc-sub">Auto-Spawn System</a>
+    <a href="#database">Database Schema</a>
+    <a href="#api-catalog">API Catalog</a>
+    <a href="#features">Feature Inventory</a>
+    <a href="#governance">Governance System</a>
+    <a href="#code-structure">Code Structure</a>
+    <a href="#source-code">Source Code</a>
+    <a href="#source-server" class="toc-sub">Server (server.js)</a>
+    <a href="#source-client" class="toc-sub">Client (app.js)</a>
+    <a href="#source-schema" class="toc-sub">Database Schema</a>
+    <a href="#source-instructions" class="toc-sub">System Instructions</a>
+    <a href="#settings">System Settings</a>
+    <a href="#live-stats">Live Statistics</a>
+  </nav>
+
+  <!-- Edit Mode Toggle -->
+  <button class="wp-edit-toggle" id="wp-edit-toggle" onclick="toggleEditMode()" title="Toggle edit mode">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+    <span id="wp-edit-label">Edit</span>
+  </button>
+
+  <!-- Export as Markdown -->
+  <button class="wp-edit-toggle" style="right:80px" onclick="window.location='/api/whitepaper/export'" title="Export as Markdown">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    <span>Export</span>
+  </button>
+
+  <!-- Main Content -->
+  <div class="wp-content" id="wp-content">
+    <div class="wp-loading" id="wp-loading">
+      <div class="wp-loading-spinner"></div>
+      <div>Loading white paper data...</div>
+    </div>
+  </div>
+
+  <!-- Refresh Bar -->
+  <div class="wp-refresh-bar" id="wp-refresh-bar">
+    <div>
+      <span class="wp-refresh-dot"></span>
+      <span id="wp-refresh-time">Last updated: loading...</span>
+      <span style="margin-left:12px;color:var(--text-3)">Auto-refreshes hourly</span>
+    </div>
+    <button class="wp-refresh-btn" onclick="loadWhitePaper()">Refresh Now</button>
+  </div>
+
+  <!-- Prism.js core + languages -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markdown.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.js"></script>
+
+  <script>
+    // ── Edit Mode State ─────────────────────────────────
+    var editMode = false;
+    var customContent = {};  // section_id -> { content, updated_at }
+    var wpCodeData = null;   // cached code snippets from API
+
+    // ── Helpers ──────────────────────────────────────────
+    function esc(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatNum(n) {
+      return Number(n || 0).toLocaleString();
+    }
+
+    function fmtDate(d) {
+      if (!d) return 'N/A';
+      try { return new Date(d).toLocaleString(); } catch(_) { return d; }
+    }
+
+    function tierBadge(tier) {
+      const map = { board: 'purple', 'c-suite': 'blue', specialist: 'green' };
+      return '<span class="wp-badge wp-badge-' + (map[tier] || 'blue') + '">' + esc(tier) + '</span>';
+    }
+
+    function statusBadge(status) {
+      const map = { new: 'blue', routing: 'yellow', in_progress: 'yellow', review: 'purple', completed: 'green', delivered: 'green' };
+      return '<span class="wp-badge wp-badge-' + (map[status] || 'blue') + '">' + esc(status) + '</span>';
+    }
+
+    function collapsible(id, title, bodyHtml, defaultOpen) {
+      var openClass = defaultOpen ? ' open' : '';
+      return '<div class="wp-collapse">' +
+        '<div class="wp-collapse-header' + openClass + '" onclick="toggleCollapse(this)" id="collapse-' + id + '">' +
+          '<svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 6 15 12 9 18"/></svg>' +
+          esc(title) +
+        '</div>' +
+        '<div class="wp-collapse-body' + openClass + '">' + bodyHtml + '</div>' +
+      '</div>';
+    }
+
+    function toggleCollapse(el) {
+      el.classList.toggle('open');
+      var body = el.nextElementSibling;
+      body.classList.toggle('open');
+    }
+
+    // ── TOC active tracking ─────────────────────────────
+    function setupTocTracking() {
+      var sections = document.querySelectorAll('.wp-section');
+      var tocLinks = document.querySelectorAll('.wp-toc a[href^="#"]');
+      if (!sections.length) return;
+
+      var observer = new IntersectionObserver(function(entries) {
+        entries.forEach(function(entry) {
+          if (entry.isIntersecting) {
+            tocLinks.forEach(function(a) { a.classList.remove('active'); });
+            var link = document.querySelector('.wp-toc a[href="#' + entry.target.id + '"]');
+            if (link) link.classList.add('active');
+          }
+        });
+      }, { rootMargin: '-20% 0px -70% 0px' });
+
+      sections.forEach(function(s) { observer.observe(s); });
+    }
+
+    // ── Main Render ─────────────────────────────────────
+    // Auth: get API key for authenticated requests
+    var _wpApiKey = null;
+    async function wpFetch(url, extraOpts) {
+      var opts = Object.assign({}, extraOpts || {});
+      opts.headers = Object.assign({}, opts.headers || {});
+      if (_wpApiKey) opts.headers['X-API-Key'] = _wpApiKey;
+      return fetch(url, opts);
+    }
+
+    async function loadWhitePaper() {
+      var content = document.getElementById('wp-content');
+      var refreshTime = document.getElementById('wp-refresh-time');
+
+      try {
+        // Bootstrap auth key
+        if (!_wpApiKey) {
+          try {
+            var authRes = await fetch('/api/auth/status');
+            var authData = await authRes.json();
+            if (authData.key) { _wpApiKey = authData.key; document.cookie = 'cb_auth=' + authData.key + ';path=/;SameSite=Strict'; }
+          } catch(e) {}
+        }
+
+        var fetches = [
+          wpFetch('/api/whitepaper/data').then(function(r) { return r.json(); }),
+          wpFetch('/api/whitepaper/schema').then(function(r) { return r.json(); }),
+          wpFetch('/api/whitepaper/routes').then(function(r) { return r.json(); }),
+          wpFetch('/api/whitepaper/code').then(function(r) { return r.ok ? r.json() : { sections: [] }; }).catch(function() { return { sections: [] }; }),
+          wpFetch('/api/whitepaper/content').then(function(r) { return r.ok ? r.json() : { sections: {} }; }).catch(function() { return { sections: {} }; })
+        ];
+
+        var [data, schema, routes, codeData, savedContent] = await Promise.all(fetches);
+
+        // Cache code data and custom content
+        wpCodeData = codeData;
+        // sections is an object keyed by section_id — assign directly
+        customContent = (savedContent && savedContent.sections) ? savedContent.sections : {};
+
+        refreshTime.textContent = 'Last updated: ' + fmtDate(data.generated_at);
+
+        content.innerHTML = renderHero(data) +
+          renderOverview(data) +
+          renderArchitecture(data) +
+          renderRoster(data) +
+          renderChainOfCommand(data) +
+          renderDatabase(schema) +
+          renderApiCatalog(routes) +
+          renderFeatures() +
+          renderGovernance(data) +
+          renderCodeStructure() +
+          renderAgentExecution() +
+          renderSourceCode(codeData) +
+          renderSettings(data) +
+          renderLiveStats(data);
+
+        // Apply custom content overrides
+        applyCustomContent();
+        // Highlight all Prism code blocks
+        if (window.Prism) Prism.highlightAll();
+        setupTocTracking();
+      } catch (err) {
+        content.innerHTML = '<div class="wp-loading"><div style="color:var(--red)">Failed to load white paper data</div><p style="margin-top:8px;color:var(--text-3)">' + esc(err.message) + '</p><button class="wp-refresh-btn" onclick="loadWhitePaper()" style="margin-top:16px">Retry</button></div>';
+      }
+    }
+
+    // ── Hero ────────────────────────────────────────────
+    function renderHero(data) {
+      return '<div class="wp-hero">' +
+        '<h1>Command Base</h1>' +
+        editableBlock('hero-subtitle',
+          '<div class="wp-subtitle">AI-Powered Organizational Management Platform &mdash; A comprehensive technical white paper documenting the architecture, governance, and operational mechanics of an autonomous AI workforce.</div>'
+        ) +
+        '<div class="wp-meta">' +
+          '<span>Generated: ' + esc(fmtDate(data.generated_at)) + '</span>' +
+          '<span>&middot;</span>' +
+          '<span>' + formatNum(data.roster.total_active) + ' active members</span>' +
+          '<span>&middot;</span>' +
+          '<span>' + formatNum(data.database.table_count) + ' database tables</span>' +
+        '</div>' +
+      '</div>';
+    }
+
+    // ── 1. Overview ─────────────────────────────────────
+    function renderOverview(data) {
+      var stats = data.taskStats;
+      return '<section class="wp-section" id="overview">' +
+        '<h2>1. Project Overview</h2>' +
+        editableBlock('overview-intro',
+          '<p>The Team is a full-stack AI agent orchestration platform that manages a hierarchical organization of AI team members. ' +
+          'It enables a single human owner (Chairman) to direct a workforce of ' + formatNum(data.roster.total_active) + ' AI agents organized into a 3-tier corporate hierarchy: ' +
+          'Board of Directors, C-Suite Executives, and Specialists.</p>' +
+          '<p>The platform handles task intake, intelligent routing through a chain of command, autonomous execution via Claude CLI terminal spawning, ' +
+          'quality review cycles, and final delivery &mdash; all governed by a cryptographic audit trail (ExoChain) and constitutional invariants.</p>'
+        ) +
+
+        '<h3>Mission Statement</h3>' +
+        editableBlock('overview-mission',
+          '<p>To provide a single human operator with the organizational leverage of a full company &mdash; strategy, engineering, design, finance, legal, marketing, and operations &mdash; ' +
+          'through an autonomous AI workforce that follows corporate governance principles, competes on merit, and self-improves continuously.</p>'
+        ) +
+
+        '<h3>Key Metrics (Live)</h3>' +
+        '<div class="wp-card-grid">' +
+          statCard(formatNum(data.roster.total_active), 'Active Members') +
+          statCard(formatNum(stats.total), 'Total Tasks') +
+          statCard(formatNum(stats.completed_this_week), 'Completed This Week') +
+          statCard(formatNum(data.projectStats.total), 'Projects') +
+          statCard(formatNum(data.governance.receipts_total), 'Governance Receipts') +
+          statCard(formatNum(data.knowledge.notes), 'Notes') +
+          statCard(data.utilization.pct + '%', 'Team Utilization') +
+          statCard(formatNum(data.database.table_count), 'DB Tables') +
+        '</div>' +
+      '</section>';
+    }
+
+    function statCard(value, label) {
+      return '<div class="wp-stat"><div class="wp-stat-value">' + esc(String(value)) + '</div><div class="wp-stat-label">' + esc(label) + '</div></div>';
+    }
+
+    // ── 2. Architecture ─────────────────────────────────
+    function renderArchitecture(data) {
+      return '<section class="wp-section" id="architecture">' +
+        '<h2>2. System Architecture</h2>' +
+        editableBlock('architecture-intro',
+          '<p>Command Base runs as a modularized Node.js Express server with SQLite, vanilla JS frontend, and WebSocket real-time updates. ' +
+          'The backend is split into a core server (~22,000 lines) and 16 domain-specific route modules. ' +
+          'AI agent work is executed via Claude CLI terminal sessions for internal tasks, and external Task Forces for independent audit/development work. ' +
+          'A DGX Spark GB10 (128GB RAM, Nemotron/qwen3-coder) handles free local inference via SSH tunnel. ' +
+          'All API endpoints are protected by key-based authentication.</p>'
+        ) +
+
+        '<h3>Technology Stack</h3>' +
+        '<div class="wp-card-grid">' +
+          techCard('Backend', 'Express.js (Node.js)', 'Core server ~22K lines + 16 route modules (~11K lines)') +
+          techCard('Database', 'SQLite (better-sqlite3)', 'WAL mode, ' + formatNum(data.database.table_count) + ' tables + separate task_forces.db') +
+          techCard('Frontend', 'Vanilla JS SPA', 'Hash-based routing, ~36,000 lines, no framework') +
+          techCard('Real-Time', 'WebSocket (ws)', 'Live updates, heartbeat, reconnection with ring buffer replay') +
+          techCard('AI Engine', 'Claude CLI + Ollama', 'CLI for code tasks, Ollama on DGX Spark for analysis') +
+          techCard('Styling', 'CSS (custom)', 'Dark theme, ~34,000 lines, CSS custom properties') +
+          techCard('Auth', 'API Key Middleware', 'Auto-generated key, X-API-Key header or cookie auth') +
+          techCard('Inference', 'DGX Spark GB10', 'Nemotron 42GB + qwen3-coder 30B via SSH tunnel on :11435') +
+        '</div>' +
+
+        '<h3>Architecture Diagram</h3>' +
+        '<div class="wp-code">' +
+          '<span class="cmt">// System Architecture — Modularized</span>\n\n' +
+          '                       +-------------------+\n' +
+          '                       |    <span class="fn">Browser (SPA)</span>    |\n' +
+          '                       | Vanilla JS + CSS  |\n' +
+          '                       +--------+----------+\n' +
+          '                                |\n' +
+          '                     HTTP / WebSocket / API Key Auth\n' +
+          '                                |\n' +
+          '                       +--------v----------+\n' +
+          '                       |  <span class="fn">Express Server</span>    |\n' +
+          '                       |  Core (22K lines)  |\n' +
+          '                       |  + 16 route modules|\n' +
+          '                       +--------+----------+\n' +
+          '                                |\n' +
+          '         +-------------+--------+--------+-------------+\n' +
+          '         |             |                  |             |\n' +
+          '  +------v-----+ +----v------+    +------v------+ +----v---------+\n' +
+          '  | <span class="type">SQLite DB</span>   | | <span class="type">Claude CLI</span> |    | <span class="type">DGX Spark</span>    | | <span class="type">Task Forces</span>  |\n' +
+          '  | the_team.db | | Terminals |    | Nemotron/    | | External DB  |\n' +
+          '  | ' + formatNum(data.database.table_count) + ' tables  | | (Sonnet)  |    | qwen3-coder  | | task_forces  |\n' +
+          '  +------+------+ +-----------+    | SSH :11435   | | .db          |\n' +
+          '         |                         +------+-------+ +----+---------+\n' +
+          '  +------v------+                         |              |\n' +
+          '  | <span class="type">task_forces</span> |                  <span class="cmt">Free inference</span>     <span class="cmt">Auto-guardian</span>\n' +
+          '  | .db (separate)|                 <span class="cmt">for analysis</span>      <span class="cmt">self-healing</span>\n' +
+          '  +-------------+\n' +
+        '</div>' +
+
+        '<h3>Key Design Decisions</h3>' +
+        '<div class="wp-card">' +
+          '<ul style="list-style:none;padding:0">' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--accent)">SQLite over Postgres</strong> &mdash; Single-file deployment, zero config, WAL mode for concurrent reads. Sufficient for single-operator use case. Separate task_forces.db for external durability.</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--accent)">Vanilla JS over React/Vue</strong> &mdash; No build step, instant loading, full control. Hash-based routing with dynamic page rendering across 16+ pages.</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--accent)">Claude CLI over API</strong> &mdash; Each agent gets a full terminal session with tool access, file I/O, and context persistence. API keys are backup only.</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--accent)">Modularized Routes</strong> &mdash; 16 domain-specific route files (governance, companies, projects, etc.) extracted from the monolith. Core server handles DB setup, middleware, engines, and spawning.</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--accent)">Dual Inference</strong> &mdash; Claude (Sonnet/Opus) for code tasks requiring tool use. Nemotron/qwen3-coder on DGX Spark (GB10, 128GB RAM) for free analysis, reviews, digestion. SSH tunnel at localhost:11435.</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--accent)">Task Forces</strong> &mdash; External execution teams with their own DB, process management, and auto-guardian. Survive server crashes. Anti-bias enforcement prevents builders from reviewing their own work.</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--accent)">API Key Auth</strong> &mdash; Auto-generated 256-bit key on first boot. All /api/* routes protected. Frontend auto-authenticates via /api/auth/status bootstrap.</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--accent)">Prepared Statement Cache</strong> &mdash; All SQL queries go through a stmt() cache to avoid re-parsing.</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--accent)">In-Memory TTL Cache</strong> &mdash; team_members (30s TTL) and system_settings (10s TTL) cached in-process to eliminate hot-path DB round-trips.</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--accent)">Resource Management</strong> &mdash; Per-device resource profiles (Mac: 60% RAM cap for protection, Spark: 98% for full utilization). Process breakdown shows grouped app-level resource usage. Emergency kill buttons for instant model termination.</li>' +
+          '</ul>' +
+        '</div>' +
+      '</section>';
+    }
+
+    function techCard(title, tech, detail) {
+      return '<div class="wp-stat">' +
+        '<div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">' + esc(title) + '</div>' +
+        '<div style="font-weight:600;font-size:14px;color:var(--text);margin-bottom:2px">' + esc(tech) + '</div>' +
+        '<div style="font-size:11px;color:var(--text-3)">' + esc(detail) + '</div>' +
+      '</div>';
+    }
+
+    // ── 3. Roster ───────────────────────────────────────
+    function renderRoster(data) {
+      var html = '<section class="wp-section" id="roster">' +
+        '<h2>3. Organizational Hierarchy &amp; Roster</h2>' +
+        '<p>The organization follows a strict 3-tier corporate hierarchy. The Board governs and routes, Executives orchestrate departments, and Specialists do all the actual work.</p>';
+
+      // Board
+      html += '<div class="wp-org-tier" id="hierarchy">' +
+        '<div class="wp-org-tier-label">Tier 1 &mdash; Board of Directors (' + data.roster.board.length + ' members)</div>' +
+        '<div class="wp-member-grid">';
+      data.roster.board.forEach(function(m) {
+        html += memberCard(m);
+      });
+      html += '</div></div>';
+
+      // C-Suite
+      html += '<div class="wp-org-tier">' +
+        '<div class="wp-org-tier-label">Tier 2 &mdash; C-Suite Executives (' + data.roster.csuite.length + ' members)</div>' +
+        '<div class="wp-member-grid">';
+      data.roster.csuite.forEach(function(m) {
+        html += memberCard(m);
+      });
+      html += '</div></div>';
+
+      // Specialists grouped by department
+      var depts = {};
+      data.roster.specialists.forEach(function(m) {
+        var dept = m.department || 'Unassigned';
+        if (!depts[dept]) depts[dept] = [];
+        depts[dept].push(m);
+      });
+
+      html += '<div class="wp-org-tier">' +
+        '<div class="wp-org-tier-label">Tier 3 &mdash; Specialists (' + data.roster.specialists.length + ' members)</div>';
+
+      Object.keys(depts).sort().forEach(function(dept) {
+        html += '<div class="wp-dept-group">' +
+          '<div class="wp-dept-label">' + esc(dept) + ' (' + depts[dept].length + ')</div>' +
+          '<div class="wp-member-grid">';
+        depts[dept].forEach(function(m) {
+          html += memberCard(m);
+        });
+        html += '</div></div>';
+      });
+      html += '</div>';
+
+      // Department summary table
+      html += '<h3>Department Breakdown</h3>' +
+        '<div class="wp-table-wrap"><table class="wp-table">' +
+        '<thead><tr><th>Department</th><th>Members</th><th>Active Tasks</th></tr></thead><tbody>';
+      (data.departments || []).forEach(function(d) {
+        html += '<tr><td>' + esc(d.department) + '</td><td>' + d.member_count + '</td><td>' + (d.active_tasks || 0) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+
+      html += '</section>';
+      return html;
+    }
+
+    function memberCard(m) {
+      return '<div class="wp-member">' +
+        '<div class="wp-member-icon">' + (m.icon || '&#x1F464;') + '</div>' +
+        '<div><div class="wp-member-name">' + esc(m.name) + '</div>' +
+        '<div class="wp-member-role">' + esc(m.role) + '</div></div>' +
+      '</div>';
+    }
+
+    // ── 4. Chain of Command ─────────────────────────────
+    function renderChainOfCommand(data) {
+      return '<section class="wp-section" id="chain-of-command">' +
+        '<h2>4. Chain of Command</h2>' +
+        editableBlock('chain-intro',
+          '<p>Every task flows through a strict delegation chain. The Board reviews and routes to Executives, who delegate to Specialists. Escalation flows upward only when a lower tier fails.</p>'
+        ) +
+
+        '<h3>Delegation Flow (Down)</h3>' +
+        '<div class="wp-flow">' +
+          '<div class="wp-flow-step" style="border-color:var(--purple)">New Task Arrives</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--purple)">Board Reviews</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--blue)">Executive Delegates</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--green)">Specialist Executes</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--green)">Delivery</div>' +
+        '</div>' +
+
+        '<h3>Escalation Flow (Up)</h3>' +
+        '<div class="wp-flow">' +
+          '<div class="wp-flow-step" style="border-color:var(--red)">Specialist Fails 2x</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--yellow)">Higher-Ranked Specialist</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--blue)">Executive Intervenes</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--purple)">Board Resolves</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--red)">Chairman (Max)</div>' +
+        '</div>' +
+
+        '<h3 id="task-lifecycle">Task Lifecycle</h3>' +
+        '<p>Every task transitions through a defined status pipeline:</p>' +
+        '<div class="wp-flow">' +
+          '<div class="wp-flow-step">' + statusBadge('new') + ' new</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step">' + statusBadge('routing') + ' routing</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step">' + statusBadge('in_progress') + ' in_progress</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step">' + statusBadge('review') + ' review</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step">' + statusBadge('completed') + ' completed</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step">' + statusBadge('delivered') + ' delivered</div>' +
+        '</div>' +
+        '<p>If review fails, the task cycles back to <code>in_progress</code> with an incremented revision count.</p>' +
+
+        '<h3>Task Statistics</h3>' +
+        '<div class="wp-table-wrap"><table class="wp-table">' +
+        '<thead><tr><th>Status</th><th>Count</th></tr></thead><tbody>' +
+        (data.taskStats.by_status || []).map(function(s) {
+          return '<tr><td>' + statusBadge(s.status) + '</td><td>' + formatNum(s.count) + '</td></tr>';
+        }).join('') +
+        '</tbody></table></div>' +
+
+        '<h3 id="auto-spawn">Auto-Spawn Terminal System</h3>' +
+        '<p>Every function that assigns work to a team member automatically spawns a Claude Code CLI terminal session for that member. This is the core execution engine.</p>' +
+        '<div class="wp-code">' +
+          '<span class="cmt">// How agent work is executed</span>\n' +
+          '<span class="kw">function</span> <span class="fn">spawnAgentTerminal</span>(memberId, taskId) {\n' +
+          '  <span class="cmt">// 1. Build system prompt with member\'s identity files (SOUL, HEARTBEAT, AGENTS)</span>\n' +
+          '  <span class="cmt">// 2. Inject task context, DB context, and learned patterns</span>\n' +
+          '  <span class="cmt">// 3. Spawn: claude --system-prompt [prompt] --task [instructions]</span>\n' +
+          '  <span class="cmt">// 4. Track in active_processes table</span>\n' +
+          '  <span class="cmt">// 5. Capture output, update task status on completion</span>\n' +
+          '}\n\n' +
+          '<span class="cmt">// Trigger points: Mission Control, task assignment, improvement</span>\n' +
+          '<span class="cmt">// execution, research sessions, calendar commands, auto-queue,</span>\n' +
+          '<span class="cmt">// webhooks, and auto-executed action items.</span>' +
+        '</div>' +
+
+        '<h3>Escalation Statistics</h3>' +
+        '<div class="wp-card-grid">' +
+          statCard(formatNum(data.escalationStats.total), 'Total Escalations') +
+          statCard(formatNum(data.escalationStats.open), 'Open') +
+          statCard(formatNum(data.escalationStats.resolved), 'Resolved') +
+        '</div>' +
+
+      '</section>';
+    }
+
+    // ── 5. Database Schema ──────────────────────────────
+    function renderDatabase(schema) {
+      var html = '<section class="wp-section" id="database">' +
+        '<h2>5. Database Schema</h2>' +
+        '<p>' + formatNum(schema.table_count) + ' tables and ' + formatNum(schema.index_count) + ' indexes in SQLite. ' +
+        'The database uses WAL mode for concurrent reads, NORMAL synchronous for performance, and 256 MB memory-mapped I/O.</p>';
+
+      // Category map for grouping tables
+      var categories = {
+        'Core Task Management': ['tasks', 'task_files', 'task_comments', 'task_assignments', 'task_checkouts'],
+        'Team & Membership': ['team_members', 'member_tools', 'member_identities', 'member_rankings', 'contacts', 'skills', 'agent_skills'],
+        'Projects': ['projects', 'project_tasks', 'project_goals', 'project_improvements', 'project_phases', 'project_repos', 'project_executives', 'project_affinity'],
+        'Companies': ['companies', 'company_members', 'company_domains'],
+        'Governance & Decisions': ['decisions', 'decision_objects', 'votes', 'exochain_decisions', 'exochain_votes', 'quorum_policies', 'governance_audit_trail', 'governance_health', 'governance_receipts'],
+        'Compliance & Security': ['constitutional_invariants', 'contestations', 'emergency_actions', 'emergency_protocols', 'escalation_challenges', 'independence_attestations'],
+        'Agents & Automation': ['agent_activity_stream', 'agent_daily_notes', 'agent_identity_files', 'agent_memory_entities', 'agent_output_schemas', 'agent_runtime_state', 'agent_wakeup_requests', 'active_processes'],
+        'Workspaces': ['execution_workspaces', 'workspace_operations', 'workspace_sessions', 'session_phases', 'session_handoffs', 'workflow_templates'],
+        'Research & Analysis': ['research_programs', 'research_experiments', 'research_findings', 'research_sessions', 'research_cycles'],
+        'Context & Knowledge': ['context_store', 'context_subscriptions', 'context_propagation', 'context_relevance_log', 'conversation_memory', 'notes', 'department_summaries'],
+        'Budget & Costs': ['budget_policies', 'budget_incidents', 'cost_events'],
+        'Integrations & External': ['integrations', 'llm_providers', 'llm_usage', 'mcp_servers', 'plugins', 'tool_catalog', 'model_sources'],
+        'Goals & Vision': ['goals', 'end_goals', 'vision_goals', 'visions', 'missions', 'mission_tasks'],
+        'Activity & Logging': ['activity_log', 'plugin_logs', 'improvement_log', 'escalation_log', 'heartbeat_runs', 'heartbeat_run_events'],
+        'Notifications & Calendar': ['notifications', 'notification_preferences', 'calendar_events', 'calendar_sync_tokens']
+      };
+
+      // Build a lookup of table names to schema data
+      var tableMap = {};
+      schema.tables.forEach(function(t) { tableMap[t.name] = t; });
+
+      var categorized = new Set();
+
+      Object.keys(categories).forEach(function(catName) {
+        var tables = categories[catName].filter(function(name) { return tableMap[name]; });
+        tables.forEach(function(name) { categorized.add(name); });
+        if (!tables.length) return;
+
+        var bodyHtml = '<div class="wp-table-wrap"><table class="wp-table">' +
+          '<thead><tr><th>Table</th><th>Rows</th><th>Create SQL</th></tr></thead><tbody>';
+        tables.forEach(function(name) {
+          var t = tableMap[name];
+          bodyHtml += '<tr><td><code>' + esc(name) + '</code></td>' +
+            '<td>' + formatNum(t.row_count) + '</td>' +
+            '<td style="max-width:500px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(t.sql) + '"><code style="font-size:11px">' + esc((t.sql || '').substring(0, 120)) + (t.sql && t.sql.length > 120 ? '...' : '') + '</code></td></tr>';
+        });
+        bodyHtml += '</tbody></table></div>';
+
+        html += collapsible('db-' + catName.replace(/\s+/g, '-').toLowerCase(), catName + ' (' + tables.length + ' tables)', bodyHtml, false);
+      });
+
+      // Uncategorized tables
+      var uncategorized = schema.tables.filter(function(t) { return !categorized.has(t.name); });
+      if (uncategorized.length) {
+        var bodyHtml = '<div class="wp-table-wrap"><table class="wp-table">' +
+          '<thead><tr><th>Table</th><th>Rows</th><th>Create SQL</th></tr></thead><tbody>';
+        uncategorized.forEach(function(t) {
+          bodyHtml += '<tr><td><code>' + esc(t.name) + '</code></td>' +
+            '<td>' + formatNum(t.row_count) + '</td>' +
+            '<td style="max-width:500px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(t.sql) + '"><code style="font-size:11px">' + esc((t.sql || '').substring(0, 120)) + (t.sql && t.sql.length > 120 ? '...' : '') + '</code></td></tr>';
+        });
+        bodyHtml += '</tbody></table></div>';
+        html += collapsible('db-other', 'Other Tables (' + uncategorized.length + ')', bodyHtml, false);
+      }
+
+      // Indexes
+      if (schema.indexes && schema.indexes.length) {
+        var idxBody = '<div class="wp-table-wrap"><table class="wp-table">' +
+          '<thead><tr><th>Index</th><th>Table</th><th>SQL</th></tr></thead><tbody>';
+        schema.indexes.forEach(function(idx) {
+          idxBody += '<tr><td><code>' + esc(idx.name) + '</code></td>' +
+            '<td><code>' + esc(idx.tbl_name) + '</code></td>' +
+            '<td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><code style="font-size:11px">' + esc((idx.sql || '').substring(0, 100)) + '</code></td></tr>';
+        });
+        idxBody += '</tbody></table></div>';
+        html += collapsible('db-indexes', 'Indexes (' + schema.indexes.length + ')', idxBody, false);
+      }
+
+      html += '</section>';
+      return html;
+    }
+
+    // ── 6. API Catalog ──────────────────────────────────
+    function renderApiCatalog(routes) {
+      var html = '<section class="wp-section" id="api-catalog">' +
+        '<h2>6. API Endpoint Catalog</h2>' +
+        '<p>' + formatNum(routes.total_routes) + ' registered routes across the Express application. Grouped by domain.</p>';
+
+      var grouped = routes.grouped || {};
+      Object.keys(grouped).sort().forEach(function(domain) {
+        var domainRoutes = grouped[domain];
+        var bodyHtml = '<div class="wp-table-wrap"><table class="wp-table">' +
+          '<thead><tr><th>Method</th><th>Path</th></tr></thead><tbody>';
+        domainRoutes.forEach(function(r) {
+          r.methods.forEach(function(method) {
+            var color = { GET: 'var(--green)', POST: 'var(--blue)', PUT: 'var(--yellow)', PATCH: 'var(--orange)', DELETE: 'var(--red)' }[method] || 'var(--text-2)';
+            bodyHtml += '<tr><td><span style="color:' + color + ';font-weight:600;font-family:var(--font-mono);font-size:12px">' + method + '</span></td>' +
+              '<td><code>' + esc(r.path) + '</code></td></tr>';
+          });
+        });
+        bodyHtml += '</tbody></table></div>';
+        html += collapsible('api-' + domain.replace(/[^a-z0-9]/gi, '-'), '/' + domain + ' (' + domainRoutes.length + ' endpoints)', bodyHtml, false);
+      });
+
+      html += '</section>';
+      return html;
+    }
+
+    // ── 7. Feature Inventory ────────────────────────────
+    function renderFeatures() {
+      var features = [
+        { name: 'Board Room', route: '#board-room', desc: 'Primary command interface. Send directives to the Board of Directors. They deliberate, route to executives, and delegates execute. Supports file attachments, company selection, and priority control.' },
+        { name: 'Inbox', route: '#inbox', desc: 'Deliverables from the team — completed task outputs, files, reports, and proof of concepts. The receiving end of the chain of command.' },
+        { name: 'Dashboard', route: '#dashboard', desc: 'Overview of recent activity, task status, team utilization, active agents, and quick actions. Real-time WebSocket updates.' },
+        { name: 'Tasks', route: '#tasks', desc: 'Full task list with filtering, sorting, bulk editing, task detail view, live agent monitor tab, and activity log. Includes queue management and task routing status.' },
+        { name: 'Agents (Workspace)', route: '#workspace', desc: 'Live agent monitoring — see who is working, heartbeat status, progress, output streaming. Workspace sessions with phase tracking and handoffs.' },
+        { name: 'Projects', route: '#projects', desc: 'Project management with phase tracking, executive assignment, repo linking, improvement pipeline, autonomous improvement cycles, and chamber-based idea generation.' },
+        { name: 'Task Forces', route: '#task-forces', desc: 'External execution teams that work ON Command Base without being inside it. Separate database (task_forces.db), anti-bias enforcement, instant cancellation, per-device resource monitoring (Mac/Spark), auto-guardian self-healing loop. Supports Claude CLI and Ollama/Spark adapters.' },
+        { name: 'Companies', route: '#companies', desc: 'Multi-company management. Each company has its own team, executive leadership, domains, revenue tracking, and founding standards. Companies hierarchy: Company → Projects → Tasks.' },
+        { name: 'Team', route: '#team', desc: 'Full team roster with member profiles, identity files (SOUL/HEARTBEAT/AGENTS), skills, tool assignments, adapter configuration, and performance rankings.' },
+        { name: 'Org Chart', route: '#org-chart', desc: 'Visual chain of command — Board → C-Suite → Specialists. Reporting lines, department groupings, and hierarchy visualization.' },
+        { name: 'Notes', route: '#notes', desc: 'Knowledge capture with auto-tagging, contact management, and decision logging. Decisions table stores all past answers for reuse.' },
+        { name: 'Calendar', route: '#calendar', desc: 'Calendar with Google Calendar sync. AVC meetings locked MWF 2:30-3:30pm. Event creation, editing, and deadline tracking.' },
+        { name: 'Resources', route: '#resources', desc: 'Linked repositories, folders, and file paths. Connect project codebases to the platform for agent access.' },
+        { name: 'Analytics', route: '#analytics', desc: 'Comprehensive metrics — task velocity, team productivity, cost tracking per model/department, token usage, budget monitoring, and system health scores.' },
+        { name: 'Research', route: '#research', desc: 'Research program management — autonomous investigation sessions with experiment tracking, findings, and research cycles.' },
+        { name: 'Ideas', route: '#ideas', desc: 'Idea board — capture, research, and prioritize project ideas. Auto-research via Pax integration.' },
+        { name: 'Goals', route: '#goals', desc: 'OKR tracking — end goals, visions, milestones, and project alignment.' },
+        { name: 'Approvals', route: '#approvals', desc: 'Approval workflow — review and approve governance actions, budget requests, and team changes. Comments and decision tracking.' },
+        { name: 'Context Store', route: '#context', desc: 'Persistent context management — shared knowledge propagation across agent sessions with subscription and relevance tracking.' },
+        { name: 'Refinement', route: '#refinement', desc: 'Code refinement pipeline — identify targets, assign reviewers, track improvement iterations.' },
+        { name: 'Plugins', route: '#plugins', desc: 'Plugin management — MCP servers, tool catalog (38 pre-loaded), plugin state tracking.' },
+        { name: 'Settings', route: '#settings', desc: 'System configuration — execution mode (terminal/autonomous), LLM providers, model sources (Spark/Mac/remote), API keys, OAuth, integrations, backup, governance controls.' },
+        { name: 'White Paper', route: '#white-paper', desc: 'This document — auto-updating technical documentation of the entire platform. Editable sections, live statistics, complete schema/API/feature reference.' },
+        { name: 'System Map', route: '#system-map', desc: 'Visual node-based system architecture diagram. Draggable nodes with connections showing data flow between components.' },
+      ];
+
+      var html = '<section class="wp-section" id="features">' +
+        '<h2>7. Feature Inventory</h2>' +
+        '<p>' + features.length + ' pages/capabilities in the dashboard.</p>' +
+        '<div class="wp-table-wrap"><table class="wp-table">' +
+        '<thead><tr><th>Feature</th><th>Route</th><th>Description</th></tr></thead><tbody>';
+
+      features.forEach(function(f) {
+        html += '<tr><td style="font-weight:600;white-space:nowrap">' + esc(f.name) + '</td>' +
+          '<td><code>' + esc(f.route) + '</code></td>' +
+          '<td>' + esc(f.desc) + '</td></tr>';
+      });
+
+      html += '</tbody></table></div></section>';
+      return html;
+    }
+
+    // ── 8. Governance ───────────────────────────────────
+    function renderGovernance(data) {
+      var gov = data.governance;
+
+      var html = '<section class="wp-section" id="governance">' +
+        '<h2>8. Governance System</h2>' +
+        editableBlock('governance-intro',
+          '<p>The Team uses ExoChain &mdash; a hash-chained cryptographic receipt system that creates an immutable audit trail for all governed actions. ' +
+          'Constitutional invariants enforce hard rules on every state transition.</p>'
+        ) +
+
+        '<h3>ExoChain (Hash-Chained Receipts)</h3>' +
+        '<div class="wp-card">' +
+          '<p>Every governed action (task assignment, priority change, personnel decision) generates a receipt with:</p>' +
+          '<ul style="padding-left:20px;color:var(--text-2);margin-top:8px">' +
+            '<li>SHA-256 hash of the action payload</li>' +
+            '<li>Previous receipt hash (chain link)</li>' +
+            '<li>Actor, action type, timestamp</li>' +
+            '<li>Constitutional invariant checks (pass/fail)</li>' +
+          '</ul>' +
+        '</div>' +
+
+        '<div class="wp-card-grid">' +
+          statCard(formatNum(gov.receipts_total), 'Total Receipts') +
+          statCard(formatNum(gov.provenance_entries), 'Provenance Entries') +
+          statCard(gov.health.status || 'unknown', 'Health Status') +
+          statCard(gov.health.score || 0, 'Health Score') +
+        '</div>';
+
+      // Constitutional Invariants
+      if (gov.invariants && gov.invariants.length) {
+        html += '<h3>Constitutional Invariants</h3>' +
+          '<p>Codified rules enforced on every state transition. Violations are logged and can trigger escalation.</p>' +
+          '<div class="wp-table-wrap"><table class="wp-table">' +
+          '<thead><tr><th>Code</th><th>Name</th><th>Description</th><th>Severity</th><th>Enforced</th><th>Violations</th></tr></thead><tbody>';
+        gov.invariants.forEach(function(inv) {
+          html += '<tr><td><code>' + esc(inv.code) + '</code></td>' +
+            '<td style="font-weight:500">' + esc(inv.name) + '</td>' +
+            '<td style="max-width:300px">' + esc(inv.description) + '</td>' +
+            '<td>' + (inv.severity === 'critical' ? '<span class="wp-badge wp-badge-red">critical</span>' : '<span class="wp-badge wp-badge-yellow">' + esc(inv.severity) + '</span>') + '</td>' +
+            '<td>' + (inv.enforced ? '<span style="color:var(--green)">Yes</span>' : '<span style="color:var(--red)">No</span>') + '</td>' +
+            '<td>' + formatNum(inv.violation_count) + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+
+      // ExoChain decisions
+      if (gov.exochain_decisions) {
+        html += '<h3>ExoChain Decision Statistics</h3>' +
+          '<div class="wp-card-grid">' +
+            statCard(formatNum(gov.exochain_decisions.total), 'Total Decisions') +
+          '</div>';
+
+        if (gov.exochain_decisions.by_status && gov.exochain_decisions.by_status.length) {
+          html += '<div class="wp-table-wrap"><table class="wp-table">' +
+            '<thead><tr><th>Status</th><th>Count</th></tr></thead><tbody>';
+          gov.exochain_decisions.by_status.forEach(function(s) {
+            html += '<tr><td>' + statusBadge(s.status) + '</td><td>' + formatNum(s.count) + '</td></tr>';
+          });
+          html += '</tbody></table></div>';
+        }
+      }
+
+      // Receipts by branch
+      if (gov.receipts_by_branch && gov.receipts_by_branch.length) {
+        html += '<h3>Receipts by Branch</h3>' +
+          '<div class="wp-table-wrap"><table class="wp-table">' +
+          '<thead><tr><th>Branch</th><th>Count</th></tr></thead><tbody>';
+        gov.receipts_by_branch.forEach(function(b) {
+          html += '<tr><td><code>' + esc(b.branch) + '</code></td><td>' + formatNum(b.count) + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+
+      html += '</section>';
+      return html;
+    }
+
+    // ── 9. Code Structure ───────────────────────────────
+    function renderCodeStructure() {
+      return '<section class="wp-section" id="code-structure">' +
+        '<h2>9. Code Structure</h2>' +
+        '<p>The application uses a modularized Express backend with 16 domain-specific route files, a vanilla JS SPA frontend, and separate infrastructure for Task Forces.</p>' +
+
+        '<div class="wp-code">' +
+          '<span class="cmt">// Project directory structure</span>\n' +
+          'The Team/\n' +
+          '<span class="str">  CLAUDE.md</span>              <span class="cmt">// System instructions for AI agents (~660 lines)</span>\n' +
+          '<span class="str">  the_team.db</span>            <span class="cmt">// Main SQLite database (WAL mode, ~133 tables)</span>\n' +
+          '<span class="str">  task_forces.db</span>         <span class="cmt">// Separate DB for Task Forces (survives server crashes)</span>\n' +
+          '<span class="str">  Teams inbox:Result/</span>    <span class="cmt">// INPUT: Max drops task files here</span>\n' +
+          '<span class="str">  Team/</span>                  <span class="cmt">// Workspace + team member profiles (.md files)</span>\n' +
+          '<span class="str">  Stew\'s inbox:Owner/</span>   <span class="cmt">// OUTPUT: Board delivers finished work here</span>\n' +
+          '\n' +
+          '  app/\n' +
+          '<span class="str">    server.js</span>             <span class="cmt">// Core Express backend — ~22,500 lines</span>\n' +
+          '<span class="str">    logger.js</span>             <span class="cmt">// Structured JSON logger with console override</span>\n' +
+          '<span class="str">    package.json</span>          <span class="cmt">// Dependencies: express, better-sqlite3, ws, multer</span>\n' +
+          '\n' +
+          '    routes/                <span class="cmt">// 16 modularized route files (~11,000 lines total)</span>\n' +
+          '<span class="str">      governance.js</span>       <span class="cmt">// 44 routes — ExoChain, approvals, escalations</span>\n' +
+          '<span class="str">      companies.js</span>        <span class="cmt">// 27 routes — company CRUD, members, domains</span>\n' +
+          '<span class="str">      projects.js</span>         <span class="cmt">// 47 routes — projects, improvements, phases</span>\n' +
+          '<span class="str">      analytics.js</span>        <span class="cmt">// 30 routes — metrics, costs, leaderboard</span>\n' +
+          '<span class="str">      settings.js</span>         <span class="cmt">// 37 routes — config, LLM, vault, integrations</span>\n' +
+          '<span class="str">      system.js</span>           <span class="cmt">// 39 routes — system map, white paper, org chart</span>\n' +
+          '<span class="str">      research.js</span>         <span class="cmt">// 27 routes — programs, experiments, findings</span>\n' +
+          '<span class="str">      members.js</span>          <span class="cmt">// 22 routes — member profiles, tools, adapters</span>\n' +
+          '<span class="str">      workspace.js</span>        <span class="cmt">// 19 routes — workspace sessions, operations</span>\n' +
+          '<span class="str">      context.js</span>          <span class="cmt">// 15 routes — context store, propagation</span>\n' +
+          '<span class="str">      refinement.js</span>       <span class="cmt">// 15 routes — refinement targets, reviews</span>\n' +
+          '<span class="str">      goals.js</span>            <span class="cmt">// 17 routes — goals, visions, milestones</span>\n' +
+          '<span class="str">      notes.js</span>            <span class="cmt">// 12 routes — notes, contacts, decisions</span>\n' +
+          '<span class="str">      calendar.js</span>         <span class="cmt">// 11 routes — events, Google sync</span>\n' +
+          '<span class="str">      plugins.js</span>          <span class="cmt">// 14 routes — plugins, MCP servers</span>\n' +
+          '<span class="str">      ideas.js</span>            <span class="cmt">// 7 routes — idea board</span>\n' +
+          '\n' +
+          '    lib/\n' +
+          '<span class="str">      task-force-db.js</span>    <span class="cmt">// Separate SQLite DB for Task Forces</span>\n' +
+          '<span class="str">      task-force-engine.js</span> <span class="cmt">// Task Force engine — spawn, kill, guardian, anti-bias</span>\n' +
+          '<span class="str">      db.js</span>               <span class="cmt">// Database pool utilities</span>\n' +
+          '<span class="str">      broadcast.js</span>        <span class="cmt">// WebSocket broadcast helpers</span>\n' +
+          '<span class="str">      helpers.js</span>           <span class="cmt">// Shared utility functions</span>\n' +
+          '\n' +
+          '    services/\n' +
+          '<span class="str">      governance.js</span>       <span class="cmt">// ExoChain governance service</span>\n' +
+          '<span class="str">      heartbeat.js</span>        <span class="cmt">// Agent heartbeat monitoring</span>\n' +
+          '<span class="str">      exochain.js</span>         <span class="cmt">// Cryptographic receipt chain</span>\n' +
+          '\n' +
+          '    public/\n' +
+          '<span class="str">      index.html</span>          <span class="cmt">// HTML shell — sidebar nav, modals, overlays</span>\n' +
+          '<span class="str">      app.js</span>              <span class="cmt">// Client SPA — ~36,000 lines, hash-based routing</span>\n' +
+          '<span class="str">      styles.css</span>           <span class="cmt">// All CSS — ~34,000 lines, dark theme, CSS vars</span>\n' +
+          '<span class="str">      sw.js</span>               <span class="cmt">// Service worker for offline caching</span>\n' +
+          '<span class="str">      whitepaper.html</span>     <span class="cmt">// This white paper (self-contained)</span>\n' +
+        '</div>' +
+
+        '<h3>Server Architecture (server.js — Core)</h3>' +
+        '<div class="wp-card">' +
+          '<ul style="list-style:none;padding:0;color:var(--text-2)">' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 1–50:</strong> Initialization — Express setup, database connection, WAL mode</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 50–300:</strong> Auto-backup system with integrity verification, retention pruning</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 300–2500:</strong> Schema — CREATE TABLE for ~133 tables, indexes, migrations</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 2500–3500:</strong> Middleware — compression, static files, API key auth, rate limiting, request logging</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 3500–4500:</strong> Engine systems — optimization triggers, Thrift/Forge audits, scan loops, Harden scanner</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 4500–8000:</strong> Core routes — tasks, board room, command processing, intake, direct-assign</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 8000–15000:</strong> Advanced routes — processor, spawn system, review panels, workflows, model sources</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 15000–18000:</strong> Agent spawning — spawnMemberTerminal, model routing (Claude/Spark/Ollama), prompt building</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 18000–20000:</strong> WebSocket — broadcast, ring buffer replay, heartbeat, ghost process detector, routing watchdog</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 20000–22500:</strong> Task Forces, modularized route imports, 404 handler, graceful shutdown</li>' +
+          '</ul>' +
+        '</div>' +
+
+        '<h3>Route Modules (app/routes/)</h3>' +
+        '<div class="wp-card">' +
+          '<p style="color:var(--text-2);margin-bottom:12px">383 routes extracted into 16 domain-specific modules. Each exports a function: <code>module.exports = function(app, db, helpers) { ... }</code></p>' +
+          '<p style="color:var(--text-2)">Helpers passed: <code>broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal</code></p>' +
+        '</div>' +
+
+        '<h3>Task Force Engine (lib/task-force-engine.js)</h3>' +
+        '<div class="wp-card">' +
+          '<ul style="list-style:none;padding:0;color:var(--text-2)">' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Separate Database:</strong> task_forces.db — survives server crashes. Tables: task_forces, task_force_members, task_force_processes, task_force_logs, resource_profiles, bias_ledger</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Adapters:</strong> claude_cli (spawns CLI process with --dangerously-skip-permissions), ollama (HTTP to Spark via SSH tunnel)</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Anti-Bias:</strong> Bias ledger tracks who built/designed/digested what. Builders cannot review their own work. Architectural enforcement, not policy.</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Guardian:</strong> Auto-healing loop every 30s. Detects zombie PIDs, stale Ollama requests (&gt;10min), and auto-respawns failed agents up to 5 attempts.</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Resource Profiles:</strong> Per-device limits (Mac: 60% RAM/CPU, Spark: 98%). Process breakdown groups OS processes by app name for clear utilization display.</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Instant Kill:</strong> SIGTERM → 3s grace → SIGKILL. Emergency kill-all per device. Ollama requests abort via req.destroy().</li>' +
+          '</ul>' +
+        '</div>' +
+
+        '<h3>Client Architecture (app.js)</h3>' +
+        '<div class="wp-card">' +
+          '<ul style="list-style:none;padding:0;color:var(--text-2)">' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 1–150:</strong> State management — WebSocket connection, cache system, rate limit tracking</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 150–500:</strong> API helpers — fetch wrappers, mutation helpers, cache invalidation</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 500–1200:</strong> UI utilities — toasts, modals, skeletons, formatters, accessibility helpers</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 1200–1800:</strong> Navigation — hash router, page switch, breadcrumbs, sidebar management</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--text)">Lines 1800–31000:</strong> Page render functions — each page (dashboard, tasks, team, etc.) as a standalone async function</li>' +
+          '</ul>' +
+        '</div>' +
+
+        '<h3>Key Implementation Patterns</h3>' +
+        '<div class="wp-code">' +
+          '<span class="cmt">// 1. Prepared Statement Cache (server.js)</span>\n' +
+          '<span class="kw">const</span> _stmtCache = <span class="kw">new</span> <span class="type">Map</span>();\n' +
+          '<span class="kw">function</span> <span class="fn">stmt</span>(sql) {\n' +
+          '  <span class="kw">let</span> s = _stmtCache.<span class="fn">get</span>(sql);\n' +
+          '  <span class="kw">if</span> (!s) { s = db.<span class="fn">prepare</span>(sql); _stmtCache.<span class="fn">set</span>(sql, s); }\n' +
+          '  <span class="kw">return</span> s;\n' +
+          '}\n\n' +
+          '<span class="cmt">// 2. In-Memory TTL Cache (server.js)</span>\n' +
+          '<span class="kw">const</span> _memCache = {\n' +
+          '  team_members:    { data: <span class="kw">null</span>, expiresAt: <span class="num">0</span> },\n' +
+          '  system_settings: { data: <span class="kw">null</span>, expiresAt: <span class="num">0</span> },\n' +
+          '};\n\n' +
+          '<span class="cmt">// 3. Client-Side API Cache with ETag support (app.js)</span>\n' +
+          '<span class="kw">async function</span> <span class="fn">api</span>(endpoint) {\n' +
+          '  <span class="kw">var</span> cached = cache[endpoint];\n' +
+          '  <span class="kw">if</span> (cached && Date.<span class="fn">now</span>() - cached.ts < ttl) <span class="kw">return</span> cached.data;\n' +
+          '  <span class="cmt">// ... ETag validation, 304 handling ...</span>\n' +
+          '}\n\n' +
+          '<span class="cmt">// 4. WebSocket Broadcast (server.js)</span>\n' +
+          '<span class="kw">function</span> <span class="fn">broadcast</span>(event, data) {\n' +
+          '  wss.clients.<span class="fn">forEach</span>(client => {\n' +
+          '    <span class="kw">if</span> (client.readyState === WebSocket.OPEN)\n' +
+          '      client.<span class="fn">send</span>(JSON.<span class="fn">stringify</span>({ event, data }));\n' +
+          '  });\n' +
+          '}' +
+        '</div>' +
+      '</section>';
+    }
+
+    // ── 11. Settings ────────────────────────────────────
+    // ── Agent Execution, Spawn System, Spark, Leadership ──
+    function renderAgentExecution() {
+      return '<section class="wp-section" id="agent-execution">' +
+        '<h2>10. Agent Execution &amp; Spawn System</h2>' +
+
+        '<h3>Auto-Spawn Terminal Pipeline</h3>' +
+        editableBlock('spawn-intro',
+          '<p>When a task is assigned to a team member, Command Base automatically spawns a Claude CLI terminal session for that member. ' +
+          'This is the core execution mechanism — every piece of work is done by an AI agent in its own isolated terminal process.</p>'
+        ) +
+
+        '<h4>Spawn Flow</h4>' +
+        '<div class="wp-flow">' +
+          '<div class="wp-flow-step" style="border-color:var(--blue)">Task Assigned</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--blue)">Budget Check</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--blue)">Duplicate Check</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--green)">Load Member Profile</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--green)">Build Prompt</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--green)">Select Model</div>' +
+          '<div class="wp-flow-arrow">&rarr;</div>' +
+          '<div class="wp-flow-step" style="border-color:var(--purple)">Spawn CLI / Ollama</div>' +
+        '</div>' +
+
+        '<h4>spawnMemberTerminal() — The Core Function</h4>' +
+        '<div class="wp-card">' +
+          '<p style="color:var(--text-2);margin-bottom:12px">Located in server.js (~line 12615). This is the most critical function in the system. It:</p>' +
+          '<ol style="padding-left:20px;color:var(--text-2)">' +
+            '<li>Checks <code>auto_spawn_enabled</code> setting (cached)</li>' +
+            '<li>Runs budget enforcement — estimates 50 cents per run, blocks if policy exceeded</li>' +
+            '<li>Prevents duplicate spawns — checks active_processes for same task+member combo</li>' +
+            '<li>Loads member profile from <code>Team/{name}.md</code> file (up to 4000 chars)</li>' +
+            '<li>Loads task details, assignments, project context, linked repos/paths</li>' +
+            '<li>Builds a comprehensive prompt using <strong>3-tier prompt system</strong></li>' +
+            '<li>Routes to the appropriate model using <strong>4-tier model selection</strong></li>' +
+            '<li>Registers in active_processes table, creates notification, broadcasts WebSocket event</li>' +
+            '<li>Spawns the Claude CLI process with <code>--print --dangerously-skip-permissions --output-format stream-json</code></li>' +
+            '<li>Pipes prompt via stdin, captures stdout/stderr, handles completion/failure</li>' +
+            '<li>On completion: parses output, records cost, triggers peer review if configured</li>' +
+          '</ol>' +
+        '</div>' +
+
+        '<h4>3-Tier Prompt System</h4>' +
+        '<div class="wp-table-wrap"><table class="wp-table">' +
+          '<thead><tr><th>Tier</th><th>When Used</th><th>Includes</th><th>Token Cost</th></tr></thead><tbody>' +
+          '<tr><td><span class="wp-badge wp-badge-green">Minimal</span></td><td>Peer reviews, QA, retries</td><td>Persona + task only</td><td>~500-1000</td></tr>' +
+          '<tr><td><span class="wp-badge wp-badge-blue">Standard</span></td><td>Most tasks (default)</td><td>SOUL.md + 5 memories + task</td><td>~2000-4000</td></tr>' +
+          '<tr><td><span class="wp-badge wp-badge-purple">Full</span></td><td>Urgent + complex, first attempt</td><td>All identity files + 10 memories + tacit knowledge + daily notes + context store</td><td>~5000-8000</td></tr>' +
+        '</tbody></table></div>' +
+
+        '<h4>4-Tier Model Routing</h4>' +
+        '<div class="wp-table-wrap"><table class="wp-table">' +
+          '<thead><tr><th>Model</th><th>When Used</th><th>Cost</th><th>Adapter</th></tr></thead><tbody>' +
+          '<tr><td><strong>Nemotron / qwen3-coder</strong></td><td>Peer reviews, QA, docs, digestion, simple tasks (when Spark available)</td><td>$0 (local)</td><td>Ollama HTTP via SSH tunnel (:11435)</td></tr>' +
+          '<tr><td><strong>Claude Haiku</strong></td><td>Simple tasks when Spark is busy/offline</td><td>Low</td><td>Claude CLI</td></tr>' +
+          '<tr><td><strong>Claude Sonnet</strong></td><td>Most implementation work, high-priority tasks (default)</td><td>Medium</td><td>Claude CLI</td></tr>' +
+          '<tr><td><strong>Claude Opus</strong></td><td>Urgent complex planning, architecture decisions</td><td>High</td><td>Claude CLI</td></tr>' +
+        '</tbody></table></div>' +
+
+        '<h4>CLI Spawn Arguments</h4>' +
+        '<div class="wp-code">' +
+          '<span class="cmt">// Actual spawn command for each agent</span>\n' +
+          '<span class="fn">spawn</span>(<span class="str">\'claude\'</span>, [\n' +
+          '  <span class="str">\'--print\'</span>,              <span class="cmt">// non-interactive mode</span>\n' +
+          '  <span class="str">\'--verbose\'</span>,            <span class="cmt">// required for stream-json</span>\n' +
+          '  <span class="str">\'--model\'</span>, modelFlag,   <span class="cmt">// claude-sonnet-4-6 / opus / haiku</span>\n' +
+          '  <span class="str">\'--max-turns\'</span>, N,       <span class="cmt">// 5 (reviews) / 7 (simple) / 10 (normal) / 15 (complex)</span>\n' +
+          '  <span class="str">\'--dangerously-skip-permissions\'</span>,  <span class="cmt">// no user approval needed</span>\n' +
+          '  <span class="str">\'--output-format\'</span>, <span class="str">\'stream-json\'</span>\n' +
+          '], { cwd: workingDir, env });\n\n' +
+          '<span class="cmt">// Prompt is piped via stdin:</span>\n' +
+          'child.stdin.<span class="fn">write</span>(prompt);\n' +
+          'child.stdin.<span class="fn">end</span>();\n' +
+        '</div>' +
+
+        '<h4>Ollama / DGX Spark Path</h4>' +
+        '<div class="wp-card">' +
+          '<p style="color:var(--text-2);margin-bottom:12px">When a task is routed to Nemotron/qwen3-coder (simple tasks with Spark available):</p>' +
+          '<ol style="padding-left:20px;color:var(--text-2)">' +
+            '<li>Query <code>model_sources</code> table for active local sources</li>' +
+            '<li>Check concurrency — max 3 simultaneous on Spark (GB10 GPU limit)</li>' +
+            '<li>GET <code>/api/tags</code> on Spark to see installed models</li>' +
+            '<li>Select best model: code tasks prefer qwen3-coder:30b, general prefer nemotron:latest</li>' +
+            '<li>POST to <code>http://localhost:11435/v1/chat/completions</code> (SSH tunnel to Spark:11434)</li>' +
+            '<li>Parse OpenAI-compatible response, record cost as $0, update active_processes</li>' +
+            '<li>Fallback: if Ollama fails or output &lt;50 chars, auto-retry with Claude Haiku</li>' +
+          '</ol>' +
+        '</div>' +
+
+        '<h3>DGX Spark Hardware</h3>' +
+        '<div class="wp-card-grid">' +
+          techCard('GPU', 'NVIDIA GB10', '128GB unified RAM, CUDA 13.0, 20 cores') +
+          techCard('Models', 'Nemotron + qwen3-coder', '42GB + 18GB (30B params), sub-1s inference') +
+          techCard('Access', 'SSH Tunnel', 'ssh spark (192.168.1.35) → localhost:11435') +
+          techCard('Cost', '$0 per query', 'Dedicated hardware, free local inference') +
+        '</div>' +
+
+        '<h3>Task Force Execution</h3>' +
+        '<div class="wp-card">' +
+          '<p style="color:var(--text-2);margin-bottom:12px">Task Forces are external execution teams that operate independently from Command Base:</p>' +
+          '<ul style="padding-left:20px;color:var(--text-2)">' +
+            '<li><strong>Own database</strong> — task_forces.db, separate from the_team.db. If server crashes, Task Force state persists.</li>' +
+            '<li><strong>Two adapters</strong> — <code>claude_cli</code> (spawns Claude terminal, can read/edit files) and <code>ollama</code> (HTTP to Spark, analysis only)</li>' +
+            '<li><strong>Anti-bias</strong> — Bias ledger tracks who built/designed/digested what. Reviewers can never review their own work. Enforced architecturally.</li>' +
+            '<li><strong>Auto-guardian</strong> — Every 30s: checks for zombie PIDs (signal 0), stale Ollama requests (&gt;10min), auto-respawns failed agents up to 5 attempts, re-activates failed forces.</li>' +
+            '<li><strong>Resource profiles</strong> — Mac: 60% CPU/RAM cap (protect user), Spark: 98% (dedicated). Process breakdown groups by app name.</li>' +
+            '<li><strong>Instant kill</strong> — SIGTERM → 3s → SIGKILL. Emergency kill-all per device. UI has per-agent and per-force kill buttons.</li>' +
+            '<li><strong>Detached processes</strong> — CLI agents use <code>detached: false</code> (server manages lifecycle). Ollama requests are HTTP (stateless).</li>' +
+          '</ul>' +
+        '</div>' +
+
+        '<h3>Complete Leadership Structure</h3>' +
+        '<div class="wp-card">' +
+          '<h4 style="color:var(--purple);margin-bottom:8px">Tier 1: Board of Directors (8 members — equal vote, Chairman breaks ties)</h4>' +
+          '<div class="wp-table-wrap"><table class="wp-table">' +
+            '<thead><tr><th>Name</th><th>Domain</th><th>Role</th></tr></thead><tbody>' +
+            '<tr><td><strong>Max Stewart</strong></td><td>Authority</td><td>Chairman of the Board (Human Owner, tie-breaker)</td></tr>' +
+            '<tr><td>Basalt</td><td>Risk &amp; Governance</td><td>Director</td></tr>' +
+            '<tr><td>Apex</td><td>Strategy &amp; Vision</td><td>Director</td></tr>' +
+            '<tr><td>Arbor</td><td>Culture &amp; Ethics</td><td>Director</td></tr>' +
+            '<tr><td>Fulcrum</td><td>Operations &amp; Efficiency</td><td>Director</td></tr>' +
+            '<tr><td>Helix</td><td>Innovation &amp; Technology</td><td>Director</td></tr>' +
+            '<tr><td>Tithe</td><td>Finance &amp; Accountability</td><td>Director</td></tr>' +
+            '<tr><td>Vantage</td><td>Growth &amp; Market Position</td><td>Director</td></tr>' +
+          '</tbody></table></div>' +
+          '<p style="color:var(--text-3);font-size:12px;margin-top:4px">Quorum: 5 of 8. Decisions governed by ExoChain. Board NEVER does the work — they route and govern.</p>' +
+
+          '<h4 style="color:var(--blue);margin-bottom:8px;margin-top:16px">Tier 2: C-Suite Executives (9 members — orchestrate, NEVER do regular tasks)</h4>' +
+          '<div class="wp-table-wrap"><table class="wp-table">' +
+            '<thead><tr><th>Name</th><th>Title</th><th>Domain</th></tr></thead><tbody>' +
+            '<tr><td>Sable</td><td>COO</td><td>Operations, cross-department coordination</td></tr>' +
+            '<tr><td>Thorn</td><td>CFO</td><td>Finance, budgets, cost analysis</td></tr>' +
+            '<tr><td>Onyx</td><td>CTO</td><td>Technology, engineering, architecture</td></tr>' +
+            '<tr><td>Blaze</td><td>CMO</td><td>Marketing, brand, content, growth</td></tr>' +
+            '<tr><td>Crest</td><td>CHRO</td><td>HR, hiring, org design, profiles</td></tr>' +
+            '<tr><td>Writ</td><td>CLO</td><td>Legal, compliance, licensing</td></tr>' +
+            '<tr><td>Loom</td><td>CAIO</td><td>AI strategy, model evaluation, data</td></tr>' +
+            '<tr><td>Quarry</td><td>CPO</td><td>Product strategy, requirements, roadmap</td></tr>' +
+            '<tr><td>Summit</td><td>CRO</td><td>Revenue, partnerships, sales</td></tr>' +
+          '</tbody></table></div>' +
+
+          '<h4 style="color:var(--green);margin-bottom:8px;margin-top:16px">Tier 3: Specialists (68 members — do ALL the actual work)</h4>' +
+          '<div class="wp-table-wrap"><table class="wp-table">' +
+            '<thead><tr><th>Department</th><th>Members</th></tr></thead><tbody>' +
+            '<tr><td>Engineering (31)</td><td>Strut, Clamp, Flare, Grit, Gauge, Barb, Spline, Mortar, Fret, Dowel, Plumb, Alloy, Frame, Harbor, Assert, Awl, Query, Hook, Crank, Render, Bind, Pulse, Pipeline, Beacon, Vigil, Sweep, Verify, Stage, Breach, Lock, Threat</td></tr>' +
+            '<tr><td>Platform (4)</td><td>Lathe, Scaffold, Plug, Cache</td></tr>' +
+            '<tr><td>Product (4)</td><td>Bower, Scope, Spec, Ink</td></tr>' +
+            '<tr><td>Design (4)</td><td>Glint, Canvas, Grid, Trace</td></tr>' +
+            '<tr><td>Data/AI (8)</td><td>Drift, Locus, Stream, Chart, Neural, Briar, Lens, Signal</td></tr>' +
+            '<tr><td>Content (3)</td><td>Quill, Prose, Echo</td></tr>' +
+            '<tr><td>Customer (3)</td><td>Haven, Anchor, Triage</td></tr>' +
+            '<tr><td>HR (2)</td><td>Talent, Culture</td></tr>' +
+            '<tr><td>Finance (2)</td><td>Tally, Margin</td></tr>' +
+            '<tr><td>Legal (2)</td><td>Clause, Patent</td></tr>' +
+            '<tr><td>Revenue (2)</td><td>Pitch, Demo</td></tr>' +
+          '</tbody></table></div>' +
+        '</div>' +
+
+        '<h3>Escalation Chain</h3>' +
+        '<div class="wp-card">' +
+          '<ol style="padding-left:20px;color:var(--text-2)">' +
+            '<li><strong>Specialist fails once</strong> &rarr; retry with checkpoint data (don\'t restart from scratch)</li>' +
+            '<li><strong>Specialist fails 2x</strong> &rarr; reassign to higher-ranked specialist in same department</li>' +
+            '<li><strong>Higher-ranked specialist fails</strong> &rarr; escalate to C-suite (CTO for tech, COO for ops, etc.)</li>' +
+            '<li><strong>C-suite can\'t fix it</strong> &rarr; escalate to the Board</li>' +
+            '<li><strong>Board resolves or notifies Max</strong> &rarr; Max only hears about it if entire chain failed</li>' +
+          '</ol>' +
+          '<p style="color:var(--text-3);font-size:12px;margin-top:8px">Hard limits: 3 retries max per quality gate. 6 total failures = circuit breaker (auto-complete + notify Max).</p>' +
+        '</div>' +
+
+        '<h3>New Company Founding Standard</h3>' +
+        '<div class="wp-card">' +
+          '<p style="color:var(--text-2);margin-bottom:8px">When a new company is created, it starts LEAN:</p>' +
+          '<ul style="padding-left:20px;color:var(--text-2)">' +
+            '<li><strong>Day 1 — Founding Team (3 members):</strong> CEO + CTO + Talent Lead. No board on day one.</li>' +
+            '<li><strong>Executive Deliberation:</strong> CEO and CTO MUST deliberate together on projects/architecture. Single-executive decisions produce worse results.</li>' +
+            '<li><strong>Hiring rules:</strong> Hire for bottlenecks not headcount. One hire at a time. New hires get a mentor. Probation period (simple tasks first).</li>' +
+            '<li><strong>Growth triggers:</strong> 3+ members at capacity &rarr; hire specialist. Repeated escalations in a domain &rarr; hire dedicated expert.</li>' +
+          '</ul>' +
+        '</div>' +
+
+      '</section>';
+    }
+
+    function renderSettings(data) {
+      var html = '<section class="wp-section" id="settings">' +
+        '<h2>11. System Settings &amp; Configuration</h2>' +
+        '<p>Runtime-configurable settings stored in the system_settings table. Sensitive values (tokens, secrets, keys) are filtered.</p>';
+
+      if (data.settings && data.settings.length) {
+        html += '<div class="wp-table-wrap"><table class="wp-table">' +
+          '<thead><tr><th>Key</th><th>Value</th><th>Updated</th></tr></thead><tbody>';
+        data.settings.forEach(function(s) {
+          var val = String(s.value || '');
+          if (val.length > 80) val = val.substring(0, 80) + '...';
+          html += '<tr><td><code>' + esc(s.key) + '</code></td><td>' + esc(val) + '</td><td style="white-space:nowrap">' + esc(fmtDate(s.updated_at)) + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+
+      // Integrations
+      if (data.integrations && data.integrations.length) {
+        html += '<h3>Integrations</h3>' +
+          '<div class="wp-table-wrap"><table class="wp-table">' +
+          '<thead><tr><th>Type</th><th>Enabled</th><th>Created</th></tr></thead><tbody>';
+        data.integrations.forEach(function(i) {
+          html += '<tr><td>' + esc(i.type) + '</td><td>' + (i.enabled ? '<span style="color:var(--green)">Yes</span>' : '<span style="color:var(--red)">No</span>') + '</td><td>' + esc(fmtDate(i.created_at)) + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+
+      // Linked repos & paths
+      if (data.linked) {
+        if (data.linked.repos && data.linked.repos.length) {
+          html += '<h3>Linked Repositories</h3>' +
+            '<div class="wp-table-wrap"><table class="wp-table">' +
+            '<thead><tr><th>Name</th><th>URL</th><th>Branch</th></tr></thead><tbody>';
+          data.linked.repos.forEach(function(r) {
+            html += '<tr><td>' + esc(r.name) + '</td><td><code>' + esc(r.url) + '</code></td><td>' + esc(r.default_branch) + '</td></tr>';
+          });
+          html += '</tbody></table></div>';
+        }
+
+        if (data.linked.paths && data.linked.paths.length) {
+          html += '<h3>Linked Paths</h3>' +
+            '<div class="wp-table-wrap"><table class="wp-table">' +
+            '<thead><tr><th>Name</th><th>Path</th><th>Type</th></tr></thead><tbody>';
+          data.linked.paths.forEach(function(p) {
+            html += '<tr><td>' + esc(p.name) + '</td><td><code>' + esc(p.path) + '</code></td><td>' + esc(p.type) + '</td></tr>';
+          });
+          html += '</tbody></table></div>';
+        }
+      }
+
+      html += '</section>';
+      return html;
+    }
+
+    // ── 12. Live Statistics ─────────────────────────────
+    function renderLiveStats(data) {
+      var html = '<section class="wp-section" id="live-stats">' +
+        '<h2>12. Live Statistics</h2>' +
+        '<p>Real-time metrics pulled from the database at generation time. This section updates automatically every hour.</p>';
+
+      // Task velocity
+      html += '<h3>Task Velocity</h3>' +
+        '<div class="wp-card-grid">' +
+          statCard(formatNum(data.taskStats.total), 'Total Tasks') +
+          statCard(formatNum(data.taskStats.completed_today), 'Completed Today') +
+          statCard(formatNum(data.taskStats.completed_this_week), 'This Week') +
+          statCard(formatNum(data.taskStats.completed_this_month), 'This Month') +
+          statCard(data.taskStats.avg_revision_count, 'Avg Revisions') +
+        '</div>';
+
+      // Tasks by priority
+      if (data.taskStats.by_priority && data.taskStats.by_priority.length) {
+        html += '<h3>Tasks by Priority</h3>' +
+          '<div class="wp-table-wrap"><table class="wp-table">' +
+          '<thead><tr><th>Priority</th><th>Count</th></tr></thead><tbody>';
+        data.taskStats.by_priority.forEach(function(p) {
+          var color = { urgent: 'var(--red)', high: 'var(--orange)', normal: 'var(--text-2)', low: 'var(--text-3)' }[p.priority] || 'var(--text-2)';
+          html += '<tr><td><span style="color:' + color + ';font-weight:600">' + esc(p.priority) + '</span></td><td>' + formatNum(p.count) + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+
+      // Top performers
+      if (data.topAssignees && data.topAssignees.length) {
+        html += '<h3>Top Performers (Most Completed)</h3>' +
+          '<div class="wp-table-wrap"><table class="wp-table">' +
+          '<thead><tr><th>Member</th><th>Role</th><th>Department</th><th>Completed</th></tr></thead><tbody>';
+        data.topAssignees.slice(0, 10).forEach(function(a) {
+          html += '<tr><td style="font-weight:600">' + esc(a.name) + '</td><td>' + esc(a.role) + '</td><td>' + esc(a.department) + '</td><td>' + formatNum(a.completed) + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+
+      // Projects
+      html += '<h3>Project Statistics</h3>' +
+        '<div class="wp-card-grid">' +
+          statCard(formatNum(data.projectStats.total), 'Total Projects') +
+        '</div>';
+
+      if (data.projectStats.details && data.projectStats.details.length) {
+        html += '<div class="wp-table-wrap"><table class="wp-table">' +
+          '<thead><tr><th>Project</th><th>Status</th><th>Tasks</th><th>Completed</th><th>Active</th></tr></thead><tbody>';
+        data.projectStats.details.forEach(function(p) {
+          html += '<tr><td style="font-weight:600">' + esc(p.name) + '</td><td>' + statusBadge(p.status) + '</td><td>' + formatNum(p.task_count) + '</td><td>' + formatNum(p.completed_tasks) + '</td><td>' + formatNum(p.active_tasks) + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+
+      // Active processes
+      html += '<h3>Active Processes</h3>' +
+        '<div class="wp-card-grid">' +
+          statCard(formatNum(data.activeProcesses.running), 'Running') +
+          statCard(formatNum(data.activeProcesses.total), 'Total') +
+          statCard(data.utilization.pct + '%', 'Utilization') +
+        '</div>';
+
+      // Cost stats
+      if (data.costStats && data.costStats.total_cents > 0) {
+        html += '<h3>Cost Summary</h3>' +
+          '<div class="wp-card-grid">' +
+            statCard('$' + (data.costStats.total_cents / 100).toFixed(2), 'Total Spend') +
+            statCard('$' + (data.costStats.this_month / 100).toFixed(2), 'This Month') +
+            statCard(formatNum(data.costStats.total_tokens || 0), 'Total Tokens') +
+          '</div>';
+
+        if (data.costStats.by_model && data.costStats.by_model.length) {
+          html += '<div class="wp-table-wrap"><table class="wp-table">' +
+            '<thead><tr><th>Model</th><th>Calls</th><th>Cost</th><th>Tokens</th></tr></thead><tbody>';
+          data.costStats.by_model.forEach(function(m) {
+            html += '<tr><td><code>' + esc(m.model) + '</code></td><td>' + formatNum(m.calls) + '</td><td>$' + (m.total_cents / 100).toFixed(2) + '</td><td>' + formatNum(m.tokens) + '</td></tr>';
+          });
+          html += '</tbody></table></div>';
+        }
+      }
+
+      // Knowledge base
+      html += '<h3>Knowledge Base</h3>' +
+        '<div class="wp-card-grid">' +
+          statCard(formatNum(data.knowledge.notes), 'Notes') +
+          statCard(formatNum(data.knowledge.contacts), 'Contacts') +
+          statCard(formatNum(data.knowledge.decisions.total), 'Decisions') +
+          statCard(formatNum(data.knowledge.tags), 'Tags') +
+        '</div>';
+
+      // Activity
+      html += '<h3>Activity Log</h3>' +
+        '<div class="wp-card-grid">' +
+          statCard(formatNum(data.activityStats.total), 'Total Actions') +
+          statCard(formatNum(data.activityStats.today), 'Today') +
+          statCard(formatNum(data.activityStats.this_week), 'This Week') +
+        '</div>';
+
+      // Peer reviews
+      if (data.peerReviewStats && data.peerReviewStats.total > 0) {
+        html += '<h3>Peer Review Statistics</h3>' +
+          '<div class="wp-card-grid">' +
+            statCard(formatNum(data.peerReviewStats.total), 'Total Reviews') +
+            statCard(data.peerReviewStats.avg_quality || 'N/A', 'Avg Quality Score') +
+          '</div>';
+      }
+
+      // Goals
+      if (data.goals) {
+        html += '<h3>Goals &amp; Visions</h3>' +
+          '<div class="wp-card-grid">' +
+            statCard(formatNum(data.goals.end_goals ? data.goals.end_goals.length : 0), 'End Goals') +
+            statCard(formatNum(data.goals.visions ? data.goals.visions.length : 0), 'Visions') +
+          '</div>';
+      }
+
+      html += '</section>';
+      return html;
+    }
+
+    // ── 9.5 Source Code (Syntax Highlighted) ──────────
+    function renderSourceCode(codeData) {
+      var html = '<section class="wp-section" id="source-code">' +
+        '<h2>10. Source Code</h2>' +
+        editableBlock('source-code-intro',
+          '<p>Auto-updating code excerpts from the actual codebase. These sections are read directly from the source files ' +
+          'and refresh with each page load. Expand any section to view the implementation.</p>'
+        );
+
+      // API returns { snippets: { key: {...}, ... } } — convert to array
+      var sections = codeData && codeData.snippets ? Object.values(codeData.snippets) : [];
+      if (!sections.length) {
+        html += '<div class="wp-card" style="color:var(--text-3);text-align:center;padding:40px">' +
+          'Code endpoint not available yet. The /api/whitepaper/code endpoint will serve live code snippets.' +
+        '</div>';
+        html += '</section>';
+        return html;
+      }
+
+      // Group code sections by file
+      var groups = {};
+      sections.forEach(function(s) {
+        var file = s.file || 'unknown';
+        if (!groups[file]) groups[file] = [];
+        groups[file].push(s);
+      });
+
+      // Render each file group
+      Object.keys(groups).forEach(function(file) {
+        var sections = groups[file];
+        var fileId = file.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+        var anchorId = 'source-' + fileId;
+
+        html += '<div id="' + anchorId + '">';
+
+        sections.forEach(function(section, idx) {
+          var lang = section.language || detectLanguage(file);
+          var sectionId = 'code-' + fileId + '-' + idx;
+
+          var bodyHtml = '<div class="wp-code-section">';
+
+          // Description block (editable)
+          if (section.description) {
+            bodyHtml += editableBlock(sectionId + '-desc',
+              '<p style="margin-bottom:12px">' + esc(section.description) + '</p>'
+            );
+          }
+
+          // Actual code with Prism syntax highlighting
+          bodyHtml += '<pre class="language-' + esc(lang) + ' line-numbers"><code class="language-' + esc(lang) + '">' +
+            esc(section.code) + '</code></pre>';
+
+          if (section.lines) {
+            bodyHtml += '<div style="font-size:11px;color:var(--text-3);margin-top:4px;font-family:var(--font-mono)">Lines ' + esc(section.lines) + '</div>';
+          }
+
+          bodyHtml += '</div>';
+
+          var title = section.title || (file + (section.lines ? ' (' + section.lines + ')' : ''));
+          html += collapsible(sectionId, title, bodyHtml, false);
+        });
+
+        html += '</div>';
+      });
+
+      html += '</section>';
+      return html;
+    }
+
+    function detectLanguage(file) {
+      if (/\.js$/.test(file)) return 'javascript';
+      if (/\.sql$/.test(file) || /schema/i.test(file)) return 'sql';
+      if (/\.md$/.test(file)) return 'markdown';
+      if (/\.sh$/.test(file)) return 'bash';
+      if (/\.css$/.test(file)) return 'css';
+      if (/\.html$/.test(file)) return 'html';
+      return 'javascript';
+    }
+
+    // ── Editable Block Wrapper ─────────────────────────
+    function editableBlock(sectionId, defaultHtml) {
+      var hasCustom = customContent[sectionId] ? ' has-custom' : '';
+      return '<div class="wp-editable' + hasCustom + '" data-section-id="' + esc(sectionId) + '">' +
+        '<div class="wp-edit-actions" contenteditable="false">' +
+          '<button class="wp-edit-btn save" onclick="saveSection(\'' + esc(sectionId) + '\', this)" title="Save edits">Save</button>' +
+          '<button class="wp-edit-btn reset" onclick="resetSection(\'' + esc(sectionId) + '\', this)" title="Reset to auto-generated">Reset</button>' +
+        '</div>' +
+        '<span class="wp-custom-badge">edited</span>' +
+        '<div class="wp-editable-content" data-default="' + escAttr(defaultHtml) + '">' +
+          defaultHtml +
+        '</div>' +
+      '</div>';
+    }
+
+    function escAttr(str) {
+      return String(str || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // ── Edit Mode Toggle ───────────────────────────────
+    function toggleEditMode() {
+      editMode = !editMode;
+      var toggle = document.getElementById('wp-edit-toggle');
+      var label = document.getElementById('wp-edit-label');
+      var editables = document.querySelectorAll('.wp-editable-content');
+
+      if (editMode) {
+        toggle.classList.add('active');
+        label.textContent = 'Editing';
+        editables.forEach(function(el) {
+          el.setAttribute('contenteditable', 'true');
+          el.parentElement.setAttribute('contenteditable', 'true');
+        });
+      } else {
+        toggle.classList.remove('active');
+        label.textContent = 'Edit';
+        editables.forEach(function(el) {
+          el.removeAttribute('contenteditable');
+          el.parentElement.removeAttribute('contenteditable');
+        });
+      }
+    }
+
+    // ── Save Section ───────────────────────────────────
+    async function saveSection(sectionId, btnEl) {
+      var wrapper = document.querySelector('[data-section-id="' + sectionId + '"]');
+      if (!wrapper) return;
+      var contentEl = wrapper.querySelector('.wp-editable-content');
+      if (!contentEl) return;
+
+      var content = contentEl.innerHTML;
+
+      try {
+        btnEl.textContent = 'Saving...';
+        btnEl.disabled = true;
+
+        var res = await wpFetch('/api/whitepaper/content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ section_id: sectionId, content: content })
+        });
+
+        if (!res.ok) throw new Error('Save failed: ' + res.status);
+
+        customContent[sectionId] = { content: content, updated_at: new Date().toISOString() };
+        wrapper.classList.add('has-custom');
+        showSaveToast('Section saved');
+      } catch (err) {
+        showSaveToast('Save failed: ' + err.message, true);
+      } finally {
+        btnEl.textContent = 'Save';
+        btnEl.disabled = false;
+      }
+    }
+
+    // ── Reset Section ──────────────────────────────────
+    async function resetSection(sectionId, btnEl) {
+      var wrapper = document.querySelector('[data-section-id="' + sectionId + '"]');
+      if (!wrapper) return;
+      var contentEl = wrapper.querySelector('.wp-editable-content');
+      if (!contentEl) return;
+
+      try {
+        btnEl.textContent = 'Resetting...';
+        btnEl.disabled = true;
+
+        var res = await wpFetch('/api/whitepaper/content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ section_id: sectionId, content: null })
+        });
+
+        // Restore default content — data-default holds the raw HTML
+        var defaultHtml = contentEl.getAttribute('data-default');
+        if (defaultHtml) {
+          contentEl.innerHTML = defaultHtml;
+        }
+
+        delete customContent[sectionId];
+        wrapper.classList.remove('has-custom');
+        showSaveToast('Section reset to auto-generated');
+      } catch (err) {
+        showSaveToast('Reset failed: ' + err.message, true);
+      } finally {
+        btnEl.textContent = 'Reset';
+        btnEl.disabled = false;
+      }
+    }
+
+    // ── Apply Custom Content Overrides ─────────────────
+    function applyCustomContent() {
+      Object.keys(customContent).forEach(function(sectionId) {
+        var wrapper = document.querySelector('[data-section-id="' + sectionId + '"]');
+        if (!wrapper) return;
+        var contentEl = wrapper.querySelector('.wp-editable-content');
+        if (!contentEl) return;
+
+        var custom = customContent[sectionId];
+        if (custom && custom.content) {
+          contentEl.innerHTML = custom.content;
+          wrapper.classList.add('has-custom');
+        }
+      });
+    }
+
+    // ── Save Toast ─────────────────────────────────────
+    function showSaveToast(msg, isError) {
+      var existing = document.getElementById('wp-save-toast');
+      if (existing) existing.remove();
+
+      var toast = document.createElement('div');
+      toast.id = 'wp-save-toast';
+      toast.className = 'wp-save-toast';
+      if (isError) {
+        toast.style.borderColor = 'var(--red)';
+        toast.style.color = 'var(--red)';
+      }
+      toast.textContent = msg;
+      document.body.appendChild(toast);
+
+      requestAnimationFrame(function() {
+        toast.classList.add('show');
+      });
+      setTimeout(function() {
+        toast.classList.remove('show');
+        setTimeout(function() { toast.remove(); }, 300);
+      }, 2500);
+    }
+
+    // ── Init ────────────────────────────────────────────
+    loadWhitePaper();
+
+    // Auto-refresh every hour (3600000 ms)
+    setInterval(loadWhitePaper, 3600000);
+  </script>
+</body>
+</html>

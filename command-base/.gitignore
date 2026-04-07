@@ -1,0 +1,81 @@
+# Dependencies
+node_modules/
+app/node_modules/
+worker/node_modules/
+
+# Database (contains local data — don't push)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Backups
+backups/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Security audit reports (transient output)
+audit-report.json
+app/audit-report.json
+
+# Docker volumes
+data/
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+/tmp/
+*.tmp
+
+# Credentials (never push)
+credentials.json
+*.pem
+*.key
+
+# Claude session files
+.claude/projects/
+.claude/backups/
+.claude/cache/
+.claude/file-history/
+.claude/history.jsonl
+.claude/.claude.json*
+
+# Stew's inbox (output files)
+Stew's inbox:Owner/
+
+# Teams inbox (input files)
+Teams inbox:Result/
+
+# Repos (cloned externally)
+repos/
+projects/
+
+# Corruption artifacts
+*.db.corrupt
+*.db.corrupt-*
+
+# Auto-sync PID
+.auto-sync.pid
+
+# User uploads
+app/uploads/
+app/.playwright-mcp/
+app/tests/
+app/dashboard-audit.png
+TOKEN_OPTIMIZATION_REVIEW.md
+app/TOKEN_OPTIMIZATION_REVIEW.md
+app/TOKEN_OPTIMIZATION_API_CONTRACT_TESTS.md
+com.commandbase.server.plist

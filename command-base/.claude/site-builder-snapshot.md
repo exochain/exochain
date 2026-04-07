@@ -1,0 +1,509 @@
+- generic [active] [ref=e1]:
+  - complementary [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]: T
+      - generic [ref=e5]: The Team
+    - generic [ref=e6] [cursor=pointer]:
+      - generic "Terminal offline" [ref=e7]
+      - generic [ref=e8]: Terminal Mode
+      - img [ref=e9]
+    - generic "Notifications" [ref=e11] [cursor=pointer]:
+      - img [ref=e12]
+      - generic: "9"
+    - navigation [ref=e15]:
+      - generic [ref=e16]:
+        - button "Work" [expanded] [ref=e17] [cursor=pointer]:
+          - generic [ref=e18]: Work
+          - img [ref=e19]
+        - generic [ref=e21]:
+          - link "Dashboard" [ref=e22] [cursor=pointer]:
+            - /url: "#dashboard"
+            - img [ref=e23]
+            - generic [ref=e28]: Dashboard
+          - link "Mission Control" [ref=e29] [cursor=pointer]:
+            - /url: "#mission"
+            - img [ref=e30]
+            - generic [ref=e35]: Mission Control
+          - link "Tasks" [ref=e36] [cursor=pointer]:
+            - /url: "#tasks"
+            - img [ref=e37]
+            - generic [ref=e40]: Tasks
+          - link "Calendar" [ref=e41] [cursor=pointer]:
+            - /url: "#calendar"
+            - img [ref=e42]
+            - generic [ref=e44]: Calendar
+      - generic [ref=e45]:
+        - button "Knowledge" [expanded] [ref=e46] [cursor=pointer]:
+          - generic [ref=e47]: Knowledge
+          - img [ref=e48]
+        - generic [ref=e50]:
+          - link "Notes" [ref=e51] [cursor=pointer]:
+            - /url: "#notes"
+            - img [ref=e52]
+            - generic [ref=e55]: Notes
+          - link "Auto-Research" [ref=e56] [cursor=pointer]:
+            - /url: "#research"
+            - img [ref=e57]
+            - generic [ref=e62]: Auto-Research
+          - link "Idea Board" [ref=e63] [cursor=pointer]:
+            - /url: "#ideas"
+            - img [ref=e64]
+            - generic [ref=e66]: Idea Board
+      - generic [ref=e67]:
+        - button "Insights" [expanded] [ref=e68] [cursor=pointer]:
+          - generic [ref=e69]: Insights
+          - img [ref=e70]
+        - generic [ref=e72]:
+          - link "Analytics" [ref=e73] [cursor=pointer]:
+            - /url: "#analytics"
+            - img [ref=e74]
+            - generic [ref=e78]: Analytics
+          - link "Executive Summary" [ref=e79] [cursor=pointer]:
+            - /url: "#projects"
+            - img [ref=e80]
+            - generic [ref=e83]: Executive Summary
+      - generic [ref=e84]:
+        - button "People" [ref=e85] [cursor=pointer]:
+          - generic [ref=e86]: People
+          - img [ref=e87]
+        - generic:
+          - link "Team & Contacts":
+            - /url: "#team"
+            - img
+            - generic: Team & Contacts
+      - generic [ref=e89]:
+        - button "Admin" [ref=e90] [cursor=pointer]:
+          - generic [ref=e91]: Admin
+          - img [ref=e92]
+        - generic:
+          - link "Settings":
+            - /url: "#settings"
+            - img
+            - generic: Settings
+          - link "Site Builder":
+            - /url: "#site-builder"
+            - img
+            - generic: Site Builder
+    - generic [ref=e94]:
+      - generic [ref=e95]:
+        - generic [ref=e96]: 7:10 PM
+        - generic [ref=e97]: Sun, Mar 29
+      - button "Toggle dark mode" [ref=e98] [cursor=pointer]:
+        - img [ref=e99]
+      - generic [ref=e101]: Dark Mode
+  - main [ref=e102]:
+    - generic [ref=e103]:
+      - navigation [ref=e393]:
+        - link "Site Builder" [ref=e394] [cursor=pointer]:
+          - /url: "#site-builder"
+        - generic [ref=e395]: /
+        - generic [ref=e396]: Improvements
+      - generic [ref=e397]:
+        - heading "Site Builder" [level=1] [ref=e398]
+        - paragraph [ref=e399]: Build, improve, and deploy changes to The Team dashboard
+      - generic [ref=e400]:
+        - button "Builder" [ref=e401] [cursor=pointer]
+        - button "Improvements" [ref=e402] [cursor=pointer]
+      - generic [ref=e403]:
+        - generic [ref=e404]:
+          - generic [ref=e405]:
+            - heading "Platform Improvements" [level=1] [ref=e406]
+            - paragraph [ref=e407]: 1% better every day — Hone's continuous improvement queue
+          - button "+ Propose Improvement" [ref=e408] [cursor=pointer]
+        - generic [ref=e409]:
+          - generic [ref=e410]:
+            - generic [ref=e411]: Pending Review
+            - generic [ref=e412]: "5"
+            - generic [ref=e413]: proposed
+          - generic [ref=e414]:
+            - generic [ref=e415]: Approved
+            - generic [ref=e416]: "0"
+            - generic [ref=e417]: ready to build
+          - generic [ref=e418]:
+            - generic [ref=e419]: Queued
+            - generic [ref=e420]: "0"
+            - generic [ref=e421]: no terminal open
+          - generic [ref=e422]:
+            - generic [ref=e423]: In Progress
+            - generic [ref=e424]: "0"
+            - generic [ref=e425]: being worked on
+          - generic [ref=e426]:
+            - generic [ref=e427]: Completed
+            - generic [ref=e428]: "20"
+            - generic [ref=e429]: shipped
+        - generic [ref=e430]:
+          - button "All" [ref=e431] [cursor=pointer]
+          - button "Proposed 5" [ref=e432] [cursor=pointer]
+          - button "Approved 0" [ref=e433] [cursor=pointer]
+          - button "Queued 0" [ref=e434] [cursor=pointer]
+          - button "In Progress 0" [ref=e435] [cursor=pointer]
+          - button "Completed 20" [ref=e436] [cursor=pointer]
+          - button "Denied 0" [ref=e437] [cursor=pointer]
+          - button "Deferred 0" [ref=e438] [cursor=pointer]
+        - generic [ref=e439]:
+          - button "All Categories" [ref=e440] [cursor=pointer]
+          - button "Ux" [ref=e441] [cursor=pointer]
+          - button "Performance" [ref=e442] [cursor=pointer]
+          - button "Feature" [ref=e443] [cursor=pointer]
+          - button "Design" [ref=e444] [cursor=pointer]
+          - button "Accessibility" [ref=e445] [cursor=pointer]
+          - button "Bug" [ref=e446] [cursor=pointer]
+          - button "Refactor" [ref=e447] [cursor=pointer]
+          - button "Infrastructure" [ref=e448] [cursor=pointer]
+        - generic [ref=e449]:
+          - generic [ref=e451] [cursor=pointer]:
+            - generic [ref=e452]:
+              - generic [ref=e453]: Add search functionality across all entities
+              - generic [ref=e454]:
+                - generic [ref=e455]: feature
+                - generic [ref=e456]: "Impact: high"
+                - generic [ref=e457]: "Effort: large"
+                - generic [ref=e458]: Proposed
+            - generic [ref=e459]: Build a global search bar that queries tasks, notes, contacts, ideas, and projects simultaneously with ranked results.
+            - generic [ref=e460]:
+              - generic [ref=e461]:
+                - text: Proposed by
+                - strong [ref=e462]: Hone
+                - text: Just now
+              - generic [ref=e463]:
+                - button "Approve" [ref=e464]
+                - button "Deny" [ref=e465]
+                - button "Defer" [ref=e466]
+          - generic [ref=e468] [cursor=pointer]:
+            - generic [ref=e469]:
+              - generic [ref=e470]: Optimize page load performance
+              - generic [ref=e471]:
+                - generic [ref=e472]: performance
+                - generic [ref=e473]: "Impact: high"
+                - generic [ref=e474]: "Effort: medium"
+                - generic [ref=e475]: Proposed
+            - generic [ref=e476]: Audit and optimize initial page load time by reducing bundle size, lazy-loading non-critical resources, and caching API responses for faster rendering.
+            - generic [ref=e477]:
+              - generic [ref=e478]:
+                - text: Proposed by
+                - strong [ref=e479]: Hone
+                - text: Just now
+              - generic [ref=e480]:
+                - button "Approve" [ref=e481]
+                - button "Deny" [ref=e482]
+                - button "Defer" [ref=e483]
+          - generic [ref=e485] [cursor=pointer]:
+            - generic [ref=e486]:
+              - generic [ref=e487]: Add keyboard shortcuts for common actions
+              - generic [ref=e488]:
+                - generic [ref=e489]: feature
+                - generic [ref=e490]: "Impact: medium"
+                - generic [ref=e491]: "Effort: medium"
+                - generic [ref=e492]: Proposed
+            - generic [ref=e493]: Implement keyboard shortcuts for navigation (Ctrl+1-9 for pages), task creation (Ctrl+N), and search (Ctrl+K) to speed up power-user workflows.
+            - generic [ref=e494]:
+              - generic [ref=e495]:
+                - text: Proposed by
+                - strong [ref=e496]: Hone
+                - text: Just now
+              - generic [ref=e497]:
+                - button "Approve" [ref=e498]
+                - button "Deny" [ref=e499]
+                - button "Defer" [ref=e500]
+          - generic [ref=e502] [cursor=pointer]:
+            - generic [ref=e503]:
+              - generic [ref=e504]: Add accessibility attributes to UI components
+              - generic [ref=e505]:
+                - generic [ref=e506]: accessibility
+                - generic [ref=e507]: "Impact: medium"
+                - generic [ref=e508]: "Effort: medium"
+                - generic [ref=e509]: Proposed
+            - generic [ref=e510]: Audit all interactive elements for ARIA labels, roles, and keyboard navigation. Ensure screen readers can navigate the full interface.
+            - generic [ref=e511]:
+              - generic [ref=e512]:
+                - text: Proposed by
+                - strong [ref=e513]: Hone
+                - text: Just now
+              - generic [ref=e514]:
+                - button "Approve" [ref=e515]
+                - button "Deny" [ref=e516]
+                - button "Defer" [ref=e517]
+          - generic [ref=e519] [cursor=pointer]:
+            - generic [ref=e520]:
+              - generic [ref=e521]: Implement request debouncing and throttling
+              - generic [ref=e522]:
+                - generic [ref=e523]: performance
+                - generic [ref=e524]: "Impact: low"
+                - generic [ref=e525]: "Effort: small"
+                - generic [ref=e526]: Proposed
+            - generic [ref=e527]: Add debounce to search inputs and throttle rapid API calls to reduce server load and improve responsiveness.
+            - generic [ref=e528]:
+              - generic [ref=e529]:
+                - text: Proposed by
+                - strong [ref=e530]: Hone
+                - text: Just now
+              - generic [ref=e531]:
+                - button "Approve" [ref=e532]
+                - button "Deny" [ref=e533]
+                - button "Defer" [ref=e534]
+          - generic [ref=e536] [cursor=pointer]:
+            - generic [ref=e537]:
+              - generic [ref=e538]: Add undo/redo for task actions
+              - generic [ref=e539]:
+                - generic [ref=e540]: ux
+                - generic [ref=e541]: "Impact: high"
+                - generic [ref=e542]: "Effort: small"
+                - generic [ref=e543]: Completed
+            - generic [ref=e544]: When a task is accidentally deleted or status-changed, there is no undo. Add a 10-second undo toast after destructive actions.
+            - generic [ref=e546]:
+              - text: Proposed by
+              - strong [ref=e547]: Hone
+              - text: 21h ago
+          - generic [ref=e549] [cursor=pointer]:
+            - generic [ref=e550]:
+              - generic [ref=e551]: Auto-backup database daily
+              - generic [ref=e552]:
+                - generic [ref=e553]: infrastructure
+                - generic [ref=e554]: "Impact: high"
+                - generic [ref=e555]: "Effort: small"
+                - generic [ref=e556]: Completed
+            - generic [ref=e557]: Schedule a daily backup of the_team.db to a backups/ folder with date-stamped copies. Prevent data loss.
+            - generic [ref=e559]:
+              - text: Proposed by
+              - strong [ref=e560]: Hone
+              - text: 21h ago
+          - generic [ref=e562] [cursor=pointer]:
+            - generic [ref=e563]:
+              - generic [ref=e564]: Kanban view for tasks
+              - generic [ref=e565]:
+                - generic [ref=e566]: feature
+                - generic [ref=e567]: "Impact: high"
+                - generic [ref=e568]: "Effort: large"
+                - generic [ref=e569]: Completed
+            - generic [ref=e570]: Add a drag-and-drop kanban board view as a tab on the Tasks page. Columns = statuses, cards = tasks.
+            - generic [ref=e572]:
+              - text: Proposed by
+              - strong [ref=e573]: Hone
+              - text: 21h ago
+          - generic [ref=e575] [cursor=pointer]:
+            - generic [ref=e576]:
+              - generic [ref=e577]: Quick-add floating button
+              - generic [ref=e578]:
+                - generic [ref=e579]: feature
+                - generic [ref=e580]: "Impact: high"
+                - generic [ref=e581]: "Effort: medium"
+                - generic [ref=e582]: Completed
+            - generic [ref=e583]: "A persistent + button (bottom-right FAB) that opens a menu: New Task, New Note, New Event, New Project. Available on every page for fast capture."
+            - generic [ref=e585]:
+              - text: Proposed by
+              - strong [ref=e586]: Hone
+              - text: Mar 27, 2026
+          - generic [ref=e588] [cursor=pointer]:
+            - generic [ref=e589]:
+              - generic [ref=e590]: Task dependency chains
+              - generic [ref=e591]:
+                - generic [ref=e592]: feature
+                - generic [ref=e593]: "Impact: high"
+                - generic [ref=e594]: "Effort: large"
+                - generic [ref=e595]: Completed
+            - generic [ref=e596]: Allow tasks to have prerequisite tasks. Show dependencies in the task detail. Block a task from starting until prerequisites are done.
+            - generic [ref=e598]:
+              - text: Proposed by
+              - strong [ref=e599]: Hone
+              - text: Mar 27, 2026
+          - generic [ref=e601] [cursor=pointer]:
+            - generic [ref=e602]:
+              - generic [ref=e603]: Task search and global search
+              - generic [ref=e604]:
+                - generic [ref=e605]: feature
+                - generic [ref=e606]: "Impact: high"
+                - generic [ref=e607]: "Effort: medium"
+                - generic [ref=e608]: Completed
+            - generic [ref=e609]: No way to search across tasks, notes, projects, and contacts from one place. Add a global search bar (Cmd+K) that searches across all entities.
+            - generic [ref=e611]:
+              - text: Proposed by
+              - strong [ref=e612]: Hone
+              - text: Mar 27, 2026
+          - generic [ref=e614] [cursor=pointer]:
+            - generic [ref=e615]:
+              - generic [ref=e616]: Collapsible sidebar sections
+              - generic [ref=e617]:
+                - generic [ref=e618]: ux
+                - generic [ref=e619]: "Impact: medium"
+                - generic [ref=e620]: "Effort: small"
+                - generic [ref=e621]: Completed
+            - generic [ref=e622]: Group sidebar nav items into collapsible sections (Work, Knowledge, Admin) so the sidebar stays organized as more pages are added.
+            - generic [ref=e624]:
+              - text: Proposed by
+              - strong [ref=e625]: Hone
+              - text: 21h ago
+          - generic [ref=e627] [cursor=pointer]:
+            - generic [ref=e628]:
+              - generic [ref=e629]: Task templates from completed tasks
+              - generic [ref=e630]:
+                - generic [ref=e631]: feature
+                - generic [ref=e632]: "Impact: medium"
+                - generic [ref=e633]: "Effort: medium"
+                - generic [ref=e634]: Completed
+            - generic [ref=e635]: Allow converting a completed task into a reusable template. Saves setup time for recurring work patterns.
+            - generic [ref=e637]:
+              - text: Proposed by
+              - strong [ref=e638]: Hone
+              - text: 21h ago
+          - generic [ref=e640] [cursor=pointer]:
+            - generic [ref=e641]:
+              - generic [ref=e642]: Inline markdown preview
+              - generic [ref=e643]:
+                - generic [ref=e644]: ux
+                - generic [ref=e645]: "Impact: medium"
+                - generic [ref=e646]: "Effort: medium"
+                - generic [ref=e647]: Completed
+            - generic [ref=e648]: When editing note content, project summaries, or idea descriptions, show a live preview of the rendered markdown side-by-side.
+            - generic [ref=e650]:
+              - text: Proposed by
+              - strong [ref=e651]: Hone
+              - text: 21h ago
+          - generic [ref=e653] [cursor=pointer]:
+            - generic [ref=e654]:
+              - generic [ref=e655]: Add breadcrumb navigation
+              - generic [ref=e656]:
+                - generic [ref=e657]: ux
+                - generic [ref=e658]: "Impact: medium"
+                - generic [ref=e659]: "Effort: small"
+                - generic [ref=e660]: Completed
+            - generic [ref=e661]: Show the current page path at the top of each page (e.g., Analytics > Team > Workload). Helps orientation especially when drilling into project details.
+            - generic [ref=e663]:
+              - text: Proposed by
+              - strong [ref=e664]: Hone
+              - text: Mar 27, 2026
+          - generic [ref=e666] [cursor=pointer]:
+            - generic [ref=e667]:
+              - generic [ref=e668]: Dashboard customizable widgets
+              - generic [ref=e669]:
+                - generic [ref=e670]: feature
+                - generic [ref=e671]: "Impact: medium"
+                - generic [ref=e672]: "Effort: large"
+                - generic [ref=e673]: Completed
+            - generic [ref=e674]: Let Max drag and rearrange dashboard cards. Save layout to localStorage. Different widgets can be shown/hidden.
+            - generic [ref=e676]:
+              - text: Proposed by
+              - strong [ref=e677]: Hone
+              - text: Mar 27, 2026
+          - generic [ref=e679] [cursor=pointer]:
+            - generic [ref=e680]:
+              - generic [ref=e681]: Add real-time activity toast stream
+              - generic [ref=e682]:
+                - generic [ref=e683]: ux
+                - generic [ref=e684]: "Impact: medium"
+                - generic [ref=e685]: "Effort: small"
+                - generic [ref=e686]: Completed
+            - generic [ref=e687]: Show a subtle stream of activity toasts (team member actions) in the corner when on any page. Keeps Max aware of team activity without switching to Activity pag...
+            - generic [ref=e689]:
+              - text: Proposed by
+              - strong [ref=e690]: Hone
+              - text: Mar 27, 2026
+          - generic [ref=e692] [cursor=pointer]:
+            - generic [ref=e693]:
+              - generic [ref=e694]: Color-coded project tags everywhere
+              - generic [ref=e695]:
+                - generic [ref=e696]: design
+                - generic [ref=e697]: "Impact: medium"
+                - generic [ref=e698]: "Effort: small"
+                - generic [ref=e699]: Completed
+            - generic [ref=e700]: Assign a color to each project. Show that color as a small dot or tag on tasks, calendar events, and activity log entries linked to that project.
+            - generic [ref=e702]:
+              - text: Proposed by
+              - strong [ref=e703]: Hone
+              - text: Mar 27, 2026
+          - generic [ref=e705] [cursor=pointer]:
+            - generic [ref=e706]:
+              - generic [ref=e707]: Add dark mode toggle
+              - generic [ref=e708]:
+                - generic [ref=e709]: design
+                - generic [ref=e710]: "Impact: medium"
+                - generic [ref=e711]: "Effort: medium"
+                - generic [ref=e712]: Completed
+            - generic [ref=e713]: The dashboard currently only has the warm-gray light theme. Adding a dark mode would reduce eye strain during late-night sessions and match what most modern app...
+            - generic [ref=e715]:
+              - text: Proposed by
+              - strong [ref=e716]: Hone
+              - text: Mar 27, 2026
+          - generic [ref=e718] [cursor=pointer]:
+            - generic [ref=e719]:
+              - generic [ref=e720]: Add keyboard shortcuts overlay
+              - generic [ref=e721]:
+                - generic [ref=e722]: ux
+                - generic [ref=e723]: "Impact: medium"
+                - generic [ref=e724]: "Effort: small"
+                - generic [ref=e725]: Completed
+            - generic [ref=e726]: Power users benefit from keyboard shortcuts. Add Cmd+K for command palette, Cmd+/ for help overlay showing all shortcuts, Cmd+N for new mission, etc.
+            - generic [ref=e728]:
+              - text: Proposed by
+              - strong [ref=e729]: Hone
+              - text: Mar 27, 2026
+          - generic [ref=e731] [cursor=pointer]:
+            - generic [ref=e732]:
+              - generic [ref=e733]: Mobile responsive polish pass
+              - generic [ref=e734]:
+                - generic [ref=e735]: accessibility
+                - generic [ref=e736]: "Impact: medium"
+                - generic [ref=e737]: "Effort: medium"
+                - generic [ref=e738]: Completed
+            - generic [ref=e739]: Several pages have responsive breakpoints but the experience on phone-sized screens needs a polish pass — sidebar becomes a hamburger menu, touch targets enlarg...
+            - generic [ref=e741]:
+              - text: Proposed by
+              - strong [ref=e742]: Hone
+              - text: Mar 27, 2026
+          - generic [ref=e744] [cursor=pointer]:
+            - generic [ref=e745]:
+              - generic [ref=e746]: Dashboard weather/time widget
+              - generic [ref=e747]:
+                - generic [ref=e748]: feature
+                - generic [ref=e749]: "Impact: low"
+                - generic [ref=e750]: "Effort: small"
+                - generic [ref=e751]: Completed
+            - generic [ref=e752]: Show current time and local weather in the sidebar footer or dashboard. Small touch that makes the dashboard feel like a personal command center.
+            - generic [ref=e754]:
+              - text: Proposed by
+              - strong [ref=e755]: Hone
+              - text: 21h ago
+          - generic [ref=e757] [cursor=pointer]:
+            - generic [ref=e758]:
+              - generic [ref=e759]: Offline mode with sync
+              - generic [ref=e760]:
+                - generic [ref=e761]: infrastructure
+                - generic [ref=e762]: "Impact: low"
+                - generic [ref=e763]: "Effort: large"
+                - generic [ref=e764]: Completed
+            - generic [ref=e765]: Cache dashboard data in localStorage/IndexedDB so the page works even if Docker is restarting. Sync when connection returns.
+            - generic [ref=e767]:
+              - text: Proposed by
+              - strong [ref=e768]: Hone
+              - text: Mar 27, 2026
+          - generic [ref=e770] [cursor=pointer]:
+            - generic [ref=e771]:
+              - generic [ref=e772]: Export data to CSV/JSON
+              - generic [ref=e773]:
+                - generic [ref=e774]: feature
+                - generic [ref=e775]: "Impact: low"
+                - generic [ref=e776]: "Effort: small"
+                - generic [ref=e777]: Completed
+            - generic [ref=e778]: Max should be able to export tasks, notes, activity logs, and calendar events as CSV or JSON for backup or analysis outside the dashboard.
+            - generic [ref=e780]:
+              - text: Proposed by
+              - strong [ref=e781]: Hone
+              - text: Mar 27, 2026
+          - generic [ref=e783] [cursor=pointer]:
+            - generic [ref=e784]:
+              - generic [ref=e785]: Add loading skeletons to all pages
+              - generic [ref=e786]:
+                - generic [ref=e787]: ux
+                - generic [ref=e788]: "Impact: low"
+                - generic [ref=e789]: "Effort: small"
+                - generic [ref=e790]: Completed
+            - generic [ref=e791]: Replace the simple "Loading" text spinner with skeleton placeholder shapes that match the page layout. Makes the app feel faster.
+            - generic [ref=e793]:
+              - text: Proposed by
+              - strong [ref=e794]: Hone
+              - text: Mar 27, 2026
+  - generic [ref=e379]:
+    - img [ref=e380]
+    - generic [ref=e382]: Terminal Required -- Open Claude Code in your terminal to process tasks
+    - button "×" [ref=e383] [cursor=pointer]
+  - button "Quick add" [ref=e385] [cursor=pointer]:
+    - img [ref=e386]

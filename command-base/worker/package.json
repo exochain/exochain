@@ -1,0 +1,12 @@
+{
+  "name": "the-team-worker",
+  "version": "1.0.0",
+  "description": "Autonomous worker for The Team — processes tasks via Claude Code CLI",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0"
+  }
+}

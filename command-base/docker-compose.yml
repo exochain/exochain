@@ -1,0 +1,48 @@
+# ── The Team Dashboard ─────────────────────────────────────────────
+# RECOMMENDED: Run natively for terminal auto-spawn: ./start.sh
+# Docker cannot access macOS Keychain, so `claude -p` fails with
+# "Not logged in". Native mode uses the host Claude CLI directly.
+# Use Docker mode only for deployment/portability (no terminal spawn).
+# ───────────────────────────────────────────────────────────────────
+services:
+  dashboard:
+    build: ./app
+    container_name: the-team
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount the entire project — database, inbox, outbox all accessible
+      - .:/data/project
+      # Mount claude CLI and its dependencies into the container
+      - /Users/maxstewart/.npm-global/lib/node_modules/@anthropic-ai/claude-code:/usr/local/lib/claude-code:ro
+      # Mount claude config directory for auth tokens (rw so CLI can write session data)
+      - /Users/maxstewart/.claude:/root/.claude
+      # Mount host home .claude.json if it exists (for CLI auth)
+      - /Users/maxstewart:/host-home:ro
+    environment:
+      - DB_PATH=/data/project/the_team.db
+      - INBOX_PATH=/data/project/Teams inbox:Result
+      - OUTBOX_PATH=/data/project/Stew's inbox:Owner
+      - HOME=/root
+      # Pass through API key from host environment if available
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    build: ./worker
+    container_name: the-team-worker
+    volumes:
+      - .:/data/project
+    environment:
+      - DB_PATH=/data/project/the_team.db
+      - INBOX_PATH=/data/project/Teams inbox:Result
+      - OUTBOX_PATH=/data/project/Stew's inbox:Owner
+    profiles:
+      - autonomous
+    restart: unless-stopped

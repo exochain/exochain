@@ -1,0 +1,1685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Prism Studio — Motion design, animation, and visual storytelling that moves people.">
+  <title>Prism Studio — Animation &amp; Motion Design</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@700;800&display=swap" as="style" crossorigin onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@700;800&display=swap"></noscript>
+  <style>
+    /* ── Reset ─────────────────────────────────────────────── */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    /* ── Tokens ─────────────────────────────────────────────── */
+    :root {
+      --bg:           #080808;
+      --bg-card:      #111111;
+      --bg-raised:    #161616;
+      --text:         #FFFFFF;
+      --text-muted:   #888888;
+      --text-dim:     #555555;
+      --border:       #1E1E1E;
+      --border-light: #2A2A2A;
+
+      /* Brand accent — electric violet-to-blue gradient */
+      --accent-a:     #7C3AED;
+      --accent-b:     #2563EB;
+      --gradient:     linear-gradient(135deg, #7C3AED 0%, #2563EB 100%);
+      --gradient-text: linear-gradient(135deg, #C084FC 0%, #60A5FA 100%);
+
+      --font-display: 'Syne', 'Inter', system-ui, sans-serif;
+      --font-body:    'Inter', system-ui, sans-serif;
+
+      --radius-sm:   6px;
+      --radius-md:   12px;
+      --radius-lg:   20px;
+      --radius-xl:   32px;
+      --radius-full: 9999px;
+
+      --shadow-glow: 0 0 80px rgba(124, 58, 237, 0.25);
+      --shadow-card: 0 2px 24px rgba(0,0,0,0.6);
+
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* ── Base ────────────────────────────────────────────────── */
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+      color-scheme: dark;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    img { display: block; max-width: 100%; }
+    button { cursor: pointer; font-family: inherit; border: none; background: none; }
+
+    /* ── Accessibility ───────────────────────────────────────── */
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0,0,0,0); clip-path: inset(50%);
+      white-space: nowrap; border: 0;
+    }
+
+    :focus-visible {
+      outline: 2px solid #7C3AED;
+      outline-offset: 3px;
+      border-radius: 4px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+      html { scroll-behavior: auto; }
+    }
+
+    /* ── Layout helpers ──────────────────────────────────────── */
+    .container {
+      width: 100%;
+      max-width: 1160px;
+      margin-inline: auto;
+      padding-inline: clamp(20px, 5vw, 60px);
+    }
+
+    /* ── NAV ─────────────────────────────────────────────────── */
+    .nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 clamp(20px, 5vw, 60px);
+      height: 68px;
+      background: rgba(8, 8, 8, 0.85);
+      backdrop-filter: blur(20px) saturate(1.4);
+      -webkit-backdrop-filter: blur(20px) saturate(1.4);
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      transition: background 0.3s ease;
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .nav-logo-mark {
+      width: 32px;
+      height: 32px;
+      background: var(--gradient);
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+    }
+
+    .nav-logo-mark svg {
+      width: 16px;
+      height: 16px;
+      fill: white;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 36px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-muted);
+      transition: color 0.2s ease;
+    }
+
+    .nav-links a:hover { color: var(--text); }
+
+    .nav-cta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border-radius: var(--radius-md);
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1;
+      transition: all 0.2s var(--ease-out);
+    }
+
+    .btn-ghost {
+      color: var(--text-muted);
+      border: 1px solid var(--border-light);
+    }
+
+    .btn-ghost:hover {
+      color: var(--text);
+      border-color: #444;
+      background: rgba(255,255,255,0.04);
+    }
+
+    .btn-primary {
+      background: var(--gradient);
+      color: white;
+      box-shadow: 0 0 24px rgba(124, 58, 237, 0.35);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 32px rgba(124, 58, 237, 0.5);
+    }
+
+    .btn-primary:active { transform: translateY(0); }
+
+    .btn-lg {
+      padding: 14px 28px;
+      font-size: 15px;
+      border-radius: var(--radius-md);
+    }
+
+    /* ── Mobile Nav Toggle ───────────────────────────────────── */
+    .nav-toggle {
+      display: none;
+      padding: 6px;
+      color: var(--text-muted);
+    }
+
+    /* Mobile nav open state */
+    .nav.nav-open .nav-links {
+      display: flex;
+      flex-direction: column;
+      position: absolute;
+      top: 68px;
+      left: 0;
+      right: 0;
+      background: rgba(8, 8, 8, 0.97);
+      backdrop-filter: blur(20px) saturate(1.4);
+      -webkit-backdrop-filter: blur(20px) saturate(1.4);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      padding: 16px clamp(20px, 5vw, 60px) 24px;
+      gap: 4px;
+      z-index: 99;
+    }
+
+    .nav.nav-open .nav-links a {
+      font-size: 15px;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+
+    .nav.nav-open .nav-links li:last-child a { border-bottom: none; }
+
+    /* ── HERO ────────────────────────────────────────────────── */
+    .hero {
+      position: relative;
+      min-height: 100svh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 120px clamp(20px, 5vw, 60px) 80px;
+      overflow: hidden;
+    }
+
+    /* Background orbs */
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 60% 50% at 20% 20%, rgba(124, 58, 237, 0.18) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 40% at 80% 70%, rgba(37, 99, 235, 0.15) 0%, transparent 60%);
+      pointer-events: none;
+    }
+
+    /* Grid overlay */
+    .hero::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 60px 60px;
+      mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 30%, transparent 100%);
+      pointer-events: none;
+    }
+
+    .hero-content {
+      position: relative;
+      z-index: 1;
+      max-width: 820px;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: var(--radius-full, 9999px);
+      background: rgba(124, 58, 237, 0.12);
+      border: 1px solid rgba(124, 58, 237, 0.3);
+      font-size: 12px;
+      font-weight: 600;
+      color: #C084FC;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 28px;
+      animation: fadeUp 0.8s var(--ease-out) both;
+    }
+
+    .hero-badge-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #C084FC;
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    .hero-headline {
+      font-family: var(--font-display);
+      font-size: clamp(48px, 8vw, 96px);
+      font-weight: 800;
+      line-height: 1.0;
+      letter-spacing: -0.03em;
+      margin-bottom: 24px;
+      animation: fadeUp 0.8s 0.1s var(--ease-out) both;
+    }
+
+    .hero-headline .gradient-text {
+      background: var(--gradient-text);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-sub {
+      font-size: clamp(16px, 2.5vw, 20px);
+      color: var(--text-muted);
+      font-weight: 400;
+      max-width: 560px;
+      margin-inline: auto;
+      margin-bottom: 44px;
+      line-height: 1.7;
+      animation: fadeUp 0.8s 0.2s var(--ease-out) both;
+    }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      animation: fadeUp 0.8s 0.3s var(--ease-out) both;
+    }
+
+    .hero-scroll {
+      position: absolute;
+      bottom: 36px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-dim);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      animation: fadeUp 0.8s 0.5s var(--ease-out) both;
+      z-index: 1;
+    }
+
+    .scroll-line {
+      width: 1px;
+      height: 32px;
+      background: linear-gradient(to bottom, var(--text-dim), transparent);
+      animation: scroll-bob 2s ease-in-out infinite;
+    }
+
+    @keyframes scroll-bob {
+      0%, 100% { transform: scaleY(1); opacity: 1; }
+      50% { transform: scaleY(0.6); opacity: 0.4; }
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── REEL / SHOWREEL ─────────────────────────────────────── */
+    .reel-section {
+      padding: 60px 0 100px;
+    }
+
+    .reel-window {
+      position: relative;
+      margin-inline: clamp(20px, 5vw, 60px);
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      box-shadow: var(--shadow-glow), var(--shadow-card);
+      aspect-ratio: 16/9;
+      max-height: 600px;
+    }
+
+    /* Placeholder for actual video/reel */
+    .reel-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      background:
+        radial-gradient(ellipse 70% 60% at 50% 50%, rgba(124,58,237,0.12) 0%, transparent 70%),
+        repeating-linear-gradient(
+          -45deg,
+          transparent 0px,
+          transparent 40px,
+          rgba(255,255,255,0.01) 40px,
+          rgba(255,255,255,0.01) 41px
+        );
+    }
+
+    .reel-play {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: var(--gradient);
+      display: grid;
+      place-items: center;
+      box-shadow: 0 0 40px rgba(124,58,237,0.5);
+      transition: transform 0.2s var(--ease-out), box-shadow 0.2s ease;
+      border: none;
+      cursor: pointer;
+    }
+
+    .reel-play:hover {
+      transform: scale(1.08);
+      box-shadow: 0 0 60px rgba(124,58,237,0.7);
+    }
+
+    .reel-play svg {
+      width: 28px;
+      height: 28px;
+      fill: white;
+      transform: translateX(2px);
+    }
+
+    .reel-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-weight: 500;
+    }
+
+    /* Film strip decoration */
+    .reel-strip {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 24px;
+      display: flex;
+      gap: 2px;
+      overflow: hidden;
+      opacity: 0.3;
+    }
+
+    .reel-strip-bottom { top: auto; bottom: 0; }
+
+    .reel-strip-frame {
+      flex-shrink: 0;
+      width: 20px;
+      height: 24px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 2px;
+    }
+
+    /* ── STATS BAR ───────────────────────────────────────────── */
+    .stats-bar {
+      padding: 0 0 100px;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .stat-item {
+      background: var(--bg-card);
+      padding: 36px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: background 0.2s ease;
+    }
+
+    .stat-item:hover { background: var(--bg-raised); }
+
+    .stat-number {
+      font-family: var(--font-display);
+      font-size: clamp(32px, 4vw, 48px);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      background: var(--gradient-text);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-size: 14px;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+
+    /* ── SECTION HEADER ──────────────────────────────────────── */
+    .section-header {
+      max-width: 620px;
+      margin-bottom: 60px;
+    }
+
+    .section-header.centered {
+      margin-inline: auto;
+      text-align: center;
+    }
+
+    .section-eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #A78BFA;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .section-eyebrow::before {
+      content: '';
+      display: block;
+      width: 24px;
+      height: 2px;
+      background: var(--gradient);
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .section-header.centered .section-eyebrow {
+      justify-content: center;
+    }
+
+    .section-header.centered .section-eyebrow::before { display: none; }
+
+    .section-title {
+      font-family: var(--font-display);
+      font-size: clamp(32px, 4vw, 52px);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      margin-bottom: 16px;
+    }
+
+    .section-desc {
+      font-size: 16px;
+      color: var(--text-muted);
+      line-height: 1.7;
+      font-weight: 400;
+    }
+
+    /* ── WORK / PROJECTS GRID ────────────────────────────────── */
+    .work-section {
+      padding: 0 0 100px;
+    }
+
+    .work-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+    }
+
+    .work-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      position: relative;
+      cursor: pointer;
+      transition: border-color 0.25s ease, transform 0.25s var(--ease-out), box-shadow 0.25s ease;
+    }
+
+    .work-card:hover {
+      border-color: var(--border-light);
+      transform: translateY(-3px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    }
+
+    /* Layout sizes */
+    .work-card.span-8 { grid-column: span 8; }
+    .work-card.span-4 { grid-column: span 4; }
+    .work-card.span-6 { grid-column: span 6; }
+    .work-card.span-5 { grid-column: span 5; }
+    .work-card.span-7 { grid-column: span 7; }
+
+    .work-thumb {
+      aspect-ratio: 16/10;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .span-4 .work-thumb { aspect-ratio: 4/5; }
+
+    /* Colorful gradient placeholders for each project */
+    .work-thumb-bg {
+      position: absolute;
+      inset: 0;
+      transition: transform 0.5s var(--ease-out);
+    }
+
+    .work-card:hover .work-thumb-bg { transform: scale(1.04); }
+
+    .bg-1 { background: linear-gradient(135deg, #1a0533 0%, #4C1D95 40%, #7C3AED 100%); }
+    .bg-2 { background: linear-gradient(135deg, #0a192f 0%, #1E40AF 50%, #2563EB 100%); }
+    .bg-3 { background: linear-gradient(135deg, #0f1f15 0%, #064E3B 50%, #059669 100%); }
+    .bg-4 { background: linear-gradient(135deg, #1a0a00 0%, #92400E 50%, #F59E0B 100%); }
+    .bg-5 { background: linear-gradient(135deg, #1a001a 0%, #7E22CE 40%, #EC4899 100%); }
+
+    .work-thumb-overlay {
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 50% 60% at 30% 40%, rgba(255,255,255,0.06) 0%, transparent 60%),
+        linear-gradient(to bottom, transparent 40%, rgba(0,0,0,0.4) 100%);
+    }
+
+    /* Animated floating shapes in card thumbnails */
+    .work-shape {
+      position: absolute;
+      border-radius: 50%;
+      opacity: 0.5;
+      animation: float-shape 6s ease-in-out infinite;
+    }
+
+    .work-shape:nth-child(1) { width: 80px; height: 80px; top: 15%; left: 20%; background: rgba(255,255,255,0.06); animation-delay: 0s; }
+    .work-shape:nth-child(2) { width: 120px; height: 120px; top: 40%; right: 10%; background: rgba(255,255,255,0.04); border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%; animation-delay: -2s; }
+    .work-shape:nth-child(3) { width: 40px; height: 40px; bottom: 20%; left: 50%; background: rgba(255,255,255,0.08); animation-delay: -4s; }
+
+    @keyframes float-shape {
+      0%, 100% { transform: translate(0, 0) rotate(0deg); }
+      33% { transform: translate(6px, -10px) rotate(5deg); }
+      66% { transform: translate(-4px, 6px) rotate(-3deg); }
+    }
+
+    .work-play-badge {
+      position: absolute;
+      bottom: 14px;
+      right: 14px;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      backdrop-filter: blur(8px);
+      display: grid;
+      place-items: center;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .work-play-badge svg { width: 14px; height: 14px; fill: white; transform: translateX(1px); }
+
+    .work-card:hover .work-play-badge { opacity: 1; }
+
+    .work-info {
+      padding: 20px 22px 22px;
+    }
+
+    .work-tag {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #A78BFA;
+      margin-bottom: 6px;
+    }
+
+    .work-title {
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+      line-height: 1.2;
+    }
+
+    .work-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    /* ── SERVICES ────────────────────────────────────────────── */
+    .services-section {
+      padding: 0 0 100px;
+    }
+
+    .services-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .service-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 32px 28px 28px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.25s ease, box-shadow 0.25s ease;
+    }
+
+    .service-card:hover {
+      border-color: rgba(124, 58, 237, 0.4);
+      box-shadow: 0 0 40px rgba(124, 58, 237, 0.08);
+    }
+
+    .service-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: var(--gradient);
+      opacity: 0;
+      transition: opacity 0.25s ease;
+    }
+
+    .service-card:hover::before { opacity: 1; }
+
+    .service-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: var(--radius-md);
+      background: rgba(124, 58, 237, 0.12);
+      border: 1px solid rgba(124, 58, 237, 0.2);
+      display: grid;
+      place-items: center;
+      margin-bottom: 20px;
+    }
+
+    .service-icon svg {
+      width: 22px;
+      height: 22px;
+      stroke: #A78BFA;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .service-title {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 10px;
+    }
+
+    .service-desc {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.65;
+      margin-bottom: 20px;
+    }
+
+    .service-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .service-list li {
+      font-size: 13px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .service-list li::before {
+      content: '';
+      display: block;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: #7C3AED;
+      flex-shrink: 0;
+    }
+
+    /* ── PROCESS ─────────────────────────────────────────────── */
+    .process-section {
+      padding: 0 0 100px;
+    }
+
+    .process-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0;
+      position: relative;
+    }
+
+    .process-grid::before {
+      content: '';
+      position: absolute;
+      top: 28px;
+      left: calc(12.5%);
+      right: calc(12.5%);
+      height: 1px;
+      background: linear-gradient(to right, transparent, var(--border-light) 15%, var(--border-light) 85%, transparent);
+      z-index: 0;
+    }
+
+    .process-step {
+      padding: 0 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .process-num {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: var(--gradient);
+      display: grid;
+      place-items: center;
+      margin-bottom: 24px;
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 800;
+      color: white;
+      box-shadow: 0 0 20px rgba(124,58,237,0.3);
+    }
+
+    .process-step:nth-child(2) .process-num { box-shadow: 0 0 20px rgba(99,102,241,0.3); }
+    .process-step:nth-child(3) .process-num { box-shadow: 0 0 20px rgba(59,130,246,0.3); }
+    .process-step:nth-child(4) .process-num { box-shadow: 0 0 20px rgba(37,99,235,0.3); }
+
+    .process-title {
+      font-family: var(--font-display);
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 10px;
+    }
+
+    .process-desc {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* ── TESTIMONIALS ────────────────────────────────────────── */
+    .testimonials-section {
+      padding: 0 0 100px;
+    }
+
+    .testimonials-track {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .testimonial-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      transition: border-color 0.25s ease;
+    }
+
+    .testimonial-card:hover { border-color: var(--border-light); }
+
+    .testimonial-stars {
+      display: flex;
+      gap: 4px;
+    }
+
+    .testimonial-stars svg {
+      width: 14px;
+      height: 14px;
+      fill: #F59E0B;
+    }
+
+    .testimonial-quote {
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text);
+      font-style: italic;
+      flex: 1;
+    }
+
+    .testimonial-author {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .testimonial-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: var(--gradient);
+      display: grid;
+      place-items: center;
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 14px;
+      color: white;
+      flex-shrink: 0;
+    }
+
+    .testimonial-name {
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .testimonial-role {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* ── CTA SECTION ─────────────────────────────────────────── */
+    .cta-section {
+      padding: 0 0 120px;
+    }
+
+    .cta-card {
+      border-radius: var(--radius-xl);
+      padding: clamp(48px, 8vw, 80px) clamp(32px, 6vw, 80px);
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      position: relative;
+      overflow: hidden;
+      text-align: center;
+    }
+
+    .cta-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 60% 70% at 50% 0%, rgba(124,58,237,0.15) 0%, transparent 60%);
+      pointer-events: none;
+    }
+
+    .cta-card::after {
+      content: '';
+      position: absolute;
+      top: -1px; left: 20%; right: 20%;
+      height: 2px;
+      background: var(--gradient);
+      border-radius: 2px;
+    }
+
+    .cta-content {
+      position: relative;
+      z-index: 1;
+    }
+
+    .cta-headline {
+      font-family: var(--font-display);
+      font-size: clamp(32px, 5vw, 56px);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      margin-bottom: 18px;
+    }
+
+    .cta-sub {
+      font-size: 17px;
+      color: var(--text-muted);
+      max-width: 480px;
+      margin-inline: auto;
+      margin-bottom: 40px;
+      line-height: 1.65;
+    }
+
+    .cta-actions {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    /* ── FOOTER ──────────────────────────────────────────────── */
+    .footer {
+      border-top: 1px solid var(--border);
+      padding: 48px 0;
+    }
+
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .footer-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .footer-logo-mark {
+      width: 28px;
+      height: 28px;
+      background: var(--gradient);
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+    }
+
+    .footer-logo-mark svg { width: 14px; height: 14px; fill: white; }
+
+    .footer-links {
+      display: flex;
+      gap: 28px;
+      list-style: none;
+    }
+
+    .footer-links a {
+      font-size: 13px;
+      color: var(--text-muted);
+      transition: color 0.2s ease;
+    }
+
+    .footer-links a:hover { color: var(--text); }
+
+    .footer-copy {
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+
+    /* ── RESPONSIVE ──────────────────────────────────────────── */
+    @media (max-width: 1024px) {
+      .services-grid { grid-template-columns: repeat(2, 1fr); }
+      .work-card.span-8 { grid-column: span 12; }
+      .work-card.span-4 { grid-column: span 6; }
+      .work-card.span-5 { grid-column: span 6; }
+      .work-card.span-7 { grid-column: span 12; }
+      .work-card.span-6 { grid-column: span 12; }
+      .span-4 .work-thumb { aspect-ratio: 16/9; }
+    }
+
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .nav-toggle { display: block; }
+      .nav-cta { display: none; }
+
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+
+      .work-card.span-8,
+      .work-card.span-4,
+      .work-card.span-6,
+      .work-card.span-5,
+      .work-card.span-7 { grid-column: span 12; }
+      .span-4 .work-thumb { aspect-ratio: 16/9; }
+
+      .services-grid { grid-template-columns: 1fr; }
+
+      .process-grid { grid-template-columns: repeat(2, 1fr); gap: 32px; }
+      .process-grid::before { display: none; }
+
+      .testimonials-track { grid-template-columns: 1fr; }
+
+      .footer-inner { flex-direction: column; align-items: flex-start; gap: 28px; }
+      .footer-links { flex-wrap: wrap; gap: 20px; }
+    }
+
+    @media (max-width: 480px) {
+      .stats-grid { grid-template-columns: 1fr; }
+      .process-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav class="nav" role="navigation" aria-label="Main navigation">
+    <a href="#" class="nav-logo" aria-label="Prism Studio — home">
+      <div class="nav-logo-mark" aria-hidden="true">
+        <svg viewBox="0 0 16 16"><polygon points="8,1 15,13 1,13"/></svg>
+      </div>
+      Prism Studio
+    </a>
+    <ul class="nav-links" role="list">
+      <li><a href="#work">Work</a></li>
+      <li><a href="#services">Services</a></li>
+      <li><a href="#process">Process</a></li>
+      <li><a href="#about">About</a></li>
+    </ul>
+    <div class="nav-cta">
+      <a href="#contact" class="btn btn-ghost">Get in touch</a>
+      <a href="#reel" class="btn btn-primary">Watch Reel</a>
+    </div>
+    <button class="nav-toggle" aria-label="Toggle navigation menu" aria-expanded="false" id="nav-toggle">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <line x1="3" y1="6" x2="21" y2="6"/>
+        <line x1="3" y1="12" x2="21" y2="12"/>
+        <line x1="3" y1="18" x2="21" y2="18"/>
+      </svg>
+    </button>
+  </nav>
+
+  <main id="main-content">
+
+    <!-- HERO -->
+    <section class="hero" aria-labelledby="hero-headline">
+      <div class="hero-content">
+        <div class="hero-badge" role="status" aria-label="Now booking projects for Q3 2026">
+          <span class="hero-badge-dot" aria-hidden="true"></span>
+          Now booking Q3 2026
+        </div>
+        <h1 class="hero-headline" id="hero-headline">
+          Motion that<br>
+          <span class="gradient-text">moves&nbsp;people.</span>
+        </h1>
+        <p class="hero-sub">
+          Award-winning animation and motion design studio. We craft visual stories that captivate audiences and elevate brands.
+        </p>
+        <div class="hero-actions">
+          <a href="#work" class="btn btn-primary btn-lg">See our work</a>
+          <a href="#process" class="btn btn-ghost btn-lg">How we work</a>
+        </div>
+      </div>
+      <div class="hero-scroll" aria-hidden="true">
+        <span>Scroll</span>
+        <div class="scroll-line"></div>
+      </div>
+    </section>
+
+    <!-- SHOWREEL -->
+    <section class="reel-section" id="reel" aria-labelledby="reel-heading">
+      <h2 class="sr-only" id="reel-heading">Showreel</h2>
+      <div class="reel-window">
+        <!-- Film strip top -->
+        <div class="reel-strip" aria-hidden="true">
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+        </div>
+
+        <div class="reel-placeholder">
+          <button class="reel-play" aria-label="Play showreel video" id="reel-play-btn">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="5,3 19,12 5,21"/></svg>
+          </button>
+          <span class="reel-label">2026 Showreel</span>
+        </div>
+
+        <!-- Film strip bottom -->
+        <div class="reel-strip reel-strip-bottom" aria-hidden="true">
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+          <div class="reel-strip-frame"></div><div class="reel-strip-frame"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- STATS -->
+    <section class="stats-bar container" aria-labelledby="stats-heading">
+      <h2 class="sr-only" id="stats-heading">Studio by the numbers</h2>
+      <div class="stats-grid" role="list">
+        <div class="stat-item" role="listitem">
+          <span class="stat-number">200+</span>
+          <span class="stat-label">Projects delivered</span>
+        </div>
+        <div class="stat-item" role="listitem">
+          <span class="stat-number">12yr</span>
+          <span class="stat-label">In the industry</span>
+        </div>
+        <div class="stat-item" role="listitem">
+          <span class="stat-number">40+</span>
+          <span class="stat-label">Global clients</span>
+        </div>
+        <div class="stat-item" role="listitem">
+          <span class="stat-number">18×</span>
+          <span class="stat-label">Awards &amp; recognition</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- WORK -->
+    <section class="work-section container" id="work" aria-labelledby="work-heading">
+      <div class="section-header">
+        <div class="section-eyebrow" aria-hidden="true">Selected Work</div>
+        <h2 class="section-title" id="work-heading">Stories we've<br>brought to life.</h2>
+        <p class="section-desc">From brand films to title sequences, every frame is crafted with intention.</p>
+      </div>
+
+      <div class="work-grid">
+
+        <!-- Card 1 — large -->
+        <article class="work-card span-8" aria-labelledby="work-1-title">
+          <div class="work-thumb">
+            <div class="work-thumb-bg bg-1" aria-hidden="true">
+              <div class="work-shape"></div>
+              <div class="work-shape"></div>
+              <div class="work-shape"></div>
+            </div>
+            <div class="work-thumb-overlay" aria-hidden="true"></div>
+            <div class="work-play-badge" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+            </div>
+          </div>
+          <div class="work-info">
+            <div class="work-tag">Brand Film</div>
+            <h3 class="work-title" id="work-1-title">Horizon — Launch Campaign</h3>
+            <p class="work-desc">A sweeping 90-second brand film for Horizon's global product launch.</p>
+          </div>
+        </article>
+
+        <!-- Card 2 — tall -->
+        <article class="work-card span-4" aria-labelledby="work-2-title">
+          <div class="work-thumb">
+            <div class="work-thumb-bg bg-2" aria-hidden="true">
+              <div class="work-shape"></div>
+              <div class="work-shape"></div>
+            </div>
+            <div class="work-thumb-overlay" aria-hidden="true"></div>
+            <div class="work-play-badge" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+            </div>
+          </div>
+          <div class="work-info">
+            <div class="work-tag">Motion Graphics</div>
+            <h3 class="work-title" id="work-2-title">Vertex — Data Viz System</h3>
+            <p class="work-desc">Animated data visualization library for Vertex's investor dashboard.</p>
+          </div>
+        </article>
+
+        <!-- Card 3 -->
+        <article class="work-card span-5" aria-labelledby="work-3-title">
+          <div class="work-thumb">
+            <div class="work-thumb-bg bg-5" aria-hidden="true">
+              <div class="work-shape"></div>
+              <div class="work-shape"></div>
+              <div class="work-shape"></div>
+            </div>
+            <div class="work-thumb-overlay" aria-hidden="true"></div>
+            <div class="work-play-badge" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+            </div>
+          </div>
+          <div class="work-info">
+            <div class="work-tag">Title Sequence</div>
+            <h3 class="work-title" id="work-3-title">Nightwave — Series Opener</h3>
+            <p class="work-desc">Opening title sequence for a 6-part documentary series.</p>
+          </div>
+        </article>
+
+        <!-- Card 4 -->
+        <article class="work-card span-7" aria-labelledby="work-4-title">
+          <div class="work-thumb">
+            <div class="work-thumb-bg bg-3" aria-hidden="true">
+              <div class="work-shape"></div>
+              <div class="work-shape"></div>
+            </div>
+            <div class="work-thumb-overlay" aria-hidden="true"></div>
+            <div class="work-play-badge" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+            </div>
+          </div>
+          <div class="work-info">
+            <div class="work-tag">Product Animation</div>
+            <h3 class="work-title" id="work-4-title">Bloom — App Reveal</h3>
+            <p class="work-desc">3D product walkthrough animation for Bloom's app store feature.</p>
+          </div>
+        </article>
+
+        <!-- Card 5 -->
+        <article class="work-card span-6" aria-labelledby="work-5-title">
+          <div class="work-thumb">
+            <div class="work-thumb-bg bg-4" aria-hidden="true">
+              <div class="work-shape"></div>
+              <div class="work-shape"></div>
+              <div class="work-shape"></div>
+            </div>
+            <div class="work-thumb-overlay" aria-hidden="true"></div>
+            <div class="work-play-badge" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+            </div>
+          </div>
+          <div class="work-info">
+            <div class="work-tag">Social Content</div>
+            <h3 class="work-title" id="work-5-title">Amber — Campaign Series</h3>
+            <p class="work-desc">24-piece animated social campaign reaching 12M+ impressions.</p>
+          </div>
+        </article>
+
+        <!-- Card 6 -->
+        <article class="work-card span-6" aria-labelledby="work-6-title">
+          <div class="work-thumb">
+            <div class="work-thumb-bg bg-2" aria-hidden="true">
+              <div class="work-shape"></div>
+              <div class="work-shape"></div>
+            </div>
+            <div class="work-thumb-overlay" aria-hidden="true"></div>
+            <div class="work-play-badge" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>
+            </div>
+          </div>
+          <div class="work-info">
+            <div class="work-tag">UI Animation</div>
+            <h3 class="work-title" id="work-6-title">Cascade — Design System Motion</h3>
+            <p class="work-desc">Full motion specification for Cascade's enterprise design system.</p>
+          </div>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- SERVICES -->
+    <section class="services-section container" id="services" aria-labelledby="services-heading">
+      <div class="section-header">
+        <div class="section-eyebrow" aria-hidden="true">What we do</div>
+        <h2 class="section-title" id="services-heading">Every frame,<br>by design.</h2>
+        <p class="section-desc">We cover the full spectrum of motion — from concept to final render.</p>
+      </div>
+
+      <div class="services-grid">
+
+        <div class="service-card">
+          <div class="service-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M22.54 6.42a2.78 2.78 0 00-1.95-1.96C18.88 4 12 4 12 4s-6.88 0-8.59.46a2.78 2.78 0 00-1.95 1.96A29 29 0 001 12a29 29 0 00.46 5.58A2.78 2.78 0 003.41 19.6C5.12 20 12 20 12 20s6.88 0 8.59-.46a2.78 2.78 0 001.95-1.95A29 29 0 0023 12a29 29 0 00-.46-5.58z"/><polygon points="9.75 15.02 15.5 12 9.75 8.98 9.75 15.02"/></svg>
+          </div>
+          <h3 class="service-title">Brand Films</h3>
+          <p class="service-desc">Cinematic storytelling that positions your brand and moves your audience.</p>
+          <ul class="service-list" aria-label="Brand films services">
+            <li>Launch films &amp; teasers</li>
+            <li>Explainer videos</li>
+            <li>Documentary-style brand stories</li>
+            <li>Investor &amp; pitch animations</li>
+          </ul>
+        </div>
+
+        <div class="service-card">
+          <div class="service-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/></svg>
+          </div>
+          <h3 class="service-title">Motion Graphics</h3>
+          <p class="service-desc">Data, ideas, and concepts brought to life with fluid, precise animation.</p>
+          <ul class="service-list" aria-label="Motion graphics services">
+            <li>Title sequences &amp; lower thirds</li>
+            <li>Data visualization animation</li>
+            <li>Broadcast graphics packages</li>
+            <li>UI &amp; product animations</li>
+          </ul>
+        </div>
+
+        <div class="service-card">
+          <div class="service-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="9"/><line x1="12" y1="15" x2="12" y2="22"/><line x1="2" y1="12" x2="9" y2="12"/><line x1="15" y1="12" x2="22" y2="12"/></svg>
+          </div>
+          <h3 class="service-title">3D Animation</h3>
+          <p class="service-desc">Photorealistic or stylized 3D that makes product and concept come alive.</p>
+          <ul class="service-list" aria-label="3D animation services">
+            <li>Product visualization &amp; reveals</li>
+            <li>Architectural walkthroughs</li>
+            <li>Character animation</li>
+            <li>VFX &amp; compositing</li>
+          </ul>
+        </div>
+
+        <div class="service-card">
+          <div class="service-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          </div>
+          <h3 class="service-title">Design Systems</h3>
+          <p class="service-desc">Motion language and interaction specifications that scale across your product.</p>
+          <ul class="service-list" aria-label="Design systems services">
+            <li>Animation principles &amp; tokens</li>
+            <li>Component micro-interactions</li>
+            <li>Transition &amp; flow choreography</li>
+            <li>Accessibility-first motion</li>
+          </ul>
+        </div>
+
+        <div class="service-card">
+          <div class="service-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M18 3a3 3 0 00-3 3v12a3 3 0 003 3 3 3 0 003-3 3 3 0 00-3-3H6a3 3 0 00-3 3 3 3 0 003 3 3 3 0 003-3V6a3 3 0 00-3-3 3 3 0 00-3 3 3 3 0 003 3h12a3 3 0 003-3 3 3 0 00-3-3z"/></svg>
+          </div>
+          <h3 class="service-title">Social Content</h3>
+          <p class="service-desc">Platform-native animated content built for scroll-stopping performance.</p>
+          <ul class="service-list" aria-label="Social content services">
+            <li>Reels, shorts &amp; TikTok</li>
+            <li>Animated stories &amp; carousels</li>
+            <li>Cinemagraphs &amp; loops</li>
+            <li>Ad creative &amp; banners</li>
+          </ul>
+        </div>
+
+        <div class="service-card">
+          <div class="service-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </div>
+          <h3 class="service-title">Creative Direction</h3>
+          <p class="service-desc">End-to-end creative leadership for ambitious campaigns and launches.</p>
+          <ul class="service-list" aria-label="Creative direction services">
+            <li>Concept development &amp; storyboards</li>
+            <li>Art direction &amp; style frames</li>
+            <li>Vendor &amp; team coordination</li>
+            <li>Post-production supervision</li>
+          </ul>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- PROCESS -->
+    <section class="process-section container" id="process" aria-labelledby="process-heading">
+      <div class="section-header centered">
+        <div class="section-eyebrow" aria-hidden="true">How we work</div>
+        <h2 class="section-title" id="process-heading">From brief to final cut.</h2>
+        <p class="section-desc">A proven process that delivers great work, on time, every time.</p>
+      </div>
+
+      <div class="process-grid" role="list">
+        <div class="process-step" role="listitem">
+          <div class="process-num" aria-hidden="true">01</div>
+          <h3 class="process-title">Discovery</h3>
+          <p class="process-desc">We dig into your brand, audience, and goals. No brief is too big or too vague.</p>
+        </div>
+        <div class="process-step" role="listitem">
+          <div class="process-num" aria-hidden="true">02</div>
+          <h3 class="process-title">Concepting</h3>
+          <p class="process-desc">Style frames, storyboards, and animatics — we align before a single frame is rendered.</p>
+        </div>
+        <div class="process-step" role="listitem">
+          <div class="process-num" aria-hidden="true">03</div>
+          <h3 class="process-title">Production</h3>
+          <p class="process-desc">Full motion production with milestone reviews and weekly updates throughout.</p>
+        </div>
+        <div class="process-step" role="listitem">
+          <div class="process-num" aria-hidden="true">04</div>
+          <h3 class="process-title">Delivery</h3>
+          <p class="process-desc">All formats, all platforms, all yours — with full source files and documentation.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- TESTIMONIALS -->
+    <section class="testimonials-section container" id="about" aria-labelledby="testimonials-heading">
+      <div class="section-header centered">
+        <div class="section-eyebrow" aria-hidden="true">Client Love</div>
+        <h2 class="section-title" id="testimonials-heading">What our clients say.</h2>
+      </div>
+
+      <div class="testimonials-track">
+
+        <div class="testimonial-card">
+          <div class="testimonial-stars" aria-label="5 out of 5 stars">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </div>
+          <blockquote class="testimonial-quote">
+            "Prism brought an energy to our launch film we didn't think was possible. The final cut exceeded every expectation — and they delivered ahead of schedule."
+          </blockquote>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar" aria-hidden="true">SK</div>
+            <div>
+              <div class="testimonial-name">Sarah Kwan</div>
+              <div class="testimonial-role">VP Marketing, Horizon</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="testimonial-card">
+          <div class="testimonial-stars" aria-label="5 out of 5 stars">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </div>
+          <blockquote class="testimonial-quote">
+            "Working with Prism felt like having a creative partner who understood our vision better than we did. The motion system they built for us is world-class."
+          </blockquote>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar" aria-hidden="true">JM</div>
+            <div>
+              <div class="testimonial-name">James Moreau</div>
+              <div class="testimonial-role">Head of Design, Cascade</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="testimonial-card">
+          <div class="testimonial-stars" aria-label="5 out of 5 stars">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </div>
+          <blockquote class="testimonial-quote">
+            "The Nightwave title sequence became the most talked-about part of our series launch. Pure artistry from a team that genuinely loves their craft."
+          </blockquote>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar" aria-hidden="true">TP</div>
+            <div>
+              <div class="testimonial-name">Tara Patel</div>
+              <div class="testimonial-role">Executive Producer, Nightwave</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta-section container" id="contact" aria-labelledby="cta-heading">
+      <div class="cta-card">
+        <div class="cta-content">
+          <h2 class="cta-headline" id="cta-heading">
+            Ready to make<br>
+            <span style="background: var(--gradient-text); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">something great?</span>
+          </h2>
+          <p class="cta-sub">Tell us about your project. We'll come back within 24 hours with ideas, not questions.</p>
+          <div class="cta-actions">
+            <a href="mailto:hello@prismstudio.co" class="btn btn-primary btn-lg">Start a project</a>
+            <a href="mailto:hello@prismstudio.co" class="btn btn-ghost btn-lg">Just say hello</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <a href="#" class="footer-logo" aria-label="Prism Studio — home">
+          <div class="footer-logo-mark" aria-hidden="true">
+            <svg viewBox="0 0 16 16"><polygon points="8,1 15,13 1,13"/></svg>
+          </div>
+          Prism Studio
+        </a>
+        <ul class="footer-links" role="list">
+          <li><a href="#work">Work</a></li>
+          <li><a href="#services">Services</a></li>
+          <li><a href="#process">Process</a></li>
+          <li><a href="mailto:hello@prismstudio.co">Contact</a></li>
+        </ul>
+        <p class="footer-copy">&copy; 2026 Prism Studio. All rights reserved.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Minimal JS — scroll-in animation and nav toggle
+    // Intersection Observer for scroll-in reveal
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.style.opacity = '1';
+          entry.target.style.transform = 'translateY(0)';
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+    // Observe cards and sections
+    document.querySelectorAll('.work-card, .service-card, .testimonial-card, .stat-item, .process-step').forEach(el => {
+      // Only animate if no reduced motion preference
+      if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(20px)';
+        el.style.transition = 'opacity 0.5s ease, transform 0.5s cubic-bezier(0.16, 1, 0.3, 1)';
+        observer.observe(el);
+      }
+    });
+
+    // Stagger work cards
+    document.querySelectorAll('.work-card').forEach((el, i) => {
+      if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        el.style.transitionDelay = `${i * 60}ms`;
+      }
+    });
+
+    // Mobile nav toggle
+    const navToggle = document.getElementById('nav-toggle');
+    const navEl = document.querySelector('.nav');
+    const navLinksList = document.querySelector('.nav-links');
+
+    function openNav() {
+      navEl.classList.add('nav-open');
+      navToggle.setAttribute('aria-expanded', 'true');
+      navToggle.setAttribute('aria-label', 'Close navigation menu');
+    }
+
+    function closeNav() {
+      navEl.classList.remove('nav-open');
+      navToggle.setAttribute('aria-expanded', 'false');
+      navToggle.setAttribute('aria-label', 'Toggle navigation menu');
+    }
+
+    navToggle.addEventListener('click', () => {
+      const isOpen = navEl.classList.contains('nav-open');
+      isOpen ? closeNav() : openNav();
+    });
+
+    // Close nav when a link is clicked (mobile UX)
+    navLinksList.addEventListener('click', (e) => {
+      if (e.target.tagName === 'A') closeNav();
+    });
+
+    // Close nav on outside click
+    document.addEventListener('click', (e) => {
+      if (navEl.classList.contains('nav-open') && !navEl.contains(e.target)) {
+        closeNav();
+      }
+    });
+
+    // Close nav on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && navEl.classList.contains('nav-open')) {
+        closeNav();
+        navToggle.focus();
+      }
+    });
+
+    // Reel play button — visual feedback (wire to actual video when available)
+    const reelPlayBtn = document.getElementById('reel-play-btn');
+    if (reelPlayBtn) {
+      reelPlayBtn.addEventListener('click', () => {
+        reelPlayBtn.setAttribute('aria-label', 'Showreel playing');
+        reelPlayBtn.style.background = 'rgba(124, 58, 237, 0.7)';
+      });
+    }
+
+    // Nav scroll state
+    const nav = document.querySelector('.nav');
+    window.addEventListener('scroll', () => {
+      nav.style.background = window.scrollY > 20
+        ? 'rgba(8, 8, 8, 0.95)'
+        : 'rgba(8, 8, 8, 0.85)';
+    }, { passive: true });
+  </script>
+</body>
+</html>
