@@ -452,6 +452,66 @@ jobs:
           retention-days: 30
 
   # -----------------------------------------------------------------------
+  # Gate 20: WASM build
+  # -----------------------------------------------------------------------
+  build-wasm:
+    name: "Gate 20 — WASM Build"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build WASM
+        run: wasm-pack build crates/exochain-wasm --target nodejs --out-dir ../../packages/exochain-wasm/wasm
+      - name: Verify 110 exports
+        run: |
+          COUNT=$(grep -c "module.exports.wasm_" packages/exochain-wasm/wasm/exochain_wasm.js)
+          echo "Found $COUNT WASM exports"
+          [ "$COUNT" -eq 110 ] || (echo "Expected 110 exports, got $COUNT" && exit 1)
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: exochain-wasm
+          path: packages/exochain-wasm/wasm/
+
+  # -----------------------------------------------------------------------
+  # Gate 21: Bridge verification
+  # -----------------------------------------------------------------------
+  test-bridge:
+    name: "Gate 21 — Bridge Verification (110 functions)"
+    runs-on: ubuntu-latest
+    needs: build-wasm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/download-artifact@v4
+        with:
+          name: exochain-wasm
+          path: packages/exochain-wasm/wasm/
+      - name: Run bridge verification
+        run: node packages/exochain-wasm/test/bridge_verification.mjs
+
+  # -----------------------------------------------------------------------
+  # Gate 22: WASM export count sync
+  # -----------------------------------------------------------------------
+  wasm-sync:
+    name: "Gate 22 — WASM/JS Export Sync"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Rust exports match JS expectations
+        run: |
+          RUST_COUNT=$(grep -r '#\[wasm_bindgen\]' crates/exochain-wasm/src/ | wc -l | tr -d ' ')
+          echo "Rust #[wasm_bindgen] exports: $RUST_COUNT"
+          [ "$RUST_COUNT" -eq 110 ] || (echo "WASM export count changed from 110 to $RUST_COUNT — update bridge tests" && exit 1)
+
+  # -----------------------------------------------------------------------
   # Constitutional gate: all must pass
   # -----------------------------------------------------------------------
   all-gates:
@@ -475,6 +535,9 @@ jobs:
       - state-sync-integration
       - cross-platform
       - zerodentity-coverage
+      - build-wasm
+      - test-bridge
+      - wasm-sync
     steps:
       - name: All quality gates passed
         run: echo "All CR-001 Section 8.8 quality gates satisfied."

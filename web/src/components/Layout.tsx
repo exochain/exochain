@@ -7,6 +7,7 @@ import { AmbientStatusBar } from './AmbientStatusBar'
 import { ThemeSwitcher } from './ThemeSwitcher'
 import { CouncilAIPanel } from './CouncilAIPanel'
 import { useCouncil } from '../lib/CouncilContext'
+import { CgrKernelStatus } from './CgrKernelStatus'
 import type { HealthInfo } from '../lib/types'
 
 interface NavItem {
@@ -89,6 +90,15 @@ const applicationNavItems: NavItem[] = [
     label: 'LiveSafe.ai',
     ariaLabel: 'LiveSafe.ai integration status',
     icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
+  },
+]
+
+/** External application links (open in new tab). */
+const externalNavItems: { href: string; label: string; ariaLabel: string }[] = [
+  {
+    href: import.meta.env.DEV ? 'http://localhost:3000' : '/command-base',
+    label: 'Command Base',
+    ariaLabel: 'CommandBase.ai — task force operations hub',
   },
 ]
 
@@ -230,12 +240,13 @@ export function Layout() {
           </Link>
 
           {/* Breadcrumb area / spacer */}
-          <div className="hidden desktop:flex flex-1 items-center px-6">
+          <div className="hidden desktop:flex flex-1 items-center px-6 justify-between">
             <nav aria-label="Breadcrumb">
               <span className="text-sm text-text-gov-secondary">
                 {getBreadcrumb(location.pathname)}
               </span>
             </nav>
+            <CgrKernelStatus />
           </div>
 
           {/* Theme + User menu */}
@@ -482,6 +493,29 @@ export function Layout() {
                   >
                     {item.label}
                   </Link>
+                </li>
+              ))}
+            </ul>
+
+            {/* External links */}
+            <h2 className="px-2 text-xs font-semibold uppercase tracking-wider text-text-gov-secondary mb-2 mt-5">
+              External
+            </h2>
+            <ul className="space-y-0.5">
+              {externalNavItems.map((item) => (
+                <li key={item.href}>
+                  <a
+                    href={item.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={item.ariaLabel}
+                    className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-text-gov-secondary hover:bg-surface-overlay hover:text-text-gov-primary"
+                  >
+                    {item.label}
+                    <svg className="w-3 h-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                  </a>
                 </li>
               ))}
             </ul>

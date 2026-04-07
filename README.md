@@ -52,6 +52,32 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 - Agent passport API and trust receipt endpoints on exo-node
 - National AI Policy Framework compliance extensions
 
+## Architecture
+
+```
+Layer 1: CGR Kernel         (Rust, 16 crates, ~75K LOC)
+         Constitutional governance runtime — deterministic, no floats,
+         cryptographic proofs, 1,846 tests passing
+
+Layer 2: WASM Bridge        (packages/exochain-wasm/)
+         110 exported functions — Rust → WebAssembly → JavaScript
+         Zero stubs. Every function calls real crate logic.
+
+Layer 3: CommandBase.ai     (command-base/)
+         Operational hypervisor for cognitiveplane.ai
+         Real control surfaces, GSD buttons, governance receipts
+         104 AI agents under constitutional authority
+         Express/Node.js + SQLite + WebSocket
+
+Layer 4: Decision Forum     (web/)
+         Governance deliberation UI
+         React/Vite — decisions, delegations, audit, constitution
+
+Layer 5: ExoForge           (exoforge/)
+         Autonomous implementation engine
+         Triage → Council Review → Implementation → Constitutional Validation
+```
+
 ## The Five Axioms
 
 1. **Identity Adjudication** — Decentralized identity with cryptographic proof, not administrative fiat.
