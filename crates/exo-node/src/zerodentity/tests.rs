@@ -498,6 +498,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn submit_claim_duplicate_unverified_returns_409() {
+        let store = new_shared_store();
+        let app = onboarding_app(store);
+
+        // First claim — should succeed
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/claims",
+            serde_json::json!({
+                "subject_did": "did:exo:alice",
+                "claim_type": "Email"
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Second claim of same type for same DID while first is still Pending — must 409
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/claims",
+            serde_json::json!({
+                "subject_did": "did:exo:alice",
+                "claim_type": "Email"
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        let body = body_json(resp).await;
+        assert!(body["error"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn submit_claim_different_types_allowed_in_parallel() {
+        let store = new_shared_store();
+        let app = onboarding_app(store);
+
+        // Email claim
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/claims",
+            serde_json::json!({
+                "subject_did": "did:exo:alice",
+                "claim_type": "Email"
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // DisplayName claim for same DID — different type, should succeed
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/claims",
+            serde_json::json!({
+                "subject_did": "did:exo:alice",
+                "claim_type": "DisplayName"
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn submit_claim_with_otp_channel_returns_challenge_id_and_ttl() {
         let app = onboarding_app(new_shared_store());
 

@@ -164,6 +164,33 @@ pub async fn submit_claim(
             )
         })?;
 
+    // Reject duplicate unverified claims of same type for this DID.
+    {
+        let store = state.store.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Store lock error"})),
+            )
+        })?;
+        let existing = store.get_claims(&subject_did).map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Store error"})),
+            )
+        })?;
+        let has_pending = existing
+            .iter()
+            .any(|(_, c)| c.claim_type == claim_type && c.status == ClaimStatus::Pending);
+        if has_pending {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(
+                    serde_json::json!({"error": "An unverified claim of this type already exists"}),
+                ),
+            ));
+        }
+    }
+
     // Build claim payload hash
     let payload = format!("{}:{}", req.subject_did, req.claim_type);
     let claim_hash = Hash256::digest(payload.as_bytes());
