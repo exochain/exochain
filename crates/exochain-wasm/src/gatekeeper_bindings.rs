@@ -154,14 +154,34 @@ mod tests {
     fn minimal_passing_context() -> InvariantContext {
         use exo_gatekeeper::types::{AuthorityLink, Provenance};
 
-        // Authority chain must terminate at the actor.
+        // Generate a real Ed25519 keypair and sign the canonical authority-link
+        // payload so the invariant engine performs full cryptographic verification
+        // (TNC-01) instead of the legacy non-emptiness fallback.
+        let (pk, sk) = exo_core::crypto::generate_keypair();
+        let grantor = Did::new("did:exo:root").expect("valid");
+        let grantee = actor();
+        let permissions = PermissionSet::default();
+
+        // Canonical payload: grantor || 0x00 || grantee || 0x00 || perm* || 0x00
+        let mut payload = Vec::new();
+        payload.extend_from_slice(grantor.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(grantee.as_str().as_bytes());
+        payload.push(0x00);
+        for perm in &permissions.permissions {
+            payload.extend_from_slice(perm.0.as_bytes());
+            payload.push(0x00);
+        }
+        let message = exo_core::Hash256::digest(&payload);
+        let sig = exo_core::crypto::sign(message.as_bytes(), &sk);
+
         let authority_chain = AuthorityChain {
             links: vec![AuthorityLink {
-                grantor: Did::new("did:exo:root").expect("valid"),
-                grantee: actor(),
-                permissions: PermissionSet::default(),
-                signature: vec![0u8; 64], // placeholder — not cryptographically verified here
-                grantor_public_key: None,
+                grantor,
+                grantee,
+                permissions,
+                signature: sig.to_bytes(),
+                grantor_public_key: Some(pk.as_bytes().to_vec()),
             }],
         };
 

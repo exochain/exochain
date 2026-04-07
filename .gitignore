@@ -15,6 +15,13 @@ demo/packages/exochain-wasm/wasm/
 demo/web/dist/
 web/dist/
 
+# CommandBase runtime files
+command-base/the_team.db
+command-base/node_modules/
+command-base/*.db-journal
+command-base/*.db-wal
+command-base/*.db-shm
+
 # Environment
 .env
 *.env.local
