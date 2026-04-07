@@ -65,6 +65,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // On mount, validate stored token
   useEffect(() => {
+    // Dev preview mode: skip API validation when backend is unavailable
+    if (import.meta.env.DEV && localStorage.getItem('df_dev_bypass') === '1') {
+      setUser({
+        did: 'did:exo:dev-preview',
+        displayName: 'Dev Preview',
+        email: 'dev@exochain.io',
+        roles: ['admin'],
+        paceStatus: 'verified' as PaceStatus,
+        trustTier: 'Gold',
+        trustScore: 7500,
+      })
+      if (!token) {
+        localStorage.setItem(TOKEN_KEY, 'dev-preview-token')
+        setToken('dev-preview-token')
+      }
+      setIsLoading(false)
+      return
+    }
     if (token) {
       refreshUser().finally(() => setIsLoading(false))
     } else {
