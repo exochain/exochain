@@ -7,7 +7,8 @@
   "deploy": {
     "_comment_startCommand": "Empty — Dockerfile CMD invokes /app/entrypoint.sh which reads env vars (IS_VALIDATOR, SEED_ADDR, EXOCHAIN_DATA_DIR, PORT, P2P_PORT, VALIDATORS).",
     "healthcheckPath": "/health",
-    "healthcheckTimeout": 300,
+    "_comment_healthcheckTimeout": "Per-probe timeout in seconds. Lowered from 300 → 15 so a hung /health fails fast instead of delaying failed deploys by 5 minutes. (A-042)",
+    "healthcheckTimeout": 15,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
   }

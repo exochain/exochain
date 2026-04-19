@@ -22,8 +22,13 @@ RUN cargo build --release --bin exochain --bin exo-gateway
 # Stage 2: Runtime
 FROM debian:bookworm-slim
 RUN apt-get update && \
-    apt-get install -y ca-certificates libssl3 && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y ca-certificates libssl3 curl gosu && \
+    rm -rf /var/lib/apt/lists/* && \
+    # Create an unprivileged runtime user. Railway volumes are root-owned on
+    # first mount, so the entrypoint chowns /data before dropping privileges
+    # via gosu — the image itself never runs the binary as root (A-040).
+    useradd --system --create-home --shell /usr/sbin/nologin exochain && \
+    mkdir -p /data
 WORKDIR /app
 
 # Copy both binaries — `exochain` is the primary entrypoint;
@@ -48,4 +53,10 @@ EXPOSE 4001 4002 8080
 # Dockerfile VOLUME keyword (Railway bans it).
 # For plain Docker: `docker run -v exochain-data:/data exochain/node`.
 
-CMD ["/app/entrypoint.sh"]
+# Probe the effective API port (Railway sets $PORT; otherwise $API_PORT or 8080).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -sf "http://localhost:${PORT:-${API_PORT:-8080}}/health" || exit 1
+
+# ENTRYPOINT (exec form) ensures the script is always invoked and signals
+# reach the child binary via entrypoint.sh's `exec exochain ...`.
+ENTRYPOINT ["/app/entrypoint.sh"]
