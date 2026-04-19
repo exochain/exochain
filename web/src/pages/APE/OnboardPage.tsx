@@ -195,9 +195,14 @@ export function OnboardPage() {
     }
     localStorage.setItem('ape_onboarding', JSON.stringify(onboardingData))
 
-    // Set dev bypass so dashboard works without backend
-    localStorage.setItem('df_dev_bypass', '1')
-    localStorage.setItem('df_token', 'ape-onboard-token')
+    // A-031: Only seed the dev-bypass key when the build explicitly opts
+    // in via VITE_ALLOW_DEV_BYPASS=true. In a production bundle this
+    // block evaporates (both conditions are compile-time false) so
+    // end-users cannot auto-escalate to admin via onboarding.
+    if (import.meta.env.DEV && import.meta.env.VITE_ALLOW_DEV_BYPASS === 'true') {
+      localStorage.setItem('df_dev_bypass', '1')
+      localStorage.setItem('df_token', 'ape-onboard-token')
+    }
 
     // Try to register with the backend if available
     try {

@@ -27,3 +27,7 @@ command-base/*.db-shm
 *.env.local
 .claude/worktrees/
 web/test-gap.mjs
+
+# Vite/Vitest transient build artifacts (A-033)
+**/vitest.config.ts.timestamp-*.mjs
+**/vite.config.ts.timestamp-*.mjs

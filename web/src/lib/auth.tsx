@@ -65,8 +65,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // On mount, validate stored token
   useEffect(() => {
-    // Dev preview mode: skip API validation when backend is unavailable
-    if (import.meta.env.DEV && localStorage.getItem('df_dev_bypass') === '1') {
+    // A-031: Dev preview mode is DOUBLY guarded so it cannot ship in a
+    // production bundle even if tree-shaking fails:
+    //   1. `import.meta.env.DEV` is `false` at build time in prod →
+    //      Vite substitutes the literal and the minifier drops the
+    //      branch.
+    //   2. Even in dev, the bypass requires a build-time env var
+    //      (VITE_ALLOW_DEV_BYPASS=true) AND the operator to explicitly
+    //      set the df_dev_bypass localStorage key. Users cannot grant
+    //      themselves admin by toying with devtools in a deployed
+    //      build because both conditions are compile-time-false there.
+    if (
+      import.meta.env.DEV &&
+      import.meta.env.VITE_ALLOW_DEV_BYPASS === 'true' &&
+      localStorage.getItem('df_dev_bypass') === '1'
+    ) {
       const onb = localStorage.getItem('ape_onboarding')
       const parsed = onb ? JSON.parse(onb) : null
       setUser({

@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      A-032: Content Security Policy. 'unsafe-inline' on style-src is
+      required because Tailwind-generated utility classes emit inline
+      <style> blocks via Vite's HMR runtime in dev; consider shifting
+      styles to a nonce-based policy when the app is behind a server
+      that can stamp per-request nonces. Access tokens SHOULD be moved
+      to an httpOnly + SameSite=Strict cookie at the backend before
+      GA; see docs/audit/REVIEW-2026-04-19-PLAN.md A-032.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    />
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>decision.forum — Sovereign Governance Platform</title>
   </head>
   <body>
