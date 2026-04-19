@@ -137,6 +137,14 @@
 
 #![deny(missing_docs)]
 
+/// Fabric protocol version this SDK speaks (A-066).
+///
+/// Applications may probe a target gateway on init and warn when the
+/// server reports a different major/minor so users can distinguish
+/// protocol skew from transport errors. All three SDKs (Rust, TypeScript,
+/// Python) expose a matching `PROTOCOL_VERSION` constant.
+pub const PROTOCOL_VERSION: &str = "0.1.0-beta";
+
 pub mod authority;
 pub mod consent;
 pub mod crypto;
