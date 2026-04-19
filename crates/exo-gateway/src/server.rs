@@ -20,6 +20,7 @@ use exo_identity::{did::DidDocument, registry::LocalDidRegistry};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::net::TcpListener;
+use tower::limit::ConcurrencyLimitLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::{
@@ -1436,6 +1437,10 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
         // GraphQL sub-router has its own state — merge after with_state()
         .merge(gql_router)
+        // A-071: global concurrency ceiling as DoS admission control.
+        // Per-actor quotas are a follow-up (needs tower-governor vetted
+        // through deny.toml). See docs/audit/REVIEW-2026-04-19-PLAN.md A-071.
+        .layer(ConcurrencyLimitLayer::new(1024))
         // Emit structured tracing spans for every request/response.
         .layer(TraceLayer::new_for_http())
 }

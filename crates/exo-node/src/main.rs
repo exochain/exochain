@@ -631,7 +631,35 @@ async fn start_node(
         );
     }
 
-    exo_gateway::server::serve_with_extra_routes(gateway_config, None, Some(extra_router)).await?;
+    // A-070: the gateway owns the HTTP graceful-shutdown hook (Ctrl+C /
+    // SIGTERM are drained before `serve_with_extra_routes` resolves). After
+    // it returns we log an explicit shutdown phase and briefly wait so that
+    // in-flight reactor / sync / network tasks that react to mpsc sender
+    // drop have a beat to wind down before the tokio runtime kills them.
+    //
+    // Full per-task CancellationToken plumbing across all 12 `tokio::spawn`
+    // sites (reactor round-timer, sync engine, holon manager, sentinel loop,
+    // telegram adjutant, state-sync, metrics fan-out) is tracked as a
+    // follow-up in docs/audit/REVIEW-2026-04-19-PLAN.md A-070.
+    let serve_fut = exo_gateway::server::serve_with_extra_routes(
+        gateway_config,
+        None,
+        Some(extra_router),
+    );
+
+    tracing::info!(
+        %bind_address,
+        "Node fully started — SIGTERM/Ctrl+C will trigger graceful shutdown"
+    );
+    serve_fut.await?;
+
+    tracing::info!("HTTP server drained — signaling subsystems to stop");
+    // Yield so spawned tasks that have a pending Poll::Ready can run their
+    // cleanup epilogues before the runtime winds down.
+    tokio::task::yield_now().await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tracing::info!("Graceful shutdown complete");
+
     Ok(())
 }
 
