@@ -29,6 +29,9 @@ dependencies = [
     "cryptography>=42.0.0",
     "pydantic>=2.5.0",
     "httpx>=0.25.0",
+    # A-050: BLAKE3 for DID derivation — matches Rust + TS SDKs. The Rust-backed
+    # `blake3` package is significantly faster than any pure-Python implementation.
+    "blake3>=0.4.1",
 ]
 
 [project.optional-dependencies]

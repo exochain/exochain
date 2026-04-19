@@ -483,4 +483,36 @@ mod tests {
         let pk = *id.public_key();
         assert_eq!(&pk, id.public_key());
     }
+
+    /// A-050: canonical DID derivation must match the TS and Python SDKs.
+    /// Fixture file is shared across all three SDKs; any drift here means one
+    /// side is producing incompatible DIDs.
+    #[test]
+    fn derive_did_matches_cross_language_fixtures() {
+        const FIXTURE: &str = include_str!("../../../tests/fixtures/did-derivation.json");
+        let root: serde_json::Value = serde_json::from_str(FIXTURE).expect("valid JSON");
+        let vectors = root["vectors"].as_array().expect("vectors array");
+        assert!(
+            !vectors.is_empty(),
+            "fixture must contain at least one vector"
+        );
+        for v in vectors {
+            let name = v["name"].as_str().expect("name");
+            let pk_hex = v["public_key_hex"].as_str().expect("public_key_hex");
+            let expected = v["expected_did"].as_str().expect("expected_did");
+
+            let mut pk_bytes = [0u8; 32];
+            for i in 0..32 {
+                pk_bytes[i] =
+                    u8::from_str_radix(&pk_hex[i * 2..i * 2 + 2], 16).expect("valid hex byte");
+            }
+            let pk = PublicKey::from_bytes(pk_bytes);
+            let did = derive_did(&pk).expect("derive_did must succeed on 32-byte key");
+            assert_eq!(
+                did.as_str(),
+                expected,
+                "vector `{name}` produced {did}, expected {expected}"
+            );
+        }
+    }
 }

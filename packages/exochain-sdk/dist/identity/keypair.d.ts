@@ -6,18 +6,23 @@
  * public-key bytes as a local SDK DID:
  *
  * ```text
- * did:exo: + first 16 hex chars of SHA-256(public_key_bytes)
+ * did:exo: + first 16 hex chars of BLAKE3(public_key_bytes)
  * ```
  *
- * This local DID is deterministic inside the TypeScript SDK, but it is not a
- * canonical fabric DID. For applications that need cross-SDK DIDs, obtain the
- * DID from the fabric and pass it into {@link Identity.fromResolvedKeypair}.
+ * As of A-050, local key-derived DIDs are cross-SDK canonical across
+ * Rust, TypeScript, and Python. For applications that need a fabric-resolved
+ * DID, obtain it from the fabric and pass it into
+ * {@link Identity.fromResolvedKeypair}.
  */
 import type { Did } from '../types.js';
 /**
- * Derive `did:exo:<first 16 hex chars of SHA-256(publicKey)>`.
+ * Derive `did:exo:<first 16 hex chars of BLAKE3(publicKey)>`.
  * Exported for advanced callers who need the same derivation without an
- * `Identity` instance.
+ * `Identity` instance. Canonical across all three SDKs (A-050).
+ *
+ * NOTE: BLAKE3 is synchronous via @noble/hashes; the function remains
+ * `async` for backward source-compatibility with callers that previously
+ * awaited it. The `Promise` resolves synchronously in practice.
  */
 export declare function deriveDid(publicKey: Uint8Array): Promise<Did>;
 /** A DID paired with an Ed25519 keypair and a human-readable label. */

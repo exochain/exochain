@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import { strictEqual, ok, rejects, throws } from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { Identity, deriveDid } from '../src/identity/keypair.js';
 import { validateDid, isDid } from '../src/identity/did.js';
 import { bytesToHex, hexToBytes } from '../src/crypto/hash.js';
@@ -28,8 +31,39 @@ async function keypairMaterial(): Promise<{
 test('Identity.generate produces a well-formed did:exo: DID', async () => {
   const id = await Identity.generate('alice');
   ok(id.did.startsWith('did:exo:'));
-  // 16 hex chars of SHA-256 prefix.
+  // 16 hex chars of BLAKE3 prefix (A-050).
   strictEqual(id.did.length, 'did:exo:'.length + 16);
+});
+
+// A-050: canonical DID derivation must match Rust + Python SDKs.
+test('deriveDid matches cross-language fixtures', async () => {
+  // When running compiled tests (`dist-test/test/identity.test.js`) we sit
+  // four levels below the repo root: dist-test/test → dist-test →
+  // exochain-sdk → packages → <repo>. Walk up until we find the fixture so
+  // the test survives both source-tree and dist-tree execution.
+  const here = dirname(fileURLToPath(import.meta.url));
+  let dir = here;
+  let fixturePath: string | null = null;
+  for (let i = 0; i < 8; i++) {
+    const candidate = resolve(dir, 'tests/fixtures/did-derivation.json');
+    try {
+      readFileSync(candidate);
+      fixturePath = candidate;
+      break;
+    } catch {
+      dir = resolve(dir, '..');
+    }
+  }
+  ok(fixturePath, `could not locate tests/fixtures/did-derivation.json from ${here}`);
+  const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as {
+    vectors: Array<{ name: string; public_key_hex: string; expected_did: string }>;
+  };
+  ok(fixture.vectors.length > 0, 'fixture must contain at least one vector');
+  for (const v of fixture.vectors) {
+    const pk = hexToBytes(v.public_key_hex);
+    const did = await deriveDid(pk);
+    strictEqual(did, v.expected_did, `vector "${v.name}" produced ${did}, expected ${v.expected_did}`);
+  }
 });
 
 test('Identity.generate exposes a 64-char (32-byte) public key hex', async () => {

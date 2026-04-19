@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from exochain import Identity, IdentityError, is_did, validate_did
+from exochain.identity.keypair import derive_did
 
 
 def test_generate_creates_valid_did() -> None:
@@ -15,8 +19,25 @@ def test_generate_creates_valid_did() -> None:
     assert identity.label == "alice"
     # Public key is 32 bytes Ed25519, hex-encoded = 64 chars.
     assert len(identity.public_key_hex) == 64
-    # Suffix after the "did:exo:" prefix is 16 hex chars (first 8 bytes of sha256).
+    # Suffix after the "did:exo:" prefix is 16 hex chars (first 8 bytes of BLAKE3). (A-050)
     assert len(identity.did.removeprefix("did:exo:")) == 16
+
+
+def test_derive_did_matches_cross_language_fixtures() -> None:
+    """A-050: the Python derivation must match the canonical Rust + TS output."""
+    fixture_path = (
+        Path(__file__).resolve().parent.parent.parent.parent
+        / "tests"
+        / "fixtures"
+        / "did-derivation.json"
+    )
+    fixture = json.loads(fixture_path.read_text())
+    for vector in fixture["vectors"]:
+        pk = bytes.fromhex(vector["public_key_hex"])
+        assert derive_did(pk) == vector["expected_did"], (
+            f'vector "{vector["name"]}" produced {derive_did(pk)}, '
+            f'expected {vector["expected_did"]}'
+        )
 
 
 def test_sign_and_verify_roundtrip() -> None:

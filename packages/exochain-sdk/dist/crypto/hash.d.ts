@@ -1,15 +1,15 @@
 /**
- * Hashing primitives backed by the Web Crypto API.
+ * Hashing primitives.
  *
- * The Rust SDK uses BLAKE3 for content-addressing. This pure-JS reference
- * implementation uses SHA-256 instead, since BLAKE3 is not available in
- * Web Crypto. Hashes produced here are NOT interoperable with Rust-produced
- * hashes at the byte level — they serve as client-side content identifiers
- * for proposal IDs, decision IDs, and the like. For canonical fabric
- * hashes (e.g. trust receipts returned from the gateway), trust the
- * server-provided values.
+ * A-050: the TS SDK now uses BLAKE3 (via @noble/hashes) to match the Rust SDK
+ * and fabric. A DID derived from a public key in this SDK will be byte-identical
+ * to a DID derived from the same key in the Rust or Python SDK. The SHA-256
+ * helpers are retained because other parts of the SDK (proposal IDs, receipts)
+ * may still want them; they are no longer used for DID derivation.
  */
 import type { Hash256 } from '../types.js';
+/** Compute BLAKE3 over `data` and return the raw 32-byte digest. (A-050) */
+export declare function blake3(data: Uint8Array): Uint8Array;
 /** Compute SHA-256 over `data` and return the raw 32-byte digest. */
 export declare function sha256(data: Uint8Array): Promise<Uint8Array>;
 /** Compute SHA-256 and return a 64-character lowercase hex string. */

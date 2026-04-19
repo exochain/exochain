@@ -6,17 +6,18 @@
  * public-key bytes as a local SDK DID:
  *
  * ```text
- * did:exo: + first 16 hex chars of SHA-256(public_key_bytes)
+ * did:exo: + first 16 hex chars of BLAKE3(public_key_bytes)
  * ```
  *
- * This local DID is deterministic inside the TypeScript SDK, but it is not a
- * canonical fabric DID. For applications that need cross-SDK DIDs, obtain the
- * DID from the fabric and pass it into {@link Identity.fromResolvedKeypair}.
+ * As of A-050, local key-derived DIDs are cross-SDK canonical across
+ * Rust, TypeScript, and Python. For applications that need a fabric-resolved
+ * DID, obtain it from the fabric and pass it into
+ * {@link Identity.fromResolvedKeypair}.
  */
 
 import { IdentityError } from '../errors.js';
 import type { Did } from '../types.js';
-import { bytesToHex, hexToBytes, sha256 } from '../crypto/hash.js';
+import { blake3, bytesToHex, hexToBytes } from '../crypto/hash.js';
 import { validateDid } from './did.js';
 
 const ED25519: EcKeyImportParams = { name: 'Ed25519' } as unknown as EcKeyImportParams;
@@ -33,12 +34,16 @@ const subtle: SubtleCrypto = (() => {
 })();
 
 /**
- * Derive `did:exo:<first 16 hex chars of SHA-256(publicKey)>`.
+ * Derive `did:exo:<first 16 hex chars of BLAKE3(publicKey)>`.
  * Exported for advanced callers who need the same derivation without an
- * `Identity` instance.
+ * `Identity` instance. Canonical across all three SDKs (A-050).
+ *
+ * NOTE: BLAKE3 is synchronous via @noble/hashes; the function remains
+ * `async` for backward source-compatibility with callers that previously
+ * awaited it. The `Promise` resolves synchronously in practice.
  */
 export async function deriveDid(publicKey: Uint8Array): Promise<Did> {
-  const digest = await sha256(publicKey);
+  const digest = blake3(publicKey);
   const first8 = digest.slice(0, 8);
   const hex = bytesToHex(first8);
   return validateDid(`did:exo:${hex}`);
