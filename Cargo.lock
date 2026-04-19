@@ -1350,6 +1350,7 @@ dependencies = [
  "decision-forum",
  "exo-core",
  "exo-legal",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

@@ -77,15 +77,23 @@ impl PostgresStore {
 
     /// Encode a `Signature` to bytes for storage.
     /// Uses serde_json for full enum fidelity (Ed25519, PostQuantum, Hybrid, Empty).
-    fn encode_signature(sig: &Signature) -> Vec<u8> {
-        // Use CBOR-style: just store the raw bytes for Ed25519 (most common).
-        // For full fidelity, we serialize via serde.
-        serde_json::to_vec(sig).unwrap_or_default()
+    ///
+    /// Returns an error on serialization failure rather than silently writing
+    /// an empty vec — a truncated/corrupted signature must never round-trip
+    /// silently through the store (A-011).
+    fn encode_signature(sig: &Signature) -> Result<Vec<u8>> {
+        serde_json::to_vec(sig)
+            .map_err(|e| store_err(format!("signature encode: {e}")))
     }
 
     /// Decode a `Signature` from stored bytes.
-    fn decode_signature(bytes: &[u8]) -> Signature {
-        serde_json::from_slice(bytes).unwrap_or(Signature::Empty)
+    ///
+    /// Returns an error on parse failure rather than silently substituting
+    /// `Signature::Empty` — data corruption must surface as an error so the
+    /// caller can detect a forged or truncated signature (A-011).
+    fn decode_signature(bytes: &[u8]) -> Result<Signature> {
+        serde_json::from_slice(bytes)
+            .map_err(|e| store_err(format!("signature decode: {e}")))
     }
 }
 
@@ -118,14 +126,21 @@ impl DagStore for PostgresStore {
                 let mut payload_arr = [0u8; 32];
                 payload_arr.copy_from_slice(&payload_bytes);
 
-                #[allow(clippy::as_conversions)]
+                // A-012: reject negative timestamps and logical counters that
+                // cannot represent as u64/u32. Silently wrapping a corrupted
+                // row would let an attacker bypass clock-causality validation.
+                let phys_u64 = u64::try_from(phys)
+                    .map_err(|_| store_err(format!("corrupted row: negative ts_physical_ms {phys}")))?;
+                let logical_u32 = u32::try_from(logical)
+                    .map_err(|_| store_err(format!("corrupted row: ts_logical {logical} out of u32 range")))?;
+
                 let node = DagNode {
                     hash: Hash256::from_bytes(hash_arr),
                     parents: Self::decode_parents(&parents_raw),
                     payload_hash: Hash256::from_bytes(payload_arr),
                     creator_did: Did::new(&did_str).map_err(|e| store_err(format!("invalid DID: {e}")))?,
-                    timestamp: Timestamp::new(phys as u64, logical as u32),
-                    signature: Self::decode_signature(&sig_bytes),
+                    timestamp: Timestamp::new(phys_u64, logical_u32),
+                    signature: Self::decode_signature(&sig_bytes)?,
                 };
                 Ok(Some(node))
             }
@@ -134,9 +149,14 @@ impl DagStore for PostgresStore {
 
     async fn put(&mut self, node: DagNode) -> Result<()> {
         let parents = Self::encode_parents(&node.parents);
-        let sig_bytes = Self::encode_signature(&node.signature);
+        let sig_bytes = Self::encode_signature(&node.signature)?;
 
-        #[allow(clippy::as_conversions)]
+        // A-012: explicit try_into on u64 -> i64 casts. physical_ms above
+        // i64::MAX would silently wrap negative and break subsequent reads.
+        let phys_i64 = i64::try_from(node.timestamp.physical_ms)
+            .map_err(|_| store_err(format!("ts_physical_ms {} exceeds i64::MAX", node.timestamp.physical_ms)))?;
+        let logical_i64 = i64::from(node.timestamp.logical);
+
         sqlx::query(
             "INSERT INTO dag_nodes (hash, parents, payload_hash, creator_did, ts_physical_ms, ts_logical, signature)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -146,8 +166,8 @@ impl DagStore for PostgresStore {
         .bind(&parents)
         .bind(node.payload_hash.as_bytes().as_slice())
         .bind(node.creator_did.as_str())
-        .bind(node.timestamp.physical_ms as i64)
-        .bind(node.timestamp.logical as i64)
+        .bind(phys_i64)
+        .bind(logical_i64)
         .bind(&sig_bytes)
         .execute(&self.pool)
         .await
@@ -201,8 +221,10 @@ impl DagStore for PostgresStore {
         .await
         .map_err(store_err)?;
 
-        #[allow(clippy::as_conversions)]
-        Ok(row.0 as u64)
+        // A-012: reject negative heights (database corruption); heights are
+        // logically unsigned and a negative i64 must not wrap to u64.
+        u64::try_from(row.0)
+            .map_err(|_| store_err(format!("corrupted row: negative committed height {}", row.0)))
     }
 
     async fn mark_committed(&mut self, hash: &Hash256, height: u64) -> Result<()> {
@@ -210,13 +232,17 @@ impl DagStore for PostgresStore {
             return Err(DagError::NodeNotFound(*hash));
         }
 
-        #[allow(clippy::as_conversions)]
+        // A-012: explicit u64 -> i64 guard; heights above i64::MAX are not
+        // representable in the BIGINT column.
+        let height_i64 = i64::try_from(height)
+            .map_err(|_| store_err(format!("committed height {height} exceeds i64::MAX")))?;
+
         sqlx::query(
             "INSERT INTO dag_committed (hash, height) VALUES ($1, $2)
              ON CONFLICT (hash) DO UPDATE SET height = EXCLUDED.height",
         )
         .bind(hash.as_bytes().as_slice())
-        .bind(height as i64)
+        .bind(height_i64)
         .execute(&self.pool)
         .await
         .map_err(store_err)?;

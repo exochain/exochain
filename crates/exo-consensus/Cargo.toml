@@ -23,5 +23,8 @@ exo-core = { path = "../exo-core" }
 exo-legal = { path = "../exo-legal" }
 decision-forum = { path = "../decision-forum" }
 
+[dev-dependencies]
+proptest.workspace = true
+
 [lints]
 workspace = true

@@ -35,10 +35,15 @@ const MAX_CLOCK_SKEW_MS: u64 = 500;
 pub async fn validated_append(store: &mut impl DagStore, node: crate::dag::DagNode) -> Result<()> {
     // 1. Wall-clock skew check: reject future-dated nodes
     if node.timestamp.physical_ms > 0 {
-        let now_ms = std::time::SystemTime::now()
+        // A-013: surface SystemTimeError and millis-overflow explicitly
+        // instead of silently defaulting to 0 or u64::MAX, either of which
+        // corrupts the skew check (0 rejects all future nodes, MAX accepts
+        // arbitrarily far-future nodes).
+        let now_duration = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-            .unwrap_or(0);
+            .map_err(|e| DagError::StoreError(format!("system clock before UNIX epoch: {e}")))?;
+        let now_ms = u64::try_from(now_duration.as_millis())
+            .map_err(|_| DagError::StoreError("wall-clock millis since epoch exceeds u64::MAX".into()))?;
         if node.timestamp.physical_ms > now_ms.saturating_add(MAX_CLOCK_SKEW_MS) {
             return Err(DagError::StoreError(format!(
                 "clock skew: node timestamp {} exceeds wall clock {} + {}ms tolerance",
