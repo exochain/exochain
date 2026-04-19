@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { api } from './api'
 
 const API_BASE = '/api/v1'
@@ -1143,6 +1143,85 @@ describe('API Client', () => {
         `${API_BASE}/decisions/${idWithSpecialChars}`,
         expect.any(Object)
       )
+    })
+  })
+
+  // A-082: CSRF double-submit — mutating requests must attach the
+  // X-CSRF-Token header whose value comes from the XSRF-TOKEN cookie.
+  describe('CSRF protection', () => {
+    const originalCookie = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie')
+
+    afterEach(() => {
+      if (originalCookie) {
+        Object.defineProperty(Document.prototype, 'cookie', originalCookie)
+      }
+    })
+
+    function setCookieString(value: string) {
+      Object.defineProperty(Document.prototype, 'cookie', {
+        configurable: true,
+        get: () => value,
+      })
+    }
+
+    it('attaches X-CSRF-Token header on POST when XSRF-TOKEN cookie is present', async () => {
+      setCookieString('session=abc; XSRF-TOKEN=tok-123; other=xyz')
+      const mockFetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ id: 'dec-1' }),
+      })
+      global.fetch = mockFetch
+
+      await api.decisions.create({ title: 'x', kind: 'Operational' } as never)
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit]
+      const headers = init.headers as Record<string, string>
+      expect(headers['X-CSRF-Token']).toBe('tok-123')
+    })
+
+    it('does not attach X-CSRF-Token on GET requests', async () => {
+      setCookieString('XSRF-TOKEN=tok-123')
+      const mockFetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([]),
+      })
+      global.fetch = mockFetch
+
+      await api.decisions.list()
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit]
+      const headers = init.headers as Record<string, string>
+      expect(headers['X-CSRF-Token']).toBeUndefined()
+    })
+
+    it('omits X-CSRF-Token when no XSRF-TOKEN cookie is set', async () => {
+      setCookieString('session=abc')
+      const mockFetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ id: 'dec-1' }),
+      })
+      global.fetch = mockFetch
+
+      await api.decisions.create({ title: 'x', kind: 'Operational' } as never)
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit]
+      const headers = init.headers as Record<string, string>
+      expect(headers['X-CSRF-Token']).toBeUndefined()
+    })
+
+    it('URL-decodes the CSRF token so quoted values roundtrip', async () => {
+      setCookieString('XSRF-TOKEN=' + encodeURIComponent('tok/with+special=chars'))
+      const mockFetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({}),
+      })
+      global.fetch = mockFetch
+
+      await api.decisions.create({ title: 'x', kind: 'Operational' } as never)
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit]
+      const headers = init.headers as Record<string, string>
+      expect(headers['X-CSRF-Token']).toBe('tok/with+special=chars')
     })
   })
 })
