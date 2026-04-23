@@ -1,0 +1,34 @@
+[package]
+name = "exo-dlp"
+description = "exoguard — DLP gateway for AI workflows; scans prompts, enforces consent, routes blinded to upstream LLMs, anchors receipts to the DAG"
+documentation = "https://docs.exochain.io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+exo-core = { path = "../exo-core" }
+exo-gatekeeper = { path = "../exo-gatekeeper" }
+exo-identity = { path = "../exo-identity" }
+exo-consent = { path = "../exo-consent" }
+exo-tenant = { path = "../exo-tenant" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+blake3 = { workspace = true }
+uuid = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+
+[package.metadata.cargo-machete]
+ignored = ["exo-identity", "exo-consent", "exo-tenant", "tokio"]

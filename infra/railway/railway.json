@@ -1,0 +1,15 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "_comment": "exoguard service spec — deployed as a distinct Railway service under the pilot project. The exochain node (n0) lives in its own service, sharing only the managed Postgres plugin.",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "./infra/railway/Dockerfile.exoguard"
+  },
+  "deploy": {
+    "_comment_startCommand": "Empty — Dockerfile CMD invokes /app/entrypoint.sh. Required env vars: DATABASE_URL, EXOGUARD_IDENTITY_REF, EXOGUARD_N0_DAG_URL. All secrets (OpenRouter key, tenant webhooks) are fetched via signed MCP calls at runtime, not injected as plaintext env vars.",
+    "healthcheckPath": "/mcp/health",
+    "healthcheckTimeout": 300,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  }
+}

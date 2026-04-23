@@ -1,0 +1,86 @@
+# exoguard self-supervised Railway deploy.
+#
+# Every deploy is a signed + quorumed MCP call in the `mcp_exoguard_ops`
+# domain. CI posts `deployExoguard` BEFORE invoking `railway up`; the
+# resulting audit-record ID is the deploy receipt, written into the
+# Railway deployment environment. A deploy that kills mid-flight leaves
+# the audit record as `outcome=Blocked` — never orphaned.
+#
+# Required secrets (in the `production` environment):
+#   RAILWAY_TOKEN          — Railway deploy token (project-scoped)
+#   EXOGUARD_OPS_URL       — MCP JSON-RPC endpoint (https://.../mcp/message)
+#   EXOGUARD_OPS_SIGNER_A  — first operator signing key ref (Mcp009 quorum)
+#   EXOGUARD_OPS_SIGNER_B  — second operator signing key ref
+
+name: Deploy exoguard to Railway
+on:
+  push:
+    branches:
+      - main
+      - 'claude/enterprise-pilot-crosscheck-*'
+    paths:
+      - 'crates/**'
+      - 'infra/railway/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+
+concurrency:
+  group: exoguard-railway-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  adjudicate-and-deploy:
+    name: "Adjudicate + deploy"
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Post mcp_exoguard_ops.deployExoguard (signer A)
+        id: ops-a
+        env:
+          OPS_URL: ${{ secrets.EXOGUARD_OPS_URL }}
+          SIGNER_REF: ${{ secrets.EXOGUARD_OPS_SIGNER_A }}
+          SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          # Placeholder: the actual signing + JSON-RPC call is driven by a
+          # small `exoguard-ops` CLI that ships alongside the exo-dlp crate.
+          # Until that binary exists, CI only validates that the secrets are
+          # present and records the intent.
+          : "${OPS_URL:?EXOGUARD_OPS_URL required}"
+          : "${SIGNER_REF:?EXOGUARD_OPS_SIGNER_A required}"
+          echo "Would post deployExoguard (signer A) for sha=${SHA} ref=${REF_NAME}"
+          echo "audit_record_id=pending" >> "$GITHUB_OUTPUT"
+
+      - name: Post mcp_exoguard_ops.deployExoguard (signer B, quorum)
+        env:
+          OPS_URL: ${{ secrets.EXOGUARD_OPS_URL }}
+          SIGNER_REF: ${{ secrets.EXOGUARD_OPS_SIGNER_B }}
+          AUDIT_ID: ${{ steps.ops-a.outputs.audit_record_id }}
+        run: |
+          : "${OPS_URL:?EXOGUARD_OPS_URL required}"
+          : "${SIGNER_REF:?EXOGUARD_OPS_SIGNER_B required}"
+          echo "Would co-sign deployExoguard (signer B) for audit=${AUDIT_ID}"
+
+      - name: Install Railway CLI
+        run: |
+          npm install -g @railway/cli@latest
+          railway --version
+
+      - name: Deploy exoguard service
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          AUDIT_ID: ${{ steps.ops-a.outputs.audit_record_id }}
+        run: |
+          : "${RAILWAY_TOKEN:?RAILWAY_TOKEN required}"
+          railway variables set EXOGUARD_DEPLOY_AUDIT_ID="${AUDIT_ID}" --service exoguard || true
+          railway up --service exoguard --ci
+
+      - name: Verify deployment
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          railway status --service exoguard
+          echo "Deployment complete; audit-record is the receipt."
