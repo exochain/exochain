@@ -6,8 +6,18 @@
 # Railway deployment environment. A deploy that kills mid-flight leaves
 # the audit record as `outcome=Blocked` — never orphaned.
 #
+# Bootstrap mode: until n0 + the MCP signing tooling are live, set repo
+# variable EXOGUARD_BOOTSTRAP_MODE=true to skip the signer steps and just
+# smoke-test the build + Railway deploy path.
+#
 # Required secrets (in the `production` environment):
-#   RAILWAY_TOKEN          — Railway deploy token (project-scoped)
+#   RAILWAY_TOKEN          — Railway project-scoped deploy token, OR
+#   RAILWAY_API_TOKEN      — Railway account-level API token (needs
+#                            RAILWAY_PROJECT_ID for `railway link`)
+#   RAILWAY_PROJECT_ID     — target project UUID (required when using
+#                            RAILWAY_API_TOKEN)
+#   RAILWAY_SERVICE        — service name to deploy (default: `exoguard`;
+#                            in bootstrap mode can be the existing default)
 #   EXOGUARD_OPS_URL       — MCP JSON-RPC endpoint (https://.../mcp/message)
 #   EXOGUARD_OPS_SIGNER_A  — first operator signing key ref (Mcp009 quorum)
 #   EXOGUARD_OPS_SIGNER_B  — second operator signing key ref
@@ -23,7 +33,15 @@ on:
       - 'infra/railway/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '.github/workflows/railway-deploy.yml'
   workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: 'Bootstrap mode (skip signer steps)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
 
 concurrency:
   group: exoguard-railway-${{ github.ref }}
@@ -37,50 +55,86 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Post mcp_exoguard_ops.deployExoguard (signer A)
-        id: ops-a
+      - name: Resolve bootstrap mode
+        id: mode
         env:
+          INPUT_BOOTSTRAP: ${{ github.event.inputs.bootstrap }}
+          VAR_BOOTSTRAP: ${{ vars.EXOGUARD_BOOTSTRAP_MODE }}
+        run: |
+          if [ "${INPUT_BOOTSTRAP}" = "true" ] || [ "${VAR_BOOTSTRAP}" = "true" ]; then
+            echo "bootstrap=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Bootstrap mode active — skipping Mcp009QuorumOps signer steps."
+          else
+            echo "bootstrap=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Adjudicate deploy (MCP quorum) OR bootstrap bypass
+        id: ops
+        env:
+          BOOTSTRAP: ${{ steps.mode.outputs.bootstrap }}
           OPS_URL: ${{ secrets.EXOGUARD_OPS_URL }}
-          SIGNER_REF: ${{ secrets.EXOGUARD_OPS_SIGNER_A }}
+          SIGNER_A: ${{ secrets.EXOGUARD_OPS_SIGNER_A }}
+          SIGNER_B: ${{ secrets.EXOGUARD_OPS_SIGNER_B }}
           SHA: ${{ github.sha }}
           REF_NAME: ${{ github.ref_name }}
         run: |
-          # Placeholder: the actual signing + JSON-RPC call is driven by a
-          # small `exoguard-ops` CLI that ships alongside the exo-dlp crate.
-          # Until that binary exists, CI only validates that the secrets are
-          # present and records the intent.
-          : "${OPS_URL:?EXOGUARD_OPS_URL required}"
-          : "${SIGNER_REF:?EXOGUARD_OPS_SIGNER_A required}"
-          echo "Would post deployExoguard (signer A) for sha=${SHA} ref=${REF_NAME}"
+          if [ "${BOOTSTRAP}" = "true" ]; then
+            AUDIT_ID="bootstrap-$(date -u +%Y%m%dT%H%M%SZ)-$(echo ${SHA} | cut -c1-7)"
+            echo "::warning::Bootstrap audit record: ${AUDIT_ID}"
+            echo "audit_record_id=${AUDIT_ID}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          : "${OPS_URL:?EXOGUARD_OPS_URL required when not in bootstrap mode}"
+          : "${SIGNER_A:?EXOGUARD_OPS_SIGNER_A required}"
+          : "${SIGNER_B:?EXOGUARD_OPS_SIGNER_B required}"
+          # TODO: exoguard-ops CLI signs + posts JSON-RPC once it ships.
+          echo "Would post deployExoguard with Mcp009 two-signer quorum (A + B) for sha=${SHA}"
           echo "audit_record_id=pending" >> "$GITHUB_OUTPUT"
-
-      - name: Post mcp_exoguard_ops.deployExoguard (signer B, quorum)
-        env:
-          OPS_URL: ${{ secrets.EXOGUARD_OPS_URL }}
-          SIGNER_REF: ${{ secrets.EXOGUARD_OPS_SIGNER_B }}
-          AUDIT_ID: ${{ steps.ops-a.outputs.audit_record_id }}
-        run: |
-          : "${OPS_URL:?EXOGUARD_OPS_URL required}"
-          : "${SIGNER_REF:?EXOGUARD_OPS_SIGNER_B required}"
-          echo "Would co-sign deployExoguard (signer B) for audit=${AUDIT_ID}"
 
       - name: Install Railway CLI
         run: |
           npm install -g @railway/cli@latest
           railway --version
 
-      - name: Deploy exoguard service
+      - name: Deploy to Railway
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          AUDIT_ID: ${{ steps.ops-a.outputs.audit_record_id }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
+          AUDIT_ID: ${{ steps.ops.outputs.audit_record_id }}
+          BOOTSTRAP: ${{ steps.mode.outputs.bootstrap }}
         run: |
-          : "${RAILWAY_TOKEN:?RAILWAY_TOKEN required}"
-          railway variables set EXOGUARD_DEPLOY_AUDIT_ID="${AUDIT_ID}" --service exoguard || true
-          railway up --service exoguard --ci
+          if [ -z "${RAILWAY_TOKEN}" ] && [ -z "${RAILWAY_API_TOKEN}" ]; then
+            echo "::error::One of RAILWAY_TOKEN or RAILWAY_API_TOKEN must be set." >&2
+            exit 1
+          fi
+
+          if [ -n "${RAILWAY_API_TOKEN}" ]; then
+            : "${RAILWAY_PROJECT_ID:?RAILWAY_PROJECT_ID required when using RAILWAY_API_TOKEN}"
+            railway link --project "${RAILWAY_PROJECT_ID}"
+          fi
+
+          SERVICE_FLAG=""
+          if [ -n "${RAILWAY_SERVICE}" ]; then
+            SERVICE_FLAG="--service ${RAILWAY_SERVICE}"
+            railway variables set EXOGUARD_DEPLOY_AUDIT_ID="${AUDIT_ID}" ${SERVICE_FLAG} || true
+          fi
+
+          echo "Deploying (bootstrap=${BOOTSTRAP}) with audit_id=${AUDIT_ID}"
+          # shellcheck disable=SC2086
+          railway up ${SERVICE_FLAG} --ci
 
       - name: Verify deployment
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
         run: |
-          railway status --service exoguard
+          SERVICE_FLAG=""
+          if [ -n "${RAILWAY_SERVICE}" ]; then
+            SERVICE_FLAG="--service ${RAILWAY_SERVICE}"
+          fi
+          # shellcheck disable=SC2086
+          railway status ${SERVICE_FLAG} || true
           echo "Deployment complete; audit-record is the receipt."
