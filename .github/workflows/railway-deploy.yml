@@ -105,14 +105,38 @@ jobs:
           AUDIT_ID: ${{ steps.ops.outputs.audit_record_id }}
           BOOTSTRAP: ${{ steps.mode.outputs.bootstrap }}
         run: |
+          set +e
           if [ -z "${RAILWAY_TOKEN}" ] && [ -z "${RAILWAY_API_TOKEN}" ]; then
-            echo "::error::One of RAILWAY_TOKEN or RAILWAY_API_TOKEN must be set." >&2
+            echo "::error::One of RAILWAY_TOKEN or RAILWAY_API_TOKEN must be set."
             exit 1
           fi
 
+          echo "::group::Railway CLI diagnostics"
+          railway --version
+          if [ -n "${RAILWAY_API_TOKEN}" ]; then
+            echo "using RAILWAY_API_TOKEN (+ RAILWAY_PROJECT_ID=${RAILWAY_PROJECT_ID:+set}${RAILWAY_PROJECT_ID:-unset})"
+          fi
+          if [ -n "${RAILWAY_TOKEN}" ]; then
+            echo "using RAILWAY_TOKEN"
+          fi
+          echo "RAILWAY_SERVICE=${RAILWAY_SERVICE:-<unset>}"
+          echo "::endgroup::"
+
           if [ -n "${RAILWAY_API_TOKEN}" ]; then
             : "${RAILWAY_PROJECT_ID:?RAILWAY_PROJECT_ID required when using RAILWAY_API_TOKEN}"
-            railway link --project "${RAILWAY_PROJECT_ID}"
+            echo "::group::railway link --project"
+            LINK_OUT=$(railway link --project "${RAILWAY_PROJECT_ID}" 2>&1)
+            LINK_CODE=$?
+            echo "${LINK_OUT}"
+            echo "::endgroup::"
+            if [ "${LINK_CODE}" -ne 0 ]; then
+              TAIL=$(printf '%s' "${LINK_OUT}" | tail -c 3000)
+              ENC_TAIL="${TAIL//'%'/'%25'}"
+              ENC_TAIL="${ENC_TAIL//$'\r'/'%0D'}"
+              ENC_TAIL="${ENC_TAIL//$'\n'/'%0A'}"
+              echo "::error title=railway link failed::${ENC_TAIL}"
+              exit ${LINK_CODE}
+            fi
           fi
 
           SERVICE_FLAG=""
@@ -121,9 +145,25 @@ jobs:
             railway variables set EXOGUARD_DEPLOY_AUDIT_ID="${AUDIT_ID}" ${SERVICE_FLAG} || true
           fi
 
+          echo "::group::railway status (pre-deploy)"
+          railway status ${SERVICE_FLAG} 2>&1 || true
+          echo "::endgroup::"
+
+          echo "::group::railway up"
           echo "Deploying (bootstrap=${BOOTSTRAP}) with audit_id=${AUDIT_ID}"
           # shellcheck disable=SC2086
-          railway up ${SERVICE_FLAG} --ci
+          UP_OUT=$(railway up ${SERVICE_FLAG} --ci 2>&1)
+          UP_CODE=$?
+          echo "${UP_OUT}"
+          echo "::endgroup::"
+          if [ "${UP_CODE}" -ne 0 ]; then
+            TAIL=$(printf '%s' "${UP_OUT}" | tail -c 3000)
+            ENC_TAIL="${TAIL//'%'/'%25'}"
+            ENC_TAIL="${ENC_TAIL//$'\r'/'%0D'}"
+            ENC_TAIL="${ENC_TAIL//$'\n'/'%0A'}"
+            echo "::error title=railway up failed::${ENC_TAIL}"
+            exit ${UP_CODE}
+          fi
 
       - name: Verify deployment
         env:
