@@ -9,12 +9,14 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 ## Repo Status
 
 > Run `bash tools/repo_truth.sh` to regenerate these numbers from source.
+>
+> The crate count includes `exo-catapult`, `exo-consensus`, `exo-messaging`, and `exochain-sdk` (four crates previously not listed in this README).
 
 | Metric | Value | Source |
 |--------|-------|--------|
-| Rust crates | 16 | `ls -d crates/*/` |
-| Rust source files | 178 | `find crates -name '*.rs'` |
-| Rust LOC | ~112,000 | `wc -l` |
+| Rust crates | 20 | `ls -d crates/*/` |
+| Rust source files | 273 | `find crates -name '*.rs'` |
+| Rust LOC | 97,681 | `wc -l` |
 | Workspace tests | 1,603 passing, 0 failing | `cargo test --workspace` |
 | CI quality gates | 16 | `.github/workflows/ci.yml` |
 | Published releases | None (pre-release) | `git tag -l` |
@@ -32,6 +34,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 - **Threat model** covers 14 threats tracked: 14 mitigated, 0 partial, 0 planned — see `governance/threat_matrix.md`
 - **Constitutional invariants** enforced via the CGR kernel in all governance paths
 - **No floating-point arithmetic** — denied workspace-wide via `#[deny(clippy::float_arithmetic)]`
+- **Post-Quantum signatures** — NIST FIPS 204 ML-DSA-65 (CRYSTALS-Dilithium) via `ml-dsa` 0.1.0-rc.7, fully wired in `Signature::PostQuantum` and `Signature::Hybrid` with deterministic signing, tamper-rejection tests, proptest roundtrip coverage, and RUSTSEC-2025-0144 patch
 
 ### What is supported by design but not yet production-hardened
 
@@ -39,7 +42,6 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 - **exo-gateway binary** — operational HTTP server with 28 endpoints (REST, GraphQL, health probes); production hardening ongoing
 - **GraphQL API** — types and schema stubs exist in `exo-api`; async runtime integration pending
 - **exo-dag benchmark** — disabled; needs rewrite against current API
-- **Post-quantum signatures** — `Signature` enum supports Ed25519/PostQuantum/Hybrid; PQ implementation is stub-level
 
 ### In Progress
 
@@ -216,8 +218,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full judicial build workflow.
 EXOCHAIN uses a `Signature` enum supporting three modes:
 
 * **Ed25519** — Current default for signing and verification
-* **PostQuantum** — Forward-looking post-quantum signature scheme (stub-level)
-* **Hybrid** — Combined Ed25519 + post-quantum for transition period (stub-level)
+* **PostQuantum** — NIST FIPS 204 ML-DSA-65 (CRYSTALS-Dilithium). Production-wired.
+* **Hybrid** — Combined Ed25519 + ML-DSA-65. Strict AND verification (no short-circuit). Closes the silent Ed25519-only downgrade (EXOCHAIN-REM-005).
 
 Float arithmetic is denied workspace-wide via `#[deny(clippy::float_arithmetic)]`.
 
