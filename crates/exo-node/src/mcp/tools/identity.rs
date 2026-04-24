@@ -438,7 +438,8 @@ mod tests {
 
     #[test]
     fn execute_resolve_identity_valid_did() {
-        let result = execute_resolve_identity(&json!({"did": "did:exo:alice"}), &NodeContext::empty());
+        let result =
+            execute_resolve_identity(&json!({"did": "did:exo:alice"}), &NodeContext::empty());
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid_format"], true);
@@ -542,11 +543,14 @@ mod tests {
 
     #[test]
     fn execute_verify_signature_bad_hex() {
-        let result = execute_verify_signature(&json!({
-            "public_key_hex": "not-hex",
-            "message_hex": "00",
-            "signature_hex": "00",
-        }), &NodeContext::empty());
+        let result = execute_verify_signature(
+            &json!({
+                "public_key_hex": "not-hex",
+                "message_hex": "00",
+                "signature_hex": "00",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 

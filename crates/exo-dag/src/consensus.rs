@@ -5,7 +5,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use exo_core::types::{Did, Hash256, Signature};
+use exo_core::{
+    crypto,
+    types::{Did, Hash256, PublicKey, Signature},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -94,6 +97,108 @@ pub struct CommitCertificate {
 }
 
 // ---------------------------------------------------------------------------
+// Canonical signing payloads + signature verification (GAP-014)
+// ---------------------------------------------------------------------------
+
+impl Vote {
+    /// Canonical CBOR payload that the voter signs.
+    ///
+    /// Domain tag prevents cross-context reuse. The tuple
+    /// `(tag, voter, round, node_hash)` binds the signature to
+    /// exactly one voter, round, and node.
+    ///
+    /// # Errors
+    /// Returns `DagError::StoreError` on CBOR encoding failure.
+    pub fn signing_payload(&self) -> Result<Vec<u8>> {
+        let tuple = (
+            "exo.dag.consensus.vote.v1",
+            &self.voter,
+            self.round,
+            &self.node_hash,
+        );
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(&tuple, &mut buf).map_err(|e| {
+            DagError::StoreError(format!("vote signing payload encoding failed: {e}"))
+        })?;
+        Ok(buf)
+    }
+
+    /// Verify the voter's signature over the canonical payload.
+    ///
+    /// Rejects empty signatures AND all-zero sentinels AND signatures
+    /// that do not verify under `voter_public_key`.
+    #[must_use]
+    pub fn verify_signature(&self, voter_public_key: &PublicKey) -> bool {
+        if self.signature.is_empty() {
+            return false;
+        }
+        let raw = self.signature.as_bytes();
+        if !raw.is_empty() && raw.iter().all(|b| *b == 0) {
+            return false;
+        }
+        let Ok(payload) = self.signing_payload() else {
+            return false;
+        };
+        crypto::verify(&payload, &self.signature, voter_public_key)
+    }
+}
+
+impl Proposal {
+    /// Canonical CBOR payload that the proposer signs.
+    ///
+    /// # Errors
+    /// Returns `DagError::StoreError` on CBOR encoding failure.
+    pub fn signing_payload(&self) -> Result<Vec<u8>> {
+        let tuple = (
+            "exo.dag.consensus.proposal.v1",
+            &self.proposer,
+            self.round,
+            &self.node_hash,
+        );
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(&tuple, &mut buf).map_err(|e| {
+            DagError::StoreError(format!("proposal signing payload encoding failed: {e}"))
+        })?;
+        Ok(buf)
+    }
+
+    /// Verify the proposer's signature (supplied separately — `Proposal`
+    /// itself has no signature field; the wire envelope carries it).
+    #[must_use]
+    pub fn verify_signature(&self, proposer_public_key: &PublicKey, signature: &Signature) -> bool {
+        if signature.is_empty() {
+            return false;
+        }
+        let raw = signature.as_bytes();
+        if !raw.is_empty() && raw.iter().all(|b| *b == 0) {
+            return false;
+        }
+        let Ok(payload) = self.signing_payload() else {
+            return false;
+        };
+        crypto::verify(&payload, signature, proposer_public_key)
+    }
+}
+
+/// Resolve a validator DID to its current public key.
+///
+/// Production implementations should back this with the identity
+/// registry (`exo-identity`) and must refuse resolution for revoked
+/// or rotated keys.
+pub trait PublicKeyResolver {
+    fn resolve(&self, did: &Did) -> Option<PublicKey>;
+}
+
+impl<F> PublicKeyResolver for F
+where
+    F: Fn(&Did) -> Option<PublicKey>,
+{
+    fn resolve(&self, did: &Did) -> Option<PublicKey> {
+        (self)(did)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Consensus State
 // ---------------------------------------------------------------------------
 
@@ -135,6 +240,16 @@ impl ConsensusState {
 }
 
 /// Propose a node for commitment.
+///
+/// **⚠️ DEPRECATED (GAP-014):** This function does not verify the
+/// proposer's signature. Use [`propose_verified`] instead, which
+/// requires a [`PublicKeyResolver`] and refuses forged signatures.
+///
+/// Retained only to avoid breaking the legacy test suite; production
+/// callers MUST migrate. Will be removed in a future release.
+#[deprecated(
+    note = "GAP-014: use propose_verified; this variant does not verify the proposer signature"
+)]
 pub fn propose(state: &mut ConsensusState, node: &DagNode, proposer: &Did) -> Result<Proposal> {
     if !state.config.validators.contains(proposer) {
         return Err(DagError::NotAValidator(proposer.to_string()));
@@ -157,6 +272,10 @@ pub fn propose(state: &mut ConsensusState, node: &DagNode, proposer: &Did) -> Re
 }
 
 /// Cast a vote for a node in the current round.
+///
+/// **⚠️ DEPRECATED (GAP-014):** This function does not verify the
+/// voter's signature. Use [`vote_verified`] instead.
+#[deprecated(note = "GAP-014: use vote_verified; this variant does not verify the voter signature")]
 pub fn vote(state: &mut ConsensusState, v: Vote) -> Result<()> {
     if !state.config.validators.contains(&v.voter) {
         return Err(DagError::NotAValidator(v.voter.to_string()));
@@ -214,10 +333,161 @@ pub fn check_commit(state: &ConsensusState, node_hash: &Hash256) -> Option<Commi
 }
 
 /// Commit a node with a certificate.
+///
+/// **⚠️ DEPRECATED (GAP-014):** This function does not verify any
+/// vote signatures in the certificate. Use [`commit_verified`] instead.
+#[deprecated(
+    note = "GAP-014: use commit_verified; this variant does not verify certificate signatures"
+)]
 pub fn commit(state: &mut ConsensusState, cert: CommitCertificate) {
     let hash = cert.node_hash;
     state.committed.push(hash);
     state.certificates.insert(hash, cert);
+}
+
+// ---------------------------------------------------------------------------
+// Verified consensus API (GAP-014) — signature-checking variants
+// ---------------------------------------------------------------------------
+
+/// Register a proposal after verifying the proposer's signature.
+///
+/// Closes GAP-014 for the proposal path. In addition to the membership
+/// check `propose` performs, this verifies that `signature` is a valid
+/// signature by `proposer` over `Proposal::signing_payload()`. Rejects
+/// empty, all-zero, or unverifiable signatures.
+///
+/// The caller supplies the proposer's public key via `resolver`. A
+/// resolver returning `None` for the proposer is treated as "unknown
+/// key" and the proposal is rejected.
+///
+/// # Errors
+/// - `NotAValidator` if `proposer` is not in the validator set.
+/// - `InvalidSignature` if the signature is empty / zero / wrong key /
+///   over the wrong payload.
+pub fn propose_verified<R: PublicKeyResolver>(
+    state: &mut ConsensusState,
+    node: &DagNode,
+    proposer: &Did,
+    signature: &Signature,
+    resolver: &R,
+) -> Result<Proposal> {
+    if !state.config.validators.contains(proposer) {
+        return Err(DagError::NotAValidator(proposer.to_string()));
+    }
+
+    let proposal = Proposal {
+        proposer: proposer.clone(),
+        round: state.current_round,
+        node_hash: node.hash,
+    };
+
+    let Some(key) = resolver.resolve(proposer) else {
+        return Err(DagError::InvalidSignature(node.hash));
+    };
+    if !proposal.verify_signature(&key, signature) {
+        return Err(DagError::InvalidSignature(node.hash));
+    }
+
+    state
+        .pending
+        .entry(state.current_round)
+        .or_default()
+        .entry(node.hash)
+        .or_default();
+
+    Ok(proposal)
+}
+
+/// Cast a vote after verifying the voter's signature.
+///
+/// Closes GAP-014 for the vote path.
+///
+/// # Errors
+/// - `NotAValidator` if `v.voter` is not in the validator set.
+/// - `InvalidRound` if `v.round` does not match the current round.
+/// - `DuplicateVote` if this voter has already voted this round.
+/// - `InvalidSignature` if the signature does not verify against
+///   the public key returned by `resolver` for `v.voter`, or the
+///   resolver returns `None`.
+pub fn vote_verified<R: PublicKeyResolver>(
+    state: &mut ConsensusState,
+    v: Vote,
+    resolver: &R,
+) -> Result<()> {
+    if !state.config.validators.contains(&v.voter) {
+        return Err(DagError::NotAValidator(v.voter.to_string()));
+    }
+
+    if v.round != state.current_round {
+        return Err(DagError::InvalidRound {
+            expected: state.current_round,
+            got: v.round,
+        });
+    }
+
+    let Some(key) = resolver.resolve(&v.voter) else {
+        return Err(DagError::InvalidSignature(v.node_hash));
+    };
+    if !v.verify_signature(&key) {
+        return Err(DagError::InvalidSignature(v.node_hash));
+    }
+
+    let round_voters = state.voted_in_round.entry(v.round).or_default();
+    if round_voters.contains(&v.voter) {
+        return Err(DagError::DuplicateVote {
+            voter: v.voter.to_string(),
+            round: v.round,
+        });
+    }
+
+    round_voters.insert(v.voter.clone());
+
+    state
+        .pending
+        .entry(v.round)
+        .or_default()
+        .entry(v.node_hash)
+        .or_default()
+        .push(v);
+
+    Ok(())
+}
+
+/// Commit a node with a certificate after verifying every vote's signature.
+///
+/// Closes GAP-014 for the commit path. Every vote in the certificate
+/// must:
+///   - reference `cert.node_hash`
+///   - come from a validator in the current set
+///   - carry a signature that verifies against the voter's current key
+///
+/// # Errors
+/// - `InvalidSignature(cert.node_hash)` if any vote fails verification
+///   or references a different node.
+/// - `NotAValidator` if any voter is not in the validator set.
+pub fn commit_verified<R: PublicKeyResolver>(
+    state: &mut ConsensusState,
+    cert: CommitCertificate,
+    resolver: &R,
+) -> Result<()> {
+    for v in &cert.votes {
+        if v.node_hash != cert.node_hash {
+            return Err(DagError::InvalidSignature(cert.node_hash));
+        }
+        if !state.config.validators.contains(&v.voter) {
+            return Err(DagError::NotAValidator(v.voter.to_string()));
+        }
+        let Some(key) = resolver.resolve(&v.voter) else {
+            return Err(DagError::InvalidSignature(cert.node_hash));
+        };
+        if !v.verify_signature(&key) {
+            return Err(DagError::InvalidSignature(cert.node_hash));
+        }
+    }
+    let hash = cert.node_hash;
+    state.committed.push(hash);
+    state.certificates.insert(hash, cert);
+    Ok(())
 }
 
 /// Check if a node has been finalized (committed with a certificate).
@@ -660,5 +930,269 @@ mod tests {
 
         assert!(check_commit(&state, &n1.hash).is_some());
         assert!(check_commit(&state, &n2.hash).is_none());
+    }
+
+    // ===================================================================
+    // GAP-014 fix regression tests — verified consensus path
+    // ===================================================================
+
+    use exo_core::crypto;
+
+    /// Build a minimal DagNode for tests. We don't run append() here
+    /// because we want the test to own the node-hash determinism and
+    /// not depend on signing details.
+    fn make_node(seed: &str) -> (DagNode, (), ()) {
+        let mut dag = Dag::new();
+        let mut clock = HybridClock::new();
+        let did = Did::new("did:exo:proposer").unwrap();
+        let sf = make_sign_fn();
+        let node = append(&mut dag, &[], seed.as_bytes(), &did, &*sf, &mut clock)
+            .expect("append test node");
+        (node, (), ())
+    }
+
+    /// Build a signed vote over its canonical payload.
+    fn signed_vote(
+        voter: &Did,
+        round: u64,
+        node_hash: Hash256,
+        sk: &exo_core::types::SecretKey,
+    ) -> Vote {
+        let mut v = Vote {
+            voter: voter.clone(),
+            round,
+            node_hash,
+            signature: Signature::empty(),
+        };
+        let payload = v.signing_payload().expect("payload");
+        v.signature = crypto::sign(&payload, sk);
+        v
+    }
+
+    #[test]
+    fn verified_vote_accepts_properly_signed() {
+        let (pk_a, sk_a) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        let vote = signed_vote(&a, 0, n.hash, &sk_a);
+        let resolver = |d: &Did| -> Option<exo_core::types::PublicKey> {
+            if *d == a { Some(pk_a.clone()) } else { None }
+        };
+        assert!(vote_verified(&mut state, vote, &resolver).is_ok());
+    }
+
+    #[test]
+    fn verified_vote_rejects_forged_signature_with_valid_voter() {
+        // The exact GAP-014 attack: voter is in the validator set, but
+        // the signature is junk bytes (the shape the old `vote()` let
+        // through silently).
+        let (pk_a, _sk_a) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        let forged = Vote {
+            voter: a.clone(),
+            round: 0,
+            node_hash: n.hash,
+            signature: Signature::from_bytes([1u8; 64]),
+        };
+        let resolver = |_d: &Did| Some(pk_a.clone());
+        let res = vote_verified(&mut state, forged, &resolver);
+        assert!(matches!(res, Err(DagError::InvalidSignature(_))));
+        // Crucially: state must not have accepted the forged vote.
+        assert!(state.pending.get(&0).is_none_or(|m| m.is_empty()));
+        assert!(state.voted_in_round.get(&0).is_none_or(|s| s.is_empty()));
+    }
+
+    #[test]
+    fn verified_vote_rejects_zero_byte_signature() {
+        let (pk_a, _sk_a) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        let zeros = Vote {
+            voter: a.clone(),
+            round: 0,
+            node_hash: n.hash,
+            signature: Signature::from_bytes([0u8; 64]),
+        };
+        let resolver = |_d: &Did| Some(pk_a.clone());
+        let res = vote_verified(&mut state, zeros, &resolver);
+        assert!(matches!(res, Err(DagError::InvalidSignature(_))));
+    }
+
+    #[test]
+    fn verified_vote_rejects_signature_by_wrong_validator_key() {
+        // Alice is the voter in the message, but the signature was
+        // actually produced by Mallory's key. Resolver returns Alice's
+        // pubkey. Verification must fail.
+        let (pk_alice, _sk_alice) = crypto::generate_keypair();
+        let (_, sk_mallory) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        // Sign with Mallory's key but claim voter = Alice.
+        let mut bad = Vote {
+            voter: a.clone(),
+            round: 0,
+            node_hash: n.hash,
+            signature: Signature::empty(),
+        };
+        let payload = bad.signing_payload().unwrap();
+        bad.signature = crypto::sign(&payload, &sk_mallory);
+        let resolver = |_d: &Did| Some(pk_alice.clone());
+        let res = vote_verified(&mut state, bad, &resolver);
+        assert!(matches!(res, Err(DagError::InvalidSignature(_))));
+    }
+
+    #[test]
+    fn verified_vote_rejects_when_resolver_returns_none() {
+        // Voter is in validator set but no public key is known.
+        let a = Did::new("did:exo:alice").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        let (_, sk) = crypto::generate_keypair();
+        let v = signed_vote(&a, 0, n.hash, &sk);
+        let null_resolver = |_d: &Did| None;
+        let res = vote_verified(&mut state, v, &null_resolver);
+        assert!(matches!(res, Err(DagError::InvalidSignature(_))));
+    }
+
+    #[test]
+    fn verified_vote_rejects_replay_from_different_round() {
+        let (pk_a, sk_a) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        state.advance_round(); // now at round 1
+        let (n, _, _) = make_node("x");
+        // Signed for round 0 but state is at round 1.
+        let v = signed_vote(&a, 0, n.hash, &sk_a);
+        let resolver = |_d: &Did| Some(pk_a.clone());
+        let res = vote_verified(&mut state, v, &resolver);
+        assert!(matches!(res, Err(DagError::InvalidRound { .. })));
+    }
+
+    #[test]
+    fn verified_propose_rejects_forged_signature() {
+        let (pk_a, _sk_a) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        let forged_sig = Signature::from_bytes([1u8; 64]);
+        let resolver = |_d: &Did| Some(pk_a.clone());
+        let res = propose_verified(&mut state, &n, &a, &forged_sig, &resolver);
+        assert!(matches!(res, Err(DagError::InvalidSignature(_))));
+    }
+
+    #[test]
+    fn verified_propose_accepts_properly_signed() {
+        let (pk_a, sk_a) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        let proposal_shape = Proposal {
+            proposer: a.clone(),
+            round: 0,
+            node_hash: n.hash,
+        };
+        let payload = proposal_shape.signing_payload().unwrap();
+        let sig = crypto::sign(&payload, &sk_a);
+        let resolver = |_d: &Did| Some(pk_a.clone());
+        let res = propose_verified(&mut state, &n, &a, &sig, &resolver);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn verified_commit_rejects_forged_vote_in_cert() {
+        let (pk_a, _sk_a) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        let forged_vote = Vote {
+            voter: a.clone(),
+            round: 0,
+            node_hash: n.hash,
+            signature: Signature::from_bytes([2u8; 64]),
+        };
+        let cert = CommitCertificate {
+            node_hash: n.hash,
+            votes: vec![forged_vote],
+            round: 0,
+        };
+        let resolver = |_d: &Did| Some(pk_a.clone());
+        let res = commit_verified(&mut state, cert, &resolver);
+        assert!(matches!(res, Err(DagError::InvalidSignature(_))));
+        assert!(state.committed.is_empty());
+    }
+
+    #[test]
+    fn verified_commit_accepts_properly_signed_cert() {
+        let (pk_a, sk_a) = crypto::generate_keypair();
+        let (pk_b, sk_b) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let b = Did::new("did:exo:bob").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        vs.insert(b.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        let va = signed_vote(&a, 0, n.hash, &sk_a);
+        let vb = signed_vote(&b, 0, n.hash, &sk_b);
+        let cert = CommitCertificate {
+            node_hash: n.hash,
+            votes: vec![va, vb],
+            round: 0,
+        };
+        let resolver = move |d: &Did| -> Option<exo_core::types::PublicKey> {
+            if *d == a {
+                Some(pk_a.clone())
+            } else if *d == b {
+                Some(pk_b.clone())
+            } else {
+                None
+            }
+        };
+        assert!(commit_verified(&mut state, cert, &resolver).is_ok());
+        assert_eq!(state.committed.len(), 1);
+    }
+
+    #[test]
+    fn verified_commit_rejects_cert_with_wrong_hash_vote() {
+        let (pk_a, sk_a) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n1, _, _) = make_node("x");
+        let (n2, _, _) = make_node("y");
+        // Vote is for n2 but cert claims n1.
+        let v = signed_vote(&a, 0, n2.hash, &sk_a);
+        let cert = CommitCertificate {
+            node_hash: n1.hash,
+            votes: vec![v],
+            round: 0,
+        };
+        let resolver = |_d: &Did| Some(pk_a.clone());
+        let res = commit_verified(&mut state, cert, &resolver);
+        assert!(matches!(res, Err(DagError::InvalidSignature(_))));
     }
 }

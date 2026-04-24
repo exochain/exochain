@@ -176,9 +176,7 @@ pub fn execute_cast_vote(params: &Value, _context: &NodeContext) -> ToolResult {
     }
 
     if decision_id.is_empty() {
-        return ToolResult::error(
-            json!({"error": "decision_id must not be empty"}).to_string(),
-        );
+        return ToolResult::error(json!({"error": "decision_id must not be empty"}).to_string());
     }
 
     let rationale = params
@@ -246,9 +244,7 @@ pub fn execute_check_quorum(params: &Value, _context: &NodeContext) -> ToolResul
     };
 
     if decision_id.is_empty() {
-        return ToolResult::error(
-            json!({"error": "decision_id must not be empty"}).to_string(),
-        );
+        return ToolResult::error(json!({"error": "decision_id must not be empty"}).to_string());
     }
 
     // No persistent vote registry yet — always report zero votes.
@@ -300,9 +296,7 @@ pub fn execute_get_decision_status(params: &Value, _context: &NodeContext) -> To
     };
 
     if decision_id.is_empty() {
-        return ToolResult::error(
-            json!({"error": "decision_id must not be empty"}).to_string(),
-        );
+        return ToolResult::error(json!({"error": "decision_id must not be empty"}).to_string());
     }
 
     let response = json!({
@@ -441,11 +435,14 @@ mod tests {
 
     #[test]
     fn execute_create_decision_success() {
-        let result = execute_create_decision(&json!({
-            "title": "Approve data sharing policy",
-            "description": "Allow cross-org medical data sharing under bailment.",
-            "proposer_did": "did:exo:alice",
-        }), &NodeContext::empty());
+        let result = execute_create_decision(
+            &json!({
+                "title": "Approve data sharing policy",
+                "description": "Allow cross-org medical data sharing under bailment.",
+                "proposer_did": "did:exo:alice",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
         assert_eq!(v["title"], "Approve data sharing policy");
@@ -456,20 +453,26 @@ mod tests {
 
     #[test]
     fn execute_create_decision_invalid_proposer() {
-        let result = execute_create_decision(&json!({
-            "title": "Test",
-            "description": "Test",
-            "proposer_did": "bad",
-        }), &NodeContext::empty());
+        let result = execute_create_decision(
+            &json!({
+                "title": "Test",
+                "description": "Test",
+                "proposer_did": "bad",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 
     #[test]
     fn execute_create_decision_missing_title() {
-        let result = execute_create_decision(&json!({
-            "description": "Test",
-            "proposer_did": "did:exo:alice",
-        }), &NodeContext::empty());
+        let result = execute_create_decision(
+            &json!({
+                "description": "Test",
+                "proposer_did": "did:exo:alice",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 
@@ -484,12 +487,15 @@ mod tests {
 
     #[test]
     fn execute_cast_vote_success() {
-        let result = execute_cast_vote(&json!({
-            "decision_id": "abc123",
-            "voter_did": "did:exo:bob",
-            "choice": "approve",
-            "rationale": "Looks good to me.",
-        }), &NodeContext::empty());
+        let result = execute_cast_vote(
+            &json!({
+                "decision_id": "abc123",
+                "voter_did": "did:exo:bob",
+                "choice": "approve",
+                "rationale": "Looks good to me.",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
         assert_eq!(v["decision_id"], "abc123");
@@ -502,21 +508,27 @@ mod tests {
 
     #[test]
     fn execute_cast_vote_invalid_choice() {
-        let result = execute_cast_vote(&json!({
-            "decision_id": "abc123",
-            "voter_did": "did:exo:bob",
-            "choice": "maybe",
-        }), &NodeContext::empty());
+        let result = execute_cast_vote(
+            &json!({
+                "decision_id": "abc123",
+                "voter_did": "did:exo:bob",
+                "choice": "maybe",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 
     #[test]
     fn execute_cast_vote_invalid_voter() {
-        let result = execute_cast_vote(&json!({
-            "decision_id": "abc123",
-            "voter_did": "bad",
-            "choice": "approve",
-        }), &NodeContext::empty());
+        let result = execute_cast_vote(
+            &json!({
+                "decision_id": "abc123",
+                "voter_did": "bad",
+                "choice": "approve",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 
@@ -531,10 +543,13 @@ mod tests {
 
     #[test]
     fn execute_check_quorum_success() {
-        let result = execute_check_quorum(&json!({
-            "decision_id": "abc123",
-            "threshold": 3,
-        }), &NodeContext::empty());
+        let result = execute_check_quorum(
+            &json!({
+                "decision_id": "abc123",
+                "threshold": 3,
+            }),
+            &NodeContext::empty(),
+        );
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
         assert_eq!(v["decision_id"], "abc123");
@@ -560,7 +575,8 @@ mod tests {
 
     #[test]
     fn execute_get_decision_status_success() {
-        let result = execute_get_decision_status(&json!({"decision_id": "abc123"}), &NodeContext::empty());
+        let result =
+            execute_get_decision_status(&json!({"decision_id": "abc123"}), &NodeContext::empty());
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
         assert_eq!(v["decision_id"], "abc123");
@@ -569,7 +585,8 @@ mod tests {
 
     #[test]
     fn execute_get_decision_status_empty_id() {
-        let result = execute_get_decision_status(&json!({"decision_id": ""}), &NodeContext::empty());
+        let result =
+            execute_get_decision_status(&json!({"decision_id": ""}), &NodeContext::empty());
         assert!(result.is_error);
     }
 
@@ -584,12 +601,15 @@ mod tests {
 
     #[test]
     fn execute_propose_amendment_success() {
-        let result = execute_propose_amendment(&json!({
-            "title": "Add quantum-safe threshold signatures",
-            "description": "Extend the constitutional invariant set to require ML-DSA-65 for kernel modification quorum.",
-            "proposer_did": "did:exo:alice",
-            "target": "constitution",
-        }), &NodeContext::empty());
+        let result = execute_propose_amendment(
+            &json!({
+                "title": "Add quantum-safe threshold signatures",
+                "description": "Extend the constitutional invariant set to require ML-DSA-65 for kernel modification quorum.",
+                "proposer_did": "did:exo:alice",
+                "target": "constitution",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
         assert_eq!(v["target"], "constitution");
@@ -597,28 +617,39 @@ mod tests {
         assert!(v["amendment_id"].as_str().expect("id").len() > 0);
         assert_eq!(v["requirements"]["validator_consensus"], "unanimous");
         assert_eq!(v["requirements"]["formal_proof_required"], true);
-        assert!(v["warning"].as_str().expect("warning").contains("highest governance threshold"));
+        assert!(
+            v["warning"]
+                .as_str()
+                .expect("warning")
+                .contains("highest governance threshold")
+        );
     }
 
     #[test]
     fn execute_propose_amendment_invalid_target() {
-        let result = execute_propose_amendment(&json!({
-            "title": "Test",
-            "description": "Test",
-            "proposer_did": "did:exo:alice",
-            "target": "invalid_target",
-        }), &NodeContext::empty());
+        let result = execute_propose_amendment(
+            &json!({
+                "title": "Test",
+                "description": "Test",
+                "proposer_did": "did:exo:alice",
+                "target": "invalid_target",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 
     #[test]
     fn execute_propose_amendment_invalid_proposer() {
-        let result = execute_propose_amendment(&json!({
-            "title": "Test",
-            "description": "Test",
-            "proposer_did": "bad",
-            "target": "constitution",
-        }), &NodeContext::empty());
+        let result = execute_propose_amendment(
+            &json!({
+                "title": "Test",
+                "description": "Test",
+                "proposer_did": "bad",
+                "target": "constitution",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 }

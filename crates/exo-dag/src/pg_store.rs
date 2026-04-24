@@ -93,13 +93,13 @@ impl PostgresStore {
 impl DagStore for PostgresStore {
     async fn get(&self, hash: &Hash256) -> Result<Option<DagNode>> {
         let row: Option<(
-            Vec<u8>,           // hash
-            Vec<Vec<u8>>,      // parents
-            Vec<u8>,           // payload_hash
-            String,            // creator_did
-            i64,               // ts_physical_ms
-            i64,               // ts_logical
-            Vec<u8>,           // signature
+            Vec<u8>,      // hash
+            Vec<Vec<u8>>, // parents
+            Vec<u8>,      // payload_hash
+            String,       // creator_did
+            i64,          // ts_physical_ms
+            i64,          // ts_logical
+            Vec<u8>,      // signature
         )> = sqlx::query_as(
             "SELECT hash, parents, payload_hash, creator_did, ts_physical_ms, ts_logical, signature
              FROM dag_nodes WHERE hash = $1",
@@ -123,7 +123,8 @@ impl DagStore for PostgresStore {
                     hash: Hash256::from_bytes(hash_arr),
                     parents: Self::decode_parents(&parents_raw),
                     payload_hash: Hash256::from_bytes(payload_arr),
-                    creator_did: Did::new(&did_str).map_err(|e| store_err(format!("invalid DID: {e}")))?,
+                    creator_did: Did::new(&did_str)
+                        .map_err(|e| store_err(format!("invalid DID: {e}")))?,
                     timestamp: Timestamp::new(phys as u64, logical as u32),
                     signature: Self::decode_signature(&sig_bytes),
                 };
@@ -157,13 +158,11 @@ impl DagStore for PostgresStore {
     }
 
     async fn contains(&self, hash: &Hash256) -> Result<bool> {
-        let row: (bool,) = sqlx::query_as(
-            "SELECT EXISTS(SELECT 1 FROM dag_nodes WHERE hash = $1)",
-        )
-        .bind(hash.as_bytes().as_slice())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(store_err)?;
+        let row: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM dag_nodes WHERE hash = $1)")
+            .bind(hash.as_bytes().as_slice())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(store_err)?;
 
         Ok(row.0)
     }
@@ -194,12 +193,10 @@ impl DagStore for PostgresStore {
     }
 
     async fn committed_height(&self) -> Result<u64> {
-        let row: (i64,) = sqlx::query_as(
-            "SELECT COALESCE(MAX(height), 0) FROM dag_committed",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(store_err)?;
+        let row: (i64,) = sqlx::query_as("SELECT COALESCE(MAX(height), 0) FROM dag_committed")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(store_err)?;
 
         #[allow(clippy::as_conversions)]
         Ok(row.0 as u64)
@@ -264,8 +261,14 @@ mod tests {
         // Run migrations
         PostgresStore::migrate(&pool).await.ok()?;
         // Clean tables for test isolation
-        sqlx::query("DELETE FROM dag_committed").execute(&pool).await.ok()?;
-        sqlx::query("DELETE FROM dag_nodes").execute(&pool).await.ok()?;
+        sqlx::query("DELETE FROM dag_committed")
+            .execute(&pool)
+            .await
+            .ok()?;
+        sqlx::query("DELETE FROM dag_nodes")
+            .execute(&pool)
+            .await
+            .ok()?;
         Some(pool)
     }
 

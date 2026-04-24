@@ -30,9 +30,7 @@ pub fn definition() -> ResourceDefinition {
 /// Classify a tool name into its canonical domain group.
 fn domain_for(name: &str) -> &'static str {
     match name {
-        "exochain_node_status"
-        | "exochain_list_invariants"
-        | "exochain_list_mcp_rules" => "node",
+        "exochain_node_status" | "exochain_list_invariants" | "exochain_list_mcp_rules" => "node",
         "exochain_create_identity"
         | "exochain_resolve_identity"
         | "exochain_assess_risk"
@@ -152,8 +150,7 @@ pub(crate) fn build_payload() -> Value {
 #[must_use]
 pub fn read(_context: &NodeContext) -> ResourceContent {
     let payload = build_payload();
-    let text = serde_json::to_string_pretty(&payload)
-        .unwrap_or_else(|_| "{}".to_string());
+    let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
 
     ResourceContent {
         uri: "exochain://tools".into(),
@@ -189,7 +186,11 @@ mod tests {
         let parsed: Value = serde_json::from_str(&text).unwrap();
         for tool in parsed["tools"].as_array().unwrap() {
             let domain = tool["domain"].as_str().unwrap();
-            assert_ne!(domain, "unknown", "tool {:?} has unknown domain", tool["name"]);
+            assert_ne!(
+                domain, "unknown",
+                "tool {:?} has unknown domain",
+                tool["name"]
+            );
         }
     }
 

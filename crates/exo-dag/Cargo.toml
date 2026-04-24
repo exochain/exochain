@@ -19,6 +19,7 @@ postgres = ["dep:sqlx", "dep:serde_json"]
 exo-core = { path = "../exo-core" }
 serde = { workspace = true }
 blake3 = { workspace = true }
+ciborium = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }

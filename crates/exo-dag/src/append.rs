@@ -171,7 +171,9 @@ mod tests {
         store.put(genesis.clone()).await.expect("put genesis");
 
         let child = make_child_node(&genesis);
-        validated_append(&mut store, child.clone()).await.expect("validated append");
+        validated_append(&mut store, child.clone())
+            .await
+            .expect("validated append");
 
         assert!(store.contains(&child.hash).await.expect("contains"));
     }
@@ -223,7 +225,11 @@ mod tests {
         let node = make_test_node();
         store.put(node.clone()).await.expect("put");
 
-        assert!(verify_stored_integrity(&store, &node.hash).await.expect("verify"));
+        assert!(
+            verify_stored_integrity(&store, &node.hash)
+                .await
+                .expect("verify")
+        );
     }
 
     #[tokio::test]
@@ -238,13 +244,19 @@ mod tests {
         store.put(node).await.expect("put");
 
         // Integrity check should detect the hash mismatch
-        assert!(!verify_stored_integrity(&store, &original_hash).await.expect("verify"));
+        assert!(
+            !verify_stored_integrity(&store, &original_hash)
+                .await
+                .expect("verify")
+        );
     }
 
     #[tokio::test]
     async fn verify_stored_integrity_not_found() {
         let store = MemoryStore::new();
-        let err = verify_stored_integrity(&store, &Hash256::ZERO).await.unwrap_err();
+        let err = verify_stored_integrity(&store, &Hash256::ZERO)
+            .await
+            .unwrap_err();
         assert!(matches!(err, DagError::NodeNotFound(_)));
     }
 
@@ -253,7 +265,9 @@ mod tests {
         let mut store = MemoryStore::new();
         let genesis = make_test_node();
         // Genesis has no parents — should pass validation
-        validated_append(&mut store, genesis.clone()).await.expect("genesis append");
+        validated_append(&mut store, genesis.clone())
+            .await
+            .expect("genesis append");
         assert!(store.contains(&genesis.hash).await.expect("contains"));
     }
 }

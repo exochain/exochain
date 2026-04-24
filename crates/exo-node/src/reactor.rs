@@ -277,8 +277,20 @@ pub async fn run_reactor(
 
 /// Validate a consensus proposal before processing.
 ///
-/// Checks: proposer is a known validator, signature is non-empty,
-/// and the node hash in the proposal matches the attached DAG node.
+/// Checks: proposer is in the current validator set, the attached
+/// signature is non-empty, is not a zero-byte sentinel, and the
+/// node hash matches the proposal's node_hash.
+///
+/// **Note (GAP-014 defense-in-depth):** This function is a structural
+/// guard only. Until the reactor is wired to a real
+/// `PublicKeyResolver` (see initiative
+/// `fix-gap-014-consensus-sig-verify.md`), the actual cryptographic
+/// verification lives in `consensus::*_verified` but is NOT yet called
+/// from this reactor. This validator does the maximum amount of
+/// structural filtering possible without a resolver: it rejects
+/// empty and all-zero signatures, blocking the most obvious forgery
+/// shapes. It does NOT yet reject forgeries that use arbitrary
+/// non-zero bytes.
 fn validate_proposal(msg: &ConsensusProposalMsg, validators: &BTreeSet<Did>) -> Result<(), String> {
     if !validators.contains(&msg.proposal.proposer) {
         return Err(format!(
@@ -288,6 +300,11 @@ fn validate_proposal(msg: &ConsensusProposalMsg, validators: &BTreeSet<Did>) -> 
     }
     if msg.signature.is_empty() {
         return Err("proposal carries empty signature".into());
+    }
+    // GAP-014 defense-in-depth: reject the null-signature attack shape.
+    let raw = msg.signature.as_bytes();
+    if !raw.is_empty() && raw.iter().all(|b| *b == 0) {
+        return Err("proposal carries zero-byte signature (null-sig attack shape)".into());
     }
     if msg.node.hash != msg.proposal.node_hash {
         return Err(format!(
@@ -300,7 +317,10 @@ fn validate_proposal(msg: &ConsensusProposalMsg, validators: &BTreeSet<Did>) -> 
 
 /// Validate a consensus vote before processing.
 ///
-/// Checks: voter is a known validator and signature is non-empty.
+/// Checks: voter is a known validator, signature is non-empty, and
+/// signature is not a zero-byte sentinel.
+///
+/// See `validate_proposal` for the GAP-014 caveat.
 fn validate_vote(msg: &ConsensusVoteMsg, validators: &BTreeSet<Did>) -> Result<(), String> {
     if !validators.contains(&msg.vote.voter) {
         return Err(format!(
@@ -311,14 +331,21 @@ fn validate_vote(msg: &ConsensusVoteMsg, validators: &BTreeSet<Did>) -> Result<(
     if msg.vote.signature.is_empty() {
         return Err("vote carries empty signature".into());
     }
+    // GAP-014 defense-in-depth: reject the null-signature attack shape.
+    let raw = msg.vote.signature.as_bytes();
+    if !raw.is_empty() && raw.iter().all(|b| *b == 0) {
+        return Err("vote carries zero-byte signature (null-sig attack shape)".into());
+    }
     Ok(())
 }
 
 /// Validate a commit certificate before processing.
 ///
 /// Checks: every vote in the certificate is from a known validator,
-/// carries a non-empty signature, and references the certificate's
-/// node hash.
+/// carries a non-empty, non-zero-sentinel signature, and references
+/// the certificate's node hash.
+///
+/// See `validate_proposal` for the GAP-014 caveat.
 fn validate_commit(msg: &ConsensusCommitMsg, validators: &BTreeSet<Did>) -> Result<(), String> {
     for vote in &msg.certificate.votes {
         if !validators.contains(&vote.voter) {
@@ -330,6 +357,14 @@ fn validate_commit(msg: &ConsensusCommitMsg, validators: &BTreeSet<Did>) -> Resu
         if vote.signature.is_empty() {
             return Err(format!(
                 "certificate vote from {} has empty signature",
+                vote.voter
+            ));
+        }
+        // GAP-014 defense-in-depth: reject the null-signature attack shape.
+        let raw = vote.signature.as_bytes();
+        if !raw.is_empty() && raw.iter().all(|b| *b == 0) {
+            return Err(format!(
+                "certificate vote from {} has zero-byte signature (null-sig attack shape)",
                 vote.voter
             ));
         }
@@ -947,7 +982,11 @@ mod tests {
         assert_eq!(s.dag.len(), 1, "DAG should have one node");
 
         let st = store.lock().unwrap();
-        assert_eq!(st.tips_sync().unwrap().len(), 1, "Store should have one tip");
+        assert_eq!(
+            st.tips_sync().unwrap().len(),
+            1,
+            "Store should have one tip"
+        );
     }
 
     #[tokio::test]
@@ -1120,8 +1159,93 @@ mod tests {
         assert!(consensus::check_commit(&state, &byzantine_node.hash).is_none());
 
         let cert = consensus::check_commit(&state, &honest_node.hash).unwrap();
+        #[allow(deprecated)]
         consensus::commit(&mut state, cert);
         assert!(consensus::is_finalized(&state, &honest_node.hash));
         assert!(!consensus::is_finalized(&state, &byzantine_node.hash));
+    }
+
+    // ==== GAP-014 defense-in-depth regression tests ====================
+
+    fn make_node_for_test() -> exo_dag::dag::DagNode {
+        use exo_dag::dag::{Dag, append};
+        let mut dag = Dag::new();
+        let mut clock = HybridClock::new();
+        let did = Did::new("did:exo:v0").unwrap();
+        let sf = make_sign_fn();
+        append(&mut dag, &[], b"x", &did, &*sf, &mut clock).unwrap()
+    }
+
+    #[test]
+    fn validate_proposal_rejects_zero_byte_signature() {
+        let validators = make_validators(1);
+        let proposer = Did::new("did:exo:v0").unwrap();
+        let node = make_node_for_test();
+        let msg = ConsensusProposalMsg {
+            proposal: exo_dag::consensus::Proposal {
+                proposer: proposer.clone(),
+                round: 0,
+                node_hash: node.hash,
+            },
+            node,
+            signature: Signature::from_bytes([0u8; 64]),
+        };
+        let err = validate_proposal(&msg, &validators).unwrap_err();
+        // Signature::Ed25519([0u8; 64]) hits is_empty() first (ex_core types.rs:325)
+        // so the "empty" message fires before the explicit null-sig check.
+        // Either message proves rejection — both are defense in depth.
+        assert!(err.contains("empty") || err.contains("zero-byte"));
+    }
+
+    #[test]
+    fn validate_vote_rejects_zero_byte_signature() {
+        let validators = make_validators(1);
+        let voter = Did::new("did:exo:v0").unwrap();
+        let msg = ConsensusVoteMsg {
+            vote: exo_dag::consensus::Vote {
+                voter,
+                round: 0,
+                node_hash: exo_core::types::Hash256([9u8; 32]),
+                signature: Signature::from_bytes([0u8; 64]),
+            },
+        };
+        let err = validate_vote(&msg, &validators).unwrap_err();
+        assert!(err.contains("empty") || err.contains("zero-byte"));
+    }
+
+    #[test]
+    fn validate_commit_rejects_zero_byte_vote_in_cert() {
+        let validators = make_validators(1);
+        let voter = Did::new("did:exo:v0").unwrap();
+        let hash = exo_core::types::Hash256([7u8; 32]);
+        let cert = exo_dag::consensus::CommitCertificate {
+            node_hash: hash,
+            votes: vec![exo_dag::consensus::Vote {
+                voter,
+                round: 0,
+                node_hash: hash,
+                signature: Signature::from_bytes([0u8; 64]),
+            }],
+            round: 0,
+        };
+        let msg = ConsensusCommitMsg { certificate: cert };
+        let err = validate_commit(&msg, &validators).unwrap_err();
+        assert!(err.contains("empty") || err.contains("zero-byte"));
+    }
+
+    #[test]
+    fn validate_vote_rejects_empty_signature() {
+        let validators = make_validators(1);
+        let voter = Did::new("did:exo:v0").unwrap();
+        let msg = ConsensusVoteMsg {
+            vote: exo_dag::consensus::Vote {
+                voter,
+                round: 0,
+                node_hash: exo_core::types::Hash256([9u8; 32]),
+                signature: Signature::empty(),
+            },
+        };
+        let err = validate_vote(&msg, &validators).unwrap_err();
+        assert!(err.contains("empty signature"));
     }
 }

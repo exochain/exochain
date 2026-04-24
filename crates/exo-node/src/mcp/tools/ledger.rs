@@ -176,7 +176,8 @@ pub fn execute_get_event(params: &Value, context: &NodeContext) -> ToolResult {
 pub fn verify_inclusion_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_verify_inclusion".to_owned(),
-        description: "Verify a Merkle inclusion proof for a given event hash against a root hash.".to_owned(),
+        description: "Verify a Merkle inclusion proof for a given event hash against a root hash."
+            .to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -293,7 +294,9 @@ pub fn execute_verify_inclusion(params: &Value, _context: &NodeContext) -> ToolR
 pub fn get_checkpoint_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_get_checkpoint".to_owned(),
-        description: "Get the latest checkpoint information including height, round, and validator count.".to_owned(),
+        description:
+            "Get the latest checkpoint information including height, round, and validator count."
+                .to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {},
@@ -314,9 +317,7 @@ pub fn execute_get_checkpoint(params: &Value, context: &NodeContext) -> ToolResu
         let height = match store.lock() {
             Ok(guard) => guard.committed_height_value(),
             Err(_) => {
-                return ToolResult::error(
-                    json!({"error": "store mutex poisoned"}).to_string(),
-                );
+                return ToolResult::error(json!({"error": "store mutex poisoned"}).to_string());
             }
         };
 

@@ -80,8 +80,7 @@ fn build_payload(context: &NodeContext) -> Value {
 #[must_use]
 pub fn read(context: &NodeContext) -> ResourceContent {
     let payload = build_payload(context);
-    let text = serde_json::to_string_pretty(&payload)
-        .unwrap_or_else(|_| "{}".to_string());
+    let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
 
     ResourceContent {
         uri: "exochain://node/status".into(),

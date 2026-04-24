@@ -244,9 +244,7 @@ pub fn execute_generate_merkle_proof(params: &Value, _context: &NodeContext) -> 
     };
 
     if leaves_val.is_empty() {
-        return ToolResult::error(
-            json!({"error": "leaves array must not be empty"}).to_string(),
-        );
+        return ToolResult::error(json!({"error": "leaves array must not be empty"}).to_string());
     }
 
     if target_index >= leaves_val.len() {
@@ -340,7 +338,8 @@ pub fn execute_generate_merkle_proof(params: &Value, _context: &NodeContext) -> 
 pub fn verify_cgr_proof_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_verify_cgr_proof".to_owned(),
-        description: "Verify a CGR kernel proof by checking the proof hash and invariants.".to_owned(),
+        description: "Verify a CGR kernel proof by checking the proof hash and invariants."
+            .to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -461,7 +460,10 @@ mod tests {
 
     #[test]
     fn execute_create_evidence_missing_description() {
-        let result = execute_create_evidence(&json!({"evidence_type": "doc", "source_did": "did:exo:a"}), &NodeContext::empty());
+        let result = execute_create_evidence(
+            &json!({"evidence_type": "doc", "source_did": "did:exo:a"}),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 
@@ -581,7 +583,8 @@ mod tests {
 
     #[test]
     fn execute_verify_cgr_proof_missing_hash() {
-        let result = execute_verify_cgr_proof(&json!({"invariants_checked": []}), &NodeContext::empty());
+        let result =
+            execute_verify_cgr_proof(&json!({"invariants_checked": []}), &NodeContext::empty());
         assert!(result.is_error);
     }
 }

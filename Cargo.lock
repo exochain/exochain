@@ -1394,6 +1394,7 @@ version = "0.1.0-beta"
 dependencies = [
  "async-trait",
  "blake3",
+ "ciborium",
  "criterion",
  "exo-core",
  "proptest",
