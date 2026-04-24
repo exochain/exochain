@@ -1,6 +1,6 @@
 [package]
 name = "exo-proofs"
-description = "EXOCHAIN zero-knowledge proof system -- SNARK, STARK, ZKML verifier"
+description = "EXOCHAIN zero-knowledge proof skeleton -- UNAUDITED, pedagogical only. See crate README."
 documentation = "https://docs.exochain.io"
 version.workspace = true
 edition.workspace = true
@@ -10,6 +10,16 @@ repository.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# Opt-in flag required to execute any proof/verify/setup API. Without it,
+# every entry point returns ProofError::UnauditedImplementation. This is a
+# safety rail: exo-proofs is a structural skeleton, not production crypto.
+#
+# DO NOT enable in production. Enabling this feature does NOT make the
+# proofs cryptographically sound — it merely unlocks the skeleton for
+# tests/demos/classroom use.
+unaudited-pedagogical-proofs = []
 
 [dependencies]
 exo-core = { path = "../exo-core" }

@@ -23,6 +23,8 @@
 use exo_core::types::{Hash256, PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 
+use crate::error::Result;
+
 // ---------------------------------------------------------------------------
 // ModelCommitment
 // ---------------------------------------------------------------------------
@@ -242,7 +244,14 @@ pub struct InferenceProof {
 ///
 /// Equivalent to the previous API.  New callers should prefer
 /// `prove_inference_with_provenance()`.
-pub fn prove_inference(model: &ModelCommitment, input: &[u8], output: &[u8]) -> InferenceProof {
+///
+/// **Unaudited** — gated behind the `unaudited-pedagogical-proofs` feature.
+pub fn prove_inference(
+    model: &ModelCommitment,
+    input: &[u8],
+    output: &[u8],
+) -> Result<InferenceProof> {
+    crate::guard_unaudited("zkml::prove_inference")?;
     let input_hash = Hash256::digest(input);
     let output_hash = Hash256::digest(output);
     let model_hash = model.commitment_hash();
@@ -255,7 +264,7 @@ pub fn prove_inference(model: &ModelCommitment, input: &[u8], output: &[u8]) -> 
 
     let verification_tag = compute_verification_tag(&model_hash, &input_hash, &output_hash, &proof);
 
-    InferenceProof {
+    Ok(InferenceProof {
         model_commitment: model.clone(),
         input_hash,
         output_hash,
@@ -265,29 +274,36 @@ pub fn prove_inference(model: &ModelCommitment, input: &[u8], output: &[u8]) -> 
         human_attestation: None,
         ai_delta: None,
         daubert_checklist: None,
-    }
+    })
 }
 
 /// Generate a proof with full LEG-007 provenance.
 ///
 /// `prompt` is the system/user prompt (separate from `input` context data).
 /// The resulting proof carries a distinct `prompt_hash` for Daubert disclosure.
+///
+/// **Unaudited** — gated behind the `unaudited-pedagogical-proofs` feature.
 pub fn prove_inference_with_provenance(
     model: &ModelCommitment,
     prompt: &[u8],
     input: &[u8],
     output: &[u8],
-) -> InferenceProof {
-    let mut proof = prove_inference(model, input, output);
+) -> Result<InferenceProof> {
+    // guard applied via the inner call
+    let mut proof = prove_inference(model, input, output)?;
     proof.prompt_hash = Some(Hash256::digest(prompt));
-    proof
+    Ok(proof)
 }
 
 /// Verify that an inference proof is valid.
 ///
 /// This checks that the proof correctly binds the model commitment, input hash,
 /// and output hash without needing the actual model or input.
-pub fn verify_inference(proof: &InferenceProof) -> bool {
+///
+/// **Unaudited** — gated behind the `unaudited-pedagogical-proofs` feature.
+/// Returns `Err(UnauditedImplementation)` when the feature is disabled.
+pub fn verify_inference(proof: &InferenceProof) -> Result<bool> {
+    crate::guard_unaudited("zkml::verify_inference")?;
     let model_hash = proof.model_commitment.commitment_hash();
 
     // Recompute the expected proof
@@ -295,7 +311,7 @@ pub fn verify_inference(proof: &InferenceProof) -> bool {
         compute_inference_proof(&model_hash, &proof.input_hash, &proof.output_hash);
 
     if expected_proof != proof.proof {
-        return false;
+        return Ok(false);
     }
 
     // Recompute and check the verification tag
@@ -306,7 +322,7 @@ pub fn verify_inference(proof: &InferenceProof) -> bool {
         &proof.proof,
     );
 
-    expected_tag == proof.verification_tag
+    Ok(expected_tag == proof.verification_tag)
 }
 
 // ---------------------------------------------------------------------------
@@ -345,7 +361,7 @@ fn compute_verification_tag(
 // Tests
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
+#[cfg(all(test, feature = "unaudited-pedagogical-proofs"))]
 mod tests {
     use exo_core::crypto;
 
@@ -382,70 +398,70 @@ mod tests {
     #[test]
     fn prove_and_verify() {
         let model = make_model();
-        let proof = prove_inference(&model, b"classify this image", b"cat: 0.95, dog: 0.05");
-        assert!(verify_inference(&proof));
+        let proof = prove_inference(&model, b"classify this image", b"cat: 0.95, dog: 0.05").unwrap();
+        assert!(verify_inference(&proof).unwrap());
     }
 
     #[test]
     fn verify_fails_tampered_model() {
         let model = make_model();
-        let mut tampered = prove_inference(&model, b"input", b"output");
+        let mut tampered = prove_inference(&model, b"input", b"output").unwrap();
         tampered.model_commitment = ModelCommitment::new(b"evil-arch", b"evil-weights", 99);
-        assert!(!verify_inference(&tampered));
+        assert!(!verify_inference(&tampered).unwrap());
     }
 
     #[test]
     fn verify_fails_tampered_input() {
         let model = make_model();
-        let mut tampered = prove_inference(&model, b"input", b"output");
+        let mut tampered = prove_inference(&model, b"input", b"output").unwrap();
         tampered.input_hash = Hash256::digest(b"different-input");
-        assert!(!verify_inference(&tampered));
+        assert!(!verify_inference(&tampered).unwrap());
     }
 
     #[test]
     fn verify_fails_tampered_output() {
         let model = make_model();
-        let mut tampered = prove_inference(&model, b"input", b"output");
+        let mut tampered = prove_inference(&model, b"input", b"output").unwrap();
         tampered.output_hash = Hash256::digest(b"different-output");
-        assert!(!verify_inference(&tampered));
+        assert!(!verify_inference(&tampered).unwrap());
     }
 
     #[test]
     fn verify_fails_tampered_proof_field() {
         let model = make_model();
-        let mut tampered = prove_inference(&model, b"input", b"output");
+        let mut tampered = prove_inference(&model, b"input", b"output").unwrap();
         tampered.proof = Hash256::ZERO;
-        assert!(!verify_inference(&tampered));
+        assert!(!verify_inference(&tampered).unwrap());
     }
 
     #[test]
     fn verify_fails_tampered_tag() {
         let model = make_model();
-        let mut tampered = prove_inference(&model, b"input", b"output");
+        let mut tampered = prove_inference(&model, b"input", b"output").unwrap();
         tampered.verification_tag = Hash256::ZERO;
-        assert!(!verify_inference(&tampered));
+        assert!(!verify_inference(&tampered).unwrap());
     }
 
     #[test]
     fn different_inputs_different_proofs() {
         let model = make_model();
-        let p1 = prove_inference(&model, b"input1", b"output1");
-        let p2 = prove_inference(&model, b"input2", b"output2");
+        let p1 = prove_inference(&model, b"input1", b"output1").unwrap();
+        let p2 = prove_inference(&model, b"input2", b"output2").unwrap();
         assert_ne!(p1.proof, p2.proof);
     }
 
     #[test]
     fn same_inputs_same_proof() {
         let model = make_model();
-        let p1 = prove_inference(&model, b"input", b"output");
-        let p2 = prove_inference(&model, b"input", b"output");
+        let p1 = prove_inference(&model, b"input", b"output").unwrap();
+        let p2 = prove_inference(&model, b"input", b"output").unwrap();
         assert_eq!(p1, p2);
     }
 
     #[test]
     fn proof_hides_model_input() {
         let model = make_model();
-        let proof = prove_inference(&model, b"secret input", b"secret output");
+        let proof = prove_inference(&model, b"secret input", b"secret output").unwrap();
         assert_eq!(proof.input_hash, Hash256::digest(b"secret input"));
         assert_eq!(proof.output_hash, Hash256::digest(b"secret output"));
         assert_eq!(
@@ -457,14 +473,14 @@ mod tests {
     #[test]
     fn empty_input_output() {
         let model = make_model();
-        assert!(verify_inference(&prove_inference(&model, b"", b"")));
+        assert!(verify_inference(&prove_inference(&model, b"", b"").unwrap()).unwrap());
     }
 
     #[test]
     fn large_input_output() {
         let model = make_model();
-        let proof = prove_inference(&model, &vec![0xABu8; 10_000], &vec![0xCDu8; 5_000]);
-        assert!(verify_inference(&proof));
+        let proof = prove_inference(&model, &vec![0xABu8; 10_000], &vec![0xCDu8; 5_000]).unwrap();
+        assert!(verify_inference(&proof).unwrap());
     }
 
     // ---- backward compat: old proofs (no Option fields) still deserialize ----
@@ -474,7 +490,7 @@ mod tests {
         // A serialized proof without the new Option fields must deserialize with
         // all provenance fields set to None.
         let model = make_model();
-        let proof = prove_inference(&model, b"input", b"output");
+        let proof = prove_inference(&model, b"input", b"output").unwrap();
         let json = serde_json::to_string(&proof).unwrap();
         let restored: InferenceProof = serde_json::from_str(&json).unwrap();
         assert!(restored.prompt_hash.is_none());
@@ -492,9 +508,9 @@ mod tests {
         let context = b"Q4 revenue declined 15%.";
         let output = b"Recommend: reject the acquisition.";
 
-        let proof = prove_inference_with_provenance(&model, prompt, context, output);
+        let proof = prove_inference_with_provenance(&model, prompt, context, output).unwrap();
 
-        assert!(verify_inference(&proof));
+        assert!(verify_inference(&proof).unwrap());
         assert!(proof.prompt_hash.is_some(), "prompt_hash must be present");
         // prompt_hash and input_hash must differ when prompt != context
         assert_ne!(
@@ -509,8 +525,8 @@ mod tests {
     #[test]
     fn prove_inference_with_provenance_verifies() {
         let model = make_model();
-        let proof = prove_inference_with_provenance(&model, b"prompt", b"context", b"output");
-        assert!(verify_inference(&proof));
+        let proof = prove_inference_with_provenance(&model, b"prompt", b"context", b"output").unwrap();
+        assert!(verify_inference(&proof).unwrap());
     }
 
     // ---- LEG-007: HumanAttestation with Ed25519 signature ----
@@ -568,7 +584,7 @@ mod tests {
     fn human_attestation_required_for_ai_output() {
         // A proof without human_attestation is flagged as lacking oversight.
         let model = make_model();
-        let proof = prove_inference(&model, b"input", b"output");
+        let proof = prove_inference(&model, b"input", b"output").unwrap();
         assert!(
             proof.human_attestation.is_none(),
             "Basic prove_inference must not fabricate attestation"
@@ -639,9 +655,9 @@ mod tests {
     #[test]
     fn zkml_tampered_model_detected() {
         let model = make_model();
-        let proof = prove_inference(&model, b"input", b"output");
+        let proof = prove_inference(&model, b"input", b"output").unwrap();
         let mut tampered = proof;
         tampered.model_commitment.weights_hash = Hash256::digest(b"evil-weights");
-        assert!(!verify_inference(&tampered));
+        assert!(!verify_inference(&tampered).unwrap());
     }
 }
