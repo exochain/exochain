@@ -160,7 +160,9 @@ pub fn execute_evaluate_threat(params: &Value, _context: &NodeContext) -> ToolRe
 pub fn escalate_case_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_escalate_case".to_owned(),
-        description: "Escalate a threat assessment to create a case for investigation and response.".to_owned(),
+        description:
+            "Escalate a threat assessment to create a case for investigation and response."
+                .to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -187,16 +189,14 @@ pub fn escalate_case_definition() -> ToolDefinition {
 /// Execute the `exochain_escalate_case` tool.
 #[must_use]
 pub fn execute_escalate_case(params: &Value, _context: &NodeContext) -> ToolResult {
-    let threat_assessment_id =
-        match params.get("threat_assessment_id").and_then(Value::as_str) {
-            Some(s) => s,
-            None => {
-                return ToolResult::error(
-                    json!({"error": "missing required parameter: threat_assessment_id"})
-                        .to_string(),
-                );
-            }
-        };
+    let threat_assessment_id = match params.get("threat_assessment_id").and_then(Value::as_str) {
+        Some(s) => s,
+        None => {
+            return ToolResult::error(
+                json!({"error": "missing required parameter: threat_assessment_id"}).to_string(),
+            );
+        }
+    };
     let escalation_reason = match params.get("escalation_reason").and_then(Value::as_str) {
         Some(s) => s,
         None => {
@@ -254,7 +254,9 @@ pub fn execute_escalate_case(params: &Value, _context: &NodeContext) -> ToolResu
 pub fn triage_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_triage".to_owned(),
-        description: "Triage a threat assessment to produce a response decision with recommended actions.".to_owned(),
+        description:
+            "Triage a threat assessment to produce a response decision with recommended actions."
+                .to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -335,7 +337,8 @@ pub fn execute_triage(params: &Value, _context: &NodeContext) -> ToolResult {
 pub fn record_feedback_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_record_feedback".to_owned(),
-        description: "Record feedback on an escalation case outcome for the learning loop.".to_owned(),
+        description: "Record feedback on an escalation case outcome for the learning loop."
+            .to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -390,10 +393,7 @@ pub fn execute_record_feedback(params: &Value, _context: &NodeContext) -> ToolRe
         );
     }
 
-    let notes = params
-        .get("notes")
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let notes = params.get("notes").and_then(Value::as_str).unwrap_or("");
 
     let now = Timestamp::now_utc();
     let feedback_id = Hash256::digest(

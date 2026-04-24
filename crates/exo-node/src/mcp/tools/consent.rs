@@ -93,7 +93,9 @@ pub fn execute_propose_bailment(params: &Value, _context: &NodeContext) -> ToolR
     let id_input = format!("{bailor_str}:{bailee_str}:{scope}:{}", now.physical_ms);
     let proposal_id = Hash256::digest(id_input.as_bytes()).to_string();
 
-    let expires_ms = now.physical_ms.saturating_add(duration_hours.saturating_mul(3_600_000));
+    let expires_ms = now
+        .physical_ms
+        .saturating_add(duration_hours.saturating_mul(3_600_000));
 
     let response = json!({
         "proposal_id": proposal_id,
@@ -179,7 +181,8 @@ pub fn execute_check_consent(params: &Value, _context: &NodeContext) -> ToolResu
 pub fn list_bailments_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_list_bailments".to_owned(),
-        description: "List all bailments (active, proposed, terminated) for a given DID.".to_owned(),
+        description: "List all bailments (active, proposed, terminated) for a given DID."
+            .to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -247,7 +250,8 @@ pub fn execute_list_bailments(params: &Value, _context: &NodeContext) -> ToolRes
 pub fn terminate_bailment_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_terminate_bailment".to_owned(),
-        description: "Terminate an active bailment, revoking the bailee's data access consent.".to_owned(),
+        description: "Terminate an active bailment, revoking the bailee's data access consent."
+            .to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -287,14 +291,10 @@ pub fn execute_terminate_bailment(params: &Value, _context: &NodeContext) -> Too
     };
 
     if bailment_id.is_empty() {
-        return ToolResult::error(
-            json!({"error": "bailment_id must not be empty"}).to_string(),
-        );
+        return ToolResult::error(json!({"error": "bailment_id must not be empty"}).to_string());
     }
     if reason.is_empty() {
-        return ToolResult::error(
-            json!({"error": "reason must not be empty"}).to_string(),
-        );
+        return ToolResult::error(json!({"error": "reason must not be empty"}).to_string());
     }
 
     let now = Timestamp::now_utc();
@@ -327,11 +327,14 @@ mod tests {
 
     #[test]
     fn execute_propose_bailment_success() {
-        let result = execute_propose_bailment(&json!({
-            "bailor_did": "did:exo:alice",
-            "bailee_did": "did:exo:bob",
-            "scope": "data:medical",
-        }), &NodeContext::empty());
+        let result = execute_propose_bailment(
+            &json!({
+                "bailor_did": "did:exo:alice",
+                "bailee_did": "did:exo:bob",
+                "scope": "data:medical",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
         assert_eq!(v["bailor"], "did:exo:alice");
@@ -344,20 +347,26 @@ mod tests {
 
     #[test]
     fn execute_propose_bailment_invalid_bailor() {
-        let result = execute_propose_bailment(&json!({
-            "bailor_did": "bad",
-            "bailee_did": "did:exo:bob",
-            "scope": "data:medical",
-        }), &NodeContext::empty());
+        let result = execute_propose_bailment(
+            &json!({
+                "bailor_did": "bad",
+                "bailee_did": "did:exo:bob",
+                "scope": "data:medical",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 
     #[test]
     fn execute_propose_bailment_missing_scope() {
-        let result = execute_propose_bailment(&json!({
-            "bailor_did": "did:exo:alice",
-            "bailee_did": "did:exo:bob",
-        }), &NodeContext::empty());
+        let result = execute_propose_bailment(
+            &json!({
+                "bailor_did": "did:exo:alice",
+                "bailee_did": "did:exo:bob",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 
@@ -372,10 +381,13 @@ mod tests {
 
     #[test]
     fn execute_check_consent_success() {
-        let result = execute_check_consent(&json!({
-            "actor_did": "did:exo:alice",
-            "scope": "data:medical",
-        }), &NodeContext::empty());
+        let result = execute_check_consent(
+            &json!({
+                "actor_did": "did:exo:alice",
+                "scope": "data:medical",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
         assert_eq!(v["consent_active"], false);
@@ -384,18 +396,24 @@ mod tests {
 
     #[test]
     fn execute_check_consent_invalid_did() {
-        let result = execute_check_consent(&json!({
-            "actor_did": "bad",
-            "scope": "data:medical",
-        }), &NodeContext::empty());
+        let result = execute_check_consent(
+            &json!({
+                "actor_did": "bad",
+                "scope": "data:medical",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 
     #[test]
     fn execute_check_consent_missing_scope() {
-        let result = execute_check_consent(&json!({
-            "actor_did": "did:exo:alice",
-        }), &NodeContext::empty());
+        let result = execute_check_consent(
+            &json!({
+                "actor_did": "did:exo:alice",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 
@@ -410,7 +428,8 @@ mod tests {
 
     #[test]
     fn execute_list_bailments_success() {
-        let result = execute_list_bailments(&json!({"did": "did:exo:alice"}), &NodeContext::empty());
+        let result =
+            execute_list_bailments(&json!({"did": "did:exo:alice"}), &NodeContext::empty());
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
         assert_eq!(v["count"], 0);
@@ -420,8 +439,10 @@ mod tests {
 
     #[test]
     fn execute_list_bailments_with_filter() {
-        let result =
-            execute_list_bailments(&json!({"did": "did:exo:alice", "status_filter": "active"}), &NodeContext::empty());
+        let result = execute_list_bailments(
+            &json!({"did": "did:exo:alice", "status_filter": "active"}),
+            &NodeContext::empty(),
+        );
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
         assert_eq!(v["filter"], "active");
@@ -453,10 +474,13 @@ mod tests {
 
     #[test]
     fn execute_terminate_bailment_success() {
-        let result = execute_terminate_bailment(&json!({
-            "bailment_id": "abc123",
-            "reason": "data access no longer needed",
-        }), &NodeContext::empty());
+        let result = execute_terminate_bailment(
+            &json!({
+                "bailment_id": "abc123",
+                "reason": "data access no longer needed",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
         assert_eq!(v["bailment_id"], "abc123");
@@ -467,16 +491,20 @@ mod tests {
 
     #[test]
     fn execute_terminate_bailment_missing_reason() {
-        let result = execute_terminate_bailment(&json!({"bailment_id": "abc123"}), &NodeContext::empty());
+        let result =
+            execute_terminate_bailment(&json!({"bailment_id": "abc123"}), &NodeContext::empty());
         assert!(result.is_error);
     }
 
     #[test]
     fn execute_terminate_bailment_empty_id() {
-        let result = execute_terminate_bailment(&json!({
-            "bailment_id": "",
-            "reason": "test",
-        }), &NodeContext::empty());
+        let result = execute_terminate_bailment(
+            &json!({
+                "bailment_id": "",
+                "reason": "test",
+            }),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 }

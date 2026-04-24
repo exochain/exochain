@@ -947,7 +947,11 @@ mod tests {
         assert_eq!(s.dag.len(), 1, "DAG should have one node");
 
         let st = store.lock().unwrap();
-        assert_eq!(st.tips_sync().unwrap().len(), 1, "Store should have one tip");
+        assert_eq!(
+            st.tips_sync().unwrap().len(),
+            1,
+            "Store should have one tip"
+        );
     }
 
     #[tokio::test]

@@ -13,8 +13,8 @@ use exo_gatekeeper::{
     kernel::{ActionRequest, AdjudicationContext, Kernel, Verdict},
     mcp::{self, McpContext, McpRule},
     types::{
-        AuthorityChain, AuthorityLink, BailmentState, ConsentRecord, GovernmentBranch,
-        Permission, PermissionSet, Provenance, Role,
+        AuthorityChain, AuthorityLink, BailmentState, ConsentRecord, GovernmentBranch, Permission,
+        PermissionSet, Provenance, Role,
     },
 };
 
@@ -32,10 +32,7 @@ impl ConstitutionalMiddleware {
     /// Create a new middleware instance with the full constitutional kernel.
     #[must_use]
     pub fn new() -> Self {
-        let kernel = Kernel::new(
-            b"EXOCHAIN Constitutional Trust Fabric",
-            InvariantSet::all(),
-        );
+        let kernel = Kernel::new(b"EXOCHAIN Constitutional Trust Fabric", InvariantSet::all());
         Self { kernel }
     }
 
@@ -81,8 +78,7 @@ impl ConstitutionalMiddleware {
         };
 
         #[allow(clippy::expect_used)] // Static string is always a valid DID.
-        let root_did =
-            Did::new("did:exo:root").expect("static DID is valid");
+        let root_did = Did::new("did:exo:root").expect("static DID is valid");
 
         let adj_context = AdjudicationContext {
             actor_roles: vec![Role {

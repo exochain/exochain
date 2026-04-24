@@ -150,9 +150,7 @@ impl ToolRegistry {
             "exochain_verify_authority_chain" => {
                 Ok(authority::execute_verify_authority_chain(params, context))
             }
-            "exochain_check_permission" => {
-                Ok(authority::execute_check_permission(params, context))
-            }
+            "exochain_check_permission" => Ok(authority::execute_check_permission(params, context)),
             "exochain_adjudicate_action" => {
                 Ok(authority::execute_adjudicate_action(params, context))
             }
@@ -171,9 +169,7 @@ impl ToolRegistry {
             }
             "exochain_verify_cgr_proof" => Ok(proofs::execute_verify_cgr_proof(params, context)),
             // Legal
-            "exochain_ediscovery_search" => {
-                Ok(legal::execute_ediscovery_search(params, context))
-            }
+            "exochain_ediscovery_search" => Ok(legal::execute_ediscovery_search(params, context)),
             "exochain_assert_privilege" => Ok(legal::execute_assert_privilege(params, context)),
             "exochain_initiate_safe_harbor" => {
                 Ok(legal::execute_initiate_safe_harbor(params, context))
@@ -252,11 +248,7 @@ mod tests {
     #[test]
     fn registry_execute_unknown_tool() {
         let registry = ToolRegistry::default();
-        let result = registry.execute(
-            "nonexistent",
-            &serde_json::json!({}),
-            &NodeContext::empty(),
-        );
+        let result = registry.execute("nonexistent", &serde_json::json!({}), &NodeContext::empty());
         assert!(result.is_err());
         match result.unwrap_err() {
             McpError::ToolNotFound(name) => assert_eq!(name, "nonexistent"),

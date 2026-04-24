@@ -559,10 +559,41 @@ async fn start_node(
     }
 
     // Generate admin token for write-endpoint authentication.
+    //
+    // Security note: we do NOT log the full token — a log aggregator
+    // that captures node stdout would otherwise end up with a copy of
+    // the governance-write credential. Instead we log a short prefix
+    // for identification and write the full token to a file with
+    // restrictive permissions (owner read/write only, 0600) under the
+    // node's data directory.
     let admin_token = auth::generate_admin_token();
+    let token_prefix = &admin_token[..8.min(admin_token.len())];
+    let token_path = data_dir.join("admin_token");
+    if let Err(e) = std::fs::write(&token_path, &admin_token) {
+        tracing::error!(
+            path = %token_path.display(),
+            err = %e,
+            "Failed to write admin token file — aborting startup"
+        );
+        return Err(anyhow::anyhow!("admin token persistence failed: {e}"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&token_path)?.permissions();
+        perms.set_mode(0o600);
+        if let Err(e) = std::fs::set_permissions(&token_path, perms) {
+            tracing::warn!(
+                path = %token_path.display(),
+                err = %e,
+                "Failed to set 0600 on admin token file — file may be world-readable"
+            );
+        }
+    }
     tracing::info!(
-        admin_token = %admin_token,
-        "Admin bearer token generated — required for POST endpoints"
+        token_prefix = %token_prefix,
+        token_path = %token_path.display(),
+        "Admin bearer token generated — full token written to file, required for POST endpoints"
     );
     let bearer_auth = auth::BearerAuth {
         token: Arc::new(admin_token),

@@ -55,10 +55,7 @@ pub fn execute_ediscovery_search(params: &Value, _context: &NodeContext) -> Tool
         }
     };
 
-    let scope = params
-        .get("scope")
-        .and_then(Value::as_str)
-        .unwrap_or("all");
+    let scope = params.get("scope").and_then(Value::as_str).unwrap_or("all");
     let date_range_start = params
         .get("date_range_start")
         .and_then(Value::as_str)
@@ -103,7 +100,9 @@ pub fn execute_ediscovery_search(params: &Value, _context: &NodeContext) -> Tool
 pub fn assert_privilege_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_assert_privilege".to_owned(),
-        description: "Assert legal privilege over evidence, marking it as protected from disclosure.".to_owned(),
+        description:
+            "Assert legal privilege over evidence, marking it as protected from disclosure."
+                .to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -238,16 +237,17 @@ pub fn execute_initiate_safe_harbor(params: &Value, _context: &NodeContext) -> T
             );
         }
     };
-    let transaction_description =
-        match params.get("transaction_description").and_then(Value::as_str) {
-            Some(s) => s,
-            None => {
-                return ToolResult::error(
-                    json!({"error": "missing required parameter: transaction_description"})
-                        .to_string(),
-                );
-            }
-        };
+    let transaction_description = match params
+        .get("transaction_description")
+        .and_then(Value::as_str)
+    {
+        Some(s) => s,
+        None => {
+            return ToolResult::error(
+                json!({"error": "missing required parameter: transaction_description"}).to_string(),
+            );
+        }
+    };
     let interested_parties = match params.get("interested_parties").and_then(Value::as_array) {
         Some(arr) => arr,
         None => {
@@ -551,7 +551,10 @@ mod tests {
         let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
         assert_eq!(v["dgcl_section"], "144");
         assert_eq!(v["status"], "initiated");
-        assert_eq!(v["interested_parties"].as_array().expect("parties").len(), 2);
+        assert_eq!(
+            v["interested_parties"].as_array().expect("parties").len(),
+            2
+        );
         assert_eq!(
             v["disclosure_requirements"]
                 .as_array()

@@ -289,10 +289,7 @@ pub fn execute_configure_death_trigger(params: &Value, _context: &NodeContext) -
         );
     }
 
-    let trigger_params = params
-        .get("trigger_params")
-        .cloned()
-        .unwrap_or(json!({}));
+    let trigger_params = params.get("trigger_params").cloned().unwrap_or(json!({}));
 
     let now = Timestamp::now_utc();
     let trigger_id = Hash256::digest(
@@ -424,7 +421,10 @@ mod tests {
 
     #[test]
     fn execute_receive_encrypted_missing_envelope() {
-        let result = execute_receive_encrypted(&json!({"recipient_did": "did:exo:bob"}), &NodeContext::empty());
+        let result = execute_receive_encrypted(
+            &json!({"recipient_did": "did:exo:bob"}),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 

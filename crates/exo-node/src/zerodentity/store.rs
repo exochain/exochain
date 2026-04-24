@@ -4,7 +4,7 @@
 //! It integrates with `exo_identity` to provide cryptographic standing via `LocalDidRegistry`
 //! and handles the `VerificationCeremony` state for identity onboarding.
 //!
-//! While currently a robust in-memory implementation for rapid consensus and state management, 
+//! While currently a robust in-memory implementation for rapid consensus and state management,
 //! the integration path for SQLite persistence remains available.
 //!
 //! All inner maps use `BTreeMap` (never `HashMap`) for deterministic iteration.

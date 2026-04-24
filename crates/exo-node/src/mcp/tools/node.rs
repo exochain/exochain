@@ -4,10 +4,7 @@
 //! and listing MCP enforcement rules. These are foundational tools that any
 //! AI agent needs to understand the governance environment.
 
-use exo_gatekeeper::{
-    invariants::ConstitutionalInvariant,
-    mcp::McpRule,
-};
+use exo_gatekeeper::{invariants::ConstitutionalInvariant, mcp::McpRule};
 use serde_json::Value;
 
 use crate::mcp::context::NodeContext;
@@ -97,8 +94,7 @@ pub fn execute_node_status(_params: &Value, context: &NodeContext) -> ToolResult
 
     ToolResult {
         content: vec![ToolContent::Text {
-            text: serde_json::to_string_pretty(&status)
-                .unwrap_or_else(|_| "{}".to_string()),
+            text: serde_json::to_string_pretty(&status).unwrap_or_else(|_| "{}".to_string()),
         }],
         is_error: false,
     }
@@ -145,12 +141,8 @@ fn invariant_description(inv: &ConstitutionalInvariant) -> &'static str {
         ConstitutionalInvariant::SeparationOfPowers => {
             "No single actor may hold legislative + executive + judicial power"
         }
-        ConstitutionalInvariant::ConsentRequired => {
-            "Action denied without active bailment consent"
-        }
-        ConstitutionalInvariant::NoSelfGrant => {
-            "An actor cannot expand its own permissions"
-        }
+        ConstitutionalInvariant::ConsentRequired => "Action denied without active bailment consent",
+        ConstitutionalInvariant::NoSelfGrant => "An actor cannot expand its own permissions",
         ConstitutionalInvariant::HumanOverride => {
             "Emergency human intervention must always be possible"
         }
@@ -200,8 +192,7 @@ pub fn execute_list_invariants(_params: &Value, _context: &NodeContext) -> ToolR
 
     ToolResult {
         content: vec![ToolContent::Text {
-            text: serde_json::to_string_pretty(&output)
-                .unwrap_or_else(|_| "{}".to_string()),
+            text: serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),
         }],
         is_error: false,
     }
@@ -262,8 +253,7 @@ pub fn execute_list_mcp_rules(_params: &Value, _context: &NodeContext) -> ToolRe
 
     ToolResult {
         content: vec![ToolContent::Text {
-            text: serde_json::to_string_pretty(&output)
-                .unwrap_or_else(|_| "{}".to_string()),
+            text: serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),
         }],
         is_error: false,
     }

@@ -15,9 +15,9 @@ use super::error::McpError;
 use super::middleware::ConstitutionalMiddleware;
 use super::prompts::PromptRegistry;
 use super::protocol::{
-    InitializeParams, InitializeResult, JsonRpcRequest, JsonRpcResponse, PromptsCapability,
+    INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST, InitializeParams, InitializeResult,
+    JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND, PARSE_ERROR, PromptsCapability,
     ResourcesCapability, ServerCapabilities, ServerInfo, ToolContent, ToolResult, ToolsCapability,
-    INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR,
 };
 use super::resources::ResourceRegistry;
 use super::tools::ToolRegistry;
@@ -102,11 +102,7 @@ impl McpServer {
         let request: JsonRpcRequest = match serde_json::from_str(message) {
             Ok(req) => req,
             Err(e) => {
-                let resp = JsonRpcResponse::error(
-                    None,
-                    PARSE_ERROR,
-                    format!("parse error: {e}"),
-                );
+                let resp = JsonRpcResponse::error(None, PARSE_ERROR, format!("parse error: {e}"));
                 return Some(serde_json::to_string(&resp).unwrap_or_default());
             }
         };
@@ -158,12 +154,16 @@ impl McpServer {
         let result = InitializeResult {
             protocol_version: "2024-11-05".into(),
             capabilities: ServerCapabilities {
-                tools: Some(ToolsCapability { list_changed: false }),
+                tools: Some(ToolsCapability {
+                    list_changed: false,
+                }),
                 resources: Some(ResourcesCapability {
                     subscribe: false,
                     list_changed: false,
                 }),
-                prompts: Some(PromptsCapability { list_changed: false }),
+                prompts: Some(PromptsCapability {
+                    list_changed: false,
+                }),
             },
             server_info: ServerInfo {
                 name: "exochain-mcp".into(),
@@ -190,10 +190,7 @@ impl McpServer {
             .filter_map(|t| serde_json::to_value(t).ok())
             .collect();
 
-        JsonRpcResponse::success(
-            request.id.clone(),
-            serde_json::json!({ "tools": tools }),
-        )
+        JsonRpcResponse::success(request.id.clone(), serde_json::json!({ "tools": tools }))
     }
 
     /// Handle `tools/call` — dispatch to a specific tool with constitutional enforcement.
@@ -244,7 +241,10 @@ impl McpServer {
         }
 
         // Execute the tool.
-        match self.registry.execute(tool_name, &tool_params, &self.context) {
+        match self
+            .registry
+            .execute(tool_name, &tool_params, &self.context)
+        {
             Ok(result) => match serde_json::to_value(&result) {
                 Ok(value) => JsonRpcResponse::success(request.id.clone(), value),
                 Err(e) => JsonRpcResponse::error(
@@ -606,10 +606,7 @@ mod tests {
         let result = parsed.result.unwrap();
         let resources = result["resources"].as_array().unwrap();
         assert_eq!(resources.len(), 6, "expected 6 registered resources");
-        let uris: Vec<&str> = resources
-            .iter()
-            .filter_map(|r| r["uri"].as_str())
-            .collect();
+        let uris: Vec<&str> = resources.iter().filter_map(|r| r["uri"].as_str()).collect();
         assert!(uris.contains(&"exochain://constitution"));
         assert!(uris.contains(&"exochain://invariants"));
         assert!(uris.contains(&"exochain://mcp-rules"));
@@ -690,10 +687,7 @@ mod tests {
         let result = parsed.result.unwrap();
         let prompts = result["prompts"].as_array().unwrap();
         assert_eq!(prompts.len(), 4, "expected 4 registered prompts");
-        let names: Vec<&str> = prompts
-            .iter()
-            .filter_map(|p| p["name"].as_str())
-            .collect();
+        let names: Vec<&str> = prompts.iter().filter_map(|p| p["name"].as_str()).collect();
         assert!(names.contains(&"governance_review"));
         assert!(names.contains(&"compliance_check"));
         assert!(names.contains(&"evidence_analysis"));

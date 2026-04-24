@@ -118,7 +118,11 @@ mod tests {
     fn definition_requires_bundle_id() {
         let def = definition();
         assert_eq!(def.name, "evidence_analysis");
-        let bundle_arg = def.arguments.iter().find(|a| a.name == "bundle_id").unwrap();
+        let bundle_arg = def
+            .arguments
+            .iter()
+            .find(|a| a.name == "bundle_id")
+            .unwrap();
         assert!(bundle_arg.required);
     }
 

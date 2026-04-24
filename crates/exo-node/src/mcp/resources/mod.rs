@@ -126,8 +126,7 @@ mod tests {
         assert!(!text.is_empty());
         // Hash must match what the kernel would compute.
         let hash = exo_core::Hash256::digest(text.as_bytes());
-        let kernel_hash =
-            exo_core::Hash256::digest(constitution::CONSTITUTION_TEXT);
+        let kernel_hash = exo_core::Hash256::digest(constitution::CONSTITUTION_TEXT);
         assert_eq!(hash, kernel_hash);
     }
 
