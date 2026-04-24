@@ -8,10 +8,8 @@
 //! `crypto::verify_hybrid`), providing a cryptographic instantiation of
 //! the `DualControl` constitutional invariant.
 
-
 use exo_core::{Did, PqPublicKey, PublicKey, Signature, Timestamp, crypto};
 use serde::{Deserialize, Serialize};
-
 
 /// Authentication method associated with a DID.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,7 +132,7 @@ pub struct DidDocument {
 #[cfg(test)]
 mod tests {
     use crate::error::IdentityError;
-    use crate::registry::{LocalDidRegistry, DidRegistry};
+    use crate::registry::{DidRegistry, LocalDidRegistry};
     // bs58 is available as a dependency of this crate
     use bs58;
     use exo_core::crypto::{generate_keypair, sign};
