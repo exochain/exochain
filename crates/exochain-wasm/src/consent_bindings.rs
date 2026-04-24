@@ -32,12 +32,23 @@ pub fn wasm_bailment_is_active(bailment_json: &str) -> Result<bool, JsValue> {
 
 /// Accept a proposed bailment (bailee countersigns, status → Active).
 ///
-/// `signature_json` — JSON-serialized Ed25519 Signature from the bailee.
+/// `bailee_public_key_json` — JSON-serialized bailee PublicKey. Required
+/// to verify `signature_json` against the canonical bailment payload.
+/// Closes GAP-012: previously this binding passed the signature through
+/// unchecked, which flipped bailments to Active on any non-empty bytes.
+///
+/// `signature_json` — JSON-serialized bailee Signature over
+/// `exo_consent::bailment::signing_payload(&bailment)`.
 #[wasm_bindgen]
-pub fn wasm_accept_bailment(bailment_json: &str, signature_json: &str) -> Result<JsValue, JsValue> {
+pub fn wasm_accept_bailment(
+    bailment_json: &str,
+    bailee_public_key_json: &str,
+    signature_json: &str,
+) -> Result<JsValue, JsValue> {
     let mut bailment: exo_consent::Bailment = from_json_str(bailment_json)?;
+    let pk: exo_core::PublicKey = from_json_str(bailee_public_key_json)?;
     let sig: exo_core::Signature = from_json_str(signature_json)?;
-    exo_consent::bailment::accept(&mut bailment, &sig)
+    exo_consent::bailment::accept(&mut bailment, &pk, &sig)
         .map_err(|e| JsValue::from_str(&format!("Accept error: {e}")))?;
     to_js_value(&bailment)
 }

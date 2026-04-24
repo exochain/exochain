@@ -166,7 +166,11 @@ mod tests {
         exp: Option<Timestamp>,
     ) -> Bailment {
         let mut b = bailment::propose(bailor, bailee, b"terms", btype);
-        bailment::accept(&mut b, &Signature::from_bytes([1u8; 64])).ok();
+        // Produce a valid bailee signature for the GAP-012-verified accept().
+        let (pk, sk) = exo_core::crypto::generate_keypair();
+        let payload = bailment::signing_payload(&b).expect("canonical payload");
+        let sig = exo_core::crypto::sign(&payload, &sk);
+        bailment::accept(&mut b, &pk, &sig).expect("test bailment accepts");
         b.expires = exp;
         b
     }

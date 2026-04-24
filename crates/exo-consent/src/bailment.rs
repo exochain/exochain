@@ -3,7 +3,7 @@
 //! A bailment is a trust relationship where a bailor entrusts property (data/authority)
 //! to a bailee under specific terms. No action may proceed without an active bailment.
 
-use exo_core::{Did, Hash256, Signature, Timestamp};
+use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -74,12 +74,62 @@ pub fn propose(bailor: &Did, bailee: &Did, terms: &[u8], bailment_type: Bailment
     }
 }
 
+/// Canonical CBOR signing payload for bailment acceptance.
+///
+/// Encodes the fixed fields the bailee is cryptographically committing to
+/// when they sign acceptance: the bailment's id, both parties' DIDs, the
+/// type, the hash of the terms, and the creation timestamp. Any tampering
+/// with these fields after signing will invalidate the signature.
+///
+/// The `status`, `signature`, and `expires` fields are deliberately NOT
+/// part of the payload: `status` transitions after signing, `signature`
+/// is the output being computed, and `expires` may be set or adjusted by
+/// the bailor post-acceptance without invalidating bailee consent to the
+/// original terms. (If future policy requires expires-at-sign-time, add a
+/// v2 payload and version-tag.)
+///
+/// # Errors
+/// Returns `Serialization` on CBOR encoding failure.
+pub fn signing_payload(bailment: &Bailment) -> Result<Vec<u8>, ConsentError> {
+    // Domain-separation tag + version + ordered tuple of fields.
+    let tuple = (
+        "exo.bailment.accept.v1",
+        &bailment.id,
+        &bailment.bailor_did,
+        &bailment.bailee_did,
+        &bailment.bailment_type,
+        &bailment.terms_hash,
+        &bailment.created,
+    );
+    let mut buf = Vec::new();
+    ciborium::ser::into_writer(&tuple, &mut buf).map_err(|e| {
+        ConsentError::Serialization(format!("bailment signing payload encoding failed: {e}"))
+    })?;
+    Ok(buf)
+}
+
 /// Accept a proposed bailment. Transitions `Proposed` -> `Active`.
+///
+/// **Closes GAP-012.** The previous implementation checked only that the
+/// signature was non-empty and stored it without verifying it against any
+/// public key — an attacker with any non-empty byte sequence could flip a
+/// bailment to Active. This was a silent authentication bypass.
+///
+/// Callers now MUST supply the bailee's public key. The signature is
+/// verified against the canonical payload from [`signing_payload`] before
+/// the status transition. Empty and zero-byte signatures are explicitly
+/// rejected.
 ///
 /// # Errors
 /// - `InvalidState` if not in `Proposed` status.
-/// - `InvalidSignature` if the signature is the empty placeholder.
-pub fn accept(bailment: &mut Bailment, bailee_signature: &Signature) -> Result<(), ConsentError> {
+/// - `InvalidSignature` if the signature is empty, a zero sentinel, or
+///   fails to verify against `bailee_public_key`.
+/// - `Serialization` on canonical encoding failure.
+pub fn accept(
+    bailment: &mut Bailment,
+    bailee_public_key: &PublicKey,
+    bailee_signature: &Signature,
+) -> Result<(), ConsentError> {
     if bailment.status != BailmentStatus::Proposed {
         return Err(ConsentError::InvalidState {
             expected: "Proposed".into(),
@@ -89,6 +139,19 @@ pub fn accept(bailment: &mut Bailment, bailee_signature: &Signature) -> Result<(
     if bailee_signature.is_empty() {
         return Err(ConsentError::InvalidSignature);
     }
+    // Explicit zero-byte sentinel guard — defense in depth against
+    // callers who forget to check is_empty() and pass an Ed25519 with
+    // all-zero bytes, which some backends treat as a valid point but
+    // is a well-known null-signature attack shape.
+    if bailee_signature.as_bytes().iter().all(|b| *b == 0) {
+        return Err(ConsentError::InvalidSignature);
+    }
+
+    let payload = signing_payload(bailment)?;
+    if !crypto::verify(&payload, bailee_signature, bailee_public_key) {
+        return Err(ConsentError::InvalidSignature);
+    }
+
     bailment.signature = bailee_signature.clone();
     bailment.status = BailmentStatus::Active;
     Ok(())
@@ -129,6 +192,8 @@ pub fn is_active(bailment: &Bailment, now: &Timestamp) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use exo_core::SecretKey;
+
     use super::*;
 
     fn alice() -> Did {
@@ -140,9 +205,16 @@ mod tests {
     fn charlie() -> Did {
         Did::new("did:exo:charlie").unwrap()
     }
-    fn sig() -> Signature {
-        Signature::from_bytes([1u8; 64])
+
+    /// Produce a (pubkey, valid-sig-over-canonical-payload) pair for the
+    /// bailee of `b`. Used by tests that want the happy path.
+    fn sign_as_bailee(b: &Bailment) -> (PublicKey, SecretKey, Signature) {
+        let (pk, sk) = crypto::generate_keypair();
+        let payload = signing_payload(b).expect("canonical payload");
+        let sig = crypto::sign(&payload, &sk);
+        (pk, sk, sig)
     }
+
     fn ts(ms: u64) -> Timestamp {
         Timestamp::new(ms, 0)
     }
@@ -171,7 +243,8 @@ mod tests {
     #[test]
     fn accept_transitions_to_active() {
         let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
-        assert!(accept(&mut b, &sig()).is_ok());
+        let (pk, _sk, sig) = sign_as_bailee(&b);
+        assert!(accept(&mut b, &pk, &sig).is_ok());
         assert_eq!(b.status, BailmentStatus::Active);
         assert!(!b.signature.is_empty());
     }
@@ -179,9 +252,10 @@ mod tests {
     #[test]
     fn accept_rejects_non_proposed() {
         let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let (pk, _sk, sig) = sign_as_bailee(&b);
         b.status = BailmentStatus::Active;
         assert_eq!(
-            accept(&mut b, &sig()),
+            accept(&mut b, &pk, &sig),
             Err(ConsentError::InvalidState {
                 expected: "Proposed".into(),
                 actual: "Active".into()
@@ -192,16 +266,116 @@ mod tests {
     #[test]
     fn accept_rejects_empty_signature() {
         let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let (pk, _sk) = crypto::generate_keypair();
         assert_eq!(
-            accept(&mut b, &Signature::empty()),
+            accept(&mut b, &pk, &Signature::empty()),
             Err(ConsentError::InvalidSignature)
         );
     }
 
+    // ==== GAP-012 regression tests =================================
+
+    /// The exact old-code attack: a non-empty but cryptographically
+    /// invalid signature that the old `accept()` would have silently
+    /// accepted.
+    #[test]
+    fn accept_rejects_non_empty_but_invalid_signature() {
+        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let (pk, _sk) = crypto::generate_keypair();
+        // Non-empty junk bytes — the kind of signature the old code let
+        // through unchecked.
+        let junk = Signature::from_bytes([1u8; 64]);
+        assert_eq!(
+            accept(&mut b, &pk, &junk),
+            Err(ConsentError::InvalidSignature)
+        );
+        // Critically: status must remain Proposed.
+        assert_eq!(b.status, BailmentStatus::Proposed);
+    }
+
+    /// An Ed25519 all-zeros signature is rejected even though it is
+    /// technically non-empty. Some backends treat [0u8; 64] as a valid
+    /// point; EXOCHAIN must not.
+    #[test]
+    fn accept_rejects_zero_byte_signature() {
+        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let (pk, _sk) = crypto::generate_keypair();
+        let zeros = Signature::from_bytes([0u8; 64]);
+        assert_eq!(
+            accept(&mut b, &pk, &zeros),
+            Err(ConsentError::InvalidSignature)
+        );
+        assert_eq!(b.status, BailmentStatus::Proposed);
+    }
+
+    /// A signature that is valid under some OTHER key than the one the
+    /// caller supplies must be rejected. Ensures the verification is
+    /// bound to the bailee's public key.
+    #[test]
+    fn accept_rejects_signature_by_wrong_key() {
+        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let (_pk_a, sk_a) = crypto::generate_keypair();
+        let (pk_b, _sk_b) = crypto::generate_keypair();
+        let payload = signing_payload(&b).unwrap();
+        let sig = crypto::sign(&payload, &sk_a);
+        // Signed by key A, verifying against key B — must fail.
+        assert_eq!(
+            accept(&mut b, &pk_b, &sig),
+            Err(ConsentError::InvalidSignature)
+        );
+        assert_eq!(b.status, BailmentStatus::Proposed);
+    }
+
+    /// A signature over a DIFFERENT bailment's payload must not
+    /// authenticate this bailment (replay protection).
+    #[test]
+    fn accept_rejects_signature_over_different_bailment() {
+        let mut b1 = propose(&alice(), &bob(), b"t1", BailmentType::Custody);
+        let b2 = propose(&alice(), &bob(), b"t2", BailmentType::Custody);
+        let (pk, sk) = crypto::generate_keypair();
+        let payload2 = signing_payload(&b2).unwrap();
+        let sig_on_b2 = crypto::sign(&payload2, &sk);
+        assert_eq!(
+            accept(&mut b1, &pk, &sig_on_b2),
+            Err(ConsentError::InvalidSignature)
+        );
+        assert_eq!(b1.status, BailmentStatus::Proposed);
+    }
+
+    /// Tampering with a signed bailment after acceptance is signed but
+    /// before acceptance is processed must invalidate the signature.
+    #[test]
+    fn accept_rejects_tampered_bailment() {
+        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let (pk, _sk, sig) = sign_as_bailee(&b);
+        // Attacker changes the bailee to themselves after the real
+        // bailee signed. Should be rejected.
+        b.bailee_did = charlie();
+        assert_eq!(
+            accept(&mut b, &pk, &sig),
+            Err(ConsentError::InvalidSignature)
+        );
+        assert_eq!(b.status, BailmentStatus::Proposed);
+    }
+
+    #[test]
+    fn accept_rejects_tampered_terms() {
+        let mut b = propose(&alice(), &bob(), b"t-original", BailmentType::Custody);
+        let (pk, _sk, sig) = sign_as_bailee(&b);
+        b.terms_hash = Hash256::digest(b"t-swapped");
+        assert_eq!(
+            accept(&mut b, &pk, &sig),
+            Err(ConsentError::InvalidSignature)
+        );
+    }
+
+    // ================================================================
+
     #[test]
     fn terminate_by_bailor() {
         let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
-        accept(&mut b, &sig()).ok();
+        let (pk, _sk, sig) = sign_as_bailee(&b);
+        accept(&mut b, &pk, &sig).ok();
         assert!(terminate(&mut b, &alice()).is_ok());
         assert_eq!(b.status, BailmentStatus::Terminated);
     }
@@ -209,7 +383,8 @@ mod tests {
     #[test]
     fn terminate_by_bailee() {
         let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
-        accept(&mut b, &sig()).ok();
+        let (pk, _sk, sig) = sign_as_bailee(&b);
+        accept(&mut b, &pk, &sig).ok();
         assert!(terminate(&mut b, &bob()).is_ok());
         assert_eq!(b.status, BailmentStatus::Terminated);
     }
@@ -217,7 +392,8 @@ mod tests {
     #[test]
     fn terminate_rejects_unauthorized() {
         let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
-        accept(&mut b, &sig()).ok();
+        let (pk, _sk, sig) = sign_as_bailee(&b);
+        accept(&mut b, &pk, &sig).ok();
         assert!(matches!(
             terminate(&mut b, &charlie()),
             Err(ConsentError::Unauthorized(_))
@@ -227,7 +403,8 @@ mod tests {
     #[test]
     fn terminate_rejects_already_terminated() {
         let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
-        accept(&mut b, &sig()).ok();
+        let (pk, _sk, sig) = sign_as_bailee(&b);
+        accept(&mut b, &pk, &sig).ok();
         terminate(&mut b, &alice()).ok();
         assert!(matches!(
             terminate(&mut b, &alice()),
@@ -261,14 +438,16 @@ mod tests {
     #[test]
     fn is_active_with_no_expiry() {
         let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
-        accept(&mut b, &sig()).ok();
+        let (pk, _sk, sig) = sign_as_bailee(&b);
+        accept(&mut b, &pk, &sig).ok();
         assert!(is_active(&b, &ts(5000)));
     }
 
     #[test]
     fn is_active_before_expiry() {
         let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
-        accept(&mut b, &sig()).ok();
+        let (pk, _sk, sig) = sign_as_bailee(&b);
+        accept(&mut b, &pk, &sig).ok();
         b.expires = Some(ts(10000));
         assert!(is_active(&b, &ts(5000)));
     }
@@ -276,7 +455,8 @@ mod tests {
     #[test]
     fn not_active_after_expiry() {
         let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
-        accept(&mut b, &sig()).ok();
+        let (pk, _sk, sig) = sign_as_bailee(&b);
+        accept(&mut b, &pk, &sig).ok();
         b.expires = Some(ts(1000));
         assert!(!is_active(&b, &ts(5000)));
     }
@@ -284,7 +464,8 @@ mod tests {
     #[test]
     fn not_active_at_exact_expiry() {
         let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
-        accept(&mut b, &sig()).ok();
+        let (pk, _sk, sig) = sign_as_bailee(&b);
+        accept(&mut b, &pk, &sig).ok();
         b.expires = Some(ts(5000));
         assert!(!is_active(&b, &ts(5000)));
     }
@@ -298,7 +479,8 @@ mod tests {
     #[test]
     fn not_active_when_terminated() {
         let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
-        accept(&mut b, &sig()).ok();
+        let (pk, _sk, sig) = sign_as_bailee(&b);
+        accept(&mut b, &pk, &sig).ok();
         terminate(&mut b, &alice()).ok();
         assert!(!is_active(&b, &ts(1000)));
     }

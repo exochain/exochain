@@ -540,10 +540,7 @@ fn substitute_params(body: &str, params: &ContractParams) -> String {
     result = result.replace("{{bailee_name}}", &params.bailee_name);
     result = result.replace("{{bailor_did}}", params.bailor_did.as_str());
     result = result.replace("{{bailee_did}}", params.bailee_did.as_str());
-    result = result.replace(
-        "{{effective_date}}",
-        &params.effective_date.to_string(),
-    );
+    result = result.replace("{{effective_date}}", &params.effective_date.to_string());
     result = result.replace(
         "{{expiry_date}}",
         &params
@@ -909,8 +906,7 @@ mod tests {
         assert_eq!(template.bailment_type, BailmentType::Custody);
         assert_eq!(template.clauses.len(), 8);
 
-        let categories: Vec<ClauseCategory> =
-            template.clauses.iter().map(|c| c.category).collect();
+        let categories: Vec<ClauseCategory> = template.clauses.iter().map(|c| c.category).collect();
         for cat in all_categories() {
             assert!(
                 categories.contains(&cat),
@@ -930,8 +926,7 @@ mod tests {
         assert_eq!(template.bailment_type, BailmentType::Processing);
         assert_eq!(template.clauses.len(), 8);
 
-        let categories: Vec<ClauseCategory> =
-            template.clauses.iter().map(|c| c.category).collect();
+        let categories: Vec<ClauseCategory> = template.clauses.iter().map(|c| c.category).collect();
         for cat in all_categories() {
             assert!(
                 categories.contains(&cat),
@@ -964,18 +959,12 @@ mod tests {
             all_bodies.contains("Bob Services"),
             "Bailee name not substituted"
         );
-        assert!(
-            all_bodies.contains("US-DE"),
-            "Jurisdiction not substituted"
-        );
+        assert!(all_bodies.contains("US-DE"), "Jurisdiction not substituted");
         assert!(
             all_bodies.contains("Confidential"),
             "Data classification not substituted"
         );
-        assert!(
-            all_bodies.contains("5000"),
-            "Liability cap not substituted"
-        );
+        assert!(all_bodies.contains("5000"), "Liability cap not substituted");
 
         // No unsubstituted placeholders
         assert!(
@@ -1048,7 +1037,10 @@ mod tests {
         let contract = compose_custody();
         let md = render_markdown(&contract);
 
-        assert!(md.contains("Alice Corp"), "Bailor name missing from markdown");
+        assert!(
+            md.contains("Alice Corp"),
+            "Bailor name missing from markdown"
+        );
         assert!(
             md.contains("Bob Services"),
             "Bailee name missing from markdown"
@@ -1070,8 +1062,7 @@ mod tests {
         let contract = compose_custody();
         let clause_id = contract.rendered_clauses[0].clause_id.as_str();
 
-        let assessment =
-            assess_breach(&contract, &[clause_id], BreachSeverity::Minor).unwrap();
+        let assessment = assess_breach(&contract, &[clause_id], BreachSeverity::Minor).unwrap();
 
         assert_eq!(assessment.breach_severity, BreachSeverity::Minor);
         assert_eq!(assessment.recommended_remedy, Remedy::Notice);
@@ -1085,8 +1076,7 @@ mod tests {
         let contract = compose_custody();
         let clause_id = contract.rendered_clauses[0].clause_id.as_str();
 
-        let assessment =
-            assess_breach(&contract, &[clause_id], BreachSeverity::Material).unwrap();
+        let assessment = assess_breach(&contract, &[clause_id], BreachSeverity::Material).unwrap();
 
         assert_eq!(assessment.breach_severity, BreachSeverity::Material);
         assert_eq!(
@@ -1122,11 +1112,7 @@ mod tests {
     fn test_breach_invalid_clause_id() {
         let contract = compose_custody();
 
-        let result = assess_breach(
-            &contract,
-            &["nonexistent-clause"],
-            BreachSeverity::Minor,
-        );
+        let result = assess_breach(&contract, &["nonexistent-clause"], BreachSeverity::Minor);
 
         assert!(result.is_err());
         match result {
@@ -1197,8 +1183,7 @@ mod tests {
 
         // Breach assessment also uses u64
         let clause_id = contract.rendered_clauses[0].clause_id.as_str();
-        let assessment =
-            assess_breach(&contract, &[clause_id], BreachSeverity::Material).unwrap();
+        let assessment = assess_breach(&contract, &[clause_id], BreachSeverity::Material).unwrap();
         let _liability: u64 = assessment.liability_assessment_bps;
         assert_eq!(assessment.liability_assessment_bps, 2500u64);
 

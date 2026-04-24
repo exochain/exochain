@@ -103,9 +103,8 @@ pub fn wasm_decrypt_message(
 ) -> Result<JsValue, JsValue> {
     let envelope: exo_messaging::EncryptedEnvelope = from_json_str(envelope_json)?;
 
-    let recipient_secret =
-        exo_messaging::X25519SecretKey::from_hex(recipient_x25519_secret_hex)
-            .map_err(|e| JsValue::from_str(&format!("invalid recipient secret: {e}")))?;
+    let recipient_secret = exo_messaging::X25519SecretKey::from_hex(recipient_x25519_secret_hex)
+        .map_err(|e| JsValue::from_str(&format!("invalid recipient secret: {e}")))?;
 
     let pk_bytes = hex::decode(sender_ed25519_public_hex)
         .map_err(|e| JsValue::from_str(&format!("invalid sender public key hex: {e}")))?;
@@ -168,8 +167,11 @@ pub fn wasm_death_verification_new(
     let initiator = exo_core::Did::new(initiated_by_did)
         .map_err(|e| JsValue::from_str(&format!("invalid initiator DID: {e}")))?;
 
-    let dv =
-        exo_messaging::death_trigger::DeathVerification::new(subject, initiator, required_confirmations);
+    let dv = exo_messaging::death_trigger::DeathVerification::new(
+        subject,
+        initiator,
+        required_confirmations,
+    );
     to_js_value(&dv)
 }
 
@@ -180,8 +182,7 @@ pub fn wasm_death_verification_confirm(
     state_json: &str,
     trustee_did: &str,
 ) -> Result<JsValue, JsValue> {
-    let mut dv: exo_messaging::death_trigger::DeathVerification =
-        from_json_str(state_json)?;
+    let mut dv: exo_messaging::death_trigger::DeathVerification = from_json_str(state_json)?;
     let trustee = exo_core::Did::new(trustee_did)
         .map_err(|e| JsValue::from_str(&format!("invalid trustee DID: {e}")))?;
 

@@ -16,8 +16,8 @@ pub fn wasm_create_franchise_blueprint(
     constitution_hash_hex: &str,
 ) -> Result<JsValue, JsValue> {
     let business_model: exo_catapult::BusinessModel = from_json_str(business_model_json)?;
-    let hash_bytes = hex::decode(constitution_hash_hex)
-        .map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
+    let hash_bytes =
+        hex::decode(constitution_hash_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
     let hash_arr: [u8; 32] = hash_bytes
         .try_into()
         .map_err(|_| JsValue::from_str("constitution hash must be 32 bytes"))?;
@@ -60,8 +60,8 @@ pub fn wasm_instantiate_newco(
     researcher_did: &str,
 ) -> Result<JsValue, JsValue> {
     let blueprint: exo_catapult::FranchiseBlueprint = from_json_str(blueprint_json)?;
-    let hr = exo_core::Did::new(hr_did)
-        .map_err(|e| JsValue::from_str(&format!("HR DID error: {e}")))?;
+    let hr =
+        exo_core::Did::new(hr_did).map_err(|e| JsValue::from_str(&format!("HR DID error: {e}")))?;
     let researcher = exo_core::Did::new(researcher_did)
         .map_err(|e| JsValue::from_str(&format!("Researcher DID error: {e}")))?;
 
@@ -88,14 +88,19 @@ pub fn wasm_instantiate_newco(
         hired_by: hr.clone(),
         commandbase_profile: None,
     };
-    newco.hire_agent(hr_agent)
+    newco
+        .hire_agent(hr_agent)
         .map_err(|e| JsValue::from_str(&format!("Hire HR error: {e}")))?;
 
     let researcher_agent = exo_catapult::CatapultAgent {
         did: researcher.clone(),
         slot: exo_catapult::OdaSlot::DeepResearcher,
         display_name: "Deep Researcher".into(),
-        capabilities: vec!["intelligence".into(), "analysis".into(), "market-research".into()],
+        capabilities: vec![
+            "intelligence".into(),
+            "analysis".into(),
+            "market-research".into(),
+        ],
         status: exo_catapult::AgentStatus::Active,
         last_heartbeat: exo_core::Timestamp::ZERO,
         budget_spent_cents: 0,
@@ -104,7 +109,8 @@ pub fn wasm_instantiate_newco(
         hired_by: hr,
         commandbase_profile: None,
     };
-    newco.hire_agent(researcher_agent)
+    newco
+        .hire_agent(researcher_agent)
         .map_err(|e| JsValue::from_str(&format!("Hire Researcher error: {e}")))?;
 
     to_js_value(&newco)
@@ -193,10 +199,7 @@ pub fn wasm_oda_authority_chain(newco_json: &str) -> Result<JsValue, JsValue> {
 
 /// Record a heartbeat from an agent.
 #[wasm_bindgen]
-pub fn wasm_record_heartbeat(
-    monitor_json: &str,
-    record_json: &str,
-) -> Result<JsValue, JsValue> {
+pub fn wasm_record_heartbeat(monitor_json: &str, record_json: &str) -> Result<JsValue, JsValue> {
     let mut monitor: exo_catapult::HeartbeatMonitor = from_json_str(monitor_json)?;
     let record: exo_catapult::HeartbeatRecord = from_json_str(record_json)?;
     monitor.record(record);
@@ -205,10 +208,7 @@ pub fn wasm_record_heartbeat(
 
 /// Check heartbeat health at the given time, returning alerts.
 #[wasm_bindgen]
-pub fn wasm_check_heartbeat_health(
-    monitor_json: &str,
-    now_ms: u64,
-) -> Result<JsValue, JsValue> {
+pub fn wasm_check_heartbeat_health(monitor_json: &str, now_ms: u64) -> Result<JsValue, JsValue> {
     let monitor: exo_catapult::HeartbeatMonitor = from_json_str(monitor_json)?;
     let now = exo_core::Timestamp {
         physical_ms: now_ms,
@@ -232,10 +232,7 @@ pub fn wasm_check_heartbeat_health(
 
 /// Record a cost event in the budget ledger.
 #[wasm_bindgen]
-pub fn wasm_record_cost_event(
-    ledger_json: &str,
-    event_json: &str,
-) -> Result<JsValue, JsValue> {
+pub fn wasm_record_cost_event(ledger_json: &str, event_json: &str) -> Result<JsValue, JsValue> {
     let mut ledger: exo_catapult::BudgetLedger = from_json_str(ledger_json)?;
     let event: exo_catapult::CostEvent = from_json_str(event_json)?;
     ledger.record_cost(event);
@@ -244,10 +241,7 @@ pub fn wasm_record_cost_event(
 
 /// Check budget enforcement for a given scope.
 #[wasm_bindgen]
-pub fn wasm_check_budget_status(
-    ledger_json: &str,
-    scope_json: &str,
-) -> Result<JsValue, JsValue> {
+pub fn wasm_check_budget_status(ledger_json: &str, scope_json: &str) -> Result<JsValue, JsValue> {
     let ledger: exo_catapult::BudgetLedger = from_json_str(ledger_json)?;
     let scope: exo_catapult::BudgetScope = from_json_str(scope_json)?;
     let verdict = ledger.check_enforcement(&scope);
@@ -337,8 +331,8 @@ pub fn wasm_generate_franchise_receipt(
         .parse()
         .map_err(|e| JsValue::from_str(&format!("UUID error: {e}")))?;
     let operation: exo_catapult::FranchiseOperation = from_json_str(operation_json)?;
-    let actor = exo_core::Did::new(actor_did)
-        .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
+    let actor =
+        exo_core::Did::new(actor_did).map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
 
     let receipt = exo_catapult::FranchiseReceipt::new(
         id,
