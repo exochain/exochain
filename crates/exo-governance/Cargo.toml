@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 exo-core = { path = "../exo-core" }
+ciborium = { workspace = true }
 exo-identity = { path = "../exo-identity" }
 exo-consent = { path = "../exo-consent" }
 exo-authority = { path = "../exo-authority" }

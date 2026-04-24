@@ -1469,6 +1469,7 @@ name = "exo-governance"
 version = "0.1.0-beta"
 dependencies = [
  "blake3",
+ "ciborium",
  "exo-authority",
  "exo-consent",
  "exo-core",

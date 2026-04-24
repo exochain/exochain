@@ -5,8 +5,8 @@
 use crate::delegation::DelegationScope;
 use crate::errors::GovernanceError;
 use crate::types::*;
-use exo_core::types::{Hash256, Timestamp};
 use exo_core::Did;
+use exo_core::types::{Hash256, Timestamp};
 use serde::{Deserialize, Serialize};
 
 /// Precedence level in the constitutional hierarchy.
@@ -83,13 +83,19 @@ pub struct CustomConstraint {
 pub struct CustomConstraintEvaluator;
 
 impl CustomConstraintEvaluator {
-    pub fn evaluate_expr(expr: &Expr, context: &exo_core::DeterministicMap<String, String>) -> Result<String, GovernanceError> {
+    pub fn evaluate_expr(
+        expr: &Expr,
+        context: &exo_core::DeterministicMap<String, String>,
+    ) -> Result<String, GovernanceError> {
         match expr {
             Expr::Variable(name) => {
-                context.get(name).cloned().ok_or_else(|| GovernanceError::ConstitutionalViolation {
-                    constraint_id: "MISSING_VAR".to_string(),
-                    reason: format!("Variable '{}' not found in context", name),
-                })
+                context
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| GovernanceError::ConstitutionalViolation {
+                        constraint_id: "MISSING_VAR".to_string(),
+                        reason: format!("Variable '{}' not found in context", name),
+                    })
             }
             Expr::Literal(val) => Ok(val.clone()),
             Expr::Eq(left, right) => {
@@ -195,9 +201,8 @@ pub struct ConstraintResult {
 impl Constitution {
     /// Compute the content hash of this constitution.
     pub fn compute_hash(&self) -> Result<Hash256, GovernanceError> {
-        let canonical = serde_json::to_vec(&self.documents).map_err(|_| {
-            GovernanceError::Serialization("failed to encode constitution".into())
-        })?;
+        let canonical = serde_json::to_vec(&self.documents)
+            .map_err(|_| GovernanceError::Serialization("failed to encode constitution".into()))?;
         Ok(Hash256::digest(&canonical))
     }
 
@@ -307,9 +312,17 @@ impl Constitution {
                     (
                         met,
                         if met {
-                            format!("Within monetary cap of ${}.{:02}", *max_cents / 100, *max_cents % 100)
+                            format!(
+                                "Within monetary cap of ${}.{:02}",
+                                *max_cents / 100,
+                                *max_cents % 100
+                            )
                         } else {
-                            format!("Exceeds monetary cap of ${}.{:02}", *max_cents / 100, *max_cents % 100)
+                            format!(
+                                "Exceeds monetary cap of ${}.{:02}",
+                                *max_cents / 100,
+                                *max_cents % 100
+                            )
                         },
                     )
                 } else {
@@ -590,7 +603,7 @@ mod tests {
         let mut ctx = exo_core::DeterministicMap::new();
         ctx.insert("dept".to_string(), "finance_dept".to_string());
         ctx.insert("level".to_string(), "5".to_string());
-        
+
         // dept contains "finance" AND level > 3
         // We simulate AND with nesting or multiple constraints.
         // Actually, let's use two constraints.

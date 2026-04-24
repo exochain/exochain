@@ -4,8 +4,8 @@
 
 use crate::errors::GovernanceError;
 use crate::types::*;
-use exo_core::types::Hash256;
 use exo_core::Did;
+use exo_core::types::Hash256;
 use exo_core::types::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -157,4 +157,3 @@ impl Delegation {
         Ok(())
     }
 }
-
