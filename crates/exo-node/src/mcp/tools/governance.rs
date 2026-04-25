@@ -1,11 +1,63 @@
 //! Governance MCP tools — decision creation, voting, quorum checking, decision
 //! status, and constitutional amendment proposals.
+//!
+//! # Simulation gate (Onyx pass 3, RED #2)
+//!
+//! The mutating tools (`exochain_create_decision`, `exochain_cast_vote`,
+//! `exochain_propose_amendment`) currently synthesize response JSON
+//! without persisting to any store or touching the reactor. Behind
+//! the scenes, they don't actually create decisions, record votes,
+//! or register amendments on-chain.
+//!
+//! Until these are wired to the real governance flow (see
+//! `Initiatives/fix-mcp-simulation-tools.md`), they are gated behind
+//! the `unaudited-mcp-simulation-tools` feature flag (default OFF).
+//! When OFF, they return a structured refusal directing callers to
+//! use the real REST API (`POST /api/v1/governance/proposals`, etc.)
+//! or to enable the feature explicitly in dev environments.
 
+#[cfg_attr(
+    not(feature = "unaudited-mcp-simulation-tools"),
+    allow(unused_imports)
+)]
 use exo_core::{Did, Hash256, Timestamp};
 use serde_json::{Value, json};
 
 use crate::mcp::context::NodeContext;
 use crate::mcp::protocol::{ToolDefinition, ToolResult};
+
+/// Build the structured refusal body for a gated simulation tool.
+///
+/// Keeps refusal shape consistent across tools and makes the feature-flag
+/// remediation path discoverable to any caller inspecting the response.
+#[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+fn simulation_refused(tool_name: &str) -> ToolResult {
+    tracing::warn!(
+        tool = %tool_name,
+        "refusing MCP simulation tool: handler does not persist to store \
+         or invoke reactor. Build with \
+         --features exo-node/unaudited-mcp-simulation-tools to allow \
+         simulation responses in dev clusters. Real governance calls \
+         belong on the REST API (see Initiatives/fix-mcp-simulation-tools.md)."
+    );
+    ToolResult::error(
+        json!({
+            "error": "mcp_simulation_tool_disabled",
+            "tool": tool_name,
+            "message": "This MCP tool currently returns simulation JSON \
+                        without persisting to the governance store or \
+                        invoking the reactor. It is disabled by default \
+                        to prevent AI agents from acting on false success \
+                        signals. Use the real REST governance API, or \
+                        build with the `unaudited-mcp-simulation-tools` \
+                        feature flag in a dev cluster.",
+            "feature_flag": "unaudited-mcp-simulation-tools",
+            "initiative": "Initiatives/fix-mcp-simulation-tools.md",
+            "refusal_source": format!("exo-node/mcp/tools/governance.rs::{tool_name}"),
+        })
+        .to_string(),
+    )
+}
 
 // ---------------------------------------------------------------------------
 // exochain_create_decision
@@ -46,7 +98,20 @@ pub fn create_decision_definition() -> ToolDefinition {
 /// Execute the `exochain_create_decision` tool.
 #[must_use]
 pub fn execute_create_decision(params: &Value, _context: &NodeContext) -> ToolResult {
-    let title = match params.get("title").and_then(Value::as_str) {
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params; // silence unused warning
+        return simulation_refused("exochain_create_decision");
+    }
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        tracing::warn!(
+            "UNAUDITED MCP simulation tool in use: exochain_create_decision. \
+             Returns synthetic decision_id without persisting to store or \
+             invoking reactor. Gated by `unaudited-mcp-simulation-tools` \
+             feature and MUST NOT be enabled in production."
+        );
+        let title = match params.get("title").and_then(Value::as_str) {
         Some(s) => s,
         None => {
             return ToolResult::error(
@@ -95,6 +160,7 @@ pub fn execute_create_decision(params: &Value, _context: &NodeContext) -> ToolRe
         "created_at": format!("{}:{}", now.physical_ms, now.logical),
     });
     ToolResult::success(response.to_string())
+    } // end cfg(feature = "unaudited-mcp-simulation-tools") block
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +203,20 @@ pub fn cast_vote_definition() -> ToolDefinition {
 /// Execute the `exochain_cast_vote` tool.
 #[must_use]
 pub fn execute_cast_vote(params: &Value, _context: &NodeContext) -> ToolResult {
-    let decision_id = match params.get("decision_id").and_then(Value::as_str) {
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        return simulation_refused("exochain_cast_vote");
+    }
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        tracing::warn!(
+            "UNAUDITED MCP simulation tool in use: exochain_cast_vote. \
+             Returns `recorded:true` without persisting the vote to any \
+             store or broadcasting it. Gated by \
+             `unaudited-mcp-simulation-tools` feature."
+        );
+        let decision_id = match params.get("decision_id").and_then(Value::as_str) {
         Some(s) => s,
         None => {
             return ToolResult::error(
@@ -193,6 +272,7 @@ pub fn execute_cast_vote(params: &Value, _context: &NodeContext) -> ToolResult {
         "rationale": rationale,
     });
     ToolResult::success(response.to_string())
+    } // end cfg(feature = "unaudited-mcp-simulation-tools") block
 }
 
 // ---------------------------------------------------------------------------
@@ -347,7 +427,19 @@ pub fn propose_amendment_definition() -> ToolDefinition {
 /// Execute the `exochain_propose_amendment` tool.
 #[must_use]
 pub fn execute_propose_amendment(params: &Value, _context: &NodeContext) -> ToolResult {
-    let title = match params.get("title").and_then(Value::as_str) {
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        return simulation_refused("exochain_propose_amendment");
+    }
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        tracing::warn!(
+            "UNAUDITED MCP simulation tool in use: exochain_propose_amendment. \
+             Returns synthetic amendment_id without persisting or invoking \
+             the reactor. Gated by `unaudited-mcp-simulation-tools` feature."
+        );
+        let title = match params.get("title").and_then(Value::as_str) {
         Some(s) => s,
         None => {
             return ToolResult::error(
@@ -414,6 +506,7 @@ pub fn execute_propose_amendment(params: &Value, _context: &NodeContext) -> Tool
         "warning": "Constitutional amendments require the highest governance threshold. See spec \u{00a7}3A.3.2.",
     });
     ToolResult::success(response.to_string())
+    } // end cfg(feature = "unaudited-mcp-simulation-tools") block
 }
 
 // ===========================================================================
@@ -433,6 +526,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_create_decision_success() {
         let result = execute_create_decision(
@@ -451,6 +545,7 @@ mod tests {
         assert!(v["decision_id"].as_str().expect("id").len() > 0);
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_create_decision_invalid_proposer() {
         let result = execute_create_decision(
@@ -464,6 +559,7 @@ mod tests {
         assert!(result.is_error);
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_create_decision_missing_title() {
         let result = execute_create_decision(
@@ -485,6 +581,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_cast_vote_success() {
         let result = execute_cast_vote(
@@ -506,6 +603,7 @@ mod tests {
         assert_eq!(v["rationale"], "Looks good to me.");
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_cast_vote_invalid_choice() {
         let result = execute_cast_vote(
@@ -519,6 +617,7 @@ mod tests {
         assert!(result.is_error);
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_cast_vote_invalid_voter() {
         let result = execute_cast_vote(
@@ -599,6 +698,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_propose_amendment_success() {
         let result = execute_propose_amendment(
@@ -625,6 +725,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_propose_amendment_invalid_target() {
         let result = execute_propose_amendment(
@@ -639,6 +740,7 @@ mod tests {
         assert!(result.is_error);
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_propose_amendment_invalid_proposer() {
         let result = execute_propose_amendment(
@@ -651,5 +753,79 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(result.is_error);
+    }
+
+    // ==================================================================
+    // RED #2 refusal tests (default build only)
+    // ==================================================================
+
+    /// When the `unaudited-mcp-simulation-tools` feature is OFF (default),
+    /// `execute_create_decision` must return the structured simulation
+    /// refusal — not a synthesized success response.
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_create_decision_refused_without_feature_flag() {
+        let result = execute_create_decision(
+            &json!({
+                "title": "Test",
+                "description": "Test",
+                "proposer_did": "did:exo:alice",
+            }),
+            &NodeContext::empty(),
+        );
+        assert!(
+            result.is_error,
+            "default build MUST refuse MCP simulation tool"
+        );
+        let text = result.content[0].text();
+        assert!(
+            text.contains("mcp_simulation_tool_disabled"),
+            "refusal body must carry error tag, got: {text}"
+        );
+        assert!(
+            text.contains("unaudited-mcp-simulation-tools"),
+            "refusal body must name the feature flag, got: {text}"
+        );
+        assert!(
+            text.contains("exochain_create_decision"),
+            "refusal body must name the specific tool, got: {text}"
+        );
+    }
+
+    /// Same refusal for cast_vote — no synthesized "recorded:true".
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_cast_vote_refused_without_feature_flag() {
+        let result = execute_cast_vote(
+            &json!({
+                "decision_id": "abc",
+                "voter_did": "did:exo:bob",
+                "choice": "approve",
+            }),
+            &NodeContext::empty(),
+        );
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_simulation_tool_disabled"));
+        assert!(text.contains("exochain_cast_vote"));
+    }
+
+    /// Same refusal for propose_amendment — no synthesized amendment_id.
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_propose_amendment_refused_without_feature_flag() {
+        let result = execute_propose_amendment(
+            &json!({
+                "title": "Test",
+                "description": "Test",
+                "proposer_did": "did:exo:alice",
+                "target": "constitution",
+            }),
+            &NodeContext::empty(),
+        );
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_simulation_tool_disabled"));
+        assert!(text.contains("exochain_propose_amendment"));
     }
 }

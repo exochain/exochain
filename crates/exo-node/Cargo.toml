@@ -98,7 +98,7 @@ ignored = ["ed25519-dalek", "exo-consent", "exo-governance", "exo-identity", "ze
 [features]
 default = []
 
-# GAP (Onyx pass 3, RED): the HTTP endpoint
+# GAP (Onyx pass 3, RED #1): the HTTP endpoint
 # `POST /api/v1/governance/validators` currently mutates the validator
 # set unilaterally on presentation of the node's admin bearer token —
 # no BFT proposal, no quorum, no signature chain, no recorded
@@ -116,3 +116,29 @@ default = []
 # single bearer-token holder controls validator set mutation, without
 # quorum or on-chain record."
 unaudited-admin-governance-shortcut = []
+
+# GAP (Onyx pass 3, RED #2): several MCP governance tools
+# (exochain_create_decision, exochain_cast_vote,
+# exochain_propose_amendment) return `{"recorded": true, ...}` /
+# `{"decision_id": <hash>}` responses without persisting to any
+# store, without invoking the reactor, without any network
+# broadcast — pure simulation. Combined with the MCP middleware's
+# hardcoded-true constitutional context, this means AI agents
+# calling these tools get "success" signals for actions that have
+# zero governance-fabric effect.
+#
+# Mitigation: tools don't mutate real state, so blast radius is
+# "AI agents acting on false success signals" — not state
+# corruption. But signalling truth-that-isn't is itself a
+# constitutional violation (HumanOverride, evidentiary integrity).
+#
+# The real fix is to wire handlers to the reactor propose/vote/
+# commit flow via exo-dag, or replace with read-only helpers, or
+# rename + disclaim. Until a direction is picked, we REFUSE by
+# default and gate the simulators behind this explicit flag so
+# no caller accidentally relies on fake-success semantics.
+#
+# Do NOT enable this in production. Enabling it means: "I accept
+# that these MCP tool calls return truthy-shaped JSON while doing
+# nothing on-chain."
+unaudited-mcp-simulation-tools = []
