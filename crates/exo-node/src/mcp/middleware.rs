@@ -6,6 +6,48 @@
 //! 3. Builds an `AdjudicationContext` for the CGR Kernel
 //! 4. Adjudicates the action against all 8 constitutional invariants
 //! 5. Returns Permitted/Denied/Escalated verdict
+//!
+//! # Audit status — Onyx pass 3, RED #3 (defense-in-depth notice)
+//!
+//! The `McpContext` and `AdjudicationContext` built below carry
+//! **hardcoded-true** constitutional booleans:
+//!
+//!   - `has_provenance: true`
+//!   - `consent_active: true`
+//!   - `output_marked_ai: true`
+//!   - `human_override_preserved: true`
+//!   - authority chain: synthetic root → actor with `signature: vec![1, 2, 3]`
+//!   - provenance: `action_hash: vec![1, 2, 3]`, `signature: vec![4, 5, 6]`
+//!
+//! These sentinels mean the middleware cannot actually fail on
+//! `ProvenancePresent`, `ConsentRequired`, or `HumanOverride` —
+//! those invariants rubber-stamp every call. The semantic checks
+//! that DO fire are the structural ones (`NoSelfGrant`,
+//! `KernelModification`, `SeparationOfPowers`) because those look
+//! at fields the caller supplies (`is_self_grant`, `modifies_kernel`,
+//! `actor_roles`).
+//!
+//! **Current blast radius: bounded by the gate on RED #2.** The three
+//! mutating MCP tools (`exochain_create_decision`, `exochain_cast_vote`,
+//! `exochain_propose_amendment`) refuse by default behind the
+//! `unaudited-mcp-simulation-tools` feature flag. Read-only tools
+//! (`exochain_check_quorum`, `exochain_get_decision_status`,
+//! `exochain_list_invariants`, etc.) are the only callers the
+//! middleware currently rubber-stamps, and they can't mutate
+//! governance fabric.
+//!
+//! **When RED #2 is resolved (real reactor wiring), this middleware
+//! MUST be rewritten first.** A rewrite must either:
+//!   (a) accept real `McpContext` / `AdjudicationContext` from the
+//!       caller and verify the embedded signatures/provenance, or
+//!   (b) decline to adjudicate (return Err) when it cannot construct
+//!       a real context and refuse the mutating action at the handler
+//!       layer.
+//!
+//! Tracked in `Initiatives/fix-mcp-simulation-tools.md`. This
+//! module-level doc exists so the stub context is visible to anyone
+//! reading the code — DO NOT remove the audit-status section when
+//! adjusting this middleware.
 
 use exo_core::{Did, Hash256, SignerType};
 use exo_gatekeeper::{
@@ -30,8 +72,23 @@ pub struct ConstitutionalMiddleware {
 
 impl ConstitutionalMiddleware {
     /// Create a new middleware instance with the full constitutional kernel.
+    ///
+    /// **Emits a loud warning** about the stub adjudication context.
+    /// See module-level docs under `# Audit status` for why this
+    /// middleware cannot currently detect provenance/consent/authority
+    /// violations — those invariants rubber-stamp every call.
     #[must_use]
     pub fn new() -> Self {
+        tracing::warn!(
+            "mcp::ConstitutionalMiddleware initialized with STUB \
+             adjudication context (has_provenance/consent_active/ \
+             human_override_preserved hardcoded true; signatures are \
+             sentinel vec![1,2,3]/vec![4,5,6]). This middleware only \
+             rubber-stamps read-only MCP tools — mutating tools MUST \
+             be gated separately (see unaudited-mcp-simulation-tools \
+             feature flag). Tracked in \
+             Initiatives/fix-mcp-simulation-tools.md."
+        );
         let kernel = Kernel::new(b"EXOCHAIN Constitutional Trust Fabric", InvariantSet::all());
         Self { kernel }
     }
@@ -230,6 +287,35 @@ mod tests {
         assert_eq!(
             mw1.kernel.constitution_hash(),
             mw2.kernel.constitution_hash()
+        );
+    }
+
+    /// Regression guard: the module-level `# Audit status` doc must
+    /// remain in place. It's the only durable signal to future readers
+    /// that this middleware cannot detect provenance/consent/authority
+    /// violations. If someone "cleans up" the doc they must re-add it.
+    #[test]
+    fn module_doc_retains_audit_status_section() {
+        // Read the source file at test time. Tests run from the crate
+        // root, so this relative path is stable in the repo layout.
+        let src = std::fs::read_to_string("src/mcp/middleware.rs")
+            .expect("middleware.rs readable from crate root");
+        assert!(
+            src.contains("# Audit status"),
+            "module doc must contain '# Audit status' audit notice; \
+             see RED #3 fix commit. Do not remove this section."
+        );
+        assert!(
+            src.contains("hardcoded-true") || src.contains("hardcoded true"),
+            "audit doc must name the stub behavior explicitly"
+        );
+        assert!(
+            src.contains("unaudited-mcp-simulation-tools"),
+            "audit doc must link to the RED #2 feature flag"
+        );
+        assert!(
+            src.contains("fix-mcp-simulation-tools.md"),
+            "audit doc must link to the remediation initiative"
         );
     }
 }
