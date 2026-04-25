@@ -136,6 +136,7 @@ fn spawn_event_fanout(
 /// Start all subsystems for a running node.
 async fn start_node(
     data_dir: &std::path::Path,
+    api_host: &str,
     api_port: u16,
     p2p_port: u16,
     validator: bool,
@@ -613,7 +614,21 @@ async fn start_node(
         }));
 
     // Start the gateway HTTP server (blocks).
-    let bind_address = format!("0.0.0.0:{api_port}");
+    //
+    // Security note (GAP AMBER — Onyx pass 3): we bind to the caller-
+    // supplied `api_host` which defaults to `127.0.0.1` (loopback only).
+    // Opt-in to broader exposure (e.g. `0.0.0.0`) requires an explicit
+    // `--api-host` flag. This protects the admin-bearer-token write
+    // surface from accidental internet exposure when the operator
+    // forgets to put a reverse proxy in front.
+    let bind_address = format!("{api_host}:{api_port}");
+    if api_host == "0.0.0.0" {
+        tracing::warn!(
+            %bind_address,
+            "API bound to 0.0.0.0 — admin-write endpoints are reachable on all interfaces. \
+             Ensure you have a TLS-terminating front door AND rotate the admin token regularly."
+        );
+    }
     let gateway_config = exo_gateway::server::GatewayConfig {
         bind_address: bind_address.clone(),
         ..exo_gateway::server::GatewayConfig::default()
@@ -639,6 +654,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Command::Start {
             api_port,
+            api_host,
             p2p_port,
             data_dir,
             validator,
@@ -655,6 +671,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 
             start_node(
                 &data_dir,
+                &api_host,
                 api_port,
                 p2p_port,
                 validator,
@@ -668,6 +685,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Join {
             seed,
             api_port,
+            api_host,
             p2p_port,
             data_dir,
             validator,
@@ -702,6 +720,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 
             start_node(
                 &data_dir,
+                &api_host,
                 api_port,
                 p2p_port,
                 validator,

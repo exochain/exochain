@@ -76,12 +76,44 @@ pub(crate) struct Update {
 #[derive(Debug, Deserialize)]
 struct TgMessage {
     text: Option<String>,
+    chat: TgChat,
+}
+
+#[derive(Debug, Deserialize)]
+struct TgChat {
+    id: i64,
 }
 
 #[derive(Debug, Deserialize)]
 struct CallbackQuery {
     id: String,
     data: Option<String>,
+    /// The message the inline keyboard was attached to — carries the
+    /// originating chat so we can filter out queries from unauthorized
+    /// chats. May be absent for very old keyboards; when absent we
+    /// reject by default (fail-closed).
+    #[serde(default)]
+    message: Option<TgMessage>,
+}
+
+/// Return true iff `msg` came from the single authorized chat.
+///
+/// Fail-closed: if `expected_chat_id` is `None` (misconfigured env),
+/// no message is authorized.
+fn is_message_authorized(expected_chat_id: Option<i64>, msg: &TgMessage) -> bool {
+    expected_chat_id == Some(msg.chat.id)
+}
+
+/// Return true iff a callback query originated in the authorized chat.
+///
+/// Callback queries must carry their originating `message` with a
+/// `chat` field. Fail-closed: missing message OR missing
+/// `expected_chat_id` rejects.
+fn is_callback_authorized(expected_chat_id: Option<i64>, cb: &CallbackQuery) -> bool {
+    match (&cb.message, expected_chat_id) {
+        (Some(m), Some(id)) => id == m.chat.id,
+        _ => false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -603,10 +635,32 @@ pub async fn run_adjutant(
 
             // Poll for Telegram updates.
             updates = adjutant.poll_updates() => {
+                // Parse the configured authorized chat id once per batch.
+                // If it fails to parse (misconfigured env), we fail-closed:
+                // no commands are dispatched.
+                let expected_chat_id: Option<i64> =
+                    adjutant.config.chat_id.parse::<i64>().ok();
+                if expected_chat_id.is_none() {
+                    tracing::error!(
+                        configured = %adjutant.config.chat_id,
+                        "TELEGRAM_CHAT_ID is not a valid i64 — rejecting ALL inbound updates (fail-closed)"
+                    );
+                }
+
                 for update in updates {
                     // Handle text commands.
                     if let Some(msg) = &update.message {
-                        if let Some(text) = &msg.text {
+                        // GAP-015 defense: reject messages from any chat other
+                        // than the configured authorized chat. Without this,
+                        // any holder of the bot token could DM the bot and
+                        // receive full node internal state.
+                        if !is_message_authorized(expected_chat_id, msg) {
+                            tracing::warn!(
+                                incoming_chat = msg.chat.id,
+                                expected = %adjutant.config.chat_id,
+                                "Rejected Telegram message from unauthorized chat"
+                            );
+                        } else if let Some(text) = &msg.text {
                             handle_command(
                                 &adjutant,
                                 text,
@@ -622,18 +676,32 @@ pub async fn run_adjutant(
 
                     // Handle callback queries (button presses).
                     if let Some(cb) = &update.callback_query {
-                        adjutant.answer_callback(&cb.id).await;
-                        if let Some(data) = &cb.data {
-                            handle_callback(
-                                &adjutant,
-                                data,
-                                &reactor,
-                                &store,
-                                &challenge_store,
-                                &sentinel_state,
-                                &zerodentity,
-                            )
-                            .await;
+                        // Callback queries must carry an originating message
+                        // whose chat matches. Missing chat info = reject
+                        // (fail-closed).
+                        if !is_callback_authorized(expected_chat_id, cb) {
+                            tracing::warn!(
+                                callback_id = %cb.id,
+                                "Rejected Telegram callback from unauthorized or unknown chat"
+                            );
+                            // Still answer the callback so the user's UI
+                            // clears (prevents their Telegram from showing a
+                            // perpetual spinner), but don't dispatch.
+                            adjutant.answer_callback(&cb.id).await;
+                        } else {
+                            adjutant.answer_callback(&cb.id).await;
+                            if let Some(data) = &cb.data {
+                                handle_callback(
+                                    &adjutant,
+                                    data,
+                                    &reactor,
+                                    &store,
+                                    &challenge_store,
+                                    &sentinel_state,
+                                    &zerodentity,
+                                )
+                                .await;
+                            }
                         }
                     }
                 }
@@ -842,5 +910,73 @@ mod tests {
         let (text, _) = build_challenges_message(&store);
         assert!(text.contains("QuorumContamination"));
         assert!(text.contains("PauseEligible"));
+    }
+
+    // ==== GAP-015 chat_id auth tests ==================================
+
+    fn msg_from_chat(id: i64, text: Option<&str>) -> TgMessage {
+        TgMessage {
+            text: text.map(ToOwned::to_owned),
+            chat: TgChat { id },
+        }
+    }
+
+    #[test]
+    fn is_message_authorized_matches_expected_chat() {
+        let msg = msg_from_chat(42, Some("/status"));
+        assert!(is_message_authorized(Some(42), &msg));
+    }
+
+    #[test]
+    fn is_message_authorized_rejects_other_chat() {
+        let msg = msg_from_chat(999, Some("/status"));
+        assert!(!is_message_authorized(Some(42), &msg));
+    }
+
+    #[test]
+    fn is_message_authorized_fails_closed_when_unconfigured() {
+        // TELEGRAM_CHAT_ID misconfigured / unparseable.
+        let msg = msg_from_chat(42, Some("/status"));
+        assert!(!is_message_authorized(None, &msg));
+    }
+
+    #[test]
+    fn is_callback_authorized_matches_expected_chat() {
+        let cb = CallbackQuery {
+            id: "abc".into(),
+            data: Some("cmd:status".into()),
+            message: Some(msg_from_chat(42, None)),
+        };
+        assert!(is_callback_authorized(Some(42), &cb));
+    }
+
+    #[test]
+    fn is_callback_authorized_rejects_other_chat() {
+        let cb = CallbackQuery {
+            id: "abc".into(),
+            data: Some("cmd:status".into()),
+            message: Some(msg_from_chat(999, None)),
+        };
+        assert!(!is_callback_authorized(Some(42), &cb));
+    }
+
+    #[test]
+    fn is_callback_authorized_fails_closed_without_message() {
+        let cb = CallbackQuery {
+            id: "abc".into(),
+            data: Some("cmd:status".into()),
+            message: None,
+        };
+        assert!(!is_callback_authorized(Some(42), &cb));
+    }
+
+    #[test]
+    fn is_callback_authorized_fails_closed_when_unconfigured() {
+        let cb = CallbackQuery {
+            id: "abc".into(),
+            data: Some("cmd:status".into()),
+            message: Some(msg_from_chat(42, None)),
+        };
+        assert!(!is_callback_authorized(None, &cb));
     }
 }
