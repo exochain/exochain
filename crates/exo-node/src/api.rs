@@ -216,26 +216,76 @@ async fn handle_status(
 
 /// `POST /api/v1/governance/validators` — add or remove a validator.
 ///
-/// The change is applied immediately to the in-memory consensus state
-/// and persisted. In a production deployment, this would go through
-/// a BFT proposal → quorum → commit flow (see `submit_proposal`).
+/// # Safety gate
+///
+/// This handler is behind the `unaudited-admin-governance-shortcut`
+/// feature flag (default OFF). When OFF, the endpoint returns
+/// `403 Forbidden` with a structured refusal.
+///
+/// **Why:** the legacy path below mutates the validator set purely
+/// on presentation of the admin bearer token — no BFT proposal,
+/// no quorum, no signature chain, no recorded governance event.
+/// One holder of the admin token becomes a constitutional dictator
+/// over validator membership. That violates SeparationOfPowers,
+/// NoSelfGrant, and every on-chain-governance invariant the
+/// constitution exists to enforce.
+///
+/// Enable ONLY with full understanding of the trade-off (e.g., an
+/// isolated dev cluster) and NEVER in production until a real
+/// propose → quorum-vote → commit flow replaces it.
+///
+/// See: council-intake/exo-node-onyx-3-api-mcp.md (RED #1),
+///      Initiatives/fix-admin-governance-bypass.md.
 async fn handle_validator_change(
     State(api): State<Arc<NodeApiState>>,
     Json(req): Json<ValidatorChangeRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let did =
-        Did::new(&req.did).map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid DID: {e}")))?;
+    #[cfg(not(feature = "unaudited-admin-governance-shortcut"))]
+    {
+        let _ = (api, req); // silence unused warnings
+        tracing::warn!(
+            "refusing POST /api/v1/governance/validators: admin bearer \
+             shortcut is gated. See fix-admin-governance-bypass \
+             initiative. To opt in for a dev cluster, build with \
+             --features exo-node/unaudited-admin-governance-shortcut."
+        );
+        return Err((
+            StatusCode::FORBIDDEN,
+            serde_json::json!({
+                "error": "admin_governance_shortcut_disabled",
+                "message": "Validator set mutation via bearer-token shortcut is disabled \
+                            by default. A real propose → quorum-vote → commit flow is \
+                            required. See Initiatives/fix-admin-governance-bypass.md.",
+                "feature_flag": "unaudited-admin-governance-shortcut",
+                "refusal_source": "exo-node/api.rs::handle_validator_change",
+            })
+            .to_string(),
+        ));
+    }
 
-    let change = match req.action.as_str() {
-        "add" => ValidatorChange::AddValidator { did },
-        "remove" => ValidatorChange::RemoveValidator { did },
-        other => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!("Invalid action '{other}', expected 'add' or 'remove'"),
-            ));
-        }
-    };
+    #[cfg(feature = "unaudited-admin-governance-shortcut")]
+    {
+        tracing::warn!(
+            action = %req.action,
+            did = %req.did,
+            "UNAUDITED admin-governance shortcut in use — single bearer \
+             token is mutating validator set without quorum. This is \
+             gated by the `unaudited-admin-governance-shortcut` feature \
+             and MUST NOT be enabled in production."
+        );
+        let did = Did::new(&req.did)
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid DID: {e}")))?;
+
+        let change = match req.action.as_str() {
+            "add" => ValidatorChange::AddValidator { did },
+            "remove" => ValidatorChange::RemoveValidator { did },
+            other => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid action '{other}', expected 'add' or 'remove'"),
+                ));
+            }
+        };
 
     // Apply the validator change.
     let (new_count, quorum) = {
@@ -318,6 +368,7 @@ async fn handle_validator_change(
         "did": req.did,
         "broadcast": broadcast_ok,
     })))
+    } // end cfg(feature = "unaudited-admin-governance-shortcut") block
 }
 
 // ---------------------------------------------------------------------------
@@ -539,6 +590,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
+    #[cfg(feature = "unaudited-admin-governance-shortcut")]
     #[tokio::test]
     async fn validator_add_increases_count() {
         let state = test_api_state();
@@ -567,6 +619,7 @@ mod tests {
         assert_eq!(result["validator_count"], 5);
     }
 
+    #[cfg(feature = "unaudited-admin-governance-shortcut")]
     #[tokio::test]
     async fn validator_remove_below_minimum_rejected() {
         let state = test_api_state();
@@ -592,6 +645,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::CONFLICT);
     }
 
+    #[cfg(feature = "unaudited-admin-governance-shortcut")]
     #[tokio::test]
     async fn validator_remove_above_minimum_succeeds() {
         let state = test_api_state();
@@ -768,5 +822,105 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ==================================================================
+    // GAP admin-governance-bypass refusal tests (default-build only)
+    // ==================================================================
+
+    /// When the `unaudited-admin-governance-shortcut` feature is OFF
+    /// (the default), a POST to /api/v1/governance/validators must
+    /// return 403 with a structured refusal body — never mutate the
+    /// validator set on bearer-token alone.
+    #[cfg(not(feature = "unaudited-admin-governance-shortcut"))]
+    #[tokio::test]
+    async fn validator_add_refused_without_feature_flag() {
+        let state = test_api_state();
+        let validator_count_before = {
+            let s = state.reactor_state.lock().unwrap();
+            s.consensus.config.validators.len()
+        };
+
+        let app = governance_router(Arc::clone(&state));
+        let body = serde_json::json!({
+            "action": "add",
+            "did": "did:exo:some-new-validator",
+        });
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/governance/validators")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "default build MUST refuse validator-set mutation via bearer shortcut"
+        );
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let text = std::str::from_utf8(&body_bytes).unwrap();
+        assert!(
+            text.contains("admin_governance_shortcut_disabled"),
+            "refusal body must include error tag, got: {text}"
+        );
+        assert!(
+            text.contains("unaudited-admin-governance-shortcut"),
+            "refusal body must name the feature flag, got: {text}"
+        );
+
+        // CRITICAL: validator set was NOT mutated.
+        let validator_count_after = {
+            let s = state.reactor_state.lock().unwrap();
+            s.consensus.config.validators.len()
+        };
+        assert_eq!(
+            validator_count_before, validator_count_after,
+            "refused endpoint must not touch validator set"
+        );
+    }
+
+    /// Same for `remove` — refused with no state change.
+    #[cfg(not(feature = "unaudited-admin-governance-shortcut"))]
+    #[tokio::test]
+    async fn validator_remove_refused_without_feature_flag() {
+        let state = test_api_state();
+        let validators_before: BTreeSet<Did> = {
+            let s = state.reactor_state.lock().unwrap();
+            s.consensus.config.validators.clone()
+        };
+
+        let app = governance_router(Arc::clone(&state));
+        let body = serde_json::json!({
+            "action": "remove",
+            "did": "did:exo:v0",
+        });
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/governance/validators")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+        // Validator set unchanged.
+        let validators_after: BTreeSet<Did> = {
+            let s = state.reactor_state.lock().unwrap();
+            s.consensus.config.validators.clone()
+        };
+        assert_eq!(validators_before, validators_after);
     }
 }

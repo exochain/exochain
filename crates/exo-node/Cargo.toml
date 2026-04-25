@@ -94,3 +94,25 @@ tower = "0.5"
 [package.metadata.cargo-machete]
 # Pre-existing workspace deps used via re-exports or conditional compilation.
 ignored = ["ed25519-dalek", "exo-consent", "exo-governance", "exo-identity", "zeroize"]
+
+[features]
+default = []
+
+# GAP (Onyx pass 3, RED): the HTTP endpoint
+# `POST /api/v1/governance/validators` currently mutates the validator
+# set unilaterally on presentation of the node's admin bearer token —
+# no BFT proposal, no quorum, no signature chain, no recorded
+# governance event. A single holder of the admin bearer token is
+# therefore a constitutional dictator over validator membership.
+#
+# The real fix is to replace this endpoint with a proper submit-proposal
+# → quorum-vote → commit flow wired through exo-governance + the DAG.
+# That is a governance-surface rewrite, not a tactical patch. Until
+# that work lands, we REFUSE the shortcut by default and gate the
+# legacy behavior behind this explicit, loud feature flag so no operator
+# trips over it accidentally.
+#
+# Do NOT enable this in production. Enabling it means: "I accept that a
+# single bearer-token holder controls validator set mutation, without
+# quorum or on-chain record."
+unaudited-admin-governance-shortcut = []
