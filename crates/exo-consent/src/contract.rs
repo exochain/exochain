@@ -1188,4 +1188,380 @@ mod tests {
         // Verify no f32/f64 by ensuring values are exact integer division
         assert_eq!(5000u64 / 2, 2500u64);
     }
+
+    // -- Test 17: default template for Delegation --
+
+    #[test]
+    fn test_default_template_delegation() {
+        let template = default_template(BailmentType::Delegation);
+        assert_eq!(template.bailment_type, BailmentType::Delegation);
+        assert_eq!(template.id, "delegation-standard-v1");
+        assert_eq!(template.name, "Standard Delegation Agreement");
+        assert!(!template.clauses.is_empty());
+        // All clauses must be required by default.
+        assert!(template.clauses.iter().all(|c| c.required));
+        // Must cover the delegation-specific ProcessingRights category.
+        let cats: Vec<ClauseCategory> = template.clauses.iter().map(|c| c.category).collect();
+        assert!(cats.contains(&ClauseCategory::ProcessingRights));
+    }
+
+    // -- Test 18: default template for Emergency --
+
+    #[test]
+    fn test_default_template_emergency() {
+        let template = default_template(BailmentType::Emergency);
+        assert_eq!(template.bailment_type, BailmentType::Emergency);
+        assert_eq!(template.id, "emergency-standard-v1");
+        assert_eq!(template.name, "Emergency Access Agreement");
+        assert!(!template.clauses.is_empty());
+        assert!(template.clauses.iter().all(|c| c.required));
+        // Must cover Termination clauses — emergencies expire fast.
+        let cats: Vec<ClauseCategory> = template.clauses.iter().map(|c| c.category).collect();
+        assert!(cats.contains(&ClauseCategory::Termination));
+    }
+
+    // -- Test 19: compose with a Delegation template composes + hashes --
+
+    #[test]
+    fn test_compose_delegation_template_succeeds() {
+        let template = default_template(BailmentType::Delegation);
+        let contract = compose(&template, &test_params()).unwrap();
+        assert!(!contract.rendered_clauses.is_empty());
+        assert_ne!(contract.contract_hash, Hash256::ZERO);
+        // Section numbering is monotonic from 1.
+        for (i, rc) in contract.rendered_clauses.iter().enumerate() {
+            assert_eq!(rc.section_number, format!("{}", i + 1));
+        }
+    }
+
+    // -- Test 20: compose with an Emergency template composes + hashes --
+
+    #[test]
+    fn test_compose_emergency_template_succeeds() {
+        let template = default_template(BailmentType::Emergency);
+        let contract = compose(&template, &test_params()).unwrap();
+        assert!(!contract.rendered_clauses.is_empty());
+        assert_ne!(contract.contract_hash, Hash256::ZERO);
+    }
+
+    // -- Test 21: compose skips OPTIONAL clause with jurisdiction mismatch --
+
+    #[test]
+    fn test_compose_skips_optional_foreign_jurisdiction_clause() {
+        // Build a template with one required EU-only clause and one optional EU-only
+        // clause. Required must match the caller jurisdiction; optional may be dropped.
+        let mut template = default_template(BailmentType::Custody);
+        template.clauses.push(Clause {
+            id: "optional-eu-only".to_string(),
+            category: ClauseCategory::Jurisdiction,
+            title: "EU-Only Optional".to_string(),
+            body: "GDPR-specific clause body.".to_string(),
+            required: false,
+            jurisdiction: Some("EU-DE".to_string()),
+        });
+
+        let contract = compose(&template, &test_params()).unwrap();
+        assert!(
+            contract
+                .rendered_clauses
+                .iter()
+                .all(|c| c.clause_id != "optional-eu-only"),
+            "Optional foreign-jurisdiction clause must be filtered out"
+        );
+    }
+
+    // -- Test 22: compose ERRORS when a REQUIRED clause has wrong jurisdiction --
+
+    #[test]
+    fn test_compose_errors_on_required_foreign_jurisdiction_clause() {
+        let mut template = default_template(BailmentType::Custody);
+        template.clauses.push(Clause {
+            id: "required-eu-only".to_string(),
+            category: ClauseCategory::Jurisdiction,
+            title: "EU-Only Required".to_string(),
+            body: "GDPR-specific clause body.".to_string(),
+            required: true,
+            jurisdiction: Some("EU-DE".to_string()),
+        });
+
+        // test_params() uses "US-DE" — the required EU clause cannot apply.
+        let result = compose(&template, &test_params());
+        match result {
+            Err(ConsentError::Denied(msg)) => {
+                assert!(msg.contains("required-eu-only"));
+                assert!(msg.contains("EU-DE"));
+                assert!(msg.contains("US-DE"));
+            }
+            other => panic!("Expected Denied error, got: {other:?}"),
+        }
+    }
+
+    // -- Test 23: compose keeps a clause whose jurisdiction matches --
+
+    #[test]
+    fn test_compose_keeps_matching_jurisdiction_clause() {
+        let mut template = default_template(BailmentType::Custody);
+        template.clauses.push(Clause {
+            id: "matching-us-clause".to_string(),
+            category: ClauseCategory::Jurisdiction,
+            title: "US-DE Specific".to_string(),
+            body: "Delaware-specific clause body.".to_string(),
+            required: false,
+            jurisdiction: Some("US-DE".to_string()),
+        });
+
+        let contract = compose(&template, &test_params()).unwrap();
+        assert!(
+            contract
+                .rendered_clauses
+                .iter()
+                .any(|c| c.clause_id == "matching-us-clause"),
+            "Matching-jurisdiction clause must be included"
+        );
+    }
+
+    // -- Test 24: amend REPLACES a named existing clause --
+
+    #[test]
+    fn test_amend_replaces_existing_clause() {
+        let original = compose_custody();
+        let target_id = original.rendered_clauses[0].clause_id.clone();
+
+        let replacement = Clause {
+            id: "custody-v2-revised".to_string(),
+            category: ClauseCategory::DataCustody,
+            title: "Revised Custody".to_string(),
+            body:
+                "Revised custody terms: Data must be returned to {{bailor_name}} upon termination."
+                    .to_string(),
+            required: true,
+            jurisdiction: None,
+        };
+
+        let amended = amend(
+            &original,
+            &test_params(),
+            &[(target_id.clone(), replacement.clone())],
+        )
+        .unwrap();
+
+        // Original clause count preserved (replacement, not insertion).
+        assert_eq!(
+            amended.rendered_clauses.len(),
+            original.rendered_clauses.len()
+        );
+        // The slot previously named by `target_id` now carries the new clause_id.
+        assert!(
+            amended
+                .rendered_clauses
+                .iter()
+                .any(|c| c.clause_id == "custody-v2-revised"),
+            "Replacement clause must appear in amended contract"
+        );
+        // And the original id is gone.
+        assert!(
+            amended
+                .rendered_clauses
+                .iter()
+                .all(|c| c.clause_id != target_id),
+            "Original clause id must be replaced"
+        );
+        // The replacement body was parameter-substituted.
+        let revised_body = amended
+            .rendered_clauses
+            .iter()
+            .find(|c| c.clause_id == "custody-v2-revised")
+            .map(|c| c.rendered_body.clone())
+            .unwrap();
+        assert!(
+            revised_body.contains("Alice Corp"),
+            "Replacement must have params substituted"
+        );
+        assert!(!revised_body.contains("{{"));
+    }
+
+    // -- Test 25: amend APPENDS a new clause when target_id is not in original --
+
+    #[test]
+    fn test_amend_appends_new_clause_when_not_present() {
+        let original = compose_custody();
+        let original_len = original.rendered_clauses.len();
+
+        let new_clause = Clause {
+            id: "new-amendment-clause".to_string(),
+            category: ClauseCategory::Indemnification,
+            title: "New Indemnification Rider".to_string(),
+            body: "Added by amendment for {{bailee_name}}.".to_string(),
+            required: true,
+            jurisdiction: None,
+        };
+
+        let amended = amend(
+            &original,
+            &test_params(),
+            &[("NON-EXISTENT-CLAUSE-ID".to_string(), new_clause)],
+        )
+        .unwrap();
+
+        assert_eq!(
+            amended.rendered_clauses.len(),
+            original_len + 1,
+            "Unknown target_id must APPEND rather than replace"
+        );
+        let appended = amended
+            .rendered_clauses
+            .last()
+            .expect("amended contract has at least one clause");
+        assert_eq!(appended.clause_id, "new-amendment-clause");
+        assert_eq!(
+            appended.section_number,
+            format!("{}", original_len + 1),
+            "Appended clause must take the next section number"
+        );
+        assert!(appended.rendered_body.contains("Bob Services"));
+    }
+
+    // -- Test 26: amend with multiple operations in one call --
+
+    #[test]
+    fn test_amend_replace_and_append_mixed() {
+        let original = compose_custody();
+        let target_id = original.rendered_clauses[1].clause_id.clone();
+
+        let replacement = Clause {
+            id: "replacement-mixed".to_string(),
+            category: original.rendered_clauses[1].category,
+            title: "Replacement".to_string(),
+            body: "Replaced text for {{jurisdiction}}.".to_string(),
+            required: true,
+            jurisdiction: None,
+        };
+        let addition = Clause {
+            id: "addition-mixed".to_string(),
+            category: ClauseCategory::DisputeResolution,
+            title: "Additional".to_string(),
+            body: "Added text.".to_string(),
+            required: true,
+            jurisdiction: None,
+        };
+
+        let amended = amend(
+            &original,
+            &test_params(),
+            &[
+                (target_id, replacement),
+                ("UNKNOWN-ID".to_string(), addition),
+            ],
+        )
+        .unwrap();
+
+        // Replacement kept the length; addition bumped it by 1.
+        assert_eq!(
+            amended.rendered_clauses.len(),
+            original.rendered_clauses.len() + 1
+        );
+        assert!(
+            amended
+                .rendered_clauses
+                .iter()
+                .any(|c| c.clause_id == "replacement-mixed")
+        );
+        assert!(
+            amended
+                .rendered_clauses
+                .iter()
+                .any(|c| c.clause_id == "addition-mixed")
+        );
+    }
+
+    // -- Test 27: amend hash differs from original --
+
+    #[test]
+    fn test_amend_changes_contract_hash() {
+        let original = compose_custody();
+        let amended = amend(&original, &test_params(), &[]).unwrap();
+        // Version differs (original = 1, amended = 2), so payload differs,
+        // so hash must differ.
+        assert_ne!(amended.contract_hash, original.contract_hash);
+    }
+
+    // -- Test 28: render_markdown emits "No expiration" when expiry_date is None --
+
+    #[test]
+    fn test_render_markdown_no_expiration() {
+        let template = default_template(BailmentType::Custody);
+        let mut params = test_params();
+        params.expiry_date = None;
+        let contract = compose(&template, &params).unwrap();
+
+        let md = render_markdown(&contract);
+        assert!(
+            md.contains("**Expires**: No expiration"),
+            "Expected 'No expiration' line in Markdown; got:\n{md}"
+        );
+    }
+
+    // -- Test 29: render_markdown emits the expiry timestamp when present --
+
+    #[test]
+    fn test_render_markdown_includes_expiry_when_set() {
+        let contract = compose_custody();
+        let md = render_markdown(&contract);
+        // The default test_params sets expiry_date = Some(1_800_000_000_000 ms).
+        assert!(
+            md.contains("1800000000000")
+                || md.contains("1_800_000_000_000")
+                || md.contains("2027")
+                || md.contains("Expires"),
+            "Expected a non-'No expiration' Expires line; got:\n{md}"
+        );
+        assert!(
+            !md.contains("**Expires**: No expiration"),
+            "Should not render 'No expiration' when expiry is set"
+        );
+    }
+
+    // -- Test 30: verify_hash returns false when params tampered --
+
+    #[test]
+    fn test_verify_hash_rejects_tampered_params() {
+        let mut contract = compose_custody();
+        // Tamper with the bailor name — this is inside the hashed payload.
+        contract.params.bailor_name = "Malicious Party".to_string();
+        assert!(!verify_hash(&contract));
+    }
+
+    // -- Test 31: verify_hash returns false when version bumped without rehashing --
+
+    #[test]
+    fn test_verify_hash_rejects_tampered_version() {
+        let mut contract = compose_custody();
+        contract.version = contract.version.saturating_add(1);
+        assert!(!verify_hash(&contract));
+    }
+
+    // -- Test 32: compose with a template whose ALL clauses are required and
+    //            whose jurisdictions are None produces all clauses --
+
+    #[test]
+    fn test_compose_includes_all_jurisdiction_neutral_required_clauses() {
+        let template = default_template(BailmentType::Custody);
+        // Default template clauses all have jurisdiction: None.
+        let contract = compose(&template, &test_params()).unwrap();
+        assert_eq!(contract.rendered_clauses.len(), template.clauses.len());
+    }
+
+    // -- Test 33: breach with multiple clause IDs (all valid) --
+
+    #[test]
+    fn test_breach_multiple_clauses() {
+        let contract = compose_custody();
+        let id0 = contract.rendered_clauses[0].clause_id.clone();
+        let id1 = contract.rendered_clauses[1].clause_id.clone();
+
+        let a = assess_breach(&contract, &[&id0, &id1], BreachSeverity::Material).unwrap();
+        assert_eq!(a.breached_clauses.len(), 2);
+        assert!(a.breached_clauses.contains(&id0));
+        assert!(a.breached_clauses.contains(&id1));
+    }
 }

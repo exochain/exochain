@@ -512,4 +512,254 @@ mod tests {
             VerificationCeremonyError::InsufficientScore { score: 0 }
         ));
     }
+
+    // Covers submit_proof() returning AlreadyFinalized (line 56) when ceremony has been finalized.
+    #[test]
+    fn test_submit_proof_after_finalize_returns_already_finalized() {
+        let did = Did::new("did:exo:finalized-then-submit").unwrap();
+        let mut ceremony = VerificationCeremony::new(
+            did,
+            "sess-finalized-submit".to_string(),
+            Timestamp::new(1000, 0),
+        );
+        ceremony
+            .submit_proof(
+                IdentityProof::KycToken("kyc-tok".to_string()),
+                Timestamp::new(1010, 0),
+            )
+            .unwrap();
+
+        let (_pk, att_sk) = generate_keypair();
+        let attester_did = Did::new("did:exo:att-finalized-submit").unwrap();
+        let _ = ceremony
+            .finalize(Timestamp::new(1020, 0), &attester_did, &att_sk)
+            .unwrap();
+        assert!(ceremony.finalized);
+
+        let err = ceremony
+            .submit_proof(
+                IdentityProof::Otp("111".to_string()),
+                Timestamp::new(1030, 0),
+            )
+            .unwrap_err();
+        assert!(matches!(err, VerificationCeremonyError::AlreadyFinalized));
+        // Proof must NOT have been appended.
+        assert_eq!(ceremony.proofs.len(), 1);
+    }
+
+    // Covers finalize() returning AlreadyFinalized (line 124) on a second finalize call.
+    #[test]
+    fn test_double_finalize_returns_already_finalized() {
+        let did = Did::new("did:exo:double-finalize").unwrap();
+        let mut ceremony = VerificationCeremony::new(
+            did,
+            "sess-double-final".to_string(),
+            Timestamp::new(1000, 0),
+        );
+        ceremony
+            .submit_proof(
+                IdentityProof::KycToken("t".to_string()),
+                Timestamp::new(1010, 0),
+            )
+            .unwrap();
+
+        let (_pk, att_sk) = generate_keypair();
+        let attester_did = Did::new("did:exo:att-double-final").unwrap();
+        let _first = ceremony
+            .finalize(Timestamp::new(1020, 0), &attester_did, &att_sk)
+            .unwrap();
+        let err = ceremony
+            .finalize(Timestamp::new(1030, 0), &attester_did, &att_sk)
+            .unwrap_err();
+        assert!(matches!(err, VerificationCeremonyError::AlreadyFinalized));
+    }
+
+    // Covers finalize() returning Expired (line 127) when `now` is past the one-hour window.
+    #[test]
+    fn test_finalize_expired_returns_expired() {
+        let did = Did::new("did:exo:finalize-expired").unwrap();
+        let mut ceremony = VerificationCeremony::new(
+            did,
+            "sess-final-expired".to_string(),
+            Timestamp::new(1000, 0),
+        );
+        ceremony
+            .submit_proof(
+                IdentityProof::KycToken("t".to_string()),
+                Timestamp::new(1010, 0),
+            )
+            .unwrap();
+
+        let (_pk, att_sk) = generate_keypair();
+        let attester_did = Did::new("did:exo:att-fin-exp").unwrap();
+        // now > initiated_at + 3_600_000 ms
+        let err = ceremony
+            .finalize(Timestamp::new(5_000_000, 0), &attester_did, &att_sk)
+            .unwrap_err();
+        assert!(matches!(err, VerificationCeremonyError::Expired));
+        // Still not finalized.
+        assert!(!ceremony.finalized);
+    }
+
+    // Covers the empty-attester-DID rejection path (lines 137-139) in finalize().
+    #[test]
+    fn test_finalize_empty_attester_did_rejected() {
+        let did = Did::new("did:exo:empty-attester").unwrap();
+        let mut ceremony =
+            VerificationCeremony::new(did, "sess-empty-att".to_string(), Timestamp::new(1000, 0));
+        ceremony
+            .submit_proof(
+                IdentityProof::KycToken("t".to_string()),
+                Timestamp::new(1010, 0),
+            )
+            .unwrap();
+
+        let (_pk, att_sk) = generate_keypair();
+        // `Did::new("")` legitimately rejects — so the only way to reach the
+        // empty-attester branch in `finalize()` is to deserialize a malformed
+        // Did from serde. That mirrors the real attack surface (malformed
+        // network input / tampered storage) that the branch is meant to catch.
+        let empty_did: Did =
+            serde_json::from_str("\"\"").expect("serde_json accepts empty string for Did wrapper");
+
+        let err = ceremony
+            .finalize(Timestamp::new(1020, 0), &empty_did, &att_sk)
+            .unwrap_err();
+        match err {
+            VerificationCeremonyError::InvalidAttesterDid(msg) => {
+                assert!(msg.contains("empty"));
+            }
+            other => panic!("expected InvalidAttesterDid, got {other:?}"),
+        }
+        // Ceremony must not have been flipped to finalized when validation failed.
+        assert!(!ceremony.finalized);
+    }
+
+    // Covers calculate_risk_score() KycToken arm (line 90) in isolation with a known weight.
+    #[test]
+    fn test_risk_score_kyc_token_weight() {
+        let did = Did::new("did:exo:score-kyc").unwrap();
+        let mut ceremony =
+            VerificationCeremony::new(did, "sess-kyc".to_string(), Timestamp::new(1000, 0));
+        ceremony
+            .submit_proof(
+                IdentityProof::KycToken("kyc".into()),
+                Timestamp::new(1001, 0),
+            )
+            .unwrap();
+        // KYC weight alone is 5000.
+        assert_eq!(ceremony.calculate_risk_score(), 5000);
+    }
+
+    // Covers RiskLevel::Low branch (line 149): 2000 <= score < 3000.
+    #[test]
+    fn test_finalize_risk_level_low() {
+        let did = Did::new("did:exo:level-low").unwrap();
+        let mut ceremony =
+            VerificationCeremony::new(did, "sess-low".to_string(), Timestamp::new(1000, 0));
+        ceremony
+            .submit_proof(IdentityProof::Otp("otp".into()), Timestamp::new(1001, 0))
+            .unwrap();
+        assert_eq!(ceremony.calculate_risk_score(), 2000);
+
+        let (att_pk, att_sk) = generate_keypair();
+        let attester_did = Did::new("did:exo:att-low").unwrap();
+        let attestation = ceremony
+            .finalize(Timestamp::new(1010, 0), &attester_did, &att_sk)
+            .unwrap();
+        assert_eq!(attestation.level, RiskLevel::Low);
+        assert!(crate::risk::verify_attestation(&attestation, &att_pk));
+    }
+
+    // Covers RiskLevel::Medium branch (line 147): 3000 <= score < 4000.
+    #[test]
+    fn test_finalize_risk_level_medium() {
+        let did = Did::new("did:exo:level-medium").unwrap();
+        let mut ceremony =
+            VerificationCeremony::new(did, "sess-med".to_string(), Timestamp::new(1000, 0));
+        let (pk, sk) = generate_keypair();
+        let msg = b"m".to_vec();
+        let sig = sign(&msg, &sk);
+        ceremony
+            .submit_proof(
+                IdentityProof::Signature(sig, pk, msg),
+                Timestamp::new(1001, 0),
+            )
+            .unwrap();
+        ceremony
+            .submit_proof(IdentityProof::Otp("otp".into()), Timestamp::new(1002, 0))
+            .unwrap();
+        // 1000 (sig) + 2000 (otp) = 3000 -> Medium
+        assert_eq!(ceremony.calculate_risk_score(), 3000);
+
+        let (_att_pk, att_sk) = generate_keypair();
+        let attester_did = Did::new("did:exo:att-med").unwrap();
+        let attestation = ceremony
+            .finalize(Timestamp::new(1010, 0), &attester_did, &att_sk)
+            .unwrap();
+        assert_eq!(attestation.level, RiskLevel::Medium);
+    }
+
+    // Covers RiskLevel::High branch (line 145): 4000 <= score < 5000.
+    #[test]
+    fn test_finalize_risk_level_high() {
+        let did = Did::new("did:exo:level-high").unwrap();
+        let mut ceremony =
+            VerificationCeremony::new(did, "sess-high".to_string(), Timestamp::new(1000, 0));
+        ceremony
+            .submit_proof(
+                IdentityProof::WebAuthnAssertion(vec![9, 9, 9]),
+                Timestamp::new(1001, 0),
+            )
+            .unwrap();
+        // WebAuthn alone = 4000 -> High
+        assert_eq!(ceremony.calculate_risk_score(), 4000);
+
+        let (_att_pk, att_sk) = generate_keypair();
+        let attester_did = Did::new("did:exo:att-high").unwrap();
+        let attestation = ceremony
+            .finalize(Timestamp::new(1010, 0), &attester_did, &att_sk)
+            .unwrap();
+        assert_eq!(attestation.level, RiskLevel::High);
+    }
+
+    // Covers canonical_evidence() OTP arm (lines 230-234) and KycToken arm (lines 242-246)
+    // by finalizing ceremonies whose evidence hashes must change when OTP/KYC material changes.
+    #[test]
+    fn test_canonical_evidence_otp_and_kyc_branches_are_deterministic() {
+        fn run(otp: &str, kyc: &str) -> [u8; 32] {
+            let did = Did::new("did:exo:canon-otp-kyc").unwrap();
+            let mut ceremony =
+                VerificationCeremony::new(did, "sess-canon".to_string(), Timestamp::new(1000, 0));
+            ceremony
+                .submit_proof(IdentityProof::Otp(otp.to_string()), Timestamp::new(1001, 0))
+                .unwrap();
+            ceremony
+                .submit_proof(
+                    IdentityProof::KycToken(kyc.to_string()),
+                    Timestamp::new(1002, 0),
+                )
+                .unwrap();
+            let (_pk, sk) = generate_keypair();
+            let attester = Did::new("did:exo:att-canon").unwrap();
+            let att = ceremony
+                .finalize(Timestamp::new(1010, 0), &attester, &sk)
+                .unwrap();
+            att.evidence_hash
+        }
+
+        let a = run("111111", "kyc-A");
+        let b = run("111111", "kyc-A");
+        let c_diff_otp = run("222222", "kyc-A");
+        let d_diff_kyc = run("111111", "kyc-B");
+
+        // Deterministic for identical inputs.
+        assert_eq!(a, b);
+        // Different OTP must change the evidence hash -> proves OTP arm is hashed.
+        assert_ne!(a, c_diff_otp);
+        // Different KYC token must change the evidence hash -> proves KycToken arm is hashed.
+        assert_ne!(a, d_diff_kyc);
+        // Non-zero sanity (also asserted by debug_assert in finalize).
+        assert_ne!(a, [0u8; 32]);
+    }
 }

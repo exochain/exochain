@@ -212,3 +212,124 @@ impl DeliberationSession {
         Ok(result)
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use decision_forum::decision_object::DecisionClass;
+
+    use super::*;
+
+    // Covers line 45: execute_round returns RoundLimitExceeded when current_round > max_rounds.
+    #[test]
+    fn execute_round_returns_round_limit_exceeded_when_current_round_exceeds_max() {
+        let panel = Panel::default_panel(DecisionClass::Routine); // max_rounds = 1
+        let mut client = MockLlmClient::new();
+        client.default_response = "A, B".into();
+        let mut session = DeliberationSession::new("s".into(), panel, "Q?".into(), client);
+        // First round succeeds; second should be rejected because current_round (2) > max_rounds (1).
+        let first = session.execute_round().expect("first round ok");
+        assert_eq!(first.round_number, 1);
+        assert_eq!(session.current_round, 2);
+        let err = session.execute_round().expect_err("must exceed limit");
+        assert!(matches!(err, ConsensusError::RoundLimitExceeded));
+        // The failed call must not push a round or advance the counter.
+        assert_eq!(session.rounds.len(), 1);
+        assert_eq!(session.current_round, 2);
+    }
+
+    // Covers lines 130-131: is_converged returns false when last round's score is below threshold.
+    #[test]
+    fn is_converged_false_when_last_round_below_threshold() {
+        // Operational panel: threshold 7500, 3 panelists. Distinct responses => convergence 0.
+        let panel = Panel::default_panel(DecisionClass::Operational);
+        let mut responses = BTreeMap::new();
+        responses.insert("claude-3-5-sonnet".into(), "alpha".into());
+        responses.insert("gpt-4o".into(), "beta".into());
+        responses.insert("gemini-1.5-pro".into(), "gamma".into());
+        let client = MockLlmClient::with_responses(responses);
+        let mut session = DeliberationSession::new("s".into(), panel, "Q?".into(), client);
+        let round = session.execute_round().unwrap();
+        // Zero overlap across three distinct claims => 0 bps, clearly below the 7500 threshold.
+        assert_eq!(round.convergence_score_bps, 0);
+        assert!(!session.is_converged());
+    }
+
+    // Covers is_converged false branch when no rounds have been executed yet.
+    #[test]
+    fn is_converged_false_when_no_rounds() {
+        let panel = Panel::default_panel(DecisionClass::Routine);
+        let session =
+            DeliberationSession::new("s".into(), panel, "Q?".into(), MockLlmClient::new());
+        assert!(!session.is_converged());
+    }
+
+    // Covers lines 136-138: finalize returns StateError when no rounds have been executed.
+    #[test]
+    fn finalize_errors_with_state_error_when_rounds_empty() {
+        let panel = Panel::default_panel(DecisionClass::Routine);
+        let session =
+            DeliberationSession::new("s".into(), panel, "Q?".into(), MockLlmClient::new());
+        let err = session.finalize().expect_err("must fail when empty");
+        match err {
+            ConsensusError::StateError(msg) => {
+                assert!(
+                    msg.contains("Cannot finalize without any rounds"),
+                    "unexpected state error message: {msg}"
+                );
+            }
+            other => panic!("expected StateError, got {other:?}"),
+        }
+    }
+
+    // Covers line 100 true branch: devil's advocate runs on final round even when convergence is low.
+    #[test]
+    fn devil_advocate_runs_on_final_round_even_without_convergence() {
+        // Operational panel: max_rounds = 2, threshold 7500, DA = "gpt-4o".
+        let panel = Panel::default_panel(DecisionClass::Operational);
+        let mut responses = BTreeMap::new();
+        // Distinct responses so convergence < threshold in both rounds.
+        responses.insert("claude-3-5-sonnet".into(), "alpha".into());
+        responses.insert("gpt-4o".into(), "beta".into());
+        responses.insert("gemini-1.5-pro".into(), "gamma".into());
+        let client = MockLlmClient::with_responses(responses);
+        let mut session = DeliberationSession::new("s".into(), panel, "Q?".into(), client);
+
+        // Round 1: not final, convergence below threshold -> DA does NOT run.
+        let r1 = session.execute_round().unwrap();
+        assert!(r1.convergence_score_bps < 7500);
+        assert!(
+            r1.devil_advocate_challenge.is_none(),
+            "DA should not run when neither converged nor on the final round"
+        );
+
+        // Round 2: final round, still below threshold -> DA MUST run via the line-100 clause.
+        let r2 = session.execute_round().unwrap();
+        assert_eq!(r2.round_number, 2);
+        assert!(r2.convergence_score_bps < 7500);
+        assert!(
+            r2.devil_advocate_challenge.is_some(),
+            "DA must trigger on the final round even without convergence"
+        );
+
+        // And finalize must surface that DA summary on the result.
+        let result = session.finalize().unwrap();
+        assert!(result.devil_advocate_summary.is_some());
+    }
+
+    // Covers the DA-skipped branch when the panel has no devil_advocate_model configured.
+    #[test]
+    fn devil_advocate_skipped_when_panel_has_no_da_model_even_on_converged_final_round() {
+        // Routine panel: max_rounds = 1 (final), devil_advocate_model = None.
+        let panel = Panel::default_panel(DecisionClass::Routine);
+        assert!(panel.devil_advocate_model.is_none());
+        let mut client = MockLlmClient::new();
+        client.default_response = "same claim".into();
+        let mut session = DeliberationSession::new("s".into(), panel, "Q?".into(), client);
+        let round = session.execute_round().unwrap();
+        // Convergence is 10000 (all identical) and we are at the final round,
+        // but devil_advocate_model is None => the inner `if let Some(..)` is false.
+        assert_eq!(round.convergence_score_bps, 10000);
+        assert!(round.devil_advocate_challenge.is_none());
+    }
+}

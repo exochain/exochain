@@ -320,19 +320,42 @@ test('wasm_bailment_is_active', () => {
   return wasm.wasm_bailment_is_active(JSON.stringify(bailment));
 });
 
-const bailSig = wasm.wasm_sign_with_ephemeral_key(TEXT_BYTES);
+// Build the canonical bailment signing payload and sign it with a
+// fresh ephemeral bailee keypair. Since GAP-012 landed (PR #109),
+// `wasm_accept_bailment` cryptographically verifies this signature;
+// arbitrary bytes no longer flip the bailment Active.
+const bailPayload = bailment
+  ? wasm.wasm_bailment_signing_payload(JSON.stringify(bailment))
+  : null;
+const bailSig = bailPayload
+  ? wasm.wasm_sign_with_ephemeral_key(bailPayload)
+  : null;
+
+// `bailSig.public_key` is hex-encoded (see wasm_sign_with_ephemeral_key
+// in core_bindings.rs). `exo_core::PublicKey` deserializes from a byte
+// array of length 32. Convert hex → number array for the accept call.
+const bailPubKeyBytes = bailSig
+  ? Array.from(Buffer.from(bailSig.public_key, 'hex'))
+  : null;
+
+test('wasm_bailment_signing_payload', () => {
+  if (!bailment) throw new Error('skipped -- no bailment from setup');
+  return wasm.wasm_bailment_signing_payload(JSON.stringify(bailment));
+});
 
 test('wasm_accept_bailment', () => {
-  if (!bailment) throw new Error('skipped -- no bailment from setup');
+  if (!bailment || !bailSig) throw new Error('skipped -- no bailment from setup');
   return wasm.wasm_accept_bailment(
     JSON.stringify(bailment),
+    JSON.stringify(bailPubKeyBytes),
     JSON.stringify(bailSig.signature)
   );
 });
 
 const activeBailment = setup(() =>
-  bailment && wasm.wasm_accept_bailment(
+  (bailment && bailSig) && wasm.wasm_accept_bailment(
     JSON.stringify(bailment),
+    JSON.stringify(bailPubKeyBytes),
     JSON.stringify(bailSig.signature)
   ));
 

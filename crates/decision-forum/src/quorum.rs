@@ -131,11 +131,10 @@ pub fn check_quorum(
         });
     }
 
-    let approve_pct = if total_votes > 0 {
-        (approve_count * 100) / total_votes
-    } else {
-        0
-    };
+    let approve_pct = approve_count
+        .checked_mul(100)
+        .and_then(|n| n.checked_div(total_votes))
+        .unwrap_or(0);
 
     if approve_pct < req.min_approve_pct {
         return Ok(QuorumCheckResult::NotMet {

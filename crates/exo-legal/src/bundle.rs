@@ -1021,4 +1021,220 @@ mod tests {
         // Suppress unused variable warning
         let _ = bundle_without;
     }
+
+    // Covers SubjectType::as_tag for every non-Decision variant.
+    #[test]
+    fn test_subject_type_as_tag_all_variants() {
+        assert_eq!(SubjectType::Decision.as_tag(), "Decision");
+        assert_eq!(SubjectType::Transaction.as_tag(), "Transaction");
+        assert_eq!(SubjectType::Delegation.as_tag(), "Delegation");
+        assert_eq!(SubjectType::Identity.as_tag(), "Identity");
+        assert_eq!(SubjectType::Consent.as_tag(), "Consent");
+        assert_eq!(SubjectType::Emergency.as_tag(), "Emergency");
+
+        // Each tag must also influence the bundle hash (no two variants collide).
+        let mk = |t: SubjectType| {
+            let mut b = EvidenceBundle {
+                id: "fixed".into(),
+                version: BUNDLE_VERSION,
+                created_at: ts(5000),
+                subject: BundleSubject {
+                    subject_type: t,
+                    subject_id: "X".into(),
+                    title: "T".into(),
+                    description: "D".into(),
+                },
+                events: vec![make_event(0, vec![])],
+                evidence_items: vec![],
+                consent_records: vec![],
+                contract_summary: None,
+                certification: None,
+                dag_anchor: make_anchor(),
+                verification: VerificationManifest {
+                    format_version: BUNDLE_VERSION,
+                    hash_algorithm: "BLAKE3".into(),
+                    verification_steps: vec![],
+                },
+                bundle_hash: Hash256::ZERO,
+                signatures: vec![],
+            };
+            b.bundle_hash = compute_bundle_hash(&b);
+            b.bundle_hash
+        };
+        let all = [
+            mk(SubjectType::Decision),
+            mk(SubjectType::Transaction),
+            mk(SubjectType::Delegation),
+            mk(SubjectType::Identity),
+            mk(SubjectType::Consent),
+            mk(SubjectType::Emergency),
+        ];
+        for i in 0..all.len() {
+            for j in (i + 1)..all.len() {
+                assert_ne!(all[i], all[j], "subject-type hashes must differ");
+            }
+        }
+    }
+
+    // Covers assemble() rejecting an empty events vector.
+    #[test]
+    fn test_assemble_rejects_empty_events() {
+        let err = assemble(
+            make_subject(),
+            vec![],
+            vec![make_evidence_item()],
+            vec![],
+            None,
+            None,
+            make_anchor(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("at least one event"));
+    }
+
+    // Covers validate_causal_chain rejecting a non-empty genesis parent list.
+    #[test]
+    fn test_assemble_rejects_genesis_with_parents() {
+        let bad_genesis = BundleEvent {
+            parent_hashes: vec![Hash256::digest(b"phantom-parent")],
+            ..make_event(0, vec![])
+        };
+        let err = assemble(
+            make_subject(),
+            vec![bad_genesis],
+            vec![make_evidence_item()],
+            vec![],
+            None,
+            None,
+            make_anchor(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("genesis"));
+    }
+
+    // Covers the signature-check closure inside verify() for a non-empty, valid signature.
+    #[test]
+    fn test_verify_reports_valid_signatures() {
+        let mut bundle = assemble_minimal();
+        sign(
+            &mut bundle,
+            &did("officer"),
+            "organization",
+            Signature::from_bytes([0xab; 64]),
+        )
+        .unwrap();
+        let result = verify(&bundle).unwrap();
+        assert_eq!(result.signatures_valid.len(), 1);
+        let check = &result.signatures_valid[0];
+        assert_eq!(check.signer, did("officer"));
+        assert_eq!(check.role, "organization");
+        assert!(check.valid);
+        assert!(result.overall);
+    }
+
+    // Covers the signature-check closure flagging an empty (all-zero) signature as invalid.
+    #[test]
+    fn test_verify_reports_invalid_empty_signature() {
+        let mut bundle = assemble_minimal();
+        bundle.signatures.push(BundleSignature {
+            signer_did: did("officer"),
+            signer_role: "organization".into(),
+            signature: Signature::from_bytes([0u8; 64]),
+            signed_at: ts(3000),
+        });
+        let result = verify(&bundle).unwrap();
+        assert_eq!(result.signatures_valid.len(), 1);
+        assert!(!result.signatures_valid[0].valid);
+        // overall must be false when any signature is invalid
+        assert!(!result.overall);
+    }
+
+    // Covers the signatures-present branch of render_markdown_summary.
+    #[test]
+    fn test_render_markdown_includes_signatures_section() {
+        let mut bundle = assemble_minimal();
+        sign(
+            &mut bundle,
+            &did("officer"),
+            "organization",
+            Signature::from_bytes([0xdd; 64]),
+        )
+        .unwrap();
+        sign(
+            &mut bundle,
+            &did("counsel"),
+            "legal",
+            Signature::from_bytes([0xee; 64]),
+        )
+        .unwrap();
+        let md = render_markdown_summary(&bundle);
+        assert!(md.contains("## Signatures"));
+        assert!(md.contains("organization"));
+        assert!(md.contains("legal"));
+        assert!(md.contains("did:exo:officer"));
+        assert!(md.contains("did:exo:counsel"));
+    }
+
+    // Covers sign() rejecting an empty role string.
+    #[test]
+    fn test_sign_rejects_empty_role() {
+        let mut bundle = assemble_minimal();
+        let err = sign(
+            &mut bundle,
+            &did("officer"),
+            "",
+            Signature::from_bytes([0xff; 64]),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("role"));
+        assert!(bundle.signatures.is_empty());
+    }
+
+    // Covers CertSnapshot::from_cert field-by-field mirroring from a live Cert902_11.
+    #[test]
+    fn test_cert_snapshot_from_cert_mirrors_fields() {
+        let ev = make_evidence_item();
+        let cert =
+            generate_902_11_cert(&ev, "EXOCHAIN decision.forum v1.0", 1_700_000_001_000).unwrap();
+        let snap = CertSnapshot::from_cert(&cert);
+        assert_eq!(snap.record_hash, cert.record_hash);
+        assert_eq!(snap.custody_chain_digest, cert.custody_chain_digest);
+        assert_eq!(snap.system_description, cert.system_description);
+        assert_eq!(snap.declarant_placeholder, cert.declarant_placeholder);
+        assert_eq!(snap.generated_at_ms, cert.generated_at_ms);
+        assert_eq!(snap.cert_hash, cert.cert_hash);
+        assert_eq!(snap.filing_disclaimer, cert.filing_disclaimer);
+    }
+
+    // Covers the certification-present arm of compute_bundle_hash (tag byte 0x01 + cert_hash).
+    #[test]
+    fn test_bundle_hash_differs_with_and_without_cert() {
+        let ev = make_evidence_item();
+        let cert =
+            generate_902_11_cert(&ev, "EXOCHAIN decision.forum v1.0", 1_700_000_001_000).unwrap();
+        let mk = |c: Option<Cert902_11>| {
+            let mut b = EvidenceBundle {
+                id: "fixed".into(),
+                version: BUNDLE_VERSION,
+                created_at: ts(5000),
+                subject: make_subject(),
+                events: vec![make_event(0, vec![])],
+                evidence_items: vec![make_evidence_item()],
+                consent_records: vec![],
+                contract_summary: None,
+                certification: c.as_ref().map(CertSnapshot::from_cert),
+                dag_anchor: make_anchor(),
+                verification: VerificationManifest {
+                    format_version: BUNDLE_VERSION,
+                    hash_algorithm: "BLAKE3".into(),
+                    verification_steps: vec![],
+                },
+                bundle_hash: Hash256::ZERO,
+                signatures: vec![],
+            };
+            b.bundle_hash = compute_bundle_hash(&b);
+            b.bundle_hash
+        };
+        assert_ne!(mk(Some(cert)), mk(None));
+    }
 }

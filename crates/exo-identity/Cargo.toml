@@ -28,6 +28,9 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# Used by tests to deserialize malformed-input fixtures (e.g. empty Did)
+# that `Did::new()` rejects but could arrive from network/storage.
+serde_json = { workspace = true }
 
 [package.metadata.cargo-machete]
 # Pre-existing deps used in wasm/no_std feature paths.

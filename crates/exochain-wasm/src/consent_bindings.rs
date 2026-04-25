@@ -53,6 +53,22 @@ pub fn wasm_accept_bailment(
     to_js_value(&bailment)
 }
 
+/// Compute the canonical signing payload for a bailment.
+///
+/// Returns the CBOR bytes that the bailee must sign for
+/// [`wasm_accept_bailment`] to succeed. Mirrors
+/// [`exo_consent::bailment::signing_payload`].
+///
+/// # Errors
+/// Returns the underlying consent error serialized to a string if the
+/// bailment cannot be encoded.
+#[wasm_bindgen]
+pub fn wasm_bailment_signing_payload(bailment_json: &str) -> Result<Vec<u8>, JsValue> {
+    let bailment: exo_consent::Bailment = from_json_str(bailment_json)?;
+    exo_consent::bailment::signing_payload(&bailment)
+        .map_err(|e| JsValue::from_str(&format!("Signing payload error: {e}")))
+}
+
 /// Terminate an active bailment.
 ///
 /// The `actor_did` must be either the bailor or bailee.

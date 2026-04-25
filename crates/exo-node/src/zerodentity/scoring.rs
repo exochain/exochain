@@ -318,18 +318,21 @@ fn score_temporal_stability(claims: &[IdentityClaim], now_ms: u64) -> u32 {
         score += contrib.min(3500);
     }
 
-    // Verification freshness.
+    // Verification freshness. `checked_div` handles total_verified == 0
+    // without an outer `if`, satisfying clippy::manual_checked_ops.
     let verified: Vec<&IdentityClaim> = claims
         .iter()
         .filter(|c| c.status == ClaimStatus::Verified)
         .collect();
     let total_verified = verified.len() as u32;
-    if total_verified > 0 {
-        let fresh = verified
-            .iter()
-            .filter(|c| c.expires_ms.is_none_or(|exp| exp > now_ms))
-            .count() as u32;
-        let freshness_bp = fresh * 10_000 / total_verified;
+    let fresh = verified
+        .iter()
+        .filter(|c| c.expires_ms.is_none_or(|exp| exp > now_ms))
+        .count() as u32;
+    if let Some(freshness_bp) = fresh
+        .checked_mul(10_000)
+        .and_then(|n| n.checked_div(total_verified))
+    {
         score += freshness_bp * 30 / 100;
     }
 

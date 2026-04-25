@@ -1202,4 +1202,243 @@ mod tests {
         let res = commit_verified(&mut state, cert, &resolver);
         assert!(matches!(res, Err(DagError::InvalidSignature(_))));
     }
+
+    // -----------------------------------------------------------------------
+    // Coverage completion tests — exercise remaining error branches.
+    // -----------------------------------------------------------------------
+
+    // Covers Vote::verify_signature line 137: non-empty, all-zero (non-Ed25519) sig.
+    #[test]
+    fn vote_verify_signature_rejects_all_zero_postquantum_bytes() {
+        let (pk_a, _sk_a) = crypto::generate_keypair();
+        let v = Vote {
+            voter: Did::new("did:exo:alice").unwrap(),
+            round: 0,
+            node_hash: Hash256::ZERO,
+            // PostQuantum variant -> is_empty() == false (vec non-empty),
+            // but as_bytes() returns the static ZEROS buffer, exercising
+            // the all-zero sentinel guard.
+            signature: Signature::PostQuantum(vec![1u8; 64]),
+        };
+        assert!(!v.verify_signature(&pk_a));
+    }
+
+    // Covers Proposal::verify_signature line 170: empty-signature rejection.
+    #[test]
+    fn proposal_verify_signature_rejects_empty() {
+        let (pk_a, _sk_a) = crypto::generate_keypair();
+        let p = Proposal {
+            proposer: Did::new("did:exo:alice").unwrap(),
+            round: 0,
+            node_hash: Hash256::ZERO,
+        };
+        assert!(!p.verify_signature(&pk_a, &Signature::empty()));
+    }
+
+    // Covers Proposal::verify_signature line 174: non-empty, all-zero sentinel.
+    #[test]
+    fn proposal_verify_signature_rejects_all_zero_postquantum_bytes() {
+        let (pk_a, _sk_a) = crypto::generate_keypair();
+        let p = Proposal {
+            proposer: Did::new("did:exo:alice").unwrap(),
+            round: 0,
+            node_hash: Hash256::ZERO,
+        };
+        // Same trick as the vote test: non-empty PostQuantum whose
+        // as_bytes() returns the all-zero static buffer.
+        let sig = Signature::PostQuantum(vec![1u8; 64]);
+        assert!(!p.verify_signature(&pk_a, &sig));
+    }
+
+    // Covers Proposal::verify_signature pass-through to crypto::verify with a
+    // wrong key (neither empty nor zero sentinel path) — asserts rejection.
+    #[test]
+    fn proposal_verify_signature_rejects_wrong_key() {
+        let (pk_a, sk_a) = crypto::generate_keypair();
+        let (pk_b, _sk_b) = crypto::generate_keypair();
+        let p = Proposal {
+            proposer: Did::new("did:exo:alice").unwrap(),
+            round: 0,
+            node_hash: Hash256::ZERO,
+        };
+        let payload = p.signing_payload().unwrap();
+        let sig = crypto::sign(&payload, &sk_a);
+        // Signed by A, verified against B -> must fail.
+        assert!(!p.verify_signature(&pk_b, &sig));
+        // Sanity: verifies under the right key.
+        assert!(p.verify_signature(&pk_a, &sig));
+    }
+
+    // Covers check_commit line 317: quorum==0 short-circuit when validator set is empty.
+    #[test]
+    fn check_commit_returns_none_when_validator_set_empty() {
+        let config = ConsensusConfig::new(BTreeSet::new(), 1000);
+        let mut state = ConsensusState::new(config);
+        // Plant a "vote" for a hash so pending is non-empty; quorum==0
+        // must still short-circuit to None (no commit is ever possible
+        // with zero validators).
+        let h = Hash256::ZERO;
+        state
+            .pending
+            .entry(0)
+            .or_default()
+            .entry(h)
+            .or_default()
+            .push(Vote {
+                voter: Did::new("did:exo:ghost").unwrap(),
+                round: 0,
+                node_hash: h,
+                signature: Signature::from_bytes([1u8; 64]),
+            });
+        assert!(check_commit(&state, &h).is_none());
+    }
+
+    // Covers check_commit line 329: pending map has the round but not the node_hash.
+    #[test]
+    fn check_commit_returns_none_for_unknown_hash_in_existing_round() {
+        let validators = make_validators(4);
+        let config = ConsensusConfig::new(validators.clone(), 1000);
+        let mut state = ConsensusState::new(config);
+        let (_dag, node) = setup_dag_with_node();
+
+        let v: Vec<Did> = validators.iter().cloned().collect();
+        // Populate pending for round 0 under `node.hash`.
+        propose(&mut state, &node, &v[0]).unwrap();
+
+        // Query a hash that has no pending entry -> inner get() is None,
+        // falls through to the end-of-function None.
+        let phantom = Hash256::from_bytes([0xAAu8; 32]);
+        assert!(check_commit(&state, &phantom).is_none());
+        // Sanity: the real hash is also not committable (no votes yet)
+        // but reaches the inner branch.
+        assert!(check_commit(&state, &node.hash).is_none());
+    }
+
+    // Covers propose_verified line 375: proposer not in validator set.
+    #[test]
+    fn propose_verified_rejects_non_validator() {
+        let (pk_a, sk_a) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let outsider = Did::new("did:exo:outsider").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        // Sign a well-formed proposal by the outsider — membership must
+        // be rejected *before* signature verification is even attempted.
+        let shape = Proposal {
+            proposer: outsider.clone(),
+            round: 0,
+            node_hash: n.hash,
+        };
+        let sig = crypto::sign(&shape.signing_payload().unwrap(), &sk_a);
+        let resolver = |_d: &Did| Some(pk_a);
+        let res = propose_verified(&mut state, &n, &outsider, &sig, &resolver);
+        assert!(matches!(res, Err(DagError::NotAValidator(_))));
+        // State must remain empty.
+        assert!(state.pending.is_empty());
+    }
+
+    // Covers propose_verified line 385: resolver returns None for the proposer.
+    #[test]
+    fn propose_verified_rejects_when_resolver_returns_none() {
+        let a = Did::new("did:exo:alice").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        let sig = Signature::from_bytes([1u8; 64]);
+        let null_resolver = |_d: &Did| None;
+        let res = propose_verified(&mut state, &n, &a, &sig, &null_resolver);
+        assert!(matches!(res, Err(DagError::InvalidSignature(_))));
+        assert!(state.pending.is_empty());
+    }
+
+    // Covers vote_verified line 418: voter not in validator set.
+    #[test]
+    fn vote_verified_rejects_non_validator() {
+        let (pk_a, sk_out) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let outsider = Did::new("did:exo:outsider").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        let v = signed_vote(&outsider, 0, n.hash, &sk_out);
+        let resolver = |_d: &Did| Some(pk_a);
+        let res = vote_verified(&mut state, v, &resolver);
+        assert!(matches!(res, Err(DagError::NotAValidator(_))));
+        assert!(state.pending.get(&0).is_none_or(|m| m.is_empty()));
+    }
+
+    // Covers vote_verified lines 437-440: duplicate vote by same voter in same round.
+    #[test]
+    fn vote_verified_rejects_duplicate_vote_same_round() {
+        let (pk_a, sk_a) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n1, _, _) = make_node("x");
+        let (n2, _, _) = make_node("y");
+        let resolver = |_d: &Did| Some(pk_a);
+        // First vote succeeds.
+        let v1 = signed_vote(&a, 0, n1.hash, &sk_a);
+        assert!(vote_verified(&mut state, v1, &resolver).is_ok());
+        // Second signed vote in the same round — even for a different
+        // node — must be rejected as a duplicate.
+        let v2 = signed_vote(&a, 0, n2.hash, &sk_a);
+        let res = vote_verified(&mut state, v2, &resolver);
+        assert!(matches!(res, Err(DagError::DuplicateVote { .. })));
+        // Only the first vote is recorded.
+        let voters = state.voted_in_round.get(&0).expect("round tracked");
+        assert_eq!(voters.len(), 1);
+    }
+
+    // Covers commit_verified line 478: a vote in the cert is not from a validator.
+    #[test]
+    fn commit_verified_rejects_vote_from_non_validator() {
+        let (pk_a, sk_a) = crypto::generate_keypair();
+        let (_, sk_out) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let outsider = Did::new("did:exo:outsider").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        let good = signed_vote(&a, 0, n.hash, &sk_a);
+        let bad = signed_vote(&outsider, 0, n.hash, &sk_out);
+        let cert = CommitCertificate {
+            node_hash: n.hash,
+            votes: vec![good, bad],
+            round: 0,
+        };
+        let resolver = |_d: &Did| Some(pk_a);
+        let res = commit_verified(&mut state, cert, &resolver);
+        assert!(matches!(res, Err(DagError::NotAValidator(_))));
+        // Nothing was committed.
+        assert!(state.committed.is_empty());
+        assert!(state.certificates.is_empty());
+    }
+
+    // Covers commit_verified line 481: resolver returns None for a voter in the cert.
+    #[test]
+    fn commit_verified_rejects_when_resolver_returns_none_for_voter() {
+        let (_, sk_a) = crypto::generate_keypair();
+        let a = Did::new("did:exo:alice").unwrap();
+        let mut vs = BTreeSet::new();
+        vs.insert(a.clone());
+        let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
+        let (n, _, _) = make_node("x");
+        let v = signed_vote(&a, 0, n.hash, &sk_a);
+        let cert = CommitCertificate {
+            node_hash: n.hash,
+            votes: vec![v],
+            round: 0,
+        };
+        let null_resolver = |_d: &Did| None;
+        let res = commit_verified(&mut state, cert, &null_resolver);
+        assert!(matches!(res, Err(DagError::InvalidSignature(_))));
+        assert!(state.committed.is_empty());
+    }
 }

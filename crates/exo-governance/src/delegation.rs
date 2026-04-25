@@ -158,3 +158,461 @@ impl Delegation {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use exo_core::types::{Signature, Timestamp};
+
+    use super::*;
+
+    fn test_scope(actions: Vec<AuthorizedAction>, classes: Vec<DecisionClass>) -> DelegationScope {
+        DelegationScope {
+            decision_classes: classes,
+            monetary_cap: None,
+            resource_ids: vec![],
+            actions,
+        }
+    }
+
+    fn test_signature() -> GovernanceSignature {
+        GovernanceSignature {
+            signer: Did::new("did:exo:signer").unwrap(),
+            signer_type: SignerType::Human,
+            signature: Signature::from_bytes([0u8; 64]),
+            key_version: 1,
+            timestamp: Timestamp::new(1_000, 0),
+        }
+    }
+
+    fn test_delegation(
+        scope: DelegationScope,
+        expires_at: u64,
+        sub_delegation_allowed: bool,
+    ) -> Delegation {
+        Delegation {
+            id: Hash256::from_bytes([1u8; 32]),
+            tenant_id: "tenant-1".to_string(),
+            delegator: Did::new("did:exo:alice").unwrap(),
+            delegatee: Did::new("did:exo:bob").unwrap(),
+            scope,
+            sub_delegation_allowed,
+            sub_delegation_scope_cap: None,
+            created_at: Timestamp::new(1_000, 0),
+            expires_at,
+            revoked_at: None,
+            constitution_version: SemVer {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            },
+            signature: test_signature(),
+            parent_delegation: None,
+        }
+    }
+
+    // ---- DelegationScope::covers -------------------------------------
+
+    #[test]
+    fn covers_returns_true_when_both_action_and_class_present() {
+        let scope = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational],
+        );
+        assert!(scope.covers(&AuthorizedAction::CastVote, &DecisionClass::Operational));
+    }
+
+    #[test]
+    fn covers_returns_false_when_action_missing() {
+        let scope = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational],
+        );
+        assert!(!scope.covers(
+            &AuthorizedAction::CreateDecision,
+            &DecisionClass::Operational
+        ));
+    }
+
+    #[test]
+    fn covers_returns_false_when_class_missing() {
+        let scope = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational],
+        );
+        assert!(!scope.covers(&AuthorizedAction::CastVote, &DecisionClass::Strategic));
+    }
+
+    // ---- DelegationScope::is_subset_of -------------------------------
+
+    #[test]
+    fn is_subset_of_true_when_actions_and_classes_all_in_parent() {
+        let parent = test_scope(
+            vec![AuthorizedAction::CastVote, AuthorizedAction::CreateDecision],
+            vec![DecisionClass::Operational, DecisionClass::Strategic],
+        );
+        let child = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational],
+        );
+        assert!(child.is_subset_of(&parent));
+    }
+
+    #[test]
+    fn is_subset_of_false_when_child_has_extra_action() {
+        let parent = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational],
+        );
+        let child = test_scope(
+            vec![
+                AuthorizedAction::CastVote,
+                AuthorizedAction::GrantDelegation,
+            ],
+            vec![DecisionClass::Operational],
+        );
+        assert!(!child.is_subset_of(&parent));
+    }
+
+    #[test]
+    fn is_subset_of_false_when_child_has_extra_class() {
+        let parent = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational],
+        );
+        let child = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational, DecisionClass::Strategic],
+        );
+        assert!(!child.is_subset_of(&parent));
+    }
+
+    #[test]
+    fn is_subset_of_monetary_child_leq_parent_cap() {
+        let parent = DelegationScope {
+            monetary_cap: Some(10_000),
+            ..test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            )
+        };
+        let child = DelegationScope {
+            monetary_cap: Some(5_000),
+            ..test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            )
+        };
+        assert!(child.is_subset_of(&parent));
+    }
+
+    #[test]
+    fn is_subset_of_monetary_child_exceeds_parent_cap() {
+        let parent = DelegationScope {
+            monetary_cap: Some(1_000),
+            ..test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            )
+        };
+        let child = DelegationScope {
+            monetary_cap: Some(5_000),
+            ..test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            )
+        };
+        assert!(!child.is_subset_of(&parent));
+    }
+
+    #[test]
+    fn is_subset_of_monetary_parent_uncapped_child_capped_ok() {
+        let parent = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational],
+        );
+        let child = DelegationScope {
+            monetary_cap: Some(5_000),
+            ..test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            )
+        };
+        assert!(child.is_subset_of(&parent));
+    }
+
+    #[test]
+    fn is_subset_of_monetary_parent_capped_child_uncapped_rejected() {
+        let parent = DelegationScope {
+            monetary_cap: Some(1_000),
+            ..test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            )
+        };
+        let child = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational],
+        );
+        assert!(!child.is_subset_of(&parent));
+    }
+
+    // ---- Delegation::is_active ---------------------------------------
+
+    #[test]
+    fn is_active_true_when_unrevoked_and_not_expired() {
+        let d = test_delegation(
+            test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            ),
+            10_000,
+            false,
+        );
+        assert!(d.is_active(5_000));
+    }
+
+    #[test]
+    fn is_active_false_when_expired() {
+        let d = test_delegation(
+            test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            ),
+            10_000,
+            false,
+        );
+        assert!(!d.is_active(10_000)); // equal = expired (TNC-05 strict)
+        assert!(!d.is_active(15_000));
+    }
+
+    #[test]
+    fn is_active_false_when_revoked() {
+        let mut d = test_delegation(
+            test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            ),
+            10_000,
+            false,
+        );
+        d.revoke(5_000);
+        assert!(!d.is_active(6_000));
+    }
+
+    // ---- Delegation::revoke -------------------------------------------
+
+    #[test]
+    fn revoke_sets_timestamp() {
+        let mut d = test_delegation(
+            test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            ),
+            10_000,
+            false,
+        );
+        assert!(d.revoked_at.is_none());
+        d.revoke(3_000);
+        assert_eq!(d.revoked_at, Some(3_000));
+    }
+
+    // ---- Delegation::authorizes --------------------------------------
+
+    #[test]
+    fn authorizes_ok_when_active_and_scope_covers() {
+        let d = test_delegation(
+            test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            ),
+            10_000,
+            false,
+        );
+        assert!(
+            d.authorizes(
+                &AuthorizedAction::CastVote,
+                &DecisionClass::Operational,
+                5_000
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn authorizes_revoked_error_when_revoked() {
+        let mut d = test_delegation(
+            test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            ),
+            10_000,
+            false,
+        );
+        d.revoke(2_000);
+        let err = d
+            .authorizes(
+                &AuthorizedAction::CastVote,
+                &DecisionClass::Operational,
+                3_000,
+            )
+            .unwrap_err();
+        assert!(matches!(err, GovernanceError::DelegationRevoked(_)));
+    }
+
+    #[test]
+    fn authorizes_expired_error_when_expired() {
+        let d = test_delegation(
+            test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            ),
+            10_000,
+            false,
+        );
+        let err = d
+            .authorizes(
+                &AuthorizedAction::CastVote,
+                &DecisionClass::Operational,
+                20_000,
+            )
+            .unwrap_err();
+        assert!(matches!(err, GovernanceError::DelegationExpired(_)));
+    }
+
+    #[test]
+    fn authorizes_chain_broken_when_scope_does_not_cover() {
+        let d = test_delegation(
+            test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            ),
+            10_000,
+            false,
+        );
+        let err = d
+            .authorizes(
+                &AuthorizedAction::GrantDelegation,
+                &DecisionClass::Operational,
+                5_000,
+            )
+            .unwrap_err();
+        assert!(matches!(err, GovernanceError::AuthorityChainBroken { .. }));
+    }
+
+    // ---- Delegation::validate_sub_delegation -------------------------
+
+    #[test]
+    fn validate_sub_delegation_ok_when_allowed_and_within_scope() {
+        let parent_scope = test_scope(
+            vec![AuthorizedAction::CastVote, AuthorizedAction::CreateDecision],
+            vec![DecisionClass::Operational, DecisionClass::Strategic],
+        );
+        let d = test_delegation(parent_scope, 10_000, true);
+        let sub_scope = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational],
+        );
+        assert!(d.validate_sub_delegation(&sub_scope, 5_000).is_ok());
+    }
+
+    #[test]
+    fn validate_sub_delegation_error_when_not_permitted() {
+        let d = test_delegation(
+            test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            ),
+            10_000,
+            false, // sub-delegation NOT allowed
+        );
+        let sub_scope = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational],
+        );
+        let err = d.validate_sub_delegation(&sub_scope, 5_000).unwrap_err();
+        assert!(matches!(err, GovernanceError::SubDelegationNotPermitted(_)));
+    }
+
+    #[test]
+    fn validate_sub_delegation_error_when_exceeds_scope() {
+        let d = test_delegation(
+            test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            ),
+            10_000,
+            true,
+        );
+        let sub_scope = test_scope(
+            vec![
+                AuthorizedAction::CastVote,
+                AuthorizedAction::GrantDelegation,
+            ],
+            vec![DecisionClass::Operational],
+        );
+        let err = d.validate_sub_delegation(&sub_scope, 5_000).unwrap_err();
+        assert!(matches!(err, GovernanceError::SubDelegationNotPermitted(_)));
+    }
+
+    #[test]
+    fn validate_sub_delegation_error_when_revoked() {
+        let mut d = test_delegation(
+            test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            ),
+            10_000,
+            true,
+        );
+        d.revoke(2_000);
+        let sub_scope = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational],
+        );
+        let err = d.validate_sub_delegation(&sub_scope, 3_000).unwrap_err();
+        assert!(matches!(err, GovernanceError::DelegationRevoked(_)));
+    }
+
+    #[test]
+    fn validate_sub_delegation_error_when_expired() {
+        let d = test_delegation(
+            test_scope(
+                vec![AuthorizedAction::CastVote],
+                vec![DecisionClass::Operational],
+            ),
+            10_000,
+            true,
+        );
+        let sub_scope = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational],
+        );
+        let err = d.validate_sub_delegation(&sub_scope, 20_000).unwrap_err();
+        assert!(matches!(err, GovernanceError::DelegationExpired(_)));
+    }
+
+    #[test]
+    fn validate_sub_delegation_uses_explicit_cap_when_set() {
+        // Parent scope is broad; explicit cap is narrower.
+        let parent_scope = test_scope(
+            vec![AuthorizedAction::CastVote, AuthorizedAction::CreateDecision],
+            vec![DecisionClass::Operational, DecisionClass::Strategic],
+        );
+        let narrower_cap = test_scope(
+            vec![AuthorizedAction::CastVote],
+            vec![DecisionClass::Operational],
+        );
+        let d = Delegation {
+            sub_delegation_scope_cap: Some(narrower_cap),
+            ..test_delegation(parent_scope, 10_000, true)
+        };
+        // Sub-delegation matches parent but exceeds cap — must be rejected.
+        let sub_scope = test_scope(
+            vec![AuthorizedAction::CreateDecision],
+            vec![DecisionClass::Operational],
+        );
+        let err = d.validate_sub_delegation(&sub_scope, 5_000).unwrap_err();
+        assert!(matches!(err, GovernanceError::SubDelegationNotPermitted(_)));
+    }
+}

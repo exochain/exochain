@@ -418,10 +418,11 @@ async fn handle_wire_message(
             handle_commit(state, store, reactor_tx, msg).await;
         }
         WireMessage::GovernanceEvent(msg) => {
-            if reactor_tx
+            // Collapsed to satisfy clippy::collapsible_if. Cheaper to
+            // read than the nested `if` form.
+            if let Err(_send_err) = reactor_tx
                 .send(ReactorEvent::GovernanceEventReceived { event: msg })
                 .await
-                .is_err()
             {
                 tracing::warn!("Reactor event receiver dropped (GovernanceEvent)");
             }
