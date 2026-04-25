@@ -1,12 +1,13 @@
 //! Identity MCP tools — DID creation, resolution, risk assessment, signature
 //! verification, and agent passport retrieval.
 
-use exo_core::crypto;
-use exo_core::{Did, Hash256, Timestamp};
+use exo_core::{Did, Hash256, Timestamp, crypto};
 use serde_json::{Value, json};
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ToolDefinition, ToolResult};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ToolDefinition, ToolResult},
+};
 
 // ---------------------------------------------------------------------------
 // exochain_create_identity
@@ -406,7 +407,7 @@ mod tests {
     fn execute_create_identity_returns_did() {
         let result = execute_create_identity(&json!({"label": "test-id"}), &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         let did = v["did"].as_str().expect("did field");
         assert!(did.starts_with("did:exo:"));
         assert_eq!(v["label"], "test-id");
@@ -423,7 +424,7 @@ mod tests {
     fn execute_create_identity_default_label() {
         let result = execute_create_identity(&json!({}), &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["label"], "default");
     }
 
@@ -441,7 +442,7 @@ mod tests {
         let result =
             execute_resolve_identity(&json!({"did": "did:exo:alice"}), &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid_format"], true);
         assert_eq!(v["resolution_status"], "format_valid");
     }
@@ -450,7 +451,7 @@ mod tests {
     fn execute_resolve_identity_invalid_did() {
         let result = execute_resolve_identity(&json!({"did": "not-a-did"}), &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid_format"], false);
         assert_eq!(v["resolution_status"], "invalid_format");
     }
@@ -474,7 +475,7 @@ mod tests {
     fn execute_assess_risk_no_evidence() {
         let result = execute_assess_risk(&json!({"did": "did:exo:target"}), &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["risk_score"], 750);
         assert_eq!(v["risk_level"], "high");
         assert_eq!(v["factors"].as_array().expect("factors").len(), 0);
@@ -487,7 +488,7 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         // 750 - 3*150 = 300
         assert_eq!(v["risk_score"], 300);
         assert_eq!(v["risk_level"], "medium");
@@ -522,7 +523,7 @@ mod tests {
         });
         let result = execute_verify_signature(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid"], true);
         assert_eq!(v["algorithm"], "Ed25519");
     }
@@ -537,7 +538,7 @@ mod tests {
         });
         let result = execute_verify_signature(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid"], false);
     }
 
@@ -567,7 +568,7 @@ mod tests {
     fn execute_get_passport_success() {
         let result = execute_get_passport(&json!({"did": "did:exo:alice"}), &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["did"], "did:exo:alice");
         assert_eq!(v["known"], false);
         assert!(v.get("identity").is_some());

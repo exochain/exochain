@@ -1,30 +1,32 @@
-pub mod error;
-pub mod panel;
-pub mod commitment;
-pub mod scoring;
-pub mod round;
 pub mod advocate;
-pub mod report;
-pub mod record;
+pub mod commitment;
+pub mod error;
 pub mod mock_client;
+pub mod panel;
+pub mod record;
+pub mod report;
+pub mod round;
+pub mod scoring;
 pub mod session;
 
-pub use error::{ConsensusError, Result};
-pub use panel::{Panel, PanelModel, ModelProvider, ModelRole};
 pub use commitment::{commit, verify_commitment};
-pub use scoring::{calculate_convergence, calculate_panel_confidence, PanelConfidenceInputs};
-pub use round::{DeliberationRound, ModelPosition};
-pub use report::MinorityReport;
-pub use record::DeliberationResult;
+pub use error::{ConsensusError, Result};
 pub use mock_client::MockLlmClient;
+pub use panel::{ModelProvider, ModelRole, Panel, PanelModel};
+pub use record::DeliberationResult;
+pub use report::MinorityReport;
+pub use round::{DeliberationRound, ModelPosition};
+pub use scoring::{PanelConfidenceInputs, calculate_convergence, calculate_panel_confidence};
 pub use session::DeliberationSession;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::BTreeMap;
+
     use decision_forum::decision_object::DecisionClass;
     use exo_core::types::Timestamp;
+
+    use super::*;
 
     // Helper functions for tests
     fn make_mock_client() -> MockLlmClient {
@@ -223,7 +225,8 @@ mod tests {
         let mut client = make_mock_client();
         client.default_response = "A, B, C".into();
 
-        let mut session = DeliberationSession::new("test".into(), panel, "What is X?".into(), client);
+        let mut session =
+            DeliberationSession::new("test".into(), panel, "What is X?".into(), client);
         let round = session.execute_round().unwrap();
         assert_eq!(round.round_number, 1);
         assert_eq!(round.positions.len(), 3);
@@ -239,9 +242,10 @@ mod tests {
         let mut client = make_mock_client();
         client.default_response = "identical claim".into();
 
-        let mut session = DeliberationSession::new("test".into(), panel, "What is X?".into(), client);
+        let mut session =
+            DeliberationSession::new("test".into(), panel, "What is X?".into(), client);
         let round = session.execute_round().unwrap();
-        
+
         // Since all give "identical claim", convergence should be 10000
         assert_eq!(round.convergence_score_bps, 10000);
         assert!(session.is_converged());

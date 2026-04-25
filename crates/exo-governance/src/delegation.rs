@@ -2,12 +2,13 @@
 //!
 //! Satisfies: GOV-003, GOV-004, TNC-05, TNC-09
 
-use crate::errors::GovernanceError;
-use crate::types::*;
-use exo_core::Did;
-use exo_core::types::Hash256;
-use exo_core::types::Timestamp;
+use exo_core::{
+    Did,
+    types::{Hash256, Timestamp},
+};
 use serde::{Deserialize, Serialize};
+
+use crate::{errors::GovernanceError, types::*};
 
 /// Scope of an authority delegation.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

@@ -22,6 +22,9 @@ impl MockLlmClient {
     }
 
     pub fn call(&self, model_id: &str, _prompt: &str) -> String {
-        self.responses.get(model_id).cloned().unwrap_or_else(|| self.default_response.clone())
+        self.responses
+            .get(model_id)
+            .cloned()
+            .unwrap_or_else(|| self.default_response.clone())
     }
 }

@@ -8,7 +8,18 @@
 #![allow(
     clippy::expect_used,
     clippy::as_conversions,
-    clippy::needless_borrows_for_generic_args
+    clippy::needless_borrows_for_generic_args,
+    // `needless_return` fires inside #[cfg(not(feature = "..."))]
+    // refusal blocks where the function body continues in the
+    // mutually-exclusive `#[cfg(feature = "...")]` branch. Clippy
+    // can't see the other branch, so the explicit `return` is
+    // load-bearing for the feature-on build.
+    clippy::needless_return,
+    // `ValidatorChangeRequest` fields + `save_validator_set` are
+    // only used inside #[cfg(feature = "unaudited-admin-governance-shortcut")].
+    // Keeping dead_code on in default build would force us to duplicate
+    // the struct definition per feature which is worse than this allow.
+    dead_code
 )]
 
 use std::sync::{Arc, Mutex};
@@ -19,14 +30,18 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
-use exo_core::types::{Did, Hash256};
+#[cfg(any(test, feature = "unaudited-admin-governance-shortcut"))]
+use exo_core::types::Did;
+use exo_core::types::Hash256;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "unaudited-admin-governance-shortcut")]
+use crate::wire::ValidatorChange;
 use crate::{
     network::NetworkHandle,
     reactor::{self, SharedReactorState},
     store::SqliteDagStore,
-    wire::{GovernanceEventType, ValidatorChange},
+    wire::GovernanceEventType,
 };
 
 // ---------------------------------------------------------------------------
@@ -287,87 +302,88 @@ async fn handle_validator_change(
             }
         };
 
-    // Apply the validator change.
-    let (new_count, quorum) = {
-        let mut s = api.reactor_state.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Reactor state unavailable".to_string(),
-            )
-        })?;
-        match &change {
-            ValidatorChange::AddValidator { did } => {
-                s.consensus.config.validators.insert(did.clone());
-            }
-            ValidatorChange::RemoveValidator { did } => {
-                if s.consensus.config.validators.len() <= 4 {
-                    return Err((
-                        StatusCode::CONFLICT,
-                        "Cannot remove validator: minimum 4 required for BFT safety (3f+1)".into(),
-                    ));
+        // Apply the validator change.
+        let (new_count, quorum) = {
+            let mut s = api.reactor_state.lock().map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Reactor state unavailable".to_string(),
+                )
+            })?;
+            match &change {
+                ValidatorChange::AddValidator { did } => {
+                    s.consensus.config.validators.insert(did.clone());
                 }
-                s.consensus.config.validators.remove(did);
+                ValidatorChange::RemoveValidator { did } => {
+                    if s.consensus.config.validators.len() <= 4 {
+                        return Err((
+                            StatusCode::CONFLICT,
+                            "Cannot remove validator: minimum 4 required for BFT safety (3f+1)"
+                                .into(),
+                        ));
+                    }
+                    s.consensus.config.validators.remove(did);
+                }
+            }
+            (
+                s.consensus.config.validators.len(),
+                s.consensus.config.quorum_size(),
+            )
+        };
+
+        // Persist the updated validator set.
+        {
+            let s = api.reactor_state.lock().map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Reactor state unavailable".to_string(),
+                )
+            })?;
+            let mut st = api.store.lock().map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Store unavailable".to_string(),
+                )
+            })?;
+            if let Err(e) = st.save_validator_set(&s.consensus.config.validators) {
+                tracing::warn!(err = %e, "Failed to persist validator set");
             }
         }
-        (
-            s.consensus.config.validators.len(),
-            s.consensus.config.quorum_size(),
+
+        // Broadcast the change to the network.
+        let payload = {
+            let mut buf = Vec::new();
+            ciborium::into_writer(&change, &mut buf).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("CBOR encode: {e}"),
+                )
+            })?;
+            buf
+        };
+
+        let broadcast_ok = match reactor::broadcast_governance_event(
+            &api.reactor_state,
+            &api.net_handle,
+            GovernanceEventType::ValidatorSetChange,
+            payload,
         )
-    };
+        .await
+        {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(err = %e, "Validator change applied locally but broadcast failed — peers will sync on next round");
+                false
+            }
+        };
 
-    // Persist the updated validator set.
-    {
-        let s = api.reactor_state.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Reactor state unavailable".to_string(),
-            )
-        })?;
-        let mut st = api.store.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Store unavailable".to_string(),
-            )
-        })?;
-        if let Err(e) = st.save_validator_set(&s.consensus.config.validators) {
-            tracing::warn!(err = %e, "Failed to persist validator set");
-        }
-    }
-
-    // Broadcast the change to the network.
-    let payload = {
-        let mut buf = Vec::new();
-        ciborium::into_writer(&change, &mut buf).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("CBOR encode: {e}"),
-            )
-        })?;
-        buf
-    };
-
-    let broadcast_ok = match reactor::broadcast_governance_event(
-        &api.reactor_state,
-        &api.net_handle,
-        GovernanceEventType::ValidatorSetChange,
-        payload,
-    )
-    .await
-    {
-        Ok(()) => true,
-        Err(e) => {
-            tracing::warn!(err = %e, "Validator change applied locally but broadcast failed — peers will sync on next round");
-            false
-        }
-    };
-
-    Ok(Json(serde_json::json!({
-        "validator_count": new_count,
-        "quorum_size": quorum,
-        "action": req.action,
-        "did": req.did,
-        "broadcast": broadcast_ok,
-    })))
+        Ok(Json(serde_json::json!({
+            "validator_count": new_count,
+            "quorum_size": quorum,
+            "action": req.action,
+            "did": req.did,
+            "broadcast": broadcast_ok,
+        })))
     } // end cfg(feature = "unaudited-admin-governance-shortcut") block
 }
 

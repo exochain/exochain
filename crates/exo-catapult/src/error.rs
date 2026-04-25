@@ -2,8 +2,7 @@
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::oda::OdaSlot;
-use crate::phase::OperationalPhase;
+use crate::{oda::OdaSlot, phase::OperationalPhase};
 
 /// Errors returned by Catapult franchise operations.
 #[derive(Debug, Error)]

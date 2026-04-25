@@ -291,6 +291,13 @@ impl SqliteDagStore {
     // -----------------------------------------------------------------
 
     /// Save the current validator set to the database.
+    ///
+    /// Only used today from inside the gated
+    /// `#[cfg(feature = "unaudited-admin-governance-shortcut")]` path
+    /// in `api.rs`. When RED #1 is reworked into real propose→commit
+    /// via the reactor, this method will be invoked from that path
+    /// instead and the `#[allow(dead_code)]` can come off.
+    #[allow(dead_code)]
     pub fn save_validator_set(&mut self, validators: &BTreeSet<Did>) -> DagResult<()> {
         self.conn
             .execute("DELETE FROM validators", [])

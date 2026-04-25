@@ -2,8 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::reactor::SharedReactorState;
-use crate::store::SqliteDagStore;
+use crate::{reactor::SharedReactorState, store::SqliteDagStore};
 
 /// Shared runtime context available to MCP tools.
 ///

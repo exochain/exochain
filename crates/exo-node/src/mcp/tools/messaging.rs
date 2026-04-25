@@ -4,8 +4,10 @@
 use exo_core::{Did, Hash256, Timestamp};
 use serde_json::{Value, json};
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ToolDefinition, ToolResult};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ToolDefinition, ToolResult},
+};
 
 // ---------------------------------------------------------------------------
 // exochain_send_encrypted
@@ -344,7 +346,7 @@ mod tests {
         });
         let result = execute_send_encrypted(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["sender_did"], "did:exo:alice");
         assert_eq!(v["recipient_did"], "did:exo:bob");
         assert_eq!(v["content_type"], "text/plain");
@@ -363,7 +365,7 @@ mod tests {
         });
         let result = execute_send_encrypted(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["content_type"], "application/json");
     }
 
@@ -404,7 +406,7 @@ mod tests {
         });
         let result = execute_receive_encrypted(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["envelope_id"], "env_abc123");
         assert_eq!(v["decryption_status"], "envelope_not_found");
     }
@@ -448,7 +450,7 @@ mod tests {
         });
         let result = execute_configure_death_trigger(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["trigger_type"], "inactivity");
         assert_eq!(v["status"], "configured");
         assert!(v["trigger_id"].as_str().is_some());
@@ -490,7 +492,7 @@ mod tests {
         });
         let result = execute_configure_death_trigger(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["trigger_params"], json!({}));
     }
 }

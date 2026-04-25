@@ -71,8 +71,7 @@ pub struct Cert902_11 {
 
 impl Cert902_11 {
     /// Disclaimer text included in every certificate.
-    pub const FILING_DISCLAIMER: &'static str =
-        "NOT READY TO FILE. The declarant_placeholder field must be completed \
+    pub const FILING_DISCLAIMER: &'static str = "NOT READY TO FILE. The declarant_placeholder field must be completed \
          by a qualified human declarant, and this certificate must be reviewed \
          by qualified counsel before use in any legal proceeding.";
 }
@@ -204,12 +203,16 @@ mod tests {
     }
 
     fn make_evidence() -> Evidence {
-        create_evidence(b"board-minutes", &did("secretary"), "board-minutes", real_ts(1_700_000_000_000))
-            .unwrap()
+        create_evidence(
+            b"board-minutes",
+            &did("secretary"),
+            "board-minutes",
+            real_ts(1_700_000_000_000),
+        )
+        .unwrap()
     }
 
-    const SYSTEM_DESC: &str =
-        "EXOCHAIN decision.forum v1.0 — records created at vote-close via BCTS lifecycle \
+    const SYSTEM_DESC: &str = "EXOCHAIN decision.forum v1.0 — records created at vote-close via BCTS lifecycle \
          as a regular practice of board governance operations.";
 
     #[test]
@@ -217,14 +220,23 @@ mod tests {
         let ev = make_evidence();
         let cert = generate_902_11_cert(&ev, SYSTEM_DESC, 1_700_000_001_000).unwrap();
 
-        assert_eq!(cert.record_hash, ev.hash, "record_hash must match evidence hash");
-        assert!(!cert.system_description.is_empty(), "system_description must be present");
+        assert_eq!(
+            cert.record_hash, ev.hash,
+            "record_hash must match evidence hash"
+        );
+        assert!(
+            !cert.system_description.is_empty(),
+            "system_description must be present"
+        );
         assert!(
             cert.declarant_placeholder.contains("DECLARANT"),
             "declarant_placeholder must be present"
         );
         assert!(cert.generated_at_ms > 0, "generated_at_ms must be non-zero");
-        assert!(cert.cert_hash != Hash256::ZERO, "cert_hash must not be zero");
+        assert!(
+            cert.cert_hash != Hash256::ZERO,
+            "cert_hash must not be zero"
+        );
         assert!(
             cert.filing_disclaimer.contains("NOT READY TO FILE"),
             "filing_disclaimer must warn about declarant completion"
@@ -235,7 +247,10 @@ mod tests {
     fn cert_verification_passes_after_generation() {
         let ev = make_evidence();
         let cert = generate_902_11_cert(&ev, SYSTEM_DESC, 1_700_000_001_000).unwrap();
-        assert!(verify_902_11_cert(&cert), "cert must verify immediately after generation");
+        assert!(
+            verify_902_11_cert(&cert),
+            "cert must verify immediately after generation"
+        );
     }
 
     #[test]
@@ -243,7 +258,10 @@ mod tests {
         let ev = make_evidence();
         let mut cert = generate_902_11_cert(&ev, SYSTEM_DESC, 1_700_000_001_000).unwrap();
         cert.record_hash = Hash256::digest(b"tampered");
-        assert!(!verify_902_11_cert(&cert), "tampered record_hash must fail verification");
+        assert!(
+            !verify_902_11_cert(&cert),
+            "tampered record_hash must fail verification"
+        );
     }
 
     #[test]
@@ -251,7 +269,10 @@ mod tests {
         let ev = make_evidence();
         let mut cert = generate_902_11_cert(&ev, SYSTEM_DESC, 1_700_000_001_000).unwrap();
         cert.system_description = "evil system".to_string();
-        assert!(!verify_902_11_cert(&cert), "tampered system_description must fail verification");
+        assert!(
+            !verify_902_11_cert(&cert),
+            "tampered system_description must fail verification"
+        );
     }
 
     #[test]
@@ -259,7 +280,10 @@ mod tests {
         let ev = make_evidence();
         let mut cert = generate_902_11_cert(&ev, SYSTEM_DESC, 1_700_000_001_000).unwrap();
         cert.generated_at_ms = 9_999_999_999_999;
-        assert!(!verify_902_11_cert(&cert), "tampered timestamp must fail verification");
+        assert!(
+            !verify_902_11_cert(&cert),
+            "tampered timestamp must fail verification"
+        );
     }
 
     #[test]
@@ -270,9 +294,15 @@ mod tests {
         let mut ev = make_evidence();
         ev.timestamp = Timestamp::ZERO;
         let result = generate_902_11_cert(&ev, SYSTEM_DESC, 1_000);
-        assert!(result.is_err(), "Cert must reject evidence with zero timestamp");
+        assert!(
+            result.is_err(),
+            "Cert must reject evidence with zero timestamp"
+        );
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("real timestamp"), "Error must explain FRE 803(6) requirement");
+        assert!(
+            msg.contains("real timestamp"),
+            "Error must explain FRE 803(6) requirement"
+        );
     }
 
     #[test]
@@ -280,7 +310,12 @@ mod tests {
         let ev = make_evidence();
         let result = generate_902_11_cert(&ev, "", 1_000);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("system_description"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("system_description")
+        );
     }
 
     #[test]
@@ -294,8 +329,7 @@ mod tests {
         let cert_after = generate_902_11_cert(&ev, SYSTEM_DESC, 2_000).unwrap();
 
         assert_ne!(
-            cert_before.custody_chain_digest,
-            cert_after.custody_chain_digest,
+            cert_before.custody_chain_digest, cert_after.custody_chain_digest,
             "custody_chain_digest must reflect chain state"
         );
     }

@@ -4,7 +4,7 @@ use thiserror::Error;
 pub enum ConsensusError {
     #[error("Round limit exceeded")]
     RoundLimitExceeded,
-    
+
     #[error("Commitment mismatch for model {model_id}")]
     CommitmentMismatch { model_id: String },
 

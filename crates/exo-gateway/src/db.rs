@@ -920,13 +920,11 @@ pub async fn list_layout_templates(
 }
 
 /// Delete a layout template by ID (refuses to delete built-in templates).
-pub async fn delete_layout_template(
-    pool: &PgPool,
-    id: &str,
-) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query(
-        "DELETE FROM layout_templates WHERE id = $1 AND is_built_in = false"
-    ).bind(id).execute(pool).await?;
+pub async fn delete_layout_template(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM layout_templates WHERE id = $1 AND is_built_in = false")
+        .bind(id)
+        .execute(pool)
+        .await?;
     Ok(result.rows_affected() > 0)
 }
 

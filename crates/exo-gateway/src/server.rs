@@ -15,8 +15,10 @@ use exo_gatekeeper::{
     types::{AuthorityChain, BailmentState, Permission, PermissionSet},
 };
 use exo_governance::conflict::ConflictDeclaration;
-use exo_identity::registry::DidRegistry;
-use exo_identity::{did::DidDocument, registry::LocalDidRegistry};
+use exo_identity::{
+    did::DidDocument,
+    registry::{DidRegistry, LocalDidRegistry},
+};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::net::TcpListener;
@@ -1036,10 +1038,7 @@ async fn handle_layout_template_put(
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("Untitled");
-    let layout_json = body
-        .get("layout")
-        .cloned()
-        .unwrap_or(serde_json::json!([]));
+    let layout_json = body.get("layout").cloned().unwrap_or(serde_json::json!([]));
     let hidden_panels = body
         .get("hiddenPanels")
         .cloned()
@@ -1127,9 +1126,7 @@ async fn handle_layout_template_delete(
 }
 
 /// GET /api/v1/layout-templates — list all layout templates.
-async fn handle_layout_templates_list(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn handle_layout_templates_list(State(state): State<AppState>) -> impl IntoResponse {
     let db = match state.require_db() {
         Ok(pool) => pool,
         Err(_) => {
@@ -1265,9 +1262,7 @@ async fn handle_feedback_issue_create(
 }
 
 /// GET /api/v1/feedback-issues — list feedback issues.
-async fn handle_feedback_issues_list(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn handle_feedback_issues_list(State(state): State<AppState>) -> impl IntoResponse {
     let db = match state.require_db() {
         Ok(pool) => pool,
         Err(_) => {
@@ -1325,7 +1320,10 @@ async fn handle_feedback_issue_update(
                 .into_response();
         }
     };
-    let status = body.get("status").and_then(|v| v.as_str()).unwrap_or("open");
+    let status = body
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("open");
     let agent_team_owned = body
         .get("assignedAgentTeam")
         .and_then(|v| v.as_str())

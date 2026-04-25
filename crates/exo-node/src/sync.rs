@@ -22,7 +22,6 @@
 use std::sync::{Arc, Mutex};
 
 use exo_core::types::Did;
-
 use tokio::sync::mpsc;
 
 use crate::{

@@ -19,8 +19,10 @@ pub mod tools_summary;
 
 use std::collections::BTreeMap;
 
-use super::context::NodeContext;
-use super::protocol::{ResourceContent, ResourceDefinition};
+use super::{
+    context::NodeContext,
+    protocol::{ResourceContent, ResourceDefinition},
+};
 
 /// Registry of available MCP resources.
 ///

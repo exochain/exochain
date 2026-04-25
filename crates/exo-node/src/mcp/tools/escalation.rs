@@ -4,8 +4,10 @@
 use exo_core::{Hash256, Timestamp};
 use serde_json::{Value, json};
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ToolDefinition, ToolResult};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ToolDefinition, ToolResult},
+};
 
 // ---------------------------------------------------------------------------
 // exochain_evaluate_threat
@@ -443,7 +445,7 @@ mod tests {
         });
         let result = execute_evaluate_threat(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["signal_count"], 2);
         assert_eq!(v["max_severity"], 7);
         assert_eq!(v["threat_level"], "high");
@@ -459,7 +461,7 @@ mod tests {
         });
         let result = execute_evaluate_threat(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["threat_level"], "critical");
     }
 
@@ -493,7 +495,7 @@ mod tests {
         });
         let result = execute_escalate_case(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["priority"], "high");
         assert_eq!(v["status"], "open");
         assert!(v["case_id"].as_str().is_some());
@@ -537,7 +539,7 @@ mod tests {
         });
         let result = execute_triage(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["case_id"], "case_abc");
         assert_eq!(v["decision"], "action_approved");
         assert_eq!(v["status"], "triaged");
@@ -571,7 +573,7 @@ mod tests {
         });
         let result = execute_record_feedback(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["outcome"], "true_positive");
         assert_eq!(v["status"], "recorded");
         assert!(v["feedback_id"].as_str().is_some());
@@ -589,7 +591,7 @@ mod tests {
         let params = json!({"case_id": "case_abc", "outcome": "false_positive"});
         let result = execute_record_feedback(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["notes"], "");
     }
 }

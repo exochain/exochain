@@ -7,8 +7,10 @@
 use exo_gatekeeper::{invariants::ConstitutionalInvariant, mcp::McpRule};
 use serde_json::Value;
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ToolContent, ToolDefinition, ToolResult};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ToolContent, ToolDefinition, ToolResult},
+};
 
 // ---------------------------------------------------------------------------
 // exochain_node_status
@@ -391,8 +393,7 @@ mod tests {
 
     #[test]
     fn tool_node_status_with_context_uses_reactor() {
-        use std::collections::BTreeSet;
-        use std::sync::Arc;
+        use std::{collections::BTreeSet, sync::Arc};
 
         use exo_core::types::{Did, Signature};
 

@@ -7,24 +7,53 @@ use exo_core::{Did, Hash256, Signature, Timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::oda::OdaSlot;
-use crate::phase::OperationalPhase;
+use crate::{oda::OdaSlot, phase::OperationalPhase};
 
 /// A franchise operation that produces a trust receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FranchiseOperation {
-    BlueprintPublished { blueprint_id: Uuid },
-    NewcoCreated { franchise_id: Uuid },
-    PhaseTransition { from: OperationalPhase, to: OperationalPhase },
-    AgentHired { slot: OdaSlot, agent_did: Did },
-    AgentReleased { slot: OdaSlot, agent_did: Did },
-    BudgetPolicyUpdated { policy_id: Uuid },
-    CostRecorded { event_id: Uuid, amount_cents: u64 },
-    GoalCreated { goal_id: Uuid },
-    GoalCompleted { goal_id: Uuid },
-    HeartbeatRecorded { agent_did: Did },
-    PaceEscalation { from_level: String, to_level: String },
-    FranchiseReplicated { source_newco_id: Uuid, target_newco_id: Uuid },
+    BlueprintPublished {
+        blueprint_id: Uuid,
+    },
+    NewcoCreated {
+        franchise_id: Uuid,
+    },
+    PhaseTransition {
+        from: OperationalPhase,
+        to: OperationalPhase,
+    },
+    AgentHired {
+        slot: OdaSlot,
+        agent_did: Did,
+    },
+    AgentReleased {
+        slot: OdaSlot,
+        agent_did: Did,
+    },
+    BudgetPolicyUpdated {
+        policy_id: Uuid,
+    },
+    CostRecorded {
+        event_id: Uuid,
+        amount_cents: u64,
+    },
+    GoalCreated {
+        goal_id: Uuid,
+    },
+    GoalCompleted {
+        goal_id: Uuid,
+    },
+    HeartbeatRecorded {
+        agent_did: Did,
+    },
+    PaceEscalation {
+        from_level: String,
+        to_level: String,
+    },
+    FranchiseReplicated {
+        source_newco_id: Uuid,
+        target_newco_id: Uuid,
+    },
 }
 
 /// A cryptographically chained trust receipt for a franchise operation.
@@ -155,11 +184,7 @@ mod tests {
         Did::new("did:exo:test-actor").unwrap()
     }
 
-    fn make_receipt(
-        newco_id: Uuid,
-        op: FranchiseOperation,
-        prev: Hash256,
-    ) -> FranchiseReceipt {
+    fn make_receipt(newco_id: Uuid, op: FranchiseOperation, prev: Hash256) -> FranchiseReceipt {
         FranchiseReceipt::new(
             newco_id,
             op,

@@ -5,9 +5,11 @@
 
 use serde_json::Value;
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ResourceContent, ResourceDefinition};
-use crate::mcp::tools::ToolRegistry;
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ResourceContent, ResourceDefinition},
+    tools::ToolRegistry,
+};
 
 /// Build the resource definition.
 #[must_use]

@@ -9,8 +9,10 @@ use exo_core::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::{CatapultError, Result};
-use crate::oda::OdaSlot;
+use crate::{
+    error::{CatapultError, Result},
+    oda::OdaSlot,
+};
 
 /// Level of a goal in the hierarchy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -179,7 +181,9 @@ impl GoalTree {
 
         // Safe: score is at most 10_000 which fits in u32
         #[allow(clippy::as_conversions)]
-        { score as u32 }
+        {
+            score as u32
+        }
     }
 
     /// Total number of goals.
@@ -250,7 +254,10 @@ mod tests {
     #[test]
     fn update_not_found() {
         let mut tree = GoalTree::new();
-        assert!(tree.update_status(&Uuid::nil(), GoalStatus::Active).is_err());
+        assert!(
+            tree.update_status(&Uuid::nil(), GoalStatus::Active)
+                .is_err()
+        );
     }
 
     #[test]

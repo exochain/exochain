@@ -17,7 +17,7 @@ pub struct PanelConfidenceInputs {
 /// Actually, the prompt says:
 /// `calculate_convergence(positions: &[&str]) -> u64`
 /// "Use categorical comparison: count matching key claims across positions divided by total unique claims."
-/// We'll assume the positions string represents a comma-separated or line-separated list of claims if it's raw text, 
+/// We'll assume the positions string represents a comma-separated or line-separated list of claims if it's raw text,
 /// but let's implement it robustly: tokenize and find overlap.
 pub fn calculate_convergence(positions: &[&str]) -> u64 {
     if positions.is_empty() {
@@ -54,7 +54,8 @@ pub fn calculate_convergence(positions: &[&str]) -> u64 {
     let total_unique = u64::try_from(all_claims.len()).unwrap_or(0);
 
     for claim in &all_claims {
-        let _count = u64::try_from(model_claims.iter().filter(|c| c.contains(claim)).count()).unwrap_or(0);
+        let _count =
+            u64::try_from(model_claims.iter().filter(|c| c.contains(claim)).count()).unwrap_or(0);
         // The more models share the claim, the more "matching" it is.
         // A claim shared by ALL models is a perfect match (worth 1).
         // Here we just say: if a claim is shared by more than half, it's a majority claim.
@@ -76,9 +77,13 @@ pub fn calculate_convergence(positions: &[&str]) -> u64 {
     // 4 / 6 = 66%. Wait, 50% overlap.
     // Let's refine based on "matching key claims across positions divided by total unique claims".
     // A matching claim means it's present in ALL positions.
-    let shared_claims = u64::try_from(all_claims.iter().filter(|c| {
-        model_claims.iter().all(|mc| mc.contains(*c))
-    }).count()).unwrap_or(0);
+    let shared_claims = u64::try_from(
+        all_claims
+            .iter()
+            .filter(|c| model_claims.iter().all(|mc| mc.contains(*c)))
+            .count(),
+    )
+    .unwrap_or(0);
 
     (shared_claims * 10000) / total_unique
 }
@@ -90,7 +95,8 @@ pub fn calculate_panel_confidence(inputs: &PanelConfidenceInputs) -> u64 {
 
     // 1. Model Agreement (50%)
     if inputs.total_models > 0 {
-        let agreement_bps = (u64::from(inputs.models_agreeing) * 5000) / u64::from(inputs.total_models);
+        let agreement_bps =
+            (u64::from(inputs.models_agreeing) * 5000) / u64::from(inputs.total_models);
         score += agreement_bps;
     }
 
@@ -101,7 +107,8 @@ pub fn calculate_panel_confidence(inputs: &PanelConfidenceInputs) -> u64 {
         // rounds_to_convergence=3 -> 1/3 -> 1000 bps
         // If it never converged (rounds_to_convergence > max_rounds), maybe 0?
         let r = std::cmp::min(inputs.rounds_to_convergence, inputs.max_rounds);
-        let speed_bps = ((u64::from(inputs.max_rounds) - u64::from(r) + 1) * 3000) / u64::from(inputs.max_rounds);
+        let speed_bps = ((u64::from(inputs.max_rounds) - u64::from(r) + 1) * 3000)
+            / u64::from(inputs.max_rounds);
         score += speed_bps;
     }
 

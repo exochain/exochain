@@ -4,8 +4,10 @@ use exo_core::{DeterministicMap, Did, Timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::{CatapultError, Result};
-use crate::oda::OdaSlot;
+use crate::{
+    error::{CatapultError, Result},
+    oda::OdaSlot,
+};
 
 /// Operational status of an agent within the ODA.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -105,7 +107,9 @@ impl AgentRoster {
     /// Whether all 12 ODA slots are filled.
     #[must_use]
     pub fn is_complete(&self) -> bool {
-        OdaSlot::ALL.iter().all(|slot| self.agents.contains_key(slot))
+        OdaSlot::ALL
+            .iter()
+            .all(|slot| self.agents.contains_key(slot))
     }
 
     /// Number of filled slots.

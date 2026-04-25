@@ -16,15 +16,21 @@
 //! use the real REST API (`POST /api/v1/governance/proposals`, etc.)
 //! or to enable the feature explicitly in dev environments.
 
-#[cfg_attr(
-    not(feature = "unaudited-mcp-simulation-tools"),
-    allow(unused_imports)
-)]
+// `needless_return` fires inside #[cfg(not(feature = "..."))]
+// refusal blocks where the function body continues in the
+// mutually-exclusive `#[cfg(feature = "...")]` branch. Clippy
+// can't see the other branch, so the explicit `return` is
+// load-bearing for the feature-on build.
+#![allow(clippy::needless_return)]
+
+#[cfg_attr(not(feature = "unaudited-mcp-simulation-tools"), allow(unused_imports))]
 use exo_core::{Did, Hash256, Timestamp};
 use serde_json::{Value, json};
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ToolDefinition, ToolResult};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ToolDefinition, ToolResult},
+};
 
 /// Build the structured refusal body for a gated simulation tool.
 ///
@@ -112,54 +118,55 @@ pub fn execute_create_decision(params: &Value, _context: &NodeContext) -> ToolRe
              feature and MUST NOT be enabled in production."
         );
         let title = match params.get("title").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: title"}).to_string(),
+                );
+            }
+        };
+        let description = match params.get("description").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: description"}).to_string(),
+                );
+            }
+        };
+        let proposer_str = match params.get("proposer_did").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: proposer_did"}).to_string(),
+                );
+            }
+        };
+
+        if Did::new(proposer_str).is_err() {
             return ToolResult::error(
-                json!({"error": "missing required parameter: title"}).to_string(),
+                json!({"error": format!("invalid proposer DID format: {proposer_str}")})
+                    .to_string(),
             );
         }
-    };
-    let description = match params.get("description").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: description"}).to_string(),
-            );
-        }
-    };
-    let proposer_str = match params.get("proposer_did").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: proposer_did"}).to_string(),
-            );
-        }
-    };
 
-    if Did::new(proposer_str).is_err() {
-        return ToolResult::error(
-            json!({"error": format!("invalid proposer DID format: {proposer_str}")}).to_string(),
-        );
-    }
+        let _decision_class = params
+            .get("decision_class")
+            .and_then(Value::as_str)
+            .unwrap_or("standard");
 
-    let _decision_class = params
-        .get("decision_class")
-        .and_then(Value::as_str)
-        .unwrap_or("standard");
+        let now = Timestamp::now_utc();
+        let id_input = format!("{title}:{proposer_str}:{}", now.physical_ms);
+        let decision_id = Hash256::digest(id_input.as_bytes()).to_string();
 
-    let now = Timestamp::now_utc();
-    let id_input = format!("{title}:{proposer_str}:{}", now.physical_ms);
-    let decision_id = Hash256::digest(id_input.as_bytes()).to_string();
-
-    let response = json!({
-        "decision_id": decision_id,
-        "title": title,
-        "description": description,
-        "proposer": proposer_str,
-        "status": "proposed",
-        "created_at": format!("{}:{}", now.physical_ms, now.logical),
-    });
-    ToolResult::success(response.to_string())
+        let response = json!({
+            "decision_id": decision_id,
+            "title": title,
+            "description": description,
+            "proposer": proposer_str,
+            "status": "proposed",
+            "created_at": format!("{}:{}", now.physical_ms, now.logical),
+        });
+        ToolResult::success(response.to_string())
     } // end cfg(feature = "unaudited-mcp-simulation-tools") block
 }
 
@@ -217,61 +224,63 @@ pub fn execute_cast_vote(params: &Value, _context: &NodeContext) -> ToolResult {
              `unaudited-mcp-simulation-tools` feature."
         );
         let decision_id = match params.get("decision_id").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: decision_id"}).to_string(),
-            );
-        }
-    };
-    let voter_str = match params.get("voter_did").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: voter_did"}).to_string(),
-            );
-        }
-    };
-    let choice = match params.get("choice").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: choice"}).to_string(),
-            );
-        }
-    };
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: decision_id"}).to_string(),
+                );
+            }
+        };
+        let voter_str = match params.get("voter_did").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: voter_did"}).to_string(),
+                );
+            }
+        };
+        let choice = match params.get("choice").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: choice"}).to_string(),
+                );
+            }
+        };
 
-    if Did::new(voter_str).is_err() {
-        return ToolResult::error(
-            json!({"error": format!("invalid voter DID format: {voter_str}")}).to_string(),
-        );
-    }
+        if Did::new(voter_str).is_err() {
+            return ToolResult::error(
+                json!({"error": format!("invalid voter DID format: {voter_str}")}).to_string(),
+            );
+        }
 
-    let valid_choices = ["approve", "reject", "abstain"];
-    if !valid_choices.contains(&choice) {
-        return ToolResult::error(
+        let valid_choices = ["approve", "reject", "abstain"];
+        if !valid_choices.contains(&choice) {
+            return ToolResult::error(
             json!({"error": format!("invalid choice: {choice}. Must be one of: approve, reject, abstain")}).to_string(),
         );
-    }
+        }
 
-    if decision_id.is_empty() {
-        return ToolResult::error(json!({"error": "decision_id must not be empty"}).to_string());
-    }
+        if decision_id.is_empty() {
+            return ToolResult::error(
+                json!({"error": "decision_id must not be empty"}).to_string(),
+            );
+        }
 
-    let rationale = params
-        .get("rationale")
-        .and_then(Value::as_str)
-        .unwrap_or("");
+        let rationale = params
+            .get("rationale")
+            .and_then(Value::as_str)
+            .unwrap_or("");
 
-    let response = json!({
-        "decision_id": decision_id,
-        "voter": voter_str,
-        "choice": choice,
-        "recorded": true,
-        "voice_kind": "unknown",
-        "rationale": rationale,
-    });
-    ToolResult::success(response.to_string())
+        let response = json!({
+            "decision_id": decision_id,
+            "voter": voter_str,
+            "choice": choice,
+            "recorded": true,
+            "voice_kind": "unknown",
+            "rationale": rationale,
+        });
+        ToolResult::success(response.to_string())
     } // end cfg(feature = "unaudited-mcp-simulation-tools") block
 }
 
@@ -440,72 +449,73 @@ pub fn execute_propose_amendment(params: &Value, _context: &NodeContext) -> Tool
              the reactor. Gated by `unaudited-mcp-simulation-tools` feature."
         );
         let title = match params.get("title").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: title"}).to_string(),
-            );
-        }
-    };
-    let description = match params.get("description").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: description"}).to_string(),
-            );
-        }
-    };
-    let proposer_str = match params.get("proposer_did").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: proposer_did"}).to_string(),
-            );
-        }
-    };
-    let target = match params.get("target").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: target"}).to_string(),
-            );
-        }
-    };
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: title"}).to_string(),
+                );
+            }
+        };
+        let description = match params.get("description").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: description"}).to_string(),
+                );
+            }
+        };
+        let proposer_str = match params.get("proposer_did").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: proposer_did"}).to_string(),
+                );
+            }
+        };
+        let target = match params.get("target").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: target"}).to_string(),
+                );
+            }
+        };
 
-    if Did::new(proposer_str).is_err() {
-        return ToolResult::error(
-            json!({"error": format!("invalid proposer DID format: {proposer_str}")}).to_string(),
-        );
-    }
+        if Did::new(proposer_str).is_err() {
+            return ToolResult::error(
+                json!({"error": format!("invalid proposer DID format: {proposer_str}")})
+                    .to_string(),
+            );
+        }
 
-    let valid_targets = ["constitution", "invariant_registry", "kernel_binary"];
-    if !valid_targets.contains(&target) {
-        return ToolResult::error(
+        let valid_targets = ["constitution", "invariant_registry", "kernel_binary"];
+        if !valid_targets.contains(&target) {
+            return ToolResult::error(
             json!({"error": format!("invalid target: {target}. Must be one of: constitution, invariant_registry, kernel_binary")}).to_string(),
         );
-    }
+        }
 
-    let now = Timestamp::now_utc();
-    let id_input = format!("amendment:{title}:{proposer_str}:{}", now.physical_ms);
-    let amendment_id = Hash256::digest(id_input.as_bytes()).to_string();
+        let now = Timestamp::now_utc();
+        let id_input = format!("amendment:{title}:{proposer_str}:{}", now.physical_ms);
+        let amendment_id = Hash256::digest(id_input.as_bytes()).to_string();
 
-    let response = json!({
-        "amendment_id": amendment_id,
-        "title": title,
-        "description": description,
-        "proposer": proposer_str,
-        "target": target,
-        "requirements": {
-            "validator_consensus": "unanimous",
-            "ai_irb_approval": ">=80%",
-            "public_comment_period_days": 30,
-            "formal_proof_required": true,
-            "security_audit_required": true,
-        },
-        "status": "draft",
-        "warning": "Constitutional amendments require the highest governance threshold. See spec \u{00a7}3A.3.2.",
-    });
-    ToolResult::success(response.to_string())
+        let response = json!({
+            "amendment_id": amendment_id,
+            "title": title,
+            "description": description,
+            "proposer": proposer_str,
+            "target": target,
+            "requirements": {
+                "validator_consensus": "unanimous",
+                "ai_irb_approval": ">=80%",
+                "public_comment_period_days": 30,
+                "formal_proof_required": true,
+                "security_audit_required": true,
+            },
+            "status": "draft",
+            "warning": "Constitutional amendments require the highest governance threshold. See spec \u{00a7}3A.3.2.",
+        });
+        ToolResult::success(response.to_string())
     } // end cfg(feature = "unaudited-mcp-simulation-tools") block
 }
 
@@ -650,7 +660,7 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["decision_id"], "abc123");
         assert_eq!(v["threshold"], 3);
         assert_eq!(v["quorum_met"], false);
@@ -677,7 +687,7 @@ mod tests {
         let result =
             execute_get_decision_status(&json!({"decision_id": "abc123"}), &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["decision_id"], "abc123");
         assert_eq!(v["status"], "unknown");
     }

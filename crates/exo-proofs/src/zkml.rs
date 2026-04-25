@@ -398,7 +398,8 @@ mod tests {
     #[test]
     fn prove_and_verify() {
         let model = make_model();
-        let proof = prove_inference(&model, b"classify this image", b"cat: 0.95, dog: 0.05").unwrap();
+        let proof =
+            prove_inference(&model, b"classify this image", b"cat: 0.95, dog: 0.05").unwrap();
         assert!(verify_inference(&proof).unwrap());
     }
 
@@ -525,7 +526,8 @@ mod tests {
     #[test]
     fn prove_inference_with_provenance_verifies() {
         let model = make_model();
-        let proof = prove_inference_with_provenance(&model, b"prompt", b"context", b"output").unwrap();
+        let proof =
+            prove_inference_with_provenance(&model, b"prompt", b"context", b"output").unwrap();
         assert!(verify_inference(&proof).unwrap());
     }
 

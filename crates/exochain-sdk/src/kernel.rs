@@ -328,8 +328,7 @@ impl ConstitutionalKernel {
             modifies_kernel,
         };
 
-        let bailor = Did::new("did:exo:sdk-bailor")
-            .expect("sdk-bailor is a well-formed DID");
+        let bailor = Did::new("did:exo:sdk-bailor").expect("sdk-bailor is a well-formed DID");
         let scope = action.to_owned();
 
         let (bailment_state, consent_records) = if include_bailment {
@@ -357,8 +356,7 @@ impl ConstitutionalKernel {
             }],
             authority_chain: AuthorityChain {
                 links: vec![AuthorityLink {
-                    grantor: Did::new("did:exo:root")
-                        .expect("did:exo:root is a well-formed DID"),
+                    grantor: Did::new("did:exo:root").expect("did:exo:root is a well-formed DID"),
                     grantee: actor.clone(),
                     permissions: permissions.clone(),
                     signature: vec![1],
@@ -485,9 +483,7 @@ mod tests {
         let denied = KernelVerdict::Denied { violations: vec![] };
         assert!(denied.is_denied());
         assert!(!denied.is_permitted());
-        let esc = KernelVerdict::Escalated {
-            reason: "r".into(),
-        };
+        let esc = KernelVerdict::Escalated { reason: "r".into() };
         assert!(esc.is_escalated());
         assert!(!esc.is_permitted());
     }

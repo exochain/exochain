@@ -10,17 +10,20 @@ use std::collections::BTreeMap;
 use exo_core::Did;
 use serde_json::Value;
 
-use super::context::NodeContext;
-use super::error::McpError;
-use super::middleware::ConstitutionalMiddleware;
-use super::prompts::PromptRegistry;
-use super::protocol::{
-    INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST, InitializeParams, InitializeResult,
-    JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND, PARSE_ERROR, PromptsCapability,
-    ResourcesCapability, ServerCapabilities, ServerInfo, ToolContent, ToolResult, ToolsCapability,
+use super::{
+    context::NodeContext,
+    error::McpError,
+    middleware::ConstitutionalMiddleware,
+    prompts::PromptRegistry,
+    protocol::{
+        INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST, InitializeParams, InitializeResult,
+        JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND, PARSE_ERROR, PromptsCapability,
+        ResourcesCapability, ServerCapabilities, ServerInfo, ToolContent, ToolResult,
+        ToolsCapability,
+    },
+    resources::ResourceRegistry,
+    tools::ToolRegistry,
 };
-use super::resources::ResourceRegistry;
-use super::tools::ToolRegistry;
 
 /// MCP server that processes JSON-RPC messages from AI clients.
 ///

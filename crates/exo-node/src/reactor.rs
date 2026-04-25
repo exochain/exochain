@@ -10,8 +10,29 @@
 //! This module wires the existing fully-tested consensus code (`propose()`,
 //! `vote()`, `check_commit()`, `commit()`) into a network-aware reactor
 //! without modifying the consensus protocol itself.
+//!
+//! # GAP-014 note
+//!
+//! The GAP-014 fix (commit 254e8dc) introduced `propose_verified`,
+//! `vote_verified`, and `commit_verified` in `exo_dag::consensus` which
+//! enforce signature verification. This reactor still calls the legacy
+//! `propose` / `vote` / `commit` — wiring the reactor's handle_* paths
+//! to the verified variants requires a `PublicKeyResolver` backed by
+//! the identity registry, which is the follow-up initiative
+//! `exochain-api-migration-gap` (tracked separately).
+//!
+//! Until that wiring lands, the legacy API is permitted here via
+//! `#[allow(deprecated)]`. As defense-in-depth, `validate_proposal` /
+//! `validate_vote` / `validate_commit` below reject all-zero signature
+//! sentinels so a trivial-forge attacker still can't inject bogus
+//! messages through this path.
 
-#![allow(clippy::as_conversions, clippy::type_complexity, clippy::single_match)]
+#![allow(
+    clippy::as_conversions,
+    clippy::type_complexity,
+    clippy::single_match,
+    deprecated
+)]
 
 use std::{
     collections::BTreeSet,

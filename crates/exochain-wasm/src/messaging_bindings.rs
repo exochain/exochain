@@ -42,6 +42,11 @@ pub fn wasm_x25519_public_from_secret(secret_hex: &str) -> Result<JsValue, JsVal
 /// # Returns
 /// The encrypted envelope as JSON.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+// Mirrors `exo_messaging::compose::lock_and_send` — 8 args is
+// the irreducible envelope spec. WASM boundary cannot take a
+// struct directly; each arg is serialized across the JS/Rust
+// boundary independently.
 pub fn wasm_encrypt_message(
     plaintext: &str,
     content_type_json: &str,

@@ -13,13 +13,11 @@
 //! - Canonical CBOR serialization for all hashing.
 //! - All errors via `thiserror` (`ConsentError`).
 
-use exo_core::hash::hash_structured;
-use exo_core::{DeterministicMap, Did, Hash256, Timestamp};
+use exo_core::{DeterministicMap, Did, Hash256, Timestamp, hash::hash_structured};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::bailment::BailmentType;
-use crate::error::ConsentError;
+use crate::{bailment::BailmentType, error::ConsentError};
 
 // ---------------------------------------------------------------------------
 // Core Types

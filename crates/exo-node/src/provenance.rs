@@ -19,7 +19,6 @@ use axum::{
     routing::get,
 };
 use exo_core::types::Hash256;
-
 use serde::Serialize;
 
 use crate::store::SqliteDagStore;

@@ -7,8 +7,7 @@ use exo_core::{Did, Hash256, Timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::oda::OdaSlot;
-use crate::phase::OperationalPhase;
+use crate::{oda::OdaSlot, phase::OperationalPhase};
 
 /// Scope of a budget policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -168,10 +167,11 @@ impl BudgetLedger {
             }
 
             // Integer-only threshold check: spent * 10_000 >= limit * warn_bps
-            if spent
-                .checked_mul(10_000)
-                .is_none_or(|s| s >= policy.limit.saturating_mul(u64::from(policy.warn_threshold_bps)))
-            {
+            if spent.checked_mul(10_000).is_none_or(|s| {
+                s >= policy
+                    .limit
+                    .saturating_mul(u64::from(policy.warn_threshold_bps))
+            }) {
                 return BudgetVerdict::Warning {
                     spent,
                     limit: policy.limit,

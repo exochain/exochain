@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 
 use exo_core::{Did, Hash256, Signature, Timestamp};
-use exo_identity::{registry::DidRegistry, did_verification::verify_did_signature};
+use exo_identity::{did_verification::verify_did_signature, registry::DidRegistry};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GatewayError, Result};
@@ -161,10 +161,7 @@ impl ApiKeyRegistry {
     /// List all key records bound to `did`.
     #[must_use]
     pub fn keys_for_did(&self, did: &Did) -> Vec<&ApiKeyRecord> {
-        self.keys
-            .values()
-            .filter(|r| r.did == *did)
-            .collect()
+        self.keys.values().filter(|r| r.did == *did).collect()
     }
 }
 
@@ -281,16 +278,12 @@ pub fn resolve_credential(
 }
 
 /// Shared resolution logic for API key and bearer token credentials.
-fn resolve_token(
-    token: &str,
-    registry: &ApiKeyRegistry,
-    kind: &str,
-) -> Result<AuthenticatedActor> {
-    let record = registry.resolve(token).ok_or_else(|| {
-        GatewayError::AuthenticationFailed {
+fn resolve_token(token: &str, registry: &ApiKeyRegistry, kind: &str) -> Result<AuthenticatedActor> {
+    let record = registry
+        .resolve(token)
+        .ok_or_else(|| GatewayError::AuthenticationFailed {
             reason: format!("unknown {kind}"),
-        }
-    })?;
+        })?;
 
     if record.revoked {
         return Err(GatewayError::AuthenticationFailed {
@@ -341,8 +334,10 @@ fn check_freshness(ts: &Timestamp) -> Result<()> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use exo_core::crypto::{generate_keypair, sign};
-    use exo_identity::did::{DidDocument, VerificationMethod};
-    use exo_identity::registry::LocalDidRegistry;
+    use exo_identity::{
+        did::{DidDocument, VerificationMethod},
+        registry::LocalDidRegistry,
+    };
 
     use super::*;
 

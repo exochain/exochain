@@ -4,8 +4,10 @@
 //! its BLAKE3 hash over this exact byte sequence. This resource exposes that same
 //! text so clients can verify the hash end-to-end.
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ResourceContent, ResourceDefinition};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ResourceContent, ResourceDefinition},
+};
 
 /// The canonical constitution text hashed by the CGR Kernel.
 ///

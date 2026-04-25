@@ -2,12 +2,13 @@
 //!
 //! Satisfies: GOV-001, GOV-002, GOV-006, TNC-04
 
-use crate::delegation::DelegationScope;
-use crate::errors::GovernanceError;
-use crate::types::*;
-use exo_core::Did;
-use exo_core::types::{Hash256, Timestamp};
+use exo_core::{
+    Did,
+    types::{Hash256, Timestamp},
+};
 use serde::{Deserialize, Serialize};
+
+use crate::{delegation::DelegationScope, errors::GovernanceError, types::*};
 
 /// Precedence level in the constitutional hierarchy.
 /// Articles > Bylaws > Resolutions > Charters > Policies (GOV-006).

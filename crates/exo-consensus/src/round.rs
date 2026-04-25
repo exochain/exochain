@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+
 use exo_core::types::{Hash256, Timestamp};
 use serde::{Deserialize, Serialize};
 
@@ -53,7 +54,7 @@ pub fn hash_round(round: &DeliberationRound) -> Hash256 {
         convergence_score_bps: round.convergence_score_bps,
         devil_advocate_challenge: &round.devil_advocate_challenge,
     };
-    
+
     // In production we'd use `hash_structured` from `exo_core::hash`. For now JSON:
     let json = serde_json::to_string(&input).unwrap_or_default();
     Hash256::digest(json.as_bytes())

@@ -16,11 +16,9 @@ google = []
 serde.workspace = true
 serde_json.workspace = true
 thiserror = "1"
-blake3.workspace = true
 
 # Local
 exo-core = { path = "../exo-core" }
-exo-legal = { path = "../exo-legal" }
 decision-forum = { path = "../decision-forum" }
 
 [lints]

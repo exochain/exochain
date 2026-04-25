@@ -155,11 +155,13 @@ pub mod kernel;
 /// assert!(id.verify(b"hello", &sig));
 /// ```
 pub mod prelude {
-    pub use crate::authority::AuthorityChainBuilder;
-    pub use crate::consent::BailmentBuilder;
-    pub use crate::crypto::{hash, sign, verify};
-    pub use crate::error::{ExoError, ExoResult};
-    pub use crate::governance::{Decision, DecisionBuilder, Vote};
-    pub use crate::identity::Identity;
-    pub use crate::kernel::ConstitutionalKernel;
+    pub use crate::{
+        authority::AuthorityChainBuilder,
+        consent::BailmentBuilder,
+        crypto::{hash, sign, verify},
+        error::{ExoError, ExoResult},
+        governance::{Decision, DecisionBuilder, Vote},
+        identity::Identity,
+        kernel::ConstitutionalKernel,
+    };
 }

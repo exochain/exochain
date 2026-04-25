@@ -3,8 +3,10 @@
 use exo_gatekeeper::invariants::ConstitutionalInvariant;
 use serde_json::Value;
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ResourceContent, ResourceDefinition};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ResourceContent, ResourceDefinition},
+};
 
 /// Build the resource definition.
 #[must_use]

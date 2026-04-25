@@ -115,7 +115,6 @@ impl ConsentGate {
 
 #[cfg(test)]
 mod tests {
-    use exo_core::Signature;
 
     use super::*;
     use crate::{

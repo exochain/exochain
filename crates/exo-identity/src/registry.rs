@@ -1,7 +1,11 @@
-use crate::did::{DidDocument, RevocationProof};
-use crate::error::IdentityError;
-use exo_core::{Did, PublicKey, Signature, Timestamp, crypto};
 use std::collections::BTreeMap;
+
+use exo_core::{Did, PublicKey, Signature, Timestamp, crypto};
+
+use crate::{
+    did::{DidDocument, RevocationProof},
+    error::IdentityError,
+};
 
 /// A decentralized identifier registry trait.
 pub trait DidRegistry {
@@ -117,9 +121,10 @@ impl DidRegistry for LocalDidRegistry {
 
 #[cfg(test)]
 mod tests {
+    use exo_core::crypto::{generate_keypair, sign};
+
     use super::*;
     use crate::did::DidDocument;
-    use exo_core::crypto::{generate_keypair, sign};
 
     fn make_did(label: &str) -> Did {
         Did::new(&format!("did:exo:{label}")).expect("valid did")

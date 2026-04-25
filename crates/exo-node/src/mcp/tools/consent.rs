@@ -4,8 +4,10 @@
 use exo_core::{Did, Hash256, Timestamp};
 use serde_json::{Value, json};
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ToolDefinition, ToolResult};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ToolDefinition, ToolResult},
+};
 
 // ---------------------------------------------------------------------------
 // exochain_propose_bailment
@@ -336,12 +338,12 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["bailor"], "did:exo:alice");
         assert_eq!(v["bailee"], "did:exo:bob");
         assert_eq!(v["scope"], "data:medical");
         assert_eq!(v["status"], "proposed");
-        assert!(v["proposal_id"].as_str().expect("id").len() > 0);
+        assert!(!v["proposal_id"].as_str().expect("id").is_empty());
         assert!(v["expires_at"].as_str().is_some());
     }
 
@@ -389,7 +391,7 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["consent_active"], false);
         assert_eq!(v["bailment_state"], "none");
     }
@@ -431,7 +433,7 @@ mod tests {
         let result =
             execute_list_bailments(&json!({"did": "did:exo:alice"}), &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["count"], 0);
         assert_eq!(v["filter"], "all");
         assert!(v["bailments"].as_array().expect("arr").is_empty());
@@ -444,7 +446,7 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["filter"], "active");
     }
 
@@ -482,7 +484,7 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["bailment_id"], "abc123");
         assert_eq!(v["status"], "terminated");
         assert_eq!(v["reason"], "data access no longer needed");

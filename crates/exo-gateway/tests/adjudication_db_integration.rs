@@ -30,7 +30,7 @@ use exo_gatekeeper::{
     },
 };
 use exo_gateway::server::AppState;
-use exo_identity::registry::{LocalDidRegistry, DidRegistry};
+use exo_identity::registry::LocalDidRegistry;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -316,7 +316,7 @@ mod db_roundtrip {
         types::{AuthorityChain, AuthorityLink, Permission, PermissionSet},
     };
     use exo_gateway::server::AppState;
-    use exo_identity::registry::{LocalDidRegistry, DidRegistry};
+    use exo_identity::registry::{DidRegistry, LocalDidRegistry};
     use sqlx::postgres::PgPoolOptions;
 
     fn did(s: &str) -> Did {

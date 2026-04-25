@@ -134,6 +134,13 @@ fn spawn_event_fanout(
 }
 
 /// Start all subsystems for a running node.
+#[allow(clippy::too_many_arguments)]
+// 8 args is the minimum for a node bootstrap entry point:
+// data_dir, api_host, api_port, p2p_port, validator, validators,
+// seed_addrs, is_join. Each is a distinct bootstrap parameter
+// that came in through CLI parsing; bundling them behind a
+// struct would add a layer of boilerplate with no safety benefit
+// since this is the single call site from `main()`.
 async fn start_node(
     data_dir: &std::path::Path,
     api_host: &str,

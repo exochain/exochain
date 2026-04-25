@@ -262,9 +262,9 @@ impl VerificationCeremony {
 
 #[cfg(test)]
 mod tests {
+    use exo_core::crypto::{generate_keypair, sign};
+
     use super::*;
-    use exo_core::crypto::generate_keypair;
-    use exo_core::crypto::sign;
 
     #[test]
     fn test_ceremony_lifecycle() {
@@ -350,7 +350,7 @@ mod tests {
         let err = ceremony
             .submit_proof(
                 IdentityProof::Otp("123".into()),
-                Timestamp::new(4000_000, 0),
+                Timestamp::new(4_000_000, 0),
             )
             .unwrap_err();
         assert!(matches!(err, VerificationCeremonyError::Expired));
@@ -377,8 +377,10 @@ mod tests {
     }
 
     // Integration-style tests combining the registry and verification flow
-    use crate::did::DidDocument;
-    use crate::registry::{DidRegistry, LocalDidRegistry};
+    use crate::{
+        did::DidDocument,
+        registry::{DidRegistry, LocalDidRegistry},
+    };
 
     fn make_did(label: &str) -> Did {
         Did::new(&format!("did:exo:{label}")).expect("valid did")

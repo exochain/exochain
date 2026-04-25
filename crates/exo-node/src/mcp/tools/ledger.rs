@@ -4,8 +4,10 @@
 use exo_core::{Did, Hash256, Timestamp};
 use serde_json::{Value, json};
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ToolDefinition, ToolResult};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ToolDefinition, ToolResult},
+};
 
 // ---------------------------------------------------------------------------
 // exochain_submit_event
@@ -387,7 +389,7 @@ mod tests {
         });
         let result = execute_submit_event(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert!(v["event_id"].as_str().is_some());
         assert_eq!(v["event_type"], "transfer");
         assert_eq!(v["author_did"], "did:exo:alice");
@@ -439,7 +441,7 @@ mod tests {
         let params = json!({"event_hash": "abcdef0123456789"});
         let result = execute_get_event(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["found"], false);
         assert_eq!(v["status"], "not_found_no_store");
     }
@@ -483,7 +485,7 @@ mod tests {
         });
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["verified"], true);
     }
 
@@ -496,7 +498,7 @@ mod tests {
         });
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["verified"], false);
     }
 
@@ -524,7 +526,7 @@ mod tests {
     fn execute_get_checkpoint_success() {
         let result = execute_get_checkpoint(&json!({}), &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["checkpoint_height"], 0);
         assert_eq!(v["round"], 0);
         assert_eq!(v["validator_count"], 0);

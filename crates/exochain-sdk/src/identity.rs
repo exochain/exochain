@@ -24,8 +24,10 @@
 //! assert!(alice.verify(b"hello", &sig));
 //! ```
 
-use exo_core::crypto::{generate_keypair, sign as core_sign, verify as core_verify};
-use exo_core::{Did, PublicKey, SecretKey, Signature, Timestamp};
+use exo_core::{
+    Did, PublicKey, SecretKey, Signature, Timestamp,
+    crypto::{generate_keypair, sign as core_sign, verify as core_verify},
+};
 use exo_identity::did::DidDocument;
 
 use crate::error::{ExoError, ExoResult};
@@ -388,5 +390,4 @@ mod tests {
         let pk = *id.public_key();
         assert_eq!(&pk, id.public_key());
     }
-
 }

@@ -1,8 +1,7 @@
 use exo_core::types::{Hash256, Timestamp};
 use serde::{Deserialize, Serialize};
 
-use crate::round::DeliberationRound;
-use crate::report::MinorityReport;
+use crate::{report::MinorityReport, round::DeliberationRound};
 
 /// The final result of a deliberation session.
 #[derive(Debug, Clone, Serialize, Deserialize)]

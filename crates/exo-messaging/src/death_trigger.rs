@@ -93,8 +93,9 @@ impl DeathVerification {
             confirmed_at: now,
         });
 
-        // Check if threshold is met
-        if self.confirmations.len() >= self.required_confirmations as usize {
+        // Check if threshold is met. `required_confirmations` is a
+        // u8 (max 255); widening to usize is lossless.
+        if self.confirmations.len() >= usize::from(self.required_confirmations) {
             self.status = DeathVerificationStatus::Verified;
             self.resolved_at = Some(now);
             Ok(true)
@@ -123,7 +124,10 @@ impl DeathVerification {
     /// Number of confirmations still needed.
     #[must_use]
     pub fn confirmations_remaining(&self) -> u8 {
-        let current = self.confirmations.len() as u8;
+        // Confirmations count is bounded by required_confirmations
+        // (a u8) in the normal path; saturating at u8::MAX is the
+        // correct behavior if somehow it grows past 255.
+        let current = u8::try_from(self.confirmations.len()).unwrap_or(u8::MAX);
         self.required_confirmations.saturating_sub(current)
     }
 }
@@ -168,7 +172,10 @@ mod tests {
     fn duplicate_confirmation_rejected() {
         let mut dv = DeathVerification::new(did("alice"), did("bob"), 3);
         let result = dv.confirm(did("bob"));
-        assert!(matches!(result, Err(MessagingError::DuplicateConfirmation(_))));
+        assert!(matches!(
+            result,
+            Err(MessagingError::DuplicateConfirmation(_))
+        ));
     }
 
     #[test]
@@ -176,7 +183,10 @@ mod tests {
         let mut dv = DeathVerification::new(did("alice"), did("bob"), 2);
         dv.confirm(did("carol")).unwrap(); // threshold met
         let result = dv.confirm(did("dave"));
-        assert!(matches!(result, Err(MessagingError::DeathTriggerAlreadyResolved)));
+        assert!(matches!(
+            result,
+            Err(MessagingError::DeathTriggerAlreadyResolved)
+        ));
     }
 
     #[test]
@@ -187,7 +197,10 @@ mod tests {
         assert!(!dv.should_release());
 
         let result = dv.confirm(did("carol"));
-        assert!(matches!(result, Err(MessagingError::DeathTriggerAlreadyResolved)));
+        assert!(matches!(
+            result,
+            Err(MessagingError::DeathTriggerAlreadyResolved)
+        ));
     }
 
     #[test]

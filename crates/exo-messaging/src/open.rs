@@ -7,9 +7,11 @@
 use exo_core::{Hash256, PublicKey, crypto};
 use exo_identity::vault::VaultEncryptor;
 
-use crate::envelope::EncryptedEnvelope;
-use crate::error::MessagingError;
-use crate::kex::{self, X25519PublicKey, X25519SecretKey};
+use crate::{
+    envelope::EncryptedEnvelope,
+    error::MessagingError,
+    kex::{self, X25519PublicKey, X25519SecretKey},
+};
 
 /// The HKDF context string — must match `compose::MESSAGE_KEX_CONTEXT`.
 const MESSAGE_KEX_CONTEXT: &[u8] = b"vitallock-message-v1";
@@ -38,17 +40,17 @@ pub fn unlock(
 
     // 2. ECDH: derive shared symmetric key from ephemeral public + our secret
     let ephemeral_pub = X25519PublicKey::from_bytes(envelope.ephemeral_public_key);
-    let shared_key = kex::derive_shared_key(
-        recipient_x25519_secret,
-        &ephemeral_pub,
-        MESSAGE_KEX_CONTEXT,
-    )?;
+    let shared_key =
+        kex::derive_shared_key(recipient_x25519_secret, &ephemeral_pub, MESSAGE_KEX_CONTEXT)?;
 
     // 3. Decrypt with XChaCha20-Poly1305
     //    Associated data = recipient DID (must match what was used during encryption)
     let encryptor = VaultEncryptor::from_key(shared_key);
     let plaintext = encryptor
-        .decrypt(&envelope.ciphertext, envelope.recipient_did.as_str().as_bytes())
+        .decrypt(
+            &envelope.ciphertext,
+            envelope.recipient_did.as_str().as_bytes(),
+        )
         .map_err(|_| MessagingError::DecryptionFailed)?;
 
     // 4. Verify plaintext integrity hash
@@ -70,11 +72,8 @@ pub fn unlock(
 mod tests {
     use exo_core::{Did, crypto::generate_keypair};
 
-    use crate::compose::lock_and_send;
-    use crate::envelope::ContentType;
-    use crate::kex::X25519KeyPair;
-
     use super::*;
+    use crate::{compose::lock_and_send, envelope::ContentType, kex::X25519KeyPair};
 
     #[test]
     fn encrypt_decrypt_round_trip() {
@@ -97,8 +96,7 @@ mod tests {
         )
         .expect("lock_and_send");
 
-        let decrypted =
-            unlock(&envelope, &recipient_kp.secret, &sender_pk).expect("unlock");
+        let decrypted = unlock(&envelope, &recipient_kp.secret, &sender_pk).expect("unlock");
 
         assert_eq!(decrypted, plaintext);
     }
@@ -178,8 +176,7 @@ mod tests {
         assert!(envelope.release_on_death);
         assert_eq!(envelope.release_delay_hours, 72);
 
-        let decrypted =
-            unlock(&envelope, &recipient_kp.secret, &sender_pk).expect("unlock");
+        let decrypted = unlock(&envelope, &recipient_kp.secret, &sender_pk).expect("unlock");
         assert_eq!(decrypted, plaintext);
     }
 
@@ -202,8 +199,7 @@ mod tests {
         )
         .expect("lock_and_send");
 
-        let decrypted =
-            unlock(&envelope, &recipient_kp.secret, &sender_pk).expect("unlock");
+        let decrypted = unlock(&envelope, &recipient_kp.secret, &sender_pk).expect("unlock");
         assert!(decrypted.is_empty());
     }
 
@@ -228,8 +224,7 @@ mod tests {
         )
         .expect("lock_and_send");
 
-        let decrypted =
-            unlock(&envelope, &recipient_kp.secret, &sender_pk).expect("unlock");
+        let decrypted = unlock(&envelope, &recipient_kp.secret, &sender_pk).expect("unlock");
         assert_eq!(decrypted, plaintext);
     }
 }

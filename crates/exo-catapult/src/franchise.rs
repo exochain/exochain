@@ -6,10 +6,12 @@ use exo_core::{Hash256, Timestamp, Version};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::budget::BudgetTemplate;
-use crate::error::{CatapultError, Result};
-use crate::goal::GoalTemplate;
-use crate::oda::OdaSlot;
+use crate::{
+    budget::BudgetTemplate,
+    error::{CatapultError, Result},
+    goal::GoalTemplate,
+    oda::OdaSlot,
+};
 
 /// The business model classification for a franchise.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -100,8 +102,7 @@ impl FranchiseRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::budget::BudgetTemplate;
-    use crate::goal::GoalTemplate;
+    use crate::{budget::BudgetTemplate, goal::GoalTemplate};
 
     fn test_blueprint() -> FranchiseBlueprint {
         FranchiseBlueprint {

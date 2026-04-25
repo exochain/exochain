@@ -23,9 +23,18 @@ ciborium = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }
-tokio = { workspace = true }
+# Minimal tokio — we only use `#[tokio::test]` (dev) and async fn
+# signatures. Wasm32 tokio supports only {sync, macros, io-util,
+# rt, time}; on native we also need rt-multi-thread for the test
+# harness. Split per target so the WASM build path stays clean.
+tokio = { version = "1", default-features = false, features = ["sync", "macros", "rt", "time"] }
 sqlx = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# rt-multi-thread is needed by `#[tokio::test(flavor = "multi_thread")]`
+# in integration tests and benches; unavailable on wasm32.
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
 proptest = { workspace = true }

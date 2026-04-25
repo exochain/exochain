@@ -13,9 +13,11 @@ pub mod proofs;
 
 use std::collections::BTreeMap;
 
-use super::context::NodeContext;
-use super::error::{McpError, Result};
-use super::protocol::{ToolDefinition, ToolResult};
+use super::{
+    context::NodeContext,
+    error::{McpError, Result},
+    protocol::{ToolDefinition, ToolResult},
+};
 
 /// Registry of available MCP tools.
 ///

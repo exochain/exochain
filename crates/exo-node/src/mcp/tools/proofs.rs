@@ -4,8 +4,10 @@
 use exo_core::{Did, Hash256, Timestamp};
 use serde_json::{Value, json};
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ToolDefinition, ToolResult};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ToolDefinition, ToolResult},
+};
 
 // ---------------------------------------------------------------------------
 // exochain_create_evidence
@@ -437,7 +439,7 @@ mod tests {
         });
         let result = execute_create_evidence(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert!(v["evidence_id"].as_str().is_some());
         assert_eq!(v["evidence_type"], "document");
         assert_eq!(v["source_did"], "did:exo:alice");
@@ -487,7 +489,7 @@ mod tests {
         });
         let result = execute_verify_chain_of_custody(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid"], true);
         assert_eq!(v["chain_length"], 2);
     }
@@ -502,7 +504,7 @@ mod tests {
         });
         let result = execute_verify_chain_of_custody(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid"], false);
     }
 
@@ -530,11 +532,11 @@ mod tests {
         });
         let result = execute_generate_merkle_proof(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert!(v["root"].as_str().is_some());
         assert_eq!(v["target_index"], 1);
         assert_eq!(v["leaf_count"], 4);
-        assert!(v["proof"].as_array().expect("proof array").len() > 0);
+        assert!(!v["proof"].as_array().expect("proof array").is_empty());
     }
 
     #[test]
@@ -568,7 +570,7 @@ mod tests {
         });
         let result = execute_verify_cgr_proof(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["verification_status"], "verified");
         assert_eq!(v["invariant_count"], 2);
         assert!(v["verification_hash"].as_str().is_some());

@@ -4,8 +4,10 @@
 use exo_core::{Did, Hash256, Timestamp};
 use serde_json::{Value, json};
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ToolDefinition, ToolResult};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ToolDefinition, ToolResult},
+};
 
 // ---------------------------------------------------------------------------
 // exochain_ediscovery_search
@@ -457,7 +459,7 @@ mod tests {
         let params = json!({"query": "contract breach"});
         let result = execute_ediscovery_search(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["query"], "contract breach");
         assert_eq!(v["scope"], "all");
         assert_eq!(v["status"], "completed");
@@ -474,7 +476,7 @@ mod tests {
         });
         let result = execute_ediscovery_search(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["scope"], "emails");
     }
 
@@ -502,7 +504,7 @@ mod tests {
         });
         let result = execute_assert_privilege(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["privilege_type"], "attorney_client");
         assert_eq!(v["status"], "asserted");
         assert!(v["assertion_id"].as_str().is_some());
@@ -548,7 +550,7 @@ mod tests {
         });
         let result = execute_initiate_safe_harbor(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["dgcl_section"], "144");
         assert_eq!(v["status"], "initiated");
         assert_eq!(
@@ -604,7 +606,7 @@ mod tests {
         });
         let result = execute_check_fiduciary_duty(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["overall_status"], "requires_review");
         let duties = v["duties_assessed"].as_array().expect("duties");
         assert_eq!(duties.len(), 3);

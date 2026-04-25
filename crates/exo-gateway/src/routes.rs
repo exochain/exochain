@@ -68,9 +68,10 @@ mod tests {
         Hash256, Timestamp,
         crypto::{generate_keypair, sign},
     };
-    use exo_identity::did::{DidDocument, VerificationMethod};
-    use exo_identity::registry::DidRegistry;
-    use exo_identity::registry::LocalDidRegistry;
+    use exo_identity::{
+        did::{DidDocument, VerificationMethod},
+        registry::{DidRegistry, LocalDidRegistry},
+    };
 
     use super::*;
 

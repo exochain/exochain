@@ -502,6 +502,13 @@ pub fn is_finalized(state: &ConsensusState, hash: &Hash256) -> bool {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
+// Tests exercise both the legacy (deprecated-by-GAP-014) API and
+// the `_verified` counterparts. The deprecated path stays tested to
+// confirm (a) regression safety for existing callers and (b) the
+// reactor defense-in-depth that rejects zero-byte signature
+// sentinels. Silencing the deprecation lint only for this test
+// module; library+binary code still fails CI on any new use.
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::dag::{Dag, HybridClock, append};
@@ -979,7 +986,7 @@ mod tests {
         let (n, _, _) = make_node("x");
         let vote = signed_vote(&a, 0, n.hash, &sk_a);
         let resolver = |d: &Did| -> Option<exo_core::types::PublicKey> {
-            if *d == a { Some(pk_a.clone()) } else { None }
+            if *d == a { Some(pk_a) } else { None }
         };
         assert!(vote_verified(&mut state, vote, &resolver).is_ok());
     }
@@ -1001,7 +1008,7 @@ mod tests {
             node_hash: n.hash,
             signature: Signature::from_bytes([1u8; 64]),
         };
-        let resolver = |_d: &Did| Some(pk_a.clone());
+        let resolver = |_d: &Did| Some(pk_a);
         let res = vote_verified(&mut state, forged, &resolver);
         assert!(matches!(res, Err(DagError::InvalidSignature(_))));
         // Crucially: state must not have accepted the forged vote.
@@ -1023,7 +1030,7 @@ mod tests {
             node_hash: n.hash,
             signature: Signature::from_bytes([0u8; 64]),
         };
-        let resolver = |_d: &Did| Some(pk_a.clone());
+        let resolver = |_d: &Did| Some(pk_a);
         let res = vote_verified(&mut state, zeros, &resolver);
         assert!(matches!(res, Err(DagError::InvalidSignature(_))));
     }
@@ -1049,7 +1056,7 @@ mod tests {
         };
         let payload = bad.signing_payload().unwrap();
         bad.signature = crypto::sign(&payload, &sk_mallory);
-        let resolver = |_d: &Did| Some(pk_alice.clone());
+        let resolver = |_d: &Did| Some(pk_alice);
         let res = vote_verified(&mut state, bad, &resolver);
         assert!(matches!(res, Err(DagError::InvalidSignature(_))));
     }
@@ -1080,7 +1087,7 @@ mod tests {
         let (n, _, _) = make_node("x");
         // Signed for round 0 but state is at round 1.
         let v = signed_vote(&a, 0, n.hash, &sk_a);
-        let resolver = |_d: &Did| Some(pk_a.clone());
+        let resolver = |_d: &Did| Some(pk_a);
         let res = vote_verified(&mut state, v, &resolver);
         assert!(matches!(res, Err(DagError::InvalidRound { .. })));
     }
@@ -1094,7 +1101,7 @@ mod tests {
         let mut state = ConsensusState::new(ConsensusConfig::new(vs, 1000));
         let (n, _, _) = make_node("x");
         let forged_sig = Signature::from_bytes([1u8; 64]);
-        let resolver = |_d: &Did| Some(pk_a.clone());
+        let resolver = |_d: &Did| Some(pk_a);
         let res = propose_verified(&mut state, &n, &a, &forged_sig, &resolver);
         assert!(matches!(res, Err(DagError::InvalidSignature(_))));
     }
@@ -1114,7 +1121,7 @@ mod tests {
         };
         let payload = proposal_shape.signing_payload().unwrap();
         let sig = crypto::sign(&payload, &sk_a);
-        let resolver = |_d: &Did| Some(pk_a.clone());
+        let resolver = |_d: &Did| Some(pk_a);
         let res = propose_verified(&mut state, &n, &a, &sig, &resolver);
         assert!(res.is_ok());
     }
@@ -1138,7 +1145,7 @@ mod tests {
             votes: vec![forged_vote],
             round: 0,
         };
-        let resolver = |_d: &Did| Some(pk_a.clone());
+        let resolver = |_d: &Did| Some(pk_a);
         let res = commit_verified(&mut state, cert, &resolver);
         assert!(matches!(res, Err(DagError::InvalidSignature(_))));
         assert!(state.committed.is_empty());
@@ -1164,9 +1171,9 @@ mod tests {
         };
         let resolver = move |d: &Did| -> Option<exo_core::types::PublicKey> {
             if *d == a {
-                Some(pk_a.clone())
+                Some(pk_a)
             } else if *d == b {
-                Some(pk_b.clone())
+                Some(pk_b)
             } else {
                 None
             }
@@ -1191,7 +1198,7 @@ mod tests {
             votes: vec![v],
             round: 0,
         };
-        let resolver = |_d: &Did| Some(pk_a.clone());
+        let resolver = |_d: &Did| Some(pk_a);
         let res = commit_verified(&mut state, cert, &resolver);
         assert!(matches!(res, Err(DagError::InvalidSignature(_))));
     }

@@ -21,10 +21,6 @@ pub mod protocol;
 pub mod resources;
 pub mod tools;
 
-#[allow(unused_imports)]
-pub use context::NodeContext;
-pub use handler::McpServer;
-
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use async_stream::stream;
@@ -38,9 +34,14 @@ use axum::{
     },
     routing::{get, post},
 };
+#[allow(unused_imports)]
+pub use context::NodeContext;
 use futures::stream::Stream;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::time::sleep;
+pub use handler::McpServer;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    time::sleep,
+};
 
 /// Run the MCP server on stdio (stdin/stdout).
 ///
@@ -145,10 +146,10 @@ async fn handle_events(
 
 #[cfg(test)]
 mod sse_tests {
-    use super::*;
-    use axum::body::Body;
-    use axum::http::Request;
+    use axum::{body::Body, http::Request};
     use tower::ServiceExt;
+
+    use super::*;
 
     fn test_router() -> Router {
         let state = SseState {

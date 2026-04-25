@@ -8,9 +8,11 @@ use exo_core::{Did, Hash256, SecretKey, hlc::HybridClock};
 use exo_identity::vault::VaultEncryptor;
 use uuid::Uuid;
 
-use crate::envelope::{ContentType, EncryptedEnvelope};
-use crate::error::MessagingError;
-use crate::kex::{self, X25519PublicKey};
+use crate::{
+    envelope::{ContentType, EncryptedEnvelope},
+    error::MessagingError,
+    kex::{self, X25519PublicKey},
+};
 
 /// The HKDF context string for message encryption key derivation.
 const MESSAGE_KEX_CONTEXT: &[u8] = b"vitallock-message-v1";
@@ -31,6 +33,13 @@ const MESSAGE_KEX_CONTEXT: &[u8] = b"vitallock-message-v1";
 /// # Returns
 ///
 /// An `EncryptedEnvelope` ready for transmission/storage.
+#[allow(clippy::too_many_arguments)]
+// 8 args is the minimum for a sender→recipient envelope with
+// death-trigger semantics: plaintext + content_type + sender DID +
+// recipient DID + sender key + recipient pubkey + release_on_death +
+// release_delay_hours. Grouping into a struct would add boilerplate
+// for every single call site with zero safety benefit — every field
+// is semantically required and independently typed.
 pub fn lock_and_send(
     plaintext: &[u8],
     content_type: ContentType,

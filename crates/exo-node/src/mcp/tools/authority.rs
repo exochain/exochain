@@ -12,8 +12,10 @@ use exo_gatekeeper::{
 };
 use serde_json::{Value, json};
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ToolDefinition, ToolResult};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ToolDefinition, ToolResult},
+};
 
 /// Constitution bytes used to initialise the CGR Kernel for adjudication.
 const CONSTITUTION: &[u8] = b"We the people of the EXOCHAIN constitutional trust fabric...";
@@ -535,11 +537,11 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["grantor"], "did:exo:root");
         assert_eq!(v["grantee"], "did:exo:alice");
         assert_eq!(v["permissions"].as_array().expect("perms").len(), 2);
-        assert!(v["delegation_id"].as_str().expect("id").len() > 0);
+        assert!(!v["delegation_id"].as_str().expect("id").is_empty());
     }
 
     #[test]
@@ -590,7 +592,7 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid"], true);
         assert_eq!(v["depth"], 2);
         assert!(v["issues"].as_array().expect("issues").is_empty());
@@ -609,7 +611,7 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid"], false);
         assert!(!v["issues"].as_array().expect("issues").is_empty());
     }
@@ -626,7 +628,7 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid"], false);
     }
 
@@ -640,7 +642,7 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid"], false);
         assert_eq!(v["depth"], 0);
     }
@@ -664,7 +666,7 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["actor"], "did:exo:alice");
         assert_eq!(v["permission"], "read");
         assert_eq!(v["granted"], false);
@@ -714,7 +716,7 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["verdict"], "Permitted");
         assert_eq!(v["actor"], "did:exo:alice");
         assert!(v["violations"].is_null());
@@ -731,9 +733,9 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["verdict"], "Denied");
-        assert!(v["violations"].as_array().expect("violations").len() > 0);
+        assert!(!v["violations"].as_array().expect("violations").is_empty());
     }
 
     #[test]
@@ -747,7 +749,7 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["verdict"], "Denied");
     }
 

@@ -4,13 +4,15 @@ use exo_core::{Did, Hash256, Timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::agent::{AgentRoster, CatapultAgent};
-use crate::budget::BudgetLedger;
-use crate::error::{CatapultError, Result};
-use crate::goal::GoalTree;
-use crate::oda::OdaSlot;
-use crate::phase::OperationalPhase;
-use crate::receipt::ReceiptChain;
+use crate::{
+    agent::{AgentRoster, CatapultAgent},
+    budget::BudgetLedger,
+    error::{CatapultError, Result},
+    goal::GoalTree,
+    oda::OdaSlot,
+    phase::OperationalPhase,
+    receipt::ReceiptChain,
+};
 
 /// Operational status of a newco.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -322,8 +324,10 @@ mod tests {
         n.hire_agent(make_agent(OdaSlot::Communications1)).unwrap();
         n.hire_agent(make_agent(OdaSlot::Communications2)).unwrap();
         n.hire_agent(make_agent(OdaSlot::HrPeopleOps2)).unwrap();
-        n.hire_agent(make_agent(OdaSlot::PlatformEngineer1)).unwrap();
-        n.hire_agent(make_agent(OdaSlot::PlatformEngineer2)).unwrap();
+        n.hire_agent(make_agent(OdaSlot::PlatformEngineer1))
+            .unwrap();
+        n.hire_agent(make_agent(OdaSlot::PlatformEngineer2))
+            .unwrap();
 
         assert!(n.is_fully_staffed());
         n.advance_phase(OperationalPhase::Execution).unwrap();

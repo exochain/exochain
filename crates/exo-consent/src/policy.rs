@@ -141,7 +141,6 @@ impl PolicyEngine {
 
 #[cfg(test)]
 mod tests {
-    use exo_core::Signature;
 
     use super::*;
     use crate::bailment;

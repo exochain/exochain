@@ -38,7 +38,7 @@ use exo_consent::{
     },
 };
 use exo_core::{Did, Hash256, Timestamp};
-use exo_identity::registry::{LocalDidRegistry, DidRegistry};
+use exo_identity::registry::{DidRegistry, LocalDidRegistry};
 use tokio::sync::{Mutex, broadcast};
 use uuid::Uuid;
 

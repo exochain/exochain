@@ -874,9 +874,9 @@ mod tests {
         // Verified variant counts ONLY Alice.
         let resolver = |did: &Did| -> Option<exo_core::types::PublicKey> {
             if *did == d_alice {
-                Some(pk_alice.clone())
+                Some(pk_alice)
             } else if *did == d_bob {
-                Some(pk_bob.clone())
+                Some(pk_bob)
             } else {
                 None
             }

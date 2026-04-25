@@ -9,9 +9,11 @@
 use exo_core::{Did, Hash256, Signature, Timestamp};
 use serde::{Deserialize, Serialize};
 
-use crate::cert_902_11::Cert902_11;
-use crate::error::{LegalError, Result};
-use crate::evidence::Evidence;
+use crate::{
+    cert_902_11::Cert902_11,
+    error::{LegalError, Result},
+    evidence::Evidence,
+};
 
 /// Owned snapshot of a `Cert902_11` for bundle serialization.
 ///
@@ -542,11 +544,7 @@ pub fn render_markdown_summary(bundle: &EvidenceBundle) -> String {
     for event in &bundle.events {
         md.push_str(&format!(
             "\n| {} | {} | {} | {} | {} |",
-            event.sequence,
-            event.event_type,
-            event.actor,
-            event.timestamp,
-            event.payload_summary
+            event.sequence, event.event_type, event.actor, event.timestamp, event.payload_summary
         ));
     }
     md.push_str("\n\n");
@@ -623,8 +621,7 @@ pub fn sign(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cert_902_11::generate_902_11_cert;
-    use crate::evidence::create_evidence;
+    use crate::{cert_902_11::generate_902_11_cert, evidence::create_evidence};
 
     // -- Helpers ----------------------------------------------------------
 
@@ -984,8 +981,8 @@ mod tests {
             make_subject(),
             vec![e0],
             vec![make_evidence_item()],
-            vec![],  // no consents
-            None,    // no contract
+            vec![], // no consents
+            None,   // no contract
             None,
             make_anchor(),
         )

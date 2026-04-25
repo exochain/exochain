@@ -131,13 +131,15 @@ pub struct DidDocument {
 /// In-memory DID registry using a `BTreeMap` for deterministic ordering.
 #[cfg(test)]
 mod tests {
-    use crate::error::IdentityError;
-    use crate::registry::{DidRegistry, LocalDidRegistry};
     // bs58 is available as a dependency of this crate
     use bs58;
     use exo_core::crypto::{generate_keypair, sign};
 
     use super::*;
+    use crate::{
+        error::IdentityError,
+        registry::{DidRegistry, LocalDidRegistry},
+    };
 
     fn make_did(label: &str) -> Did {
         Did::new(&format!("did:exo:{label}")).expect("valid did")
