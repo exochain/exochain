@@ -7,9 +7,13 @@ DATA_DIR="${EXOCHAIN_DATA_DIR:-/data}"
 P2P_PORT="${P2P_PORT:-4001}"
 # Honor Railway/Heroku-style $PORT first, then $API_PORT, then default 8080.
 API_PORT="${PORT:-${API_PORT:-8080}}"
+# Containers must bind HTTP to all interfaces for Railway/public ingress.
+# Direct CLI execution keeps the binary's safer 127.0.0.1 default unless this
+# deployment entrypoint is used.
+API_HOST="${API_HOST:-0.0.0.0}"
 
 # Build base arguments.
-ARGS="--data-dir ${DATA_DIR} --p2p-port ${P2P_PORT} --api-port ${API_PORT}"
+ARGS="--data-dir ${DATA_DIR} --p2p-port ${P2P_PORT} --api-port ${API_PORT} --api-host ${API_HOST}"
 
 if [ -n "${VALIDATORS}" ]; then
     ARGS="${ARGS} --validator --validators ${VALIDATORS}"

@@ -241,6 +241,8 @@ jobs:
         run: bash tools/test_gap_registry_truth.sh
       - name: No orphan Rust modules
         run: bash tools/test_no_orphan_rust_modules.sh
+      - name: Railway entrypoint ingress contract
+        run: bash tools/test_railway_entrypoint_args.sh
 
   # -----------------------------------------------------------------------
   # Gate 10: SBOM (dry-run generation — no upload, validates toolchain)
