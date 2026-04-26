@@ -22,7 +22,7 @@ The following review was conducted against the live implementation at `/Users/bo
 - `exo-dag/src/dag.rs` -- Append-only DAG with Blake3 hashing, sorted parent canonicalization, cycle detection, signature verification
 - `exo-dag/src/smt.rs` -- Sparse Merkle Tree with 256-bit key space, inclusion/non-inclusion proofs, proptest-verified determinism
 - `exo-dag/src/mmr.rs` -- Merkle Mountain Range, append-only accumulator with peak-bagging and proof generation
-- `exo-dag/src/proof.rs` -- EventInclusionProof (simplified MMR path verification)
+- `exo-dag/src/mmr.rs` -- Merkle Mountain Range proof generation and verification
 - `exo-dag/src/store.rs` -- DagStore trait + MemoryStore with BTreeMap (deterministic iteration)
 - `exo-dag/src/checkpoint.rs` -- CheckpointPayload with event_root (MMR), state_root (SMT), validator signatures
 - `exo-core/src/hash.rs` -- Canonical Blake3 hashing
@@ -190,7 +190,7 @@ The following review was conducted against the live implementation at `/Users/bo
 - `exo-gateway/src/middleware.rs` -- Consent middleware (default-deny), Governance middleware (Allow/Deny/Escalate), Audit middleware
 - `exo-gateway/src/auth.rs` -- DID-based authentication
 - `exo-core/src/crypto.rs` -- Ed25519 with zeroize-on-drop for key material
-- `exo-identity/src/did.rs`, `exo-identity/src/key.rs` -- DID resolution, key management
+- `exo-identity/src/did.rs`, `exo-identity/src/did_verification.rs`, `exo-identity/src/key_management.rs` -- DID resolution, DID signature verification, key management
 
 **Gaps:**
 1. **No tenant key isolation.** All tenants share the same Ed25519 key type. There is no per-tenant key derivation, no tenant-scoped key rotation, and no mechanism to revoke a single tenant's keys without affecting others.
@@ -247,7 +247,7 @@ The following review was conducted against the live implementation at `/Users/bo
 **Exochain Coverage:**
 - `exo-core/src/crypto.rs` -- Ed25519 via ed25519-dalek, zeroize on drop
 - `exo-proofs/src/stark.rs` -- Hash-based proofs (blake3 only, no elliptic curves), explicitly post-quantum
-- `exo-identity/src/key.rs` -- Key management structures
+- `exo-identity/src/key_management.rs` -- Key management structures
 - `exo-dag/src/dag.rs` -- Signature as opaque 64-byte array (algorithm-agnostic at the storage layer)
 
 **Gaps:**

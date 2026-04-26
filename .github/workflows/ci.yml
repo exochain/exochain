@@ -239,6 +239,8 @@ jobs:
         run: bash tools/test_cr001_status.sh
       - name: GAP registry truth
         run: bash tools/test_gap_registry_truth.sh
+      - name: No orphan Rust modules
+        run: bash tools/test_no_orphan_rust_modules.sh
 
   # -----------------------------------------------------------------------
   # Gate 10: SBOM (dry-run generation — no upload, validates toolchain)

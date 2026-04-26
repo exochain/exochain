@@ -51,11 +51,21 @@ follow-up identifiers below are the plan's A-NN items.
   `HttpTransport.timeout` accepts `httpx.Timeout` for per-phase control.
 - **Python SDK ships `py.typed`** (A-063); all three SDKs expose a
   matching `PROTOCOL_VERSION` constant (A-066).
+- **Orphan Rust modules removed**: deleted undeclared top-level Rust files
+  that were not compiled or tested (`exo-core/src/event.rs`,
+  `exo-dag/src/proof.rs`, `exo-gatekeeper/src/proof.rs`,
+  `exo-governance/src/{anchor,decision,emergency}.rs`, and
+  `exo-identity/src/key.rs`). Current functionality lives in the declared
+  `events`, `mmr`, `kernel`/`invariants`, `decision-forum`,
+  `did_verification`, and `key_management` surfaces.
 
 ### CI
 
 - **GAP stub hygiene** (A-102): CI Gate 9 fails on any `STUB.*GAP-0NN`
   marker in code so a closed GAP can never leave a stub behind.
+- **Rust module hygiene**: CI Gate 9 now runs
+  `tools/test_no_orphan_rust_modules.sh` to reject undeclared
+  top-level `crates/*/src/*.rs` files.
 
 ### Docs
 

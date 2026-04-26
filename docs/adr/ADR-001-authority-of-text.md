@@ -83,7 +83,7 @@ SYBIL = adversarial/synthetic condition manufacturing counterfeit plurality (can
 |----------|-------|--------------|
 | `EXOCHAIN-FABRIC-PLATFORM.md` header | Self-describes as "Authoritative Source of Truth" and "Supersedes all prior documentation" | Acknowledged and resolved by this ADR; no file edit required unless platform doc is republished |
 | `crates/exo-core/src/events.rs` lines 142, 208 | Cites `"spec v2.1 Section 3A"` | Must cite v2.2 spec §3A (Holon lifecycle); reference `EXOCHAIN_Specification_v2.2.pdf` |
-| `crates/exo-core/src/event.rs` line 81 | Cites `"spec v2.1 Section 3A"` | Same fix as above |
+| obsolete exo-core event orphan | Previously cited `"spec v2.1 Section 3A"` | Removed; structured events now live in `crates/exo-core/src/events.rs` |
 | `crates/exo-dag/src/checkpoint.rs` line 50 | Cites `"Spec 9.4"` with no version | Must cite `EXOCHAIN_Specification_v2.2.pdf §9.4` |
 | `crates/exo-dag/src/append.rs` lines 8, 31 | Unversioned `"normative"` reference | Must cite `EXOCHAIN_Specification_v2.2.pdf` |
 | Five owned crates (exo-gatekeeper, exo-governance, exo-escalation, exo-legal, decision-forum) | No inline spec version citations found | **No drift** — these crates implement invariants from `invariants.rs` without pinning to a platform version |

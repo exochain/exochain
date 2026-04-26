@@ -117,57 +117,31 @@ Every governance action follows the Bailment-Conditioned Transaction Set lifecyc
 
 ### 3.1 The Decision State Machine
 
-EXOCHAIN governance decisions follow an 11-state lifecycle. The `DecisionStatus` enum in [[exo-governance/src/decision.rs]] defines the complete state machine. Terminal states are immutable (TNC-08): once a decision reaches `Approved`, `Rejected`, `Void`, or `RatificationExpired`, it can never be modified.
+EXOCHAIN governance decisions follow the BCTS lifecycle. The `BctsState`
+enum in [[exo-core/src/bcts.rs]] defines the transition graph, and
+[[decision-forum/src/decision_object.rs]] binds it to decision objects
+with receipt-chain validation. Terminal states are immutable (TNC-08):
+once a decision reaches `Closed`, it cannot transition again.
 
-```
-                                    ┌──────────────┐
-                                    │   Created    │
-                                    └──────┬───────┘
-                                           │
-                                    ┌──────▼───────┐
-                               ┌────│ Deliberation │────┐
-                               │    └──────┬───────┘    │
-                               │           │            │
-                        ┌──────▼──────┐    │     ┌──────▼──────┐
-                        │  Contested  │◄───┤     │    Void     │
-                        └──────┬──────┘    │     │  (terminal) │
-                               │           │     └─────────────┘
-                               └───────────┤
-                                           │
-                                    ┌──────▼───────┐
-                               ┌────│   Voting     │────┐
-                               │    └──────┬───────┘    │
-                               │           │            │
-                        ┌──────▼──────┐    │     ┌──────▼──────┐
-                        │  Approved   │    │     │  Rejected   │
-                        │  (terminal) │    │     │  (terminal) │
-                        └─────────────┘    │     └─────────────┘
-                                           │
-                                    ┌──────▼───────────────┐
-                                    │RatificationRequired  │
-                                    └──────┬──────┬────────┘
-                                           │      │
-                                    ┌──────▼──┐ ┌─▼─────────────────┐
-                                    │Approved │ │RatificationExpired│
-                                    │(terminal│ │    (terminal)     │
-                                    └─────────┘ └───────────────────┘
+Main success path:
 
-                                    ┌──────────────────┐
-                                    │DegradedGovernance│
-                                    └──────┬───────────┘
-                                           │
-                                    ┌──────▼───────┐
-                                    │ Deliberation │ (return to normal)
-                                    └──────────────┘
-```
+`Draft -> Submitted -> IdentityResolved -> ConsentValidated -> Deliberated -> Verified -> Governed -> Approved -> Executed -> Recorded -> Closed`
 
-The 11 states: `Created`, `Deliberation`, `Voting`, `Approved`, `Rejected`, `Void`, `Contested`, `RatificationRequired`, `RatificationExpired`, `DegradedGovernance`, and the re-entry back to `Deliberation` from contestation.
+Failure/recovery states:
+
+`Denied -> Remediated -> Submitted`
+
+`Escalated -> Deliberated | Denied | Remediated`
+
+The 14 BCTS states are `Draft`, `Submitted`, `IdentityResolved`,
+`ConsentValidated`, `Deliberated`, `Verified`, `Governed`, `Approved`,
+`Executed`, `Recorded`, `Closed`, `Denied`, `Escalated`, and `Remediated`.
 
 ### 3.2 Why Every Action Needs Correlation, Receipt, and Attribution
 
 Every governance action in EXOCHAIN carries three mandatory components:
 
-- **Correlation ID** --- The `event_id` computed as `Blake3(canonical_CBOR(envelope))`. This is deterministic: the same envelope always produces the same ID. See `compute_event_id()` in [[exo-core/src/event.rs]].
+- **Correlation ID** --- The `event_id` computed as `Blake3(canonical_CBOR(envelope))`. This is deterministic: the same envelope always produces the same ID. See `compute_event_id()` in [[exo-core/src/events.rs]].
 - **Receipt chain** --- The `parents` field in `EventEnvelope` establishes DAG causality. Every event references its causal predecessors, creating an unforgeable ordering.
 - **Actor attribution** --- The `author` DID and `key_version` fields, combined with the domain-separated Ed25519 signature, cryptographically bind every action to an identified actor.
 
@@ -221,7 +195,7 @@ When any invariant fails:
 2. All violations from a single transition are accumulated and returned.
 3. Violations are appended to the kernel's audit trail for post-hoc review.
 
-See [[exo-gatekeeper/src/proof.rs]].
+See [[exo-gatekeeper/src/kernel.rs]] and [[exo-gatekeeper/src/invariants.rs]].
 
 ---
 
@@ -555,13 +529,13 @@ exo-core           (leaf node; no internal dependencies)
 | Path | Contents |
 |---|---|
 | [[exo-core/src/crypto.rs]] | `Blake3Hash`, `compute_signature()`, `verify_signature()`, domain separator |
-| [[exo-core/src/event.rs]] | `EventEnvelope`, `EventPayload` (30+ event types), `LedgerEvent`, `compute_event_id()` |
+| [[exo-core/src/events.rs]] | `Event`, `EventType`, `EventPayload`, signed event helpers, `compute_event_id()` |
 | [[exo-core/src/hlc.rs]] | `HybridLogicalClock`, `new_event()` with catch-up semantics |
 | [[exo-gatekeeper/src/kernel.rs]] | `CgrKernel`, `verify_transition()`, all 8 `check_inv*` methods |
 | [[exo-gatekeeper/src/invariants.rs]] | `InvariantRegistry::canonical()`, content-addressed invariant definitions |
 | [[exo-gatekeeper/src/combinator.rs]] | `CombinatorTerm`, `CombinatorEngine::reduce()`, `encode_invariant()` |
 | [[exo-gatekeeper/src/holon.rs]] | `Holon`, `HolonStatus`, `HolonType`, capability model |
-| [[exo-governance/src/decision.rs]] | `DecisionStatus` (11 states), `valid_transitions()`, `Vote` |
+| [[decision-forum/src/decision_object.rs]] | `DecisionObject`, BCTS-backed lifecycle receipts, votes, evidence, authority chain |
 | [[exo-governance/src/crosscheck.rs]] | `CrosscheckReport`, `OpinionProvenance`, `verify_provenance_compliance()` |
 | [[exo-governance/src/quorum.rs]] | `verify_quorum()`, `DegradedGovernanceConfig` |
 | [[exo-escalation/src/escalation.rs]] | `EscalationPolicy`, 5-level escalation, auto-escalation logic |
