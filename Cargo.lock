@@ -1361,7 +1361,6 @@ dependencies = [
  "ciborium",
  "exo-core",
  "serde",
- "serde_json",
  "thiserror 2.0.17",
 ]
 
@@ -1412,7 +1411,6 @@ dependencies = [
  "exo-gatekeeper",
  "exo-governance",
  "exo-identity",
- "proptest",
  "serde",
  "thiserror 2.0.17",
  "uuid",
@@ -1473,7 +1471,6 @@ dependencies = [
  "exo-consent",
  "exo-core",
  "exo-identity",
- "proptest",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -1511,7 +1508,6 @@ dependencies = [
  "exo-gatekeeper",
  "exo-governance",
  "exo-identity",
- "proptest",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -1586,7 +1582,6 @@ version = "0.1.0-beta"
 dependencies = [
  "blake3",
  "exo-core",
- "proptest",
  "serde",
  "serde_json",
  "sha2",

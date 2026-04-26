@@ -533,6 +533,30 @@ mod tests {
         did("challenger")
     }
 
+    fn challenge_id(n: u128) -> uuid::Uuid {
+        uuid::Uuid::from_u128(n)
+    }
+
+    fn challenge_ts(ms: u64) -> Timestamp {
+        Timestamp::new(ms, 0)
+    }
+
+    fn make_challenge(
+        id: u128,
+        ground: ChallengeGround,
+        evidence: &[u8],
+    ) -> crate::challenge::Challenge {
+        file_challenge(
+            challenge_id(id),
+            challenge_ts(20_000),
+            &challenger_did(),
+            &target(),
+            ground,
+            evidence,
+        )
+        .expect("deterministic challenge")
+    }
+
     #[test]
     fn open_challenge_blocks_quorum() {
         let approvals = vec![
@@ -540,9 +564,8 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let ch = file_challenge(
-            &challenger_did(),
-            &target(),
+        let ch = make_challenge(
+            0x9001,
             ChallengeGround::SybilAllegation,
             b"coordinated approvers suspected",
         );
@@ -559,12 +582,7 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let mut ch = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::QuorumViolation,
-            b"",
-        );
+        let mut ch = make_challenge(0x9002, ChallengeGround::QuorumViolation, b"");
         ch.status = ChallengeStatus::UnderReview;
         assert!(matches!(
             compute_quorum_with_challenges(&approvals, &default_policy(), &[&ch]),
@@ -579,12 +597,7 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let mut ch = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::SybilAllegation,
-            b"",
-        );
+        let mut ch = make_challenge(0x9003, ChallengeGround::SybilAllegation, b"");
         ch.status = ChallengeStatus::Overruled;
         assert!(matches!(
             compute_quorum_with_challenges(&approvals, &default_policy(), &[&ch]),
@@ -612,12 +625,7 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let mut ch = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::SybilAllegation,
-            b"",
-        );
+        let mut ch = make_challenge(0x9004, ChallengeGround::SybilAllegation, b"");
         ch.status = ChallengeStatus::Withdrawn;
         assert!(matches!(
             compute_quorum_with_challenges(&approvals, &default_policy(), &[&ch]),
@@ -636,9 +644,8 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let mut ch = file_challenge(
-            &challenger_did(),
-            &target(),
+        let mut ch = make_challenge(
+            0x9005,
             ChallengeGround::SybilAllegation,
             b"coordinated approvers suspected",
         );
@@ -674,12 +681,7 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let mut ch = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::QuorumViolation,
-            b"",
-        );
+        let mut ch = make_challenge(0x9006, ChallengeGround::QuorumViolation, b"");
         adjudicate(&mut ch, ChallengeVerdict::Sustain).expect("adjudicate ok");
         assert_eq!(ch.status, ChallengeStatus::Sustained);
         assert!(matches!(
@@ -697,18 +699,8 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let ch1 = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::SybilAllegation,
-            b"sybil evidence",
-        );
-        let ch2 = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::QuorumViolation,
-            b"quorum evidence",
-        );
+        let ch1 = make_challenge(0x9007, ChallengeGround::SybilAllegation, b"sybil evidence");
+        let ch2 = make_challenge(0x9008, ChallengeGround::QuorumViolation, b"quorum evidence");
         assert!(matches!(
             compute_quorum_with_challenges(&approvals, &default_policy(), &[&ch1, &ch2]),
             QuorumResult::Contested { .. }
@@ -723,20 +715,10 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let mut resolved = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::SybilAllegation,
-            b"",
-        );
+        let mut resolved = make_challenge(0x9009, ChallengeGround::SybilAllegation, b"");
         adjudicate(&mut resolved, ChallengeVerdict::Overrule).expect("adjudicate ok");
 
-        let open = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::ProceduralError,
-            b"",
-        );
+        let open = make_challenge(0x9010, ChallengeGround::ProceduralError, b"");
 
         // resolved first in slice — open challenge must still block
         assert!(matches!(
@@ -1099,12 +1081,7 @@ mod tests {
         let resolver = move |d: &Did| -> Option<PublicKey> {
             if *d == d_alice { Some(pk_alice) } else { None }
         };
-        let ch = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::SybilAllegation,
-            b"evidence",
-        );
+        let ch = make_challenge(0x9011, ChallengeGround::SybilAllegation, b"evidence");
         match compute_quorum_with_challenges_verified(&approvals, &policy, &[&ch], &resolver) {
             QuorumResult::Contested { challenge } => {
                 assert!(challenge.contains("unresolved independence challenge"));
@@ -1136,12 +1113,7 @@ mod tests {
         let resolver = move |d: &Did| -> Option<PublicKey> {
             if *d == d_alice { Some(pk_alice) } else { None }
         };
-        let mut ch = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::QuorumViolation,
-            b"",
-        );
+        let mut ch = make_challenge(0x9012, ChallengeGround::QuorumViolation, b"");
         ch.status = ChallengeStatus::UnderReview;
         assert!(matches!(
             compute_quorum_with_challenges_verified(&approvals, &policy, &[&ch], &resolver),
@@ -1202,12 +1174,7 @@ mod tests {
         let resolver = move |d: &Did| -> Option<PublicKey> {
             if *d == d_alice { Some(pk_alice) } else { None }
         };
-        let mut ch = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::SybilAllegation,
-            b"",
-        );
+        let mut ch = make_challenge(0x9013, ChallengeGround::SybilAllegation, b"");
         ch.status = ChallengeStatus::Overruled;
         assert!(matches!(
             compute_quorum_with_challenges_verified(&approvals, &policy, &[&ch], &resolver),

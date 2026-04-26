@@ -1214,10 +1214,10 @@ test('wasm_activate_succession', () => {
 console.log('\n--- Audit ---');
 
 test('wasm_audit_append', () =>
-  wasm.wasm_audit_append(TEST_DID, 'create', 'success', ZERO_32_HEX));
+  wasm.wasm_audit_append(UUID_1, NOW_MS, 0, TEST_DID, 'create', 'success', ZERO_32_HEX));
 
 const auditEntry = setup(() =>
-  wasm.wasm_audit_append(TEST_DID, 'create', 'success', ZERO_32_HEX));
+  wasm.wasm_audit_append(UUID_1, NOW_MS, 0, TEST_DID, 'create', 'success', ZERO_32_HEX));
 
 test('wasm_audit_verify', () => {
   const entry = {
@@ -1252,12 +1252,18 @@ console.log('\n--- Deliberation / Voting ---');
 
 test('wasm_open_deliberation', () =>
   wasm.wasm_open_deliberation(
+    UUID_1,
+    NOW_MS,
+    0,
     Buffer.from('test proposal').toString('hex'),
     JSON.stringify([TEST_DID, TEST_DID_2])
   ));
 
 const deliberation = setup(() =>
   wasm.wasm_open_deliberation(
+    UUID_1,
+    NOW_MS,
+    0,
     Buffer.from('test proposal').toString('hex'),
     JSON.stringify([TEST_DID, TEST_DID_2])
   ));
@@ -1359,6 +1365,9 @@ console.log('\n--- Governance Challenges ---');
 
 test('wasm_file_governance_challenge', () =>
   wasm.wasm_file_governance_challenge(
+    UUID_1,
+    NOW_MS,
+    0,
     TEST_DID,
     ZERO_32_HEX,
     JSON.stringify('ProceduralError'),

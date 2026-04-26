@@ -22,7 +22,6 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 exo-gatekeeper = { path = "../exo-gatekeeper" }
-proptest = { workspace = true }
 
 [package.metadata.cargo-machete]
 # Pre-existing workspace dep used via re-exports.

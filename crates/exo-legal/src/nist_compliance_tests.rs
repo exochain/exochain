@@ -146,20 +146,26 @@ mod nist_compliance {
         let mut audit_log = AuditLog::new();
         let e1 = gov_audit::create_entry(
             &audit_log,
+            audit_id(0xE100),
+            ts(40_000),
             actor.clone(),
             "human_override_check".into(),
             "pass".into(),
             [0u8; 32],
-        );
+        )
+        .expect("deterministic governance audit entry");
         gov_audit::append(&mut audit_log, e1).expect("audit append");
 
         let e2 = gov_audit::create_entry(
             &audit_log,
+            audit_id(0xE101),
+            ts(40_001),
             actor,
             "human_override_check".into(),
             "VIOLATION: human_override_preserved=false".into(),
             [0u8; 32],
-        );
+        )
+        .expect("deterministic governance audit entry");
         gov_audit::append(&mut audit_log, e2).expect("audit append");
 
         // 5. Chain integrity must hold — satisfies tamper-evidence requirement.
