@@ -1,14 +1,14 @@
 //! Validated persistent-store DAG append with Byzantine clock defense.
 //!
 //! Extends the in-memory [`dag::append`](crate::dag::append) with:
-//! - Wall-clock skew enforcement (±500ms tolerance)
+//! - Validation-time skew enforcement (±500ms tolerance)
 //! - HLC causality validation (node timestamp must strictly exceed all parents)
 //! - Stored-node integrity verification (hash recomputation)
 //!
 //! These checks implement the normative HLC check (EXOCHAIN Specification v2.2): event > parent,
 //! preventing Byzantine clock manipulation in the trust fabric.
 
-use exo_core::types::Hash256;
+use exo_core::types::{Hash256, Timestamp};
 
 use crate::{
     dag::compute_node_hash,
@@ -16,33 +16,34 @@ use crate::{
     store::DagStore,
 };
 
-/// Maximum allowed clock skew between nodes (500ms).
+/// Maximum allowed clock skew between a node and validation time (500ms).
 ///
-/// Nodes claiming timestamps more than this far ahead of the wall clock
-/// are rejected as potential Byzantine clock manipulation.
+/// Nodes claiming timestamps more than this far ahead of the caller-supplied
+/// validation timestamp are rejected as potential Byzantine clock manipulation.
 const MAX_CLOCK_SKEW_MS: u64 = 500;
 
 /// Validate and append a DAG node to persistent storage.
 ///
 /// Performs three checks beyond basic structure:
-/// 1. **Wall-clock skew**: reject nodes with timestamps too far in the future
+/// 1. **Validation-time skew**: reject nodes with timestamps too far in the future
 /// 2. **HLC causality**: node timestamp must strictly exceed all parent timestamps
 /// 3. **Parent existence**: all parents must exist in the store
 ///
 /// This is the normative append path for persistent deployments (EXOCHAIN Specification v2.2).
 /// The in-memory [`dag::append`](crate::dag::append) handles local construction;
 /// this function handles validation for nodes received from external sources.
-pub async fn validated_append(store: &mut impl DagStore, node: crate::dag::DagNode) -> Result<()> {
-    // 1. Wall-clock skew check: reject future-dated nodes
+pub async fn validated_append(
+    store: &mut impl DagStore,
+    node: crate::dag::DagNode,
+    validation_time: Timestamp,
+) -> Result<()> {
+    // 1. Validation-time skew check: reject future-dated nodes
     if node.timestamp.physical_ms > 0 {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-            .unwrap_or(0);
-        if node.timestamp.physical_ms > now_ms.saturating_add(MAX_CLOCK_SKEW_MS) {
+        let validation_ms = validation_time.physical_ms;
+        if node.timestamp.physical_ms > validation_ms.saturating_add(MAX_CLOCK_SKEW_MS) {
             return Err(DagError::StoreError(format!(
-                "clock skew: node timestamp {} exceeds wall clock {} + {}ms tolerance",
-                node.timestamp.physical_ms, now_ms, MAX_CLOCK_SKEW_MS
+                "clock skew: node timestamp {} exceeds validation timestamp {} + {}ms tolerance",
+                node.timestamp.physical_ms, validation_ms, MAX_CLOCK_SKEW_MS
             )));
         }
     }
@@ -164,6 +165,46 @@ mod tests {
         }
     }
 
+    fn make_node_at(timestamp: Timestamp) -> DagNode {
+        let creator = test_did();
+        let payload_hash = Hash256::digest(b"timestamped-node");
+        let hash = compute_node_hash(&[], &payload_hash, &creator, &timestamp);
+        let sign_fn = make_sign_fn();
+        let signature = (*sign_fn)(hash.as_bytes());
+
+        DagNode {
+            hash,
+            parents: Vec::new(),
+            payload_hash,
+            creator_did: creator,
+            timestamp,
+            signature,
+        }
+    }
+
+    fn validation_time_for(node: &DagNode) -> Timestamp {
+        Timestamp::new(
+            node.timestamp.physical_ms.saturating_add(MAX_CLOCK_SKEW_MS),
+            node.timestamp.logical,
+        )
+    }
+
+    #[test]
+    fn validated_append_has_no_internal_wall_clock() {
+        let source = include_str!("append.rs");
+        let system_time_pattern = format!("{}{}", "SystemTime::", "now()");
+        let unix_epoch_pattern = format!("{}{}", "UNIX_", "EPOCH");
+
+        assert!(
+            !source.contains(&system_time_pattern),
+            "validated_append must receive caller-supplied validation time"
+        );
+        assert!(
+            !source.contains(&unix_epoch_pattern),
+            "validated_append must not derive validation time from the wall clock"
+        );
+    }
+
     #[tokio::test]
     async fn validated_append_success() {
         let mut store = MemoryStore::new();
@@ -171,7 +212,7 @@ mod tests {
         store.put(genesis.clone()).await.expect("put genesis");
 
         let child = make_child_node(&genesis);
-        validated_append(&mut store, child.clone())
+        validated_append(&mut store, child.clone(), validation_time_for(&child))
             .await
             .expect("validated append");
 
@@ -185,7 +226,9 @@ mod tests {
         let genesis = make_test_node();
         let child = make_child_node(&genesis);
 
-        let err = validated_append(&mut store, child).await.unwrap_err();
+        let err = validated_append(&mut store, child.clone(), validation_time_for(&child))
+            .await
+            .unwrap_err();
         assert!(matches!(err, DagError::ParentNotFound(_)));
     }
 
@@ -212,11 +255,48 @@ mod tests {
             signature,
         };
 
-        let err = validated_append(&mut store, bad_child).await.unwrap_err();
+        let err = validated_append(
+            &mut store,
+            bad_child.clone(),
+            validation_time_for(&bad_child),
+        )
+        .await
+        .unwrap_err();
         assert!(
             matches!(err, DagError::StoreError(ref msg) if msg.contains("causality")),
             "expected causality violation, got: {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn validated_append_rejects_node_after_supplied_validation_time() {
+        let mut store = MemoryStore::new();
+        let node = make_node_at(Timestamp::new(2_001, 0));
+
+        let err = validated_append(&mut store, node, Timestamp::new(1_500, 0))
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                DagError::StoreError(ref msg)
+                    if msg.contains("node timestamp 2001 exceeds validation timestamp 1500 + 500ms tolerance")
+            ),
+            "expected validation-time skew rejection, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validated_append_accepts_node_within_supplied_validation_time_tolerance() {
+        let mut store = MemoryStore::new();
+        let node = make_node_at(Timestamp::new(2_000, 0));
+
+        validated_append(&mut store, node.clone(), Timestamp::new(1_500, 0))
+            .await
+            .expect("node inside validation-time tolerance");
+
+        assert!(store.contains(&node.hash).await.expect("contains"));
     }
 
     #[tokio::test]
@@ -265,7 +345,7 @@ mod tests {
         let mut store = MemoryStore::new();
         let genesis = make_test_node();
         // Genesis has no parents — should pass validation
-        validated_append(&mut store, genesis.clone())
+        validated_append(&mut store, genesis.clone(), validation_time_for(&genesis))
             .await
             .expect("genesis append");
         assert!(store.contains(&genesis.hash).await.expect("contains"));
