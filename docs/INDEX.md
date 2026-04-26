@@ -149,6 +149,7 @@ tags: [exochain, documentation, index]
 
 - [ExoForge Repository](https://github.com/exochain/exoforge) — Archon-based autonomous coding platform.
 - [[ARCHON-INTEGRATION]] — Integration guide (commands, workflows, council review, governance gate).
+- [CommandBase Foundation Starter](commandbase-foundation/README.md) — portable starter package for the first ExoChain-powered operating business.
 
 ## Development
 
