@@ -32,7 +32,10 @@ fi
 
 if [ "$(id -u)" = "0" ]; then
     mkdir -p "${DATA_DIR}"
-    chown "${RUN_AS_USER}:${RUN_AS_USER}" "${DATA_DIR}"
+    # Railway mounts volumes after pre-deploy commands run; repair the live
+    # mounted tree before dropping privileges so existing root-owned state
+    # remains readable and writable by the node process.
+    chown -R "${RUN_AS_USER}:${RUN_AS_USER}" "${DATA_DIR}"
     chmod 755 "${DATA_DIR}"
 
     if command -v gosu >/dev/null 2>&1; then
