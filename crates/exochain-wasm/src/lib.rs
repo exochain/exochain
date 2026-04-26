@@ -57,4 +57,21 @@ mod source_guard_tests {
             );
         }
     }
+
+    #[test]
+    fn wasm_consent_bridge_requires_caller_supplied_time() {
+        let source = include_str!("consent_bindings.rs");
+        let forbidden = [
+            format!("{}{}", "Timestamp::", "now_utc()"),
+            format!("{}{}", "Uuid::", "new_v4()"),
+            "HybridClock::new()".to_string(),
+        ];
+
+        for pattern in forbidden {
+            assert!(
+                !source.contains(&pattern),
+                "consent WASM bindings must receive caller-supplied IDs and HLC timestamps"
+            );
+        }
+    }
 }

@@ -16,7 +16,6 @@ exo-core = { path = "../exo-core" }
 serde = { workspace = true }
 blake3 = { workspace = true }
 thiserror = { workspace = true }
-uuid = { workspace = true }
 ciborium = { workspace = true }
 
 [dev-dependencies]

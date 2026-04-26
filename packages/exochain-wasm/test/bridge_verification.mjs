@@ -520,7 +520,9 @@ test('wasm_propose_bailment', () =>
     TEST_DID,
     TEST_DID_2,
     TEXT_BYTES,
-    JSON.stringify('Custody')
+    JSON.stringify('Custody'),
+    UUID_1,
+    JSON.stringify(NOW_TS)
   ));
 
 const bailment = setup(() =>
@@ -528,12 +530,14 @@ const bailment = setup(() =>
     TEST_DID,
     TEST_DID_2,
     TEXT_BYTES,
-    JSON.stringify('Custody')
+    JSON.stringify('Custody'),
+    UUID_1,
+    JSON.stringify(NOW_TS)
   ));
 
 test('wasm_bailment_is_active', () => {
   if (!bailment) throw new Error('skipped -- no bailment from setup');
-  return wasm.wasm_bailment_is_active(JSON.stringify(bailment));
+  return wasm.wasm_bailment_is_active(JSON.stringify(bailment), JSON.stringify(NOW_TS));
 });
 
 // Build the canonical bailment signing payload and sign it with a

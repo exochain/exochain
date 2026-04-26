@@ -26,6 +26,8 @@ fn js_str(val: JsValue) -> String {
     val.as_string().expect("expected string JsValue")
 }
 
+const TEST_TS_JSON: &str = r#"{"physical_ms":1700000000000,"logical":0}"#;
+
 // ── Core: Hashing ─────────────────────────────────────────────────────────────
 
 #[wasm_bindgen_test]
@@ -411,10 +413,17 @@ fn test_propose_bailment_creates_proposed_status() {
         "did:exo:bailee",
         b"data sharing terms v1",
         r#""Custody""#,
+        "bailment-wasm-test",
+        TEST_TS_JSON,
     )
     .expect("propose_bailment");
     let json = js_to_json(result);
     assert_eq!(json["status"].as_str().unwrap(), "Proposed");
+    assert_eq!(json["id"].as_str().unwrap(), "bailment-wasm-test");
+    assert_eq!(
+        json["created"]["physical_ms"].as_u64().unwrap(),
+        1700000000000
+    );
 }
 
 #[wasm_bindgen_test]
@@ -425,10 +434,13 @@ fn test_bailment_not_active_when_proposed() {
             "did:exo:bailee",
             b"terms",
             r#""Processing""#,
+            "bailment-wasm-test",
+            TEST_TS_JSON,
         )
         .expect("propose"),
     );
-    let active = exochain_wasm::wasm_bailment_is_active(&bailment_json).expect("is_active");
+    let active =
+        exochain_wasm::wasm_bailment_is_active(&bailment_json, TEST_TS_JSON).expect("is_active");
     assert!(!active);
 }
 

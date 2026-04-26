@@ -5,7 +5,6 @@
 
 use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::error::ConsentError;
 
@@ -59,19 +58,55 @@ pub struct Bailment {
 }
 
 /// Propose a new bailment. Returns a bailment in `Proposed` status.
-#[must_use]
-pub fn propose(bailor: &Did, bailee: &Did, terms: &[u8], bailment_type: BailmentType) -> Bailment {
-    Bailment {
-        id: Uuid::new_v4().to_string(),
+///
+/// Callers must supply the proposal ID and creation timestamp from their
+/// deterministic execution context. The constructor rejects empty IDs and
+/// zero timestamps so consensus/audit-significant bailments cannot silently
+/// carry placeholder metadata.
+///
+/// # Errors
+/// Returns `Denied` if `id` is empty or `created` is [`Timestamp::ZERO`].
+pub fn propose(
+    bailor: &Did,
+    bailee: &Did,
+    terms: &[u8],
+    bailment_type: BailmentType,
+    id: impl Into<String>,
+    created: Timestamp,
+) -> Result<Bailment, ConsentError> {
+    let id = id.into();
+    validate_constructor_metadata("bailment id", &id, "created", &created)?;
+
+    Ok(Bailment {
+        id,
         bailor_did: bailor.clone(),
         bailee_did: bailee.clone(),
         bailment_type,
         terms_hash: Hash256::digest(terms),
-        created: Timestamp::now_utc(),
+        created,
         expires: None,
         status: BailmentStatus::Proposed,
         signature: Signature::empty(),
+    })
+}
+
+fn validate_constructor_metadata(
+    id_label: &str,
+    id: &str,
+    timestamp_label: &str,
+    timestamp: &Timestamp,
+) -> Result<(), ConsentError> {
+    if id.trim().is_empty() {
+        return Err(ConsentError::Denied(format!(
+            "{id_label} must be caller-supplied and non-empty"
+        )));
     }
+    if *timestamp == Timestamp::ZERO {
+        return Err(ConsentError::Denied(format!(
+            "{timestamp_label} must be caller-supplied and non-zero"
+        )));
+    }
+    Ok(())
 }
 
 /// Canonical CBOR signing payload for bailment acceptance.
@@ -219,30 +254,108 @@ mod tests {
         Timestamp::new(ms, 0)
     }
 
+    fn propose_test(terms: &[u8], bailment_type: BailmentType) -> Bailment {
+        propose(
+            &alice(),
+            &bob(),
+            terms,
+            bailment_type,
+            "bailment-test",
+            ts(1000),
+        )
+        .expect("test bailment proposal")
+    }
+
+    fn propose_test_with_metadata(
+        terms: &[u8],
+        bailment_type: BailmentType,
+        id: &str,
+        created: Timestamp,
+    ) -> Bailment {
+        propose(&alice(), &bob(), terms, bailment_type, id, created)
+            .expect("test bailment proposal with metadata")
+    }
+
+    #[test]
+    fn bailment_proposal_constructor_has_no_internal_entropy_or_wall_clock() {
+        let source = include_str!("bailment.rs");
+        let uuid_pattern = format!("{}{}", "Uuid::", "new_v4()");
+        let now_pattern = format!("{}{}", "Timestamp::", "now_utc()");
+
+        assert!(
+            !source.contains(&uuid_pattern),
+            "bailment proposals must receive caller-supplied IDs"
+        );
+        assert!(
+            !source.contains(&now_pattern),
+            "bailment proposals must receive caller-supplied HLC timestamps"
+        );
+    }
+
     #[test]
     fn propose_creates_proposed() {
-        let b = propose(&alice(), &bob(), b"terms", BailmentType::Custody);
+        let b = propose_test_with_metadata(
+            b"terms",
+            BailmentType::Custody,
+            "bailment-explicit",
+            ts(1234),
+        );
         assert_eq!(b.status, BailmentStatus::Proposed);
         assert_eq!(b.bailor_did, alice());
         assert_eq!(b.bailee_did, bob());
         assert_eq!(b.bailment_type, BailmentType::Custody);
+        assert_eq!(b.id, "bailment-explicit");
+        assert_eq!(b.created, ts(1234));
         assert!(b.signature.is_empty());
         assert!(b.expires.is_none());
-        assert!(!b.id.is_empty());
+    }
+
+    #[test]
+    fn propose_rejects_empty_id() {
+        let err = propose(
+            &alice(),
+            &bob(),
+            b"terms",
+            BailmentType::Custody,
+            " ",
+            ts(1000),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ConsentError::Denied("bailment id must be caller-supplied and non-empty".into())
+        );
+    }
+
+    #[test]
+    fn propose_rejects_zero_created_timestamp() {
+        let err = propose(
+            &alice(),
+            &bob(),
+            b"terms",
+            BailmentType::Custody,
+            "bailment-explicit",
+            Timestamp::ZERO,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ConsentError::Denied("created must be caller-supplied and non-zero".into())
+        );
     }
 
     #[test]
     fn propose_hashes_terms_deterministically() {
-        let a = propose(&alice(), &bob(), b"terms-a", BailmentType::Processing);
-        let b = propose(&alice(), &bob(), b"terms-b", BailmentType::Processing);
+        let a = propose_test(b"terms-a", BailmentType::Processing);
+        let b = propose_test(b"terms-b", BailmentType::Processing);
         assert_ne!(a.terms_hash, b.terms_hash);
-        let c = propose(&alice(), &bob(), b"terms-a", BailmentType::Processing);
+        let c = propose_test(b"terms-a", BailmentType::Processing);
         assert_eq!(a.terms_hash, c.terms_hash);
     }
 
     #[test]
     fn accept_transitions_to_active() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
         assert!(accept(&mut b, &pk, &sig).is_ok());
         assert_eq!(b.status, BailmentStatus::Active);
@@ -251,7 +364,7 @@ mod tests {
 
     #[test]
     fn accept_rejects_non_proposed() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
         b.status = BailmentStatus::Active;
         assert_eq!(
@@ -265,7 +378,7 @@ mod tests {
 
     #[test]
     fn accept_rejects_empty_signature() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk) = crypto::generate_keypair();
         assert_eq!(
             accept(&mut b, &pk, &Signature::empty()),
@@ -280,7 +393,7 @@ mod tests {
     /// accepted.
     #[test]
     fn accept_rejects_non_empty_but_invalid_signature() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk) = crypto::generate_keypair();
         // Non-empty junk bytes — the kind of signature the old code let
         // through unchecked.
@@ -298,7 +411,7 @@ mod tests {
     /// point; EXOCHAIN must not.
     #[test]
     fn accept_rejects_zero_byte_signature() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk) = crypto::generate_keypair();
         let zeros = Signature::from_bytes([0u8; 64]);
         assert_eq!(
@@ -313,7 +426,7 @@ mod tests {
     /// bound to the bailee's public key.
     #[test]
     fn accept_rejects_signature_by_wrong_key() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (_pk_a, sk_a) = crypto::generate_keypair();
         let (pk_b, _sk_b) = crypto::generate_keypair();
         let payload = signing_payload(&b).unwrap();
@@ -330,8 +443,8 @@ mod tests {
     /// authenticate this bailment (replay protection).
     #[test]
     fn accept_rejects_signature_over_different_bailment() {
-        let mut b1 = propose(&alice(), &bob(), b"t1", BailmentType::Custody);
-        let b2 = propose(&alice(), &bob(), b"t2", BailmentType::Custody);
+        let mut b1 = propose_test(b"t1", BailmentType::Custody);
+        let b2 = propose_test(b"t2", BailmentType::Custody);
         let (pk, sk) = crypto::generate_keypair();
         let payload2 = signing_payload(&b2).unwrap();
         let sig_on_b2 = crypto::sign(&payload2, &sk);
@@ -346,7 +459,7 @@ mod tests {
     /// before acceptance is processed must invalidate the signature.
     #[test]
     fn accept_rejects_tampered_bailment() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
         // Attacker changes the bailee to themselves after the real
         // bailee signed. Should be rejected.
@@ -360,7 +473,7 @@ mod tests {
 
     #[test]
     fn accept_rejects_tampered_terms() {
-        let mut b = propose(&alice(), &bob(), b"t-original", BailmentType::Custody);
+        let mut b = propose_test(b"t-original", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
         b.terms_hash = Hash256::digest(b"t-swapped");
         assert_eq!(
@@ -373,7 +486,7 @@ mod tests {
 
     #[test]
     fn terminate_by_bailor() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
         accept(&mut b, &pk, &sig).ok();
         assert!(terminate(&mut b, &alice()).is_ok());
@@ -382,7 +495,7 @@ mod tests {
 
     #[test]
     fn terminate_by_bailee() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
         accept(&mut b, &pk, &sig).ok();
         assert!(terminate(&mut b, &bob()).is_ok());
@@ -391,7 +504,7 @@ mod tests {
 
     #[test]
     fn terminate_rejects_unauthorized() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
         accept(&mut b, &pk, &sig).ok();
         assert!(matches!(
@@ -402,7 +515,7 @@ mod tests {
 
     #[test]
     fn terminate_rejects_already_terminated() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
         accept(&mut b, &pk, &sig).ok();
         terminate(&mut b, &alice()).ok();
@@ -414,7 +527,7 @@ mod tests {
 
     #[test]
     fn terminate_rejects_expired() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         b.status = BailmentStatus::Expired;
         assert!(matches!(
             terminate(&mut b, &alice()),
@@ -424,20 +537,20 @@ mod tests {
 
     #[test]
     fn terminate_proposed() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         assert!(terminate(&mut b, &alice()).is_ok());
     }
 
     #[test]
     fn terminate_suspended() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         b.status = BailmentStatus::Suspended;
         assert!(terminate(&mut b, &alice()).is_ok());
     }
 
     #[test]
     fn is_active_with_no_expiry() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
         accept(&mut b, &pk, &sig).ok();
         assert!(is_active(&b, &ts(5000)));
@@ -445,7 +558,7 @@ mod tests {
 
     #[test]
     fn is_active_before_expiry() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
         accept(&mut b, &pk, &sig).ok();
         b.expires = Some(ts(10000));
@@ -454,7 +567,7 @@ mod tests {
 
     #[test]
     fn not_active_after_expiry() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
         accept(&mut b, &pk, &sig).ok();
         b.expires = Some(ts(1000));
@@ -463,7 +576,7 @@ mod tests {
 
     #[test]
     fn not_active_at_exact_expiry() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
         accept(&mut b, &pk, &sig).ok();
         b.expires = Some(ts(5000));
@@ -472,13 +585,13 @@ mod tests {
 
     #[test]
     fn not_active_when_proposed() {
-        let b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let b = propose_test(b"t", BailmentType::Custody);
         assert!(!is_active(&b, &ts(1000)));
     }
 
     #[test]
     fn not_active_when_terminated() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
         accept(&mut b, &pk, &sig).ok();
         terminate(&mut b, &alice()).ok();
@@ -487,14 +600,14 @@ mod tests {
 
     #[test]
     fn not_active_when_suspended() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         b.status = BailmentStatus::Suspended;
         assert!(!is_active(&b, &ts(1000)));
     }
 
     #[test]
     fn not_active_when_expired_status() {
-        let mut b = propose(&alice(), &bob(), b"t", BailmentType::Custody);
+        let mut b = propose_test(b"t", BailmentType::Custody);
         b.status = BailmentStatus::Expired;
         assert!(!is_active(&b, &ts(1000)));
     }

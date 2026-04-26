@@ -157,7 +157,8 @@ mod tests {
         bt: BailmentType,
         exp: Option<Timestamp>,
     ) -> Bailment {
-        let mut b = bailment::propose(bailor, bailee, b"gt", bt);
+        let mut b = bailment::propose(bailor, bailee, b"gt", bt, "gatekeeper-test", ts(1000))
+            .expect("test bailment proposal");
         // Produce a valid bailee signature for the GAP-012-verified accept().
         let (pk, sk) = exo_core::crypto::generate_keypair();
         let payload = bailment::signing_payload(&b).expect("canonical payload");

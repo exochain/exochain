@@ -15,7 +15,6 @@
 
 use exo_core::{DeterministicMap, Did, Hash256, Timestamp, hash::hash_structured};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::{bailment::BailmentType, error::ConsentError};
 
@@ -281,7 +280,12 @@ pub fn default_template(bailment_type: BailmentType) -> ContractTemplate {
 pub fn compose(
     template: &ContractTemplate,
     params: &ContractParams,
+    id: impl Into<String>,
+    composed_at: Timestamp,
 ) -> Result<ComposedContract, ConsentError> {
+    let id = id.into();
+    validate_constructor_metadata("contract id", &id, "composed_at", &composed_at)?;
+
     // Filter clauses by jurisdiction
     let mut filtered_clauses = Vec::new();
     for clause in &template.clauses {
@@ -327,11 +331,11 @@ pub fn compose(
         hash_structured(&payload).map_err(|e| ConsentError::Denied(format!("Hash error: {e}")))?;
 
     Ok(ComposedContract {
-        id: Uuid::new_v4().to_string(),
+        id,
         template_id,
         params: params.clone(),
         rendered_clauses,
-        composed_at: Timestamp::now_utc(),
+        composed_at,
         contract_hash,
         version,
         parent_contract_id: None,
@@ -403,7 +407,10 @@ pub fn assess_breach(
     contract: &ComposedContract,
     breached_clause_ids: &[&str],
     severity: BreachSeverity,
+    assessed_at: Timestamp,
 ) -> Result<BreachAssessment, ConsentError> {
+    validate_constructor_metadata("contract id", &contract.id, "assessed_at", &assessed_at)?;
+
     // Validate all clause IDs exist
     for clause_id in breached_clause_ids {
         if !contract
@@ -440,7 +447,7 @@ pub fn assess_breach(
         breached_clauses: breached_clause_ids.iter().map(|s| s.to_string()).collect(),
         liability_assessment_bps: liability_bps,
         recommended_remedy: remedy,
-        assessed_at: Timestamp::now_utc(),
+        assessed_at,
     })
 }
 
@@ -457,7 +464,12 @@ pub fn amend(
     original: &ComposedContract,
     new_params: &ContractParams,
     amended_clauses: &[(String, Clause)],
+    id: impl Into<String>,
+    composed_at: Timestamp,
 ) -> Result<ComposedContract, ConsentError> {
+    let id = id.into();
+    validate_constructor_metadata("contract id", &id, "composed_at", &composed_at)?;
+
     // Start with original rendered clauses
     let mut clauses: Vec<RenderedClause> = original.rendered_clauses.clone();
 
@@ -498,11 +510,11 @@ pub fn amend(
         hash_structured(&payload).map_err(|e| ConsentError::Denied(format!("Hash error: {e}")))?;
 
     Ok(ComposedContract {
-        id: Uuid::new_v4().to_string(),
+        id,
         template_id: original.template_id.clone(),
         params: new_params.clone(),
         rendered_clauses: clauses,
-        composed_at: Timestamp::now_utc(),
+        composed_at,
         contract_hash,
         version: new_version,
         parent_contract_id: Some(original.id.clone()),
@@ -525,6 +537,25 @@ pub fn verify_hash(contract: &ComposedContract) -> bool {
         Ok(computed) => computed == contract.contract_hash,
         Err(_) => false,
     }
+}
+
+fn validate_constructor_metadata(
+    id_label: &str,
+    id: &str,
+    timestamp_label: &str,
+    timestamp: &Timestamp,
+) -> Result<(), ConsentError> {
+    if id.trim().is_empty() {
+        return Err(ConsentError::Denied(format!(
+            "{id_label} must be caller-supplied and non-empty"
+        )));
+    }
+    if *timestamp == Timestamp::ZERO {
+        return Err(ConsentError::Denied(format!(
+            "{timestamp_label} must be caller-supplied and non-zero"
+        )));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -877,9 +908,181 @@ mod tests {
         }
     }
 
+    fn ts(ms: u64) -> Timestamp {
+        Timestamp::new(ms, 0)
+    }
+
+    fn compose_test(template: &ContractTemplate, params: &ContractParams) -> ComposedContract {
+        compose(template, params, "contract-test", ts(1_700_000_000_100))
+            .expect("test contract composition")
+    }
+
+    fn compose_test_with_metadata(
+        template: &ContractTemplate,
+        params: &ContractParams,
+        id: &str,
+        composed_at: Timestamp,
+    ) -> ComposedContract {
+        compose(template, params, id, composed_at).expect("test contract composition metadata")
+    }
+
+    fn assess_breach_test(
+        contract: &ComposedContract,
+        breached_clause_ids: &[&str],
+        severity: BreachSeverity,
+    ) -> BreachAssessment {
+        assess_breach(
+            contract,
+            breached_clause_ids,
+            severity,
+            ts(1_700_000_000_200),
+        )
+        .expect("test breach assessment")
+    }
+
+    fn amend_test(
+        original: &ComposedContract,
+        new_params: &ContractParams,
+        amended_clauses: &[(String, Clause)],
+    ) -> ComposedContract {
+        amend(
+            original,
+            new_params,
+            amended_clauses,
+            "contract-amendment-test",
+            ts(1_700_000_000_300),
+        )
+        .expect("test amendment")
+    }
+
     fn compose_custody() -> ComposedContract {
         let template = default_template(BailmentType::Custody);
-        compose(&template, &test_params()).unwrap()
+        compose_test(&template, &test_params())
+    }
+
+    #[test]
+    fn contract_constructors_have_no_internal_entropy_or_wall_clock() {
+        let source = include_str!("contract.rs");
+        let uuid_pattern = format!("{}{}", "Uuid::", "new_v4()");
+        let now_pattern = format!("{}{}", "Timestamp::", "now_utc()");
+
+        assert!(
+            !source.contains(&uuid_pattern),
+            "contract constructors must receive caller-supplied IDs"
+        );
+        assert!(
+            !source.contains(&now_pattern),
+            "contract constructors must receive caller-supplied HLC timestamps"
+        );
+    }
+
+    #[test]
+    fn compose_uses_caller_supplied_metadata() {
+        let template = default_template(BailmentType::Custody);
+        let contract =
+            compose_test_with_metadata(&template, &test_params(), "contract-explicit", ts(4321));
+
+        assert_eq!(contract.id, "contract-explicit");
+        assert_eq!(contract.composed_at, ts(4321));
+        assert_eq!(contract.version, 1);
+        assert_eq!(contract.parent_contract_id, None);
+    }
+
+    #[test]
+    fn compose_rejects_empty_id() {
+        let template = default_template(BailmentType::Custody);
+        let err = compose(&template, &test_params(), " ", ts(1000)).unwrap_err();
+
+        assert_eq!(
+            err,
+            ConsentError::Denied("contract id must be caller-supplied and non-empty".into())
+        );
+    }
+
+    #[test]
+    fn compose_rejects_zero_composed_at() {
+        let template = default_template(BailmentType::Custody);
+        let err = compose(
+            &template,
+            &test_params(),
+            "contract-explicit",
+            Timestamp::ZERO,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            ConsentError::Denied("composed_at must be caller-supplied and non-zero".into())
+        );
+    }
+
+    #[test]
+    fn assess_breach_uses_caller_supplied_timestamp() {
+        let contract = compose_custody();
+        let clause_id = contract.rendered_clauses[0].clause_id.as_str();
+        let assessment = assess_breach(&contract, &[clause_id], BreachSeverity::Minor, ts(4567))
+            .expect("breach assessment");
+
+        assert_eq!(assessment.assessed_at, ts(4567));
+    }
+
+    #[test]
+    fn assess_breach_rejects_zero_timestamp() {
+        let contract = compose_custody();
+        let clause_id = contract.rendered_clauses[0].clause_id.as_str();
+        let err = assess_breach(
+            &contract,
+            &[clause_id],
+            BreachSeverity::Minor,
+            Timestamp::ZERO,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            ConsentError::Denied("assessed_at must be caller-supplied and non-zero".into())
+        );
+    }
+
+    #[test]
+    fn amend_uses_caller_supplied_metadata() {
+        let original = compose_custody();
+        let amended = amend(
+            &original,
+            &test_params(),
+            &[],
+            "contract-amendment-explicit",
+            ts(5678),
+        )
+        .expect("amendment");
+
+        assert_eq!(amended.id, "contract-amendment-explicit");
+        assert_eq!(amended.composed_at, ts(5678));
+        assert_eq!(amended.parent_contract_id, Some(original.id.clone()));
+    }
+
+    #[test]
+    fn amend_rejects_placeholder_metadata() {
+        let original = compose_custody();
+
+        let empty_id = amend(&original, &test_params(), &[], " ", ts(5678)).unwrap_err();
+        assert_eq!(
+            empty_id,
+            ConsentError::Denied("contract id must be caller-supplied and non-empty".into())
+        );
+
+        let zero_time = amend(
+            &original,
+            &test_params(),
+            &[],
+            "contract-amendment-explicit",
+            Timestamp::ZERO,
+        )
+        .unwrap_err();
+        assert_eq!(
+            zero_time,
+            ConsentError::Denied("composed_at must be caller-supplied and non-zero".into())
+        );
     }
 
     // All 8 clause categories
@@ -978,11 +1181,12 @@ mod tests {
         let template = default_template(BailmentType::Custody);
         let params = test_params();
 
-        let c1 = compose(&template, &params).unwrap();
-        let c2 = compose(&template, &params).unwrap();
+        let c1 = compose_test(&template, &params);
+        let c2 = compose_test(&template, &params);
 
-        // IDs differ (UUID), but hashes must be identical
-        assert_ne!(c1.id, c2.id);
+        // Caller-supplied metadata is stable, and content hash is stable.
+        assert_eq!(c1.id, c2.id);
+        assert_eq!(c1.composed_at, c2.composed_at);
         assert_eq!(c1.contract_hash, c2.contract_hash);
     }
 
@@ -995,8 +1199,8 @@ mod tests {
         let mut params2 = test_params();
         params2.liability_cap_bps = 9999;
 
-        let c1 = compose(&template, &params1).unwrap();
-        let c2 = compose(&template, &params2).unwrap();
+        let c1 = compose_test(&template, &params1);
+        let c2 = compose_test(&template, &params2);
 
         assert_ne!(c1.contract_hash, c2.contract_hash);
     }
@@ -1060,7 +1264,7 @@ mod tests {
         let contract = compose_custody();
         let clause_id = contract.rendered_clauses[0].clause_id.as_str();
 
-        let assessment = assess_breach(&contract, &[clause_id], BreachSeverity::Minor).unwrap();
+        let assessment = assess_breach_test(&contract, &[clause_id], BreachSeverity::Minor);
 
         assert_eq!(assessment.breach_severity, BreachSeverity::Minor);
         assert_eq!(assessment.recommended_remedy, Remedy::Notice);
@@ -1074,7 +1278,7 @@ mod tests {
         let contract = compose_custody();
         let clause_id = contract.rendered_clauses[0].clause_id.as_str();
 
-        let assessment = assess_breach(&contract, &[clause_id], BreachSeverity::Material).unwrap();
+        let assessment = assess_breach_test(&contract, &[clause_id], BreachSeverity::Material);
 
         assert_eq!(assessment.breach_severity, BreachSeverity::Material);
         assert_eq!(
@@ -1093,8 +1297,7 @@ mod tests {
         let contract = compose_custody();
         let clause_id = contract.rendered_clauses[0].clause_id.as_str();
 
-        let assessment =
-            assess_breach(&contract, &[clause_id], BreachSeverity::Fundamental).unwrap();
+        let assessment = assess_breach_test(&contract, &[clause_id], BreachSeverity::Fundamental);
 
         assert_eq!(assessment.breach_severity, BreachSeverity::Fundamental);
         assert_eq!(
@@ -1110,7 +1313,12 @@ mod tests {
     fn test_breach_invalid_clause_id() {
         let contract = compose_custody();
 
-        let result = assess_breach(&contract, &["nonexistent-clause"], BreachSeverity::Minor);
+        let result = assess_breach(
+            &contract,
+            &["nonexistent-clause"],
+            BreachSeverity::Minor,
+            ts(1_700_000_000_200),
+        );
 
         assert!(result.is_err());
         match result {
@@ -1128,7 +1336,7 @@ mod tests {
         let original = compose_custody();
         let new_params = test_params();
 
-        let amended = amend(&original, &new_params, &[]).unwrap();
+        let amended = amend_test(&original, &new_params, &[]);
 
         assert_eq!(amended.version, original.version + 1);
         assert_eq!(amended.parent_contract_id, Some(original.id.clone()));
@@ -1145,7 +1353,7 @@ mod tests {
         let mut new_params = test_params();
         new_params.liability_cap_bps = 9000;
 
-        let _amended = amend(&original, &new_params, &[]).unwrap();
+        let _amended = amend_test(&original, &new_params, &[]);
 
         // Original's hash is unchanged
         assert_eq!(original.contract_hash, original_hash);
@@ -1181,7 +1389,7 @@ mod tests {
 
         // Breach assessment also uses u64
         let clause_id = contract.rendered_clauses[0].clause_id.as_str();
-        let assessment = assess_breach(&contract, &[clause_id], BreachSeverity::Material).unwrap();
+        let assessment = assess_breach_test(&contract, &[clause_id], BreachSeverity::Material);
         let _liability: u64 = assessment.liability_assessment_bps;
         assert_eq!(assessment.liability_assessment_bps, 2500u64);
 
@@ -1225,7 +1433,7 @@ mod tests {
     #[test]
     fn test_compose_delegation_template_succeeds() {
         let template = default_template(BailmentType::Delegation);
-        let contract = compose(&template, &test_params()).unwrap();
+        let contract = compose_test(&template, &test_params());
         assert!(!contract.rendered_clauses.is_empty());
         assert_ne!(contract.contract_hash, Hash256::ZERO);
         // Section numbering is monotonic from 1.
@@ -1239,7 +1447,7 @@ mod tests {
     #[test]
     fn test_compose_emergency_template_succeeds() {
         let template = default_template(BailmentType::Emergency);
-        let contract = compose(&template, &test_params()).unwrap();
+        let contract = compose_test(&template, &test_params());
         assert!(!contract.rendered_clauses.is_empty());
         assert_ne!(contract.contract_hash, Hash256::ZERO);
     }
@@ -1260,7 +1468,7 @@ mod tests {
             jurisdiction: Some("EU-DE".to_string()),
         });
 
-        let contract = compose(&template, &test_params()).unwrap();
+        let contract = compose_test(&template, &test_params());
         assert!(
             contract
                 .rendered_clauses
@@ -1285,7 +1493,12 @@ mod tests {
         });
 
         // test_params() uses "US-DE" — the required EU clause cannot apply.
-        let result = compose(&template, &test_params());
+        let result = compose(
+            &template,
+            &test_params(),
+            "contract-test",
+            ts(1_700_000_000_100),
+        );
         match result {
             Err(ConsentError::Denied(msg)) => {
                 assert!(msg.contains("required-eu-only"));
@@ -1310,7 +1523,7 @@ mod tests {
             jurisdiction: Some("US-DE".to_string()),
         });
 
-        let contract = compose(&template, &test_params()).unwrap();
+        let contract = compose_test(&template, &test_params());
         assert!(
             contract
                 .rendered_clauses
@@ -1342,6 +1555,8 @@ mod tests {
             &original,
             &test_params(),
             &[(target_id.clone(), replacement.clone())],
+            "contract-amendment-test",
+            ts(1_700_000_000_300),
         )
         .unwrap();
 
@@ -1400,6 +1615,8 @@ mod tests {
             &original,
             &test_params(),
             &[("NON-EXISTENT-CLAUSE-ID".to_string(), new_clause)],
+            "contract-amendment-test",
+            ts(1_700_000_000_300),
         )
         .unwrap();
 
@@ -1452,6 +1669,8 @@ mod tests {
                 (target_id, replacement),
                 ("UNKNOWN-ID".to_string(), addition),
             ],
+            "contract-amendment-test",
+            ts(1_700_000_000_300),
         )
         .unwrap();
 
@@ -1479,7 +1698,7 @@ mod tests {
     #[test]
     fn test_amend_changes_contract_hash() {
         let original = compose_custody();
-        let amended = amend(&original, &test_params(), &[]).unwrap();
+        let amended = amend_test(&original, &test_params(), &[]);
         // Version differs (original = 1, amended = 2), so payload differs,
         // so hash must differ.
         assert_ne!(amended.contract_hash, original.contract_hash);
@@ -1492,7 +1711,7 @@ mod tests {
         let template = default_template(BailmentType::Custody);
         let mut params = test_params();
         params.expiry_date = None;
-        let contract = compose(&template, &params).unwrap();
+        let contract = compose_test(&template, &params);
 
         let md = render_markdown(&contract);
         assert!(
@@ -1547,7 +1766,7 @@ mod tests {
     fn test_compose_includes_all_jurisdiction_neutral_required_clauses() {
         let template = default_template(BailmentType::Custody);
         // Default template clauses all have jurisdiction: None.
-        let contract = compose(&template, &test_params()).unwrap();
+        let contract = compose_test(&template, &test_params());
         assert_eq!(contract.rendered_clauses.len(), template.clauses.len());
     }
 
@@ -1559,7 +1778,7 @@ mod tests {
         let id0 = contract.rendered_clauses[0].clause_id.clone();
         let id1 = contract.rendered_clauses[1].clause_id.clone();
 
-        let a = assess_breach(&contract, &[&id0, &id1], BreachSeverity::Material).unwrap();
+        let a = assess_breach_test(&contract, &[&id0, &id1], BreachSeverity::Material);
         assert_eq!(a.breached_clauses.len(), 2);
         assert!(a.breached_clauses.contains(&id0));
         assert!(a.breached_clauses.contains(&id1));
