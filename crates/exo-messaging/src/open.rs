@@ -70,10 +70,20 @@ pub fn unlock(
 
 #[cfg(test)]
 mod tests {
-    use exo_core::{Did, crypto::generate_keypair};
+    use exo_core::{Did, Timestamp, crypto::generate_keypair};
+    use uuid::Uuid;
 
     use super::*;
-    use crate::{compose::lock_and_send, envelope::ContentType, kex::X25519KeyPair};
+    use crate::{
+        compose::{ComposeMetadata, lock_and_send},
+        envelope::ContentType,
+        kex::X25519KeyPair,
+    };
+
+    fn metadata(suffix: u128) -> ComposeMetadata {
+        ComposeMetadata::new(Uuid::from_u128(suffix), Timestamp::new(8_000, 0))
+            .expect("valid compose metadata")
+    }
 
     #[test]
     fn encrypt_decrypt_round_trip() {
@@ -91,6 +101,7 @@ mod tests {
             &recipient_did,
             &sender_sk,
             &recipient_kp.public,
+            metadata(0x018f_7a96_8ad0_7c4f_8e0f_1111_1111_1101),
             false,
             0,
         )
@@ -116,6 +127,7 @@ mod tests {
             &recipient_did,
             &sender_sk,
             &recipient_kp.public,
+            metadata(0x018f_7a96_8ad0_7c4f_8e0f_1111_1111_1102),
             false,
             0,
         )
@@ -140,6 +152,7 @@ mod tests {
             &recipient_did,
             &sender_sk,
             &recipient_kp.public,
+            metadata(0x018f_7a96_8ad0_7c4f_8e0f_1111_1111_1103),
             false,
             0,
         )
@@ -168,6 +181,7 @@ mod tests {
             &recipient_did,
             &sender_sk,
             &recipient_kp.public,
+            metadata(0x018f_7a96_8ad0_7c4f_8e0f_1111_1111_1104),
             true,
             72,
         )
@@ -194,6 +208,7 @@ mod tests {
             &recipient_did,
             &sender_sk,
             &recipient_kp.public,
+            metadata(0x018f_7a96_8ad0_7c4f_8e0f_1111_1111_1105),
             false,
             0,
         )
@@ -219,6 +234,7 @@ mod tests {
             &recipient_did,
             &sender_sk,
             &recipient_kp.public,
+            metadata(0x018f_7a96_8ad0_7c4f_8e0f_1111_1111_1106),
             false,
             0,
         )

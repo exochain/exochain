@@ -91,4 +91,30 @@ mod source_guard_tests {
             );
         }
     }
+
+    #[test]
+    fn wasm_messaging_bridge_requires_caller_supplied_envelope_metadata() {
+        let source = include_str!("messaging_bindings.rs");
+        assert!(
+            source.contains("message_id") && source.contains("created_physical_ms"),
+            "messaging WASM encryption must expose caller-supplied envelope metadata"
+        );
+        assert!(
+            source.contains("ComposeMetadata::new"),
+            "messaging WASM encryption must validate caller-supplied envelope metadata"
+        );
+
+        let forbidden = [
+            format!("{}{}", "Timestamp::", "now_utc()"),
+            format!("{}{}", "Uuid::", "new_v4()"),
+            "HybridClock::new()".to_string(),
+        ];
+
+        for pattern in forbidden {
+            assert!(
+                !source.contains(&pattern),
+                "messaging WASM bindings must receive caller-supplied IDs and HLC timestamps"
+            );
+        }
+    }
 }

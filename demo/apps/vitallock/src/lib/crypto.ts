@@ -76,6 +76,9 @@ export function encryptMessage(
   recipientDid: string,
   senderSigningKeyHex: string,
   recipientX25519PublicHex: string,
+  messageId: string,
+  createdPhysicalMs: bigint,
+  createdLogical: number,
   releaseOnDeath: boolean = false,
   releaseDelayHours: number = 0,
 ): EncryptedEnvelope {
@@ -86,6 +89,9 @@ export function encryptMessage(
     recipientDid,
     senderSigningKeyHex,
     recipientX25519PublicHex,
+    messageId,
+    createdPhysicalMs,
+    createdLogical,
     releaseOnDeath,
     releaseDelayHours,
   );

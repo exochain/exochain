@@ -66,8 +66,15 @@ export const server = http.createServer(async (req, res) => {
         const {
           plaintext, content_type, sender_did, recipient_did,
           sender_signing_key_hex, recipient_x25519_public_hex,
+          message_id, created_physical_ms, created_logical,
           release_on_death, release_delay_hours,
         } = body;
+
+        if (!message_id || created_physical_ms === undefined || created_logical === undefined) {
+          return json(res, 400, {
+            error: 'message_id, created_physical_ms, and created_logical are required for server-side encryption',
+          });
+        }
 
         envelope = wasm.wasm_encrypt_message(
           plaintext,
@@ -76,6 +83,9 @@ export const server = http.createServer(async (req, res) => {
           recipient_did,
           sender_signing_key_hex,
           recipient_x25519_public_hex,
+          message_id,
+          BigInt(created_physical_ms),
+          created_logical,
           release_on_death || false,
           release_delay_hours || 0,
         );

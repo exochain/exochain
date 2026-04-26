@@ -216,6 +216,9 @@ test('wasm_encrypt_message', () => {
     TEST_DID_2,
     DUMMY_SECRET_HEX,
     recipientKex.public_key_hex,
+    '018f7a96-8ad0-7c4f-8e0f-111111111201',
+    7000n,
+    0,
     false,
     0
   );
@@ -233,6 +236,9 @@ const encryptedEnvelope = setup(() =>
     TEST_DID_2,
     DUMMY_SECRET_HEX,
     recipientKex.public_key_hex,
+    '018f7a96-8ad0-7c4f-8e0f-111111111202',
+    7001n,
+    0,
     false,
     0
   ));

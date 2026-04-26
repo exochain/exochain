@@ -45,6 +45,9 @@ pub fn wasm_x25519_public_from_secret(secret_hex: &str) -> Result<JsValue, JsVal
 /// - `recipient_did`: Recipient's DID string
 /// - `sender_signing_key_hex`: Sender's Ed25519 secret key (hex)
 /// - `recipient_x25519_public_hex`: Recipient's X25519 public key (hex)
+/// - `message_id`: Caller-supplied non-nil message UUID
+/// - `created_physical_ms`: Caller-supplied non-zero HLC physical milliseconds
+/// - `created_logical`: Caller-supplied HLC logical counter
 /// - `release_on_death`: Whether to release after sender's death
 /// - `release_delay_hours`: Hours to wait after death verification
 ///
@@ -52,10 +55,9 @@ pub fn wasm_x25519_public_from_secret(secret_hex: &str) -> Result<JsValue, JsVal
 /// The encrypted envelope as JSON.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
-// Mirrors `exo_messaging::compose::lock_and_send` — 8 args is
-// the irreducible envelope spec. WASM boundary cannot take a
-// struct directly; each arg is serialized across the JS/Rust
-// boundary independently.
+// Mirrors `exo_messaging::compose::lock_and_send`; the WASM boundary
+// cannot take Rust structs directly, so envelope metadata crosses as
+// primitive fields and is validated before encryption.
 pub fn wasm_encrypt_message(
     plaintext: &str,
     content_type_json: &str,
@@ -63,6 +65,9 @@ pub fn wasm_encrypt_message(
     recipient_did: &str,
     sender_signing_key_hex: &str,
     recipient_x25519_public_hex: &str,
+    message_id: &str,
+    created_physical_ms: u64,
+    created_logical: u32,
     release_on_death: bool,
     release_delay_hours: u32,
 ) -> Result<JsValue, JsValue> {
@@ -84,6 +89,13 @@ pub fn wasm_encrypt_message(
 
     let recipient_pub = exo_messaging::X25519PublicKey::from_hex(recipient_x25519_public_hex)
         .map_err(|e| JsValue::from_str(&format!("invalid recipient X25519 key: {e}")))?;
+    let message_uuid = uuid::Uuid::parse_str(message_id)
+        .map_err(|e| JsValue::from_str(&format!("invalid message id: {e}")))?;
+    let metadata = exo_messaging::ComposeMetadata::new(
+        message_uuid,
+        exo_core::Timestamp::new(created_physical_ms, created_logical),
+    )
+    .map_err(|e| JsValue::from_str(&format!("invalid envelope metadata: {e}")))?;
 
     let envelope = exo_messaging::lock_and_send(
         plaintext.as_bytes(),
@@ -92,6 +104,7 @@ pub fn wasm_encrypt_message(
         &recipient,
         &sender_sk,
         &recipient_pub,
+        metadata,
         release_on_death,
         release_delay_hours,
     )

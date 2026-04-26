@@ -180,6 +180,9 @@ test('check_conflicts with no declarations', () => {
 test('audit_append creates entry', () => {
   const evidenceHash = '0'.repeat(64);
   const result = wasm.wasm_audit_append(
+    '018f7a96-8ad0-7c4f-8e0f-111111111301',
+    7200n,
+    0,
     'did:exo:alice',
     'create_decision',
     'success',
@@ -275,7 +278,9 @@ test('propose_bailment creates bailment', () => {
     'did:exo:bailor',
     'did:exo:bailee',
     new Uint8Array([1, 2, 3]),
-    '"Processing"'
+    '"Processing"',
+    '018f7a96-8ad0-7c4f-8e0f-111111111302',
+    JSON.stringify({ physical_ms: 7300, logical: 0 })
   );
   assert(bailment, 'should return bailment');
 });
