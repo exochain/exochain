@@ -32,6 +32,38 @@ pub struct RouteResult {
     pub correlation_id: Uuid,
 }
 
+/// Caller-supplied route metadata bound into the gateway audit trail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RouteMetadata {
+    pub correlation_id: Uuid,
+    pub audit_timestamp: exo_core::Timestamp,
+}
+
+impl RouteMetadata {
+    /// Validate caller-supplied route metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GatewayError::BadRequest` if the correlation ID is nil or the
+    /// audit timestamp is `Timestamp::ZERO`.
+    pub fn new(correlation_id: Uuid, audit_timestamp: exo_core::Timestamp) -> Result<Self> {
+        if correlation_id.is_nil() {
+            return Err(GatewayError::BadRequest(
+                "route correlation_id must be caller-supplied and non-nil".into(),
+            ));
+        }
+        if audit_timestamp == exo_core::Timestamp::ZERO {
+            return Err(GatewayError::BadRequest(
+                "route audit timestamp must be caller-supplied and non-zero".into(),
+            ));
+        }
+        Ok(Self {
+            correlation_id,
+            audit_timestamp,
+        })
+    }
+}
+
 /// Process a request through the full middleware chain: auth -> consent -> governance -> execution.
 pub fn process_request(
     request: &Request,
@@ -39,6 +71,7 @@ pub fn process_request(
     route: Route,
     consent: bool,
     verdict: &Verdict,
+    metadata: RouteMetadata,
     log: &mut AuditLog,
 ) -> Result<RouteResult> {
     let actor = authenticate(request, registry)?;
@@ -47,10 +80,15 @@ pub fn process_request(
     let result = RouteResult {
         route: route.clone(),
         status: "ok".into(),
-        correlation_id: Uuid::new_v4(),
+        correlation_id: metadata.correlation_id,
     };
-    let now = exo_core::Timestamp::now_utc();
-    audit_middleware(&actor.did, &request.action, "success", &now, log)?;
+    audit_middleware(
+        &actor.did,
+        &request.action,
+        "success",
+        &metadata.audit_timestamp,
+        log,
+    )?;
     Ok(result)
 }
 
@@ -116,20 +154,76 @@ mod tests {
         (reg, req)
     }
 
+    fn route_metadata() -> RouteMetadata {
+        RouteMetadata::new(
+            Uuid::parse_str("018f7a96-8ad0-7c4f-8e0f-333333333333").unwrap(),
+            Timestamp::new(7_000, 1),
+        )
+        .expect("valid route metadata")
+    }
+
     #[test]
     fn full_chain_ok() {
         let (reg, req) = alice_registry_and_req();
         let mut log = AuditLog::new();
+        let metadata = route_metadata();
         let r = process_request(
             &req,
             &reg,
             Route::CreateTransaction,
             true,
             &Verdict::Allow,
+            metadata,
             &mut log,
         );
         assert!(r.is_ok());
+        assert_eq!(
+            r.unwrap().correlation_id,
+            Uuid::parse_str("018f7a96-8ad0-7c4f-8e0f-333333333333").unwrap()
+        );
         assert_eq!(log.len(), 1);
+        assert_eq!(log.entries[0].timestamp, Timestamp::new(7_000, 1));
+    }
+
+    #[test]
+    fn route_metadata_rejects_nil_correlation_id() {
+        let result = RouteMetadata::new(Uuid::nil(), Timestamp::new(7_000, 0));
+
+        assert!(
+            matches!(result, Err(GatewayError::BadRequest(reason)) if reason.contains("correlation"))
+        );
+    }
+
+    #[test]
+    fn route_metadata_rejects_zero_audit_timestamp() {
+        let result = RouteMetadata::new(
+            Uuid::parse_str("018f7a96-8ad0-7c4f-8e0f-444444444444").unwrap(),
+            Timestamp::ZERO,
+        );
+
+        assert!(
+            matches!(result, Err(GatewayError::BadRequest(reason)) if reason.contains("timestamp"))
+        );
+    }
+
+    #[test]
+    fn process_request_does_not_fabricate_route_metadata() {
+        let source = include_str!("routes.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+
+        let forbidden_uuid = ["Uuid", "::new_v4"].concat();
+        assert!(
+            !production.contains(&forbidden_uuid),
+            "route processing must not fabricate correlation IDs"
+        );
+        let forbidden_time = ["Timestamp", "::now_utc"].concat();
+        assert!(
+            !production.contains(&forbidden_time),
+            "route processing must not fabricate audit timestamps"
+        );
     }
 
     #[test]
@@ -147,6 +241,7 @@ mod tests {
                 Route::CreateTransaction,
                 true,
                 &Verdict::Allow,
+                route_metadata(),
                 &mut log
             )
             .is_err()
@@ -164,6 +259,7 @@ mod tests {
                 Route::CreateTransaction,
                 false,
                 &Verdict::Allow,
+                route_metadata(),
                 &mut log
             )
             .is_err()
@@ -183,6 +279,7 @@ mod tests {
                 &Verdict::Deny {
                     reason: "no".into()
                 },
+                route_metadata(),
                 &mut log
             )
             .is_err()
