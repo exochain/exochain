@@ -10,7 +10,7 @@ use decision_forum::{
     decision_object::{ActorKind, DecisionObject, Vote, VoteChoice},
     quorum::{QuorumCheckResult, QuorumRegistry, check_quorum, verify_quorum_precondition},
 };
-use exo_core::{Timestamp, hlc::HybridClock, types::Hash256};
+use exo_core::{Timestamp, types::Hash256};
 use exo_gatekeeper::{
     kernel::{ActionRequest as GatekeeperActionRequest, Verdict},
     types::{Permission, PermissionSet},
@@ -80,6 +80,10 @@ fn build_audit_entry(
     timestamp: Timestamp,
     payload: &Value,
 ) -> Result<AuditEntryRecord, String> {
+    if timestamp == Timestamp::ZERO {
+        return Err("audit timestamp must be caller-supplied and non-zero".to_owned());
+    }
+
     let sequence = match last {
         Some(row) => row
             .sequence
@@ -129,6 +133,7 @@ async fn write_audit(
     actor: &str,
     tenant_id: &str,
     decision_id: &str,
+    timestamp: Timestamp,
     payload: &Value,
 ) -> Result<(), String> {
     let db = state.require_db().map_err(|e| e.to_string())?;
@@ -144,14 +149,13 @@ async fn write_audit(
     .fetch_optional(&mut *tx)
     .await
     .map_err(|e| e.to_string())?;
-    let mut clock = HybridClock::new();
     let entry = build_audit_entry(
         last.as_ref(),
         event_type,
         actor,
         tenant_id,
         decision_id,
-        clock.now(),
+        timestamp,
         payload,
     )?;
     sqlx::query(
@@ -185,6 +189,18 @@ pub struct VoteRequest {
     pub choice: VoteChoice,
     pub actor_kind: ActorKind,
     pub rationale: Option<String>,
+    pub timestamp_physical_ms: u64,
+    pub timestamp_logical: u32,
+}
+
+impl VoteRequest {
+    fn caller_supplied_timestamp(&self) -> Result<Timestamp, String> {
+        let timestamp = Timestamp::new(self.timestamp_physical_ms, self.timestamp_logical);
+        if timestamp == Timestamp::ZERO {
+            return Err("vote timestamp must be caller-supplied and non-zero".to_owned());
+        }
+        Ok(timestamp)
+    }
 }
 
 /// Handle a vote submission with conflict-of-interest and authority chain checks.
@@ -363,9 +379,17 @@ pub async fn vote_handler(
         }
     }
 
-    // Build the typed Vote using HLC for deterministic timestamp (AGENTS.md §1).
-    let mut clock = HybridClock::new();
-    let timestamp = clock.now();
+    // Build the typed Vote with caller-supplied HLC metadata (AGENTS.md §1).
+    let timestamp = match body.caller_supplied_timestamp() {
+        Ok(timestamp) => timestamp,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e})),
+            )
+                .into_response();
+        }
+    };
     let sig_input = format!("{}:{}:{:?}", body.voter_did, body.decision_id, body.choice);
     let signature_hash = Hash256::digest(sig_input.as_bytes());
     let vote = Vote {
@@ -430,6 +454,8 @@ pub async fn vote_handler(
         "tenant_id": tenant_id.as_str(),
         "voter": body.voter_did.as_str(),
         "choice": body.choice,
+        "timestamp_physical_ms": timestamp.physical_ms,
+        "timestamp_logical": timestamp.logical,
     });
     if let Err(e) = write_audit(
         &state,
@@ -437,6 +463,7 @@ pub async fn vote_handler(
         &body.voter_did,
         &tenant_id,
         &body.decision_id,
+        timestamp,
         &audit_payload,
     )
     .await
@@ -642,6 +669,89 @@ mod tests {
         );
     }
 
+    #[test]
+    fn gateway_vote_audit_path_does_not_create_hlc_clock_internally() {
+        let source = include_str!("handlers.rs");
+        let forbidden = ["HybridClock", "::new()"].concat();
+        assert!(
+            !source.contains(&forbidden),
+            "gateway vote/audit path must use caller-supplied HLC timestamps"
+        );
+    }
+
+    #[test]
+    fn audit_entry_rejects_zero_timestamp() {
+        let payload = serde_json::json!({"event": "vote_recorded", "decision_id": "decision-1"});
+        let err = build_audit_entry(
+            None,
+            "VoteCast",
+            "did:exo:alice",
+            "tenant-a",
+            "decision-1",
+            exo_core::Timestamp::ZERO,
+            &payload,
+        )
+        .expect_err("zero audit timestamp must be rejected");
+
+        assert!(
+            err.contains("timestamp"),
+            "error should identify the invalid audit timestamp"
+        );
+    }
+
+    #[test]
+    fn vote_request_requires_caller_supplied_timestamp() {
+        let without_timestamp = serde_json::json!({
+            "decision_id": "decision-1",
+            "voter_did": "did:exo:alice",
+            "choice": "Approve",
+            "actor_kind": "Human",
+            "rationale": null
+        });
+        assert!(
+            serde_json::from_value::<VoteRequest>(without_timestamp).is_err(),
+            "vote requests must not deserialize without explicit HLC timestamp metadata"
+        );
+
+        let with_timestamp = serde_json::json!({
+            "decision_id": "decision-1",
+            "voter_did": "did:exo:alice",
+            "choice": "Approve",
+            "actor_kind": "Human",
+            "rationale": null,
+            "timestamp_physical_ms": 7000,
+            "timestamp_logical": 2
+        });
+        let request: VoteRequest =
+            serde_json::from_value(with_timestamp).expect("timestamped vote request");
+
+        assert_eq!(
+            request
+                .caller_supplied_timestamp()
+                .expect("non-zero timestamp"),
+            exo_core::Timestamp::new(7000, 2)
+        );
+    }
+
+    #[test]
+    fn vote_request_rejects_zero_timestamp() {
+        let request: VoteRequest = serde_json::from_value(serde_json::json!({
+            "decision_id": "decision-1",
+            "voter_did": "did:exo:alice",
+            "choice": "Approve",
+            "actor_kind": "Human",
+            "rationale": null,
+            "timestamp_physical_ms": 0,
+            "timestamp_logical": 0
+        }))
+        .expect("request shape is valid");
+
+        assert!(
+            request.caller_supplied_timestamp().is_err(),
+            "zero vote timestamp must be rejected"
+        );
+    }
+
     #[cfg(feature = "production-db")]
     #[tokio::test]
     async fn vote_audit_write_is_read_by_audit_route_from_migrated_schema() {
@@ -691,6 +801,7 @@ mod tests {
             voter,
             "tenant-r4",
             decision_id,
+            exo_core::Timestamp::new(9000, 0),
             &payload,
         )
         .await
@@ -701,6 +812,7 @@ mod tests {
             voter,
             "tenant-r4",
             decision_id,
+            exo_core::Timestamp::new(9001, 0),
             &payload,
         )
         .await

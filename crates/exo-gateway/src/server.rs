@@ -1969,6 +1969,8 @@ mod tests {
             "choice": "Approve",
             "actor_kind": "Human",
             "rationale": null,
+            "timestamp_physical_ms": 7000,
+            "timestamp_logical": 0,
         }))
         .unwrap();
         let app = build_router(state());
