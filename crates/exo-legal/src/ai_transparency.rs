@@ -212,6 +212,7 @@ mod tests {
         McpRule,
         mcp_audit::{McpAuditLog, McpEnforcementOutcome, append, create_record},
     };
+    use uuid::Uuid;
 
     use super::*;
 
@@ -223,24 +224,34 @@ mod tests {
         Timestamp::new(ms, 0)
     }
 
+    fn audit_id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
     fn make_log_with_records() -> McpAuditLog {
         let mut log = McpAuditLog::new();
         let r1 = create_record(
             &log,
+            audit_id(0xE001),
+            ts(10_000),
             McpRule::Mcp001BctsScope,
             did("agent"),
             McpEnforcementOutcome::Allowed,
             None,
-        );
-        append(&mut log, r1).ok();
+        )
+        .expect("deterministic MCP audit record");
+        append(&mut log, r1).expect("append deterministic MCP audit record");
         let r2 = create_record(
             &log,
+            audit_id(0xE002),
+            ts(10_001),
             McpRule::Mcp002NoSelfEscalation,
             did("agent"),
             McpEnforcementOutcome::Blocked,
             None,
-        );
-        append(&mut log, r2).ok();
+        )
+        .expect("deterministic MCP audit record");
+        append(&mut log, r2).expect("append deterministic MCP audit record");
         log
     }
 
@@ -341,15 +352,18 @@ mod tests {
     #[test]
     fn period_filtering_applies() {
         let mut log = McpAuditLog::new();
-        // MCP audit records use caller-supplied HLC timestamps that are beyond ts(500).
+        // MCP audit records use caller-supplied HLC timestamps beyond this report window.
         let r = create_record(
             &log,
+            audit_id(0xE003),
+            ts(500),
             McpRule::Mcp001BctsScope,
             did("agent"),
             McpEnforcementOutcome::Allowed,
             None,
-        );
-        append(&mut log, r).ok();
+        )
+        .expect("deterministic MCP audit record");
+        append(&mut log, r).expect("append deterministic MCP audit record");
 
         // Period that excludes the record (past epoch)
         let report = generate_report(ReportParams {

@@ -18,6 +18,7 @@ mod nist_compliance {
         },
     };
     use exo_governance::audit::{self as gov_audit, AuditLog};
+    use uuid::Uuid;
 
     use crate::{
         ai_transparency::{ReportParams, ai_delegation_event_from_link, generate_report},
@@ -37,6 +38,10 @@ mod nist_compliance {
 
     fn ts(ms: u64) -> Timestamp {
         Timestamp::new(ms, 0)
+    }
+
+    fn audit_id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
     }
 
     /// Build a passing InvariantContext matching the pattern in invariants.rs tests.
@@ -206,14 +211,19 @@ mod nist_compliance {
         //    satisfies MS.2 "AI risk measurement via documentation".
         let actor = did("ai-agent-1");
         let mut mcp_log = McpAuditLog::new();
-        for rule in McpRule::all() {
+        for (index, rule) in McpRule::all().into_iter().enumerate() {
+            let offset = u128::try_from(index).expect("rule index fits u128");
+            let timestamp_offset = u64::try_from(index).expect("rule index fits u64");
             let r = create_record(
                 &mcp_log,
+                audit_id(0xD000 + offset),
+                ts(30_000 + timestamp_offset),
                 rule,
                 actor.clone(),
                 McpEnforcementOutcome::Allowed,
                 Some("EU-WEST-1".into()),
-            );
+            )
+            .expect("deterministic MCP audit record");
             append(&mut mcp_log, r).expect("MCP audit append");
         }
         verify_chain(&mcp_log).expect("MCP audit chain must be intact after 6 records");
