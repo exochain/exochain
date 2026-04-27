@@ -18,16 +18,9 @@ function getToken(): string | null {
 }
 
 /**
- * Read the XSRF-TOKEN cookie set by the gateway on authenticated sessions.
- * Client half of the standard double-submit pattern — the server echoes a
- * random token into a non-httpOnly cookie, and the SPA echoes it back in
- * an X-CSRF-Token header on mutating requests. The server rejects
- * mutations where the header does not match the cookie. (A-082)
- *
- * Returns `null` when the cookie is absent; the server-side middleware
- * that enforces the check is tracked as a follow-up in the remediation
- * plan. Shipping this reader first lets the backend roll out its half
- * non-disruptively.
+ * Read the XSRF-TOKEN cookie and echo it back in an X-CSRF-Token header
+ * on mutating requests. The gateway rejects mutations when that cookie is
+ * present and the header is absent or mismatched. (A-082)
  */
 function getCsrfToken(): string | null {
   const cookie = document.cookie

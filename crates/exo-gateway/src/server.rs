@@ -3,9 +3,11 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use axum::{
     Router,
+    body::Body,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Json},
+    http::{HeaderMap, Method, Request, StatusCode, header},
+    middleware::{self, Next},
+    response::{IntoResponse, Json, Response},
     routing::{get, post},
 };
 use exo_core::{Did, Hash256, Signature, Timestamp, hlc::HybridClock};
@@ -19,6 +21,7 @@ use exo_identity::{
     did::DidDocument,
     registry::{DidRegistry, LocalDidRegistry},
 };
+use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::net::TcpListener;
@@ -32,6 +35,9 @@ use crate::{
     handlers::{health_handler as db_health_handler, vote_handler},
     rest::HealthResponse,
 };
+
+const XSRF_COOKIE_PREFIX: &str = "XSRF-TOKEN=";
+const CSRF_HEADER_NAME: &str = "x-csrf-token";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -1332,6 +1338,71 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
         .map(|s| s.trim().to_owned())
 }
 
+fn is_csrf_protected_method(method: &Method) -> bool {
+    matches!(
+        *method,
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    )
+}
+
+fn xsrf_cookie_token(headers: &HeaderMap) -> std::result::Result<Option<String>, ()> {
+    let cookie_headers = headers.get_all(header::COOKIE);
+    for value in cookie_headers {
+        let Ok(raw) = value.to_str() else {
+            return Err(());
+        };
+        for cookie in raw.split(';').map(str::trim) {
+            let Some(token) = cookie.strip_prefix(XSRF_COOKIE_PREFIX) else {
+                continue;
+            };
+            return percent_decode_str(token)
+                .decode_utf8()
+                .map(|decoded| Some(decoded.into_owned()))
+                .map_err(|_| ());
+        }
+    }
+    Ok(None)
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (left, right) in a.iter().zip(b.iter()) {
+        diff |= left ^ right;
+    }
+    diff == 0
+}
+
+async fn require_csrf_double_submit(
+    request: Request<Body>,
+    next: Next,
+) -> std::result::Result<Response, StatusCode> {
+    if !is_csrf_protected_method(request.method()) {
+        return Ok(next.run(request).await);
+    }
+
+    let Some(cookie_token) =
+        xsrf_cookie_token(request.headers()).map_err(|_| StatusCode::FORBIDDEN)?
+    else {
+        return Ok(next.run(request).await);
+    };
+    let Some(header_token) = request
+        .headers()
+        .get(CSRF_HEADER_NAME)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return Err(StatusCode::FORBIDDEN);
+    };
+
+    if constant_time_eq(header_token.as_bytes(), cookie_token.as_bytes()) {
+        Ok(next.run(request).await)
+    } else {
+        Err(StatusCode::FORBIDDEN)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Dashboard handlers (layout templates + feedback issues)
 // ---------------------------------------------------------------------------
@@ -1761,6 +1832,7 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
         // GraphQL sub-router has its own state — merge after with_state()
         .merge(gql_router)
+        .layer(middleware::from_fn(require_csrf_double_submit))
         // Emit structured tracing spans for every request/response.
         .layer(TraceLayer::new_for_http())
 }
@@ -3058,6 +3130,112 @@ mod tests {
     async fn extract_bearer_token_missing_returns_none() {
         let headers = HeaderMap::new();
         assert!(extract_bearer_token(&headers).is_none());
+    }
+
+    #[tokio::test]
+    async fn csrf_cookie_without_header_rejects_mutating_request() {
+        let app = build_router(state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/logout")
+                    .header(header::COOKIE, "XSRF-TOKEN=tok-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn csrf_cookie_with_wrong_header_rejects_mutating_request() {
+        let app = build_router(state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/logout")
+                    .header(header::COOKIE, "session=abc; XSRF-TOKEN=tok-123")
+                    .header(CSRF_HEADER_NAME, "other-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn csrf_cookie_with_matching_header_allows_mutating_request() {
+        let app = build_router(state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/logout")
+                    .header(header::COOKIE, "session=abc; XSRF-TOKEN=tok-123")
+                    .header(CSRF_HEADER_NAME, "tok-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn csrf_cookie_with_percent_encoding_compares_decoded_value() {
+        let app = build_router(state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/logout")
+                    .header(
+                        header::COOKIE,
+                        "session=abc; XSRF-TOKEN=tok%2Fwith%2Bspecial%3Dchars",
+                    )
+                    .header(CSRF_HEADER_NAME, "tok/with+special=chars")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn csrf_absent_cookie_preserves_bearer_api_requests() {
+        let app = build_router(state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/logout")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn csrf_header_not_required_for_read_only_request() {
+        let app = build_router(state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .header(header::COOKIE, "XSRF-TOKEN=tok-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     // -----------------------------------------------------------------------
