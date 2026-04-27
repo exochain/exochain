@@ -1,6 +1,12 @@
 use std::collections::BTreeMap;
-use exo_core::types::{Hash256, Timestamp};
+
+use exo_core::{
+    hash::hash_structured,
+    types::{Hash256, Timestamp},
+};
 use serde::{Deserialize, Serialize};
+
+use crate::error::{ConsensusError, Result};
 
 /// A single position submitted by a model in a round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,14 +35,16 @@ pub struct DeliberationRound {
 
 impl DeliberationRound {
     /// Hashes the round deterministically.
-    pub fn compute_hash(&self) -> Hash256 {
+    pub fn compute_hash(&self) -> Result<Hash256> {
         hash_round(self)
     }
 }
 
-pub fn hash_round(round: &DeliberationRound) -> Hash256 {
+pub fn hash_round(round: &DeliberationRound) -> Result<Hash256> {
     #[derive(Serialize)]
     struct HashInput<'a> {
+        pub domain: &'static str,
+        pub schema_version: &'static str,
         pub round_number: u32,
         pub question: &'a str,
         pub positions: &'a BTreeMap<String, ModelPosition>,
@@ -46,6 +54,8 @@ pub fn hash_round(round: &DeliberationRound) -> Hash256 {
     }
 
     let input = HashInput {
+        domain: "exo.consensus.deliberation_round.v1",
+        schema_version: "1",
         round_number: round.round_number,
         question: &round.question,
         positions: &round.positions,
@@ -53,8 +63,9 @@ pub fn hash_round(round: &DeliberationRound) -> Hash256 {
         convergence_score_bps: round.convergence_score_bps,
         devil_advocate_challenge: &round.devil_advocate_challenge,
     };
-    
-    // In production we'd use `hash_structured` from `exo_core::hash`. For now JSON:
-    let json = serde_json::to_string(&input).unwrap_or_default();
-    Hash256::digest(json.as_bytes())
+
+    hash_structured(&input).map_err(|source| ConsensusError::HashSerialization {
+        context: "deliberation round",
+        source,
+    })
 }

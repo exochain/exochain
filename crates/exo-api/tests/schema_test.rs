@@ -7,6 +7,7 @@
 //! - `types::ApiVersion` / `Cursor`
 //!
 //! Async GraphQL resolver tests live in `crates/exo-gateway/src/graphql.rs`.
+#![allow(clippy::expect_used)]
 
 use exo_api::schema::{ApiRequest, ApiResponse, canonical_request_hash};
 use exo_core::{Did, Hash256, Timestamp};
@@ -110,7 +111,10 @@ fn canonical_hash_deterministic() {
         actor: did("alice"),
         scope: "s".into(),
     };
-    assert_eq!(canonical_request_hash(&r), canonical_request_hash(&r));
+    assert_eq!(
+        canonical_request_hash(&r).expect("hash"),
+        canonical_request_hash(&r).expect("hash")
+    );
 }
 
 #[test]
@@ -123,7 +127,10 @@ fn canonical_hash_scope_differs() {
         actor: did("alice"),
         scope: "s2".into(),
     };
-    assert_ne!(canonical_request_hash(&r1), canonical_request_hash(&r2));
+    assert_ne!(
+        canonical_request_hash(&r1).expect("hash"),
+        canonical_request_hash(&r2).expect("hash")
+    );
 }
 
 #[test]
@@ -136,7 +143,10 @@ fn canonical_hash_actor_differs() {
         actor: did("bob"),
         scope: "s".into(),
     };
-    assert_ne!(canonical_request_hash(&r1), canonical_request_hash(&r2));
+    assert_ne!(
+        canonical_request_hash(&r1).expect("hash"),
+        canonical_request_hash(&r2).expect("hash")
+    );
 }
 
 #[test]
@@ -172,7 +182,10 @@ fn canonical_hash_no_collisions_across_variants() {
             actor: did("a"),
         },
     ];
-    let hashes: Vec<_> = reqs.iter().map(canonical_request_hash).collect();
+    let hashes: Vec<_> = reqs
+        .iter()
+        .map(|req| canonical_request_hash(req).expect("hash"))
+        .collect();
     for (i, h1) in hashes.iter().enumerate() {
         for (j, h2) in hashes.iter().enumerate() {
             if i != j {
@@ -185,7 +198,7 @@ fn canonical_hash_no_collisions_across_variants() {
 #[test]
 fn canonical_hash_is_hash256() {
     let r = ApiRequest::QueryTransaction { tx_id: Uuid::nil() };
-    let h = canonical_request_hash(&r);
+    let h = canonical_request_hash(&r).expect("hash");
     // Hash must be non-zero for non-trivial input.
     assert_ne!(h, Hash256::ZERO);
 }

@@ -17,7 +17,7 @@
 | `store.rs` | 929 | In-memory DID store, score history, fingerprint history, ceremony management |
 | `behavioral.rs` | 282 | `quantize_to_histogram()`, `histogram_similarity()` — histogram-intersection scoring |
 | `fingerprint.rs` | 249 | `compute_composite_hash()`, `compute_consistency()` — BLAKE3, Jaccard overlap |
-| `api.rs` | ~730 | `GET /score`, `GET /claims`, `GET /score/history`, `GET /fingerprints`, `GET /server-key` |
+| `api.rs` | ~730 | `GET /score`, `GET /claims`, `GET /score/history`, `GET /fingerprints`, peer attestations, erasure |
 
 All Rust modules are complete, tested, and passing. The scoring engine, onboarding pipeline, store, behavioral comparison, and fingerprint consistency logic are production-quality Rust.
 
@@ -77,7 +77,7 @@ SHA-256 via `crypto.subtle` is intentional for this deployment:
 
 ### ExoForge Registry
 
-Phase 4 tasks updated to `Some(1)` (complete) with accurate implementation descriptions. Phase 5 `GET /server-key` updated to reflect Ed25519 DH (not RSA-OAEP as the placeholder said) and `Some(2)`. Phase 6 tasks updated with implementation references.
+Phase 4 tasks updated to `Some(1)` (complete) with accurate implementation descriptions. Phase 5 now records ONYX-4 R6 removal of the fabricated `/api/v1/0dentity/server-key` route instead of advertising a digest as a public key. Phase 6 tasks updated with implementation references.
 
 ---
 

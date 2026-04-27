@@ -10,8 +10,29 @@
 //! This module wires the existing fully-tested consensus code (`propose()`,
 //! `vote()`, `check_commit()`, `commit()`) into a network-aware reactor
 //! without modifying the consensus protocol itself.
+//!
+//! # GAP-014 note
+//!
+//! The GAP-014 fix (commit 254e8dc) introduced `propose_verified`,
+//! `vote_verified`, and `commit_verified` in `exo_dag::consensus` which
+//! enforce signature verification. This reactor still calls the legacy
+//! `propose` / `vote` / `commit` — wiring the reactor's handle_* paths
+//! to the verified variants requires a `PublicKeyResolver` backed by
+//! the identity registry, which is the follow-up initiative
+//! `exochain-api-migration-gap` (tracked separately).
+//!
+//! Until that wiring lands, the legacy API is permitted here via
+//! `#[allow(deprecated)]`. As defense-in-depth, `validate_proposal` /
+//! `validate_vote` / `validate_commit` below reject all-zero signature
+//! sentinels so a trivial-forge attacker still can't inject bogus
+//! messages through this path.
 
-#![allow(clippy::as_conversions, clippy::type_complexity, clippy::single_match)]
+#![allow(
+    clippy::as_conversions,
+    clippy::type_complexity,
+    clippy::single_match,
+    deprecated
+)]
 
 use std::{
     collections::BTreeSet,
@@ -19,9 +40,12 @@ use std::{
     time::Duration,
 };
 
-use exo_core::types::{Did, Hash256, ReceiptOutcome, Signature, Timestamp, TrustReceipt};
+use exo_core::{
+    hash::hash_structured,
+    types::{Did, Hash256, ReceiptOutcome, Signature, Timestamp, TrustReceipt},
+};
 use exo_dag::{
-    consensus::{self, ConsensusConfig, ConsensusState, Vote},
+    consensus::{self, CommitCertificate, ConsensusConfig, ConsensusState, Vote},
     dag::{Dag, DagNode, HybridClock, append},
 };
 use tokio::sync::mpsc;
@@ -34,6 +58,58 @@ use crate::{
         GovernanceEventType, WireMessage, topics,
     },
 };
+
+#[derive(serde::Serialize)]
+struct CommitReceiptAuthorityPayload<'a> {
+    domain: &'static str,
+    certificate: &'a CommitCertificate,
+}
+
+fn commit_receipt_authority_hash(cert: &CommitCertificate) -> Result<Hash256, String> {
+    hash_structured(&CommitReceiptAuthorityPayload {
+        domain: "exo.reactor.commit_certificate_authority.v1",
+        certificate: cert,
+    })
+    .map_err(|e| format!("commit certificate authority hash: {e}"))
+}
+
+fn stored_node_timestamp_for_receipt(
+    store: &Arc<Mutex<SqliteDagStore>>,
+    hash: &Hash256,
+) -> Result<Timestamp, String> {
+    let st = store
+        .lock()
+        .map_err(|_| "Store mutex poisoned while loading committed node timestamp".to_string())?;
+    let node = st
+        .get_sync(hash)
+        .map_err(|e| format!("load committed DAG node {hash}: {e}"))?
+        .ok_or_else(|| format!("committed DAG node {hash} not found for trust receipt"))?;
+
+    Ok(node.timestamp)
+}
+
+fn commit_receipt_from_certificate(
+    state: &SharedReactorState,
+    store: &Arc<Mutex<SqliteDagStore>>,
+    cert: &CommitCertificate,
+) -> Result<TrustReceipt, String> {
+    let timestamp = stored_node_timestamp_for_receipt(store, &cert.node_hash)?;
+    let authority_hash = commit_receipt_authority_hash(cert)?;
+    let s = state
+        .lock()
+        .map_err(|_| "Reactor state mutex poisoned while building commit receipt".to_string())?;
+
+    Ok(TrustReceipt::new(
+        s.node_did.clone(),
+        authority_hash,
+        None,
+        "dag.commit".to_string(),
+        cert.node_hash,
+        ReceiptOutcome::Executed,
+        timestamp,
+        &*s.sign_fn,
+    ))
+}
 
 // ---------------------------------------------------------------------------
 // Reactor state
@@ -277,8 +353,20 @@ pub async fn run_reactor(
 
 /// Validate a consensus proposal before processing.
 ///
-/// Checks: proposer is a known validator, signature is non-empty,
-/// and the node hash in the proposal matches the attached DAG node.
+/// Checks: proposer is in the current validator set, the attached
+/// signature is non-empty, is not a zero-byte sentinel, and the
+/// node hash matches the proposal's node_hash.
+///
+/// **Note (GAP-014 defense-in-depth):** This function is a structural
+/// guard only. Until the reactor is wired to a real
+/// `PublicKeyResolver` (see initiative
+/// `fix-gap-014-consensus-sig-verify.md`), the actual cryptographic
+/// verification lives in `consensus::*_verified` but is NOT yet called
+/// from this reactor. This validator does the maximum amount of
+/// structural filtering possible without a resolver: it rejects
+/// empty and all-zero signatures, blocking the most obvious forgery
+/// shapes. It does NOT yet reject forgeries that use arbitrary
+/// non-zero bytes.
 fn validate_proposal(msg: &ConsensusProposalMsg, validators: &BTreeSet<Did>) -> Result<(), String> {
     if !validators.contains(&msg.proposal.proposer) {
         return Err(format!(
@@ -288,6 +376,11 @@ fn validate_proposal(msg: &ConsensusProposalMsg, validators: &BTreeSet<Did>) -> 
     }
     if msg.signature.is_empty() {
         return Err("proposal carries empty signature".into());
+    }
+    // GAP-014 defense-in-depth: reject the null-signature attack shape.
+    let raw = msg.signature.as_bytes();
+    if !raw.is_empty() && raw.iter().all(|b| *b == 0) {
+        return Err("proposal carries zero-byte signature (null-sig attack shape)".into());
     }
     if msg.node.hash != msg.proposal.node_hash {
         return Err(format!(
@@ -300,7 +393,10 @@ fn validate_proposal(msg: &ConsensusProposalMsg, validators: &BTreeSet<Did>) -> 
 
 /// Validate a consensus vote before processing.
 ///
-/// Checks: voter is a known validator and signature is non-empty.
+/// Checks: voter is a known validator, signature is non-empty, and
+/// signature is not a zero-byte sentinel.
+///
+/// See `validate_proposal` for the GAP-014 caveat.
 fn validate_vote(msg: &ConsensusVoteMsg, validators: &BTreeSet<Did>) -> Result<(), String> {
     if !validators.contains(&msg.vote.voter) {
         return Err(format!(
@@ -311,14 +407,21 @@ fn validate_vote(msg: &ConsensusVoteMsg, validators: &BTreeSet<Did>) -> Result<(
     if msg.vote.signature.is_empty() {
         return Err("vote carries empty signature".into());
     }
+    // GAP-014 defense-in-depth: reject the null-signature attack shape.
+    let raw = msg.vote.signature.as_bytes();
+    if !raw.is_empty() && raw.iter().all(|b| *b == 0) {
+        return Err("vote carries zero-byte signature (null-sig attack shape)".into());
+    }
     Ok(())
 }
 
 /// Validate a commit certificate before processing.
 ///
 /// Checks: every vote in the certificate is from a known validator,
-/// carries a non-empty signature, and references the certificate's
-/// node hash.
+/// carries a non-empty, non-zero-sentinel signature, and references
+/// the certificate's node hash.
+///
+/// See `validate_proposal` for the GAP-014 caveat.
 fn validate_commit(msg: &ConsensusCommitMsg, validators: &BTreeSet<Did>) -> Result<(), String> {
     for vote in &msg.certificate.votes {
         if !validators.contains(&vote.voter) {
@@ -330,6 +433,14 @@ fn validate_commit(msg: &ConsensusCommitMsg, validators: &BTreeSet<Did>) -> Resu
         if vote.signature.is_empty() {
             return Err(format!(
                 "certificate vote from {} has empty signature",
+                vote.voter
+            ));
+        }
+        // GAP-014 defense-in-depth: reject the null-signature attack shape.
+        let raw = vote.signature.as_bytes();
+        if !raw.is_empty() && raw.iter().all(|b| *b == 0) {
+            return Err(format!(
+                "certificate vote from {} has zero-byte signature (null-sig attack shape)",
                 vote.voter
             ));
         }
@@ -362,10 +473,11 @@ async fn handle_wire_message(
             handle_commit(state, store, reactor_tx, msg).await;
         }
         WireMessage::GovernanceEvent(msg) => {
-            if reactor_tx
+            // Collapsed to satisfy clippy::collapsible_if. Cheaper to
+            // read than the nested `if` form.
+            if let Err(_send_err) = reactor_tx
                 .send(ReactorEvent::GovernanceEventReceived { event: msg })
                 .await
-                .is_err()
             {
                 tracing::warn!("Reactor event receiver dropped (GovernanceEvent)");
             }
@@ -536,7 +648,7 @@ async fn handle_commit(
         }
     }
 
-    let commit_info = {
+    let (cert, commit_info) = {
         let Ok(mut s) = state.lock() else {
             tracing::error!("Reactor state mutex poisoned in handle_commit (process)");
             return;
@@ -551,10 +663,10 @@ async fn handle_commit(
         // Apply the commit certificate.
         let round = cert.round;
         let hash = cert.node_hash;
-        consensus::commit(&mut s.consensus, cert);
+        consensus::commit(&mut s.consensus, cert.clone());
 
         let height = s.consensus.committed.len() as u64;
-        (hash, height, round)
+        (cert, (hash, height, round))
     }; // MutexGuard dropped here
 
     let (hash, height, round) = commit_info;
@@ -567,34 +679,17 @@ async fn handle_commit(
         };
         if let Err(e) = st.mark_committed_sync(&hash, height) {
             tracing::warn!(err = %e, "Failed to mark committed in store");
+            return;
         }
     }
 
     // Emit a trust receipt for the network-received commit.
-    let receipt = {
-        let Ok(s) = state.lock() else {
-            tracing::error!("Reactor state mutex poisoned in handle_commit (receipt)");
+    let receipt = match commit_receipt_from_certificate(state, store, &cert) {
+        Ok(receipt) => receipt,
+        Err(e) => {
+            tracing::warn!(err = %e, "Failed to build trust receipt for network commit");
             return;
-        };
-        #[allow(clippy::as_conversions)]
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        let ts = Timestamp {
-            physical_ms: now_ms,
-            logical: 0,
-        };
-        TrustReceipt::new(
-            s.node_did.clone(),
-            Hash256::ZERO,
-            None,
-            "dag.commit".to_string(),
-            hash,
-            ReceiptOutcome::Executed,
-            ts,
-            &*s.sign_fn,
-        )
+        }
     };
     {
         let Ok(mut st) = store.lock() else {
@@ -673,6 +768,7 @@ async fn check_and_commit(
             };
             if let Err(e) = st.mark_committed_sync(&hash, height) {
                 tracing::warn!(err = %e, "Failed to mark committed");
+                return;
             }
             if let Err(e) = st.save_certificate(&cert) {
                 tracing::warn!(err = %e, "Failed to persist certificate");
@@ -680,30 +776,12 @@ async fn check_and_commit(
         }
 
         // Emit a trust receipt recording the commit action.
-        let receipt = {
-            let Ok(s) = state.lock() else {
-                tracing::error!("Reactor state mutex poisoned in check_and_commit (receipt)");
+        let receipt = match commit_receipt_from_certificate(state, store, &cert) {
+            Ok(receipt) => receipt,
+            Err(e) => {
+                tracing::warn!(err = %e, "Failed to build trust receipt for commit");
                 return;
-            };
-            #[allow(clippy::as_conversions)]
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
-            let ts = Timestamp {
-                physical_ms: now_ms,
-                logical: 0,
-            };
-            TrustReceipt::new(
-                s.node_did.clone(),
-                Hash256::ZERO,
-                None,
-                "dag.commit".to_string(),
-                hash,
-                ReceiptOutcome::Executed,
-                ts,
-                &*s.sign_fn,
-            )
+            }
         };
         {
             let Ok(mut st) = store.lock() else {
@@ -947,7 +1025,11 @@ mod tests {
         assert_eq!(s.dag.len(), 1, "DAG should have one node");
 
         let st = store.lock().unwrap();
-        assert_eq!(st.tips_sync().unwrap().len(), 1, "Store should have one tip");
+        assert_eq!(
+            st.tips_sync().unwrap().len(),
+            1,
+            "Store should have one tip"
+        );
     }
 
     #[tokio::test]
@@ -973,6 +1055,70 @@ mod tests {
             result.unwrap_err().to_string().contains("not a validator"),
             "Error should mention validator"
         );
+    }
+
+    #[test]
+    fn commit_receipt_uses_certificate_authority_and_node_timestamp() {
+        let validators = make_validators(4);
+        let validator_vec: Vec<Did> = validators.iter().cloned().collect();
+        let node_did = validator_vec[0].clone();
+        let config = ReactorConfig {
+            node_did: node_did.clone(),
+            is_validator: true,
+            validators,
+            round_timeout_ms: 5000,
+        };
+        let sign_fn = make_sign_fn();
+        let state = create_reactor_state(&config, sign_fn.clone(), None);
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(SqliteDagStore::open(dir.path()).unwrap()));
+
+        let mut dag = Dag::new();
+        let mut clock = HybridClock::with_time(42_000);
+        let node = append(
+            &mut dag,
+            &[],
+            b"receipt-timestamp-source",
+            &node_did,
+            &*sign_fn,
+            &mut clock,
+        )
+        .unwrap();
+        store.lock().unwrap().put_sync(node.clone()).unwrap();
+
+        let cert = CommitCertificate {
+            node_hash: node.hash,
+            votes: validator_vec
+                .iter()
+                .take(3)
+                .map(|voter| Vote {
+                    voter: voter.clone(),
+                    round: 0,
+                    node_hash: node.hash,
+                    signature: sign_fn(node.hash.0.as_slice()),
+                })
+                .collect(),
+            round: 0,
+        };
+
+        let receipt = commit_receipt_from_certificate(&state, &store, &cert).unwrap();
+        let expected_authority = commit_receipt_authority_hash(&cert).unwrap();
+
+        assert_eq!(receipt.timestamp, node.timestamp);
+        assert_eq!(receipt.authority_chain_hash, expected_authority);
+        assert_ne!(receipt.authority_chain_hash, Hash256::ZERO);
+        assert_eq!(receipt.action_hash, node.hash);
+        assert!(!receipt.signature.is_empty());
+    }
+
+    #[test]
+    fn commit_receipt_timestamp_rejects_missing_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(SqliteDagStore::open(dir.path()).unwrap()));
+
+        let err = stored_node_timestamp_for_receipt(&store, &Hash256::ZERO).unwrap_err();
+
+        assert!(err.contains("not found for trust receipt"));
     }
 
     #[test]
@@ -1120,8 +1266,104 @@ mod tests {
         assert!(consensus::check_commit(&state, &byzantine_node.hash).is_none());
 
         let cert = consensus::check_commit(&state, &honest_node.hash).unwrap();
+        #[allow(deprecated)]
         consensus::commit(&mut state, cert);
         assert!(consensus::is_finalized(&state, &honest_node.hash));
         assert!(!consensus::is_finalized(&state, &byzantine_node.hash));
+    }
+
+    // ==== GAP-014 defense-in-depth regression tests ====================
+
+    fn make_node_for_test() -> exo_dag::dag::DagNode {
+        use exo_dag::dag::{Dag, append};
+        let mut dag = Dag::new();
+        let mut clock = HybridClock::new();
+        let did = Did::new("did:exo:v0").unwrap();
+        let sf = make_sign_fn();
+        append(&mut dag, &[], b"x", &did, &*sf, &mut clock).unwrap()
+    }
+
+    #[test]
+    fn validate_proposal_rejects_zero_byte_signature() {
+        let validators = make_validators(1);
+        let proposer = Did::new("did:exo:v0").unwrap();
+        let node = make_node_for_test();
+        let msg = ConsensusProposalMsg {
+            proposal: exo_dag::consensus::Proposal {
+                proposer: proposer.clone(),
+                round: 0,
+                node_hash: node.hash,
+            },
+            node,
+            signature: Signature::from_bytes([0u8; 64]),
+        };
+        let err = validate_proposal(&msg, &validators).unwrap_err();
+        // Signature::Ed25519([0u8; 64]) hits is_empty() first (ex_core types.rs:325)
+        // so the "empty" message fires before the explicit null-sig check.
+        // Either message proves rejection — both are defense in depth.
+        assert!(err.contains("empty") || err.contains("zero-byte"));
+    }
+
+    #[test]
+    fn validate_vote_rejects_zero_byte_signature() {
+        let validators = make_validators(1);
+        let voter = Did::new("did:exo:v0").unwrap();
+        let msg = ConsensusVoteMsg {
+            vote: exo_dag::consensus::Vote {
+                voter,
+                round: 0,
+                node_hash: exo_core::types::Hash256([9u8; 32]),
+                signature: Signature::from_bytes([0u8; 64]),
+            },
+        };
+        let err = validate_vote(&msg, &validators).unwrap_err();
+        assert!(err.contains("empty") || err.contains("zero-byte"));
+    }
+
+    #[test]
+    fn validate_commit_rejects_zero_byte_vote_in_cert() {
+        let validators = make_validators(1);
+        let voter = Did::new("did:exo:v0").unwrap();
+        let hash = exo_core::types::Hash256([7u8; 32]);
+        let cert = exo_dag::consensus::CommitCertificate {
+            node_hash: hash,
+            votes: vec![exo_dag::consensus::Vote {
+                voter,
+                round: 0,
+                node_hash: hash,
+                signature: Signature::from_bytes([0u8; 64]),
+            }],
+            round: 0,
+        };
+        let msg = ConsensusCommitMsg { certificate: cert };
+        let err = validate_commit(&msg, &validators).unwrap_err();
+        assert!(err.contains("empty") || err.contains("zero-byte"));
+    }
+
+    #[test]
+    fn validate_vote_rejects_empty_signature() {
+        let validators = make_validators(1);
+        let voter = Did::new("did:exo:v0").unwrap();
+        let msg = ConsensusVoteMsg {
+            vote: exo_dag::consensus::Vote {
+                voter,
+                round: 0,
+                node_hash: exo_core::types::Hash256([9u8; 32]),
+                signature: Signature::empty(),
+            },
+        };
+        let err = validate_vote(&msg, &validators).unwrap_err();
+        assert!(err.contains("empty signature"));
+    }
+
+    #[test]
+    fn reactor_commit_receipts_do_not_use_local_wall_clock() {
+        let source = include_str!("reactor.rs");
+        let forbidden = concat!("System", "Time::now");
+
+        assert!(
+            !source.contains(forbidden),
+            "reactor commit receipts must derive timestamps from protocol or stored DAG metadata"
+        );
     }
 }

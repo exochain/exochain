@@ -16,11 +16,12 @@
 //! | ScoreIntegrity | 0dentity scores are deterministically reproducible | 60s |
 
 use std::{
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
+use exo_core::hlc::HybridClock;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -104,12 +105,16 @@ pub type SharedSentinelState = Arc<Mutex<Vec<SentinelStatus>>>;
 pub type AlertSender = mpsc::Sender<SentinelAlert>;
 pub type AlertReceiver = mpsc::Receiver<SentinelAlert>;
 
-#[allow(clippy::as_conversions)]
 pub(crate) fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    static SENTINEL_CLOCK: OnceLock<Mutex<HybridClock>> = OnceLock::new();
+    let clock = SENTINEL_CLOCK.get_or_init(|| Mutex::new(HybridClock::new()));
+    match clock.lock() {
+        Ok(mut clock) => clock.now().physical_ms,
+        Err(_) => {
+            tracing::error!("Sentinel HLC mutex poisoned while reading timestamp");
+            0
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +201,18 @@ fn check_receipt_integrity(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus
     // We query via a raw SQL since load_receipts_by_actor requires an actor.
     // For the sentinel, we'll check receipts from a known actor or skip if none.
     // Simplified: check committed height is sane as a proxy.
-    let height = st.committed_height_value();
+    let height = match st.committed_height_value() {
+        Ok(height) => height,
+        Err(e) => {
+            tracing::error!(err = %e, "Failed to read committed height in receipt sentinel");
+            return SentinelStatus {
+                check: SentinelCheck::ReceiptIntegrity,
+                healthy: false,
+                message: format!("Receipt store unavailable: {e}"),
+                last_run_ms: now_ms(),
+            };
+        }
+    };
 
     SentinelStatus {
         check: SentinelCheck::ReceiptIntegrity,
@@ -371,8 +387,30 @@ fn check_store_consistency(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus
             };
         }
     };
-    let height = st.committed_height_value();
-    let certs = st.load_certificates().unwrap_or_default();
+    let height = match st.committed_height_value() {
+        Ok(height) => height,
+        Err(e) => {
+            tracing::error!(err = %e, "Failed to read committed height in consistency sentinel");
+            return SentinelStatus {
+                check: SentinelCheck::StoreConsistency,
+                healthy: false,
+                message: format!("Store unavailable: {e}"),
+                last_run_ms: now_ms(),
+            };
+        }
+    };
+    let certs = match st.load_certificates() {
+        Ok(certs) => certs,
+        Err(e) => {
+            tracing::error!(err = %e, "Failed to load commit certificates in consistency sentinel");
+            return SentinelStatus {
+                check: SentinelCheck::StoreConsistency,
+                healthy: false,
+                message: format!("Store certificates unavailable: {e}"),
+                last_run_ms: now_ms(),
+            };
+        }
+    };
 
     let healthy = certs.len() as u64 <= height || height == 0;
     let message = if healthy {
@@ -533,6 +571,20 @@ mod tests {
         Arc::new(Mutex::new(store))
     }
 
+    fn store_with_negative_committed_height() -> Arc<Mutex<SqliteDagStore>> {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteDagStore::open(dir.path()).unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("dag.db")).unwrap();
+        let hash = [0xA5u8; 32];
+        conn.execute(
+            "INSERT INTO committed (hash, height) VALUES (?1, ?2)",
+            rusqlite::params![hash.as_slice(), -1_i64],
+        )
+        .unwrap();
+        std::mem::forget(dir);
+        Arc::new(Mutex::new(store))
+    }
+
     #[test]
     fn liveness_check_healthy() {
         let reactor = test_reactor();
@@ -578,6 +630,26 @@ mod tests {
         let store = test_store();
         let status = check_receipt_integrity(&store);
         assert!(status.healthy);
+    }
+
+    #[test]
+    fn receipt_integrity_fails_closed_on_store_height_error() {
+        let store = store_with_negative_committed_height();
+        let status = check_receipt_integrity(&store);
+
+        assert!(!status.healthy);
+        assert_eq!(status.check, SentinelCheck::ReceiptIntegrity);
+        assert!(status.message.contains("committed.height"));
+    }
+
+    #[test]
+    fn store_consistency_fails_closed_on_store_height_error() {
+        let store = store_with_negative_committed_height();
+        let status = check_store_consistency(&store);
+
+        assert!(!status.healthy);
+        assert_eq!(status.check, SentinelCheck::StoreConsistency);
+        assert!(status.message.contains("committed.height"));
     }
 
     #[tokio::test]

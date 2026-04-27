@@ -517,8 +517,7 @@ mod tests {
 
     #[test]
     fn vote_with_rationale() {
-        let v = Vote::new(did("did:exo:v"), VoteChoice::Reject)
-            .with_rationale("risk too high");
+        let v = Vote::new(did("did:exo:v"), VoteChoice::Reject).with_rationale("risk too high");
         assert_eq!(v.rationale.as_deref(), Some("risk too high"));
     }
 

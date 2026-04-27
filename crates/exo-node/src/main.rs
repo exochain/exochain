@@ -47,6 +47,7 @@ use std::{
 use clap::Parser;
 use cli::{Cli, Command};
 use exo_core::types::Did;
+#[cfg(feature = "unaudited-infrastructure-holons")]
 use holons::{HolonEvent, HolonManagerConfig};
 use network::{NetworkConfig, NetworkEvent, NetworkHandle};
 use reactor::{ReactorConfig, ReactorEvent};
@@ -134,8 +135,16 @@ fn spawn_event_fanout(
 }
 
 /// Start all subsystems for a running node.
+#[allow(clippy::too_many_arguments)]
+// 8 args is the minimum for a node bootstrap entry point:
+// data_dir, api_host, api_port, p2p_port, validator, validators,
+// seed_addrs, is_join. Each is a distinct bootstrap parameter
+// that came in through CLI parsing; bundling them behind a
+// struct would add a layer of boilerplate with no safety benefit
+// since this is the single call site from `main()`.
 async fn start_node(
     data_dir: &std::path::Path,
+    api_host: &str,
     api_port: u16,
     p2p_port: u16,
     validator: bool,
@@ -153,13 +162,28 @@ async fn start_node(
 
     // Open local DAG store.
     let dag_store = store::SqliteDagStore::open(data_dir)?;
-    let height = dag_store.committed_height_value();
+    let height = dag_store.committed_height_value()?;
     tracing::info!(height, "DAG store opened");
 
     // Open 0dentity store (shares the same dag.db, applies zerodentity migration).
-    let zerodentity_store = zerodentity::store::ZerodentityStore::open(data_dir)?;
+    let mut zerodentity_store = zerodentity::store::ZerodentityStore::open(data_dir)?;
+    let zd_receipt_signer: zerodentity::store::ReceiptSigner = {
+        let identity = identity::load_or_create(data_dir)?;
+        Arc::new(move |payload: &[u8]| identity.sign(payload))
+    };
+    zerodentity_store.set_receipt_signer(node_identity.did.clone(), zd_receipt_signer);
+    if !zerodentity::store::ZerodentityStore::persistence_ready() {
+        tracing::warn!(
+            persistence_ready = zerodentity::store::ZerodentityStore::persistence_ready(),
+            warning = zerodentity::store::ZerodentityStore::persistence_warning(),
+            "0dentity store persistence is not ready"
+        );
+    }
     let zerodentity_store = std::sync::Arc::new(Mutex::new(zerodentity_store));
-    tracing::info!("0dentity store ready");
+    tracing::info!(
+        persistence_ready = zerodentity::store::ZerodentityStore::persistence_ready(),
+        "0dentity store ready"
+    );
 
     tracing::info!(
         api_port,
@@ -371,95 +395,121 @@ async fn start_node(
     });
 
     // --- Infrastructure Holons ---
-    let holon_config = HolonManagerConfig {
-        node_did: node_identity.did.clone(),
-        root_did: Did::new("did:exo:root").unwrap_or_else(|_| node_identity.did.clone()),
-        topology_interval_secs: 60,
-        scaling_interval_secs: 300,
-        health_interval_secs: 30,
-    };
+    #[cfg(feature = "unaudited-infrastructure-holons")]
+    {
+        let holon_identity = identity::load_or_create(data_dir)?;
+        let holon_authority_did = holon_identity.did.clone();
+        let holon_authority_public_key = *holon_identity.public_key();
+        let holon_authority_signer = Arc::new(move |message: &[u8]| holon_identity.sign(message));
+        let holon_config = HolonManagerConfig {
+            node_did: node_identity.did.clone(),
+            root_did: holon_authority_did,
+            root_public_key: holon_authority_public_key,
+            root_signer: holon_authority_signer,
+            topology_interval_secs: 60,
+            scaling_interval_secs: 300,
+            health_interval_secs: 30,
+        };
 
-    let (holon_event_tx, mut holon_event_rx) = mpsc::channel::<HolonEvent>(256);
+        let (holon_event_tx, mut holon_event_rx) = mpsc::channel::<HolonEvent>(256);
 
-    tokio::spawn(holons::run_holon_manager(
-        holon_config,
-        Arc::clone(&reactor_state),
-        Arc::clone(&shared_store),
-        net_handle.clone(),
-        holon_event_tx,
-    ));
-    tracing::info!("Infrastructure Holons started (topology, scaling, health)");
+        tokio::spawn(holons::run_holon_manager(
+            holon_config,
+            Arc::clone(&reactor_state),
+            Arc::clone(&shared_store),
+            net_handle.clone(),
+            holon_event_tx,
+        ));
+        tracing::warn!(
+            enabled = holons::infrastructure_holons_enabled(),
+            feature_flag = holons::INFRASTRUCTURE_HOLONS_FEATURE,
+            initiative = holons::INFRASTRUCTURE_HOLONS_INITIATIVE,
+            "Infrastructure Holons started under unaudited feature gate"
+        );
 
-    // Holon event logger (with metrics updates).
-    let holon_metrics = Arc::clone(&node_metrics);
-    tokio::spawn(async move {
-        while let Some(event) = holon_event_rx.recv().await {
-            match event {
-                HolonEvent::TopologyAnalysis {
-                    peer_count,
-                    diversity_score,
-                    recommendation,
-                } => {
-                    holon_metrics
-                        .peer_count
-                        .store(peer_count as u64, std::sync::atomic::Ordering::Relaxed);
-                    tracing::info!(
+        // Holon event logger (with metrics updates).
+        let holon_metrics = Arc::clone(&node_metrics);
+        tokio::spawn(async move {
+            while let Some(event) = holon_event_rx.recv().await {
+                match event {
+                    HolonEvent::TopologyAnalysis {
                         peer_count,
-                        diversity_score,
-                        %recommendation,
-                        "Topology Holon"
-                    );
-                }
-                HolonEvent::ScalingRecommendation {
-                    validator_count,
-                    node_count,
-                    recommendation,
-                } => {
-                    holon_metrics
-                        .validator_count
-                        .store(validator_count as u64, std::sync::atomic::Ordering::Relaxed);
-                    tracing::info!(
+                        diversity_score_bp,
+                        recommendation,
+                    } => {
+                        holon_metrics
+                            .peer_count
+                            .store(peer_count as u64, std::sync::atomic::Ordering::Relaxed);
+                        tracing::info!(
+                            peer_count,
+                            diversity_score_bp,
+                            %recommendation,
+                            "Topology Holon"
+                        );
+                    }
+                    HolonEvent::ScalingRecommendation {
                         validator_count,
                         node_count,
-                        %recommendation,
-                        "Scaling Holon"
-                    );
-                }
-                HolonEvent::HealthCheck {
-                    consensus_round,
-                    committed_height,
-                    status,
-                } => match &status {
-                    holons::HealthStatus::Healthy => {
-                        tracing::debug!(consensus_round, committed_height, "Health Holon: healthy");
-                    }
-                    holons::HealthStatus::Degraded { reason } => {
-                        tracing::warn!(
-                            consensus_round,
-                            committed_height,
-                            %reason,
-                            "Health Holon: degraded"
+                        recommendation,
+                    } => {
+                        holon_metrics
+                            .validator_count
+                            .store(validator_count as u64, std::sync::atomic::Ordering::Relaxed);
+                        tracing::info!(
+                            validator_count,
+                            node_count,
+                            %recommendation,
+                            "Scaling Holon"
                         );
                     }
-                    holons::HealthStatus::Critical { reason } => {
+                    HolonEvent::HealthCheck {
+                        consensus_round,
+                        committed_height,
+                        status,
+                    } => match &status {
+                        holons::HealthStatus::Healthy => {
+                            tracing::debug!(
+                                consensus_round,
+                                committed_height,
+                                "Health Holon: healthy"
+                            );
+                        }
+                        holons::HealthStatus::Degraded { reason } => {
+                            tracing::warn!(
+                                consensus_round,
+                                committed_height,
+                                %reason,
+                                "Health Holon: degraded"
+                            );
+                        }
+                        holons::HealthStatus::Critical { reason } => {
+                            tracing::error!(
+                                consensus_round,
+                                committed_height,
+                                %reason,
+                                "Health Holon: CRITICAL"
+                            );
+                        }
+                    },
+                    HolonEvent::HolonTerminated { holon_id, reason } => {
                         tracing::error!(
-                            consensus_round,
-                            committed_height,
+                            %holon_id,
                             %reason,
-                            "Health Holon: CRITICAL"
+                            "Infrastructure Holon terminated"
                         );
                     }
-                },
-                HolonEvent::HolonTerminated { holon_id, reason } => {
-                    tracing::error!(
-                        %holon_id,
-                        %reason,
-                        "Infrastructure Holon terminated"
-                    );
                 }
             }
-        }
-    });
+        });
+    }
+
+    #[cfg(not(feature = "unaudited-infrastructure-holons"))]
+    tracing::warn!(
+        enabled = holons::infrastructure_holons_enabled(),
+        feature_flag = holons::INFRASTRUCTURE_HOLONS_FEATURE,
+        initiative = holons::INFRASTRUCTURE_HOLONS_INITIATIVE,
+        "Infrastructure Holons disabled pending product disposition"
+    );
 
     // NOTE: /health and /ready are provided by the gateway (exo-gateway)
     // with uptime tracking and DB readiness checks. Node-specific probes
@@ -559,10 +609,41 @@ async fn start_node(
     }
 
     // Generate admin token for write-endpoint authentication.
+    //
+    // Security note: we do NOT log the full token — a log aggregator
+    // that captures node stdout would otherwise end up with a copy of
+    // the governance-write credential. Instead we log a short prefix
+    // for identification and write the full token to a file with
+    // restrictive permissions (owner read/write only, 0600) under the
+    // node's data directory.
     let admin_token = auth::generate_admin_token();
+    let token_prefix = &admin_token[..8.min(admin_token.len())];
+    let token_path = data_dir.join("admin_token");
+    if let Err(e) = std::fs::write(&token_path, &admin_token) {
+        tracing::error!(
+            path = %token_path.display(),
+            err = %e,
+            "Failed to write admin token file — aborting startup"
+        );
+        return Err(anyhow::anyhow!("admin token persistence failed: {e}"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&token_path)?.permissions();
+        perms.set_mode(0o600);
+        if let Err(e) = std::fs::set_permissions(&token_path, perms) {
+            tracing::warn!(
+                path = %token_path.display(),
+                err = %e,
+                "Failed to set 0600 on admin token file — file may be world-readable"
+            );
+        }
+    }
     tracing::info!(
-        admin_token = %admin_token,
-        "Admin bearer token generated — required for POST endpoints"
+        token_prefix = %token_prefix,
+        token_path = %token_path.display(),
+        "Admin bearer token generated — full token written to file, required for POST endpoints"
     );
     let bearer_auth = auth::BearerAuth {
         token: Arc::new(admin_token),
@@ -572,14 +653,8 @@ async fn start_node(
     let zd_onboarding_state = zerodentity::onboarding::OnboardingState {
         store: std::sync::Arc::clone(&zerodentity_store),
     };
-    let started_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
     let zd_api_state = zerodentity::api::ApiState {
         store: std::sync::Arc::clone(&zerodentity_store),
-        node_did: node_identity.did.clone(),
-        started_ms,
     };
     let zerodentity_onboarding_router =
         zerodentity::onboarding::onboarding_router(zd_onboarding_state);
@@ -613,7 +688,21 @@ async fn start_node(
         }));
 
     // Start the gateway HTTP server (blocks).
-    let bind_address = format!("0.0.0.0:{api_port}");
+    //
+    // Security note (GAP AMBER — Onyx pass 3): we bind to the caller-
+    // supplied `api_host` which defaults to `127.0.0.1` (loopback only).
+    // Opt-in to broader exposure (e.g. `0.0.0.0`) requires an explicit
+    // `--api-host` flag. This protects the admin-bearer-token write
+    // surface from accidental internet exposure when the operator
+    // forgets to put a reverse proxy in front.
+    let bind_address = format!("{api_host}:{api_port}");
+    if api_host == "0.0.0.0" {
+        tracing::warn!(
+            %bind_address,
+            "API bound to 0.0.0.0 — admin-write endpoints are reachable on all interfaces. \
+             Ensure you have a TLS-terminating front door AND rotate the admin token regularly."
+        );
+    }
     let gateway_config = exo_gateway::server::GatewayConfig {
         bind_address: bind_address.clone(),
         ..exo_gateway::server::GatewayConfig::default()
@@ -639,6 +728,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Command::Start {
             api_port,
+            api_host,
             p2p_port,
             data_dir,
             validator,
@@ -655,6 +745,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 
             start_node(
                 &data_dir,
+                &api_host,
                 api_port,
                 p2p_port,
                 validator,
@@ -668,6 +759,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Join {
             seed,
             api_port,
+            api_host,
             p2p_port,
             data_dir,
             validator,
@@ -702,6 +794,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 
             start_node(
                 &data_dir,
+                &api_host,
                 api_port,
                 p2p_port,
                 validator,
@@ -718,7 +811,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             let dag_store = store::SqliteDagStore::open(&data_dir)?;
 
             println!("Node:   {}", node_identity.did);
-            println!("Height: {}", dag_store.committed_height_value());
+            println!("Height: {}", dag_store.committed_height_value()?);
             println!("Data:   {}", data_dir.display());
 
             Ok(())
@@ -742,6 +835,15 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             } else {
                 node_identity.did.clone()
             };
+            if did != node_identity.did {
+                return Err(anyhow::anyhow!(
+                    "MCP actor DID must match the local node identity DID for signed adjudication"
+                ));
+            }
+            let node_identity_for_log = node_identity.did.clone();
+            let mcp_authority_did = node_identity.did.clone();
+            let mcp_authority_public_key = *node_identity.public_key();
+            let mcp_authority_signer = Arc::new(move |message: &[u8]| node_identity.sign(message));
 
             // The standalone `exochain mcp` command does NOT connect to a
             // running node, so we spin up the MCP server with an empty
@@ -753,17 +855,22 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             // context)` where `context` carries the `SharedReactorState`
             // and the `Arc<Mutex<SqliteDagStore>>` so tools return real
             // runtime data.
-            let server = mcp::McpServer::new(did);
+            let server = mcp::McpServer::with_authority(
+                did,
+                mcp_authority_did,
+                mcp_authority_public_key,
+                mcp_authority_signer,
+            );
 
             if let Some(bind) = sse {
                 eprintln!("[exochain-mcp] Starting MCP server on SSE at {bind}...");
-                eprintln!("[exochain-mcp] Node identity: {}", node_identity.did);
+                eprintln!("[exochain-mcp] Node identity: {}", node_identity_for_log);
                 mcp::serve_sse(server, &bind)
                     .await
                     .map_err(|e| anyhow::anyhow!("MCP SSE server error: {e}"))
             } else {
                 eprintln!("[exochain-mcp] Starting MCP server on stdio...");
-                eprintln!("[exochain-mcp] Node identity: {}", node_identity.did);
+                eprintln!("[exochain-mcp] Node identity: {}", node_identity_for_log);
                 mcp::serve_stdio(server)
                     .await
                     .map_err(|e| anyhow::anyhow!("MCP stdio server error: {e}"))

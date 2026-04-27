@@ -10,7 +10,7 @@ tags: [exochain, documentation, index]
 
 **Constitutional Trust Fabric for Safe Superintelligence Governance**
 
-~31,000 lines of Rust · 16 crates · 1,846 tests · 0 failures · 40 MCP tools · 8 constitutional invariants
+115663 lines of Rust under `crates/` · 20 workspace packages · 2,861 listed tests · 40 MCP tools · 8 constitutional invariants
 
 ---
 
@@ -45,7 +45,7 @@ tags: [exochain, documentation, index]
 
 ## Reference
 
-- [[CRATE-REFERENCE]] — Complete API reference for all 16 crates (types, traits, functions, invariants).
+- [[CRATE-REFERENCE]] — API reference for the workspace crates (types, traits, functions, invariants).
 
 ## Proofs
 
@@ -149,6 +149,7 @@ tags: [exochain, documentation, index]
 
 - [ExoForge Repository](https://github.com/exochain/exoforge) — Archon-based autonomous coding platform.
 - [[ARCHON-INTEGRATION]] — Integration guide (commands, workflows, council review, governance gate).
+- [CommandBase Foundation Starter](commandbase-foundation/README.md) — portable starter package for the first ExoChain-powered operating business.
 
 ## Development
 
@@ -159,7 +160,7 @@ tags: [exochain, documentation, index]
 
 ## CI/CD
 
-- `.github/workflows/ci.yml` — 9 quality gates per CR-001 §8.8.
+- `.github/workflows/ci.yml` — 20 numbered quality gates plus required aggregator per CR-001 §8.8.
 - `.github/workflows/release.yml` — Release with manual approval + provenance attestation.
 - `.github/workflows/exoforge-triage.yml` — Automatic ExoForge triage for GitHub issues.
 - `.github/ISSUE_TEMPLATE/` — Structured issue templates (bug report, feature request).

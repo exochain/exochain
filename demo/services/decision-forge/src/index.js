@@ -21,6 +21,10 @@ function parseBody(req) {
   });
 }
 
+function missingFields(input, fields) {
+  return fields.filter(field => input[field] === undefined || input[field] === null || input[field] === '');
+}
+
 export const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
@@ -33,9 +37,18 @@ export const server = http.createServer(async (req, res) => {
 
     // ── Create Decision ──
     if (url.pathname === '/api/decision/create' && req.method === 'POST') {
-      const { title, decision_class, constitution_hash } = await parseBody(req);
-      const hash = constitution_hash || '0'.repeat(64);
-      const decision = wasm.wasm_create_decision(title, JSON.stringify(decision_class || 'Operational'), hash);
+      const body = await parseBody(req);
+      const { title, decision_class, constitution_hash, decision_id, created_at_ms, created_at_logical } = body;
+      const missing = missingFields(body, ['constitution_hash', 'decision_id', 'created_at_ms', 'created_at_logical']);
+      if (missing.length) return json(res, 400, { error: 'Missing required deterministic metadata', fields: missing });
+      const decision = wasm.wasm_create_decision(
+        decision_id,
+        title,
+        JSON.stringify(decision_class || 'Operational'),
+        constitution_hash,
+        created_at_ms,
+        created_at_logical
+      );
       return json(res, 201, decision);
     }
 
@@ -55,8 +68,17 @@ export const server = http.createServer(async (req, res) => {
 
     // ── Transition State ──
     if (url.pathname === '/api/decision/transition' && req.method === 'POST') {
-      const { decision_json, to_state, actor_did } = await parseBody(req);
-      const updated = wasm.wasm_transition_decision(JSON.stringify(decision_json), JSON.stringify(to_state), actor_did);
+      const body = await parseBody(req);
+      const { decision_json, to_state, actor_did, timestamp_ms, timestamp_logical } = body;
+      const missing = missingFields(body, ['timestamp_ms', 'timestamp_logical']);
+      if (missing.length) return json(res, 400, { error: 'Missing required deterministic metadata', fields: missing });
+      const updated = wasm.wasm_transition_decision(
+        JSON.stringify(decision_json),
+        JSON.stringify(to_state),
+        actor_did,
+        timestamp_ms,
+        timestamp_logical
+      );
       return json(res, 200, updated);
     }
 
@@ -76,15 +98,38 @@ export const server = http.createServer(async (req, res) => {
 
     // ── File Challenge (Contestation GOV-008) ──
     if (url.pathname === '/api/decision/challenge' && req.method === 'POST') {
-      const { challenger_did, decision_id, ground, evidence_hash } = await parseBody(req);
-      const challenge = wasm.wasm_file_challenge(challenger_did, decision_id, JSON.stringify(ground), evidence_hash);
+      const body = await parseBody(req);
+      const { challenger_did, decision_id, ground, evidence_hash, challenge_id, created_at_ms, created_at_logical } = body;
+      const missing = missingFields(body, ['challenge_id', 'created_at_ms', 'created_at_logical']);
+      if (missing.length) return json(res, 400, { error: 'Missing required deterministic metadata', fields: missing });
+      const challenge = wasm.wasm_file_challenge(
+        challenge_id,
+        challenger_did,
+        decision_id,
+        JSON.stringify(ground),
+        evidence_hash,
+        created_at_ms,
+        created_at_logical
+      );
       return json(res, 200, challenge);
     }
 
     // ── Propose Accountability (GOV-012) ──
     if (url.pathname === '/api/decision/accountability' && req.method === 'POST') {
-      const { target_did, proposer_did, action_type, reason, evidence_hash } = await parseBody(req);
-      const action = wasm.wasm_propose_accountability(target_did, proposer_did, JSON.stringify(action_type), reason, evidence_hash);
+      const body = await parseBody(req);
+      const { target_did, proposer_did, action_type, reason, evidence_hash, action_id, proposed_at_ms, proposed_at_logical } = body;
+      const missing = missingFields(body, ['action_id', 'proposed_at_ms', 'proposed_at_logical']);
+      if (missing.length) return json(res, 400, { error: 'Missing required deterministic metadata', fields: missing });
+      const action = wasm.wasm_propose_accountability(
+        action_id,
+        target_did,
+        proposer_did,
+        JSON.stringify(action_type),
+        reason,
+        evidence_hash,
+        proposed_at_ms,
+        proposed_at_logical
+      );
       return json(res, 200, action);
     }
 

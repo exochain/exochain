@@ -46,9 +46,9 @@ decision.forum is a constitutional trust fabric for AI-era governance. Not a fra
 
 The numbers, verified as of this writing:
 
-- **29,587 lines of Rust** -- not Python, not JavaScript. Rust. For determinism.
-- **16 crates** covering identity, consent, authority, governance, escalation, legal infrastructure, cryptographic proofs, and more
-- **1,846 tests. Zero failures.**
+- **111606 lines of Rust under `crates/`** -- not Python, not JavaScript. Rust. For determinism.
+- **20 workspace packages** covering identity, consent, authority, governance, escalation, legal infrastructure, cryptographic proofs, and more
+- **2,687 listed tests** exercised by the workspace test gate.
 - **10 formal proofs** demonstrating that constitutional properties hold under all reachable system states
 - Built and reviewed through a **5-panel council process** (Governance, Legal, Architecture, Security, Operations)
 
@@ -270,7 +270,7 @@ The question is whether we will build it before we need it.
 
 *Bob Stewart is the architect of EXOCHAIN and decision.forum, and the author of The ASI Report on LinkedIn, where he writes about the infrastructure required for safe superintelligence. His work focuses on the intersection of constitutional governance, cryptographic enforcement, and AI safety -- the premise that alignment is necessary but insufficient, and that enforceable structural constraints are the missing complement.*
 
-*The decision.forum codebase -- 29,587 lines of Rust, 16 crates, 1,846 tests, 10 formal proofs -- is available for technical review. Participation in the council process is open to qualified reviewers across all five panels.*
+*The EXOCHAIN workspace -- 111606 lines of Rust under `crates/`, 20 packages, 2,687 listed tests, and formal proof material -- is available for technical review. Participation in the council process is open to qualified reviewers across all five panels.*
 
 ---
 

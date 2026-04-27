@@ -1,11 +1,25 @@
 //! Proofs MCP tools — evidence creation, chain of custody verification,
 //! Merkle proof generation, and CGR kernel proof verification.
 
-use exo_core::{Did, Hash256, Timestamp};
+use exo_core::{Did, Hash256};
 use serde_json::{Value, json};
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ToolDefinition, ToolResult};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ToolDefinition, ToolResult},
+};
+
+fn required_nonzero_u64(params: &Value, name: &str) -> std::result::Result<u64, ToolResult> {
+    match params.get(name).and_then(Value::as_u64) {
+        Some(value) if value > 0 => Ok(value),
+        Some(_) => Err(ToolResult::error(
+            json!({"error": format!("{name} must be a nonzero integer")}).to_string(),
+        )),
+        None => Err(ToolResult::error(
+            json!({"error": format!("missing required parameter: {name}")}).to_string(),
+        )),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // exochain_create_evidence
@@ -31,9 +45,17 @@ pub fn create_evidence_definition() -> ToolDefinition {
                 "source_did": {
                     "type": "string",
                     "description": "DID of the evidence source/creator."
+                },
+                "evidence_id": {
+                    "type": "string",
+                    "description": "Caller-supplied non-placeholder evidence ID."
+                },
+                "created_at_ms": {
+                    "type": "integer",
+                    "description": "Caller-supplied nonzero HLC physical milliseconds for creation."
                 }
             },
-            "required": ["description", "evidence_type", "source_did"],
+            "required": ["description", "evidence_type", "source_did", "evidence_id", "created_at_ms"],
             "additionalProperties": false,
         }),
     }
@@ -66,6 +88,23 @@ pub fn execute_create_evidence(params: &Value, _context: &NodeContext) -> ToolRe
             );
         }
     };
+    let evidence_id = match params.get("evidence_id").and_then(Value::as_str) {
+        Some(s) if !s.trim().is_empty() => s,
+        Some(_) => {
+            return ToolResult::error(
+                json!({"error": "evidence_id must not be empty"}).to_string(),
+            );
+        }
+        None => {
+            return ToolResult::error(
+                json!({"error": "missing required parameter: evidence_id"}).to_string(),
+            );
+        }
+    };
+    let created_at_ms = match required_nonzero_u64(params, "created_at_ms") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
 
     if Did::new(source_did_str).is_err() {
         return ToolResult::error(
@@ -73,15 +112,8 @@ pub fn execute_create_evidence(params: &Value, _context: &NodeContext) -> ToolRe
         );
     }
 
-    let now = Timestamp::now_utc();
-    let hash_input = format!(
-        "evidence:{}:{}:{}:{}:{}",
-        description, evidence_type, source_did_str, now.physical_ms, now.logical
-    );
-    let evidence_id = Hash256::digest(hash_input.as_bytes());
-
     let response = json!({
-        "evidence_id": evidence_id.to_string(),
+        "evidence_id": evidence_id,
         "description": description,
         "evidence_type": evidence_type,
         "source_did": source_did_str,
@@ -89,7 +121,7 @@ pub fn execute_create_evidence(params: &Value, _context: &NodeContext) -> ToolRe
             {
                 "custodian": source_did_str,
                 "action": "created",
-                "timestamp": format!("{}:{}", now.physical_ms, now.logical),
+                "timestamp": format!("{}:0", created_at_ms),
             }
         ],
         "status": "created",
@@ -124,9 +156,13 @@ pub fn verify_chain_of_custody_definition() -> ToolDefinition {
                         }
                     },
                     "description": "Array of custody entries with custodian and action fields."
+                },
+                "verified_at_ms": {
+                    "type": "integer",
+                    "description": "Caller-supplied nonzero HLC physical milliseconds for verification."
                 }
             },
-            "required": ["evidence_id", "chain"],
+            "required": ["evidence_id", "chain", "verified_at_ms"],
             "additionalProperties": false,
         }),
     }
@@ -151,6 +187,10 @@ pub fn execute_verify_chain_of_custody(params: &Value, _context: &NodeContext) -
                     .to_string(),
             );
         }
+    };
+    let verified_at_ms = match required_nonzero_u64(params, "verified_at_ms") {
+        Ok(value) => value,
+        Err(result) => return result,
     };
 
     if chain.is_empty() {
@@ -180,14 +220,13 @@ pub fn execute_verify_chain_of_custody(params: &Value, _context: &NodeContext) -
     }
 
     let valid = issues.is_empty();
-    let now = Timestamp::now_utc();
 
     let response = json!({
         "evidence_id": evidence_id,
         "chain_length": chain.len(),
         "valid": valid,
         "issues": issues,
-        "verified_at": format!("{}:{}", now.physical_ms, now.logical),
+        "verified_at": format!("{}:0", verified_at_ms),
     });
     ToolResult::success(response.to_string())
 }
@@ -244,9 +283,7 @@ pub fn execute_generate_merkle_proof(params: &Value, _context: &NodeContext) -> 
     };
 
     if leaves_val.is_empty() {
-        return ToolResult::error(
-            json!({"error": "leaves array must not be empty"}).to_string(),
-        );
+        return ToolResult::error(json!({"error": "leaves array must not be empty"}).to_string());
     }
 
     if target_index >= leaves_val.len() {
@@ -340,7 +377,8 @@ pub fn execute_generate_merkle_proof(params: &Value, _context: &NodeContext) -> 
 pub fn verify_cgr_proof_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_verify_cgr_proof".to_owned(),
-        description: "Verify a CGR kernel proof by checking the proof hash and invariants.".to_owned(),
+        description: "Verify a CGR kernel proof by checking the proof hash and invariants."
+            .to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -352,9 +390,13 @@ pub fn verify_cgr_proof_definition() -> ToolDefinition {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "List of invariant names that were checked in the proof."
+                },
+                "verified_at_ms": {
+                    "type": "integer",
+                    "description": "Caller-supplied nonzero HLC physical milliseconds for verification."
                 }
             },
-            "required": ["proof_hash", "invariants_checked"],
+            "required": ["proof_hash", "invariants_checked", "verified_at_ms"],
             "additionalProperties": false,
         }),
     }
@@ -380,6 +422,10 @@ pub fn execute_verify_cgr_proof(params: &Value, _context: &NodeContext) -> ToolR
             );
         }
     };
+    let verified_at_ms = match required_nonzero_u64(params, "verified_at_ms") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
 
     // Validate hex format.
     if hex::decode(proof_hash).is_err() {
@@ -394,8 +440,6 @@ pub fn execute_verify_cgr_proof(params: &Value, _context: &NodeContext) -> ToolR
         .map(String::from)
         .collect();
 
-    let now = Timestamp::now_utc();
-
     // Compute a verification hash to attest we checked this proof.
     let verification_input = format!("cgr_verify:{}:{}", proof_hash, invariant_names.join(","));
     let verification_hash = Hash256::digest(verification_input.as_bytes());
@@ -406,7 +450,7 @@ pub fn execute_verify_cgr_proof(params: &Value, _context: &NodeContext) -> ToolR
         "invariants_checked": invariant_names,
         "invariant_count": invariant_names.len(),
         "verification_hash": verification_hash.to_string(),
-        "verified_at": format!("{}:{}", now.physical_ms, now.logical),
+        "verified_at": format!("{}:0", verified_at_ms),
     });
     ToolResult::success(response.to_string())
 }
@@ -435,11 +479,13 @@ mod tests {
             "description": "Contract PDF",
             "evidence_type": "document",
             "source_did": "did:exo:alice",
+            "evidence_id": "00000000-0000-0000-0000-000000000001",
+            "created_at_ms": 1700000000000_u64,
         });
         let result = execute_create_evidence(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
-        assert!(v["evidence_id"].as_str().is_some());
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+        assert_eq!(v["evidence_id"], "00000000-0000-0000-0000-000000000001");
         assert_eq!(v["evidence_type"], "document");
         assert_eq!(v["source_did"], "did:exo:alice");
         assert_eq!(v["status"], "created");
@@ -454,6 +500,8 @@ mod tests {
             "description": "test",
             "evidence_type": "document",
             "source_did": "bad",
+            "evidence_id": "00000000-0000-0000-0000-000000000001",
+            "created_at_ms": 1700000000000_u64,
         });
         let result = execute_create_evidence(&params, &NodeContext::empty());
         assert!(result.is_error);
@@ -461,7 +509,26 @@ mod tests {
 
     #[test]
     fn execute_create_evidence_missing_description() {
-        let result = execute_create_evidence(&json!({"evidence_type": "doc", "source_did": "did:exo:a"}), &NodeContext::empty());
+        let result = execute_create_evidence(
+            &json!({
+                "evidence_type": "doc",
+                "source_did": "did:exo:a",
+                "evidence_id": "00000000-0000-0000-0000-000000000001",
+                "created_at_ms": 1700000000000_u64
+            }),
+            &NodeContext::empty(),
+        );
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn execute_create_evidence_rejects_missing_metadata() {
+        let params = json!({
+            "description": "Contract PDF",
+            "evidence_type": "document",
+            "source_did": "did:exo:alice",
+        });
+        let result = execute_create_evidence(&params, &NodeContext::empty());
         assert!(result.is_error);
     }
 
@@ -482,10 +549,11 @@ mod tests {
                 {"custodian": "did:exo:alice", "action": "created"},
                 {"custodian": "did:exo:bob", "action": "transferred"},
             ],
+            "verified_at_ms": 1700000000001_u64,
         });
         let result = execute_verify_chain_of_custody(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid"], true);
         assert_eq!(v["chain_length"], 2);
     }
@@ -497,16 +565,18 @@ mod tests {
             "chain": [
                 {"custodian": "did:exo:alice", "action": "transferred"},
             ],
+            "verified_at_ms": 1700000000001_u64,
         });
         let result = execute_verify_chain_of_custody(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid"], false);
     }
 
     #[test]
     fn execute_verify_chain_of_custody_empty() {
-        let params = json!({"evidence_id": "abc", "chain": []});
+        let params =
+            json!({"evidence_id": "abc", "chain": [], "verified_at_ms": 1700000000001_u64});
         let result = execute_verify_chain_of_custody(&params, &NodeContext::empty());
         assert!(result.is_error);
     }
@@ -528,11 +598,11 @@ mod tests {
         });
         let result = execute_generate_merkle_proof(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert!(v["root"].as_str().is_some());
         assert_eq!(v["target_index"], 1);
         assert_eq!(v["leaf_count"], 4);
-        assert!(v["proof"].as_array().expect("proof array").len() > 0);
+        assert!(!v["proof"].as_array().expect("proof array").is_empty());
     }
 
     #[test]
@@ -563,10 +633,11 @@ mod tests {
         let params = json!({
             "proof_hash": "abcdef01",
             "invariants_checked": ["consent_required", "no_self_dealing"],
+            "verified_at_ms": 1700000000002_u64,
         });
         let result = execute_verify_cgr_proof(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["verification_status"], "verified");
         assert_eq!(v["invariant_count"], 2);
         assert!(v["verification_hash"].as_str().is_some());
@@ -574,14 +645,17 @@ mod tests {
 
     #[test]
     fn execute_verify_cgr_proof_invalid_hex() {
-        let params = json!({"proof_hash": "zzzz", "invariants_checked": []});
+        let params = json!({"proof_hash": "zzzz", "invariants_checked": [], "verified_at_ms": 1700000000002_u64});
         let result = execute_verify_cgr_proof(&params, &NodeContext::empty());
         assert!(result.is_error);
     }
 
     #[test]
     fn execute_verify_cgr_proof_missing_hash() {
-        let result = execute_verify_cgr_proof(&json!({"invariants_checked": []}), &NodeContext::empty());
+        let result = execute_verify_cgr_proof(
+            &json!({"invariants_checked": [], "verified_at_ms": 1700000000002_u64}),
+            &NodeContext::empty(),
+        );
         assert!(result.is_error);
     }
 }

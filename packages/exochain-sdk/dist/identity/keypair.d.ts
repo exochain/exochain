@@ -3,18 +3,15 @@
  *
  * Built on the Web Crypto API, which supports Ed25519 natively on Node 20+
  * and modern browsers. The DID is derived deterministically from the raw
- * public-key bytes as:
+ * public-key bytes as a local SDK DID:
  *
  * ```text
  * did:exo: + first 16 hex chars of SHA-256(public_key_bytes)
  * ```
  *
- * The Rust SDK uses BLAKE3 for this derivation; the pure-JS reference
- * implementation uses SHA-256 so the SDK requires no external dependencies.
- * Two identities generated from the same public key will always produce the
- * same DID within this SDK, but that DID will NOT match one produced by the
- * Rust SDK. For applications that need cross-SDK DIDs, obtain the DID from
- * the canonical Rust-side fabric and pass it into {@link Identity.fromKeypair}.
+ * This local DID is deterministic inside the TypeScript SDK, but it is not a
+ * canonical fabric DID. For applications that need cross-SDK DIDs, obtain the
+ * DID from the fabric and pass it into {@link Identity.fromResolvedKeypair}.
  */
 import type { Did } from '../types.js';
 /**
@@ -39,6 +36,20 @@ export declare class Identity {
      */
     static fromKeypair(args: {
         label: string;
+        publicKeyHex: string;
+        privateKeyPkcs8: Uint8Array;
+    }): Promise<Identity>;
+    /**
+     * Rebuild an identity from an existing raw key pair while preserving a DID
+     * resolved from the canonical fabric.
+     *
+     * This constructor does not derive a local TypeScript DID. Use it when a
+     * gateway or DID-document resolver has already bound the supplied public key
+     * to a canonical `did:exo:` identifier.
+     */
+    static fromResolvedKeypair(args: {
+        label: string;
+        did: Did | string;
         publicKeyHex: string;
         privateKeyPkcs8: Uint8Array;
     }): Promise<Identity>;

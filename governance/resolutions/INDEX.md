@@ -7,7 +7,8 @@ tags: [council, governance, index]
 
 | ID | Title | Status | Date | Implemented |
 |----|-------|--------|------|-------------|
-| [[CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY\|CR-001]] | AEGIS, SYBIL, Authentic Plurality & Constitutional Enforcement | RATIFIED | 2026-03-18 | 2026-03-19 |
+| [[CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY\|CR-001]] | AEGIS, SYBIL, Authentic Plurality & Constitutional Enforcement | DRAFT | 2026-03-18 | - |
+| [[CR-002-AUTONOMOUS-RECURSIVE-IMPROVEMENT-INFRASTRUCTURE\|CR-002]] | Autonomous Recursive Self-Improvement Governance and Deployment | DRAFT | 2026-04-25 | - |
 
 ## Resolution Lifecycle
 

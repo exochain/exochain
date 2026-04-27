@@ -273,12 +273,7 @@ impl JsonRpcResponse {
 
     #[must_use]
     #[allow(dead_code)]
-    pub fn error_with_data(
-        id: Option<Value>,
-        code: i32,
-        message: String,
-        data: Value,
-    ) -> Self {
+    pub fn error_with_data(id: Option<Value>, code: i32, message: String, data: Value) -> Self {
         Self {
             jsonrpc: "2.0".into(),
             id,
@@ -373,7 +368,9 @@ mod tests {
         let result = InitializeResult {
             protocol_version: "2024-11-05".into(),
             capabilities: ServerCapabilities {
-                tools: Some(ToolsCapability { list_changed: false }),
+                tools: Some(ToolsCapability {
+                    list_changed: false,
+                }),
                 resources: Some(ResourcesCapability {
                     subscribe: false,
                     list_changed: false,

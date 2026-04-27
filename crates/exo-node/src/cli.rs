@@ -26,6 +26,16 @@ pub enum Command {
         #[arg(long, default_value = None)]
         api_port: Option<u16>,
 
+        /// HTTP API bind host. Default is `127.0.0.1` (loopback only).
+        /// Set to `0.0.0.0` to expose the admin-write API on all
+        /// interfaces — do so ONLY when you have a front-door TLS
+        /// terminator AND your admin bearer token is appropriately
+        /// scoped (see auth.rs). Exposing 0.0.0.0 with the default
+        /// bearer model is equivalent to publishing your node's
+        /// governance-write credential on the open internet.
+        #[arg(long, default_value = "127.0.0.1")]
+        api_host: String,
+
         /// P2P listen port.
         #[arg(long, default_value = None)]
         p2p_port: Option<u16>,
@@ -53,6 +63,11 @@ pub enum Command {
         /// HTTP API port.
         #[arg(long, default_value = None)]
         api_port: Option<u16>,
+
+        /// HTTP API bind host. Default is `127.0.0.1` (loopback only).
+        /// See `Start --api-host` for rationale on 0.0.0.0.
+        #[arg(long, default_value = "127.0.0.1")]
+        api_host: String,
 
         /// P2P listen port.
         #[arg(long, default_value = None)]

@@ -12,17 +12,12 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Core crates
+# Core crates (only those actually `use`d today; see removed-deps
+# note in commit message when adding back — avoid drift between
+# `pub use` surface and dependency graph)
 exo-core = { path = "../exo-core" }
 exo-identity = { path = "../exo-identity" }
-exo-consent = { path = "../exo-consent" }
-exo-authority = { path = "../exo-authority" }
-exo-governance = { path = "../exo-governance" }
 exo-gatekeeper = { path = "../exo-gatekeeper" }
-exo-escalation = { path = "../exo-escalation" }
-exo-legal = { path = "../exo-legal" }
-exo-dag = { path = "../exo-dag" }
-exo-proofs = { path = "../exo-proofs" }
 
 # Serialization
 serde = { workspace = true }

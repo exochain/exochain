@@ -1,5 +1,9 @@
 # EXOCHAIN Repository Truth Baseline
 
+> Superseded numerically by `tools/repo_truth.sh` as updated in Wave E Basalt
+> on 2026-04-26. This file is retained as a historical audit baseline, not as
+> the current source of repo counts.
+
 Generated: 2026-03-20
 Branch: `feat/platform-hardening` @ `bf38f9f`
 Method: Manual audit + automated verification

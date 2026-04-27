@@ -184,8 +184,7 @@ mod tests {
 
         let alice_key =
             derive_shared_key(&alice.secret, &bob.public, context).expect("alice derive");
-        let bob_key =
-            derive_shared_key(&bob.secret, &alice.public, context).expect("bob derive");
+        let bob_key = derive_shared_key(&bob.secret, &alice.public, context).expect("bob derive");
 
         assert_eq!(alice_key, bob_key, "shared keys must match");
     }
@@ -195,10 +194,8 @@ mod tests {
         let alice = X25519KeyPair::generate();
         let bob = X25519KeyPair::generate();
 
-        let key1 =
-            derive_shared_key(&alice.secret, &bob.public, b"context-a").expect("derive");
-        let key2 =
-            derive_shared_key(&alice.secret, &bob.public, b"context-b").expect("derive");
+        let key1 = derive_shared_key(&alice.secret, &bob.public, b"context-a").expect("derive");
+        let key2 = derive_shared_key(&alice.secret, &bob.public, b"context-b").expect("derive");
 
         assert_ne!(key1, key2, "different contexts must produce different keys");
     }
