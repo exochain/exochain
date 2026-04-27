@@ -1319,6 +1319,7 @@ name = "exo-authority"
 version = "0.1.0-beta"
 dependencies = [
  "blake3",
+ "ciborium",
  "ed25519-dalek",
  "exo-core",
  "exo-identity",

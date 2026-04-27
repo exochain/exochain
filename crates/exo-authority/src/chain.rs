@@ -13,6 +13,22 @@ use crate::{
 
 /// Default maximum delegation depth.
 pub const DEFAULT_MAX_DEPTH: usize = 5;
+/// Domain tag for authority delegation signatures.
+pub const AUTHORITY_LINK_SIGNING_DOMAIN: &str = "exo.authority.delegation.v1";
+const AUTHORITY_LINK_SIGNING_SCHEMA_VERSION: u16 = 1;
+
+#[derive(Serialize)]
+struct AuthorityLinkSigningPayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    delegator_did: &'a Did,
+    delegate_did: &'a Did,
+    scope: &'a [Permission],
+    created: &'a Timestamp,
+    expires: &'a Option<Timestamp>,
+    depth: usize,
+    delegatee_kind: &'a DelegateeKind,
+}
 
 /// Distinguishes human delegatees from AI agent delegatees.
 ///
@@ -56,32 +72,48 @@ pub struct AuthorityLink {
 
 impl AuthorityLink {
     /// Compute a deterministic ID for this link.
-    #[must_use]
-    pub fn id(&self) -> Hash256 {
-        Hash256::digest(&self.signable_payload())
+    ///
+    /// # Errors
+    ///
+    /// Returns `AuthorityError::SigningPayloadEncoding` if canonical CBOR
+    /// encoding of the signed payload fails.
+    pub fn id(&self) -> Result<Hash256, AuthorityError> {
+        Ok(Hash256::digest(&self.signing_payload()?))
     }
 
     /// The canonical payload that must be signed by the delegator.
-    /// This is the deterministic byte representation of the link's content
-    /// (excluding the signature itself).
-    #[must_use]
-    pub fn signable_payload(&self) -> Vec<u8> {
-        let mut data = Vec::new();
-        data.extend_from_slice(self.delegator_did.as_str().as_bytes());
-        data.extend_from_slice(self.delegate_did.as_str().as_bytes());
-        for p in &self.scope {
-            data.extend_from_slice(format!("{p:?}").as_bytes());
-        }
-        data.extend_from_slice(&self.created.physical_ms.to_le_bytes());
-        data.extend_from_slice(&self.created.logical.to_le_bytes());
-        data.extend_from_slice(&self.depth.to_le_bytes());
-        if let Some(exp) = &self.expires {
-            data.extend_from_slice(&exp.physical_ms.to_le_bytes());
-            data.extend_from_slice(&exp.logical.to_le_bytes());
-        }
-        // Include delegatee kind so it is cryptographically bound to the grant.
-        data.extend_from_slice(format!("{:?}", self.delegatee_kind).as_bytes());
-        data
+    ///
+    /// The payload is domain-separated canonical CBOR and excludes the
+    /// signature itself. Permissions are represented as a deterministic set so
+    /// caller ordering cannot alter the grant identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AuthorityError::SigningPayloadEncoding` if canonical CBOR
+    /// encoding fails.
+    pub fn signing_payload(&self) -> Result<Vec<u8>, AuthorityError> {
+        let scope: Vec<Permission> = PermissionSet::from_permissions(&self.scope)
+            .iter()
+            .copied()
+            .collect();
+        let payload = AuthorityLinkSigningPayload {
+            domain: AUTHORITY_LINK_SIGNING_DOMAIN,
+            schema_version: AUTHORITY_LINK_SIGNING_SCHEMA_VERSION,
+            delegator_did: &self.delegator_did,
+            delegate_did: &self.delegate_did,
+            scope: &scope,
+            created: &self.created,
+            expires: &self.expires,
+            depth: self.depth,
+            delegatee_kind: &self.delegatee_kind,
+        };
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(&payload, &mut buf).map_err(|e| {
+            AuthorityError::SigningPayloadEncoding {
+                reason: e.to_string(),
+            }
+        })?;
+        Ok(buf)
     }
 }
 
@@ -213,7 +245,7 @@ where
         // Real Ed25519 signature verification
         let pub_key = resolve_key(&link.delegator_did)
             .ok_or(AuthorityError::InvalidSignature { index: i })?;
-        let payload = link.signable_payload();
+        let payload = link.signing_payload()?;
         if !exo_core::crypto::verify(&payload, &link.signature, &pub_key) {
             return Err(AuthorityError::InvalidSignature { index: i });
         }
@@ -316,7 +348,7 @@ mod tests {
             depth,
             delegatee_kind: DelegateeKind::Human,
         };
-        let payload = link.signable_payload();
+        let payload = link.signing_payload().expect("canonical signing payload");
         let kp = registry
             .keys
             .get(&format!("did:exo:{from}"))
@@ -339,7 +371,7 @@ mod tests {
             scope,
             created: ts(1000),
             expires: exp,
-            signature: Signature::from_bytes([1u8; 64]),
+            signature: Signature::from_bytes([0xA5u8; 64]),
             depth,
             delegatee_kind: DelegateeKind::Human,
         }
@@ -505,7 +537,7 @@ mod tests {
             depth: 0,
             delegatee_kind: DelegateeKind::Human,
         };
-        let payload = link.signable_payload();
+        let payload = link.signing_payload().expect("canonical signing payload");
         // Sign with alice's key (wrong key for root)
         let alice_kp = reg.keys.get("did:exo:alice").unwrap();
         link.signature = alice_kp.sign(&payload);
@@ -659,15 +691,35 @@ mod tests {
     #[test]
     fn link_id_deterministic() {
         let l = fake_link("root", "alice", vec![Permission::Read], 0, None);
-        let id1 = l.id();
-        let id2 = l.id();
+        let id1 = l.id().expect("canonical link id");
+        let id2 = l.id().expect("canonical link id");
         assert_eq!(id1, id2);
     }
 
     #[test]
-    fn signable_payload_deterministic() {
+    fn signing_payload_deterministic() {
         let l = fake_link("root", "alice", vec![Permission::Read], 0, None);
-        assert_eq!(l.signable_payload(), l.signable_payload());
+        assert_eq!(
+            l.signing_payload().expect("canonical signing payload"),
+            l.signing_payload().expect("canonical signing payload")
+        );
+    }
+
+    #[test]
+    fn authority_link_signing_payload_is_domain_tagged_cbor() {
+        #[derive(Deserialize)]
+        struct DecodedPayload {
+            domain: String,
+            schema_version: u16,
+        }
+
+        let link = fake_link("root", "alice", vec![Permission::Read], 0, None);
+        let payload = link.signing_payload().expect("canonical signing payload");
+        let decoded: DecodedPayload =
+            ciborium::from_reader(payload.as_slice()).expect("decode authority payload");
+
+        assert_eq!(decoded.domain, AUTHORITY_LINK_SIGNING_DOMAIN);
+        assert_eq!(decoded.schema_version, 1);
     }
 
     #[test]
