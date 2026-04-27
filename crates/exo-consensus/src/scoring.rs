@@ -10,77 +10,46 @@ pub struct PanelConfidenceInputs {
     pub minority_reports_count: u32,
 }
 
-/// Calculate convergence between a set of positions (in bps, 0–10000).
-/// This extracts mock "key claims" by splitting the text by lines or using provided claims
-/// but for the real system we expect structured claims. Here we simulate it by comparing
-/// the sets of words or using the actual key_claims array if we can pass it.
-/// Actually, the prompt says:
-/// `calculate_convergence(positions: &[&str]) -> u64`
-/// "Use categorical comparison: count matching key claims across positions divided by total unique claims."
-/// We'll assume the positions string represents a comma-separated or line-separated list of claims if it's raw text,
-/// but let's implement it robustly: tokenize and find overlap.
-pub fn calculate_convergence(positions: &[&str]) -> u64 {
-    if positions.is_empty() {
+/// Return a canonical deterministic claim set: trimmed, lowercased, sorted, and
+/// deduplicated. Empty claims are removed.
+pub fn canonical_claim_set(claims: &[String]) -> Vec<String> {
+    claims
+        .iter()
+        .map(|claim| claim.trim().to_lowercase())
+        .filter(|claim| !claim.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Calculate convergence between structured key-claim sets (in bps, 0-10000).
+/// Free-form text is not parsed here; callers must provide explicit claim
+/// evidence for each model position.
+pub fn calculate_convergence(claim_sets: &[Vec<String>]) -> u64 {
+    if claim_sets.is_empty() {
         return 0;
     }
-    if positions.len() == 1 {
-        return 10000;
-    }
 
-    // A simple categorical extraction: split by common delimiters and trim.
-    // In production, these would be structured key_claims provided to the function.
     let mut all_claims = BTreeSet::new();
     let mut model_claims = Vec::new();
 
-    for pos in positions {
-        let mut claims = BTreeSet::new();
-        // Extract claims by splitting on commas or newlines for simplistic proxy
-        let parts: Vec<&str> = pos.split([',', '\n', ';']).collect();
-        for p in parts {
-            let clean = p.trim().to_lowercase();
-            if !clean.is_empty() {
-                claims.insert(clean.clone());
-                all_claims.insert(clean);
-            }
+    for claims in claim_sets {
+        let canonical = canonical_claim_set(claims);
+        let set = canonical.into_iter().collect::<BTreeSet<_>>();
+        for claim in &set {
+            all_claims.insert(claim.clone());
         }
-        model_claims.push(claims);
+        model_claims.push(set);
     }
 
     if all_claims.is_empty() {
-        return 10000; // If they all submitted empty, they agree.
+        return 0;
     }
-
-    let _match_score = 0;
-    let total_unique = u64::try_from(all_claims.len()).unwrap_or(0);
-
-    for claim in &all_claims {
-        let _count =
-            u64::try_from(model_claims.iter().filter(|c| c.contains(claim)).count()).unwrap_or(0);
-        // The more models share the claim, the more "matching" it is.
-        // A claim shared by ALL models is a perfect match (worth 1).
-        // Here we just say: if a claim is shared by more than half, it's a majority claim.
-        // Let's use a simple ratio: sum(count) / (total_unique * num_models)
-        // match_score += count; // Keeping for reference if needed
-    }
-
-    let max_possible_score = total_unique * u64::try_from(positions.len()).unwrap_or(0);
-    // Invariant chain: positions.len() >= 2 (early-returned 0/1 above) and
-    // all_claims.len() >= 1 (early-returned empty above). u64::try_from only
-    // fails for usize > 2^64, impossible for in-memory collections. Guard
-    // remains for defense-in-depth against pathological platforms.
-    if max_possible_score == 0 {
+    if claim_sets.len() == 1 {
         return 10000;
     }
 
-    // If we want identical positions to be 10000 and 0 overlap to be 0:
-    // This formula works: match_score / max_possible_score
-    // Example: 2 positions. "A, B" and "A, C".
-    // all_claims: A, B, C.
-    // A count = 2. B count = 1. C count = 1.
-    // match_score = 4. max_possible_score = 3 * 2 = 6.
-    // 4 / 6 = 66%. Wait, 50% overlap.
-    // Let's refine based on "matching key claims across positions divided by total unique claims".
-    // A matching claim means it's present in ALL positions.
+    let total_unique = u64::try_from(all_claims.len()).unwrap_or(0);
     let shared_claims = u64::try_from(
         all_claims
             .iter()
@@ -90,6 +59,50 @@ pub fn calculate_convergence(positions: &[&str]) -> u64 {
     .unwrap_or(0);
 
     (shared_claims * 10000) / total_unique
+}
+
+/// Return claims whose support across models meets the configured threshold.
+pub fn consensus_claims_at_threshold(
+    claim_sets: &[Vec<String>],
+    threshold_bps: u64,
+) -> Vec<String> {
+    if claim_sets.is_empty() {
+        return Vec::new();
+    }
+
+    let canonical_sets = claim_sets
+        .iter()
+        .map(|claims| {
+            canonical_claim_set(claims)
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut all_claims = BTreeSet::new();
+    for claims in &canonical_sets {
+        for claim in claims {
+            all_claims.insert(claim.clone());
+        }
+    }
+
+    let model_count = u64::try_from(canonical_sets.len()).unwrap_or(0);
+    if model_count == 0 {
+        return Vec::new();
+    }
+
+    all_claims
+        .into_iter()
+        .filter(|claim| {
+            let support = u64::try_from(
+                canonical_sets
+                    .iter()
+                    .filter(|claims| claims.contains(claim))
+                    .count(),
+            )
+            .unwrap_or(0);
+            (support * 10000) / model_count >= threshold_bps
+        })
+        .collect()
 }
 
 /// Calculate Panel Confidence Index in bps (0–10000).
@@ -153,17 +166,18 @@ mod proptests {
         /// `calculate_convergence` must never panic on arbitrary input and
         /// must always return a score within the valid bps range.
         #[test]
-        fn convergence_never_panics_and_bounded(positions in proptest::collection::vec(".*", 0..20)) {
-            let refs: Vec<&str> = positions.iter().map(String::as_str).collect();
-            let score = calculate_convergence(&refs);
+        fn convergence_never_panics_and_bounded(positions in proptest::collection::vec(proptest::collection::vec(".*", 0..10), 0..20)) {
+            let score = calculate_convergence(&positions);
             prop_assert!(score <= 10000, "score {score} out of range");
         }
 
         /// Identical positions must always score 10000 (perfect convergence),
         /// regardless of claim shape.
         #[test]
-        fn identical_positions_always_ten_thousand(pos in ".+") {
-            let refs = vec![pos.as_str(); 5];
+        fn identical_positions_always_ten_thousand(
+            pos in proptest::collection::vec("[A-Za-z0-9][A-Za-z0-9 _-]{0,32}", 1..10)
+        ) {
+            let refs = vec![pos; 5];
             let score = calculate_convergence(&refs);
             prop_assert_eq!(score, 10000);
         }
@@ -202,21 +216,25 @@ mod proptests {
     /// Boundary: single position returns 10000 (trivially self-consistent).
     #[test]
     fn single_position_returns_ten_thousand() {
-        assert_eq!(calculate_convergence(&["only one"]), 10000);
+        assert_eq!(calculate_convergence(&[vec!["only one".into()]]), 10000);
     }
 
-    /// Boundary: all-empty strings should not panic and should yield 10000
-    /// (no claims to disagree on).
+    /// Boundary: all-empty claim sets should not panic and should yield 0
+    /// because no explicit claim evidence exists.
     #[test]
     fn all_empty_strings_do_not_panic() {
-        let score = calculate_convergence(&["", "", ""]);
-        assert_eq!(score, 10000);
+        let score = calculate_convergence(&[Vec::new(), Vec::new(), Vec::new()]);
+        assert_eq!(score, 0);
     }
 
     /// Boundary: single-claim positions with disjoint claims score zero.
     #[test]
     fn disjoint_single_claims_score_zero() {
-        let score = calculate_convergence(&["A", "B", "C"]);
+        let score = calculate_convergence(&[
+            vec!["A".to_string()],
+            vec!["B".to_string()],
+            vec!["C".to_string()],
+        ]);
         assert_eq!(score, 0);
     }
 }

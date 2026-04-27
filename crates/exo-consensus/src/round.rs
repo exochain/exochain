@@ -8,6 +8,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{ConsensusError, Result};
 
+/// Structured deterministic response from one panel model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelDeliberationResponse {
+    pub position_text: String,
+    pub key_claims: Vec<String>,
+    pub confidence_bps: u64,
+}
+
+/// Structured deterministic devil's advocate review.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DevilAdvocateReview {
+    pub review_text: String,
+    pub serious_objection: bool,
+    pub reasons: Vec<String>,
+}
+
 /// A single position submitted by a model in a round.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelPosition {
@@ -29,7 +45,7 @@ pub struct DeliberationRound {
     pub positions: BTreeMap<String, ModelPosition>,
     pub synthesis: Option<String>,
     pub convergence_score_bps: u64,
-    pub devil_advocate_challenge: Option<String>,
+    pub devil_advocate_review: Option<DevilAdvocateReview>,
     pub round_hash: Hash256,
 }
 
@@ -50,7 +66,7 @@ pub fn hash_round(round: &DeliberationRound) -> Result<Hash256> {
         pub positions: &'a BTreeMap<String, ModelPosition>,
         pub synthesis: &'a Option<String>,
         pub convergence_score_bps: u64,
-        pub devil_advocate_challenge: &'a Option<String>,
+        pub devil_advocate_review: &'a Option<DevilAdvocateReview>,
     }
 
     let input = HashInput {
@@ -61,7 +77,7 @@ pub fn hash_round(round: &DeliberationRound) -> Result<Hash256> {
         positions: &round.positions,
         synthesis: &round.synthesis,
         convergence_score_bps: round.convergence_score_bps,
-        devil_advocate_challenge: &round.devil_advocate_challenge,
+        devil_advocate_review: &round.devil_advocate_review,
     };
 
     hash_structured(&input).map_err(|source| ConsensusError::HashSerialization {

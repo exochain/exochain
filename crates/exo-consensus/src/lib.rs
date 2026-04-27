@@ -8,13 +8,16 @@ pub mod round;
 pub mod scoring;
 pub mod session;
 
-pub use commitment::{commit, verify_commitment};
+pub use commitment::{commit, commit_response, verify_commitment, verify_response_commitment};
 pub use error::{ConsensusError, Result};
 pub use panel::{ModelProvider, ModelRole, Panel, PanelModel};
 pub use record::DeliberationResult;
 pub use report::MinorityReport;
-pub use round::{DeliberationRound, ModelPosition};
-pub use scoring::{PanelConfidenceInputs, calculate_convergence, calculate_panel_confidence};
+pub use round::{DeliberationRound, DevilAdvocateReview, ModelDeliberationResponse, ModelPosition};
+pub use scoring::{
+    PanelConfidenceInputs, calculate_convergence, calculate_panel_confidence, canonical_claim_set,
+    consensus_claims_at_threshold,
+};
 pub use session::{
     DeliberationSession, DeterministicResponseProvider, FinalizationTiming, RoundExecutionTiming,
 };
@@ -42,22 +45,67 @@ mod tests {
         }
     }
 
-    fn routine_response_provider(response: &str) -> DeterministicResponseProvider {
-        DeterministicResponseProvider::new(routine_panel_responses(response))
+    fn response(text: &str, claims: &[&str]) -> ModelDeliberationResponse {
+        ModelDeliberationResponse {
+            position_text: text.to_string(),
+            key_claims: claims.iter().map(|claim| (*claim).to_string()).collect(),
+            confidence_bps: 8000,
+        }
     }
 
-    fn operational_response_provider(response: &str) -> DeterministicResponseProvider {
-        DeterministicResponseProvider::new(BTreeMap::from([
-            ("claude-3-5-sonnet".to_string(), response.to_string()),
-            ("gpt-4o".to_string(), response.to_string()),
-            ("gemini-1.5-pro".to_string(), response.to_string()),
-        ]))
+    fn routine_response_provider(
+        response_text: &str,
+        claims: &[&str],
+    ) -> DeterministicResponseProvider {
+        DeterministicResponseProvider::with_positions(routine_panel_responses(
+            response_text,
+            claims,
+        ))
+    }
+
+    fn operational_response_provider(
+        response_text: &str,
+        claims: &[&str],
+    ) -> DeterministicResponseProvider {
+        DeterministicResponseProvider::new(
+            BTreeMap::from([
+                (
+                    "claude-3-5-sonnet".to_string(),
+                    response(response_text, claims),
+                ),
+                ("gpt-4o".to_string(), response(response_text, claims)),
+                (
+                    "gemini-1.5-pro".to_string(),
+                    response(response_text, claims),
+                ),
+            ]),
+            BTreeMap::from([("gpt-4o".to_string(), neutral_review())]),
+        )
+    }
+
+    fn neutral_review() -> DevilAdvocateReview {
+        DevilAdvocateReview {
+            review_text: "No threshold objection found.".to_string(),
+            serious_objection: false,
+            reasons: Vec::new(),
+        }
     }
 
     // 1. test_convergence_identical_positions
     #[test]
     fn test_convergence_identical_positions() {
-        let pos = vec!["claim1, claim2, claim3", "claim1, claim2, claim3"];
+        let pos = vec![
+            vec![
+                "claim1".to_string(),
+                "claim2".to_string(),
+                "claim3".to_string(),
+            ],
+            vec![
+                "claim1".to_string(),
+                "claim2".to_string(),
+                "claim3".to_string(),
+            ],
+        ];
         let score = calculate_convergence(&pos);
         assert_eq!(score, 10000);
     }
@@ -65,7 +113,10 @@ mod tests {
     // 2. test_convergence_zero_overlap
     #[test]
     fn test_convergence_zero_overlap() {
-        let pos = vec!["claim1, claim2", "claim3, claim4"];
+        let pos = vec![
+            vec!["claim1".to_string(), "claim2".to_string()],
+            vec!["claim3".to_string(), "claim4".to_string()],
+        ];
         let score = calculate_convergence(&pos);
         assert_eq!(score, 0);
     }
@@ -75,7 +126,10 @@ mod tests {
     fn test_convergence_partial_overlap() {
         // "claim1" is shared, "claim2", "claim3", "claim4", "claim5" are not. Total unique: 5.
         // Shared: 1. Wait, let's just make it simple:
-        let pos = vec!["A, B", "A, C"];
+        let pos = vec![
+            vec!["A".to_string(), "B".to_string()],
+            vec!["A".to_string(), "C".to_string()],
+        ];
         let score = calculate_convergence(&pos);
         // Unique claims: a, b, c (3). Shared: a (1).
         // Score = 1/3 * 10000 = 3333.
@@ -83,7 +137,15 @@ mod tests {
         assert_eq!(score, 3333);
 
         // For exactly 50%: "A, B", "A, B, C, D" => Wait.
-        let pos2 = vec!["A, B", "A, B, C, D"];
+        let pos2 = vec![
+            vec!["A".to_string(), "B".to_string()],
+            vec![
+                "A".to_string(),
+                "B".to_string(),
+                "C".to_string(),
+                "D".to_string(),
+            ],
+        ];
         let score2 = calculate_convergence(&pos2);
         // unique: a, b, c, d (4). Shared: a, b (2).
         // 2/4 = 5000
@@ -190,12 +252,44 @@ mod tests {
             positions: BTreeMap::new(),
             synthesis: None,
             convergence_score_bps: 10000,
-            devil_advocate_challenge: None,
+            devil_advocate_review: None,
             round_hash: exo_core::types::Hash256::ZERO,
         };
         let h1 = round.compute_hash().expect("round hash");
         let h2 = round.compute_hash().expect("round hash");
         assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn structured_response_commitment_binds_claims_and_confidence() {
+        let original = response("same prose", &["claim-a", "claim-b"]);
+        let same = response("same prose", &["claim-a", "claim-b"]);
+        let changed_claims = response("same prose", &["claim-a", "claim-c"]);
+        let mut changed_confidence = response("same prose", &["claim-a", "claim-b"]);
+        changed_confidence.confidence_bps = 7000;
+
+        let original_hash = commit_response(&original).expect("structured response hash");
+
+        assert_eq!(
+            original_hash,
+            commit_response(&same).expect("same structured response hash")
+        );
+        assert_ne!(
+            original_hash,
+            commit_response(&changed_claims).expect("changed claims hash")
+        );
+        assert_ne!(
+            original_hash,
+            commit_response(&changed_confidence).expect("changed confidence hash")
+        );
+        assert!(
+            verify_response_commitment(&original, &original_hash)
+                .expect("verify structured commitment")
+        );
+        assert!(
+            !verify_response_commitment(&changed_claims, &original_hash)
+                .expect("reject changed structured claims")
+        );
     }
 
     // 10. test_result_hash_deterministic
@@ -243,7 +337,7 @@ mod tests {
     #[test]
     fn test_deterministic_session_single_round() {
         let panel = Panel::default_panel(DecisionClass::Routine);
-        let provider = routine_response_provider("A, B, C");
+        let provider = routine_response_provider("A, B, C", &["a", "b", "c"]);
 
         let mut session =
             DeliberationSession::new("test".into(), panel, "What is X?".into(), provider);
@@ -259,7 +353,7 @@ mod tests {
     #[test]
     fn test_deterministic_session_converges() {
         let panel = Panel::default_panel(DecisionClass::Operational);
-        let provider = operational_response_provider("identical claim");
+        let provider = operational_response_provider("identical claim", &["identical claim"]);
 
         let mut session =
             DeliberationSession::new("test".into(), panel, "What is X?".into(), provider);
@@ -289,8 +383,8 @@ mod tests {
     #[test]
     fn session_uses_caller_supplied_hlc_inputs() {
         let panel = Panel::default_panel(DecisionClass::Routine);
-        let responses = routine_panel_responses("A, B, C");
-        let provider = DeterministicResponseProvider::new(responses);
+        let responses = routine_panel_responses("A, B, C", &["a", "b", "c"]);
+        let provider = DeterministicResponseProvider::with_positions(responses);
         let submitted_at = Timestamp::new(42_000, 7);
         let revealed_at = Timestamp::new(42_000, 8);
         let completed_at = Timestamp::new(42_001, 0);
@@ -317,9 +411,9 @@ mod tests {
     #[test]
     fn missing_deterministic_response_is_rejected_without_placeholder_text() {
         let panel = Panel::default_panel(DecisionClass::Routine);
-        let mut responses = routine_panel_responses("A, B, C");
+        let mut responses = routine_panel_responses("A, B, C", &["a", "b", "c"]);
         responses.remove("gpt-4o-mini");
-        let provider = DeterministicResponseProvider::new(responses);
+        let provider = DeterministicResponseProvider::with_positions(responses);
         let mut session =
             DeliberationSession::new("test".into(), panel, "What is X?".into(), provider);
 
@@ -351,7 +445,7 @@ mod tests {
             positions: &'a BTreeMap<String, ModelPosition>,
             synthesis: &'a Option<String>,
             convergence_score_bps: u64,
-            devil_advocate_challenge: &'a Option<String>,
+            devil_advocate_review: &'a Option<DevilAdvocateReview>,
         }
         let expected = exo_core::hash::hash_structured(&ExpectedRoundHashPayload {
             domain: "exo.consensus.deliberation_round.v1",
@@ -361,7 +455,7 @@ mod tests {
             positions: &round.positions,
             synthesis: &round.synthesis,
             convergence_score_bps: round.convergence_score_bps,
-            devil_advocate_challenge: &round.devil_advocate_challenge,
+            devil_advocate_review: &round.devil_advocate_review,
         })
         .expect("expected CBOR hash");
 
@@ -425,6 +519,19 @@ mod tests {
     }
 
     #[test]
+    fn production_session_source_has_no_raw_text_consensus_heuristics() {
+        let source = production_source("src/session.rs");
+        assert!(
+            !source.contains(".split([',', '\\n', ';'])"),
+            "production session code must not derive structured claims by splitting raw prose"
+        );
+        assert!(
+            !source.contains("is_serious_challenge"),
+            "production session code must not derive serious objections from keyword heuristics"
+        );
+    }
+
+    #[test]
     fn production_hashing_source_has_no_json_or_silent_default_fallback() {
         for file in ["src/round.rs", "src/record.rs"] {
             let source = production_source(file);
@@ -439,11 +546,20 @@ mod tests {
         }
     }
 
-    fn routine_panel_responses(response: &str) -> BTreeMap<String, String> {
+    fn routine_panel_responses(
+        response_text: &str,
+        claims: &[&str],
+    ) -> BTreeMap<String, ModelDeliberationResponse> {
         BTreeMap::from([
-            ("claude-3-haiku".to_string(), response.to_string()),
-            ("gpt-4o-mini".to_string(), response.to_string()),
-            ("gemini-1.5-flash".to_string(), response.to_string()),
+            (
+                "claude-3-haiku".to_string(),
+                response(response_text, claims),
+            ),
+            ("gpt-4o-mini".to_string(), response(response_text, claims)),
+            (
+                "gemini-1.5-flash".to_string(),
+                response(response_text, claims),
+            ),
         ])
     }
 
@@ -455,7 +571,12 @@ mod tests {
             ModelPosition {
                 model_id: "claude-3-haiku".to_string(),
                 round: 1,
-                position_hash: commit(&position_text),
+                position_hash: commit_response(&ModelDeliberationResponse {
+                    position_text: position_text.clone(),
+                    key_claims: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+                    confidence_bps: 8000,
+                })
+                .expect("structured commitment"),
                 position_text,
                 key_claims: vec!["a".to_string(), "b".to_string(), "c".to_string()],
                 confidence_bps: 8000,
@@ -467,9 +588,9 @@ mod tests {
             round_number: 1,
             question: "What is X?".to_string(),
             positions,
-            synthesis: Some("Synthesized consensus from 1 models.".to_string()),
+            synthesis: Some("Structured consensus claims: a; b; c.".to_string()),
             convergence_score_bps: 10000,
-            devil_advocate_challenge: None,
+            devil_advocate_review: None,
             round_hash: exo_core::types::Hash256::ZERO,
         }
     }
@@ -479,7 +600,7 @@ mod tests {
             session_id: "test".to_string(),
             question: "What is X?".to_string(),
             rounds: vec![sample_round()],
-            final_consensus: "Synthesized consensus from 1 models.".to_string(),
+            final_consensus: "Structured consensus claims: a; b; c.".to_string(),
             minority_reports: Vec::new(),
             panel_confidence_index_bps: 10000,
             rounds_to_convergence: 1,
