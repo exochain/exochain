@@ -174,17 +174,23 @@ impl AppState {
         })
     }
 
-    /// Load conflict declarations for an actor.
-    ///
-    /// Currently returns an empty list until the DB schema includes a
-    /// `conflict_declarations` table.  Handlers should call
-    /// `.await.unwrap_or_default()` for graceful degradation.
+    /// Load conflict declarations for an actor from the DB-backed standing
+    /// conflict register.
     pub async fn load_conflict_declarations(
         &self,
-        _actor: &Did,
+        actor: &Did,
     ) -> std::result::Result<Vec<ConflictDeclaration>, GatewayError> {
-        // TODO: query `conflict_declarations` table when DB is available
-        Ok(vec![])
+        let pool = self.require_db()?;
+        let payloads = db::list_conflict_declaration_payloads_db(pool, actor.as_str())
+            .await
+            .map_err(|e| {
+                GatewayError::Internal(format!("failed to load conflict declarations: {e}"))
+            })?;
+
+        payloads
+            .into_iter()
+            .map(|payload| decode_conflict_declaration_payload(actor, payload))
+            .collect()
     }
 
     /// Build an adjudication context for the given actor.
@@ -234,6 +240,44 @@ impl AppState {
             active_challenge_reason: None,
         }
     }
+}
+
+fn decode_conflict_declaration_payload(
+    actor: &Did,
+    payload: serde_json::Value,
+) -> std::result::Result<ConflictDeclaration, GatewayError> {
+    let declaration: ConflictDeclaration = serde_json::from_value(payload).map_err(|e| {
+        GatewayError::Internal(format!("invalid stored conflict declaration payload: {e}"))
+    })?;
+    validate_conflict_declaration(actor, declaration)
+}
+
+fn validate_conflict_declaration(
+    actor: &Did,
+    declaration: ConflictDeclaration,
+) -> std::result::Result<ConflictDeclaration, GatewayError> {
+    if &declaration.declarant_did != actor {
+        return Err(GatewayError::Internal(format!(
+            "stored conflict declaration for {} was returned while loading {}",
+            declaration.declarant_did, actor
+        )));
+    }
+    if declaration.nature.trim().is_empty() {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration has empty nature".into(),
+        ));
+    }
+    if declaration.related_dids.is_empty() {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration has no related DIDs".into(),
+        ));
+    }
+    if declaration.timestamp == Timestamp::ZERO {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration has zero timestamp".into(),
+        ));
+    }
+    Ok(declaration)
 }
 
 const GATEWAY_SERVER_METADATA_INITIATIVE: &str =
@@ -1989,6 +2033,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn conflict_declaration_loader_fails_closed_without_db_pool() {
+        let state = state();
+        let actor = Did::new("did:exo:alice").expect("valid DID");
+        let err = state
+            .load_conflict_declarations(&actor)
+            .await
+            .expect_err("missing conflict register must fail closed");
+        assert!(
+            err.to_string().contains("database"),
+            "error should identify missing DB-backed conflict register, got: {err}"
+        );
+    }
+
+    #[test]
+    fn conflict_declaration_payload_validation_rejects_wrong_actor_and_placeholders() {
+        let actor = Did::new("did:exo:alice").expect("valid DID");
+        let related = Did::new("did:exo:tenant-a").expect("valid DID");
+
+        let valid = serde_json::json!({
+            "declarant_did": actor,
+            "nature": "financial ownership",
+            "related_dids": [related],
+            "timestamp": { "physical_ms": 7000, "logical": 0 }
+        });
+        let decoded =
+            decode_conflict_declaration_payload(&actor, valid).expect("valid declaration payload");
+        assert_eq!(decoded.declarant_did, actor);
+
+        let wrong_actor = serde_json::json!({
+            "declarant_did": "did:exo:bob",
+            "nature": "financial ownership",
+            "related_dids": ["did:exo:tenant-a"],
+            "timestamp": { "physical_ms": 7000, "logical": 0 }
+        });
+        assert!(decode_conflict_declaration_payload(&actor, wrong_actor).is_err());
+
+        let zero_timestamp = serde_json::json!({
+            "declarant_did": actor,
+            "nature": "financial ownership",
+            "related_dids": ["did:exo:tenant-a"],
+            "timestamp": { "physical_ms": 0, "logical": 0 }
+        });
+        assert!(decode_conflict_declaration_payload(&actor, zero_timestamp).is_err());
+    }
+
+    #[tokio::test]
     async fn gateway_global_concurrency_limit_queues_excess_requests() {
         #[derive(Clone)]
         struct HoldState {
@@ -2535,10 +2625,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn vote_route_without_authority_returns_403() {
+    async fn vote_route_without_conflict_register_returns_503() {
         let body = serde_json::to_string(&serde_json::json!({
             "decision_id": "d1",
             "voter_did": "did:exo:alice",
+            "affected_dids": ["did:exo:tenant-a"],
             "choice": "Approve",
             "actor_kind": "Human",
             "rationale": null,
@@ -2558,11 +2649,10 @@ mod tests {
             )
             .await
             .unwrap();
-        // The Kernel adjudicates before the DB check.  The dev-scaffold context
-        // has BailmentState::None (fails ConsentRequired) and an empty authority
-        // chain (fails AuthorityChainValid), so the Kernel correctly returns 403
-        // before we ever reach the DB-pool check.
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        // Conflict adjudication is a required vote precondition. Without a
+        // DB-backed standing conflict register, the route fails closed before
+        // reaching kernel adjudication.
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     // --- Identity score endpoint tests ---

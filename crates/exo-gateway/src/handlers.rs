@@ -1,7 +1,7 @@
 //! HTTP route handlers — axum handler functions for all gateway endpoints.
 //!
 //! CONSTITUTIONAL REQUIREMENTS (do not remove):
-//!   1. Vote handler MUST call `check_conflicts` + `must_recuse` (ConflictAdjudication)
+//!   1. Vote handler MUST call `check_conflicts` + `check_and_block` (ConflictAdjudication)
 //!   2. Vote handler MUST call `Kernel::adjudicate` and gate on `Verdict::Permitted` (TNC-01)
 //!   3. `write_audit` MUST use `ciborium::into_writer` before blake3, not serde_json (TransparencyAccountability)
 
@@ -10,13 +10,13 @@ use decision_forum::{
     decision_object::{ActorKind, DecisionObject, Vote, VoteChoice},
     quorum::{QuorumCheckResult, QuorumRegistry, check_quorum, verify_quorum_precondition},
 };
-use exo_core::{Timestamp, types::Hash256};
+use exo_core::{Did, Timestamp, types::Hash256};
 use exo_gatekeeper::{
     kernel::{ActionRequest as GatekeeperActionRequest, Verdict},
     types::{Permission, PermissionSet},
 };
 use exo_governance::conflict::{
-    ActionRequest as ConflictActionRequest, check_conflicts, must_recuse,
+    ActionRequest as ConflictActionRequest, check_and_block, check_conflicts,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -186,6 +186,7 @@ async fn write_audit(
 pub struct VoteRequest {
     pub decision_id: String,
     pub voter_did: String,
+    pub affected_dids: Vec<String>,
     pub choice: VoteChoice,
     pub actor_kind: ActorKind,
     pub rationale: Option<String>,
@@ -200,6 +201,17 @@ impl VoteRequest {
             return Err("vote timestamp must be caller-supplied and non-zero".to_owned());
         }
         Ok(timestamp)
+    }
+
+    fn caller_supplied_affected_dids(&self) -> Result<Vec<Did>, String> {
+        if self.affected_dids.is_empty() {
+            return Err("affected_dids must contain at least one DID".to_owned());
+        }
+
+        self.affected_dids
+            .iter()
+            .map(|raw| Did::new(raw).map_err(|e| format!("invalid affected DID `{raw}`: {e}")))
+            .collect()
     }
 }
 
@@ -218,24 +230,46 @@ pub async fn vote_handler(
                 .into_response();
         }
     };
+    let affected_dids = match body.caller_supplied_affected_dids() {
+        Ok(dids) => dids,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e})),
+            )
+                .into_response();
+        }
+    };
 
     // ── VIOLATION 1 FIX: ConflictAdjudication ───────────────────────────
     // Check if voter has a declared conflict of interest on this decision.
-    let declarations = state
-        .load_conflict_declarations(&voter_did)
-        .await
-        .unwrap_or_default();
+    let declarations = match state.load_conflict_declarations(&voter_did).await {
+        Ok(declarations) => declarations,
+        Err(e) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "conflict register unavailable",
+                    "details": e.to_string()
+                })),
+            )
+                .into_response();
+        }
+    };
     let conflict_action = ConflictActionRequest {
         action_id: body.decision_id.clone(),
         actor_did: voter_did.clone(),
-        affected_dids: vec![],
+        affected_dids,
         description: format!("Vote on {}", body.decision_id),
     };
     let conflicts = check_conflicts(&voter_did, &conflict_action, &declarations);
-    if must_recuse(&conflicts) {
+    if let Err(err) = check_and_block(&voter_did, &conflicts) {
         return (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error": "must recuse due to conflict of interest"})),
+            Json(serde_json::json!({
+                "error": "must recuse due to conflict of interest",
+                "reason": err.to_string()
+            })),
         )
             .into_response();
     }
@@ -716,6 +750,7 @@ mod tests {
         let with_timestamp = serde_json::json!({
             "decision_id": "decision-1",
             "voter_did": "did:exo:alice",
+            "affected_dids": ["did:exo:tenant-a"],
             "choice": "Approve",
             "actor_kind": "Human",
             "rationale": null,
@@ -738,6 +773,7 @@ mod tests {
         let request: VoteRequest = serde_json::from_value(serde_json::json!({
             "decision_id": "decision-1",
             "voter_did": "did:exo:alice",
+            "affected_dids": ["did:exo:tenant-a"],
             "choice": "Approve",
             "actor_kind": "Human",
             "rationale": null,
@@ -749,6 +785,62 @@ mod tests {
         assert!(
             request.caller_supplied_timestamp().is_err(),
             "zero vote timestamp must be rejected"
+        );
+    }
+
+    #[test]
+    fn vote_request_requires_affected_dids_for_conflict_adjudication() {
+        let without_affected_dids = serde_json::json!({
+            "decision_id": "decision-1",
+            "voter_did": "did:exo:alice",
+            "choice": "Approve",
+            "actor_kind": "Human",
+            "rationale": null,
+            "timestamp_physical_ms": 7000,
+            "timestamp_logical": 2
+        });
+        assert!(
+            serde_json::from_value::<VoteRequest>(without_affected_dids).is_err(),
+            "vote requests must provide affected DIDs so conflict checks are not vacuous"
+        );
+
+        let empty_affected_dids: VoteRequest = serde_json::from_value(serde_json::json!({
+            "decision_id": "decision-1",
+            "voter_did": "did:exo:alice",
+            "affected_dids": [],
+            "choice": "Approve",
+            "actor_kind": "Human",
+            "rationale": null,
+            "timestamp_physical_ms": 7000,
+            "timestamp_logical": 2
+        }))
+        .expect("request shape is valid");
+        assert!(
+            empty_affected_dids.caller_supplied_affected_dids().is_err(),
+            "affected_dids must not be an explicitly empty conflict context"
+        );
+    }
+
+    #[test]
+    fn vote_handler_source_does_not_default_conflict_adjudication() {
+        let source = include_str!("handlers.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker present");
+        assert!(
+            !production.contains(
+                ".load_conflict_declarations(&voter_did)\n        .await\n        .unwrap_or_default()"
+            ),
+            "vote handler must fail closed when the conflict register cannot be loaded"
+        );
+        assert!(
+            !production.contains("affected_dids: vec![]"),
+            "vote handler must not adjudicate conflicts against an empty affected-DID set"
+        );
+        assert!(
+            production.contains("check_and_block(&voter_did, &conflicts)"),
+            "vote handler must use the enforcing conflict gate, not advisory-only recusal checks"
         );
     }
 

@@ -327,6 +327,25 @@ pub async fn update_decision(
     Ok(())
 }
 
+/// Load conflict declaration payloads for a declarant, oldest first.
+pub async fn list_conflict_declaration_payloads_db(
+    pool: &PgPool,
+    declarant_did: &str,
+) -> Result<Vec<JsonValue>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT payload FROM conflict_declarations
+         WHERE declarant_did = $1
+         ORDER BY timestamp_physical_ms, timestamp_logical, id_hash",
+    )
+    .bind(declarant_did)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| row.try_get::<JsonValue, _>("payload"))
+        .collect()
+}
+
 /// Row representation of a governance decision from the `decisions` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct DecisionRow {
