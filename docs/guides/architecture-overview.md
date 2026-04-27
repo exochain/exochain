@@ -19,8 +19,8 @@ From the top-level `README.md`, EXOCHAIN is organised in five layers.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ Layer 5  ExoForge                    Autonomous implementation engine │
-│          (exoforge/)                 Triage → Council Review → Impl   │
+│ Layer 5  ExoForge                    Governance triage/planning tools │
+│          (exoforge/)                 Triage → Heuristic Review → Plan │
 │                                      → Constitutional Validation      │
 ├──────────────────────────────────────────────────────────────────────┤
 │ Layer 4  Decision Forum              Governance deliberation UI       │
@@ -30,18 +30,18 @@ From the top-level `README.md`, EXOCHAIN is organised in five layers.
 │          (command-base/)             cognitiveplane.ai                │
 │                                      Express + SQLite + WebSocket     │
 ├──────────────────────────────────────────────────────────────────────┤
-│ Layer 2  WASM Bridge                 110 exported functions           │
+│ Layer 2  WASM Bridge                 140 verified bridge exports      │
 │          (packages/exochain-wasm,    Rust → WebAssembly → JS          │
-│           crates/exochain-wasm)      Zero stubs, every fn real logic  │
+│           crates/exochain-wasm)      Export sync checked in CI        │
 ├──────────────────────────────────────────────────────────────────────┤
-│ Layer 1  CGR Kernel                  Rust, 16 crates                  │
+│ Layer 1  CGR Kernel                  Rust, 20 workspace packages      │
 │          (crates/)                   Constitutional governance runtime │
 │                                      Deterministic, no floats, tests  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 The layers are directional: higher layers depend on lower ones, never
-the reverse. Layer 1 (the kernel and its 16 crates) is the load-bearing
+the reverse. Layer 1 (the kernel and its workspace crates) is the load-bearing
 substance. The rest are presentation and orchestration surfaces over
 the same primitives.
 
@@ -377,7 +377,7 @@ rollbacks.
   resolution. Implemented in `exo-identity::pace` with Verifiable
   Secret Sharing (Feldman commitments) and a geographic-distribution
   requirement (no two stewards in the same jurisdiction).
-- **Species Quorum** (CR-001 / spec v2.1 §3A): PACE recovery must
+- **Species Quorum** (CR-001 / spec v2.2 §3A): PACE recovery must
   include ≥3 human stewards and ≥1 Holon steward. Single-species
   control is rejected.
 

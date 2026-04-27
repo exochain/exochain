@@ -762,34 +762,36 @@ Any credible challenge can pause a contested action, and no mechanism within EXO
 
 In a court of law, if there is credible evidence of wrongdoing, a judge can issue an injunction -- a legally binding order that pauses the contested activity until it is reviewed. The person being investigated cannot cancel the injunction. They cannot hide it. They cannot pretend it does not exist.
 
-EXOCHAIN implements a digital version of this principle. If any actor files a challenge against a governance action, and the challenge meets the validity criteria (it cites a recognized ground and provides evidence), the challenged action is automatically paused. The actor whose action is being challenged cannot dismiss the challenge, cannot override the pause, and cannot proceed as if the challenge was never filed. The challenge must be resolved through the adjudication process before the action can resume.
+EXOCHAIN implements a digital version of this principle. If any actor files a challenge against a governance action, and the challenge meets the validity criteria (it carries caller-supplied non-placeholder metadata and cites a recognized typed ground), a pause order can be issued for the challenged action. The actor whose action is being challenged cannot dismiss the challenge, cannot override the pause, and cannot proceed as if the challenge was never filed. The challenge must be resolved through the adjudication process before the action can resume.
 
 ### Formal Proof
 
 **Definitions.**
 
-Let `Ch: A x ActionId x Ground x Evidence -> {Accepted, Rejected}` be the challenge function.
+Let `Ch: Metadata x A x ActionId x Ground x Evidence -> {Accepted, Rejected}` be the challenge function.
+
+Let `Metadata` contain caller-supplied challenge ID and HLC timestamp fields.
 
 Let `ValidGrounds` be the set of recognized challenge grounds (authority-chain violation, quorum contamination, consent violation, Sybil allegation, etc.).
 
 Let `Paused(action)` be the state where `action` is suspended pending adjudication.
 
-**Invariant (INV-CL).** For all actors `a`, actions `action`, grounds `g`, and evidence `e`:
+**Invariant (INV-CL).** For all metadata `m`, actors `a`, actions `action`, grounds `g`, and evidence `e`:
 
 ```
-g in ValidGrounds AND e != empty_set
-  => Ch(a, action, g, e) = Accepted
-  AND action enters Paused state
+m is caller_supplied_non_placeholder AND g in ValidGrounds
+  => Ch(m, a, action, g, e) = Accepted
+  AND a pause order can be issued for action
 ```
 
 **Proof.**
 
-1. The `file_challenge()` function in `exo-governance` accepts a challenge containing an actor, a target action, a ground, and evidence.
-2. The function first validates `g in ValidGrounds`. `ValidGrounds` is defined in the kernel ([[#Proof 5 Kernel Immutability|immutable per Proof 5]]) and cannot be reduced by any actor.
-3. The function then checks `e != empty_set` (evidence is non-empty).
-4. If both conditions hold, the challenge is recorded in the audit log (tamper-evident per [[#Proof 8 Receipt Chain Integrity Tamper Evidence|Proof 8]]).
-5. The `pause_action()` function is then invoked, which sets the target action's state to `Paused`.
-6. The `Paused` state can only be exited through adjudication by the judicial branch (per [[#Proof 1 Separation of Powers|Proof 1]], a different actor than the one whose action is challenged).
+1. The `file_challenge()` function in `exo-governance` accepts caller-supplied challenge metadata, an actor DID, a target action hash, a typed ground, and evidence bytes.
+2. The function rejects fabricated placeholder metadata: challenge IDs must be non-nil UUIDs, and creation timestamps must be caller-supplied non-zero HLC timestamps.
+3. The ground is represented by the closed `ChallengeGround` enum; callers cannot submit unrecognized string grounds.
+4. If metadata and typed inputs are valid, the challenge is recorded as `Filed` with the supplied evidence bytes.
+5. The `pause_action()` function is then invoked with caller-supplied non-zero HLC metadata, which produces a pause order for the challenged action.
+6. The paused action can only be resolved through adjudication by the judicial branch (per [[#Proof 1 Separation of Powers|Proof 1]], a different actor than the one whose action is challenged).
 7. There is no `dismiss_challenge()` function callable by the challenged actor. Challenge dismissal requires judicial adjudication.
 8. Therefore, any challenge meeting the validity criteria succeeds, and no mechanism can suppress it. **QED.**
 
@@ -801,37 +803,42 @@ g in ValidGrounds AND e != empty_set
 
 ```rust
 pub fn file_challenge(
-    challenger: &ActorId,
-    target: ActionId,
+    id: Uuid,
+    created: Timestamp,
+    challenger: &Did,
+    target: &[u8; 32],
     ground: ChallengeGround,
-    evidence: &[Evidence],
-) -> Result<ChallengeId, ChallengeError> {
-    // Ground must be recognized
-    if !VALID_GROUNDS.contains(&ground) {
-        return Err(ChallengeError::InvalidGround(ground));
+    evidence: &[u8],
+) -> Result<Challenge, GovernanceError> {
+    if id.is_nil() {
+        return Err(GovernanceError::InvalidGovernanceMetadata { /* ... */ });
+    }
+    if created == Timestamp::ZERO {
+        return Err(GovernanceError::InvalidGovernanceMetadata { /* ... */ });
     }
 
-    // Evidence must be non-empty
-    if evidence.is_empty() {
-        return Err(ChallengeError::NoEvidence);
-    }
-
-    // Record the challenge (tamper-evident via receipt chain)
-    let challenge_id = record_challenge(challenger, target, ground, evidence)?;
-
-    // Pause the contested action — mandatory, not discretionary
-    pause_action(target)?;
-
-    Ok(challenge_id)
+    Ok(Challenge {
+        id,
+        challenger_did: challenger.clone(),
+        target_action_id: *target,
+        ground,
+        evidence: evidence.to_vec(),
+        status: ChallengeStatus::Filed,
+        created,
+    })
 }
 
-pub fn pause_action(action: ActionId) -> Result<(), PauseError> {
-    let mut action_state = load_action_state(action)?;
-    action_state.status = ActionStatus::Paused {
-        reason: PauseReason::ChallengeReceived,
-    };
-    persist_action_state(action_state)?;
-    Ok(())
+pub fn pause_action(challenge: &Challenge, issued: Timestamp) -> Result<PauseOrder, GovernanceError> {
+    if issued == Timestamp::ZERO {
+        return Err(GovernanceError::InvalidGovernanceMetadata { /* ... */ });
+    }
+
+    Ok(PauseOrder {
+        challenge_id: challenge.id,
+        target_action_id: challenge.target_action_id,
+        reason: format!("challenged on ground: {:?}", challenge.ground),
+        issued,
+    })
 }
 ```
 

@@ -136,8 +136,9 @@ fn is_platform_allowed(platform: &TeePlatform, policy: &TeePolicy) -> bool {
 
 /// Generate an attestation for the given platform and measurement.
 ///
-/// In production, this would interface with the actual TEE hardware.
-/// For now, it produces a deterministic attestation with a blake3-based signature.
+/// This creates deterministic simulated attestation fixtures. Hardware TEE
+/// platforms require platform quote verification and are not accepted by
+/// `verify_attestation` when carrying this synthetic signature.
 #[must_use]
 pub fn generate_attestation(
     platform: &TeePlatform,
@@ -146,18 +147,44 @@ pub fn generate_attestation(
 ) -> TeeAttestation {
     let measurement_hash = *blake3::hash(measurement).as_bytes();
 
-    // Deterministic signature: hash(measurement_hash || timestamp || platform).
-    let mut sig_input = Vec::new();
-    sig_input.extend_from_slice(&measurement_hash);
-    sig_input.extend_from_slice(&timestamp.to_le_bytes());
-    sig_input.extend_from_slice(format!("{:?}", platform).as_bytes());
-    let signature = blake3::hash(&sig_input).as_bytes().to_vec();
-
     TeeAttestation {
         platform: *platform,
         measurement_hash,
         timestamp,
-        signature,
+        signature: synthetic_attestation_signature(platform, &measurement_hash, timestamp),
+    }
+}
+
+/// Deterministic signature used only for simulated TEE test fixtures.
+fn synthetic_attestation_signature(
+    platform: &TeePlatform,
+    measurement_hash: &[u8; 32],
+    timestamp: u64,
+) -> Vec<u8> {
+    let mut sig_input = Vec::new();
+    sig_input.extend_from_slice(measurement_hash);
+    sig_input.extend_from_slice(&timestamp.to_le_bytes());
+    sig_input.extend_from_slice(format!("{:?}", platform).as_bytes());
+    blake3::hash(&sig_input).as_bytes().to_vec()
+}
+
+fn synthetic_signature_allowed(attestation: &TeeAttestation, policy: &TeePolicy) -> bool {
+    if attestation.platform != TeePlatform::Simulated {
+        return false;
+    }
+
+    if policy.environment == TeeEnvironment::Testing {
+        return true;
+    }
+
+    #[cfg(feature = "allow-simulated-tee")]
+    {
+        policy.environment == TeeEnvironment::Production
+    }
+
+    #[cfg(not(feature = "allow-simulated-tee"))]
+    {
+        false
     }
 }
 
@@ -207,20 +234,31 @@ pub fn verify_attestation(
         }
     }
 
-    // Verify deterministic signature.
-    let mut sig_input = Vec::new();
-    sig_input.extend_from_slice(&attestation.measurement_hash);
-    sig_input.extend_from_slice(&attestation.timestamp.to_le_bytes());
-    sig_input.extend_from_slice(format!("{:?}", attestation.platform).as_bytes());
-    let expected_sig = blake3::hash(&sig_input).as_bytes().to_vec();
+    let synthetic_sig = synthetic_attestation_signature(
+        &attestation.platform,
+        &attestation.measurement_hash,
+        attestation.timestamp,
+    );
 
-    if attestation.signature != expected_sig {
+    if attestation.signature == synthetic_sig {
+        if synthetic_signature_allowed(attestation, policy) {
+            return Ok(());
+        }
         return Err(GatekeeperError::TeeError(
-            "Attestation signature verification failed".into(),
+            "synthetic TEE attestation signatures are only accepted for simulated TEEs in explicitly allowed environments".into(),
         ));
     }
 
-    Ok(())
+    if attestation.platform == TeePlatform::Simulated {
+        return Err(GatekeeperError::TeeError(
+            "simulated TEE attestation signature verification failed".into(),
+        ));
+    }
+
+    Err(GatekeeperError::TeeError(format!(
+        "Hardware TEE attestation for platform {:?} requires a platform quote verifier",
+        attestation.platform
+    )))
 }
 
 // ===========================================================================
@@ -295,24 +333,30 @@ mod tests {
     }
 
     #[test]
-    fn verify_passes_for_sgx_attestation() {
+    fn verify_rejects_synthetic_sgx_attestation() {
         let att = generate_attestation(&TeePlatform::Sgx, MEASUREMENT, TIMESTAMP);
         let policy = permissive_policy();
-        assert!(verify_attestation(&att, &policy).is_ok());
+        let result = verify_attestation(&att, &policy);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("synthetic"));
     }
 
     #[test]
-    fn verify_passes_for_trustzone_attestation() {
+    fn verify_rejects_synthetic_trustzone_attestation() {
         let att = generate_attestation(&TeePlatform::TrustZone, MEASUREMENT, TIMESTAMP);
         let policy = permissive_policy();
-        assert!(verify_attestation(&att, &policy).is_ok());
+        let result = verify_attestation(&att, &policy);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("synthetic"));
     }
 
     #[test]
-    fn verify_passes_for_sev_attestation() {
+    fn verify_rejects_synthetic_sev_attestation() {
         let att = generate_attestation(&TeePlatform::Sev, MEASUREMENT, TIMESTAMP);
         let policy = permissive_policy();
-        assert!(verify_attestation(&att, &policy).is_ok());
+        let result = verify_attestation(&att, &policy);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("synthetic"));
     }
 
     // --- Verification: platform rejection ---
@@ -484,35 +528,87 @@ mod tests {
     }
 
     #[test]
-    fn sgx_accepted_in_production() {
+    fn synthetic_sgx_attestation_rejected_in_production() {
         let att = generate_attestation(&TeePlatform::Sgx, MEASUREMENT, TIMESTAMP);
         let mut policy = TeePolicy::production();
         policy.current_time_ms = TIMESTAMP;
-        assert!(verify_attestation(&att, &policy).is_ok());
+        let result = verify_attestation(&att, &policy);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("synthetic"));
     }
 
     #[test]
-    fn sgx_accepted_in_testing() {
-        let att = generate_attestation(&TeePlatform::Sgx, MEASUREMENT, TIMESTAMP);
-        let mut policy = TeePolicy::testing();
-        policy.current_time_ms = TIMESTAMP;
-        assert!(verify_attestation(&att, &policy).is_ok());
-    }
-
-    #[test]
-    fn trustzone_accepted_in_production() {
+    fn synthetic_trustzone_attestation_rejected_in_production() {
         let att = generate_attestation(&TeePlatform::TrustZone, MEASUREMENT, TIMESTAMP);
         let mut policy = TeePolicy::production();
         policy.current_time_ms = TIMESTAMP;
-        assert!(verify_attestation(&att, &policy).is_ok());
+        let result = verify_attestation(&att, &policy);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("synthetic"));
     }
 
     #[test]
-    fn sev_accepted_in_production() {
+    fn synthetic_sev_attestation_rejected_in_production() {
         let att = generate_attestation(&TeePlatform::Sev, MEASUREMENT, TIMESTAMP);
         let mut policy = TeePolicy::production();
         policy.current_time_ms = TIMESTAMP;
-        assert!(verify_attestation(&att, &policy).is_ok());
+        let result = verify_attestation(&att, &policy);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("synthetic"));
+    }
+
+    #[test]
+    fn synthetic_hardware_attestation_rejected_in_testing() {
+        let att = generate_attestation(&TeePlatform::Sgx, MEASUREMENT, TIMESTAMP);
+        let mut policy = TeePolicy::testing();
+        policy.current_time_ms = TIMESTAMP;
+        let result = verify_attestation(&att, &policy);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("synthetic"));
+    }
+
+    #[test]
+    fn sgx_non_synthetic_signature_rejected_without_quote_verifier_in_production() {
+        let mut att = generate_attestation(&TeePlatform::Sgx, MEASUREMENT, TIMESTAMP);
+        att.signature = vec![0xA5; 64];
+        let mut policy = TeePolicy::production();
+        policy.current_time_ms = TIMESTAMP;
+        let result = verify_attestation(&att, &policy);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("quote verifier"));
+    }
+
+    #[test]
+    fn sgx_non_synthetic_signature_rejected_without_quote_verifier_in_testing() {
+        let mut att = generate_attestation(&TeePlatform::Sgx, MEASUREMENT, TIMESTAMP);
+        att.signature = vec![0xA5; 64];
+        let mut policy = TeePolicy::testing();
+        policy.current_time_ms = TIMESTAMP;
+        let result = verify_attestation(&att, &policy);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("quote verifier"));
+    }
+
+    #[test]
+    fn trustzone_non_synthetic_signature_rejected_without_quote_verifier() {
+        let mut att = generate_attestation(&TeePlatform::TrustZone, MEASUREMENT, TIMESTAMP);
+        att.signature = vec![0xA5; 64];
+        let mut policy = TeePolicy::production();
+        policy.current_time_ms = TIMESTAMP;
+        let result = verify_attestation(&att, &policy);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("quote verifier"));
+    }
+
+    #[test]
+    fn sev_non_synthetic_signature_rejected_without_quote_verifier() {
+        let mut att = generate_attestation(&TeePlatform::Sev, MEASUREMENT, TIMESTAMP);
+        att.signature = vec![0xA5; 64];
+        let mut policy = TeePolicy::production();
+        policy.current_time_ms = TIMESTAMP;
+        let result = verify_attestation(&att, &policy);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("quote verifier"));
     }
 
     #[test]

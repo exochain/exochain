@@ -103,9 +103,13 @@ pub fn apply_learnings(feedbacks: &[FeedbackEntry]) -> Vec<PolicyRecommendation>
 mod tests {
     use super::*;
 
+    fn uuid(byte: u8) -> Uuid {
+        Uuid::from_bytes([byte; 16])
+    }
+
     fn entry(outcome: FeedbackOutcome, recs: &[&str]) -> FeedbackEntry {
         FeedbackEntry {
-            case_id: Uuid::new_v4(),
+            case_id: uuid(1),
             outcome,
             lessons_learned: "lesson".into(),
             policy_recommendations: recs.iter().map(|s| s.to_string()).collect(),

@@ -10,12 +10,17 @@
 //! - Reinstatement refuses zero-hash clearance evidence
 //! - `check_completeness` returns `Complete` after all seven stages
 
-use exo_core::{Did, Timestamp};
+use exo_core::{Did, Hash256, Timestamp};
 use exo_escalation::{
-    challenge::{ContestStatus, SybilChallengeGround, admit_challenge, begin_review, resolve_hold},
+    challenge::{
+        ChallengeAdmission, ContestStatus, SignedChallengeAdmission, SybilChallengeGround,
+        admit_challenge, begin_review, resolve_hold, sign_challenge_admission,
+    },
     completeness::{CompletenessResult, check_completeness},
     detector::{DetectionSignal, Severity, SignalType, evaluate_signals},
-    escalation::{EscalationPath, SybilStage, advance_sybil_stage, escalate, reinstate},
+    escalation::{
+        EscalationCaseInput, EscalationPath, SybilStage, advance_sybil_stage, escalate, reinstate,
+    },
     triage::{TriageLevel, triage},
 };
 use exo_gatekeeper::{
@@ -41,6 +46,103 @@ fn ts(ms: u64) -> Timestamp {
     Timestamp::new(ms, 0)
 }
 
+fn uuid(byte: u8) -> uuid::Uuid {
+    uuid::Uuid::from_bytes([byte; 16])
+}
+
+fn keypair(seed: u8) -> exo_core::crypto::KeyPair {
+    exo_core::crypto::KeyPair::from_secret_bytes([seed; 32]).expect("valid keypair")
+}
+
+fn escalation_input(
+    id_marker: u8,
+    signal: DetectionSignal,
+    path: EscalationPath,
+    created_ms: u64,
+) -> EscalationCaseInput {
+    EscalationCaseInput {
+        id: uuid(id_marker),
+        created: ts(created_ms),
+        signal,
+        path,
+    }
+}
+
+fn signed_challenge(
+    hold_marker: u8,
+    action_id: [u8; 32],
+    ground: SybilChallengeGround,
+    admitted_at: Timestamp,
+) -> SignedChallengeAdmission {
+    let keypair = keypair(7);
+    sign_challenge_admission(
+        ChallengeAdmission {
+            hold_id: uuid(hold_marker),
+            action_id,
+            ground,
+            admitted_at,
+            admitted_by: did("did:exo:reviewer"),
+            admitter_public_key: *keypair.public_key(),
+            evidence_hash: [0xEEu8; 32],
+            authority_chain_hash: [0xACu8; 32],
+        },
+        keypair.secret_key(),
+    )
+    .expect("valid challenge admission")
+}
+
+fn signed_authority_link(grantee: &Did) -> AuthorityLink {
+    let keypair = keypair(11);
+    let grantor = did("did:exo:root");
+    let permissions = PermissionSet::new(vec![Permission::new("read")]);
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(grantor.as_str().as_bytes());
+    payload.push(0x00);
+    payload.extend_from_slice(grantee.as_str().as_bytes());
+    payload.push(0x00);
+    for permission in &permissions.permissions {
+        payload.extend_from_slice(permission.0.as_bytes());
+        payload.push(0x00);
+    }
+    let message = Hash256::digest(&payload);
+    let signature = exo_core::crypto::sign(message.as_bytes(), keypair.secret_key());
+
+    AuthorityLink {
+        grantor,
+        grantee: grantee.clone(),
+        permissions,
+        signature: signature.to_bytes().to_vec(),
+        grantor_public_key: Some(keypair.public_key().as_bytes().to_vec()),
+    }
+}
+
+fn signed_provenance(actor: &Did) -> Provenance {
+    let keypair = keypair(12);
+    let timestamp = "2026-03-30T00:00:00Z".to_owned();
+    let action_hash = vec![0xAA, 0xBB, 0xCC];
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(actor.as_str().as_bytes());
+    payload.push(0x00);
+    payload.extend_from_slice(&action_hash);
+    payload.push(0x00);
+    payload.extend_from_slice(timestamp.as_bytes());
+    let message = Hash256::digest(&payload);
+    let signature = exo_core::crypto::sign(message.as_bytes(), keypair.secret_key());
+
+    Provenance {
+        actor: actor.clone(),
+        timestamp,
+        action_hash,
+        signature: signature.to_bytes().to_vec(),
+        public_key: Some(keypair.public_key().as_bytes().to_vec()),
+        voice_kind: None,
+        independence: None,
+        review_order: None,
+    }
+}
+
 /// Build a fully valid `AdjudicationContext`.  Pass `Some(reason)` to inject
 /// an active Sybil challenge hold so the kernel returns `Verdict::Escalated`.
 fn valid_kernel_context(actor: &Did, challenge_reason: Option<String>) -> AdjudicationContext {
@@ -50,13 +152,7 @@ fn valid_kernel_context(actor: &Did, challenge_reason: Option<String>) -> Adjudi
             branch: GovernmentBranch::Judicial,
         }],
         authority_chain: AuthorityChain {
-            links: vec![AuthorityLink {
-                grantor: did("did:exo:root"),
-                grantee: actor.clone(),
-                permissions: PermissionSet::new(vec![Permission::new("read")]),
-                signature: vec![1, 2, 3],
-                grantor_public_key: None,
-            }],
+            links: vec![signed_authority_link(actor)],
         },
         consent_records: vec![ConsentRecord {
             subject: did("did:exo:bailor"),
@@ -71,16 +167,7 @@ fn valid_kernel_context(actor: &Did, challenge_reason: Option<String>) -> Adjudi
         },
         human_override_preserved: true,
         actor_permissions: PermissionSet::new(vec![Permission::new("read")]),
-        provenance: Some(Provenance {
-            actor: actor.clone(),
-            timestamp: "2026-03-30T00:00:00Z".into(),
-            action_hash: vec![0xAA, 0xBB, 0xCC],
-            signature: vec![0x01, 0x02, 0x03],
-            public_key: None,
-            voice_kind: None,
-            independence: None,
-            review_order: None,
-        }),
+        provenance: Some(signed_provenance(actor)),
         quorum_evidence: None,
         active_challenge_reason: challenge_reason,
     }
@@ -116,7 +203,13 @@ fn full_detection_to_reinstatement_flow() {
     );
 
     // ── Open escalation case (Detection stage logged) ─────────────────────────
-    let mut case = escalate(&signal, &EscalationPath::SybilAdjudication);
+    let mut case = escalate(escalation_input(
+        1,
+        signal.clone(),
+        EscalationPath::SybilAdjudication,
+        1_050,
+    ))
+    .unwrap();
     assert!(case.stages_completed.contains(&"Detection".to_string()));
 
     // ── Stage 2 (case): Triage ────────────────────────────────────────────────
@@ -124,11 +217,13 @@ fn full_detection_to_reinstatement_flow() {
 
     // ── Stage 3: Quarantine — admit challenge hold ────────────────────────────
     let action_id = [0x01u8; 32];
-    let mut hold = admit_challenge(
-        &action_id,
+    let mut hold = admit_challenge(signed_challenge(
+        2,
+        action_id,
         SybilChallengeGround::ConcealedCommonControl,
         ts(1_100),
-    );
+    ))
+    .unwrap();
     assert_eq!(hold.status, ContestStatus::PauseEligible);
     advance_sybil_stage(&mut case, SybilStage::Quarantine).unwrap();
 
@@ -194,11 +289,13 @@ fn quarantine_pauses_contested_actions_via_kernel() {
 
     // Admit challenge → derive escalation reason
     let action_id = [0x02u8; 32];
-    let hold = admit_challenge(
-        &action_id,
+    let hold = admit_challenge(signed_challenge(
+        3,
+        action_id,
         SybilChallengeGround::QuorumContamination,
         ts(2_000),
-    );
+    ))
+    .unwrap();
     let reason = hold.escalation_reason();
     assert!(reason.contains("SybilChallenge"));
 
@@ -238,7 +335,13 @@ fn reinstatement_refuses_zero_hash_evidence() {
         evidence_hash: [0x01u8; 32],
         timestamp: ts(3_000),
     };
-    let mut case = escalate(&signal, &EscalationPath::SybilAdjudication);
+    let mut case = escalate(escalation_input(
+        4,
+        signal,
+        EscalationPath::SybilAdjudication,
+        3_100,
+    ))
+    .unwrap();
     for stage in [
         SybilStage::Triage,
         SybilStage::Quarantine,

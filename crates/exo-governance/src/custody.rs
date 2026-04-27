@@ -590,4 +590,409 @@ mod tests {
 
         assert!(chain.verify_integrity().is_ok());
     }
+
+    fn test_signature() -> GovernanceSignature {
+        use exo_core::Signature;
+
+        use crate::types::SignerType;
+        GovernanceSignature {
+            signer: test_did("signer"),
+            signer_type: SignerType::Human,
+            signature: Signature::from_bytes([7u8; 64]),
+            key_version: 1,
+            timestamp: test_ts(1000),
+        }
+    }
+
+    // Covers: latest() returning Some(&event) and is_empty() returning false after append.
+    #[test]
+    fn test_latest_and_is_empty_after_append() {
+        let mut chain = CustodyChain::new(Hash256::digest(b"decision-latest"));
+        let record_hash = Hash256::digest(b"record-v1");
+        chain.append(
+            test_did("alice"),
+            CustodyRole::Proposer,
+            CustodyAction::Create,
+            record_hash,
+            test_ts(1000),
+            None,
+        );
+        assert!(!chain.is_empty());
+        let latest = chain.latest().expect("non-empty");
+        assert_eq!(latest.sequence, 0);
+        assert_eq!(latest.actor_id, test_did("alice"));
+    }
+
+    // Covers: Some(GovernanceSignature) path on append storing the signature on the event.
+    #[test]
+    fn test_append_with_signature() {
+        let mut chain = CustodyChain::new(Hash256::digest(b"decision-sig"));
+        let record_hash = Hash256::digest(b"record-v1");
+        let sig = test_signature();
+        chain.append(
+            test_did("alice"),
+            CustodyRole::Proposer,
+            CustodyAction::Create,
+            record_hash,
+            test_ts(1000),
+            Some(sig.clone()),
+        );
+        let stored = chain.events[0]
+            .signature
+            .as_ref()
+            .expect("signature present");
+        assert_eq!(stored.signer, sig.signer);
+        assert_eq!(stored.key_version, sig.key_version);
+    }
+
+    // Covers: returned reference from append points to the last-appended event.
+    #[test]
+    fn test_append_returns_last_event_reference() {
+        let mut chain = CustodyChain::new(Hash256::digest(b"decision-ret"));
+        let record_hash = Hash256::digest(b"record-v1");
+        let ev = chain.append(
+            test_did("alice"),
+            CustodyRole::Proposer,
+            CustodyAction::Create,
+            record_hash,
+            test_ts(1000),
+            None,
+        );
+        assert_eq!(ev.sequence, 0);
+        assert!(ev.prev_event_hash.is_none());
+        let id = ev.id.clone();
+        assert_eq!(chain.events[0].id, id);
+    }
+
+    // Covers: verify_integrity InvalidGenesisLink branch (genesis has prev_event_hash = Some).
+    #[test]
+    fn test_verify_integrity_invalid_genesis_link() {
+        let mut chain = CustodyChain::new(Hash256::digest(b"decision-ig"));
+        chain.append(
+            test_did("alice"),
+            CustodyRole::Proposer,
+            CustodyAction::Create,
+            Hash256::digest(b"r"),
+            test_ts(1000),
+            None,
+        );
+        chain.events[0].prev_event_hash = Some(Hash256::digest(b"unexpected"));
+        let err = chain.verify_integrity().expect_err("must be error");
+        assert!(matches!(err, CustodyChainError::InvalidGenesisLink));
+    }
+
+    // Covers: verify_integrity BrokenLink branch (non-genesis prev_event_hash mismatches predecessor).
+    #[test]
+    fn test_verify_integrity_broken_link() {
+        let mut chain = CustodyChain::new(Hash256::digest(b"decision-bl"));
+        let record_hash = Hash256::digest(b"r");
+        chain.append(
+            test_did("alice"),
+            CustodyRole::Proposer,
+            CustodyAction::Create,
+            record_hash,
+            test_ts(1000),
+            None,
+        );
+        chain.append(
+            test_did("bob"),
+            CustodyRole::Reviewer,
+            CustodyAction::Approve,
+            record_hash,
+            test_ts(2000),
+            None,
+        );
+        let bogus = Hash256::digest(b"bogus-prev");
+        chain.events[1].prev_event_hash = Some(bogus);
+        let err = chain.verify_integrity().expect_err("must be error");
+        match err {
+            CustodyChainError::BrokenLink {
+                sequence, actual, ..
+            } => {
+                assert_eq!(sequence, 1);
+                assert_eq!(actual, bogus);
+            }
+            other => panic!("expected BrokenLink, got {other:?}"),
+        }
+    }
+
+    // Covers: verify_integrity MissingLink branch (non-genesis prev_event_hash = None).
+    #[test]
+    fn test_verify_integrity_missing_link() {
+        let mut chain = CustodyChain::new(Hash256::digest(b"decision-ml"));
+        let record_hash = Hash256::digest(b"r");
+        chain.append(
+            test_did("alice"),
+            CustodyRole::Proposer,
+            CustodyAction::Create,
+            record_hash,
+            test_ts(1000),
+            None,
+        );
+        chain.append(
+            test_did("bob"),
+            CustodyRole::Reviewer,
+            CustodyAction::Approve,
+            record_hash,
+            test_ts(2000),
+            None,
+        );
+        chain.events[1].prev_event_hash = None;
+        let err = chain.verify_integrity().expect_err("must be error");
+        assert!(matches!(
+            err,
+            CustodyChainError::MissingLink { sequence: 1 }
+        ));
+    }
+
+    // Covers: verify_integrity SequenceGap branch (event sequence number does not match index).
+    #[test]
+    fn test_verify_integrity_sequence_gap() {
+        let mut chain = CustodyChain::new(Hash256::digest(b"decision-sg"));
+        let record_hash = Hash256::digest(b"r");
+        chain.append(
+            test_did("alice"),
+            CustodyRole::Proposer,
+            CustodyAction::Create,
+            record_hash,
+            test_ts(1000),
+            None,
+        );
+        chain.events[0].sequence = 99;
+        let err = chain.verify_integrity().expect_err("must be error");
+        match err {
+            CustodyChainError::SequenceGap { expected, actual } => {
+                assert_eq!(expected, 0);
+                assert_eq!(actual, 99);
+            }
+            other => panic!("expected SequenceGap, got {other:?}"),
+        }
+    }
+
+    // Covers: verify_integrity HashMismatch branch asserting the exact variant (not just is_err).
+    #[test]
+    fn test_verify_integrity_hash_mismatch_variant() {
+        let mut chain = CustodyChain::new(Hash256::digest(b"decision-hm"));
+        let record_hash = Hash256::digest(b"r");
+        chain.append(
+            test_did("alice"),
+            CustodyRole::Proposer,
+            CustodyAction::Create,
+            record_hash,
+            test_ts(1000),
+            None,
+        );
+        let tampered = Hash256::digest(b"tampered");
+        chain.events[0].event_hash = tampered;
+        let err = chain.verify_integrity().expect_err("must be error");
+        match err {
+            CustodyChainError::HashMismatch {
+                sequence, actual, ..
+            } => {
+                assert_eq!(sequence, 0);
+                assert_eq!(actual, tampered);
+            }
+            other => panic!("expected HashMismatch, got {other:?}"),
+        }
+    }
+
+    // Covers: Display impls for every CustodyChainError variant.
+    #[test]
+    fn test_error_display_all_variants() {
+        let h = Hash256::digest(b"x");
+        let seq_gap = CustodyChainError::SequenceGap {
+            expected: 3,
+            actual: 7,
+        };
+        assert_eq!(format!("{seq_gap}"), "Sequence gap: expected 3, got 7");
+
+        let genesis = CustodyChainError::InvalidGenesisLink;
+        assert_eq!(
+            format!("{genesis}"),
+            "Genesis event should not have prev_event_hash"
+        );
+
+        let broken = CustodyChainError::BrokenLink {
+            sequence: 4,
+            expected: h,
+            actual: h,
+        };
+        assert_eq!(format!("{broken}"), "Broken chain link at sequence 4");
+
+        let missing = CustodyChainError::MissingLink { sequence: 5 };
+        assert_eq!(
+            format!("{missing}"),
+            "Missing prev_event_hash at sequence 5"
+        );
+
+        let mismatch = CustodyChainError::HashMismatch {
+            sequence: 6,
+            expected: h,
+            actual: h,
+        };
+        assert_eq!(format!("{mismatch}"), "Event hash mismatch at sequence 6");
+    }
+
+    // Covers: CustodyChainError implements std::error::Error (trait-object usability).
+    #[test]
+    fn test_error_trait_object() {
+        let err: Box<dyn std::error::Error> =
+            Box::new(CustodyChainError::MissingLink { sequence: 2 });
+        assert!(err.to_string().contains("sequence 2"));
+    }
+
+    // Covers: CustodyEvent id uses first byte of decision_id and the sequence number.
+    #[test]
+    fn test_event_id_format() {
+        let mut bytes = [0u8; 32];
+        bytes[0] = 0x2a;
+        let decision_id = Hash256::from_bytes(bytes);
+        let mut chain = CustodyChain::new(decision_id);
+        chain.append(
+            test_did("alice"),
+            CustodyRole::Proposer,
+            CustodyAction::Create,
+            Hash256::digest(b"r"),
+            test_ts(1000),
+            None,
+        );
+        chain.append(
+            test_did("bob"),
+            CustodyRole::Reviewer,
+            CustodyAction::Approve,
+            Hash256::digest(b"r"),
+            test_ts(2000),
+            None,
+        );
+        assert_eq!(chain.events[0].id, "ce-42-0");
+        assert_eq!(chain.events[1].id, "ce-42-1");
+    }
+
+    // Covers: next_sequence monotonically increases across appends.
+    #[test]
+    fn test_next_sequence_monotonic() {
+        let mut chain = CustodyChain::new(Hash256::digest(b"decision-mono"));
+        assert_eq!(chain.next_sequence, 0);
+        for i in 0..3 {
+            chain.append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                Hash256::digest(b"r"),
+                test_ts(1000 + i),
+                None,
+            );
+        }
+        assert_eq!(chain.next_sequence, 3);
+        assert_eq!(chain.len(), 3);
+    }
+
+    // Covers: events_by_actor filters and returns only matching actor's events (no false positives).
+    #[test]
+    fn test_events_by_actor_nonmatching_filtered_out() {
+        let mut chain = CustodyChain::new(Hash256::digest(b"decision-filter"));
+        chain.append(
+            test_did("alice"),
+            CustodyRole::Proposer,
+            CustodyAction::Create,
+            Hash256::digest(b"r"),
+            test_ts(1000),
+            None,
+        );
+        chain.append(
+            test_did("bob"),
+            CustodyRole::Reviewer,
+            CustodyAction::Approve,
+            Hash256::digest(b"r"),
+            test_ts(2000),
+            None,
+        );
+        assert!(chain.events_by_actor("did:exo:charlie").is_empty());
+        let bobs = chain.events_by_actor("did:exo:bob");
+        assert_eq!(bobs.len(), 1);
+        assert_eq!(bobs[0].actor_id, test_did("bob"));
+    }
+
+    // Covers: attestations() includes Veto and Abstain (all four attestation variants).
+    #[test]
+    fn test_attestations_include_veto_and_abstain() {
+        let mut chain = CustodyChain::new(Hash256::digest(b"decision-att"));
+        let r = Hash256::digest(b"r");
+        for (i, action) in [
+            CustodyAction::Approve,
+            CustodyAction::Reject,
+            CustodyAction::Abstain,
+            CustodyAction::Veto,
+            CustodyAction::Comment {
+                content: "noise".to_string(),
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            chain.append(
+                test_did("alice"),
+                CustodyRole::Reviewer,
+                action,
+                r,
+                test_ts(1000 + u64::try_from(i).expect("small")),
+                None,
+            );
+        }
+        let atts = chain.attestations();
+        assert_eq!(atts.len(), 4);
+        assert!(atts.iter().any(|e| matches!(e.action, CustodyAction::Veto)));
+        assert!(
+            atts.iter()
+                .any(|e| matches!(e.action, CustodyAction::Abstain))
+        );
+    }
+
+    // Covers: verify_integrity succeeds on an empty chain (no events to validate).
+    #[test]
+    fn test_verify_integrity_empty_chain() {
+        let chain = CustodyChain::new(Hash256::digest(b"decision-empty"));
+        assert!(chain.verify_integrity().is_ok());
+    }
+
+    // Covers: CustodyChainError implements Clone + Debug (derived trait usage).
+    #[test]
+    fn test_error_clone_debug() {
+        let err = CustodyChainError::SequenceGap {
+            expected: 1,
+            actual: 2,
+        };
+        let cloned = err.clone();
+        assert!(matches!(
+            cloned,
+            CustodyChainError::SequenceGap {
+                expected: 1,
+                actual: 2
+            }
+        ));
+        assert!(format!("{err:?}").contains("SequenceGap"));
+    }
+
+    // Covers: serde round-trip for CustodyChain (Serialize + Deserialize derives on all enums/structs).
+    #[test]
+    fn test_custody_chain_serde_roundtrip() {
+        let mut chain = CustodyChain::new(Hash256::digest(b"decision-serde"));
+        chain.append(
+            test_did("alice"),
+            CustodyRole::AiAgent {
+                delegation_id: Hash256::digest(b"d"),
+            },
+            CustodyAction::Custom {
+                action: "sign-off".to_string(),
+                metadata: Some("ok".to_string()),
+            },
+            Hash256::digest(b"r"),
+            test_ts(1000),
+            None,
+        );
+        let json = serde_json::to_string(&chain).expect("serialize");
+        let decoded: CustodyChain = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.events.len(), 1);
+        assert!(decoded.verify_integrity().is_ok());
+    }
 }

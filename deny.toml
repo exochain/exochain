@@ -40,29 +40,37 @@ ignore = [
     # Same transitive dep as above; same tracking issue.
     { id = "RUSTSEC-2025-0010", reason = "pre-existing transitive via rustls-webpki; upgrade tracked in hygiene sprint" },
 
-    # rsa — Marvin Attack timing side-channel.
-    # rsa is a transitive dep via sqlx (pre-existing in main).
-    # The workspace does NOT enable the sqlx 'mysql' feature, so the vulnerable
-    # RSA path is never exercised.  Upgrade tracked in APE-12 hygiene sprint.
-    { id = "RUSTSEC-2023-0071", reason = "pre-existing transitive via sqlx; mysql feature not enabled; vulnerable path unreachable" },
-
-    # instant — no longer maintained.
-    # Transitive dep via wasm-timer / yamux (libp2p stack, pre-existing in main).
-    # instant is a thin no-std shim; the unmaintained status poses no security
-    # risk.  Upgrade tracked in APE-12 hygiene sprint.
-    { id = "RUSTSEC-2024-0384", reason = "pre-existing transitive via yamux/libp2p; unmaintained shim with no security impact" },
-
     # paste — no longer maintained.
     # Transitive dep via async-graphql macro infrastructure (pre-existing in main).
     # paste is a proc-macro utility; the unmaintained status poses no runtime risk.
     # Upgrade tracked in APE-12 hygiene sprint.
     { id = "RUSTSEC-2024-0436", reason = "pre-existing transitive via async-graphql; proc-macro only; no runtime security impact" },
 
-    # lru — IterMut violates Stacked Borrows (unsafe aliasing).
-    # Transitive dep via existing caching infrastructure (pre-existing in main).
-    # The workspace does not use IterMut on lru caches directly.
-    # Upgrade tracked in APE-12 hygiene sprint.
-    { id = "RUSTSEC-2026-0002", reason = "pre-existing transitive dep; workspace does not call lru::IterMut; no exploitable path" },
+    # core2 0.4.0 — maintainer stopped maintenance, all versions yanked.
+    # Transitive dep via multihash → libp2p-core → libp2p (pre-existing).
+    # No safe upgrade exists upstream (embedded-io / no-std-io2 are alternatives
+    # but libp2p-core has not migrated). The workspace does not call core2
+    # directly — it is used internally by multihash for no_std I/O abstraction.
+    # Upgrade blocked on libp2p-core; tracked for libp2p bump sprint.
+    { id = "RUSTSEC-2026-0105", reason = "pre-existing transitive via multihash/libp2p; no safe upgrade; workspace does not use core2 directly" },
+
+    # rustls-webpki 0.101.7 — name constraint URI names incorrectly accepted.
+    # Transitive dep via libp2p-tls → libp2p-quic → libp2p (pre-existing).
+    # libp2p-tls uses self-signed libp2p peer-identity certs; the workspace
+    # does NOT rely on name-constraint-chained WebPKI validation. Upgrade
+    # blocked on libp2p-tls (still pinned to rustls-webpki 0.101.x).
+    # Upgrade tracked in libp2p bump sprint.
+    { id = "RUSTSEC-2026-0098", reason = "pre-existing transitive via libp2p-tls; libp2p uses peer-identity auth, not WebPKI name constraints" },
+
+    # rustls-webpki 0.101.7 — name constraints accepted for wildcard-name certs.
+    # Same transitive path, same reachability analysis as RUSTSEC-2026-0098.
+    { id = "RUSTSEC-2026-0099", reason = "pre-existing transitive via libp2p-tls; libp2p uses peer-identity auth, not WebPKI wildcard name constraints" },
+
+    # rustls-webpki 0.101.7 — reachable panic in CRL parsing.
+    # Same transitive path. The workspace does not use CRLs — libp2p-tls
+    # never calls into the CRL parser. Reachability zero in practice.
+    # Upgrade tracked in libp2p bump sprint.
+    { id = "RUSTSEC-2026-0104", reason = "pre-existing transitive via libp2p-tls; workspace does not use CRL parsing" },
 ]
 
 # ---------------------------------------------------------------------------

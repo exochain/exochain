@@ -1,6 +1,6 @@
 //! Independence verification (anti-Sybil).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use exo_core::{Did, Timestamp};
 use serde::{Deserialize, Serialize};
@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 /// Registry of identity attributes used for Sybil detection and independence verification.
 #[derive(Debug, Clone, Default)]
 pub struct IdentityRegistry {
-    pub signing_keys: HashMap<Did, String>,
-    pub attestation_roots: HashMap<Did, Did>,
-    pub control_metadata: HashMap<Did, String>,
+    pub signing_keys: BTreeMap<Did, String>,
+    pub attestation_roots: BTreeMap<Did, Did>,
+    pub control_metadata: BTreeMap<Did, String>,
 }
 
 /// A group of DIDs that share a common identity attribute, indicating potential Sybil collusion.
@@ -48,11 +48,11 @@ pub struct CoordinationSignal {
 #[must_use]
 pub fn verify_independence(actors: &[Did], registry: &IdentityRegistry) -> IndependenceResult {
     let mut clusters: Vec<Cluster> = Vec::new();
-    let mut clustered_dids: HashSet<Did> = HashSet::new();
+    let mut clustered_dids: BTreeSet<Did> = BTreeSet::new();
     let mut suspicious_pairs: Vec<(Did, Did)> = Vec::new();
 
     // Check 1: Same signing keys
-    let mut key_groups: HashMap<&str, Vec<Did>> = HashMap::new();
+    let mut key_groups: BTreeMap<&str, Vec<Did>> = BTreeMap::new();
     for actor in actors {
         if let Some(key) = registry.signing_keys.get(actor) {
             key_groups
@@ -74,7 +74,7 @@ pub fn verify_independence(actors: &[Did], registry: &IdentityRegistry) -> Indep
     }
 
     // Check 2: Same attestation chain root
-    let mut root_groups: HashMap<Did, Vec<Did>> = HashMap::new();
+    let mut root_groups: BTreeMap<Did, Vec<Did>> = BTreeMap::new();
     for actor in actors {
         if let Some(root) = registry.attestation_roots.get(actor) {
             root_groups
@@ -96,7 +96,7 @@ pub fn verify_independence(actors: &[Did], registry: &IdentityRegistry) -> Indep
     }
 
     // Check 3: Shared control metadata
-    let mut control_groups: HashMap<&str, Vec<Did>> = HashMap::new();
+    let mut control_groups: BTreeMap<&str, Vec<Did>> = BTreeMap::new();
     for actor in actors {
         if let Some(meta) = registry.control_metadata.get(actor) {
             control_groups
@@ -126,7 +126,7 @@ pub fn verify_independence(actors: &[Did], registry: &IdentityRegistry) -> Indep
         }
     }
 
-    let actor_set: HashSet<Did> = actors.iter().cloned().collect();
+    let actor_set: BTreeSet<Did> = actors.iter().cloned().collect();
     let independent_count = actor_set.difference(&clustered_dids).count();
 
     IndependenceResult {

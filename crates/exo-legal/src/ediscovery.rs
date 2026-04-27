@@ -53,6 +53,8 @@ pub fn search(request: &DiscoveryRequest, corpus: &[Evidence]) -> DiscoveryRespo
 
 #[cfg(test)]
 mod tests {
+    use uuid::Uuid;
+
     use super::*;
     use crate::evidence::create_evidence;
     fn did(n: &str) -> Did {
@@ -60,9 +62,30 @@ mod tests {
     }
     fn corpus() -> Vec<Evidence> {
         let (a, b) = (did("alice"), did("bob"));
-        let e1 = create_evidence(b"contract", &a, "contract", Timestamp::new(100, 0)).unwrap();
-        let e2 = create_evidence(b"email", &b, "email", Timestamp::new(200, 0)).unwrap();
-        let e3 = create_evidence(b"memo", &a, "memo", Timestamp::new(300, 0)).unwrap();
+        let e1 = create_evidence(
+            Uuid::from_u128(0x501),
+            b"contract",
+            &a,
+            "contract",
+            Timestamp::new(100, 0),
+        )
+        .unwrap();
+        let e2 = create_evidence(
+            Uuid::from_u128(0x502),
+            b"email",
+            &b,
+            "email",
+            Timestamp::new(200, 0),
+        )
+        .unwrap();
+        let e3 = create_evidence(
+            Uuid::from_u128(0x503),
+            b"memo",
+            &a,
+            "memo",
+            Timestamp::new(300, 0),
+        )
+        .unwrap();
         vec![e1, e2, e3]
     }
     fn req(custodians: Vec<Did>, terms: Vec<String>, range: (u64, u64)) -> DiscoveryRequest {

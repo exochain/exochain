@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS death_verification (
     initiated_by TEXT NOT NULL,
     required_confirmations INTEGER NOT NULL DEFAULT 3,
     trustee_confirmations JSONB DEFAULT '[]',
+    verification_state JSONB NOT NULL DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending','verified','rejected')),
     created_at_ms BIGINT NOT NULL,

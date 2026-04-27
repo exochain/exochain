@@ -100,6 +100,7 @@ pub struct FairnessEvidence {
 /// # Errors
 /// Returns `LegalError::InvalidStateTransition` if the timestamp is zero.
 pub fn initiate_safe_harbor(
+    id: Uuid,
     interested_party: &Did,
     counterparty: &Did,
     interest_description: &str,
@@ -107,13 +108,28 @@ pub fn initiate_safe_harbor(
     path: SafeHarborPath,
     now: Timestamp,
 ) -> Result<InterestedTransaction> {
+    if id.is_nil() {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "safe-harbor transaction ID must be caller-supplied and non-nil".into(),
+        });
+    }
+    if interest_description.trim().is_empty() {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "safe-harbor interest description must not be empty".into(),
+        });
+    }
+    if terms_hash == Hash256::ZERO {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "safe-harbor terms hash must not be Hash256::ZERO".into(),
+        });
+    }
     if now == Timestamp::ZERO {
         return Err(LegalError::InvalidStateTransition {
             reason: "safe-harbor initiation requires a real timestamp".into(),
         });
     }
     Ok(InterestedTransaction {
-        id: Uuid::new_v4(),
+        id,
         interested_party: interested_party.clone(),
         interest_description: interest_description.to_string(),
         counterparty: counterparty.clone(),
@@ -263,9 +279,13 @@ mod tests {
     fn ts(ms: u64) -> Timestamp {
         Timestamp::new(ms, 0)
     }
+    fn id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
 
     fn create_txn(path: SafeHarborPath) -> InterestedTransaction {
         initiate_safe_harbor(
+            id(0x300),
             &did("director-alice"),
             &did("alice-corp"),
             "director has financial interest in counterparty",
@@ -274,6 +294,62 @@ mod tests {
             ts(1000),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn initiate_uses_caller_supplied_id() {
+        let transaction_id = id(0x301);
+        let txn = initiate_safe_harbor(
+            transaction_id,
+            &did("director-alice"),
+            &did("alice-corp"),
+            "director has financial interest in counterparty",
+            Hash256::digest(b"terms"),
+            SafeHarborPath::BoardApproval,
+            ts(1000),
+        )
+        .unwrap();
+        assert_eq!(txn.id, transaction_id);
+    }
+
+    #[test]
+    fn initiate_rejects_placeholder_metadata() {
+        assert!(
+            initiate_safe_harbor(
+                Uuid::nil(),
+                &did("a"),
+                &did("b"),
+                "interest",
+                Hash256::digest(b"terms"),
+                SafeHarborPath::BoardApproval,
+                ts(1000),
+            )
+            .is_err()
+        );
+        assert!(
+            initiate_safe_harbor(
+                id(0x302),
+                &did("a"),
+                &did("b"),
+                "interest",
+                Hash256::ZERO,
+                SafeHarborPath::BoardApproval,
+                ts(1000),
+            )
+            .is_err()
+        );
+        assert!(
+            initiate_safe_harbor(
+                id(0x303),
+                &did("a"),
+                &did("b"),
+                " ",
+                Hash256::digest(b"terms"),
+                SafeHarborPath::BoardApproval,
+                ts(1000),
+            )
+            .is_err()
+        );
     }
 
     // -- Board Approval path --
@@ -401,10 +477,11 @@ mod tests {
     #[test]
     fn initiate_rejects_zero_timestamp() {
         let err = initiate_safe_harbor(
+            id(0x304),
             &did("a"),
             &did("b"),
             "interest",
-            Hash256::ZERO,
+            Hash256::digest(b"terms"),
             SafeHarborPath::BoardApproval,
             Timestamp::ZERO,
         );

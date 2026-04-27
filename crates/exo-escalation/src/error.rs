@@ -17,6 +17,15 @@ pub enum EscalationError {
     #[error("invalid signal: {0}")]
     InvalidSignal(String),
 
+    #[error("invalid provenance: {reason}")]
+    InvalidProvenance { reason: String },
+
+    #[error("invalid signature from {signer}: {reason}")]
+    InvalidSignature { signer: String, reason: String },
+
+    #[error("serialization failed for {context}: {reason}")]
+    SerializationFailed { context: String, reason: String },
+
     #[error("column not found: {0}")]
     ColumnNotFound(String),
 }

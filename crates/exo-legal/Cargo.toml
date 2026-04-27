@@ -18,13 +18,10 @@ exo-authority = { path = "../exo-authority" }
 exo-governance = { path = "../exo-governance" }
 exo-gatekeeper = { path = "../exo-gatekeeper" }
 serde = { workspace = true }
+ciborium = { workspace = true }
 blake3 = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
-serde_json = { workspace = true }
-
-[dev-dependencies]
-proptest = { workspace = true }
 serde_json = { workspace = true }
 
 [package.metadata.cargo-machete]

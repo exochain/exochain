@@ -1,7 +1,9 @@
 //! `exochain://readme` — quick-reference guide for AI agents.
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ResourceContent, ResourceDefinition};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ResourceContent, ResourceDefinition},
+};
 
 /// Markdown quick-reference returned by the readme resource.
 pub const README_TEXT: &str = r#"# EXOCHAIN MCP Server — AI Agent Quick Reference
