@@ -151,8 +151,16 @@ test('wasm_sign', () =>
 test('wasm_ed25519_public_from_secret', () =>
   wasm.wasm_ed25519_public_from_secret(DUMMY_SECRET_HEX));
 
-test('wasm_compute_event_id', () =>
-  wasm.wasm_compute_event_id());
+const EVENT_SEED = new TextEncoder().encode('event-seed-1');
+const EVENT_ID = wasm.wasm_compute_event_id(EVENT_SEED);
+
+test('wasm_compute_event_id', () => {
+  const again = wasm.wasm_compute_event_id(EVENT_SEED);
+  if (EVENT_ID !== again) {
+    throw new Error('event ID derivation must be deterministic for caller seed');
+  }
+  return EVENT_ID;
+});
 
 // =========================================================================
 // Module 3 — Events
@@ -165,7 +173,10 @@ test('wasm_create_signed_event', () =>
     JSON.stringify('AuditEntry'),
     TEXT_BYTES,
     TEST_DID,
-    DUMMY_SECRET_HEX
+    DUMMY_SECRET_HEX,
+    EVENT_ID,
+    NOW_MS,
+    7
   ));
 
 const signedEvent = setup(() =>
@@ -173,12 +184,21 @@ const signedEvent = setup(() =>
     JSON.stringify('AuditEntry'),
     TEXT_BYTES,
     TEST_DID,
-    DUMMY_SECRET_HEX
+    DUMMY_SECRET_HEX,
+    EVENT_ID,
+    NOW_MS,
+    7
   ));
 
 test('wasm_verify_event', () => {
   if (!signedEvent) throw new Error('skipped -- no signed event from setup');
-  const pubKey = signedEvent.public_key || signedEvent.source_public_key || ephResult.public_key;
+  if (String(signedEvent.id) !== EVENT_ID) {
+    throw new Error('signed event did not preserve caller-supplied event ID');
+  }
+  if (BigInt(signedEvent.timestamp?.physical_ms) !== NOW_MS || signedEvent.timestamp?.logical !== 7) {
+    throw new Error('signed event did not preserve caller-supplied HLC timestamp');
+  }
+  const pubKey = publicKeyForSecret(DUMMY_SECRET_HEX);
   return wasm.wasm_verify_event(JSON.stringify(signedEvent), pubKey);
 });
 

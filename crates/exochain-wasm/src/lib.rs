@@ -146,4 +146,28 @@ mod source_guard_tests {
             );
         }
     }
+
+    #[test]
+    fn wasm_core_event_bridge_requires_caller_supplied_metadata() {
+        let source = include_str!("core_bindings.rs");
+        assert!(
+            source.contains("event_id")
+                && source.contains("timestamp_physical_ms")
+                && source.contains("timestamp_logical"),
+            "signed event creation must expose caller-supplied event ID and HLC metadata"
+        );
+
+        let forbidden = [
+            "CorrelationId::new()",
+            "HybridClock::new()",
+            "Timestamp::now_utc()",
+        ];
+
+        for pattern in forbidden {
+            assert!(
+                !source.contains(pattern),
+                "core WASM event bindings must not fabricate event metadata with {pattern}"
+            );
+        }
+    }
 }

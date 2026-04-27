@@ -189,10 +189,48 @@ pub fn wasm_verify_merkle_proof(
 
 // ── Events ─────────────────────────────────────────────────────────
 
-/// Generate a fresh event correlation ID.
+fn deterministic_event_id(seed: &[u8]) -> String {
+    let mut preimage = b"exo.wasm.event_id.v1".to_vec();
+    preimage.extend_from_slice(seed);
+    let digest = exo_core::Hash256::digest(&preimage);
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest.as_bytes()[..16]);
+    // RFC 9562 UUID version 8 with RFC 4122 variant bits, using caller seed
+    // entropy hashed under the domain tag above.
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    uuid::Uuid::from_bytes(bytes).to_string()
+}
+
+fn caller_event_id(event_id: &str) -> Result<exo_core::CorrelationId, JsValue> {
+    let uuid = uuid::Uuid::parse_str(event_id)
+        .map_err(|e| JsValue::from_str(&format!("event_id: {e}")))?;
+    if uuid.is_nil() {
+        return Err(JsValue::from_str("event_id must not be the nil UUID"));
+    }
+    Ok(exo_core::CorrelationId::from_uuid(uuid))
+}
+
+fn caller_timestamp(
+    physical_ms: u64,
+    logical: u32,
+    label: &str,
+) -> Result<exo_core::Timestamp, JsValue> {
+    if physical_ms == 0 {
+        return Err(JsValue::from_str(&format!(
+            "{label} physical_ms must be caller-supplied and non-zero"
+        )));
+    }
+    Ok(exo_core::Timestamp::new(physical_ms, logical))
+}
+
+/// Derive an event correlation ID from caller-supplied seed bytes.
 #[wasm_bindgen]
-pub fn wasm_compute_event_id() -> String {
-    exo_core::CorrelationId::new().to_string()
+pub fn wasm_compute_event_id(seed: &[u8]) -> Result<String, JsValue> {
+    if seed.is_empty() {
+        return Err(JsValue::from_str("event_id seed must not be empty"));
+    }
+    Ok(deterministic_event_id(seed))
 }
 
 /// Verify the Ed25519 signature on a signed event.
@@ -236,6 +274,9 @@ pub fn wasm_create_signed_event(
     payload: &[u8],
     source_did: &str,
     secret_hex: &str,
+    event_id: &str,
+    timestamp_physical_ms: u64,
+    timestamp_logical: u32,
 ) -> Result<JsValue, JsValue> {
     let event_type: exo_core::events::EventType = from_json_str(event_type_json)?;
     let did = exo_core::Did::new(source_did)
@@ -247,9 +288,8 @@ pub fn wasm_create_signed_event(
         .map_err(|_| JsValue::from_str("secret key must be 32 bytes"))?;
     let secret = exo_core::SecretKey::from_bytes(arr);
 
-    let mut clock = exo_core::hlc::HybridClock::new();
-    let ts = clock.now();
-    let corr = exo_core::CorrelationId::new();
+    let corr = caller_event_id(event_id)?;
+    let ts = caller_timestamp(timestamp_physical_ms, timestamp_logical, "event timestamp")?;
 
     let event =
         exo_core::events::create_signed_event(corr, ts, event_type, payload.to_vec(), did, &secret);
