@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { cn } from './utils'
+import { cn, escapeHtml } from './utils'
 
 describe('utils.ts — Classname utilities', () => {
   describe('cn function', () => {
@@ -182,6 +182,40 @@ describe('utils.ts — Classname utilities', () => {
       const result1 = cn(...input)
       const result2 = cn(...input)
       expect(result1).toBe(result2)
+    })
+  })
+
+  // A-030: escapeHtml protects CouncilAIPanel's dangerouslySetInnerHTML path
+  // from backend-provided markdown that contains raw tags / quotes / script.
+  describe('escapeHtml', () => {
+    it('escapes angle brackets so <script> cannot execute', () => {
+      const result = escapeHtml('<script>alert(1)</script>')
+      expect(result).toBe('&lt;script&gt;alert(1)&lt;/script&gt;')
+      expect(result).not.toContain('<script>')
+    })
+
+    it('escapes img onerror payloads', () => {
+      const result = escapeHtml('<img src=x onerror="alert(1)">')
+      expect(result).toContain('&lt;img')
+      expect(result).toContain('&quot;')
+      expect(result).not.toContain('<img')
+    })
+
+    it('escapes ampersands before other entities to avoid double-encoding traps', () => {
+      const result = escapeHtml('Tom & Jerry <3')
+      expect(result).toBe('Tom &amp; Jerry &lt;3')
+    })
+
+    it('escapes all five reserved characters', () => {
+      expect(escapeHtml('&<>"\'')).toBe('&amp;&lt;&gt;&quot;&#39;')
+    })
+
+    it('leaves plain text untouched', () => {
+      expect(escapeHtml('plain text without anything special')).toBe('plain text without anything special')
+    })
+
+    it('returns empty string for empty input', () => {
+      expect(escapeHtml('')).toBe('')
     })
   })
 })
