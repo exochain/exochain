@@ -9,7 +9,7 @@ tags: [exochain, reference, api, crates]
 
 **API reference for the workspace crates composing the EXOCHAIN constitutional trust fabric.**
 
-20 workspace packages · 115855 lines of Rust under `crates/` · 2,869 listed tests
+20 workspace packages · 115919 lines of Rust under `crates/` · 2,870 listed tests
 
 > Cross-references: [[ARCHITECTURE]], [[GETTING-STARTED]], [[THREAT-MODEL]], [[CONSTITUTIONAL-PROOFS]]
 
