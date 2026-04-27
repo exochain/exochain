@@ -47,6 +47,28 @@ pub struct AuthenticatedActor {
     pub authenticated_at: Timestamp,
 }
 
+/// Caller-supplied metadata for an authentication attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuthenticationMetadata {
+    pub observed_at: Timestamp,
+}
+
+impl AuthenticationMetadata {
+    /// Validate caller-supplied authentication metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GatewayError::BadRequest` if `observed_at` is `Timestamp::ZERO`.
+    pub fn new(observed_at: Timestamp) -> Result<Self> {
+        if observed_at == Timestamp::ZERO {
+            return Err(GatewayError::BadRequest(
+                "authentication observed_at must be caller-supplied and non-zero".into(),
+            ));
+        }
+        Ok(Self { observed_at })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Credential enum
 // ---------------------------------------------------------------------------
@@ -92,6 +114,28 @@ pub struct ApiKeyRecord {
     pub revoked: bool,
 }
 
+/// Caller-supplied metadata for API key creation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApiKeyMetadata {
+    pub created_at: Timestamp,
+}
+
+impl ApiKeyMetadata {
+    /// Validate caller-supplied API key metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GatewayError::BadRequest` if `created_at` is `Timestamp::ZERO`.
+    pub fn new(created_at: Timestamp) -> Result<Self> {
+        if created_at == Timestamp::ZERO {
+            return Err(GatewayError::BadRequest(
+                "API key created_at must be caller-supplied and non-zero".into(),
+            ));
+        }
+        Ok(Self { created_at })
+    }
+}
+
 /// Registry of API keys mapped to DIDs.
 /// Uses `BTreeMap` (not `HashMap`) for deterministic iteration.
 #[derive(Debug, Clone, Default)]
@@ -116,7 +160,12 @@ impl ApiKeyRegistry {
     ///
     /// Panics if the OS entropy source is unavailable (unrecoverable).
     #[allow(clippy::expect_used)] // OS entropy failure is unrecoverable.
-    pub fn register(&mut self, did: Did, label: String) -> (String, ApiKeyRecord) {
+    pub fn register(
+        &mut self,
+        did: Did,
+        label: String,
+        metadata: ApiKeyMetadata,
+    ) -> (String, ApiKeyRecord) {
         // Generate 32 random bytes via getrandom.
         let mut key_bytes = [0u8; 32];
         getrandom::getrandom(&mut key_bytes).expect("OS entropy source unavailable");
@@ -128,7 +177,7 @@ impl ApiKeyRegistry {
             key_hash,
             did,
             label,
-            created_at: Timestamp::now_utc(),
+            created_at: metadata.created_at,
             expires_at: None,
             revoked: false,
         };
@@ -166,7 +215,7 @@ impl ApiKeyRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// authenticate() — original DID-signature path (unchanged)
+// authenticate() — DID-signature path
 // ---------------------------------------------------------------------------
 
 /// Authenticate a request by validating DID format, signature freshness,
@@ -180,7 +229,11 @@ impl ApiKeyRegistry {
 /// - `AuthenticationFailed` if the DID is not found in `registry`
 /// - `AuthenticationFailed` if the DID has no active verification method
 /// - `AuthenticationFailed` if signature verification fails
-pub fn authenticate(request: &Request, registry: &dyn DidRegistry) -> Result<AuthenticatedActor> {
+pub fn authenticate(
+    request: &Request,
+    registry: &dyn DidRegistry,
+    metadata: AuthenticationMetadata,
+) -> Result<AuthenticatedActor> {
     // 1. Validate DID format.
     let did = Did::new(&request.actor_did).map_err(|_| GatewayError::AuthenticationFailed {
         reason: format!("invalid DID: {}", request.actor_did),
@@ -195,10 +248,7 @@ pub fn authenticate(request: &Request, registry: &dyn DidRegistry) -> Result<Aut
     }
 
     // 3. Timestamp freshness — guard against replay attacks.
-    //    Disabled in test builds so unit tests can use fixed Timestamps
-    //    without a live wall clock.
-    #[cfg(not(test))]
-    check_freshness(&request.timestamp)?;
+    check_freshness(&request.timestamp, &metadata.observed_at)?;
 
     // 4. Resolve DID document from the registry.
     let doc = registry
@@ -232,7 +282,7 @@ pub fn authenticate(request: &Request, registry: &dyn DidRegistry) -> Result<Aut
 
     Ok(AuthenticatedActor {
         did,
-        authenticated_at: request.timestamp,
+        authenticated_at: metadata.observed_at,
     })
 }
 
@@ -253,6 +303,7 @@ pub fn resolve_credential(
     credential: &Credential,
     did_registry: &dyn DidRegistry,
     api_key_registry: &ApiKeyRegistry,
+    metadata: AuthenticationMetadata,
 ) -> Result<AuthenticatedActor> {
     match credential {
         Credential::DidSignature {
@@ -268,17 +319,24 @@ pub fn resolve_credential(
                 signature: signature.clone(),
                 timestamp: *timestamp,
             };
-            authenticate(&request, did_registry)
+            authenticate(&request, did_registry, metadata)
         }
 
-        Credential::ApiKey(key) => resolve_token(key, api_key_registry, "API key"),
+        Credential::ApiKey(key) => resolve_token(key, api_key_registry, "API key", metadata),
 
-        Credential::BearerToken(token) => resolve_token(token, api_key_registry, "bearer token"),
+        Credential::BearerToken(token) => {
+            resolve_token(token, api_key_registry, "bearer token", metadata)
+        }
     }
 }
 
 /// Shared resolution logic for API key and bearer token credentials.
-fn resolve_token(token: &str, registry: &ApiKeyRegistry, kind: &str) -> Result<AuthenticatedActor> {
+fn resolve_token(
+    token: &str,
+    registry: &ApiKeyRegistry,
+    kind: &str,
+    metadata: AuthenticationMetadata,
+) -> Result<AuthenticatedActor> {
     let record = registry
         .resolve(token)
         .ok_or_else(|| GatewayError::AuthenticationFailed {
@@ -292,8 +350,7 @@ fn resolve_token(token: &str, registry: &ApiKeyRegistry, kind: &str) -> Result<A
     }
 
     if let Some(expires_at) = record.expires_at {
-        let now = Timestamp::now_utc();
-        if now > expires_at {
+        if metadata.observed_at > expires_at {
             return Err(GatewayError::AuthenticationFailed {
                 reason: format!("{kind} has expired"),
             });
@@ -302,7 +359,7 @@ fn resolve_token(token: &str, registry: &ApiKeyRegistry, kind: &str) -> Result<A
 
     Ok(AuthenticatedActor {
         did: record.did.clone(),
-        authenticated_at: Timestamp::now_utc(),
+        authenticated_at: metadata.observed_at,
     })
 }
 
@@ -310,10 +367,10 @@ fn resolve_token(token: &str, registry: &ApiKeyRegistry, kind: &str) -> Result<A
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Reject requests whose timestamp deviates from `now` by more than
+/// Reject requests whose timestamp deviates from `observed_at` by more than
 /// `FRESHNESS_WINDOW_MS`.
-fn check_freshness(ts: &Timestamp) -> Result<()> {
-    let now_ms = Timestamp::now_utc().physical_ms;
+fn check_freshness(ts: &Timestamp, observed_at: &Timestamp) -> Result<()> {
+    let now_ms = observed_at.physical_ms;
     let req_ms = ts.physical_ms;
     let skew_ms = now_ms.abs_diff(req_ms);
     if skew_ms > FRESHNESS_WINDOW_MS {
@@ -341,10 +398,16 @@ mod tests {
 
     use super::*;
 
-    // In test mode, freshness check is disabled, so Timestamp::ZERO is
-    // accepted.  Production code uses check_freshness() via #[cfg(not(test))].
     fn req_ts() -> Timestamp {
-        Timestamp::ZERO
+        Timestamp::new(10_000, 0)
+    }
+
+    fn auth_metadata() -> AuthenticationMetadata {
+        AuthenticationMetadata::new(Timestamp::new(10_000, 0)).unwrap()
+    }
+
+    fn api_key_metadata() -> ApiKeyMetadata {
+        ApiKeyMetadata::new(Timestamp::new(1_000, 0)).unwrap()
     }
 
     /// Build an in-memory registry with a single DID `did:exo:alice` registered
@@ -395,8 +458,9 @@ mod tests {
             signature,
             timestamp: req_ts(),
         };
-        let a = authenticate(&r, &reg).unwrap();
+        let a = authenticate(&r, &reg, auth_metadata()).unwrap();
         assert_eq!(a.did.as_str(), "did:exo:alice");
+        assert_eq!(a.authenticated_at, auth_metadata().observed_at);
     }
 
     #[test]
@@ -413,7 +477,7 @@ mod tests {
             }),
             timestamp: req_ts(),
         };
-        assert!(authenticate(&r, &reg).is_err());
+        assert!(authenticate(&r, &reg, auth_metadata()).is_err());
     }
 
     #[test]
@@ -426,7 +490,7 @@ mod tests {
             signature: Signature::from_bytes([0u8; 64]),
             timestamp: req_ts(),
         };
-        assert!(authenticate(&r, &reg).is_err());
+        assert!(authenticate(&r, &reg, auth_metadata()).is_err());
     }
 
     #[test]
@@ -439,7 +503,7 @@ mod tests {
             signature: Signature::Empty,
             timestamp: req_ts(),
         };
-        assert!(authenticate(&r, &reg).is_err());
+        assert!(authenticate(&r, &reg, auth_metadata()).is_err());
     }
 
     #[test]
@@ -456,7 +520,7 @@ mod tests {
             signature: bad_sig,
             timestamp: req_ts(),
         };
-        assert!(authenticate(&r, &reg).is_err());
+        assert!(authenticate(&r, &reg, auth_metadata()).is_err());
     }
 
     #[test]
@@ -473,7 +537,7 @@ mod tests {
             signature: sig,
             timestamp: req_ts(),
         };
-        assert!(authenticate(&r, &reg).is_err());
+        assert!(authenticate(&r, &reg, auth_metadata()).is_err());
     }
 
     #[test]
@@ -495,15 +559,67 @@ mod tests {
 
     #[test]
     fn freshness_check_passes_recent() {
-        let ts = Timestamp::now_utc();
-        assert!(check_freshness(&ts).is_ok());
+        let observed_at = Timestamp::new(10_000, 0);
+        assert!(check_freshness(&observed_at, &observed_at).is_ok());
     }
 
     #[test]
     fn freshness_check_rejects_stale() {
-        // physical_ms = 1 is Jan 1 1970 — way outside any freshness window.
         let stale = Timestamp::new(1, 0);
-        assert!(check_freshness(&stale).is_err());
+        let observed_at = Timestamp::new(FRESHNESS_WINDOW_MS + 2, 0);
+        assert!(check_freshness(&stale, &observed_at).is_err());
+    }
+
+    #[test]
+    fn authentication_metadata_rejects_zero_observed_at() {
+        let metadata = AuthenticationMetadata::new(Timestamp::ZERO);
+
+        assert!(
+            matches!(metadata, Err(GatewayError::BadRequest(reason)) if reason.contains("observed_at"))
+        );
+    }
+
+    #[test]
+    fn authenticate_rejects_stale_against_supplied_metadata() {
+        let (reg, sk) = registry_with_alice();
+        let body_hash = Hash256::ZERO;
+        let signature = sign(body_hash.as_bytes(), &sk);
+        let r = Request {
+            actor_did: "did:exo:alice".into(),
+            action: "read".into(),
+            body_hash,
+            signature,
+            timestamp: Timestamp::new(1, 0),
+        };
+        let metadata =
+            AuthenticationMetadata::new(Timestamp::new(FRESHNESS_WINDOW_MS + 2, 0)).unwrap();
+
+        let err = authenticate(&r, &reg, metadata).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("freshness window"),
+            "expected freshness-window error in: {msg}"
+        );
+    }
+
+    #[test]
+    fn auth_production_does_not_fabricate_auth_timestamps() {
+        let source = include_str!("auth.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+
+        let forbidden_timestamp = ["Timestamp", "::now_utc"].concat();
+        assert!(
+            !production.contains(&forbidden_timestamp),
+            "gateway auth must use caller-supplied authentication timestamps"
+        );
+        let forbidden_system_time = ["SystemTime", "::now"].concat();
+        assert!(
+            !production.contains(&forbidden_system_time),
+            "gateway auth must not read wall-clock time"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -522,7 +638,7 @@ mod tests {
             timestamp: req_ts(),
         };
         let api_reg = ApiKeyRegistry::new();
-        let actor = resolve_credential(&cred, &reg, &api_reg).unwrap();
+        let actor = resolve_credential(&cred, &reg, &api_reg, auth_metadata()).unwrap();
         assert_eq!(actor.did.as_str(), "did:exo:alice");
     }
 
@@ -539,7 +655,7 @@ mod tests {
             timestamp: req_ts(),
         };
         let api_reg = ApiKeyRegistry::new();
-        assert!(resolve_credential(&cred, &reg, &api_reg).is_err());
+        assert!(resolve_credential(&cred, &reg, &api_reg, auth_metadata()).is_err());
     }
 
     #[test]
@@ -547,10 +663,10 @@ mod tests {
         let did_reg = LocalDidRegistry::new();
         let mut api_reg = ApiKeyRegistry::new();
         let did = Did::new("did:exo:alice").unwrap();
-        let (plaintext, _record) = api_reg.register(did, "test key".into());
+        let (plaintext, _record) = api_reg.register(did, "test key".into(), api_key_metadata());
 
         let cred = Credential::ApiKey(plaintext);
-        let actor = resolve_credential(&cred, &did_reg, &api_reg).unwrap();
+        let actor = resolve_credential(&cred, &did_reg, &api_reg, auth_metadata()).unwrap();
         assert_eq!(actor.did.as_str(), "did:exo:alice");
     }
 
@@ -559,11 +675,11 @@ mod tests {
         let did_reg = LocalDidRegistry::new();
         let mut api_reg = ApiKeyRegistry::new();
         let did = Did::new("did:exo:alice").unwrap();
-        let (plaintext, record) = api_reg.register(did, "test key".into());
+        let (plaintext, record) = api_reg.register(did, "test key".into(), api_key_metadata());
         api_reg.revoke(&record.key_hash);
 
         let cred = Credential::ApiKey(plaintext);
-        let err = resolve_credential(&cred, &did_reg, &api_reg).unwrap_err();
+        let err = resolve_credential(&cred, &did_reg, &api_reg, auth_metadata()).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("revoked"), "expected 'revoked' in: {msg}");
     }
@@ -573,14 +689,14 @@ mod tests {
         let did_reg = LocalDidRegistry::new();
         let mut api_reg = ApiKeyRegistry::new();
         let did = Did::new("did:exo:alice").unwrap();
-        let (plaintext, record) = api_reg.register(did, "test key".into());
+        let (plaintext, record) = api_reg.register(did, "test key".into(), api_key_metadata());
 
         // Manually set expiration to the past.
         let key_hash = record.key_hash;
         api_reg.keys.get_mut(&key_hash).unwrap().expires_at = Some(Timestamp::new(1, 0));
 
         let cred = Credential::ApiKey(plaintext);
-        let err = resolve_credential(&cred, &did_reg, &api_reg).unwrap_err();
+        let err = resolve_credential(&cred, &did_reg, &api_reg, auth_metadata()).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("expired"), "expected 'expired' in: {msg}");
     }
@@ -590,7 +706,7 @@ mod tests {
         let did_reg = LocalDidRegistry::new();
         let api_reg = ApiKeyRegistry::new();
         let cred = Credential::ApiKey("deadbeef".repeat(8));
-        let err = resolve_credential(&cred, &did_reg, &api_reg).unwrap_err();
+        let err = resolve_credential(&cred, &did_reg, &api_reg, auth_metadata()).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("unknown"), "expected 'unknown' in: {msg}");
     }
@@ -600,10 +716,11 @@ mod tests {
         let did_reg = LocalDidRegistry::new();
         let mut api_reg = ApiKeyRegistry::new();
         let did = Did::new("did:exo:bob").unwrap();
-        let (plaintext, _record) = api_reg.register(did, "bearer session".into());
+        let (plaintext, _record) =
+            api_reg.register(did, "bearer session".into(), api_key_metadata());
 
         let cred = Credential::BearerToken(plaintext);
-        let actor = resolve_credential(&cred, &did_reg, &api_reg).unwrap();
+        let actor = resolve_credential(&cred, &did_reg, &api_reg, auth_metadata()).unwrap();
         assert_eq!(actor.did.as_str(), "did:exo:bob");
     }
 
@@ -611,7 +728,7 @@ mod tests {
     fn api_key_registry_register() {
         let mut reg = ApiKeyRegistry::new();
         let did = Did::new("did:exo:carol").unwrap();
-        let (plaintext, record) = reg.register(did.clone(), "my key".into());
+        let (plaintext, record) = reg.register(did.clone(), "my key".into(), api_key_metadata());
 
         // Plaintext is 64 hex chars (32 bytes).
         assert_eq!(plaintext.len(), 64);
@@ -631,7 +748,7 @@ mod tests {
     fn api_key_registry_revoke() {
         let mut reg = ApiKeyRegistry::new();
         let did = Did::new("did:exo:carol").unwrap();
-        let (_plaintext, record) = reg.register(did, "my key".into());
+        let (_plaintext, record) = reg.register(did, "my key".into(), api_key_metadata());
 
         assert!(reg.revoke(&record.key_hash));
         assert!(reg.keys.get(&record.key_hash).unwrap().revoked);
@@ -646,9 +763,9 @@ mod tests {
         let alice = Did::new("did:exo:alice").unwrap();
         let bob = Did::new("did:exo:bob").unwrap();
 
-        reg.register(alice.clone(), "alice-1".into());
-        reg.register(alice.clone(), "alice-2".into());
-        reg.register(bob.clone(), "bob-1".into());
+        reg.register(alice.clone(), "alice-1".into(), api_key_metadata());
+        reg.register(alice.clone(), "alice-2".into(), api_key_metadata());
+        reg.register(bob.clone(), "bob-1".into(), api_key_metadata());
 
         let alice_keys = reg.keys_for_did(&alice);
         assert_eq!(alice_keys.len(), 2);
@@ -663,7 +780,7 @@ mod tests {
     fn api_key_plaintext_shown_once() {
         let mut reg = ApiKeyRegistry::new();
         let did = Did::new("did:exo:alice").unwrap();
-        let (plaintext, record) = reg.register(did, "test".into());
+        let (plaintext, record) = reg.register(did, "test".into(), api_key_metadata());
 
         // The plaintext key, when hashed with BLAKE3, must equal the stored key_hash.
         let key_bytes = hex::decode(&plaintext).unwrap();
@@ -673,5 +790,31 @@ mod tests {
         // Resolve round-trips through the same hash.
         let resolved = reg.resolve(&plaintext).unwrap();
         assert_eq!(resolved.key_hash, record.key_hash);
+    }
+
+    #[test]
+    fn api_key_metadata_rejects_zero_created_at() {
+        let metadata = ApiKeyMetadata::new(Timestamp::ZERO);
+
+        assert!(
+            matches!(metadata, Err(GatewayError::BadRequest(reason)) if reason.contains("created_at"))
+        );
+    }
+
+    #[test]
+    fn resolve_credential_uses_supplied_authentication_metadata() {
+        let did_reg = LocalDidRegistry::new();
+        let mut api_reg = ApiKeyRegistry::new();
+        let did = Did::new("did:exo:alice").unwrap();
+        let key_metadata = ApiKeyMetadata::new(Timestamp::new(1_000, 0)).unwrap();
+        let (plaintext, record) = api_reg.register(did, "test key".into(), key_metadata);
+
+        assert_eq!(record.created_at, Timestamp::new(1_000, 0));
+
+        let auth_metadata = AuthenticationMetadata::new(Timestamp::new(2_000, 0)).unwrap();
+        let cred = Credential::ApiKey(plaintext);
+        let actor = resolve_credential(&cred, &did_reg, &api_reg, auth_metadata).unwrap();
+
+        assert_eq!(actor.authenticated_at, Timestamp::new(2_000, 0));
     }
 }

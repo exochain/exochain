@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    auth::{Request, authenticate},
+    auth::{AuthenticationMetadata, Request, authenticate},
     error::{GatewayError, Result},
     middleware::{AuditLog, Verdict, audit_middleware, consent_middleware, governance_middleware},
 };
@@ -74,7 +74,8 @@ pub fn process_request(
     metadata: RouteMetadata,
     log: &mut AuditLog,
 ) -> Result<RouteResult> {
-    let actor = authenticate(request, registry)?;
+    let auth_metadata = AuthenticationMetadata::new(metadata.audit_timestamp)?;
+    let actor = authenticate(request, registry, auth_metadata)?;
     consent_middleware(&actor.did, &request.action, consent)?;
     governance_middleware(&actor.did, &request.action, verdict)?;
     let result = RouteResult {
@@ -149,7 +150,7 @@ mod tests {
             action: "create".into(),
             body_hash,
             signature,
-            timestamp: Timestamp::ZERO,
+            timestamp: Timestamp::new(7_000, 1),
         };
         (reg, req)
     }
