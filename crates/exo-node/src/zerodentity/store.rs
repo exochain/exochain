@@ -658,9 +658,16 @@ impl ZerodentityStore {
     /// 5. Remove OTP challenges belonging to this DID.
     /// 6. Tombstone DAG nodes — zero payload hash, keep structural links.
     /// 7. Emit an erasure receipt.
-    pub fn erase_did_with_evidence(&mut self, did: &Did) -> anyhow::Result<ErasureEvidence> {
+    pub fn erase_did_with_evidence(
+        &mut self,
+        did: &Did,
+        timestamp: Timestamp,
+    ) -> anyhow::Result<ErasureEvidence> {
         if self.receipt_signing.is_none() {
             anyhow::bail!("0dentity trust receipt signer is not configured");
+        }
+        if timestamp.physical_ms == 0 {
+            anyhow::bail!("0dentity erasure timestamp must be greater than 0");
         }
 
         let key = did.as_str().to_owned();
@@ -699,15 +706,14 @@ impl ZerodentityStore {
         // 6. Emit erasure receipt and append a signed erasure DAG node. The
         // existing claim nodes remain append-only; erasure is represented as a
         // new tombstone event.
-        let now_ms = crate::sentinels::now_ms();
         let erasure_hash = erasure_action_hash(did)?;
         let receipt = self.trust_receipt(
             "zerodentity.identity_erased",
             erasure_hash,
             ReceiptOutcome::Executed,
-            Timestamp::new(now_ms, 0),
+            timestamp,
         )?;
-        let erasure_node = self.signed_dag_node(erasure_hash, Timestamp::new(now_ms, 0))?;
+        let erasure_node = self.signed_dag_node(erasure_hash, timestamp)?;
         let dag_node_hash = erasure_node.hash;
         let receipt_hash = receipt.receipt_hash;
         self.dag_nodes.push(erasure_node);
@@ -779,7 +785,7 @@ mod tests {
 
     use exo_core::{
         crypto::{KeyPair, verify},
-        types::{Did, Hash256, PublicKey, Signature},
+        types::{Did, Hash256, PublicKey, Signature, Timestamp},
     };
 
     use super::*;
@@ -1051,7 +1057,9 @@ mod tests {
         store.save_claim("apg-dag-erasure-001", &c).unwrap();
         let claim_node = store.dag_nodes()[0].clone();
 
-        store.erase_did_with_evidence(&d).unwrap();
+        store
+            .erase_did_with_evidence(&d, Timestamp::new(6_000, 0))
+            .unwrap();
 
         let nodes = store.dag_nodes();
         assert_eq!(nodes.len(), 2);
@@ -1165,7 +1173,9 @@ mod tests {
             .unwrap();
 
         // Erase
-        let evidence = store.erase_did_with_evidence(&d).unwrap();
+        let evidence = store
+            .erase_did_with_evidence(&d, Timestamp::new(7_000, 0))
+            .unwrap();
         assert_eq!(evidence.claims_revoked, 2);
 
         // Score gone
@@ -1198,7 +1208,9 @@ mod tests {
         let d = did("did:exo:signed-erase");
         store.put_claim(claim(&d, ClaimType::Email));
 
-        let evidence = store.erase_did_with_evidence(&d).unwrap();
+        let evidence = store
+            .erase_did_with_evidence(&d, Timestamp::new(8_000, 0))
+            .unwrap();
         assert_eq!(evidence.claims_revoked, 1);
 
         let receipt = store
@@ -1210,6 +1222,33 @@ mod tests {
         assert!(!receipt.signature.is_empty());
         assert!(receipt.verify_hash());
         assert!(receipt.verify_signature(&node_public_key));
+    }
+
+    #[test]
+    fn erase_did_rejects_zero_timestamp() {
+        let (mut store, _, _) = signed_store(18);
+        let d = did("did:exo:zero-erase");
+        store.put_claim(claim(&d, ClaimType::Email));
+
+        let err = store
+            .erase_did_with_evidence(&d, Timestamp::new(0, 0))
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("erasure timestamp must be greater than 0")
+        );
+    }
+
+    #[test]
+    fn erase_did_write_path_does_not_fabricate_runtime_time() {
+        let source = include_str!("store.rs");
+        let erasure_section = source
+            .split("// Write — erasure")
+            .nth(1)
+            .and_then(|section| section.split("// Read — OTP challenges").next())
+            .unwrap();
+
+        assert!(!erasure_section.contains("now_ms()"));
     }
 
     #[test]
@@ -1245,7 +1284,9 @@ mod tests {
         assert!(!store.get_fingerprints(&d).unwrap().is_empty());
         assert!(!store.get_behavioral_samples(&d).unwrap().is_empty());
 
-        store.erase_did_with_evidence(&d).unwrap();
+        store
+            .erase_did_with_evidence(&d, Timestamp::new(9_000, 0))
+            .unwrap();
 
         assert!(store.get_fingerprints(&d).unwrap().is_empty());
         assert!(store.get_behavioral_samples(&d).unwrap().is_empty());
@@ -1259,7 +1300,9 @@ mod tests {
         store.save_claim("dag-001", &c).unwrap();
 
         let claim_node = store.dag_nodes()[0].clone();
-        store.erase_did_with_evidence(&d).unwrap();
+        store
+            .erase_did_with_evidence(&d, Timestamp::new(10_000, 0))
+            .unwrap();
         assert_eq!(store.dag_nodes().len(), 2);
         assert_eq!(store.dag_nodes()[0], claim_node);
         assert_eq!(store.dag_nodes()[1].parents, vec![claim_node.hash]);

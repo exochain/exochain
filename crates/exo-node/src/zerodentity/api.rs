@@ -828,6 +828,11 @@ pub struct ErasureResponse {
     pub message: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ErasureRequest {
+    pub erased_ms: Option<u64>,
+}
+
 /// Delete all 0dentity data for a DID.
 ///
 /// Implements the right to erasure (§11.4):
@@ -848,6 +853,14 @@ pub async fn delete_identity(
 
     let request_path = path_and_query(&uri);
     let _token = verify_signed_write(&state, &headers, &did, "DELETE", &request_path, &body)?;
+    let req: ErasureRequest = serde_json::from_slice(&body)
+        .map_err(|_| json_error(StatusCode::BAD_REQUEST, "Invalid JSON body"))?;
+    let erased_ms = req
+        .erased_ms
+        .ok_or_else(|| bad_request("erased_ms is required"))?;
+    if erased_ms == 0 {
+        return Err(bad_request("erased_ms must be greater than 0"));
+    }
 
     let erasure_evidence = {
         let mut store = state.store.lock().map_err(|_| {
@@ -856,12 +869,14 @@ pub async fn delete_identity(
                 Json(serde_json::json!({"error": "lock poisoned"})),
             )
         })?;
-        store.erase_did_with_evidence(&did).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("Erasure failed: {e}")})),
-            )
-        })?
+        store
+            .erase_did_with_evidence(&did, Timestamp::new(erased_ms, 0))
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("Erasure failed: {e}")})),
+                )
+            })?
     };
 
     let receipt_hash = hex::encode(erasure_evidence.receipt_hash.as_bytes());
@@ -981,6 +996,18 @@ mod tests {
             .unwrap();
 
         assert!(!score_section.contains("now_ms()"));
+    }
+
+    #[test]
+    fn erasure_write_path_does_not_fabricate_runtime_time() {
+        let source = include_str!("api.rs");
+        let erasure_section = source
+            .split("// DELETE /api/v1/0dentity/:did")
+            .nth(1)
+            .and_then(|section| section.split("// ---------------------------------------------------------------------------\n// Router").next())
+            .unwrap();
+
+        assert!(!erasure_section.contains("now_ms()"));
     }
 
     fn test_keypair(seed: u8) -> KeyPair {
@@ -1114,19 +1141,21 @@ mod tests {
         uri: &str,
         token: &str,
         nonce: &str,
+        body: serde_json::Value,
         keypair: &KeyPair,
     ) -> axum::response::Response {
-        let body = Vec::new();
+        let body = serde_json::to_vec(&body).unwrap();
         let (nonce, signature) =
             request_signature_headers("DELETE", uri, token, nonce, &body, keypair);
         app.oneshot(
             Request::builder()
                 .method("DELETE")
                 .uri(uri)
+                .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {token}"))
                 .header("x-exo-nonce", nonce)
                 .header("x-exo-sig", signature)
-                .body(Body::empty())
+                .body(Body::from(body))
                 .unwrap(),
         )
         .await
@@ -1541,6 +1570,7 @@ mod tests {
             "/api/v1/0dentity/did%3Aexo%3Aalice",
             "tok-alice",
             "nonce-api-delete-1",
+            serde_json::json!({ "erased_ms": 7_777_000 }),
             &keypair,
         )
         .await;
@@ -1559,12 +1589,61 @@ mod tests {
             result["receipt_hash"].as_str().unwrap(),
             hex::encode(receipt.receipt_hash.as_bytes())
         );
+        assert_eq!(receipt.timestamp.physical_ms, 7_777_000);
+        let nodes = guard.dag_nodes();
+        let erasure_node = nodes.last().expect("erasure dag node");
+        assert_eq!(erasure_node.timestamp.physical_ms, 7_777_000);
         assert!(receipt.verify_hash());
         assert!(
             result["message"]
                 .as_str()
                 .unwrap()
                 .contains("Identity erased")
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_identity_requires_erasure_timestamp() {
+        let keypair = test_keypair(44);
+        let state =
+            make_state_with_signed_session_and_claim("tok-alice", "did:exo:alice", &keypair);
+        let app = zerodentity_api_router(state);
+        let resp = signed_delete(
+            app,
+            "/api/v1/0dentity/did%3Aexo%3Aalice",
+            "tok-alice",
+            "nonce-api-delete-missing-time",
+            serde_json::json!({}),
+            &keypair,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result["error"].as_str().unwrap(), "erased_ms is required");
+    }
+
+    #[tokio::test]
+    async fn delete_identity_rejects_zero_erasure_timestamp() {
+        let keypair = test_keypair(45);
+        let state =
+            make_state_with_signed_session_and_claim("tok-alice", "did:exo:alice", &keypair);
+        let app = zerodentity_api_router(state);
+        let resp = signed_delete(
+            app,
+            "/api/v1/0dentity/did%3Aexo%3Aalice",
+            "tok-alice",
+            "nonce-api-delete-zero-time",
+            serde_json::json!({ "erased_ms": 0 }),
+            &keypair,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            result["error"].as_str().unwrap(),
+            "erased_ms must be greater than 0"
         );
     }
 
