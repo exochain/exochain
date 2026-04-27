@@ -37,7 +37,9 @@ use super::{
     device_behavioral_axes_enabled,
     session_auth::{public_key_from_session_bytes, request_signing_payload, signature_from_hex},
     store::ZerodentityStore,
-    types::{AttestationType, IdentityClaim, ZerodentityScore},
+    types::{
+        AttestationType, BehavioralSample, DeviceFingerprint, IdentityClaim, ZerodentityScore,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -60,6 +62,11 @@ pub struct ClaimsQuery {
     pub claim_type: Option<String>,
     pub limit: Option<u64>,
     pub offset: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScoreQuery {
+    pub as_of_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -375,8 +382,34 @@ fn axes_from_score(s: &ZerodentityScore) -> AxesResponse {
     }
 }
 
-fn now_ms() -> u64 {
-    exo_core::hlc::HybridClock::new().now().physical_ms
+fn score_as_of_ms(
+    claims: &[IdentityClaim],
+    fingerprints: &[DeviceFingerprint],
+    behavioral: &[BehavioralSample],
+    requested_as_of_ms: Option<u64>,
+) -> Result<u64, (StatusCode, Json<serde_json::Value>)> {
+    if let Some(as_of_ms) = requested_as_of_ms {
+        if as_of_ms == 0 {
+            return Err(bad_request("as_of_ms must be greater than 0"));
+        }
+        return Ok(as_of_ms);
+    }
+
+    let mut horizon_ms = 0u64;
+    for claim in claims {
+        horizon_ms = horizon_ms.max(claim.created_ms);
+        if let Some(verified_ms) = claim.verified_ms {
+            horizon_ms = horizon_ms.max(verified_ms);
+        }
+    }
+    for fingerprint in fingerprints {
+        horizon_ms = horizon_ms.max(fingerprint.captured_ms);
+    }
+    for sample in behavioral {
+        horizon_ms = horizon_ms.max(sample.captured_ms);
+    }
+
+    Ok(horizon_ms)
 }
 
 // ---------------------------------------------------------------------------
@@ -387,9 +420,9 @@ fn now_ms() -> u64 {
 pub async fn get_score(
     State(state): State<ApiState>,
     Path(did_str): Path<String>,
+    Query(params): Query<ScoreQuery>,
 ) -> Result<Json<ScoreResponse>, (StatusCode, Json<serde_json::Value>)> {
     let did = parse_did(&did_str)?;
-    let now = now_ms();
 
     let store = state.store.lock().map_err(|_| {
         (
@@ -410,8 +443,9 @@ pub async fn get_score(
     let claims: Vec<IdentityClaim> = claims_raw.into_iter().map(|(_, c)| c).collect();
     let fingerprints = store.get_fingerprints(&did).unwrap_or_default();
     let behavioral = store.get_behavioral_samples(&did).unwrap_or_default();
+    let as_of_ms = score_as_of_ms(&claims, &fingerprints, &behavioral, params.as_of_ms)?;
 
-    let score = ZerodentityScore::compute(&did, &claims, &fingerprints, &behavioral, now);
+    let score = ZerodentityScore::compute(&did, &claims, &fingerprints, &behavioral, as_of_ms);
 
     let history = store
         .get_score_history(&did, None, None)
@@ -935,6 +969,18 @@ mod tests {
             .unwrap();
 
         assert!(!attestation_section.contains("now_ms()"));
+    }
+
+    #[test]
+    fn score_read_path_does_not_fabricate_runtime_time() {
+        let source = include_str!("api.rs");
+        let score_section = source
+            .split("// GET /api/v1/0dentity/:did/score\n// ---------------------------------------------------------------------------")
+            .nth(1)
+            .and_then(|section| section.split("// ---------------------------------------------------------------------------").next())
+            .unwrap();
+
+        assert!(!score_section.contains("now_ms()"));
     }
 
     fn test_keypair(seed: u8) -> KeyPair {

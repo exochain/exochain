@@ -1054,6 +1054,85 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_score_without_as_of_uses_latest_evidence_timestamp() {
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let did = td("api-score-evidence-time");
+
+        {
+            let mut s = store.lock().unwrap();
+            s.insert_claim(
+                "e1",
+                &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
+            )
+            .unwrap();
+            s.insert_claim(
+                "p1",
+                &make_claim(&did, ClaimType::Phone, ClaimStatus::Verified, 2_000),
+            )
+            .unwrap();
+        }
+
+        let resp = get_req(&app, &format!("/api/v1/0dentity/{}/score", did.as_str())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        assert_eq!(body["computed_ms"].as_u64().unwrap(), 2_500);
+    }
+
+    #[tokio::test]
+    async fn get_score_with_as_of_uses_caller_supplied_timestamp() {
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let did = td("api-score-explicit-time");
+
+        store
+            .lock()
+            .unwrap()
+            .insert_claim(
+                "c1",
+                &make_claim(&did, ClaimType::DisplayName, ClaimStatus::Verified, 1_000),
+            )
+            .unwrap();
+
+        let resp = get_req(
+            &app,
+            &format!("/api/v1/0dentity/{}/score?as_of_ms=123456", did.as_str()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        assert_eq!(body["computed_ms"].as_u64().unwrap(), 123_456);
+    }
+
+    #[tokio::test]
+    async fn get_score_rejects_zero_as_of_timestamp() {
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let did = td("api-score-zero-time");
+
+        store
+            .lock()
+            .unwrap()
+            .insert_claim(
+                "c1",
+                &make_claim(&did, ClaimType::DisplayName, ClaimStatus::Verified, 1_000),
+            )
+            .unwrap();
+
+        let resp = get_req(
+            &app,
+            &format!("/api/v1/0dentity/{}/score?as_of_ms=0", did.as_str()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = body_json(resp).await;
+        assert_eq!(
+            body["error"].as_str().unwrap(),
+            "as_of_ms must be greater than 0"
+        );
+    }
+
+    #[tokio::test]
     async fn get_score_includes_dag_state_hash_hex() {
         let store = new_shared_store();
         let app = api_app(store.clone());
