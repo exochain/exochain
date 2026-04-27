@@ -20,6 +20,18 @@ pub struct DelegationScope {
     pub description: String,
 }
 
+impl DelegationScope {
+    /// Check whether this scope is a non-empty subset of `parent`.
+    #[must_use]
+    pub fn is_subset_of(&self, parent: &Self) -> bool {
+        !self.decision_classes.is_empty()
+            && self
+                .decision_classes
+                .iter()
+                .all(|class| parent.decision_classes.contains(class))
+    }
+}
+
 /// A single delegated authority record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DelegatedAuthority {
@@ -35,6 +47,46 @@ pub struct DelegatedAuthority {
 }
 
 impl DelegatedAuthority {
+    /// Validate delegation metadata before it can enter an authority matrix.
+    pub fn validate(&self) -> Result<()> {
+        if self.id.trim().is_empty() {
+            return Err(ForumError::AuthorityInvalid {
+                reason: "delegation id must not be empty".into(),
+            });
+        }
+        if self.delegator.as_str().trim().is_empty() {
+            return Err(ForumError::AuthorityInvalid {
+                reason: "delegator DID must not be empty".into(),
+            });
+        }
+        if self.delegate.as_str().trim().is_empty() {
+            return Err(ForumError::AuthorityInvalid {
+                reason: "delegate DID must not be empty".into(),
+            });
+        }
+        if self.scope.decision_classes.is_empty() {
+            return Err(ForumError::AuthorityInvalid {
+                reason: "delegation scope must include at least one decision class".into(),
+            });
+        }
+        if self.scope.description.trim().is_empty() {
+            return Err(ForumError::AuthorityInvalid {
+                reason: "delegation scope description must not be empty".into(),
+            });
+        }
+        if self.signature_hash == Hash256::ZERO {
+            return Err(ForumError::AuthorityInvalid {
+                reason: "delegation signature hash must not be zero".into(),
+            });
+        }
+        if self.expires_at <= self.granted_at {
+            return Err(ForumError::AuthorityInvalid {
+                reason: "delegation expiry must be after grant timestamp".into(),
+            });
+        }
+        Ok(())
+    }
+
     /// Check whether this delegation is currently active at the given time.
     #[must_use]
     pub fn is_active(&self, now: &Timestamp) -> bool {
@@ -79,12 +131,25 @@ impl AuthorityMatrix {
 
     /// Grant a new delegation.
     pub fn grant(&mut self, delegation: DelegatedAuthority) -> Result<()> {
+        delegation.validate()?;
+        if self.contains_delegation_id(&delegation.id) {
+            return Err(ForumError::AuthorityInvalid {
+                reason: format!("delegation {} already exists", delegation.id),
+            });
+        }
+
         let key = delegation.delegate.as_str().to_owned();
         let entries = self.delegations.get(&key).cloned().unwrap_or_default();
         let mut entries = entries;
         entries.push(delegation);
         self.delegations.insert(key, entries);
         Ok(())
+    }
+
+    fn contains_delegation_id(&self, delegation_id: &str) -> bool {
+        self.delegations
+            .iter()
+            .any(|(_, entries)| entries.iter().any(|entry| entry.id == delegation_id))
     }
 
     /// Revoke a delegation by ID for a specific delegate DID.
@@ -183,6 +248,8 @@ impl AuthorityMatrix {
         new_delegation: DelegatedAuthority,
         now: &Timestamp,
     ) -> Result<()> {
+        new_delegation.validate()?;
+
         let key = parent_delegate.as_str().to_owned();
         let parent = self
             .delegations
@@ -199,13 +266,28 @@ impl AuthorityMatrix {
             return Err(ForumError::SubDelegationNotPermitted);
         }
 
-        // Sub-delegation scope must be a subset of parent scope
-        for class in &new_delegation.scope.decision_classes {
-            if !parent.covers_class(*class) {
-                return Err(ForumError::DelegationScopeExceeded {
-                    reason: format!("{class:?} not in parent scope"),
-                });
-            }
+        if new_delegation.delegator != *parent_delegate {
+            return Err(ForumError::AuthorityInvalid {
+                reason: format!(
+                    "child delegator {} must match parent delegate {parent_delegate}",
+                    new_delegation.delegator
+                ),
+            });
+        }
+        if new_delegation.granted_at < parent.granted_at {
+            return Err(ForumError::AuthorityInvalid {
+                reason: "child grant timestamp must not precede parent grant timestamp".into(),
+            });
+        }
+        if new_delegation.expires_at > parent.expires_at {
+            return Err(ForumError::AuthorityInvalid {
+                reason: "child expiry must not exceed parent expiry".into(),
+            });
+        }
+        if !new_delegation.scope.is_subset_of(&parent.scope) {
+            return Err(ForumError::DelegationScopeExceeded {
+                reason: "child scope must be a non-empty subset of parent scope".into(),
+            });
         }
 
         self.grant(new_delegation)
@@ -231,8 +313,14 @@ mod tests {
     fn future() -> Timestamp {
         Timestamp::new(1_100_000_000, 0)
     } // ~1.16 days from now
+    fn further_future() -> Timestamp {
+        Timestamp::new(1_200_000_000, 0)
+    }
     fn past() -> Timestamp {
         Timestamp::new(500_000_000, 0)
+    }
+    fn earlier_past() -> Timestamp {
+        Timestamp::new(400_000_000, 0)
     }
 
     fn make_delegation(id: &str, delegator: &str, delegate: &str, sub: bool) -> DelegatedAuthority {
@@ -290,6 +378,7 @@ mod tests {
     fn purge_expired() {
         let mut m = AuthorityMatrix::new();
         let mut d = make_delegation("d1", "root", "alice", false);
+        d.granted_at = earlier_past();
         d.expires_at = past();
         m.grant(d).expect("ok");
         m.grant(make_delegation("d2", "root", "alice", false))
@@ -346,6 +435,142 @@ mod tests {
             .sub_delegate(&did("alice"), "d1", sub, &now())
             .unwrap_err();
         assert!(matches!(err, ForumError::DelegationScopeExceeded { .. }));
+    }
+
+    #[test]
+    fn delegation_scope_subset_requires_non_empty_child_and_parent_coverage() {
+        let parent = DelegationScope {
+            decision_classes: vec![DecisionClass::Routine, DecisionClass::Operational],
+            description: "parent scope".into(),
+        };
+        let child = DelegationScope {
+            decision_classes: vec![DecisionClass::Routine],
+            description: "child scope".into(),
+        };
+        let wider_child = DelegationScope {
+            decision_classes: vec![DecisionClass::Strategic],
+            description: "wider child".into(),
+        };
+        let empty_child = DelegationScope {
+            decision_classes: Vec::new(),
+            description: "empty child".into(),
+        };
+
+        assert!(child.is_subset_of(&parent));
+        assert!(!wider_child.is_subset_of(&parent));
+        assert!(!empty_child.is_subset_of(&parent));
+    }
+
+    #[test]
+    fn grant_rejects_duplicate_delegation_id_across_matrix() {
+        let mut m = AuthorityMatrix::new();
+        m.grant(make_delegation("d1", "root", "alice", false))
+            .expect("ok");
+        let err = m
+            .grant(make_delegation("d1", "root", "bob", false))
+            .unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("bob"), DecisionClass::Routine, &now()));
+    }
+
+    #[test]
+    fn grant_rejects_empty_delegation_id() {
+        let mut m = AuthorityMatrix::new();
+        let err = m
+            .grant(make_delegation("", "root", "alice", false))
+            .unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
+    }
+
+    #[test]
+    fn grant_rejects_empty_scope_classes() {
+        let mut m = AuthorityMatrix::new();
+        let mut d = make_delegation("d1", "root", "alice", false);
+        d.scope.decision_classes = Vec::new();
+        let err = m.grant(d).unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
+    }
+
+    #[test]
+    fn grant_rejects_empty_scope_description() {
+        let mut m = AuthorityMatrix::new();
+        let mut d = make_delegation("d1", "root", "alice", false);
+        d.scope.description.clear();
+        let err = m.grant(d).unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
+    }
+
+    #[test]
+    fn grant_rejects_zero_signature_hash() {
+        let mut m = AuthorityMatrix::new();
+        let mut d = make_delegation("d1", "root", "alice", false);
+        d.signature_hash = Hash256::ZERO;
+        let err = m.grant(d).unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
+    }
+
+    #[test]
+    fn grant_rejects_non_forward_time_bounds() {
+        let mut m = AuthorityMatrix::new();
+        let mut d = make_delegation("d1", "root", "alice", false);
+        d.expires_at = d.granted_at;
+        let err = m.grant(d).unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
+    }
+
+    #[test]
+    fn sub_delegation_rejects_child_delegator_mismatch() {
+        let mut m = AuthorityMatrix::new();
+        m.grant(make_delegation("d1", "root", "alice", true))
+            .expect("ok");
+        let sub = make_delegation("d2", "mallory", "bob", false);
+        let err = m
+            .sub_delegate(&did("alice"), "d1", sub, &now())
+            .unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("bob"), DecisionClass::Routine, &now()));
+    }
+
+    #[test]
+    fn sub_delegation_rejects_child_grant_before_parent_grant() {
+        let mut m = AuthorityMatrix::new();
+        m.grant(make_delegation("d1", "root", "alice", true))
+            .expect("ok");
+        let mut sub = make_delegation("d2", "alice", "bob", false);
+        sub.granted_at = earlier_past();
+        let err = m
+            .sub_delegate(&did("alice"), "d1", sub, &now())
+            .unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("bob"), DecisionClass::Routine, &now()));
+    }
+
+    #[test]
+    fn sub_delegation_rejects_child_expiry_after_parent_expiry() {
+        let mut m = AuthorityMatrix::new();
+        m.grant(make_delegation("d1", "root", "alice", true))
+            .expect("ok");
+        let mut sub = make_delegation("d2", "alice", "bob", false);
+        sub.expires_at = further_future();
+        let err = m
+            .sub_delegate(&did("alice"), "d1", sub, &now())
+            .unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("bob"), DecisionClass::Routine, &now()));
     }
 
     #[test]

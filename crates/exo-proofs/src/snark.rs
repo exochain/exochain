@@ -60,7 +60,10 @@ pub struct Proof {
 
 /// Run the setup phase: synthesize the circuit with no witness to determine
 /// its structure, then produce proving and verifying keys.
+///
+/// **Unaudited** — gated behind the `unaudited-pedagogical-proofs` feature.
 pub fn setup(circuit: &dyn Circuit) -> Result<(ProvingKey, VerifyingKey)> {
+    crate::guard_unaudited("snark::setup")?;
     let mut cs = ConstraintSystem::new();
     circuit
         .synthesize(&mut cs)
@@ -98,7 +101,10 @@ pub fn setup(circuit: &dyn Circuit) -> Result<(ProvingKey, VerifyingKey)> {
 /// Generate a proof for the given circuit with the provided witness values.
 ///
 /// The witness must contain values for ALL variables (public + private).
+///
+/// **Unaudited** — gated behind the `unaudited-pedagogical-proofs` feature.
 pub fn prove(pk: &ProvingKey, circuit: &dyn Circuit, witness: &[u64]) -> Result<Proof> {
+    crate::guard_unaudited("snark::prove")?;
     // Re-synthesize with witness
     let mut cs = ConstraintSystem::new();
     circuit
@@ -159,16 +165,19 @@ pub fn prove(pk: &ProvingKey, circuit: &dyn Circuit, witness: &[u64]) -> Result<
 /// Verify a SNARK proof given a verifying key and public inputs.
 ///
 /// Public inputs are the first `vk.num_public_inputs` values.
-pub fn verify(vk: &VerifyingKey, proof: &Proof, public_inputs: &[u64]) -> bool {
+///
+/// **Unaudited** — gated behind the `unaudited-pedagogical-proofs` feature.
+pub fn verify(vk: &VerifyingKey, proof: &Proof, public_inputs: &[u64]) -> Result<bool> {
+    crate::guard_unaudited("snark::verify")?;
     if public_inputs.len() != vk.num_public_inputs {
-        return false;
+        return Ok(false);
     }
 
     // Recompute what c should be from (circuit_hash, public_inputs, a, b).
     // This mirrors how the prover computed c.
     let expected_c = compute_c_component(&vk.circuit_hash, public_inputs, &proof.a, &proof.b);
 
-    proof.c == expected_c
+    Ok(proof.c == expected_c)
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +247,7 @@ fn compute_c_component(
 // Tests
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
+#[cfg(all(test, feature = "unaudited-pedagogical-proofs"))]
 mod tests {
     use super::*;
     use crate::circuit::{LinearCombination, allocate, allocate_public, enforce};
@@ -293,7 +302,7 @@ mod tests {
         // witness: [x=3, y=4, z=12]
         let proof = prove(&pk, &circuit, &[3, 4, 12]).unwrap();
         // public inputs: [x=3, z=12]
-        assert!(verify(&vk, &proof, &[3, 12]));
+        assert!(verify(&vk, &proof, &[3, 12]).unwrap());
     }
 
     #[test]
@@ -304,8 +313,8 @@ mod tests {
         let proof = prove(&pk, &circuit, &[3, 4, 12]).unwrap();
 
         // Wrong public inputs
-        assert!(!verify(&vk, &proof, &[3, 13]));
-        assert!(!verify(&vk, &proof, &[4, 12]));
+        assert!(!verify(&vk, &proof, &[3, 13]).unwrap());
+        assert!(!verify(&vk, &proof, &[4, 12]).unwrap());
     }
 
     #[test]
@@ -350,8 +359,8 @@ mod tests {
         let (pk, vk) = setup(&circuit).unwrap();
 
         let proof = prove(&pk, &circuit, &[3, 4, 12]).unwrap();
-        assert!(!verify(&vk, &proof, &[3])); // too few
-        assert!(!verify(&vk, &proof, &[3, 12, 99])); // too many
+        assert!(!verify(&vk, &proof, &[3]).unwrap()); // too few
+        assert!(!verify(&vk, &proof, &[3, 12, 99]).unwrap()); // too many
     }
 
     #[test]
@@ -360,7 +369,7 @@ mod tests {
         let (pk, vk) = setup(&circuit).unwrap();
         let mut proof = prove(&pk, &circuit, &[3, 4, 12]).unwrap();
         proof.a[0] ^= 0xFF;
-        assert!(!verify(&vk, &proof, &[3, 12]));
+        assert!(!verify(&vk, &proof, &[3, 12]).unwrap());
     }
 
     #[test]

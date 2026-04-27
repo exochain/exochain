@@ -48,29 +48,46 @@ pub struct AccountabilityAction {
 pub const SUSPENSION_ENACT_LIMIT_MS: u64 = 60_000; // 60 seconds
 pub const DUE_PROCESS_WINDOW_MS: u64 = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+/// Caller-supplied metadata for proposing an accountability action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountabilityInput {
+    pub id: Uuid,
+    pub action_type: AccountabilityActionType,
+    pub target: Did,
+    pub proposer: Did,
+    pub reason: String,
+    pub evidence_hash: Hash256,
+    pub proposed_at: Timestamp,
+}
+
 /// Propose an accountability action.
-pub fn propose(
-    action_type: AccountabilityActionType,
-    target: &Did,
-    proposer: &Did,
-    reason: &str,
-    evidence_hash: Hash256,
-    timestamp: Timestamp,
-) -> AccountabilityAction {
-    let due_process_deadline_ms = timestamp.physical_ms.saturating_add(DUE_PROCESS_WINDOW_MS);
-    AccountabilityAction {
-        id: Uuid::new_v4(),
-        action_type,
-        target_did: target.clone(),
-        proposer_did: proposer.clone(),
-        reason: reason.to_owned(),
-        evidence_hash,
+pub fn propose(input: AccountabilityInput) -> Result<AccountabilityAction> {
+    validate_uuid(input.id, "accountability action id")?;
+    validate_timestamp(input.proposed_at, "accountability proposed_at")?;
+    validate_hash(input.evidence_hash, "accountability evidence hash")?;
+    if input.reason.trim().is_empty() {
+        return Err(ForumError::InvalidProvenance {
+            reason: "accountability reason must be non-empty".into(),
+        });
+    }
+
+    let due_process_deadline_ms = input
+        .proposed_at
+        .physical_ms
+        .saturating_add(DUE_PROCESS_WINDOW_MS);
+    Ok(AccountabilityAction {
+        id: input.id,
+        action_type: input.action_type,
+        target_did: input.target,
+        proposer_did: input.proposer,
+        reason: input.reason,
+        evidence_hash: input.evidence_hash,
         status: AccountabilityStatus::Proposed,
         decision_id: None,
-        proposed_at: timestamp,
+        proposed_at: input.proposed_at,
         enacted_at: None,
         due_process_deadline: Timestamp::new(due_process_deadline_ms, 0),
-    }
+    })
 }
 
 /// Move an action into due-process status.
@@ -137,6 +154,33 @@ pub fn is_due_process_expired(action: &AccountabilityAction, now: &Timestamp) ->
     action.status == AccountabilityStatus::DueProcess && *now > action.due_process_deadline
 }
 
+fn validate_uuid(id: Uuid, label: &str) -> Result<()> {
+    if id.is_nil() {
+        return Err(ForumError::InvalidProvenance {
+            reason: format!("{label} must not be nil"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_timestamp(timestamp: Timestamp, label: &str) -> Result<()> {
+    if timestamp == Timestamp::ZERO {
+        return Err(ForumError::InvalidProvenance {
+            reason: format!("{label} must be non-zero HLC"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_hash(hash: Hash256, label: &str) -> Result<()> {
+    if hash == Hash256::ZERO {
+        return Err(ForumError::InvalidProvenance {
+            reason: format!("{label} must be non-zero"),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,44 +192,71 @@ mod tests {
         Timestamp::new(1_000_000, 0)
     }
 
+    fn action_input(id: Uuid, action_type: AccountabilityActionType) -> AccountabilityInput {
+        AccountabilityInput {
+            id,
+            action_type,
+            target: did("target"),
+            proposer: did("proposer"),
+            reason: "misconduct".into(),
+            evidence_hash: Hash256::digest(b"evidence"),
+            proposed_at: ts(),
+        }
+    }
+
+    fn make_action(action_type: AccountabilityActionType) -> AccountabilityAction {
+        propose(action_input(Uuid::from_u128(21), action_type)).expect("valid action")
+    }
+
+    #[test]
+    fn propose_requires_caller_supplied_identity_and_hlc() {
+        let action = propose(action_input(
+            Uuid::from_u128(22),
+            AccountabilityActionType::Censure,
+        ))
+        .expect("valid");
+        assert_eq!(action.id, Uuid::from_u128(22));
+        assert_eq!(action.proposed_at, ts());
+
+        let nil =
+            propose(action_input(Uuid::nil(), AccountabilityActionType::Censure)).unwrap_err();
+        assert!(matches!(nil, ForumError::InvalidProvenance { .. }));
+
+        let zero_time = propose(AccountabilityInput {
+            proposed_at: Timestamp::ZERO,
+            ..action_input(Uuid::from_u128(23), AccountabilityActionType::Censure)
+        })
+        .unwrap_err();
+        assert!(matches!(zero_time, ForumError::InvalidProvenance { .. }));
+
+        let zero_evidence = propose(AccountabilityInput {
+            evidence_hash: Hash256::ZERO,
+            ..action_input(Uuid::from_u128(24), AccountabilityActionType::Censure)
+        })
+        .unwrap_err();
+        assert!(matches!(
+            zero_evidence,
+            ForumError::InvalidProvenance { .. }
+        ));
+    }
+
     #[test]
     fn propose_censure() {
-        let a = propose(
-            AccountabilityActionType::Censure,
-            &did("target"),
-            &did("proposer"),
-            "misconduct",
-            Hash256::digest(b"evidence"),
-            ts(),
-        );
+        let a = make_action(AccountabilityActionType::Censure);
         assert_eq!(a.status, AccountabilityStatus::Proposed);
         assert_eq!(a.action_type, AccountabilityActionType::Censure);
     }
 
     #[test]
     fn due_process_flow() {
-        let mut a = propose(
-            AccountabilityActionType::Recall,
-            &did("target"),
-            &did("proposer"),
-            "reason",
-            Hash256::ZERO,
-            ts(),
-        );
+        let mut a = make_action(AccountabilityActionType::Recall);
         begin_due_process(&mut a).expect("ok");
         assert_eq!(a.status, AccountabilityStatus::DueProcess);
     }
 
     #[test]
     fn enact_after_due_process() {
-        let mut a = propose(
-            AccountabilityActionType::Revocation,
-            &did("target"),
-            &did("proposer"),
-            "reason",
-            Hash256::ZERO,
-            ts(),
-        );
+        let mut a = make_action(AccountabilityActionType::Revocation);
         begin_due_process(&mut a).expect("ok");
         let enact_ts = Timestamp::new(ts().physical_ms + 1000, 0);
         enact(&mut a, Uuid::new_v4(), enact_ts).expect("ok");
@@ -195,14 +266,7 @@ mod tests {
 
     #[test]
     fn suspension_must_be_immediate() {
-        let mut a = propose(
-            AccountabilityActionType::Suspension,
-            &did("target"),
-            &did("proposer"),
-            "urgent",
-            Hash256::ZERO,
-            ts(),
-        );
+        let mut a = make_action(AccountabilityActionType::Suspension);
         // Enact within 60s — should work
         let fast_ts = Timestamp::new(ts().physical_ms + 30_000, 0);
         enact(&mut a, Uuid::new_v4(), fast_ts).expect("ok");
@@ -210,14 +274,7 @@ mod tests {
 
     #[test]
     fn suspension_too_slow_fails() {
-        let mut a = propose(
-            AccountabilityActionType::Suspension,
-            &did("target"),
-            &did("proposer"),
-            "urgent",
-            Hash256::ZERO,
-            ts(),
-        );
+        let mut a = make_action(AccountabilityActionType::Suspension);
         let slow_ts = Timestamp::new(ts().physical_ms + 120_000, 0);
         let err = enact(&mut a, Uuid::new_v4(), slow_ts).unwrap_err();
         assert!(err.to_string().contains("60s"));
@@ -225,14 +282,7 @@ mod tests {
 
     #[test]
     fn reverse_enacted() {
-        let mut a = propose(
-            AccountabilityActionType::Censure,
-            &did("target"),
-            &did("proposer"),
-            "reason",
-            Hash256::ZERO,
-            ts(),
-        );
+        let mut a = make_action(AccountabilityActionType::Censure);
         let enact_ts = Timestamp::new(ts().physical_ms + 100, 0);
         enact(&mut a, Uuid::new_v4(), enact_ts).expect("ok");
         reverse(&mut a).expect("ok");
@@ -241,27 +291,13 @@ mod tests {
 
     #[test]
     fn reverse_not_enacted_fails() {
-        let mut a = propose(
-            AccountabilityActionType::Censure,
-            &did("target"),
-            &did("proposer"),
-            "reason",
-            Hash256::ZERO,
-            ts(),
-        );
+        let mut a = make_action(AccountabilityActionType::Censure);
         assert!(reverse(&mut a).is_err());
     }
 
     #[test]
     fn due_process_expiry() {
-        let mut a = propose(
-            AccountabilityActionType::Recall,
-            &did("target"),
-            &did("proposer"),
-            "reason",
-            Hash256::ZERO,
-            ts(),
-        );
+        let mut a = make_action(AccountabilityActionType::Recall);
         begin_due_process(&mut a).expect("ok");
         let before = Timestamp::new(a.due_process_deadline.physical_ms - 1000, 0);
         assert!(!is_due_process_expired(&a, &before));
@@ -271,14 +307,7 @@ mod tests {
 
     #[test]
     fn double_due_process_fails() {
-        let mut a = propose(
-            AccountabilityActionType::Censure,
-            &did("target"),
-            &did("proposer"),
-            "reason",
-            Hash256::ZERO,
-            ts(),
-        );
+        let mut a = make_action(AccountabilityActionType::Censure);
         begin_due_process(&mut a).expect("ok");
         assert!(begin_due_process(&mut a).is_err());
     }

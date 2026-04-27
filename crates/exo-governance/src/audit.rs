@@ -95,23 +95,37 @@ pub fn verify_chain(log: &AuditLog) -> Result<(), GovernanceError> {
 }
 
 /// Create a new audit entry chained to the current log head, ready for appending.
-#[must_use]
 pub fn create_entry(
     log: &AuditLog,
+    id: Uuid,
+    timestamp: Timestamp,
     actor: Did,
     action: String,
     result: String,
     evidence_hash: [u8; 32],
-) -> AuditEntry {
-    AuditEntry {
-        id: Uuid::new_v4(),
-        timestamp: Timestamp::now_utc(),
+) -> Result<AuditEntry, GovernanceError> {
+    if id.is_nil() {
+        return Err(GovernanceError::InvalidGovernanceMetadata {
+            field: "audit_entry.id".into(),
+            reason: "must be caller-supplied and non-nil".into(),
+        });
+    }
+    if timestamp == Timestamp::ZERO {
+        return Err(GovernanceError::InvalidGovernanceMetadata {
+            field: "audit_entry.timestamp".into(),
+            reason: "must be caller-supplied and non-zero".into(),
+        });
+    }
+
+    Ok(AuditEntry {
+        id,
+        timestamp,
         actor,
         action,
         result,
         evidence_hash,
         chain_hash: log.head_hash(),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -121,8 +135,51 @@ mod tests {
         Did::new(&format!("did:exo:{n}")).expect("ok")
     }
 
+    fn entry_id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
+    fn ts(ms: u64) -> Timestamp {
+        Timestamp::new(ms, 0)
+    }
+
+    fn create_entry_source() -> &'static str {
+        let source = include_str!("audit.rs");
+        let start = source
+            .find("pub fn create_entry(")
+            .expect("create_entry source must exist");
+        let end = source[start..]
+            .find("#[cfg(test)]")
+            .expect("tests marker must exist");
+        &source[start..start + end]
+    }
+
+    #[test]
+    fn create_entry_has_no_internal_entropy_or_wall_clock() {
+        let source = create_entry_source();
+        assert!(
+            !source.contains("Uuid::new_v4"),
+            "governance audit entries must not fabricate UUIDs internally"
+        );
+        assert!(
+            !source.contains("Timestamp::now_utc"),
+            "governance audit entries must not read wall-clock time internally"
+        );
+    }
+
     fn make_and_append(log: &mut AuditLog, act: &str) {
-        let e = create_entry(log, did("auditor"), act.into(), "ok".into(), [0u8; 32]);
+        let offset = u128::try_from(log.len()).expect("log length fits u128");
+        let timestamp_offset = u64::try_from(log.len()).expect("log length fits u64");
+        let e = create_entry(
+            log,
+            entry_id(0xA000 + offset),
+            ts(10_000 + timestamp_offset),
+            did("auditor"),
+            act.into(),
+            "ok".into(),
+            [0u8; 32],
+        )
+        .expect("deterministic audit entry");
         append(log, e).expect("append failed");
     }
 
@@ -163,8 +220,8 @@ mod tests {
         let mut log = AuditLog::new();
         make_and_append(&mut log, "a1");
         let bad = AuditEntry {
-            id: Uuid::new_v4(),
-            timestamp: Timestamp::new(2000, 0),
+            id: entry_id(0xB001),
+            timestamp: ts(2000),
             actor: did("x"),
             action: "bad".into(),
             result: "bad".into(),
@@ -193,5 +250,63 @@ mod tests {
             chain_hash: [0u8; 32],
         };
         assert_eq!(hash_entry(&e), hash_entry(&e));
+    }
+
+    #[test]
+    fn create_entry_preserves_caller_supplied_metadata() {
+        let log = AuditLog::new();
+        let id = entry_id(0xC001);
+        let timestamp = ts(20_000);
+        let entry = create_entry(
+            &log,
+            id,
+            timestamp,
+            did("auditor"),
+            "act".into(),
+            "ok".into(),
+            [0u8; 32],
+        )
+        .expect("deterministic audit entry");
+
+        assert_eq!(entry.id, id);
+        assert_eq!(entry.timestamp, timestamp);
+    }
+
+    #[test]
+    fn create_entry_rejects_nil_id() {
+        let err = create_entry(
+            &AuditLog::new(),
+            Uuid::nil(),
+            ts(20_001),
+            did("auditor"),
+            "act".into(),
+            "ok".into(),
+            [0u8; 32],
+        )
+        .expect_err("nil audit entry id must be rejected");
+
+        assert!(matches!(
+            err,
+            GovernanceError::InvalidGovernanceMetadata { .. }
+        ));
+    }
+
+    #[test]
+    fn create_entry_rejects_zero_timestamp() {
+        let err = create_entry(
+            &AuditLog::new(),
+            entry_id(0xC002),
+            Timestamp::ZERO,
+            did("auditor"),
+            "act".into(),
+            "ok".into(),
+            [0u8; 32],
+        )
+        .expect_err("zero audit entry timestamp must be rejected");
+
+        assert!(matches!(
+            err,
+            GovernanceError::InvalidGovernanceMetadata { .. }
+        ));
     }
 }

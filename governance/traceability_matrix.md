@@ -158,9 +158,9 @@ Updated 2026-03-20 after EXOCHAIN-REM-009 — continuous governance monitoring a
 | Legal (§15) | 7 | 7 | 0 | 0 |
 | ZK Proofs (§12.5) | 5 | 5 | 0 | 0 |
 | P2P/API/Gateway/Tenant (§16–17) | 4 | 4 | 0 | 0 |
-| Decision Forum (GOV/TNC/M) | 16 | 16 | 0 | 0 |
+| Decision Forum (GOV/TNC/M) | 15 | 15 | 0 | 0 |
 | Governance Monitoring (MON) | 12 | 9 | 1 | 2 |
-| **TOTAL** | **87** | **84** | **1** | **2** |
+| **TOTAL** | **86** | **83** | **1** | **2** |
 
-**Coverage: 84/87 requirements traced to code (97%). 2 planned (ExoForge scheduling + React dashboard). 1 partial (T-14 Rust attestation verification).**
-**Workspace: 1,846 tests, 0 failures across 16 crates (monitoring requirements covered by integration tests — see MON-009).**
+**Coverage: 83/86 requirements traced to code (97%). 2 planned (ExoForge scheduling + React dashboard). 1 partial (T-14 Rust attestation verification).**
+**Workspace inventory: 2,687 listed tests across 20 packages and 266 Rust files.**

@@ -6,6 +6,8 @@ use exo_core::{Hash256, Timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::error::{LegalError, Result};
+
 /// Lifecycle state of a legal record under the retention policy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Disposition {
@@ -70,29 +72,77 @@ pub fn apply_retention(records: &mut [Record], policy: &RetentionPolicy, now: &T
 }
 
 /// Creates a new active record with a content hash and the given retention period.
-#[must_use]
-pub fn create_record(data: &[u8], classification: &str, retention_days: u64) -> Record {
-    Record {
-        id: Uuid::new_v4(),
+pub fn create_record(
+    id: Uuid,
+    data: &[u8],
+    classification: &str,
+    retention_days: u64,
+    created: Timestamp,
+) -> Result<Record> {
+    if id.is_nil() {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "record ID must be caller-supplied and non-nil".into(),
+        });
+    }
+    if classification.trim().is_empty() {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "record classification must not be empty".into(),
+        });
+    }
+    if retention_days == 0 {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "record retention period must be nonzero".into(),
+        });
+    }
+    if created == Timestamp::ZERO {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "record created timestamp must not be Timestamp::ZERO".into(),
+        });
+    }
+    Ok(Record {
+        id,
         content_hash: Hash256::digest(data),
         classification: Classification(classification.into()),
         retention_period_days: retention_days,
-        created: Timestamp::ZERO,
+        created,
         disposition: Disposition::Active,
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+    fn ts(ms: u64) -> Timestamp {
+        Timestamp::new(ms, 0)
+    }
+
+    #[test]
+    fn create_uses_caller_supplied_metadata() {
+        let record_id = id(0x200);
+        let r = create_record(record_id, b"d", "g", 365, ts(1000)).unwrap();
+        assert_eq!(r.id, record_id);
+        assert_eq!(r.created, ts(1000));
+    }
+
+    #[test]
+    fn create_rejects_placeholder_metadata() {
+        assert!(create_record(Uuid::nil(), b"d", "g", 365, ts(1000)).is_err());
+        assert!(create_record(id(0x201), b"d", "g", 365, Timestamp::ZERO).is_err());
+        assert!(create_record(id(0x202), b"d", "g", 0, ts(1000)).is_err());
+        assert!(create_record(id(0x203), b"d", " ", 365, ts(1000)).is_err());
+    }
+
     #[test]
     fn create_is_active() {
-        let r = create_record(b"d", "g", 365);
+        let r = create_record(id(0x204), b"d", "g", 365, ts(1000)).unwrap();
         assert_eq!(r.disposition, Disposition::Active);
     }
     #[test]
     fn create_hashes() {
-        let r = create_record(b"x", "g", 30);
+        let r = create_record(id(0x205), b"x", "g", 30, ts(1000)).unwrap();
         assert_eq!(r.content_hash, Hash256::digest(b"x"));
     }
     #[test]
@@ -107,7 +157,7 @@ mod tests {
     }
     #[test]
     fn retention_marks_expired() {
-        let mut r = vec![create_record(b"o", "g", 30)];
+        let mut r = vec![create_record(id(0x206), b"o", "g", 30, ts(1)).unwrap()];
         apply_retention(
             &mut r,
             &RetentionPolicy::new(),
@@ -117,7 +167,7 @@ mod tests {
     }
     #[test]
     fn retention_keeps_fresh() {
-        let mut r = vec![create_record(b"n", "g", 30)];
+        let mut r = vec![create_record(id(0x207), b"n", "g", 30, ts(1)).unwrap()];
         apply_retention(
             &mut r,
             &RetentionPolicy::new(),
@@ -127,7 +177,7 @@ mod tests {
     }
     #[test]
     fn retention_skips_hold() {
-        let mut r = vec![create_record(b"h", "g", 1)];
+        let mut r = vec![create_record(id(0x208), b"h", "g", 1, ts(1)).unwrap()];
         r[0].disposition = Disposition::RetentionHold;
         apply_retention(
             &mut r,
@@ -138,7 +188,7 @@ mod tests {
     }
     #[test]
     fn retention_skips_destroyed() {
-        let mut r = vec![create_record(b"g", "g", 1)];
+        let mut r = vec![create_record(id(0x209), b"g", "g", 1, ts(1)).unwrap()];
         r[0].disposition = Disposition::Destroyed;
         apply_retention(
             &mut r,
@@ -149,7 +199,7 @@ mod tests {
     }
     #[test]
     fn retention_policy_override() {
-        let mut r = vec![create_record(b"d", "legal", 30)];
+        let mut r = vec![create_record(id(0x20a), b"d", "legal", 30, ts(1)).unwrap()];
         let mut p = RetentionPolicy::new();
         p.add_rule(Classification("legal".into()), 365);
         apply_retention(&mut r, &p, &Timestamp::new(31 * MS_PER_DAY, 0));
@@ -170,11 +220,11 @@ mod tests {
     }
     #[test]
     fn boundary() {
-        let mut r = vec![create_record(b"b", "g", 30)];
+        let mut r = vec![create_record(id(0x20b), b"b", "g", 30, ts(1)).unwrap()];
         apply_retention(
             &mut r,
             &RetentionPolicy::new(),
-            &Timestamp::new(30 * MS_PER_DAY, 0),
+            &Timestamp::new(30 * MS_PER_DAY + 1, 0),
         );
         assert_eq!(r[0].disposition, Disposition::PendingDestruction);
     }

@@ -102,13 +102,13 @@ cargo install cargo-audit
 ## Build, test, lint
 
 ```bash
-# Build all 16 crates (debug)
+# Build the full workspace (debug)
 cargo build --workspace
 
 # Build in release mode (LTO, may take longer)
 cargo build --workspace --release
 
-# Run all 1,846 tests
+# Run the workspace test gate
 cargo test --workspace
 
 # Run tests for a specific crate
@@ -123,10 +123,12 @@ cargo tarpaulin --workspace --out html
 open tarpaulin-report.html
 ```
 
-A clean build produces zero errors and zero warnings. All 1,846 tests should pass with 0 failures:
+A clean build produces zero errors and zero warnings. The current workspace
+inventory lists 2,687 tests; the exact executed count can change as doctests and
+integration targets evolve. What matters is zero failures:
 
 ```
-test result: ok. 1846 passed; 0 failed; 0 ignored
+test result: ok. ... passed; 0 failed; 0 ignored
 ```
 
 ---
@@ -150,7 +152,7 @@ Draft -> Submitted -> IdentityResolved -> ConsentValidated -> Deliberated
 
 Each transition emits a cryptographic receipt; the receipt chain is verifiable end-to-end.
 
-All 16 crates depend on `exo-core`. The full dependency graph is in [[ARCHITECTURE]]; the complete API surface in [[CRATE-REFERENCE]]; the 10 formal proofs that the invariants hold in [[CONSTITUTIONAL-PROOFS]].
+All workspace crates depend directly or indirectly on `exo-core`. The full dependency graph is in [[ARCHITECTURE]]; the API surface is in [[CRATE-REFERENCE]]; the formal proof material is in [[CONSTITUTIONAL-PROOFS]].
 
 ---
 
@@ -250,7 +252,7 @@ A new operation type must be:
 
 ## Running the full quality gate locally
 
-Before pushing, run all 8 gates CI enforces per [[CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY]] §8.8:
+Before pushing, run the core local checks behind the CI gates tracked against [[CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY]] §8.8:
 
 ```bash
 cargo build --workspace --release

@@ -1,8 +1,29 @@
 import { test } from 'node:test';
 import { strictEqual, ok, rejects, throws } from 'node:assert/strict';
-import { Identity } from '../src/identity/keypair.js';
+import { Identity, deriveDid } from '../src/identity/keypair.js';
 import { validateDid, isDid } from '../src/identity/did.js';
+import { bytesToHex, hexToBytes } from '../src/crypto/hash.js';
 import { IdentityError } from '../src/errors.js';
+
+const ED25519: EcKeyImportParams = { name: 'Ed25519' } as unknown as EcKeyImportParams;
+
+async function keypairMaterial(): Promise<{
+  publicKeyHex: string;
+  privateKeyPkcs8: Uint8Array;
+}> {
+  const pair = (await globalThis.crypto.subtle.generateKey(ED25519, true, [
+    'sign',
+    'verify',
+  ])) as CryptoKeyPair;
+  return {
+    publicKeyHex: bytesToHex(
+      new Uint8Array(await globalThis.crypto.subtle.exportKey('raw', pair.publicKey)),
+    ),
+    privateKeyPkcs8: new Uint8Array(
+      await globalThis.crypto.subtle.exportKey('pkcs8', pair.privateKey),
+    ),
+  };
+}
 
 test('Identity.generate produces a well-formed did:exo: DID', async () => {
   const id = await Identity.generate('alice');
@@ -73,6 +94,44 @@ test('Identity.verify returns false for bad public key input', async () => {
 test('Identity.generate rejects non-string label', async () => {
   await rejects(
     async () => Identity.generate(42 as unknown as string),
+    IdentityError,
+  );
+});
+
+test('Identity.fromResolvedKeypair preserves a fabric-resolved DID', async () => {
+  const material = await keypairMaterial();
+  const localDid = await deriveDid(hexToBytes(material.publicKeyHex));
+  const fabricDid = validateDid('did:exo:fabricResolvedDid');
+
+  const id = await Identity.fromResolvedKeypair({
+    label: 'fabric',
+    did: fabricDid,
+    publicKeyHex: material.publicKeyHex,
+    privateKeyPkcs8: material.privateKeyPkcs8,
+  });
+
+  strictEqual(id.did, fabricDid);
+  ok(id.did !== localDid);
+  strictEqual(id.publicKeyHex, material.publicKeyHex);
+
+  const msg = new TextEncoder().encode('resolved fabric DID');
+  const sig = await id.sign(msg);
+  ok(await Identity.verify(id.publicKeyHex, msg, sig));
+  ok(await id.verifySelf(msg, sig));
+});
+
+test('Identity.fromResolvedKeypair rejects mismatched public and private keys', async () => {
+  const publicMaterial = await keypairMaterial();
+  const secretMaterial = await keypairMaterial();
+
+  await rejects(
+    async () =>
+      Identity.fromResolvedKeypair({
+        label: 'fabric',
+        did: validateDid('did:exo:fabricMismatch'),
+        publicKeyHex: publicMaterial.publicKeyHex,
+        privateKeyPkcs8: secretMaterial.privateKeyPkcs8,
+      }),
     IdentityError,
   );
 });

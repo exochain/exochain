@@ -97,8 +97,19 @@ mod tests {
             source: "test".into(),
             signal_type: SignalType::AnomalousPattern,
             confidence,
-            evidence_hash: [0u8; 32],
+            evidence_hash: [0xE1u8; 32],
             timestamp: Timestamp::new(1000, 0),
+        }
+    }
+    fn uuid(byte: u8) -> Uuid {
+        Uuid::from_bytes([byte; 16])
+    }
+    fn case_input(id_marker: u8, confidence: u8) -> EscalationCaseInput {
+        EscalationCaseInput {
+            id: uuid(id_marker),
+            created: Timestamp::new(2000, 0),
+            signal: signal(confidence),
+            path: EscalationPath::Standard,
         }
     }
 
@@ -111,7 +122,7 @@ mod tests {
     #[test]
     fn add_case_to_backlog() {
         let mut b = KanbanBoard::new();
-        let c = escalate(&signal(50), &EscalationPath::Standard);
+        let c = escalate(case_input(1, 50)).unwrap();
         b.add_case(c);
         assert_eq!(b.total_cases(), 1);
         assert_eq!(b.columns[&KanbanColumn::Backlog].len(), 1);
@@ -119,7 +130,7 @@ mod tests {
     #[test]
     fn move_case_between_columns() {
         let mut b = KanbanBoard::new();
-        let c = escalate(&signal(50), &EscalationPath::Standard);
+        let c = escalate(case_input(2, 50)).unwrap();
         let id = c.id;
         b.add_case(c);
         assert!(move_case(&mut b, &id, KanbanColumn::InProgress).is_ok());
@@ -129,12 +140,12 @@ mod tests {
     #[test]
     fn move_nonexistent_case_fails() {
         let mut b = KanbanBoard::new();
-        assert!(move_case(&mut b, &Uuid::new_v4(), KanbanColumn::InProgress).is_err());
+        assert!(move_case(&mut b, &uuid(0xFE), KanbanColumn::InProgress).is_err());
     }
     #[test]
     fn move_through_all_columns() {
         let mut b = KanbanBoard::new();
-        let c = escalate(&signal(50), &EscalationPath::Standard);
+        let c = escalate(case_input(3, 50)).unwrap();
         let id = c.id;
         b.add_case(c);
         assert!(move_case(&mut b, &id, KanbanColumn::InProgress).is_ok());
@@ -146,9 +157,9 @@ mod tests {
     #[test]
     fn cases_by_priority_sorted() {
         let mut b = KanbanBoard::new();
-        b.add_case(escalate(&signal(20), &EscalationPath::Standard)); // Low
-        b.add_case(escalate(&signal(90), &EscalationPath::Standard)); // Critical
-        b.add_case(escalate(&signal(50), &EscalationPath::Standard)); // Medium
+        b.add_case(escalate(case_input(4, 20)).unwrap()); // Low
+        b.add_case(escalate(case_input(5, 90)).unwrap()); // Critical
+        b.add_case(escalate(case_input(6, 50)).unwrap()); // Medium
         let sorted = cases_by_priority(&b);
         assert_eq!(sorted.len(), 3);
         assert_eq!(sorted[0].priority, CasePriority::Critical);

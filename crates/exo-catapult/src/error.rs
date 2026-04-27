@@ -2,8 +2,7 @@
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::oda::OdaSlot;
-use crate::phase::OperationalPhase;
+use crate::{oda::OdaSlot, phase::OperationalPhase};
 
 /// Errors returned by Catapult franchise operations.
 #[derive(Debug, Error)]
@@ -39,6 +38,26 @@ pub enum CatapultError {
     FranchiseAlreadyExists(Uuid),
     #[error("newco already exists: {0}")]
     NewcoAlreadyExists(Uuid),
+    #[error("invalid catapult agent: {reason}")]
+    InvalidAgent { reason: String },
+    #[error("invalid budget policy: {reason}")]
+    InvalidBudgetPolicy { reason: String },
+    #[error("invalid cost event: {reason}")]
+    InvalidCostEvent { reason: String },
+    #[error("invalid goal: {reason}")]
+    InvalidGoal { reason: String },
+    #[error("invalid heartbeat record: {reason}")]
+    InvalidHeartbeat { reason: String },
+    #[error("invalid franchise blueprint: {reason}")]
+    InvalidFranchiseBlueprint { reason: String },
+    #[error("invalid newco: {reason}")]
+    InvalidNewco { reason: String },
+    #[error("invalid franchise receipt: {reason}")]
+    InvalidReceipt { reason: String },
+    #[error("franchise receipt serialization failed: {reason}")]
+    ReceiptSerializationFailed { reason: String },
+    #[error("franchise receipt chain broken at index {index}")]
+    ReceiptChainBroken { index: usize },
 }
 
 /// Convenience alias for results with [`CatapultError`].
@@ -75,6 +94,34 @@ mod tests {
             CatapultError::DuplicateGoal(Uuid::nil()),
             CatapultError::FranchiseAlreadyExists(Uuid::nil()),
             CatapultError::NewcoAlreadyExists(Uuid::nil()),
+            CatapultError::InvalidAgent {
+                reason: "bad agent".into(),
+            },
+            CatapultError::InvalidBudgetPolicy {
+                reason: "bad policy".into(),
+            },
+            CatapultError::InvalidCostEvent {
+                reason: "bad cost".into(),
+            },
+            CatapultError::InvalidGoal {
+                reason: "bad goal".into(),
+            },
+            CatapultError::InvalidHeartbeat {
+                reason: "bad heartbeat".into(),
+            },
+            CatapultError::InvalidFranchiseBlueprint {
+                reason: "bad blueprint".into(),
+            },
+            CatapultError::InvalidNewco {
+                reason: "bad newco".into(),
+            },
+            CatapultError::InvalidReceipt {
+                reason: "bad receipt".into(),
+            },
+            CatapultError::ReceiptSerializationFailed {
+                reason: "bad cbor".into(),
+            },
+            CatapultError::ReceiptChainBroken { index: 3 },
         ];
         for e in &es {
             assert!(!e.to_string().is_empty());

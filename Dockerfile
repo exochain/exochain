@@ -22,8 +22,10 @@ RUN cargo build --release --bin exochain --bin exo-gateway
 # Stage 2: Runtime
 FROM debian:bookworm-slim
 RUN apt-get update && \
-    apt-get install -y ca-certificates libssl3 && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y ca-certificates libssl3 gosu && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd --system --create-home --shell /usr/sbin/nologin exochain && \
+    mkdir -p /data && chown exochain:exochain /data && chmod 755 /data
 WORKDIR /app
 
 # Copy both binaries — `exochain` is the primary entrypoint;
@@ -47,5 +49,8 @@ EXPOSE 4001 4002 8080
 # On Railway, /data is mounted via a Railway volume — do NOT use the
 # Dockerfile VOLUME keyword (Railway bans it).
 # For plain Docker: `docker run -v exochain-data:/data exochain/node`.
+# Keep the container entrypoint as root so mounted volumes can have ownership
+# repaired at startup; deploy/entrypoint.sh drops to the exochain user before
+# launching the node process.
 
 CMD ["/app/entrypoint.sh"]

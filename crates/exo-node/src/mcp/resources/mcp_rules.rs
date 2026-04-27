@@ -3,8 +3,10 @@
 use exo_gatekeeper::mcp::McpRule;
 use serde_json::Value;
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ResourceContent, ResourceDefinition};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ResourceContent, ResourceDefinition},
+};
 
 /// Build the resource definition.
 #[must_use]
@@ -96,8 +98,7 @@ pub(crate) fn build_payload() -> Value {
 #[must_use]
 pub fn read(_context: &NodeContext) -> ResourceContent {
     let payload = build_payload();
-    let text = serde_json::to_string_pretty(&payload)
-        .unwrap_or_else(|_| "{}".to_string());
+    let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
 
     ResourceContent {
         uri: "exochain://mcp-rules".into(),

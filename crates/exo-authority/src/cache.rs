@@ -151,7 +151,7 @@ mod tests {
                 scope: vec![Permission::Read],
                 created: ts(1000),
                 expires: None,
-                signature: Signature::from_bytes([1u8; 64]),
+                signature: Signature::from_bytes([0xA5u8; 64]),
                 depth: 0,
                 delegatee_kind: crate::chain::DelegateeKind::Human,
             }],

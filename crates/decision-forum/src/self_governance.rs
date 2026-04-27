@@ -7,6 +7,8 @@ use exo_core::types::{Hash256, Timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::error::{ForumError, Result};
+
 /// A proposed governance change tracked as a self-governance item.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GovernanceProposal {
@@ -116,23 +118,48 @@ impl Default for ComplianceTracker {
     }
 }
 
+/// Caller-supplied metadata for creating a governance proposal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GovernanceProposalInput {
+    pub id: Uuid,
+    pub title: String,
+    pub description: String,
+    pub change_type: GovernanceChangeType,
+    pub proposed_at: Timestamp,
+}
+
 /// Create a governance proposal.
-#[must_use]
-pub fn create_proposal(
-    title: &str,
-    description: &str,
-    change_type: GovernanceChangeType,
-    timestamp: Timestamp,
-) -> GovernanceProposal {
-    GovernanceProposal {
-        id: Uuid::new_v4(),
-        title: title.to_owned(),
-        description: description.to_owned(),
-        change_type,
+pub fn create_proposal(input: GovernanceProposalInput) -> Result<GovernanceProposal> {
+    if input.id.is_nil() {
+        return Err(ForumError::InvalidProvenance {
+            reason: "governance proposal id must not be nil".into(),
+        });
+    }
+    if input.proposed_at == Timestamp::ZERO {
+        return Err(ForumError::InvalidProvenance {
+            reason: "governance proposal proposed_at must be non-zero HLC".into(),
+        });
+    }
+    if input.title.trim().is_empty() {
+        return Err(ForumError::InvalidProvenance {
+            reason: "governance proposal title must be non-empty".into(),
+        });
+    }
+    if input.description.trim().is_empty() {
+        return Err(ForumError::InvalidProvenance {
+            reason: "governance proposal description must be non-empty".into(),
+        });
+    }
+
+    Ok(GovernanceProposal {
+        id: input.id,
+        title: input.title,
+        description: input.description,
+        change_type: input.change_type,
         decision_id: None,
         simulation_result: None,
-        proposed_at: timestamp,
-    }
+        proposed_at: input.proposed_at,
+    })
 }
 
 #[cfg(test)]
@@ -143,14 +170,61 @@ mod tests {
         Timestamp::new(1_000_000, 0)
     }
 
+    fn proposal_input(
+        id: Uuid,
+        title: &str,
+        change_type: GovernanceChangeType,
+    ) -> GovernanceProposalInput {
+        GovernanceProposalInput {
+            id,
+            title: title.into(),
+            description: "desc".into(),
+            change_type,
+            proposed_at: ts(),
+        }
+    }
+
+    #[test]
+    fn create_proposal_requires_caller_supplied_identity_and_hlc() {
+        let proposal = create_proposal(proposal_input(
+            Uuid::from_u128(70),
+            "Update quorum",
+            GovernanceChangeType::QuorumPolicyChange,
+        ))
+        .expect("valid");
+        assert_eq!(proposal.id, Uuid::from_u128(70));
+
+        let nil = create_proposal(proposal_input(
+            Uuid::nil(),
+            "bad",
+            GovernanceChangeType::QuorumPolicyChange,
+        ))
+        .unwrap_err();
+        assert!(matches!(nil, ForumError::InvalidProvenance { .. }));
+
+        let zero_time = create_proposal(GovernanceProposalInput {
+            proposed_at: Timestamp::ZERO,
+            ..proposal_input(
+                Uuid::from_u128(71),
+                "bad",
+                GovernanceChangeType::QuorumPolicyChange,
+            )
+        })
+        .unwrap_err();
+        assert!(matches!(zero_time, ForumError::InvalidProvenance { .. }));
+    }
+
     #[test]
     fn create_proposal_basic() {
-        let p = create_proposal(
-            "Update quorum",
-            "Change thresholds",
-            GovernanceChangeType::QuorumPolicyChange,
-            ts(),
-        );
+        let p = create_proposal(GovernanceProposalInput {
+            description: "Change thresholds".into(),
+            ..proposal_input(
+                Uuid::from_u128(72),
+                "Update quorum",
+                GovernanceChangeType::QuorumPolicyChange,
+            )
+        })
+        .expect("valid");
         assert_eq!(p.title, "Update quorum");
         assert!(p.decision_id.is_none());
         assert!(p.simulation_result.is_none());
@@ -158,12 +232,12 @@ mod tests {
 
     #[test]
     fn simulate_valid_proposal() {
-        let p = create_proposal(
+        let p = create_proposal(proposal_input(
+            Uuid::from_u128(73),
             "Test",
-            "desc",
             GovernanceChangeType::QuorumPolicyChange,
-            ts(),
-        );
+        ))
+        .expect("valid");
         let result = GovernanceSimulator::simulate(&p, Hash256::ZERO, ts());
         assert!(result.passed);
         assert!(result.issues.is_empty());
@@ -171,12 +245,12 @@ mod tests {
 
     #[test]
     fn simulate_amendment_without_decision() {
-        let p = create_proposal(
+        let p = create_proposal(proposal_input(
+            Uuid::from_u128(74),
             "Amend",
-            "desc",
             GovernanceChangeType::ConstitutionalAmendment,
-            ts(),
-        );
+        ))
+        .expect("valid");
         let result = GovernanceSimulator::simulate(&p, Hash256::ZERO, ts());
         assert!(!result.passed);
         assert!(result.issues.iter().any(|i| i.contains("backing decision")));
@@ -184,9 +258,13 @@ mod tests {
 
     #[test]
     fn simulate_empty_title() {
-        let p = create_proposal("", "desc", GovernanceChangeType::QuorumPolicyChange, ts());
-        let result = GovernanceSimulator::simulate(&p, Hash256::ZERO, ts());
-        assert!(!result.passed);
+        let err = create_proposal(proposal_input(
+            Uuid::from_u128(75),
+            "",
+            GovernanceChangeType::QuorumPolicyChange,
+        ))
+        .unwrap_err();
+        assert!(matches!(err, ForumError::InvalidProvenance { .. }));
     }
 
     #[test]

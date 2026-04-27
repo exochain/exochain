@@ -17,6 +17,7 @@ impl Default for ApiVersion {
 pub struct Cursor(pub String);
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     #[test]

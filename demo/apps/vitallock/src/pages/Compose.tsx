@@ -36,6 +36,10 @@ export default function Compose() {
     mutationFn: async () => {
       if (!isCryptoReady()) throw new Error('WASM not initialized');
 
+      const messageId = crypto.randomUUID();
+      const createdPhysicalMs = BigInt(Date.now());
+      const createdLogical = 0;
+
       // Encrypt client-side — plaintext never leaves the browser
       const envelope = encryptMessage(
         body,
@@ -44,6 +48,9 @@ export default function Compose() {
         recipientDid,
         auth!.ed25519SecretHex,
         recipientX25519,
+        messageId,
+        createdPhysicalMs,
+        createdLogical,
         releaseOnDeath,
         releaseDelay,
       );

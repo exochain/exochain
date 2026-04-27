@@ -157,6 +157,8 @@ pub fn resume(holon: &mut Holon, checkpoint: &Checkpoint) -> Result<(), Gatekeep
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
+    use exo_core::Hash256;
+
     use super::*;
     use crate::{
         combinator::{Predicate, TransformFn},
@@ -167,6 +169,58 @@ mod tests {
     fn did(s: &str) -> Did {
         Did::new(s).expect("valid DID")
     }
+
+    fn signed_link(grantor_str: &str, grantee: &Did) -> AuthorityLink {
+        let (pk, sk) = exo_core::crypto::generate_keypair();
+        let grantor = did(grantor_str);
+        let permissions = PermissionSet::new(vec![Permission::new("read")]);
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(grantor.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(grantee.as_str().as_bytes());
+        payload.push(0x00);
+        for permission in &permissions.permissions {
+            payload.extend_from_slice(permission.0.as_bytes());
+            payload.push(0x00);
+        }
+        let message = Hash256::digest(&payload);
+        let signature = exo_core::crypto::sign(message.as_bytes(), &sk);
+
+        AuthorityLink {
+            grantor,
+            grantee: grantee.clone(),
+            permissions,
+            signature: signature.to_bytes().to_vec(),
+            grantor_public_key: Some(pk.as_bytes().to_vec()),
+        }
+    }
+
+    fn signed_provenance(actor: &Did) -> Provenance {
+        let (pk, sk) = exo_core::crypto::generate_keypair();
+        let timestamp = "2025-01-01T00:00:00Z".to_owned();
+        let action_hash = vec![1];
+        let mut payload = Vec::new();
+        payload.extend_from_slice(actor.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(&action_hash);
+        payload.push(0x00);
+        payload.extend_from_slice(timestamp.as_bytes());
+        let message = Hash256::digest(&payload);
+        let signature = exo_core::crypto::sign(message.as_bytes(), &sk);
+
+        Provenance {
+            actor: actor.clone(),
+            timestamp,
+            action_hash,
+            signature: signature.to_bytes().to_vec(),
+            public_key: Some(pk.as_bytes().to_vec()),
+            voice_kind: None,
+            independence: None,
+            review_order: None,
+        }
+    }
+
     fn test_kernel() -> Kernel {
         Kernel::new(b"constitution", InvariantSet::all())
     }
@@ -186,13 +240,7 @@ mod tests {
                 branch: GovernmentBranch::Executive,
             }],
             authority_chain: AuthorityChain {
-                links: vec![AuthorityLink {
-                    grantor: did("did:exo:root"),
-                    grantee: actor.clone(),
-                    permissions: PermissionSet::new(vec![Permission::new("read")]),
-                    signature: vec![1, 2, 3],
-                    grantor_public_key: None,
-                }],
+                links: vec![signed_link("did:exo:root", actor)],
             },
             consent_records: vec![ConsentRecord {
                 subject: did("did:exo:owner"),
@@ -207,16 +255,7 @@ mod tests {
             },
             human_override_preserved: true,
             actor_permissions: PermissionSet::new(vec![Permission::new("read")]),
-            provenance: Some(Provenance {
-                actor: actor.clone(),
-                timestamp: "t".into(),
-                action_hash: vec![1],
-                signature: vec![4, 5, 6],
-                public_key: None,
-                voice_kind: None,
-                independence: None,
-                review_order: None,
-            }),
+            provenance: Some(signed_provenance(actor)),
             quorum_evidence: None,
             active_challenge_reason: None,
         }

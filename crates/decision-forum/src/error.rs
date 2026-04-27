@@ -51,6 +51,9 @@ pub enum ForumError {
     #[error("invalid state transition: {from} -> {to}")]
     InvalidTransition { from: String, to: String },
 
+    #[error("invalid provenance metadata: {reason}")]
+    InvalidProvenance { reason: String },
+
     // -- Human gate errors -------------------------------------------------
     #[error("human gate required: AI cannot satisfy this approval")]
     HumanGateRequired,
@@ -144,6 +147,9 @@ mod tests {
             ForumError::InvalidTransition {
                 from: "Draft".into(),
                 to: "Closed".into(),
+            },
+            ForumError::InvalidProvenance {
+                reason: "nil id".into(),
             },
             ForumError::HumanGateRequired,
             ForumError::AiCeilingExceeded {

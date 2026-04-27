@@ -12,7 +12,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use decision_forum::{
-    decision_object::{ActorKind, DecisionClass, DecisionObject, Vote, VoteChoice},
+    decision_object::{
+        ActorKind, DecisionClass, DecisionObject, DecisionObjectInput, Vote, VoteChoice,
+    },
     quorum::{QuorumCheckResult, QuorumRegistry, check_quorum, verify_quorum_precondition},
 };
 use exo_core::{
@@ -35,12 +37,14 @@ fn did(s: &str) -> Did {
 }
 
 fn routine_decision(clock: &mut HybridClock) -> DecisionObject {
-    DecisionObject::new(
-        "Routine test decision",
-        DecisionClass::Routine,
-        Hash256::digest(b"test-constitution-v1"),
-        clock,
-    )
+    DecisionObject::new(DecisionObjectInput {
+        id: uuid::Uuid::from_u128(400),
+        title: "Routine test decision".into(),
+        class: DecisionClass::Routine,
+        constitutional_hash: Hash256::digest(b"test-constitution-v1"),
+        created_at: clock.now(),
+    })
+    .expect("valid decision")
 }
 
 fn human_approve(name: &str, clock: &mut HybridClock) -> Vote {
@@ -67,7 +71,7 @@ fn vote_accepted_quorum_status_met() {
 
     // Verify precondition: 1 eligible voter satisfies Routine (min 1).
     let precondition_ok =
-        verify_quorum_precondition(&registry, decision.class, 1).expect("precondition ok");
+        verify_quorum_precondition(&registry, decision.class, 1, 1).expect("precondition ok");
     assert!(
         precondition_ok,
         "precondition should pass with 1 eligible voter"
@@ -152,8 +156,9 @@ fn terminal_decision_rejects_votes() {
         BctsState::Closed,
     ];
     for state in lifecycle {
+        let ts = clock.now();
         decision
-            .transition(state, &actor, &mut clock)
+            .transition_at(state, &actor, ts)
             .expect("transition ok");
     }
 

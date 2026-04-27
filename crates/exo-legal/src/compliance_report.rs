@@ -3,8 +3,8 @@
 //! Produces a structured JSON compliance report that maps each ExoChain
 //! constitutional invariant to its NIST AI RMF attestation status. The
 //! report is deterministic: identical inputs always produce the same
-//! BLAKE3 hash, which serves as the integrity anchor for regulatory
-//! submissions.
+//! BLAKE3 hash over a canonical CBOR payload, which serves as the integrity
+//! anchor for regulatory submissions.
 //!
 //! # Output modes
 //!
@@ -14,14 +14,18 @@
 //!   `BLAKE3(tenant_id || model_id || redaction_salt)`. For public disclosure
 //!   or external auditors. Prevents AI model fingerprinting.
 
-use exo_core::{Did, Timestamp};
+use exo_core::{Did, Timestamp, hash::hash_structured};
 use exo_gatekeeper::invariants::{ConstitutionalInvariant, InvariantSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     ai_transparency::AiTransparencyReport,
+    error::{LegalError, Result},
     nist_mapping::{NistFunction, NistMapping},
 };
+
+const COMPLIANCE_REPORT_SCHEMA_VERSION: &str = "1.0.0";
+const COMPLIANCE_REPORT_HASH_DOMAIN: &str = "exo.legal.compliance_report.v1";
 
 // ---------------------------------------------------------------------------
 // Report mode
@@ -73,7 +77,7 @@ pub struct InvariantAttestation {
 
 /// A deterministic compliance report covering all constitutional invariants.
 ///
-/// `report_hash` is the BLAKE3 hash of the canonical JSON serialisation of
+/// `report_hash` is the BLAKE3 hash of the canonical CBOR serialisation of
 /// all fields except `report_hash` itself. Use it as an integrity anchor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComplianceReport {
@@ -98,12 +102,11 @@ pub struct ComplianceReport {
 ///
 /// The report is deterministic: given the same `transparency_report`,
 /// `mode`, and `generated_at`, it always produces the same `report_hash`.
-#[must_use]
 pub fn build_report(
     transparency_report: &AiTransparencyReport,
     mode: &ComplianceReportMode,
     generated_at: Timestamp,
-) -> ComplianceReport {
+) -> Result<ComplianceReport> {
     let mapping = NistMapping::canonical();
     let all_invariants = InvariantSet::all();
 
@@ -119,18 +122,21 @@ pub fn build_report(
     };
 
     // Compute deterministic hash over all content fields.
-    let content_hash = hash_report_content(
-        &transparency_report.tenant_id,
+    let hash_payload = ComplianceReportHashPayload {
+        domain: COMPLIANCE_REPORT_HASH_DOMAIN,
+        schema_version: COMPLIANCE_REPORT_SCHEMA_VERSION,
+        tenant_id: &transparency_report.tenant_id,
         generated_at,
-        transparency_report.period_start,
-        transparency_report.period_end,
-        &transparency_report.legal_jurisdiction,
-        &report_mode,
-        &attestations,
-    );
+        period_start: transparency_report.period_start,
+        period_end: transparency_report.period_end,
+        legal_jurisdiction: &transparency_report.legal_jurisdiction,
+        report_mode: &report_mode,
+        attestations: &attestations,
+    };
+    let content_hash = hash_report_payload(&hash_payload)?;
 
-    ComplianceReport {
-        schema_version: "1.0.0".into(),
+    Ok(ComplianceReport {
+        schema_version: COMPLIANCE_REPORT_SCHEMA_VERSION.into(),
         tenant_id: transparency_report.tenant_id.clone(),
         generated_at,
         period_start: transparency_report.period_start,
@@ -139,7 +145,20 @@ pub fn build_report(
         report_mode,
         attestations,
         report_hash: content_hash,
-    }
+    })
+}
+
+/// Recompute and verify a compliance report's integrity hash.
+///
+/// # Errors
+///
+/// Returns [`LegalError::InvalidStateTransition`] if canonical CBOR hashing
+/// fails.
+pub fn verify_report_hash(report: &ComplianceReport) -> Result<bool> {
+    Ok(
+        hash_report_payload(&ComplianceReportHashPayload::from_report(report))?
+            == report.report_hash,
+    )
 }
 
 fn build_attestation(
@@ -266,32 +285,41 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn hash_report_content(
-    tenant_id: &Did,
+#[derive(Serialize)]
+struct ComplianceReportHashPayload<'a> {
+    domain: &'static str,
+    schema_version: &'a str,
+    tenant_id: &'a Did,
     generated_at: Timestamp,
     period_start: Timestamp,
     period_end: Timestamp,
-    legal_jurisdiction: &str,
-    report_mode: &str,
-    attestations: &[InvariantAttestation],
-) -> [u8; 32] {
-    let mut h = blake3::Hasher::new();
-    h.update(tenant_id.as_str().as_bytes());
-    h.update(&generated_at.physical_ms.to_le_bytes());
-    h.update(&generated_at.logical.to_le_bytes());
-    h.update(&period_start.physical_ms.to_le_bytes());
-    h.update(&period_start.logical.to_le_bytes());
-    h.update(&period_end.physical_ms.to_le_bytes());
-    h.update(&period_end.logical.to_le_bytes());
-    h.update(legal_jurisdiction.as_bytes());
-    h.update(report_mode.as_bytes());
-    for att in attestations {
-        h.update(att.invariant.as_bytes());
-        h.update(att.exochain_label.as_bytes());
-        h.update(att.evidence_summary.as_bytes());
-        h.update(format!("{:?}", att.status).as_bytes());
+    legal_jurisdiction: &'a str,
+    report_mode: &'a str,
+    attestations: &'a [InvariantAttestation],
+}
+
+impl<'a> ComplianceReportHashPayload<'a> {
+    fn from_report(report: &'a ComplianceReport) -> Self {
+        Self {
+            domain: COMPLIANCE_REPORT_HASH_DOMAIN,
+            schema_version: &report.schema_version,
+            tenant_id: &report.tenant_id,
+            generated_at: report.generated_at,
+            period_start: report.period_start,
+            period_end: report.period_end,
+            legal_jurisdiction: &report.legal_jurisdiction,
+            report_mode: &report.report_mode,
+            attestations: &report.attestations,
+        }
     }
-    *h.finalize().as_bytes()
+}
+
+fn hash_report_payload(payload: &ComplianceReportHashPayload<'_>) -> Result<[u8; 32]> {
+    hash_structured(payload)
+        .map(|hash| *hash.as_bytes())
+        .map_err(|e| LegalError::InvalidStateTransition {
+            reason: format!("compliance report canonical CBOR hash failed: {e}"),
+        })
 }
 
 // ===========================================================================
@@ -332,7 +360,7 @@ mod tests {
     fn build_report_full_mode_produces_all_attestations() {
         let tenant = did("tenant");
         let tr = empty_report(&tenant);
-        let report = build_report(&tr, &ComplianceReportMode::Full, ts(10000));
+        let report = build_report(&tr, &ComplianceReportMode::Full, ts(10000)).expect("ok");
         // All 8 invariants must be attested
         assert_eq!(report.attestations.len(), 8);
         assert_eq!(report.report_mode, "Full");
@@ -348,7 +376,8 @@ mod tests {
                 redaction_salt: [0u8; 32],
             },
             ts(10000),
-        );
+        )
+        .expect("ok");
         assert_eq!(report.report_mode, "Redacted");
     }
 
@@ -356,17 +385,51 @@ mod tests {
     fn report_hash_is_deterministic() {
         let tenant = did("tenant");
         let tr = empty_report(&tenant);
-        let r1 = build_report(&tr, &ComplianceReportMode::Full, ts(10000));
-        let r2 = build_report(&tr, &ComplianceReportMode::Full, ts(10000));
+        let r1 = build_report(&tr, &ComplianceReportMode::Full, ts(10000)).expect("ok");
+        let r2 = build_report(&tr, &ComplianceReportMode::Full, ts(10000)).expect("ok");
         assert_eq!(r1.report_hash, r2.report_hash);
+    }
+
+    #[test]
+    fn report_hash_detects_nist_mapping_tamper() {
+        let tenant = did("tenant");
+        let tr = empty_report(&tenant);
+        let mut report = build_report(&tr, &ComplianceReportMode::Full, ts(10000)).expect("ok");
+
+        assert!(verify_report_hash(&report).expect("report hash verification should succeed"));
+
+        report.attestations[0]
+            .nist_subcategories
+            .push("tampered-subcategory".into());
+
+        assert!(
+            !verify_report_hash(&report).expect("report hash verification should succeed"),
+            "report hash must cover NIST subcategories"
+        );
+    }
+
+    #[test]
+    fn report_hash_detects_regulatory_reference_tamper() {
+        let tenant = did("tenant");
+        let tr = empty_report(&tenant);
+        let mut report = build_report(&tr, &ComplianceReportMode::Full, ts(10000)).expect("ok");
+
+        report.attestations[0]
+            .regulatory_refs
+            .push("tampered-reference".into());
+
+        assert!(
+            !verify_report_hash(&report).expect("report hash verification should succeed"),
+            "report hash must cover regulatory references"
+        );
     }
 
     #[test]
     fn report_hash_differs_on_different_timestamp() {
         let tenant = did("tenant");
         let tr = empty_report(&tenant);
-        let r1 = build_report(&tr, &ComplianceReportMode::Full, ts(10000));
-        let r2 = build_report(&tr, &ComplianceReportMode::Full, ts(20000));
+        let r1 = build_report(&tr, &ComplianceReportMode::Full, ts(10000)).expect("ok");
+        let r2 = build_report(&tr, &ComplianceReportMode::Full, ts(20000)).expect("ok");
         assert_ne!(r1.report_hash, r2.report_hash);
     }
 
@@ -374,7 +437,7 @@ mod tests {
     fn all_attestations_compliant_for_empty_period() {
         let tenant = did("tenant");
         let tr = empty_report(&tenant);
-        let report = build_report(&tr, &ComplianceReportMode::Full, ts(10000));
+        let report = build_report(&tr, &ComplianceReportMode::Full, ts(10000)).expect("ok");
         for att in &report.attestations {
             assert_eq!(
                 att.status,

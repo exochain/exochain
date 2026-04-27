@@ -79,6 +79,7 @@ pub fn check_completeness(case: &EscalationCase) -> CompletenessResult {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use exo_core::Timestamp;
+    use uuid::Uuid;
 
     use super::*;
     use crate::{detector::*, escalation::*};
@@ -92,16 +93,27 @@ mod tests {
             timestamp: Timestamp::new(1000, 0),
         }
     }
+    fn uuid(byte: u8) -> Uuid {
+        Uuid::from_bytes([byte; 16])
+    }
+    fn case_input(id_marker: u8, confidence: u8, path: EscalationPath) -> EscalationCaseInput {
+        EscalationCaseInput {
+            id: uuid(id_marker),
+            created: Timestamp::new(2000, 0),
+            signal: signal(confidence),
+            path,
+        }
+    }
 
     #[test]
     fn standard_case_complete() {
-        let c = escalate(&signal(50), &EscalationPath::Standard);
+        let c = escalate(case_input(1, 50, EscalationPath::Standard)).unwrap();
         assert_eq!(check_completeness(&c), CompletenessResult::Complete);
     }
 
     #[test]
     fn sybil_case_incomplete_initially() {
-        let c = escalate(&signal(75), &EscalationPath::SybilAdjudication);
+        let c = escalate(case_input(2, 75, EscalationPath::SybilAdjudication)).unwrap();
         match check_completeness(&c) {
             CompletenessResult::Incomplete { missing } => {
                 assert!(missing.iter().any(|m| m.contains("Triage")));
@@ -113,7 +125,7 @@ mod tests {
 
     #[test]
     fn sybil_case_complete_after_all_stages() {
-        let mut c = escalate(&signal(75), &EscalationPath::SybilAdjudication);
+        let mut c = escalate(case_input(3, 75, EscalationPath::SybilAdjudication)).unwrap();
         c.assignee = Some(exo_core::Did::new("did:exo:reviewer").expect("ok"));
         for stage in [
             SybilStage::Triage,
@@ -130,7 +142,7 @@ mod tests {
 
     #[test]
     fn resolved_without_assignee_incomplete() {
-        let mut c = escalate(&signal(50), &EscalationPath::Standard);
+        let mut c = escalate(case_input(4, 50, EscalationPath::Standard)).unwrap();
         c.status = CaseStatus::Resolved;
         match check_completeness(&c) {
             CompletenessResult::Incomplete { missing } => {
@@ -142,19 +154,19 @@ mod tests {
 
     #[test]
     fn emergency_case_complete() {
-        let c = escalate(&signal(95), &EscalationPath::Emergency);
+        let c = escalate(case_input(5, 95, EscalationPath::Emergency)).unwrap();
         assert_eq!(check_completeness(&c), CompletenessResult::Complete);
     }
 
     #[test]
     fn constitutional_case_complete() {
-        let c = escalate(&signal(60), &EscalationPath::Constitutional);
+        let c = escalate(case_input(6, 60, EscalationPath::Constitutional)).unwrap();
         assert_eq!(check_completeness(&c), CompletenessResult::Complete);
     }
 
     #[test]
     fn no_evidence_incomplete() {
-        let mut c = escalate(&signal(50), &EscalationPath::Standard);
+        let mut c = escalate(case_input(7, 50, EscalationPath::Standard)).unwrap();
         c.evidence.clear();
         match check_completeness(&c) {
             CompletenessResult::Incomplete { missing } => {

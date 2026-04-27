@@ -11,6 +11,20 @@ const require = createRequire(import.meta.url);
 
 let wasm = null;
 
+export const VALIDATION_TIMESTAMP_ISO = '2023-11-14T22:13:20.000Z';
+const VALIDATION_TIMESTAMP_MS = 1_700_000_000_000;
+const VALIDATION_TIMESTAMP_MS_BIGINT = 1_700_000_000_000n;
+const VALIDATION_DECISION_ID = '00000000-0000-0000-0000-0000000005f0';
+const VALIDATION_CONSTITUTION_HASH = '1'.repeat(64);
+
+function repeatedByte(byte) {
+  return Array(32).fill(byte);
+}
+
+function validationTimestamp() {
+  return { physical_ms: VALIDATION_TIMESTAMP_MS, logical: 0 };
+}
+
 /**
  * Load the ExoChain WASM governance kernel.
  * Idempotent — subsequent calls return the cached module.
@@ -67,6 +81,9 @@ export function enforceAllTnc(state) {
   const { decision, flags } = state;
   try {
     const result = kernel.wasm_enforce_all_tnc(s(decision), s(flags));
+    if (result && result.ok === false) {
+      return { ok: false, violation: result.error || 'TNC enforcement failed', result };
+    }
     return { ok: true, result };
   } catch (err) {
     return { ok: false, violation: err.message || String(err) };
@@ -85,7 +102,11 @@ export function enforceAllTnc(state) {
 export function collectTncViolations(state) {
   const kernel = loadKernel();
   const { decision, flags } = state;
-  return kernel.wasm_collect_tnc_violations(s(decision), s(flags));
+  try {
+    return kernel.wasm_collect_tnc_violations(s(decision), s(flags));
+  } catch (err) {
+    return { violations: [err.message || String(err)] };
+  }
 }
 
 /**
@@ -188,4 +209,89 @@ export function workflowStages() {
 export function hashStructured(data) {
   const kernel = loadKernel();
   return kernel.wasm_hash_structured(s(data));
+}
+
+/**
+ * Build a deterministic DecisionObject fixture that satisfies the current
+ * WASM TNC enforcement schema.
+ */
+export function buildValidationDecision(title = 'ExoForge Validation Check') {
+  const kernel = loadKernel();
+  const decision = kernel.wasm_create_decision(
+    VALIDATION_DECISION_ID,
+    title,
+    '"Routine"',
+    VALIDATION_CONSTITUTION_HASH,
+    VALIDATION_TIMESTAMP_MS_BIGINT,
+    0
+  );
+  const ts = validationTimestamp();
+  decision.authority_chain = [{
+    actor_did: 'did:exo:validator',
+    actor_kind: 'Human',
+    delegation_hash: repeatedByte(2),
+    timestamp: ts
+  }];
+  decision.evidence_bundle = [{
+    hash: repeatedByte(3),
+    description: 'ExoForge validation evidence',
+    attached_at: ts
+  }];
+  return decision;
+}
+
+/**
+ * Build TNC precondition flags matching `decision_forum_bindings::TncFlags`.
+ */
+export function buildValidationTncFlags() {
+  return {
+    constitutional_hash_valid: true,
+    consent_verified: true,
+    identity_verified: true,
+    evidence_complete: true,
+    quorum_met: true,
+    human_gate_satisfied: true,
+    authority_chain_verified: true,
+    ai_ceilings_externally_verified: true
+  };
+}
+
+/**
+ * Build a deterministic invariant request matching `WasmInvariantRequest`.
+ */
+export function buildValidationInvariantRequest() {
+  return {
+    actor: 'did:exo:alice',
+    actor_roles: [],
+    bailment_state: {
+      Active: {
+        bailor: 'did:exo:bailor',
+        bailee: 'did:exo:alice',
+        scope: 'data'
+      }
+    },
+    consent_records: [{
+      subject: 'did:exo:subject',
+      granted_to: 'did:exo:alice',
+      scope: 'data',
+      active: true
+    }],
+    authority_chain: {
+      links: [{
+        grantor: 'did:exo:bailor',
+        grantee: 'did:exo:alice',
+        permissions: { permissions: ['validate'] },
+        signature: [1, 2, 3]
+      }]
+    },
+    provenance: {
+      actor: 'did:exo:alice',
+      timestamp: VALIDATION_TIMESTAMP_ISO,
+      action_hash: repeatedByte(4),
+      signature: [1, 2, 3],
+      voice_kind: 'Human',
+      independence: 'Independent',
+      review_order: 'FirstOrder'
+    }
+  };
 }

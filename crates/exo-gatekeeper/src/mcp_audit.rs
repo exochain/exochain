@@ -144,23 +144,35 @@ pub fn verify_chain(log: &McpAuditLog) -> Result<(), GatekeeperError> {
 }
 
 /// Build a new record linked to the current log head.
-#[must_use]
 pub fn create_record(
     log: &McpAuditLog,
+    id: Uuid,
+    timestamp: Timestamp,
     rule: McpRule,
     actor: Did,
     outcome: McpEnforcementOutcome,
     data_residency_region: Option<String>,
-) -> McpAuditRecord {
-    McpAuditRecord {
-        id: Uuid::new_v4(),
-        timestamp: Timestamp::now_utc(),
+) -> Result<McpAuditRecord, GatekeeperError> {
+    if id.is_nil() {
+        return Err(GatekeeperError::McpAuditInvalidRecord {
+            reason: "record id must be caller-supplied and non-nil".into(),
+        });
+    }
+    if timestamp == Timestamp::ZERO {
+        return Err(GatekeeperError::McpAuditInvalidRecord {
+            reason: "timestamp must be caller-supplied and non-zero".into(),
+        });
+    }
+
+    Ok(McpAuditRecord {
+        id,
+        timestamp,
         rule,
         actor,
         outcome,
         data_residency_region,
         chain_hash: log.head_hash(),
-    }
+    })
 }
 
 // ===========================================================================
@@ -178,8 +190,51 @@ mod tests {
         Did::new(&format!("did:exo:{s}")).expect("valid DID")
     }
 
+    fn record_id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
+    fn ts(ms: u64) -> Timestamp {
+        Timestamp::new(ms, 0)
+    }
+
+    fn create_record_source() -> &'static str {
+        let source = include_str!("mcp_audit.rs");
+        let start = source
+            .find("pub fn create_record(")
+            .expect("create_record source must exist");
+        let end = source[start..]
+            .find("// ===========================================================================")
+            .expect("tests section marker must exist");
+        &source[start..start + end]
+    }
+
+    #[test]
+    fn create_record_has_no_internal_entropy_or_wall_clock() {
+        let source = create_record_source();
+        assert!(
+            !source.contains("Uuid::new_v4"),
+            "MCP audit records must not fabricate nondeterministic UUIDs internally"
+        );
+        assert!(
+            !source.contains("Timestamp::now_utc"),
+            "MCP audit records must not read wall-clock time internally"
+        );
+    }
+
     fn append_ok(log: &mut McpAuditLog, rule: McpRule, outcome: McpEnforcementOutcome) {
-        let r = create_record(log, rule, did("agent"), outcome, None);
+        let offset = u128::try_from(log.len()).expect("log length fits u128");
+        let timestamp_offset = u64::try_from(log.len()).expect("log length fits u64");
+        let r = create_record(
+            log,
+            record_id(0xA000 + offset),
+            ts(10_000 + timestamp_offset),
+            rule,
+            did("agent"),
+            outcome,
+            None,
+        )
+        .expect("deterministic MCP audit record");
         append(log, r).expect("append failed");
     }
 
@@ -230,8 +285,8 @@ mod tests {
             McpEnforcementOutcome::Allowed,
         );
         let bad = McpAuditRecord {
-            id: Uuid::new_v4(),
-            timestamp: Timestamp::new(9000, 0),
+            id: record_id(0xB001),
+            timestamp: ts(9000),
             rule: McpRule::Mcp002NoSelfEscalation,
             actor: did("agent"),
             outcome: McpEnforcementOutcome::Blocked,
@@ -273,14 +328,69 @@ mod tests {
         let mut log = McpAuditLog::new();
         let r = create_record(
             &log,
+            record_id(0xC001),
+            ts(20_000),
             McpRule::Mcp001BctsScope,
             did("agent"),
             McpEnforcementOutcome::Allowed,
             Some("EU-WEST-1".into()),
-        );
+        )
+        .expect("deterministic MCP audit record");
         assert_eq!(r.data_residency_region, Some("EU-WEST-1".into()));
         append(&mut log, r).expect("append ok");
         assert!(verify_chain(&log).is_ok());
+    }
+
+    #[test]
+    fn create_record_preserves_caller_supplied_metadata() {
+        let log = McpAuditLog::new();
+        let id = record_id(0xC002);
+        let timestamp = ts(21_000);
+        let record = create_record(
+            &log,
+            id,
+            timestamp,
+            McpRule::Mcp001BctsScope,
+            did("agent"),
+            McpEnforcementOutcome::Allowed,
+            None,
+        )
+        .expect("deterministic MCP audit record");
+
+        assert_eq!(record.id, id);
+        assert_eq!(record.timestamp, timestamp);
+    }
+
+    #[test]
+    fn create_record_rejects_nil_id() {
+        let err = create_record(
+            &McpAuditLog::new(),
+            Uuid::nil(),
+            ts(21_001),
+            McpRule::Mcp001BctsScope,
+            did("agent"),
+            McpEnforcementOutcome::Allowed,
+            None,
+        )
+        .expect_err("nil record IDs must be rejected");
+
+        assert!(matches!(err, GatekeeperError::McpAuditInvalidRecord { .. }));
+    }
+
+    #[test]
+    fn create_record_rejects_zero_timestamp() {
+        let err = create_record(
+            &McpAuditLog::new(),
+            record_id(0xC003),
+            Timestamp::ZERO,
+            McpRule::Mcp001BctsScope,
+            did("agent"),
+            McpEnforcementOutcome::Allowed,
+            None,
+        )
+        .expect_err("zero timestamps must be rejected");
+
+        assert!(matches!(err, GatekeeperError::McpAuditInvalidRecord { .. }));
     }
 
     #[test]

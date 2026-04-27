@@ -79,7 +79,8 @@ pub struct DagNode {
 }
 
 /// Compute the canonical hash of a DAG node from its fields.
-pub(crate) fn compute_node_hash(
+#[must_use]
+pub fn compute_node_hash(
     parents: &[Hash256],
     payload_hash: &Hash256,
     creator_did: &Did,

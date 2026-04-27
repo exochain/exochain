@@ -38,7 +38,7 @@ Full audit of all 16 crates in the ExoChain workspace for admin-bypass paths. **
 
 ### §2 — Emergency Actions Require Ratification
 
-`crates/exo-governance/src/emergency.rs`: Emergency halt/resume actions require explicit ratification via the governance quorum path. This is not a bypass — it is an explicit constitutional mechanism documented in the AEGIS framework.
+`crates/decision-forum/src/emergency.rs`: Emergency halt/resume actions require explicit ratification via the governance quorum path. This is not a bypass — it is an explicit constitutional mechanism documented in the AEGIS framework.
 
 ### §3 — Gateway Dev Scaffold is Deny-All (Not a Bypass)
 

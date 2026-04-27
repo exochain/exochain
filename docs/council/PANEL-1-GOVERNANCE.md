@@ -175,7 +175,7 @@
 ### GOV-009 -- Emergency Action Protocol
 
 **Assessment:** Sound
-**Exochain Coverage:** `exo-governance/src/emergency.rs` -- `EmergencyAction` with `ratification_decision_id` (auto-created per TNC-10), `ratification_deadline`, `RatificationStatus` (Pending/Ratified/Expired). `EmergencyFrequencyTracker` with configurable threshold and `is_threshold_exceeded()`. `exo-governance/src/constitution.rs` -- `EmergencySpec` with authorized_roles, scope, max_duration_hours, ratification_deadline_hours, max_per_quarter.
+**Exochain Coverage:** `decision-forum/src/emergency.rs` -- `EmergencyAction` with caller-supplied deterministic IDs/timestamps, `ratification_deadline`, `RatificationStatus` (Required/Ratified/Expired), policy caps, and governance-review threshold checks. `exo-governance/src/constitution.rs` -- `EmergencySpec` with authorized_roles, scope, max_duration_hours, ratification_deadline_hours, max_per_quarter.
 **Gaps:**
 1. `>3/quarter triggers governance review` is tracked by `EmergencyFrequencyTracker` but no review action is auto-created.
 2. `RATIFICATION_REQUIRED` auto-creation: `ratification_decision_id` is stored but the actual Decision Object must be created by the caller -- no automatic creation.
@@ -361,7 +361,7 @@
 ### TNC-10 -- Emergency Action Ratification Tracking
 
 **Assessment:** Sound
-**Exochain Coverage:** `exo-governance/src/emergency.rs` `EmergencyAction` with `ratification_decision_id` (auto-generated), `ratification_deadline`, `RatificationStatus`. `is_ratification_expired()` detects overdue ratification. `EmergencyFrequencyTracker` tracks quarterly usage.
+**Exochain Coverage:** `decision-forum/src/emergency.rs` `EmergencyAction` with `ratification_deadline`, `RatificationStatus`, `check_expiry()`, `ratify_emergency()`, and `needs_governance_review()` threshold checks.
 **Gaps:**
 1. "Unratified = governance failure surfaced by system" -- detection exists (`is_ratification_expired()`) but no automatic surfacing/notification.
 2. Auto-creation of ratification Decision Object is caller responsibility.
@@ -384,7 +384,7 @@ The following requirements have solid implementations and can proceed to integra
 2. **GOV-003 (Delegated Authority Matrix)** -- Core delegation mechanics in both `exo-governance` and `exo-authority` are well-implemented with scope narrowing, sub-delegation caps, and circular detection.
 3. **TNC-03 (Audit Log Continuity)** -- `exo-governance/src/audit.rs` provides a correct Blake3 hash-chained append-only log with tamper detection.
 4. **GOV-008 (Contestation)** -- `exo-governance/src/challenge.rs` has a complete challenge lifecycle with 6 grounds, adjudication, and withdrawal.
-5. **GOV-009 (Emergency Protocol)** -- `exo-governance/src/emergency.rs` handles ratification tracking and frequency monitoring.
+5. **GOV-009 (Emergency Protocol)** -- `decision-forum/src/emergency.rs` handles ratification tracking and frequency monitoring.
 
 ### Needs Spec Work (Partial Implementation, Spec Gaps)
 

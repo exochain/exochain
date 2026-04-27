@@ -59,6 +59,7 @@ pub enum NetworkCommand {
     #[allow(dead_code)] // Used when governance API enables dynamic peer dialing
     Dial { addr: Multiaddr },
     /// Request the current peer count.
+    #[cfg_attr(not(feature = "unaudited-infrastructure-holons"), allow(dead_code))]
     PeerCount {
         reply: tokio::sync::oneshot::Sender<usize>,
     },
@@ -482,6 +483,7 @@ impl NetworkHandle {
     }
 
     /// Get the current connected peer count.
+    #[cfg_attr(not(feature = "unaudited-infrastructure-holons"), allow(dead_code))]
     pub async fn peer_count(&self) -> anyhow::Result<usize> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.cmd_tx
@@ -549,12 +551,7 @@ mod tests {
             seed_addrs: vec![],
             node_did: Did::new("did:exo:test").unwrap(),
         };
-        let mut swarm = build_swarm(&config).unwrap();
-
-        // Listen on random ports
-        swarm
-            .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
-            .unwrap();
+        let swarm = build_swarm(&config).unwrap();
 
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
         let (event_tx, _event_rx) = mpsc::channel(32);
@@ -564,10 +561,8 @@ mod tests {
         // Spawn network loop
         tokio::spawn(run_network_loop(swarm, cmd_rx, event_tx));
 
-        // Small delay for the loop to start
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // Query peer count (should be 0 — no peers connected)
+        // Query peer count before listening so concurrent network tests cannot
+        // connect through loopback/mDNS and make this assertion nondeterministic.
         let count = handle.peer_count().await.unwrap();
         assert_eq!(count, 0);
     }

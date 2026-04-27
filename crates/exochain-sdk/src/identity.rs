@@ -24,24 +24,32 @@
 //! assert!(alice.verify(b"hello", &sig));
 //! ```
 
-use exo_core::crypto::{generate_keypair, sign as core_sign, verify as core_verify};
-use exo_core::{Did, PublicKey, SecretKey, Signature, Timestamp};
+use exo_core::{
+    Did, PublicKey, SecretKey, Signature, Timestamp,
+    crypto::{generate_keypair, sign as core_sign, verify as core_verify},
+};
 use exo_identity::did::DidDocument;
 
 use crate::error::{ExoError, ExoResult};
 
+const KEYPAIR_PROOF_MESSAGE: &[u8] = b"exo.sdk.identity.keypair.v1";
+
 /// A DID paired with its Ed25519 keypair and a human-readable label.
 ///
-/// Identities are created either with [`Identity::generate`] (fresh random
-/// keypair) or [`Identity::from_keypair`] (reuse an existing keypair, e.g.
-/// loaded from a keystore). The DID is derived from the public key as:
+/// Local identities are created either with [`Identity::generate`] (fresh
+/// random keypair) or [`Identity::from_keypair`] (reuse an existing keypair,
+/// e.g. loaded from a keystore). The local SDK DID is derived from the public
+/// key as:
 ///
 /// ```text
 /// did:exo: + first 16 hex chars of BLAKE3(public_key_bytes)
 /// ```
 ///
-/// The `Debug` implementation deliberately redacts the secret key so
-/// identities can be logged without leaking private material.
+/// Use [`Identity::from_resolved_keypair`] when the canonical DID has already
+/// been resolved from the fabric and must not be re-derived locally.
+///
+/// The `Debug` implementation deliberately redacts the secret key so identities
+/// can be logged without leaking private material.
 ///
 /// # Examples
 ///
@@ -142,6 +150,41 @@ impl Identity {
     /// ```
     pub fn from_keypair(label: &str, public: PublicKey, secret: SecretKey) -> ExoResult<Self> {
         let did = derive_did(&public)?;
+        Self::from_resolved_keypair(label, did, public, secret)
+    }
+
+    /// Build an [`Identity`] from an existing Ed25519 keypair and a DID that
+    /// was resolved from the canonical fabric.
+    ///
+    /// Unlike [`Identity::from_keypair`], this method preserves the supplied
+    /// DID instead of re-deriving a local SDK DID from the public key. It is
+    /// intended for cross-language or gateway-backed flows where the fabric
+    /// has already resolved the DID document and associated public key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExoError::Identity`] when the supplied secret key does not
+    /// match the supplied public key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use exo_core::{Did, crypto::generate_keypair};
+    /// use exochain_sdk::identity::Identity;
+    ///
+    /// let (public, secret) = generate_keypair();
+    /// let did = Did::new("did:exo:fabric-resolved")?;
+    /// let identity = Identity::from_resolved_keypair("alice", did.clone(), public, secret)?;
+    /// assert_eq!(identity.did(), &did);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn from_resolved_keypair(
+        label: &str,
+        did: Did,
+        public: PublicKey,
+        secret: SecretKey,
+    ) -> ExoResult<Self> {
+        verify_keypair_match(&public, &secret)?;
         Ok(Self {
             did,
             public,
@@ -291,6 +334,17 @@ fn derive_did(public: &PublicKey) -> ExoResult<Did> {
     Did::new(&did_str).map_err(|e| ExoError::InvalidDid(e.to_string()))
 }
 
+fn verify_keypair_match(public: &PublicKey, secret: &SecretKey) -> ExoResult<()> {
+    let signature = core_sign(KEYPAIR_PROOF_MESSAGE, secret);
+    if core_verify(KEYPAIR_PROOF_MESSAGE, &signature, public) {
+        Ok(())
+    } else {
+        Err(ExoError::Identity(
+            "secret key does not match public key".to_owned(),
+        ))
+    }
+}
+
 /// Fallback DID for the unreachable case where hex-derived DIDs fail
 /// validation.  Never observed in practice; present only so that
 /// [`Identity::generate`] remains infallible.
@@ -307,6 +361,7 @@ fn fallback_did() -> Did {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::error::ExoError;
 
     #[test]
     fn generate_produces_valid_did() {
@@ -359,6 +414,46 @@ mod tests {
     }
 
     #[test]
+    fn from_resolved_keypair_preserves_fabric_resolved_did() {
+        let id = Identity::generate("local");
+        let fabric_did = Did::new("did:exo:fabric-resolved").unwrap();
+
+        let rebuilt = Identity::from_resolved_keypair(
+            "fabric",
+            fabric_did.clone(),
+            *id.public_key(),
+            SecretKey::from_bytes(*id.secret.as_bytes()),
+        )
+        .expect("resolved identity");
+
+        assert_eq!(rebuilt.did(), &fabric_did);
+        assert_ne!(rebuilt.did(), id.did());
+        assert_eq!(rebuilt.label(), "fabric");
+        let sig = rebuilt.sign(b"resolved fabric DID");
+        assert!(rebuilt.verify(b"resolved fabric DID", &sig));
+    }
+
+    #[test]
+    fn from_resolved_keypair_rejects_mismatched_public_and_secret_keys() {
+        let public_source = Identity::generate("public");
+        let secret_source = Identity::generate("secret");
+        let fabric_did = Did::new("did:exo:fabric-mismatch").unwrap();
+
+        let err = Identity::from_resolved_keypair(
+            "fabric",
+            fabric_did,
+            *public_source.public_key(),
+            SecretKey::from_bytes(*secret_source.secret.as_bytes()),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            ExoError::Identity(msg) if msg.contains("does not match public key")
+        ));
+    }
+
+    #[test]
     fn did_document_contains_identity_fields() {
         let id = Identity::generate("doc");
         let doc = id.did_document();
@@ -388,5 +483,4 @@ mod tests {
         let pk = *id.public_key();
         assert_eq!(&pk, id.public_key());
     }
-
 }
