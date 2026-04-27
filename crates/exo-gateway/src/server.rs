@@ -199,6 +199,179 @@ fn now_ms() -> u64 {
     exo_core::Timestamp::now_utc().physical_ms
 }
 
+const GATEWAY_SERVER_METADATA_INITIATIVE: &str =
+    "Initiatives/fix-gateway-server-deterministic-metadata.md";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SessionIssueMetadata {
+    created_at: i64,
+    expires_at: i64,
+}
+
+impl SessionIssueMetadata {
+    fn from_body(body: &serde_json::Value) -> Result<Self> {
+        let created_at = required_nonzero_i64(body, "createdAt")?;
+        let expires_at = required_nonzero_i64(body, "expiresAt")?;
+        if expires_at <= created_at {
+            return Err(metadata_error(
+                "session expiresAt must be greater than caller-supplied createdAt",
+            ));
+        }
+        Ok(Self {
+            created_at,
+            expires_at,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SessionRefreshMetadata {
+    observed_at: i64,
+    expires_at: i64,
+}
+
+impl SessionRefreshMetadata {
+    fn from_body(body: &serde_json::Value) -> Result<Self> {
+        let observed_at = required_nonzero_i64(body, "observedAt")?;
+        let expires_at = required_nonzero_i64(body, "expiresAt")?;
+        if expires_at <= observed_at {
+            return Err(metadata_error(
+                "session refresh expiresAt must be greater than caller-supplied observedAt",
+            ));
+        }
+        Ok(Self {
+            observed_at,
+            expires_at,
+        })
+    }
+
+    fn from_optional_body(body: Option<&serde_json::Value>) -> Result<Self> {
+        let body = body.ok_or_else(|| {
+            metadata_error(
+                "session refresh requires caller-supplied observedAt and expiresAt metadata",
+            )
+        })?;
+        Self::from_body(body)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LayoutTemplateMetadata {
+    created_at: i64,
+    updated_at: i64,
+}
+
+impl LayoutTemplateMetadata {
+    fn from_body(body: &serde_json::Value) -> Result<Self> {
+        let created_at = required_nonzero_i64(body, "createdAt")?;
+        let updated_at = required_nonzero_i64(body, "updatedAt")?;
+        if updated_at < created_at {
+            return Err(metadata_error(
+                "layout updatedAt must not be earlier than caller-supplied createdAt",
+            ));
+        }
+        Ok(Self {
+            created_at,
+            updated_at,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FeedbackIssueCreateMetadata {
+    id: String,
+    created_at: i64,
+}
+
+impl FeedbackIssueCreateMetadata {
+    fn from_body(body: &serde_json::Value) -> Result<Self> {
+        Ok(Self {
+            id: required_nonempty_string(body, "id")?,
+            created_at: required_nonzero_i64(body, "createdAt")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FeedbackIssueUpdateMetadata {
+    updated_at: i64,
+}
+
+impl FeedbackIssueUpdateMetadata {
+    fn from_body(body: &serde_json::Value) -> Result<Self> {
+        Ok(Self {
+            updated_at: required_nonzero_i64(body, "updatedAt")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AdvancePaceMetadata {
+    queued_at: i64,
+}
+
+impl AdvancePaceMetadata {
+    fn from_optional_body(body: Option<&serde_json::Value>) -> Result<Self> {
+        let body = body.ok_or_else(|| {
+            metadata_error("advance pace requires caller-supplied queuedAt metadata")
+        })?;
+        Ok(Self {
+            queued_at: required_nonzero_i64(body, "queuedAt")?,
+        })
+    }
+}
+
+fn required_nonempty_string(body: &serde_json::Value, field: &str) -> Result<String> {
+    let value = body
+        .get(field)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| metadata_error(format!("{field} must be caller-supplied")))?;
+    if value.trim().is_empty() {
+        return Err(metadata_error(format!("{field} must not be empty")));
+    }
+    Ok(value.to_owned())
+}
+
+fn required_nonzero_i64(body: &serde_json::Value, field: &str) -> Result<i64> {
+    let value = body
+        .get(field)
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| metadata_error(format!("{field} must be caller-supplied")))?;
+    if value <= 0 {
+        return Err(metadata_error(format!(
+            "{field} must be a positive non-zero epoch millisecond"
+        )));
+    }
+    Ok(value)
+}
+
+fn metadata_error(reason: impl Into<String>) -> GatewayError {
+    GatewayError::BadRequest(format!(
+        "{}; see {}",
+        reason.into(),
+        GATEWAY_SERVER_METADATA_INITIATIVE
+    ))
+}
+
+fn metadata_error_response(error: GatewayError) -> axum::response::Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({
+            "error": "missing_or_invalid_caller_supplied_metadata",
+            "message": error.to_string(),
+            "initiative": GATEWAY_SERVER_METADATA_INITIATIVE
+        })),
+    )
+        .into_response()
+}
+
+fn generate_session_token() -> Result<String> {
+    let mut token_bytes = [0u8; 32];
+    getrandom::getrandom(&mut token_bytes)
+        .map_err(|e| GatewayError::Internal(format!("session token entropy unavailable: {e}")))?;
+    Ok(hex::encode(token_bytes))
+}
+
 // ---------------------------------------------------------------------------
 // Production DB adjudication context resolver (APE-53)
 // ---------------------------------------------------------------------------
@@ -670,9 +843,9 @@ async fn handle_agents_enroll(
 
 /// POST /api/v1/auth/login — authenticate a DID and issue a session token.
 ///
-/// Body: `{ "did": "did:exo:alice", "signature": "..." }`
+/// Body: `{ "did": "did:exo:alice", "signature": "...", "createdAt": 123, "expiresAt": 456 }`
 ///
-/// Returns a UUID session token stored in the `sessions` table:
+/// Returns a 256-bit bearer session token stored in the `sessions` table:
 /// ```sql
 /// CREATE TABLE IF NOT EXISTS sessions (
 ///     token       TEXT    PRIMARY KEY,
@@ -732,25 +905,35 @@ async fn handle_auth_login(
                 .into_response();
         }
     }
-    // Issue a 1-hour session token.
-    let token = uuid::Uuid::new_v4().to_string();
-    let now_ms = i64::try_from(now_ms()).unwrap_or(i64::MAX);
-    let expires_ms = now_ms.saturating_add(3_600_000); // +1 hour
+    let metadata = match SessionIssueMetadata::from_body(&body) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
+    let token = match generate_session_token() {
+        Ok(token) => token,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
     match sqlx::query(
         "INSERT INTO sessions (token, actor_did, created_at, expires_at, revoked) \
          VALUES ($1, $2, $3, $4, false)",
     )
     .bind(&token)
     .bind(&did_str)
-    .bind(now_ms)
-    .bind(expires_ms)
+    .bind(metadata.created_at)
+    .bind(metadata.expires_at)
     .execute(db)
     .await
     {
         Ok(_) => Json(serde_json::json!({
             "token": token,
             "actor_did": did_str,
-            "expires_at": expires_ms,
+            "expires_at": metadata.expires_at,
         }))
         .into_response(),
         Err(e) => (
@@ -774,11 +957,13 @@ async fn handle_auth_token(
 
 /// POST /api/v1/auth/refresh — extend an existing session.
 ///
-/// Requires `Authorization: Bearer <token>`.  Resets `expires_at` to now + 1h.
+/// Requires `Authorization: Bearer <token>` plus a JSON body with caller-supplied
+/// `observedAt` and replacement `expiresAt` metadata.
 /// Returns 401 when the token is missing, expired, or revoked; 503 without DB.
 async fn handle_auth_refresh(
     State(state): State<AppState>,
     headers: HeaderMap,
+    body: Option<Json<serde_json::Value>>,
 ) -> impl IntoResponse {
     let db = match state.require_db() {
         Ok(pool) => pool,
@@ -803,15 +988,18 @@ async fn handle_auth_refresh(
                 .into_response();
         }
     };
-    let now_ms = i64::try_from(now_ms()).unwrap_or(i64::MAX);
-    let new_expires = now_ms.saturating_add(3_600_000);
+    let body_ref = body.as_ref().map(|Json(value)| value);
+    let metadata = match SessionRefreshMetadata::from_optional_body(body_ref) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
     match sqlx::query(
         "UPDATE sessions SET expires_at = $1 \
          WHERE token = $2 AND expires_at > $3 AND revoked = false",
     )
-    .bind(new_expires)
+    .bind(metadata.expires_at)
     .bind(&token)
-    .bind(now_ms)
+    .bind(metadata.observed_at)
     .execute(db)
     .await
     {
@@ -822,7 +1010,7 @@ async fn handle_auth_refresh(
             .into_response(),
         Ok(_) => Json(serde_json::json!({
             "token": token,
-            "expires_at": new_expires,
+            "expires_at": metadata.expires_at,
         }))
         .into_response(),
         Err(e) => (
@@ -911,6 +1099,7 @@ async fn handle_auth_saml_callback() -> (StatusCode, Json<serde_json::Value>) {
 async fn handle_advance_pace(
     State(state): State<AppState>,
     Path(did_str): Path<String>,
+    body: Option<Json<serde_json::Value>>,
 ) -> impl IntoResponse {
     let did = match Did::new(&did_str) {
         Ok(d) => d,
@@ -959,13 +1148,17 @@ async fn handle_advance_pace(
                 .into_response();
         }
     };
-    let queued_at = now_ms();
+    let body_ref = body.as_ref().map(|Json(value)| value);
+    let metadata = match AdvancePaceMetadata::from_optional_body(body_ref) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
     (
         StatusCode::ACCEPTED,
         Json(serde_json::json!({
             "status": "pace_advanced",
             "actor_did": did_str,
-            "queued_at": queued_at,
+            "queued_at": metadata.queued_at,
         })),
     )
         .into_response()
@@ -1045,15 +1238,10 @@ async fn handle_layout_template_put(
         .get("isBuiltIn")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let now_ms = i64::try_from(now_ms()).unwrap_or(i64::MAX);
-    let updated_at = body
-        .get("updatedAt")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(now_ms);
-    let created_at = body
-        .get("createdAt")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(now_ms);
+    let metadata = match LayoutTemplateMetadata::from_body(&body) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
 
     // Extract user DID from bearer token session if available.
     // For now, accept an optional `userDid` field in the body.
@@ -1071,8 +1259,8 @@ async fn handle_layout_template_put(
         &layout_json,
         &hidden_panels,
         is_built_in,
-        created_at,
-        updated_at,
+        metadata.created_at,
+        metadata.updated_at,
     )
     .await
     {
@@ -1196,11 +1384,10 @@ async fn handle_feedback_issue_create(
                 .into_response();
         }
     };
-    let id = body
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_owned())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let metadata = match FeedbackIssueCreateMetadata::from_body(&body) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
     let description = body
         .get("description")
         .and_then(|v| v.as_str())
@@ -1224,15 +1411,10 @@ async fn handle_feedback_issue_create(
     let reporter_did = reporter_did_owned.as_deref();
     let widget_state = body.get("widgetState");
     let browser_info = body.get("browserInfo");
-    let now_ms = i64::try_from(now_ms()).unwrap_or(i64::MAX);
-    let created_at = body
-        .get("createdAt")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(now_ms);
 
     match crate::db::insert_feedback_issue(
         db,
-        &id,
+        &metadata.id,
         &title,
         description,
         severity,
@@ -1242,13 +1424,13 @@ async fn handle_feedback_issue_create(
         reporter_did,
         widget_state,
         browser_info,
-        created_at,
+        metadata.created_at,
     )
     .await
     {
         Ok(()) => (
             StatusCode::CREATED,
-            Json(serde_json::json!({ "id": id, "status": "filed" })),
+            Json(serde_json::json!({ "id": metadata.id, "status": "filed" })),
         )
             .into_response(),
         Err(e) => (
@@ -1332,9 +1514,20 @@ async fn handle_feedback_issue_update(
         .and_then(|v| v.as_str())
         .map(|s| s.to_owned());
     let notes = notes_owned.as_deref();
-    let now_ms = i64::try_from(now_ms()).unwrap_or(i64::MAX);
+    let metadata = match FeedbackIssueUpdateMetadata::from_body(&body) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
 
-    match crate::db::update_feedback_issue_status(db, &id, status, agent_team, notes, now_ms).await
+    match crate::db::update_feedback_issue_status(
+        db,
+        &id,
+        status,
+        agent_team,
+        notes,
+        metadata.updated_at,
+    )
+    .await
     {
         Ok(true) => (
             StatusCode::OK,
@@ -2202,6 +2395,172 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    #[test]
+    fn session_issue_metadata_rejects_missing_created_at() {
+        let body = serde_json::json!({
+            "did": "did:exo:alice",
+            "expiresAt": 4_600_000
+        });
+        let err = SessionIssueMetadata::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("createdAt")),
+            "expected createdAt refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn session_issue_metadata_rejects_zero_created_at() {
+        let body = serde_json::json!({
+            "did": "did:exo:alice",
+            "createdAt": 0,
+            "expiresAt": 4_600_000
+        });
+        let err = SessionIssueMetadata::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("createdAt")),
+            "expected zero createdAt refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn session_issue_metadata_requires_expiry_after_creation() {
+        let body = serde_json::json!({
+            "did": "did:exo:alice",
+            "createdAt": 4_600_000,
+            "expiresAt": 4_600_000
+        });
+        let err = SessionIssueMetadata::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("expiresAt")),
+            "expected expiresAt ordering refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn session_refresh_metadata_requires_observed_at() {
+        let body = serde_json::json!({
+            "expiresAt": 4_600_000
+        });
+        let err = SessionRefreshMetadata::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("observedAt")),
+            "expected observedAt refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn feedback_issue_create_metadata_requires_id_and_created_at() {
+        let missing_id = serde_json::json!({
+            "createdAt": 4_000
+        });
+        let missing_created_at = serde_json::json!({
+            "id": "fb-1"
+        });
+        assert!(matches!(
+            FeedbackIssueCreateMetadata::from_body(&missing_id),
+            Err(GatewayError::BadRequest(reason)) if reason.contains("id")
+        ));
+        assert!(matches!(
+            FeedbackIssueCreateMetadata::from_body(&missing_created_at),
+            Err(GatewayError::BadRequest(reason)) if reason.contains("createdAt")
+        ));
+    }
+
+    #[test]
+    fn layout_template_metadata_requires_created_and_updated_at() {
+        let missing_created_at = serde_json::json!({
+            "updatedAt": 5_000
+        });
+        let missing_updated_at = serde_json::json!({
+            "createdAt": 4_000
+        });
+        assert!(matches!(
+            LayoutTemplateMetadata::from_body(&missing_created_at),
+            Err(GatewayError::BadRequest(reason)) if reason.contains("createdAt")
+        ));
+        assert!(matches!(
+            LayoutTemplateMetadata::from_body(&missing_updated_at),
+            Err(GatewayError::BadRequest(reason)) if reason.contains("updatedAt")
+        ));
+    }
+
+    #[test]
+    fn feedback_issue_update_metadata_requires_updated_at() {
+        let body = serde_json::json!({
+            "status": "closed"
+        });
+        let err = FeedbackIssueUpdateMetadata::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("updatedAt")),
+            "expected updatedAt refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn advance_pace_metadata_requires_queued_at() {
+        let body = serde_json::json!({});
+        let err = AdvancePaceMetadata::from_optional_body(Some(&body)).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("queuedAt")),
+            "expected queuedAt refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn gateway_server_durable_handlers_do_not_fabricate_metadata() {
+        let source = include_str!("server.rs");
+        let durable_handlers = [
+            source_between(
+                source,
+                "async fn handle_auth_login",
+                "/// POST /api/v1/auth/token",
+            ),
+            source_between(
+                source,
+                "async fn handle_auth_refresh",
+                "/// POST /api/v1/auth/logout",
+            ),
+            source_between(
+                source,
+                "async fn handle_advance_pace",
+                "// ---------------------------------------------------------------------------\n// Legal / eDiscovery handlers",
+            ),
+            source_between(
+                source,
+                "async fn handle_layout_template_put",
+                "/// DELETE /api/v1/layout-templates/:id",
+            ),
+            source_between(
+                source,
+                "async fn handle_feedback_issue_create",
+                "/// GET /api/v1/feedback-issues",
+            ),
+            source_between(
+                source,
+                "async fn handle_feedback_issue_update",
+                "pub fn build_router",
+            ),
+        ];
+
+        for handler in durable_handlers {
+            assert!(
+                !handler.contains("now_ms()"),
+                "durable gateway handlers must not fabricate timestamps"
+            );
+            assert!(
+                !handler.contains("Uuid::new_v4"),
+                "durable gateway handlers must not fabricate persistent IDs"
+            );
+        }
+    }
+
+    fn source_between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+        let start_index = source.find(start).expect("source start marker");
+        let after_start = &source[start_index..];
+        let end_index = after_start.find(end).expect("source end marker");
+        &after_start[..end_index]
     }
 
     #[tokio::test]
