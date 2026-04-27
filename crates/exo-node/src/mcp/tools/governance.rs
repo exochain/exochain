@@ -548,11 +548,11 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["title"], "Approve data sharing policy");
         assert_eq!(v["proposer"], "did:exo:alice");
         assert_eq!(v["status"], "proposed");
-        assert!(v["decision_id"].as_str().expect("id").len() > 0);
+        assert!(!v["decision_id"].as_str().expect("id").is_empty());
     }
 
     #[cfg(feature = "unaudited-mcp-simulation-tools")]
@@ -604,7 +604,7 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["decision_id"], "abc123");
         assert_eq!(v["voter"], "did:exo:bob");
         assert_eq!(v["choice"], "approve");
@@ -721,10 +721,10 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["target"], "constitution");
         assert_eq!(v["status"], "draft");
-        assert!(v["amendment_id"].as_str().expect("id").len() > 0);
+        assert!(!v["amendment_id"].as_str().expect("id").is_empty());
         assert_eq!(v["requirements"]["validator_consensus"], "unanimous");
         assert_eq!(v["requirements"]["formal_proof_required"], true);
         assert!(
