@@ -122,4 +122,28 @@ mod source_guard_tests {
             );
         }
     }
+
+    #[test]
+    fn wasm_identity_risk_bridge_requires_caller_supplied_signer_and_time() {
+        let source = include_str!("identity_bindings.rs");
+        assert!(
+            source.contains("attester_secret_hex")
+                && source.contains("now_physical_ms")
+                && source.contains("now_logical"),
+            "risk assessment must expose caller-supplied signer and HLC metadata"
+        );
+
+        let forbidden = [
+            "HybridClock::new()",
+            "generate_keypair()",
+            "Timestamp::now_utc()",
+        ];
+
+        for pattern in forbidden {
+            assert!(
+                !source.contains(pattern),
+                "identity WASM risk binding must not fabricate signer or time with {pattern}"
+            );
+        }
+    }
 }

@@ -1024,14 +1024,28 @@ test('wasm_verify_franchise_receipt_chain', () => {
 
 console.log('\n--- Risk Assessment ---');
 
-test('wasm_assess_risk', () =>
-  wasm.wasm_assess_risk(
+test('wasm_assess_risk and wasm_verify_risk_attestation use caller signer and caller HLC', () => {
+  const attesterPublicKey = publicKeyForSecret(DUMMY_SECRET_HEX);
+  const attestation = wasm.wasm_assess_risk(
     TEST_DID,
     TEST_DID_2,
     TEXT_BYTES,
     JSON.stringify('Low'),
-    BigInt(3600000)
-  ));
+    JSON.stringify({
+      validity_ms: 3600000,
+      attester_secret_hex: DUMMY_SECRET_HEX,
+      now_physical_ms: NOW_NUM,
+      now_logical: 0
+    })
+  );
+  if (!wasm.wasm_verify_risk_attestation(JSON.stringify(attestation), attesterPublicKey)) {
+    throw new Error('risk attestation must verify against caller-supplied attester key');
+  }
+  if (attestation.timestamp.physical_ms !== NOW_NUM || attestation.timestamp.logical !== 0) {
+    throw new Error('risk attestation timestamp must be caller-supplied HLC');
+  }
+  return attestation;
+});
 
 const riskAttestation = setup(() =>
   wasm.wasm_assess_risk(
@@ -1039,7 +1053,12 @@ const riskAttestation = setup(() =>
     TEST_DID_2,
     TEXT_BYTES,
     JSON.stringify('Low'),
-    BigInt(3600000)
+    JSON.stringify({
+      validity_ms: 3600000,
+      attester_secret_hex: DUMMY_SECRET_HEX,
+      now_physical_ms: NOW_NUM,
+      now_logical: 0
+    })
   ));
 
 test('wasm_is_expired', () => {
