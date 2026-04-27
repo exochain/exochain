@@ -7,7 +7,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useCouncil } from '../lib/CouncilContext'
-import { cn } from '../lib/utils'
+import { cn, escapeHtml } from '../lib/utils'
 import type { TicketTag, TicketPriority, ConversationMessage } from '../lib/council'
 
 // ---------------------------------------------------------------------------
@@ -76,13 +76,18 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
           </div>
         )}
 
-        {/* Render markdown-lite content */}
+        {/* Render markdown-lite content.
+            A-030: HTML-escape the raw line FIRST so any untrusted characters
+            in message.content render as literal text, then apply the bold /
+            code regex replacements that insert the only real HTML tags we
+            want. Previously, backend-provided markdown could include raw
+            <script>/<img onerror=...> that flowed straight into
+            dangerouslySetInnerHTML. */}
         <div className="whitespace-pre-wrap leading-relaxed">
           {message.content.split('\n').map((line, i) => {
-            // Bold
-            const formatted = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-            // Code
-            const withCode = formatted.replace(/`(.+?)`/g, '<code class="px-1 py-0.5 rounded bg-black/10 text-xs font-mono">$1</code>')
+            const escaped = escapeHtml(line)
+            const withBold = escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            const withCode = withBold.replace(/`(.+?)`/g, '<code class="px-1 py-0.5 rounded bg-black/10 text-xs font-mono">$1</code>')
             return <p key={i} className={cn(line === '' && 'h-2')} dangerouslySetInnerHTML={{ __html: withCode }} />
           })}
         </div>
