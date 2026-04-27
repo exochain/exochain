@@ -1,10 +1,13 @@
 /**
- * panels.js — 5-panel council review system for ExoForge.
+ * panels.js — 5-panel council triage system for ExoForge.
  *
- * Implements the multi-panel governance review process modeled on
- * ExoChain's three-branch (legislative/executive/judicial) structure.
- * Each panel evaluates proposals within its scope and casts a weighted vote.
+ * Provides deterministic heuristic triage modeled on ExoChain's
+ * three-branch (legislative/executive/judicial) structure.
  */
+
+export const REVIEW_METHOD = 'heuristic_triage';
+export const REVIEW_BINDING = false;
+export const REVIEW_TIMESTAMP_ISO = '2023-11-14T22:13:20.000Z';
 
 /**
  * The 5 standing council panels.
@@ -97,7 +100,7 @@ export function getPanel(name) {
 }
 
 /**
- * Conduct a multi-panel review of a proposal.
+ * Conduct a multi-panel heuristic triage of a proposal.
  *
  * Each panel evaluates the proposal against its criteria and produces
  * a structured assessment. This function returns the raw assessments;
@@ -121,11 +124,10 @@ export function conductReview(panels, proposal) {
 }
 
 /**
- * Evaluate a single panel's review of a proposal.
+ * Evaluate a single panel's heuristic triage of a proposal.
  *
- * Performs heuristic analysis based on the proposal's described impact
- * areas and the panel's criteria. In production, this would invoke
- * Claude Code for deeper semantic analysis.
+ * Performs deterministic keyword analysis based on the proposal's described
+ * impact areas and the panel's criteria. This is not a binding council vote.
  *
  * @param {object} panel - Panel definition
  * @param {object} proposal - Proposal to evaluate
@@ -269,10 +271,12 @@ function evaluatePanel(panel, proposal) {
     weight: panel.weight,
     vote,
     confidence: Math.round(confidence * 100) / 100,
+    review_method: REVIEW_METHOD,
+    binding_review: REVIEW_BINDING,
     findings,
     criteria_met: criteriaMet,
     criteria_failed: criteriaFailed,
-    reviewed_at: new Date().toISOString()
+    reviewed_at: REVIEW_TIMESTAMP_ISO
   };
 }
 
@@ -348,10 +352,12 @@ export function tallyVotes(votes) {
   return {
     verdict,
     score,
+    review_method: REVIEW_METHOD,
+    binding_review: REVIEW_BINDING,
     breakdown,
     vetoed_by: vetoedBy,
     total_findings: totalFindings,
     panels_reviewed: votes.length,
-    reviewed_at: new Date().toISOString()
+    reviewed_at: REVIEW_TIMESTAMP_ISO
   };
 }

@@ -1,8 +1,11 @@
 {
   "name": "@exochain/exoforge",
   "version": "0.1.0-beta",
-  "description": "ExoForge — autonomous implementation engine for EXOCHAIN",
+  "description": "ExoForge — governance triage, planning, validation, and monitoring tools for EXOCHAIN",
   "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "bin": {
     "exoforge-triage": "./bin/exoforge-triage.js",
     "exoforge-council-review": "./bin/exoforge-council-review.js",

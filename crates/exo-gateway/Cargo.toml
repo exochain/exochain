@@ -47,6 +47,13 @@ async-stream = { workspace = true }
 ## dev/test environments do not need a live database.
 production-db = []
 
+## Enable the unaudited GraphQL API surface.
+##
+## Default OFF. The current GraphQL resolvers include unaudited governance
+## mutations, fabricated consent evaluation, and proof-verification scaffolding.
+## Keep this disabled outside explicitly-audited development compatibility runs.
+unaudited-gateway-graphql-api = []
+
 [dev-dependencies]
 serde_json = { workspace = true }
 tower = { workspace = true }

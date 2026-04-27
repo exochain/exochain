@@ -33,11 +33,16 @@ export const server = http.createServer(async (req, res) => {
 
     // ── Create Evidence ──
     if (url.pathname === '/api/evidence/create' && req.method === 'POST') {
-      const { content, type_tag, creator_did } = await parseBody(req);
+      const { content, type_tag, creator_did, evidence_id, created_ms } = await parseBody(req);
+      if (!evidence_id || created_ms === undefined || created_ms === null) {
+        return json(res, 400, { error: 'evidence_id and created_ms are required' });
+      }
       const evidence = wasm.wasm_create_evidence(
         new Uint8Array(Buffer.from(content || '')),
         type_tag || 'document',
-        creator_did
+        creator_did,
+        evidence_id,
+        BigInt(created_ms)
       );
       return json(res, 201, evidence);
     }

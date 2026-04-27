@@ -1,8 +1,14 @@
-use exo_core::types::{Hash256, Timestamp};
+use exo_core::{
+    hash::hash_structured,
+    types::{Hash256, Timestamp},
+};
 use serde::{Deserialize, Serialize};
 
-use crate::round::DeliberationRound;
-use crate::report::MinorityReport;
+use crate::{
+    error::{ConsensusError, Result},
+    report::MinorityReport,
+    round::DeliberationRound,
+};
 
 /// The final result of a deliberation session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,25 +26,30 @@ pub struct DeliberationResult {
 }
 
 impl DeliberationResult {
-    pub fn compute_hash(&self) -> Hash256 {
+    pub fn compute_hash(&self) -> Result<Hash256> {
         hash_result(self)
     }
 }
 
-pub fn hash_result(result: &DeliberationResult) -> Hash256 {
+pub fn hash_result(result: &DeliberationResult) -> Result<Hash256> {
     #[derive(Serialize)]
     struct HashInput<'a> {
+        pub domain: &'static str,
+        pub schema_version: &'static str,
         pub session_id: &'a str,
         pub question: &'a str,
-        pub rounds: &'a Vec<DeliberationRound>,
+        pub rounds: &'a [DeliberationRound],
         pub final_consensus: &'a str,
-        pub minority_reports: &'a Vec<MinorityReport>,
+        pub minority_reports: &'a [MinorityReport],
         pub panel_confidence_index_bps: u64,
         pub rounds_to_convergence: u32,
         pub devil_advocate_summary: &'a Option<String>,
+        pub completed_at: Timestamp,
     }
 
     let input = HashInput {
+        domain: "exo.consensus.deliberation_result.v1",
+        schema_version: "1",
         session_id: &result.session_id,
         question: &result.question,
         rounds: &result.rounds,
@@ -47,8 +58,11 @@ pub fn hash_result(result: &DeliberationResult) -> Hash256 {
         panel_confidence_index_bps: result.panel_confidence_index_bps,
         rounds_to_convergence: result.rounds_to_convergence,
         devil_advocate_summary: &result.devil_advocate_summary,
+        completed_at: result.completed_at,
     };
 
-    let json = serde_json::to_string(&input).unwrap_or_default();
-    Hash256::digest(json.as_bytes())
+    hash_structured(&input).map_err(|source| ConsensusError::HashSerialization {
+        context: "deliberation result",
+        source,
+    })
 }

@@ -19,8 +19,10 @@ pub mod tools_summary;
 
 use std::collections::BTreeMap;
 
-use super::context::NodeContext;
-use super::protocol::{ResourceContent, ResourceDefinition};
+use super::{
+    context::NodeContext,
+    protocol::{ResourceContent, ResourceDefinition},
+};
 
 /// Registry of available MCP resources.
 ///
@@ -126,8 +128,7 @@ mod tests {
         assert!(!text.is_empty());
         // Hash must match what the kernel would compute.
         let hash = exo_core::Hash256::digest(text.as_bytes());
-        let kernel_hash =
-            exo_core::Hash256::digest(constitution::CONSTITUTION_TEXT);
+        let kernel_hash = exo_core::Hash256::digest(constitution::CONSTITUTION_TEXT);
         assert_eq!(hash, kernel_hash);
     }
 

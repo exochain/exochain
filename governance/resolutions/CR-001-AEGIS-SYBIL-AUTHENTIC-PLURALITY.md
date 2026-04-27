@@ -189,12 +189,12 @@ Upon adoption, this Resolution shall serve as the canonical Council interpretati
 
 | Work Order | Owner | Status | Evidence |
 |-----------|-------|--------|----------|
-| 8.1 Spec harmonization | SPEC_GUARDIAN | ⬜ NOT STARTED | |
-| 8.2 Threat expansion | SECURITY_THREATS_AGENT | ⬜ NOT STARTED | |
-| 8.3 Provenance enforcement | Council | ⬜ NOT STARTED | |
-| 8.4 Clearance hardening | Council | ⬜ NOT STARTED | |
-| 8.5 Challenge path hardening | Council | ⬜ NOT STARTED | |
-| 8.6 Escalation pathway | Council | ⬜ NOT STARTED | |
-| 8.7 Traceability completion | QA_TDD_AGENT + SPEC_GUARDIAN | ⬜ NOT STARTED | |
-| 8.8 Release gating | DEVOPS_RELEASE_AGENT | ⬜ NOT STARTED | |
-| 8.9 No-admin preservation | Council | ⬜ NOT STARTED | |
+| 8.1 Spec harmonization | SPEC_GUARDIAN | 🟡 PARTIAL | `docs/adr/ADR-001-authority-of-text.md`; Basalt R2 keeps CR-001 draft until ratification evidence exists. |
+| 8.2 Threat expansion | SECURITY_THREATS_AGENT | 🟡 PARTIAL | `governance/threat_matrix.md`; `docs/architecture/THREAT-MODEL.md`; Basalt R3 will reconcile registry truth. |
+| 8.3 Provenance enforcement | Council | 🟡 PARTIAL | Provenance surfaces exist across governance and legal crates, but recent Council waves still found unsigned trust-boundary paths. |
+| 8.4 Clearance hardening | Council | 🟡 PARTIAL | Independence-aware quorum/clearance code exists, but open governance-bypass work remains tracked outside this resolution. |
+| 8.5 Challenge path hardening | Council | 🟡 PARTIAL | Challenge paths exist in `exo-governance` and `exo-escalation`; end-to-end auth/admissibility review remains open. |
+| 8.6 Escalation pathway | Council | 🟡 PARTIAL | `exo-escalation` implements the pathway shape; Clause-expansion left residual authority-chain evidence questions. |
+| 8.7 Traceability completion | QA_TDD_AGENT + SPEC_GUARDIAN | 🟡 PARTIAL | Current matrix is 83 implemented / 1 partial / 2 planned rows. |
+| 8.8 Release gating | DEVOPS_RELEASE_AGENT | ✅ IMPLEMENTED | `.github/workflows/ci.yml` defines 20 numbered gates plus the required aggregator. |
+| 8.9 No-admin preservation | Council | 🟡 PARTIAL | `docs/audit/WO-009-no-admin-bypass-audit.md`; design-deferred governance-bypass initiative remains open. |

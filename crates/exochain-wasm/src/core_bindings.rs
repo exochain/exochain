@@ -95,6 +95,18 @@ pub fn wasm_sign(message: &[u8], secret_hex: &str) -> Result<String, JsValue> {
 }
 
 #[wasm_bindgen]
+pub fn wasm_ed25519_public_from_secret(secret_hex: &str) -> Result<String, JsValue> {
+    let secret_bytes =
+        hex::decode(secret_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
+    let arr: [u8; 32] = secret_bytes
+        .try_into()
+        .map_err(|_| JsValue::from_str("secret key must be 32 bytes"))?;
+    let keypair = exo_core::crypto::KeyPair::from_secret_bytes(arr)
+        .map_err(|e| JsValue::from_str(&format!("keypair: {e}")))?;
+    Ok(hex::encode(keypair.public_key().as_bytes()))
+}
+
+#[wasm_bindgen]
 pub fn wasm_verify(
     message: &[u8],
     signature_json: &str,

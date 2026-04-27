@@ -31,8 +31,10 @@
 //! assert!(verify(b"payload", &sig, &pk));
 //! ```
 
-pub use exo_core::crypto::{generate_keypair, sign, verify};
-pub use exo_core::{Did, Hash256, PublicKey, SecretKey, Signature, Timestamp};
+pub use exo_core::{
+    Did, Hash256, PublicKey, SecretKey, Signature, Timestamp,
+    crypto::{generate_keypair, sign, verify},
+};
 
 /// Compute the BLAKE3 hash of `data`, returning the raw 32-byte digest.
 ///
@@ -108,7 +110,10 @@ mod tests {
     fn hash_hex_is_64_chars_lowercase_hex() {
         let h = hash_hex(b"hello");
         assert_eq!(h.len(), 64);
-        assert!(h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            h.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
     }
 
     #[test]

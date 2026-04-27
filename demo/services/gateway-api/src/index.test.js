@@ -15,9 +15,19 @@ const mockWasm = vi.hoisted(() => ({
   wasm_bcts_is_terminal: vi.fn(() => false),
   wasm_check_clearance: vi.fn(() => ({ status: 'Granted' })),
   wasm_check_conflicts: vi.fn(() => ({ must_recuse: false, conflicts: [] })),
-  wasm_create_decision: vi.fn((title) => ({ id: 'test-id-001', title, status: 'Draft', votes: [] })),
+  wasm_create_decision: vi.fn((id, title, _decClass, _hash, createdAtMs, createdAtLogical) => ({
+    id,
+    title,
+    status: 'Draft',
+    created_at: { physical_ms: createdAtMs, logical: createdAtLogical },
+    votes: [],
+  })),
   wasm_add_vote: vi.fn((decJson, voteJson) => ({ ...JSON.parse(decJson), votes: [JSON.parse(voteJson)] })),
-  wasm_transition_decision: vi.fn((decJson, stateJson) => ({ ...JSON.parse(decJson), status: JSON.parse(stateJson) })),
+  wasm_transition_decision: vi.fn((decJson, stateJson, _actor, timestampMs, timestampLogical) => ({
+    ...JSON.parse(decJson),
+    status: JSON.parse(stateJson),
+    last_transition_at: { physical_ms: timestampMs, logical: timestampLogical },
+  })),
   wasm_decision_is_terminal: vi.fn(() => false),
   wasm_shamir_split: vi.fn(() => []),
   wasm_audit_append: vi.fn(() => ({ entries: 1, head_hash: 'f'.repeat(64) })),
@@ -80,9 +90,19 @@ beforeEach(async () => {
   mockWasm.wasm_generate_keypair.mockReturnValue({ public_key: 'c'.repeat(64), secret_key: 'd'.repeat(64) });
   mockWasm.wasm_sign.mockReturnValue('e'.repeat(128));
   mockWasm.wasm_verify.mockReturnValue(true);
-  mockWasm.wasm_create_decision.mockImplementation((title) => ({ id: 'test-id-001', title, status: 'Draft', votes: [] }));
+  mockWasm.wasm_create_decision.mockImplementation((id, title, _decClass, _hash, createdAtMs, createdAtLogical) => ({
+    id,
+    title,
+    status: 'Draft',
+    created_at: { physical_ms: createdAtMs, logical: createdAtLogical },
+    votes: [],
+  }));
   mockWasm.wasm_add_vote.mockImplementation((decJson, voteJson) => ({ ...JSON.parse(decJson), votes: [JSON.parse(voteJson)] }));
-  mockWasm.wasm_transition_decision.mockImplementation((decJson, stateJson) => ({ ...JSON.parse(decJson), status: JSON.parse(stateJson) }));
+  mockWasm.wasm_transition_decision.mockImplementation((decJson, stateJson, _actor, timestampMs, timestampLogical) => ({
+    ...JSON.parse(decJson),
+    status: JSON.parse(stateJson),
+    last_transition_at: { physical_ms: timestampMs, logical: timestampLogical },
+  }));
   mockWasm.wasm_decision_is_terminal.mockReturnValue(false);
   mockWasm.wasm_shamir_split.mockReturnValue([]);
   mockWasm.wasm_audit_append.mockReturnValue({ entries: 1, head_hash: 'f'.repeat(64) });
@@ -133,10 +153,25 @@ describe('POST /api/decisions', () => {
       .mockResolvedValueOnce({ rows: [] });
     const res = await request
       .post('/api/decisions')
-      .send({ title: 'Test Decision', decision_class: 'Operational', author_did: 'did:exo:alice' });
+      .send({
+        title: 'Test Decision',
+        decision_class: 'Operational',
+        author_did: 'did:exo:alice',
+        decision_id: '00000000-0000-0000-0000-000000000001',
+        created_at_ms: 1000,
+        created_at_logical: 0,
+      });
     expect(res.status).toBe(201);
-    expect(res.body.decision).toHaveProperty('id');
+    expect(res.body.decision).toHaveProperty('id', '00000000-0000-0000-0000-000000000001');
     expect(res.body.decision.title).toBe('Test Decision');
+  });
+
+  it('requires caller-supplied deterministic create metadata', async () => {
+    const res = await request
+      .post('/api/decisions')
+      .send({ title: 'Test Decision', decision_class: 'Operational', author_did: 'did:exo:alice' });
+    expect(res.status).toBe(400);
+    expect(res.body.fields).toEqual(['decision_id', 'created_at_ms', 'created_at_logical']);
   });
 
   it('returns 404 when author not found', async () => {
@@ -144,7 +179,13 @@ describe('POST /api/decisions', () => {
     pool.query.mockResolvedValueOnce({ rows: [] });
     const res = await request
       .post('/api/decisions')
-      .send({ title: 'Test', author_did: 'did:exo:unknown' });
+      .send({
+        title: 'Test',
+        author_did: 'did:exo:unknown',
+        decision_id: '00000000-0000-0000-0000-000000000002',
+        created_at_ms: 1100,
+        created_at_logical: 0,
+      });
     expect(res.status).toBe(404);
     expect(res.body.error).toBe('Author not found');
   });
@@ -154,7 +195,13 @@ describe('POST /api/decisions', () => {
     pool.query.mockResolvedValueOnce({ rows: [{ did: 'did:exo:bob', pace_status: 'Pending' }] });
     const res = await request
       .post('/api/decisions')
-      .send({ title: 'Test', author_did: 'did:exo:bob' });
+      .send({
+        title: 'Test',
+        author_did: 'did:exo:bob',
+        decision_id: '00000000-0000-0000-0000-000000000003',
+        created_at_ms: 1200,
+        created_at_logical: 0,
+      });
     expect(res.status).toBe(403);
     expect(res.body.error).toBe('Author not PACE enrolled');
   });
@@ -202,9 +249,23 @@ describe('POST /api/decisions/transition', () => {
       .mockResolvedValueOnce({ rows: [] });
     const res = await request
       .post('/api/decisions/transition')
-      .send({ decision_id: 'test-id-001', to_state: 'Review', actor_did: 'did:exo:alice' });
+      .send({
+        decision_id: 'test-id-001',
+        to_state: 'Review',
+        actor_did: 'did:exo:alice',
+        timestamp_ms: 2000,
+        timestamp_logical: 0,
+      });
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('new_state', 'Review');
+  });
+
+  it('requires caller-supplied transition timestamp metadata', async () => {
+    const res = await request
+      .post('/api/decisions/transition')
+      .send({ decision_id: 'test-id-001', to_state: 'Review', actor_did: 'did:exo:alice' });
+    expect(res.status).toBe(400);
+    expect(res.body.fields).toEqual(['timestamp_ms', 'timestamp_logical']);
   });
 });
 

@@ -22,7 +22,6 @@
 use std::sync::{Arc, Mutex};
 
 use exo_core::types::Did;
-
 use tokio::sync::mpsc;
 
 use crate::{
@@ -127,6 +126,7 @@ impl SyncEngine {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("Store mutex poisoned in request_sync"))?;
             st.committed_height_value()
+                .map_err(|e| anyhow::anyhow!("committed height: {e}"))?
         };
 
         tracing::info!(local_height, "Requesting state snapshot from network");
@@ -198,7 +198,13 @@ impl SyncEngine {
                 tracing::error!("Store mutex poisoned in handle_snapshot_request");
                 return;
             };
-            st.committed_height_value()
+            match st.committed_height_value() {
+                Ok(height) => height,
+                Err(e) => {
+                    tracing::warn!(err = %e, "Failed to read committed height for snapshot request");
+                    return;
+                }
+            }
         };
 
         // Only respond if we have data the peer needs.
@@ -346,7 +352,13 @@ impl SyncEngine {
                     tracing::error!("Store mutex poisoned in handle_snapshot_chunk (complete)");
                     return;
                 };
-                st.committed_height_value()
+                match st.committed_height_value() {
+                    Ok(height) => height,
+                    Err(e) => {
+                        tracing::warn!(err = %e, "Failed to read committed height after snapshot");
+                        return;
+                    }
+                }
             };
 
             tracing::info!(committed_height, "State sync complete");
@@ -389,7 +401,13 @@ impl SyncEngine {
             // Get nodes the peer is missing — nodes we have that descend
             // from their tips. For simplicity, we send our committed nodes
             // above the peer's implicit height.
-            let local_height = st.committed_height_value();
+            let local_height = match st.committed_height_value() {
+                Ok(height) => height,
+                Err(e) => {
+                    tracing::warn!(err = %e, "Failed to read committed height for DAG sync");
+                    return;
+                }
+            };
             let max_nodes = msg.max_nodes.min(500) as u64;
             let send_height = if local_height > max_nodes {
                 local_height - max_nodes
@@ -738,7 +756,7 @@ mod tests {
             let st = store.lock().unwrap();
             assert!(st.contains_sync(&node1.hash).unwrap());
             assert!(st.contains_sync(&node2.hash).unwrap());
-            assert_eq!(st.committed_height_value(), 2);
+            assert_eq!(st.committed_height_value().unwrap(), 2);
         }
 
         // Verify sync completed.
@@ -833,6 +851,40 @@ mod tests {
             }
             _ => panic!("Expected Publish command"),
         }
+    }
+
+    #[tokio::test]
+    async fn request_sync_fails_closed_on_store_height_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteDagStore::open(dir.path()).unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("dag.db")).unwrap();
+        let hash = [0xA5u8; 32];
+        conn.execute(
+            "INSERT INTO committed (hash, height) VALUES (?1, ?2)",
+            rusqlite::params![hash.as_slice(), -1_i64],
+        )
+        .unwrap();
+        let store = Arc::new(Mutex::new(store));
+
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(256);
+        let net_handle = NetworkHandle::new(cmd_tx);
+        let (event_tx, _event_rx) = mpsc::channel(32);
+        let mut engine = SyncEngine::new(
+            SyncConfig {
+                node_did: test_did(),
+                chunk_size: 50,
+                max_sync_nodes: 200,
+            },
+            store,
+            net_handle,
+            event_tx,
+        );
+
+        let err = engine.request_sync().await.unwrap_err();
+
+        assert!(err.to_string().contains("committed.height"));
+        assert!(!engine.needs_sync());
+        assert!(cmd_rx.try_recv().is_err());
     }
 
     #[tokio::test]

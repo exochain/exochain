@@ -131,11 +131,10 @@ pub fn check_quorum(
         });
     }
 
-    let approve_pct = if total_votes > 0 {
-        (approve_count * 100) / total_votes
-    } else {
-        0
-    };
+    let approve_pct = approve_count
+        .checked_mul(100)
+        .and_then(|n| n.checked_div(total_votes))
+        .unwrap_or(0);
 
     if approve_pct < req.min_approve_pct {
         return Ok(QuorumCheckResult::NotMet {
@@ -154,16 +153,18 @@ pub fn check_quorum(
 }
 
 /// Verify quorum preconditions BEFORE a vote is initiated (TNC-07).
-/// Returns true if enough eligible voters exist to potentially meet quorum.
+/// Returns true if enough eligible voters and eligible human voters exist to
+/// potentially meet quorum.
 pub fn verify_quorum_precondition(
     registry: &QuorumRegistry,
     class: DecisionClass,
     eligible_voters: usize,
+    eligible_human_voters: usize,
 ) -> Result<bool> {
     let req = registry
         .requirement_for(class)
         .ok_or(ForumError::QuorumPolicyMissing)?;
-    Ok(eligible_voters >= req.min_votes)
+    Ok(eligible_voters >= req.min_votes && eligible_human_voters >= req.min_human_votes)
 }
 
 #[cfg(test)]
@@ -174,6 +175,7 @@ mod tests {
         hlc::HybridClock,
         types::{Did, Hash256},
     };
+    use uuid::Uuid;
 
     use super::*;
     use crate::decision_object::*;
@@ -216,11 +218,22 @@ mod tests {
         }
     }
 
+    fn make_decision(title: &str, class: DecisionClass, clock: &mut HybridClock) -> DecisionObject {
+        DecisionObject::new(DecisionObjectInput {
+            id: Uuid::from_u128(200),
+            title: title.into(),
+            class,
+            constitutional_hash: Hash256::digest(b"constitution"),
+            created_at: clock.now(),
+        })
+        .expect("valid decision")
+    }
+
     #[test]
     fn routine_quorum_met() {
         let mut clock = test_clock();
         let reg = QuorumRegistry::with_defaults();
-        let mut d = DecisionObject::new("test", DecisionClass::Routine, Hash256::ZERO, &mut clock);
+        let mut d = make_decision("test", DecisionClass::Routine, &mut clock);
         d.add_vote(human_approve_vote("alice", &mut clock))
             .expect("ok");
         match check_quorum(&reg, &d).expect("ok") {
@@ -233,12 +246,7 @@ mod tests {
     fn operational_needs_three_votes() {
         let mut clock = test_clock();
         let reg = QuorumRegistry::with_defaults();
-        let mut d = DecisionObject::new(
-            "test",
-            DecisionClass::Operational,
-            Hash256::ZERO,
-            &mut clock,
-        );
+        let mut d = make_decision("test", DecisionClass::Operational, &mut clock);
         d.add_vote(human_approve_vote("alice", &mut clock))
             .expect("ok");
         match check_quorum(&reg, &d).expect("ok") {
@@ -258,12 +266,7 @@ mod tests {
     fn operational_quorum_met() {
         let mut clock = test_clock();
         let reg = QuorumRegistry::with_defaults();
-        let mut d = DecisionObject::new(
-            "test",
-            DecisionClass::Operational,
-            Hash256::ZERO,
-            &mut clock,
-        );
+        let mut d = make_decision("test", DecisionClass::Operational, &mut clock);
         d.add_vote(human_approve_vote("alice", &mut clock))
             .expect("ok");
         d.add_vote(ai_approve_vote("bot1", &mut clock)).expect("ok");
@@ -285,12 +288,7 @@ mod tests {
     fn insufficient_approval_pct() {
         let mut clock = test_clock();
         let reg = QuorumRegistry::with_defaults();
-        let mut d = DecisionObject::new(
-            "test",
-            DecisionClass::Operational,
-            Hash256::ZERO,
-            &mut clock,
-        );
+        let mut d = make_decision("test", DecisionClass::Operational, &mut clock);
         d.add_vote(human_approve_vote("alice", &mut clock))
             .expect("ok");
         d.add_vote(reject_vote("bob", &mut clock)).expect("ok");
@@ -307,8 +305,7 @@ mod tests {
     fn strategic_needs_human_votes() {
         let mut clock = test_clock();
         let reg = QuorumRegistry::with_defaults();
-        let mut d =
-            DecisionObject::new("test", DecisionClass::Strategic, Hash256::ZERO, &mut clock);
+        let mut d = make_decision("test", DecisionClass::Strategic, &mut clock);
         for i in 0..5 {
             d.add_vote(ai_approve_vote(&format!("bot{i}"), &mut clock))
                 .expect("ok");
@@ -324,9 +321,30 @@ mod tests {
     #[test]
     fn verify_precondition() {
         let reg = QuorumRegistry::with_defaults();
-        assert!(verify_quorum_precondition(&reg, DecisionClass::Routine, 1).expect("ok"));
-        assert!(!verify_quorum_precondition(&reg, DecisionClass::Operational, 2).expect("ok"));
-        assert!(verify_quorum_precondition(&reg, DecisionClass::Operational, 3).expect("ok"));
+        assert!(verify_quorum_precondition(&reg, DecisionClass::Routine, 1, 0).expect("ok"));
+        assert!(!verify_quorum_precondition(&reg, DecisionClass::Operational, 2, 1).expect("ok"));
+        assert!(!verify_quorum_precondition(&reg, DecisionClass::Operational, 3, 0).expect("ok"));
+        assert!(verify_quorum_precondition(&reg, DecisionClass::Operational, 3, 1).expect("ok"));
+    }
+
+    #[test]
+    fn strategic_precondition_rejects_when_human_floor_is_impossible() {
+        let reg = QuorumRegistry::with_defaults();
+
+        assert!(
+            !verify_quorum_precondition(&reg, DecisionClass::Strategic, 5, 0).expect("ok"),
+            "strategic class requires three eligible human voters"
+        );
+    }
+
+    #[test]
+    fn constitutional_precondition_rejects_when_human_floor_is_impossible() {
+        let reg = QuorumRegistry::with_defaults();
+
+        assert!(
+            !verify_quorum_precondition(&reg, DecisionClass::Constitutional, 7, 4).expect("ok"),
+            "constitutional class requires five eligible human voters"
+        );
     }
 
     #[test]

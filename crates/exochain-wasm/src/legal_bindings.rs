@@ -10,12 +10,16 @@ pub fn wasm_create_evidence(
     content: &[u8],
     type_tag: &str,
     creator_did: &str,
+    evidence_id: &str,
+    created_ms: u64,
 ) -> Result<JsValue, JsValue> {
     let creator = exo_core::Did::new(creator_did)
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
-    let mut clock = exo_core::hlc::HybridClock::new();
-    let timestamp = clock.now();
-    let evidence = exo_legal::evidence::create_evidence(content, &creator, type_tag, timestamp)
+    let id: uuid::Uuid = evidence_id
+        .parse()
+        .map_err(|e| JsValue::from_str(&format!("UUID error: {e}")))?;
+    let timestamp = exo_core::Timestamp::new(created_ms, 0);
+    let evidence = exo_legal::evidence::create_evidence(id, content, &creator, type_tag, timestamp)
         .map_err(|e| JsValue::from_str(&format!("Evidence error: {e}")))?;
     to_js_value(&evidence)
 }
@@ -57,6 +61,7 @@ pub fn wasm_assert_privilege(
     privilege_type_json: &str,
     asserter_did: &str,
     basis: &str,
+    asserted_at_ms: u64,
 ) -> Result<JsValue, JsValue> {
     let id: uuid::Uuid = evidence_id
         .parse()
@@ -64,7 +69,10 @@ pub fn wasm_assert_privilege(
     let privilege_type: exo_legal::privilege::PrivilegeType = from_json_str(privilege_type_json)?;
     let asserter = exo_core::Did::new(asserter_did)
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
-    let assertion = exo_legal::privilege::assert_privilege(&id, privilege_type, &asserter, basis);
+    let asserted_at = exo_core::Timestamp::new(asserted_at_ms, 0);
+    let assertion =
+        exo_legal::privilege::assert_privilege(&id, privilege_type, &asserter, basis, asserted_at)
+            .map_err(|e| JsValue::from_str(&format!("Privilege error: {e}")))?;
     to_js_value(&assertion)
 }
 
@@ -74,11 +82,15 @@ pub fn wasm_challenge_privilege(
     assertion_json: &str,
     challenger_did: &str,
     grounds: &str,
+    challenged_at_ms: u64,
 ) -> Result<JsValue, JsValue> {
     let assertion: exo_legal::privilege::PrivilegeAssertion = from_json_str(assertion_json)?;
     let challenger = exo_core::Did::new(challenger_did)
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
-    let challenge = exo_legal::privilege::challenge_privilege(&assertion, &challenger, grounds);
+    let challenged_at = exo_core::Timestamp::new(challenged_at_ms, 0);
+    let challenge =
+        exo_legal::privilege::challenge_privilege(&assertion, &challenger, grounds, challenged_at)
+            .map_err(|e| JsValue::from_str(&format!("Privilege error: {e}")))?;
     to_js_value(&challenge)
 }
 
@@ -90,8 +102,16 @@ pub fn wasm_create_record(
     data: &[u8],
     classification: &str,
     retention_days: u64,
+    record_id: &str,
+    created_ms: u64,
 ) -> Result<JsValue, JsValue> {
-    let record = exo_legal::records::create_record(data, classification, retention_days);
+    let id: uuid::Uuid = record_id
+        .parse()
+        .map_err(|e| JsValue::from_str(&format!("UUID error: {e}")))?;
+    let created = exo_core::Timestamp::new(created_ms, 0);
+    let record =
+        exo_legal::records::create_record(id, data, classification, retention_days, created)
+            .map_err(|e| JsValue::from_str(&format!("Record error: {e}")))?;
     to_js_value(&record)
 }
 
@@ -117,6 +137,7 @@ pub fn wasm_apply_retention(
 /// Initiate a DGCL §144 safe harbor process for an interested-party transaction.
 #[wasm_bindgen]
 pub fn wasm_initiate_safe_harbor(
+    transaction_id: &str,
     interested_party_did: &str,
     counterparty_did: &str,
     interest_description: &str,
@@ -124,6 +145,9 @@ pub fn wasm_initiate_safe_harbor(
     path_json: &str,
     now_ms: u64,
 ) -> Result<JsValue, JsValue> {
+    let id: uuid::Uuid = transaction_id
+        .parse()
+        .map_err(|e| JsValue::from_str(&format!("UUID error: {e}")))?;
     let interested_party = exo_core::Did::new(interested_party_did)
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
     let counterparty = exo_core::Did::new(counterparty_did)
@@ -137,6 +161,7 @@ pub fn wasm_initiate_safe_harbor(
     let path: exo_legal::dgcl144::SafeHarborPath = from_json_str(path_json)?;
     let now = exo_core::types::Timestamp::new(now_ms, 0);
     let txn = exo_legal::dgcl144::initiate_safe_harbor(
+        id,
         &interested_party,
         &counterparty,
         interest_description,

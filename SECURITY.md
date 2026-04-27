@@ -9,11 +9,26 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in EXOCHAIN, please report it responsibly.
+If you discover a security vulnerability in EXOCHAIN, please report it
+responsibly via **GitHub Private Security Advisory**. This is the
+preferred channel:
 
-**Do not open a public GitHub issue for security vulnerabilities.**
+- Go to https://github.com/exochain/exochain/security/advisories/new
+- Or, from the repository: **Security** tab → **Advisories** → **New draft advisory**
 
-Instead, please email: **security@exochain.org**
+GitHub Security Advisories give you a private workspace that is scoped to
+the repository, let the maintainers comment in-thread, and coordinate a
+release + CVE assignment when the fix ships. They do not require an email
+server on the reporter's end and they are the fastest path to a patched
+release.
+
+If the GitHub UI is not available to you, email `security@exochain.org`
+as a fallback. Email is monitored on a best-effort basis; the Advisory
+channel is the primary mechanism.
+
+**Do not open a public GitHub issue for security vulnerabilities.** A
+public issue starts the clock on disclosure without letting the
+maintainers coordinate a release.
 
 Include:
 - Description of the vulnerability

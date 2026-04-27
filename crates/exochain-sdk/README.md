@@ -80,7 +80,8 @@ fn main() -> Result<(), ExoError> {
     assert_eq!(chain.depth, 2);
 
     // 5. Ask the kernel whether bob may perform the action.
-    let kernel = ConstitutionalKernel::new();
+    // The SDK kernel requires caller-supplied authority signing material.
+    let kernel = ConstitutionalKernel::with_authority_identity(root);
     let verdict = kernel.adjudicate(bob.did(), "data:medical:read");
     assert!(verdict.is_permitted());
 
@@ -217,23 +218,26 @@ terminal mismatch.
 
 [`ConstitutionalKernel`](src/kernel.rs) is a simplified wrapper over
 [`exo_gatekeeper::Kernel`]. It initialises the kernel with the default
-EXOCHAIN constitution and all eight invariants, and exposes
-`adjudicate(actor, action)` with reasonable defaults.
+EXOCHAIN constitution and all eight invariants. Adjudication requires
+caller-supplied authority signing material, so the SDK does not fabricate a
+trust root.
 
 ```rust
 use exochain_sdk::kernel::ConstitutionalKernel;
+use exochain_sdk::identity::Identity;
 use exo_core::Did;
 
-let kernel = ConstitutionalKernel::new();
+let authority = Identity::generate("authority");
+let kernel = ConstitutionalKernel::with_authority_identity(authority);
 let actor = Did::new("did:exo:alice").expect("valid");
 
 let verdict = kernel.adjudicate(&actor, "data:medical:read");
 assert!(verdict.is_permitted());
 ```
 
-The SDK supplies a permissive default context (single Judicial role, one-link
-authority chain, active bailment, preserved human override). Targeted helpers
-exercise specific invariants:
+The SDK supplies a minimal signed default context (single Judicial role,
+one-link authority chain, active bailment, preserved human override). Targeted
+helpers exercise specific invariants:
 
 - `adjudicate_self_grant` — enables `NoSelfGrant` enforcement.
 - `adjudicate_kernel_modification` — enables `KernelImmutability` enforcement.

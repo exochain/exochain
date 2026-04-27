@@ -42,11 +42,22 @@ pub struct Evidence {
 /// Returns `LegalError` if the timestamp is `Timestamp::ZERO` (placeholder).
 /// Evidence must carry a real timestamp for litigation-grade provenance.
 pub fn create_evidence(
+    id: Uuid,
     data: &[u8],
     creator: &Did,
     type_tag: &str,
     timestamp: Timestamp,
 ) -> Result<Evidence> {
+    if id.is_nil() {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "evidence ID must be caller-supplied and non-nil".into(),
+        });
+    }
+    if type_tag.trim().is_empty() {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "evidence type_tag must not be empty".into(),
+        });
+    }
     if timestamp == Timestamp::ZERO {
         return Err(LegalError::InvalidStateTransition {
             reason: "evidence timestamp must not be Timestamp::ZERO; provide a real HLC timestamp"
@@ -54,7 +65,7 @@ pub fn create_evidence(
         });
     }
     Ok(Evidence {
-        id: Uuid::new_v4(),
+        id,
         type_tag: type_tag.to_string(),
         hash: Hash256::digest(data),
         creator: creator.clone(),
@@ -65,7 +76,23 @@ pub fn create_evidence(
 }
 
 /// Transfers custody of evidence from the current holder to a new party, appending to the chain.
-pub fn transfer_custody(evidence: &mut Evidence, from: &Did, to: &Did) -> Result<()> {
+pub fn transfer_custody(
+    evidence: &mut Evidence,
+    from: &Did,
+    to: &Did,
+    timestamp: Timestamp,
+    reason: &str,
+) -> Result<()> {
+    if timestamp == Timestamp::ZERO {
+        return Err(LegalError::CustodyTransferFailed {
+            reason: "custody transfer timestamp must not be Timestamp::ZERO".into(),
+        });
+    }
+    if reason.trim().is_empty() {
+        return Err(LegalError::CustodyTransferFailed {
+            reason: "custody transfer reason must not be empty".into(),
+        });
+    }
     let current = evidence
         .chain_of_custody
         .last()
@@ -76,16 +103,23 @@ pub fn transfer_custody(evidence: &mut Evidence, from: &Did, to: &Did) -> Result
             reason: format!("current custodian is {current}, not {from}"),
         });
     }
-    let prev_ms = evidence
+    let previous_timestamp = evidence
         .chain_of_custody
         .last()
-        .map(|t| t.timestamp.physical_ms + 1)
-        .unwrap_or(evidence.timestamp.physical_ms + 1);
+        .map(|t| t.timestamp)
+        .unwrap_or(evidence.timestamp);
+    if timestamp <= previous_timestamp {
+        return Err(LegalError::CustodyTransferFailed {
+            reason: format!(
+                "custody transfer timestamp {timestamp} must be after previous timestamp {previous_timestamp}"
+            ),
+        });
+    }
     evidence.chain_of_custody.push(CustodyTransfer {
         from: from.clone(),
         to: to.clone(),
-        timestamp: Timestamp::new(prev_ms, 0),
-        reason: "custody transfer".to_string(),
+        timestamp,
+        reason: reason.to_string(),
     });
     Ok(())
 }
@@ -111,66 +145,98 @@ mod tests {
     fn ts(ms: u64) -> Timestamp {
         Timestamp::new(ms, 0)
     }
+    fn id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn create_uses_caller_supplied_id() {
+        let evidence_id = id(0x100);
+        let ev = create_evidence(evidence_id, b"doc", &did("a"), "contract", ts(1000)).unwrap();
+        assert_eq!(ev.id, evidence_id);
+    }
+
+    #[test]
+    fn create_rejects_nil_id() {
+        let result = create_evidence(Uuid::nil(), b"doc", &did("a"), "contract", ts(1000));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn transfer_uses_caller_supplied_timestamp_and_reason() {
+        let (a, b) = (did("a"), did("b"));
+        let mut ev = create_evidence(id(0x101), b"d", &a, "d", ts(1000)).unwrap();
+        transfer_custody(&mut ev, &a, &b, ts(2000), "signed release").unwrap();
+        assert_eq!(ev.chain_of_custody[0].timestamp, ts(2000));
+        assert_eq!(ev.chain_of_custody[0].reason, "signed release");
+    }
+
+    #[test]
+    fn transfer_rejects_zero_timestamp() {
+        let (a, b) = (did("a"), did("b"));
+        let mut ev = create_evidence(id(0x102), b"d", &a, "d", ts(1000)).unwrap();
+        assert!(transfer_custody(&mut ev, &a, &b, Timestamp::ZERO, "release").is_err());
+    }
 
     #[test]
     fn create_sets_pending() {
-        let ev = create_evidence(b"doc", &did("a"), "contract", ts(1000)).unwrap();
+        let ev = create_evidence(id(0x103), b"doc", &did("a"), "contract", ts(1000)).unwrap();
         assert_eq!(ev.admissibility_status, AdmissibilityStatus::Pending);
         assert_eq!(ev.type_tag, "contract");
         assert!(ev.chain_of_custody.is_empty());
     }
     #[test]
     fn create_hashes_data() {
-        let ev = create_evidence(b"x", &did("a"), "d", ts(1000)).unwrap();
+        let ev = create_evidence(id(0x104), b"x", &did("a"), "d", ts(1000)).unwrap();
         assert_eq!(ev.hash, Hash256::digest(b"x"));
     }
     #[test]
     fn create_rejects_zero_timestamp() {
-        let result = create_evidence(b"d", &did("a"), "d", Timestamp::ZERO);
+        let result = create_evidence(id(0x105), b"d", &did("a"), "d", Timestamp::ZERO);
         assert!(result.is_err());
     }
     #[test]
     fn create_stores_real_timestamp() {
-        let ev = create_evidence(b"d", &did("a"), "d", ts(42000)).unwrap();
+        let ev = create_evidence(id(0x106), b"d", &did("a"), "d", ts(42000)).unwrap();
         assert_eq!(ev.timestamp, ts(42000));
     }
     #[test]
     fn transfer_success() {
         let (a, b) = (did("a"), did("b"));
-        let mut ev = create_evidence(b"d", &a, "d", ts(1000)).unwrap();
-        transfer_custody(&mut ev, &a, &b).unwrap();
+        let mut ev = create_evidence(id(0x107), b"d", &a, "d", ts(1000)).unwrap();
+        transfer_custody(&mut ev, &a, &b, ts(2000), "custody transfer").unwrap();
         assert_eq!(ev.chain_of_custody.len(), 1);
     }
     #[test]
     fn transfer_chain() {
         let (a, b, c) = (did("a"), did("b"), did("c"));
-        let mut ev = create_evidence(b"d", &a, "d", ts(1000)).unwrap();
-        transfer_custody(&mut ev, &a, &b).unwrap();
-        transfer_custody(&mut ev, &b, &c).unwrap();
+        let mut ev = create_evidence(id(0x108), b"d", &a, "d", ts(1000)).unwrap();
+        transfer_custody(&mut ev, &a, &b, ts(2000), "first transfer").unwrap();
+        transfer_custody(&mut ev, &b, &c, ts(3000), "second transfer").unwrap();
         assert_eq!(ev.chain_of_custody.len(), 2);
     }
     #[test]
     fn transfer_wrong_holder() {
         let (a, b, c) = (did("a"), did("b"), did("c"));
-        let mut ev = create_evidence(b"d", &a, "d", ts(1000)).unwrap();
-        assert!(transfer_custody(&mut ev, &c, &b).is_err());
+        let mut ev = create_evidence(id(0x109), b"d", &a, "d", ts(1000)).unwrap();
+        assert!(transfer_custody(&mut ev, &c, &b, ts(2000), "bad transfer").is_err());
     }
     #[test]
     fn verify_empty_ok() {
-        let ev = create_evidence(b"d", &did("a"), "d", ts(1000)).unwrap();
+        let ev = create_evidence(id(0x10a), b"d", &did("a"), "d", ts(1000)).unwrap();
         verify_chain_of_custody(&ev).unwrap();
     }
     #[test]
     fn verify_valid() {
         let (a, b) = (did("a"), did("b"));
-        let mut ev = create_evidence(b"d", &a, "d", ts(1000)).unwrap();
-        transfer_custody(&mut ev, &a, &b).unwrap();
+        let mut ev = create_evidence(id(0x10b), b"d", &a, "d", ts(1000)).unwrap();
+        transfer_custody(&mut ev, &a, &b, ts(2000), "custody transfer").unwrap();
         verify_chain_of_custody(&ev).unwrap();
     }
     #[test]
     fn verify_broken() {
         let (a, b, c) = (did("a"), did("b"), did("c"));
-        let mut ev = create_evidence(b"d", &a, "d", ts(1000)).unwrap();
+        let mut ev = create_evidence(id(0x10c), b"d", &a, "d", ts(1000)).unwrap();
         ev.chain_of_custody.push(CustodyTransfer {
             from: c,
             to: b,
@@ -207,9 +273,9 @@ mod tests {
     #[test]
     fn timestamps_increase() {
         let (a, b, c) = (did("a"), did("b"), did("c"));
-        let mut ev = create_evidence(b"d", &a, "d", ts(1000)).unwrap();
-        transfer_custody(&mut ev, &a, &b).unwrap();
-        transfer_custody(&mut ev, &b, &c).unwrap();
+        let mut ev = create_evidence(id(0x10d), b"d", &a, "d", ts(1000)).unwrap();
+        transfer_custody(&mut ev, &a, &b, ts(2000), "first transfer").unwrap();
+        transfer_custody(&mut ev, &b, &c, ts(3000), "second transfer").unwrap();
         assert!(ev.chain_of_custody[1].timestamp > ev.chain_of_custody[0].timestamp);
     }
 }

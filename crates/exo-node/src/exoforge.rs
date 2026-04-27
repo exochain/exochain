@@ -16,8 +16,6 @@
 //! | POST   | `/api/v1/forge/tasks/:id/escalate`| Escalate a task          |
 //! | POST   | `/api/v1/forge/log`               | Append activity log      |
 
-#![allow(clippy::as_conversions, clippy::float_arithmetic)]
-
 use std::sync::{Arc, Mutex};
 
 use axum::{
@@ -27,6 +25,7 @@ use axum::{
     response::Html,
     routing::{get, post},
 };
+use exo_core::{Timestamp, hlc::HybridClock};
 use serde::{Deserialize, Serialize};
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -47,8 +46,8 @@ pub struct ForgeTask {
     pub agent: Option<String>,
     pub escalation: EscalationLevel,
     pub depends_on_phase: Option<u32>,
-    pub started_ms: Option<u64>,
-    pub completed_ms: Option<u64>,
+    pub started_at: Option<Timestamp>,
+    pub completed_at: Option<Timestamp>,
 }
 
 /// Lifecycle status of a forge task (Queued -> Assigned -> InProgress -> Review -> Complete).
@@ -75,7 +74,7 @@ pub enum EscalationLevel {
 /// A timestamped entry in the forge activity log, optionally linked to a task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityEntry {
-    pub timestamp_ms: u64,
+    pub timestamp: Timestamp,
     pub message: String,
     pub task_id: Option<u32>,
 }
@@ -91,7 +90,7 @@ pub struct ForgeStats {
     pub complete: u32,
     pub blocked: u32,
     pub escalated: u32,
-    pub percent_complete: f64,
+    pub percent_complete_basis_points: u32,
     pub phases: Vec<PhaseStats>,
 }
 
@@ -102,7 +101,7 @@ pub struct PhaseStats {
     pub name: String,
     pub total: u32,
     pub complete: u32,
-    pub percent: f64,
+    pub percent_basis_points: u32,
 }
 
 /// Mutable state for the forge orchestrator: task graph, activity log, and spec metadata.
@@ -113,13 +112,14 @@ pub struct ForgeState {
     pub tasks: Vec<ForgeTask>,
     pub activity_log: Vec<ActivityEntry>,
     #[allow(dead_code)]
-    pub started_ms: u64,
+    pub started_at: Timestamp,
+    clock: HybridClock,
 }
 
 // ─── Request / Response bodies ──────────────────────────────────────
 
 /// Request body for updating a task's status.
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct StatusUpdate {
     pub status: TaskStatus,
 }
@@ -146,86 +146,59 @@ pub struct LogEntry {
 
 // ─── State Initialization ───────────────────────────────────────────
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
 impl ForgeState {
     /// Create a new forge state pre-loaded with the 0DENTITY spec task graph.
     pub fn new_zerodentity() -> Self {
+        Self::new_zerodentity_with_clock(HybridClock::new())
+    }
+
+    /// Create a new forge state with an explicit HLC source.
+    pub fn new_zerodentity_with_clock(mut clock: HybridClock) -> Self {
         let tasks = build_zerodentity_tasks();
-        let started = now_ms();
+        let started = clock.now();
+        let decomposed_at = clock.now();
+        let awaiting_at = clock.now();
         ForgeState {
             spec_name: "0DENTITY-APP-SPEC.md".into(),
             spec_path: "docs/0DENTITY-APP-SPEC.md".into(),
             tasks,
             activity_log: vec![
                 ActivityEntry {
-                    timestamp_ms: started,
+                    timestamp: started,
                     message: "ExoForge initialized — spec loaded: 0DENTITY-APP-SPEC.md (2,221 lines, 14 sections)".into(),
                     task_id: None,
                 },
                 ActivityEntry {
-                    timestamp_ms: started + 1,
+                    timestamp: decomposed_at,
                     message: "Task graph decomposed: 56 tasks across 12 phases".into(),
                     task_id: None,
                 },
                 ActivityEntry {
-                    timestamp_ms: started + 2,
+                    timestamp: awaiting_at,
                     message: "Awaiting agent assignment — orchestrator monitoring".into(),
                     task_id: None,
                 },
             ],
-            started_ms: started,
+            started_at: started,
+            clock,
         }
+    }
+
+    fn next_timestamp(&mut self) -> Timestamp {
+        self.clock.now()
     }
 
     /// Compute aggregate and per-phase completion statistics from the current task list.
     pub fn stats(&self) -> ForgeStats {
-        let total = self.tasks.len() as u32;
-        let queued = self
-            .tasks
-            .iter()
-            .filter(|t| t.status == TaskStatus::Queued)
-            .count() as u32;
-        let assigned = self
-            .tasks
-            .iter()
-            .filter(|t| t.status == TaskStatus::Assigned)
-            .count() as u32;
-        let in_progress = self
-            .tasks
-            .iter()
-            .filter(|t| t.status == TaskStatus::InProgress)
-            .count() as u32;
-        let review = self
-            .tasks
-            .iter()
-            .filter(|t| t.status == TaskStatus::Review)
-            .count() as u32;
-        let complete = self
-            .tasks
-            .iter()
-            .filter(|t| t.status == TaskStatus::Complete)
-            .count() as u32;
-        let blocked = self
-            .tasks
-            .iter()
-            .filter(|t| t.status == TaskStatus::Blocked)
-            .count() as u32;
-        let escalated = self
-            .tasks
-            .iter()
-            .filter(|t| t.status == TaskStatus::Escalated)
-            .count() as u32;
-        let percent_complete = if total > 0 {
-            (complete as f64 / total as f64) * 100.0
-        } else {
-            0.0
-        };
+        let total = count_to_u32(self.tasks.len());
+        let queued = self.count_status(TaskStatus::Queued);
+        let assigned = self.count_status(TaskStatus::Assigned);
+        let in_progress = self.count_status(TaskStatus::InProgress);
+        let review = self.count_status(TaskStatus::Review);
+        let complete = self.count_status(TaskStatus::Complete);
+        let blocked = self.count_status(TaskStatus::Blocked);
+        let escalated = self.count_status(TaskStatus::Escalated);
+        let percent_complete_basis_points = percent_basis_points(complete, total);
 
         // Per-phase stats
         let mut phase_map: std::collections::BTreeMap<u32, (String, u32, u32)> =
@@ -246,11 +219,7 @@ impl ForgeState {
                 name,
                 total: tot,
                 complete: comp,
-                percent: if tot > 0 {
-                    (comp as f64 / tot as f64) * 100.0
-                } else {
-                    0.0
-                },
+                percent_basis_points: percent_basis_points(comp, tot),
             })
             .collect();
 
@@ -263,10 +232,25 @@ impl ForgeState {
             complete,
             blocked,
             escalated,
-            percent_complete,
+            percent_complete_basis_points,
             phases,
         }
     }
+
+    fn count_status(&self, status: TaskStatus) -> u32 {
+        count_to_u32(self.tasks.iter().filter(|t| t.status == status).count())
+    }
+}
+
+fn count_to_u32(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn percent_basis_points(complete: u32, total: u32) -> u32 {
+    if total == 0 {
+        return 0;
+    }
+    complete.saturating_mul(10_000) / total
 }
 
 #[allow(clippy::too_many_lines, unused_assignments)]
@@ -287,8 +271,8 @@ fn build_zerodentity_tasks() -> Vec<ForgeTask> {
                 agent: None,
                 escalation: EscalationLevel::None,
                 depends_on_phase: $dep,
-                started_ms: None,
-                completed_ms: None,
+                started_at: None,
+                completed_at: None,
             });
             id += 1;
         }};
@@ -482,8 +466,8 @@ fn build_zerodentity_tasks() -> Vec<ForgeTask> {
     task!(
         5,
         "Onboarding API",
-        "GET /server-key — Ed25519 DH public key",
-        "Implemented in api.rs get_server_key(). Returns Ed25519 key bytes as hex + key_hash. \n        Test: get_server_key_returns_ed25519_dh() in tests.rs.",
+        "Server key endpoint removed",
+        "ONYX-4 R6 deleted the fabricated /api/v1/0dentity/server-key route. The removed handler wrapped a BLAKE3 digest as a public key; regression coverage asserts the route is absent.",
         "§7.3",
         Some(2)
     );
@@ -525,7 +509,7 @@ fn build_zerodentity_tasks() -> Vec<ForgeTask> {
         6,
         "Identity API",
         "POST /attest — peer attestation",
-        "Create attestation from verified DID to target DID. Reject self-attestation, duplicate. Compute score impact",
+        "Create signed Ed25519 attestation from verified DID to target DID. Reject self-attestation, duplicate, empty signature, zero signature, wrong key, tampered payload, replayed payload. Compute score impact",
         "§7.2",
         Some(5)
     );
@@ -559,7 +543,7 @@ fn build_zerodentity_tasks() -> Vec<ForgeTask> {
         7,
         "Onboarding UI",
         "Email input + OTP steps",
-        "Email form → RSA-OAEP encrypt → dispatch OTP. 6-digit auto-advance input, countdown timer, resend cooldown",
+        "Email form submits claim hash with no server-key dependency. 6-digit auto-advance input, countdown timer, resend cooldown",
         "§4.3-§4.4",
         Some(4)
     );
@@ -816,25 +800,27 @@ async fn update_task_status(
         tracing::error!("ForgeState mutex poisoned in update_task_status");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let task = s
+    let task_index = s
         .tasks
-        .iter_mut()
-        .find(|t| t.id == task_id)
+        .iter()
+        .position(|t| t.id == task_id)
         .ok_or(StatusCode::NOT_FOUND)?;
+    let timestamp = s.next_timestamp();
+    let task = &mut s.tasks[task_index];
 
     let old_status = task.status.clone();
     let task_title = task.title.clone();
     task.status = body.status.clone();
 
-    if body.status == TaskStatus::InProgress && task.started_ms.is_none() {
-        task.started_ms = Some(now_ms());
+    if body.status == TaskStatus::InProgress && task.started_at.is_none() {
+        task.started_at = Some(timestamp);
     }
     if body.status == TaskStatus::Complete {
-        task.completed_ms = Some(now_ms());
+        task.completed_at = Some(timestamp);
     }
 
     s.activity_log.push(ActivityEntry {
-        timestamp_ms: now_ms(),
+        timestamp,
         message: format!(
             "Task #{} '{}' status: {:?} → {:?}",
             task_id, task_title, old_status, body.status
@@ -855,11 +841,13 @@ async fn assign_agent(
         tracing::error!("ForgeState mutex poisoned in assign_agent");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let task = s
+    let task_index = s
         .tasks
-        .iter_mut()
-        .find(|t| t.id == task_id)
+        .iter()
+        .position(|t| t.id == task_id)
         .ok_or(StatusCode::NOT_FOUND)?;
+    let timestamp = s.next_timestamp();
+    let task = &mut s.tasks[task_index];
 
     let task_title = task.title.clone();
     task.agent = Some(body.agent.clone());
@@ -868,7 +856,7 @@ async fn assign_agent(
     }
 
     s.activity_log.push(ActivityEntry {
-        timestamp_ms: now_ms(),
+        timestamp,
         message: format!(
             "Task #{} '{}' assigned to {}",
             task_id, task_title, body.agent
@@ -891,11 +879,13 @@ async fn escalate_task(
         tracing::error!("ForgeState mutex poisoned in escalate_task");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let task = s
+    let task_index = s
         .tasks
-        .iter_mut()
-        .find(|t| t.id == task_id)
+        .iter()
+        .position(|t| t.id == task_id)
         .ok_or(StatusCode::NOT_FOUND)?;
+    let timestamp = s.next_timestamp();
+    let task = &mut s.tasks[task_index];
 
     task.escalation = body.level.clone();
     task.status = TaskStatus::Escalated;
@@ -908,7 +898,7 @@ async fn escalate_task(
     };
 
     s.activity_log.push(ActivityEntry {
-        timestamp_ms: now_ms(),
+        timestamp,
         message: format!(
             "Task #{} ESCALATED to {} — {}",
             task_id, level_str, body.reason
@@ -930,8 +920,9 @@ async fn append_log(
         tracing::error!("ForgeState mutex poisoned in append_log");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+    let timestamp = s.next_timestamp();
     s.activity_log.push(ActivityEntry {
-        timestamp_ms: now_ms(),
+        timestamp,
         message: body.message,
         task_id: body.task_id,
     });
@@ -1381,10 +1372,11 @@ function renderStats() {{
     </div>`
   ).join('');
 
+  const progressPct = stats.percent_complete_basis_points / 100;
   document.getElementById('progress-pct').textContent =
-    stats.percent_complete.toFixed(0) + '%';
+    progressPct.toFixed(0) + '%';
   document.getElementById('progress-fill').style.width =
-    stats.percent_complete.toFixed(1) + '%';
+    progressPct.toFixed(1) + '%';
 }}
 
 function renderPhases() {{
@@ -1437,7 +1429,7 @@ function renderLog() {{
   // Show newest first
   const entries = [...activityLog].reverse();
   container.innerHTML = entries.map(e => {{
-    const d = new Date(e.timestamp_ms);
+    const d = new Date(e.timestamp.physical_ms);
     const time = d.toLocaleTimeString('en-US', {{ hour12: false }});
     const taskRef = e.task_id ? `<span class="log-task-ref">#${{e.task_id}}</span> ` : '';
     return `<div class="log-entry"><span class="log-time">${{time}}</span>${{taskRef}}${{e.message}}</div>`;
@@ -1504,6 +1496,10 @@ pub fn exoforge_router(state: SharedForgeState) -> Router {
 mod tests {
     use super::*;
 
+    fn test_state() -> ForgeState {
+        ForgeState::new_zerodentity_with_clock(HybridClock::with_wall_clock(|| 42_000))
+    }
+
     #[test]
     fn task_initialization_produces_56_tasks() {
         let tasks = build_zerodentity_tasks();
@@ -1511,7 +1507,7 @@ mod tests {
         // All start as Queued
         assert!(tasks.iter().all(|t| t.status == TaskStatus::Queued));
         // All have unique IDs
-        let ids: std::collections::HashSet<u32> = tasks.iter().map(|t| t.id).collect();
+        let ids: std::collections::BTreeSet<u32> = tasks.iter().map(|t| t.id).collect();
         assert_eq!(ids.len(), 56);
     }
 
@@ -1527,30 +1523,34 @@ mod tests {
 
     #[test]
     fn stats_computation() {
-        let mut state = ForgeState::new_zerodentity();
+        let mut state = test_state();
         let s = state.stats();
         assert_eq!(s.total, 56);
         assert_eq!(s.queued, 56);
         assert_eq!(s.complete, 0);
-        assert!((s.percent_complete - 0.0).abs() < 0.001);
+        assert_eq!(s.percent_complete_basis_points, 0);
 
         // Complete one task
         state.tasks[0].status = TaskStatus::Complete;
         let s2 = state.stats();
         assert_eq!(s2.complete, 1);
-        assert!(s2.percent_complete > 1.0);
+        assert_eq!(s2.percent_complete_basis_points, 178);
     }
 
     #[test]
     fn state_initialization() {
-        let state = ForgeState::new_zerodentity();
+        let state = test_state();
         assert_eq!(state.spec_name, "0DENTITY-APP-SPEC.md");
         assert_eq!(state.activity_log.len(), 3);
+        assert_eq!(state.started_at, Timestamp::new(42_000, 0));
+        assert_eq!(state.activity_log[0].timestamp, Timestamp::new(42_000, 0));
+        assert_eq!(state.activity_log[1].timestamp, Timestamp::new(42_000, 1));
+        assert_eq!(state.activity_log[2].timestamp, Timestamp::new(42_000, 2));
     }
 
     #[tokio::test]
     async fn dashboard_returns_html() {
-        let state: SharedForgeState = Arc::new(Mutex::new(ForgeState::new_zerodentity()));
+        let state: SharedForgeState = Arc::new(Mutex::new(test_state()));
         let router = exoforge_router(state);
 
         let req = axum::http::Request::builder()
@@ -1573,7 +1573,7 @@ mod tests {
 
     #[tokio::test]
     async fn tasks_api_returns_all_tasks() {
-        let state: SharedForgeState = Arc::new(Mutex::new(ForgeState::new_zerodentity()));
+        let state: SharedForgeState = Arc::new(Mutex::new(test_state()));
         let router = exoforge_router(state);
 
         let req = axum::http::Request::builder()
@@ -1589,5 +1589,47 @@ mod tests {
             .unwrap();
         let data: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(data["stats"]["total"], 56);
+    }
+
+    #[tokio::test]
+    async fn status_update_uses_state_hlc_timestamp() {
+        let state: SharedForgeState = Arc::new(Mutex::new(test_state()));
+        let router = exoforge_router(Arc::clone(&state));
+        let body = serde_json::to_vec(&StatusUpdate {
+            status: TaskStatus::InProgress,
+        })
+        .unwrap();
+
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/v1/forge/tasks/1/status")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(body))
+            .unwrap();
+
+        let resp = tower::ServiceExt::oneshot(router, req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+
+        let state = state.lock().unwrap();
+        assert_eq!(state.tasks[0].started_at, Some(Timestamp::new(42_000, 3)));
+        assert_eq!(
+            state.activity_log.last().unwrap().timestamp,
+            Timestamp::new(42_000, 3)
+        );
+    }
+
+    #[test]
+    fn production_source_has_no_float_wall_clock_or_hashset_escape_hatches() {
+        let source = include_str!("exoforge.rs");
+        let production = source
+            .split("// ─── Tests")
+            .next()
+            .expect("tests marker present");
+
+        assert!(!production.contains("float_arithmetic"));
+        assert!(!production.contains("f64"));
+        assert!(!production.contains("SystemTime::now"));
+        let hash_set = "Hash".to_owned() + "Set";
+        assert!(!source.contains(&hash_set));
     }
 }

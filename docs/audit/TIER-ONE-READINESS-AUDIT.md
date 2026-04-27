@@ -1,5 +1,9 @@
 # EXOCHAIN Tier-One Readiness Audit
 
+> Historical readiness audit. Numeric repo facts in this document predate Wave E
+> Basalt; use `tools/repo_truth.sh` and `README.md` for current crate, LOC, test,
+> and CI-gate counts.
+
 **Date**: 2026-04-04
 **Auditor**: ExoForge Council (automated via exochain.io governance API)
 **Live Node**: https://exochain.io (consensus round 14,845 at time of audit)

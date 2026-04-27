@@ -115,7 +115,6 @@ impl ConsentGate {
 
 #[cfg(test)]
 mod tests {
-    use exo_core::Signature;
 
     use super::*;
     use crate::{
@@ -158,8 +157,13 @@ mod tests {
         bt: BailmentType,
         exp: Option<Timestamp>,
     ) -> Bailment {
-        let mut b = bailment::propose(bailor, bailee, b"gt", bt);
-        bailment::accept(&mut b, &Signature::from_bytes([1u8; 64])).ok();
+        let mut b = bailment::propose(bailor, bailee, b"gt", bt, "gatekeeper-test", ts(1000))
+            .expect("test bailment proposal");
+        // Produce a valid bailee signature for the GAP-012-verified accept().
+        let (pk, sk) = exo_core::crypto::generate_keypair();
+        let payload = bailment::signing_payload(&b).expect("canonical payload");
+        let sig = exo_core::crypto::sign(&payload, &sk);
+        bailment::accept(&mut b, &pk, &sig).expect("test bailment accepts");
         b.expires = exp;
         b
     }
@@ -259,6 +263,31 @@ mod tests {
             g.check(&charlie(), "read", &now()),
             ConsentDecision::Denied { .. }
         ));
+    }
+
+    #[test]
+    fn check_denies_status_forged_active_bailment() {
+        let mut g = ConsentGate::new(strict_policy());
+        let mut b = bailment::propose(
+            &alice(),
+            &bob(),
+            b"gt",
+            BailmentType::Custody,
+            "forged",
+            ts(1000),
+        )
+        .expect("test bailment proposal");
+        b.status = bailment::BailmentStatus::Active;
+        b.signature = exo_core::Signature::from_bytes([0xAB; 64]);
+        g.register_consent(&bob(), "read", "data-owner", 1, b);
+
+        assert!(
+            matches!(
+                g.check(&bob(), "read", &now()),
+                ConsentDecision::Denied { .. }
+            ),
+            "ConsentGate must not grant on a status-forged active bailment"
+        );
     }
 
     #[test]

@@ -112,4 +112,8 @@ pub enum GovernanceError {
     // --- Crypto errors ---
     #[error("Signature verification failed")]
     SignatureVerificationFailed,
+
+    // --- Deterministic metadata errors ---
+    #[error("Invalid governance metadata for {field}: {reason}")]
+    InvalidGovernanceMetadata { field: String, reason: String },
 }

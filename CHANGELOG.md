@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security / Correctness
+
+Driven by the 2026-04-19 full-repo review
+([docs/audit/REVIEW-2026-04-19.md](docs/audit/REVIEW-2026-04-19.md));
+follow-up identifiers below are the plan's A-NN items.
+
+- **Node runs non-root in Docker** (A-040): root `Dockerfile` now creates
+  an unprivileged `exochain` user, installs `gosu`, and chowns the data
+  volume on first boot before stepping down. Adds `HEALTHCHECK` probing
+  the effective API port and uses exec-form `ENTRYPOINT`.
+- **Secrets moved behind fail-fast env vars** (A-043): `docker-compose.yml`
+  no longer carries hardcoded `exochain_dev` / `*-dev-secret`; every
+  secret is now `${VAR:?message}`-guarded and a missing `.env` fails
+  with a clear error.
+- **MCP input validation** (A-020): `tools/call` now validates params
+  against each tool's registered JSON Schema before dispatch. Schema
+  violations return JSON-RPC `INVALID_PARAMS (-32602)` rather than
+  silently reaching the tool body with an empty-defaulted field.
+- **Gateway body cap** (A-022): 1 MiB `DefaultBodyLimit` on every route.
+- **Web XSS hardened** (A-030/031/032): Council AI panel HTML-escapes
+  message content before applying markdown regex; dev-bypass is
+  double-guarded behind `VITE_ALLOW_DEV_BYPASS=true` and dropped from
+  production bundles by Vite DCE; CSP meta added.
+- **CSRF double-submit client** (A-082): fetchJson reads the
+  `XSRF-TOKEN` cookie and echoes it as `X-CSRF-Token` on mutating
+  requests. Server-side enforcement is a separate follow-up.
+- **Consensus scoring clamped** (A-010): `calculate_panel_confidence`
+  now clamps `models_agreeing` to `total_models` and caps the speed
+  sub-score numerator so out-of-range inputs cannot produce a score
+  above 10000 bps. Added property tests.
+- **Signature roundtrip returns `Result`** (A-011/012): `exo-dag`
+  Postgres store no longer silently substitutes `Signature::Empty` on
+  decode failure, and all lossy `as` casts for timestamps / heights
+  are replaced with checked `try_into`.
+- **Explicit shutdown phases** (A-070): exo-node logs HTTP-drain →
+  subsystem-stop → shutdown-complete and adds a 500ms task-drain
+  window. Full per-task CancellationToken plumbing is tracked as a
+  follow-up.
+- **Global concurrency ceiling** (A-071): gateway adds
+  `ConcurrencyLimitLayer(1024)` as admission control.
+- **Python `TransportError` carries status + body** (A-061); Python
+  `HttpTransport.timeout` accepts `httpx.Timeout` for per-phase control.
+- **Python SDK ships `py.typed`** (A-063); all three SDKs expose a
+  matching `PROTOCOL_VERSION` constant (A-066).
+- **Orphan Rust modules removed**: deleted undeclared top-level Rust files
+  that were not compiled or tested (`exo-core/src/event.rs`,
+  `exo-dag/src/proof.rs`, `exo-gatekeeper/src/proof.rs`,
+  `exo-governance/src/{anchor,decision,emergency}.rs`, and
+  `exo-identity/src/key.rs`). Current functionality lives in the declared
+  `events`, `mmr`, `kernel`/`invariants`, `decision-forum`,
+  `did_verification`, and `key_management` surfaces.
+
+### CI
+
+- **GAP stub hygiene** (A-102): CI Gate 9 fails on any `STUB.*GAP-0NN`
+  marker in code so a closed GAP can never leave a stub behind.
+- **Rust module hygiene**: CI Gate 9 now runs
+  `tools/test_no_orphan_rust_modules.sh` to reject undeclared
+  top-level `crates/*/src/*.rs` files.
+
+### Docs
+
+- `SECURITY.md` now points to GitHub Private Security Advisory as the
+  primary disclosure channel (A-093); the `security@exochain.org`
+  fallback remains documented.
+- `CONTRIBUTING.md` cross-links to `docs/guides/DEPLOYMENT.md` for
+  post-merge shipping guidance (A-107).
+- Doc-rot sweep: `spec v2.1` references updated to `v2.2` in
+  `docs/guides/constitutional-model.md` and
+  `docs/guides/architecture-overview.md` (A-104).
+
+### ⚠ BREAKING
+
+- **DID derivation canonicalized to BLAKE3 across all SDKs** (A-050):
+  the TypeScript and Python SDKs previously used SHA-256(pubkey)[:8]
+  while the Rust SDK used BLAKE3(pubkey)[:8]; identical keypairs
+  yielded different DIDs per language. All three now derive via
+  BLAKE3 and share a fixture file at
+  `tests/fixtures/did-derivation.json`. Applications that persisted
+  locally-generated DIDs from the old TS/Python SDKs must migrate.
+  TS SDK adds `@noble/hashes` dep; Python SDK adds `blake3>=0.4.1` dep.
+
 ## [0.1.0-beta] - 2026-04-10
 
 Promotes alpha to beta. The WASM CGR Kernel is now fully operational, all 7
