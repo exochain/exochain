@@ -287,6 +287,8 @@ export const server = http.createServer(async (req, res) => {
         authorized_trustees,
         claim_nonce_hex,
         initiator_signature_hex,
+        created_physical_ms,
+        created_logical,
       } = await parseBody(req);
 
       if (!Array.isArray(authorized_trustees)) {
@@ -297,6 +299,11 @@ export const server = http.createServer(async (req, res) => {
           error: 'claim_nonce_hex and initiator_signature_hex are required',
         });
       }
+      if (created_physical_ms === undefined || created_logical === undefined) {
+        return json(res, 400, {
+          error: 'created_physical_ms and created_logical are required',
+        });
+      }
 
       const state = wasm.wasm_death_verification_new(
         subject_did,
@@ -304,7 +311,9 @@ export const server = http.createServer(async (req, res) => {
         required_confirmations || 3,
         JSON.stringify(authorized_trustees),
         claim_nonce_hex,
-        initiator_signature_hex
+        initiator_signature_hex,
+        BigInt(created_physical_ms),
+        created_logical
       );
       const initialStatus = state.status === 'Verified' ? 'verified' : 'pending';
 
@@ -315,7 +324,7 @@ export const server = http.createServer(async (req, res) => {
           trustee_confirmations, verification_state, status, created_at_ms)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [id, subject_did, initiated_by_did, required_confirmations || 3,
-         JSON.stringify(state.confirmations || []), JSON.stringify(state), initialStatus, nowMs()]
+         JSON.stringify(state.confirmations || []), JSON.stringify(state), initialStatus, created_physical_ms]
       );
 
       return json(res, 201, { id, status: initialStatus, state });
@@ -328,11 +337,18 @@ export const server = http.createServer(async (req, res) => {
         trustee_did,
         trustee_public_key_hex,
         signature_hex,
+        confirmed_physical_ms,
+        confirmed_logical,
       } = await parseBody(req);
 
       if (!trustee_public_key_hex || !signature_hex) {
         return json(res, 400, {
           error: 'trustee_public_key_hex and signature_hex are required',
+        });
+      }
+      if (confirmed_physical_ms === undefined || confirmed_logical === undefined) {
+        return json(res, 400, {
+          error: 'confirmed_physical_ms and confirmed_logical are required',
         });
       }
 
@@ -354,7 +370,9 @@ export const server = http.createServer(async (req, res) => {
         JSON.stringify(dv.verification_state),
         trustee_did,
         trustee_public_key_hex,
-        signature_hex
+        signature_hex,
+        BigInt(confirmed_physical_ms),
+        confirmed_logical
       );
 
       const verified = result.verified;
@@ -369,7 +387,7 @@ export const server = http.createServer(async (req, res) => {
           JSON.stringify(result.state.confirmations || []),
           JSON.stringify(result.state),
           newStatus,
-          verified ? nowMs() : null,
+          verified ? confirmed_physical_ms : null,
           verification_id,
         ]
       );

@@ -187,6 +187,8 @@ export function createDeathVerification(
   authorizedTrustees: AuthorizedDeathVerificationTrustee[],
   claimNonceHex: string,
   initiatorSignatureHex: string,
+  createdPhysicalMs: bigint,
+  createdLogical: number,
   requiredConfirmations: number = 3,
 ): DeathVerificationState {
   return wasm_death_verification_new(
@@ -196,6 +198,8 @@ export function createDeathVerification(
     JSON.stringify(authorizedTrustees),
     claimNonceHex,
     initiatorSignatureHex,
+    createdPhysicalMs,
+    createdLogical,
   );
 }
 
@@ -213,11 +217,15 @@ export function confirmDeathVerification(
   trusteeDid: string,
   trusteePublicKeyHex: string,
   signatureHex: string,
+  confirmedPhysicalMs: bigint,
+  confirmedLogical: number,
 ): { verified: boolean; confirmations_remaining: number; state: DeathVerificationState } {
   return wasm_death_verification_confirm(
     stateJson,
     trusteeDid,
     trusteePublicKeyHex,
     signatureHex,
+    confirmedPhysicalMs,
+    confirmedLogical,
   );
 }

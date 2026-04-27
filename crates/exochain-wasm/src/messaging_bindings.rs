@@ -261,6 +261,10 @@ pub fn wasm_death_verification_initial_signing_payload(
 /// this claim instance.
 /// Returns the verification state as JSON.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+// WASM cannot take Rust metadata structs directly, so the death-verification
+// creation boundary exposes the HLC metadata as primitive fields and validates
+// it before touching the state machine.
 pub fn wasm_death_verification_new(
     subject_did: &str,
     initiated_by_did: &str,
@@ -268,6 +272,8 @@ pub fn wasm_death_verification_new(
     authorized_trustees_json: &str,
     claim_nonce_hex: &str,
     initiator_signature_hex: &str,
+    created_physical_ms: u64,
+    created_logical: u32,
 ) -> Result<JsValue, JsValue> {
     let subject = exo_core::Did::new(subject_did)
         .map_err(|e| JsValue::from_str(&format!("invalid subject DID: {e}")))?;
@@ -278,6 +284,10 @@ pub fn wasm_death_verification_new(
         .map_err(|e| JsValue::from_str(&format!("invalid claim nonce hex: {e}")))?;
     let initiator_signature =
         parse_ed25519_signature_hex("initiator confirmation signature", initiator_signature_hex)?;
+    let metadata = exo_messaging::death_trigger::DeathVerificationCreationMetadata::new(
+        exo_core::Timestamp::new(created_physical_ms, created_logical),
+    )
+    .map_err(|e| JsValue::from_str(&format!("invalid death verification metadata: {e}")))?;
 
     let dv = exo_messaging::death_trigger::DeathVerification::new(
         subject,
@@ -286,6 +296,7 @@ pub fn wasm_death_verification_new(
         authorized_trustees,
         claim_nonce,
         initiator_signature,
+        metadata,
     )
     .map_err(|e| JsValue::from_str(&format!("death verification creation failed: {e}")))?;
     to_js_value(&dv)
@@ -318,6 +329,8 @@ pub fn wasm_death_verification_confirm(
     trustee_did: &str,
     trustee_public_key_hex: &str,
     signature_hex: &str,
+    confirmed_physical_ms: u64,
+    confirmed_logical: u32,
 ) -> Result<JsValue, JsValue> {
     let mut dv: exo_messaging::death_trigger::DeathVerification = from_json_str(state_json)?;
     let trustee = exo_core::Did::new(trustee_did)
@@ -325,9 +338,13 @@ pub fn wasm_death_verification_confirm(
     let trustee_public_key =
         parse_ed25519_public_key_hex("trustee Ed25519 public key", trustee_public_key_hex)?;
     let signature = parse_ed25519_signature_hex("trustee confirmation signature", signature_hex)?;
+    let metadata = exo_messaging::death_trigger::DeathConfirmationMetadata::new(
+        exo_core::Timestamp::new(confirmed_physical_ms, confirmed_logical),
+    )
+    .map_err(|e| JsValue::from_str(&format!("invalid death confirmation metadata: {e}")))?;
 
     let verified = dv
-        .confirm(trustee, trustee_public_key, signature)
+        .confirm(trustee, trustee_public_key, signature, metadata)
         .map_err(|e| JsValue::from_str(&format!("confirmation failed: {e}")))?;
 
     to_js_value(&serde_json::json!({

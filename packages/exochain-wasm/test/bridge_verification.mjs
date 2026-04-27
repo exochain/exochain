@@ -310,14 +310,23 @@ test('wasm_death_verification_new', () => {
   if (!deathTrusteesJson || !deathInitialSignatureHex) {
     throw new Error('skipped -- no signed initial payload');
   }
-  return wasm.wasm_death_verification_new(
+  const state = wasm.wasm_death_verification_new(
     TEST_DID,
     TEST_DID_2,
     2,
     deathTrusteesJson,
     deathClaimNonceHex,
-    deathInitialSignatureHex
+    deathInitialSignatureHex,
+    NOW_MS,
+    0
   );
+  if (state.created.physical_ms !== NOW_NUM || state.created.logical !== 0) {
+    throw new Error('death verification created timestamp must be caller-supplied HLC');
+  }
+  if (state.confirmations[0].confirmed_at.physical_ms !== NOW_NUM) {
+    throw new Error('initial confirmation timestamp must match caller-supplied creation HLC');
+  }
+  return state;
 });
 
 const deathState = setup(() =>
@@ -327,7 +336,9 @@ const deathState = setup(() =>
     2,
     deathTrusteesJson,
     deathClaimNonceHex,
-    deathInitialSignatureHex
+    deathInitialSignatureHex,
+    NOW_MS,
+    0
   ));
 
 test('wasm_death_verification_confirmation_signing_payload', () => {
@@ -352,12 +363,22 @@ test('wasm_death_verification_confirm', () => {
   if (!deathState || !trusteePublicKey || !deathConfirmationSignatureHex) {
     throw new Error('skipped -- no signed confirmation payload');
   }
-  return wasm.wasm_death_verification_confirm(
+  const result = wasm.wasm_death_verification_confirm(
     JSON.stringify(deathState),
     TEST_DID_3,
     trusteePublicKey,
-    deathConfirmationSignatureHex
+    deathConfirmationSignatureHex,
+    BigInt(NOW_NUM + 1),
+    0
   );
+  const confirmation = result.state.confirmations[1];
+  if (confirmation.confirmed_at.physical_ms !== NOW_NUM + 1 || confirmation.confirmed_at.logical !== 0) {
+    throw new Error('trustee confirmation timestamp must be caller-supplied HLC');
+  }
+  if (result.state.resolved_at.physical_ms !== NOW_NUM + 1) {
+    throw new Error('verified death claim resolution timestamp must match confirmation HLC');
+  }
+  return result;
 });
 
 // =========================================================================

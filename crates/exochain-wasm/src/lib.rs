@@ -103,6 +103,11 @@ mod source_guard_tests {
             source.contains("ComposeMetadata::new"),
             "messaging WASM encryption must validate caller-supplied envelope metadata"
         );
+        assert!(
+            source.contains("DeathVerificationCreationMetadata::new")
+                && source.contains("DeathConfirmationMetadata::new"),
+            "messaging WASM death verification must validate caller-supplied state metadata"
+        );
 
         let forbidden = [
             format!("{}{}", "Timestamp::", "now_utc()"),
