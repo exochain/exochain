@@ -32,7 +32,10 @@ mod tests {
         onboarding::{OnboardingState, onboarding_router},
         scoring::compute_symmetry,
         store::{SharedZerodentityStore, ZerodentityStore, new_shared_store},
-        types::AttestationType,
+        types::{
+            AttestationType, BehavioralSample, BehavioralSignalType, DeviceFingerprint,
+            FingerprintSignal,
+        },
     };
 
     // -----------------------------------------------------------------------
@@ -118,6 +121,42 @@ mod tests {
             expires_ms: None,
             signature: Signature::Empty,
             dag_node_hash: h(&format!("dag-{key}")),
+        }
+    }
+
+    fn make_signed_claim(
+        did: &Did,
+        ct: ClaimType,
+        status: ClaimStatus,
+        ms: u64,
+        signature: Signature,
+    ) -> IdentityClaim {
+        let mut claim = make_claim(did, ct, status, ms);
+        claim.signature = signature;
+        claim
+    }
+
+    fn make_fingerprint(tag: &str, captured_ms: u64) -> DeviceFingerprint {
+        let mut signal_hashes = std::collections::BTreeMap::new();
+        signal_hashes.insert(FingerprintSignal::UserAgent, h(&format!("{tag}-ua")));
+        DeviceFingerprint {
+            composite_hash: h(&format!("{tag}-composite")),
+            signal_hashes,
+            captured_ms,
+            consistency_score_bp: Some(8_000),
+        }
+    }
+
+    fn make_behavioral_sample(
+        tag: &str,
+        signal_type: BehavioralSignalType,
+        captured_ms: u64,
+    ) -> BehavioralSample {
+        BehavioralSample {
+            sample_hash: h(&format!("{tag}-sample")),
+            signal_type,
+            captured_ms,
+            baseline_similarity_bp: Some(7_500),
         }
     }
 
@@ -551,6 +590,76 @@ mod tests {
         for ((_, c_t), c_s) in tuples.iter().zip(slice.iter()) {
             assert_eq!(c_t.claim_type, c_s.claim_type);
         }
+    }
+
+    #[test]
+    fn store_get_claims_returns_canonical_created_ms_order() {
+        let did = td("store-claims-canonical-order");
+        let mut store = ZerodentityStore::new();
+
+        store
+            .insert_claim(
+                "newer",
+                &make_claim(&did, ClaimType::Phone, ClaimStatus::Verified, 2_000),
+            )
+            .unwrap();
+        store
+            .insert_claim(
+                "older",
+                &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
+            )
+            .unwrap();
+
+        let claim_ids: Vec<String> = store
+            .get_claims(&did)
+            .unwrap()
+            .into_iter()
+            .map(|(claim_id, _)| claim_id)
+            .collect();
+
+        assert_eq!(claim_ids, vec!["older".to_owned(), "newer".to_owned()]);
+    }
+
+    #[test]
+    fn store_get_fingerprints_returns_canonical_captured_ms_order() {
+        let did = td("store-fingerprints-canonical-order");
+        let mut store = ZerodentityStore::new();
+
+        store.put_fingerprint(&did, make_fingerprint("newer", 2_000));
+        store.put_fingerprint(&did, make_fingerprint("older", 1_000));
+
+        let captured: Vec<u64> = store
+            .get_fingerprints(&did)
+            .unwrap()
+            .into_iter()
+            .map(|fingerprint| fingerprint.captured_ms)
+            .collect();
+
+        assert_eq!(captured, vec![1_000, 2_000]);
+    }
+
+    #[test]
+    fn store_get_behavioral_samples_returns_canonical_captured_ms_order() {
+        let did = td("store-behavioral-canonical-order");
+        let mut store = ZerodentityStore::new();
+
+        store.put_behavioral(
+            &did,
+            make_behavioral_sample("newer", BehavioralSignalType::MouseDynamics, 2_000),
+        );
+        store.put_behavioral(
+            &did,
+            make_behavioral_sample("older", BehavioralSignalType::KeystrokeDynamics, 1_000),
+        );
+
+        let captured: Vec<u64> = store
+            .get_behavioral_samples(&did)
+            .unwrap()
+            .into_iter()
+            .map(|sample| sample.captured_ms)
+            .collect();
+
+        assert_eq!(captured, vec![1_000, 2_000]);
     }
 
     // -----------------------------------------------------------------------
@@ -1129,6 +1238,68 @@ mod tests {
         assert_eq!(
             body["error"].as_str().unwrap(),
             "as_of_ms must be greater than 0"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_score_is_invariant_to_claim_insertion_order() {
+        let did = td("api-score-canonical-order");
+        let older_post_quantum = make_signed_claim(
+            &did,
+            ClaimType::Email,
+            ClaimStatus::Verified,
+            1_000,
+            Signature::PostQuantum(vec![9; 64]),
+        );
+        let newer_ed25519 = make_signed_claim(
+            &did,
+            ClaimType::Phone,
+            ClaimStatus::Verified,
+            2_000,
+            Signature::Ed25519([8; 64]),
+        );
+
+        let ordered_store = new_shared_store();
+        {
+            let mut s = ordered_store.lock().unwrap();
+            s.insert_claim("older", &older_post_quantum).unwrap();
+            s.insert_claim("newer", &newer_ed25519).unwrap();
+        }
+        let ordered_app = api_app(ordered_store);
+
+        let reversed_store = new_shared_store();
+        {
+            let mut s = reversed_store.lock().unwrap();
+            s.insert_claim("newer", &newer_ed25519).unwrap();
+            s.insert_claim("older", &older_post_quantum).unwrap();
+        }
+        let reversed_app = api_app(reversed_store);
+
+        let ordered_resp = get_req(
+            &ordered_app,
+            &format!("/api/v1/0dentity/{}/score", did.as_str()),
+        )
+        .await;
+        let reversed_resp = get_req(
+            &reversed_app,
+            &format!("/api/v1/0dentity/{}/score", did.as_str()),
+        )
+        .await;
+
+        assert_eq!(ordered_resp.status(), StatusCode::OK);
+        assert_eq!(reversed_resp.status(), StatusCode::OK);
+        let ordered_body = body_json(ordered_resp).await;
+        let reversed_body = body_json(reversed_resp).await;
+
+        assert_eq!(
+            ordered_body["axes"]["cryptographic_strength"],
+            reversed_body["axes"]["cryptographic_strength"]
+        );
+        assert_eq!(
+            ordered_body["axes"]["cryptographic_strength"]
+                .as_u64()
+                .unwrap(),
+            4_000
         );
     }
 

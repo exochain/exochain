@@ -8,6 +8,7 @@
 //! the integration path for SQLite persistence remains available.
 //!
 //! All inner maps use `BTreeMap` (never `HashMap`) for deterministic iteration.
+//! Evidence vectors are canonicalized on read before callers perform scoring.
 //!
 //! Spec reference: §9, §12.1.
 
@@ -69,6 +70,45 @@ pub struct ErasureEvidence {
     pub dag_node_hash: Hash256,
     pub action_hash: Hash256,
     pub receipt_hash: Hash256,
+}
+
+fn canonicalize_claim_entries(claims: &mut [(String, IdentityClaim)]) {
+    claims.sort_by(|(left_id, left), (right_id, right)| {
+        left.created_ms
+            .cmp(&right.created_ms)
+            .then(left.verified_ms.cmp(&right.verified_ms))
+            .then(left.claim_hash.as_bytes().cmp(right.claim_hash.as_bytes()))
+            .then(left_id.cmp(right_id))
+    });
+}
+
+fn canonicalize_fingerprints(fingerprints: &mut [DeviceFingerprint]) {
+    fingerprints.sort_by(|left, right| {
+        left.captured_ms
+            .cmp(&right.captured_ms)
+            .then(
+                left.composite_hash
+                    .as_bytes()
+                    .cmp(right.composite_hash.as_bytes()),
+            )
+            .then(left.consistency_score_bp.cmp(&right.consistency_score_bp))
+    });
+}
+
+fn canonicalize_behavioral_samples(samples: &mut [BehavioralSample]) {
+    samples.sort_by(|left, right| {
+        left.captured_ms
+            .cmp(&right.captured_ms)
+            .then(
+                left.sample_hash
+                    .as_bytes()
+                    .cmp(right.sample_hash.as_bytes()),
+            )
+            .then(
+                left.baseline_similarity_bp
+                    .cmp(&right.baseline_similarity_bp),
+            )
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -369,7 +409,9 @@ impl ZerodentityStore {
     ///
     /// Returns an empty `Vec` (not an error) when the DID has no claims.
     pub fn get_claims(&self, did: &Did) -> anyhow::Result<Vec<(String, IdentityClaim)>> {
-        Ok(self.claims.get(did.as_str()).cloned().unwrap_or_default())
+        let mut claims = self.claims.get(did.as_str()).cloned().unwrap_or_default();
+        canonicalize_claim_entries(&mut claims);
+        Ok(claims)
     }
 
     /// Return all claims for a DID as a plain slice (no claim IDs).
@@ -379,9 +421,8 @@ impl ZerodentityStore {
     #[must_use]
     #[allow(dead_code)]
     pub fn get_claims_slice(&self, did: &Did) -> Vec<IdentityClaim> {
-        self.claims
-            .get(did.as_str())
-            .map(|v| v.iter().map(|(_, c)| c.clone()).collect())
+        self.get_claims(did)
+            .map(|entries| entries.into_iter().map(|(_, c)| c).collect())
             .unwrap_or_default()
     }
 
@@ -391,20 +432,24 @@ impl ZerodentityStore {
 
     /// Return all device fingerprints for a DID.
     pub fn get_fingerprints(&self, did: &Did) -> anyhow::Result<Vec<DeviceFingerprint>> {
-        Ok(self
+        let mut fingerprints = self
             .fingerprints
             .get(did.as_str())
             .cloned()
-            .unwrap_or_default())
+            .unwrap_or_default();
+        canonicalize_fingerprints(&mut fingerprints);
+        Ok(fingerprints)
     }
 
     /// Return all behavioral samples for a DID.
     pub fn get_behavioral_samples(&self, did: &Did) -> anyhow::Result<Vec<BehavioralSample>> {
-        Ok(self
+        let mut samples = self
             .behavioral
             .get(did.as_str())
             .cloned()
-            .unwrap_or_default())
+            .unwrap_or_default();
+        canonicalize_behavioral_samples(&mut samples);
+        Ok(samples)
     }
 
     // -----------------------------------------------------------------------
