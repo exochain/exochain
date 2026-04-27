@@ -22,6 +22,9 @@ pub enum ConsentError {
 
     #[error("consent denied: {0}")]
     Denied(String),
+
+    #[error("serialization error: {0}")]
+    Serialization(String),
 }
 
 #[cfg(test)]

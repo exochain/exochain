@@ -22,6 +22,10 @@ function parseBody(req) {
   });
 }
 
+function missingFields(input, fields) {
+  return fields.filter(field => input[field] === undefined || input[field] === null || input[field] === '');
+}
+
 export const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
@@ -72,7 +76,9 @@ export const server = http.createServer(async (req, res) => {
     // ── Decisions: Create (full WASM pipeline) ──
     if (url.pathname === '/api/decisions' && req.method === 'POST') {
       const body = await parseBody(req);
-      const { title, decision_class, author_did } = body;
+      const { title, decision_class, author_did, decision_id, created_at_ms, created_at_logical } = body;
+      const missing = missingFields(body, ['decision_id', 'created_at_ms', 'created_at_logical']);
+      if (missing.length) return json(res, 400, { error: 'Missing required deterministic metadata', fields: missing });
 
       // 1. Verify author exists
       const { rows: [author] } = await pool.query('SELECT did, roles, pace_status FROM users WHERE did = $1', [author_did]);
@@ -87,12 +93,19 @@ export const server = http.createServer(async (req, res) => {
       const constitutionHash = wasm.wasm_hash_structured(JSON.stringify(constitution.payload));
 
       // 3. Create DecisionObject via WASM
-      const decision = wasm.wasm_create_decision(title, JSON.stringify(decision_class || 'Operational'), constitutionHash);
+      const decision = wasm.wasm_create_decision(
+        decision_id,
+        title,
+        JSON.stringify(decision_class || 'Operational'),
+        constitutionHash,
+        created_at_ms,
+        created_at_logical
+      );
 
       // 4. Persist to DB
       await pool.query(
         'INSERT INTO decisions (id_hash, tenant_id, status, title, decision_class, author, created_at_ms, constitution_version, payload) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-        [decision.id, 'exochain-foundation', 'Draft', title, decision_class || 'Operational', author_did, Date.now(), constitution.version, JSON.stringify(decision)]
+        [decision.id, 'exochain-foundation', 'Draft', title, decision_class || 'Operational', author_did, created_at_ms, constitution.version, JSON.stringify(decision)]
       );
 
       // 5. Audit trail
@@ -136,12 +149,20 @@ export const server = http.createServer(async (req, res) => {
     // ── Decisions: Transition State ──
     if (url.pathname === '/api/decisions/transition' && req.method === 'POST') {
       const body = await parseBody(req);
-      const { decision_id, to_state, actor_did } = body;
+      const { decision_id, to_state, actor_did, timestamp_ms, timestamp_logical } = body;
+      const missing = missingFields(body, ['timestamp_ms', 'timestamp_logical']);
+      if (missing.length) return json(res, 400, { error: 'Missing required deterministic metadata', fields: missing });
 
       const { rows: [row] } = await pool.query('SELECT payload, status FROM decisions WHERE id_hash = $1', [decision_id]);
       if (!row) return json(res, 404, { error: 'Decision not found' });
 
-      const updated = wasm.wasm_transition_decision(JSON.stringify(row.payload), JSON.stringify(to_state), actor_did);
+      const updated = wasm.wasm_transition_decision(
+        JSON.stringify(row.payload),
+        JSON.stringify(to_state),
+        actor_did,
+        timestamp_ms,
+        timestamp_logical
+      );
 
       await pool.query('UPDATE decisions SET payload = $1, status = $2 WHERE id_hash = $3', [JSON.stringify(updated), to_state, decision_id]);
 

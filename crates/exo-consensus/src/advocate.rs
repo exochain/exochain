@@ -2,7 +2,8 @@
 pub fn is_serious_challenge(challenge_text: &str) -> bool {
     // A mock heuristic for whether the devil's advocate found a serious issue.
     // Real implementation uses another model call or structural analysis.
-    challenge_text.to_lowercase().contains("serious") || challenge_text.to_lowercase().contains("fatal")
+    challenge_text.to_lowercase().contains("serious")
+        || challenge_text.to_lowercase().contains("fatal")
 }
 
 /// Generates a prompt for the devil's advocate based on the synthesized consensus.

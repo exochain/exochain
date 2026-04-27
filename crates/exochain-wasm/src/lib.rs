@@ -30,3 +30,96 @@ pub use governance_bindings::*;
 pub use identity_bindings::*;
 pub use legal_bindings::*;
 pub use messaging_bindings::*;
+
+#[cfg(test)]
+mod source_guard_tests {
+    #[test]
+    fn wasm_bridge_uses_deterministic_collections() {
+        let binding_sources = [
+            (
+                "authority_bindings.rs",
+                include_str!("authority_bindings.rs"),
+            ),
+            (
+                "governance_bindings.rs",
+                include_str!("governance_bindings.rs"),
+            ),
+        ];
+
+        for (path, source) in binding_sources {
+            assert!(
+                !source.contains("HashMap"),
+                "{path} must use deterministic BTreeMap-style collections at the WASM boundary"
+            );
+            assert!(
+                !source.contains("HashSet"),
+                "{path} must use deterministic BTreeSet-style collections at the WASM boundary"
+            );
+        }
+    }
+
+    #[test]
+    fn wasm_consent_bridge_requires_caller_supplied_time() {
+        let source = include_str!("consent_bindings.rs");
+        let forbidden = [
+            format!("{}{}", "Timestamp::", "now_utc()"),
+            format!("{}{}", "Uuid::", "new_v4()"),
+            "HybridClock::new()".to_string(),
+        ];
+
+        for pattern in forbidden {
+            assert!(
+                !source.contains(&pattern),
+                "consent WASM bindings must receive caller-supplied IDs and HLC timestamps"
+            );
+        }
+    }
+
+    #[test]
+    fn wasm_governance_bridge_requires_caller_supplied_metadata() {
+        let source = include_str!("governance_bindings.rs");
+        let forbidden = [
+            format!("{}{}", "Timestamp::", "now_utc()"),
+            format!("{}{}", "Uuid::", "new_v4()"),
+            "HybridClock::new()".to_string(),
+        ];
+
+        for pattern in forbidden {
+            assert!(
+                !source.contains(&pattern),
+                "governance WASM bindings must receive caller-supplied IDs and HLC timestamps"
+            );
+        }
+    }
+
+    #[test]
+    fn wasm_messaging_bridge_requires_caller_supplied_envelope_metadata() {
+        let source = include_str!("messaging_bindings.rs");
+        assert!(
+            source.contains("message_id") && source.contains("created_physical_ms"),
+            "messaging WASM encryption must expose caller-supplied envelope metadata"
+        );
+        assert!(
+            source.contains("ComposeMetadata::new"),
+            "messaging WASM encryption must validate caller-supplied envelope metadata"
+        );
+        assert!(
+            source.contains("DeathVerificationCreationMetadata::new")
+                && source.contains("DeathConfirmationMetadata::new"),
+            "messaging WASM death verification must validate caller-supplied state metadata"
+        );
+
+        let forbidden = [
+            format!("{}{}", "Timestamp::", "now_utc()"),
+            format!("{}{}", "Uuid::", "new_v4()"),
+            "HybridClock::new()".to_string(),
+        ];
+
+        for pattern in forbidden {
+            assert!(
+                !source.contains(&pattern),
+                "messaging WASM bindings must receive caller-supplied IDs and HLC timestamps"
+            );
+        }
+    }
+}

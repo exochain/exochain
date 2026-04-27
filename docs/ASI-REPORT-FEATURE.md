@@ -27,7 +27,7 @@ EXOCHAIN takes a different approach. Instead of aspirational guidelines, it prov
 
 ## What EXOCHAIN Is
 
-EXOCHAIN is a constitutional trust fabric: 16 Rust crates, 18,705 lines of code, 1,846 tests, and a formal proof chain demonstrating that its governance properties hold under all conditions.
+EXOCHAIN is a constitutional trust fabric: 20 Rust workspace packages, 115663 lines of Rust under `crates/`, 2,861 listed tests, and a formal proof chain demonstrating its intended governance properties.
 
 It implements a three-branch constitutional model — legislative, executive, and judicial — where:
 
@@ -247,4 +247,4 @@ EXOCHAIN is our answer.
 | Council Assessment | `governance/COUNCIL-ASSESSMENT-EXO-VS-EXOCHAIN.md` | 5-panel exo vs exochain |
 | Refactor Plan | `governance/EXOCHAIN-REFACTOR-PLAN.md` | Master plan |
 | AGENTS.md | Root `AGENTS.md` | AI development instructions |
-| CI Pipeline | `.github/workflows/ci.yml` | 8 quality gates |
+| CI Pipeline | `.github/workflows/ci.yml` | 20 numbered gates plus required aggregator |

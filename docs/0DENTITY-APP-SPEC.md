@@ -748,16 +748,15 @@ function normalize_name(raw) {
      device_fingerprint: updated_composite_hash.hex(),
      signal_hashes: { ... },
      verification_channel: "email",
-     // Server-side: dispatches OTP to the ACTUAL email address
-     // The raw email must be transmitted THIS ONCE for delivery
-     // Server hashes it, dispatches OTP, then discards the plaintext
-     encrypted_channel_address: RSA_OAEP.encrypt(server_public_key, email_normalized)
+     // Current node build: creates an OTP challenge for the email channel.
+     // The raw email address is not transmitted to this API.
+     encrypted_channel_address: null
    }
 5. Response: { challenge_id: "...", ttl_ms: 300000, channel: "email" }
 6. Advance to Step 3 (Email OTP)
 ```
 
-**Critical security note:** The raw email address must be transmitted to the server exactly once for OTP dispatch. It is encrypted with the server's RSA-OAEP public key (provided at page load), decrypted server-side only within the OTP dispatch function, used to send the email, then immediately zeroed. The server never persists the raw address — only the BLAKE3 hash.
+**Implementation status note:** the current node build does not route a server public-key endpoint for channel-address encryption. Clients must not depend on RSA-OAEP channel encryption in this build; the API stores only claim hashes and OTP challenge metadata.
 
 ### 4.4 Step 3: Email OTP Verification
 
@@ -824,7 +823,9 @@ function normalize_name(raw) {
      device_fingerprint: updated_composite_hash.hex(),
      signal_hashes: { ... },
      verification_channel: "sms",
-     encrypted_channel_address: RSA_OAEP.encrypt(server_public_key, phone_e164)
+     // Current node build: creates an OTP challenge for the SMS channel.
+     // The raw phone number is not transmitted to this API.
+     encrypted_channel_address: null
    }
 4. Response: { challenge_id: "...", ttl_ms: 180000, channel: "sms" }
 5. Advance to Step 5 (Phone OTP)
@@ -1466,7 +1467,7 @@ POST /api/v1/0dentity/claims
         ...
       },
       "verification_channel": "email" | "sms" | null,
-      "encrypted_channel_address": "base64-RSA-OAEP-encrypted address" | null,
+      "encrypted_channel_address": null,
       "signature": "hex-encoded Ed25519 signature",
       "public_key": "hex-encoded Ed25519 public key"
     }
@@ -1616,16 +1617,22 @@ GET /api/v1/0dentity/:did/fingerprints
 
 POST /api/v1/0dentity/:did/attest
   Description: Attest/vouch for another identity (peer attestation).
-  Auth: Bearer session_token (attester must be verified)
+  Auth: Bearer session_token (attester must be verified).
+  Signature: Ed25519 over canonical CBOR tuple
+    ("exo.zerodentity.attestation.v1", attester_did, target_did,
+     attestation_type, message_hash, created_ms)
   Request body:
     {
       "target_did": "did:exo:...",
-      "attestation_type": "identity" | "competence" | "trustworthy",
-      "message_hash": "hex..."  // optional hash of attestation message
+      "attestation_type": "Identity" | "Professional" | "Trustworthy" | "Character",
+      "message_hash": "32-byte hex...",  // optional hash of attestation message
+      "created_ms": 1743724800000,
+      "attester_public_key": "32-byte Ed25519 public key hex",
+      "signature": "64-byte Ed25519 signature hex"
     }
   Response 201:
     {
-      "attestation_id": "uuid",
+      "attestation_id": "deterministic blake3 hex",
       "receipt_hash": "hex...",
       "attester_score_impact": { "network_reputation": "+3" },
       "target_score_impact": { "network_reputation": "+5" }
@@ -1634,19 +1641,7 @@ POST /api/v1/0dentity/:did/attest
 
 ### 7.3 Server Public Key Endpoint
 
-```
-GET /api/v1/0dentity/server-key
-  Description: Retrieve server's RSA-OAEP public key for encrypting channel addresses.
-  Auth: None
-  Response 200:
-    {
-      "algorithm": "RSA-OAEP",
-      "key_size": 4096,
-      "public_key_pem": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----",
-      "key_hash": "hex...",    // BLAKE3 hash for pinning
-      "rotated_ms": 1743724800000
-    }
-```
+No server public-key endpoint is routed in the current node build. ONYX-4 R6 removed the previous `/api/v1/0dentity/server-key` handler because it advertised key-agreement semantics while returning a BLAKE3 digest wrapped as PEM. Clients must treat this endpoint as absent.
 
 ---
 
@@ -1890,6 +1885,8 @@ CREATE TABLE IF NOT EXISTS peer_attestations (
     attestation_type TEXT NOT NULL,
     message_hash    BLOB,
     created_ms      INTEGER NOT NULL,
+    attester_public_key BLOB NOT NULL,
+    signature       BLOB NOT NULL,
     dag_node_hash   BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_attest_target ON peer_attestations(target_did);
@@ -2049,7 +2046,7 @@ let extra_router = Router::new()
 | Content addressing | BLAKE3 | 256-bit output |
 | Claim signing | Ed25519 | 64-byte signatures |
 | OTP HMAC | SHA-256 HMAC | 256-bit key, 6-digit code |
-| Channel encryption | RSA-OAEP | 4096-bit key, SHA-256 |
+| Channel encryption | Not routed in current node build | No server public-key endpoint |
 | Session token | getrandom | 256-bit, hex-encoded |
 | Fingerprint consistency | Jaccard similarity | Over signal hash sets |
 

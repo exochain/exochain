@@ -5,25 +5,28 @@
 //!
 //! Spec reference: §7.1.
 
-use std::{
-    str::FromStr,
-    sync::{Arc, Mutex},
-};
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
-use exo_core::types::{Did, Hash256, Signature};
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+use exo_core::types::{Did, Hash256};
+use exo_core::{crypto, types::PublicKey};
 use getrandom::getrandom;
 use rand::{SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+use super::session_auth::{claim_submission_signing_payload, did_from_public_key};
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+use super::types::{ClaimStatus, IdentityClaim, OtpChannel};
 use super::{
     otp::OtpResult,
+    session_auth::{bootstrap_signing_payload, public_key_from_hex, signature_from_hex},
     store::ZerodentityStore,
-    types::{
-        ClaimStatus, ClaimType, IdentityClaim, IdentitySession, OtpChallenge, OtpChannel,
-        ZerodentityScore,
-    },
+    types::{ClaimType, IdentitySession, OtpChallenge, ZerodentityScore},
 };
 
 // ---------------------------------------------------------------------------
@@ -65,11 +68,21 @@ pub fn score_summary_from(score: &ZerodentityScore) -> ScoreSummary {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    not(feature = "unaudited-zerodentity-first-touch-onboarding"),
+    allow(dead_code)
+)]
 pub struct SubmitClaimRequest {
     pub subject_did: String,
     pub claim_type: String,
     #[serde(default)]
     pub provider: Option<String>,
+    #[serde(default)]
+    pub created_ms: Option<u64>,
+    #[serde(default)]
+    pub public_key: Option<String>,
+    #[serde(default)]
+    pub signature: Option<String>,
     pub verification_channel: Option<String>,
 }
 
@@ -85,6 +98,10 @@ pub struct SubmitClaimResponse {
 pub struct VerifyOtpRequest {
     pub challenge_id: String,
     pub code: String,
+    #[serde(default)]
+    pub public_key: Option<String>,
+    #[serde(default)]
+    pub bootstrap_signature: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -110,6 +127,11 @@ pub struct ResendOtpResponse {
 // Helpers
 // ---------------------------------------------------------------------------
 
+#[cfg(not(feature = "unaudited-zerodentity-first-touch-onboarding"))]
+const FIRST_TOUCH_ONBOARDING_FEATURE: &str = "unaudited-zerodentity-first-touch-onboarding";
+#[cfg(not(feature = "unaudited-zerodentity-first-touch-onboarding"))]
+const FIRST_TOUCH_ONBOARDING_INITIATIVE: &str = "fix-onyx-4-r1-onboarding-auth.md";
+
 fn now_ms() -> u64 {
     exo_core::hlc::HybridClock::new().now().physical_ms
 }
@@ -120,6 +142,7 @@ fn build_rng() -> StdRng {
     StdRng::from_seed(seed)
 }
 
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
 fn parse_did(s: &str) -> Result<Did, (StatusCode, Json<serde_json::Value>)> {
     Did::new(s).map_err(|_| {
         (
@@ -129,6 +152,63 @@ fn parse_did(s: &str) -> Result<Did, (StatusCode, Json<serde_json::Value>)> {
     })
 }
 
+fn json_error(
+    status: StatusCode,
+    error: impl Into<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    (status, Json(serde_json::json!({ "error": error.into() })))
+}
+
+fn lock_store(
+    state: &OnboardingState,
+) -> Result<std::sync::MutexGuard<'_, ZerodentityStore>, (StatusCode, Json<serde_json::Value>)> {
+    state
+        .store
+        .lock()
+        .map_err(|_| json_error(StatusCode::INTERNAL_SERVER_ERROR, "Store lock error"))
+}
+
+fn verify_bootstrap_signature(
+    req: &VerifyOtpRequest,
+    challenge: &OtpChallenge,
+) -> Result<PublicKey, (StatusCode, Json<serde_json::Value>)> {
+    let public_key_hex = req
+        .public_key
+        .as_deref()
+        .ok_or_else(|| json_error(StatusCode::BAD_REQUEST, "public_key is required"))?;
+    let signature_hex = req
+        .bootstrap_signature
+        .as_deref()
+        .ok_or_else(|| json_error(StatusCode::BAD_REQUEST, "bootstrap_signature is required"))?;
+
+    let public_key =
+        public_key_from_hex(public_key_hex).map_err(|e| json_error(StatusCode::BAD_REQUEST, e))?;
+    let signature =
+        signature_from_hex(signature_hex).map_err(|e| json_error(StatusCode::BAD_REQUEST, e))?;
+    if signature.is_empty() {
+        return Err(json_error(
+            StatusCode::UNAUTHORIZED,
+            "bootstrap_signature must not be empty",
+        ));
+    }
+
+    let payload =
+        bootstrap_signing_payload(&challenge.challenge_id, &challenge.subject_did, &public_key)
+            .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if !crypto::verify(&payload, &signature, &public_key) {
+        return Err(json_error(
+            StatusCode::UNAUTHORIZED,
+            "bootstrap_signature verification failed",
+        ));
+    }
+
+    Ok(public_key)
+}
+
+#[cfg_attr(
+    not(feature = "unaudited-zerodentity-first-touch-onboarding"),
+    allow(dead_code)
+)]
 fn parse_claim_type(ct: &str, provider: Option<&str>) -> Option<ClaimType> {
     match ct {
         "Email" => Some(ClaimType::Email),
@@ -144,17 +224,56 @@ fn parse_claim_type(ct: &str, provider: Option<&str>) -> Option<ClaimType> {
     }
 }
 
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+fn parse_otp_channel(channel: &str) -> Result<OtpChannel, (StatusCode, Json<serde_json::Value>)> {
+    OtpChannel::from_str(channel)
+        .map_err(|_| json_error(StatusCode::BAD_REQUEST, "Invalid OTP channel"))
+}
+
+#[cfg(not(feature = "unaudited-zerodentity-first-touch-onboarding"))]
+fn first_touch_onboarding_refusal() -> (StatusCode, Json<serde_json::Value>) {
+    tracing::warn!(
+        "refusing POST /api/v1/0dentity/claims: first-touch onboarding \
+         is gated. See fix-onyx-4-r1-onboarding-auth initiative. To opt \
+         in for a dev cluster, build with \
+         --features exo-node/unaudited-zerodentity-first-touch-onboarding."
+    );
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({
+            "error": "zerodentity_first_touch_onboarding_disabled",
+            "message": "First-touch 0dentity claim creation is disabled by default. \
+                        The approved onboarding proof-of-possession design must land \
+                        before this path is exposed. See \
+                        Initiatives/fix-onyx-4-r1-onboarding-auth.md.",
+            "feature_flag": FIRST_TOUCH_ONBOARDING_FEATURE,
+            "initiative": FIRST_TOUCH_ONBOARDING_INITIATIVE,
+            "refusal_source": "exo-node/zerodentity/onboarding.rs::submit_claim",
+        })),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/v1/0dentity/claims
 // ---------------------------------------------------------------------------
 
 /// `POST /api/v1/0dentity/claims` — submit a new identity claim for verification.
+#[cfg(not(feature = "unaudited-zerodentity-first-touch-onboarding"))]
+pub async fn submit_claim(
+    State(state): State<OnboardingState>,
+    Json(req): Json<SubmitClaimRequest>,
+) -> Result<Json<SubmitClaimResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let _ = (state, req);
+    Err(first_touch_onboarding_refusal())
+}
+
+/// `POST /api/v1/0dentity/claims` — submit a new identity claim for verification.
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
 pub async fn submit_claim(
     State(state): State<OnboardingState>,
     Json(req): Json<SubmitClaimRequest>,
 ) -> Result<Json<SubmitClaimResponse>, (StatusCode, Json<serde_json::Value>)> {
     let subject_did = parse_did(&req.subject_did)?;
-    let now = now_ms();
 
     let claim_type =
         parse_claim_type(&req.claim_type, req.provider.as_deref()).ok_or_else(|| {
@@ -163,22 +282,74 @@ pub async fn submit_claim(
                 Json(serde_json::json!({"error": "Unrecognised claim_type"})),
             )
         })?;
+    let created_ms = req
+        .created_ms
+        .ok_or_else(|| json_error(StatusCode::BAD_REQUEST, "created_ms is required"))?;
+    if created_ms == 0 {
+        return Err(json_error(
+            StatusCode::BAD_REQUEST,
+            "created_ms must be non-zero",
+        ));
+    }
 
-    // Build claim payload hash
-    let payload = format!("{}:{}", req.subject_did, req.claim_type);
-    let claim_hash = Hash256::digest(payload.as_bytes());
+    let public_key_hex = req
+        .public_key
+        .as_deref()
+        .ok_or_else(|| json_error(StatusCode::BAD_REQUEST, "public_key is required"))?;
+    let public_key =
+        public_key_from_hex(public_key_hex).map_err(|e| json_error(StatusCode::BAD_REQUEST, e))?;
+    let derived_did = did_from_public_key(&public_key)
+        .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if derived_did != subject_did {
+        return Err(json_error(
+            StatusCode::BAD_REQUEST,
+            "subject_did must equal did:exo:<bs58(blake3(public_key))>",
+        ));
+    }
 
-    let claim_id = Uuid::new_v4().to_string();
+    let signature_hex = req
+        .signature
+        .as_deref()
+        .ok_or_else(|| json_error(StatusCode::BAD_REQUEST, "signature is required"))?;
+    let signature =
+        signature_from_hex(signature_hex).map_err(|e| json_error(StatusCode::BAD_REQUEST, e))?;
+    if signature.is_empty() {
+        return Err(json_error(
+            StatusCode::UNAUTHORIZED,
+            "signature must not be empty",
+        ));
+    }
+
+    let payload = claim_submission_signing_payload(
+        &subject_did,
+        &req.claim_type,
+        req.provider.as_deref(),
+        req.verification_channel.as_deref(),
+        created_ms,
+        &public_key,
+    )
+    .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if !crypto::verify(&payload, &signature, &public_key) {
+        return Err(json_error(
+            StatusCode::UNAUTHORIZED,
+            "signature verification failed",
+        ));
+    }
+
+    let claim_hash = Hash256::digest(&payload);
+    let mut claim_id_input = payload.clone();
+    claim_id_input.extend_from_slice(&signature.to_bytes());
+    let claim_id = hex::encode(Hash256::digest(&claim_id_input).as_bytes());
 
     let claim = IdentityClaim {
         claim_hash,
         subject_did: subject_did.clone(),
         claim_type,
         status: ClaimStatus::Pending,
-        created_ms: now,
+        created_ms,
         verified_ms: None,
         expires_ms: None,
-        signature: Signature::Empty,
+        signature: signature.clone(),
         dag_node_hash: Hash256::digest(claim_id.as_bytes()),
     };
 
@@ -189,6 +360,22 @@ pub async fn submit_claim(
                 Json(serde_json::json!({"error": "Store lock error"})),
             )
         })?;
+        if store
+            .get_claims(&subject_did)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("Store error: {e}")})),
+                )
+            })?
+            .iter()
+            .any(|(existing_id, _)| existing_id == &claim_id)
+        {
+            return Err(json_error(
+                StatusCode::CONFLICT,
+                "claim submission has already been accepted",
+            ));
+        }
         store.insert_claim(&claim_id, &claim).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -199,12 +386,12 @@ pub async fn submit_claim(
 
     // Optionally create OTP challenge for email/phone claims
     let (challenge_id, challenge_ttl_ms) = if let Some(channel_str) = &req.verification_channel {
-        let channel = OtpChannel::from_str(channel_str).unwrap_or(OtpChannel::Email);
+        let channel = parse_otp_channel(channel_str)?;
         let ttl = channel.ttl_ms();
 
         let mut rng = build_rng();
-        let (challenge, _code) =
-            OtpChallenge::new(&subject_did, channel, now, &mut rng).map_err(|_| {
+        let (challenge, _code) = OtpChallenge::new(&subject_did, channel, created_ms, &mut rng)
+            .map_err(|_| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({"error": "OTP generation failed"})),
@@ -246,12 +433,7 @@ pub async fn verify_otp(
     let now = now_ms();
 
     let mut challenge = {
-        let store = state.store.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "Store lock error"})),
-            )
-        })?;
+        let store = lock_store(&state)?;
         store
             .get_otp_challenge(&req.challenge_id)
             .map_err(|e| {
@@ -270,35 +452,32 @@ pub async fn verify_otp(
 
     let result = challenge.verify(&req.code, now);
 
-    {
-        let mut store = state.store.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "Store lock error"})),
-            )
-        })?;
-        let _ = store.update_otp_challenge(&challenge);
-    }
-
     match result {
         OtpResult::Success => {
+            let public_key = verify_bootstrap_signature(&req, &challenge)?;
             let session_token = Uuid::new_v4().to_string();
             let session = IdentitySession {
                 session_token: session_token.clone(),
                 subject_did: challenge.subject_did.clone(),
-                public_key: vec![],
+                public_key: public_key.as_bytes().to_vec(),
                 created_ms: now,
                 last_active_ms: now,
                 revoked: false,
             };
             {
-                let mut store = state.store.lock().map_err(|_| {
+                let mut store = lock_store(&state)?;
+                store.update_otp_challenge(&challenge).map_err(|e| {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({"error": "Store lock error"})),
+                        Json(serde_json::json!({"error": format!("Store error: {e}")})),
                     )
                 })?;
-                let _ = store.insert_session(&session);
+                store.insert_session(&session).map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": format!("Store error: {e}")})),
+                    )
+                })?;
             }
             Ok(Json(VerifyOtpResponse {
                 verified: true,
@@ -307,20 +486,44 @@ pub async fn verify_otp(
                 message: "Verification successful".into(),
             }))
         }
-        OtpResult::WrongCode { attempts_remaining } => Ok(Json(VerifyOtpResponse {
-            verified: false,
-            session_token: None,
-            attempts_remaining: Some(attempts_remaining),
-            message: "Incorrect code".into(),
-        })),
-        OtpResult::Expired => Err((
-            StatusCode::GONE,
-            Json(serde_json::json!({"error": "Challenge has expired"})),
-        )),
-        OtpResult::Locked { .. } => Err((
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({"error": "Too many failed attempts — locked"})),
-        )),
+        OtpResult::WrongCode { attempts_remaining } => {
+            let mut store = lock_store(&state)?;
+            store.update_otp_challenge(&challenge).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("Store error: {e}")})),
+                )
+            })?;
+            Ok(Json(VerifyOtpResponse {
+                verified: false,
+                session_token: None,
+                attempts_remaining: Some(attempts_remaining),
+                message: "Incorrect code".into(),
+            }))
+        }
+        OtpResult::Expired => {
+            let mut store = lock_store(&state)?;
+            store.update_otp_challenge(&challenge).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("Store error: {e}")})),
+                )
+            })?;
+            Err(json_error(StatusCode::GONE, "Challenge has expired"))
+        }
+        OtpResult::Locked { .. } => {
+            let mut store = lock_store(&state)?;
+            store.update_otp_challenge(&challenge).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("Store error: {e}")})),
+                )
+            })?;
+            Err(json_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many failed attempts — locked",
+            ))
+        }
     }
 }
 
@@ -430,6 +633,30 @@ mod tests {
             parse_claim_type("BiometricLiveness", None),
             Some(ClaimType::BiometricLiveness)
         );
+    }
+
+    #[test]
+    #[cfg(not(feature = "unaudited-zerodentity-first-touch-onboarding"))]
+    fn default_submit_claim_handler_compiles_out_legacy_claim_creation() {
+        let source = include_str!("onboarding.rs");
+        let default_handler = source
+            .split(
+                "#[cfg(not(feature = \"unaudited-zerodentity-first-touch-onboarding\"))]\n\
+                 pub async fn submit_claim",
+            )
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("#[cfg(feature = \"unaudited-zerodentity-first-touch-onboarding\")]")
+                    .next()
+            })
+            .expect("default submit_claim handler must have an explicit cfg boundary");
+
+        assert!(default_handler.contains("first_touch_onboarding_refusal"));
+        assert!(!default_handler.contains("now_ms()"));
+        assert!(!default_handler.contains("Uuid::new_v4()"));
+        assert!(!default_handler.contains("Signature::Empty"));
+        assert!(!default_handler.contains("insert_claim"));
     }
 
     #[test]

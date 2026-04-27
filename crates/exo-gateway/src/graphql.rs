@@ -27,18 +27,18 @@ use async_graphql::{
     Context, ID, InputObject, Object, Result as GqlResult, Schema, SimpleObject, Subscription,
     futures_util::Stream,
 };
+#[cfg(feature = "unaudited-gateway-graphql-api")]
 use async_graphql_axum::{GraphQL, GraphQLSubscription};
 use async_stream::stream;
+#[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+use axum::{Json, http::StatusCode};
 use axum::{Router, routing::get};
-use exo_consent::{
-    bailment::{self, BailmentStatus, BailmentType},
-    policy::{
-        ActionRequest as ConsentActionRequest, ActiveConsent, ConsentDecision, ConsentPolicy,
-        ConsentRequirement, PolicyEngine,
-    },
+use exo_consent::policy::{
+    ActionRequest as ConsentActionRequest, ConsentDecision, ConsentPolicy, ConsentRequirement,
+    PolicyEngine,
 };
 use exo_core::{Did, Hash256, Timestamp};
-use exo_identity::registry::{LocalDidRegistry, DidRegistry};
+use exo_identity::registry::{DidRegistry, LocalDidRegistry};
 use tokio::sync::{Mutex, broadcast};
 use uuid::Uuid;
 
@@ -311,6 +311,14 @@ fn now_str() -> String {
 /// Fully-built GraphQL schema type with query, mutation, and subscription roots.
 pub type GovSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
 
+pub const UNAUDITED_GRAPHQL_API_FEATURE: &str = "unaudited-gateway-graphql-api";
+pub const UNAUDITED_GRAPHQL_API_INITIATIVE: &str = "Initiatives/fix-spline-r1-graphql-auth-gate.md";
+pub const UNAUDITED_GRAPHQL_API_MEMO: &str =
+    "exochain/council-intake/exo-spline-gateway-api-messaging.md";
+pub const GRAPHQL_CONSENT_FABRICATION_INITIATIVE: &str =
+    "Initiatives/fix-spline-r2-graphql-consent-fabrication.md";
+pub const GRAPHQL_PROOF_STUB_INITIATIVE: &str = "Initiatives/fix-spline-r3-graphql-proof-stub.md";
+
 // ---------------------------------------------------------------------------
 // Query resolvers
 // ---------------------------------------------------------------------------
@@ -434,18 +442,14 @@ impl QueryRoot {
         _ctx: &Context<'_>,
         proof_id: ID,
     ) -> GqlResult<GqlVerificationResult> {
-        // Proof verification delegates to exo-proofs crate; placeholder returns
-        // deterministic result based on the proof_id hash.
-        let hash = Hash256::digest(proof_id.as_str().as_bytes());
-        let valid = hash.as_bytes()[0] & 1 == 0; // deterministic stub
         Ok(GqlVerificationResult {
-            proof_type: "Blake3Commitment".into(),
-            valid,
-            message: if valid {
-                "Proof verified".into()
-            } else {
-                "Proof not found — full verification requires exo-proofs integration".into()
-            },
+            proof_type: "Unavailable".into(),
+            valid: false,
+            message: format!(
+                "Proof verification refused: gateway GraphQL proof storage and verification are not wired for proof ID '{}'; see {}",
+                proof_id.as_str(),
+                GRAPHQL_PROOF_STUB_INITIATIVE
+            ),
         })
     }
 
@@ -505,7 +509,7 @@ impl QueryRoot {
         let guard = state.lock().await;
         let subject_str = subject.to_string();
         let actor_str = actor.to_string();
-        let subject_did = Did::new(&subject_str)
+        Did::new(&subject_str)
             .map_err(|e| async_graphql::Error::new(format!("invalid subject DID: {e}")))?;
         let actor_did = Did::new(&actor_str)
             .map_err(|e| async_graphql::Error::new(format!("invalid actor DID: {e}")))?;
@@ -522,41 +526,32 @@ impl QueryRoot {
             deny_by_default: true,
         };
 
-        // Build an active bailment from subject (bailor) → actor (bailee) covering
-        // the requested scope.  Terms are hashed from the scope string.
-        let mut active_bailment = bailment::propose(
-            &subject_did,
-            &actor_did,
-            scope.as_bytes(),
-            BailmentType::Processing,
-        );
-        active_bailment.status = BailmentStatus::Active; // grant for evaluation
-        let consents = vec![ActiveConsent {
-            grantor: subject_did,
-            action_type: action_type.clone(),
-            role: "any".into(),
-            clearance_level: 0,
-            bailment: active_bailment,
-        }];
         let action = ConsentActionRequest {
             actor: actor_did,
             action_type: action_type.clone(),
         };
-        let now = Timestamp::now_utc();
         let decision = guard
             .consent_engine
-            .evaluate(&policy, &consents, &action, &now);
+            .evaluate(&policy, &[], &action, &Timestamp::ZERO);
         let (granted, message) = match decision {
             ConsentDecision::Granted { .. } => (
-                true,
+                false,
                 format!(
-                    "Consent granted: {actor_str} may perform '{action_type}' on {subject_str} scope '{scope}'"
+                    "Consent denied: gateway GraphQL has no verified consent evidence for {subject_str} -> {actor_str} scope '{scope}' action '{action_type}'; see {GRAPHQL_CONSENT_FABRICATION_INITIATIVE}"
                 ),
             ),
-            ConsentDecision::Denied { reason } => (false, reason),
-            ConsentDecision::Escalated { to } => {
-                (false, format!("Escalated to {to} for manual review"))
-            }
+            ConsentDecision::Denied { reason } => (
+                false,
+                format!(
+                    "Consent denied: gateway GraphQL has no verified consent evidence for {subject_str} -> {actor_str} scope '{scope}' action '{action_type}'; policy reason: {reason}; see {GRAPHQL_CONSENT_FABRICATION_INITIATIVE}"
+                ),
+            ),
+            ConsentDecision::Escalated { to } => (
+                false,
+                format!(
+                    "Consent denied: gateway GraphQL has no verified consent evidence for {subject_str} -> {actor_str} scope '{scope}' action '{action_type}'; policy escalated to {to}; see {GRAPHQL_CONSENT_FABRICATION_INITIATIVE}"
+                ),
+            ),
         };
         Ok(GqlConsentResult {
             subject: subject_str,
@@ -980,7 +975,14 @@ pub fn build_schema(state: Arc<Mutex<AppState>>) -> GovSchema {
 /// - `POST /graphql` — query and mutation handler
 /// - `GET  /graphql` — GraphQL Playground (development)
 /// - `GET  /graphql/ws` — WebSocket subscription endpoint
+#[cfg(feature = "unaudited-gateway-graphql-api")]
 pub fn graphql_router(schema: GovSchema) -> Router {
+    tracing::warn!(
+        feature_flag = UNAUDITED_GRAPHQL_API_FEATURE,
+        initiative = UNAUDITED_GRAPHQL_API_INITIATIVE,
+        memo = UNAUDITED_GRAPHQL_API_MEMO,
+        "unaudited gateway GraphQL API enabled"
+    );
     Router::new()
         .route(
             "/graphql",
@@ -989,11 +991,41 @@ pub fn graphql_router(schema: GovSchema) -> Router {
         .route_service("/graphql/ws", GraphQLSubscription::new(schema))
 }
 
+/// Construct the default-safe GraphQL router.
+///
+/// The playground remains available for local schema inspection, but executable
+/// GraphQL operations are refused unless `unaudited-gateway-graphql-api` is
+/// explicitly enabled. This avoids exposing resolver-local placeholder caller
+/// identity, fabricated consent, and proof-verification scaffolding.
+#[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+pub fn graphql_router(_schema: GovSchema) -> Router {
+    Router::new()
+        .route(
+            "/graphql",
+            get(graphql_playground_handler).post(graphql_refusal_handler),
+        )
+        .route("/graphql/ws", get(graphql_refusal_handler))
+}
+
 async fn graphql_playground_handler() -> impl axum::response::IntoResponse {
     axum::response::Html(async_graphql::http::playground_source(
         async_graphql::http::GraphQLPlaygroundConfig::new("/graphql")
             .subscription_endpoint("/graphql/ws"),
     ))
+}
+
+#[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+async fn graphql_refusal_handler() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({
+            "error": "unaudited_graphql_api_disabled",
+            "message": "The gateway GraphQL execution surface is disabled by default pending Spline R1 remediation.",
+            "feature_flag": UNAUDITED_GRAPHQL_API_FEATURE,
+            "initiative": UNAUDITED_GRAPHQL_API_INITIATIVE,
+            "memo": UNAUDITED_GRAPHQL_API_MEMO,
+        })),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1424,10 +1456,11 @@ mod tests {
         assert_eq!(data["resolveIdentity"]["activeKeyCount"], 1);
     }
 
-    /// APE-35: evaluateConsent returns `granted: true` when bailment conditions
-    /// are met via the PolicyEngine (end-to-end consent check).
+    /// SPLINE-R2: evaluateConsent must fail closed when GraphQL has no verified
+    /// consent evidence source. The resolver must not fabricate an active
+    /// bailment for the requested subject/actor pair.
     #[tokio::test]
-    async fn query_evaluate_consent_granted() {
+    async fn query_evaluate_consent_denies_without_verified_consent_evidence() {
         let schema = build_test_schema();
         let res = schema
             .execute(
@@ -1441,9 +1474,40 @@ mod tests {
             .await;
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
         let data = res.data.into_json().expect("data");
-        assert_eq!(data["evaluateConsent"]["granted"], true);
+        assert_eq!(data["evaluateConsent"]["granted"], false);
         assert_eq!(data["evaluateConsent"]["scope"], "data:medical");
         assert_eq!(data["evaluateConsent"]["subject"], "did:exo:alice");
+        let message = data["evaluateConsent"]["message"]
+            .as_str()
+            .expect("message is a string");
+        assert!(message.contains("no verified consent evidence"));
+        assert!(message.contains("fix-spline-r2-graphql-consent-fabrication.md"));
+    }
+
+    /// SPLINE-R3: verifyProof must not treat arbitrary proof IDs as valid.
+    /// The GraphQL schema has no proof bytes, public inputs, or verified proof
+    /// store wired, so it must fail closed instead of using hash parity.
+    #[tokio::test]
+    async fn query_verify_proof_refuses_arbitrary_proof_id() {
+        let schema = build_test_schema();
+        let res = schema
+            .execute(
+                r#"{ verifyProof(proofId: "proof-acceptance-must-not-depend-on-id-hash") {
+                    proofType
+                    valid
+                    message
+                } }"#,
+            )
+            .await;
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().expect("data");
+        assert_eq!(data["verifyProof"]["valid"], false);
+        assert_eq!(data["verifyProof"]["proofType"], "Unavailable");
+        let message = data["verifyProof"]["message"]
+            .as_str()
+            .expect("message is a string");
+        assert!(message.contains("proof storage and verification are not wired"));
+        assert!(message.contains("fix-spline-r3-graphql-proof-stub.md"));
     }
 
     /// APE-35: resolveIdentity rejects malformed DIDs with a GraphQL error.

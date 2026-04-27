@@ -38,3 +38,32 @@ pub mod self_governance;
 pub mod terms;
 pub mod tnc_enforcer;
 pub mod workflow;
+
+#[cfg(test)]
+mod audit_tests {
+    fn production_source(source: &str) -> &str {
+        source.split("#[cfg(test)]").next().unwrap_or(source)
+    }
+
+    #[test]
+    fn scope_r1_constructors_do_not_fabricate_identity_or_clock_metadata() {
+        for (module, source) in [
+            ("decision_object", include_str!("decision_object.rs")),
+            ("contestation", include_str!("contestation.rs")),
+            ("accountability", include_str!("accountability.rs")),
+            ("emergency", include_str!("emergency.rs")),
+            ("self_governance", include_str!("self_governance.rs")),
+            ("workflow", include_str!("workflow.rs")),
+        ] {
+            let production = production_source(source);
+            assert!(
+                !production.contains("Uuid::new_v4"),
+                "{module} production code must not fabricate UUIDs"
+            );
+            assert!(
+                !production.contains("HybridClock::new()"),
+                "{module} production code must not fabricate HLC clocks"
+            );
+        }
+    }
+}

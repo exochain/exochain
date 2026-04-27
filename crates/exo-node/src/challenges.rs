@@ -27,7 +27,7 @@ use axum::{
     routing::{get, post},
 };
 use exo_core::types::Timestamp;
-use exo_escalation::challenge::{self, ContestHold, SybilChallengeGround};
+use exo_escalation::challenge::{self, ContestHold, SignedChallengeAdmission};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -88,6 +88,10 @@ pub struct ChallengeResponse {
     pub ground: String,
     pub status: String,
     pub admitted_at_ms: u64,
+    pub admitted_by: String,
+    pub evidence_hash: String,
+    pub authority_chain_hash: String,
+    pub admission_signature_algorithm: String,
     pub audit_log: Vec<String>,
 }
 
@@ -99,61 +103,38 @@ impl From<&ContestHold> for ChallengeResponse {
             ground: hold.ground.to_string(),
             status: format!("{:?}", hold.status),
             admitted_at_ms: hold.admitted_at.physical_ms,
+            admitted_by: hold.admitted_by.to_string(),
+            evidence_hash: hex::encode(hold.evidence_hash),
+            authority_chain_hash: hex::encode(hold.authority_chain_hash),
+            admission_signature_algorithm: hold.admission_signature.algorithm().to_string(),
             audit_log: hold.audit_log.clone(),
         }
     }
 }
 
-/// Request body for filing a new challenge.
+/// Request body for beginning review.
 #[derive(Debug, Deserialize)]
-pub struct FileChallengeRequest {
-    /// Hex-encoded 32-byte action identifier being challenged.
-    pub action_id_hex: String,
-    /// Challenge ground: one of "ConcealedCommonControl",
-    /// "CoordinatedManipulation", "QuorumContamination",
-    /// "SyntheticHumanMisrepresentation".
-    pub ground: String,
+pub struct ReviewChallengeRequest {
+    pub at: Timestamp,
 }
 
 /// Request body for resolving a challenge.
 #[derive(Debug, Deserialize)]
 pub struct ResolveChallengeRequest {
+    pub at: Timestamp,
     pub outcome: String,
 }
 
 /// Request body for dismissing a challenge.
 #[derive(Debug, Deserialize)]
 pub struct DismissChallengeRequest {
+    pub at: Timestamp,
     pub reason: String,
 }
 
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
-
-fn parse_ground(s: &str) -> Result<SybilChallengeGround, String> {
-    match s {
-        "ConcealedCommonControl" => Ok(SybilChallengeGround::ConcealedCommonControl),
-        "CoordinatedManipulation" => Ok(SybilChallengeGround::CoordinatedManipulation),
-        "QuorumContamination" => Ok(SybilChallengeGround::QuorumContamination),
-        "SyntheticHumanMisrepresentation" => {
-            Ok(SybilChallengeGround::SyntheticHumanMisrepresentation)
-        }
-        other => Err(format!("unknown challenge ground: {other}")),
-    }
-}
-
-fn now_timestamp() -> Timestamp {
-    #[allow(clippy::as_conversions)]
-    let ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    Timestamp {
-        physical_ms: ms,
-        logical: 0,
-    }
-}
 
 /// `GET /api/v1/challenges` — list all challenge holds.
 async fn handle_list(
@@ -195,22 +176,10 @@ async fn handle_get(
 /// `POST /api/v1/challenges` — file a new Sybil challenge.
 async fn handle_file(
     State(store): State<SharedChallengeStore>,
-    Json(req): Json<FileChallengeRequest>,
+    Json(req): Json<SignedChallengeAdmission>,
 ) -> Result<(StatusCode, Json<ChallengeResponse>), (StatusCode, String)> {
-    let action_bytes = hex::decode(&req.action_id_hex)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid hex: {e}")))?;
-    if action_bytes.len() != 32 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            format!("action_id must be 32 bytes, got {}", action_bytes.len()),
-        ));
-    }
-    let mut action_id = [0u8; 32];
-    action_id.copy_from_slice(&action_bytes);
-
-    let ground = parse_ground(&req.ground).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-
-    let hold = challenge::admit_challenge(&action_id, ground, now_timestamp());
+    let hold =
+        challenge::admit_challenge(req).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let resp = ChallengeResponse::from(&hold);
 
     {
@@ -230,6 +199,7 @@ async fn handle_file(
 async fn handle_begin_review(
     State(store): State<SharedChallengeStore>,
     Path(id_str): Path<String>,
+    Json(req): Json<ReviewChallengeRequest>,
 ) -> Result<Json<ChallengeResponse>, (StatusCode, String)> {
     let id = Uuid::parse_str(&id_str)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid UUID: {e}")))?;
@@ -244,8 +214,7 @@ async fn handle_begin_review(
         .get_mut(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "challenge not found".into()))?;
 
-    challenge::begin_review(hold, now_timestamp())
-        .map_err(|e| (StatusCode::CONFLICT, e.to_string()))?;
+    challenge::begin_review(hold, req.at).map_err(|e| (StatusCode::CONFLICT, e.to_string()))?;
 
     Ok(Json(ChallengeResponse::from(&*hold)))
 }
@@ -269,7 +238,7 @@ async fn handle_resolve(
         .get_mut(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "challenge not found".into()))?;
 
-    challenge::resolve_hold(hold, now_timestamp(), &req.outcome)
+    challenge::resolve_hold(hold, req.at, &req.outcome)
         .map_err(|e| (StatusCode::CONFLICT, e.to_string()))?;
 
     Ok(Json(ChallengeResponse::from(&*hold)))
@@ -294,7 +263,7 @@ async fn handle_dismiss(
         .get_mut(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "challenge not found".into()))?;
 
-    challenge::dismiss_hold(hold, now_timestamp(), &req.reason)
+    challenge::dismiss_hold(hold, req.at, &req.reason)
         .map_err(|e| (StatusCode::CONFLICT, e.to_string()))?;
 
     Ok(Json(ChallengeResponse::from(&*hold)))
@@ -324,6 +293,10 @@ pub fn challenge_router(store: SharedChallengeStore) -> Router {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use axum::{body::Body, http::Request};
+    use exo_core::{Did, Signature};
+    use exo_escalation::challenge::{
+        ChallengeAdmission, SybilChallengeGround, sign_challenge_admission,
+    };
     use tower::ServiceExt;
 
     use super::*;
@@ -332,8 +305,47 @@ mod tests {
         Arc::new(Mutex::new(ChallengeStore::new()))
     }
 
-    fn action_id_hex() -> String {
-        hex::encode([7u8; 32])
+    fn action_id(byte: u8) -> [u8; 32] {
+        [byte; 32]
+    }
+
+    fn ts(ms: u64) -> Timestamp {
+        Timestamp::new(ms, 0)
+    }
+
+    fn did(s: &str) -> Did {
+        Did::new(s).unwrap()
+    }
+
+    fn uuid(byte: u8) -> Uuid {
+        Uuid::from_bytes([byte; 16])
+    }
+
+    fn keypair(seed: u8) -> exo_core::crypto::KeyPair {
+        exo_core::crypto::KeyPair::from_secret_bytes([seed; 32]).unwrap()
+    }
+
+    fn signed_challenge(
+        hold_marker: u8,
+        action_id: [u8; 32],
+        ground: SybilChallengeGround,
+        admitted_at: Timestamp,
+    ) -> SignedChallengeAdmission {
+        let keypair = keypair(7);
+        sign_challenge_admission(
+            ChallengeAdmission {
+                hold_id: uuid(hold_marker),
+                action_id,
+                ground,
+                admitted_at,
+                admitted_by: did("did:exo:reviewer"),
+                admitter_public_key: *keypair.public_key(),
+                evidence_hash: [0xEEu8; 32],
+                authority_chain_hash: [0xACu8; 32],
+            },
+            keypair.secret_key(),
+        )
+        .unwrap()
     }
 
     #[tokio::test]
@@ -362,10 +374,12 @@ mod tests {
         let store = test_store();
         let app = challenge_router(Arc::clone(&store));
 
-        let body = serde_json::json!({
-            "action_id_hex": action_id_hex(),
-            "ground": "QuorumContamination",
-        });
+        let body = signed_challenge(
+            1,
+            action_id(7),
+            SybilChallengeGround::QuorumContamination,
+            ts(1000),
+        );
 
         let resp = app
             .oneshot(
@@ -384,6 +398,9 @@ mod tests {
         let result: ChallengeResponse = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(result.ground, "QuorumContamination");
         assert_eq!(result.status, "PauseEligible");
+        assert_eq!(result.id, uuid(1).to_string());
+        assert_eq!(result.admitted_by, "did:exo:reviewer");
+        assert_eq!(result.admission_signature_algorithm, "Ed25519");
         assert!(!result.audit_log.is_empty());
 
         // Retrieve it by ID.
@@ -405,11 +422,13 @@ mod tests {
         let store = test_store();
 
         // File challenge.
-        let hold = challenge::admit_challenge(
-            &[1u8; 32],
+        let hold = challenge::admit_challenge(signed_challenge(
+            2,
+            action_id(1),
             SybilChallengeGround::ConcealedCommonControl,
-            Timestamp::new(1000, 0),
-        );
+            ts(1000),
+        ))
+        .unwrap();
         let hold_id = hold.id;
         {
             let mut st = store.lock().unwrap();
@@ -418,13 +437,14 @@ mod tests {
 
         // Begin review.
         let app = challenge_router(Arc::clone(&store));
+        let review_body = serde_json::json!({ "at": ts(1100) });
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri(&format!("/api/v1/challenges/{hold_id}/review"))
                     .header("content-type", "application/json")
-                    .body(Body::empty())
+                    .body(Body::from(serde_json::to_string(&review_body).unwrap()))
                     .unwrap(),
             )
             .await
@@ -436,7 +456,7 @@ mod tests {
 
         // Resolve.
         let app2 = challenge_router(Arc::clone(&store));
-        let resolve_body = serde_json::json!({ "outcome": "challenge sustained" });
+        let resolve_body = serde_json::json!({ "at": ts(1200), "outcome": "challenge sustained" });
         let resp2 = app2
             .oneshot(
                 Request::builder()
@@ -458,11 +478,13 @@ mod tests {
     #[tokio::test]
     async fn dismiss_challenge() {
         let store = test_store();
-        let hold = challenge::admit_challenge(
-            &[2u8; 32],
+        let hold = challenge::admit_challenge(signed_challenge(
+            3,
+            action_id(2),
             SybilChallengeGround::SyntheticHumanMisrepresentation,
-            Timestamp::new(500, 0),
-        );
+            ts(500),
+        ))
+        .unwrap();
         let hold_id = hold.id;
         {
             let mut st = store.lock().unwrap();
@@ -470,7 +492,7 @@ mod tests {
         }
 
         let app = challenge_router(Arc::clone(&store));
-        let body = serde_json::json!({ "reason": "insufficient evidence" });
+        let body = serde_json::json!({ "at": ts(600), "reason": "insufficient evidence" });
         let resp = app
             .oneshot(
                 Request::builder()
@@ -489,14 +511,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_ground_rejected() {
+    async fn invalid_signature_rejected() {
         let store = test_store();
         let app = challenge_router(store);
 
-        let body = serde_json::json!({
-            "action_id_hex": action_id_hex(),
-            "ground": "InvalidGround",
-        });
+        let mut body = signed_challenge(
+            4,
+            action_id(7),
+            SybilChallengeGround::QuorumContamination,
+            ts(1000),
+        );
+        body.admission_signature = Signature::Ed25519([0xABu8; 64]);
 
         let resp = app
             .oneshot(
@@ -516,7 +541,7 @@ mod tests {
     async fn get_nonexistent_returns_404() {
         let store = test_store();
         let app = challenge_router(store);
-        let fake_id = Uuid::new_v4();
+        let fake_id = uuid(0xFE);
 
         let resp = app
             .oneshot(
@@ -533,20 +558,22 @@ mod tests {
     #[tokio::test]
     async fn resolve_already_resolved_conflicts() {
         let store = test_store();
-        let mut hold = challenge::admit_challenge(
-            &[3u8; 32],
+        let mut hold = challenge::admit_challenge(signed_challenge(
+            5,
+            action_id(3),
             SybilChallengeGround::CoordinatedManipulation,
-            Timestamp::new(100, 0),
-        );
+            ts(100),
+        ))
+        .unwrap();
         let hold_id = hold.id;
-        challenge::resolve_hold(&mut hold, Timestamp::new(200, 0), "done").unwrap();
+        challenge::resolve_hold(&mut hold, ts(200), "done").unwrap();
         {
             let mut st = store.lock().unwrap();
             st.insert(hold);
         }
 
         let app = challenge_router(store);
-        let body = serde_json::json!({ "outcome": "again" });
+        let body = serde_json::json!({ "at": ts(300), "outcome": "again" });
         let resp = app
             .oneshot(
                 Request::builder()

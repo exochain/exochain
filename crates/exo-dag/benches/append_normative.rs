@@ -1,4 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+// Bench suite exists to measure baseline perf of the legacy
+// consensus API (propose/vote/commit). The GAP-014 fix added
+// _verified counterparts and marked the legacy path deprecated —
+// benching the legacy path is still valuable for perf regression
+// tracking and defense-in-depth testing.
+#![allow(deprecated)]
 //! exo-dag benchmark suite.
 //!
 //! Covers the four operation families mandated by EXOCHAIN-REM-004:
@@ -14,7 +20,7 @@ use exo_core::types::{Did, Hash256, Signature};
 use exo_dag::{
     consensus::{ConsensusConfig, ConsensusState, Vote, check_commit, commit, propose, vote},
     dag::{Dag, HybridClock, ancestors, append, tips},
-    store::{DagStore, MemoryStore},
+    store::MemoryStore,
 };
 
 // ---------------------------------------------------------------------------
@@ -180,7 +186,7 @@ fn bench_store_checkpoint(c: &mut Criterion) {
                     for (height, node) in ns.iter().enumerate() {
                         store.put_sync(node.clone()).expect("put");
                         store
-                            .mark_committed(&node.hash, u64::try_from(height).unwrap())
+                            .mark_committed_sync(&node.hash, u64::try_from(height).unwrap())
                             .expect("mark_committed");
                     }
                     black_box(store.committed_height_sync().expect("height"))

@@ -7,8 +7,7 @@
 use exo_core::Did;
 use uuid::Uuid;
 
-use crate::newco::Newco;
-use crate::oda::OdaSlot;
+use crate::{newco::Newco, oda::OdaSlot};
 
 /// PACE (Primary-Alternate-Contingency-Emergency) configuration
 /// derived from the ODA command hierarchy.
@@ -74,10 +73,10 @@ pub enum DecisionClass {
 #[must_use]
 pub fn classify_decision(slot: &OdaSlot) -> DecisionClass {
     match slot.authority_depth() {
-        0 => DecisionClass::Strategic,     // VentureCommander can initiate strategic
-        1 => DecisionClass::Operational,   // Deputy initiates operational
-        2 => DecisionClass::Operational,   // Architect/Researcher — operational
-        _ => DecisionClass::Routine,       // Specialists — routine
+        0 => DecisionClass::Strategic, // VentureCommander can initiate strategic
+        1 => DecisionClass::Operational, // Deputy initiates operational
+        2 => DecisionClass::Operational, // Architect/Researcher — operational
+        _ => DecisionClass::Routine,   // Specialists — routine
     }
 }
 
@@ -106,10 +105,7 @@ pub struct HealthSummary {
 
 /// Compute a health summary for a newco.
 #[must_use]
-pub fn health_summary(
-    newco: &Newco,
-    heartbeat_alerts: usize,
-) -> HealthSummary {
+pub fn health_summary(newco: &Newco, heartbeat_alerts: usize) -> HealthSummary {
     HealthSummary {
         newco_id: newco.id,
         phase: newco.phase,
@@ -126,23 +122,33 @@ pub fn health_summary(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::agent::{AgentStatus, CatapultAgent};
     use exo_core::{Hash256, Timestamp};
+
+    use super::*;
+    use crate::{
+        agent::{AgentStatus, CatapultAgent},
+        newco::NewcoInput,
+    };
 
     fn test_did(name: &str) -> Did {
         Did::new(&format!("did:exo:test-{name}")).unwrap()
     }
 
     fn make_newco() -> Newco {
-        Newco::new(
-            "Test Co".into(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Hash256::ZERO,
-            test_did("root"),
-            Timestamp::ZERO,
-        )
+        Newco::new(NewcoInput {
+            id: Uuid::from_bytes([1; 16]),
+            name: "Test Co".into(),
+            franchise_id: Uuid::from_bytes([2; 16]),
+            tenant_id: Uuid::from_bytes([3; 16]),
+            constitution_hash: Hash256::digest(b"constitution"),
+            authority_chain_root: test_did("root"),
+            dag_anchor: Hash256::digest(b"dag-anchor"),
+            created: Timestamp {
+                physical_ms: 1_765_000_000_000,
+                logical: 1,
+            },
+        })
+        .unwrap()
     }
 
     fn make_agent(slot: OdaSlot, name: &str) -> CatapultAgent {
@@ -152,10 +158,10 @@ mod tests {
             display_name: name.into(),
             capabilities: vec![],
             status: AgentStatus::Active,
-            last_heartbeat: Timestamp::ZERO,
+            last_heartbeat: Timestamp::new(1_765_000_000_100, 0),
             budget_spent_cents: 0,
             budget_limit_cents: 100_000,
-            hired_at: Timestamp::ZERO,
+            hired_at: Timestamp::new(1_765_000_000_000, 0),
             hired_by: test_did("hr"),
             commandbase_profile: None,
         }
@@ -174,11 +180,21 @@ mod tests {
     #[test]
     fn pace_config_with_roster() {
         let mut newco = make_newco();
-        newco.hire_agent(make_agent(OdaSlot::VentureCommander, "vc")).unwrap();
-        newco.hire_agent(make_agent(OdaSlot::OperationsDeputy, "od")).unwrap();
-        newco.hire_agent(make_agent(OdaSlot::ProcessArchitect, "pa")).unwrap();
-        newco.hire_agent(make_agent(OdaSlot::HrPeopleOps1, "hr")).unwrap();
-        newco.hire_agent(make_agent(OdaSlot::DeepResearcher, "dr")).unwrap();
+        newco
+            .hire_agent(make_agent(OdaSlot::VentureCommander, "vc"))
+            .unwrap();
+        newco
+            .hire_agent(make_agent(OdaSlot::OperationsDeputy, "od"))
+            .unwrap();
+        newco
+            .hire_agent(make_agent(OdaSlot::ProcessArchitect, "pa"))
+            .unwrap();
+        newco
+            .hire_agent(make_agent(OdaSlot::HrPeopleOps1, "hr"))
+            .unwrap();
+        newco
+            .hire_agent(make_agent(OdaSlot::DeepResearcher, "dr"))
+            .unwrap();
 
         let pace = build_pace_config(&newco);
         assert!(pace.primary.is_some());

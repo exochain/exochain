@@ -44,9 +44,11 @@ const sig = await alice.sign(msg);
 const ok = await Identity.verify(alice.publicKeyHex, msg, sig);
 ```
 
-`Identity.generate` produces a random Ed25519 keypair and derives a
-deterministic DID from the public key. `Identity.fromKeypair(label, publicKey,
-secretKey)` rehydrates an identity from stored material.
+`Identity.generate` produces a random Ed25519 keypair and derives a local
+deterministic DID from the public key. `Identity.fromKeypair(...)` rehydrates
+an identity from stored material with the same local derivation. Use
+`Identity.fromResolvedKeypair(...)` when the canonical DID has already been
+resolved from the fabric and must not be re-derived locally.
 
 ### 2. Propose a bailment (scoped consent)
 
@@ -204,17 +206,28 @@ format:
 - **TypeScript** (this package).
 - **Python** — `packages/exochain-py`, published as `exochain` on PyPI.
 
-Both the TypeScript and Python SDKs derive DIDs as:
+Local TypeScript SDK identities derive DIDs as:
 
 ```
 did:exo: + first 16 hex chars of SHA-256(raw public key bytes)
 ```
 
-because Web Crypto does not ship BLAKE3. **DIDs produced by this SDK will
-not match DIDs produced by the Rust SDK for the same keypair.** Applications
-that need canonical DIDs across all three SDKs should obtain the canonical
-DID from the fabric (via `exo-gateway`) and construct the identity with
-`Identity.fromKeypair(label, publicKey, secretKey)`.
+because Web Crypto does not ship BLAKE3. **DIDs produced by local TypeScript
+derivation will not match local DIDs produced by the Rust SDK for the same
+keypair.** Applications that need canonical DIDs across SDKs should obtain the
+canonical DID from the fabric (via `exo-gateway` or another DID-document
+resolver) and construct the signing handle with `Identity.fromResolvedKeypair`.
+That constructor preserves the fabric DID and verifies that the private key
+matches the supplied public key before returning an identity.
+
+```ts
+const identity = await Identity.fromResolvedKeypair({
+  label: 'alice',
+  did: fabricResolvedDid,
+  publicKeyHex,
+  privateKeyPkcs8,
+});
+```
 
 Bailment IDs, decision IDs, and chain identifiers are also hashed with
 SHA-256 in this SDK and BLAKE3 in Rust, for the same reason. All three SDKs

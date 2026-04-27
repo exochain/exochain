@@ -11,35 +11,72 @@ pub fn wasm_propose_bailment(
     bailee_did: &str,
     terms: &[u8],
     bailment_type_json: &str,
+    bailment_id: &str,
+    created_json: &str,
 ) -> Result<JsValue, JsValue> {
     let bailor = exo_core::Did::new(bailor_did)
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
     let bailee = exo_core::Did::new(bailee_did)
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
     let bailment_type: exo_consent::BailmentType = from_json_str(bailment_type_json)?;
-    let bailment = exo_consent::bailment::propose(&bailor, &bailee, terms, bailment_type);
+    let created: exo_core::Timestamp = from_json_str(created_json)?;
+    let bailment = exo_consent::bailment::propose(
+        &bailor,
+        &bailee,
+        terms,
+        bailment_type,
+        bailment_id,
+        created,
+    )
+    .map_err(|e| JsValue::from_str(&format!("Propose error: {e}")))?;
     to_js_value(&bailment)
 }
 
 /// Check if a bailment is currently active
 #[wasm_bindgen]
-pub fn wasm_bailment_is_active(bailment_json: &str) -> Result<bool, JsValue> {
+pub fn wasm_bailment_is_active(bailment_json: &str, now_json: &str) -> Result<bool, JsValue> {
     let bailment: exo_consent::Bailment = from_json_str(bailment_json)?;
-    let mut clock = exo_core::hlc::HybridClock::new();
-    let now = clock.now();
+    let now: exo_core::Timestamp = from_json_str(now_json)?;
     Ok(exo_consent::bailment::is_active(&bailment, &now))
 }
 
 /// Accept a proposed bailment (bailee countersigns, status → Active).
 ///
-/// `signature_json` — JSON-serialized Ed25519 Signature from the bailee.
+/// `bailee_public_key_json` — JSON-serialized bailee PublicKey. Required
+/// to verify `signature_json` against the canonical bailment payload.
+/// Closes GAP-012: previously this binding passed the signature through
+/// unchecked, which flipped bailments to Active on any non-empty bytes.
+///
+/// `signature_json` — JSON-serialized bailee Signature over
+/// `exo_consent::bailment::signing_payload(&bailment)`.
 #[wasm_bindgen]
-pub fn wasm_accept_bailment(bailment_json: &str, signature_json: &str) -> Result<JsValue, JsValue> {
+pub fn wasm_accept_bailment(
+    bailment_json: &str,
+    bailee_public_key_json: &str,
+    signature_json: &str,
+) -> Result<JsValue, JsValue> {
     let mut bailment: exo_consent::Bailment = from_json_str(bailment_json)?;
+    let pk: exo_core::PublicKey = from_json_str(bailee_public_key_json)?;
     let sig: exo_core::Signature = from_json_str(signature_json)?;
-    exo_consent::bailment::accept(&mut bailment, &sig)
+    exo_consent::bailment::accept(&mut bailment, &pk, &sig)
         .map_err(|e| JsValue::from_str(&format!("Accept error: {e}")))?;
     to_js_value(&bailment)
+}
+
+/// Compute the canonical signing payload for a bailment.
+///
+/// Returns the CBOR bytes that the bailee must sign for
+/// [`wasm_accept_bailment`] to succeed. Mirrors
+/// [`exo_consent::bailment::signing_payload`].
+///
+/// # Errors
+/// Returns the underlying consent error serialized to a string if the
+/// bailment cannot be encoded.
+#[wasm_bindgen]
+pub fn wasm_bailment_signing_payload(bailment_json: &str) -> Result<Vec<u8>, JsValue> {
+    let bailment: exo_consent::Bailment = from_json_str(bailment_json)?;
+    exo_consent::bailment::signing_payload(&bailment)
+        .map_err(|e| JsValue::from_str(&format!("Signing payload error: {e}")))
 }
 
 /// Terminate an active bailment.

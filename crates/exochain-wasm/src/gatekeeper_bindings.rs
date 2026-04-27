@@ -185,13 +185,25 @@ mod tests {
             }],
         };
 
-        // Provenance must exist and be signed (non-empty signature).
+        let (provenance_pk, provenance_sk) = exo_core::crypto::generate_keypair();
+        let provenance_actor = actor();
+        let provenance_timestamp = "2026-03-20T00:00:00Z".to_string();
+        let provenance_action_hash = vec![1u8; 32];
+        let mut provenance_payload = Vec::new();
+        provenance_payload.extend_from_slice(provenance_actor.as_str().as_bytes());
+        provenance_payload.push(0x00);
+        provenance_payload.extend_from_slice(&provenance_action_hash);
+        provenance_payload.push(0x00);
+        provenance_payload.extend_from_slice(provenance_timestamp.as_bytes());
+        let provenance_message = exo_core::Hash256::digest(&provenance_payload);
+        let provenance_sig = exo_core::crypto::sign(provenance_message.as_bytes(), &provenance_sk);
+
         let provenance = Some(Provenance {
-            actor: actor(),
-            timestamp: "2026-03-20T00:00:00Z".to_string(),
-            action_hash: vec![1u8; 32],
-            signature: vec![2u8; 64],
-            public_key: None,
+            actor: provenance_actor,
+            timestamp: provenance_timestamp,
+            action_hash: provenance_action_hash,
+            signature: provenance_sig.to_bytes().to_vec(),
+            public_key: Some(provenance_pk.as_bytes().to_vec()),
             voice_kind: None,
             independence: None,
             review_order: None,

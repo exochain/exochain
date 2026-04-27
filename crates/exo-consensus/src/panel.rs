@@ -40,9 +40,21 @@ impl Panel {
             DecisionClass::Routine => Panel {
                 id: "default-routine".into(),
                 models: vec![
-                    PanelModel { model_id: "claude-3-haiku".into(), provider: ModelProvider::Anthropic, role: ModelRole::Panelist },
-                    PanelModel { model_id: "gpt-4o-mini".into(), provider: ModelProvider::OpenAI, role: ModelRole::Panelist },
-                    PanelModel { model_id: "gemini-1.5-flash".into(), provider: ModelProvider::Google, role: ModelRole::Panelist },
+                    PanelModel {
+                        model_id: "claude-3-haiku".into(),
+                        provider: ModelProvider::Anthropic,
+                        role: ModelRole::Panelist,
+                    },
+                    PanelModel {
+                        model_id: "gpt-4o-mini".into(),
+                        provider: ModelProvider::OpenAI,
+                        role: ModelRole::Panelist,
+                    },
+                    PanelModel {
+                        model_id: "gemini-1.5-flash".into(),
+                        provider: ModelProvider::Google,
+                        role: ModelRole::Panelist,
+                    },
                 ],
                 max_rounds: 1,
                 convergence_threshold_bps: 6000,
@@ -51,9 +63,21 @@ impl Panel {
             DecisionClass::Operational => Panel {
                 id: "default-operational".into(),
                 models: vec![
-                    PanelModel { model_id: "claude-3-5-sonnet".into(), provider: ModelProvider::Anthropic, role: ModelRole::Panelist },
-                    PanelModel { model_id: "gpt-4o".into(), provider: ModelProvider::OpenAI, role: ModelRole::Panelist },
-                    PanelModel { model_id: "gemini-1.5-pro".into(), provider: ModelProvider::Google, role: ModelRole::Panelist },
+                    PanelModel {
+                        model_id: "claude-3-5-sonnet".into(),
+                        provider: ModelProvider::Anthropic,
+                        role: ModelRole::Panelist,
+                    },
+                    PanelModel {
+                        model_id: "gpt-4o".into(),
+                        provider: ModelProvider::OpenAI,
+                        role: ModelRole::Panelist,
+                    },
+                    PanelModel {
+                        model_id: "gemini-1.5-pro".into(),
+                        provider: ModelProvider::Google,
+                        role: ModelRole::Panelist,
+                    },
                 ],
                 max_rounds: 2,
                 convergence_threshold_bps: 7500,
@@ -62,10 +86,26 @@ impl Panel {
             DecisionClass::Strategic => Panel {
                 id: "default-strategic".into(),
                 models: vec![
-                    PanelModel { model_id: "claude-3-opus".into(), provider: ModelProvider::Anthropic, role: ModelRole::Panelist },
-                    PanelModel { model_id: "gpt-4o".into(), provider: ModelProvider::OpenAI, role: ModelRole::Panelist },
-                    PanelModel { model_id: "gemini-1.5-pro".into(), provider: ModelProvider::Google, role: ModelRole::Panelist },
-                    PanelModel { model_id: "grok-2".into(), provider: ModelProvider::XAI, role: ModelRole::Panelist },
+                    PanelModel {
+                        model_id: "claude-3-opus".into(),
+                        provider: ModelProvider::Anthropic,
+                        role: ModelRole::Panelist,
+                    },
+                    PanelModel {
+                        model_id: "gpt-4o".into(),
+                        provider: ModelProvider::OpenAI,
+                        role: ModelRole::Panelist,
+                    },
+                    PanelModel {
+                        model_id: "gemini-1.5-pro".into(),
+                        provider: ModelProvider::Google,
+                        role: ModelRole::Panelist,
+                    },
+                    PanelModel {
+                        model_id: "grok-2".into(),
+                        provider: ModelProvider::XAI,
+                        role: ModelRole::Panelist,
+                    },
                 ],
                 max_rounds: 3,
                 convergence_threshold_bps: 8000,
@@ -74,11 +114,31 @@ impl Panel {
             DecisionClass::Constitutional => Panel {
                 id: "default-constitutional".into(),
                 models: vec![
-                    PanelModel { model_id: "claude-3-opus".into(), provider: ModelProvider::Anthropic, role: ModelRole::Panelist },
-                    PanelModel { model_id: "gpt-4o".into(), provider: ModelProvider::OpenAI, role: ModelRole::Panelist },
-                    PanelModel { model_id: "gemini-1.5-pro".into(), provider: ModelProvider::Google, role: ModelRole::Panelist },
-                    PanelModel { model_id: "grok-2".into(), provider: ModelProvider::XAI, role: ModelRole::Panelist },
-                    PanelModel { model_id: "o1-preview".into(), provider: ModelProvider::OpenAI, role: ModelRole::Panelist },
+                    PanelModel {
+                        model_id: "claude-3-opus".into(),
+                        provider: ModelProvider::Anthropic,
+                        role: ModelRole::Panelist,
+                    },
+                    PanelModel {
+                        model_id: "gpt-4o".into(),
+                        provider: ModelProvider::OpenAI,
+                        role: ModelRole::Panelist,
+                    },
+                    PanelModel {
+                        model_id: "gemini-1.5-pro".into(),
+                        provider: ModelProvider::Google,
+                        role: ModelRole::Panelist,
+                    },
+                    PanelModel {
+                        model_id: "grok-2".into(),
+                        provider: ModelProvider::XAI,
+                        role: ModelRole::Panelist,
+                    },
+                    PanelModel {
+                        model_id: "o1-preview".into(),
+                        provider: ModelProvider::OpenAI,
+                        role: ModelRole::Panelist,
+                    },
                 ],
                 max_rounds: 4,
                 convergence_threshold_bps: 9000,

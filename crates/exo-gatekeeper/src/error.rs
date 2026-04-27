@@ -37,6 +37,9 @@ pub enum GatekeeperError {
 
     #[error("MCP audit chain broken at index {index}")]
     McpAuditChainBroken { index: usize },
+
+    #[error("MCP audit record invalid: {reason}")]
+    McpAuditInvalidRecord { reason: String },
 }
 
 impl From<exo_core::ExoError> for GatekeeperError {
@@ -68,6 +71,12 @@ mod tests {
             (GatekeeperError::Timeout(500), "500"),
             (GatekeeperError::CheckpointError("ckpt".into()), "ckpt"),
             (GatekeeperError::Core("core".into()), "core"),
+            (
+                GatekeeperError::McpAuditInvalidRecord {
+                    reason: "missing deterministic metadata".into(),
+                },
+                "missing deterministic metadata",
+            ),
         ];
         for (err, fragment) in cases {
             assert!(err.to_string().contains(fragment), "{err}");

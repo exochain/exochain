@@ -19,7 +19,7 @@ RUN cargo build --release --bin exochain
 
 FROM debian:bookworm-slim
 RUN apt-get update && \
-    apt-get install -y ca-certificates libssl3 curl && \
+    apt-get install -y ca-certificates libssl3 curl gosu && \
     rm -rf /var/lib/apt/lists/* && \
     useradd --system --create-home --shell /usr/sbin/nologin exochain && \
     mkdir -p /data && chown exochain:exochain /data
@@ -27,7 +27,6 @@ RUN apt-get update && \
 COPY --from=builder /app/target/release/exochain /usr/local/bin/exochain
 COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
 
-USER exochain
 ENV EXOCHAIN_DATA_DIR=/data
 ENV RUST_LOG=info
 

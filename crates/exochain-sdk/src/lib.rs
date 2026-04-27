@@ -85,7 +85,8 @@
 //! assert_eq!(&chain.terminal, bob.did());
 //!
 //! // 5. Ask the kernel whether bob may perform the action.
-//! let kernel = ConstitutionalKernel::new();
+//! // The SDK kernel requires caller-supplied authority signing material.
+//! let kernel = ConstitutionalKernel::with_authority_identity(root);
 //! let verdict = kernel.adjudicate(bob.did(), "data:medical:read");
 //! assert!(verdict.is_permitted(), "expected Permitted, got {verdict:?}");
 //! # Ok::<(), exochain_sdk::error::ExoError>(())
@@ -129,11 +130,17 @@
 //!
 //! ## Cross-language notes
 //!
-//! The Rust SDK derives DIDs from `BLAKE3(public_key)[..8]`. The TypeScript
-//! SDK uses `SHA-256` because Web Crypto does not ship BLAKE3, and the Python
-//! SDK uses `SHA-256` for the same reason. Applications that need canonical
-//! DIDs across all three SDKs should resolve the DID from the fabric rather
-//! than deriving it locally.
+//! The SDK distinguishes local deterministic IDs from canonical fabric IDs.
+//! [`identity::Identity::generate`] and [`identity::Identity::from_keypair`]
+//! derive local Rust SDK DIDs from `BLAKE3(public_key)[..8]`. Other language
+//! SDKs may use different local-only derivation primitives for zero-dependency
+//! client operation.
+//!
+//! Applications that need canonical DIDs across languages should resolve the
+//! DID from the fabric, then construct the local signing handle with
+//! [`identity::Identity::from_resolved_keypair`]. That path preserves the
+//! fabric DID and verifies that the supplied secret key matches the supplied
+//! public key before constructing the identity.
 
 #![deny(missing_docs)]
 
@@ -155,11 +162,13 @@ pub mod kernel;
 /// assert!(id.verify(b"hello", &sig));
 /// ```
 pub mod prelude {
-    pub use crate::authority::AuthorityChainBuilder;
-    pub use crate::consent::BailmentBuilder;
-    pub use crate::crypto::{hash, sign, verify};
-    pub use crate::error::{ExoError, ExoResult};
-    pub use crate::governance::{Decision, DecisionBuilder, Vote};
-    pub use crate::identity::Identity;
-    pub use crate::kernel::ConstitutionalKernel;
+    pub use crate::{
+        authority::AuthorityChainBuilder,
+        consent::BailmentBuilder,
+        crypto::{hash, sign, verify},
+        error::{ExoError, ExoResult},
+        governance::{Decision, DecisionBuilder, Vote},
+        identity::Identity,
+        kernel::ConstitutionalKernel,
+    };
 }

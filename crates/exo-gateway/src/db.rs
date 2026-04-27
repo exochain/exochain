@@ -422,17 +422,18 @@ pub async fn insert_audit_entry(
     event_type: &str,
     actor: &str,
     tenant_id: &str,
+    decision_id: &str,
     timestamp_physical_ms: i64,
     timestamp_logical: i32,
     entry_hash: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO audit_entries (sequence, prev_hash, event_hash, event_type, actor, tenant_id, timestamp_physical_ms, timestamp_logical, entry_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (sequence) DO NOTHING"
+        "INSERT INTO audit_entries (sequence, prev_hash, event_hash, event_type, actor, tenant_id, decision_id, timestamp_physical_ms, timestamp_logical, entry_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
     )
     .bind(sequence).bind(prev_hash).bind(event_hash).bind(event_type)
-    .bind(actor).bind(tenant_id).bind(timestamp_physical_ms).bind(timestamp_logical)
-    .bind(entry_hash)
+    .bind(actor).bind(tenant_id).bind(decision_id).bind(timestamp_physical_ms)
+    .bind(timestamp_logical).bind(entry_hash)
     .execute(pool).await?;
     Ok(())
 }
@@ -440,14 +441,28 @@ pub async fn insert_audit_entry(
 /// List all audit entries ordered by sequence number.
 pub async fn list_audit_entries(pool: &PgPool) -> Result<Vec<AuditRow>, sqlx::Error> {
     sqlx::query_as::<_, AuditRow>(
-        "SELECT sequence, prev_hash, event_hash, event_type, actor, tenant_id, timestamp_physical_ms, timestamp_logical, entry_hash FROM audit_entries ORDER BY sequence"
+        "SELECT sequence, prev_hash, event_hash, event_type, actor, tenant_id, decision_id, timestamp_physical_ms, timestamp_logical, entry_hash FROM audit_entries ORDER BY sequence"
     ).fetch_all(pool).await
+}
+
+/// List audit entries for one decision ordered by sequence number.
+pub async fn list_audit_entries_for_decision(
+    pool: &PgPool,
+    decision_id: &str,
+) -> Result<Vec<AuditRow>, sqlx::Error> {
+    sqlx::query_as::<_, AuditRow>(
+        "SELECT sequence, prev_hash, event_hash, event_type, actor, tenant_id, decision_id, timestamp_physical_ms, timestamp_logical, entry_hash
+         FROM audit_entries WHERE decision_id = $1 ORDER BY sequence",
+    )
+    .bind(decision_id)
+    .fetch_all(pool)
+    .await
 }
 
 /// Return the most recent audit entry by sequence number, or `None` if empty.
 pub async fn get_last_audit_entry(pool: &PgPool) -> Result<Option<AuditRow>, sqlx::Error> {
     sqlx::query_as::<_, AuditRow>(
-        "SELECT sequence, prev_hash, event_hash, event_type, actor, tenant_id, timestamp_physical_ms, timestamp_logical, entry_hash FROM audit_entries ORDER BY sequence DESC LIMIT 1"
+        "SELECT sequence, prev_hash, event_hash, event_type, actor, tenant_id, decision_id, timestamp_physical_ms, timestamp_logical, entry_hash FROM audit_entries ORDER BY sequence DESC LIMIT 1"
     ).fetch_optional(pool).await
 }
 
@@ -490,6 +505,7 @@ pub struct AuditRow {
     pub event_type: String,
     pub actor: String,
     pub tenant_id: String,
+    pub decision_id: String,
     pub timestamp_physical_ms: i64,
     pub timestamp_logical: i32,
     pub entry_hash: String,
@@ -600,17 +616,17 @@ pub async fn insert_enrollment(
 pub async fn insert_livesafe_identity(
     pool: &PgPool,
     did: &str,
-    odentity_composite: f64,
+    odentity_composite_basis_points: i32,
     pace_status: &str,
     card_status: &str,
     created_at_ms: i64,
     exochain_anchor: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO livesafe_identities (did, odentity_composite, pace_status, card_status, created_at_ms, exochain_anchor)
+        "INSERT INTO livesafe_identities (did, odentity_composite_basis_points, pace_status, card_status, created_at_ms, exochain_anchor)
          VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (did) DO UPDATE SET odentity_composite = $2, pace_status = $3, card_status = $4, exochain_anchor = $6"
-    ).bind(did).bind(odentity_composite).bind(pace_status).bind(card_status)
+         ON CONFLICT (did) DO UPDATE SET odentity_composite_basis_points = $2, pace_status = $3, card_status = $4, exochain_anchor = $6"
+    ).bind(did).bind(odentity_composite_basis_points).bind(pace_status).bind(card_status)
     .bind(created_at_ms).bind(exochain_anchor)
     .execute(pool).await?;
     Ok(())
@@ -622,7 +638,7 @@ pub async fn get_livesafe_identity(
     did: &str,
 ) -> Result<Option<LiveSafeIdentityRow>, sqlx::Error> {
     sqlx::query_as::<_, LiveSafeIdentityRow>(
-        "SELECT did, odentity_composite, pace_status, card_status, created_at_ms, exochain_anchor FROM livesafe_identities WHERE did = $1"
+        "SELECT did, odentity_composite_basis_points, pace_status, card_status, created_at_ms, exochain_anchor FROM livesafe_identities WHERE did = $1"
     ).bind(did).fetch_optional(pool).await
 }
 
@@ -630,7 +646,7 @@ pub async fn get_livesafe_identity(
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct LiveSafeIdentityRow {
     pub did: String,
-    pub odentity_composite: f64,
+    pub odentity_composite_basis_points: i32,
     pub pace_status: String,
     pub card_status: String,
     pub created_at_ms: i64,
@@ -920,13 +936,11 @@ pub async fn list_layout_templates(
 }
 
 /// Delete a layout template by ID (refuses to delete built-in templates).
-pub async fn delete_layout_template(
-    pool: &PgPool,
-    id: &str,
-) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query(
-        "DELETE FROM layout_templates WHERE id = $1 AND is_built_in = false"
-    ).bind(id).execute(pool).await?;
+pub async fn delete_layout_template(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM layout_templates WHERE id = $1 AND is_built_in = false")
+        .bind(id)
+        .execute(pool)
+        .await?;
     Ok(result.rows_affected() > 0)
 }
 

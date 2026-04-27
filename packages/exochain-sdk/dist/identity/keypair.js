@@ -3,23 +3,21 @@
  *
  * Built on the Web Crypto API, which supports Ed25519 natively on Node 20+
  * and modern browsers. The DID is derived deterministically from the raw
- * public-key bytes as:
+ * public-key bytes as a local SDK DID:
  *
  * ```text
  * did:exo: + first 16 hex chars of SHA-256(public_key_bytes)
  * ```
  *
- * The Rust SDK uses BLAKE3 for this derivation; the pure-JS reference
- * implementation uses SHA-256 so the SDK requires no external dependencies.
- * Two identities generated from the same public key will always produce the
- * same DID within this SDK, but that DID will NOT match one produced by the
- * Rust SDK. For applications that need cross-SDK DIDs, obtain the DID from
- * the canonical Rust-side fabric and pass it into {@link Identity.fromKeypair}.
+ * This local DID is deterministic inside the TypeScript SDK, but it is not a
+ * canonical fabric DID. For applications that need cross-SDK DIDs, obtain the
+ * DID from the fabric and pass it into {@link Identity.fromResolvedKeypair}.
  */
 import { IdentityError } from '../errors.js';
 import { bytesToHex, hexToBytes, sha256 } from '../crypto/hash.js';
 import { validateDid } from './did.js';
 const ED25519 = { name: 'Ed25519' };
+const KEYPAIR_PROOF_MESSAGE = new TextEncoder().encode('exo.sdk.identity.keypair.v1');
 const subtle = (() => {
     const c = globalThis.crypto;
     if (c === undefined || c.subtle === undefined) {
@@ -37,6 +35,40 @@ export async function deriveDid(publicKey) {
     const first8 = digest.slice(0, 8);
     const hex = bytesToHex(first8);
     return validateDid(`did:exo:${hex}`);
+}
+async function importIdentityKeypair(args) {
+    const rawPub = hexToBytes(args.publicKeyHex);
+    if (rawPub.length !== 32) {
+        throw new IdentityError(`public key must be 32 bytes, got ${rawPub.length}`);
+    }
+    let privateKey;
+    let publicKey;
+    try {
+        privateKey = await subtle.importKey('pkcs8', args.privateKeyPkcs8, ED25519, true, ['sign']);
+        publicKey = await subtle.importKey('raw', rawPub, ED25519, true, [
+            'verify',
+        ]);
+    }
+    catch (err) {
+        throw new IdentityError('failed to import keypair', { cause: err });
+    }
+    let matches = false;
+    try {
+        const proof = await subtle.sign(ED25519, privateKey, KEYPAIR_PROOF_MESSAGE);
+        matches = await subtle.verify(ED25519, publicKey, proof, KEYPAIR_PROOF_MESSAGE);
+    }
+    catch (err) {
+        throw new IdentityError('failed to verify keypair binding', { cause: err });
+    }
+    if (!matches) {
+        throw new IdentityError('private key does not match public key');
+    }
+    return {
+        rawPublicKey: rawPub,
+        publicKeyHex: args.publicKeyHex,
+        privateKey,
+        publicKey,
+    };
 }
 /** A DID paired with an Ed25519 keypair and a human-readable label. */
 export class Identity {
@@ -83,28 +115,33 @@ export class Identity {
      * and deterministic fixtures.
      */
     static async fromKeypair(args) {
-        const rawPub = hexToBytes(args.publicKeyHex);
-        if (rawPub.length !== 32) {
-            throw new IdentityError(`public key must be 32 bytes, got ${rawPub.length}`);
-        }
-        let privateKey;
-        let publicKey;
-        try {
-            privateKey = await subtle.importKey('pkcs8', args.privateKeyPkcs8, ED25519, true, ['sign']);
-            publicKey = await subtle.importKey('raw', rawPub, ED25519, true, [
-                'verify',
-            ]);
-        }
-        catch (err) {
-            throw new IdentityError('failed to import keypair', { cause: err });
-        }
-        const did = await deriveDid(rawPub);
+        const imported = await importIdentityKeypair(args);
+        const did = await deriveDid(imported.rawPublicKey);
         return new Identity({
             did,
-            publicKeyHex: args.publicKeyHex,
+            publicKeyHex: imported.publicKeyHex,
             label: args.label,
-            privateKey,
-            publicKey,
+            privateKey: imported.privateKey,
+            publicKey: imported.publicKey,
+        });
+    }
+    /**
+     * Rebuild an identity from an existing raw key pair while preserving a DID
+     * resolved from the canonical fabric.
+     *
+     * This constructor does not derive a local TypeScript DID. Use it when a
+     * gateway or DID-document resolver has already bound the supplied public key
+     * to a canonical `did:exo:` identifier.
+     */
+    static async fromResolvedKeypair(args) {
+        const did = validateDid(args.did);
+        const imported = await importIdentityKeypair(args);
+        return new Identity({
+            did,
+            publicKeyHex: imported.publicKeyHex,
+            label: args.label,
+            privateKey: imported.privateKey,
+            publicKey: imported.publicKey,
         });
     }
     /** Sign `message` with this identity's private key. Returns a 64-byte signature. */

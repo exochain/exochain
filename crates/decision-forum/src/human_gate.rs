@@ -92,7 +92,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::decision_object::VoteChoice;
+    use crate::decision_object::{DecisionObjectInput, VoteChoice};
 
     fn test_clock() -> HybridClock {
         let counter = AtomicU64::new(1000);
@@ -122,11 +122,22 @@ mod tests {
         }
     }
 
+    fn make_decision(class: DecisionClass, clock: &mut HybridClock) -> DecisionObject {
+        DecisionObject::new(DecisionObjectInput {
+            id: uuid::Uuid::from_u128(100),
+            title: "test".into(),
+            class,
+            constitutional_hash: Hash256::digest(b"constitution"),
+            created_at: clock.now(),
+        })
+        .expect("valid decision")
+    }
+
     #[test]
     fn routine_passes_without_human() {
         let mut clock = test_clock();
         let policy = HumanGatePolicy::default();
-        let mut d = DecisionObject::new("test", DecisionClass::Routine, Hash256::ZERO, &mut clock);
+        let mut d = make_decision(DecisionClass::Routine, &mut clock);
         d.add_vote(ai_vote(&mut clock)).expect("ok");
         assert!(enforce_human_gate(&policy, &d).is_ok());
     }
@@ -135,8 +146,7 @@ mod tests {
     fn strategic_requires_human() {
         let mut clock = test_clock();
         let policy = HumanGatePolicy::default();
-        let mut d =
-            DecisionObject::new("test", DecisionClass::Strategic, Hash256::ZERO, &mut clock);
+        let mut d = make_decision(DecisionClass::Strategic, &mut clock);
         d.add_vote(ai_vote(&mut clock)).expect("ok");
         let err = enforce_human_gate(&policy, &d).unwrap_err();
         assert!(matches!(
@@ -149,8 +159,7 @@ mod tests {
     fn strategic_passes_with_human() {
         let mut clock = test_clock();
         let policy = HumanGatePolicy::default();
-        let mut d =
-            DecisionObject::new("test", DecisionClass::Strategic, Hash256::ZERO, &mut clock);
+        let mut d = make_decision(DecisionClass::Strategic, &mut clock);
         d.add_vote(human_vote(&mut clock)).expect("ok");
         assert!(enforce_human_gate(&policy, &d).is_ok());
     }
@@ -159,12 +168,7 @@ mod tests {
     fn constitutional_requires_human() {
         let mut clock = test_clock();
         let policy = HumanGatePolicy::default();
-        let mut d = DecisionObject::new(
-            "test",
-            DecisionClass::Constitutional,
-            Hash256::ZERO,
-            &mut clock,
-        );
+        let mut d = make_decision(DecisionClass::Constitutional, &mut clock);
         d.add_vote(ai_vote(&mut clock)).expect("ok");
         assert!(enforce_human_gate(&policy, &d).is_err());
     }
@@ -174,7 +178,7 @@ mod tests {
         // No votes yet — gate doesn't block (nothing to validate).
         let mut clock = test_clock();
         let policy = HumanGatePolicy::default();
-        let d = DecisionObject::new("test", DecisionClass::Strategic, Hash256::ZERO, &mut clock);
+        let d = make_decision(DecisionClass::Strategic, &mut clock);
         // With no votes, the human gate check for human_required_classes fails
         // because human_count == 0, but we allow empty votes since no approval is claimed.
         let result = enforce_human_gate(&policy, &d);

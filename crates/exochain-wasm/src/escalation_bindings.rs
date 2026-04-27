@@ -12,12 +12,15 @@ pub fn wasm_evaluate_signals(signals_json: &str) -> Result<JsValue, JsValue> {
     to_js_value(&assessment)
 }
 
-/// Escalate a detection signal to create a case
+/// Escalate a detection signal to create a case.
+///
+/// The input JSON must be an `EscalationCaseInput` so the caller supplies the
+/// case id and HLC creation timestamp explicitly.
 #[wasm_bindgen]
-pub fn wasm_escalate(signal_json: &str, path_json: &str) -> Result<JsValue, JsValue> {
-    let signal: exo_escalation::detector::DetectionSignal = from_json_str(signal_json)?;
-    let path: exo_escalation::escalation::EscalationPath = from_json_str(path_json)?;
-    let case = exo_escalation::escalation::escalate(&signal, &path);
+pub fn wasm_escalate(input_json: &str) -> Result<JsValue, JsValue> {
+    let input: exo_escalation::escalation::EscalationCaseInput = from_json_str(input_json)?;
+    let case = exo_escalation::escalation::escalate(input)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
     to_js_value(&case)
 }
 
