@@ -1350,6 +1350,7 @@ version = "0.1.0-beta"
 dependencies = [
  "decision-forum",
  "exo-core",
+ "proptest",
  "serde",
  "thiserror 1.0.69",
 ]
