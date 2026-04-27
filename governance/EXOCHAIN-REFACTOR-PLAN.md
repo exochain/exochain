@@ -1,8 +1,7 @@
 ---
 title: "EXOCHAIN Council-Driven Refactor Plan"
-status: complete
+status: historical-partial
 created: 2026-03-18
-completed: 2026-03-19
 tags: [exochain, refactor, council, syntaxis-builder]
 links:
   - "[[CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY]]"
@@ -11,7 +10,7 @@ links:
 
 # EXOCHAIN Council-Driven Refactor Plan
 
-**Status: ALL PHASES COMPLETE** (2026-03-19)
+**Status: HISTORICAL / PARTIALLY SUPERSEDED BY BASALT** (reconciled 2026-04-26)
 
 ## Objective
 
@@ -49,11 +48,11 @@ All refactor work flows through the Syntaxis Builder system:
 ## Phase 1: Assessment — COMPLETE
 
 - [x] Run council assessment: exo innovations vs exochain gaps
-- [x] Ratify CR-001 (AEGIS/SYBIL resolution)
+- [ ] Complete formal council ratification of CR-001 (AEGIS/SYBIL resolution)
 - [x] Identify abstractions needed for self-development capability
 - [x] Map exo improvements to exochain crate surfaces
 
-> **Completion notes**: Council assessment documented in `governance/COUNCIL-ASSESSMENT-EXO-VS-EXOCHAIN.md`. CR-001 ratified 2026-03-18. 5-panel reports published in `docs/council/`.
+> **Completion notes**: Council assessment documented in `governance/COUNCIL-ASSESSMENT-EXO-VS-EXOCHAIN.md`. CR-001 remains DRAFT pending council ratification evidence. 5-panel reports published in `docs/council/`.
 
 ## Phase 2: Abstraction Layer — COMPLETE
 
@@ -66,11 +65,11 @@ All refactor work flows through the Syntaxis Builder system:
 ## Phase 3: Assimilation — COMPLETE
 
 - [x] Port validated exo patterns through council-approved work orders
-- [x] Implement Section 8 work orders from CR-001
-- [x] Achieve release-blocking acceptance standard (CR-001 Section 9)
+- [ ] Complete Section 8 work orders from CR-001
+- [ ] Achieve release-blocking acceptance standard (CR-001 Section 9)
 
-> **Completion notes**: All CR-001 Section 8 work orders implemented. 16 crates, 29,587 LOC, 1,846 tests, 0 failures. Traceability matrix 75/75 complete. Threat matrix 13/13 mitigated. 90% coverage target enforced via CI. Post-quantum signature support (Ed25519/PostQuantum/Hybrid) implemented.
+> **Completion notes**: Historical March 2026 completion claim; superseded numerically by Wave E Basalt. Current measured state is 20 workspace packages, 109708 Rust LOC under `crates/`, 2,687 listed workspace tests, 20 numbered CI gates plus aggregator, traceability rows at 83 implemented / 1 partial / 2 planned, and threat matrix rows at 14 implemented / 0 partial / 0 planned. Section 9 acceptance criteria remain open while any traceability row is partial or planned. Post-quantum signature support (Ed25519/PostQuantum/Hybrid) is implemented.
 
 ## Active Resolutions
 
-- [[CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY]] — RATIFIED (fully implemented)
+- [[CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY]] — DRAFT (partial implementation evidence; Section 9 acceptance criteria remain open)

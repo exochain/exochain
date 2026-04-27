@@ -1,11 +1,40 @@
 //! Legal MCP tools — e-discovery search, privilege assertion, DGCL safe harbor,
 //! and fiduciary duty compliance checking.
 
-use exo_core::{Did, Hash256, Timestamp};
+use exo_core::Did;
 use serde_json::{Value, json};
 
-use crate::mcp::context::NodeContext;
-use crate::mcp::protocol::{ToolDefinition, ToolResult};
+use crate::mcp::{
+    context::NodeContext,
+    protocol::{ToolDefinition, ToolResult},
+};
+
+fn required_nonempty_str<'a>(
+    params: &'a Value,
+    name: &str,
+) -> std::result::Result<&'a str, ToolResult> {
+    match params.get(name).and_then(Value::as_str) {
+        Some(value) if !value.trim().is_empty() => Ok(value),
+        Some(_) => Err(ToolResult::error(
+            json!({"error": format!("{name} must not be empty")}).to_string(),
+        )),
+        None => Err(ToolResult::error(
+            json!({"error": format!("missing required parameter: {name}")}).to_string(),
+        )),
+    }
+}
+
+fn required_nonzero_u64(params: &Value, name: &str) -> std::result::Result<u64, ToolResult> {
+    match params.get(name).and_then(Value::as_u64) {
+        Some(value) if value > 0 => Ok(value),
+        Some(_) => Err(ToolResult::error(
+            json!({"error": format!("{name} must be a nonzero integer")}).to_string(),
+        )),
+        None => Err(ToolResult::error(
+            json!({"error": format!("missing required parameter: {name}")}).to_string(),
+        )),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // exochain_ediscovery_search
@@ -35,9 +64,17 @@ pub fn ediscovery_search_definition() -> ToolDefinition {
                 "date_range_end": {
                     "type": "string",
                     "description": "Optional ISO-8601 end date for the search window."
+                },
+                "search_id": {
+                    "type": "string",
+                    "description": "Caller-supplied non-placeholder search ID."
+                },
+                "searched_at_ms": {
+                    "type": "integer",
+                    "description": "Caller-supplied nonzero HLC physical milliseconds for the search."
                 }
             },
-            "required": ["query"],
+            "required": ["query", "search_id", "searched_at_ms"],
             "additionalProperties": false,
         }),
     }
@@ -55,10 +92,15 @@ pub fn execute_ediscovery_search(params: &Value, _context: &NodeContext) -> Tool
         }
     };
 
-    let scope = params
-        .get("scope")
-        .and_then(Value::as_str)
-        .unwrap_or("all");
+    let scope = params.get("scope").and_then(Value::as_str).unwrap_or("all");
+    let search_id = match required_nonempty_str(params, "search_id") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let searched_at_ms = match required_nonzero_u64(params, "searched_at_ms") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
     let date_range_start = params
         .get("date_range_start")
         .and_then(Value::as_str)
@@ -68,17 +110,8 @@ pub fn execute_ediscovery_search(params: &Value, _context: &NodeContext) -> Tool
         .and_then(Value::as_str)
         .map(String::from);
 
-    let now = Timestamp::now_utc();
-    let search_id = Hash256::digest(
-        format!(
-            "ediscovery:{}:{}:{}:{}",
-            query, scope, now.physical_ms, now.logical
-        )
-        .as_bytes(),
-    );
-
     let response = json!({
-        "search_id": search_id.to_string(),
+        "search_id": search_id,
         "query": query,
         "scope": scope,
         "date_range": {
@@ -88,7 +121,7 @@ pub fn execute_ediscovery_search(params: &Value, _context: &NodeContext) -> Tool
         "results": [],
         "total_matches": 0,
         "status": "completed",
-        "searched_at": format!("{}:{}", now.physical_ms, now.logical),
+        "searched_at": format!("{}:0", searched_at_ms),
         "note": "No evidence corpus is loaded in this node instance.",
     });
     ToolResult::success(response.to_string())
@@ -103,7 +136,9 @@ pub fn execute_ediscovery_search(params: &Value, _context: &NodeContext) -> Tool
 pub fn assert_privilege_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_assert_privilege".to_owned(),
-        description: "Assert legal privilege over evidence, marking it as protected from disclosure.".to_owned(),
+        description:
+            "Assert legal privilege over evidence, marking it as protected from disclosure."
+                .to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -119,9 +154,17 @@ pub fn assert_privilege_definition() -> ToolDefinition {
                 "asserter_did": {
                     "type": "string",
                     "description": "DID of the person asserting privilege."
+                },
+                "assertion_id": {
+                    "type": "string",
+                    "description": "Caller-supplied non-placeholder privilege assertion ID."
+                },
+                "asserted_at_ms": {
+                    "type": "integer",
+                    "description": "Caller-supplied nonzero HLC physical milliseconds for assertion."
                 }
             },
-            "required": ["evidence_id", "privilege_type", "asserter_did"],
+            "required": ["evidence_id", "privilege_type", "asserter_did", "assertion_id", "asserted_at_ms"],
             "additionalProperties": false,
         }),
     }
@@ -154,6 +197,14 @@ pub fn execute_assert_privilege(params: &Value, _context: &NodeContext) -> ToolR
             );
         }
     };
+    let assertion_id = match required_nonempty_str(params, "assertion_id") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let asserted_at_ms = match required_nonzero_u64(params, "asserted_at_ms") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
 
     // Validate privilege type.
     let valid_types = ["attorney_client", "work_product", "deliberative"];
@@ -174,22 +225,13 @@ pub fn execute_assert_privilege(params: &Value, _context: &NodeContext) -> ToolR
         );
     }
 
-    let now = Timestamp::now_utc();
-    let assertion_id = Hash256::digest(
-        format!(
-            "privilege:{}:{}:{}:{}:{}",
-            evidence_id, privilege_type, asserter_did_str, now.physical_ms, now.logical
-        )
-        .as_bytes(),
-    );
-
     let response = json!({
-        "assertion_id": assertion_id.to_string(),
+        "assertion_id": assertion_id,
         "evidence_id": evidence_id,
         "privilege_type": privilege_type,
         "asserter_did": asserter_did_str,
         "status": "asserted",
-        "asserted_at": format!("{}:{}", now.physical_ms, now.logical),
+        "asserted_at": format!("{}:0", asserted_at_ms),
     });
     ToolResult::success(response.to_string())
 }
@@ -219,9 +261,17 @@ pub fn initiate_safe_harbor_definition() -> ToolDefinition {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Array of DID strings for the interested parties."
+                },
+                "process_id": {
+                    "type": "string",
+                    "description": "Caller-supplied non-placeholder safe-harbor process ID."
+                },
+                "initiated_at_ms": {
+                    "type": "integer",
+                    "description": "Caller-supplied nonzero HLC physical milliseconds for initiation."
                 }
             },
-            "required": ["initiator_did", "transaction_description", "interested_parties"],
+            "required": ["initiator_did", "transaction_description", "interested_parties", "process_id", "initiated_at_ms"],
             "additionalProperties": false,
         }),
     }
@@ -238,16 +288,17 @@ pub fn execute_initiate_safe_harbor(params: &Value, _context: &NodeContext) -> T
             );
         }
     };
-    let transaction_description =
-        match params.get("transaction_description").and_then(Value::as_str) {
-            Some(s) => s,
-            None => {
-                return ToolResult::error(
-                    json!({"error": "missing required parameter: transaction_description"})
-                        .to_string(),
-                );
-            }
-        };
+    let transaction_description = match params
+        .get("transaction_description")
+        .and_then(Value::as_str)
+    {
+        Some(s) => s,
+        None => {
+            return ToolResult::error(
+                json!({"error": "missing required parameter: transaction_description"}).to_string(),
+            );
+        }
+    };
     let interested_parties = match params.get("interested_parties").and_then(Value::as_array) {
         Some(arr) => arr,
         None => {
@@ -256,6 +307,14 @@ pub fn execute_initiate_safe_harbor(params: &Value, _context: &NodeContext) -> T
                     .to_string(),
             );
         }
+    };
+    let process_id = match required_nonempty_str(params, "process_id") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let initiated_at_ms = match required_nonzero_u64(params, "initiated_at_ms") {
+        Ok(value) => value,
+        Err(result) => return result,
     };
 
     // Validate initiator DID.
@@ -287,15 +346,6 @@ pub fn execute_initiate_safe_harbor(params: &Value, _context: &NodeContext) -> T
         }
     }
 
-    let now = Timestamp::now_utc();
-    let process_id = Hash256::digest(
-        format!(
-            "safe_harbor:{}:{}:{}:{}",
-            initiator_did_str, transaction_description, now.physical_ms, now.logical
-        )
-        .as_bytes(),
-    );
-
     let disclosure_requirements: Vec<Value> = party_dids
         .iter()
         .map(|did| {
@@ -308,14 +358,14 @@ pub fn execute_initiate_safe_harbor(params: &Value, _context: &NodeContext) -> T
         .collect();
 
     let response = json!({
-        "process_id": process_id.to_string(),
+        "process_id": process_id,
         "initiator_did": initiator_did_str,
         "transaction_description": transaction_description,
         "interested_parties": party_dids,
         "disclosure_requirements": disclosure_requirements,
         "dgcl_section": "144",
         "status": "initiated",
-        "initiated_at": format!("{}:{}", now.physical_ms, now.logical),
+        "initiated_at": format!("{}:0", initiated_at_ms),
     });
     ToolResult::success(response.to_string())
 }
@@ -344,9 +394,17 @@ pub fn check_fiduciary_duty_definition() -> ToolDefinition {
                 "beneficiary_did": {
                     "type": "string",
                     "description": "DID of the beneficiary owed the fiduciary duty."
+                },
+                "check_id": {
+                    "type": "string",
+                    "description": "Caller-supplied non-placeholder fiduciary check ID."
+                },
+                "checked_at_ms": {
+                    "type": "integer",
+                    "description": "Caller-supplied nonzero HLC physical milliseconds for the check."
                 }
             },
-            "required": ["actor_did", "action", "beneficiary_did"],
+            "required": ["actor_did", "action", "beneficiary_did", "check_id", "checked_at_ms"],
             "additionalProperties": false,
         }),
     }
@@ -379,6 +437,14 @@ pub fn execute_check_fiduciary_duty(params: &Value, _context: &NodeContext) -> T
             );
         }
     };
+    let check_id = match required_nonempty_str(params, "check_id") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let checked_at_ms = match required_nonzero_u64(params, "checked_at_ms") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
 
     // Validate DIDs.
     if Did::new(actor_did_str).is_err() {
@@ -391,8 +457,6 @@ pub fn execute_check_fiduciary_duty(params: &Value, _context: &NodeContext) -> T
             json!({"error": format!("invalid DID format: {beneficiary_did_str}")}).to_string(),
         );
     }
-
-    let now = Timestamp::now_utc();
 
     // Assess fiduciary duties: loyalty, care, good faith.
     let duties = vec![
@@ -413,22 +477,14 @@ pub fn execute_check_fiduciary_duty(params: &Value, _context: &NodeContext) -> T
         }),
     ];
 
-    let check_id = Hash256::digest(
-        format!(
-            "fiduciary:{}:{}:{}:{}:{}",
-            actor_did_str, action, beneficiary_did_str, now.physical_ms, now.logical
-        )
-        .as_bytes(),
-    );
-
     let response = json!({
-        "check_id": check_id.to_string(),
+        "check_id": check_id,
         "actor_did": actor_did_str,
         "action": action,
         "beneficiary_did": beneficiary_did_str,
         "duties_assessed": duties,
         "overall_status": "requires_review",
-        "checked_at": format!("{}:{}", now.physical_ms, now.logical),
+        "checked_at": format!("{}:0", checked_at_ms),
         "note": "Automated pre-screening complete. Human review required for final determination.",
     });
     ToolResult::success(response.to_string())
@@ -454,14 +510,18 @@ mod tests {
 
     #[test]
     fn execute_ediscovery_search_success() {
-        let params = json!({"query": "contract breach"});
+        let params = json!({
+            "query": "contract breach",
+            "search_id": "search-001",
+            "searched_at_ms": 1700000000000_u64,
+        });
         let result = execute_ediscovery_search(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["query"], "contract breach");
         assert_eq!(v["scope"], "all");
         assert_eq!(v["status"], "completed");
-        assert!(v["search_id"].as_str().is_some());
+        assert_eq!(v["search_id"], "search-001");
     }
 
     #[test]
@@ -471,16 +531,28 @@ mod tests {
             "scope": "emails",
             "date_range_start": "2025-01-01",
             "date_range_end": "2025-12-31",
+            "search_id": "search-002",
+            "searched_at_ms": 1700000000001_u64,
         });
         let result = execute_ediscovery_search(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["scope"], "emails");
     }
 
     #[test]
     fn execute_ediscovery_search_missing_query() {
-        let result = execute_ediscovery_search(&json!({}), &NodeContext::empty());
+        let result = execute_ediscovery_search(
+            &json!({"search_id": "search-003", "searched_at_ms": 1700000000002_u64}),
+            &NodeContext::empty(),
+        );
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn execute_ediscovery_search_missing_metadata() {
+        let result =
+            execute_ediscovery_search(&json!({"query": "contract breach"}), &NodeContext::empty());
         assert!(result.is_error);
     }
 
@@ -499,13 +571,15 @@ mod tests {
             "evidence_id": "ev123",
             "privilege_type": "attorney_client",
             "asserter_did": "did:exo:counsel",
+            "assertion_id": "assertion-001",
+            "asserted_at_ms": 1700000000010_u64,
         });
         let result = execute_assert_privilege(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["privilege_type"], "attorney_client");
         assert_eq!(v["status"], "asserted");
-        assert!(v["assertion_id"].as_str().is_some());
+        assert_eq!(v["assertion_id"], "assertion-001");
     }
 
     #[test]
@@ -514,6 +588,8 @@ mod tests {
             "evidence_id": "ev123",
             "privilege_type": "invalid_type",
             "asserter_did": "did:exo:counsel",
+            "assertion_id": "assertion-002",
+            "asserted_at_ms": 1700000000011_u64,
         });
         let result = execute_assert_privilege(&params, &NodeContext::empty());
         assert!(result.is_error);
@@ -525,6 +601,8 @@ mod tests {
             "evidence_id": "ev123",
             "privilege_type": "work_product",
             "asserter_did": "bad",
+            "assertion_id": "assertion-003",
+            "asserted_at_ms": 1700000000012_u64,
         });
         let result = execute_assert_privilege(&params, &NodeContext::empty());
         assert!(result.is_error);
@@ -545,13 +623,19 @@ mod tests {
             "initiator_did": "did:exo:alice",
             "transaction_description": "Acquisition of subsidiary",
             "interested_parties": ["did:exo:bob", "did:exo:carol"],
+            "process_id": "safe-harbor-001",
+            "initiated_at_ms": 1700000000020_u64,
         });
         let result = execute_initiate_safe_harbor(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["dgcl_section"], "144");
         assert_eq!(v["status"], "initiated");
-        assert_eq!(v["interested_parties"].as_array().expect("parties").len(), 2);
+        assert_eq!(v["process_id"], "safe-harbor-001");
+        assert_eq!(
+            v["interested_parties"].as_array().expect("parties").len(),
+            2
+        );
         assert_eq!(
             v["disclosure_requirements"]
                 .as_array()
@@ -567,6 +651,8 @@ mod tests {
             "initiator_did": "bad",
             "transaction_description": "test",
             "interested_parties": [],
+            "process_id": "safe-harbor-002",
+            "initiated_at_ms": 1700000000021_u64,
         });
         let result = execute_initiate_safe_harbor(&params, &NodeContext::empty());
         assert!(result.is_error);
@@ -578,6 +664,8 @@ mod tests {
             "initiator_did": "did:exo:alice",
             "transaction_description": "test",
             "interested_parties": ["not-a-did"],
+            "process_id": "safe-harbor-003",
+            "initiated_at_ms": 1700000000022_u64,
         });
         let result = execute_initiate_safe_harbor(&params, &NodeContext::empty());
         assert!(result.is_error);
@@ -598,14 +686,16 @@ mod tests {
             "actor_did": "did:exo:director",
             "action": "approve merger with personal interest",
             "beneficiary_did": "did:exo:shareholders",
+            "check_id": "fiduciary-001",
+            "checked_at_ms": 1700000000030_u64,
         });
         let result = execute_check_fiduciary_duty(&params, &NodeContext::empty());
         assert!(!result.is_error);
-        let v: Value = serde_json::from_str(&result.content[0].text()).expect("valid JSON");
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["overall_status"], "requires_review");
         let duties = v["duties_assessed"].as_array().expect("duties");
         assert_eq!(duties.len(), 3);
-        assert!(v["check_id"].as_str().is_some());
+        assert_eq!(v["check_id"], "fiduciary-001");
     }
 
     #[test]
@@ -614,6 +704,8 @@ mod tests {
             "actor_did": "bad",
             "action": "something",
             "beneficiary_did": "did:exo:someone",
+            "check_id": "fiduciary-002",
+            "checked_at_ms": 1700000000031_u64,
         });
         let result = execute_check_fiduciary_duty(&params, &NodeContext::empty());
         assert!(result.is_error);

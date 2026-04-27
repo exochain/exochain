@@ -1,7 +1,7 @@
 # The EXOCHAIN Constitutional Model
 
 > **Status:** Developer guide — canonical reference for the constitutional
-> governance model. Reflects spec v2.1 and CR-001 (AEGIS / SYBIL / Authentic
+> governance model. Reflects spec v2.2 and CR-001 (AEGIS / SYBIL / Authentic
 > Plurality).
 > **Audience:** Engineers building on EXOCHAIN, AI agents operating under
 > EXOCHAIN governance, auditors verifying conformance.

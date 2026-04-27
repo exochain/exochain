@@ -129,10 +129,9 @@ pub struct AuthorityLink {
     pub signature: Vec<u8>,
     /// Ed25519 public key (32 bytes) of the grantor.
     ///
-    /// When present, `check_authority_chain_valid` performs full cryptographic
-    /// Ed25519 signature verification over the canonical link payload
-    /// (grantor || grantee || permissions). When absent, only non-emptiness of
-    /// `signature` is checked (legacy path for links without embedded keys).
+    /// `check_authority_chain_valid` requires this key and performs Ed25519
+    /// signature verification over the canonical link payload
+    /// (grantor || grantee || permissions). Links without this key fail closed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grantor_public_key: Option<Vec<u8>>,
 }
@@ -250,10 +249,10 @@ pub struct Provenance {
     pub signature: Vec<u8>,
     /// Ed25519 public key (32 bytes) of the actor.
     ///
-    /// When present, `check_provenance_verifiable` performs full cryptographic
-    /// Ed25519 signature verification over the canonical provenance payload:
+    /// `check_provenance_verifiable` requires this key and performs Ed25519
+    /// signature verification over the canonical provenance payload:
     /// `Hash256(actor_bytes || 0x00 || action_hash || 0x00 || timestamp_bytes)`.
-    /// When absent, only non-emptiness of `signature` is checked (legacy path).
+    /// Provenance without this key fails closed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_key: Option<Vec<u8>>,
     /// Whether this actor is human, synthetic (AI), or a system process.

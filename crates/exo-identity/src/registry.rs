@@ -1,21 +1,30 @@
 use std::collections::BTreeMap;
+
 use exo_core::{Did, PublicKey, Signature, Timestamp, crypto};
-use crate::did::{DidDocument, RevocationProof};
-use crate::error::IdentityError;
+
+use crate::{
+    did::{DidDocument, RevocationProof},
+    error::IdentityError,
+};
 
 /// A decentralized identifier registry trait.
 pub trait DidRegistry {
     /// Register a new DID document.
     fn register(&mut self, doc: DidDocument) -> Result<(), IdentityError>;
-    
+
     /// Resolve a DID to its document.
     fn resolve(&self, did: &Did) -> Option<&DidDocument>;
-    
+
     /// Revoke a DID after verifying the proof.
     fn revoke(&mut self, did: &Did, proof: &RevocationProof) -> Result<(), IdentityError>;
-    
+
     /// Rotate the key for a DID after verifying the proof.
-    fn rotate_key(&mut self, did: &Did, new_key: &PublicKey, proof: &Signature) -> Result<(), IdentityError>;
+    fn rotate_key(
+        &mut self,
+        did: &Did,
+        new_key: &PublicKey,
+        proof: &Signature,
+    ) -> Result<(), IdentityError>;
 }
 
 /// A local, in-memory implementation of the `DidRegistry` trait.
@@ -29,7 +38,7 @@ impl LocalDidRegistry {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.documents.len()
@@ -112,9 +121,10 @@ impl DidRegistry for LocalDidRegistry {
 
 #[cfg(test)]
 mod tests {
+    use exo_core::crypto::{generate_keypair, sign};
+
     use super::*;
     use crate::did::DidDocument;
-    use exo_core::crypto::{generate_keypair, sign};
 
     fn make_did(label: &str) -> Did {
         Did::new(&format!("did:exo:{label}")).expect("valid did")
@@ -143,7 +153,7 @@ mod tests {
         let mut reg = LocalDidRegistry::new();
         reg.register(doc).unwrap();
         assert_eq!(reg.len(), 1);
-        
+
         let resolved = reg.resolve(&did).unwrap();
         assert_eq!(resolved.id, did);
     }
@@ -162,7 +172,7 @@ mod tests {
             signature: sign(did.as_str().as_bytes(), &sk),
         };
         reg.revoke(&did, &proof).unwrap();
-        
+
         assert!(reg.resolve(&did).is_none());
     }
 
@@ -178,9 +188,9 @@ mod tests {
 
         let (new_pk, _) = generate_keypair();
         let proof = sign(new_pk.as_bytes(), &sk);
-        
+
         reg.rotate_key(&did, &new_pk, &proof).unwrap();
-        
+
         let resolved = reg.resolve(&did).unwrap();
         assert_eq!(resolved.public_keys.len(), 2);
     }
@@ -189,7 +199,7 @@ mod tests {
     fn test_resolve_nonexistent() {
         let reg = LocalDidRegistry::new();
         let did = make_did("nobody");
-        
+
         assert!(reg.resolve(&did).is_none());
     }
 }

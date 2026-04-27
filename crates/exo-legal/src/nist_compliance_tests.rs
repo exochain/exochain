@@ -7,7 +7,7 @@
 #[cfg(test)]
 mod nist_compliance {
     use exo_authority::DelegateeKind;
-    use exo_core::{Did, Timestamp};
+    use exo_core::{Did, Hash256, Timestamp};
     use exo_gatekeeper::{
         InvariantEngine, McpRule,
         invariants::{ConstitutionalInvariant, InvariantContext, enforce_all},
@@ -18,6 +18,7 @@ mod nist_compliance {
         },
     };
     use exo_governance::audit::{self as gov_audit, AuditLog};
+    use uuid::Uuid;
 
     use crate::{
         ai_transparency::{ReportParams, ai_delegation_event_from_link, generate_report},
@@ -39,8 +40,64 @@ mod nist_compliance {
         Timestamp::new(ms, 0)
     }
 
+    fn audit_id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
+    fn signed_authority_link(grantor: &Did, grantee: &Did) -> AuthorityLink {
+        let (public_key, secret_key) = exo_core::crypto::generate_keypair();
+        let permissions = PermissionSet::new(vec![Permission::new("read")]);
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(grantor.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(grantee.as_str().as_bytes());
+        payload.push(0x00);
+        for permission in &permissions.permissions {
+            payload.extend_from_slice(permission.0.as_bytes());
+            payload.push(0x00);
+        }
+        let message = Hash256::digest(&payload);
+        let signature = exo_core::crypto::sign(message.as_bytes(), &secret_key);
+
+        AuthorityLink {
+            grantor: grantor.clone(),
+            grantee: grantee.clone(),
+            permissions,
+            signature: signature.to_bytes().to_vec(),
+            grantor_public_key: Some(public_key.as_bytes().to_vec()),
+        }
+    }
+
+    fn signed_provenance(actor: &Did) -> Provenance {
+        let (public_key, secret_key) = exo_core::crypto::generate_keypair();
+        let timestamp = "2026-03-20T00:00:00Z".to_owned();
+        let action_hash = vec![1, 2, 3];
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(actor.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(&action_hash);
+        payload.push(0x00);
+        payload.extend_from_slice(timestamp.as_bytes());
+        let message = Hash256::digest(&payload);
+        let signature = exo_core::crypto::sign(message.as_bytes(), &secret_key);
+
+        Provenance {
+            actor: actor.clone(),
+            timestamp,
+            action_hash,
+            signature: signature.to_bytes().to_vec(),
+            public_key: Some(public_key.as_bytes().to_vec()),
+            voice_kind: None,
+            independence: None,
+            review_order: None,
+        }
+    }
+
     /// Build a passing InvariantContext matching the pattern in invariants.rs tests.
     fn passing_context(actor: &Did) -> InvariantContext {
+        let root = did("root");
         InvariantContext {
             actor: actor.clone(),
             actor_roles: vec![Role {
@@ -59,28 +116,13 @@ mod nist_compliance {
                 active: true,
             }],
             authority_chain: AuthorityChain {
-                links: vec![AuthorityLink {
-                    grantor: did("root"),
-                    grantee: actor.clone(),
-                    permissions: PermissionSet::new(vec![Permission::new("read")]),
-                    signature: vec![1, 2, 3],
-                    grantor_public_key: None,
-                }],
+                links: vec![signed_authority_link(&root, actor)],
             },
             is_self_grant: false,
             human_override_preserved: true,
             kernel_modification_attempted: false,
             quorum_evidence: None,
-            provenance: Some(Provenance {
-                actor: actor.clone(),
-                timestamp: "2026-03-20T00:00:00Z".into(),
-                action_hash: vec![1, 2, 3],
-                signature: vec![4, 5, 6],
-                public_key: None,
-                voice_kind: None,
-                independence: None,
-                review_order: None,
-            }),
+            provenance: Some(signed_provenance(actor)),
             actor_permissions: PermissionSet::new(vec![Permission::new("read")]),
             requested_permissions: PermissionSet::default(),
         }
@@ -141,20 +183,26 @@ mod nist_compliance {
         let mut audit_log = AuditLog::new();
         let e1 = gov_audit::create_entry(
             &audit_log,
+            audit_id(0xE100),
+            ts(40_000),
             actor.clone(),
             "human_override_check".into(),
             "pass".into(),
             [0u8; 32],
-        );
+        )
+        .expect("deterministic governance audit entry");
         gov_audit::append(&mut audit_log, e1).expect("audit append");
 
         let e2 = gov_audit::create_entry(
             &audit_log,
+            audit_id(0xE101),
+            ts(40_001),
             actor,
             "human_override_check".into(),
             "VIOLATION: human_override_preserved=false".into(),
             [0u8; 32],
-        );
+        )
+        .expect("deterministic governance audit entry");
         gov_audit::append(&mut audit_log, e2).expect("audit append");
 
         // 5. Chain integrity must hold — satisfies tamper-evidence requirement.
@@ -206,14 +254,19 @@ mod nist_compliance {
         //    satisfies MS.2 "AI risk measurement via documentation".
         let actor = did("ai-agent-1");
         let mut mcp_log = McpAuditLog::new();
-        for rule in McpRule::all() {
+        for (index, rule) in McpRule::all().into_iter().enumerate() {
+            let offset = u128::try_from(index).expect("rule index fits u128");
+            let timestamp_offset = u64::try_from(index).expect("rule index fits u64");
             let r = create_record(
                 &mcp_log,
+                audit_id(0xD000 + offset),
+                ts(30_000 + timestamp_offset),
                 rule,
                 actor.clone(),
                 McpEnforcementOutcome::Allowed,
                 Some("EU-WEST-1".into()),
-            );
+            )
+            .expect("deterministic MCP audit record");
             append(&mut mcp_log, r).expect("MCP audit append");
         }
         verify_chain(&mcp_log).expect("MCP audit chain must be intact after 6 records");
@@ -259,8 +312,10 @@ mod nist_compliance {
         );
 
         // 6. ComplianceReport hash is deterministic.
-        let cr1 = build_report(&report, &ComplianceReportMode::Full, ts(99_000));
-        let cr2 = build_report(&report, &ComplianceReportMode::Full, ts(99_000));
+        let cr1 = build_report(&report, &ComplianceReportMode::Full, ts(99_000))
+            .expect("compliance report hash must build");
+        let cr2 = build_report(&report, &ComplianceReportMode::Full, ts(99_000))
+            .expect("compliance report hash must build");
         assert_eq!(
             cr1.report_hash, cr2.report_hash,
             "ComplianceReport hash must be deterministic (same inputs → same hash)"
@@ -409,7 +464,8 @@ mod nist_compliance {
                 redaction_salt: salt,
             },
             ts(5000),
-        );
+        )
+        .expect("compliance report hash must build");
         let acv = cr
             .attestations
             .iter()

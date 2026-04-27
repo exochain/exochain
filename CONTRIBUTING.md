@@ -142,6 +142,13 @@ All of the following must pass before a PR can be merged:
 - [ ] `cargo doc --no-deps` succeeds
 - [ ] Coverage >= 90% (verified by CI)
 
+Once your change passes the PR checklist, see
+[docs/guides/DEPLOYMENT.md](./docs/guides/DEPLOYMENT.md) for how the merged
+binary is shipped (Railway Dockerfile, entrypoint env contract, node bootstrap).
+Deployment-relevant PRs (Dockerfile, `deploy/entrypoint.sh`, `railway.json`,
+`docker-compose*.yml`) should include a note linking to the deployment doc
+section they exercise.
+
 ### The PR Description
 
 Use the following template:

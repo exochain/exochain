@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use zeroize::Zeroize;
 
-use crate::error::{ExoError, Result};
+use crate::{
+    crypto,
+    error::{ExoError, Result},
+};
 
 // ---------------------------------------------------------------------------
 // DeterministicMap
@@ -883,7 +886,47 @@ pub struct TrustReceipt {
     pub challenge_reference: Option<Hash256>,
 }
 
+const TRUST_RECEIPT_SIGNING_DOMAIN: &str = "exo.trust_receipt.v1";
+
+#[derive(Serialize)]
+struct TrustReceiptSigningPayload<'a> {
+    domain: &'static str,
+    actor_did: &'a str,
+    authority_chain_hash: &'a Hash256,
+    consent_reference: Option<&'a Hash256>,
+    action_type: &'a str,
+    action_hash: &'a Hash256,
+    outcome: &'a ReceiptOutcome,
+    timestamp: &'a Timestamp,
+}
+
 impl TrustReceipt {
+    fn payload_for_signature(
+        actor_did: &Did,
+        authority_chain_hash: &Hash256,
+        consent_reference: Option<&Hash256>,
+        action_type: &str,
+        action_hash: &Hash256,
+        outcome: &ReceiptOutcome,
+        timestamp: &Timestamp,
+    ) -> Vec<u8> {
+        let payload = TrustReceiptSigningPayload {
+            domain: TRUST_RECEIPT_SIGNING_DOMAIN,
+            actor_did: actor_did.as_str(),
+            authority_chain_hash,
+            consent_reference,
+            action_type,
+            action_hash,
+            outcome,
+            timestamp,
+        };
+        let mut encoded = Vec::new();
+        if ciborium::into_writer(&payload, &mut encoded).is_err() {
+            panic!("TrustReceipt signing payload CBOR serialization failed");
+        }
+        encoded
+    }
+
     /// Create a new trust receipt and compute its content-addressed hash.
     ///
     /// The `sign_fn` is called with the canonical signable payload to
@@ -899,18 +942,15 @@ impl TrustReceipt {
         timestamp: Timestamp,
         sign_fn: &dyn Fn(&[u8]) -> Signature,
     ) -> Self {
-        // Build the signable payload: canonical concatenation of all fields.
-        let mut payload = Vec::new();
-        payload.extend_from_slice(actor_did.to_string().as_bytes());
-        payload.extend_from_slice(&authority_chain_hash.0);
-        if let Some(ref cr) = consent_reference {
-            payload.extend_from_slice(&cr.0);
-        }
-        payload.extend_from_slice(action_type.as_bytes());
-        payload.extend_from_slice(&action_hash.0);
-        payload.extend_from_slice(outcome.to_string().as_bytes());
-        payload.extend_from_slice(&timestamp.physical_ms.to_le_bytes());
-        payload.extend_from_slice(&timestamp.logical.to_le_bytes());
+        let payload = Self::payload_for_signature(
+            &actor_did,
+            &authority_chain_hash,
+            consent_reference.as_ref(),
+            &action_type,
+            &action_hash,
+            &outcome,
+            &timestamp,
+        );
 
         let signature = sign_fn(&payload);
         let receipt_hash = Hash256::digest(&payload);
@@ -932,19 +972,31 @@ impl TrustReceipt {
     /// Verify that the receipt hash matches the content.
     #[must_use]
     pub fn verify_hash(&self) -> bool {
-        let mut payload = Vec::new();
-        payload.extend_from_slice(self.actor_did.to_string().as_bytes());
-        payload.extend_from_slice(&self.authority_chain_hash.0);
-        if let Some(ref cr) = self.consent_reference {
-            payload.extend_from_slice(&cr.0);
-        }
-        payload.extend_from_slice(self.action_type.as_bytes());
-        payload.extend_from_slice(&self.action_hash.0);
-        payload.extend_from_slice(self.outcome.to_string().as_bytes());
-        payload.extend_from_slice(&self.timestamp.physical_ms.to_le_bytes());
-        payload.extend_from_slice(&self.timestamp.logical.to_le_bytes());
-
+        let payload = self.signing_payload();
         Hash256::digest(&payload) == self.receipt_hash
+    }
+
+    /// Return the exact payload signed by the actor for this receipt.
+    #[must_use]
+    pub fn signing_payload(&self) -> Vec<u8> {
+        Self::payload_for_signature(
+            &self.actor_did,
+            &self.authority_chain_hash,
+            self.consent_reference.as_ref(),
+            &self.action_type,
+            &self.action_hash,
+            &self.outcome,
+            &self.timestamp,
+        )
+    }
+
+    /// Verify the actor signature over this receipt's signable payload.
+    #[must_use]
+    pub fn verify_signature(&self, public_key: &PublicKey) -> bool {
+        if self.signature.is_empty() {
+            return false;
+        }
+        crypto::verify(&self.signing_payload(), &self.signature, public_key)
     }
 }
 
@@ -1560,6 +1612,93 @@ mod tests {
         assert_eq!(receipt.action_type, "governance.propose");
         assert_eq!(receipt.outcome, ReceiptOutcome::Executed);
         assert!(receipt.challenge_reference.is_none());
+    }
+
+    #[derive(serde::Deserialize)]
+    struct DecodedTrustReceiptSigningPayload {
+        domain: String,
+        actor_did: String,
+        authority_chain_hash: Hash256,
+        consent_reference: Option<Hash256>,
+        action_type: String,
+        action_hash: Hash256,
+        outcome: ReceiptOutcome,
+        timestamp: Timestamp,
+    }
+
+    #[test]
+    fn trust_receipt_signing_payload_is_domain_tagged_cbor() {
+        let authority_chain_hash = Hash256::digest(b"authority-chain");
+        let consent_reference = Hash256::digest(b"consent-ref");
+        let action_hash = Hash256::digest(b"action-payload");
+        let timestamp = Timestamp::new(1_700_000_000_123, 7);
+        let receipt = TrustReceipt::new(
+            Did::new("did:exo:actor-cbor").unwrap(),
+            authority_chain_hash,
+            Some(consent_reference),
+            "governance.propose".into(),
+            action_hash,
+            ReceiptOutcome::Executed,
+            timestamp,
+            &test_sign_fn,
+        );
+
+        let payload: DecodedTrustReceiptSigningPayload =
+            ciborium::from_reader(&receipt.signing_payload()[..]).expect("decode payload");
+        assert_eq!(payload.domain, TRUST_RECEIPT_SIGNING_DOMAIN);
+        assert_eq!(payload.actor_did, "did:exo:actor-cbor");
+        assert_eq!(payload.authority_chain_hash, authority_chain_hash);
+        assert_eq!(payload.consent_reference, Some(consent_reference));
+        assert_eq!(payload.action_type, "governance.propose");
+        assert_eq!(payload.action_hash, action_hash);
+        assert_eq!(payload.outcome, ReceiptOutcome::Executed);
+        assert_eq!(payload.timestamp, timestamp);
+    }
+
+    #[test]
+    fn trust_receipt_signature_verifies_with_actor_key() {
+        let keypair = crate::crypto::KeyPair::from_secret_bytes([42u8; 32]).unwrap();
+        let public_key = *keypair.public_key();
+        let receipt = TrustReceipt::new(
+            Did::new("did:exo:actor-signer").unwrap(),
+            Hash256::digest(b"authority-chain"),
+            None,
+            "governance.vote".into(),
+            Hash256::digest(b"vote-payload"),
+            ReceiptOutcome::Executed,
+            Timestamp::new(1_700_000_003_000, 0),
+            &|payload| keypair.sign(payload),
+        );
+
+        assert!(receipt.verify_signature(&public_key));
+    }
+
+    #[test]
+    fn trust_receipt_signature_rejects_empty_wrong_key_and_tamper() {
+        let keypair = crate::crypto::KeyPair::from_secret_bytes([43u8; 32]).unwrap();
+        let wrong_keypair = crate::crypto::KeyPair::from_secret_bytes([44u8; 32]).unwrap();
+        let public_key = *keypair.public_key();
+        let wrong_public_key = *wrong_keypair.public_key();
+        let mut receipt = TrustReceipt::new(
+            Did::new("did:exo:actor-signer").unwrap(),
+            Hash256::digest(b"authority-chain"),
+            None,
+            "governance.vote".into(),
+            Hash256::digest(b"vote-payload"),
+            ReceiptOutcome::Executed,
+            Timestamp::new(1_700_000_003_000, 0),
+            &|payload| keypair.sign(payload),
+        );
+
+        assert!(!receipt.verify_signature(&wrong_public_key));
+
+        let signature = receipt.signature.clone();
+        receipt.signature = Signature::Empty;
+        assert!(!receipt.verify_signature(&public_key));
+
+        receipt.signature = signature;
+        receipt.action_type = "governance.escalate".into();
+        assert!(!receipt.verify_signature(&public_key));
     }
 
     #[test]

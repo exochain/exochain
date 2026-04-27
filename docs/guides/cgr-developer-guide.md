@@ -530,16 +530,20 @@ All MCP enforcement outcomes must be recorded in a hash-chained audit log:
 ```rust
 use exo_gatekeeper::{McpAuditLog, McpEnforcementOutcome};
 use exo_gatekeeper::mcp_audit::{create_record, append};
+use exo_core::Timestamp;
+use uuid::Uuid;
 
 let mut log = McpAuditLog::new();
 
 let record = create_record(
     &log,
+    Uuid::from_u128(0xA11D17),
+    Timestamp::new(1_800_000_000_000, 0),
     McpRule::Mcp001BctsScope,
     actor_did.clone(),
     McpEnforcementOutcome::Allowed,
     Some("EU".into()), // data residency region (GDPR Chapter V)
-);
+)?;
 append(&mut log, record)?;
 
 // Verify chain integrity at any point

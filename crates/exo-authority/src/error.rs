@@ -20,6 +20,15 @@ pub enum AuthorityError {
     #[error("invalid signature at index {index}")]
     InvalidSignature { index: usize },
 
+    #[error("delegation signing payload encoding failed: {reason}")]
+    SigningPayloadEncoding { reason: String },
+
+    #[error("invalid delegation: {reason}")]
+    InvalidDelegation { reason: String },
+
+    #[error("duplicate delegation: {id}")]
+    DuplicateDelegation { id: String },
+
     #[error("circular delegation detected: {0}")]
     CircularDelegation(String),
 
@@ -72,6 +81,28 @@ mod tests {
     fn error_display_invalid_signature() {
         let e = AuthorityError::InvalidSignature { index: 3 };
         assert!(e.to_string().contains("3"));
+    }
+
+    #[test]
+    fn error_display_signing_payload_encoding() {
+        let e = AuthorityError::SigningPayloadEncoding {
+            reason: "writer".into(),
+        };
+        assert!(e.to_string().contains("writer"));
+    }
+
+    #[test]
+    fn error_display_invalid_delegation() {
+        let e = AuthorityError::InvalidDelegation {
+            reason: "empty scope".into(),
+        };
+        assert!(e.to_string().contains("empty scope"));
+    }
+
+    #[test]
+    fn error_display_duplicate_delegation() {
+        let e = AuthorityError::DuplicateDelegation { id: "abc".into() };
+        assert!(e.to_string().contains("abc"));
     }
 
     #[test]

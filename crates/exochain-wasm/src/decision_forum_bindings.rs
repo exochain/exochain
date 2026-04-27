@@ -8,21 +8,28 @@ use crate::serde_bridge::*;
 /// Create a new DecisionObject with full BCTS lifecycle
 #[wasm_bindgen]
 pub fn wasm_create_decision(
+    decision_id: &str,
     title: &str,
     class_json: &str,
     constitution_hash_hex: &str,
+    created_at_ms: u64,
+    created_at_logical: u32,
 ) -> Result<JsValue, JsValue> {
+    let id = parse_uuid(decision_id)?;
     let class: decision_forum::decision_object::DecisionClass = from_json_str(class_json)?;
-    let hash_bytes =
-        hex::decode(constitution_hash_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
-    let arr: [u8; 32] = hash_bytes
-        .try_into()
-        .map_err(|_| JsValue::from_str("hash must be 32 bytes"))?;
-    let hash = exo_core::Hash256::from_bytes(arr);
+    let hash = parse_hash(constitution_hash_hex, "hash")?;
+    let created_at = exo_core::types::Timestamp::new(created_at_ms, created_at_logical);
 
-    let mut clock = exo_core::hlc::HybridClock::new();
-    let decision =
-        decision_forum::decision_object::DecisionObject::new(title, class, hash, &mut clock);
+    let decision = decision_forum::decision_object::DecisionObject::new(
+        decision_forum::decision_object::DecisionObjectInput {
+            id,
+            title: title.into(),
+            class,
+            constitutional_hash: hash,
+            created_at,
+        },
+    )
+    .map_err(|e| JsValue::from_str(&format!("Decision error: {e}")))?;
     to_js_value(&decision)
 }
 
@@ -32,16 +39,18 @@ pub fn wasm_transition_decision(
     decision_json: &str,
     to_state_json: &str,
     actor_did: &str,
+    timestamp_ms: u64,
+    timestamp_logical: u32,
 ) -> Result<JsValue, JsValue> {
     let mut decision: decision_forum::decision_object::DecisionObject =
         from_json_str(decision_json)?;
     let to_state: exo_core::bcts::BctsState = from_json_str(to_state_json)?;
     let actor =
         exo_core::Did::new(actor_did).map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
-    let mut clock = exo_core::hlc::HybridClock::new();
+    let ts = exo_core::types::Timestamp::new(timestamp_ms, timestamp_logical);
 
     decision
-        .transition(to_state, &actor, &mut clock)
+        .transition_at(to_state, &actor, ts)
         .map_err(|e| JsValue::from_str(&format!("Transition error: {e}")))?;
     to_js_value(&decision)
 }
@@ -92,70 +101,73 @@ pub fn wasm_decision_content_hash(decision_json: &str) -> Result<String, JsValue
 /// File a challenge against a decision (contestation - GOV-008)
 #[wasm_bindgen]
 pub fn wasm_file_challenge(
+    challenge_id: &str,
     challenger_did: &str,
     decision_id: &str,
     ground_json: &str,
     evidence_hash_hex: &str,
+    created_at_ms: u64,
+    created_at_logical: u32,
 ) -> Result<JsValue, JsValue> {
+    let challenge_id = parse_uuid(challenge_id)?;
     let challenger = exo_core::Did::new(challenger_did)
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
-    let id: uuid::Uuid = decision_id
-        .parse()
-        .map_err(|e| JsValue::from_str(&format!("Invalid UUID: {e}")))?;
+    let decision_id = parse_uuid(decision_id)?;
     let ground: exo_governance::challenge::ChallengeGround = from_json_str(ground_json)?;
-    let evidence_bytes =
-        hex::decode(evidence_hash_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
-    let arr: [u8; 32] = evidence_bytes
-        .try_into()
-        .map_err(|_| JsValue::from_str("evidence hash must be 32 bytes"))?;
-    let evidence_hash = exo_core::Hash256::from_bytes(arr);
-
-    let mut clock = exo_core::hlc::HybridClock::new();
-    let timestamp = clock.now();
+    let evidence_hash = parse_hash(evidence_hash_hex, "evidence hash")?;
+    let created_at = exo_core::types::Timestamp::new(created_at_ms, created_at_logical);
 
     let challenge = decision_forum::contestation::file_challenge(
-        id,
-        &challenger,
-        ground,
-        evidence_hash,
-        timestamp,
-    );
+        decision_forum::contestation::ChallengeInput {
+            id: challenge_id,
+            decision_id,
+            challenger,
+            ground,
+            evidence_hash,
+            created_at,
+        },
+    )
+    .map_err(|e| JsValue::from_str(&format!("Challenge error: {e}")))?;
     to_js_value(&challenge)
 }
 
 /// Propose an accountability action (GOV-012)
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+// WASM exports cannot accept Rust input structs directly; the explicit
+// metadata fields keep provenance caller-supplied across the JS boundary.
 pub fn wasm_propose_accountability(
+    action_id: &str,
     target_did: &str,
     proposer_did: &str,
     action_type_json: &str,
     reason: &str,
     evidence_hash_hex: &str,
+    proposed_at_ms: u64,
+    proposed_at_logical: u32,
 ) -> Result<JsValue, JsValue> {
+    let action_id = parse_uuid(action_id)?;
     let target = exo_core::Did::new(target_did)
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
     let proposer = exo_core::Did::new(proposer_did)
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
     let action_type: decision_forum::accountability::AccountabilityActionType =
         from_json_str(action_type_json)?;
-    let evidence_bytes =
-        hex::decode(evidence_hash_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
-    let arr: [u8; 32] = evidence_bytes
-        .try_into()
-        .map_err(|_| JsValue::from_str("evidence hash must be 32 bytes"))?;
-    let evidence_hash = exo_core::Hash256::from_bytes(arr);
-
-    let mut clock = exo_core::hlc::HybridClock::new();
-    let timestamp = clock.now();
+    let evidence_hash = parse_hash(evidence_hash_hex, "evidence hash")?;
+    let proposed_at = exo_core::types::Timestamp::new(proposed_at_ms, proposed_at_logical);
 
     let action = decision_forum::accountability::propose(
-        action_type,
-        &target,
-        &proposer,
-        reason,
-        evidence_hash,
-        timestamp,
-    );
+        decision_forum::accountability::AccountabilityInput {
+            id: action_id,
+            action_type,
+            target,
+            proposer,
+            reason: reason.into(),
+            evidence_hash,
+            proposed_at,
+        },
+    )
+    .map_err(|e| JsValue::from_str(&format!("Accountability error: {e}")))?;
     to_js_value(&action)
 }
 
@@ -540,18 +552,28 @@ pub fn wasm_verify_quorum_precondition(
     registry_json: &str,
     class_json: &str,
     eligible_voters: usize,
+    eligible_human_voters: usize,
 ) -> Result<bool, JsValue> {
     let registry: decision_forum::quorum::QuorumRegistry = from_json_str(registry_json)?;
     let class: decision_forum::decision_object::DecisionClass = from_json_str(class_json)?;
-    decision_forum::quorum::verify_quorum_precondition(&registry, class, eligible_voters)
-        .map_err(|e| JsValue::from_str(&format!("Precondition error: {e}")))
+    decision_forum::quorum::verify_quorum_precondition(
+        &registry,
+        class,
+        eligible_voters,
+        eligible_human_voters,
+    )
+    .map_err(|e| JsValue::from_str(&format!("Precondition error: {e}")))
 }
 
 // ── Emergency Protocol ───────────────────────────────────────────
 
 /// Create an emergency action under the given policy.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+// Mirrors the emergency action provenance contract across the JS/Rust
+// boundary without rebuilding IDs or HLC timestamps inside the bridge.
 pub fn wasm_create_emergency_action(
+    action_id: &str,
     action_type_json: &str,
     actor_did: &str,
     justification: &str,
@@ -559,28 +581,28 @@ pub fn wasm_create_emergency_action(
     evidence_hash_hex: &str,
     policy_json: &str,
     timestamp_ms: u64,
+    timestamp_logical: u32,
 ) -> Result<JsValue, JsValue> {
+    let action_id = parse_uuid(action_id)?;
     let action_type: decision_forum::emergency::EmergencyActionType =
         from_json_str(action_type_json)?;
     let actor =
         exo_core::Did::new(actor_did).map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
-    let evidence_bytes =
-        hex::decode(evidence_hash_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
-    let arr: [u8; 32] = evidence_bytes
-        .try_into()
-        .map_err(|_| JsValue::from_str("evidence hash must be 32 bytes"))?;
-    let evidence_hash = exo_core::Hash256::from_bytes(arr);
+    let evidence_hash = parse_hash(evidence_hash_hex, "evidence hash")?;
     let policy: decision_forum::emergency::EmergencyPolicy = from_json_str(policy_json)?;
-    let ts = exo_core::types::Timestamp::new(timestamp_ms, 0);
+    let ts = exo_core::types::Timestamp::new(timestamp_ms, timestamp_logical);
 
     let action = decision_forum::emergency::create_emergency_action(
-        action_type,
-        &actor,
-        justification,
-        monetary_cap_cents,
-        evidence_hash,
+        decision_forum::emergency::EmergencyActionInput {
+            id: action_id,
+            action_type,
+            actor,
+            justification: justification.into(),
+            monetary_cap_cents,
+            evidence_hash,
+            created_at: ts,
+        },
         &policy,
-        ts,
     )
     .map_err(|e| JsValue::from_str(&format!("Emergency error: {e}")))?;
     to_js_value(&action)
@@ -719,5 +741,40 @@ pub fn wasm_verify_forum_authority(authority_json: &str) -> Result<JsValue, JsVa
     match decision_forum::authority::verify_forum_authority(&authority) {
         Ok(()) => to_js_value(&serde_json::json!({"ok": true})),
         Err(e) => to_js_value(&serde_json::json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
+fn parse_uuid(value: &str) -> Result<uuid::Uuid, JsValue> {
+    value
+        .parse()
+        .map_err(|e| JsValue::from_str(&format!("UUID error: {e}")))
+}
+
+fn parse_hash(value: &str, label: &str) -> Result<exo_core::Hash256, JsValue> {
+    let bytes = hex::decode(value).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| JsValue::from_str(&format!("{label} must be 32 bytes")))?;
+    Ok(exo_core::Hash256::from_bytes(arr))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn decision_forum_bridge_does_not_synthesize_clock_metadata() {
+        let source = include_str!("decision_forum_bindings.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+
+        assert!(
+            !production.contains("HybridClock::new()"),
+            "decision-forum WASM exports must require caller-supplied HLC metadata"
+        );
+        assert!(
+            !production.contains("Uuid::new_v4"),
+            "decision-forum WASM exports must require caller-supplied UUID metadata"
+        );
     }
 }

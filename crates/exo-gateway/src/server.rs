@@ -1,27 +1,28 @@
 //! HTTP server skeleton — gateway configuration, lifecycle, and axum routing.
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json},
     routing::{get, post},
 };
-use exo_core::Did;
+use exo_core::{Did, Hash256, Signature, Timestamp, hlc::HybridClock};
 use exo_gatekeeper::{
     invariants::InvariantSet,
     kernel::{ActionRequest as GkActionRequest, AdjudicationContext, Kernel, Verdict},
     types::{AuthorityChain, BailmentState, Permission, PermissionSet},
 };
 use exo_governance::conflict::ConflictDeclaration;
-use exo_identity::registry::DidRegistry;
-use exo_identity::{did::DidDocument, registry::LocalDidRegistry};
+use exo_identity::{
+    did::DidDocument,
+    registry::{DidRegistry, LocalDidRegistry},
+};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
-use axum::extract::DefaultBodyLimit;
 
 /// Maximum accepted request body size, in bytes (1 MiB).
 ///
@@ -32,6 +33,8 @@ use axum::extract::DefaultBodyLimit;
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 
 use crate::{
+    auth::{AuthenticatedActor, AuthenticationMetadata, Request as AuthRequest, authenticate},
+    db,
     error::{GatewayError, Result},
     graphql,
     handlers::{health_handler as db_health_handler, vote_handler},
@@ -111,26 +114,49 @@ pub struct AppState {
     pub registry: Arc<RwLock<LocalDidRegistry>>,
     /// Constitutional kernel — enforces the 8 invariants on every action.
     pub kernel: Arc<Kernel>,
-    /// Wall-clock milliseconds at server start, used to compute uptime.
-    start_ms: u64,
+    /// HLC timestamp captured at server start, used to compute uptime.
+    start_time: Timestamp,
+    /// HLC source used for default-on gateway runtime timestamps.
+    clock: Arc<Mutex<HybridClock>>,
 }
 
 impl AppState {
     /// Create a new `AppState` with an optional database pool and a shared DID registry.
     pub fn new(pool: Option<sqlx::PgPool>, registry: Arc<RwLock<LocalDidRegistry>>) -> Self {
+        Self::new_with_clock(pool, registry, HybridClock::new())
+    }
+
+    /// Create a new `AppState` with an explicit HLC source.
+    pub fn new_with_clock(
+        pool: Option<sqlx::PgPool>,
+        registry: Arc<RwLock<LocalDidRegistry>>,
+        mut clock: HybridClock,
+    ) -> Self {
         // Bootstrap kernel with the all-invariants set.
         // constitution bytes are hashed for immutability verification.
         let kernel = Kernel::new(b"exochain-constitution-v1", InvariantSet::all());
+        let start_time = clock.now();
         Self {
             pool,
             registry,
             kernel: Arc::new(kernel),
-            start_ms: now_ms(),
+            start_time,
+            clock: Arc::new(Mutex::new(clock)),
+        }
+    }
+
+    fn now_ms(&self) -> u64 {
+        match self.clock.lock() {
+            Ok(mut clock) => clock.now().physical_ms,
+            Err(_) => {
+                tracing::error!("Gateway AppState HLC mutex poisoned while reading timestamp");
+                0
+            }
         }
     }
 
     fn uptime_seconds(&self) -> u64 {
-        now_ms().saturating_sub(self.start_ms) / 1000
+        self.now_ms().saturating_sub(self.start_time.physical_ms) / 1000
     }
 
     /// Return the DB pool or a 503 if none is configured.
@@ -174,7 +200,8 @@ impl AppState {
         // Production path — compiled only when the feature flag is set.
         #[cfg(feature = "production-db")]
         if let Some(pool) = &self.pool {
-            match build_adjudication_context_from_db(pool, actor).await {
+            let now = i64::try_from(self.now_ms()).unwrap_or(i64::MAX);
+            match build_adjudication_context_from_db(pool, actor, now).await {
                 Ok(ctx) => return ctx,
                 Err(e) => {
                     tracing::warn!(
@@ -201,8 +228,287 @@ impl AppState {
     }
 }
 
-fn now_ms() -> u64 {
-    exo_core::Timestamp::now_utc().physical_ms
+const GATEWAY_SERVER_METADATA_INITIATIVE: &str =
+    "Initiatives/fix-gateway-server-deterministic-metadata.md";
+const GATEWAY_SESSION_LOGIN_DOMAIN: &str = "exo.gateway.session_login.v1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SessionIssueMetadata {
+    created_at: i64,
+    expires_at: i64,
+}
+
+impl SessionIssueMetadata {
+    fn from_body(body: &serde_json::Value) -> Result<Self> {
+        let created_at = required_nonzero_i64(body, "createdAt")?;
+        let expires_at = required_nonzero_i64(body, "expiresAt")?;
+        if expires_at <= created_at {
+            return Err(metadata_error(
+                "session expiresAt must be greater than caller-supplied createdAt",
+            ));
+        }
+        Ok(Self {
+            created_at,
+            expires_at,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionLoginProof {
+    timestamp: Timestamp,
+    observed_at: Timestamp,
+    signature: Signature,
+}
+
+impl SessionLoginProof {
+    fn from_body(body: &serde_json::Value) -> Result<Self> {
+        let timestamp = Timestamp::new(
+            required_nonzero_u64(body, "authTimestampPhysicalMs")?,
+            required_u32(body, "authTimestampLogical")?,
+        );
+        let observed_at = Timestamp::new(
+            required_nonzero_u64(body, "observedAt")?,
+            required_u32(body, "observedAtLogical")?,
+        );
+        Ok(Self {
+            timestamp,
+            observed_at,
+            signature: required_ed25519_signature_hex(body, "signature")?,
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct SessionLoginPayload<'a> {
+    domain: &'static str,
+    did: &'a str,
+    created_at: i64,
+    expires_at: i64,
+    auth_timestamp_physical_ms: u64,
+    auth_timestamp_logical: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SessionRefreshMetadata {
+    observed_at: i64,
+    expires_at: i64,
+}
+
+impl SessionRefreshMetadata {
+    fn from_body(body: &serde_json::Value) -> Result<Self> {
+        let observed_at = required_nonzero_i64(body, "observedAt")?;
+        let expires_at = required_nonzero_i64(body, "expiresAt")?;
+        if expires_at <= observed_at {
+            return Err(metadata_error(
+                "session refresh expiresAt must be greater than caller-supplied observedAt",
+            ));
+        }
+        Ok(Self {
+            observed_at,
+            expires_at,
+        })
+    }
+
+    fn from_optional_body(body: Option<&serde_json::Value>) -> Result<Self> {
+        let body = body.ok_or_else(|| {
+            metadata_error(
+                "session refresh requires caller-supplied observedAt and expiresAt metadata",
+            )
+        })?;
+        Self::from_body(body)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LayoutTemplateMetadata {
+    created_at: i64,
+    updated_at: i64,
+}
+
+impl LayoutTemplateMetadata {
+    fn from_body(body: &serde_json::Value) -> Result<Self> {
+        let created_at = required_nonzero_i64(body, "createdAt")?;
+        let updated_at = required_nonzero_i64(body, "updatedAt")?;
+        if updated_at < created_at {
+            return Err(metadata_error(
+                "layout updatedAt must not be earlier than caller-supplied createdAt",
+            ));
+        }
+        Ok(Self {
+            created_at,
+            updated_at,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FeedbackIssueCreateMetadata {
+    id: String,
+    created_at: i64,
+}
+
+impl FeedbackIssueCreateMetadata {
+    fn from_body(body: &serde_json::Value) -> Result<Self> {
+        Ok(Self {
+            id: required_nonempty_string(body, "id")?,
+            created_at: required_nonzero_i64(body, "createdAt")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FeedbackIssueUpdateMetadata {
+    updated_at: i64,
+}
+
+impl FeedbackIssueUpdateMetadata {
+    fn from_body(body: &serde_json::Value) -> Result<Self> {
+        Ok(Self {
+            updated_at: required_nonzero_i64(body, "updatedAt")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AdvancePaceMetadata {
+    queued_at: i64,
+}
+
+impl AdvancePaceMetadata {
+    fn from_optional_body(body: Option<&serde_json::Value>) -> Result<Self> {
+        let body = body.ok_or_else(|| {
+            metadata_error("advance pace requires caller-supplied queuedAt metadata")
+        })?;
+        Ok(Self {
+            queued_at: required_nonzero_i64(body, "queuedAt")?,
+        })
+    }
+}
+
+fn required_nonempty_string(body: &serde_json::Value, field: &str) -> Result<String> {
+    let value = body
+        .get(field)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| metadata_error(format!("{field} must be caller-supplied")))?;
+    if value.trim().is_empty() {
+        return Err(metadata_error(format!("{field} must not be empty")));
+    }
+    Ok(value.to_owned())
+}
+
+fn required_nonzero_i64(body: &serde_json::Value, field: &str) -> Result<i64> {
+    let value = body
+        .get(field)
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| metadata_error(format!("{field} must be caller-supplied")))?;
+    if value <= 0 {
+        return Err(metadata_error(format!(
+            "{field} must be a positive non-zero epoch millisecond"
+        )));
+    }
+    Ok(value)
+}
+
+fn required_nonzero_u64(body: &serde_json::Value, field: &str) -> Result<u64> {
+    let value = body
+        .get(field)
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| metadata_error(format!("{field} must be caller-supplied")))?;
+    if value == 0 {
+        return Err(metadata_error(format!(
+            "{field} must be a positive non-zero HLC physical millisecond"
+        )));
+    }
+    Ok(value)
+}
+
+fn required_u32(body: &serde_json::Value, field: &str) -> Result<u32> {
+    let value = body
+        .get(field)
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| metadata_error(format!("{field} must be caller-supplied")))?;
+    u32::try_from(value).map_err(|_| metadata_error(format!("{field} must fit in u32")))
+}
+
+fn required_ed25519_signature_hex(body: &serde_json::Value, field: &str) -> Result<Signature> {
+    let encoded = required_nonempty_string(body, field)?;
+    let bytes = hex::decode(&encoded)
+        .map_err(|e| metadata_error(format!("{field} must be hex-encoded Ed25519: {e}")))?;
+    let signature_bytes: [u8; 64] = bytes.try_into().map_err(|bytes: Vec<u8>| {
+        metadata_error(format!("{field} must be 64 bytes, got {}", bytes.len()))
+    })?;
+    let signature = Signature::Ed25519(signature_bytes);
+    if signature.is_empty() {
+        return Err(metadata_error(format!(
+            "{field} must not be empty or all-zero"
+        )));
+    }
+    Ok(signature)
+}
+
+fn session_login_payload_hash(
+    did: &str,
+    metadata: &SessionIssueMetadata,
+    timestamp: &Timestamp,
+) -> Result<Hash256> {
+    let payload = SessionLoginPayload {
+        domain: GATEWAY_SESSION_LOGIN_DOMAIN,
+        did,
+        created_at: metadata.created_at,
+        expires_at: metadata.expires_at,
+        auth_timestamp_physical_ms: timestamp.physical_ms,
+        auth_timestamp_logical: timestamp.logical,
+    };
+    let mut encoded = Vec::new();
+    ciborium::into_writer(&payload, &mut encoded)
+        .map_err(|e| GatewayError::Internal(format!("session login payload CBOR: {e:?}")))?;
+    Ok(Hash256::digest(&encoded))
+}
+
+fn authenticate_session_login(
+    did: &str,
+    metadata: &SessionIssueMetadata,
+    proof: &SessionLoginProof,
+    registry: &dyn DidRegistry,
+) -> Result<AuthenticatedActor> {
+    let body_hash = session_login_payload_hash(did, metadata, &proof.timestamp)?;
+    let request = AuthRequest {
+        actor_did: did.to_owned(),
+        action: "gateway_session_login".to_owned(),
+        body_hash,
+        signature: proof.signature.clone(),
+        timestamp: proof.timestamp,
+    };
+    let auth_metadata = AuthenticationMetadata::new(proof.observed_at)?;
+    authenticate(&request, registry, auth_metadata)
+}
+
+fn metadata_error(reason: impl Into<String>) -> GatewayError {
+    GatewayError::BadRequest(format!(
+        "{}; see {}",
+        reason.into(),
+        GATEWAY_SERVER_METADATA_INITIATIVE
+    ))
+}
+
+fn metadata_error_response(error: GatewayError) -> axum::response::Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({
+            "error": "missing_or_invalid_caller_supplied_metadata",
+            "message": error.to_string(),
+            "initiative": GATEWAY_SERVER_METADATA_INITIATIVE
+        })),
+    )
+        .into_response()
+}
+
+fn generate_session_token() -> Result<String> {
+    let mut token_bytes = [0u8; 32];
+    getrandom::getrandom(&mut token_bytes)
+        .map_err(|e| GatewayError::Internal(format!("session token entropy unavailable: {e}")))?;
+    Ok(hex::encode(token_bytes))
 }
 
 // ---------------------------------------------------------------------------
@@ -222,13 +528,13 @@ fn now_ms() -> u64 {
 async fn build_adjudication_context_from_db(
     pool: &sqlx::PgPool,
     actor: &Did,
+    now: i64,
 ) -> Result<AdjudicationContext> {
     use exo_gatekeeper::types::{
         AuthorityChain as GkChain, BailmentState as GkBailment, ConsentRecord, GovernmentBranch,
         Role,
     };
 
-    let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
     let actor_str = actor.as_str();
 
     let role_rows = crate::db::load_agent_roles(pool, actor_str, now)
@@ -595,12 +901,12 @@ async fn handle_decision_get(
 
 /// GET /api/v1/audit/:decision_id — retrieve the audit trail for a decision.
 ///
-/// Queries the `audit_log` table populated by the vote handler.  Requires a DB pool.
+/// Queries the `audit_entries` table populated by the vote handler.  Requires a DB pool.
 async fn handle_audit_trail(
     State(state): State<AppState>,
     Path(decision_id): Path<String>,
 ) -> impl IntoResponse {
-    let db = match state.require_db() {
+    let pool = match state.require_db() {
         Ok(pool) => pool,
         Err(_) => {
             return (
@@ -613,25 +919,22 @@ async fn handle_audit_trail(
                 .into_response();
         }
     };
-    match sqlx::query_as::<_, (String, String, String, serde_json::Value, i64)>(
-        "SELECT id, event_type, actor, payload, created_at \
-         FROM audit_log WHERE actor = $1 OR payload->>'decision_id' = $1 \
-         ORDER BY created_at ASC",
-    )
-    .bind(&decision_id)
-    .fetch_all(db)
-    .await
-    {
+    match db::list_audit_entries_for_decision(pool, &decision_id).await {
         Ok(rows) => {
             let entries: Vec<serde_json::Value> = rows
                 .into_iter()
-                .map(|(id, event_type, actor, payload, created_at)| {
+                .map(|entry| {
                     serde_json::json!({
-                        "id": id,
-                        "event_type": event_type,
-                        "actor": actor,
-                        "payload": payload,
-                        "created_at": created_at,
+                        "sequence": entry.sequence,
+                        "prev_hash": entry.prev_hash,
+                        "event_hash": entry.event_hash,
+                        "event_type": entry.event_type,
+                        "actor": entry.actor,
+                        "tenant_id": entry.tenant_id,
+                        "decision_id": entry.decision_id,
+                        "timestamp_physical_ms": entry.timestamp_physical_ms,
+                        "timestamp_logical": entry.timestamp_logical,
+                        "entry_hash": entry.entry_hash,
                     })
                 })
                 .collect();
@@ -679,9 +982,11 @@ async fn handle_agents_enroll(
 
 /// POST /api/v1/auth/login — authenticate a DID and issue a session token.
 ///
-/// Body: `{ "did": "did:exo:alice", "signature": "..." }`
+/// Body includes the actor DID, session metadata, HLC authentication metadata,
+/// and an Ed25519 `signature` hex string over the canonical domain-tagged
+/// session-login payload.
 ///
-/// Returns a UUID session token stored in the `sessions` table:
+/// Returns a 256-bit bearer session token stored in the `sessions` table:
 /// ```sql
 /// CREATE TABLE IF NOT EXISTS sessions (
 ///     token       TEXT    PRIMARY KEY,
@@ -720,46 +1025,59 @@ async fn handle_auth_login(
                 .into_response();
         }
     };
-    // Verify the DID is registered — reject unknown actors.
+    if Did::new(&did_str).is_err() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "invalid DID format" })),
+        )
+            .into_response();
+    }
+    let metadata = match SessionIssueMetadata::from_body(&body) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
+    let proof = match SessionLoginProof::from_body(&body) {
+        Ok(proof) => proof,
+        Err(e) => return metadata_error_response(e),
+    };
     {
-        let did = match Did::new(&did_str) {
-            Ok(d) => d,
-            Err(_) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({ "error": "invalid DID format" })),
-                )
-                    .into_response();
-            }
-        };
         let reg = state.registry.read().unwrap_or_else(|e| e.into_inner());
-        if reg.resolve(&did).is_none() {
+        if let Err(e) = authenticate_session_login(&did_str, &metadata, &proof, &*reg) {
             return (
                 StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({ "error": "DID not registered" })),
+                Json(serde_json::json!({
+                    "error": "authentication failed",
+                    "message": e.to_string()
+                })),
             )
                 .into_response();
         }
     }
-    // Issue a 1-hour session token.
-    let token = uuid::Uuid::new_v4().to_string();
-    let now_ms = i64::try_from(now_ms()).unwrap_or(i64::MAX);
-    let expires_ms = now_ms.saturating_add(3_600_000); // +1 hour
+    let token = match generate_session_token() {
+        Ok(token) => token,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
     match sqlx::query(
         "INSERT INTO sessions (token, actor_did, created_at, expires_at, revoked) \
          VALUES ($1, $2, $3, $4, false)",
     )
     .bind(&token)
     .bind(&did_str)
-    .bind(now_ms)
-    .bind(expires_ms)
+    .bind(metadata.created_at)
+    .bind(metadata.expires_at)
     .execute(db)
     .await
     {
         Ok(_) => Json(serde_json::json!({
             "token": token,
             "actor_did": did_str,
-            "expires_at": expires_ms,
+            "expires_at": metadata.expires_at,
         }))
         .into_response(),
         Err(e) => (
@@ -783,11 +1101,13 @@ async fn handle_auth_token(
 
 /// POST /api/v1/auth/refresh — extend an existing session.
 ///
-/// Requires `Authorization: Bearer <token>`.  Resets `expires_at` to now + 1h.
+/// Requires `Authorization: Bearer <token>` plus a JSON body with caller-supplied
+/// `observedAt` and replacement `expiresAt` metadata.
 /// Returns 401 when the token is missing, expired, or revoked; 503 without DB.
 async fn handle_auth_refresh(
     State(state): State<AppState>,
     headers: HeaderMap,
+    body: Option<Json<serde_json::Value>>,
 ) -> impl IntoResponse {
     let db = match state.require_db() {
         Ok(pool) => pool,
@@ -812,15 +1132,18 @@ async fn handle_auth_refresh(
                 .into_response();
         }
     };
-    let now_ms = i64::try_from(now_ms()).unwrap_or(i64::MAX);
-    let new_expires = now_ms.saturating_add(3_600_000);
+    let body_ref = body.as_ref().map(|Json(value)| value);
+    let metadata = match SessionRefreshMetadata::from_optional_body(body_ref) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
     match sqlx::query(
         "UPDATE sessions SET expires_at = $1 \
          WHERE token = $2 AND expires_at > $3 AND revoked = false",
     )
-    .bind(new_expires)
+    .bind(metadata.expires_at)
     .bind(&token)
-    .bind(now_ms)
+    .bind(metadata.observed_at)
     .execute(db)
     .await
     {
@@ -831,7 +1154,7 @@ async fn handle_auth_refresh(
             .into_response(),
         Ok(_) => Json(serde_json::json!({
             "token": token,
-            "expires_at": new_expires,
+            "expires_at": metadata.expires_at,
         }))
         .into_response(),
         Err(e) => (
@@ -920,6 +1243,7 @@ async fn handle_auth_saml_callback() -> (StatusCode, Json<serde_json::Value>) {
 async fn handle_advance_pace(
     State(state): State<AppState>,
     Path(did_str): Path<String>,
+    body: Option<Json<serde_json::Value>>,
 ) -> impl IntoResponse {
     let did = match Did::new(&did_str) {
         Ok(d) => d,
@@ -968,13 +1292,17 @@ async fn handle_advance_pace(
                 .into_response();
         }
     };
-    let queued_at = now_ms();
+    let body_ref = body.as_ref().map(|Json(value)| value);
+    let metadata = match AdvancePaceMetadata::from_optional_body(body_ref) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
     (
         StatusCode::ACCEPTED,
         Json(serde_json::json!({
             "status": "pace_advanced",
             "actor_did": did_str,
-            "queued_at": queued_at,
+            "queued_at": metadata.queued_at,
         })),
     )
         .into_response()
@@ -1045,10 +1373,7 @@ async fn handle_layout_template_put(
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("Untitled");
-    let layout_json = body
-        .get("layout")
-        .cloned()
-        .unwrap_or(serde_json::json!([]));
+    let layout_json = body.get("layout").cloned().unwrap_or(serde_json::json!([]));
     let hidden_panels = body
         .get("hiddenPanels")
         .cloned()
@@ -1057,15 +1382,10 @@ async fn handle_layout_template_put(
         .get("isBuiltIn")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let now_ms = i64::try_from(now_ms()).unwrap_or(i64::MAX);
-    let updated_at = body
-        .get("updatedAt")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(now_ms);
-    let created_at = body
-        .get("createdAt")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(now_ms);
+    let metadata = match LayoutTemplateMetadata::from_body(&body) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
 
     // Extract user DID from bearer token session if available.
     // For now, accept an optional `userDid` field in the body.
@@ -1083,8 +1403,8 @@ async fn handle_layout_template_put(
         &layout_json,
         &hidden_panels,
         is_built_in,
-        created_at,
-        updated_at,
+        metadata.created_at,
+        metadata.updated_at,
     )
     .await
     {
@@ -1136,9 +1456,7 @@ async fn handle_layout_template_delete(
 }
 
 /// GET /api/v1/layout-templates — list all layout templates.
-async fn handle_layout_templates_list(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn handle_layout_templates_list(State(state): State<AppState>) -> impl IntoResponse {
     let db = match state.require_db() {
         Ok(pool) => pool,
         Err(_) => {
@@ -1210,11 +1528,10 @@ async fn handle_feedback_issue_create(
                 .into_response();
         }
     };
-    let id = body
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_owned())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let metadata = match FeedbackIssueCreateMetadata::from_body(&body) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
     let description = body
         .get("description")
         .and_then(|v| v.as_str())
@@ -1238,15 +1555,10 @@ async fn handle_feedback_issue_create(
     let reporter_did = reporter_did_owned.as_deref();
     let widget_state = body.get("widgetState");
     let browser_info = body.get("browserInfo");
-    let now_ms = i64::try_from(now_ms()).unwrap_or(i64::MAX);
-    let created_at = body
-        .get("createdAt")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(now_ms);
 
     match crate::db::insert_feedback_issue(
         db,
-        &id,
+        &metadata.id,
         &title,
         description,
         severity,
@@ -1256,13 +1568,13 @@ async fn handle_feedback_issue_create(
         reporter_did,
         widget_state,
         browser_info,
-        created_at,
+        metadata.created_at,
     )
     .await
     {
         Ok(()) => (
             StatusCode::CREATED,
-            Json(serde_json::json!({ "id": id, "status": "filed" })),
+            Json(serde_json::json!({ "id": metadata.id, "status": "filed" })),
         )
             .into_response(),
         Err(e) => (
@@ -1274,9 +1586,7 @@ async fn handle_feedback_issue_create(
 }
 
 /// GET /api/v1/feedback-issues — list feedback issues.
-async fn handle_feedback_issues_list(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn handle_feedback_issues_list(State(state): State<AppState>) -> impl IntoResponse {
     let db = match state.require_db() {
         Ok(pool) => pool,
         Err(_) => {
@@ -1334,7 +1644,10 @@ async fn handle_feedback_issue_update(
                 .into_response();
         }
     };
-    let status = body.get("status").and_then(|v| v.as_str()).unwrap_or("open");
+    let status = body
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("open");
     let agent_team_owned = body
         .get("assignedAgentTeam")
         .and_then(|v| v.as_str())
@@ -1345,9 +1658,20 @@ async fn handle_feedback_issue_update(
         .and_then(|v| v.as_str())
         .map(|s| s.to_owned());
     let notes = notes_owned.as_deref();
-    let now_ms = i64::try_from(now_ms()).unwrap_or(i64::MAX);
+    let metadata = match FeedbackIssueUpdateMetadata::from_body(&body) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
 
-    match crate::db::update_feedback_issue_status(db, &id, status, agent_team, notes, now_ms).await
+    match crate::db::update_feedback_issue_status(
+        db,
+        &id,
+        status,
+        agent_team,
+        notes,
+        metadata.updated_at,
+    )
+    .await
     {
         Ok(true) => (
             StatusCode::OK,
@@ -1529,15 +1853,53 @@ pub async fn serve_with_extra_routes(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use axum::{body::Body, http::Request};
-    use exo_core::Timestamp;
-    use exo_identity::did::DidDocument;
+    use exo_core::{
+        Timestamp,
+        crypto::{generate_keypair, sign},
+        hlc::HybridClock,
+    };
+    use exo_identity::did::{DidDocument, VerificationMethod};
     use tower::ServiceExt;
 
     use super::*; // for .oneshot()
 
     fn state() -> AppState {
         AppState::new(None, Arc::new(RwLock::new(LocalDidRegistry::new())))
+    }
+
+    #[test]
+    fn gateway_uptime_uses_injected_hlc_source() {
+        let wall = Arc::new(AtomicU64::new(80_000));
+        let wall_for_clock = Arc::clone(&wall);
+        let state = AppState::new_with_clock(
+            None,
+            Arc::new(RwLock::new(LocalDidRegistry::new())),
+            HybridClock::with_wall_clock(move || wall_for_clock.load(Ordering::Relaxed)),
+        );
+
+        wall.store(86_000, Ordering::Relaxed);
+
+        assert_eq!(state.uptime_seconds(), 6);
+    }
+
+    #[test]
+    fn gateway_server_runtime_sources_do_not_read_wall_clock_directly() {
+        let source = include_str!("server.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("tests marker present");
+
+        let timestamp_now = format!("{}{}", "Timestamp::", "now_utc()");
+        let system_time_now = format!("{}{}", "SystemTime::", "now()");
+        let instant_now = format!("{}{}", "Instant::", "now()");
+
+        assert!(!production.contains(&timestamp_now));
+        assert!(!production.contains(&system_time_now));
+        assert!(!production.contains(&instant_now));
     }
 
     /// Build a minimal DidDocument for use in registration tests.
@@ -1554,6 +1916,46 @@ mod tests {
             updated: Timestamp::ZERO,
             revoked: false,
         }
+    }
+
+    fn signing_registry() -> (Arc<RwLock<LocalDidRegistry>>, exo_core::SecretKey) {
+        let did = Did::new("did:exo:login-alice").unwrap();
+        let (pk, sk) = generate_keypair();
+        let multibase = format!("z{}", bs58::encode(pk.as_bytes()).into_string());
+        let doc = DidDocument {
+            id: did.clone(),
+            public_keys: vec![pk],
+            authentication: vec![],
+            verification_methods: vec![VerificationMethod {
+                id: "did:exo:login-alice#key-1".into(),
+                key_type: "Ed25519VerificationKey2020".into(),
+                controller: did,
+                public_key_multibase: multibase,
+                version: 1,
+                active: true,
+                valid_from: 0,
+                revoked_at: None,
+            }],
+            hybrid_verification_methods: vec![],
+            service_endpoints: vec![],
+            created: Timestamp::ZERO,
+            updated: Timestamp::ZERO,
+            revoked: false,
+        };
+        let registry = Arc::new(RwLock::new(LocalDidRegistry::new()));
+        registry.write().unwrap().register(doc).unwrap();
+        (registry, sk)
+    }
+
+    async fn gateway_test_pool() -> Option<sqlx::PgPool> {
+        let url = std::env::var("DATABASE_URL").ok()?;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .ok()?;
+        sqlx::migrate!("./migrations").run(&pool).await.ok()?;
+        Some(pool)
     }
 
     // --- GatewayConfig / start() (existing tests preserved) ---
@@ -1892,6 +2294,90 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
+    #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+    #[tokio::test]
+    async fn graphql_post_default_off_returns_403_with_initiative() {
+        let app = build_router(state());
+        let body = serde_json::json!({
+            "query": "mutation { createDecision(input: { tenantId: \"t1\", title: \"x\", body: \"y\", decisionClass: \"Routine\" }) { id } }"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/graphql")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(val["error"], "unaudited_graphql_api_disabled");
+        assert_eq!(val["feature_flag"], "unaudited-gateway-graphql-api");
+        assert_eq!(
+            val["initiative"],
+            "Initiatives/fix-spline-r1-graphql-auth-gate.md"
+        );
+    }
+
+    #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+    #[tokio::test]
+    async fn graphql_ws_default_off_returns_403_with_initiative() {
+        let app = build_router(state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/graphql/ws")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(val["feature_flag"], "unaudited-gateway-graphql-api");
+        assert_eq!(
+            val["initiative"],
+            "Initiatives/fix-spline-r1-graphql-auth-gate.md"
+        );
+    }
+
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
+    #[tokio::test]
+    async fn graphql_post_feature_on_preserves_existing_mutation_behavior() {
+        let app = build_router(state());
+        let body = serde_json::json!({
+            "query": "mutation { createDecision(input: { tenantId: \"t1\", title: \"x\", body: \"y\", decisionClass: \"Routine\" }) { id status author } }"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/graphql")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(val["errors"].is_null(), "unexpected errors: {val}");
+        assert_eq!(val["data"]["createDecision"]["status"], "CREATED");
+        assert_eq!(val["data"]["createDecision"]["author"], "system");
+    }
+
     #[tokio::test]
     async fn vote_route_without_authority_returns_403() {
         let body = serde_json::to_string(&serde_json::json!({
@@ -1900,6 +2386,8 @@ mod tests {
             "choice": "Approve",
             "actor_kind": "Human",
             "rationale": null,
+            "timestamp_physical_ms": 7000,
+            "timestamp_logical": 0,
         }))
         .unwrap();
         let app = build_router(state());
@@ -2049,6 +2537,220 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auth_login_valid_signature_creates_session_row_with_caller_metadata() {
+        use sqlx::Row;
+
+        let pool = match gateway_test_pool().await {
+            Some(pool) => pool,
+            None => return,
+        };
+        let did = "did:exo:login-alice";
+        sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
+            .bind(did)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let (registry, sk) = signing_registry();
+        let metadata = SessionIssueMetadata {
+            created_at: 10_000,
+            expires_at: 20_000,
+        };
+        let timestamp = Timestamp::new(10_000, 0);
+        let observed_at = Timestamp::new(10_000, 0);
+        let body_hash = session_login_payload_hash(did, &metadata, &timestamp).unwrap();
+        let signature = sign(body_hash.as_bytes(), &sk);
+        let body = serde_json::json!({
+            "did": did,
+            "createdAt": metadata.created_at,
+            "expiresAt": metadata.expires_at,
+            "authTimestampPhysicalMs": timestamp.physical_ms,
+            "authTimestampLogical": timestamp.logical,
+            "observedAt": observed_at.physical_ms,
+            "observedAtLogical": observed_at.logical,
+            "signature": hex::encode(signature.as_bytes())
+        });
+
+        let response = handle_auth_login(
+            State(AppState::new(Some(pool.clone()), registry)),
+            Json(body),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let rows = sqlx::query(
+            "SELECT actor_did, created_at, expires_at, revoked \
+             FROM sessions WHERE actor_did = $1",
+        )
+        .bind(did)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get::<String, _>("actor_did"), did);
+        assert_eq!(rows[0].get::<i64, _>("created_at"), metadata.created_at);
+        assert_eq!(rows[0].get::<i64, _>("expires_at"), metadata.expires_at);
+        assert!(!rows[0].get::<bool, _>("revoked"));
+
+        sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
+            .bind(did)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn session_login_proof_rejects_missing_signature() {
+        let body = serde_json::json!({
+            "authTimestampPhysicalMs": 10_000,
+            "authTimestampLogical": 0,
+            "observedAt": 10_000,
+            "observedAtLogical": 0
+        });
+        let err = SessionLoginProof::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("signature")),
+            "expected signature refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn session_login_proof_rejects_empty_signature() {
+        let body = serde_json::json!({
+            "authTimestampPhysicalMs": 10_000,
+            "authTimestampLogical": 0,
+            "observedAt": 10_000,
+            "observedAtLogical": 0,
+            "signature": ""
+        });
+        let err = SessionLoginProof::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("signature")),
+            "expected empty signature refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn session_login_authentication_accepts_valid_signature() {
+        let (registry, sk) = signing_registry();
+        let metadata = SessionIssueMetadata {
+            created_at: 10_000,
+            expires_at: 20_000,
+        };
+        let timestamp = Timestamp::new(10_000, 0);
+        let body_hash =
+            session_login_payload_hash("did:exo:login-alice", &metadata, &timestamp).unwrap();
+        let signature = sign(body_hash.as_bytes(), &sk);
+        let proof = SessionLoginProof {
+            timestamp,
+            observed_at: timestamp,
+            signature,
+        };
+        let guard = registry.read().unwrap();
+        let actor =
+            authenticate_session_login("did:exo:login-alice", &metadata, &proof, &*guard).unwrap();
+
+        assert_eq!(actor.did.as_str(), "did:exo:login-alice");
+    }
+
+    #[test]
+    fn session_login_authentication_rejects_wrong_key_signature() {
+        let (registry, _sk) = signing_registry();
+        let (_wrong_pk, wrong_sk) = generate_keypair();
+        let metadata = SessionIssueMetadata {
+            created_at: 10_000,
+            expires_at: 20_000,
+        };
+        let timestamp = Timestamp::new(10_000, 0);
+        let body_hash =
+            session_login_payload_hash("did:exo:login-alice", &metadata, &timestamp).unwrap();
+        let proof = SessionLoginProof {
+            timestamp,
+            observed_at: timestamp,
+            signature: sign(body_hash.as_bytes(), &wrong_sk),
+        };
+        let guard = registry.read().unwrap();
+
+        assert!(
+            authenticate_session_login("did:exo:login-alice", &metadata, &proof, &*guard).is_err()
+        );
+    }
+
+    #[test]
+    fn session_login_authentication_rejects_tampered_payload() {
+        let (registry, sk) = signing_registry();
+        let signed_metadata = SessionIssueMetadata {
+            created_at: 10_000,
+            expires_at: 20_000,
+        };
+        let tampered_metadata = SessionIssueMetadata {
+            created_at: 10_000,
+            expires_at: 30_000,
+        };
+        let timestamp = Timestamp::new(10_000, 0);
+        let body_hash =
+            session_login_payload_hash("did:exo:login-alice", &signed_metadata, &timestamp)
+                .unwrap();
+        let proof = SessionLoginProof {
+            timestamp,
+            observed_at: timestamp,
+            signature: sign(body_hash.as_bytes(), &sk),
+        };
+        let guard = registry.read().unwrap();
+
+        assert!(
+            authenticate_session_login("did:exo:login-alice", &tampered_metadata, &proof, &*guard)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn session_login_authentication_rejects_stale_timestamp() {
+        let (registry, sk) = signing_registry();
+        let metadata = SessionIssueMetadata {
+            created_at: 10_000,
+            expires_at: 20_000,
+        };
+        let timestamp = Timestamp::new(1, 0);
+        let observed_at = Timestamp::new(400_000, 0);
+        let body_hash =
+            session_login_payload_hash("did:exo:login-alice", &metadata, &timestamp).unwrap();
+        let proof = SessionLoginProof {
+            timestamp,
+            observed_at,
+            signature: sign(body_hash.as_bytes(), &sk),
+        };
+        let guard = registry.read().unwrap();
+        let err = authenticate_session_login("did:exo:login-alice", &metadata, &proof, &*guard)
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("freshness window"),
+            "expected stale timestamp refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn auth_login_handler_requires_proof_of_possession() {
+        let source = include_str!("server.rs");
+        let login_handler = source_between(
+            source,
+            "async fn handle_auth_login",
+            "/// POST /api/v1/auth/token",
+        );
+
+        assert!(
+            login_handler.contains("authenticate_session_login"),
+            "login must use DID proof-of-possession before issuing a session"
+        );
+        assert!(
+            !login_handler.contains("reg.resolve(&did).is_none()"),
+            "login must not downgrade to a registry-membership-only check"
+        );
+    }
+
+    #[tokio::test]
     async fn auth_token_without_db_returns_503() {
         let body = serde_json::to_string(&serde_json::json!({ "did": "did:exo:alice" })).unwrap();
         let app = build_router(state());
@@ -2131,6 +2833,172 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    #[test]
+    fn session_issue_metadata_rejects_missing_created_at() {
+        let body = serde_json::json!({
+            "did": "did:exo:alice",
+            "expiresAt": 4_600_000
+        });
+        let err = SessionIssueMetadata::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("createdAt")),
+            "expected createdAt refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn session_issue_metadata_rejects_zero_created_at() {
+        let body = serde_json::json!({
+            "did": "did:exo:alice",
+            "createdAt": 0,
+            "expiresAt": 4_600_000
+        });
+        let err = SessionIssueMetadata::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("createdAt")),
+            "expected zero createdAt refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn session_issue_metadata_requires_expiry_after_creation() {
+        let body = serde_json::json!({
+            "did": "did:exo:alice",
+            "createdAt": 4_600_000,
+            "expiresAt": 4_600_000
+        });
+        let err = SessionIssueMetadata::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("expiresAt")),
+            "expected expiresAt ordering refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn session_refresh_metadata_requires_observed_at() {
+        let body = serde_json::json!({
+            "expiresAt": 4_600_000
+        });
+        let err = SessionRefreshMetadata::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("observedAt")),
+            "expected observedAt refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn feedback_issue_create_metadata_requires_id_and_created_at() {
+        let missing_id = serde_json::json!({
+            "createdAt": 4_000
+        });
+        let missing_created_at = serde_json::json!({
+            "id": "fb-1"
+        });
+        assert!(matches!(
+            FeedbackIssueCreateMetadata::from_body(&missing_id),
+            Err(GatewayError::BadRequest(reason)) if reason.contains("id")
+        ));
+        assert!(matches!(
+            FeedbackIssueCreateMetadata::from_body(&missing_created_at),
+            Err(GatewayError::BadRequest(reason)) if reason.contains("createdAt")
+        ));
+    }
+
+    #[test]
+    fn layout_template_metadata_requires_created_and_updated_at() {
+        let missing_created_at = serde_json::json!({
+            "updatedAt": 5_000
+        });
+        let missing_updated_at = serde_json::json!({
+            "createdAt": 4_000
+        });
+        assert!(matches!(
+            LayoutTemplateMetadata::from_body(&missing_created_at),
+            Err(GatewayError::BadRequest(reason)) if reason.contains("createdAt")
+        ));
+        assert!(matches!(
+            LayoutTemplateMetadata::from_body(&missing_updated_at),
+            Err(GatewayError::BadRequest(reason)) if reason.contains("updatedAt")
+        ));
+    }
+
+    #[test]
+    fn feedback_issue_update_metadata_requires_updated_at() {
+        let body = serde_json::json!({
+            "status": "closed"
+        });
+        let err = FeedbackIssueUpdateMetadata::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("updatedAt")),
+            "expected updatedAt refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn advance_pace_metadata_requires_queued_at() {
+        let body = serde_json::json!({});
+        let err = AdvancePaceMetadata::from_optional_body(Some(&body)).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("queuedAt")),
+            "expected queuedAt refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn gateway_server_durable_handlers_do_not_fabricate_metadata() {
+        let source = include_str!("server.rs");
+        let durable_handlers = [
+            source_between(
+                source,
+                "async fn handle_auth_login",
+                "/// POST /api/v1/auth/token",
+            ),
+            source_between(
+                source,
+                "async fn handle_auth_refresh",
+                "/// POST /api/v1/auth/logout",
+            ),
+            source_between(
+                source,
+                "async fn handle_advance_pace",
+                "// ---------------------------------------------------------------------------\n// Legal / eDiscovery handlers",
+            ),
+            source_between(
+                source,
+                "async fn handle_layout_template_put",
+                "/// DELETE /api/v1/layout-templates/:id",
+            ),
+            source_between(
+                source,
+                "async fn handle_feedback_issue_create",
+                "/// GET /api/v1/feedback-issues",
+            ),
+            source_between(
+                source,
+                "async fn handle_feedback_issue_update",
+                "pub fn build_router",
+            ),
+        ];
+
+        for handler in durable_handlers {
+            assert!(
+                !handler.contains("now_ms()"),
+                "durable gateway handlers must not fabricate timestamps"
+            );
+            assert!(
+                !handler.contains("Uuid::new_v4"),
+                "durable gateway handlers must not fabricate persistent IDs"
+            );
+        }
+    }
+
+    fn source_between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+        let start_index = source.find(start).expect("source start marker");
+        let after_start = &source[start_index..];
+        let end_index = after_start.find(end).expect("source end marker");
+        &after_start[..end_index]
     }
 
     #[tokio::test]
@@ -2244,6 +3112,31 @@ mod tests {
     /// all non-provenance invariants.  Mirrors the context that
     /// `build_adjudication_context_from_db` would produce for an actor with
     /// a single role, one active consent record, and a one-link authority chain.
+    fn signed_authority_link(grantor: &Did, grantee: &Did) -> AuthorityLink {
+        let (public_key, secret_key) = generate_keypair();
+        let permissions = PermissionSet::new(vec![Permission::new("vote")]);
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(grantor.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(grantee.as_str().as_bytes());
+        payload.push(0x00);
+        for permission in &permissions.permissions {
+            payload.extend_from_slice(permission.0.as_bytes());
+            payload.push(0x00);
+        }
+        let message = Hash256::digest(&payload);
+        let signature = sign(message.as_bytes(), &secret_key);
+
+        AuthorityLink {
+            grantor: grantor.clone(),
+            grantee: grantee.clone(),
+            permissions,
+            signature: signature.to_bytes().to_vec(),
+            grantor_public_key: Some(public_key.as_bytes().to_vec()),
+        }
+    }
+
     fn valid_db_context(actor: &Did) -> AdjudicationContext {
         let root = Did::new("did:exo:root-grantor").unwrap();
         AdjudicationContext {
@@ -2252,14 +3145,7 @@ mod tests {
                 branch: GovernmentBranch::Executive,
             }],
             authority_chain: AuthorityChain {
-                links: vec![AuthorityLink {
-                    grantor: root.clone(),
-                    grantee: actor.clone(),
-                    permissions: PermissionSet::new(vec![Permission::new("vote")]),
-                    // Non-empty signature satisfies the legacy (no-public-key) path.
-                    signature: vec![0xAB; 8],
-                    grantor_public_key: None,
-                }],
+                links: vec![signed_authority_link(&root, actor)],
             },
             consent_records: vec![ConsentRecord {
                 subject: root.clone(),

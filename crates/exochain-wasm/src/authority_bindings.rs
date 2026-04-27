@@ -1,5 +1,7 @@
 //! Authority bindings: delegation chain verification, permission checking
 
+use std::collections::BTreeMap;
+
 use wasm_bindgen::prelude::*;
 
 use crate::serde_bridge::*;
@@ -52,9 +54,8 @@ pub fn wasm_verify_authority_chain(
     let now = exo_core::types::Timestamp::new(now_ms, 0);
     let key_pairs: Vec<(String, String)> = from_json_str(keys_json)?;
 
-    // Build lookup table from the caller-supplied key list.
-    let mut lookup: std::collections::HashMap<exo_core::Did, exo_core::PublicKey> =
-        std::collections::HashMap::new();
+    // Build deterministic lookup table from the caller-supplied key list.
+    let mut lookup: BTreeMap<exo_core::Did, exo_core::PublicKey> = BTreeMap::new();
     for (did_str, key_hex) in &key_pairs {
         let did = exo_core::Did::new(did_str)
             .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;

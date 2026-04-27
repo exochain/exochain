@@ -9,7 +9,6 @@
 use exo_core::{
     bcts::BctsState,
     hash::hash_structured,
-    hlc::HybridClock,
     types::{DeterministicMap, Did, Hash256, Timestamp},
 };
 use serde::{Deserialize, Serialize};
@@ -101,29 +100,46 @@ pub struct DecisionObject {
     pub metadata: DeterministicMap<String, String>,
 }
 
+/// Caller-supplied metadata for constructing a [`DecisionObject`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionObjectInput {
+    pub id: Uuid,
+    pub title: String,
+    pub class: DecisionClass,
+    pub constitutional_hash: Hash256,
+    pub created_at: Timestamp,
+}
+
 impl DecisionObject {
     /// Create a new Decision Object in the Draft state, bound to the given
     /// constitutional hash.
-    #[must_use]
-    pub fn new(
-        title: &str,
-        class: DecisionClass,
-        constitutional_hash: Hash256,
-        clock: &mut HybridClock,
-    ) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            title: title.to_owned(),
-            class,
-            constitutional_hash,
+    pub fn new(input: DecisionObjectInput) -> Result<Self> {
+        validate_uuid(input.id, "decision id")?;
+        validate_timestamp(input.created_at, "decision created_at")?;
+        if input.title.trim().is_empty() {
+            return Err(ForumError::InvalidProvenance {
+                reason: "decision title must be non-empty".into(),
+            });
+        }
+        if input.constitutional_hash == Hash256::ZERO {
+            return Err(ForumError::InvalidProvenance {
+                reason: "constitutional hash must be non-zero".into(),
+            });
+        }
+
+        Ok(Self {
+            id: input.id,
+            title: input.title,
+            class: input.class,
+            constitutional_hash: input.constitutional_hash,
             state: BctsState::Draft,
             authority_chain: Vec::new(),
             votes: Vec::new(),
             evidence_bundle: Vec::new(),
             receipt_chain: Vec::new(),
-            created_at: clock.now(),
+            created_at: input.created_at,
             metadata: DeterministicMap::new(),
-        }
+        })
     }
 
     /// Returns true if this decision is in a terminal state (Closed or
@@ -134,11 +150,11 @@ impl DecisionObject {
     }
 
     /// Transition the decision to a new BCTS state, recording a receipt.
-    pub fn transition(
+    pub fn transition_at(
         &mut self,
         to: BctsState,
         actor: &Did,
-        clock: &mut HybridClock,
+        timestamp: Timestamp,
     ) -> Result<()> {
         if self.is_terminal() {
             return Err(ForumError::DecisionImmutable);
@@ -149,8 +165,8 @@ impl DecisionObject {
                 to: format!("{to:?}"),
             });
         }
+        self.validate_transition_timestamp(timestamp)?;
 
-        let timestamp = clock.now();
         let receipt_hash = self.compute_receipt_hash(self.state, to, &timestamp, actor)?;
 
         self.receipt_chain.push(LifecycleReceipt {
@@ -161,6 +177,24 @@ impl DecisionObject {
             receipt_hash,
         });
         self.state = to;
+        Ok(())
+    }
+
+    fn validate_transition_timestamp(&self, timestamp: Timestamp) -> Result<()> {
+        validate_timestamp(timestamp, "transition timestamp")?;
+        let floor = self
+            .receipt_chain
+            .last()
+            .map(|r| r.timestamp)
+            .unwrap_or(self.created_at);
+        if timestamp <= floor {
+            return Err(ForumError::InvalidProvenance {
+                reason: format!(
+                    "transition timestamp {:?} must be greater than prior timestamp {:?}",
+                    timestamp, floor
+                ),
+            });
+        }
         Ok(())
     }
 
@@ -255,6 +289,24 @@ impl DecisionObject {
     }
 }
 
+fn validate_uuid(id: Uuid, label: &str) -> Result<()> {
+    if id.is_nil() {
+        return Err(ForumError::InvalidProvenance {
+            reason: format!("{label} must not be nil"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_timestamp(timestamp: Timestamp, label: &str) -> Result<()> {
+    if timestamp == Timestamp::ZERO {
+        return Err(ForumError::InvalidProvenance {
+            reason: format!("{label} must be non-zero HLC"),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -273,12 +325,85 @@ mod tests {
     }
 
     fn make_decision(clock: &mut HybridClock) -> DecisionObject {
-        DecisionObject::new(
-            "Test Decision",
-            DecisionClass::Operational,
-            Hash256::digest(b"const-v1"),
-            clock,
+        DecisionObject::new(DecisionObjectInput {
+            id: Uuid::from_u128(1),
+            title: "Test Decision".into(),
+            class: DecisionClass::Operational,
+            constitutional_hash: Hash256::digest(b"const-v1"),
+            created_at: clock.now(),
+        })
+        .expect("valid decision")
+    }
+
+    #[test]
+    fn new_decision_requires_caller_supplied_identity_and_hlc() {
+        let input = DecisionObjectInput {
+            id: Uuid::from_u128(42),
+            title: "Deterministic Decision".into(),
+            class: DecisionClass::Strategic,
+            constitutional_hash: Hash256::digest(b"constitution"),
+            created_at: Timestamp::new(10_000, 0),
+        };
+        let first = DecisionObject::new(input.clone()).expect("valid decision");
+        let second = DecisionObject::new(input).expect("same metadata valid");
+
+        assert_eq!(first.id, Uuid::from_u128(42));
+        assert_eq!(first.created_at, Timestamp::new(10_000, 0));
+        assert_eq!(
+            first.content_hash().expect("hash"),
+            second.content_hash().expect("hash")
+        );
+
+        let nil_id = DecisionObject::new(DecisionObjectInput {
+            id: Uuid::nil(),
+            title: "bad".into(),
+            class: DecisionClass::Routine,
+            constitutional_hash: Hash256::digest(b"constitution"),
+            created_at: Timestamp::new(10_000, 0),
+        })
+        .unwrap_err();
+        assert!(matches!(nil_id, ForumError::InvalidProvenance { .. }));
+
+        let zero_time = DecisionObject::new(DecisionObjectInput {
+            id: Uuid::from_u128(43),
+            title: "bad".into(),
+            class: DecisionClass::Routine,
+            constitutional_hash: Hash256::digest(b"constitution"),
+            created_at: Timestamp::ZERO,
+        })
+        .unwrap_err();
+        assert!(matches!(zero_time, ForumError::InvalidProvenance { .. }));
+    }
+
+    #[test]
+    fn transition_requires_caller_supplied_monotonic_hlc() {
+        let mut clock = test_clock();
+        let actor = test_did();
+        let mut d = make_decision(&mut clock);
+
+        d.transition_at(BctsState::Submitted, &actor, Timestamp::new(10_001, 0))
+            .expect("submitted");
+
+        let zero = d
+            .transition_at(BctsState::IdentityResolved, &actor, Timestamp::ZERO)
+            .unwrap_err();
+        assert!(matches!(zero, ForumError::InvalidProvenance { .. }));
+
+        let regressive = d
+            .transition_at(
+                BctsState::IdentityResolved,
+                &actor,
+                Timestamp::new(10_000, 0),
+            )
+            .unwrap_err();
+        assert!(matches!(regressive, ForumError::InvalidProvenance { .. }));
+
+        d.transition_at(
+            BctsState::IdentityResolved,
+            &actor,
+            Timestamp::new(10_002, 0),
         )
+        .expect("monotonic transition");
     }
 
     #[test]
@@ -297,7 +422,8 @@ mod tests {
     fn transition_draft_to_submitted() {
         let mut clock = test_clock();
         let mut d = make_decision(&mut clock);
-        d.transition(BctsState::Submitted, &test_did(), &mut clock)
+        let ts = clock.now();
+        d.transition_at(BctsState::Submitted, &test_did(), ts)
             .expect("ok");
         assert_eq!(d.state, BctsState::Submitted);
         assert_eq!(d.receipt_chain.len(), 1);
@@ -307,8 +433,9 @@ mod tests {
     fn transition_invalid_rejects() {
         let mut clock = test_clock();
         let mut d = make_decision(&mut clock);
+        let ts = clock.now();
         let err = d
-            .transition(BctsState::Closed, &test_did(), &mut clock)
+            .transition_at(BctsState::Closed, &test_did(), ts)
             .unwrap_err();
         assert!(matches!(err, ForumError::InvalidTransition { .. }));
     }
@@ -331,7 +458,8 @@ mod tests {
             BctsState::Closed,
         ];
         for s in steps {
-            d.transition(s, &actor, &mut clock).expect("ok");
+            let ts = clock.now();
+            d.transition_at(s, &actor, ts).expect("ok");
         }
         assert!(d.is_terminal());
         assert_eq!(d.receipt_chain.len(), 10);
@@ -354,9 +482,11 @@ mod tests {
             BctsState::Recorded,
             BctsState::Closed,
         ] {
-            d.transition(s, &actor, &mut clock).expect("ok");
+            let ts = clock.now();
+            d.transition_at(s, &actor, ts).expect("ok");
         }
-        assert!(d.transition(BctsState::Draft, &actor, &mut clock).is_err());
+        let ts = clock.now();
+        assert!(d.transition_at(BctsState::Draft, &actor, ts).is_err());
         assert!(
             d.add_vote(Vote {
                 voter_did: actor.clone(),
@@ -418,7 +548,8 @@ mod tests {
         let actor = test_did();
         let mut d = make_decision(&mut clock);
         let h1 = d.content_hash().expect("ok");
-        d.transition(BctsState::Submitted, &actor, &mut clock)
+        let ts = clock.now();
+        d.transition_at(BctsState::Submitted, &actor, ts)
             .expect("ok");
         let h2 = d.content_hash().expect("ok");
         assert_ne!(h1, h2);
@@ -429,9 +560,11 @@ mod tests {
         let mut clock = test_clock();
         let actor = test_did();
         let mut d = make_decision(&mut clock);
-        d.transition(BctsState::Submitted, &actor, &mut clock)
+        let ts = clock.now();
+        d.transition_at(BctsState::Submitted, &actor, ts)
             .expect("ok");
-        d.transition(BctsState::IdentityResolved, &actor, &mut clock)
+        let ts = clock.now();
+        d.transition_at(BctsState::IdentityResolved, &actor, ts)
             .expect("ok");
         assert_ne!(
             d.receipt_chain[0].receipt_hash,
@@ -450,7 +583,14 @@ mod tests {
     fn constitutional_hash_bound_at_creation() {
         let mut clock = test_clock();
         let hash = Hash256::digest(b"test-constitution");
-        let d = DecisionObject::new("test", DecisionClass::Routine, hash, &mut clock);
+        let d = DecisionObject::new(DecisionObjectInput {
+            id: Uuid::from_u128(2),
+            title: "test".into(),
+            class: DecisionClass::Routine,
+            constitutional_hash: hash,
+            created_at: clock.now(),
+        })
+        .expect("valid");
         assert_eq!(d.constitutional_hash, hash);
     }
 

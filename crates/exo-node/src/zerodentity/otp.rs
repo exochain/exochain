@@ -4,7 +4,7 @@
 //! per §4.3–4.6 of the 0dentity spec.
 //!
 //! ## Properties
-//! - TTL: 600_000ms (10 min) per issue spec
+//! - TTL: channel-specific via `OtpChannel::ttl_ms()`
 //! - Lockout: after 5 failed attempts, locked for 3_600_000ms (1 hour)
 //! - Resend cooldown: 60_000ms (1 min)
 //! - Code format: 6-digit decimal string (leading zeros preserved)
@@ -22,9 +22,6 @@ type HmacSha256 = Hmac<Sha256>;
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-/// OTP TTL in milliseconds (10 minutes).
-pub const OTP_TTL_MS: u64 = 600_000;
 
 /// Number of failed attempts before lockout.
 pub const OTP_MAX_ATTEMPTS: u32 = 5;
@@ -97,6 +94,7 @@ impl OtpChallenge {
         id_input.extend_from_slice(&secret);
         let id_hash = Hash256::digest(&id_input);
         let challenge_id = hex::encode(id_hash.as_bytes());
+        let ttl_ms = channel.ttl_ms();
 
         let challenge = OtpChallenge {
             challenge_id,
@@ -104,7 +102,7 @@ impl OtpChallenge {
             channel,
             hmac_secret: secret,
             dispatched_ms: now_ms,
-            ttl_ms: OTP_TTL_MS,
+            ttl_ms,
             attempts: 0,
             max_attempts: OTP_MAX_ATTEMPTS,
             state: OtpState::Pending,
@@ -272,13 +270,25 @@ mod tests {
             OtpChallenge::new(&did, OtpChannel::Email, 0, &mut rng).expect("new ok");
         assert_eq!(challenge.state, OtpState::Pending);
         assert_eq!(challenge.attempts, 0);
-        assert_eq!(challenge.ttl_ms, OTP_TTL_MS);
+        assert_eq!(challenge.ttl_ms, OtpChannel::Email.ttl_ms());
         assert_eq!(challenge.max_attempts, OTP_MAX_ATTEMPTS);
         assert_eq!(code.len(), 6, "code must be 6 digits");
         assert!(
             code.chars().all(|c| c.is_ascii_digit()),
             "code must be digits"
         );
+    }
+
+    #[test]
+    fn new_challenge_ttl_matches_delivery_channel() {
+        let did = test_did();
+        let (email, _) =
+            OtpChallenge::new(&did, OtpChannel::Email, 0, &mut test_rng()).expect("email ok");
+        let (sms, _) =
+            OtpChallenge::new(&did, OtpChannel::Sms, 1, &mut test_rng()).expect("sms ok");
+
+        assert_eq!(email.ttl_ms, OtpChannel::Email.ttl_ms());
+        assert_eq!(sms.ttl_ms, OtpChannel::Sms.ttl_ms());
     }
 
     #[test]
@@ -344,7 +354,7 @@ mod tests {
         let (mut challenge, code) =
             OtpChallenge::new(&did, OtpChannel::Email, now, &mut rng).expect("new ok");
         // Advance past TTL
-        let result = challenge.verify(&code, now + OTP_TTL_MS + 1);
+        let result = challenge.verify(&code, now + OtpChannel::Email.ttl_ms() + 1);
         assert_eq!(result, OtpResult::Expired);
         assert_eq!(challenge.state, OtpState::Expired);
     }
@@ -452,11 +462,11 @@ mod tests {
         let (mut ch, _) =
             OtpChallenge::new(&did, OtpChannel::Email, now, &mut rng).expect("new ok");
         // Expire via TTL (transitions state to Expired)
-        let _ = ch.verify("wrong", now + OTP_TTL_MS + 1);
+        let _ = ch.verify("wrong", now + OtpChannel::Email.ttl_ms() + 1);
         assert_eq!(ch.state, OtpState::Expired);
         let attempts_before = ch.attempts;
         // Verify again — hits Expired early-return (line 135)
-        let result = ch.verify("wrong", now + OTP_TTL_MS + 2);
+        let result = ch.verify("wrong", now + OtpChannel::Email.ttl_ms() + 2);
         assert_eq!(result, OtpResult::Expired, "should be Expired early-return");
         assert_eq!(ch.attempts, attempts_before, "attempts must not change");
     }
@@ -475,8 +485,8 @@ mod tests {
             let _ = ch.verify("000000", 1_000);
         }
         assert_eq!(ch.state, OtpState::LockedOut);
-        // locked_until = dispatched + OTP_TTL_MS + OTP_LOCKOUT_MS
-        let locked_until = dispatched + OTP_TTL_MS + OTP_LOCKOUT_MS;
+        // locked_until = dispatched + challenge ttl + OTP_LOCKOUT_MS
+        let locked_until = dispatched + ch.ttl_ms + OTP_LOCKOUT_MS;
         // Inside the lock window → true (hits lines 184-188)
         assert!(
             ch.is_locked(locked_until - 1),

@@ -8,7 +8,7 @@
 
 use std::{collections::BTreeSet, path::Path};
 
-use exo_core::types::{Did, Hash256};
+use exo_core::types::{Did, Hash256, Signature};
 use exo_dag::{
     consensus::{CommitCertificate, Vote},
     dag::DagNode,
@@ -20,6 +20,90 @@ fn store_err(e: impl std::fmt::Display) -> DagError {
     DagError::StoreError(e.to_string())
 }
 use rusqlite::{Connection, params};
+
+fn sqlite_u64_to_i64(value: u64, field: &str) -> DagResult<i64> {
+    i64::try_from(value)
+        .map_err(|_| store_err(format!("{field} value {value} exceeds SQLite INTEGER max")))
+}
+
+#[allow(clippy::as_conversions)]
+fn sqlite_i64_to_u64(value: i64, field: &str) -> DagResult<u64> {
+    if value < 0 {
+        return Err(store_err(format!("{field} value {value} is negative")));
+    }
+    Ok(value as u64)
+}
+
+fn decode_hash_bytes(bytes: &[u8], field: &str) -> DagResult<Hash256> {
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| store_err(format!("{field} must be 32 bytes, got {}", bytes.len())))?;
+    Ok(Hash256::from_bytes(arr))
+}
+
+fn decode_signature_bytes(bytes: &[u8], field: &str) -> DagResult<Signature> {
+    let arr: [u8; 64] = bytes
+        .try_into()
+        .map_err(|_| store_err(format!("{field} must be 64 bytes, got {}", bytes.len())))?;
+    let signature = Signature::from_bytes(arr);
+    validate_signature(&signature, field)?;
+    Ok(signature)
+}
+
+fn validate_signature(signature: &Signature, field: &str) -> DagResult<()> {
+    if signature.is_empty() {
+        return Err(store_err(format!("{field} must not be empty or all-zero")));
+    }
+    Ok(())
+}
+
+fn validate_ed25519_signature<'a>(
+    signature: &'a Signature,
+    field: &str,
+) -> DagResult<&'a [u8; 64]> {
+    let Signature::Ed25519(bytes) = signature else {
+        return Err(store_err(format!(
+            "{field} must be an Ed25519 signature for consensus persistence"
+        )));
+    };
+    if bytes.iter().all(|b| *b == 0) {
+        return Err(store_err(format!("{field} must not be empty or all-zero")));
+    }
+    Ok(bytes)
+}
+
+fn decode_did(value: &str, field: &str) -> DagResult<Did> {
+    Did::new(value).map_err(|e| store_err(format!("{field} is invalid: {e}")))
+}
+
+fn validate_vote(vote: &Vote, context: &str) -> DagResult<()> {
+    validate_ed25519_signature(&vote.signature, &format!("{context}.signature"))?;
+    Ok(())
+}
+
+fn validate_commit_certificate(cert: &CommitCertificate) -> DagResult<()> {
+    if cert.votes.is_empty() {
+        return Err(store_err("commit_certificates.votes must not be empty"));
+    }
+
+    for (idx, vote) in cert.votes.iter().enumerate() {
+        let context = format!("commit_certificates.votes[{idx}]");
+        if vote.round != cert.round {
+            return Err(store_err(format!(
+                "{context}.round {} does not match certificate round {}",
+                vote.round, cert.round
+            )));
+        }
+        if vote.node_hash != cert.node_hash {
+            return Err(store_err(format!(
+                "{context}.node_hash does not match certificate node_hash"
+            )));
+        }
+        validate_vote(vote, &context)?;
+    }
+
+    Ok(())
+}
 
 /// SQLite-backed DAG store.
 pub struct SqliteDagStore {
@@ -100,9 +184,8 @@ impl SqliteDagStore {
     }
 
     /// Convenience accessor for the current committed height.
-    #[must_use]
-    pub fn committed_height_value(&self) -> u64 {
-        self.committed_height_sync().unwrap_or(0)
+    pub fn committed_height_value(&self) -> DagResult<u64> {
+        self.committed_height_sync()
     }
 
     /// Serialize a `DagNode` to CBOR bytes.
@@ -126,7 +209,8 @@ impl SqliteDagStore {
         from_height: u64,
         to_height: u64,
     ) -> DagResult<Vec<(Hash256, u64)>> {
-        #[allow(clippy::as_conversions)]
+        let from_height = sqlite_u64_to_i64(from_height, "committed.from_height")?;
+        let to_height = sqlite_u64_to_i64(to_height, "committed.to_height")?;
         let mut stmt = self
             .conn
             .prepare_cached(
@@ -136,20 +220,21 @@ impl SqliteDagStore {
             )
             .map_err(store_err)?;
 
-        #[allow(clippy::as_conversions)]
         let rows = stmt
-            .query_map(params![from_height as i64, to_height as i64], |row| {
+            .query_map(params![from_height, to_height], |row| {
                 let bytes: Vec<u8> = row.get(0)?;
                 let height: i64 = row.get(1)?;
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&bytes);
-                Ok((Hash256::from_bytes(arr), height as u64))
+                Ok((bytes, height))
             })
             .map_err(store_err)?;
 
         let mut result = Vec::new();
         for row in rows {
-            result.push(row.map_err(store_err)?);
+            let (bytes, height) = row.map_err(store_err)?;
+            result.push((
+                decode_hash_bytes(&bytes, "committed.hash")?,
+                sqlite_i64_to_u64(height, "committed.height")?,
+            ));
         }
         Ok(result)
     }
@@ -179,21 +264,25 @@ impl SqliteDagStore {
         );
         match result {
             Ok(s) => s.parse::<u64>().map_err(store_err),
-            Err(_) => Ok(0),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
+            Err(e) => Err(store_err(e)),
         }
     }
 
     /// Persist a consensus vote.
     pub fn save_vote(&mut self, vote: &Vote) -> DagResult<()> {
-        #[allow(clippy::as_conversions)]
+        let round = sqlite_u64_to_i64(vote.round, "consensus_votes.round")?;
+        validate_vote(vote, "consensus_votes")?;
+        let signature = validate_ed25519_signature(&vote.signature, "consensus_votes.signature")?;
+
         self.conn
             .execute(
                 "INSERT OR IGNORE INTO consensus_votes (round, node_hash, voter_did, signature) VALUES (?1, ?2, ?3, ?4)",
                 params![
-                    vote.round as i64,
+                    round,
                     vote.node_hash.0.as_slice(),
                     vote.voter.to_string(),
-                    vote.signature.as_bytes(),
+                    signature,
                 ],
             )
             .map_err(store_err)?;
@@ -202,7 +291,7 @@ impl SqliteDagStore {
 
     /// Load all votes for a given round.
     pub fn load_votes_for_round(&self, round: u64) -> DagResult<Vec<Vote>> {
-        #[allow(clippy::as_conversions)]
+        let round_i64 = sqlite_u64_to_i64(round, "consensus_votes.round")?;
         let mut stmt = self
             .conn
             .prepare_cached(
@@ -210,51 +299,43 @@ impl SqliteDagStore {
             )
             .map_err(store_err)?;
 
-        #[allow(clippy::as_conversions)]
         let rows = stmt
-            .query_map(params![round as i64], |row| {
+            .query_map(params![round_i64], |row| {
                 let hash_bytes: Vec<u8> = row.get(0)?;
                 let voter_str: String = row.get(1)?;
                 let sig_bytes: Vec<u8> = row.get(2)?;
-
-                let mut hash_arr = [0u8; 32];
-                hash_arr.copy_from_slice(&hash_bytes);
-                let mut sig_arr = [0u8; 64];
-                if sig_bytes.len() == 64 {
-                    sig_arr.copy_from_slice(&sig_bytes);
-                }
-
-                Ok(Vote {
-                    #[allow(clippy::expect_used)] // Hardcoded constant — always valid.
-                    voter: Did::new(&voter_str)
-                        .unwrap_or_else(|_| Did::new("did:exo:unknown").expect("hardcoded DID")),
-                    round,
-                    node_hash: Hash256::from_bytes(hash_arr),
-                    signature: exo_core::types::Signature::from_bytes(sig_arr),
-                })
+                Ok((hash_bytes, voter_str, sig_bytes))
             })
             .map_err(store_err)?;
 
         let mut votes = Vec::new();
         for row in rows {
-            votes.push(row.map_err(store_err)?);
+            let (hash_bytes, voter_str, sig_bytes) = row.map_err(store_err)?;
+            votes.push(Vote {
+                voter: decode_did(&voter_str, "consensus_votes.voter_did")?,
+                round,
+                node_hash: decode_hash_bytes(&hash_bytes, "consensus_votes.node_hash")?,
+                signature: decode_signature_bytes(&sig_bytes, "consensus_votes.signature")?,
+            });
         }
         Ok(votes)
     }
 
     /// Persist a commit certificate.
     pub fn save_certificate(&mut self, cert: &CommitCertificate) -> DagResult<()> {
+        let round = sqlite_u64_to_i64(cert.round, "commit_certificates.round")?;
+        validate_commit_certificate(cert)?;
+
         let mut cbor_buf = Vec::new();
         ciborium::into_writer(cert, &mut cbor_buf)
             .map_err(|e| store_err(format!("CBOR encode certificate: {e}")))?;
 
-        #[allow(clippy::as_conversions)]
         self.conn
             .execute(
                 "INSERT OR IGNORE INTO commit_certificates (node_hash, round, cbor_data) VALUES (?1, ?2, ?3)",
                 params![
                     cert.node_hash.0.as_slice(),
-                    cert.round as i64,
+                    round,
                     cbor_buf,
                 ],
             )
@@ -281,6 +362,7 @@ impl SqliteDagStore {
             let bytes = row.map_err(store_err)?;
             let cert: CommitCertificate = ciborium::from_reader(bytes.as_slice())
                 .map_err(|e| store_err(format!("CBOR decode certificate: {e}")))?;
+            validate_commit_certificate(&cert)?;
             certs.push(cert);
         }
         Ok(certs)
@@ -291,6 +373,13 @@ impl SqliteDagStore {
     // -----------------------------------------------------------------
 
     /// Save the current validator set to the database.
+    ///
+    /// Only used today from inside the gated
+    /// `#[cfg(feature = "unaudited-admin-governance-shortcut")]` path
+    /// in `api.rs`. When RED #1 is reworked into real propose→commit
+    /// via the reactor, this method will be invoked from that path
+    /// instead and the `#[allow(dead_code)]` can come off.
+    #[allow(dead_code)]
     pub fn save_validator_set(&mut self, validators: &BTreeSet<Did>) -> DagResult<()> {
         self.conn
             .execute("DELETE FROM validators", [])
@@ -323,15 +412,18 @@ impl SqliteDagStore {
         let mut set = BTreeSet::new();
         for row in rows {
             let did_str = row.map_err(store_err)?;
-            if let Ok(did) = Did::new(&did_str) {
-                set.insert(did);
-            }
+            let did = decode_did(&did_str, "validators.did")?;
+            set.insert(did);
         }
         Ok(set)
     }
 
     /// Save a trust receipt to the database.
     pub fn save_receipt(&mut self, receipt: &exo_core::types::TrustReceipt) -> DagResult<()> {
+        validate_signature(&receipt.signature, "trust_receipts.signature")?;
+        let timestamp_ms =
+            sqlite_u64_to_i64(receipt.timestamp.physical_ms, "trust_receipts.timestamp_ms")?;
+
         let mut buf = Vec::new();
         ciborium::into_writer(receipt, &mut buf)
             .map_err(|e| store_err(format!("CBOR encode receipt: {e}")))?;
@@ -344,7 +436,7 @@ impl SqliteDagStore {
                     receipt.actor_did.to_string(),
                     receipt.action_type,
                     receipt.outcome.to_string(),
-                    receipt.timestamp.physical_ms as i64,
+                    timestamp_ms,
                     buf,
                 ],
             )
@@ -420,15 +512,14 @@ impl SqliteDagStore {
         let rows = stmt
             .query_map(params![parent_hash.0.as_slice()], |row| {
                 let bytes: Vec<u8> = row.get(0)?;
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&bytes);
-                Ok(Hash256::from_bytes(arr))
+                Ok(bytes)
             })
             .map_err(store_err)?;
 
         let mut result = Vec::new();
         for row in rows {
-            result.push(row.map_err(store_err)?);
+            let bytes = row.map_err(store_err)?;
+            result.push(decode_hash_bytes(&bytes, "dag_parents.child_hash")?);
         }
         Ok(result)
     }
@@ -454,11 +545,11 @@ impl SqliteDagStore {
 
         match stmt.query_row(params![hash.0.as_slice()], |row| {
             let h: i64 = row.get(0)?;
-            #[allow(clippy::as_conversions)]
-            Ok(h as u64)
+            Ok(h)
         }) {
-            Ok(h) => Ok(Some(h)),
-            Err(_) => Ok(None),
+            Ok(h) => Ok(Some(sqlite_i64_to_u64(h, "committed.height")?)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(store_err(e)),
         }
     }
 
@@ -555,15 +646,14 @@ impl SqliteDagStore {
         let rows = stmt
             .query_map([], |row| {
                 let bytes: Vec<u8> = row.get(0)?;
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&bytes);
-                Ok(Hash256::from_bytes(arr))
+                Ok(bytes)
             })
             .map_err(store_err)?;
 
         let mut tips = Vec::new();
         for row in rows {
-            tips.push(row.map_err(store_err)?);
+            let bytes = row.map_err(store_err)?;
+            tips.push(decode_hash_bytes(&bytes, "dag_nodes.hash")?);
         }
         Ok(tips)
     }
@@ -577,8 +667,7 @@ impl SqliteDagStore {
 
         let height: i64 = stmt.query_row([], |row| row.get(0)).map_err(store_err)?;
 
-        #[allow(clippy::as_conversions)]
-        Ok(height as u64)
+        sqlite_i64_to_u64(height, "committed.height")
     }
 
     /// Sync version of `DagStore::mark_committed`.
@@ -587,11 +676,11 @@ impl SqliteDagStore {
             return Err(DagError::NodeNotFound(*hash));
         }
 
-        #[allow(clippy::as_conversions)]
+        let height = sqlite_u64_to_i64(height, "committed.height")?;
         self.conn
             .execute(
                 "INSERT OR REPLACE INTO committed (hash, height) VALUES (?1, ?2)",
-                params![hash.0.as_slice(), height as i64],
+                params![hash.0.as_slice(), height],
             )
             .map_err(store_err)?;
 
@@ -738,6 +827,16 @@ mod tests {
     }
 
     #[test]
+    fn load_consensus_round_propagates_store_errors() {
+        let store = temp_store();
+        store.conn.execute("DROP TABLE consensus_meta", []).unwrap();
+
+        let err = store.load_consensus_round().unwrap_err();
+
+        assert!(err.to_string().contains("consensus_meta"));
+    }
+
+    #[test]
     fn vote_persistence_roundtrip() {
         use exo_core::types::Signature;
         let mut store = temp_store();
@@ -761,6 +860,125 @@ mod tests {
         // Different round returns empty.
         let empty = store.load_votes_for_round(6).unwrap();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn load_votes_for_round_rejects_short_hash() {
+        let store = temp_store();
+        store
+            .conn
+            .execute(
+                "INSERT INTO consensus_votes (round, node_hash, voter_did, signature)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![7_i64, vec![0xABu8; 31], "did:exo:voter1", vec![7u8; 64]],
+            )
+            .unwrap();
+
+        let err = store.load_votes_for_round(7).unwrap_err();
+
+        assert!(err.to_string().contains("consensus_votes.node_hash"));
+    }
+
+    #[test]
+    fn load_votes_for_round_rejects_short_signature() {
+        let store = temp_store();
+        let mut hash = [0u8; 32];
+        hash[0] = 0xAB;
+        store
+            .conn
+            .execute(
+                "INSERT INTO consensus_votes (round, node_hash, voter_did, signature)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![7_i64, hash.as_slice(), "did:exo:voter1", vec![7u8; 63]],
+            )
+            .unwrap();
+
+        let err = store.load_votes_for_round(7).unwrap_err();
+
+        assert!(err.to_string().contains("consensus_votes.signature"));
+    }
+
+    #[test]
+    fn load_votes_for_round_rejects_zero_signature() {
+        let store = temp_store();
+        let mut hash = [0u8; 32];
+        hash[0] = 0xAB;
+        store
+            .conn
+            .execute(
+                "INSERT INTO consensus_votes (round, node_hash, voter_did, signature)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![7_i64, hash.as_slice(), "did:exo:voter1", vec![0u8; 64]],
+            )
+            .unwrap();
+
+        let err = store.load_votes_for_round(7).unwrap_err();
+
+        assert!(err.to_string().contains("consensus_votes.signature"));
+    }
+
+    #[test]
+    fn load_votes_for_round_rejects_invalid_voter_did() {
+        let store = temp_store();
+        let mut hash = [0u8; 32];
+        hash[0] = 0xAB;
+        store
+            .conn
+            .execute(
+                "INSERT INTO consensus_votes (round, node_hash, voter_did, signature)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![7_i64, hash.as_slice(), "not-a-did", vec![7u8; 64]],
+            )
+            .unwrap();
+
+        let err = store.load_votes_for_round(7).unwrap_err();
+
+        assert!(err.to_string().contains("consensus_votes.voter_did"));
+    }
+
+    #[test]
+    fn save_vote_rejects_empty_signature() {
+        let mut store = temp_store();
+        let vote = Vote {
+            voter: Did::new("did:exo:voter1").unwrap(),
+            round: 5,
+            node_hash: Hash256::digest(b"vote-target"),
+            signature: Signature::from_bytes([0u8; 64]),
+        };
+
+        let err = store.save_vote(&vote).unwrap_err();
+
+        assert!(err.to_string().contains("consensus_votes.signature"));
+    }
+
+    #[test]
+    fn save_vote_rejects_signature_variants_that_cannot_roundtrip() {
+        let mut store = temp_store();
+        let vote = Vote {
+            voter: Did::new("did:exo:voter1").unwrap(),
+            round: 5,
+            node_hash: Hash256::digest(b"vote-target"),
+            signature: Signature::PostQuantum(vec![7u8; 64]),
+        };
+
+        let err = store.save_vote(&vote).unwrap_err();
+
+        assert!(err.to_string().contains("consensus_votes.signature"));
+    }
+
+    #[test]
+    fn save_vote_rejects_rounds_that_do_not_fit_sqlite_integer() {
+        let mut store = temp_store();
+        let vote = Vote {
+            voter: Did::new("did:exo:voter1").unwrap(),
+            round: u64::MAX,
+            node_hash: Hash256::digest(b"vote-target"),
+            signature: Signature::from_bytes([7u8; 64]),
+        };
+
+        let err = store.save_vote(&vote).unwrap_err();
+
+        assert!(err.to_string().contains("consensus_votes.round"));
     }
 
     #[test]
@@ -789,6 +1007,105 @@ mod tests {
     }
 
     #[test]
+    fn save_certificate_rejects_empty_vote_signature() {
+        let mut store = temp_store();
+        let hash = Hash256::digest(b"cert-target");
+        let cert = CommitCertificate {
+            node_hash: hash,
+            round: 3,
+            votes: vec![Vote {
+                voter: Did::new("did:exo:v0").unwrap(),
+                round: 3,
+                node_hash: hash,
+                signature: Signature::Empty,
+            }],
+        };
+
+        let err = store.save_certificate(&cert).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("commit_certificates.votes[0].signature")
+        );
+    }
+
+    #[test]
+    fn save_certificate_rejects_signature_variants_that_cannot_verify() {
+        let mut store = temp_store();
+        let hash = Hash256::digest(b"cert-target");
+        let cert = CommitCertificate {
+            node_hash: hash,
+            round: 3,
+            votes: vec![Vote {
+                voter: Did::new("did:exo:v0").unwrap(),
+                round: 3,
+                node_hash: hash,
+                signature: Signature::PostQuantum(vec![7u8; 64]),
+            }],
+        };
+
+        let err = store.save_certificate(&cert).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("commit_certificates.votes[0].signature")
+        );
+    }
+
+    #[test]
+    fn load_certificates_rejects_empty_vote_signature() {
+        let store = temp_store();
+        let hash = Hash256::digest(b"cert-target");
+        let cert = CommitCertificate {
+            node_hash: hash,
+            round: 3,
+            votes: vec![Vote {
+                voter: Did::new("did:exo:v0").unwrap(),
+                round: 3,
+                node_hash: hash,
+                signature: Signature::Empty,
+            }],
+        };
+        let mut cbor = Vec::new();
+        ciborium::into_writer(&cert, &mut cbor).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO commit_certificates (node_hash, round, cbor_data)
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![hash.0.as_slice(), 3_i64, cbor],
+            )
+            .unwrap();
+
+        let err = store.load_certificates().unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("commit_certificates.votes[0].signature")
+        );
+    }
+
+    #[test]
+    fn save_certificate_rejects_rounds_that_do_not_fit_sqlite_integer() {
+        let mut store = temp_store();
+        let hash = Hash256::digest(b"cert-target");
+        let cert = CommitCertificate {
+            node_hash: hash,
+            round: u64::MAX,
+            votes: vec![Vote {
+                voter: Did::new("did:exo:v0").unwrap(),
+                round: u64::MAX,
+                node_hash: hash,
+                signature: Signature::from_bytes([1u8; 64]),
+            }],
+        };
+
+        let err = store.save_certificate(&cert).unwrap_err();
+
+        assert!(err.to_string().contains("commit_certificates.round"));
+    }
+
+    #[test]
     fn validator_set_persistence() {
         let mut store = temp_store();
         let empty = store.load_validator_set().unwrap();
@@ -811,6 +1128,19 @@ mod tests {
         store.save_validator_set(&smaller).unwrap();
         let loaded2 = store.load_validator_set().unwrap();
         assert_eq!(loaded2.len(), 1);
+    }
+
+    #[test]
+    fn load_validator_set_rejects_invalid_did() {
+        let store = temp_store();
+        store
+            .conn
+            .execute("INSERT INTO validators (did) VALUES (?1)", ["not-a-did"])
+            .unwrap();
+
+        let err = store.load_validator_set().unwrap_err();
+
+        assert!(err.to_string().contains("validators.did"));
     }
 
     #[test]
@@ -843,6 +1173,55 @@ mod tests {
         assert_eq!(loaded.actor_did.to_string(), "did:exo:agent-a");
         assert_eq!(loaded.action_type, "dag.commit");
         assert_eq!(loaded.outcome, ReceiptOutcome::Executed);
+    }
+
+    #[test]
+    fn save_receipt_rejects_empty_signature() {
+        use exo_core::types::{ReceiptOutcome, Timestamp, TrustReceipt};
+        let mut store = temp_store();
+
+        let receipt = TrustReceipt::new(
+            Did::new("did:exo:agent-a").unwrap(),
+            Hash256::digest(b"authority"),
+            None,
+            "dag.commit".to_string(),
+            Hash256::digest(b"action-payload"),
+            ReceiptOutcome::Executed,
+            Timestamp {
+                physical_ms: 1_700_000_000_000,
+                logical: 0,
+            },
+            &|_| Signature::Empty,
+        );
+
+        let err = store.save_receipt(&receipt).unwrap_err();
+
+        assert!(err.to_string().contains("trust_receipts.signature"));
+    }
+
+    #[test]
+    fn save_receipt_rejects_timestamps_that_do_not_fit_sqlite_integer() {
+        use exo_core::types::{ReceiptOutcome, Timestamp, TrustReceipt};
+        let mut store = temp_store();
+        let sign_fn = make_sign_fn();
+
+        let receipt = TrustReceipt::new(
+            Did::new("did:exo:agent-a").unwrap(),
+            Hash256::digest(b"authority"),
+            None,
+            "dag.commit".to_string(),
+            Hash256::digest(b"action-payload"),
+            ReceiptOutcome::Executed,
+            Timestamp {
+                physical_ms: u64::MAX,
+                logical: 0,
+            },
+            &*sign_fn,
+        );
+
+        let err = store.save_receipt(&receipt).unwrap_err();
+
+        assert!(err.to_string().contains("trust_receipts.timestamp_ms"));
     }
 
     #[test]
@@ -948,5 +1327,116 @@ mod tests {
         assert_eq!(t.len(), 2);
         assert!(t.contains(&c1.hash));
         assert!(t.contains(&c2.hash));
+    }
+
+    #[test]
+    fn committed_nodes_in_range_rejects_short_hash() {
+        let store = temp_store();
+        store
+            .conn
+            .execute(
+                "INSERT INTO committed (hash, height) VALUES (?1, ?2)",
+                rusqlite::params![vec![0xCDu8; 31], 1_i64],
+            )
+            .unwrap();
+
+        let err = store.committed_nodes_in_range(0, 10).unwrap_err();
+
+        assert!(err.to_string().contains("committed.hash"));
+    }
+
+    #[test]
+    fn committed_height_for_rejects_negative_height() {
+        let store = temp_store();
+        let hash = Hash256::digest(b"committed-node");
+        store
+            .conn
+            .execute(
+                "INSERT INTO committed (hash, height) VALUES (?1, ?2)",
+                rusqlite::params![hash.0.as_slice(), -1_i64],
+            )
+            .unwrap();
+
+        let err = store.committed_height_for(&hash).unwrap_err();
+
+        assert!(err.to_string().contains("committed.height"));
+    }
+
+    #[test]
+    fn committed_height_value_rejects_negative_height() {
+        let store = temp_store();
+        let hash = Hash256::digest(b"committed-node");
+        store
+            .conn
+            .execute(
+                "INSERT INTO committed (hash, height) VALUES (?1, ?2)",
+                rusqlite::params![hash.0.as_slice(), -1_i64],
+            )
+            .unwrap();
+
+        let err = store.committed_height_value().unwrap_err();
+
+        assert!(err.to_string().contains("committed.height"));
+    }
+
+    #[test]
+    fn committed_height_sync_rejects_negative_height() {
+        let store = temp_store();
+        let hash = Hash256::digest(b"committed-node");
+        store
+            .conn
+            .execute(
+                "INSERT INTO committed (hash, height) VALUES (?1, ?2)",
+                rusqlite::params![hash.0.as_slice(), -1_i64],
+            )
+            .unwrap();
+
+        let err = store.committed_height_sync().unwrap_err();
+
+        assert!(err.to_string().contains("committed.height"));
+    }
+
+    #[test]
+    fn mark_committed_rejects_heights_that_do_not_fit_sqlite_integer() {
+        let mut store = temp_store();
+        let node = make_test_node();
+        store.put_sync(node.clone()).unwrap();
+
+        let err = store.mark_committed_sync(&node.hash, u64::MAX).unwrap_err();
+
+        assert!(err.to_string().contains("committed.height"));
+    }
+
+    #[test]
+    fn children_rejects_short_child_hash() {
+        let store = temp_store();
+        let parent = Hash256::digest(b"parent");
+        store
+            .conn
+            .execute(
+                "INSERT INTO dag_parents (child_hash, parent_hash) VALUES (?1, ?2)",
+                rusqlite::params![vec![0xABu8; 31], parent.0.as_slice()],
+            )
+            .unwrap();
+
+        let err = store.children(&parent).unwrap_err();
+
+        assert!(err.to_string().contains("dag_parents.child_hash"));
+    }
+
+    #[test]
+    fn tips_rejects_short_hash() {
+        let store = temp_store();
+        store
+            .conn
+            .execute(
+                "INSERT INTO dag_nodes (hash, cbor_payload) VALUES (?1, ?2)",
+                rusqlite::params![vec![0xABu8; 31], vec![0x00u8]],
+            )
+            .unwrap();
+
+        let err = store.tips_sync().unwrap_err();
+
+        assert!(err.to_string().contains("dag_nodes.hash"));
     }
 }

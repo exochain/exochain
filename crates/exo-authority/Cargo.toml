@@ -12,6 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+ciborium = { workspace = true }
 exo-core = { path = "../exo-core" }
 exo-identity = { path = "../exo-identity" }
 serde = { workspace = true }

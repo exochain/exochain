@@ -48,6 +48,7 @@ tracing-subscriber = { workspace = true }
 # Crypto (identity bootstrap)
 ed25519-dalek = { workspace = true }
 blake3 = { workspace = true }
+bs58 = { workspace = true }
 rand = { workspace = true }
 sha2 = { workspace = true }
 hmac = { workspace = true }
@@ -99,3 +100,90 @@ tower = "0.5"
 [package.metadata.cargo-machete]
 # Pre-existing workspace deps used via re-exports or conditional compilation.
 ignored = ["ed25519-dalek", "exo-consent", "exo-governance", "exo-identity", "zeroize"]
+
+[features]
+default = []
+
+# GAP (Onyx pass 3, RED #1): the HTTP endpoint
+# `POST /api/v1/governance/validators` currently mutates the validator
+# set unilaterally on presentation of the node's admin bearer token —
+# no BFT proposal, no quorum, no signature chain, no recorded
+# governance event. A single holder of the admin bearer token is
+# therefore a constitutional dictator over validator membership.
+#
+# The real fix is to replace this endpoint with a proper submit-proposal
+# → quorum-vote → commit flow wired through exo-governance + the DAG.
+# That is a governance-surface rewrite, not a tactical patch. Until
+# that work lands, we REFUSE the shortcut by default and gate the
+# legacy behavior behind this explicit, loud feature flag so no operator
+# trips over it accidentally.
+#
+# Do NOT enable this in production. Enabling it means: "I accept that a
+# single bearer-token holder controls validator set mutation, without
+# quorum or on-chain record."
+unaudited-admin-governance-shortcut = []
+
+# GAP (Onyx pass 3, RED #2 and follow-on trust-surface scans): several
+# MCP tools return truthy-shaped responses without persisting to any
+# store, invoking the reactor, appending to the DAG, delivering a
+# message, or recording consent/escalation state — pure simulation.
+# Combined with the MCP middleware's hardcoded-true constitutional
+# context, this means AI agents calling these tools get "success"
+# signals for actions that have zero governance-fabric effect.
+#
+# Mitigation: tools don't mutate real state, so blast radius is
+# "AI agents acting on false success signals" — not state
+# corruption. But signalling truth-that-isn't is itself a
+# constitutional violation (HumanOverride, evidentiary integrity).
+#
+# The real fix is to wire handlers to the reactor propose/vote/
+# commit flow via exo-dag, or replace with read-only helpers, or
+# rename + disclaim. Until a direction is picked, we REFUSE by
+# default and gate the simulators behind this explicit flag so
+# no caller accidentally relies on fake-success semantics.
+#
+# Do NOT enable this in production. Enabling it means: "I accept
+# that these MCP tool calls return truthy-shaped JSON while doing
+# nothing on-chain."
+unaudited-mcp-simulation-tools = []
+
+# ONYX-4 RED R1: `POST /api/v1/0dentity/claims` is the first-touch
+# identity-claim bootstrap path. Before R7, this path allowed a caller
+# with only the node write bearer token to create a pending claim for any
+# DID, then later session flows had no cryptographic key binding. R7
+# now binds OTP sessions to a verified Ed25519 bootstrap key, but the
+# first-touch product design still needs an approved proof-of-possession
+# contract (for example did:exo:<bs58(blake3(pubkey))> derivation match
+# plus signed bootstrap payload) before the open claim-creation path is
+# safe to expose.
+#
+# Until that design is accepted and implemented, the endpoint refuses by
+# default. Enable this only for a controlled dev cluster that explicitly
+# accepts the unaudited first-touch onboarding behavior.
+#
+# Do NOT enable this in production. Enabling it means: "I accept that
+# first-touch 0dentity claim creation is running under the legacy,
+# unaudited onboarding contract tracked by Onyx-4 R1."
+unaudited-zerodentity-first-touch-onboarding = []
+
+# ONYX-4 RED R5: infrastructure Holons currently build kernel adjudication
+# contexts with sentinel authority/provenance signatures (`vec![1, 2, 3]`) and
+# no public key. The Holons are recommendation-only today, but the runtime must
+# not start by default until the context carries real signed authority and
+# provenance.
+#
+# Do NOT enable this in production. Enabling it means: "I accept that
+# infrastructure Holons run with the unaudited R5 adjudication context tracked
+# by fix-onyx-4-r5-holons-stub-context.md."
+unaudited-infrastructure-holons = []
+
+# ONYX-4 RED R3: the 0dentity device fingerprint and behavioral biometric
+# modules have deterministic helpers and tests, but there is no public
+# ingestion path that persists client-collected samples into the store. The
+# onboarding UI can collect hashes and the scoring engine can consume samples,
+# yet POST /api/v1/0dentity/claims ignores those fields.
+#
+# Do NOT enable this in production. Enabling it means: "I accept that the
+# device_trust and behavioral_signature axes are running under the unaudited R3
+# contract tracked by fix-onyx-4-r3-unwired-axes.md."
+unaudited-zerodentity-device-behavioral-axes = []

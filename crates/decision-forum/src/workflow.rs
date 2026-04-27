@@ -10,6 +10,8 @@ use exo_core::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::error::{ForumError, Result};
+
 /// A workflow stage corresponding to a BCTS state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowStage {
@@ -29,8 +31,12 @@ pub struct WorkflowDefinition {
 
 impl WorkflowDefinition {
     /// Create the standard decision governance workflow.
-    #[must_use]
-    pub fn standard_governance() -> Self {
+    pub fn standard_governance(id: Uuid) -> Result<Self> {
+        if id.is_nil() {
+            return Err(ForumError::InvalidProvenance {
+                reason: "workflow id must not be nil".into(),
+            });
+        }
         let stages = vec![
             WorkflowStage {
                 state: BctsState::Draft,
@@ -99,11 +105,11 @@ impl WorkflowDefinition {
                 requires_receipt: true,
             },
         ];
-        Self {
-            id: Uuid::new_v4(),
+        Ok(Self {
+            id,
             name: "Standard Governance Workflow".into(),
             stages,
-        }
+        })
     }
 
     /// Find the stage definition for a given BCTS state.
@@ -171,34 +177,40 @@ mod tests {
 
     #[test]
     fn standard_workflow_has_all_stages() {
-        let wf = WorkflowDefinition::standard_governance();
+        let wf = WorkflowDefinition::standard_governance(Uuid::from_u128(80)).expect("valid");
         assert_eq!(wf.stage_count(), 11);
         assert!(wf.stage_for(BctsState::Draft).is_some());
         assert!(wf.stage_for(BctsState::Closed).is_some());
     }
 
     #[test]
+    fn standard_workflow_requires_caller_supplied_identity() {
+        let err = WorkflowDefinition::standard_governance(Uuid::nil()).unwrap_err();
+        assert!(matches!(err, ForumError::InvalidProvenance { .. }));
+    }
+
+    #[test]
     fn next_stage() {
-        let wf = WorkflowDefinition::standard_governance();
+        let wf = WorkflowDefinition::standard_governance(Uuid::from_u128(81)).expect("valid");
         let next = wf.next_stage(BctsState::Draft).expect("should exist");
         assert_eq!(next.state, BctsState::Submitted);
     }
 
     #[test]
     fn next_stage_from_closed_is_none() {
-        let wf = WorkflowDefinition::standard_governance();
+        let wf = WorkflowDefinition::standard_governance(Uuid::from_u128(82)).expect("valid");
         assert!(wf.next_stage(BctsState::Closed).is_none());
     }
 
     #[test]
     fn draft_no_receipt() {
-        let wf = WorkflowDefinition::standard_governance();
+        let wf = WorkflowDefinition::standard_governance(Uuid::from_u128(83)).expect("valid");
         assert!(!wf.requires_receipt(BctsState::Draft));
     }
 
     #[test]
     fn submitted_requires_receipt() {
-        let wf = WorkflowDefinition::standard_governance();
+        let wf = WorkflowDefinition::standard_governance(Uuid::from_u128(84)).expect("valid");
         assert!(wf.requires_receipt(BctsState::Submitted));
     }
 
@@ -224,14 +236,14 @@ mod tests {
 
     #[test]
     fn unknown_state_not_found() {
-        let wf = WorkflowDefinition::standard_governance();
+        let wf = WorkflowDefinition::standard_governance(Uuid::from_u128(85)).expect("valid");
         // Escalated is not in the standard workflow
         assert!(wf.stage_for(BctsState::Escalated).is_none());
     }
 
     #[test]
     fn serde_roundtrip() {
-        let wf = WorkflowDefinition::standard_governance();
+        let wf = WorkflowDefinition::standard_governance(Uuid::from_u128(86)).expect("valid");
         let json = serde_json::to_string(&wf).expect("ser");
         let wf2: WorkflowDefinition = serde_json::from_str(&json).expect("de");
         assert_eq!(wf2.stage_count(), wf.stage_count());

@@ -1,10 +1,12 @@
 //! Peer-to-peer mesh networking.
 use std::collections::{BTreeMap, BTreeSet};
 
-use exo_core::{Did, Hash256, Signature, Timestamp};
+use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ApiError, Result};
+
+const P2P_MESSAGE_SIGNING_DOMAIN: &str = "exo.p2p.message.v1";
 
 /// Unique identifier for a peer in the P2P mesh, wrapping a DID.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -106,18 +108,45 @@ pub fn send(registry: &PeerRegistry, msg: &Message) -> Result<()> {
     Ok(())
 }
 
-/// Verify structural integrity of a peer-to-peer message.
+#[derive(Serialize)]
+struct MessageSigningPayload<'a> {
+    domain: &'static str,
+    from: &'a str,
+    to: Option<&'a str>,
+    payload: &'a [u8],
+    nonce: u64,
+}
+
+/// Canonical CBOR payload signed by a peer-to-peer message sender.
+///
+/// The domain tag prevents cross-protocol replay, and the payload binds sender,
+/// optional recipient, body bytes, and nonce. The signature field is excluded
+/// so callers can use this function before and after signing.
+pub fn message_signing_payload(msg: &Message) -> Result<Vec<u8>> {
+    let payload = MessageSigningPayload {
+        domain: P2P_MESSAGE_SIGNING_DOMAIN,
+        from: msg.from.0.as_str(),
+        to: msg.to.as_ref().map(|peer| peer.0.as_str()),
+        payload: &msg.payload,
+        nonce: msg.nonce,
+    };
+    let mut encoded = Vec::new();
+    ciborium::into_writer(&payload, &mut encoded)
+        .map_err(|e| ApiError::SerializationError(e.to_string()))?;
+    Ok(encoded)
+}
+
+/// Validate structural integrity of a peer-to-peer message.
 ///
 /// Validates:
 /// 1. Signature is not empty / all-zero (rejects [`Signature::Empty`] and zero-filled Ed25519).
 /// 2. Sender DID (`msg.from`) is well-formed.
 ///
-/// Full Ed25519 cryptographic verification requires a `PublicKey` lookup via
-/// `exo_core::crypto::verify()`; callers that hold a key registry should
-/// perform that step after this structural check passes.
-pub fn verify_message(msg: &Message) -> Result<()> {
+/// This helper is intentionally not named `verify`: it does not authenticate
+/// the signature. Use [`verify_message`] for Ed25519 verification.
+pub fn validate_message_structure(msg: &Message) -> Result<()> {
     // Reject empty / all-zero signatures.
-    if msg.signature.is_empty() || *msg.signature.as_bytes() == [0u8; 64] {
+    if msg.signature.is_empty() {
         return Err(ApiError::VerificationFailed {
             reason: "empty or zero signature".into(),
         });
@@ -129,6 +158,19 @@ pub fn verify_message(msg: &Message) -> Result<()> {
         });
     }
     Ok(())
+}
+
+/// Verify a peer-to-peer message Ed25519 signature against the sender public key.
+pub fn verify_message(msg: &Message, sender_public_key: &PublicKey) -> Result<()> {
+    validate_message_structure(msg)?;
+    let payload = message_signing_payload(msg)?;
+    if exo_core::crypto::verify(&payload, &msg.signature, sender_public_key) {
+        Ok(())
+    } else {
+        Err(ApiError::VerificationFailed {
+            reason: "invalid Ed25519 signature".into(),
+        })
+    }
 }
 
 /// Discover new peers from bootstrap addresses and register them.
@@ -326,6 +368,7 @@ pub fn rotate_peers(
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     fn pid(n: &str) -> PeerId {
@@ -350,6 +393,23 @@ mod tests {
             signature: Signature::from_bytes(sig),
             nonce: 1,
         }
+    }
+    fn keypair(seed: u8) -> (PublicKey, exo_core::SecretKey) {
+        let keypair = exo_core::crypto::KeyPair::from_secret_bytes([seed; 32]).expect("keypair");
+        (*keypair.public_key(), keypair.secret_key().clone())
+    }
+    fn signed_msg(from: &str, to: Option<&str>, seed: u8) -> (Message, PublicKey) {
+        let (public_key, secret_key) = keypair(seed);
+        let mut message = Message {
+            from: pid(from),
+            to: to.map(pid),
+            payload: b"hello".to_vec(),
+            signature: Signature::Empty,
+            nonce: 1,
+        };
+        let payload = message_signing_payload(&message).expect("signing payload");
+        message.signature = exo_core::crypto::sign(&payload, &secret_key);
+        (message, public_key)
     }
 
     #[test]
@@ -386,11 +446,36 @@ mod tests {
         assert!(send(&r, &msg("a", None)).is_ok());
     }
     #[test]
-    fn verify_ok() {
-        assert!(verify_message(&msg("a", None)).is_ok());
+    fn message_signing_payload_is_domain_separated_and_deterministic() {
+        let (message, _) = signed_msg("a", Some("b"), 7);
+        let first = message_signing_payload(&message).expect("payload");
+        let second = message_signing_payload(&message).expect("payload");
+        assert_eq!(first, second);
+
+        #[derive(Deserialize)]
+        struct DecodedPayload {
+            domain: String,
+        }
+        let decoded: DecodedPayload = ciborium::from_reader(&first[..]).expect("decode");
+        assert_eq!(decoded.domain, "exo.p2p.message.v1");
     }
     #[test]
-    fn verify_empty_sig() {
+    fn verify_message_accepts_correct_signature() {
+        let (message, public_key) = signed_msg("a", None, 7);
+        assert!(verify_message(&message, &public_key).is_ok());
+    }
+    #[test]
+    fn verify_message_rejects_empty_and_zero_signatures() {
+        let (public_key, _) = keypair(7);
+        let m = Message {
+            from: pid("a"),
+            to: None,
+            payload: vec![],
+            signature: Signature::Empty,
+            nonce: 0,
+        };
+        assert!(verify_message(&m, &public_key).is_err());
+
         let m = Message {
             from: pid("a"),
             to: None,
@@ -398,7 +483,42 @@ mod tests {
             signature: Signature::from_bytes([0u8; 64]),
             nonce: 0,
         };
-        assert!(verify_message(&m).is_err());
+        assert!(verify_message(&m, &public_key).is_err());
+    }
+    #[test]
+    fn verify_message_rejects_fake_non_empty_signature() {
+        let (public_key, _) = keypair(7);
+        assert!(verify_message(&msg("a", None), &public_key).is_err());
+    }
+    #[test]
+    fn verify_message_rejects_wrong_key() {
+        let (message, _) = signed_msg("a", Some("b"), 7);
+        let (wrong_public_key, _) = keypair(8);
+        assert!(verify_message(&message, &wrong_public_key).is_err());
+    }
+    #[test]
+    fn verify_message_rejects_tampering() {
+        let (message, public_key) = signed_msg("a", Some("b"), 7);
+
+        let mut tampered_payload = message.clone();
+        tampered_payload.payload = b"goodbye".to_vec();
+        assert!(verify_message(&tampered_payload, &public_key).is_err());
+
+        let mut tampered_recipient = message.clone();
+        tampered_recipient.to = Some(pid("c"));
+        assert!(verify_message(&tampered_recipient, &public_key).is_err());
+
+        let mut tampered_nonce = message.clone();
+        tampered_nonce.nonce = 2;
+        assert!(verify_message(&tampered_nonce, &public_key).is_err());
+
+        let mut tampered_sender = message.clone();
+        tampered_sender.from = pid("z");
+        assert!(verify_message(&tampered_sender, &public_key).is_err());
+    }
+    #[test]
+    fn validate_message_structure_keeps_non_crypto_checks_separate() {
+        assert!(validate_message_structure(&msg("a", None)).is_ok());
     }
     #[test]
     fn discover() {

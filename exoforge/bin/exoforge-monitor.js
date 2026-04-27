@@ -24,7 +24,11 @@ import {
   verifyInvariants,
   auditVerify,
   workflowStages,
-  hashStructured
+  hashStructured,
+  buildValidationDecision,
+  buildValidationTncFlags,
+  buildValidationInvariantRequest,
+  VALIDATION_TIMESTAMP_ISO
 } from '../lib/constitutional.js';
 
 // ── Parse CLI arguments ─────────────────────────────────────────────────────
@@ -76,31 +80,24 @@ Options:
  * Check kernel availability and responsiveness.
  */
 function checkKernel() {
-  const start = Date.now();
   try {
     const kernel = loadKernel();
-    const loadTime = Date.now() - start;
 
     // Verify kernel responds to a basic call
-    const hashStart = Date.now();
-    const testHash = hashStructured({ probe: true, ts: Date.now() });
-    const hashTime = Date.now() - hashStart;
+    const testHash = hashStructured({ probe: true, source: 'exoforge-monitor' });
 
     return {
       check: 'kernel_availability',
       status: 'healthy',
       score: 1.0,
-      latency_ms: loadTime,
-      hash_latency_ms: hashTime,
       test_hash: testHash ? testHash.substring(0, 16) + '...' : null,
-      details: `Kernel loaded in ${loadTime}ms, hash computed in ${hashTime}ms`
+      details: 'Kernel loaded and deterministic hash probe succeeded'
     };
   } catch (err) {
     return {
       check: 'kernel_availability',
       status: 'critical',
       score: 0.0,
-      latency_ms: Date.now() - start,
       error: err.message,
       details: 'WASM kernel is unavailable'
     };
@@ -113,29 +110,8 @@ function checkKernel() {
  */
 function checkTncEnforcement() {
   const testContext = {
-    decision: {
-      id: 'health-check-' + Date.now(),
-      title: 'Health Check Decision',
-      class: 'Routine',
-      state: 'Draft',
-      constitution_hash: '0'.repeat(64),
-      votes: [],
-      evidence: [],
-      created_at: Date.now(),
-      transitions: []
-    },
-    flags: {
-      authority_chain_verified: true,
-      human_gate_satisfied: true,
-      consent_verified: true,
-      identity_verified: true,
-      delegation_unexpired: true,
-      constitutional_binding_valid: true,
-      quorum_met: true,
-      terminal_immutable: true,
-      ai_ceiling_respected: true,
-      evidence_bundle_complete: true
-    }
+    decision: buildValidationDecision('ExoForge Health Check Decision'),
+    flags: buildValidationTncFlags()
   };
 
   try {
@@ -177,18 +153,12 @@ function checkTncEnforcement() {
  * Check constitutional invariant enforcement.
  */
 function checkInvariants() {
-  const ctx = {
-    actor_did: 'did:exo:health-monitor',
-    action: 'health_check',
-    resource: 'system',
-    context: { source: 'exoforge-monitor', timestamp: Date.now() }
-  };
+  const ctx = buildValidationInvariantRequest();
 
   try {
     const result = verifyInvariants(ctx);
     const violationCount = result.violations ? result.violations.length : 0;
-    const score = result.ok && violationCount === 0 ? 1.0
-      : result.ok ? 0.7
+    const score = result.ok && result.passed && violationCount === 0 ? 1.0
       : 0.0;
 
     return {
@@ -309,7 +279,7 @@ function runHealthCheck(verbose) {
     })),
     exochain_version: '2.2',
     monitor_version: '0.1.0-beta',
-    checked_at: new Date().toISOString()
+    checked_at: VALIDATION_TIMESTAMP_ISO
   };
 
   return report;
