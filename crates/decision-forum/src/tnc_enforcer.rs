@@ -222,6 +222,7 @@ mod tests {
         hlc::HybridClock,
         types::{Did, Hash256},
     };
+    use uuid::Uuid;
 
     use super::*;
     use crate::decision_object::*;
@@ -245,8 +246,19 @@ mod tests {
         }
     }
 
+    fn make_decision(class: DecisionClass, clock: &mut HybridClock) -> DecisionObject {
+        DecisionObject::new(DecisionObjectInput {
+            id: Uuid::from_u128(300),
+            title: "test".into(),
+            class,
+            constitutional_hash: Hash256::digest(b"constitution"),
+            created_at: clock.now(),
+        })
+        .expect("valid decision")
+    }
+
     fn decision_with_authority(clock: &mut HybridClock) -> DecisionObject {
-        let mut d = DecisionObject::new("test", DecisionClass::Operational, Hash256::ZERO, clock);
+        let mut d = make_decision(DecisionClass::Operational, clock);
         let ts = clock.now();
         d.add_authority_link(AuthorityLink {
             actor_did: Did::new("did:exo:root").expect("ok"),
@@ -269,7 +281,7 @@ mod tests {
     #[test]
     fn tnc_01_empty_authority() {
         let mut clock = test_clock();
-        let d = DecisionObject::new("test", DecisionClass::Routine, Hash256::ZERO, &mut clock);
+        let d = make_decision(DecisionClass::Routine, &mut clock);
         let ctx = passing_ctx(&d);
         let err = enforce_tnc_01(&ctx).unwrap_err();
         assert!(matches!(err, ForumError::TncViolation { tnc_id: 1, .. }));
@@ -347,7 +359,8 @@ mod tests {
             BctsState::Recorded,
             BctsState::Closed,
         ] {
-            d.transition(s, &actor, &mut clock).expect("ok");
+            let ts = clock.now();
+            d.transition_at(s, &actor, ts).expect("ok");
         }
         let ctx = passing_ctx(&d);
         let err = enforce_tnc_08(&ctx).unwrap_err();
@@ -357,8 +370,7 @@ mod tests {
     #[test]
     fn tnc_09_ai_ceiling() {
         let mut clock = test_clock();
-        let mut d =
-            DecisionObject::new("test", DecisionClass::Strategic, Hash256::ZERO, &mut clock);
+        let mut d = make_decision(DecisionClass::Strategic, &mut clock);
         d.add_authority_link(AuthorityLink {
             actor_did: Did::new("did:exo:root").expect("ok"),
             actor_kind: ActorKind::Human,
@@ -395,7 +407,7 @@ mod tests {
     #[test]
     fn collect_violations_multiple() {
         let mut clock = test_clock();
-        let d = DecisionObject::new("test", DecisionClass::Routine, Hash256::ZERO, &mut clock);
+        let d = make_decision(DecisionClass::Routine, &mut clock);
         let ctx = TncContext {
             decision: &d,
             constitutional_hash_valid: false,
@@ -429,12 +441,7 @@ mod tests {
         // Without external ceiling verification, an AI signer on an Operational
         // decision must be rejected even if it self-declares Operational ceiling.
         let mut clock = test_clock();
-        let mut d = DecisionObject::new(
-            "test",
-            DecisionClass::Operational,
-            Hash256::ZERO,
-            &mut clock,
-        );
+        let mut d = make_decision(DecisionClass::Operational, &mut clock);
         d.add_authority_link(AuthorityLink {
             actor_did: Did::new("did:exo:human-root").expect("ok"),
             actor_kind: ActorKind::Human,
@@ -467,7 +474,7 @@ mod tests {
     fn test_ai_ceiling_unverified_allows_routine() {
         // Without external verification, AI signers are still allowed on Routine.
         let mut clock = test_clock();
-        let mut d = DecisionObject::new("test", DecisionClass::Routine, Hash256::ZERO, &mut clock);
+        let mut d = make_decision(DecisionClass::Routine, &mut clock);
         d.add_authority_link(AuthorityLink {
             actor_did: Did::new("did:exo:human-root").expect("ok"),
             actor_kind: ActorKind::Human,
@@ -495,12 +502,7 @@ mod tests {
     fn test_ai_ceiling_verified_allows_declared_class() {
         // With external verification, the declared ceiling_class is trusted.
         let mut clock = test_clock();
-        let mut d = DecisionObject::new(
-            "test",
-            DecisionClass::Operational,
-            Hash256::ZERO,
-            &mut clock,
-        );
+        let mut d = make_decision(DecisionClass::Operational, &mut clock);
         d.add_authority_link(AuthorityLink {
             actor_did: Did::new("did:exo:human-root").expect("ok"),
             actor_kind: ActorKind::Human,
@@ -528,8 +530,7 @@ mod tests {
     fn test_ai_self_declared_strategic_blocked_when_verified_ceiling_is_operational() {
         // Even when externally verified, AI cannot exceed its actual registry ceiling.
         let mut clock = test_clock();
-        let mut d =
-            DecisionObject::new("test", DecisionClass::Strategic, Hash256::ZERO, &mut clock);
+        let mut d = make_decision(DecisionClass::Strategic, &mut clock);
         d.add_authority_link(AuthorityLink {
             actor_did: Did::new("did:exo:human-root").expect("ok"),
             actor_kind: ActorKind::Human,

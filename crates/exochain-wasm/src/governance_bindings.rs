@@ -4,6 +4,34 @@ use wasm_bindgen::prelude::*;
 
 use crate::serde_bridge::*;
 
+fn parse_uuid(value: &str, label: &str) -> Result<uuid::Uuid, JsValue> {
+    let id: uuid::Uuid = value
+        .parse()
+        .map_err(|e| JsValue::from_str(&format!("{label} UUID error: {e}")))?;
+    if id.is_nil() {
+        return Err(JsValue::from_str(&format!(
+            "{label} UUID must be caller-supplied and non-nil"
+        )));
+    }
+    Ok(id)
+}
+
+fn parse_timestamp(
+    physical_ms: u64,
+    logical: u32,
+    label: &str,
+) -> Result<exo_core::Timestamp, JsValue> {
+    if physical_ms == 0 && logical == 0 {
+        return Err(JsValue::from_str(&format!(
+            "{label} timestamp must be caller-supplied HLC"
+        )));
+    }
+    Ok(exo_core::Timestamp {
+        physical_ms,
+        logical,
+    })
+}
+
 /// Compute quorum result from approvals and policy
 #[wasm_bindgen]
 pub fn wasm_compute_quorum(approvals_json: &str, policy_json: &str) -> Result<JsValue, JsValue> {
@@ -84,6 +112,9 @@ pub fn wasm_check_conflicts(
 /// Append to a hash-chained audit log
 #[wasm_bindgen]
 pub fn wasm_audit_append(
+    entry_id: &str,
+    timestamp_physical_ms: u64,
+    timestamp_logical: u32,
     actor_did: &str,
     action: &str,
     result: &str,
@@ -100,11 +131,14 @@ pub fn wasm_audit_append(
     let mut log = exo_governance::audit::AuditLog::new();
     let entry = exo_governance::audit::create_entry(
         &log,
+        parse_uuid(entry_id, "audit entry")?,
+        parse_timestamp(timestamp_physical_ms, timestamp_logical, "audit entry")?,
         actor,
         action.to_string(),
         result.to_string(),
         arr,
-    );
+    )
+    .map_err(|e| JsValue::from_str(&format!("Audit error: {e}")))?;
     exo_governance::audit::append(&mut log, entry)
         .map_err(|e| JsValue::from_str(&format!("Audit error: {e}")))?;
     // AuditLog doesn't derive Serialize, return summary
@@ -139,6 +173,9 @@ pub fn wasm_audit_verify(entries_json: &str) -> Result<JsValue, JsValue> {
 /// `participants_json` — JSON array of DID strings.
 #[wasm_bindgen]
 pub fn wasm_open_deliberation(
+    deliberation_id: &str,
+    created_physical_ms: u64,
+    created_logical: u32,
     proposal_hex: &str,
     participants_json: &str,
 ) -> Result<JsValue, JsValue> {
@@ -151,7 +188,13 @@ pub fn wasm_open_deliberation(
             exo_core::Did::new(s).map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?,
         );
     }
-    let delib = exo_governance::deliberation::open_deliberation(&proposal, &participants);
+    let delib = exo_governance::deliberation::open_deliberation(
+        parse_uuid(deliberation_id, "deliberation")?,
+        parse_timestamp(created_physical_ms, created_logical, "deliberation")?,
+        &proposal,
+        &participants,
+    )
+    .map_err(|e| JsValue::from_str(&format!("Deliberation error: {e}")))?;
     to_js_value(&delib)
 }
 
@@ -242,7 +285,7 @@ pub fn wasm_verify_independence(
     actors_json: &str,
     registry_json: &str,
 ) -> Result<JsValue, JsValue> {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     let did_strs: Vec<String> = from_json_str(actors_json)?;
     let mut actors = Vec::with_capacity(did_strs.len());
@@ -264,13 +307,13 @@ pub fn wasm_verify_independence(
     }
     let input: RegistryInput = from_json_str(registry_json)?;
 
-    let mut signing_keys = HashMap::new();
+    let mut signing_keys = BTreeMap::new();
     for (did_str, key) in &input.signing_keys {
         let did = exo_core::Did::new(did_str)
             .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
         signing_keys.insert(did, key.clone());
     }
-    let mut attestation_roots = HashMap::new();
+    let mut attestation_roots = BTreeMap::new();
     for (did_str, root_str) in &input.attestation_roots {
         let did = exo_core::Did::new(did_str)
             .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
@@ -278,7 +321,7 @@ pub fn wasm_verify_independence(
             .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
         attestation_roots.insert(did, root);
     }
-    let mut control_metadata = HashMap::new();
+    let mut control_metadata = BTreeMap::new();
     for (did_str, meta) in &input.control_metadata {
         let did = exo_core::Did::new(did_str)
             .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
@@ -336,6 +379,9 @@ pub fn wasm_detect_coordination(actions_json: &str) -> Result<JsValue, JsValue> 
 /// File a governance challenge
 #[wasm_bindgen]
 pub fn wasm_file_governance_challenge(
+    challenge_id: &str,
+    created_physical_ms: u64,
+    created_logical: u32,
     challenger_did: &str,
     target_hash_hex: &str,
     ground_json: &str,
@@ -349,7 +395,15 @@ pub fn wasm_file_governance_challenge(
         .try_into()
         .map_err(|_| JsValue::from_str("target must be 32 bytes"))?;
     let ground: exo_governance::challenge::ChallengeGround = from_json_str(ground_json)?;
-    let challenge = exo_governance::challenge::file_challenge(&challenger, &arr, ground, evidence);
+    let challenge = exo_governance::challenge::file_challenge(
+        parse_uuid(challenge_id, "challenge")?,
+        parse_timestamp(created_physical_ms, created_logical, "challenge")?,
+        &challenger,
+        &arr,
+        ground,
+        evidence,
+    )
+    .map_err(|e| JsValue::from_str(&format!("Challenge error: {e}")))?;
     to_js_value(&challenge)
 }
 

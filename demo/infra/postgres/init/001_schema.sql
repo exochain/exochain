@@ -114,7 +114,7 @@ INSERT INTO hlc_state (counter) VALUES (1000) ON CONFLICT DO NOTHING;
 -- LiveSafe tables
 CREATE TABLE IF NOT EXISTS livesafe_identities (
     did TEXT PRIMARY KEY,
-    odentity_composite DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    odentity_composite_basis_points INTEGER NOT NULL DEFAULT 0,
     pace_status TEXT NOT NULL DEFAULT 'Incomplete',
     card_status TEXT NOT NULL DEFAULT 'NotIssued',
     created_at_ms BIGINT NOT NULL,

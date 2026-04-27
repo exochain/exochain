@@ -79,45 +79,61 @@ impl Default for EmergencyPolicy {
     }
 }
 
+/// Caller-supplied metadata for creating an emergency action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmergencyActionInput {
+    pub id: Uuid,
+    pub action_type: EmergencyActionType,
+    pub actor: Did,
+    pub justification: String,
+    pub monetary_cap_cents: u64,
+    pub evidence_hash: Hash256,
+    pub created_at: Timestamp,
+}
+
 /// Create an emergency action, validating against the policy.
 pub fn create_emergency_action(
-    action_type: EmergencyActionType,
-    actor: &Did,
-    justification: &str,
-    monetary_cap_cents: u64,
-    evidence_hash: Hash256,
+    input: EmergencyActionInput,
     policy: &EmergencyPolicy,
-    timestamp: Timestamp,
 ) -> Result<EmergencyAction> {
-    if !policy.allowed_actions.contains(&action_type) {
+    validate_uuid(input.id, "emergency action id")?;
+    validate_timestamp(input.created_at, "emergency created_at")?;
+    validate_hash(input.evidence_hash, "emergency evidence hash")?;
+    if input.justification.trim().is_empty() {
         return Err(ForumError::EmergencyInvalid {
-            reason: format!("{action_type:?} not in allowed actions"),
+            reason: "justification must be non-empty".into(),
         });
     }
-    if monetary_cap_cents > policy.max_monetary_cap_cents {
+    if !policy.allowed_actions.contains(&input.action_type) {
+        return Err(ForumError::EmergencyInvalid {
+            reason: format!("{:?} not in allowed actions", input.action_type),
+        });
+    }
+    if input.monetary_cap_cents > policy.max_monetary_cap_cents {
         return Err(ForumError::EmergencyCapExceeded {
             reason: format!(
-                "cap {monetary_cap_cents} exceeds policy max {}",
-                policy.max_monetary_cap_cents
+                "cap {} exceeds policy max {}",
+                input.monetary_cap_cents, policy.max_monetary_cap_cents
             ),
         });
     }
 
-    let deadline_ms = timestamp
+    let deadline_ms = input
+        .created_at
         .physical_ms
         .saturating_add(policy.ratification_window_ms);
     Ok(EmergencyAction {
-        id: Uuid::new_v4(),
-        action_type,
-        actor_did: actor.clone(),
-        justification: justification.to_owned(),
-        monetary_cap_cents,
+        id: input.id,
+        action_type: input.action_type,
+        actor_did: input.actor,
+        justification: input.justification,
+        monetary_cap_cents: input.monetary_cap_cents,
         actual_cost_cents: 0,
-        created_at: timestamp,
+        created_at: input.created_at,
         ratification_status: RatificationStatus::Required,
         ratification_deadline: Timestamp::new(deadline_ms, 0),
         ratification_decision_id: None,
-        evidence_hash,
+        evidence_hash: input.evidence_hash,
     })
 }
 
@@ -201,6 +217,33 @@ pub fn needs_governance_review(actions: &[EmergencyAction], policy: &EmergencyPo
     active_count > policy.max_per_quarter
 }
 
+fn validate_uuid(id: Uuid, label: &str) -> Result<()> {
+    if id.is_nil() {
+        return Err(ForumError::InvalidProvenance {
+            reason: format!("{label} must not be nil"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_timestamp(timestamp: Timestamp, label: &str) -> Result<()> {
+    if timestamp == Timestamp::ZERO {
+        return Err(ForumError::InvalidProvenance {
+            reason: format!("{label} must be non-zero HLC"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_hash(hash: Hash256, label: &str) -> Result<()> {
+    if hash == Hash256::ZERO {
+        return Err(ForumError::InvalidProvenance {
+            reason: format!("{label} must be non-zero"),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,18 +258,67 @@ mod tests {
         EmergencyPolicy::default()
     }
 
+    fn emergency_input(id: Uuid, action_type: EmergencyActionType) -> EmergencyActionInput {
+        EmergencyActionInput {
+            id,
+            action_type,
+            actor: did(),
+            justification: "critical outage".into(),
+            monetary_cap_cents: 5_000_000,
+            evidence_hash: Hash256::digest(b"evidence"),
+            created_at: ts(),
+        }
+    }
+
+    fn make_action(action_type: EmergencyActionType) -> EmergencyAction {
+        create_emergency_action(emergency_input(Uuid::from_u128(31), action_type), &policy())
+            .expect("valid emergency")
+    }
+
+    #[test]
+    fn create_action_requires_caller_supplied_identity_and_hlc() {
+        let action = create_emergency_action(
+            emergency_input(Uuid::from_u128(32), EmergencyActionType::SystemHalt),
+            &policy(),
+        )
+        .expect("valid");
+        assert_eq!(action.id, Uuid::from_u128(32));
+        assert_eq!(action.created_at, ts());
+
+        let nil = create_emergency_action(
+            emergency_input(Uuid::nil(), EmergencyActionType::SystemHalt),
+            &policy(),
+        )
+        .unwrap_err();
+        assert!(matches!(nil, ForumError::InvalidProvenance { .. }));
+
+        let zero_time = create_emergency_action(
+            EmergencyActionInput {
+                created_at: Timestamp::ZERO,
+                ..emergency_input(Uuid::from_u128(33), EmergencyActionType::SystemHalt)
+            },
+            &policy(),
+        )
+        .unwrap_err();
+        assert!(matches!(zero_time, ForumError::InvalidProvenance { .. }));
+
+        let zero_evidence = create_emergency_action(
+            EmergencyActionInput {
+                evidence_hash: Hash256::ZERO,
+                ..emergency_input(Uuid::from_u128(34), EmergencyActionType::SystemHalt)
+            },
+            &policy(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            zero_evidence,
+            ForumError::InvalidProvenance { .. }
+        ));
+    }
+
     #[test]
     fn create_valid_action() {
-        let a = create_emergency_action(
-            EmergencyActionType::SystemHalt,
-            &did(),
-            "critical outage",
-            5_000_000,
-            Hash256::digest(b"evidence"),
-            &policy(),
-            ts(),
-        )
-        .expect("ok");
+        let a = make_action(EmergencyActionType::SystemHalt);
         assert_eq!(a.ratification_status, RatificationStatus::Required);
         assert_eq!(a.action_type, EmergencyActionType::SystemHalt);
     }
@@ -234,13 +326,11 @@ mod tests {
     #[test]
     fn cap_exceeded() {
         let err = create_emergency_action(
-            EmergencyActionType::SystemHalt,
-            &did(),
-            "too expensive",
-            99_999_999,
-            Hash256::ZERO,
+            EmergencyActionInput {
+                monetary_cap_cents: 99_999_999,
+                ..emergency_input(Uuid::from_u128(35), EmergencyActionType::SystemHalt)
+            },
             &policy(),
-            ts(),
         )
         .unwrap_err();
         assert!(matches!(err, ForumError::EmergencyCapExceeded { .. }));
@@ -253,13 +343,8 @@ mod tests {
             ..policy()
         };
         let err = create_emergency_action(
-            EmergencyActionType::RoleEscalation,
-            &did(),
-            "not allowed",
-            0,
-            Hash256::ZERO,
+            emergency_input(Uuid::from_u128(36), EmergencyActionType::RoleEscalation),
             &p,
-            ts(),
         )
         .unwrap_err();
         assert!(matches!(err, ForumError::EmergencyInvalid { .. }));
@@ -267,16 +352,7 @@ mod tests {
 
     #[test]
     fn ratify_ok() {
-        let mut a = create_emergency_action(
-            EmergencyActionType::DataFreeze,
-            &did(),
-            "breach",
-            0,
-            Hash256::ZERO,
-            &policy(),
-            ts(),
-        )
-        .expect("ok");
+        let mut a = make_action(EmergencyActionType::DataFreeze);
         let ratify_ts = Timestamp::new(ts().physical_ms + 1000, 0);
         ratify_emergency(&mut a, Uuid::new_v4(), ratify_ts).expect("ok");
         assert_eq!(a.ratification_status, RatificationStatus::Ratified);
@@ -285,16 +361,7 @@ mod tests {
 
     #[test]
     fn ratify_expired() {
-        let mut a = create_emergency_action(
-            EmergencyActionType::DataFreeze,
-            &did(),
-            "breach",
-            0,
-            Hash256::ZERO,
-            &policy(),
-            ts(),
-        )
-        .expect("ok");
+        let mut a = make_action(EmergencyActionType::DataFreeze);
         let late = Timestamp::new(a.ratification_deadline.physical_ms + 1000, 0);
         let err = ratify_emergency(&mut a, Uuid::new_v4(), late).unwrap_err();
         assert!(matches!(err, ForumError::EmergencyInvalid { .. }));
@@ -303,16 +370,7 @@ mod tests {
 
     #[test]
     fn check_expiry_marks_expired() {
-        let mut a = create_emergency_action(
-            EmergencyActionType::SystemHalt,
-            &did(),
-            "test",
-            0,
-            Hash256::ZERO,
-            &policy(),
-            ts(),
-        )
-        .expect("ok");
+        let mut a = make_action(EmergencyActionType::SystemHalt);
         let before = Timestamp::new(a.ratification_deadline.physical_ms - 1000, 0);
         assert!(!check_expiry(&mut a, &before));
         let after = Timestamp::new(a.ratification_deadline.physical_ms + 1000, 0);
@@ -324,15 +382,13 @@ mod tests {
     fn frequency_monitoring() {
         let p = policy();
         let actions: Vec<EmergencyAction> = (0..4)
-            .map(|_| {
+            .map(|i| {
                 create_emergency_action(
-                    EmergencyActionType::SystemHalt,
-                    &did(),
-                    "test",
-                    0,
-                    Hash256::ZERO,
+                    EmergencyActionInput {
+                        id: Uuid::from_u128(40 + i),
+                        ..emergency_input(Uuid::from_u128(40 + i), EmergencyActionType::SystemHalt)
+                    },
                     &p,
-                    ts(),
                 )
                 .expect("ok")
             })
@@ -353,13 +409,8 @@ mod tests {
     fn per_actor_limit_blocks_second_invocation_same_actor() {
         let p = policy(); // max_per_quarter_per_actor = 1
         let first = create_emergency_action(
-            EmergencyActionType::SystemHalt,
-            &did(),
-            "first",
-            0,
-            Hash256::ZERO,
+            emergency_input(Uuid::from_u128(50), EmergencyActionType::SystemHalt),
             &p,
-            ts(),
         )
         .expect("ok");
         let err = check_per_actor_limit(&[first], &did(), &p).unwrap_err();
@@ -375,13 +426,11 @@ mod tests {
         let actor_a = Did::new("did:exo:actor-a").expect("ok");
         let actor_b = Did::new("did:exo:actor-b").expect("ok");
         let action_a = create_emergency_action(
-            EmergencyActionType::SystemHalt,
-            &actor_a,
-            "actor a",
-            0,
-            Hash256::ZERO,
+            EmergencyActionInput {
+                actor: actor_a,
+                ..emergency_input(Uuid::from_u128(51), EmergencyActionType::SystemHalt)
+            },
             &p,
-            ts(),
         )
         .expect("ok");
         // actor_b is unaffected by actor_a's invocation
@@ -392,13 +441,8 @@ mod tests {
     fn per_actor_limit_excludes_expired_actions() {
         let p = policy(); // max_per_quarter_per_actor = 1
         let mut expired = create_emergency_action(
-            EmergencyActionType::SystemHalt,
-            &did(),
-            "old",
-            0,
-            Hash256::ZERO,
+            emergency_input(Uuid::from_u128(52), EmergencyActionType::SystemHalt),
             &p,
-            ts(),
         )
         .expect("ok");
         // Mark as expired (missed ratification window)
@@ -417,15 +461,10 @@ mod tests {
         };
         // Create many actions for the same actor — all should pass
         let actions: Vec<EmergencyAction> = (0..10)
-            .map(|_| {
+            .map(|i| {
                 create_emergency_action(
-                    EmergencyActionType::SystemHalt,
-                    &did(),
-                    "unlimited",
-                    0,
-                    Hash256::ZERO,
+                    emergency_input(Uuid::from_u128(60 + i), EmergencyActionType::SystemHalt),
                     &p,
-                    ts(),
                 )
                 .expect("ok")
             })
@@ -435,16 +474,7 @@ mod tests {
 
     #[test]
     fn double_ratify_fails() {
-        let mut a = create_emergency_action(
-            EmergencyActionType::SystemHalt,
-            &did(),
-            "test",
-            0,
-            Hash256::ZERO,
-            &policy(),
-            ts(),
-        )
-        .expect("ok");
+        let mut a = make_action(EmergencyActionType::SystemHalt);
         ratify_emergency(
             &mut a,
             Uuid::new_v4(),

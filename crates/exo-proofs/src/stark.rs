@@ -109,11 +109,14 @@ impl Eq for StarkConfig {}
 ///
 /// `trace` is a 2D array: trace[row][column].
 /// `constraints` define the transition rules between consecutive rows.
+///
+/// **Unaudited** — gated behind the `unaudited-pedagogical-proofs` feature.
 pub fn prove_stark(
     trace: &[Vec<u64>],
     constraints: &[StarkConstraint],
     config: &StarkConfig,
 ) -> Result<StarkProof> {
+    crate::guard_unaudited("stark::prove_stark")?;
     if trace.is_empty() {
         return Err(ProofError::ProofGenerationFailed("empty trace".to_string()));
     }
@@ -189,7 +192,11 @@ pub fn prove_stark(
 /// Verify a STARK proof given public inputs.
 ///
 /// Public inputs are the first row of the trace.
-pub fn verify_stark(proof: &StarkProof, public_inputs: &[u64]) -> bool {
+///
+/// **Unaudited** — gated behind the `unaudited-pedagogical-proofs` feature.
+/// Returns `Err(UnauditedImplementation)` when the feature is disabled.
+pub fn verify_stark(proof: &StarkProof, public_inputs: &[u64]) -> Result<bool> {
+    crate::guard_unaudited("stark::verify_stark")?;
     // Step 1: Re-derive query indices from commitments (Fiat-Shamir)
     let expected_queries = match derive_queries(
         &proof.trace_commitment,
@@ -198,22 +205,22 @@ pub fn verify_stark(proof: &StarkProof, public_inputs: &[u64]) -> bool {
         proof.trace_length,
     ) {
         Ok(q) => q,
-        Err(_) => return false,
+        Err(_) => return Ok(false),
     };
 
     if expected_queries != proof.query_indices {
-        return false;
+        return Ok(false);
     }
 
     // Step 2: Verify FRI proof structure
     if proof.fri_proof.layer_commitments.is_empty() {
-        return false;
+        return Ok(false);
     }
 
     // Step 3: Verify the public inputs match what was committed.
     let public_hash = hash_row(public_inputs);
     if public_hash != proof.public_input_hash {
-        return false;
+        return Ok(false);
     }
 
     // Step 4: Verify consistency between trace commitment, constraint commitment,
@@ -222,7 +229,7 @@ pub fn verify_stark(proof: &StarkProof, public_inputs: &[u64]) -> bool {
         compute_fri_base_commitment(&proof.trace_commitment, &proof.constraint_commitment);
 
     if proof.fri_proof.layer_commitments[0] != expected_fri_base {
-        return false;
+        return Ok(false);
     }
 
     // Step 5: Verify FRI layer transitions
@@ -232,11 +239,11 @@ pub fn verify_stark(proof: &StarkProof, public_inputs: &[u64]) -> bool {
         h.update(window[0].as_bytes());
         let expected_next = Hash256::from_bytes(*h.finalize().as_bytes());
         if window[1] != expected_next {
-            return false;
+            return Ok(false);
         }
     }
 
-    true
+    Ok(true)
 }
 
 // ---------------------------------------------------------------------------
@@ -393,7 +400,7 @@ fn build_fri_proof(
 // Tests
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
+#[cfg(all(test, feature = "unaudited-pedagogical-proofs"))]
 mod tests {
     use super::*;
 
@@ -430,7 +437,7 @@ mod tests {
 
         let proof = prove_stark(&trace, &constraints, &config).unwrap();
         let public_inputs = &trace[0];
-        assert!(verify_stark(&proof, public_inputs));
+        assert!(verify_stark(&proof, public_inputs).unwrap());
     }
 
     #[test]
@@ -503,7 +510,7 @@ mod tests {
 
         let proof = prove_stark(&trace, &constraints, &config).unwrap();
         // Wrong public inputs
-        assert!(!verify_stark(&proof, &[99, 99]));
+        assert!(!verify_stark(&proof, &[99, 99]).unwrap());
     }
 
     #[test]
@@ -514,7 +521,7 @@ mod tests {
 
         let mut proof = prove_stark(&trace, &constraints, &config).unwrap();
         proof.trace_commitment = Hash256::ZERO;
-        assert!(!verify_stark(&proof, &trace[0]));
+        assert!(!verify_stark(&proof, &trace[0]).unwrap());
     }
 
     #[test]
@@ -522,7 +529,7 @@ mod tests {
         let config = StarkConfig::default_config();
         let trace = vec![vec![1, 2], vec![3, 4], vec![5, 6]];
         let proof = prove_stark(&trace, &[], &config).unwrap();
-        assert!(verify_stark(&proof, &trace[0]));
+        assert!(verify_stark(&proof, &trace[0]).unwrap());
     }
 
     #[test]
@@ -559,7 +566,7 @@ mod tests {
             coefficients: vec![(1, 1)], // non-zero: 1*0 + 1*0 == 0, but would be non-zero if OOB returned column data
         };
         let proof = prove_stark(&trace, &[constraint], &config).unwrap();
-        assert!(verify_stark(&proof, &trace[0]));
+        assert!(verify_stark(&proof, &trace[0]).unwrap());
     }
 
     #[test]
@@ -579,6 +586,6 @@ mod tests {
             coefficients: vec![(1, 1)], // non-zero, one entry — index 1 is silently skipped
         };
         let proof = prove_stark(&trace, &[constraint], &config).unwrap();
-        assert!(verify_stark(&proof, &trace[0]));
+        assert!(verify_stark(&proof, &trace[0]).unwrap());
     }
 }

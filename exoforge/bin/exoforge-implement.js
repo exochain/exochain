@@ -1,22 +1,25 @@
 #!/usr/bin/env node
 
 /**
- * exoforge-implement — Generate an implementation plan from a GitHub issue.
+ * exoforge-implement — Generate an implementation readiness plan from a GitHub issue.
  *
  * Reads the specified issue from GitHub, analyzes its requirements against
  * the 5-panel governance matrix, and produces a structured implementation
  * plan skeleton. The plan includes affected files, governance gates,
- * required reviews, and testing criteria.
- *
- * Actual code implementation requires Claude Code invocation; this tool
- * generates the plan that guides that process.
+ * required reviews, and testing criteria. This command is planning-only.
  *
  * Usage:
  *   exoforge-implement <issue_number> [--repo owner/name] [--json]
  */
 
 import { getIssue } from '../lib/github.js';
-import { getPanels, conductReview, tallyVotes } from '../lib/panels.js';
+import {
+  REVIEW_BINDING,
+  REVIEW_TIMESTAMP_ISO,
+  getPanels,
+  conductReview,
+  tallyVotes
+} from '../lib/panels.js';
 
 const DEFAULT_REPO = 'exochain/exochain';
 
@@ -196,8 +199,7 @@ function determinePhases(issue, panelAssessments) {
       'Create feature branch from main',
       'Implement changes per requirements',
       'Update WASM bindings if Rust crates are modified',
-      'Run cargo test and cargo clippy',
-      'NOTE: Actual implementation requires Claude Code invocation'
+      'Run cargo test and cargo clippy'
     ],
     blocked: false
   });
@@ -304,15 +306,17 @@ async function main() {
         : tally.total_findings > 2 ? 'medium' : 'low',
       requires_wasm_rebuild: affectedFiles.some(f => f.includes('crates/') || f.includes('wasm')),
       requires_council_review: tally.verdict !== 'APPROVED',
-      generated_at: new Date().toISOString(),
-      implementation_note: 'Actual code implementation requires invoking Claude Code with this plan as context.'
+      generated_at: REVIEW_TIMESTAMP_ISO,
+      execution_mode: 'planning_only',
+      binding_review: REVIEW_BINDING,
+      planning_note: 'This command generates an implementation readiness plan; it does not modify files.'
     };
 
     if (args.json) {
       console.log(JSON.stringify(plan, null, 2));
     } else {
       console.log('');
-      console.log('  ExoForge Implementation Plan');
+      console.log('  ExoForge Implementation Readiness Plan');
       console.log(`  ${'='.repeat(50)}`);
       console.log(`  Issue: #${plan.issue.number} — ${plan.issue.title}`);
       console.log(`  URL: ${plan.issue.url}`);
@@ -350,7 +354,7 @@ async function main() {
       if (plan.requires_wasm_rebuild) {
         console.log('  NOTE: This implementation requires a WASM rebuild (wasm-pack build)');
       }
-      console.log(`  NOTE: ${plan.implementation_note}`);
+      console.log(`  NOTE: ${plan.planning_note}`);
       console.log('');
     }
   } catch (err) {

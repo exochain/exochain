@@ -19,7 +19,6 @@ use axum::{
     routing::get,
 };
 use exo_core::types::Hash256;
-
 use serde::Serialize;
 
 use crate::store::SqliteDagStore;
@@ -55,8 +54,8 @@ pub struct ProvenanceResponse {
     pub committed_height: Option<u64>,
     /// Timestamp (physical_ms from HLC).
     pub timestamp_ms: u64,
-    /// Payload size in bytes.
-    pub payload_size: usize,
+    /// Size in bytes of the stored payload hash.
+    pub payload_hash_size: usize,
     /// Depth: number of hops to reach a root (node with no parents).
     pub depth: u32,
 }
@@ -126,7 +125,7 @@ async fn handle_provenance(
         committed: committed_height.is_some(),
         committed_height,
         timestamp_ms: node.timestamp.physical_ms,
-        payload_size: 32, // payload_hash is 32 bytes
+        payload_hash_size: node.payload_hash.as_bytes().len(),
         depth,
     }))
 }
@@ -223,6 +222,8 @@ mod tests {
         let parents = result["parents"].as_array().unwrap();
         assert_eq!(parents.len(), 1);
         assert_eq!(parents[0], hex::encode(genesis_hash.0));
+        assert!(result.get("payload_size").is_none());
+        assert_eq!(result["payload_hash_size"], 32);
     }
 
     #[tokio::test]

@@ -1,14 +1,13 @@
 /**
  * Bridge Verification Test — WASM binding smoke-test harness
  *
- * Calls every one of the 110 exported wasm_ functions with valid minimal
- * inputs and verifies each returns without throwing.
+ * Calls the covered exported wasm_ bridge functions with valid minimal inputs
+ * and verifies each returns without throwing.
  *
  * Run:  node packages/exochain-wasm/test/bridge_verification.mjs
  */
 
 import { createRequire } from 'node:module';
-import { randomUUID }    from 'node:crypto';
 const require = createRequire(import.meta.url);
 const wasm = require('../wasm/exochain_wasm.js');
 
@@ -19,9 +18,13 @@ const wasm = require('../wasm/exochain_wasm.js');
 let passed = 0;
 let failed = 0;
 const failures = [];
+const coveredExports = new Set();
 
 function test(name, fn) {
   try {
+    for (const match of name.matchAll(/\bwasm_[A-Za-z0-9_]+\b/g)) {
+      coveredExports.add(match[0]);
+    }
     const result = fn();
     passed++;
     console.log(`  PASS  ${name}`);
@@ -42,7 +45,9 @@ function setup(fn) {
 
 // Convenience constants
 const ZERO_32_HEX   = '0'.repeat(64);
+const NONZERO_32_HEX = '11'.repeat(32);
 const ZERO_32_BYTES = Array.from({ length: 32 }, () => 0);
+const EVIDENCE_32_BYTES = Array.from({ length: 32 }, () => 0xee);
 const TEST_DID      = 'did:exo:test-actor';
 const TEST_DID_2    = 'did:exo:test-actor-2';
 const TEST_DID_3    = 'did:exo:test-actor-3';
@@ -51,11 +56,42 @@ const NOW_NUM       = Number(NOW_MS);
 const NOW_TS        = { physical_ms: NOW_NUM, logical: 0 };  // HLC Timestamp
 const TEXT_BYTES     = new TextEncoder().encode('hello');
 const DUMMY_SECRET_HEX = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
-const UUID_1 = randomUUID();
-const UUID_2 = randomUUID();
+const DUMMY_SECRET_HEX_2 = '1111111111111111111111111111111111111111111111111111111111111111';
+const DUMMY_SECRET_HEX_3 = '2222222222222222222222222222222222222222222222222222222222222222';
+const UUID_1 = '00000000-0000-0000-0000-000000000001';
+const UUID_2 = '00000000-0000-0000-0000-000000000002';
+const UUID_3 = '00000000-0000-0000-0000-000000000003';
+const UUID_4 = '00000000-0000-0000-0000-000000000004';
 
 // Pre-compute a valid Ed25519 keypair result for reuse
 const ephResult = wasm.wasm_sign_with_ephemeral_key(TEXT_BYTES);
+
+function publicKeyForSecret(secretHex) {
+  return wasm.wasm_ed25519_public_from_secret(secretHex);
+}
+
+function signatureHexFromJson(signatureJson) {
+  const signature = typeof signatureJson === 'string' ? JSON.parse(signatureJson) : signatureJson;
+  const bytes = signature.Ed25519;
+  if (!Array.isArray(bytes) || bytes.length !== 64) {
+    throw new Error('expected Ed25519 signature bytes');
+  }
+  return Buffer.from(bytes).toString('hex');
+}
+
+function hashBytes(hashValue) {
+  if (Array.isArray(hashValue)) return hashValue;
+  if (hashValue && Array.isArray(hashValue[0])) return hashValue[0];
+  if (hashValue && Array.isArray(hashValue.bytes)) return hashValue.bytes;
+  throw new Error('expected serialized Hash256 bytes');
+}
+
+function assertNonZeroHash(hashValue, label) {
+  const bytes = hashBytes(hashValue);
+  if (bytes.length !== 32 || bytes.every((byte) => byte === 0)) {
+    throw new Error(`${label} must be a nonzero Hash256`);
+  }
+}
 
 // =========================================================================
 // Module 1 — BCTS (Bounded-Context Transition System)
@@ -112,6 +148,9 @@ test('wasm_verify', () =>
 test('wasm_sign', () =>
   wasm.wasm_sign(TEXT_BYTES, DUMMY_SECRET_HEX));
 
+test('wasm_ed25519_public_from_secret', () =>
+  wasm.wasm_ed25519_public_from_secret(DUMMY_SECRET_HEX));
+
 test('wasm_compute_event_id', () =>
   wasm.wasm_compute_event_id());
 
@@ -144,16 +183,215 @@ test('wasm_verify_event', () => {
 });
 
 // =========================================================================
+// Module 3b — Messaging / Death Verification
+// =========================================================================
+
+console.log('\n--- Messaging / Death Verification ---');
+
+test('wasm_generate_x25519_keypair', () => {
+  const keypair = wasm.wasm_generate_x25519_keypair();
+  if (keypair.public_key_hex.length !== 64 || keypair.secret_key_hex.length !== 64) {
+    throw new Error('X25519 keypair must return 32-byte public and secret keys');
+  }
+  return keypair;
+});
+
+const recipientKex = setup(() => wasm.wasm_generate_x25519_keypair());
+
+test('wasm_x25519_public_from_secret', () => {
+  if (!recipientKex) throw new Error('skipped -- no recipient X25519 keypair');
+  const derived = wasm.wasm_x25519_public_from_secret(recipientKex.secret_key_hex);
+  if (derived.public_key_hex !== recipientKex.public_key_hex) {
+    throw new Error('derived X25519 public key must match generated keypair');
+  }
+  return derived;
+});
+
+test('wasm_encrypt_message', () => {
+  if (!recipientKex) throw new Error('skipped -- no recipient X25519 keypair');
+  const envelope = wasm.wasm_encrypt_message(
+    'bridge encrypted message',
+    JSON.stringify('Text'),
+    TEST_DID,
+    TEST_DID_2,
+    DUMMY_SECRET_HEX,
+    recipientKex.public_key_hex,
+    '018f7a96-8ad0-7c4f-8e0f-111111111201',
+    7000n,
+    0,
+    false,
+    0
+  );
+  if (envelope.sender_did !== TEST_DID || envelope.recipient_did !== TEST_DID_2) {
+    throw new Error('encrypted envelope must retain sender and recipient DIDs');
+  }
+  return envelope;
+});
+
+const encryptedEnvelope = setup(() =>
+  recipientKex && wasm.wasm_encrypt_message(
+    'bridge encrypted message',
+    JSON.stringify('Text'),
+    TEST_DID,
+    TEST_DID_2,
+    DUMMY_SECRET_HEX,
+    recipientKex.public_key_hex,
+    '018f7a96-8ad0-7c4f-8e0f-111111111202',
+    7001n,
+    0,
+    false,
+    0
+  ));
+const encryptedSenderPublicKey = setup(() => publicKeyForSecret(DUMMY_SECRET_HEX));
+
+test('wasm_verify_message_signature', () => {
+  if (!encryptedEnvelope || !encryptedSenderPublicKey) {
+    throw new Error('skipped -- no encrypted envelope');
+  }
+  const ok = wasm.wasm_verify_message_signature(
+    JSON.stringify(encryptedEnvelope),
+    encryptedSenderPublicKey
+  );
+  if (!ok) throw new Error('message signature must verify with sender public key');
+  return ok;
+});
+
+test('wasm_decrypt_message', () => {
+  if (!encryptedEnvelope || !recipientKex || !encryptedSenderPublicKey) {
+    throw new Error('skipped -- no encrypted envelope');
+  }
+  const decrypted = wasm.wasm_decrypt_message(
+    JSON.stringify(encryptedEnvelope),
+    recipientKex.secret_key_hex,
+    encryptedSenderPublicKey
+  );
+  if (decrypted.plaintext !== 'bridge encrypted message') {
+    throw new Error('decrypted plaintext mismatch');
+  }
+  return decrypted;
+});
+
+const initiatorPublicKey = setup(() => publicKeyForSecret(DUMMY_SECRET_HEX_2));
+const trusteePublicKey = setup(() => publicKeyForSecret(DUMMY_SECRET_HEX_3));
+const deathTrusteesJson = setup(() => {
+  if (!initiatorPublicKey || !trusteePublicKey) {
+    throw new Error('missing death-verification public keys');
+  }
+  return JSON.stringify([
+    { did: TEST_DID_2, public_key_hex: initiatorPublicKey },
+    { did: TEST_DID_3, public_key_hex: trusteePublicKey },
+  ]);
+});
+const deathClaimNonceHex = Buffer.from('bridge-death-claim').toString('hex');
+
+test('wasm_death_verification_initial_signing_payload', () => {
+  if (!deathTrusteesJson) throw new Error('skipped -- no trustee set');
+  return wasm.wasm_death_verification_initial_signing_payload(
+    TEST_DID,
+    TEST_DID_2,
+    2,
+    deathTrusteesJson,
+    deathClaimNonceHex
+  );
+});
+
+const deathInitialPayload = setup(() =>
+  deathTrusteesJson && wasm.wasm_death_verification_initial_signing_payload(
+    TEST_DID,
+    TEST_DID_2,
+    2,
+    deathTrusteesJson,
+    deathClaimNonceHex
+  ));
+const deathInitialSignatureHex = setup(() =>
+  deathInitialPayload && signatureHexFromJson(wasm.wasm_sign(deathInitialPayload, DUMMY_SECRET_HEX_2)));
+
+test('wasm_death_verification_new', () => {
+  if (!deathTrusteesJson || !deathInitialSignatureHex) {
+    throw new Error('skipped -- no signed initial payload');
+  }
+  const state = wasm.wasm_death_verification_new(
+    TEST_DID,
+    TEST_DID_2,
+    2,
+    deathTrusteesJson,
+    deathClaimNonceHex,
+    deathInitialSignatureHex,
+    NOW_MS,
+    0
+  );
+  if (state.created.physical_ms !== NOW_NUM || state.created.logical !== 0) {
+    throw new Error('death verification created timestamp must be caller-supplied HLC');
+  }
+  if (state.confirmations[0].confirmed_at.physical_ms !== NOW_NUM) {
+    throw new Error('initial confirmation timestamp must match caller-supplied creation HLC');
+  }
+  return state;
+});
+
+const deathState = setup(() =>
+  deathTrusteesJson && deathInitialSignatureHex && wasm.wasm_death_verification_new(
+    TEST_DID,
+    TEST_DID_2,
+    2,
+    deathTrusteesJson,
+    deathClaimNonceHex,
+    deathInitialSignatureHex,
+    NOW_MS,
+    0
+  ));
+
+test('wasm_death_verification_confirmation_signing_payload', () => {
+  if (!deathState) throw new Error('skipped -- no death-verification state');
+  return wasm.wasm_death_verification_confirmation_signing_payload(
+    JSON.stringify(deathState),
+    TEST_DID_3
+  );
+});
+
+const deathConfirmationPayload = setup(() =>
+  deathState && wasm.wasm_death_verification_confirmation_signing_payload(
+    JSON.stringify(deathState),
+    TEST_DID_3
+  ));
+const deathConfirmationSignatureHex = setup(() =>
+  deathConfirmationPayload && signatureHexFromJson(
+    wasm.wasm_sign(deathConfirmationPayload, DUMMY_SECRET_HEX_3)
+  ));
+
+test('wasm_death_verification_confirm', () => {
+  if (!deathState || !trusteePublicKey || !deathConfirmationSignatureHex) {
+    throw new Error('skipped -- no signed confirmation payload');
+  }
+  const result = wasm.wasm_death_verification_confirm(
+    JSON.stringify(deathState),
+    TEST_DID_3,
+    trusteePublicKey,
+    deathConfirmationSignatureHex,
+    BigInt(NOW_NUM + 1),
+    0
+  );
+  const confirmation = result.state.confirmations[1];
+  if (confirmation.confirmed_at.physical_ms !== NOW_NUM + 1 || confirmation.confirmed_at.logical !== 0) {
+    throw new Error('trustee confirmation timestamp must be caller-supplied HLC');
+  }
+  if (result.state.resolved_at.physical_ms !== NOW_NUM + 1) {
+    throw new Error('verified death claim resolution timestamp must match confirmation HLC');
+  }
+  return result;
+});
+
+// =========================================================================
 // Module 4 — Legal / Records / Evidence
 // =========================================================================
 
 console.log('\n--- Legal / Records / Evidence ---');
 
 test('wasm_create_record', () =>
-  wasm.wasm_create_record(TEXT_BYTES, 'Confidential', BigInt(365)));
+  wasm.wasm_create_record(TEXT_BYTES, 'Confidential', BigInt(365), UUID_1, NOW_MS));
 
 test('wasm_apply_retention', () => {
-  const rec = wasm.wasm_create_record(TEXT_BYTES, 'Confidential', BigInt(365));
+  const rec = wasm.wasm_create_record(TEXT_BYTES, 'Confidential', BigInt(365), UUID_2, NOW_MS);
   const policy = {
     default_retention_days: 365,
     rules: { Confidential: 365 }
@@ -166,24 +404,25 @@ test('wasm_apply_retention', () => {
 });
 
 test('wasm_create_evidence', () =>
-  wasm.wasm_create_evidence(TEXT_BYTES, 'Document', TEST_DID));
+  wasm.wasm_create_evidence(TEXT_BYTES, 'Document', TEST_DID, UUID_3, NOW_MS));
 
 const evidence = setup(() =>
-  wasm.wasm_create_evidence(TEXT_BYTES, 'Document', TEST_DID));
+  wasm.wasm_create_evidence(TEXT_BYTES, 'Document', TEST_DID, UUID_3, NOW_MS));
 
 test('wasm_verify_chain_of_custody', () => {
   if (!evidence) throw new Error('skipped -- no evidence from setup');
   return wasm.wasm_verify_chain_of_custody(JSON.stringify(evidence));
 });
 
-const evidenceId = (evidence && evidence.evidence_id) || UUID_1;
+const evidenceId = (evidence && evidence.id) || UUID_3;
 
 test('wasm_assert_privilege', () =>
   wasm.wasm_assert_privilege(
     evidenceId,
     JSON.stringify('AttorneyClient'),
     TEST_DID,
-    'Legal advice communication'
+    'Legal advice communication',
+    NOW_MS
   ));
 
 const assertion = setup(() =>
@@ -191,7 +430,8 @@ const assertion = setup(() =>
     evidenceId,
     JSON.stringify('AttorneyClient'),
     TEST_DID,
-    'Legal advice communication'
+    'Legal advice communication',
+    NOW_MS
   ));
 
 test('wasm_challenge_privilege', () => {
@@ -199,7 +439,8 @@ test('wasm_challenge_privilege', () => {
   return wasm.wasm_challenge_privilege(
     JSON.stringify(assertion),
     TEST_DID_2,
-    'Crime-fraud exception'
+    'Crime-fraud exception',
+    NOW_MS
   );
 });
 
@@ -242,20 +483,22 @@ console.log('\n--- Safe Harbor ---');
 
 test('wasm_initiate_safe_harbor', () =>
   wasm.wasm_initiate_safe_harbor(
+    UUID_4,
     TEST_DID,
     TEST_DID_2,
     'Board member is counterparty',
-    ZERO_32_HEX,
+    NONZERO_32_HEX,
     JSON.stringify('BoardApproval'),
     NOW_MS
   ));
 
 const shTxn = setup(() =>
   wasm.wasm_initiate_safe_harbor(
+    UUID_4,
     TEST_DID,
     TEST_DID_2,
     'Board member is counterparty',
-    ZERO_32_HEX,
+    NONZERO_32_HEX,
     JSON.stringify('BoardApproval'),
     NOW_MS
   ));
@@ -304,7 +547,9 @@ test('wasm_propose_bailment', () =>
     TEST_DID,
     TEST_DID_2,
     TEXT_BYTES,
-    JSON.stringify('Custody')
+    JSON.stringify('Custody'),
+    UUID_1,
+    JSON.stringify(NOW_TS)
   ));
 
 const bailment = setup(() =>
@@ -312,27 +557,52 @@ const bailment = setup(() =>
     TEST_DID,
     TEST_DID_2,
     TEXT_BYTES,
-    JSON.stringify('Custody')
+    JSON.stringify('Custody'),
+    UUID_1,
+    JSON.stringify(NOW_TS)
   ));
 
 test('wasm_bailment_is_active', () => {
   if (!bailment) throw new Error('skipped -- no bailment from setup');
-  return wasm.wasm_bailment_is_active(JSON.stringify(bailment));
+  return wasm.wasm_bailment_is_active(JSON.stringify(bailment), JSON.stringify(NOW_TS));
 });
 
-const bailSig = wasm.wasm_sign_with_ephemeral_key(TEXT_BYTES);
+// Build the canonical bailment signing payload and sign it with a
+// fresh ephemeral bailee keypair. Since GAP-012 landed (PR #109),
+// `wasm_accept_bailment` cryptographically verifies this signature;
+// arbitrary bytes no longer flip the bailment Active.
+const bailPayload = bailment
+  ? wasm.wasm_bailment_signing_payload(JSON.stringify(bailment))
+  : null;
+const bailSig = bailPayload
+  ? wasm.wasm_sign_with_ephemeral_key(bailPayload)
+  : null;
+
+// `bailSig.public_key` is hex-encoded (see wasm_sign_with_ephemeral_key
+// in core_bindings.rs). `exo_core::PublicKey` deserializes from a byte
+// array of length 32. Convert hex → number array for the accept call.
+const bailPubKeyBytes = bailSig
+  ? Array.from(Buffer.from(bailSig.public_key, 'hex'))
+  : null;
+
+test('wasm_bailment_signing_payload', () => {
+  if (!bailment) throw new Error('skipped -- no bailment from setup');
+  return wasm.wasm_bailment_signing_payload(JSON.stringify(bailment));
+});
 
 test('wasm_accept_bailment', () => {
-  if (!bailment) throw new Error('skipped -- no bailment from setup');
+  if (!bailment || !bailSig) throw new Error('skipped -- no bailment from setup');
   return wasm.wasm_accept_bailment(
     JSON.stringify(bailment),
+    JSON.stringify(bailPubKeyBytes),
     JSON.stringify(bailSig.signature)
   );
 });
 
 const activeBailment = setup(() =>
-  bailment && wasm.wasm_accept_bailment(
+  (bailment && bailSig) && wasm.wasm_accept_bailment(
     JSON.stringify(bailment),
+    JSON.stringify(bailPubKeyBytes),
     JSON.stringify(bailSig.signature)
   ));
 
@@ -384,6 +654,368 @@ test('wasm_pace_resolve', () => {
     JSON.stringify(config),
     JSON.stringify('Normal')
   );
+});
+
+// =========================================================================
+// Module 8b — Catapult
+// =========================================================================
+
+console.log('\n--- Catapult ---');
+
+test('wasm_create_franchise_blueprint', () => {
+  const blueprint = wasm.wasm_create_franchise_blueprint(
+    'Bridge Franchise',
+    JSON.stringify('SaaS'),
+    NONZERO_32_HEX,
+    UUID_4,
+    'Bridge-test franchise blueprint',
+    NOW_MS,
+    1
+  );
+  if (blueprint.id !== UUID_4) throw new Error('blueprint id must be caller-supplied');
+  assertNonZeroHash(blueprint.content_hash, 'blueprint content_hash');
+  return blueprint;
+});
+
+const catapultBlueprint = setup(() =>
+  wasm.wasm_create_franchise_blueprint(
+    'Bridge Franchise',
+    JSON.stringify('SaaS'),
+    NONZERO_32_HEX,
+    UUID_4,
+    'Bridge-test franchise blueprint',
+    NOW_MS,
+    1
+  ));
+
+test('wasm_instantiate_newco', () => {
+  if (!catapultBlueprint) throw new Error('skipped -- no Catapult blueprint from setup');
+  const newco = wasm.wasm_instantiate_newco(
+    JSON.stringify(catapultBlueprint),
+    JSON.stringify({
+      name: 'Bridge Newco',
+      newco_id: UUID_1,
+      tenant_id: UUID_2,
+      dag_anchor_hex: '22'.repeat(32),
+      created_physical_ms: NOW_NUM,
+      created_logical: 2,
+      hr_did: TEST_DID,
+      researcher_did: TEST_DID_2
+    })
+  );
+  if (newco.id !== UUID_1) throw new Error('newco id must be caller-supplied');
+  if (newco.tenant_id !== UUID_2) throw new Error('tenant id must be caller-supplied');
+  assertNonZeroHash(newco.constitution_hash, 'newco constitution_hash');
+  assertNonZeroHash(newco.dag_anchor, 'newco dag_anchor');
+  if (newco.created.physical_ms !== NOW_NUM || newco.created.logical !== 2) {
+    throw new Error('newco created timestamp must be caller-supplied HLC');
+  }
+  return newco;
+});
+
+const catapultNewco = setup(() =>
+  catapultBlueprint && wasm.wasm_instantiate_newco(
+    JSON.stringify(catapultBlueprint),
+    JSON.stringify({
+      name: 'Bridge Newco',
+      newco_id: UUID_1,
+      tenant_id: UUID_2,
+      dag_anchor_hex: '22'.repeat(32),
+      created_physical_ms: NOW_NUM,
+      created_logical: 2,
+      hr_did: TEST_DID,
+      researcher_did: TEST_DID_2
+    })
+  ));
+
+test('wasm_list_franchise_blueprints', () => {
+  if (!catapultBlueprint) throw new Error('skipped -- no Catapult blueprint from setup');
+  const blueprints = wasm.wasm_list_franchise_blueprints(
+    JSON.stringify({ blueprints: { [UUID_4]: catapultBlueprint } })
+  );
+  if (blueprints.length !== 1 || blueprints[0].id !== UUID_4) {
+    throw new Error('franchise registry list did not return published blueprint');
+  }
+  return blueprints;
+});
+
+test('wasm_valid_phase_transitions', () => {
+  const transitions = wasm.wasm_valid_phase_transitions(JSON.stringify('Assessment'));
+  if (!transitions.includes('Selection')) {
+    throw new Error('Assessment phase must allow Selection transition');
+  }
+  return transitions;
+});
+
+test('wasm_transition_newco_phase', () => {
+  if (!catapultNewco) throw new Error('skipped -- no Catapult newco from setup');
+  const transitioned = wasm.wasm_transition_newco_phase(
+    JSON.stringify(catapultNewco),
+    JSON.stringify('Selection')
+  );
+  if (transitioned.phase !== 'Selection') {
+    throw new Error('newco phase did not transition to Selection');
+  }
+  return transitioned;
+});
+
+const ventureCommander = {
+  did: TEST_DID_3,
+  slot: 'VentureCommander',
+  display_name: 'Bridge Venture Commander',
+  capabilities: ['command', 'budget'],
+  status: 'Active',
+  last_heartbeat: { physical_ms: NOW_NUM + 50, logical: 0 },
+  budget_spent_cents: 0,
+  budget_limit_cents: 1000000,
+  hired_at: { physical_ms: NOW_NUM + 50, logical: 0 },
+  hired_by: TEST_DID,
+  commandbase_profile: null
+};
+
+test('wasm_hire_agent', () => {
+  if (!catapultNewco) throw new Error('skipped -- no Catapult newco from setup');
+  const hired = wasm.wasm_hire_agent(
+    JSON.stringify(catapultNewco),
+    JSON.stringify(ventureCommander)
+  );
+  if (!hired.roster.agents.VentureCommander) {
+    throw new Error('VentureCommander slot was not filled');
+  }
+  return hired;
+});
+
+test('wasm_release_agent', () => {
+  if (!catapultNewco) throw new Error('skipped -- no Catapult newco from setup');
+  const hired = wasm.wasm_hire_agent(
+    JSON.stringify(catapultNewco),
+    JSON.stringify(ventureCommander)
+  );
+  const released = wasm.wasm_release_agent(
+    JSON.stringify(hired),
+    JSON.stringify('VentureCommander')
+  );
+  if (released.released_agent.did !== TEST_DID_3) {
+    throw new Error('released agent DID mismatch');
+  }
+  return released;
+});
+
+test('wasm_roster_status', () => {
+  if (!catapultNewco) throw new Error('skipped -- no Catapult newco from setup');
+  const status = wasm.wasm_roster_status(JSON.stringify(catapultNewco));
+  if (status.filled < 2 || !status.has_founders) {
+    throw new Error('newco roster status must include founding agents');
+  }
+  return status;
+});
+
+test('wasm_oda_authority_chain', () => {
+  if (!catapultNewco) throw new Error('skipped -- no Catapult newco from setup');
+  const hired = wasm.wasm_hire_agent(
+    JSON.stringify(catapultNewco),
+    JSON.stringify(ventureCommander)
+  );
+  const chain = wasm.wasm_oda_authority_chain(JSON.stringify(hired));
+  if (chain.primary !== TEST_DID_3) {
+    throw new Error('PACE primary authority should be the VentureCommander in bridge fixture');
+  }
+  return chain;
+});
+
+test('wasm_record_cost_event', () => {
+  const ledger = wasm.wasm_record_cost_event(
+    JSON.stringify({ policies: [], events: [] }),
+    JSON.stringify({
+      id: UUID_1,
+      newco_id: UUID_2,
+      agent_did: TEST_DID,
+      slot: 'VentureCommander',
+      amount: 1234,
+      metric: 'BilledCents',
+      description: 'Bridge cost event',
+      timestamp: { physical_ms: NOW_NUM + 10, logical: 0 }
+    })
+  );
+  if (ledger.events.length !== 1) throw new Error('cost event was not recorded');
+  assertNonZeroHash(ledger.events[0].receipt_hash, 'cost event receipt_hash');
+  return ledger;
+});
+
+const catapultLedger = setup(() =>
+  wasm.wasm_record_cost_event(
+    JSON.stringify({
+      policies: [{
+        id: UUID_4,
+        scope: 'Company',
+        metric: 'BilledCents',
+        window: 'Lifetime',
+        limit: 2000,
+        warn_threshold_bps: 5000,
+        hard_stop: true,
+        is_active: true
+      }],
+      events: []
+    }),
+    JSON.stringify({
+      id: UUID_1,
+      newco_id: UUID_2,
+      agent_did: TEST_DID,
+      slot: 'VentureCommander',
+      amount: 1234,
+      metric: 'BilledCents',
+      description: 'Bridge cost event',
+      timestamp: { physical_ms: NOW_NUM + 10, logical: 0 }
+    })
+  ));
+
+test('wasm_check_budget_status', () => {
+  if (!catapultLedger) throw new Error('skipped -- no Catapult budget ledger');
+  const status = wasm.wasm_check_budget_status(
+    JSON.stringify(catapultLedger),
+    JSON.stringify('Company')
+  );
+  if (status.status !== 'Warning') {
+    throw new Error('budget status should warn after threshold crossing');
+  }
+  return status;
+});
+
+test('wasm_enforce_budget', () => {
+  if (!catapultNewco) throw new Error('skipped -- no Catapult newco from setup');
+  const enforcement = wasm.wasm_enforce_budget(JSON.stringify(catapultNewco));
+  if (enforcement.status !== 'Ok') {
+    throw new Error('fresh newco budget should be Ok');
+  }
+  return enforcement;
+});
+
+test('wasm_record_heartbeat', () => {
+  const monitor = wasm.wasm_record_heartbeat(
+    JSON.stringify({
+      last_seen: {},
+      history: {},
+      warn_ms: 180000,
+      timeout_ms: 300000
+    }),
+    JSON.stringify({
+      id: UUID_2,
+      newco_id: UUID_3,
+      agent_did: TEST_DID,
+      status: 'Completed',
+      started: { physical_ms: NOW_NUM + 20, logical: 0 },
+      finished: { physical_ms: NOW_NUM + 120, logical: 0 },
+      usage: { tokens: 12 }
+    })
+  );
+  if (monitor.last_seen[TEST_DID].physical_ms !== NOW_NUM + 20) {
+    throw new Error('heartbeat last_seen was not recorded');
+  }
+  assertNonZeroHash(monitor.history[TEST_DID][0].receipt_hash, 'heartbeat receipt_hash');
+  return monitor;
+});
+
+const catapultMonitor = setup(() =>
+  wasm.wasm_record_heartbeat(
+    JSON.stringify({
+      last_seen: {},
+      history: {},
+      warn_ms: 180000,
+      timeout_ms: 300000
+    }),
+    JSON.stringify({
+      id: UUID_2,
+      newco_id: UUID_3,
+      agent_did: TEST_DID,
+      status: 'Completed',
+      started: { physical_ms: NOW_NUM + 20, logical: 0 },
+      finished: { physical_ms: NOW_NUM + 120, logical: 0 },
+      usage: { tokens: 12 }
+    })
+  ));
+
+test('wasm_check_heartbeat_health', () => {
+  if (!catapultMonitor) throw new Error('skipped -- no Catapult heartbeat monitor');
+  const health = wasm.wasm_check_heartbeat_health(
+    JSON.stringify(catapultMonitor),
+    BigInt(NOW_NUM + 300000)
+  );
+  if (health.agent_count !== 1 || health.alerts.length !== 1) {
+    throw new Error('heartbeat health should report one delayed agent');
+  }
+  return health;
+});
+
+test('wasm_create_goal and wasm_update_goal_status', () => {
+  const tree = wasm.wasm_create_goal(
+    JSON.stringify({ goals: {} }),
+    JSON.stringify({
+      id: UUID_3,
+      title: 'Bridge goal',
+      description: null,
+      level: 'Company',
+      status: 'Planned',
+      parent_id: null,
+      owner_slot: null,
+      created: { physical_ms: NOW_NUM + 30, logical: 0 },
+      updated: { physical_ms: NOW_NUM + 30, logical: 0 }
+    })
+  );
+  const updated = wasm.wasm_update_goal_status(
+    JSON.stringify(tree),
+    UUID_3,
+    JSON.stringify('Completed'),
+    BigInt(NOW_NUM + 40),
+    0
+  );
+  if (updated.goals[UUID_3].status !== 'Completed') {
+    throw new Error('goal status was not updated');
+  }
+  if (updated.goals[UUID_3].updated.physical_ms !== NOW_NUM + 40) {
+    throw new Error('goal updated timestamp was not caller-supplied HLC');
+  }
+  return updated;
+});
+
+const catapultGoalTree = setup(() =>
+  wasm.wasm_create_goal(
+    JSON.stringify({ goals: {} }),
+    JSON.stringify({
+      id: UUID_3,
+      title: 'Bridge goal',
+      description: null,
+      level: 'Company',
+      status: 'Completed',
+      parent_id: null,
+      owner_slot: null,
+      created: { physical_ms: NOW_NUM + 30, logical: 0 },
+      updated: { physical_ms: NOW_NUM + 30, logical: 0 }
+    })
+  ));
+
+test('wasm_goal_alignment_score', () => {
+  if (!catapultGoalTree) throw new Error('skipped -- no Catapult goal tree');
+  const score = wasm.wasm_goal_alignment_score(JSON.stringify(catapultGoalTree));
+  if (score !== 10000) {
+    throw new Error('single completed goal should score 10000 basis points');
+  }
+  return score;
+});
+
+test('wasm_generate_franchise_receipt', () => {
+  try {
+    wasm.wasm_generate_franchise_receipt(UUID_1, JSON.stringify('Instantiate'), TEST_DID);
+  } catch (err) {
+    if (!String(err).includes('server-side Ed25519 signer')) throw err;
+    return true;
+  }
+  throw new Error('franchise receipt generation must refuse without a server-side signer');
+});
+
+test('wasm_verify_franchise_receipt_chain', () => {
+  const ok = wasm.wasm_verify_franchise_receipt_chain(JSON.stringify({ receipts: [] }));
+  if (!ok) throw new Error('empty franchise receipt chain should verify');
+  return ok;
 });
 
 // =========================================================================
@@ -471,12 +1103,16 @@ test('wasm_escalate', () => {
     source: TEST_DID,
     signal_type: 'AnomalousPattern',
     confidence: 80,
-    evidence_hash: ZERO_32_BYTES,
+    evidence_hash: EVIDENCE_32_BYTES,
     timestamp: NOW_TS
   };
-  // EscalationPath is an enum: Standard, SybilAdjudication, Emergency, Constitutional
-  const path = JSON.stringify('Standard');
-  return wasm.wasm_escalate(JSON.stringify(signal), path);
+  const input = {
+    id: '11111111-1111-1111-1111-111111111111',
+    created: NOW_TS,
+    signal,
+    path: 'Standard'
+  };
+  return wasm.wasm_escalate(JSON.stringify(input));
 });
 
 const escCase = setup(() => {
@@ -484,12 +1120,16 @@ const escCase = setup(() => {
     source: TEST_DID,
     signal_type: 'AnomalousPattern',
     confidence: 80,
-    evidence_hash: ZERO_32_BYTES,
+    evidence_hash: EVIDENCE_32_BYTES,
     timestamp: NOW_TS
   };
-  // EscalationPath is an enum: Standard, SybilAdjudication, Emergency, Constitutional
-  const path = JSON.stringify('Standard');
-  return wasm.wasm_escalate(JSON.stringify(signal), path);
+  const input = {
+    id: '22222222-2222-2222-2222-222222222222',
+    created: NOW_TS,
+    signal,
+    path: 'Standard'
+  };
+  return wasm.wasm_escalate(JSON.stringify(input));
 });
 
 test('wasm_check_completeness', () => {
@@ -601,10 +1241,10 @@ test('wasm_activate_succession', () => {
 console.log('\n--- Audit ---');
 
 test('wasm_audit_append', () =>
-  wasm.wasm_audit_append(TEST_DID, 'create', 'success', ZERO_32_HEX));
+  wasm.wasm_audit_append(UUID_1, NOW_MS, 0, TEST_DID, 'create', 'success', ZERO_32_HEX));
 
 const auditEntry = setup(() =>
-  wasm.wasm_audit_append(TEST_DID, 'create', 'success', ZERO_32_HEX));
+  wasm.wasm_audit_append(UUID_1, NOW_MS, 0, TEST_DID, 'create', 'success', ZERO_32_HEX));
 
 test('wasm_audit_verify', () => {
   const entry = {
@@ -639,12 +1279,18 @@ console.log('\n--- Deliberation / Voting ---');
 
 test('wasm_open_deliberation', () =>
   wasm.wasm_open_deliberation(
+    UUID_1,
+    NOW_MS,
+    0,
     Buffer.from('test proposal').toString('hex'),
     JSON.stringify([TEST_DID, TEST_DID_2])
   ));
 
 const deliberation = setup(() =>
   wasm.wasm_open_deliberation(
+    UUID_1,
+    NOW_MS,
+    0,
     Buffer.from('test proposal').toString('hex'),
     JSON.stringify([TEST_DID, TEST_DID_2])
   ));
@@ -746,6 +1392,9 @@ console.log('\n--- Governance Challenges ---');
 
 test('wasm_file_governance_challenge', () =>
   wasm.wasm_file_governance_challenge(
+    UUID_1,
+    NOW_MS,
+    0,
     TEST_DID,
     ZERO_32_HEX,
     JSON.stringify('ProceduralError'),
@@ -773,9 +1422,12 @@ console.log('\n--- TNC Enforcement ---');
 
 const minDecision = setup(() =>
   wasm.wasm_create_decision(
+    UUID_1,
     'Test Decision',
     JSON.stringify('Operational'),
-    ZERO_32_HEX
+    NONZERO_32_HEX,
+    NOW_MS,
+    0
   ));
 
 const tncFlags = {
@@ -854,18 +1506,24 @@ console.log('\n--- Challenge Lifecycle ---');
 
 test('wasm_file_challenge', () =>
   wasm.wasm_file_challenge(
+    UUID_2,
     TEST_DID,
     UUID_1,
     JSON.stringify('ProceduralError'),
-    ZERO_32_HEX
+    NONZERO_32_HEX,
+    NOW_MS,
+    0
   ));
 
 const challenge = setup(() =>
   wasm.wasm_file_challenge(
+    UUID_2,
     TEST_DID,
     UUID_1,
     JSON.stringify('ProceduralError'),
-    ZERO_32_HEX
+    NONZERO_32_HEX,
+    NOW_MS,
+    0
   ));
 
 test('wasm_begin_review', () => {
@@ -891,16 +1549,22 @@ console.log('\n--- Decision Lifecycle ---');
 
 test('wasm_create_decision', () =>
   wasm.wasm_create_decision(
+    UUID_3,
     'Bridge Test Decision',
     JSON.stringify('Operational'),
-    ZERO_32_HEX
+    NONZERO_32_HEX,
+    NOW_MS,
+    0
   ));
 
 const decision = setup(() =>
   wasm.wasm_create_decision(
+    UUID_3,
     'Bridge Test Decision',
     JSON.stringify('Operational'),
-    ZERO_32_HEX
+    NONZERO_32_HEX,
+    NOW_MS,
+    0
   ));
 
 const decJson = decision ? JSON.stringify(decision) : '{}';
@@ -937,7 +1601,9 @@ test('wasm_transition_decision', () =>
   wasm.wasm_transition_decision(
     decJson,
     JSON.stringify('Submitted'),
-    TEST_DID
+    TEST_DID,
+    BigInt(NOW_NUM + 1),
+    0
   ));
 
 test('wasm_check_quorum', () => {
@@ -998,7 +1664,8 @@ test('wasm_verify_quorum_precondition', () => {
   return wasm.wasm_verify_quorum_precondition(
     JSON.stringify(registry),
     JSON.stringify('Operational'),
-    3
+    3,
+    1
   );
 });
 
@@ -1075,20 +1742,26 @@ console.log('\n--- Accountability ---');
 
 test('wasm_propose_accountability', () =>
   wasm.wasm_propose_accountability(
+    UUID_4,
     TEST_DID_2,
     TEST_DID,
     JSON.stringify('Censure'),
     'Violation of governance protocol',
-    ZERO_32_HEX
+    NONZERO_32_HEX,
+    NOW_MS,
+    0
   ));
 
 const accAction = setup(() =>
   wasm.wasm_propose_accountability(
+    UUID_4,
     TEST_DID_2,
     TEST_DID,
     JSON.stringify('Censure'),
     'Violation of governance protocol',
-    ZERO_32_HEX
+    NONZERO_32_HEX,
+    NOW_MS,
+    0
   ));
 
 test('wasm_begin_due_process', () => {
@@ -1143,24 +1816,28 @@ const emergencyPolicy = {
 
 test('wasm_create_emergency_action', () =>
   wasm.wasm_create_emergency_action(
+    UUID_1,
     JSON.stringify('SystemHalt'),
     TEST_DID,
     'Critical security breach',
     BigInt(50000),
-    ZERO_32_HEX,
+    NONZERO_32_HEX,
     JSON.stringify(emergencyPolicy),
-    NOW_MS
+    NOW_MS,
+    0
   ));
 
 const emergencyAction = setup(() =>
   wasm.wasm_create_emergency_action(
+    UUID_1,
     JSON.stringify('SystemHalt'),
     TEST_DID,
     'Critical security breach',
     BigInt(50000),
-    ZERO_32_HEX,
+    NONZERO_32_HEX,
     JSON.stringify(emergencyPolicy),
-    NOW_MS
+    NOW_MS,
+    0
   ));
 
 test('wasm_check_expiry', () => {
@@ -1178,6 +1855,21 @@ test('wasm_needs_governance_review', () =>
     JSON.stringify([]),
     JSON.stringify(emergencyPolicy)
   ));
+
+// =========================================================================
+// Module 26 — Bridge Coverage Guard
+// =========================================================================
+
+console.log('\n--- Bridge Coverage Guard ---');
+
+test('all wasm exports have bridge verification', () => {
+  const exported = Object.keys(wasm).filter((name) => name.startsWith('wasm_')).sort();
+  const missing = exported.filter((name) => !coveredExports.has(name));
+  if (missing.length > 0) {
+    throw new Error(`missing bridge verification for exports: ${missing.join(', ')}`);
+  }
+  return { exported: exported.length, covered: coveredExports.size };
+});
 
 // =========================================================================
 // Final Report

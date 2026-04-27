@@ -8,7 +8,18 @@
 #![allow(
     clippy::expect_used,
     clippy::as_conversions,
-    clippy::needless_borrows_for_generic_args
+    clippy::needless_borrows_for_generic_args,
+    // `needless_return` fires inside #[cfg(not(feature = "..."))]
+    // refusal blocks where the function body continues in the
+    // mutually-exclusive `#[cfg(feature = "...")]` branch. Clippy
+    // can't see the other branch, so the explicit `return` is
+    // load-bearing for the feature-on build.
+    clippy::needless_return,
+    // `ValidatorChangeRequest` fields + `save_validator_set` are
+    // only used inside #[cfg(feature = "unaudited-admin-governance-shortcut")].
+    // Keeping dead_code on in default build would force us to duplicate
+    // the struct definition per feature which is worse than this allow.
+    dead_code
 )]
 
 use std::sync::{Arc, Mutex};
@@ -19,14 +30,18 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
-use exo_core::types::{Did, Hash256};
+#[cfg(any(test, feature = "unaudited-admin-governance-shortcut"))]
+use exo_core::types::Did;
+use exo_core::types::Hash256;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "unaudited-admin-governance-shortcut")]
+use crate::wire::ValidatorChange;
 use crate::{
     network::NetworkHandle,
     reactor::{self, SharedReactorState},
     store::SqliteDagStore,
-    wire::{GovernanceEventType, ValidatorChange},
+    wire::GovernanceEventType,
 };
 
 // ---------------------------------------------------------------------------
@@ -216,108 +231,160 @@ async fn handle_status(
 
 /// `POST /api/v1/governance/validators` — add or remove a validator.
 ///
-/// The change is applied immediately to the in-memory consensus state
-/// and persisted. In a production deployment, this would go through
-/// a BFT proposal → quorum → commit flow (see `submit_proposal`).
+/// # Safety gate
+///
+/// This handler is behind the `unaudited-admin-governance-shortcut`
+/// feature flag (default OFF). When OFF, the endpoint returns
+/// `403 Forbidden` with a structured refusal.
+///
+/// **Why:** the legacy path below mutates the validator set purely
+/// on presentation of the admin bearer token — no BFT proposal,
+/// no quorum, no signature chain, no recorded governance event.
+/// One holder of the admin token becomes a constitutional dictator
+/// over validator membership. That violates SeparationOfPowers,
+/// NoSelfGrant, and every on-chain-governance invariant the
+/// constitution exists to enforce.
+///
+/// Enable ONLY with full understanding of the trade-off (e.g., an
+/// isolated dev cluster) and NEVER in production until a real
+/// propose → quorum-vote → commit flow replaces it.
+///
+/// See: council-intake/exo-node-onyx-3-api-mcp.md (RED #1),
+///      Initiatives/fix-admin-governance-bypass.md.
 async fn handle_validator_change(
     State(api): State<Arc<NodeApiState>>,
     Json(req): Json<ValidatorChangeRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let did =
-        Did::new(&req.did).map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid DID: {e}")))?;
-
-    let change = match req.action.as_str() {
-        "add" => ValidatorChange::AddValidator { did },
-        "remove" => ValidatorChange::RemoveValidator { did },
-        other => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!("Invalid action '{other}', expected 'add' or 'remove'"),
-            ));
-        }
-    };
-
-    // Apply the validator change.
-    let (new_count, quorum) = {
-        let mut s = api.reactor_state.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Reactor state unavailable".to_string(),
-            )
-        })?;
-        match &change {
-            ValidatorChange::AddValidator { did } => {
-                s.consensus.config.validators.insert(did.clone());
-            }
-            ValidatorChange::RemoveValidator { did } => {
-                if s.consensus.config.validators.len() <= 4 {
-                    return Err((
-                        StatusCode::CONFLICT,
-                        "Cannot remove validator: minimum 4 required for BFT safety (3f+1)".into(),
-                    ));
-                }
-                s.consensus.config.validators.remove(did);
-            }
-        }
-        (
-            s.consensus.config.validators.len(),
-            s.consensus.config.quorum_size(),
-        )
-    };
-
-    // Persist the updated validator set.
+    #[cfg(not(feature = "unaudited-admin-governance-shortcut"))]
     {
-        let s = api.reactor_state.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Reactor state unavailable".to_string(),
-            )
-        })?;
-        let mut st = api.store.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Store unavailable".to_string(),
-            )
-        })?;
-        if let Err(e) = st.save_validator_set(&s.consensus.config.validators) {
-            tracing::warn!(err = %e, "Failed to persist validator set");
-        }
+        let _ = (api, req); // silence unused warnings
+        tracing::warn!(
+            "refusing POST /api/v1/governance/validators: admin bearer \
+             shortcut is gated. See fix-admin-governance-bypass \
+             initiative. To opt in for a dev cluster, build with \
+             --features exo-node/unaudited-admin-governance-shortcut."
+        );
+        return Err((
+            StatusCode::FORBIDDEN,
+            serde_json::json!({
+                "error": "admin_governance_shortcut_disabled",
+                "message": "Validator set mutation via bearer-token shortcut is disabled \
+                            by default. A real propose → quorum-vote → commit flow is \
+                            required. See Initiatives/fix-admin-governance-bypass.md.",
+                "feature_flag": "unaudited-admin-governance-shortcut",
+                "refusal_source": "exo-node/api.rs::handle_validator_change",
+            })
+            .to_string(),
+        ));
     }
 
-    // Broadcast the change to the network.
-    let payload = {
-        let mut buf = Vec::new();
-        ciborium::into_writer(&change, &mut buf).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("CBOR encode: {e}"),
-            )
-        })?;
-        buf
-    };
-
-    let broadcast_ok = match reactor::broadcast_governance_event(
-        &api.reactor_state,
-        &api.net_handle,
-        GovernanceEventType::ValidatorSetChange,
-        payload,
-    )
-    .await
+    #[cfg(feature = "unaudited-admin-governance-shortcut")]
     {
-        Ok(()) => true,
-        Err(e) => {
-            tracing::warn!(err = %e, "Validator change applied locally but broadcast failed — peers will sync on next round");
-            false
-        }
-    };
+        tracing::warn!(
+            action = %req.action,
+            did = %req.did,
+            "UNAUDITED admin-governance shortcut in use — single bearer \
+             token is mutating validator set without quorum. This is \
+             gated by the `unaudited-admin-governance-shortcut` feature \
+             and MUST NOT be enabled in production."
+        );
+        let did = Did::new(&req.did)
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid DID: {e}")))?;
 
-    Ok(Json(serde_json::json!({
-        "validator_count": new_count,
-        "quorum_size": quorum,
-        "action": req.action,
-        "did": req.did,
-        "broadcast": broadcast_ok,
-    })))
+        let change = match req.action.as_str() {
+            "add" => ValidatorChange::AddValidator { did },
+            "remove" => ValidatorChange::RemoveValidator { did },
+            other => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid action '{other}', expected 'add' or 'remove'"),
+                ));
+            }
+        };
+
+        // Apply the validator change.
+        let (new_count, quorum) = {
+            let mut s = api.reactor_state.lock().map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Reactor state unavailable".to_string(),
+                )
+            })?;
+            match &change {
+                ValidatorChange::AddValidator { did } => {
+                    s.consensus.config.validators.insert(did.clone());
+                }
+                ValidatorChange::RemoveValidator { did } => {
+                    if s.consensus.config.validators.len() <= 4 {
+                        return Err((
+                            StatusCode::CONFLICT,
+                            "Cannot remove validator: minimum 4 required for BFT safety (3f+1)"
+                                .into(),
+                        ));
+                    }
+                    s.consensus.config.validators.remove(did);
+                }
+            }
+            (
+                s.consensus.config.validators.len(),
+                s.consensus.config.quorum_size(),
+            )
+        };
+
+        // Persist the updated validator set.
+        {
+            let s = api.reactor_state.lock().map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Reactor state unavailable".to_string(),
+                )
+            })?;
+            let mut st = api.store.lock().map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Store unavailable".to_string(),
+                )
+            })?;
+            if let Err(e) = st.save_validator_set(&s.consensus.config.validators) {
+                tracing::warn!(err = %e, "Failed to persist validator set");
+            }
+        }
+
+        // Broadcast the change to the network.
+        let payload = {
+            let mut buf = Vec::new();
+            ciborium::into_writer(&change, &mut buf).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("CBOR encode: {e}"),
+                )
+            })?;
+            buf
+        };
+
+        let broadcast_ok = match reactor::broadcast_governance_event(
+            &api.reactor_state,
+            &api.net_handle,
+            GovernanceEventType::ValidatorSetChange,
+            payload,
+        )
+        .await
+        {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(err = %e, "Validator change applied locally but broadcast failed — peers will sync on next round");
+                false
+            }
+        };
+
+        Ok(Json(serde_json::json!({
+            "validator_count": new_count,
+            "quorum_size": quorum,
+            "action": req.action,
+            "did": req.did,
+            "broadcast": broadcast_ok,
+        })))
+    } // end cfg(feature = "unaudited-admin-governance-shortcut") block
 }
 
 // ---------------------------------------------------------------------------
@@ -539,6 +606,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
+    #[cfg(feature = "unaudited-admin-governance-shortcut")]
     #[tokio::test]
     async fn validator_add_increases_count() {
         let state = test_api_state();
@@ -567,6 +635,7 @@ mod tests {
         assert_eq!(result["validator_count"], 5);
     }
 
+    #[cfg(feature = "unaudited-admin-governance-shortcut")]
     #[tokio::test]
     async fn validator_remove_below_minimum_rejected() {
         let state = test_api_state();
@@ -592,6 +661,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::CONFLICT);
     }
 
+    #[cfg(feature = "unaudited-admin-governance-shortcut")]
     #[tokio::test]
     async fn validator_remove_above_minimum_succeeds() {
         let state = test_api_state();
@@ -768,5 +838,105 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ==================================================================
+    // GAP admin-governance-bypass refusal tests (default-build only)
+    // ==================================================================
+
+    /// When the `unaudited-admin-governance-shortcut` feature is OFF
+    /// (the default), a POST to /api/v1/governance/validators must
+    /// return 403 with a structured refusal body — never mutate the
+    /// validator set on bearer-token alone.
+    #[cfg(not(feature = "unaudited-admin-governance-shortcut"))]
+    #[tokio::test]
+    async fn validator_add_refused_without_feature_flag() {
+        let state = test_api_state();
+        let validator_count_before = {
+            let s = state.reactor_state.lock().unwrap();
+            s.consensus.config.validators.len()
+        };
+
+        let app = governance_router(Arc::clone(&state));
+        let body = serde_json::json!({
+            "action": "add",
+            "did": "did:exo:some-new-validator",
+        });
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/governance/validators")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "default build MUST refuse validator-set mutation via bearer shortcut"
+        );
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let text = std::str::from_utf8(&body_bytes).unwrap();
+        assert!(
+            text.contains("admin_governance_shortcut_disabled"),
+            "refusal body must include error tag, got: {text}"
+        );
+        assert!(
+            text.contains("unaudited-admin-governance-shortcut"),
+            "refusal body must name the feature flag, got: {text}"
+        );
+
+        // CRITICAL: validator set was NOT mutated.
+        let validator_count_after = {
+            let s = state.reactor_state.lock().unwrap();
+            s.consensus.config.validators.len()
+        };
+        assert_eq!(
+            validator_count_before, validator_count_after,
+            "refused endpoint must not touch validator set"
+        );
+    }
+
+    /// Same for `remove` — refused with no state change.
+    #[cfg(not(feature = "unaudited-admin-governance-shortcut"))]
+    #[tokio::test]
+    async fn validator_remove_refused_without_feature_flag() {
+        let state = test_api_state();
+        let validators_before: BTreeSet<Did> = {
+            let s = state.reactor_state.lock().unwrap();
+            s.consensus.config.validators.clone()
+        };
+
+        let app = governance_router(Arc::clone(&state));
+        let body = serde_json::json!({
+            "action": "remove",
+            "did": "did:exo:v0",
+        });
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/governance/validators")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+        // Validator set unchanged.
+        let validators_after: BTreeSet<Did> = {
+            let s = state.reactor_state.lock().unwrap();
+            s.consensus.config.validators.clone()
+        };
+        assert_eq!(validators_before, validators_after);
     }
 }

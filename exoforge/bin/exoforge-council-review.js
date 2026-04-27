@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 
 /**
- * exoforge-council-review — Run a 5-panel council review on a proposal.
+ * exoforge-council-review — Run 5-panel council-style heuristic triage.
  *
  * Accepts a proposal description (as CLI argument or via stdin) and runs
- * it through all 5 governance panels (Governance, Legal, Architecture,
- * Security, Operations). Each panel evaluates the proposal against its
- * criteria and casts a weighted vote. The final verdict is computed using
- * weighted tallying with veto power for Security and Governance panels.
+ * it through all 5 governance panel lenses (Governance, Legal, Architecture,
+ * Security, Operations). The result is non-binding heuristic triage, not an
+ * actual constitutional council decision.
  *
  * Usage:
  *   exoforge-council-review "Add new WASM combinator for delegation"
@@ -16,7 +15,13 @@
  *   exoforge-council-review --json "Modify safe harbor process"
  */
 
-import { getPanels, conductReview, tallyVotes } from '../lib/panels.js';
+import {
+  REVIEW_BINDING,
+  REVIEW_METHOD,
+  getPanels,
+  conductReview,
+  tallyVotes
+} from '../lib/panels.js';
 
 // ── Parse CLI arguments ─────────────────────────────────────────────────────
 
@@ -116,10 +121,12 @@ async function readStdin() {
 function formatTextReport(proposal, assessments, tally) {
   const lines = [];
   lines.push('');
-  lines.push('  ExoForge Council Review');
+  lines.push('  ExoForge Council-Style Triage');
   lines.push(`  ${'='.repeat(50)}`);
   lines.push(`  Proposal: ${proposal.title}`);
   if (proposal.type) lines.push(`  Type: ${proposal.type}`);
+  lines.push(`  Method: ${REVIEW_METHOD}`);
+  lines.push(`  Binding: ${REVIEW_BINDING ? 'YES' : 'NO'}`);
   lines.push('');
 
   // Panel assessments
@@ -230,7 +237,9 @@ async function main() {
         affected_systems: proposal.affectedSystems
       },
       assessments,
-      verdict: tally
+      verdict: tally,
+      review_method: REVIEW_METHOD,
+      binding_review: REVIEW_BINDING
     }, null, 2));
   } else {
     console.log(formatTextReport(proposal, assessments, tally));

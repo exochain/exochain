@@ -1,6 +1,6 @@
 # ULTRAPLAN — GAP-002: Evidence Bundle Export
 
-**Status:** Active  
+**Status:** Closed — Basalt reconciled 2026-04-26
 **Crate:** `exo-legal`  
 **File:** `crates/exo-legal/src/bundle.rs`  
 **Author:** Aeon (Chief-of-Staff AI)  
@@ -41,7 +41,7 @@ Offline verification requires zero network access:
 1. **Recompute Hash** — Feed all content fields through the same BLAKE3 pipeline. Compare to `bundle_hash`. If mismatch → tampered.
 2. **Validate Event Ordering** — Confirm `sequence` numbers are 0, 1, 2, … with no gaps.
 3. **Validate Causal Chain** — For each event at position i > 0, confirm all `parent_hashes` appear as `event_hash` values in events at positions < i. Event 0 must have empty `parent_hashes` (genesis).
-4. **Check Signatures** — For each `BundleSignature`, verify the signature is non-empty (placeholder for full cryptographic verification against a key registry). Production systems will resolve signer DIDs to public keys and verify Ed25519/PQ signatures over the `bundle_hash`.
+4. **Check Signatures** — Use `verify_with_signer_keys()` with a `BundleSignerKeyResolver`. For each `BundleSignature`, resolve the signer DID to a public key and verify the Ed25519 signature over the domain-separated canonical CBOR signing payload that binds `bundle_hash`, signer DID, signer role, and signed timestamp. A missing signer key, empty signature, wrong key, replayed signature, or tampered bundle fails closed.
 5. **Result** — `VerificationResult` reports `hash_valid`, `event_chain_valid`, `causal_order_valid`, per-signature `SignatureCheck` results, and an `overall` boolean (all checks pass).
 
 ## 4. Legal Admissibility Mapping
@@ -108,4 +108,4 @@ The `decision-forum` crate can call `bundle::render_markdown_summary()` and embe
 
 ---
 
-**Implementation:** `crates/exo-legal/src/bundle.rs` — all types, assembly, verification, rendering, signing, and 16 tests.
+**Implementation:** `crates/exo-legal/src/bundle.rs` — all types, assembly, structural verification, signer-key verification, rendering, signing, and regression tests for valid signatures, wrong keys, replay, tampering, and empty signatures.

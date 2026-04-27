@@ -5,8 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{CatapultError, Result};
-use crate::oda::OdaSlot;
+use crate::{
+    error::{CatapultError, Result},
+    oda::OdaSlot,
+};
 
 /// Operational phase of a newco, aligned with FM 3-05 doctrine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -94,7 +96,14 @@ mod tests {
     #[test]
     fn happy_path_forward() {
         use OperationalPhase::*;
-        let path = [Assessment, Selection, Preparation, Execution, Sustainment, Transition];
+        let path = [
+            Assessment,
+            Selection,
+            Preparation,
+            Execution,
+            Sustainment,
+            Transition,
+        ];
         for w in path.windows(2) {
             assert!(
                 w[0].can_transition_to(w[1]),

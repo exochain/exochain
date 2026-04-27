@@ -26,6 +26,8 @@ fn js_str(val: JsValue) -> String {
     val.as_string().expect("expected string JsValue")
 }
 
+const TEST_TS_JSON: &str = r#"{"physical_ms":1700000000000,"logical":0}"#;
+
 // ── Core: Hashing ─────────────────────────────────────────────────────────────
 
 #[wasm_bindgen_test]
@@ -172,8 +174,15 @@ fn test_bcts_terminal_states() {
 #[wasm_bindgen_test]
 fn test_create_decision_round_trip() {
     let hash_hex = "a".repeat(64);
-    let result = exochain_wasm::wasm_create_decision("Test proposal", r#""Routine""#, &hash_hex)
-        .expect("create_decision");
+    let result = exochain_wasm::wasm_create_decision(
+        "00000000-0000-0000-0000-000000000101",
+        "Test proposal",
+        r#""Routine""#,
+        &hash_hex,
+        1_700_000_000_000,
+        0,
+    )
+    .expect("create_decision");
     let json = js_to_json(result);
     assert_eq!(json["title"].as_str().unwrap(), "Test proposal");
     assert!(!json["id"].as_str().unwrap().is_empty());
@@ -183,8 +192,15 @@ fn test_create_decision_round_trip() {
 fn test_decision_is_not_terminal_after_creation() {
     let hash_hex = "b".repeat(64);
     let decision_json = js_str(
-        exochain_wasm::wasm_create_decision("Draft dec", r#""Routine""#, &hash_hex)
-            .expect("create"),
+        exochain_wasm::wasm_create_decision(
+            "00000000-0000-0000-0000-000000000102",
+            "Draft dec",
+            r#""Routine""#,
+            &hash_hex,
+            1_700_000_000_000,
+            0,
+        )
+        .expect("create"),
     );
     let terminal = exochain_wasm::wasm_decision_is_terminal(&decision_json).expect("is_terminal");
     assert!(!terminal);
@@ -194,7 +210,15 @@ fn test_decision_is_not_terminal_after_creation() {
 fn test_decision_content_hash_is_deterministic() {
     let hash_hex = "c".repeat(64);
     let decision_json = js_str(
-        exochain_wasm::wasm_create_decision("Stable", r#""Routine""#, &hash_hex).expect("create"),
+        exochain_wasm::wasm_create_decision(
+            "00000000-0000-0000-0000-000000000103",
+            "Stable",
+            r#""Routine""#,
+            &hash_hex,
+            1_700_000_000_000,
+            0,
+        )
+        .expect("create"),
     );
     let h1 = exochain_wasm::wasm_decision_content_hash(&decision_json).expect("h1");
     let h2 = exochain_wasm::wasm_decision_content_hash(&decision_json).expect("h2");
@@ -223,10 +247,13 @@ fn test_workflow_stages_contains_all_14_bcts_states() {
 fn test_file_challenge_creates_filed_status() {
     let evidence_hex = "d".repeat(64);
     let result = exochain_wasm::wasm_file_challenge(
+        "00000000-0000-0000-0000-000000000201",
         "did:exo:challenger",
         "00000000-0000-0000-0000-000000000001",
         r#""ProceduralError""#,
         &evidence_hex,
+        1_700_000_000_000,
+        0,
     )
     .expect("file_challenge");
     let json = js_to_json(result);
@@ -238,10 +265,13 @@ fn test_begin_review_transitions_to_under_review() {
     let evidence_hex = "e".repeat(64);
     let challenge_json = js_str(
         exochain_wasm::wasm_file_challenge(
+            "00000000-0000-0000-0000-000000000202",
             "did:exo:c",
             "00000000-0000-0000-0000-000000000002",
             r#""ProceduralError""#,
             &evidence_hex,
+            1_700_000_000_000,
+            0,
         )
         .expect("file"),
     );
@@ -255,8 +285,16 @@ fn test_is_contested_true_when_filed() {
     let id = "00000000-0000-0000-0000-000000000003";
     let evidence_hex = "f".repeat(64);
     let challenge_json = js_str(
-        exochain_wasm::wasm_file_challenge("did:exo:c", id, r#""ProceduralError""#, &evidence_hex)
-            .expect("file"),
+        exochain_wasm::wasm_file_challenge(
+            "00000000-0000-0000-0000-000000000203",
+            "did:exo:c",
+            id,
+            r#""ProceduralError""#,
+            &evidence_hex,
+            1_700_000_000_000,
+            0,
+        )
+        .expect("file"),
     );
     let challenges_json = format!("[{}]", challenge_json);
     let contested = exochain_wasm::wasm_is_contested(&challenges_json, id).expect("is_contested");
@@ -270,11 +308,14 @@ fn test_begin_due_process_transitions_status() {
     let evidence_hex = "1".repeat(64);
     let action_json = js_str(
         exochain_wasm::wasm_propose_accountability(
+            "00000000-0000-0000-0000-000000000301",
             "did:exo:target",
             "did:exo:proposer",
             r#""Censure""#,
             "Violated transparency policy",
             &evidence_hex,
+            1_700_000_000_000,
+            0,
         )
         .expect("propose"),
     );
@@ -289,7 +330,15 @@ fn test_begin_due_process_transitions_status() {
 fn test_enforce_all_tnc_passes_when_all_flags_set() {
     let hash_hex = "2".repeat(64);
     let decision_json = js_str(
-        exochain_wasm::wasm_create_decision("TNC test", r#""Routine""#, &hash_hex).expect("create"),
+        exochain_wasm::wasm_create_decision(
+            "00000000-0000-0000-0000-000000000501",
+            "TNC test",
+            r#""Routine""#,
+            &hash_hex,
+            1_700_000_000_000,
+            0,
+        )
+        .expect("create"),
     );
     let flags = r#"{
         "constitutional_hash_valid": true,
@@ -310,8 +359,15 @@ fn test_enforce_all_tnc_passes_when_all_flags_set() {
 fn test_collect_tnc_violations_when_flags_clear() {
     let hash_hex = "3".repeat(64);
     let decision_json = js_str(
-        exochain_wasm::wasm_create_decision("Violation test", r#""Routine""#, &hash_hex)
-            .expect("create"),
+        exochain_wasm::wasm_create_decision(
+            "00000000-0000-0000-0000-000000000502",
+            "Violation test",
+            r#""Routine""#,
+            &hash_hex,
+            1_700_000_000_000,
+            0,
+        )
+        .expect("create"),
     );
     let result = exochain_wasm::wasm_collect_tnc_violations(&decision_json, r#"{}"#)
         .expect("collect_violations");
@@ -357,10 +413,17 @@ fn test_propose_bailment_creates_proposed_status() {
         "did:exo:bailee",
         b"data sharing terms v1",
         r#""Custody""#,
+        "bailment-wasm-test",
+        TEST_TS_JSON,
     )
     .expect("propose_bailment");
     let json = js_to_json(result);
     assert_eq!(json["status"].as_str().unwrap(), "Proposed");
+    assert_eq!(json["id"].as_str().unwrap(), "bailment-wasm-test");
+    assert_eq!(
+        json["created"]["physical_ms"].as_u64().unwrap(),
+        1700000000000
+    );
 }
 
 #[wasm_bindgen_test]
@@ -371,10 +434,13 @@ fn test_bailment_not_active_when_proposed() {
             "did:exo:bailee",
             b"terms",
             r#""Processing""#,
+            "bailment-wasm-test",
+            TEST_TS_JSON,
         )
         .expect("propose"),
     );
-    let active = exochain_wasm::wasm_bailment_is_active(&bailment_json).expect("is_active");
+    let active =
+        exochain_wasm::wasm_bailment_is_active(&bailment_json, TEST_TS_JSON).expect("is_active");
     assert!(!active);
 }
 
@@ -387,9 +453,11 @@ fn test_create_emergency_action_round_trip() {
         "max_monetary_cap_cents": 1000000,
         "allowed_actions": ["DataFreeze", "SystemHalt"],
         "ratification_window_ms": 3600000,
-        "max_per_quarter": 5
+        "max_per_quarter": 5,
+        "max_per_quarter_per_actor": 1
     }"#;
     let result = exochain_wasm::wasm_create_emergency_action(
+        "00000000-0000-0000-0000-000000000401",
         r#""DataFreeze""#,
         "did:exo:operator",
         "Network anomaly detected",
@@ -397,6 +465,7 @@ fn test_create_emergency_action_round_trip() {
         &evidence_hex,
         policy,
         1_700_000_000_000,
+        0,
     )
     .expect("create_emergency_action");
     let json = js_to_json(result);
@@ -411,8 +480,14 @@ fn test_create_emergency_action_round_trip() {
 
 #[wasm_bindgen_test]
 fn test_create_record_active_disposition() {
-    let result = exochain_wasm::wasm_create_record(b"document contents", "Confidential", 365)
-        .expect("create_record");
+    let result = exochain_wasm::wasm_create_record(
+        b"document contents",
+        "Confidential",
+        365,
+        "00000000-0000-0000-0000-000000000365",
+        1_700_000_000_000,
+    )
+    .expect("create_record");
     let json = js_to_json(result);
     assert_eq!(json["retention_period_days"].as_u64().unwrap(), 365);
     assert_eq!(json["disposition"].as_str().unwrap(), "Active");

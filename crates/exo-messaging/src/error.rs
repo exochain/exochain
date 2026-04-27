@@ -15,6 +15,9 @@ pub enum MessagingError {
     #[error("signature verification failed")]
     SignatureVerificationFailed,
 
+    #[error("death-trigger confirmation payload encoding failed: {0}")]
+    DeathConfirmationPayloadEncoding(String),
+
     #[error("invalid envelope: {0}")]
     InvalidEnvelope(String),
 
@@ -24,8 +27,14 @@ pub enum MessagingError {
     #[error("death trigger already resolved")]
     DeathTriggerAlreadyResolved,
 
+    #[error("invalid death verification: {0}")]
+    InvalidDeathVerification(String),
+
     #[error("insufficient confirmations: need {need}, got {got}")]
     InsufficientConfirmations { need: u8, got: u8 },
+
+    #[error("unauthorized death-trigger trustee: {0}")]
+    UnauthorizedTrustee(String),
 
     #[error("duplicate confirmation from: {0}")]
     DuplicateConfirmation(String),

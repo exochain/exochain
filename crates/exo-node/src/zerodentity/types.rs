@@ -9,7 +9,7 @@
 use std::{collections::BTreeMap, fmt};
 
 pub use exo_core::types::Signature;
-use exo_core::types::{Did, Hash256};
+use exo_core::types::{Did, Hash256, PublicKey};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -382,7 +382,7 @@ impl std::str::FromStr for AttestationType {
 /// Spec §7.2.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PeerAttestation {
-    /// Unique identifier for this attestation (UUID v4).
+    /// Deterministic BLAKE3 identifier for this signed attestation.
     pub attestation_id: String,
     /// The DID making the attestation.
     pub attester_did: Did,
@@ -394,6 +394,10 @@ pub struct PeerAttestation {
     pub message_hash: Option<Hash256>,
     /// When this attestation was created (epoch ms).
     pub created_ms: u64,
+    /// Ed25519 public key used to verify the attester's signature.
+    pub attester_public_key: PublicKey,
+    /// Attester signature over the canonical attestation payload.
+    pub signature: Signature,
     /// DAG node hash for this attestation.
     pub dag_node_hash: Hash256,
 }

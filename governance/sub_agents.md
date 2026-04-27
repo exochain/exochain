@@ -1,6 +1,6 @@
 # Sub-Agent Charters
 
-All 11 sub-agent missions are **COMPLETE**. Status updated 2026-03-19.
+Historical 2026-03-19 sub-agent completion record. Numeric status claims are superseded by `tools/repo_truth.sh` and the Wave E Basalt audit.
 
 ## A) SPEC_GUARDIAN (Legislative) — DONE
 
@@ -8,7 +8,7 @@ All 11 sub-agent missions are **COMPLETE**. Status updated 2026-03-19.
 * **Inputs**: `EXOCHAIN_Specification_v2.2.pdf`, `EXOCHAIN-FABRIC-PLATFORM.md`.
 * **Outputs**: `traceability_matrix.md`, ADR reviews, "Non-negotiable invariants checklist".
 * **Definition of Done**: Traceability matrix maps every Spec section to code/tests; no unmapped requirements.
-* **Status**: **DONE** — Traceability matrix complete: 75/75 requirements mapped and implemented.
+* **Status**: **DONE, needs Basalt refresh** — Current traceability rows are 83 implemented, 1 partial, and 2 planned.
 
 ## B) ARCHITECTURE_AGENT (Legislative) — DONE
 
@@ -16,7 +16,7 @@ All 11 sub-agent missions are **COMPLETE**. Status updated 2026-03-19.
 * **Inputs**: Spec Phases, Rust Ecosystem Best Practices.
 * **Outputs**: Repo layout, `Cargo.toml` workspace, crate boundaries.
 * **Definition of Done**: Use of `workspace` pattern, circular dependency check pass, clear API boundaries.
-* **Status**: **DONE** — 16 crates established in workspace `Cargo.toml` with clean dependency graph.
+* **Status**: **DONE** — 20 workspace packages are established in `Cargo.toml` / `cargo metadata`.
 
 ## C) CRYPTO_CANONICAL_AGENT (Judicial) — DONE
 
@@ -64,7 +64,7 @@ All 11 sub-agent missions are **COMPLETE**. Status updated 2026-03-19.
 * **Inputs**: Spec Section 13 (Threat Model).
 * **Outputs**: `threat_matrix.md`, fuzzing targets, `cargo-audit` config.
 * **Definition of Done**: Every threat in Section 13 has > 1 corresponding test case.
-* **Status**: **DONE** — 13/13 threats implemented with test coverage and mitigations verified.
+* **Status**: **DONE** — Current threat matrix tracks 14 threats, all marked implemented.
 
 ## I) QA_TDD_AGENT (Judicial) — DONE
 
@@ -72,7 +72,7 @@ All 11 sub-agent missions are **COMPLETE**. Status updated 2026-03-19.
 * **Inputs**: Spec Section 16 (Acceptance Criteria).
 * **Outputs**: Test harnesses, Integration tests, Fuzz targets.
 * **Definition of Done**: Section 16 Acceptance Criteria are automated and passing.
-* **Status**: **DONE** — 1,846 tests, 0 failures across 16 crates and 136 source files.
+* **Status**: **DONE** — Current workspace inventory lists 2,687 tests across 20 packages and 273 Rust files.
 
 ## J) DEVOPS_RELEASE_AGENT (Judicial) — DONE
 
@@ -80,7 +80,7 @@ All 11 sub-agent missions are **COMPLETE**. Status updated 2026-03-19.
 * **Inputs**: Quality Gate Policies.
 * **Outputs**: `.github/workflows/ci.yml`, Release scripts, `deny.toml`.
 * **Definition of Done**: CI pipeline enforces coverage, formatting, and audit checks.
-* **Status**: **DONE** — CI pipeline at `.github/workflows/ci.yml` with 8 quality gates, `cargo deny` integration, 90% coverage enforcement per CR-001 Section 8.8.
+* **Status**: **DONE** — CI pipeline at `.github/workflows/ci.yml` with 20 numbered gates plus the required aggregator, `cargo deny` integration, and coverage enforcement per CR-001 Section 8.8.
 
 ## K) DOCS_OSS_GOVERNANCE_AGENT (Legislative) — DONE
 

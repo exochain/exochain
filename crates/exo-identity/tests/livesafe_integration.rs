@@ -8,11 +8,11 @@
 //! - Shamir secret split + reconstruct (success and failure paths)
 //! - Operator continuity through state transitions
 
-use exo_identity::{
-    pace::{deescalate, escalate, resolve_operator, PaceConfig, PaceState},
-    shamir::{reconstruct, split, ShamirConfig},
-};
 use exo_core::Did;
+use exo_identity::{
+    pace::{PaceConfig, PaceState, deescalate, escalate, resolve_operator},
+    shamir::{ShamirConfig, reconstruct, split},
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
