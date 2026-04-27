@@ -1,7 +1,10 @@
 #!/bin/sh
 # Exochain node entrypoint — joins an existing network if SEED_ADDR is set,
 # otherwise bootstraps as a standalone seed node.
-set -e
+#
+# Runs initially as root so Railway's root-owned mounted volume can be repaired
+# after mount time, then launches the node as the unprivileged `exochain` user.
+set -eu
 
 DATA_DIR="${EXOCHAIN_DATA_DIR:-/data}"
 P2P_PORT="${P2P_PORT:-4001}"
