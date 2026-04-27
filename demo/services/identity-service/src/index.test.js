@@ -112,11 +112,32 @@ describe('POST /api/pace/escalate', () => {
 
 describe('POST /api/risk/assess', () => {
   it('returns risk attestation', async () => {
-    const res = await request.post('/api/risk/assess').send({ subject_did: 'did:exo:alice', attester_did: 'did:exo:trustee', evidence: 'biometric', level: 'High', validity_ms: 86400000 });
+    const res = await request.post('/api/risk/assess').send({
+      subject_did: 'did:exo:alice',
+      attester_did: 'did:exo:trustee',
+      evidence: 'biometric',
+      level: 'High',
+      validity_ms: 86400000,
+      attester_secret_hex: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+      timestamp_ms: 1700000000000,
+      timestamp_logical: 0
+    });
     expect(res.status).toBe(200);
     expect(res.body.subject_did).toBe('did:exo:alice');
     expect(res.body.level).toBe('High');
     expect(res.body).toHaveProperty('attestation_hash');
+  });
+
+  it('requires caller-supplied signer and timestamp metadata', async () => {
+    const res = await request.post('/api/risk/assess').send({
+      subject_did: 'did:exo:alice',
+      attester_did: 'did:exo:trustee',
+      evidence: 'biometric',
+      level: 'High',
+      validity_ms: 86400000
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.fields).toEqual(['attester_secret_hex', 'timestamp_ms']);
   });
 });
 

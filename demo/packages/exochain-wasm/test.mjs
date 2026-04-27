@@ -263,7 +263,12 @@ test('assess_risk creates attestation', () => {
     'did:exo:attester',
     new Uint8Array([1, 2, 3]),
     '"Medium"',
-    BigInt(86400000)
+    JSON.stringify({
+      validity_ms: 86400000,
+      attester_secret_hex: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+      now_physical_ms: 1700000000000,
+      now_logical: 0
+    })
   );
   assert(attestation, 'should return attestation');
 });

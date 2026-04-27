@@ -92,7 +92,7 @@ Expected output tail:
 test result: ok. ... passed; 0 failed; 0 ignored; ...
 ```
 
-The current workspace inventory lists **2,868 tests**. The number grows as new crates land; consult
+The current workspace inventory lists **2,869 tests**. The number grows as new crates land; consult
 `governance/traceability_matrix.md` and the `README.md` repo-truth
 table for the latest figure. What matters is `0 failed`.
 
@@ -200,7 +200,7 @@ for first-week work:
 | `exo-catapult`       | Event ingestion acceleration / batching                                                 |
 | `exo-node`           | The `exochain` binary: P2P, BFT, reactor, API, dashboard, CLI, MCP server               |
 | `exochain-sdk`       | In-process Rust SDK: ergonomic wrappers for kernel, identity, consent, authority        |
-| `exochain-wasm`      | WebAssembly bindings (140 verified bridge exports)                                      |
+| `exochain-wasm`      | WebAssembly bindings (141 verified bridge exports)                                      |
 | `decision-forum`     | Deliberative decision-making forum protocol and voting engine                           |
 
 ### 3.2 SDK and bindings in `packages/`

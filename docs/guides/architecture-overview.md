@@ -30,7 +30,7 @@ From the top-level `README.md`, EXOCHAIN is organised in five layers.
 │          (command-base/)             cognitiveplane.ai                │
 │                                      Express + SQLite + WebSocket     │
 ├──────────────────────────────────────────────────────────────────────┤
-│ Layer 2  WASM Bridge                 140 verified bridge exports      │
+│ Layer 2  WASM Bridge                 141 verified bridge exports      │
 │          (packages/exochain-wasm,    Rust → WebAssembly → JS          │
 │           crates/exochain-wasm)      Export sync checked in CI        │
 ├──────────────────────────────────────────────────────────────────────┤
