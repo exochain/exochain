@@ -64,28 +64,53 @@ impl PostgresStore {
         parents.iter().map(|h| h.as_bytes().to_vec()).collect()
     }
 
+    /// Decode a fixed-width hash from raw bytes returned by Postgres.
+    fn decode_hash256(bytes: &[u8], column: &str) -> Result<Hash256> {
+        let arr = <[u8; 32]>::try_from(bytes).map_err(|_| {
+            store_err(format!(
+                "invalid dag_nodes.{column}: expected 32 bytes, got {}",
+                bytes.len()
+            ))
+        })?;
+
+        Ok(Hash256::from_bytes(arr))
+    }
+
     /// Decode parents from raw byte arrays returned by Postgres.
-    fn decode_parents(raw: &[Vec<u8>]) -> Vec<Hash256> {
+    fn decode_parents(raw: &[Vec<u8>]) -> Result<Vec<Hash256>> {
         raw.iter()
-            .map(|bytes| {
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(bytes);
-                Hash256::from_bytes(arr)
-            })
+            .enumerate()
+            .map(|(idx, bytes)| Self::decode_hash256(bytes, &format!("parents[{idx}]")))
             .collect()
     }
 
     /// Encode a `Signature` to bytes for storage.
     /// Uses serde_json for full enum fidelity (Ed25519, PostQuantum, Hybrid, Empty).
-    fn encode_signature(sig: &Signature) -> Vec<u8> {
-        // Use CBOR-style: just store the raw bytes for Ed25519 (most common).
-        // For full fidelity, we serialize via serde.
-        serde_json::to_vec(sig).unwrap_or_default()
+    fn encode_signature(sig: &Signature) -> Result<Vec<u8>> {
+        serde_json::to_vec(sig)
+            .map_err(|e| store_err(format!("failed to serialize DAG node signature: {e}")))
     }
 
     /// Decode a `Signature` from stored bytes.
-    fn decode_signature(bytes: &[u8]) -> Signature {
-        serde_json::from_slice(bytes).unwrap_or(Signature::Empty)
+    fn decode_signature(bytes: &[u8]) -> Result<Signature> {
+        serde_json::from_slice(bytes)
+            .map_err(|e| store_err(format!("invalid DAG node signature encoding: {e}")))
+    }
+
+    /// Decode a timestamp from raw Postgres integer columns.
+    fn decode_timestamp(physical_ms: i64, logical: i64) -> Result<Timestamp> {
+        let physical_ms = u64::try_from(physical_ms).map_err(|_| {
+            store_err(format!(
+                "invalid dag_nodes.ts_physical_ms: expected non-negative value, got {physical_ms}"
+            ))
+        })?;
+        let logical = u32::try_from(logical).map_err(|_| {
+            store_err(format!(
+                "invalid dag_nodes.ts_logical: expected u32-compatible value, got {logical}"
+            ))
+        })?;
+
+        Ok(Timestamp::new(physical_ms, logical))
     }
 }
 
@@ -112,21 +137,14 @@ impl DagStore for PostgresStore {
         match row {
             None => Ok(None),
             Some((hash_bytes, parents_raw, payload_bytes, did_str, phys, logical, sig_bytes)) => {
-                let mut hash_arr = [0u8; 32];
-                hash_arr.copy_from_slice(&hash_bytes);
-
-                let mut payload_arr = [0u8; 32];
-                payload_arr.copy_from_slice(&payload_bytes);
-
-                #[allow(clippy::as_conversions)]
                 let node = DagNode {
-                    hash: Hash256::from_bytes(hash_arr),
-                    parents: Self::decode_parents(&parents_raw),
-                    payload_hash: Hash256::from_bytes(payload_arr),
+                    hash: Self::decode_hash256(&hash_bytes, "hash")?,
+                    parents: Self::decode_parents(&parents_raw)?,
+                    payload_hash: Self::decode_hash256(&payload_bytes, "payload_hash")?,
                     creator_did: Did::new(&did_str)
                         .map_err(|e| store_err(format!("invalid DID: {e}")))?,
-                    timestamp: Timestamp::new(phys as u64, logical as u32),
-                    signature: Self::decode_signature(&sig_bytes),
+                    timestamp: Self::decode_timestamp(phys, logical)?,
+                    signature: Self::decode_signature(&sig_bytes)?,
                 };
                 Ok(Some(node))
             }
@@ -135,7 +153,7 @@ impl DagStore for PostgresStore {
 
     async fn put(&mut self, node: DagNode) -> Result<()> {
         let parents = Self::encode_parents(&node.parents);
-        let sig_bytes = Self::encode_signature(&node.signature);
+        let sig_bytes = Self::encode_signature(&node.signature)?;
 
         #[allow(clippy::as_conversions)]
         sqlx::query(
@@ -297,6 +315,44 @@ mod tests {
         assert_eq!(retrieved.payload_hash, node.payload_hash);
         assert_eq!(retrieved.creator_did, node.creator_did);
         assert_eq!(retrieved.timestamp, node.timestamp);
+    }
+
+    #[test]
+    fn decode_signature_rejects_invalid_stored_bytes() {
+        let decoded = PostgresStore::decode_signature(b"not a serialized signature");
+
+        assert!(
+            decoded.is_err(),
+            "corrupt signature storage must not decode as Signature::Empty"
+        );
+    }
+
+    #[test]
+    fn signature_encoding_roundtrips_without_fabrication() {
+        let signature = Signature::from_bytes([7u8; 64]);
+
+        let encoded = PostgresStore::encode_signature(&signature).unwrap();
+        let decoded = PostgresStore::decode_signature(&encoded).unwrap();
+
+        assert_eq!(decoded, signature);
+    }
+
+    #[test]
+    fn decode_hash256_rejects_wrong_width_storage() {
+        let err = PostgresStore::decode_hash256(&[1u8; 31], "hash").unwrap_err();
+        let message = err.to_string();
+
+        assert!(message.contains("dag_nodes.hash"));
+        assert!(message.contains("expected 32 bytes, got 31"));
+    }
+
+    #[test]
+    fn decode_timestamp_rejects_negative_storage_values() {
+        let err = PostgresStore::decode_timestamp(-1, 0).unwrap_err();
+        let message = err.to_string();
+
+        assert!(message.contains("ts_physical_ms"));
+        assert!(message.contains("expected non-negative"));
     }
 
     #[tokio::test]
