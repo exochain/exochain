@@ -5,29 +5,26 @@
 //!
 //! Spec reference: §7.1.
 
-use std::{
-    str::FromStr,
-    sync::{Arc, Mutex},
-};
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
-use exo_core::{
-    crypto,
-    types::{Did, Hash256, PublicKey, Signature},
-};
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+use exo_core::types::{Did, Hash256, Signature};
+use exo_core::{crypto, types::PublicKey};
 use getrandom::getrandom;
 use rand::{SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+use super::types::{ClaimStatus, IdentityClaim, OtpChannel};
 use super::{
     otp::OtpResult,
     session_auth::{bootstrap_signing_payload, public_key_from_hex, signature_from_hex},
     store::ZerodentityStore,
-    types::{
-        ClaimStatus, ClaimType, IdentityClaim, IdentitySession, OtpChallenge, OtpChannel,
-        ZerodentityScore,
-    },
+    types::{ClaimType, IdentitySession, OtpChallenge, ZerodentityScore},
 };
 
 // ---------------------------------------------------------------------------
@@ -69,6 +66,10 @@ pub fn score_summary_from(score: &ZerodentityScore) -> ScoreSummary {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
+#[cfg_attr(
+    not(feature = "unaudited-zerodentity-first-touch-onboarding"),
+    allow(dead_code)
+)]
 pub struct SubmitClaimRequest {
     pub subject_did: String,
     pub claim_type: String,
@@ -118,7 +119,9 @@ pub struct ResendOtpResponse {
 // Helpers
 // ---------------------------------------------------------------------------
 
+#[cfg(not(feature = "unaudited-zerodentity-first-touch-onboarding"))]
 const FIRST_TOUCH_ONBOARDING_FEATURE: &str = "unaudited-zerodentity-first-touch-onboarding";
+#[cfg(not(feature = "unaudited-zerodentity-first-touch-onboarding"))]
 const FIRST_TOUCH_ONBOARDING_INITIATIVE: &str = "fix-onyx-4-r1-onboarding-auth.md";
 
 fn now_ms() -> u64 {
@@ -131,6 +134,7 @@ fn build_rng() -> StdRng {
     StdRng::from_seed(seed)
 }
 
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
 fn parse_did(s: &str) -> Result<Did, (StatusCode, Json<serde_json::Value>)> {
     Did::new(s).map_err(|_| {
         (
@@ -193,6 +197,10 @@ fn verify_bootstrap_signature(
     Ok(public_key)
 }
 
+#[cfg_attr(
+    not(feature = "unaudited-zerodentity-first-touch-onboarding"),
+    allow(dead_code)
+)]
 fn parse_claim_type(ct: &str, provider: Option<&str>) -> Option<ClaimType> {
     match ct {
         "Email" => Some(ClaimType::Email),
@@ -208,6 +216,7 @@ fn parse_claim_type(ct: &str, provider: Option<&str>) -> Option<ClaimType> {
     }
 }
 
+#[cfg(not(feature = "unaudited-zerodentity-first-touch-onboarding"))]
 fn first_touch_onboarding_refusal() -> (StatusCode, Json<serde_json::Value>) {
     tracing::warn!(
         "refusing POST /api/v1/0dentity/claims: first-touch onboarding \
@@ -235,15 +244,21 @@ fn first_touch_onboarding_refusal() -> (StatusCode, Json<serde_json::Value>) {
 // ---------------------------------------------------------------------------
 
 /// `POST /api/v1/0dentity/claims` — submit a new identity claim for verification.
+#[cfg(not(feature = "unaudited-zerodentity-first-touch-onboarding"))]
 pub async fn submit_claim(
     State(state): State<OnboardingState>,
     Json(req): Json<SubmitClaimRequest>,
 ) -> Result<Json<SubmitClaimResponse>, (StatusCode, Json<serde_json::Value>)> {
-    if !cfg!(feature = "unaudited-zerodentity-first-touch-onboarding") {
-        let _ = (state, req);
-        return Err(first_touch_onboarding_refusal());
-    }
+    let _ = (state, req);
+    Err(first_touch_onboarding_refusal())
+}
 
+/// `POST /api/v1/0dentity/claims` — submit a new identity claim for verification.
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+pub async fn submit_claim(
+    State(state): State<OnboardingState>,
+    Json(req): Json<SubmitClaimRequest>,
+) -> Result<Json<SubmitClaimResponse>, (StatusCode, Json<serde_json::Value>)> {
     let subject_did = parse_did(&req.subject_did)?;
     let now = now_ms();
 
@@ -537,6 +552,30 @@ mod tests {
             parse_claim_type("BiometricLiveness", None),
             Some(ClaimType::BiometricLiveness)
         );
+    }
+
+    #[test]
+    #[cfg(not(feature = "unaudited-zerodentity-first-touch-onboarding"))]
+    fn default_submit_claim_handler_compiles_out_legacy_claim_creation() {
+        let source = include_str!("onboarding.rs");
+        let default_handler = source
+            .split(
+                "#[cfg(not(feature = \"unaudited-zerodentity-first-touch-onboarding\"))]\n\
+                 pub async fn submit_claim",
+            )
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("#[cfg(feature = \"unaudited-zerodentity-first-touch-onboarding\")]")
+                    .next()
+            })
+            .expect("default submit_claim handler must have an explicit cfg boundary");
+
+        assert!(default_handler.contains("first_touch_onboarding_refusal"));
+        assert!(!default_handler.contains("now_ms()"));
+        assert!(!default_handler.contains("Uuid::new_v4()"));
+        assert!(!default_handler.contains("Signature::Empty"));
+        assert!(!default_handler.contains("insert_claim"));
     }
 
     #[test]
