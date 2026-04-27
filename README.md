@@ -62,7 +62,7 @@ Layer 1: CGR Kernel         (Rust, 20 crates, 115754 tracked LOC under crates/)
          cryptographic proofs, 2,862 listed workspace tests
 
 Layer 2: WASM Bridge        (packages/exochain-wasm/)
-         140 verified bridge exports — Rust → WebAssembly → JavaScript
+         141 verified bridge exports — Rust → WebAssembly → JavaScript
 
 Layer 3: CommandBase.ai     (command-base/)
          Operational hypervisor for cognitiveplane.ai
