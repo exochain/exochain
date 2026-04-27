@@ -1,17 +1,24 @@
+# Local development compose.
+#
+# This file references secrets via env vars with REQUIRED fail-fast guards
+# (`${VAR:?message}`). Copy .env.example → .env and fill in values before
+# running `docker compose up`; the included example values are clearly
+# marked DEV-ONLY and must be rotated for any non-local use. (A-043)
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: exochain
-      POSTGRES_USER: exochain
-      POSTGRES_PASSWORD: exochain_dev
+      POSTGRES_DB: ${POSTGRES_DB:-exochain}
+      POSTGRES_USER: ${POSTGRES_USER:-exochain}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see .env.example)}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U exochain"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-exochain}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -21,9 +28,9 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      DATABASE_URL: postgres://exochain:exochain_dev@postgres:5432/exochain
+      DATABASE_URL: postgres://${POSTGRES_USER:-exochain}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-exochain}
       PORT: "8080"
-      JWT_SECRET: "${JWT_SECRET:-exochain-dev-secret-change-in-production}"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (see .env.example)}
       RUST_LOG: info
     ports:
       - "8080:8080"
@@ -36,10 +43,10 @@ services:
       context: ../livesafe
       dockerfile: Dockerfile
     environment:
-      DATABASE_URL: postgres://exochain:exochain_dev@postgres:5432/livesafe
+      DATABASE_URL: postgres://${POSTGRES_USER:-exochain}:${POSTGRES_PASSWORD}@postgres:5432/livesafe
       PORT: "3001"
       NODE_ENV: production
-      JWT_SECRET: "${JWT_SECRET:-livesafe-dev-secret-change-in-production}"
+      JWT_SECRET: ${LIVESAFE_JWT_SECRET:?set LIVESAFE_JWT_SECRET in .env (see .env.example)}
       EXOCHAIN_GATEWAY_URL: http://exochain-api:8080/graphql
     ports:
       - "3001:3001"
