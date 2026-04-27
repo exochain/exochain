@@ -649,7 +649,6 @@ pub async fn create_peer_attestation(
     let req: AttestRequest = serde_json::from_slice(&body)
         .map_err(|_| json_error(StatusCode::BAD_REQUEST, "Invalid JSON body"))?;
     let target_did = parse_did(&req.target_did)?;
-    let now = now_ms();
 
     let request_path = path_and_query(&uri);
     let _token = verify_signed_write(
@@ -707,7 +706,7 @@ pub async fn create_peer_attestation(
         )
     })?;
     let dag_node_hash = store
-        .next_claim_dag_node_hash(target_claim_hash, Timestamp::new(now, 0))
+        .next_claim_dag_node_hash(target_claim_hash, Timestamp::new(created_ms, 0))
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -731,12 +730,13 @@ pub async fn create_peer_attestation(
             Json(serde_json::json!({"error": e.to_string()})),
         )
     })?;
-    let target_claim = build_target_claim(&attestation, dag_node_hash, now).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-    })?;
+    let target_claim =
+        build_target_claim(&attestation, dag_node_hash, created_ms).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+        })?;
     let claim_id = target_claim_id(&attestation).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -923,6 +923,18 @@ mod tests {
         let fabricated_receipt = format!("{}{}", "erasure-", "receipt");
 
         assert!(!production.contains(&fabricated_receipt));
+    }
+
+    #[test]
+    fn attestation_write_path_uses_caller_supplied_time() {
+        let source = include_str!("api.rs");
+        let attestation_section = source
+            .split("// POST /api/v1/0dentity/:did/attest\n// ---------------------------------------------------------------------------")
+            .nth(1)
+            .and_then(|section| section.split("// ---------------------------------------------------------------------------").next())
+            .unwrap();
+
+        assert!(!attestation_section.contains("now_ms()"));
     }
 
     fn test_keypair(seed: u8) -> KeyPair {

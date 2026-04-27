@@ -1563,6 +1563,7 @@ mod tests {
         }
 
         let uri = format!("/api/v1/0dentity/{}/attest", attester.as_str());
+        let signed_created_ms = 1_234_000;
         let resp = post_with_signed_auth(
             &app,
             &uri,
@@ -1573,7 +1574,7 @@ mod tests {
                 &target,
                 AttestationType::Identity,
                 None,
-                1_234_000,
+                signed_created_ms,
                 &public_key,
                 &secret_key,
             ),
@@ -1601,6 +1602,8 @@ mod tests {
         assert_eq!(saved_attestation.attestation_id, attestation_id);
         assert_eq!(claim_id, &target_claim_id(&saved_attestation).unwrap());
         assert_eq!(target_claim.dag_node_hash, guard.dag_nodes()[0].hash);
+        assert_eq!(target_claim.created_ms, signed_created_ms);
+        assert_eq!(target_claim.verified_ms, Some(signed_created_ms));
 
         let receipts = guard.trust_receipts();
         assert_eq!(receipts.len(), 1);
