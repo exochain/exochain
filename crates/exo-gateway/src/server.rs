@@ -8,7 +8,7 @@ use axum::{
     response::{IntoResponse, Json},
     routing::{get, post},
 };
-use exo_core::Did;
+use exo_core::{Did, Hash256, Signature, Timestamp};
 use exo_gatekeeper::{
     invariants::InvariantSet,
     kernel::{ActionRequest as GkActionRequest, AdjudicationContext, Kernel, Verdict},
@@ -25,6 +25,7 @@ use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
 use crate::{
+    auth::{AuthenticatedActor, AuthenticationMetadata, Request as AuthRequest, authenticate},
     db,
     error::{GatewayError, Result},
     graphql,
@@ -201,6 +202,7 @@ fn now_ms() -> u64 {
 
 const GATEWAY_SERVER_METADATA_INITIATIVE: &str =
     "Initiatives/fix-gateway-server-deterministic-metadata.md";
+const GATEWAY_SESSION_LOGIN_DOMAIN: &str = "exo.gateway.session_login.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SessionIssueMetadata {
@@ -222,6 +224,41 @@ impl SessionIssueMetadata {
             expires_at,
         })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionLoginProof {
+    timestamp: Timestamp,
+    observed_at: Timestamp,
+    signature: Signature,
+}
+
+impl SessionLoginProof {
+    fn from_body(body: &serde_json::Value) -> Result<Self> {
+        let timestamp = Timestamp::new(
+            required_nonzero_u64(body, "authTimestampPhysicalMs")?,
+            required_u32(body, "authTimestampLogical")?,
+        );
+        let observed_at = Timestamp::new(
+            required_nonzero_u64(body, "observedAt")?,
+            required_u32(body, "observedAtLogical")?,
+        );
+        Ok(Self {
+            timestamp,
+            observed_at,
+            signature: required_ed25519_signature_hex(body, "signature")?,
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct SessionLoginPayload<'a> {
+    domain: &'static str,
+    did: &'a str,
+    created_at: i64,
+    expires_at: i64,
+    auth_timestamp_physical_ms: u64,
+    auth_timestamp_logical: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -343,6 +380,80 @@ fn required_nonzero_i64(body: &serde_json::Value, field: &str) -> Result<i64> {
         )));
     }
     Ok(value)
+}
+
+fn required_nonzero_u64(body: &serde_json::Value, field: &str) -> Result<u64> {
+    let value = body
+        .get(field)
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| metadata_error(format!("{field} must be caller-supplied")))?;
+    if value == 0 {
+        return Err(metadata_error(format!(
+            "{field} must be a positive non-zero HLC physical millisecond"
+        )));
+    }
+    Ok(value)
+}
+
+fn required_u32(body: &serde_json::Value, field: &str) -> Result<u32> {
+    let value = body
+        .get(field)
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| metadata_error(format!("{field} must be caller-supplied")))?;
+    u32::try_from(value).map_err(|_| metadata_error(format!("{field} must fit in u32")))
+}
+
+fn required_ed25519_signature_hex(body: &serde_json::Value, field: &str) -> Result<Signature> {
+    let encoded = required_nonempty_string(body, field)?;
+    let bytes = hex::decode(&encoded)
+        .map_err(|e| metadata_error(format!("{field} must be hex-encoded Ed25519: {e}")))?;
+    let signature_bytes: [u8; 64] = bytes.try_into().map_err(|bytes: Vec<u8>| {
+        metadata_error(format!("{field} must be 64 bytes, got {}", bytes.len()))
+    })?;
+    let signature = Signature::Ed25519(signature_bytes);
+    if signature.is_empty() {
+        return Err(metadata_error(format!(
+            "{field} must not be empty or all-zero"
+        )));
+    }
+    Ok(signature)
+}
+
+fn session_login_payload_hash(
+    did: &str,
+    metadata: &SessionIssueMetadata,
+    timestamp: &Timestamp,
+) -> Result<Hash256> {
+    let payload = SessionLoginPayload {
+        domain: GATEWAY_SESSION_LOGIN_DOMAIN,
+        did,
+        created_at: metadata.created_at,
+        expires_at: metadata.expires_at,
+        auth_timestamp_physical_ms: timestamp.physical_ms,
+        auth_timestamp_logical: timestamp.logical,
+    };
+    let mut encoded = Vec::new();
+    ciborium::into_writer(&payload, &mut encoded)
+        .map_err(|e| GatewayError::Internal(format!("session login payload CBOR: {e:?}")))?;
+    Ok(Hash256::digest(&encoded))
+}
+
+fn authenticate_session_login(
+    did: &str,
+    metadata: &SessionIssueMetadata,
+    proof: &SessionLoginProof,
+    registry: &dyn DidRegistry,
+) -> Result<AuthenticatedActor> {
+    let body_hash = session_login_payload_hash(did, metadata, &proof.timestamp)?;
+    let request = AuthRequest {
+        actor_did: did.to_owned(),
+        action: "gateway_session_login".to_owned(),
+        body_hash,
+        signature: proof.signature.clone(),
+        timestamp: proof.timestamp,
+    };
+    let auth_metadata = AuthenticationMetadata::new(proof.observed_at)?;
+    authenticate(&request, registry, auth_metadata)
 }
 
 fn metadata_error(reason: impl Into<String>) -> GatewayError {
@@ -843,7 +954,9 @@ async fn handle_agents_enroll(
 
 /// POST /api/v1/auth/login — authenticate a DID and issue a session token.
 ///
-/// Body: `{ "did": "did:exo:alice", "signature": "...", "createdAt": 123, "expiresAt": 456 }`
+/// Body includes the actor DID, session metadata, HLC authentication metadata,
+/// and an Ed25519 `signature` hex string over the canonical domain-tagged
+/// session-login payload.
 ///
 /// Returns a 256-bit bearer session token stored in the `sessions` table:
 /// ```sql
@@ -884,31 +997,34 @@ async fn handle_auth_login(
                 .into_response();
         }
     };
-    // Verify the DID is registered — reject unknown actors.
-    {
-        let did = match Did::new(&did_str) {
-            Ok(d) => d,
-            Err(_) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({ "error": "invalid DID format" })),
-                )
-                    .into_response();
-            }
-        };
-        let reg = state.registry.read().unwrap_or_else(|e| e.into_inner());
-        if reg.resolve(&did).is_none() {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({ "error": "DID not registered" })),
-            )
-                .into_response();
-        }
+    if Did::new(&did_str).is_err() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "invalid DID format" })),
+        )
+            .into_response();
     }
     let metadata = match SessionIssueMetadata::from_body(&body) {
         Ok(metadata) => metadata,
         Err(e) => return metadata_error_response(e),
     };
+    let proof = match SessionLoginProof::from_body(&body) {
+        Ok(proof) => proof,
+        Err(e) => return metadata_error_response(e),
+    };
+    {
+        let reg = state.registry.read().unwrap_or_else(|e| e.into_inner());
+        if let Err(e) = authenticate_session_login(&did_str, &metadata, &proof, &*reg) {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "error": "authentication failed",
+                    "message": e.to_string()
+                })),
+            )
+                .into_response();
+        }
+    }
     let token = match generate_session_token() {
         Ok(token) => token,
         Err(e) => {
@@ -1708,8 +1824,11 @@ pub async fn serve_with_extra_routes(
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use axum::{body::Body, http::Request};
-    use exo_core::Timestamp;
-    use exo_identity::did::DidDocument;
+    use exo_core::{
+        Timestamp,
+        crypto::{generate_keypair, sign},
+    };
+    use exo_identity::did::{DidDocument, VerificationMethod};
     use tower::ServiceExt;
 
     use super::*; // for .oneshot()
@@ -1732,6 +1851,46 @@ mod tests {
             updated: Timestamp::ZERO,
             revoked: false,
         }
+    }
+
+    fn signing_registry() -> (Arc<RwLock<LocalDidRegistry>>, exo_core::SecretKey) {
+        let did = Did::new("did:exo:login-alice").unwrap();
+        let (pk, sk) = generate_keypair();
+        let multibase = format!("z{}", bs58::encode(pk.as_bytes()).into_string());
+        let doc = DidDocument {
+            id: did.clone(),
+            public_keys: vec![pk],
+            authentication: vec![],
+            verification_methods: vec![VerificationMethod {
+                id: "did:exo:login-alice#key-1".into(),
+                key_type: "Ed25519VerificationKey2020".into(),
+                controller: did,
+                public_key_multibase: multibase,
+                version: 1,
+                active: true,
+                valid_from: 0,
+                revoked_at: None,
+            }],
+            hybrid_verification_methods: vec![],
+            service_endpoints: vec![],
+            created: Timestamp::ZERO,
+            updated: Timestamp::ZERO,
+            revoked: false,
+        };
+        let registry = Arc::new(RwLock::new(LocalDidRegistry::new()));
+        registry.write().unwrap().register(doc).unwrap();
+        (registry, sk)
+    }
+
+    async fn gateway_test_pool() -> Option<sqlx::PgPool> {
+        let url = std::env::var("DATABASE_URL").ok()?;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .ok()?;
+        sqlx::migrate!("./migrations").run(&pool).await.ok()?;
+        Some(pool)
     }
 
     // --- GatewayConfig / start() (existing tests preserved) ---
@@ -2310,6 +2469,220 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn auth_login_valid_signature_creates_session_row_with_caller_metadata() {
+        use sqlx::Row;
+
+        let pool = match gateway_test_pool().await {
+            Some(pool) => pool,
+            None => return,
+        };
+        let did = "did:exo:login-alice";
+        sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
+            .bind(did)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let (registry, sk) = signing_registry();
+        let metadata = SessionIssueMetadata {
+            created_at: 10_000,
+            expires_at: 20_000,
+        };
+        let timestamp = Timestamp::new(10_000, 0);
+        let observed_at = Timestamp::new(10_000, 0);
+        let body_hash = session_login_payload_hash(did, &metadata, &timestamp).unwrap();
+        let signature = sign(body_hash.as_bytes(), &sk);
+        let body = serde_json::json!({
+            "did": did,
+            "createdAt": metadata.created_at,
+            "expiresAt": metadata.expires_at,
+            "authTimestampPhysicalMs": timestamp.physical_ms,
+            "authTimestampLogical": timestamp.logical,
+            "observedAt": observed_at.physical_ms,
+            "observedAtLogical": observed_at.logical,
+            "signature": hex::encode(signature.as_bytes())
+        });
+
+        let response = handle_auth_login(
+            State(AppState::new(Some(pool.clone()), registry)),
+            Json(body),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let rows = sqlx::query(
+            "SELECT actor_did, created_at, expires_at, revoked \
+             FROM sessions WHERE actor_did = $1",
+        )
+        .bind(did)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get::<String, _>("actor_did"), did);
+        assert_eq!(rows[0].get::<i64, _>("created_at"), metadata.created_at);
+        assert_eq!(rows[0].get::<i64, _>("expires_at"), metadata.expires_at);
+        assert!(!rows[0].get::<bool, _>("revoked"));
+
+        sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
+            .bind(did)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn session_login_proof_rejects_missing_signature() {
+        let body = serde_json::json!({
+            "authTimestampPhysicalMs": 10_000,
+            "authTimestampLogical": 0,
+            "observedAt": 10_000,
+            "observedAtLogical": 0
+        });
+        let err = SessionLoginProof::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("signature")),
+            "expected signature refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn session_login_proof_rejects_empty_signature() {
+        let body = serde_json::json!({
+            "authTimestampPhysicalMs": 10_000,
+            "authTimestampLogical": 0,
+            "observedAt": 10_000,
+            "observedAtLogical": 0,
+            "signature": ""
+        });
+        let err = SessionLoginProof::from_body(&body).unwrap_err();
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("signature")),
+            "expected empty signature refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn session_login_authentication_accepts_valid_signature() {
+        let (registry, sk) = signing_registry();
+        let metadata = SessionIssueMetadata {
+            created_at: 10_000,
+            expires_at: 20_000,
+        };
+        let timestamp = Timestamp::new(10_000, 0);
+        let body_hash =
+            session_login_payload_hash("did:exo:login-alice", &metadata, &timestamp).unwrap();
+        let signature = sign(body_hash.as_bytes(), &sk);
+        let proof = SessionLoginProof {
+            timestamp,
+            observed_at: timestamp,
+            signature,
+        };
+        let guard = registry.read().unwrap();
+        let actor =
+            authenticate_session_login("did:exo:login-alice", &metadata, &proof, &*guard).unwrap();
+
+        assert_eq!(actor.did.as_str(), "did:exo:login-alice");
+    }
+
+    #[test]
+    fn session_login_authentication_rejects_wrong_key_signature() {
+        let (registry, _sk) = signing_registry();
+        let (_wrong_pk, wrong_sk) = generate_keypair();
+        let metadata = SessionIssueMetadata {
+            created_at: 10_000,
+            expires_at: 20_000,
+        };
+        let timestamp = Timestamp::new(10_000, 0);
+        let body_hash =
+            session_login_payload_hash("did:exo:login-alice", &metadata, &timestamp).unwrap();
+        let proof = SessionLoginProof {
+            timestamp,
+            observed_at: timestamp,
+            signature: sign(body_hash.as_bytes(), &wrong_sk),
+        };
+        let guard = registry.read().unwrap();
+
+        assert!(
+            authenticate_session_login("did:exo:login-alice", &metadata, &proof, &*guard).is_err()
+        );
+    }
+
+    #[test]
+    fn session_login_authentication_rejects_tampered_payload() {
+        let (registry, sk) = signing_registry();
+        let signed_metadata = SessionIssueMetadata {
+            created_at: 10_000,
+            expires_at: 20_000,
+        };
+        let tampered_metadata = SessionIssueMetadata {
+            created_at: 10_000,
+            expires_at: 30_000,
+        };
+        let timestamp = Timestamp::new(10_000, 0);
+        let body_hash =
+            session_login_payload_hash("did:exo:login-alice", &signed_metadata, &timestamp)
+                .unwrap();
+        let proof = SessionLoginProof {
+            timestamp,
+            observed_at: timestamp,
+            signature: sign(body_hash.as_bytes(), &sk),
+        };
+        let guard = registry.read().unwrap();
+
+        assert!(
+            authenticate_session_login("did:exo:login-alice", &tampered_metadata, &proof, &*guard)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn session_login_authentication_rejects_stale_timestamp() {
+        let (registry, sk) = signing_registry();
+        let metadata = SessionIssueMetadata {
+            created_at: 10_000,
+            expires_at: 20_000,
+        };
+        let timestamp = Timestamp::new(1, 0);
+        let observed_at = Timestamp::new(400_000, 0);
+        let body_hash =
+            session_login_payload_hash("did:exo:login-alice", &metadata, &timestamp).unwrap();
+        let proof = SessionLoginProof {
+            timestamp,
+            observed_at,
+            signature: sign(body_hash.as_bytes(), &sk),
+        };
+        let guard = registry.read().unwrap();
+        let err = authenticate_session_login("did:exo:login-alice", &metadata, &proof, &*guard)
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("freshness window"),
+            "expected stale timestamp refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn auth_login_handler_requires_proof_of_possession() {
+        let source = include_str!("server.rs");
+        let login_handler = source_between(
+            source,
+            "async fn handle_auth_login",
+            "/// POST /api/v1/auth/token",
+        );
+
+        assert!(
+            login_handler.contains("authenticate_session_login"),
+            "login must use DID proof-of-possession before issuing a session"
+        );
+        assert!(
+            !login_handler.contains("reg.resolve(&did).is_none()"),
+            "login must not downgrade to a registry-membership-only check"
+        );
     }
 
     #[tokio::test]
