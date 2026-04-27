@@ -300,6 +300,14 @@ impl McpServer {
                     ),
                 }
             }
+            // Schema validation failure surfaces as a standard JSON-RPC
+            // INVALID_PARAMS so clients can distinguish a malformed call
+            // from a runtime failure (A-020).
+            Err(McpError::InvalidParams(msg)) => JsonRpcResponse::error(
+                request.id.clone(),
+                INVALID_PARAMS,
+                format!("invalid params for tool `{tool_name}`: {msg}"),
+            ),
             Err(e) => JsonRpcResponse::error(
                 request.id.clone(),
                 INTERNAL_ERROR,

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json},
     routing::{get, post},
@@ -23,6 +23,14 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
+
+/// Maximum accepted request body size, in bytes (1 MiB).
+///
+/// Caps inbound JSON payloads to prevent memory exhaustion from hostile
+/// clients. Larger uploads (e.g. e-discovery export streams) should use
+/// dedicated streaming endpoints that override this cap with
+/// `DefaultBodyLimit::disable()` at the route level. (A-022)
+const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 
 use crate::{
     auth::{AuthenticatedActor, AuthenticationMetadata, Request as AuthRequest, authenticate},
@@ -1761,6 +1769,8 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
         // GraphQL sub-router has its own state — merge after with_state()
         .merge(gql_router)
+        // Cap inbound body size before the handler reads a single byte. (A-022)
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         // Emit structured tracing spans for every request/response.
         .layer(TraceLayer::new_for_http())
 }

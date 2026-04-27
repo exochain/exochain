@@ -388,7 +388,10 @@ pub fn execute_get_checkpoint(params: &Value, context: &NodeContext) -> ToolResu
                 }
             },
             Err(_) => {
-                return ToolResult::error(json!({"error": "store mutex poisoned"}).to_string());
+                tracing::error!("MCP ledger checkpoint store mutex poisoned");
+                return ToolResult::error(
+                    json!({"error": "ledger store is temporarily unavailable"}).to_string(),
+                );
             }
         };
 
@@ -401,8 +404,9 @@ pub fn execute_get_checkpoint(params: &Value, context: &NodeContext) -> ToolResu
                     state.consensus.config.validators.len(),
                 ),
                 Err(_) => {
+                    tracing::error!("MCP ledger checkpoint reactor state mutex poisoned");
                     return ToolResult::error(
-                        json!({"error": "reactor state mutex poisoned"}).to_string(),
+                        json!({"error": "node state is temporarily unavailable"}).to_string(),
                     );
                 }
             }
@@ -759,5 +763,12 @@ mod tests {
         let text = result.content[0].text();
         assert!(text.contains("store committed height unavailable"));
         assert!(text.contains("committed.height"));
+    }
+
+    #[test]
+    fn get_checkpoint_does_not_expose_mutex_poisoning_to_clients() {
+        let src = include_str!("ledger.rs");
+        assert!(!src.contains("json!({\"error\": \"store mutex poisoned\"}"));
+        assert!(!src.contains("json!({\"error\": \"reactor state mutex poisoned\"}"));
     }
 }

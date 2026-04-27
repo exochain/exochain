@@ -13,6 +13,8 @@ pub mod proofs;
 
 use std::collections::BTreeMap;
 
+use jsonschema::JSONSchema;
+
 use super::{
     context::NodeContext,
     error::{McpError, Result},
@@ -37,11 +39,20 @@ pub(crate) fn simulation_tool_refused(
     )
 }
 
+/// A tool definition plus its compiled JSON Schema validator.
+///
+/// Schemas are compiled once at registration time; each `execute()` call
+/// reuses the compiled validator to reject malformed params before dispatch.
+struct RegisteredTool {
+    definition: ToolDefinition,
+    validator: JSONSchema,
+}
+
 /// Registry of available MCP tools.
 ///
 /// Stores tool definitions and dispatches calls to the appropriate handler.
 pub struct ToolRegistry {
-    tools: BTreeMap<String, ToolDefinition>,
+    tools: BTreeMap<String, RegisteredTool>,
 }
 
 impl ToolRegistry {
@@ -54,21 +65,33 @@ impl ToolRegistry {
     }
 
     /// Register a tool definition.
+    ///
+    /// Compiles the tool's `input_schema` up-front (A-020). A broken schema
+    /// is a programmer error — compilation failure panics so the regression
+    /// surfaces in tests rather than silently admitting invalid tools.
     pub fn register(&mut self, def: ToolDefinition) {
-        self.tools.insert(def.name.clone(), def);
+        let validator = JSONSchema::compile(&def.input_schema)
+            .unwrap_or_else(|e| panic!("tool `{}` has an invalid input_schema: {e}", def.name));
+        self.tools.insert(
+            def.name.clone(),
+            RegisteredTool {
+                definition: def,
+                validator,
+            },
+        );
     }
 
     /// List all registered tool definitions.
     #[must_use]
     pub fn list(&self) -> Vec<&ToolDefinition> {
-        self.tools.values().collect()
+        self.tools.values().map(|t| &t.definition).collect()
     }
 
     /// Look up a tool by name.
     #[must_use]
     #[allow(dead_code)] // Used in tests and will be used by resources.
     pub fn get(&self, name: &str) -> Option<&ToolDefinition> {
-        self.tools.get(name)
+        self.tools.get(name).map(|t| &t.definition)
     }
 
     /// Register all built-in tools from sub-modules.
@@ -126,15 +149,30 @@ impl ToolRegistry {
     }
 
     /// Execute a tool by name with the given params and runtime context.
+    ///
+    /// Validates `params` against the tool's registered JSON Schema before
+    /// dispatch (A-020). Schema violations surface as
+    /// [`McpError::InvalidParams`] with all offending instance paths joined.
     pub fn execute(
         &self,
         name: &str,
         params: &serde_json::Value,
         context: &NodeContext,
     ) -> Result<ToolResult> {
-        if !self.tools.contains_key(name) {
-            return Err(McpError::ToolNotFound(name.to_string()));
+        let registered = self
+            .tools
+            .get(name)
+            .ok_or_else(|| McpError::ToolNotFound(name.to_string()))?;
+
+        // Reject malformed input BEFORE dispatch so each tool doesn't have
+        // to defend against every shape the AI client might invent.
+        if let Err(errors) = registered.validator.validate(params) {
+            let msgs: Vec<String> = errors
+                .map(|err| format!("{}: {}", err.instance_path, err))
+                .collect();
+            return Err(McpError::InvalidParams(msgs.join("; ")));
         }
+
         match name {
             // Node
             "exochain_node_status" => Ok(node::execute_node_status(params, context)),
@@ -280,6 +318,66 @@ mod tests {
     fn registry_empty_has_no_tools() {
         let registry = ToolRegistry::new();
         assert!(registry.list().is_empty());
+    }
+
+    // A-020: schema validation must reject malformed params before dispatch.
+
+    #[test]
+    fn execute_rejects_missing_required_field() {
+        let registry = ToolRegistry::default();
+        // `exochain_resolve_identity` requires a `did` field.
+        let result = registry.execute(
+            "exochain_resolve_identity",
+            &serde_json::json!({}),
+            &NodeContext::empty(),
+        );
+        match result {
+            Err(McpError::InvalidParams(msg)) => {
+                assert!(
+                    msg.contains("did"),
+                    "error should mention the missing field, got: {msg}"
+                );
+            }
+            other => panic!("expected InvalidParams, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn execute_rejects_wrong_type() {
+        let registry = ToolRegistry::default();
+        // `exochain_resolve_identity` requires `did: string`; pass a number.
+        let result = registry.execute(
+            "exochain_resolve_identity",
+            &serde_json::json!({ "did": 42 }),
+            &NodeContext::empty(),
+        );
+        assert!(matches!(result, Err(McpError::InvalidParams(_))));
+    }
+
+    #[test]
+    fn execute_rejects_extra_property_when_additional_properties_false() {
+        let registry = ToolRegistry::default();
+        // `exochain_node_status` declares additionalProperties: false.
+        let result = registry.execute(
+            "exochain_node_status",
+            &serde_json::json!({ "intruder": "sneak" }),
+            &NodeContext::empty(),
+        );
+        assert!(matches!(result, Err(McpError::InvalidParams(_))));
+    }
+
+    #[test]
+    fn execute_accepts_valid_params() {
+        let registry = ToolRegistry::default();
+        let result = registry.execute(
+            "exochain_node_status",
+            &serde_json::json!({}),
+            &NodeContext::empty(),
+        );
+        assert!(
+            result.is_ok(),
+            "valid params should dispatch successfully: {result:?}"
+        );
     }
 
     #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
