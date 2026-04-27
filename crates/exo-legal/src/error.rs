@@ -26,6 +26,8 @@ pub enum LegalError {
     RetentionViolation { reason: String },
     #[error("disclosure required for action: {action}")]
     DisclosureRequired { action: String },
+    #[error("disclosure verification invalid: {reason}")]
+    DisclosureVerificationInvalid { reason: String },
     #[error("conflict of interest: {reason}")]
     ConflictOfInterest { reason: String },
     #[error("record not found: {0}")]
@@ -57,6 +59,7 @@ mod tests {
             Box::new(LegalError::DisclosureRequired {
                 action: "vote".into(),
             }),
+            Box::new(LegalError::DisclosureVerificationInvalid { reason: "x".into() }),
             Box::new(LegalError::ConflictOfInterest { reason: "x".into() }),
             Box::new(LegalError::RecordNotFound(id)),
             Box::new(LegalError::InvalidStateTransition { reason: "x".into() }),
