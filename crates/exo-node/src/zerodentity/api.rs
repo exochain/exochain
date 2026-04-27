@@ -815,14 +815,14 @@ pub async fn delete_identity(
     let request_path = path_and_query(&uri);
     let _token = verify_signed_write(&state, &headers, &did, "DELETE", &request_path, &body)?;
 
-    let claims_revoked = {
+    let erasure_evidence = {
         let mut store = state.store.lock().map_err(|_| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": "lock poisoned"})),
             )
         })?;
-        store.erase_did(&did).map_err(|e| {
+        store.erase_did_with_evidence(&did).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": format!("Erasure failed: {e}")})),
@@ -830,13 +830,11 @@ pub async fn delete_identity(
         })?
     };
 
-    let receipt_hash = hex::encode(
-        Hash256::digest(format!("erasure-receipt:{}", did.as_str()).as_bytes()).as_bytes(),
-    );
+    let receipt_hash = hex::encode(erasure_evidence.receipt_hash.as_bytes());
 
     Ok(Json(ErasureResponse {
         subject_did: did.to_string(),
-        claims_revoked,
+        claims_revoked: erasure_evidence.claims_revoked,
         receipt_hash,
         message: "Identity erased. All sessions revoked, claims marked Revoked, scores zeroed, fingerprints removed, DAG nodes tombstoned.".into(),
     }))
@@ -912,6 +910,18 @@ mod tests {
 
         assert!(!production.contains(&uuid_new_v4));
         assert!(!production.contains(&qualified_uuid_new_v4));
+        assert!(!production.contains(&fabricated_receipt));
+    }
+
+    #[test]
+    fn erasure_write_path_does_not_fabricate_receipt_hashes() {
+        let source = include_str!("api.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .unwrap();
+        let fabricated_receipt = format!("{}{}", "erasure-", "receipt");
+
         assert!(!production.contains(&fabricated_receipt));
     }
 
@@ -1466,6 +1476,7 @@ mod tests {
         let keypair = test_keypair(43);
         let state =
             make_state_with_signed_session_and_claim("tok-alice", "did:exo:alice", &keypair);
+        let store = state.store.clone();
         let app = zerodentity_api_router(state);
         let resp = signed_delete(
             app,
@@ -1480,6 +1491,17 @@ mod tests {
         let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(result["claims_revoked"], 1);
         assert!(result["receipt_hash"].as_str().is_some());
+        let guard = store.lock().unwrap();
+        let receipts = guard.trust_receipts();
+        let receipt = receipts
+            .iter()
+            .find(|receipt| receipt.action_type == "zerodentity.identity_erased")
+            .expect("erasure receipt");
+        assert_eq!(
+            result["receipt_hash"].as_str().unwrap(),
+            hex::encode(receipt.receipt_hash.as_bytes())
+        );
+        assert!(receipt.verify_hash());
         assert!(
             result["message"]
                 .as_str()

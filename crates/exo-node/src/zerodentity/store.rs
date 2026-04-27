@@ -20,6 +20,7 @@ use std::{
 
 use exo_core::types::{Did, Hash256, ReceiptOutcome, Signature, Timestamp, TrustReceipt};
 use exo_dag::dag::{DagNode, compute_node_hash};
+use serde::Serialize;
 
 use super::types::{
     BehavioralSample, ClaimStatus, DeviceFingerprint, IdentityClaim, IdentitySession, OtpChallenge,
@@ -60,6 +61,14 @@ impl fmt::Debug for ReceiptSigningContext {
 pub struct ClaimSaveEvidence {
     pub dag_node_hash: Hash256,
     pub receipt_hash: Option<Hash256>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErasureEvidence {
+    pub claims_revoked: u32,
+    pub dag_node_hash: Hash256,
+    pub action_hash: Hash256,
+    pub receipt_hash: Hash256,
 }
 
 // ---------------------------------------------------------------------------
@@ -593,7 +602,8 @@ impl ZerodentityStore {
     // Write — erasure (§11.4 Right to Erasure)
     // -----------------------------------------------------------------------
 
-    /// Erase all data associated with a DID.
+    /// Erase all stored 0dentity data for `did` and return the signed evidence
+    /// emitted for the erasure.
     ///
     /// Implements §11.4 — right to erasure:
     /// 1. Revoke all sessions for this DID.
@@ -603,9 +613,7 @@ impl ZerodentityStore {
     /// 5. Remove OTP challenges belonging to this DID.
     /// 6. Tombstone DAG nodes — zero payload hash, keep structural links.
     /// 7. Emit an erasure receipt.
-    ///
-    /// Returns the number of claims revoked.
-    pub fn erase_did(&mut self, did: &Did) -> anyhow::Result<u32> {
+    pub fn erase_did_with_evidence(&mut self, did: &Did) -> anyhow::Result<ErasureEvidence> {
         if self.receipt_signing.is_none() {
             anyhow::bail!("0dentity trust receipt signer is not configured");
         }
@@ -647,7 +655,7 @@ impl ZerodentityStore {
         // existing claim nodes remain append-only; erasure is represented as a
         // new tombstone event.
         let now_ms = crate::sentinels::now_ms();
-        let erasure_hash = Hash256::digest(format!("erase:{}", did.as_str()).as_bytes());
+        let erasure_hash = erasure_action_hash(did)?;
         let receipt = self.trust_receipt(
             "zerodentity.identity_erased",
             erasure_hash,
@@ -655,10 +663,17 @@ impl ZerodentityStore {
             Timestamp::new(now_ms, 0),
         )?;
         let erasure_node = self.signed_dag_node(erasure_hash, Timestamp::new(now_ms, 0))?;
+        let dag_node_hash = erasure_node.hash;
+        let receipt_hash = receipt.receipt_hash;
         self.dag_nodes.push(erasure_node);
         self.trust_receipts.push(receipt);
 
-        Ok(revoked_count)
+        Ok(ErasureEvidence {
+            claims_revoked: revoked_count,
+            dag_node_hash,
+            action_hash: erasure_hash,
+            receipt_hash,
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -694,6 +709,18 @@ pub type SharedZerodentityStore = Arc<Mutex<ZerodentityStore>>;
 #[allow(dead_code)]
 pub fn new_shared_store() -> SharedZerodentityStore {
     Arc::new(Mutex::new(ZerodentityStore::new()))
+}
+
+fn canonical_cbor<T: Serialize>(value: &T) -> anyhow::Result<Vec<u8>> {
+    let mut encoded = Vec::new();
+    ciborium::ser::into_writer(value, &mut encoded)?;
+    Ok(encoded)
+}
+
+/// Domain-separated canonical action hash for a 0dentity erasure event.
+pub fn erasure_action_hash(did: &Did) -> anyhow::Result<Hash256> {
+    let payload = ("exo.zerodentity.identity_erased.v1", did.as_str());
+    Ok(Hash256::digest(&canonical_cbor(&payload)?))
 }
 
 // ---------------------------------------------------------------------------
@@ -766,6 +793,29 @@ mod tests {
             signature: Signature::Empty,
             dag_node_hash: h(),
         }
+    }
+
+    #[test]
+    fn erasure_action_hash_is_deterministic_and_did_bound() {
+        let did_a = did("did:exo:erase-a");
+        let did_b = did("did:exo:erase-b");
+
+        let first = erasure_action_hash(&did_a).expect("erasure hash");
+
+        assert_eq!(erasure_action_hash(&did_a).expect("erasure hash"), first);
+        assert_ne!(erasure_action_hash(&did_b).expect("erasure hash"), first);
+    }
+
+    #[test]
+    fn erasure_path_does_not_use_ad_hoc_format_hashes() {
+        let source = include_str!("store.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .unwrap();
+        let ad_hoc_erasure_hash = format!("{}{}", "format!(\"erase", ":");
+
+        assert!(!production.contains(&ad_hoc_erasure_hash));
     }
 
     #[test]
@@ -956,7 +1006,7 @@ mod tests {
         store.save_claim("apg-dag-erasure-001", &c).unwrap();
         let claim_node = store.dag_nodes()[0].clone();
 
-        store.erase_did(&d).unwrap();
+        store.erase_did_with_evidence(&d).unwrap();
 
         let nodes = store.dag_nodes();
         assert_eq!(nodes.len(), 2);
@@ -1070,8 +1120,8 @@ mod tests {
             .unwrap();
 
         // Erase
-        let revoked = store.erase_did(&d).unwrap();
-        assert_eq!(revoked, 2);
+        let evidence = store.erase_did_with_evidence(&d).unwrap();
+        assert_eq!(evidence.claims_revoked, 2);
 
         // Score gone
         assert!(store.get_score(&d).is_none());
@@ -1103,8 +1153,8 @@ mod tests {
         let d = did("did:exo:signed-erase");
         store.put_claim(claim(&d, ClaimType::Email));
 
-        let revoked = store.erase_did(&d).unwrap();
-        assert_eq!(revoked, 1);
+        let evidence = store.erase_did_with_evidence(&d).unwrap();
+        assert_eq!(evidence.claims_revoked, 1);
 
         let receipt = store
             .trust_receipts()
@@ -1150,7 +1200,7 @@ mod tests {
         assert!(!store.get_fingerprints(&d).unwrap().is_empty());
         assert!(!store.get_behavioral_samples(&d).unwrap().is_empty());
 
-        store.erase_did(&d).unwrap();
+        store.erase_did_with_evidence(&d).unwrap();
 
         assert!(store.get_fingerprints(&d).unwrap().is_empty());
         assert!(store.get_behavioral_samples(&d).unwrap().is_empty());
@@ -1164,7 +1214,7 @@ mod tests {
         store.save_claim("dag-001", &c).unwrap();
 
         let claim_node = store.dag_nodes()[0].clone();
-        store.erase_did(&d).unwrap();
+        store.erase_did_with_evidence(&d).unwrap();
         assert_eq!(store.dag_nodes().len(), 2);
         assert_eq!(store.dag_nodes()[0], claim_node);
         assert_eq!(store.dag_nodes()[1].parents, vec![claim_node.hash]);
