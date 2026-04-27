@@ -298,7 +298,7 @@ Use these at session start to let the agent self-orient.
 | `exochain_create_evidence` | Bundle evidence with a chain-of-custody record. |
 | `exochain_verify_chain_of_custody` | Verify an evidence bundle end-to-end. |
 | `exochain_generate_merkle_proof` | Produce a Merkle inclusion proof for a leaf. |
-| `exochain_verify_cgr_proof` | Verify a CGR verdict proof against the checkpoint root. |
+| `exochain_verify_cgr_proof` | Refuses CGR proof verification until proof bytes, public inputs, checkpoint roots, validator signatures, and a production verifier are wired. |
 
 ### Legal (4)
 

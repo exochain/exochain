@@ -9,6 +9,8 @@ use crate::mcp::{
     protocol::{ToolDefinition, ToolResult},
 };
 
+const MCP_CGR_PROOF_INITIATIVE: &str = "Initiatives/fix-mcp-cgr-proof-verification-stub.md";
+
 fn required_nonzero_u64(params: &Value, name: &str) -> std::result::Result<u64, ToolResult> {
     match params.get(name).and_then(Value::as_u64) {
         Some(value) if value > 0 => Ok(value),
@@ -377,23 +379,22 @@ pub fn execute_generate_merkle_proof(params: &Value, _context: &NodeContext) -> 
 pub fn verify_cgr_proof_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_verify_cgr_proof".to_owned(),
-        description: "Verify a CGR kernel proof by checking the proof hash and invariants."
-            .to_owned(),
+        description: "Fail-closed placeholder for CGR kernel proof verification until proof bytes, public inputs, checkpoint roots, and a production verifier are wired.".to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
                 "proof_hash": {
                     "type": "string",
-                    "description": "Hex-encoded hash of the CGR proof to verify."
+                    "description": "Hex-encoded hash claim for the CGR proof. Hash-only verification is refused."
                 },
                 "invariants_checked": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "List of invariant names that were checked in the proof."
+                    "description": "Caller-declared invariant names. These are not accepted as proof of verification."
                 },
                 "verified_at_ms": {
                     "type": "integer",
-                    "description": "Caller-supplied nonzero HLC physical milliseconds for verification."
+                    "description": "Caller-supplied nonzero HLC physical milliseconds for the refusal record."
                 }
             },
             "required": ["proof_hash", "invariants_checked", "verified_at_ms"],
@@ -440,19 +441,18 @@ pub fn execute_verify_cgr_proof(params: &Value, _context: &NodeContext) -> ToolR
         .map(String::from)
         .collect();
 
-    // Compute a verification hash to attest we checked this proof.
-    let verification_input = format!("cgr_verify:{}:{}", proof_hash, invariant_names.join(","));
-    let verification_hash = Hash256::digest(verification_input.as_bytes());
-
-    let response = json!({
-        "proof_hash": proof_hash,
-        "verification_status": "verified",
-        "invariants_checked": invariant_names,
-        "invariant_count": invariant_names.len(),
-        "verification_hash": verification_hash.to_string(),
-        "verified_at": format!("{}:0", verified_at_ms),
-    });
-    ToolResult::success(response.to_string())
+    ToolResult::error(
+        json!({
+            "error": format!(
+                "CGR proof verification is unavailable: exochain_verify_cgr_proof has no proof bytes, public inputs, checkpoint root, validator signature set, or production CGR proof verifier wired; refusing hash-only verification claims. See {MCP_CGR_PROOF_INITIATIVE}."
+            ),
+            "proof_hash": proof_hash,
+            "invariants_requested": invariant_names,
+            "refused_at": format!("{}:0", verified_at_ms),
+            "initiative": MCP_CGR_PROOF_INITIATIVE,
+        })
+        .to_string(),
+    )
 }
 
 // ===========================================================================
@@ -629,18 +629,19 @@ mod tests {
     }
 
     #[test]
-    fn execute_verify_cgr_proof_success() {
+    fn execute_verify_cgr_proof_refuses_hash_only_claims() {
         let params = json!({
             "proof_hash": "abcdef01",
             "invariants_checked": ["consent_required", "no_self_dealing"],
             "verified_at_ms": 1700000000002_u64,
         });
         let result = execute_verify_cgr_proof(&params, &NodeContext::empty());
-        assert!(!result.is_error);
+        assert!(result.is_error);
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
-        assert_eq!(v["verification_status"], "verified");
-        assert_eq!(v["invariant_count"], 2);
-        assert!(v["verification_hash"].as_str().is_some());
+        let error = v["error"].as_str().expect("error string");
+        assert!(error.contains("CGR proof verification is unavailable"));
+        assert!(error.contains("fix-mcp-cgr-proof-verification-stub.md"));
+        assert!(!result.content[0].text().contains("verification_status"));
     }
 
     #[test]

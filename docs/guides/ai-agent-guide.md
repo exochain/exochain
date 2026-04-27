@@ -329,11 +329,14 @@ inclusion proofs — for admissibility review.
 3. `tools/call` → `exochain_verify_chain_of_custody` for the
    bundle's custody chain. Every transfer must be signed and
    time-ordered.
-4. `tools/call` → `exochain_verify_cgr_proof` to verify the
-   CGR proof carried by each `PROVEN` event.
+4. Do not treat `exochain_verify_cgr_proof` as a verifier in default
+   builds. It refuses hash-only CGR proof claims until proof bytes,
+   public inputs, checkpoint roots, validator signatures, and a
+   production verifier are wired.
 5. Produce an admissibility statement: either "the bundle is
    self-consistent, signed end-to-end, and verifies against
-   checkpoint X" or a list of specific defects.
+   checkpoint X" or a list of specific defects, including unavailable
+   CGR proof verification when applicable.
 
 ### 5.4 Constitutional audit
 
@@ -357,9 +360,9 @@ against all eight invariants.
 ## 6. Your trust receipts
 
 Every action you take that the kernel adjudicates produces a verdict.
-When that verdict is `Permitted`, a `CgrProof` is attached — a
-cryptographic certificate recording the kernel version, the invariant
-set hash, and the invariants that were evaluated.
+When that verdict is `Permitted`, callers must preserve the signed
+event and any receipt/proof material returned by the adjudication
+path. Default MCP builds do not expose a standalone CGR proof verifier.
 
 These are your **trust receipts**. Keep them. If your work is later
 challenged, the trust receipt is what establishes that you acted
@@ -368,20 +371,10 @@ set.
 
 ### 6.1 How to retrieve a trust receipt
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id":      10,
-  "method":  "tools/call",
-  "params": {
-    "name":      "exochain_verify_cgr_proof",
-    "arguments": { "event_id": "<the event you want the receipt for>" }
-  }
-}
-```
-
-The response includes the `CgrProof` fields: `kernel_hash`,
-`invariants_checked`, `verdict`, `timestamp`, `proof_signature`.
+`exochain_verify_cgr_proof` currently refuses hash-only verification
+claims and names `Initiatives/fix-mcp-cgr-proof-verification-stub.md`
+in the refusal body. Treat that refusal as a missing verification
+surface, not as a negative proof result or a verified trust receipt.
 
 ### 6.2 How to read a trust receipt
 
