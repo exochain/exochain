@@ -47,6 +47,8 @@ Issues = "https://github.com/exochain/exochain/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["exochain"]
+# A-063: ship the py.typed marker so mypy / pyright pick up inline annotations.
+include = ["exochain/py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

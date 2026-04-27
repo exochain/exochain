@@ -88,6 +88,11 @@ uuid = { workspace = true }
 # HTTP client for Telegram bot API
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+# JSON Schema validation for MCP tool input params (A-020). default-features
+# disabled to drop the built-in HTTP retriever — we never resolve $ref over
+# the network; schemas are local and compiled at registration time.
+jsonschema = { version = "0.19", default-features = false }
+
 [dev-dependencies]
 tempfile = "3"
 tower = "0.5"

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from exochain import sha256, sha256_hex
+from exochain import PROTOCOL_VERSION, sha256, sha256_hex
+
+
+def test_protocol_version_is_exported() -> None:
+    """The Python SDK exposes the fabric protocol version for skew checks."""
+    assert PROTOCOL_VERSION == "0.1.0-beta"
 
 
 def test_sha256_is_deterministic() -> None:

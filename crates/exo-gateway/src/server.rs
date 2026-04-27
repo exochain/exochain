@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use axum::{
     Router,
     body::Body,
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, Method, Request, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Json, Response},
@@ -25,7 +25,16 @@ use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::net::TcpListener;
+use tower::limit::GlobalConcurrencyLimitLayer;
 use tower_http::trace::TraceLayer;
+
+/// Maximum accepted request body size, in bytes (1 MiB).
+///
+/// Caps inbound JSON payloads to prevent memory exhaustion from hostile
+/// clients. Larger uploads (e.g. e-discovery export streams) should use
+/// dedicated streaming endpoints that override this cap with
+/// `DefaultBodyLimit::disable()` at the route level. (A-022)
+const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 
 use crate::{
     auth::{AuthenticatedActor, AuthenticationMetadata, Request as AuthRequest, authenticate},
@@ -38,6 +47,7 @@ use crate::{
 
 const XSRF_COOKIE_PREFIX: &str = "XSRF-TOKEN=";
 const CSRF_HEADER_NAME: &str = "x-csrf-token";
+const GLOBAL_CONCURRENCY_LIMIT: usize = 1024;
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -1769,7 +1779,7 @@ pub fn build_router(state: AppState) -> Router {
     let schema = graphql::build_schema(gql_state);
     let gql_router = graphql::graphql_router(schema);
 
-    Router::new()
+    let router = Router::new()
         // Probes
         .route("/health", get(handle_health))
         .route("/ready", get(handle_ready))
@@ -1831,10 +1841,20 @@ pub fn build_router(state: AppState) -> Router {
         )
         .with_state(state)
         // GraphQL sub-router has its own state — merge after with_state()
-        .merge(gql_router)
+        .merge(gql_router);
+
+    apply_gateway_layers(router, GLOBAL_CONCURRENCY_LIMIT)
+}
+
+fn apply_gateway_layers(router: Router, concurrency_limit: usize) -> Router {
+    router
         .layer(middleware::from_fn(require_csrf_double_submit))
+        // Cap inbound body size before the handler reads a single byte. (A-022)
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         // Emit structured tracing spans for every request/response.
         .layer(TraceLayer::new_for_http())
+        // Global concurrency ceiling as DoS admission control.
+        .layer(GlobalConcurrencyLimitLayer::new(concurrency_limit))
 }
 
 // ---------------------------------------------------------------------------
@@ -1915,7 +1935,10 @@ pub async fn serve_with_extra_routes(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::{
+        sync::atomic::{AtomicU64, Ordering},
+        time::Duration,
+    };
 
     use axum::{body::Body, http::Request};
     use exo_core::{
@@ -1924,6 +1947,7 @@ mod tests {
         hlc::HybridClock,
     };
     use exo_identity::did::{DidDocument, VerificationMethod};
+    use tokio::sync::Notify;
     use tower::ServiceExt;
 
     use super::*; // for .oneshot()
@@ -1962,6 +1986,76 @@ mod tests {
         assert!(!production.contains(&timestamp_now));
         assert!(!production.contains(&system_time_now));
         assert!(!production.contains(&instant_now));
+    }
+
+    #[tokio::test]
+    async fn gateway_global_concurrency_limit_queues_excess_requests() {
+        #[derive(Clone)]
+        struct HoldState {
+            entered: Arc<Notify>,
+            release: Arc<Notify>,
+        }
+
+        async fn hold(State(state): State<HoldState>) -> StatusCode {
+            state.entered.notify_one();
+            state.release.notified().await;
+            StatusCode::OK
+        }
+
+        async fn probe() -> StatusCode {
+            StatusCode::OK
+        }
+
+        let state = HoldState {
+            entered: Arc::new(Notify::new()),
+            release: Arc::new(Notify::new()),
+        };
+        let app = apply_gateway_layers(
+            Router::new()
+                .route("/hold", get(hold))
+                .route("/probe", get(probe))
+                .with_state(state.clone()),
+            1,
+        );
+
+        let first = tokio::spawn(
+            app.clone()
+                .oneshot(Request::builder().uri("/hold").body(Body::empty()).unwrap()),
+        );
+        state.entered.notified().await;
+
+        let queued = tokio::time::timeout(
+            Duration::from_millis(50),
+            app.clone().oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+        )
+        .await;
+        assert!(
+            queued.is_err(),
+            "request must queue while the limit is held"
+        );
+
+        state.release.notify_one();
+        let first_response = first.await.unwrap().unwrap();
+        assert_eq!(first_response.status(), StatusCode::OK);
+
+        let next_response = tokio::time::timeout(
+            Duration::from_secs(1),
+            app.oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(next_response.status(), StatusCode::OK);
     }
 
     /// Build a minimal DidDocument for use in registration tests.

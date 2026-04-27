@@ -720,7 +720,20 @@ async fn start_node(
         );
     }
 
-    exo_gateway::server::serve_with_extra_routes(gateway_config, None, Some(extra_router)).await?;
+    let serve_fut =
+        exo_gateway::server::serve_with_extra_routes(gateway_config, None, Some(extra_router));
+
+    tracing::info!(
+        %bind_address,
+        "Node fully started — SIGTERM/Ctrl+C will trigger graceful shutdown"
+    );
+    serve_fut.await?;
+
+    tracing::info!("HTTP server drained — signaling subsystems to stop");
+    tokio::task::yield_now().await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tracing::info!("Graceful shutdown complete");
+
     Ok(())
 }
 
