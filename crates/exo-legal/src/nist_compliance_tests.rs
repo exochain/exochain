@@ -6,8 +6,11 @@
 
 #[cfg(test)]
 mod nist_compliance {
-    use exo_authority::DelegateeKind;
-    use exo_core::{Did, Hash256, Timestamp};
+    use exo_authority::{
+        AuthorityChain as ReportAuthorityChain, AuthorityLink as ReportAuthorityLink,
+        DelegateeKind, Permission as ReportPermission,
+    };
+    use exo_core::{Did, Hash256, Signature, Timestamp, crypto::KeyPair};
     use exo_gatekeeper::{
         InvariantEngine, McpRule,
         invariants::{ConstitutionalInvariant, InvariantContext, enforce_all},
@@ -21,7 +24,10 @@ mod nist_compliance {
     use uuid::Uuid;
 
     use crate::{
-        ai_transparency::{ReportParams, ai_delegation_event_from_link, generate_report},
+        ai_transparency::{
+            ReportParams, VerifiedAuthorityClearance, ai_delegation_event_from_link,
+            generate_report, verify_authority_clearance,
+        },
         compliance_report::{
             AttestationStatus, ComplianceReportMode, build_report, redact_model_id,
         },
@@ -42,6 +48,38 @@ mod nist_compliance {
 
     fn audit_id(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    fn verified_report_clearance(requester: &Did) -> VerifiedAuthorityClearance {
+        let root = did("report-root");
+        let root_key = KeyPair::generate();
+        let mut link = ReportAuthorityLink {
+            delegator_did: root.clone(),
+            delegate_did: requester.clone(),
+            scope: vec![ReportPermission::Read],
+            created: ts(1_000),
+            expires: None,
+            signature: Signature::empty(),
+            depth: 0,
+            delegatee_kind: DelegateeKind::Human,
+        };
+        let payload = link
+            .signing_payload()
+            .expect("authority link signing payload");
+        link.signature = root_key.sign(&payload);
+
+        let chain = ReportAuthorityChain {
+            links: vec![link],
+            max_depth: 5,
+        };
+        verify_authority_clearance(requester, &chain, ts(2_000), |did| {
+            if did == &root {
+                Some(*root_key.public_key())
+            } else {
+                None
+            }
+        })
+        .expect("report authority clearance must verify")
     }
 
     fn signed_authority_link(grantor: &Did, grantee: &Did) -> AuthorityLink {
@@ -295,6 +333,7 @@ mod nist_compliance {
 
         // 5. Transparency report captures MCP enforcement events.
         let tenant = did("tenant-acme");
+        let clearance = verified_report_clearance(&tenant);
         let report = generate_report(ReportParams {
             tenant_id: &tenant,
             period_start: ts(0),
@@ -303,7 +342,7 @@ mod nist_compliance {
             mcp_log: &mcp_log,
             ai_delegation_grants: vec![],
             ai_delegation_revocations: 0,
-            clearance_verified: true,
+            authority_clearance: &clearance,
         })
         .expect("transparency report generation must succeed");
         assert_eq!(
@@ -412,6 +451,7 @@ mod nist_compliance {
         // 4. Transparency report records AI delegation grants and revocations.
         let tenant = did("tenant-beta");
         let mcp_log = McpAuditLog::new();
+        let clearance = verified_report_clearance(&tenant);
         let report = generate_report(ReportParams {
             tenant_id: &tenant,
             period_start: ts(0),
@@ -420,7 +460,7 @@ mod nist_compliance {
             mcp_log: &mcp_log,
             ai_delegation_grants: vec![ai_event],
             ai_delegation_revocations: 1,
-            clearance_verified: true,
+            authority_clearance: &clearance,
         })
         .expect("transparency report must succeed");
         assert_eq!(report.ai_delegation_grants.len(), 1);

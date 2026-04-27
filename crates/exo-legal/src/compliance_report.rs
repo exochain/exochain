@@ -215,15 +215,28 @@ fn derive_status_and_evidence(
                 .iter()
                 .map(|o| o.allowed + o.blocked + o.escalated)
                 .sum();
-            (
-                AttestationStatus::Compliant,
-                format!(
-                    "Hash-chained AuditLog provides tamper-evident provenance. \
-                     {} MCP enforcement events recorded this period. \
-                     BLAKE3 chain verified. GDPR Art. 5(1)(f) satisfied.",
-                    mcp_count
-                ),
-            )
+            if mcp_count == 0 {
+                (
+                    AttestationStatus::NotApplicable,
+                    format!(
+                        "No MCP enforcement events recorded this period; no action provenance \
+                         is attested for this invariant. MCP audit log was structurally verified \
+                         before report generation with head hash {}.",
+                        hex_encode(&report.mcp_audit_head_hash)
+                    ),
+                )
+            } else {
+                (
+                    AttestationStatus::Compliant,
+                    format!(
+                        "Hash-chained MCP audit log verified before report generation. \
+                         {} MCP enforcement events recorded this period. \
+                         Verified head hash {}. GDPR Art. 5(1)(f) satisfied.",
+                        mcp_count,
+                        hex_encode(&report.mcp_audit_head_hash)
+                    ),
+                )
+            }
         }
 
         ConstitutionalInvariant::AuthorityChainValid => {
@@ -231,10 +244,17 @@ fn derive_status_and_evidence(
             (
                 AttestationStatus::Compliant,
                 format!(
-                    "Authority chain verified for all actions. \
+                    "Report generation authorized by verified authority clearance for requester {}. \
+                     Chain root {}, leaf {}, depth {}, hash {}. \
                      {} AI agent delegation grants recorded (DelegateeKind::AiAgent tagged). \
-                     {} revocations. GDPR Art. 5(2) accountability chain intact.",
-                    ai_grants, report.ai_delegation_revocations
+                     {} revocations. GDPR Art. 5(2) accountability chain evidence present.",
+                    report.authority_clearance.requester.as_str(),
+                    report.authority_clearance.chain_root.as_str(),
+                    report.authority_clearance.chain_leaf.as_str(),
+                    report.authority_clearance.chain_depth,
+                    hex_encode(&report.authority_clearance.chain_hash),
+                    ai_grants,
+                    report.ai_delegation_revocations
                 ),
             )
         }
@@ -328,11 +348,15 @@ fn hash_report_payload(payload: &ComplianceReportHashPayload<'_>) -> Result<[u8;
 
 #[cfg(test)]
 mod tests {
-    use exo_core::{Did, Timestamp};
+    use exo_authority::{AuthorityChain, AuthorityLink, DelegateeKind, Permission};
+    use exo_core::{Did, Signature, Timestamp, crypto::KeyPair};
     use exo_gatekeeper::mcp_audit::McpAuditLog;
 
     use super::*;
-    use crate::ai_transparency::{AiTransparencyReport, ReportParams, generate_report};
+    use crate::ai_transparency::{
+        AiTransparencyReport, ReportParams, VerifiedAuthorityClearance, generate_report,
+        verify_authority_clearance,
+    };
 
     fn did(s: &str) -> Did {
         Did::new(&format!("did:exo:{s}")).expect("valid DID")
@@ -342,7 +366,40 @@ mod tests {
         Timestamp::new(ms, 0)
     }
 
+    fn verified_clearance(requester: &Did) -> VerifiedAuthorityClearance {
+        let root = did("root-authority");
+        let root_key = KeyPair::generate();
+        let mut link = AuthorityLink {
+            delegator_did: root.clone(),
+            delegate_did: requester.clone(),
+            scope: vec![Permission::Read],
+            created: ts(1_000),
+            expires: None,
+            signature: Signature::empty(),
+            depth: 0,
+            delegatee_kind: DelegateeKind::Human,
+        };
+        let payload = link
+            .signing_payload()
+            .expect("authority link signing payload");
+        link.signature = root_key.sign(&payload);
+        let chain = AuthorityChain {
+            links: vec![link],
+            max_depth: 5,
+        };
+
+        verify_authority_clearance(requester, &chain, ts(2_000), |did| {
+            if did == &root {
+                Some(*root_key.public_key())
+            } else {
+                None
+            }
+        })
+        .expect("authority clearance must verify")
+    }
+
     fn empty_report(tenant: &Did) -> AiTransparencyReport {
+        let clearance = verified_clearance(tenant);
         generate_report(ReportParams {
             tenant_id: tenant,
             period_start: ts(0),
@@ -351,7 +408,7 @@ mod tests {
             mcp_log: &McpAuditLog::new(),
             ai_delegation_grants: vec![],
             ai_delegation_revocations: 0,
-            clearance_verified: true,
+            authority_clearance: &clearance,
         })
         .expect("ok")
     }
@@ -434,18 +491,58 @@ mod tests {
     }
 
     #[test]
-    fn all_attestations_compliant_for_empty_period() {
+    fn static_kernel_attestations_remain_compliant_for_empty_period() {
         let tenant = did("tenant");
         let tr = empty_report(&tenant);
         let report = build_report(&tr, &ComplianceReportMode::Full, ts(10000)).expect("ok");
         for att in &report.attestations {
-            assert_eq!(
-                att.status,
-                AttestationStatus::Compliant,
-                "invariant {} should be Compliant",
-                att.invariant
-            );
+            if att.invariant == "ProvenanceVerifiable" {
+                assert_eq!(att.status, AttestationStatus::NotApplicable);
+            } else {
+                assert_eq!(
+                    att.status,
+                    AttestationStatus::Compliant,
+                    "invariant {} should be Compliant",
+                    att.invariant
+                );
+            }
         }
+    }
+
+    #[test]
+    fn empty_period_does_not_overclaim_provenance_or_authority_compliance() {
+        let tenant = did("tenant");
+        let tr = empty_report(&tenant);
+        let report = build_report(&tr, &ComplianceReportMode::Full, ts(10000)).expect("ok");
+
+        let provenance = report
+            .attestations
+            .iter()
+            .find(|a| a.invariant == "ProvenanceVerifiable")
+            .expect("ProvenanceVerifiable must appear in attestations");
+        assert_ne!(
+            provenance.status,
+            AttestationStatus::Compliant,
+            "an empty report period has no provenance events to verify"
+        );
+        assert!(
+            !provenance
+                .evidence_summary
+                .contains("BLAKE3 chain verified"),
+            "empty evidence must not claim a verified non-empty audit chain"
+        );
+
+        let authority = report
+            .attestations
+            .iter()
+            .find(|a| a.invariant == "AuthorityChainValid")
+            .expect("AuthorityChainValid must appear in attestations");
+        assert!(
+            !authority
+                .evidence_summary
+                .contains("Authority chain verified for all actions"),
+            "authority attestations must name concrete verified evidence, not all-action prose"
+        );
     }
 
     #[test]

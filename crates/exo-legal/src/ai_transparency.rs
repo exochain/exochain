@@ -7,21 +7,52 @@
 //! # Clearance requirement
 //!
 //! [`generate_report`] is a sensitive operation — the report reveals which
-//! AI agents hold delegated authority. Callers must verify that the
-//! requesting actor holds a valid authority chain before calling this
-//! function. The function signature accepts a `clearance_verified: bool`
-//! flag which must be set only after an [`exo_authority`] chain check.
+//! AI agents hold delegated authority. Callers must pass a
+//! [`VerifiedAuthorityClearance`] created by [`verify_authority_clearance`],
+//! which verifies the requesting actor's authority chain before any report
+//! can be generated.
 
-use exo_authority::DelegateeKind;
-use exo_core::{Did, Timestamp};
-use exo_gatekeeper::mcp_audit::{McpAuditLog, McpEnforcementOutcome};
+use exo_authority::{AuthorityChain, DelegateeKind, chain};
+use exo_core::{Did, PublicKey, Timestamp, hash::hash_structured};
+use exo_gatekeeper::mcp_audit::{
+    McpAuditLog, McpEnforcementOutcome, verify_chain as verify_mcp_audit_chain,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{LegalError, Result};
 
+const AUTHORITY_CLEARANCE_DOMAIN: &str = "exo.legal.ai_transparency.authority_clearance.v1";
+const AUTHORITY_CLEARANCE_SCHEMA_VERSION: u16 = 1;
+
 // ---------------------------------------------------------------------------
 // Report structures
 // ---------------------------------------------------------------------------
+
+/// Verified authority-chain evidence authorizing report generation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorityClearanceEvidence {
+    pub requester: Did,
+    pub verified_at: Timestamp,
+    pub chain_root: Did,
+    pub chain_leaf: Did,
+    pub chain_depth: usize,
+    pub chain_hash: [u8; 32],
+}
+
+/// Authority clearance artifact that can only be created by successful chain
+/// verification through [`verify_authority_clearance`].
+#[derive(Debug, Clone)]
+pub struct VerifiedAuthorityClearance {
+    evidence: AuthorityClearanceEvidence,
+}
+
+impl VerifiedAuthorityClearance {
+    /// Return the serializable evidence captured after verification.
+    #[must_use]
+    pub fn evidence(&self) -> &AuthorityClearanceEvidence {
+        &self.evidence
+    }
+}
 
 /// Summary of a single AI agent delegation event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +96,10 @@ pub struct AiTransparencyReport {
     pub ai_delegation_revocations: u64,
     /// Per-rule breakdown of MCP enforcement outcomes.
     pub mcp_rule_outcomes: Vec<McpOutcomeSummary>,
+    /// Head hash of the MCP audit log after full-chain verification.
+    pub mcp_audit_head_hash: [u8; 32],
+    /// Verified report-generation authority evidence.
+    pub authority_clearance: AuthorityClearanceEvidence,
 }
 
 // ---------------------------------------------------------------------------
@@ -81,22 +116,21 @@ pub struct ReportParams<'a> {
     pub mcp_log: &'a McpAuditLog,
     pub ai_delegation_grants: Vec<AiDelegationEvent>,
     pub ai_delegation_revocations: u64,
-    /// Must only be `true` after the caller has validated the requesting
-    /// actor's authority chain via `exo_authority::chain::verify_chain`.
-    pub clearance_verified: bool,
+    /// Verified authority-chain clearance for the actor generating the report.
+    pub authority_clearance: &'a VerifiedAuthorityClearance,
 }
 
 /// Generate an AI transparency report for the given tenant and time period.
 ///
 /// # Clearance requirement
 ///
-/// `params.clearance_verified` must be `true` only after the caller has
-/// validated the requesting actor's authority chain. Passing `false` returns
-/// [`LegalError::InvalidStateTransition`] immediately without generating data.
+/// `params.authority_clearance` must be created by
+/// [`verify_authority_clearance`], which performs real authority-chain
+/// verification and binds the resulting chain evidence into the report.
 ///
 /// # Errors
 ///
-/// - [`LegalError::InvalidStateTransition`] if clearance is not verified.
+/// - [`LegalError::InvalidStateTransition`] if the MCP audit chain is broken.
 pub fn generate_report(params: ReportParams<'_>) -> Result<AiTransparencyReport> {
     let ReportParams {
         tenant_id,
@@ -106,16 +140,12 @@ pub fn generate_report(params: ReportParams<'_>) -> Result<AiTransparencyReport>
         mcp_log,
         ai_delegation_grants,
         ai_delegation_revocations,
-        clearance_verified,
+        authority_clearance,
     } = params;
 
-    if !clearance_verified {
-        return Err(LegalError::InvalidStateTransition {
-            reason: "AiTransparencyReport requires verified authority chain clearance; \
-                     call exo_authority::chain::verify_chain before generate_report"
-                .into(),
-        });
-    }
+    verify_mcp_audit_chain(mcp_log).map_err(|e| LegalError::InvalidStateTransition {
+        reason: format!("MCP audit chain verification failed before transparency report: {e}"),
+    })?;
 
     // Count total AI agent actions from MCP audit log within period.
     let ai_agent_action_count = u64::try_from(
@@ -139,6 +169,74 @@ pub fn generate_report(params: ReportParams<'_>) -> Result<AiTransparencyReport>
         ai_delegation_grants,
         ai_delegation_revocations,
         mcp_rule_outcomes,
+        mcp_audit_head_hash: mcp_log.head_hash(),
+        authority_clearance: authority_clearance.evidence().clone(),
+    })
+}
+
+/// Verify report-generation authority clearance and return a non-synthesizable
+/// artifact for [`ReportParams`].
+///
+/// # Errors
+///
+/// Returns [`LegalError::InvalidStateTransition`] if the timestamp is zero, the
+/// chain leaf is not the requester, the authority chain fails verification, or
+/// the chain evidence cannot be canonicalized.
+pub fn verify_authority_clearance<F>(
+    requester: &Did,
+    authority_chain: &AuthorityChain,
+    verified_at: Timestamp,
+    resolve_key: F,
+) -> Result<VerifiedAuthorityClearance>
+where
+    F: Fn(&Did) -> Option<PublicKey>,
+{
+    if verified_at == Timestamp::ZERO {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "authority clearance verification timestamp must be non-zero".into(),
+        });
+    }
+
+    let chain_root =
+        authority_chain
+            .root()
+            .cloned()
+            .ok_or_else(|| LegalError::InvalidStateTransition {
+                reason: "authority clearance chain must not be empty".into(),
+            })?;
+    let chain_leaf =
+        authority_chain
+            .leaf()
+            .cloned()
+            .ok_or_else(|| LegalError::InvalidStateTransition {
+                reason: "authority clearance chain must not be empty".into(),
+            })?;
+
+    if &chain_leaf != requester {
+        return Err(LegalError::InvalidStateTransition {
+            reason: format!(
+                "authority clearance requester {} does not match chain leaf {}",
+                requester.as_str(),
+                chain_leaf.as_str()
+            ),
+        });
+    }
+
+    chain::verify_chain(authority_chain, &verified_at, resolve_key).map_err(|e| {
+        LegalError::InvalidStateTransition {
+            reason: format!("authority clearance chain verification failed: {e}"),
+        }
+    })?;
+
+    Ok(VerifiedAuthorityClearance {
+        evidence: AuthorityClearanceEvidence {
+            requester: requester.clone(),
+            verified_at,
+            chain_root,
+            chain_leaf,
+            chain_depth: authority_chain.depth(),
+            chain_hash: hash_authority_clearance_chain(authority_chain)?,
+        },
     })
 }
 
@@ -201,13 +299,34 @@ fn aggregate_mcp_outcomes(
         .collect()
 }
 
+#[derive(Serialize)]
+struct AuthorityClearanceHashPayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    authority_chain: &'a AuthorityChain,
+}
+
+fn hash_authority_clearance_chain(authority_chain: &AuthorityChain) -> Result<[u8; 32]> {
+    let payload = AuthorityClearanceHashPayload {
+        domain: AUTHORITY_CLEARANCE_DOMAIN,
+        schema_version: AUTHORITY_CLEARANCE_SCHEMA_VERSION,
+        authority_chain,
+    };
+    hash_structured(&payload)
+        .map(|hash| *hash.as_bytes())
+        .map_err(|e| LegalError::InvalidStateTransition {
+            reason: format!("authority clearance canonical CBOR hash failed: {e}"),
+        })
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================
 
 #[cfg(test)]
 mod tests {
-    use exo_core::{Did, Timestamp};
+    use exo_authority::{AuthorityChain, AuthorityLink, Permission};
+    use exo_core::{Did, Signature, Timestamp, crypto::KeyPair};
     use exo_gatekeeper::{
         McpRule,
         mcp_audit::{McpAuditLog, McpEnforcementOutcome, append, create_record},
@@ -226,6 +345,38 @@ mod tests {
 
     fn audit_id(n: u128) -> Uuid {
         Uuid::from_u128(n)
+    }
+
+    fn verified_clearance(requester: &Did) -> VerifiedAuthorityClearance {
+        let root = did("root-authority");
+        let root_key = KeyPair::generate();
+        let mut link = AuthorityLink {
+            delegator_did: root.clone(),
+            delegate_did: requester.clone(),
+            scope: vec![Permission::Read],
+            created: ts(1_000),
+            expires: None,
+            signature: Signature::empty(),
+            depth: 0,
+            delegatee_kind: DelegateeKind::Human,
+        };
+        let payload = link
+            .signing_payload()
+            .expect("authority link signing payload");
+        link.signature = root_key.sign(&payload);
+
+        let chain = AuthorityChain {
+            links: vec![link],
+            max_depth: 5,
+        };
+        verify_authority_clearance(requester, &chain, ts(2_000), |did| {
+            if did == &root {
+                Some(*root_key.public_key())
+            } else {
+                None
+            }
+        })
+        .expect("authority clearance must verify")
     }
 
     fn make_log_with_records() -> McpAuditLog {
@@ -256,51 +407,119 @@ mod tests {
     }
 
     #[test]
-    fn generate_report_requires_clearance() {
-        let log = McpAuditLog::new();
+    fn generate_report_rejects_tampered_mcp_audit_chain() {
+        let mut log = make_log_with_records();
+        log.records[1].chain_hash = [0xAA; 32];
+        let tenant = did("tenant");
+        let clearance = verified_clearance(&tenant);
+
         let result = generate_report(ReportParams {
-            tenant_id: &did("tenant"),
+            tenant_id: &tenant,
             period_start: ts(0),
-            period_end: ts(9999),
+            period_end: ts(u64::MAX),
             legal_jurisdiction: "EU-AI-ACT",
             mcp_log: &log,
             ai_delegation_grants: vec![],
             ai_delegation_revocations: 0,
-            clearance_verified: false,
+            authority_clearance: &clearance,
         });
+
+        assert!(
+            result.is_err(),
+            "transparency reports must not aggregate over a broken MCP audit chain"
+        );
+    }
+
+    #[test]
+    fn generate_report_source_does_not_accept_caller_supplied_clearance_boolean() {
+        let source = include_str!("ai_transparency.rs");
+        let production = source
+            .split("// ===========================================================================")
+            .next()
+            .expect("tests section marker present");
+
+        assert!(
+            !production.contains("clearance_verified: bool"),
+            "authority clearance must be a verified artifact, not a caller-supplied boolean"
+        );
+        assert!(
+            !production.contains("if !clearance_verified"),
+            "report generation must not trust a naked clearance boolean"
+        );
+    }
+
+    #[test]
+    fn verify_authority_clearance_requires_requester_to_match_chain_leaf() {
+        let root = did("root-authority");
+        let requester = did("reporter");
+        let other = did("other");
+        let root_key = KeyPair::generate();
+        let mut link = AuthorityLink {
+            delegator_did: root.clone(),
+            delegate_did: other,
+            scope: vec![Permission::Read],
+            created: ts(1_000),
+            expires: None,
+            signature: Signature::empty(),
+            depth: 0,
+            delegatee_kind: DelegateeKind::Human,
+        };
+        let payload = link
+            .signing_payload()
+            .expect("authority link signing payload");
+        link.signature = root_key.sign(&payload);
+
+        let chain = AuthorityChain {
+            links: vec![link],
+            max_depth: 5,
+        };
+        let result = verify_authority_clearance(&requester, &chain, ts(2_000), |did| {
+            if did == &root {
+                Some(*root_key.public_key())
+            } else {
+                None
+            }
+        });
+
         assert!(result.is_err());
     }
 
     #[test]
     fn generate_report_with_clearance_succeeds() {
         let log = make_log_with_records();
+        let tenant = did("tenant");
+        let clearance = verified_clearance(&tenant);
         let report = generate_report(ReportParams {
-            tenant_id: &did("tenant"),
+            tenant_id: &tenant,
             period_start: ts(0),
             period_end: ts(u64::MAX),
             legal_jurisdiction: "EU-AI-ACT",
             mcp_log: &log,
             ai_delegation_grants: vec![],
             ai_delegation_revocations: 0,
-            clearance_verified: true,
+            authority_clearance: &clearance,
         })
         .expect("report generation should succeed");
         assert_eq!(report.ai_agent_action_count, 2);
         assert_eq!(report.legal_jurisdiction, "EU-AI-ACT");
+        assert_eq!(report.authority_clearance.requester, tenant);
+        assert_eq!(report.mcp_audit_head_hash, log.head_hash());
     }
 
     #[test]
     fn mcp_outcomes_aggregated_correctly() {
         let log = make_log_with_records();
+        let tenant = did("tenant");
+        let clearance = verified_clearance(&tenant);
         let report = generate_report(ReportParams {
-            tenant_id: &did("tenant"),
+            tenant_id: &tenant,
             period_start: ts(0),
             period_end: ts(u64::MAX),
             legal_jurisdiction: "NIST-AI-RMF",
             mcp_log: &log,
             ai_delegation_grants: vec![],
             ai_delegation_revocations: 0,
-            clearance_verified: true,
+            authority_clearance: &clearance,
         })
         .expect("ok");
         // One Allowed for Mcp001, one Blocked for Mcp002
@@ -366,15 +585,17 @@ mod tests {
         append(&mut log, r).expect("append deterministic MCP audit record");
 
         // Period that excludes the record (past epoch)
+        let tenant = did("tenant");
+        let clearance = verified_clearance(&tenant);
         let report = generate_report(ReportParams {
-            tenant_id: &did("tenant"),
+            tenant_id: &tenant,
             period_start: ts(0),
             period_end: ts(1), // very narrow window in the past
             legal_jurisdiction: "EU-AI-ACT",
             mcp_log: &log,
             ai_delegation_grants: vec![],
             ai_delegation_revocations: 0,
-            clearance_verified: true,
+            authority_clearance: &clearance,
         })
         .expect("ok");
         // Record's timestamp from now_utc() will not fall in [0, 1ms]
