@@ -89,11 +89,10 @@ cargo test --workspace
 Expected output tail:
 
 ```
-test result: ok. 1603 passed; 0 failed; 0 ignored; ...
+test result: ok. ... passed; 0 failed; 0 ignored; ...
 ```
 
-The baseline is currently **1,603 tests passing, 0 failures**. The
-number grows as new crates land; consult
+The current workspace inventory lists **2,868 tests**. The number grows as new crates land; consult
 `governance/traceability_matrix.md` and the `README.md` repo-truth
 table for the latest figure. What matters is `0 failed`.
 
@@ -177,11 +176,9 @@ violation.
 The workspace root is a plain Cargo workspace. The pieces that matter
 for first-week work:
 
-### 3.1 The 17 Rust crates in `crates/`
+### 3.1 The 20 Rust workspace packages in `crates/`
 
-> There are currently 16 production crates and one SDK crate (17
-> directory entries in `crates/`). The README repo-truth table tracks
-> the production count.
+> The README repo-truth table tracks the current package and source-file counts.
 
 | Crate                | One-line purpose                                                                        |
 |----------------------|-----------------------------------------------------------------------------------------|
@@ -203,7 +200,7 @@ for first-week work:
 | `exo-catapult`       | Event ingestion acceleration / batching                                                 |
 | `exo-node`           | The `exochain` binary: P2P, BFT, reactor, API, dashboard, CLI, MCP server               |
 | `exochain-sdk`       | In-process Rust SDK: ergonomic wrappers for kernel, identity, consent, authority        |
-| `exochain-wasm`      | WebAssembly bindings (the 110-function bridge)                                          |
+| `exochain-wasm`      | WebAssembly bindings (140 verified bridge exports)                                      |
 | `decision-forum`     | Deliberative decision-making forum protocol and voting engine                           |
 
 ### 3.2 SDK and bindings in `packages/`
@@ -218,7 +215,7 @@ for first-week work:
 
 | File                                            | Contents                                                                       |
 |-------------------------------------------------|--------------------------------------------------------------------------------|
-| `traceability_matrix.md`                        | 87 requirements → crate → tests → status                                       |
+| `traceability_matrix.md`                        | 86 requirements → crate → tests → status                                       |
 | `threat_matrix.md`                              | 14 threats, status, mitigation mapping                                         |
 | `quality_gates.md`                              | The 8 pull-request gates and release gates                                     |
 | `resolutions/CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY.md` | Council resolution defining AEGIS, SYBIL, authentic plurality, work orders |
@@ -241,7 +238,7 @@ for first-week work:
 |-------------------|------------------------------------------------------------------------|
 | `docs/`           | Architecture, guides, ADRs, reference, council panel reports           |
 | `command-base/`   | CommandBase.ai operational hypervisor (Node/Express + SQLite)          |
-| `exoforge/`       | Autonomous implementation engine (triage → council → implement → validate) |
+| `exoforge/`       | Governance triage, implementation planning, validation, and monitoring tools |
 | `web/`            | Decision Forum React UI                                                |
 | `demo/`           | Standalone demo stack (Node microservices + React + Postgres)          |
 | `tla/`            | TLA+ specifications for core protocols                                 |
@@ -364,36 +361,14 @@ Three sources, in priority order:
    been triaged by ExoForge and include a council review. These tend
    to have the clearest acceptance criteria.
 
-### 6.2 The 16 CI quality gates
+### 6.2 The CI quality gates
 
-Every PR runs the `.github/workflows/ci.yml` pipeline. The gates fall
-into three groups:
-
-**Pull-request gates (8, must pass to merge)**
-
-1. Compilation — `cargo build --workspace --all-targets`
-2. Testing — `cargo test --workspace --lib` (≥1,116 tests, 100% pass)
-3. Coverage — `tarpaulin` / `llvm-cov` ≥ 90% line coverage
-4. Formatting — `cargo fmt --all -- --check`
-5. Linting — `cargo clippy --workspace --all-targets -- -D warnings`
-6. Security audit — `cargo audit`, zero CVSS>0 vulnerabilities
-7. Dependency check — `cargo deny check`
-8. Doc check — `cargo doc --workspace --no-deps`
-
-**Release gates (additional)**
-
-9. Cross-implementation hash test — `tools/cross-impl-test/compare.sh`
-10. Benchmark regression — `cargo bench`, no ≥10% regression
-11. Fuzz smoke — 5-minute run, 0 crashes
-12. Changelog — `CHANGELOG.md` updated with conventional commits
-13. Post-quantum roundtrip — all three `Signature` enum variants
-14. Constitutional invariant verification — all AEGIS/SYBIL invariants
-    verified against CR-001
-
-**Meta gates**
-
-15. SBOM generation
-16. `cargo machete` (no unused deps)
+Every PR runs the `.github/workflows/ci.yml` pipeline. It currently defines 20
+numbered gates plus the required "All Constitutional Gates" aggregator. The
+gates cover build, debug/release tests, coverage, clippy, format, audit, deny,
+docs, repo hygiene, SBOM dry-run, unused dependency checks, gateway/DB/consensus
+integration, state sync, cross-platform builds, 0dentity coverage, WASM build,
+bridge verification, and WASM/JS export sync.
 
 See [`../../governance/quality_gates.md`](../../governance/quality_gates.md)
 for the authoritative list.
@@ -473,9 +448,9 @@ CR-001:
 
 | Artifact                                                | What it is                                              |
 |---------------------------------------------------------|---------------------------------------------------------|
-| [`../../governance/traceability_matrix.md`](../../governance/traceability_matrix.md) | 87 requirements, each mapped to crate/module/tests/status |
+| [`../../governance/traceability_matrix.md`](../../governance/traceability_matrix.md) | 86 requirements, each mapped to crate/module/tests/status |
 | [`../../governance/threat_matrix.md`](../../governance/threat_matrix.md) | 14 threats with mitigation references                    |
-| [`../../governance/quality_gates.md`](../../governance/quality_gates.md) | The 16 CI-enforced gates                                 |
+| [`../../governance/quality_gates.md`](../../governance/quality_gates.md) | The 20 numbered CI gates plus required aggregator         |
 | [`../../governance/resolutions/CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY.md`](../../governance/resolutions/CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY.md) | The AEGIS / SYBIL resolution (draft, pending ratification) |
 | [`../../governance/sub_agents.md`](../../governance/sub_agents.md) | 11 sub-agent charters with ownership boundaries          |
 | [`../../governance/EXOCHAIN-REFACTOR-PLAN.md`](../../governance/EXOCHAIN-REFACTOR-PLAN.md) | Active refactor roadmap                                  |

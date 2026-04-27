@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vites
 import supertest from 'supertest';
 
 const mockWasm = vi.hoisted(() => ({
-  wasm_create_evidence: vi.fn((_content, typeTag, creator) => ({ id: 'ev-001', type_tag: typeTag, creator_did: creator, content_hash: 'e'.repeat(64), chain_of_custody: [{ actor: creator, timestamp_ms: Date.now(), action: 'Created' }], created_at_ms: Date.now() })),
+  wasm_create_evidence: vi.fn((_content, typeTag, creator, id, createdMs) => ({ id, type_tag: typeTag, creator_did: creator, content_hash: 'e'.repeat(64), chain_of_custody: [{ actor: creator, timestamp_ms: Number(createdMs), action: 'Created' }], created_at_ms: Number(createdMs) })),
   wasm_verify_chain_of_custody: vi.fn((evidenceJson) => ({ valid: true, evidence: JSON.parse(evidenceJson), chain_length: JSON.parse(evidenceJson).chain_of_custody?.length || 0 })),
   wasm_check_fiduciary_duty: vi.fn((_duty, actionsJson) => ({ compliant: true, actions_reviewed: JSON.parse(actionsJson).length, violations: [] })),
   wasm_ediscovery_search: vi.fn((requestJson) => ({ query: JSON.parse(requestJson).query, results: [], result_count: 0, format: 'EDRM' })),
@@ -29,9 +29,9 @@ describe('GET /health', () => {
 
 describe('POST /api/evidence/create', () => {
   it('creates evidence entry with chain-of-custody', async () => {
-    const res = await request.post('/api/evidence/create').send({ content: 'doc', type_tag: 'document', creator_did: 'did:exo:alice' });
+    const res = await request.post('/api/evidence/create').send({ content: 'doc', type_tag: 'document', creator_did: 'did:exo:alice', evidence_id: '00000000-0000-0000-0000-000000000001', created_ms: 1700000000000 });
     expect(res.status).toBe(201);
-    expect(res.body).toHaveProperty('id', 'ev-001');
+    expect(res.body).toHaveProperty('id', '00000000-0000-0000-0000-000000000001');
     expect(res.body.type_tag).toBe('document');
     expect(res.body.creator_did).toBe('did:exo:alice');
     expect(res.body).toHaveProperty('content_hash');
@@ -39,9 +39,15 @@ describe('POST /api/evidence/create', () => {
   });
 
   it('defaults type_tag to document', async () => {
-    const res = await request.post('/api/evidence/create').send({ content: 'x', creator_did: 'did:exo:bob' });
+    const res = await request.post('/api/evidence/create').send({ content: 'x', creator_did: 'did:exo:bob', evidence_id: '00000000-0000-0000-0000-000000000002', created_ms: 1700000000001 });
     expect(res.status).toBe(201);
     expect(res.body.type_tag).toBe('document');
+  });
+
+  it('requires caller-supplied deterministic metadata', async () => {
+    const res = await request.post('/api/evidence/create').send({ content: 'x', creator_did: 'did:exo:bob' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('evidence_id');
   });
 });
 

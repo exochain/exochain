@@ -302,10 +302,7 @@ mod tests {
         assert_eq!(proposal.scope, "data:medical");
         assert_eq!(proposal.duration_hours, 24);
         assert_eq!(proposal.proposal_id.len(), 16);
-        assert!(proposal
-            .proposal_id
-            .chars()
-            .all(|c| c.is_ascii_hexdigit()));
+        assert!(proposal.proposal_id.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]

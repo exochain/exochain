@@ -7,9 +7,9 @@ tags: [exochain, reference, api, crates]
 
 # Crate Reference
 
-**Complete API reference for the 16 crates composing the EXOCHAIN constitutional trust fabric.**
+**API reference for the workspace crates composing the EXOCHAIN constitutional trust fabric.**
 
-16 crates · 18,705 lines of Rust · 1,846 tests · 0 failures
+20 workspace packages · 115764 lines of Rust under `crates/` · 2,868 listed tests
 
 > Cross-references: [[ARCHITECTURE]], [[GETTING-STARTED]], [[THREAT-MODEL]], [[CONSTITUTIONAL-PROOFS]]
 

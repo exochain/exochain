@@ -1,8 +1,22 @@
 # EXOCHAIN Gap Registry — Honest Audit
 
 **Generated:** 2026-04-15
-**Last Updated:** 2026-04-15 21:15 EDT
+**Last Updated:** 2026-04-26 08:25 EDT
+**Current ULTRAPLAN files:** 9
 **Rule:** No gap closes until tests pass and the stub is deleted. Re-audit after each completion.
+
+---
+
+## Basalt reconciliation
+
+Wave E Basalt reconciles this registry against the current repository and Council remediation ledger. The earlier Phase 0 handoff mentioned 53 ULTRAPLAN files; the current repository has 9 `gap/ULTRAPLAN-*.md` files. Treat 9 as the current audited inventory unless new artifacts are restored in a later PR.
+
+| GAP | Reconciliation |
+|-----|----------------|
+| GAP-002 | Closed claim remains valid, but the implementation is stronger than the old registry text: `verify_with_signer_keys` verifies Ed25519 signatures with resolver-supplied signer keys over a domain-separated canonical CBOR payload. |
+| GAP-004 | GAP-004 closure is retained only with Onyx-4 remediation PRs #117-#124 applied. The 0dentity subsystem is no longer represented as unqualified-complete; first-touch onboarding, infrastructure Holons, and device/behavioral axes are default-off or gated where unaudited. |
+| GAP-007 | Closed claim remains scoped to LiveSafe integration tests and production-resolver wiring. Test-only helpers are not production fallback behavior. |
+| GAP-011 | GAP-011 closure is retained with a caveat: ExoForge task registry and onboarding collectors were reconciled, while 0dentity device/behavioral scoring remains feature-gated unaudited axes until Bob approves ship-ingestion vs delete/reduce-to-6-axes. |
 
 ---
 
@@ -14,7 +28,8 @@
 
 ### ✅ GAP-002: Evidence Bundle Export — CLOSED `0685ded`
 - **Closed:** 2026-04-15
-- **What was built:** `crates/exo-legal/src/bundle.rs` — `EvidenceBundle` with `assemble()`, `verify()`, `render_json()`, `render_markdown_summary()`, `sign()`, `compute_bundle_hash()`. Offline-verifiable BLAKE3 hash chain. FRE 901/803(6)/902(13/14)/Daubert compliant. 16 tests, 126 total in exo-legal.
+- **Basalt-reconciled:** 2026-04-26
+- **What was built:** `crates/exo-legal/src/bundle.rs` — `EvidenceBundle` with `assemble()`, `verify()`, `verify_with_signer_keys()`, `render_json()`, `render_markdown_summary()`, `sign()`, and `compute_bundle_hash()`. Offline structural verification covers BLAKE3 hash chain, event order, and causal order. Signer-key verification validates Ed25519 signatures against resolver-supplied public keys over a domain-separated canonical CBOR payload. Current `exo-legal` inventory lists 159 tests.
 
 ### ✅ GAP-003: Multi-Model AI Consensus Engine — CLOSED `789c324`
 - **Closed:** 2026-04-15
@@ -22,7 +37,9 @@
 
 ### ✅ GAP-004: Identity Verification (0dentity) — CLOSED `7746c2a`
 - **Closed:** 2026-04-15
-- **What was built:** `crates/exo-identity/src/registry.rs` (`LocalDidRegistry`) + `crates/exo-identity/src/verification.rs` (`VerificationCeremony`, `IdentityProof`, `calculate_risk_score()`). Stub comments removed from `zerodentity/store.rs`. 12 tests.
+- **Basalt-reconciled:** 2026-04-26
+- **What was built:** `crates/exo-identity/src/registry.rs` (`LocalDidRegistry`) + `crates/exo-identity/src/verification.rs` (`VerificationCeremony`, `IdentityProof`, `calculate_risk_score()`). Stub comments removed from `zerodentity/store.rs`.
+- **Council reconciliation:** Onyx-4 later found RED trust-boundary holes in `exo-node::zerodentity`. GAP-004 remains closed only with Onyx-4 remediation PRs #117-#124 applied: server-key fabrication removed, peer attestations signed, trust receipts signed, sessions bound to public keys, first-touch onboarding default-off, infrastructure Holons gated, device/behavioral axes gated, and AMBER hygiene landed. Current `cargo test -p exo-node zerodentity -- --list` inventory lists 193 zerodentity tests.
 
 ### ✅ GAP-005: Gateway Authentication & Authorization — CLOSED `34ce160`
 - **Closed:** 2026-04-15
@@ -35,10 +52,13 @@
 ### ✅ GAP-007: LiveSafe Integration — CLOSED `8fb0a2a`
 - **Closed:** 2026-04-15
 - **What was built:** Production resolvers now require real `PgPool` — mock fallback is a compile error, not a silent return. 12 PACE integration tests rewritten against current API (PaceConfig, state transitions, escalation, Shamir split/reconstruct). Mock functions retained as `FOR TESTING ONLY`.
+- **Basalt-reconciled:** 2026-04-26 — closure remains scoped to production resolver wiring and PACE integration tests; test-only helpers are not production fallback behavior.
 
 ### ✅ GAP-011: ExoForge Signal Collection & Onboarding — CLOSED `8ec43c6`
 - **Closed:** 2026-04-15
+- **Basalt-reconciled:** 2026-04-26
 - **What was built:** Behavioral JS collector implemented (keystroke dynamics, mouse velocity, touch pressure, scroll histograms). Fingerprint collector expanded from 8 to all 15 `FingerprintSignal` variants (AudioContext, CanvasRendering, WebGL, WebRTC, FontEnumeration, BatteryStatus, + originals). ExoForge task registry updated to reflect actual completion. Phase 4/5 stubs removed.
+- **Council reconciliation:** Onyx-4 R3 later established that Rust fingerprint/behavioral helpers and UI collection existed without a complete default-on ingestion/scoring trust boundary. PR #123 keeps those feature-gated unaudited axes behind `unaudited-zerodentity-device-behavioral-axes` until Bob approves ship-ingestion vs delete/reduce-to-6-axes.
 
 ---
 

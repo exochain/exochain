@@ -66,8 +66,15 @@ export const server = http.createServer(async (req, res) => {
         const {
           plaintext, content_type, sender_did, recipient_did,
           sender_signing_key_hex, recipient_x25519_public_hex,
+          message_id, created_physical_ms, created_logical,
           release_on_death, release_delay_hours,
         } = body;
+
+        if (!message_id || created_physical_ms === undefined || created_logical === undefined) {
+          return json(res, 400, {
+            error: 'message_id, created_physical_ms, and created_logical are required for server-side encryption',
+          });
+        }
 
         envelope = wasm.wasm_encrypt_message(
           plaintext,
@@ -76,6 +83,9 @@ export const server = http.createServer(async (req, res) => {
           recipient_did,
           sender_signing_key_hex,
           recipient_x25519_public_hex,
+          message_id,
+          BigInt(created_physical_ms),
+          created_logical,
           release_on_death || false,
           release_delay_hours || 0,
         );
@@ -270,28 +280,77 @@ export const server = http.createServer(async (req, res) => {
 
     // ── Initiate death claim ──
     if (url.pathname === '/api/death/initiate' && req.method === 'POST') {
-      const { subject_did, initiated_by_did, required_confirmations } = await parseBody(req);
+      const {
+        subject_did,
+        initiated_by_did,
+        required_confirmations,
+        authorized_trustees,
+        claim_nonce_hex,
+        initiator_signature_hex,
+        created_physical_ms,
+        created_logical,
+      } = await parseBody(req);
+
+      if (!Array.isArray(authorized_trustees)) {
+        return json(res, 400, { error: 'authorized_trustees must be an array' });
+      }
+      if (!claim_nonce_hex || !initiator_signature_hex) {
+        return json(res, 400, {
+          error: 'claim_nonce_hex and initiator_signature_hex are required',
+        });
+      }
+      if (created_physical_ms === undefined || created_logical === undefined) {
+        return json(res, 400, {
+          error: 'created_physical_ms and created_logical are required',
+        });
+      }
 
       const state = wasm.wasm_death_verification_new(
-        subject_did, initiated_by_did, required_confirmations || 3
+        subject_did,
+        initiated_by_did,
+        required_confirmations || 3,
+        JSON.stringify(authorized_trustees),
+        claim_nonce_hex,
+        initiator_signature_hex,
+        BigInt(created_physical_ms),
+        created_logical
       );
+      const initialStatus = state.status === 'Verified' ? 'verified' : 'pending';
 
       const id = crypto.randomUUID();
       await pool.query(
         `INSERT INTO death_verification
          (id, subject_did, initiated_by, required_confirmations,
-          trustee_confirmations, status, created_at_ms)
-         VALUES ($1, $2, $3, $4, $5, 'pending', $6)`,
+          trustee_confirmations, verification_state, status, created_at_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [id, subject_did, initiated_by_did, required_confirmations || 3,
-         JSON.stringify(state.confirmations || []), nowMs()]
+         JSON.stringify(state.confirmations || []), JSON.stringify(state), initialStatus, created_physical_ms]
       );
 
-      return json(res, 201, { id, status: 'pending', state });
+      return json(res, 201, { id, status: initialStatus, state });
     }
 
     // ── Confirm death claim ──
     if (url.pathname === '/api/death/confirm' && req.method === 'POST') {
-      const { verification_id, trustee_did } = await parseBody(req);
+      const {
+        verification_id,
+        trustee_did,
+        trustee_public_key_hex,
+        signature_hex,
+        confirmed_physical_ms,
+        confirmed_logical,
+      } = await parseBody(req);
+
+      if (!trustee_public_key_hex || !signature_hex) {
+        return json(res, 400, {
+          error: 'trustee_public_key_hex and signature_hex are required',
+        });
+      }
+      if (confirmed_physical_ms === undefined || confirmed_logical === undefined) {
+        return json(res, 400, {
+          error: 'confirmed_physical_ms and confirmed_logical are required',
+        });
+      }
 
       const { rows } = await pool.query(
         'SELECT * FROM death_verification WHERE id = $1',
@@ -303,29 +362,32 @@ export const server = http.createServer(async (req, res) => {
       if (dv.status !== 'pending') {
         return json(res, 400, { error: 'verification already resolved' });
       }
-
-      // Rebuild state and confirm
-      const existingConfirmations = dv.trustee_confirmations || [];
-      if (existingConfirmations.some(c => c.trustee_did === trustee_did)) {
-        return json(res, 400, { error: 'duplicate confirmation' });
+      if (!dv.verification_state || !dv.verification_state.subject_did) {
+        return json(res, 500, { error: 'stored verification_state is invalid' });
       }
 
-      existingConfirmations.push({
-        trustee_did: trustee_did,
-        confirmed_at_ms: nowMs(),
-      });
+      const result = wasm.wasm_death_verification_confirm(
+        JSON.stringify(dv.verification_state),
+        trustee_did,
+        trustee_public_key_hex,
+        signature_hex,
+        BigInt(confirmed_physical_ms),
+        confirmed_logical
+      );
 
-      const verified = existingConfirmations.length >= dv.required_confirmations;
+      const verified = result.verified;
       const newStatus = verified ? 'verified' : 'pending';
 
       await pool.query(
         `UPDATE death_verification
-         SET trustee_confirmations = $1, status = $2, resolved_at_ms = $3
-         WHERE id = $4`,
+         SET trustee_confirmations = $1, verification_state = $2,
+             status = $3, resolved_at_ms = $4
+         WHERE id = $5`,
         [
-          JSON.stringify(existingConfirmations),
+          JSON.stringify(result.state.confirmations || []),
+          JSON.stringify(result.state),
           newStatus,
-          verified ? nowMs() : null,
+          verified ? confirmed_physical_ms : null,
           verification_id,
         ]
       );
@@ -341,7 +403,7 @@ export const server = http.createServer(async (req, res) => {
 
       return json(res, 200, {
         verified,
-        confirmations: existingConfirmations.length,
+        confirmations: (result.state.confirmations || []).length,
         required: dv.required_confirmations,
         afterlife_messages_released: verified,
       });

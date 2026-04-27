@@ -154,3 +154,64 @@ fn write_secret(path: &Path, data: &[u8]) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_or_create_creates_identity_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let identity = load_or_create(dir.path()).unwrap();
+
+        let key_bytes = std::fs::read(dir.path().join("identity.key")).unwrap();
+        let did_text = std::fs::read_to_string(dir.path().join("identity.did")).unwrap();
+
+        assert_eq!(key_bytes.len(), 32);
+        assert_eq!(did_text.trim(), identity.did.as_str());
+        assert_eq!(identity.public_key_bytes().len(), 32);
+    }
+
+    #[test]
+    fn load_or_create_reloads_existing_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = load_or_create(dir.path()).unwrap();
+        let second = load_or_create(dir.path()).unwrap();
+
+        assert_eq!(first.did, second.did);
+        assert_eq!(first.public_key_bytes(), second.public_key_bytes());
+    }
+
+    #[test]
+    fn load_or_create_rejects_corrupt_secret_key() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("identity.key"), [7u8; 31]).unwrap();
+        std::fs::write(dir.path().join("identity.did"), b"did:exo:corrupt").unwrap();
+
+        let err = match load_or_create(dir.path()) {
+            Ok(_) => panic!("corrupt secret key must not load"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("Corrupt identity key"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_or_create_writes_secret_key_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let _identity = load_or_create(dir.path()).unwrap();
+
+        let mode = std::fs::metadata(dir.path().join("identity.key"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+}

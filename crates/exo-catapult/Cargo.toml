@@ -18,6 +18,7 @@ exo-consent = { path = "../exo-consent" }
 exo-authority = { path = "../exo-authority" }
 exo-tenant = { path = "../exo-tenant" }
 exo-escalation = { path = "../exo-escalation" }
+ciborium = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }

@@ -160,6 +160,7 @@ pub enum GovernanceEventType {
 
 /// A request to change the validator set.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(not(feature = "unaudited-infrastructure-holons"), allow(dead_code))]
 pub enum ValidatorChange {
     /// Promote a node to validator status.
     AddValidator { did: Did },

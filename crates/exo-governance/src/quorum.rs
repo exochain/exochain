@@ -3,7 +3,7 @@
 //! Constitutional principle: "Numerical multiplicity without attributable
 //! independence is theater, not legitimacy."
 
-use exo_core::{Did, Signature, Timestamp};
+use exo_core::{Did, PublicKey, Signature, Timestamp, crypto};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -33,10 +33,66 @@ pub struct IndependenceAttestation {
 }
 
 impl IndependenceAttestation {
-    /// An attestation is valid only if all three declarations are true.
+    /// Structural check: all three independence declarations must be true.
+    ///
+    /// **Caveat:** this does NOT verify the attester's signature. Use
+    /// [`Self::verify_signature`] for that, and prefer
+    /// [`Self::is_fully_valid`] at call sites that need both structural
+    /// truth *and* cryptographic proof of authorship.
     #[must_use]
     pub fn is_valid(&self) -> bool {
         self.no_common_control && self.no_coordination && self.identity_verified
+    }
+
+    /// Canonical CBOR payload that the attester signs.
+    ///
+    /// Order is fixed: `attester_did` then the three booleans in
+    /// declaration order. Any future field additions must append to this
+    /// payload, not reorder it, to avoid breaking existing signatures.
+    pub fn signing_payload(&self) -> Result<Vec<u8>, GovernanceError> {
+        // We use explicit CBOR encoding of a tuple to stay canonical.
+        // ciborium preserves struct/tuple ordering on serialize.
+        let tuple = (
+            &self.attester_did,
+            self.no_common_control,
+            self.no_coordination,
+            self.identity_verified,
+        );
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(&tuple, &mut buf).map_err(|e| {
+            GovernanceError::Serialization(format!(
+                "independence attestation canonical encoding failed: {e}"
+            ))
+        })?;
+        Ok(buf)
+    }
+
+    /// Verify the attester's signature over the canonical payload.
+    ///
+    /// Returns `true` only if the signature on `signing_payload()` is
+    /// valid under `public_key`. An empty or malformed signature returns
+    /// `false`.
+    #[must_use]
+    pub fn verify_signature(&self, public_key: &PublicKey) -> bool {
+        let Ok(payload) = self.signing_payload() else {
+            return false;
+        };
+        // Empty signatures are an explicit "unsigned" sentinel and must not verify.
+        let raw = self.signature.as_bytes();
+        if raw.is_empty() || raw.iter().all(|b| *b == 0) {
+            return false;
+        }
+        crypto::verify(&payload, &self.signature, public_key)
+    }
+
+    /// Structural check **and** cryptographic signature verification.
+    ///
+    /// This is the method governance call sites should use. It requires
+    /// the caller to supply the attester's public key so the signature
+    /// can be bound to a real identity.
+    #[must_use]
+    pub fn is_fully_valid(&self, public_key: &PublicKey) -> bool {
+        self.is_valid() && self.verify_signature(public_key)
     }
 }
 
@@ -148,6 +204,117 @@ pub fn compute_quorum_with_challenges(
         };
     }
     compute_quorum(approvals, policy)
+}
+
+/// Resolve an attester DID to a public key for signature verification.
+///
+/// Governance call sites supply an implementation of this trait backed by
+/// the authority chain or identity registry. A resolver that returns
+/// `None` for a given DID causes `compute_quorum_verified` to treat any
+/// independence attestation from that DID as unverifiable (and therefore
+/// not countable toward `min_independent`).
+pub trait PublicKeyResolver {
+    fn resolve(&self, did: &Did) -> Option<PublicKey>;
+}
+
+impl<F> PublicKeyResolver for F
+where
+    F: Fn(&Did) -> Option<PublicKey>,
+{
+    fn resolve(&self, did: &Did) -> Option<PublicKey> {
+        (self)(did)
+    }
+}
+
+/// Compute quorum with **full cryptographic** independence verification.
+///
+/// Unlike [`compute_quorum`], which only inspects the three boolean
+/// declarations inside each `IndependenceAttestation`, this variant
+/// additionally requires a valid signature over the canonical payload
+/// under the attester's public key (as resolved by `resolver`).
+///
+/// This closes GAP-013: the structural-only check allowed an attacker
+/// with a forged or missing signature to be counted toward
+/// `min_independent`, defeating CR-001 §8.3's intent that "numerical
+/// multiplicity without attributable independence is theater."
+///
+/// Prefer this function over `compute_quorum` in all production paths.
+#[must_use]
+pub fn compute_quorum_verified<R: PublicKeyResolver>(
+    approvals: &[Approval],
+    policy: &QuorumPolicy,
+    resolver: &R,
+) -> QuorumResult {
+    let total_count = approvals.len();
+
+    if total_count < policy.min_approvals {
+        return QuorumResult::NotMet {
+            reason: format!(
+                "insufficient approvals: {total_count} < {}",
+                policy.min_approvals
+            ),
+        };
+    }
+
+    for required_role in &policy.required_roles {
+        if !approvals.iter().any(|a| &a.role == required_role) {
+            return QuorumResult::NotMet {
+                reason: format!("missing required role: {required_role:?}"),
+            };
+        }
+    }
+
+    let independent_count = approvals
+        .iter()
+        .filter(|a| {
+            a.independence_attestation.as_ref().is_some_and(|att| {
+                match resolver.resolve(&att.attester_did) {
+                    Some(key) => att.is_fully_valid(&key),
+                    None => false,
+                }
+            })
+        })
+        .count();
+
+    if independent_count < policy.min_independent {
+        return QuorumResult::NotMet {
+            reason: format!(
+                "insufficient verified independence: {independent_count} verified-independent of {} required \
+                 (numerical multiplicity without attributable independence is theater, not legitimacy)",
+                policy.min_independent
+            ),
+        };
+    }
+
+    QuorumResult::Met {
+        independent_count,
+        total_count,
+    }
+}
+
+/// Same as [`compute_quorum_verified`] but with the active-challenge guard
+/// from [`compute_quorum_with_challenges`].
+#[must_use]
+pub fn compute_quorum_with_challenges_verified<R: PublicKeyResolver>(
+    approvals: &[Approval],
+    policy: &QuorumPolicy,
+    open_challenges: &[&Challenge],
+    resolver: &R,
+) -> QuorumResult {
+    if let Some(blocking) = open_challenges.iter().find(|c| {
+        matches!(
+            c.status,
+            ChallengeStatus::Filed | ChallengeStatus::UnderReview
+        )
+    }) {
+        return QuorumResult::Contested {
+            challenge: format!(
+                "unresolved independence challenge {} on ground {:?}",
+                blocking.id, blocking.ground
+            ),
+        };
+    }
+    compute_quorum_verified(approvals, policy, resolver)
 }
 
 /// Validate a single approval's basic structure.
@@ -366,6 +533,30 @@ mod tests {
         did("challenger")
     }
 
+    fn challenge_id(n: u128) -> uuid::Uuid {
+        uuid::Uuid::from_u128(n)
+    }
+
+    fn challenge_ts(ms: u64) -> Timestamp {
+        Timestamp::new(ms, 0)
+    }
+
+    fn make_challenge(
+        id: u128,
+        ground: ChallengeGround,
+        evidence: &[u8],
+    ) -> crate::challenge::Challenge {
+        file_challenge(
+            challenge_id(id),
+            challenge_ts(20_000),
+            &challenger_did(),
+            &target(),
+            ground,
+            evidence,
+        )
+        .expect("deterministic challenge")
+    }
+
     #[test]
     fn open_challenge_blocks_quorum() {
         let approvals = vec![
@@ -373,9 +564,8 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let ch = file_challenge(
-            &challenger_did(),
-            &target(),
+        let ch = make_challenge(
+            0x9001,
             ChallengeGround::SybilAllegation,
             b"coordinated approvers suspected",
         );
@@ -392,12 +582,7 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let mut ch = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::QuorumViolation,
-            b"",
-        );
+        let mut ch = make_challenge(0x9002, ChallengeGround::QuorumViolation, b"");
         ch.status = ChallengeStatus::UnderReview;
         assert!(matches!(
             compute_quorum_with_challenges(&approvals, &default_policy(), &[&ch]),
@@ -412,12 +597,7 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let mut ch = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::SybilAllegation,
-            b"",
-        );
+        let mut ch = make_challenge(0x9003, ChallengeGround::SybilAllegation, b"");
         ch.status = ChallengeStatus::Overruled;
         assert!(matches!(
             compute_quorum_with_challenges(&approvals, &default_policy(), &[&ch]),
@@ -445,12 +625,7 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let mut ch = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::SybilAllegation,
-            b"",
-        );
+        let mut ch = make_challenge(0x9004, ChallengeGround::SybilAllegation, b"");
         ch.status = ChallengeStatus::Withdrawn;
         assert!(matches!(
             compute_quorum_with_challenges(&approvals, &default_policy(), &[&ch]),
@@ -469,9 +644,8 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let mut ch = file_challenge(
-            &challenger_did(),
-            &target(),
+        let mut ch = make_challenge(
+            0x9005,
             ChallengeGround::SybilAllegation,
             b"coordinated approvers suspected",
         );
@@ -507,12 +681,7 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let mut ch = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::QuorumViolation,
-            b"",
-        );
+        let mut ch = make_challenge(0x9006, ChallengeGround::QuorumViolation, b"");
         adjudicate(&mut ch, ChallengeVerdict::Sustain).expect("adjudicate ok");
         assert_eq!(ch.status, ChallengeStatus::Sustained);
         assert!(matches!(
@@ -530,18 +699,8 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let ch1 = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::SybilAllegation,
-            b"sybil evidence",
-        );
-        let ch2 = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::QuorumViolation,
-            b"quorum evidence",
-        );
+        let ch1 = make_challenge(0x9007, ChallengeGround::SybilAllegation, b"sybil evidence");
+        let ch2 = make_challenge(0x9008, ChallengeGround::QuorumViolation, b"quorum evidence");
         assert!(matches!(
             compute_quorum_with_challenges(&approvals, &default_policy(), &[&ch1, &ch2]),
             QuorumResult::Contested { .. }
@@ -556,25 +715,553 @@ mod tests {
             make_approval("bob", Role::Reviewer, true),
             make_approval("carol", Role::Contributor, true),
         ];
-        let mut resolved = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::SybilAllegation,
-            b"",
-        );
+        let mut resolved = make_challenge(0x9009, ChallengeGround::SybilAllegation, b"");
         adjudicate(&mut resolved, ChallengeVerdict::Overrule).expect("adjudicate ok");
 
-        let open = file_challenge(
-            &challenger_did(),
-            &target(),
-            ChallengeGround::ProceduralError,
-            b"",
-        );
+        let open = make_challenge(0x9010, ChallengeGround::ProceduralError, b"");
 
         // resolved first in slice — open challenge must still block
         assert!(matches!(
             compute_quorum_with_challenges(&approvals, &default_policy(), &[&resolved, &open]),
             QuorumResult::Contested { .. }
         ));
+    }
+
+    // ---------------------------------------------------------------
+    // GAP-013 fix: signature verification on independence attestations
+    // ---------------------------------------------------------------
+
+    /// Build an attestation whose signature IS a real signature over the
+    /// canonical payload under `sk`.
+    fn properly_signed_attestation(
+        did: &Did,
+        sk: &exo_core::types::SecretKey,
+    ) -> IndependenceAttestation {
+        let mut att = IndependenceAttestation {
+            attester_did: did.clone(),
+            no_common_control: true,
+            no_coordination: true,
+            identity_verified: true,
+            signature: Signature::Empty,
+        };
+        let payload = att.signing_payload().expect("canonical payload");
+        att.signature = crypto::sign(&payload, sk);
+        att
+    }
+
+    #[test]
+    fn properly_signed_attestation_verifies() {
+        let (pk, sk) = crypto::generate_keypair();
+        let d = did("alice");
+        let att = properly_signed_attestation(&d, &sk);
+        assert!(att.is_valid(), "structural must hold");
+        assert!(
+            att.verify_signature(&pk),
+            "signature over canonical payload must verify"
+        );
+        assert!(att.is_fully_valid(&pk));
+    }
+
+    #[test]
+    fn zero_signature_fails_verification() {
+        let (pk, _sk) = crypto::generate_keypair();
+        let d = did("alice");
+        let att = IndependenceAttestation {
+            attester_did: d,
+            no_common_control: true,
+            no_coordination: true,
+            identity_verified: true,
+            signature: Signature::Ed25519([0u8; 64]),
+        };
+        // Structural is true, but verification must fail because the
+        // signature is a zero sentinel, not a real signature.
+        assert!(att.is_valid());
+        assert!(!att.verify_signature(&pk));
+        assert!(!att.is_fully_valid(&pk));
+    }
+
+    #[test]
+    fn signature_by_wrong_key_fails_verification() {
+        let (_pk_a, sk_a) = crypto::generate_keypair();
+        let (pk_b, _sk_b) = crypto::generate_keypair();
+        let d = did("alice");
+        // Signed by key A, verified against key B.
+        let att = properly_signed_attestation(&d, &sk_a);
+        assert!(!att.verify_signature(&pk_b));
+        assert!(!att.is_fully_valid(&pk_b));
+    }
+
+    #[test]
+    fn signature_over_tampered_booleans_fails_verification() {
+        let (pk, sk) = crypto::generate_keypair();
+        let d = did("alice");
+        let mut att = properly_signed_attestation(&d, &sk);
+        // Tamper after signing.
+        att.no_common_control = false;
+        assert!(!att.verify_signature(&pk));
+    }
+
+    #[test]
+    fn compute_quorum_verified_counts_only_signed_attestations() {
+        let (pk_alice, sk_alice) = crypto::generate_keypair();
+        let (pk_bob, _sk_bob) = crypto::generate_keypair();
+        let d_alice = did("alice");
+        let d_bob = did("bob");
+
+        // Alice signs properly.
+        let alice_att = properly_signed_attestation(&d_alice, &sk_alice);
+        // Bob has a structurally-valid attestation but a zero signature —
+        // this is the attack the old code allowed through.
+        let bob_att = IndependenceAttestation {
+            attester_did: d_bob.clone(),
+            no_common_control: true,
+            no_coordination: true,
+            identity_verified: true,
+            signature: Signature::Ed25519([0u8; 64]),
+        };
+
+        let approvals = vec![
+            Approval {
+                approver_did: d_alice.clone(),
+                role: Role::Steward,
+                timestamp: Timestamp::now_utc(),
+                signature: test_sig(),
+                independence_attestation: Some(alice_att),
+            },
+            Approval {
+                approver_did: d_bob.clone(),
+                role: Role::Governor,
+                timestamp: Timestamp::now_utc(),
+                signature: test_sig(),
+                independence_attestation: Some(bob_att),
+            },
+        ];
+
+        let policy = QuorumPolicy {
+            min_approvals: 2,
+            min_independent: 2,
+            required_roles: vec![],
+            timeout: Timestamp::now_utc(),
+        };
+
+        // Structural-only counts both. (This is the bug.)
+        assert!(matches!(
+            compute_quorum(&approvals, &policy),
+            QuorumResult::Met {
+                independent_count: 2,
+                ..
+            }
+        ));
+
+        // Verified variant counts ONLY Alice.
+        let resolver = |did: &Did| -> Option<exo_core::types::PublicKey> {
+            if *did == d_alice {
+                Some(pk_alice)
+            } else if *did == d_bob {
+                Some(pk_bob)
+            } else {
+                None
+            }
+        };
+        match compute_quorum_verified(&approvals, &policy, &resolver) {
+            QuorumResult::NotMet { reason } => {
+                assert!(reason.contains("insufficient verified independence"));
+                assert!(reason.contains("1 verified-independent of 2"));
+            }
+            other => panic!("expected NotMet (only Alice verified) but got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compute_quorum_verified_unresolved_did_not_counted() {
+        let (_pk_alice, sk_alice) = crypto::generate_keypair();
+        let d_alice = did("alice");
+        let att = properly_signed_attestation(&d_alice, &sk_alice);
+
+        let approvals = vec![Approval {
+            approver_did: d_alice.clone(),
+            role: Role::Steward,
+            timestamp: Timestamp::now_utc(),
+            signature: test_sig(),
+            independence_attestation: Some(att),
+        }];
+        let policy = QuorumPolicy {
+            min_approvals: 1,
+            min_independent: 1,
+            required_roles: vec![],
+            timeout: Timestamp::now_utc(),
+        };
+
+        // Resolver that returns None for everything — attestation cannot
+        // be verified, so independent_count is 0.
+        let null_resolver = |_did: &Did| None;
+        assert!(matches!(
+            compute_quorum_verified(&approvals, &policy, &null_resolver),
+            QuorumResult::NotMet { .. }
+        ));
+    }
+
+    // ── Coverage completion: previously-untested branches ────────────────────
+
+    // Covers validate_approval Err branch when approver_did is empty.
+    #[test]
+    fn validate_approval_rejects_empty_did() {
+        let approval = Approval {
+            approver_did: Did::new("did:exo:placeholder").expect("valid did"),
+            role: Role::Steward,
+            timestamp: Timestamp::new(1000, 0),
+            signature: test_sig(),
+            independence_attestation: None,
+        };
+        // Replace DID with one whose as_str() is empty via a direct constructor.
+        // Did::new rejects empties, so fabricate one by cloning and mutating
+        // through serde round-trip of a hand-built JSON value.
+        let empty_did: Did =
+            serde_json::from_str("\"\"").expect("empty-string DID deserializes for test");
+        let bad_approval = Approval {
+            approver_did: empty_did,
+            ..approval
+        };
+        match validate_approval(&bad_approval) {
+            Err(GovernanceError::QuorumNotMet { required, present }) => {
+                assert_eq!(required, 1);
+                assert_eq!(present, 0);
+            }
+            other => panic!("expected QuorumNotMet error, got {other:?}"),
+        }
+    }
+
+    // Covers compute_quorum_verified's `insufficient approvals` NotMet branch.
+    #[test]
+    fn compute_quorum_verified_insufficient_approvals_branch() {
+        let resolver = |_d: &Did| -> Option<PublicKey> { None };
+        let policy = QuorumPolicy {
+            min_approvals: 3,
+            min_independent: 0,
+            required_roles: vec![],
+            timeout: Timestamp::new(999_999, 0),
+        };
+        let approvals = vec![make_approval("alice", Role::Steward, false)];
+        match compute_quorum_verified(&approvals, &policy, &resolver) {
+            QuorumResult::NotMet { reason } => {
+                assert!(
+                    reason.contains("insufficient approvals"),
+                    "reason was {reason}"
+                );
+                assert!(reason.contains("1 < 3"));
+            }
+            other => panic!("expected NotMet, got {other:?}"),
+        }
+    }
+
+    // Covers compute_quorum_verified's `missing required role` NotMet branch.
+    #[test]
+    fn compute_quorum_verified_missing_required_role_branch() {
+        let resolver = |_d: &Did| -> Option<PublicKey> { None };
+        let policy = QuorumPolicy {
+            min_approvals: 1,
+            min_independent: 0,
+            required_roles: vec![Role::Governor],
+            timeout: Timestamp::new(999_999, 0),
+        };
+        // Three Reviewer approvals — no Governor.
+        let approvals = vec![
+            make_approval("alice", Role::Reviewer, false),
+            make_approval("bob", Role::Reviewer, false),
+            make_approval("carol", Role::Reviewer, false),
+        ];
+        match compute_quorum_verified(&approvals, &policy, &resolver) {
+            QuorumResult::NotMet { reason } => {
+                assert!(reason.contains("missing required role"));
+                assert!(reason.contains("Governor"));
+            }
+            other => panic!("expected NotMet, got {other:?}"),
+        }
+    }
+
+    // Covers compute_quorum_verified's Met success branch with a signed attestation.
+    #[test]
+    fn compute_quorum_verified_met_branch_for_signed_attestation() {
+        let (pk_alice, sk_alice) = crypto::generate_keypair();
+        let (pk_bob, sk_bob) = crypto::generate_keypair();
+        let d_alice = did("alice");
+        let d_bob = did("bob");
+        let alice_att = properly_signed_attestation(&d_alice, &sk_alice);
+        let bob_att = properly_signed_attestation(&d_bob, &sk_bob);
+
+        let approvals = vec![
+            Approval {
+                approver_did: d_alice.clone(),
+                role: Role::Steward,
+                timestamp: Timestamp::new(1000, 0),
+                signature: test_sig(),
+                independence_attestation: Some(alice_att),
+            },
+            Approval {
+                approver_did: d_bob.clone(),
+                role: Role::Reviewer,
+                timestamp: Timestamp::new(1000, 0),
+                signature: test_sig(),
+                independence_attestation: Some(bob_att),
+            },
+        ];
+        let policy = QuorumPolicy {
+            min_approvals: 2,
+            min_independent: 2,
+            required_roles: vec![Role::Steward],
+            timeout: Timestamp::new(999_999, 0),
+        };
+        let resolver = |d: &Did| -> Option<PublicKey> {
+            if *d == d_alice {
+                Some(pk_alice)
+            } else if *d == d_bob {
+                Some(pk_bob)
+            } else {
+                None
+            }
+        };
+        assert_eq!(
+            compute_quorum_verified(&approvals, &policy, &resolver),
+            QuorumResult::Met {
+                independent_count: 2,
+                total_count: 2,
+            }
+        );
+    }
+
+    // Covers compute_quorum_verified's None-from-resolver match arm path (attestation not counted).
+    #[test]
+    fn compute_quorum_verified_none_resolver_excludes_but_totals_pass() {
+        let (_pk_alice, sk_alice) = crypto::generate_keypair();
+        let d_alice = did("alice");
+        let att = properly_signed_attestation(&d_alice, &sk_alice);
+        let approvals = vec![Approval {
+            approver_did: d_alice.clone(),
+            role: Role::Steward,
+            timestamp: Timestamp::new(1000, 0),
+            signature: test_sig(),
+            independence_attestation: Some(att),
+        }];
+        // min_independent=0 so Met is reached even with unresolvable DID.
+        let policy = QuorumPolicy {
+            min_approvals: 1,
+            min_independent: 0,
+            required_roles: vec![],
+            timeout: Timestamp::new(999_999, 0),
+        };
+        let null_resolver = |_d: &Did| -> Option<PublicKey> { None };
+        assert_eq!(
+            compute_quorum_verified(&approvals, &policy, &null_resolver),
+            QuorumResult::Met {
+                independent_count: 0,
+                total_count: 1,
+            }
+        );
+    }
+
+    // Covers compute_quorum_with_challenges_verified: open Filed challenge short-circuits to Contested.
+    #[test]
+    fn compute_quorum_with_challenges_verified_filed_blocks() {
+        let (pk_alice, sk_alice) = crypto::generate_keypair();
+        let d_alice = did("alice");
+        let att = properly_signed_attestation(&d_alice, &sk_alice);
+        let approvals = vec![Approval {
+            approver_did: d_alice.clone(),
+            role: Role::Steward,
+            timestamp: Timestamp::new(1000, 0),
+            signature: test_sig(),
+            independence_attestation: Some(att),
+        }];
+        let policy = QuorumPolicy {
+            min_approvals: 1,
+            min_independent: 1,
+            required_roles: vec![],
+            timeout: Timestamp::new(999_999, 0),
+        };
+        let resolver = move |d: &Did| -> Option<PublicKey> {
+            if *d == d_alice { Some(pk_alice) } else { None }
+        };
+        let ch = make_challenge(0x9011, ChallengeGround::SybilAllegation, b"evidence");
+        match compute_quorum_with_challenges_verified(&approvals, &policy, &[&ch], &resolver) {
+            QuorumResult::Contested { challenge } => {
+                assert!(challenge.contains("unresolved independence challenge"));
+                assert!(challenge.contains("SybilAllegation"));
+            }
+            other => panic!("expected Contested, got {other:?}"),
+        }
+    }
+
+    // Covers compute_quorum_with_challenges_verified: UnderReview challenge also blocks.
+    #[test]
+    fn compute_quorum_with_challenges_verified_under_review_blocks() {
+        let (pk_alice, sk_alice) = crypto::generate_keypair();
+        let d_alice = did("alice");
+        let att = properly_signed_attestation(&d_alice, &sk_alice);
+        let approvals = vec![Approval {
+            approver_did: d_alice.clone(),
+            role: Role::Steward,
+            timestamp: Timestamp::new(1000, 0),
+            signature: test_sig(),
+            independence_attestation: Some(att),
+        }];
+        let policy = QuorumPolicy {
+            min_approvals: 1,
+            min_independent: 1,
+            required_roles: vec![],
+            timeout: Timestamp::new(999_999, 0),
+        };
+        let resolver = move |d: &Did| -> Option<PublicKey> {
+            if *d == d_alice { Some(pk_alice) } else { None }
+        };
+        let mut ch = make_challenge(0x9012, ChallengeGround::QuorumViolation, b"");
+        ch.status = ChallengeStatus::UnderReview;
+        assert!(matches!(
+            compute_quorum_with_challenges_verified(&approvals, &policy, &[&ch], &resolver),
+            QuorumResult::Contested { .. }
+        ));
+    }
+
+    // Covers compute_quorum_with_challenges_verified: no open challenges → delegates and returns Met.
+    #[test]
+    fn compute_quorum_with_challenges_verified_delegates_to_verified_on_clean() {
+        let (pk_alice, sk_alice) = crypto::generate_keypair();
+        let d_alice = did("alice");
+        let att = properly_signed_attestation(&d_alice, &sk_alice);
+        let approvals = vec![Approval {
+            approver_did: d_alice.clone(),
+            role: Role::Steward,
+            timestamp: Timestamp::new(1000, 0),
+            signature: test_sig(),
+            independence_attestation: Some(att),
+        }];
+        let policy = QuorumPolicy {
+            min_approvals: 1,
+            min_independent: 1,
+            required_roles: vec![],
+            timeout: Timestamp::new(999_999, 0),
+        };
+        let resolver = move |d: &Did| -> Option<PublicKey> {
+            if *d == d_alice { Some(pk_alice) } else { None }
+        };
+        assert_eq!(
+            compute_quorum_with_challenges_verified(&approvals, &policy, &[], &resolver),
+            QuorumResult::Met {
+                independent_count: 1,
+                total_count: 1,
+            }
+        );
+    }
+
+    // Covers compute_quorum_with_challenges_verified: only resolved challenges pass through to verified delegate.
+    #[test]
+    fn compute_quorum_with_challenges_verified_resolved_challenge_passes_through() {
+        let (pk_alice, sk_alice) = crypto::generate_keypair();
+        let d_alice = did("alice");
+        let att = properly_signed_attestation(&d_alice, &sk_alice);
+        let approvals = vec![Approval {
+            approver_did: d_alice.clone(),
+            role: Role::Steward,
+            timestamp: Timestamp::new(1000, 0),
+            signature: test_sig(),
+            independence_attestation: Some(att),
+        }];
+        let policy = QuorumPolicy {
+            min_approvals: 1,
+            min_independent: 1,
+            required_roles: vec![],
+            timeout: Timestamp::new(999_999, 0),
+        };
+        let resolver = move |d: &Did| -> Option<PublicKey> {
+            if *d == d_alice { Some(pk_alice) } else { None }
+        };
+        let mut ch = make_challenge(0x9013, ChallengeGround::SybilAllegation, b"");
+        ch.status = ChallengeStatus::Overruled;
+        assert!(matches!(
+            compute_quorum_with_challenges_verified(&approvals, &policy, &[&ch], &resolver),
+            QuorumResult::Met { .. }
+        ));
+    }
+
+    // Covers PublicKeyResolver trait's closure adapter — resolve() invokes the Fn.
+    #[test]
+    fn public_key_resolver_closure_adapter_invokes_fn() {
+        let (pk, _sk) = crypto::generate_keypair();
+        let d = did("adapter");
+        let pk_clone = pk;
+        let d_clone = d.clone();
+        let resolver = move |q: &Did| -> Option<PublicKey> {
+            if *q == d_clone { Some(pk_clone) } else { None }
+        };
+        // Trait-dispatched call path.
+        let resolved: Option<PublicKey> = PublicKeyResolver::resolve(&resolver, &d);
+        assert!(resolved.is_some());
+        assert_eq!(resolved.expect("just checked some"), pk);
+        // Unrecognized DID maps to None via the same adapter.
+        assert!(PublicKeyResolver::resolve(&resolver, &did("other")).is_none());
+    }
+
+    // Covers verify_signature's empty-signature early reject (Signature::Empty → 64 zeros).
+    #[test]
+    fn verify_signature_rejects_empty_variant() {
+        let (pk, _sk) = crypto::generate_keypair();
+        let d = did("empty-sig");
+        let att = IndependenceAttestation {
+            attester_did: d,
+            no_common_control: true,
+            no_coordination: true,
+            identity_verified: true,
+            signature: Signature::Empty,
+        };
+        // Empty sentinel must not verify even though the structural flags hold.
+        assert!(att.is_valid());
+        assert!(!att.verify_signature(&pk));
+        assert!(!att.is_fully_valid(&pk));
+    }
+
+    // Covers Role equality & hashing across all five variants (exhaustive Role coverage incl. Observer).
+    #[test]
+    fn role_variants_distinct_and_serde_roundtrip() {
+        let all = [
+            Role::Steward,
+            Role::Governor,
+            Role::Reviewer,
+            Role::Contributor,
+            Role::Observer,
+        ];
+        // Pairwise inequality.
+        for i in 0..all.len() {
+            for j in 0..all.len() {
+                if i == j {
+                    assert_eq!(all[i], all[j]);
+                } else {
+                    assert_ne!(all[i], all[j]);
+                }
+            }
+        }
+        // Serde round-trip for each variant.
+        for r in &all {
+            let ser = serde_json::to_string(r).expect("serialize role");
+            let back: Role = serde_json::from_str(&ser).expect("deserialize role");
+            assert_eq!(&back, r);
+        }
+    }
+
+    // Covers compute_quorum Met result's eq/debug surface (PartialEq + Debug on QuorumResult).
+    #[test]
+    fn quorum_result_debug_and_eq_surface() {
+        let met = QuorumResult::Met {
+            independent_count: 2,
+            total_count: 3,
+        };
+        let met2 = QuorumResult::Met {
+            independent_count: 2,
+            total_count: 3,
+        };
+        let notmet = QuorumResult::NotMet { reason: "x".into() };
+        assert_eq!(met, met2);
+        assert_ne!(met, notmet);
+        let dbg = format!("{met:?}");
+        assert!(dbg.contains("Met"));
+        assert!(dbg.contains("independent_count"));
     }
 }

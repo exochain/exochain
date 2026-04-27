@@ -9,29 +9,32 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 ## Repo Status
 
 > Run `bash tools/repo_truth.sh` to regenerate these numbers from source.
+>
+> The crate count includes `exo-catapult`, `exo-consensus`, `exo-messaging`, and `exochain-sdk` (four crates previously not listed in this README).
 
 | Metric | Value | Source |
 |--------|-------|--------|
-| Rust crates | 16 | `ls -d crates/*/` |
-| Rust source files | 178 | `find crates -name '*.rs'` |
-| Rust LOC | ~112,000 | `wc -l` |
-| Workspace tests | 1,603 passing, 0 failing | `cargo test --workspace` |
-| CI quality gates | 16 | `.github/workflows/ci.yml` |
+| Rust crates | 20 | `ls -d crates/*/` |
+| Rust source files | 266 | `find crates -name '*.rs'` |
+| Rust LOC | 115764 | `wc -l` |
+| Workspace tests | 2,868 listed | `cargo test --workspace -- --list` |
+| CI quality gates | 20 | `.github/workflows/ci.yml` numbered gates, plus required aggregator |
 | Published releases | None (pre-release) | `git tag -l` |
 | License | Apache-2.0 | `Cargo.toml` |
 | Live node | https://exochain.io | Fly.io deployment |
 
 ### What is verified today
 
-- **1,603 workspace tests pass** with zero failures (`cargo test --workspace`)
+- **2,868 workspace tests are listed** by `cargo test --workspace -- --list`; CI Gate 2 runs them in debug and release modes
 - **Build succeeds** for all library crates, binaries, tests, and benchmarks
 - **Clippy clean** under `-D warnings` for production code
 - **Format clean** under `cargo +nightly fmt --all -- --check`
-- **16 CI quality gates** defined and enforced (build, test, coverage, lint, format, audit, deny, doc, hygiene, SBOM, machete, integration, DB integration, consensus integration, sync/join, cross-platform)
-- **Traceability matrix** maps 87 requirements — see `governance/traceability_matrix.md`
+- **20 numbered CI quality gates** plus the required "All Constitutional Gates" aggregator are defined and enforced
+- **Traceability matrix** maps 86 requirements — see `governance/traceability_matrix.md`
 - **Threat model** covers 14 threats tracked: 14 mitigated, 0 partial, 0 planned — see `governance/threat_matrix.md`
 - **Constitutional invariants** enforced via the CGR kernel in all governance paths
 - **No floating-point arithmetic** — denied workspace-wide via `#[deny(clippy::float_arithmetic)]`
+- **Post-Quantum signatures** — NIST FIPS 204 ML-DSA-65 (CRYSTALS-Dilithium) via `ml-dsa` 0.1.0-rc.7, fully wired in `Signature::PostQuantum` and `Signature::Hybrid` with deterministic signing, tamper-rejection tests, proptest roundtrip coverage, and RUSTSEC-2025-0144 patch
 
 ### What is supported by design but not yet production-hardened
 
@@ -39,7 +42,6 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 - **exo-gateway binary** — operational HTTP server with 28 endpoints (REST, GraphQL, health probes); production hardening ongoing
 - **GraphQL API** — types and schema stubs exist in `exo-api`; async runtime integration pending
 - **exo-dag benchmark** — disabled; needs rewrite against current API
-- **Post-quantum signatures** — `Signature` enum supports Ed25519/PostQuantum/Hybrid; PQ implementation is stub-level
 
 ### In Progress
 
@@ -55,13 +57,12 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 ## Architecture
 
 ```
-Layer 1: CGR Kernel         (Rust, 16 crates, ~75K LOC)
+Layer 1: CGR Kernel         (Rust, 20 crates, 115764 tracked LOC under crates/)
          Constitutional governance runtime — deterministic, no floats,
-         cryptographic proofs, 1,846 tests passing
+         cryptographic proofs, 2,868 listed workspace tests
 
 Layer 2: WASM Bridge        (packages/exochain-wasm/)
-         110 exported functions — Rust → WebAssembly → JavaScript
-         Zero stubs. Every function calls real crate logic.
+         140 verified bridge exports — Rust → WebAssembly → JavaScript
 
 Layer 3: CommandBase.ai     (command-base/)
          Operational hypervisor for cognitiveplane.ai
@@ -74,8 +75,8 @@ Layer 4: Decision Forum     (web/)
          React/Vite — decisions, delegations, audit, constitution
 
 Layer 5: ExoForge           (exoforge/)
-         Autonomous implementation engine
-         Triage → Council Review → Implementation → Constitutional Validation
+         Governance triage, planning, validation, and monitoring tools
+         Triage → Council-style heuristic review → Plan → Constitutional Validation
 ```
 
 ## The Five Axioms
@@ -83,12 +84,12 @@ Layer 5: ExoForge           (exoforge/)
 1. **Identity Adjudication** — Decentralized identity with cryptographic proof, not administrative fiat.
 2. **Data Sovereignty** — Data belongs to its subject; consent is explicit, revocable, and auditable.
 3. **Deterministic Finality** — Every operation is reproducible and verifiable; no floating-point arithmetic permitted.
-4. **Constitutional Governance** — All system behavior is governed by ratified resolutions (CR-001 AEGIS/SYBIL framework).
+4. **Constitutional Governance** — System behavior is governed by the constitutional specification and draft CR-001 AEGIS/SYBIL framework pending council ratification.
 5. **Authentic Plurality** — Sybil-resistant participation ensuring one-entity-one-voice integrity.
 
 ## Repository Structure
 
-### Core Crates (16)
+### Core Crates (20)
 
 | Crate | Description |
 |-------|-------------|
@@ -108,12 +109,16 @@ Layer 5: ExoForge           (exoforge/)
 | `decision-forum` | Governance application: council-driven decision making |
 | `exochain-wasm` | WASM compilation target for browser/Node.js integration |
 | `exo-node` | Distributed P2P node: BFT consensus, networking, governance API, live dashboard |
+| `exo-catapult` | Franchise/NewCo spawn, budgets, goals, agents, receipts, and autonomous corporation scaffolding |
+| `exo-messaging` | Encrypted messaging envelopes, death-trigger checks, and compose/open flows |
+| `exo-consensus` | Multi-model consensus session, scoring, commitment, and report primitives |
+| `exochain-sdk` | Rust SDK facade for identity, consent, authority, governance, and kernel calls |
 
 ### Governance & Infrastructure
 
 * **`governance/`** — Council resolutions, sub-agent charters, traceability matrices, quality gates
 * **`docs/`** — Architecture, guides, council panel reports, proofs, reference documentation
-* **`.github/workflows/`** — CI pipeline (16 quality gates), release workflow, ExoForge triage
+* **`.github/workflows/`** — CI pipeline (20 numbered quality gates plus required aggregator), release workflow, ExoForge triage
 
 ## Governance & Compliance
 
@@ -121,9 +126,9 @@ This repository is managed under strict **Judicial Build Governance**. All contr
 
 ### Key Governance Artifacts
 
-* [Traceability Matrix](governance/traceability_matrix.md) — 87 requirements tracked
+* [Traceability Matrix](governance/traceability_matrix.md) — 86 requirements tracked
 * [Threat Model](governance/threat_matrix.md) — 14 mitigated, 0 partial, 0 planned
-* [Quality Gates](governance/quality_gates.md) — 16 CI-enforced gates
+* [Quality Gates](governance/quality_gates.md) — 20 numbered CI gates plus required aggregator
 * [Sub-Agent Charters](governance/sub_agents.md) — 11 agent charters documented
 * [Council Resolutions](governance/resolutions/INDEX.md) — CR-001 DRAFT
 * [Tier-One Readiness Audit](docs/audit/TIER-ONE-READINESS-AUDIT.md) — capability model, gap analysis, exit checklist
@@ -159,15 +164,15 @@ cd demo && npm install && npm run dev
 
 See [demo/README.md](demo/README.md) for full setup instructions.
 
-## ExoForge (Autonomous Implementation Engine)
+## ExoForge
 
-[ExoForge](https://github.com/exochain/exoforge) is the autonomous implementation engine that establishes a **perpetual self-improvement cycle** for ExoChain:
+[ExoForge](exoforge/) provides governance triage, planning, validation, and monitoring tools for ExoChain:
 
 ```
-Widget AI Help → Feedback Ingestion → Triage → AI-IRB Council Review → Implementation → Constitutional Validation → PR → Deploy
+Widget AI Help → Feedback Ingestion → Triage → Council-Style Heuristic Review → Implementation Plan → Constitutional Validation
 ```
 
-- **7 Archon commands** — Triage, council review, Syntaxis generation, PRD generation, implementation, bug fixing, constitutional validation
+- **7 Archon commands** — Triage, council-style review, Syntaxis generation, PRD generation, implementation planning, bug-fix planning, constitutional validation
 - **4 DAG workflows** — Self-improvement cycle, client onboarding, issue fixing, continuous governance monitoring
 - **5×5 discipline matrix** — 5 council panels × 5 artifact properties (Storable, Diffable, Transferable, Auditable, Contestable)
 - **GitHub Issues integration** — Issues labeled `exoforge:triage` automatically enter the self-improvement cycle
@@ -187,8 +192,8 @@ See [docs/guides/ARCHON-INTEGRATION.md](docs/guides/ARCHON-INTEGRATION.md) for s
 # Build all crates
 cargo build --workspace --all-targets
 
-# Run all library tests
-cargo test --workspace --lib
+# Run the workspace test gate
+cargo test --workspace
 
 # Lint (strict — no warnings allowed)
 cargo clippy --workspace --lib --bins -- -D warnings
@@ -216,8 +221,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full judicial build workflow.
 EXOCHAIN uses a `Signature` enum supporting three modes:
 
 * **Ed25519** — Current default for signing and verification
-* **PostQuantum** — Forward-looking post-quantum signature scheme (stub-level)
-* **Hybrid** — Combined Ed25519 + post-quantum for transition period (stub-level)
+* **PostQuantum** — NIST FIPS 204 ML-DSA-65 (CRYSTALS-Dilithium). Production-wired.
+* **Hybrid** — Combined Ed25519 + ML-DSA-65. Strict AND verification (no short-circuit). Closes the silent Ed25519-only downgrade (EXOCHAIN-REM-005).
 
 Float arithmetic is denied workspace-wide via `#[deny(clippy::float_arithmetic)]`.
 

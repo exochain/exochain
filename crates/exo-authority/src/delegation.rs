@@ -1,8 +1,8 @@
 //! Delegation management — tracks active delegations and resolves chains.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use exo_core::{Did, Hash256, Signature, Timestamp};
+use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto};
 
 use crate::{
     chain::{self, AuthorityChain, AuthorityLink, DEFAULT_MAX_DEPTH, DelegateeKind},
@@ -21,6 +21,17 @@ pub struct DelegationRegistry {
     by_delegate: BTreeMap<String, Vec<Hash256>>,
 }
 
+/// Caller-supplied fields for a signed delegation grant.
+pub struct DelegationGrant<'a> {
+    pub from: &'a Did,
+    pub to: &'a Did,
+    pub scope: &'a [Permission],
+    pub expires: Timestamp,
+    pub now: &'a Timestamp,
+    pub delegatee_kind: DelegateeKind,
+    pub delegator_public_key: &'a PublicKey,
+}
+
 impl DelegationRegistry {
     #[must_use]
     pub fn new() -> Self {
@@ -33,13 +44,19 @@ impl DelegationRegistry {
     /// Returns `CircularDelegation` if this would create a cycle.
     pub fn delegate(
         &mut self,
-        from: &Did,
-        to: &Did,
-        scope: &[Permission],
-        expires: Timestamp,
-        now: &Timestamp,
-        delegatee_kind: DelegateeKind,
+        grant: DelegationGrant<'_>,
+        sign_fn: impl FnOnce(&[u8]) -> Signature,
     ) -> Result<AuthorityLink, AuthorityError> {
+        let DelegationGrant {
+            from,
+            to,
+            scope,
+            expires,
+            now,
+            delegatee_kind,
+            delegator_public_key,
+        } = grant;
+
         // Detect circular: if `to` already delegates (directly or transitively) to `from`
         if self.has_path(to, from) {
             return Err(AuthorityError::CircularDelegation(format!(
@@ -48,20 +65,52 @@ impl DelegationRegistry {
             )));
         }
 
+        if *now == Timestamp::ZERO {
+            return Err(AuthorityError::InvalidDelegation {
+                reason: "created timestamp must be non-zero".into(),
+            });
+        }
+        if expires <= *now {
+            return Err(AuthorityError::InvalidDelegation {
+                reason: "expiration must be later than created timestamp".into(),
+            });
+        }
+        if let DelegateeKind::AiAgent { model_id } = &delegatee_kind {
+            if model_id.trim().is_empty() {
+                return Err(AuthorityError::InvalidDelegation {
+                    reason: "AI-agent delegatee kind requires a non-empty model_id".into(),
+                });
+            }
+        }
+
+        let scope = canonical_scope(scope)?;
         let depth = self.compute_depth(from);
 
-        let link = AuthorityLink {
+        let mut link = AuthorityLink {
             delegator_did: from.clone(),
             delegate_did: to.clone(),
-            scope: scope.to_vec(),
+            scope,
             created: *now,
             expires: Some(expires),
-            signature: Signature::from_bytes([1u8; 64]), // placeholder
+            signature: Signature::empty(),
             depth,
             delegatee_kind,
         };
 
-        let id = link.id();
+        let payload = link.signing_payload()?;
+        let signature = sign_fn(&payload);
+        if signature.is_empty() || signature_is_all_zero(&signature) {
+            return Err(AuthorityError::InvalidSignature { index: depth });
+        }
+        if !crypto::verify(&payload, &signature, delegator_public_key) {
+            return Err(AuthorityError::InvalidSignature { index: depth });
+        }
+        link.signature = signature;
+
+        let id = link.id()?;
+        if self.links.contains_key(&id) {
+            return Err(AuthorityError::DuplicateDelegation { id: id.to_string() });
+        }
         self.links.insert(id, link.clone());
         self.by_delegator
             .entry(from.as_str().to_owned())
@@ -194,8 +243,28 @@ impl DelegationRegistry {
     }
 }
 
+fn canonical_scope(scope: &[Permission]) -> Result<Vec<Permission>, AuthorityError> {
+    let scope: BTreeSet<Permission> = scope.iter().copied().collect();
+    if scope.is_empty() {
+        return Err(AuthorityError::InvalidDelegation {
+            reason: "scope must contain at least one permission".into(),
+        });
+    }
+    Ok(scope.into_iter().collect())
+}
+
+fn signature_is_all_zero(signature: &Signature) -> bool {
+    let raw = signature.as_bytes();
+    !raw.is_empty() && raw.iter().all(|b| *b == 0)
+}
+
 #[cfg(test)]
 mod tests {
+    use exo_core::{
+        PublicKey,
+        crypto::{self, KeyPair},
+    };
+
     use super::*;
 
     fn did(name: &str) -> Did {
@@ -207,18 +276,173 @@ mod tests {
     fn now() -> Timestamp {
         ts(5000)
     }
+    fn public_key(keypair: &KeyPair) -> PublicKey {
+        *keypair.public_key()
+    }
+    fn signed_delegate(
+        reg: &mut DelegationRegistry,
+        from: &str,
+        to: &str,
+        scope: &[Permission],
+        signer: &KeyPair,
+    ) -> Result<AuthorityLink, AuthorityError> {
+        let public_key = public_key(signer);
+        let from = did(from);
+        let to = did(to);
+        reg.delegate(
+            DelegationGrant {
+                from: &from,
+                to: &to,
+                scope,
+                expires: ts(10000),
+                now: &now(),
+                delegatee_kind: DelegateeKind::Human,
+                delegator_public_key: &public_key,
+            },
+            |payload| signer.sign(payload),
+        )
+    }
+
+    #[test]
+    fn delegate_signs_link_with_delegator_key() {
+        let mut reg = DelegationRegistry::new();
+        let keypair = KeyPair::generate();
+        let public_key = public_key(&keypair);
+        let link =
+            signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &keypair).unwrap();
+
+        assert!(!link.signature.is_empty());
+        let payload = link.signing_payload().unwrap();
+        assert!(crypto::verify(&payload, &link.signature, &public_key));
+    }
+
+    #[test]
+    fn delegate_rejects_wrong_key_signature() {
+        let mut reg = DelegationRegistry::new();
+        let signer = KeyPair::generate();
+        let wrong_key = KeyPair::generate();
+        let wrong_public_key = public_key(&wrong_key);
+        let from = did("alice");
+        let to = did("bob");
+
+        let result = reg.delegate(
+            DelegationGrant {
+                from: &from,
+                to: &to,
+                scope: &[Permission::Read],
+                expires: ts(10000),
+                now: &now(),
+                delegatee_kind: DelegateeKind::Human,
+                delegator_public_key: &wrong_public_key,
+            },
+            |payload| signer.sign(payload),
+        );
+
+        assert!(matches!(
+            result,
+            Err(AuthorityError::InvalidSignature { index: 0 })
+        ));
+    }
+
+    #[test]
+    fn delegate_rejects_empty_signature() {
+        let mut reg = DelegationRegistry::new();
+        let keypair = KeyPair::generate();
+        let public_key = public_key(&keypair);
+        let from = did("alice");
+        let to = did("bob");
+
+        let result = reg.delegate(
+            DelegationGrant {
+                from: &from,
+                to: &to,
+                scope: &[Permission::Read],
+                expires: ts(10000),
+                now: &now(),
+                delegatee_kind: DelegateeKind::Human,
+                delegator_public_key: &public_key,
+            },
+            |_payload| Signature::Empty,
+        );
+
+        assert!(matches!(
+            result,
+            Err(AuthorityError::InvalidSignature { index: 0 })
+        ));
+    }
+
+    #[test]
+    fn delegate_rejects_all_zero_signature() {
+        let mut reg = DelegationRegistry::new();
+        let keypair = KeyPair::generate();
+        let public_key = public_key(&keypair);
+        let from = did("alice");
+        let to = did("bob");
+
+        let result = reg.delegate(
+            DelegationGrant {
+                from: &from,
+                to: &to,
+                scope: &[Permission::Read],
+                expires: ts(10000),
+                now: &now(),
+                delegatee_kind: DelegateeKind::Human,
+                delegator_public_key: &public_key,
+            },
+            |_payload| Signature::from_bytes([0u8; 64]),
+        );
+
+        assert!(matches!(
+            result,
+            Err(AuthorityError::InvalidSignature { index: 0 })
+        ));
+    }
+
+    #[test]
+    fn delegate_rejects_duplicate_grant() {
+        let mut reg = DelegationRegistry::new();
+        let keypair = KeyPair::generate();
+        signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &keypair).unwrap();
+
+        let result = signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &keypair);
+
+        assert!(matches!(
+            result,
+            Err(AuthorityError::DuplicateDelegation { .. })
+        ));
+    }
+
+    #[test]
+    fn find_chain_returns_cryptographically_valid_chain() {
+        let mut reg = DelegationRegistry::new();
+        let alice_key = KeyPair::generate();
+        let bob_key = KeyPair::generate();
+        signed_delegate(
+            &mut reg,
+            "alice",
+            "bob",
+            &[Permission::Read, Permission::Write],
+            &alice_key,
+        )
+        .unwrap();
+        signed_delegate(&mut reg, "bob", "charlie", &[Permission::Read], &bob_key).unwrap();
+
+        let chain = reg
+            .find_chain(&did("alice"), &did("charlie"))
+            .expect("chain should resolve");
+        let keys = std::collections::BTreeMap::from([
+            (did("alice").as_str().to_owned(), public_key(&alice_key)),
+            (did("bob").as_str().to_owned(), public_key(&bob_key)),
+        ]);
+
+        assert!(chain::verify_chain(&chain, &now(), |did| keys.get(did.as_str()).copied()).is_ok());
+    }
 
     #[test]
     fn delegate_creates_link() {
         let mut reg = DelegationRegistry::new();
-        let link = reg.delegate(
-            &did("alice"),
-            &did("bob"),
-            &[Permission::Read],
-            ts(10000),
-            &now(),
-            DelegateeKind::Human,
-        );
+        let alice_key = KeyPair::generate();
+        let link = signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key);
         assert!(link.is_ok());
         let l = link.unwrap();
         assert_eq!(l.delegator_did, did("alice"));
@@ -229,54 +453,27 @@ mod tests {
     #[test]
     fn delegate_detects_circular() {
         let mut reg = DelegationRegistry::new();
-        reg.delegate(
-            &did("alice"),
-            &did("bob"),
-            &[Permission::Read],
-            ts(10000),
-            &now(),
-            DelegateeKind::Human,
-        )
-        .ok();
-        let result = reg.delegate(
-            &did("bob"),
-            &did("alice"),
-            &[Permission::Read],
-            ts(10000),
-            &now(),
-            DelegateeKind::Human,
-        );
+        let alice_key = KeyPair::generate();
+        let bob_key = KeyPair::generate();
+        signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).ok();
+        let result = signed_delegate(&mut reg, "bob", "alice", &[Permission::Read], &bob_key);
         assert!(matches!(result, Err(AuthorityError::CircularDelegation(_))));
     }
 
     #[test]
     fn delegate_detects_transitive_circular() {
         let mut reg = DelegationRegistry::new();
-        reg.delegate(
-            &did("alice"),
-            &did("bob"),
+        let alice_key = KeyPair::generate();
+        let bob_key = KeyPair::generate();
+        let charlie_key = KeyPair::generate();
+        signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).ok();
+        signed_delegate(&mut reg, "bob", "charlie", &[Permission::Read], &bob_key).ok();
+        let result = signed_delegate(
+            &mut reg,
+            "charlie",
+            "alice",
             &[Permission::Read],
-            ts(10000),
-            &now(),
-            DelegateeKind::Human,
-        )
-        .ok();
-        reg.delegate(
-            &did("bob"),
-            &did("charlie"),
-            &[Permission::Read],
-            ts(10000),
-            &now(),
-            DelegateeKind::Human,
-        )
-        .ok();
-        let result = reg.delegate(
-            &did("charlie"),
-            &did("alice"),
-            &[Permission::Read],
-            ts(10000),
-            &now(),
-            DelegateeKind::Human,
+            &charlie_key,
         );
         assert!(matches!(result, Err(AuthorityError::CircularDelegation(_))));
     }
@@ -284,17 +481,10 @@ mod tests {
     #[test]
     fn revoke_delegation() {
         let mut reg = DelegationRegistry::new();
-        let link = reg
-            .delegate(
-                &did("alice"),
-                &did("bob"),
-                &[Permission::Read],
-                ts(10000),
-                &now(),
-                DelegateeKind::Human,
-            )
-            .unwrap();
-        let id = link.id();
+        let alice_key = KeyPair::generate();
+        let link =
+            signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
+        let id = link.id().unwrap();
         assert!(reg.revoke_delegation(&id).is_ok());
         assert_eq!(reg.len(), 0);
     }
@@ -312,15 +502,8 @@ mod tests {
     #[test]
     fn find_chain_direct() {
         let mut reg = DelegationRegistry::new();
-        reg.delegate(
-            &did("alice"),
-            &did("bob"),
-            &[Permission::Read],
-            ts(10000),
-            &now(),
-            DelegateeKind::Human,
-        )
-        .ok();
+        let alice_key = KeyPair::generate();
+        signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).ok();
         let chain = reg.find_chain(&did("alice"), &did("bob"));
         assert!(chain.is_some());
         assert_eq!(chain.unwrap().depth(), 1);
@@ -329,24 +512,17 @@ mod tests {
     #[test]
     fn find_chain_transitive() {
         let mut reg = DelegationRegistry::new();
-        reg.delegate(
-            &did("alice"),
-            &did("bob"),
+        let alice_key = KeyPair::generate();
+        let bob_key = KeyPair::generate();
+        signed_delegate(
+            &mut reg,
+            "alice",
+            "bob",
             &[Permission::Read, Permission::Write],
-            ts(10000),
-            &now(),
-            DelegateeKind::Human,
+            &alice_key,
         )
         .ok();
-        reg.delegate(
-            &did("bob"),
-            &did("charlie"),
-            &[Permission::Read],
-            ts(10000),
-            &now(),
-            DelegateeKind::Human,
-        )
-        .ok();
+        signed_delegate(&mut reg, "bob", "charlie", &[Permission::Read], &bob_key).ok();
         let chain = reg.find_chain(&did("alice"), &did("charlie"));
         assert!(chain.is_some());
         assert_eq!(chain.unwrap().depth(), 2);
@@ -361,15 +537,8 @@ mod tests {
     #[test]
     fn find_chain_no_path() {
         let mut reg = DelegationRegistry::new();
-        reg.delegate(
-            &did("alice"),
-            &did("bob"),
-            &[Permission::Read],
-            ts(10000),
-            &now(),
-            DelegateeKind::Human,
-        )
-        .ok();
+        let alice_key = KeyPair::generate();
+        signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).ok();
         assert!(reg.find_chain(&did("alice"), &did("charlie")).is_none());
     }
 
@@ -383,17 +552,9 @@ mod tests {
     #[test]
     fn revoke_cleans_indexes() {
         let mut reg = DelegationRegistry::new();
-        let l = reg
-            .delegate(
-                &did("alice"),
-                &did("bob"),
-                &[Permission::Read],
-                ts(10000),
-                &now(),
-                DelegateeKind::Human,
-            )
-            .unwrap();
-        reg.revoke_delegation(&l.id()).ok();
+        let alice_key = KeyPair::generate();
+        let l = signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
+        reg.revoke_delegation(&l.id().unwrap()).ok();
         // After revocation, chain should not be found
         assert!(reg.find_chain(&did("alice"), &did("bob")).is_none());
     }
@@ -401,22 +562,14 @@ mod tests {
     #[test]
     fn multiple_delegations_from_same_source() {
         let mut reg = DelegationRegistry::new();
-        reg.delegate(
-            &did("alice"),
-            &did("bob"),
-            &[Permission::Read],
-            ts(10000),
-            &now(),
-            DelegateeKind::Human,
-        )
-        .ok();
-        reg.delegate(
-            &did("alice"),
-            &did("charlie"),
+        let alice_key = KeyPair::generate();
+        signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).ok();
+        signed_delegate(
+            &mut reg,
+            "alice",
+            "charlie",
             &[Permission::Write],
-            ts(10000),
-            &now(),
-            DelegateeKind::Human,
+            &alice_key,
         )
         .ok();
         assert_eq!(reg.len(), 2);
@@ -427,14 +580,8 @@ mod tests {
     #[test]
     fn self_delegation_detected_as_circular() {
         let mut reg = DelegationRegistry::new();
-        let result = reg.delegate(
-            &did("alice"),
-            &did("alice"),
-            &[Permission::Read],
-            ts(10000),
-            &now(),
-            DelegateeKind::Human,
-        );
+        let alice_key = KeyPair::generate();
+        let result = signed_delegate(&mut reg, "alice", "alice", &[Permission::Read], &alice_key);
         assert!(matches!(result, Err(AuthorityError::CircularDelegation(_))));
     }
 }

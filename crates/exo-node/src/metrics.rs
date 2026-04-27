@@ -15,13 +15,12 @@
 //! - `exochain_uptime_seconds` — node uptime in seconds
 //! - `exochain_sync_in_progress` — whether state sync is active (0 or 1)
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::Instant,
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
 };
+
+use exo_core::{Timestamp, hlc::HybridClock};
 
 /// Thread-safe metrics registry for the node.
 #[derive(Debug)]
@@ -41,13 +40,22 @@ pub struct NodeMetrics {
     /// Whether state sync is in progress.
     pub sync_in_progress: AtomicU64,
     /// When the node started.
-    start_time: Instant,
+    start_time: Timestamp,
+    /// HLC source used to render deterministic uptime.
+    clock: Mutex<HybridClock>,
 }
 
 impl NodeMetrics {
     /// Create a new metrics registry.
     #[must_use]
     pub fn new() -> Self {
+        Self::new_with_clock(HybridClock::new())
+    }
+
+    /// Create a new metrics registry with an explicit HLC source.
+    #[must_use]
+    pub fn new_with_clock(mut clock: HybridClock) -> Self {
+        let start_time = clock.now();
         Self {
             peer_count: AtomicU64::new(0),
             consensus_round: AtomicU64::new(0),
@@ -56,14 +64,31 @@ impl NodeMetrics {
             validator_count: AtomicU64::new(0),
             is_validator: AtomicU64::new(0),
             sync_in_progress: AtomicU64::new(0),
-            start_time: Instant::now(),
+            start_time,
+            clock: Mutex::new(clock),
+        }
+    }
+
+    fn uptime_seconds(&self) -> u64 {
+        match self.clock.lock() {
+            Ok(mut clock) => {
+                clock
+                    .now()
+                    .physical_ms
+                    .saturating_sub(self.start_time.physical_ms)
+                    / 1000
+            }
+            Err(_) => {
+                tracing::error!("NodeMetrics HLC mutex poisoned while rendering uptime");
+                0
+            }
         }
     }
 
     /// Render all metrics in Prometheus exposition format.
     #[must_use]
     pub fn render(&self) -> String {
-        let uptime = self.start_time.elapsed().as_secs();
+        let uptime = self.uptime_seconds();
 
         format!(
             "# HELP exochain_peer_count Number of connected P2P peers.\n\
@@ -131,6 +156,8 @@ pub fn create_metrics() -> SharedMetrics {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use exo_core::hlc::HybridClock;
+
     use super::*;
 
     #[test]
@@ -163,6 +190,20 @@ mod tests {
     }
 
     #[test]
+    fn metrics_uptime_uses_injected_hlc_source() {
+        let wall = Arc::new(AtomicU64::new(42_000));
+        let wall_for_clock = Arc::clone(&wall);
+        let metrics = NodeMetrics::new_with_clock(HybridClock::with_wall_clock(move || {
+            wall_for_clock.load(Ordering::Relaxed)
+        }));
+
+        wall.store(45_000, Ordering::Relaxed);
+        let output = metrics.render();
+
+        assert!(output.contains("exochain_uptime_seconds 3"));
+    }
+
+    #[test]
     fn metrics_atomic_updates() {
         let metrics = Arc::new(NodeMetrics::new());
 
@@ -185,5 +226,21 @@ mod tests {
         .unwrap();
 
         assert_eq!(metrics.peer_count.load(Ordering::Relaxed), 42);
+    }
+
+    #[test]
+    fn default_runtime_sources_do_not_read_wall_clock_directly() {
+        let metrics_source = include_str!("metrics.rs")
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("metrics tests marker present");
+        let sentinels_source = include_str!("sentinels.rs")
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("sentinels tests marker present");
+
+        assert!(!metrics_source.contains("Instant::now"));
+        assert!(!metrics_source.contains("time::Instant"));
+        assert!(!sentinels_source.contains("SystemTime::now"));
     }
 }

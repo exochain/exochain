@@ -8,20 +8,38 @@ use exo_core::{Did, Hash256, Signature, Timestamp};
 use serde::{Deserialize, Serialize};
 
 /// The type of content in the encrypted message.
+///
+/// `#[repr(u8)]` with explicit discriminants so the wire-format byte
+/// value is stable and independent of declaration order. See
+/// `impl From<ContentType> for u8` below — that's the canonical
+/// widening the envelope serializer uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum ContentType {
     /// General text message.
-    Text,
+    Text = 0,
     /// Password or credential.
-    Password,
+    Password = 1,
     /// Generic secret (API keys, 2FA seeds, etc.).
-    Secret,
+    Secret = 2,
     /// Message to be delivered after sender's death.
-    AfterlifeMessage,
+    AfterlifeMessage = 3,
     /// Pre-populated template message.
-    Template,
+    Template = 4,
     /// Binary attachment (file).
-    Attachment,
+    Attachment = 5,
+}
+
+impl From<ContentType> for u8 {
+    fn from(ct: ContentType) -> Self {
+        // `ContentType` is `#[repr(u8)]` with explicit discriminants,
+        // so this is a well-defined no-op widening — the only place
+        // we use `as` and it's canonical for the repr.
+        #[allow(clippy::as_conversions)]
+        {
+            ct as u8
+        }
+    }
 }
 
 /// An encrypted message envelope — the complete wire format.
@@ -65,7 +83,7 @@ impl EncryptedEnvelope {
         buf.extend_from_slice(self.recipient_did.as_str().as_bytes());
         buf.extend_from_slice(&self.ephemeral_public_key);
         buf.extend_from_slice(&self.ciphertext);
-        buf.extend_from_slice(&[self.content_type as u8]);
+        buf.extend_from_slice(&[u8::from(self.content_type)]);
         buf.extend_from_slice(self.plaintext_hash.as_bytes());
         buf.extend_from_slice(&[u8::from(self.release_on_death)]);
         buf.extend_from_slice(&self.release_delay_hours.to_le_bytes());

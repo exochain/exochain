@@ -15,7 +15,7 @@ pub mod error;
 pub mod kex;
 pub mod open;
 
-pub use compose::lock_and_send;
+pub use compose::{ComposeMetadata, lock_and_send};
 pub use envelope::{ContentType, EncryptedEnvelope};
 pub use error::MessagingError;
 pub use kex::{X25519KeyPair, X25519PublicKey, X25519SecretKey};

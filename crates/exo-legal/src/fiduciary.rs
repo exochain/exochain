@@ -93,10 +93,21 @@ pub fn create_duty(
     fiduciary: &Did,
     duty_type: DutyType,
     scope: &str,
+    created: Timestamp,
 ) -> Result<FiduciaryDuty> {
     if principal == fiduciary {
         return Err(LegalError::FiduciaryViolation {
             reason: "principal and fiduciary cannot be same".into(),
+        });
+    }
+    if scope.trim().is_empty() {
+        return Err(LegalError::FiduciaryViolation {
+            reason: "fiduciary duty scope must not be empty".into(),
+        });
+    }
+    if created == Timestamp::ZERO {
+        return Err(LegalError::FiduciaryViolation {
+            reason: "fiduciary duty created timestamp must not be Timestamp::ZERO".into(),
         });
     }
     Ok(FiduciaryDuty {
@@ -104,7 +115,7 @@ pub fn create_duty(
         fiduciary_did: fiduciary.clone(),
         duty_type,
         scope: scope.into(),
-        created: Timestamp::ZERO,
+        created,
     })
 }
 
@@ -114,17 +125,33 @@ mod tests {
     fn did(n: &str) -> Did {
         Did::new(&format!("did:exo:{n}")).unwrap()
     }
+    fn ts(ms: u64) -> Timestamp {
+        Timestamp::new(ms, 0)
+    }
     fn entry(actor: &str, action: &str, ben: Option<&str>) -> AuditEntry {
         AuditEntry {
             actor: did(actor),
             action: action.into(),
-            timestamp: Timestamp::ZERO,
+            timestamp: ts(2000),
             beneficiary: ben.map(did),
         }
     }
+
+    #[test]
+    fn create_duty_uses_caller_supplied_timestamp() {
+        let d = create_duty(&did("p"), &did("f"), DutyType::Care, "a", ts(1000)).unwrap();
+        assert_eq!(d.created, ts(1000));
+    }
+
+    #[test]
+    fn create_duty_rejects_placeholder_metadata() {
+        assert!(create_duty(&did("p"), &did("f"), DutyType::Care, "a", Timestamp::ZERO,).is_err());
+        assert!(create_duty(&did("p"), &did("f"), DutyType::Care, " ", ts(1000)).is_err());
+    }
+
     #[test]
     fn care_ok() {
-        let d = create_duty(&did("p"), &did("f"), DutyType::Care, "a").unwrap();
+        let d = create_duty(&did("p"), &did("f"), DutyType::Care, "a", ts(1000)).unwrap();
         assert_eq!(
             check_duty_compliance(&d, &[entry("f", "review", None)]),
             ComplianceResult::Compliant
@@ -132,7 +159,7 @@ mod tests {
     }
     #[test]
     fn care_fail() {
-        let d = create_duty(&did("p"), &did("f"), DutyType::Care, "a").unwrap();
+        let d = create_duty(&did("p"), &did("f"), DutyType::Care, "a", ts(1000)).unwrap();
         assert!(matches!(
             check_duty_compliance(&d, &[]),
             ComplianceResult::Violation { .. }
@@ -140,7 +167,7 @@ mod tests {
     }
     #[test]
     fn loyalty_ok() {
-        let d = create_duty(&did("p"), &did("f"), DutyType::Loyalty, "a").unwrap();
+        let d = create_duty(&did("p"), &did("f"), DutyType::Loyalty, "a", ts(1000)).unwrap();
         assert_eq!(
             check_duty_compliance(&d, &[entry("f", "act", Some("p"))]),
             ComplianceResult::Compliant
@@ -148,7 +175,7 @@ mod tests {
     }
     #[test]
     fn loyalty_fail() {
-        let d = create_duty(&did("p"), &did("f"), DutyType::Loyalty, "a").unwrap();
+        let d = create_duty(&did("p"), &did("f"), DutyType::Loyalty, "a", ts(1000)).unwrap();
         assert!(matches!(
             check_duty_compliance(&d, &[entry("f", "act", Some("x"))]),
             ComplianceResult::Violation { .. }
@@ -156,7 +183,7 @@ mod tests {
     }
     #[test]
     fn good_faith_ok() {
-        let d = create_duty(&did("p"), &did("f"), DutyType::GoodFaith, "a").unwrap();
+        let d = create_duty(&did("p"), &did("f"), DutyType::GoodFaith, "a", ts(1000)).unwrap();
         assert_eq!(
             check_duty_compliance(&d, &[entry("f", "act", None)]),
             ComplianceResult::Compliant
@@ -164,7 +191,7 @@ mod tests {
     }
     #[test]
     fn good_faith_fail() {
-        let d = create_duty(&did("p"), &did("f"), DutyType::GoodFaith, "a").unwrap();
+        let d = create_duty(&did("p"), &did("f"), DutyType::GoodFaith, "a", ts(1000)).unwrap();
         assert!(matches!(
             check_duty_compliance(&d, &[entry("x", "act", None)]),
             ComplianceResult::Violation { .. }
@@ -172,7 +199,7 @@ mod tests {
     }
     #[test]
     fn disclosure_ok() {
-        let d = create_duty(&did("p"), &did("f"), DutyType::Disclosure, "a").unwrap();
+        let d = create_duty(&did("p"), &did("f"), DutyType::Disclosure, "a", ts(1000)).unwrap();
         assert_eq!(
             check_duty_compliance(&d, &[entry("f", "disclose conflict", None)]),
             ComplianceResult::Compliant
@@ -180,7 +207,7 @@ mod tests {
     }
     #[test]
     fn disclosure_fail() {
-        let d = create_duty(&did("p"), &did("f"), DutyType::Disclosure, "a").unwrap();
+        let d = create_duty(&did("p"), &did("f"), DutyType::Disclosure, "a", ts(1000)).unwrap();
         assert!(matches!(
             check_duty_compliance(&d, &[entry("f", "acted", None)]),
             ComplianceResult::Violation { .. }
@@ -188,7 +215,14 @@ mod tests {
     }
     #[test]
     fn confidentiality_ok() {
-        let d = create_duty(&did("p"), &did("f"), DutyType::Confidentiality, "a").unwrap();
+        let d = create_duty(
+            &did("p"),
+            &did("f"),
+            DutyType::Confidentiality,
+            "a",
+            ts(1000),
+        )
+        .unwrap();
         assert_eq!(
             check_duty_compliance(&d, &[entry("f", "reviewed", None)]),
             ComplianceResult::Compliant
@@ -196,7 +230,14 @@ mod tests {
     }
     #[test]
     fn confidentiality_fail_share() {
-        let d = create_duty(&did("p"), &did("f"), DutyType::Confidentiality, "a").unwrap();
+        let d = create_duty(
+            &did("p"),
+            &did("f"),
+            DutyType::Confidentiality,
+            "a",
+            ts(1000),
+        )
+        .unwrap();
         assert!(matches!(
             check_duty_compliance(&d, &[entry("f", "share x", None)]),
             ComplianceResult::Violation { .. }
@@ -204,7 +245,14 @@ mod tests {
     }
     #[test]
     fn confidentiality_fail_publish() {
-        let d = create_duty(&did("p"), &did("f"), DutyType::Confidentiality, "a").unwrap();
+        let d = create_duty(
+            &did("p"),
+            &did("f"),
+            DutyType::Confidentiality,
+            "a",
+            ts(1000),
+        )
+        .unwrap();
         assert!(matches!(
             check_duty_compliance(&d, &[entry("f", "publish x", None)]),
             ComplianceResult::Violation { .. }
@@ -212,7 +260,7 @@ mod tests {
     }
     #[test]
     fn same_entity_fails() {
-        assert!(create_duty(&did("s"), &did("s"), DutyType::Care, "a").is_err());
+        assert!(create_duty(&did("s"), &did("s"), DutyType::Care, "a", ts(1000)).is_err());
     }
     #[test]
     fn duty_type_serde() {

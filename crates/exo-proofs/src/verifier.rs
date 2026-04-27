@@ -72,7 +72,7 @@ fn verify_snark(proof_bytes: &[u8], public_inputs_bytes: &[u8]) -> Result<bool> 
     let public_inputs: Vec<u64> = serde_json::from_slice(public_inputs_bytes)
         .map_err(|e| ProofError::DeserializationError(e.to_string()))?;
 
-    Ok(snark::verify(&bundle.vk, &bundle.proof, &public_inputs))
+    snark::verify(&bundle.vk, &bundle.proof, &public_inputs)
 }
 
 fn verify_stark(proof_bytes: &[u8], public_inputs_bytes: &[u8]) -> Result<bool> {
@@ -82,21 +82,21 @@ fn verify_stark(proof_bytes: &[u8], public_inputs_bytes: &[u8]) -> Result<bool> 
     let public_inputs: Vec<u64> = serde_json::from_slice(public_inputs_bytes)
         .map_err(|e| ProofError::DeserializationError(e.to_string()))?;
 
-    Ok(stark::verify_stark(&bundle.proof, &public_inputs))
+    stark::verify_stark(&bundle.proof, &public_inputs)
 }
 
 fn verify_zkml(proof_bytes: &[u8]) -> Result<bool> {
     let bundle: ZkmlBundle = serde_json::from_slice(proof_bytes)
         .map_err(|e| ProofError::DeserializationError(e.to_string()))?;
 
-    Ok(zkml::verify_inference(&bundle.proof))
+    zkml::verify_inference(&bundle.proof)
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
+#[cfg(all(test, feature = "unaudited-pedagogical-proofs"))]
 mod tests {
     use super::*;
     use crate::{
@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn verify_any_zkml() {
         let model = ModelCommitment::new(b"arch", b"weights", 1);
-        let proof = zkml::prove_inference(&model, b"input", b"output");
+        let proof = zkml::prove_inference(&model, b"input", b"output").unwrap();
 
         let bundle = ZkmlBundle { proof };
         let proof_bytes = serde_json::to_vec(&bundle).unwrap();
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn verify_any_zkml_tampered() {
         let model = ModelCommitment::new(b"arch", b"weights", 1);
-        let mut proof = zkml::prove_inference(&model, b"input", b"output");
+        let mut proof = zkml::prove_inference(&model, b"input", b"output").unwrap();
         proof.output_hash = exo_core::types::Hash256::ZERO;
 
         let bundle = ZkmlBundle { proof };

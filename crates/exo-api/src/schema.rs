@@ -3,6 +3,8 @@ use exo_core::{Did, Hash256, Timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::error::{ApiError, Result};
+
 /// Incoming API request variants for the EXOCHAIN trust fabric.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ApiRequest {
@@ -66,15 +68,20 @@ pub enum ApiResponse {
     },
 }
 
-/// Compute canonical hash for a request (CBOR -> blake3).
-#[must_use]
-pub fn canonical_request_hash(request: &ApiRequest) -> Hash256 {
+/// Compute canonical hash for a request (CBOR -> BLAKE3).
+pub fn canonical_request_hash(request: &ApiRequest) -> Result<Hash256> {
     let mut buf = Vec::new();
-    ciborium::into_writer(request, &mut buf).unwrap_or_default();
-    Hash256::digest(&buf)
+    write_canonical_request(request, &mut buf)?;
+    Ok(Hash256::digest(&buf))
+}
+
+fn write_canonical_request<W: std::io::Write>(request: &ApiRequest, writer: W) -> Result<()> {
+    ciborium::into_writer(request, writer)
+        .map_err(|err| ApiError::SerializationError(err.to_string()))
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     fn did(n: &str) -> Did {
@@ -154,7 +161,10 @@ mod tests {
             actor: did("a"),
             scope: "s".into(),
         };
-        assert_eq!(canonical_request_hash(&r), canonical_request_hash(&r));
+        assert_eq!(
+            canonical_request_hash(&r).unwrap(),
+            canonical_request_hash(&r).unwrap()
+        );
     }
     #[test]
     fn canonical_hash_differs() {
@@ -166,6 +176,32 @@ mod tests {
             actor: did("a"),
             scope: "s2".into(),
         };
-        assert_ne!(canonical_request_hash(&r1), canonical_request_hash(&r2));
+        assert_ne!(
+            canonical_request_hash(&r1).unwrap(),
+            canonical_request_hash(&r2).unwrap()
+        );
+    }
+
+    #[test]
+    fn canonical_hash_writer_error_returns_error() {
+        let r = ApiRequest::CreateTransaction {
+            actor: did("a"),
+            scope: "s".into(),
+        };
+
+        let err = write_canonical_request(&r, FailingWriter).unwrap_err();
+        assert!(err.to_string().contains("serialization error"));
+    }
+
+    struct FailingWriter;
+
+    impl std::io::Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("forced writer failure"))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 }

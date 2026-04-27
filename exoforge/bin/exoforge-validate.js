@@ -20,7 +20,11 @@ import {
   collectTncViolations,
   verifyInvariants,
   auditVerify,
-  workflowStages
+  workflowStages,
+  buildValidationDecision,
+  buildValidationTncFlags,
+  buildValidationInvariantRequest,
+  VALIDATION_TIMESTAMP_ISO
 } from '../lib/constitutional.js';
 
 // ── Parse CLI arguments ─────────────────────────────────────────────────────
@@ -66,29 +70,8 @@ Options:
  */
 function buildTestContext() {
   return {
-    decision: {
-      id: 'validation-check-' + Date.now(),
-      title: 'ExoForge Validation Check',
-      class: 'Routine',
-      state: 'Draft',
-      constitution_hash: '0'.repeat(64),
-      votes: [],
-      evidence: [],
-      created_at: Date.now(),
-      transitions: []
-    },
-    flags: {
-      authority_chain_verified: true,
-      human_gate_satisfied: true,
-      consent_verified: true,
-      identity_verified: true,
-      delegation_unexpired: true,
-      constitutional_binding_valid: true,
-      quorum_met: true,
-      terminal_immutable: true,
-      ai_ceiling_respected: true,
-      evidence_bundle_complete: true
-    }
+    decision: buildValidationDecision(),
+    flags: buildValidationTncFlags()
   };
 }
 
@@ -96,15 +79,7 @@ function buildTestContext() {
  * Build a test invariant request context.
  */
 function buildInvariantContext() {
-  return {
-    actor_did: 'did:exo:exoforge-validator',
-    action: 'validate',
-    resource: 'constitutional-invariants',
-    context: {
-      source: 'exoforge-validate',
-      timestamp: Date.now()
-    }
-  };
+  return buildValidationInvariantRequest();
 }
 
 /**
@@ -115,7 +90,7 @@ function runValidation(args) {
     kernel_loaded: false,
     checks: [],
     summary: { total: 0, passed: 0, failed: 0, skipped: 0 },
-    validated_at: new Date().toISOString()
+    validated_at: VALIDATION_TIMESTAMP_ISO
   };
 
   // Step 0: Load kernel
@@ -245,21 +220,18 @@ function runValidation(args) {
   if (!args.tncOnly) {
     const invCtx = buildInvariantContext();
     const invResult = verifyInvariants(invCtx);
+    const violationCount = invResult.violations ? invResult.violations.length : 0;
     results.checks.push({
       name: 'invariant_enforcement',
       category: 'invariants',
-      status: invResult.ok ? 'pass' : 'fail',
+      status: invResult.ok && violationCount === 0 && invResult.passed ? 'pass' : 'fail',
       details: invResult.ok
-        ? `Invariant enforcement passed (${invResult.violations.length} violations)`
+        ? `Invariant enforcement passed (${violationCount} violations)`
         : `Invariant enforcement failed: ${invResult.violations.join(', ')}`
     });
     results.summary.total++;
-    if (invResult.ok && invResult.violations.length === 0) results.summary.passed++;
-    else if (invResult.ok) {
-      results.summary.passed++; // Passed but with warnings
-    } else {
-      results.summary.failed++;
-    }
+    if (invResult.ok && violationCount === 0 && invResult.passed) results.summary.passed++;
+    else results.summary.failed++;
   }
 
   // Step 4: Audit chain verification (empty chain baseline)

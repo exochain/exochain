@@ -4,8 +4,10 @@ use exo_core::{DeterministicMap, Did, Timestamp};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::{CatapultError, Result};
-use crate::oda::OdaSlot;
+use crate::{
+    error::{CatapultError, Result},
+    oda::OdaSlot,
+};
 
 /// Operational status of an agent within the ODA.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -49,6 +51,67 @@ pub struct CatapultAgent {
     pub commandbase_profile: Option<String>,
 }
 
+/// Caller-supplied deterministic metadata for hiring an agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatapultAgentInput {
+    pub did: Did,
+    pub slot: OdaSlot,
+    pub display_name: String,
+    pub capabilities: Vec<String>,
+    pub status: AgentStatus,
+    pub last_heartbeat: Timestamp,
+    pub budget_spent_cents: u64,
+    pub budget_limit_cents: u64,
+    pub hired_at: Timestamp,
+    pub hired_by: Did,
+    pub commandbase_profile: Option<String>,
+}
+
+impl CatapultAgent {
+    /// Create an agent from caller-supplied lifecycle metadata.
+    ///
+    /// # Errors
+    /// Returns [`CatapultError`] when the input contains placeholder
+    /// timestamps, an empty display name, or an unusable budget limit.
+    pub fn new(input: CatapultAgentInput) -> Result<Self> {
+        validate_agent_input(&input)?;
+        Ok(Self {
+            did: input.did,
+            slot: input.slot,
+            display_name: input.display_name,
+            capabilities: input.capabilities,
+            status: input.status,
+            last_heartbeat: input.last_heartbeat,
+            budget_spent_cents: input.budget_spent_cents,
+            budget_limit_cents: input.budget_limit_cents,
+            hired_at: input.hired_at,
+            hired_by: input.hired_by,
+            commandbase_profile: input.commandbase_profile,
+        })
+    }
+
+    /// Validate externally supplied or deserialized agent metadata.
+    ///
+    /// # Errors
+    /// Returns [`CatapultError`] when the agent contains placeholder
+    /// lifecycle metadata.
+    pub fn validate(&self) -> Result<()> {
+        validate_agent_input(&CatapultAgentInput {
+            did: self.did.clone(),
+            slot: self.slot,
+            display_name: self.display_name.clone(),
+            capabilities: self.capabilities.clone(),
+            status: self.status,
+            last_heartbeat: self.last_heartbeat,
+            budget_spent_cents: self.budget_spent_cents,
+            budget_limit_cents: self.budget_limit_cents,
+            hired_at: self.hired_at,
+            hired_by: self.hired_by.clone(),
+            commandbase_profile: self.commandbase_profile.clone(),
+        })
+    }
+}
+
 /// The ODA roster — a governed map of slots to agents.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentRoster {
@@ -66,6 +129,7 @@ impl AgentRoster {
 
     /// Fill an ODA slot with an agent. Returns an error if the slot is already occupied.
     pub fn fill_slot(&mut self, agent: CatapultAgent) -> Result<()> {
+        agent.validate()?;
         let slot = agent.slot;
         if self.agents.contains_key(&slot) {
             return Err(CatapultError::SlotAlreadyFilled(slot));
@@ -105,7 +169,9 @@ impl AgentRoster {
     /// Whether all 12 ODA slots are filled.
     #[must_use]
     pub fn is_complete(&self) -> bool {
-        OdaSlot::ALL.iter().all(|slot| self.agents.contains_key(slot))
+        OdaSlot::ALL
+            .iter()
+            .all(|slot| self.agents.contains_key(slot))
     }
 
     /// Number of filled slots.
@@ -140,6 +206,26 @@ impl AgentRoster {
         self.agents.iter()
     }
 
+    /// Validate every roster entry and the map key-to-slot invariant.
+    ///
+    /// # Errors
+    /// Returns [`CatapultError`] when an agent contains placeholder metadata
+    /// or is stored under the wrong ODA slot key.
+    pub fn validate(&self) -> Result<()> {
+        for (slot, agent) in &self.agents {
+            if *slot != agent.slot {
+                return Err(CatapultError::InvalidAgent {
+                    reason: format!(
+                        "agent {} stored under slot {slot:?} but declares slot {:?}",
+                        agent.did, agent.slot
+                    ),
+                });
+            }
+            agent.validate()?;
+        }
+        Ok(())
+    }
+
     /// Generate a unique DID for an agent in this newco.
     ///
     /// Format: `did:exo:catapult:<newco_id>:<slot_name>`
@@ -147,6 +233,35 @@ impl AgentRoster {
         let slot_name = format!("{slot:?}").to_ascii_lowercase();
         Did::new(&format!("did:exo:catapult:{newco_id}:{slot_name}"))
     }
+}
+
+fn validate_agent_input(input: &CatapultAgentInput) -> Result<()> {
+    if input.display_name.trim().is_empty() {
+        return Err(CatapultError::InvalidAgent {
+            reason: "agent display name must not be empty".into(),
+        });
+    }
+    if input.last_heartbeat == Timestamp::ZERO {
+        return Err(CatapultError::InvalidAgent {
+            reason: "agent last heartbeat must be caller-supplied HLC".into(),
+        });
+    }
+    if input.hired_at == Timestamp::ZERO {
+        return Err(CatapultError::InvalidAgent {
+            reason: "agent hired_at must be caller-supplied HLC".into(),
+        });
+    }
+    if input.last_heartbeat < input.hired_at {
+        return Err(CatapultError::InvalidAgent {
+            reason: "agent last heartbeat must not precede hired_at".into(),
+        });
+    }
+    if input.budget_limit_cents == 0 {
+        return Err(CatapultError::InvalidAgent {
+            reason: "agent budget limit must be nonzero".into(),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -164,13 +279,85 @@ mod tests {
             display_name: name.into(),
             capabilities: vec!["test".into()],
             status: AgentStatus::Active,
-            last_heartbeat: Timestamp::ZERO,
+            last_heartbeat: Timestamp::new(1_765_000_000_100, 0),
             budget_spent_cents: 0,
             budget_limit_cents: 100_000,
-            hired_at: Timestamp::ZERO,
+            hired_at: Timestamp::new(1_765_000_000_000, 0),
             hired_by: test_did("hr"),
             commandbase_profile: None,
         }
+    }
+
+    #[test]
+    fn agent_new_requires_caller_supplied_lifecycle_metadata() {
+        let agent = CatapultAgent::new(CatapultAgentInput {
+            did: test_did("valid"),
+            slot: OdaSlot::DeepResearcher,
+            display_name: "valid".into(),
+            capabilities: vec!["research".into()],
+            status: AgentStatus::Active,
+            last_heartbeat: Timestamp::new(1_765_000_000_100, 0),
+            budget_spent_cents: 0,
+            budget_limit_cents: 100_000,
+            hired_at: Timestamp::new(1_765_000_000_000, 0),
+            hired_by: test_did("hr"),
+            commandbase_profile: None,
+        })
+        .unwrap();
+
+        assert_eq!(agent.slot, OdaSlot::DeepResearcher);
+        assert_ne!(agent.last_heartbeat, Timestamp::ZERO);
+        assert_ne!(agent.hired_at, Timestamp::ZERO);
+    }
+
+    #[test]
+    fn roster_rejects_placeholder_agent_metadata() {
+        let mut roster = AgentRoster::new();
+        let mut agent = make_agent(OdaSlot::DeepResearcher, "dr1");
+        agent.last_heartbeat = Timestamp::ZERO;
+        assert!(roster.fill_slot(agent).is_err());
+
+        let mut agent = make_agent(OdaSlot::DeepResearcher, "dr1");
+        agent.hired_at = Timestamp::ZERO;
+        assert!(roster.fill_slot(agent).is_err());
+
+        let mut agent = make_agent(OdaSlot::DeepResearcher, "dr1");
+        agent.budget_limit_cents = 0;
+        assert!(roster.fill_slot(agent).is_err());
+    }
+
+    #[test]
+    fn agent_validation_rejects_empty_name_and_regressive_heartbeat() {
+        let mut agent = make_agent(OdaSlot::DeepResearcher, "dr1");
+        agent.display_name = "   ".into();
+        assert!(agent.validate().is_err());
+
+        let mut agent = make_agent(OdaSlot::DeepResearcher, "dr1");
+        agent.last_heartbeat = Timestamp::new(1, 0);
+        assert!(agent.validate().is_err());
+    }
+
+    #[test]
+    fn roster_validate_detects_deserialized_slot_key_mismatch() {
+        let mut roster = AgentRoster::new();
+        let agent = make_agent(OdaSlot::DeepResearcher, "dr1");
+        roster.agents.insert(OdaSlot::HrPeopleOps1, agent);
+
+        assert!(roster.validate().is_err());
+    }
+
+    #[test]
+    fn active_count_ignores_non_active_agents() {
+        let mut roster = AgentRoster::new();
+        roster
+            .fill_slot(make_agent(OdaSlot::DeepResearcher, "dr1"))
+            .unwrap();
+        let mut suspended = make_agent(OdaSlot::HrPeopleOps1, "hr1");
+        suspended.status = AgentStatus::Suspended;
+        roster.fill_slot(suspended).unwrap();
+
+        assert_eq!(roster.active_count(), 1);
+        assert_eq!(roster.iter().count(), 2);
     }
 
     #[test]

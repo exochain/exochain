@@ -1,17 +1,35 @@
 # EXOCHAIN cargo-audit configuration
 #
-# All advisories listed here are pre-existing transitive dependencies that
-# were present in main before Sprint 4.  None are introduced by this PR.
-# Each is explicitly justified in deny.toml (Gate 7).
+# cargo-audit scans the full Cargo.lock (including crates behind
+# disabled features and dev-only transitive deps), so this list is
+# LARGER than deny.toml's ignore list. Both files must be kept in
+# sync with reachability analysis — see deny.toml for the full
+# prose rationale per advisory.
 #
 # Gate 6 (cargo audit --deny warnings) reads this file.
 
 [advisories]
 ignore = [
+    # ring 0.16.x AES panic — debug-only overflow-check path.
     "RUSTSEC-2025-0009",
+    # ring 0.16.x unmaintained.
     "RUSTSEC-2025-0010",
-    "RUSTSEC-2023-0071",
-    "RUSTSEC-2024-0384",
+    # paste unmaintained proc-macro (via async-graphql).
     "RUSTSEC-2024-0436",
+    # rsa Marvin timing attack (via sqlx; mysql feature OFF; path unreachable).
+    "RUSTSEC-2023-0071",
+    # instant unmaintained (via libp2p-gossipsub/futures-ticker; no-std shim).
+    "RUSTSEC-2024-0384",
+    # lru IterMut stacked-borrows (via libp2p-identify; workspace does not
+    # call IterMut).
     "RUSTSEC-2026-0002",
+    # core2 yanked (via multihash/libp2p-core; no safe upstream upgrade).
+    "RUSTSEC-2026-0105",
+    # rustls-webpki URI name-constraint bug (libp2p-tls only; peer-identity
+    # auth, not WebPKI name constraints).
+    "RUSTSEC-2026-0098",
+    # rustls-webpki wildcard name-constraint bug; same reachability.
+    "RUSTSEC-2026-0099",
+    # rustls-webpki CRL-parse panic; workspace does not use CRL paths.
+    "RUSTSEC-2026-0104",
 ]

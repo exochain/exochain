@@ -67,6 +67,8 @@ pub struct AgentPassport {
     pub consent: ConsentProfile,
     /// Trust standing (sanctions, revocation, risk).
     pub standing: StandingProfile,
+    /// Whether the backing 0dentity store is durable across node restarts.
+    pub persistence_ready: bool,
     /// 0dentity sovereign identity score, if available for this DID.
     pub zerodentity: Option<ZerodentityProfile>,
 }
@@ -245,6 +247,7 @@ async fn handle_passport(
         delegations: build_delegation_profile(),
         consent: build_consent_profile(),
         standing,
+        persistence_ready: crate::zerodentity::store::ZerodentityStore::persistence_ready(),
         zerodentity,
     };
 
@@ -510,6 +513,7 @@ mod tests {
         assert_eq!(passport["standing"]["status"], "active");
         assert_eq!(passport["standing"]["revoked"], false);
         assert_eq!(passport["consent"]["default_deny_enforced"], true);
+        assert_eq!(passport["persistence_ready"], false);
     }
 
     #[tokio::test]
@@ -660,12 +664,13 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
         let passport: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        // Verify all 6 top-level trust dimensions are present.
+        // Verify all top-level trust dimensions are present.
         assert!(passport.get("did").is_some());
         assert!(passport.get("identity").is_some());
         assert!(passport.get("delegations").is_some());
         assert!(passport.get("consent").is_some());
         assert!(passport.get("standing").is_some());
+        assert!(passport.get("persistence_ready").is_some());
         // zerodentity is Optional — present as null when no score exists.
         assert!(passport.get("zerodentity").is_some());
 
