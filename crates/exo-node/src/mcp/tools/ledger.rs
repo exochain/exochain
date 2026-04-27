@@ -1,7 +1,9 @@
 //! Ledger MCP tools — event submission, retrieval, Merkle inclusion
 //! verification, and checkpoint queries against the DAG.
 
-use exo_core::{Did, Hash256, Timestamp};
+use exo_core::Hash256;
+#[cfg(feature = "unaudited-mcp-simulation-tools")]
+use exo_core::{Did, hash::hash_structured};
 use serde_json::{Value, json};
 
 use crate::mcp::{
@@ -44,62 +46,83 @@ pub fn submit_event_definition() -> ToolDefinition {
 /// Execute the `exochain_submit_event` tool.
 #[must_use]
 pub fn execute_submit_event(params: &Value, _context: &NodeContext) -> ToolResult {
-    let event_type = match params.get("event_type").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: event_type"}).to_string(),
-            );
-        }
-    };
-    let payload_hex = match params.get("payload_hex").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: payload_hex"}).to_string(),
-            );
-        }
-    };
-    let author_did_str = match params.get("author_did").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: author_did"}).to_string(),
-            );
-        }
-    };
-
-    // Validate DID format.
-    if Did::new(author_did_str).is_err() {
-        return ToolResult::error(
-            json!({"error": format!("invalid DID format: {author_did_str}")}).to_string(),
-        );
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        super::simulation_tool_refused(
+            "exochain_submit_event",
+            "Initiatives/fix-mcp-default-simulation-gates.md",
+            "This MCP tool currently returns simulated DAG acceptance without \
+             appending an event to a live store. Build with \
+             `unaudited-mcp-simulation-tools` only for explicit dev simulation.",
+        )
     }
 
-    // Validate hex payload.
-    if hex::decode(payload_hex).is_err() {
-        return ToolResult::error(
-            json!({"error": "invalid payload_hex: not valid hexadecimal"}).to_string(),
-        );
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let event_type = match params.get("event_type").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: event_type"}).to_string(),
+                );
+            }
+        };
+        let payload_hex = match params.get("payload_hex").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: payload_hex"}).to_string(),
+                );
+            }
+        };
+        let author_did_str = match params.get("author_did").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: author_did"}).to_string(),
+                );
+            }
+        };
+
+        // Validate DID format.
+        if Did::new(author_did_str).is_err() {
+            return ToolResult::error(
+                json!({"error": format!("invalid DID format: {author_did_str}")}).to_string(),
+            );
+        }
+
+        // Validate hex payload.
+        if hex::decode(payload_hex).is_err() {
+            return ToolResult::error(
+                json!({"error": "invalid payload_hex: not valid hexadecimal"}).to_string(),
+            );
+        }
+
+        let event_id = match hash_structured(&(
+            "exo.mcp.ledger.submit_event.v1",
+            event_type,
+            payload_hex,
+            author_did_str,
+        )) {
+            Ok(hash) => hash,
+            Err(e) => {
+                return ToolResult::error(
+                    json!({"error": format!("event ID serialization failed: {e}")}).to_string(),
+                );
+            }
+        };
+
+        let response = json!({
+            "event_id": event_id.to_string(),
+            "event_type": event_type,
+            "author_did": author_did_str,
+            "status": "accepted",
+            "submitted_at": Value::Null,
+            "submitted_at_source": "simulation_no_persistence_timestamp",
+        });
+        ToolResult::success(response.to_string())
     }
-
-    let now = Timestamp::now_utc();
-
-    // Generate event_id via BLAKE3 hash of type+payload+author+timestamp.
-    let hash_input = format!(
-        "{}:{}:{}:{}:{}",
-        event_type, payload_hex, author_did_str, now.physical_ms, now.logical
-    );
-    let event_id = Hash256::digest(hash_input.as_bytes());
-
-    let response = json!({
-        "event_id": event_id.to_string(),
-        "event_type": event_type,
-        "author_did": author_did_str,
-        "status": "accepted",
-        "submitted_at": format!("{}:{}", now.physical_ms, now.logical),
-    });
-    ToolResult::success(response.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -146,16 +169,13 @@ pub fn execute_get_event(params: &Value, context: &NodeContext) -> ToolResult {
     }
 
     // When a DAG store is attached, we differentiate the response so
-    // callers know the lookup was attempted against real state. Full
-    // event retrieval wiring lands in a subsequent change — for now we
-    // surface that a store is available but the lookup path is not yet
-    // implemented.
+    // callers know the lookup was attempted against real state.
     if context.has_store() {
         let response = json!({
             "event_hash": event_hash,
             "found": false,
             "status": "known_store_but_lookup_not_yet_implemented",
-            "suggestion": "Store is attached; direct event retrieval will be wired in a future change.",
+            "suggestion": "Store is attached; this MCP tool cannot retrieve event bodies.",
         });
         return ToolResult::success(response.to_string());
     }
@@ -312,8 +332,6 @@ pub fn get_checkpoint_definition() -> ToolDefinition {
 pub fn execute_get_checkpoint(params: &Value, context: &NodeContext) -> ToolResult {
     let _ = params; // No required params.
 
-    let now = Timestamp::now_utc();
-
     // Prefer live store-reported height if we have one.
     if let Some(store) = context.store.as_ref() {
         let height = match store.lock() {
@@ -346,7 +364,8 @@ pub fn execute_get_checkpoint(params: &Value, context: &NodeContext) -> ToolResu
             "round": round,
             "validator_count": validator_count,
             "status": "live",
-            "last_finalized_at": format!("{}:{}", now.physical_ms, now.logical),
+            "last_finalized_at": Value::Null,
+            "last_finalized_at_source": "unavailable_from_attached_store",
         });
         return ToolResult::success(response.to_string());
     }
@@ -356,8 +375,9 @@ pub fn execute_get_checkpoint(params: &Value, context: &NodeContext) -> ToolResu
         "round": 0,
         "validator_count": 0,
         "status": "no_store_available",
-        "last_finalized_at": format!("{}:{}", now.physical_ms, now.logical),
-        "note": "No DAG store attached to this MCP server. Returning genesis-style template.",
+        "last_finalized_at": Value::Null,
+        "last_finalized_at_source": "unavailable_no_store",
+        "note": "No DAG store attached to this MCP server. Returning non-finalized status.",
     });
     ToolResult::success(response.to_string())
 }
@@ -380,6 +400,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_submit_event_success() {
         let params = json!({
@@ -394,6 +415,22 @@ mod tests {
         assert_eq!(v["event_type"], "transfer");
         assert_eq!(v["author_did"], "did:exo:alice");
         assert_eq!(v["status"], "accepted");
+    }
+
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_submit_event_refuses_by_default() {
+        let params = json!({
+            "event_type": "transfer",
+            "payload_hex": "deadbeef",
+            "author_did": "did:exo:alice",
+        });
+        let result = execute_submit_event(&params, &NodeContext::empty());
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_simulation_tool_disabled"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("fix-mcp-default-simulation-gates.md"));
     }
 
     #[test]
@@ -531,5 +568,14 @@ mod tests {
         assert_eq!(v["round"], 0);
         assert_eq!(v["validator_count"], 0);
         assert_eq!(v["status"], "no_store_available");
+    }
+
+    #[test]
+    fn execute_get_checkpoint_no_store_does_not_fabricate_timestamp() {
+        let result = execute_get_checkpoint(&json!({}), &NodeContext::empty());
+        assert!(!result.is_error);
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+        assert!(v["last_finalized_at"].is_null());
+        assert_eq!(v["last_finalized_at_source"], "unavailable_no_store");
     }
 }

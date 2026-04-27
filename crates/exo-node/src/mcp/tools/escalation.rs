@@ -1,7 +1,7 @@
 //! Escalation MCP tools — threat evaluation, case escalation, triage,
 //! and feedback recording for the detection-to-response pipeline.
 
-use exo_core::{Hash256, Timestamp};
+use exo_core::hash::hash_structured;
 use serde_json::{Value, json};
 
 use crate::mcp::{
@@ -68,6 +68,7 @@ pub fn execute_evaluate_threat(params: &Value, _context: &NodeContext) -> ToolRe
     let mut total_severity: i64 = 0;
     let mut max_severity: i64 = 0;
     let mut signal_summaries: Vec<Value> = Vec::new();
+    let mut signal_inputs: Vec<(String, i64, String)> = Vec::new();
 
     for (i, signal) in signals.iter().enumerate() {
         let signal_type = match signal.get("type").and_then(Value::as_str) {
@@ -112,6 +113,7 @@ pub fn execute_evaluate_threat(params: &Value, _context: &NodeContext) -> ToolRe
             "severity": severity,
             "source": source,
         }));
+        signal_inputs.push((signal_type.to_owned(), severity, source.to_owned()));
     }
 
     // Integer average: truncated division is fine for a threat bucket.
@@ -129,17 +131,20 @@ pub fn execute_evaluate_threat(params: &Value, _context: &NodeContext) -> ToolRe
         "low"
     };
 
-    let now = Timestamp::now_utc();
-    let assessment_id = Hash256::digest(
-        format!(
-            "threat:{}:{}:{}:{}",
-            signals.len(),
-            max_severity,
-            now.physical_ms,
-            now.logical
-        )
-        .as_bytes(),
-    );
+    let assessment_id = match hash_structured(&(
+        "exo.mcp.escalation.threat.v1",
+        &signal_inputs,
+        avg_severity,
+        max_severity,
+        threat_level,
+    )) {
+        Ok(hash) => hash,
+        Err(e) => {
+            return ToolResult::error(
+                json!({"error": format!("assessment ID serialization failed: {e}")}).to_string(),
+            );
+        }
+    };
 
     let response = json!({
         "assessment_id": assessment_id.to_string(),
@@ -148,7 +153,8 @@ pub fn execute_evaluate_threat(params: &Value, _context: &NodeContext) -> ToolRe
         "aggregate_severity": avg_severity,
         "max_severity": max_severity,
         "threat_level": threat_level,
-        "assessed_at": format!("{}:{}", now.physical_ms, now.logical),
+        "assessed_at": Value::Null,
+        "assessed_at_source": "unavailable_no_escalation_store",
     });
     ToolResult::success(response.to_string())
 }
@@ -191,60 +197,83 @@ pub fn escalate_case_definition() -> ToolDefinition {
 /// Execute the `exochain_escalate_case` tool.
 #[must_use]
 pub fn execute_escalate_case(params: &Value, _context: &NodeContext) -> ToolResult {
-    let threat_assessment_id = match params.get("threat_assessment_id").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: threat_assessment_id"}).to_string(),
-            );
-        }
-    };
-    let escalation_reason = match params.get("escalation_reason").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: escalation_reason"}).to_string(),
-            );
-        }
-    };
-    let priority = match params.get("priority").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: priority"}).to_string(),
-            );
-        }
-    };
-
-    let valid_priorities = ["low", "medium", "high", "critical"];
-    if !valid_priorities.contains(&priority) {
-        return ToolResult::error(
-            json!({"error": format!(
-                "invalid priority '{}': must be one of {:?}",
-                priority, valid_priorities
-            )})
-            .to_string(),
-        );
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        super::simulation_tool_refused(
+            "exochain_escalate_case",
+            "Initiatives/fix-mcp-default-simulation-gates.md",
+            "This MCP tool currently returns a simulated escalation case without \
+             persisting escalation state. Build with \
+             `unaudited-mcp-simulation-tools` only for explicit dev simulation.",
+        )
     }
 
-    let now = Timestamp::now_utc();
-    let case_id = Hash256::digest(
-        format!(
-            "case:{}:{}:{}:{}",
-            threat_assessment_id, priority, now.physical_ms, now.logical
-        )
-        .as_bytes(),
-    );
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let threat_assessment_id = match params.get("threat_assessment_id").and_then(Value::as_str)
+        {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: threat_assessment_id"})
+                        .to_string(),
+                );
+            }
+        };
+        let escalation_reason = match params.get("escalation_reason").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: escalation_reason"}).to_string(),
+                );
+            }
+        };
+        let priority = match params.get("priority").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: priority"}).to_string(),
+                );
+            }
+        };
 
-    let response = json!({
-        "case_id": case_id.to_string(),
-        "threat_assessment_id": threat_assessment_id,
-        "escalation_reason": escalation_reason,
-        "priority": priority,
-        "status": "open",
-        "escalated_at": format!("{}:{}", now.physical_ms, now.logical),
-    });
-    ToolResult::success(response.to_string())
+        let valid_priorities = ["low", "medium", "high", "critical"];
+        if !valid_priorities.contains(&priority) {
+            return ToolResult::error(
+                json!({"error": format!(
+                    "invalid priority '{}': must be one of {:?}",
+                    priority, valid_priorities
+                )})
+                .to_string(),
+            );
+        }
+
+        let case_id = match hash_structured(&(
+            "exo.mcp.escalation.case.v1",
+            threat_assessment_id,
+            escalation_reason,
+            priority,
+        )) {
+            Ok(hash) => hash,
+            Err(e) => {
+                return ToolResult::error(
+                    json!({"error": format!("case ID serialization failed: {e}")}).to_string(),
+                );
+            }
+        };
+
+        let response = json!({
+            "case_id": case_id.to_string(),
+            "threat_assessment_id": threat_assessment_id,
+            "escalation_reason": escalation_reason,
+            "priority": priority,
+            "status": "open",
+            "escalated_at": Value::Null,
+            "escalated_at_source": "simulation_no_persistence_timestamp",
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -284,50 +313,71 @@ pub fn triage_definition() -> ToolDefinition {
 /// Execute the `exochain_triage` tool.
 #[must_use]
 pub fn execute_triage(params: &Value, _context: &NodeContext) -> ToolResult {
-    let case_id = match params.get("case_id").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: case_id"}).to_string(),
-            );
-        }
-    };
-    let assessment = match params.get("assessment").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: assessment"}).to_string(),
-            );
-        }
-    };
-    let recommended_action = match params.get("recommended_action").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: recommended_action"}).to_string(),
-            );
-        }
-    };
-
-    let now = Timestamp::now_utc();
-    let triage_id = Hash256::digest(
-        format!(
-            "triage:{}:{}:{}:{}",
-            case_id, recommended_action, now.physical_ms, now.logical
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        super::simulation_tool_refused(
+            "exochain_triage",
+            "Initiatives/fix-mcp-default-simulation-gates.md",
+            "This MCP tool currently returns a simulated triage decision without \
+             persisting escalation state. Build with \
+             `unaudited-mcp-simulation-tools` only for explicit dev simulation.",
         )
-        .as_bytes(),
-    );
+    }
 
-    let response = json!({
-        "triage_id": triage_id.to_string(),
-        "case_id": case_id,
-        "assessment": assessment,
-        "recommended_action": recommended_action,
-        "decision": "action_approved",
-        "status": "triaged",
-        "triaged_at": format!("{}:{}", now.physical_ms, now.logical),
-    });
-    ToolResult::success(response.to_string())
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let case_id = match params.get("case_id").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: case_id"}).to_string(),
+                );
+            }
+        };
+        let assessment = match params.get("assessment").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: assessment"}).to_string(),
+                );
+            }
+        };
+        let recommended_action = match params.get("recommended_action").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: recommended_action"}).to_string(),
+                );
+            }
+        };
+
+        let triage_id = match hash_structured(&(
+            "exo.mcp.escalation.triage.v1",
+            case_id,
+            assessment,
+            recommended_action,
+        )) {
+            Ok(hash) => hash,
+            Err(e) => {
+                return ToolResult::error(
+                    json!({"error": format!("triage ID serialization failed: {e}")}).to_string(),
+                );
+            }
+        };
+
+        let response = json!({
+            "triage_id": triage_id.to_string(),
+            "case_id": case_id,
+            "assessment": assessment,
+            "recommended_action": recommended_action,
+            "decision": "action_approved",
+            "status": "triaged",
+            "triaged_at": Value::Null,
+            "triaged_at_source": "simulation_no_persistence_timestamp",
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -367,54 +417,72 @@ pub fn record_feedback_definition() -> ToolDefinition {
 /// Execute the `exochain_record_feedback` tool.
 #[must_use]
 pub fn execute_record_feedback(params: &Value, _context: &NodeContext) -> ToolResult {
-    let case_id = match params.get("case_id").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: case_id"}).to_string(),
-            );
-        }
-    };
-    let outcome = match params.get("outcome").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: outcome"}).to_string(),
-            );
-        }
-    };
-
-    let valid_outcomes = ["true_positive", "false_positive", "inconclusive"];
-    if !valid_outcomes.contains(&outcome) {
-        return ToolResult::error(
-            json!({"error": format!(
-                "invalid outcome '{}': must be one of {:?}",
-                outcome, valid_outcomes
-            )})
-            .to_string(),
-        );
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        super::simulation_tool_refused(
+            "exochain_record_feedback",
+            "Initiatives/fix-mcp-default-simulation-gates.md",
+            "This MCP tool currently returns simulated feedback recording without \
+             persisting escalation state. Build with \
+             `unaudited-mcp-simulation-tools` only for explicit dev simulation.",
+        )
     }
 
-    let notes = params.get("notes").and_then(Value::as_str).unwrap_or("");
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let case_id = match params.get("case_id").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: case_id"}).to_string(),
+                );
+            }
+        };
+        let outcome = match params.get("outcome").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: outcome"}).to_string(),
+                );
+            }
+        };
 
-    let now = Timestamp::now_utc();
-    let feedback_id = Hash256::digest(
-        format!(
-            "feedback:{}:{}:{}:{}",
-            case_id, outcome, now.physical_ms, now.logical
-        )
-        .as_bytes(),
-    );
+        let valid_outcomes = ["true_positive", "false_positive", "inconclusive"];
+        if !valid_outcomes.contains(&outcome) {
+            return ToolResult::error(
+                json!({"error": format!(
+                    "invalid outcome '{}': must be one of {:?}",
+                    outcome, valid_outcomes
+                )})
+                .to_string(),
+            );
+        }
 
-    let response = json!({
-        "feedback_id": feedback_id.to_string(),
-        "case_id": case_id,
-        "outcome": outcome,
-        "notes": notes,
-        "status": "recorded",
-        "recorded_at": format!("{}:{}", now.physical_ms, now.logical),
-    });
-    ToolResult::success(response.to_string())
+        let notes = params.get("notes").and_then(Value::as_str).unwrap_or("");
+
+        let feedback_id =
+            match hash_structured(&("exo.mcp.escalation.feedback.v1", case_id, outcome, notes)) {
+                Ok(hash) => hash,
+                Err(e) => {
+                    return ToolResult::error(
+                        json!({"error": format!("feedback ID serialization failed: {e}")})
+                            .to_string(),
+                    );
+                }
+            };
+
+        let response = json!({
+            "feedback_id": feedback_id.to_string(),
+            "case_id": case_id,
+            "outcome": outcome,
+            "notes": notes,
+            "status": "recorded",
+            "recorded_at": Value::Null,
+            "recorded_at_source": "simulation_no_persistence_timestamp",
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ===========================================================================
@@ -450,6 +518,7 @@ mod tests {
         assert_eq!(v["max_severity"], 7);
         assert_eq!(v["threat_level"], "high");
         assert!(v["assessment_id"].as_str().is_some());
+        assert!(v["assessed_at"].is_null());
     }
 
     #[test]
@@ -463,6 +532,25 @@ mod tests {
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["threat_level"], "critical");
+    }
+
+    #[test]
+    fn execute_evaluate_threat_is_deterministic() {
+        let params = json!({
+            "signals": [
+                {"type": "anomaly", "severity": 7, "source": "ids"},
+                {"type": "policy_violation", "severity": 3, "source": "audit_log"},
+            ],
+        });
+        let first = execute_evaluate_threat(&params, &NodeContext::empty());
+        let second = execute_evaluate_threat(&params, &NodeContext::empty());
+        assert!(!first.is_error);
+        assert!(!second.is_error);
+        let first_json: Value = serde_json::from_str(first.content[0].text()).expect("valid JSON");
+        let second_json: Value =
+            serde_json::from_str(second.content[0].text()).expect("valid JSON");
+        assert_eq!(first_json["assessment_id"], second_json["assessment_id"]);
+        assert_eq!(first_json["assessed_at"], second_json["assessed_at"]);
     }
 
     #[test]
@@ -486,6 +574,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_escalate_case_success() {
         let params = json!({
@@ -499,6 +588,22 @@ mod tests {
         assert_eq!(v["priority"], "high");
         assert_eq!(v["status"], "open");
         assert!(v["case_id"].as_str().is_some());
+    }
+
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_escalate_case_refuses_by_default() {
+        let params = json!({
+            "threat_assessment_id": "ta_abc123",
+            "escalation_reason": "Multiple high-severity signals detected",
+            "priority": "high",
+        });
+        let result = execute_escalate_case(&params, &NodeContext::empty());
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_simulation_tool_disabled"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("fix-mcp-default-simulation-gates.md"));
     }
 
     #[test]
@@ -530,6 +635,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_triage_success() {
         let params = json!({
@@ -544,6 +650,22 @@ mod tests {
         assert_eq!(v["decision"], "action_approved");
         assert_eq!(v["status"], "triaged");
         assert!(v["triage_id"].as_str().is_some());
+    }
+
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_triage_refuses_by_default() {
+        let params = json!({
+            "case_id": "case_abc",
+            "assessment": "Confirmed unauthorized access attempt",
+            "recommended_action": "block_source_ip",
+        });
+        let result = execute_triage(&params, &NodeContext::empty());
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_simulation_tool_disabled"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("fix-mcp-default-simulation-gates.md"));
     }
 
     #[test]
@@ -564,6 +686,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_record_feedback_success() {
         let params = json!({
@@ -579,6 +702,22 @@ mod tests {
         assert!(v["feedback_id"].as_str().is_some());
     }
 
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_record_feedback_refuses_by_default() {
+        let params = json!({
+            "case_id": "case_abc",
+            "outcome": "true_positive",
+            "notes": "Confirmed breach via log analysis",
+        });
+        let result = execute_record_feedback(&params, &NodeContext::empty());
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_simulation_tool_disabled"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("fix-mcp-default-simulation-gates.md"));
+    }
+
     #[test]
     fn execute_record_feedback_invalid_outcome() {
         let params = json!({"case_id": "case_abc", "outcome": "maybe"});
@@ -586,6 +725,7 @@ mod tests {
         assert!(result.is_error);
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_record_feedback_no_notes() {
         let params = json!({"case_id": "case_abc", "outcome": "false_positive"});

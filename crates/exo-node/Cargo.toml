@@ -117,15 +117,13 @@ default = []
 # quorum or on-chain record."
 unaudited-admin-governance-shortcut = []
 
-# GAP (Onyx pass 3, RED #2): several MCP governance tools
-# (exochain_create_decision, exochain_cast_vote,
-# exochain_propose_amendment) return `{"recorded": true, ...}` /
-# `{"decision_id": <hash>}` responses without persisting to any
-# store, without invoking the reactor, without any network
-# broadcast — pure simulation. Combined with the MCP middleware's
-# hardcoded-true constitutional context, this means AI agents
-# calling these tools get "success" signals for actions that have
-# zero governance-fabric effect.
+# GAP (Onyx pass 3, RED #2 and follow-on trust-surface scans): several
+# MCP tools return truthy-shaped responses without persisting to any
+# store, invoking the reactor, appending to the DAG, delivering a
+# message, or recording consent/escalation state — pure simulation.
+# Combined with the MCP middleware's hardcoded-true constitutional
+# context, this means AI agents calling these tools get "success"
+# signals for actions that have zero governance-fabric effect.
 #
 # Mitigation: tools don't mutate real state, so blast radius is
 # "AI agents acting on false success signals" — not state

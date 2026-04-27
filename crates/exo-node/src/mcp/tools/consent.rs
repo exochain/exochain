@@ -1,7 +1,9 @@
 //! Consent MCP tools — bailment proposal, consent checking, bailment listing,
 //! and bailment termination.
 
-use exo_core::{Did, Hash256, Timestamp};
+use exo_core::Did;
+#[cfg(feature = "unaudited-mcp-simulation-tools")]
+use exo_core::hash::hash_structured;
 use serde_json::{Value, json};
 
 use crate::mcp::{
@@ -35,7 +37,8 @@ pub fn propose_bailment_definition() -> ToolDefinition {
                     "description": "Data scope for the bailment (e.g. \"data:medical:records\")."
                 },
                 "duration_hours": {
-                    "type": "number",
+                    "type": "integer",
+                    "minimum": 1,
                     "description": "Duration in hours before the bailment expires (default: 24)."
                 }
             },
@@ -48,66 +51,95 @@ pub fn propose_bailment_definition() -> ToolDefinition {
 /// Execute the `exochain_propose_bailment` tool.
 #[must_use]
 pub fn execute_propose_bailment(params: &Value, _context: &NodeContext) -> ToolResult {
-    let bailor_str = match params.get("bailor_did").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: bailor_did"}).to_string(),
-            );
-        }
-    };
-    let bailee_str = match params.get("bailee_did").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: bailee_did"}).to_string(),
-            );
-        }
-    };
-    let scope = match params.get("scope").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: scope"}).to_string(),
-            );
-        }
-    };
-
-    if Did::new(bailor_str).is_err() {
-        return ToolResult::error(
-            json!({"error": format!("invalid bailor DID format: {bailor_str}")}).to_string(),
-        );
-    }
-    if Did::new(bailee_str).is_err() {
-        return ToolResult::error(
-            json!({"error": format!("invalid bailee DID format: {bailee_str}")}).to_string(),
-        );
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        super::simulation_tool_refused(
+            "exochain_propose_bailment",
+            "Initiatives/fix-mcp-default-simulation-gates.md",
+            "This MCP tool currently returns a simulated bailment proposal without \
+             persisting consent state. Build with `unaudited-mcp-simulation-tools` \
+             only for explicit dev simulation.",
+        )
     }
 
-    let duration_hours = params
-        .get("duration_hours")
-        .and_then(Value::as_f64)
-        .unwrap_or(24.0) as u64;
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let bailor_str = match params.get("bailor_did").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: bailor_did"}).to_string(),
+                );
+            }
+        };
+        let bailee_str = match params.get("bailee_did").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: bailee_did"}).to_string(),
+                );
+            }
+        };
+        let scope = match params.get("scope").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: scope"}).to_string(),
+                );
+            }
+        };
 
-    let now = Timestamp::now_utc();
+        if Did::new(bailor_str).is_err() {
+            return ToolResult::error(
+                json!({"error": format!("invalid bailor DID format: {bailor_str}")}).to_string(),
+            );
+        }
+        if Did::new(bailee_str).is_err() {
+            return ToolResult::error(
+                json!({"error": format!("invalid bailee DID format: {bailee_str}")}).to_string(),
+            );
+        }
 
-    // Generate a deterministic proposal ID from the inputs.
-    let id_input = format!("{bailor_str}:{bailee_str}:{scope}:{}", now.physical_ms);
-    let proposal_id = Hash256::digest(id_input.as_bytes()).to_string();
+        let duration_hours = match params.get("duration_hours") {
+            Some(value) => match value.as_u64() {
+                Some(hours) if hours > 0 => hours,
+                _ => {
+                    return ToolResult::error(
+                        json!({"error": "duration_hours must be a positive integer"}).to_string(),
+                    );
+                }
+            },
+            None => 24,
+        };
 
-    let expires_ms = now
-        .physical_ms
-        .saturating_add(duration_hours.saturating_mul(3_600_000));
+        let proposal_id = match hash_structured(&(
+            "exo.mcp.consent.proposal.v1",
+            bailor_str,
+            bailee_str,
+            scope,
+            duration_hours,
+        )) {
+            Ok(hash) => hash.to_string(),
+            Err(e) => {
+                return ToolResult::error(
+                    json!({"error": format!("proposal ID serialization failed: {e}")}).to_string(),
+                );
+            }
+        };
 
-    let response = json!({
-        "proposal_id": proposal_id,
-        "bailor": bailor_str,
-        "bailee": bailee_str,
-        "scope": scope,
-        "status": "proposed",
-        "expires_at": format!("{expires_ms}:0"),
-    });
-    ToolResult::success(response.to_string())
+        let response = json!({
+            "proposal_id": proposal_id,
+            "bailor": bailor_str,
+            "bailee": bailee_str,
+            "scope": scope,
+            "status": "proposed",
+            "expires_at": Value::Null,
+            "expires_at_source": "simulation_no_start_timestamp",
+            "expires_after_hours": duration_hours,
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -275,39 +307,55 @@ pub fn terminate_bailment_definition() -> ToolDefinition {
 /// Execute the `exochain_terminate_bailment` tool.
 #[must_use]
 pub fn execute_terminate_bailment(params: &Value, _context: &NodeContext) -> ToolResult {
-    let bailment_id = match params.get("bailment_id").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: bailment_id"}).to_string(),
-            );
-        }
-    };
-    let reason = match params.get("reason").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: reason"}).to_string(),
-            );
-        }
-    };
-
-    if bailment_id.is_empty() {
-        return ToolResult::error(json!({"error": "bailment_id must not be empty"}).to_string());
-    }
-    if reason.is_empty() {
-        return ToolResult::error(json!({"error": "reason must not be empty"}).to_string());
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        super::simulation_tool_refused(
+            "exochain_terminate_bailment",
+            "Initiatives/fix-mcp-default-simulation-gates.md",
+            "This MCP tool currently returns a simulated bailment termination \
+             without mutating consent state. Build with \
+             `unaudited-mcp-simulation-tools` only for explicit dev simulation.",
+        )
     }
 
-    let now = Timestamp::now_utc();
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let bailment_id = match params.get("bailment_id").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: bailment_id"}).to_string(),
+                );
+            }
+        };
+        let reason = match params.get("reason").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: reason"}).to_string(),
+                );
+            }
+        };
 
-    let response = json!({
-        "bailment_id": bailment_id,
-        "status": "terminated",
-        "reason": reason,
-        "terminated_at": format!("{}:{}", now.physical_ms, now.logical),
-    });
-    ToolResult::success(response.to_string())
+        if bailment_id.is_empty() {
+            return ToolResult::error(
+                json!({"error": "bailment_id must not be empty"}).to_string(),
+            );
+        }
+        if reason.is_empty() {
+            return ToolResult::error(json!({"error": "reason must not be empty"}).to_string());
+        }
+
+        let response = json!({
+            "bailment_id": bailment_id,
+            "status": "terminated",
+            "reason": reason,
+            "terminated_at": Value::Null,
+            "terminated_at_source": "simulation_no_persistence_timestamp",
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ===========================================================================
@@ -327,6 +375,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_propose_bailment_success() {
         let result = execute_propose_bailment(
@@ -344,7 +393,26 @@ mod tests {
         assert_eq!(v["scope"], "data:medical");
         assert_eq!(v["status"], "proposed");
         assert!(!v["proposal_id"].as_str().expect("id").is_empty());
-        assert!(v["expires_at"].as_str().is_some());
+        assert!(v["expires_at"].is_null());
+        assert_eq!(v["expires_after_hours"], 24);
+    }
+
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_propose_bailment_refuses_by_default() {
+        let result = execute_propose_bailment(
+            &json!({
+                "bailor_did": "did:exo:alice",
+                "bailee_did": "did:exo:bob",
+                "scope": "data:medical",
+            }),
+            &NodeContext::empty(),
+        );
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_simulation_tool_disabled"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("fix-mcp-default-simulation-gates.md"));
     }
 
     #[test]
@@ -474,6 +542,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_terminate_bailment_success() {
         let result = execute_terminate_bailment(
@@ -488,7 +557,24 @@ mod tests {
         assert_eq!(v["bailment_id"], "abc123");
         assert_eq!(v["status"], "terminated");
         assert_eq!(v["reason"], "data access no longer needed");
-        assert!(v["terminated_at"].as_str().is_some());
+        assert!(v["terminated_at"].is_null());
+    }
+
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_terminate_bailment_refuses_by_default() {
+        let result = execute_terminate_bailment(
+            &json!({
+                "bailment_id": "abc123",
+                "reason": "data access no longer needed",
+            }),
+            &NodeContext::empty(),
+        );
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_simulation_tool_disabled"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("fix-mcp-default-simulation-gates.md"));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Identity MCP tools — DID creation, resolution, risk assessment, signature
 //! verification, and agent passport retrieval.
 
-use exo_core::{Did, Hash256, Timestamp, crypto};
+use exo_core::{Did, Hash256, crypto};
 use serde_json::{Value, json};
 
 use crate::mcp::{
@@ -195,13 +195,13 @@ pub fn execute_assess_risk(params: &Value, _context: &NodeContext) -> ToolResult
         })
         .collect();
 
-    let now = Timestamp::now_utc();
     let response = json!({
         "did": did_str,
         "risk_score": risk_score,
         "risk_level": risk_level,
         "factors": factors,
-        "assessed_at": format!("{}:{}", now.physical_ms, now.logical),
+        "assessed_at": Value::Null,
+        "assessed_at_source": "unavailable_no_risk_store",
     });
     ToolResult::success(response.to_string())
 }
@@ -479,6 +479,8 @@ mod tests {
         assert_eq!(v["risk_score"], 750);
         assert_eq!(v["risk_level"], "high");
         assert_eq!(v["factors"].as_array().expect("factors").len(), 0);
+        assert!(v["assessed_at"].is_null());
+        assert_eq!(v["assessed_at_source"], "unavailable_no_risk_store");
     }
 
     #[test]

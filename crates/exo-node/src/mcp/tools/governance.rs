@@ -24,7 +24,7 @@
 #![allow(clippy::needless_return)]
 
 #[cfg_attr(not(feature = "unaudited-mcp-simulation-tools"), allow(unused_imports))]
-use exo_core::{Did, Hash256, Timestamp};
+use exo_core::{Did, hash::hash_structured};
 use serde_json::{Value, json};
 
 use crate::mcp::{
@@ -149,22 +149,35 @@ pub fn execute_create_decision(params: &Value, _context: &NodeContext) -> ToolRe
             );
         }
 
-        let _decision_class = params
+        let decision_class = params
             .get("decision_class")
             .and_then(Value::as_str)
             .unwrap_or("standard");
 
-        let now = Timestamp::now_utc();
-        let id_input = format!("{title}:{proposer_str}:{}", now.physical_ms);
-        let decision_id = Hash256::digest(id_input.as_bytes()).to_string();
+        let decision_id = match hash_structured(&(
+            "exo.mcp.governance.decision.v1",
+            title,
+            description,
+            proposer_str,
+            decision_class,
+        )) {
+            Ok(hash) => hash.to_string(),
+            Err(e) => {
+                return ToolResult::error(
+                    json!({"error": format!("failed to hash decision payload: {e}")}).to_string(),
+                );
+            }
+        };
 
         let response = json!({
             "decision_id": decision_id,
             "title": title,
             "description": description,
             "proposer": proposer_str,
+            "decision_class": decision_class,
             "status": "proposed",
-            "created_at": format!("{}:{}", now.physical_ms, now.logical),
+            "created_at": null,
+            "created_at_source": "simulation_no_persistence_timestamp",
         });
         ToolResult::success(response.to_string())
     } // end cfg(feature = "unaudited-mcp-simulation-tools") block
@@ -495,9 +508,20 @@ pub fn execute_propose_amendment(params: &Value, _context: &NodeContext) -> Tool
         );
         }
 
-        let now = Timestamp::now_utc();
-        let id_input = format!("amendment:{title}:{proposer_str}:{}", now.physical_ms);
-        let amendment_id = Hash256::digest(id_input.as_bytes()).to_string();
+        let amendment_id = match hash_structured(&(
+            "exo.mcp.governance.amendment.v1",
+            title,
+            description,
+            proposer_str,
+            target,
+        )) {
+            Ok(hash) => hash.to_string(),
+            Err(e) => {
+                return ToolResult::error(
+                    json!({"error": format!("failed to hash amendment payload: {e}")}).to_string(),
+                );
+            }
+        };
 
         let response = json!({
             "amendment_id": amendment_id,
@@ -513,6 +537,8 @@ pub fn execute_propose_amendment(params: &Value, _context: &NodeContext) -> Tool
                 "security_audit_required": true,
             },
             "status": "draft",
+            "proposed_at": null,
+            "proposed_at_source": "simulation_no_persistence_timestamp",
             "warning": "Constitutional amendments require the highest governance threshold. See spec \u{00a7}3A.3.2.",
         });
         ToolResult::success(response.to_string())
@@ -539,20 +565,27 @@ mod tests {
     #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_create_decision_success() {
-        let result = execute_create_decision(
-            &json!({
+        let params = json!({
                 "title": "Approve data sharing policy",
                 "description": "Allow cross-org medical data sharing under bailment.",
                 "proposer_did": "did:exo:alice",
-            }),
-            &NodeContext::empty(),
-        );
+        });
+        let result = execute_create_decision(&params, &NodeContext::empty());
+        let repeat = execute_create_decision(&params, &NodeContext::empty());
         assert!(!result.is_error);
+        assert!(!repeat.is_error);
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+        let repeat_v: Value = serde_json::from_str(repeat.content[0].text()).expect("valid JSON");
         assert_eq!(v["title"], "Approve data sharing policy");
         assert_eq!(v["proposer"], "did:exo:alice");
         assert_eq!(v["status"], "proposed");
         assert!(!v["decision_id"].as_str().expect("id").is_empty());
+        assert_eq!(v["decision_id"], repeat_v["decision_id"]);
+        assert!(v["created_at"].is_null());
+        assert_eq!(
+            v["created_at_source"],
+            "simulation_no_persistence_timestamp"
+        );
     }
 
     #[cfg(feature = "unaudited-mcp-simulation-tools")]
@@ -711,20 +744,27 @@ mod tests {
     #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_propose_amendment_success() {
-        let result = execute_propose_amendment(
-            &json!({
+        let params = json!({
                 "title": "Add quantum-safe threshold signatures",
                 "description": "Extend the constitutional invariant set to require ML-DSA-65 for kernel modification quorum.",
                 "proposer_did": "did:exo:alice",
                 "target": "constitution",
-            }),
-            &NodeContext::empty(),
-        );
+        });
+        let result = execute_propose_amendment(&params, &NodeContext::empty());
+        let repeat = execute_propose_amendment(&params, &NodeContext::empty());
         assert!(!result.is_error);
+        assert!(!repeat.is_error);
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+        let repeat_v: Value = serde_json::from_str(repeat.content[0].text()).expect("valid JSON");
         assert_eq!(v["target"], "constitution");
         assert_eq!(v["status"], "draft");
         assert!(!v["amendment_id"].as_str().expect("id").is_empty());
+        assert_eq!(v["amendment_id"], repeat_v["amendment_id"]);
+        assert!(v["proposed_at"].is_null());
+        assert_eq!(
+            v["proposed_at_source"],
+            "simulation_no_persistence_timestamp"
+        );
         assert_eq!(v["requirements"]["validator_consensus"], "unanimous");
         assert_eq!(v["requirements"]["formal_proof_required"], true);
         assert!(

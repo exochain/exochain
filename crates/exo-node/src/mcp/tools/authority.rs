@@ -6,8 +6,10 @@
 // mutually-exclusive `#[cfg(feature = "...")]` branch.
 #![allow(clippy::needless_return)]
 
+#[cfg(test)]
+use exo_core::Hash256;
 #[cfg_attr(not(feature = "unaudited-mcp-simulation-tools"), allow(unused_imports))]
-use exo_core::{Did, Hash256, Timestamp};
+use exo_core::{Did, hash::hash_structured};
 use exo_gatekeeper::{
     invariants::{
         ConstitutionalInvariant, InvariantContext, InvariantEngine, InvariantSet, enforce_all,
@@ -426,16 +428,27 @@ pub fn execute_delegate_authority(params: &Value, _context: &NodeContext) -> Too
             );
         }
 
-        let now = Timestamp::now_utc();
-        let id_input = format!("{grantor_str}:{grantee_str}:{}", now.physical_ms);
-        let delegation_id = Hash256::digest(id_input.as_bytes()).to_string();
+        let delegation_id = match hash_structured(&(
+            "exo.mcp.authority.delegation.v1",
+            grantor_str,
+            grantee_str,
+            &permissions,
+        )) {
+            Ok(hash) => hash.to_string(),
+            Err(e) => {
+                return ToolResult::error(
+                    json!({"error": format!("failed to hash delegation payload: {e}")}).to_string(),
+                );
+            }
+        };
 
         let response = json!({
             "delegation_id": delegation_id,
             "grantor": grantor_str,
             "grantee": grantee_str,
             "permissions": permissions,
-            "created_at": format!("{}:{}", now.physical_ms, now.logical),
+            "created_at": null,
+            "created_at_source": "simulation_no_persistence_timestamp",
         });
         ToolResult::success(response.to_string())
     }
@@ -918,20 +931,27 @@ mod tests {
     #[test]
     #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_delegate_authority_success() {
-        let result = execute_delegate_authority(
-            &json!({
+        let params = json!({
                 "grantor_did": "did:exo:root",
                 "grantee_did": "did:exo:alice",
                 "permissions": ["read", "write"],
-            }),
-            &NodeContext::empty(),
-        );
+        });
+        let result = execute_delegate_authority(&params, &NodeContext::empty());
+        let repeat = execute_delegate_authority(&params, &NodeContext::empty());
         assert!(!result.is_error);
+        assert!(!repeat.is_error);
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+        let repeat_v: Value = serde_json::from_str(repeat.content[0].text()).expect("valid JSON");
         assert_eq!(v["grantor"], "did:exo:root");
         assert_eq!(v["grantee"], "did:exo:alice");
         assert_eq!(v["permissions"].as_array().expect("perms").len(), 2);
         assert!(!v["delegation_id"].as_str().expect("id").is_empty());
+        assert_eq!(v["delegation_id"], repeat_v["delegation_id"]);
+        assert!(v["created_at"].is_null());
+        assert_eq!(
+            v["created_at_source"],
+            "simulation_no_persistence_timestamp"
+        );
     }
 
     #[test]

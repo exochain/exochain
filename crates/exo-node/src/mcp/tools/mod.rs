@@ -19,6 +19,24 @@ use super::{
     protocol::{ToolDefinition, ToolResult},
 };
 
+#[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+pub(crate) fn simulation_tool_refused(
+    tool_name: &str,
+    initiative: &str,
+    reason: &str,
+) -> ToolResult {
+    ToolResult::error(
+        serde_json::json!({
+            "error": "mcp_simulation_tool_disabled",
+            "tool": tool_name,
+            "message": reason,
+            "feature_flag": "unaudited-mcp-simulation-tools",
+            "initiative": initiative,
+        })
+        .to_string(),
+    )
+}
+
 /// Registry of available MCP tools.
 ///
 /// Stores tool definitions and dispatches calls to the appropriate handler.
@@ -262,5 +280,30 @@ mod tests {
     fn registry_empty_has_no_tools() {
         let registry = ToolRegistry::new();
         assert!(registry.list().is_empty());
+    }
+
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn default_mcp_operational_tools_do_not_fabricate_local_time() {
+        for path in [
+            "src/mcp/tools/authority.rs",
+            "src/mcp/tools/consent.rs",
+            "src/mcp/tools/ledger.rs",
+            "src/mcp/tools/escalation.rs",
+            "src/mcp/tools/governance.rs",
+            "src/mcp/tools/messaging.rs",
+            "src/mcp/tools/identity.rs",
+        ] {
+            let src = std::fs::read_to_string(path).expect("MCP tool source readable");
+            let operational_src = src.split("#[cfg(test)]").next().expect("source prefix");
+            assert!(
+                !operational_src.contains("Timestamp::now_utc"),
+                "{path} must not read local wall-clock time in MCP tool handlers"
+            );
+            assert!(
+                !operational_src.contains(".as_f64()"),
+                "{path} must not parse floating-point request values"
+            );
+        }
     }
 }
