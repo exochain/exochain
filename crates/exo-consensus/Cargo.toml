@@ -20,5 +20,8 @@ thiserror = "1"
 exo-core = { path = "../exo-core" }
 decision-forum = { path = "../decision-forum" }
 
+[dev-dependencies]
+proptest.workspace = true
+
 [lints]
 workspace = true
