@@ -12,7 +12,7 @@ Findings: [REVIEW-2026-04-19.md](./REVIEW-2026-04-19.md)
 | ------ | -------------------------------------------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------- | ------------- |
 | A-001  | Commit this review + plan                                                        | `docs/audit/REVIEW-2026-04-19*.md`        | Findings linkable from every follow-up PR                         | **this PR**   |
 | A-002  | ~~Downgrade `edition = "2024"` → `2021`~~                                        | `Cargo.toml:27`                           | DROPPED — edition 2024 stable since 1.85; MSRV 1.85, fine         | dropped       |
-| A-003  | Pin toolchain: `rust-toolchain.toml` at repo root, channel `1.88`                | new file                                  | Local dev + Dockerfile converge on 1.88                           | **this PR**   |
+| A-003  | ~~Pin toolchain: `rust-toolchain.toml` at repo root, channel `1.88`~~            | repo root                                 | DROPPED — CI intentionally tracks current stable; Dockerfile pins deploy floor | dropped       |
 | A-004  | CI gate audit                                                                    | `.github/workflows/ci.yml`                | 22 gates verified blocking, no `continue-on-error`                | verified      |
 
 ## Wave 1 — Correctness + security-critical (parallel)
