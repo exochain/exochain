@@ -10,6 +10,8 @@ from __future__ import annotations
 from types import TracebackType
 from typing import Any
 
+import httpx
+
 from .errors import KernelError, TransportError
 from .transport.http import HttpTransport
 from .types import TrustReceipt
@@ -23,7 +25,7 @@ class ExochainClient:
         base_url: str,
         *,
         api_key: str | None = None,
-        timeout: float = 30.0,
+        timeout: float | httpx.Timeout = 30.0,
     ) -> None:
         self._transport: HttpTransport = HttpTransport(
             base_url,

@@ -49,6 +49,7 @@ __version__ = "0.1.0"
 PROTOCOL_VERSION = "0.1.0-beta"
 
 __all__ = [
+    "PROTOCOL_VERSION",
     "AuthorityChainBuilder",
     "AuthorityError",
     "BailmentBuilder",
@@ -69,7 +70,6 @@ __all__ = [
     "IdentityError",
     "KernelError",
     "QuorumResult",
-    "PROTOCOL_VERSION",
     "TransportError",
     "TrustReceipt",
     "ValidatedChain",

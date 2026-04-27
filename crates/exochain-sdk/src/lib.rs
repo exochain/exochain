@@ -180,3 +180,13 @@ pub mod prelude {
         kernel::ConstitutionalKernel,
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PROTOCOL_VERSION;
+
+    #[test]
+    fn protocol_version_is_stable() {
+        assert_eq!(PROTOCOL_VERSION, "0.1.0-beta");
+    }
+}
