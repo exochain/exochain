@@ -16,8 +16,8 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 |--------|-------|--------|
 | Rust crates | 20 | `ls -d crates/*/` |
 | Rust source files | 266 | `find crates -name '*.rs'` |
-| Rust LOC | 115631 | `wc -l` |
-| Workspace tests | 2,839 listed | `cargo test --workspace -- --list` |
+| Rust LOC | 115686 | `wc -l` |
+| Workspace tests | 2,841 listed | `cargo test --workspace -- --list` |
 | CI quality gates | 20 | `.github/workflows/ci.yml` numbered gates, plus required aggregator |
 | Published releases | None (pre-release) | `git tag -l` |
 | License | Apache-2.0 | `Cargo.toml` |
@@ -25,7 +25,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 
 ### What is verified today
 
-- **2,839 workspace tests are listed** by `cargo test --workspace -- --list`; CI Gate 2 runs them in debug and release modes
+- **2,841 workspace tests are listed** by `cargo test --workspace -- --list`; CI Gate 2 runs them in debug and release modes
 - **Build succeeds** for all library crates, binaries, tests, and benchmarks
 - **Clippy clean** under `-D warnings` for production code
 - **Format clean** under `cargo +nightly fmt --all -- --check`
@@ -57,9 +57,9 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 ## Architecture
 
 ```
-Layer 1: CGR Kernel         (Rust, 20 crates, 115631 tracked LOC under crates/)
+Layer 1: CGR Kernel         (Rust, 20 crates, 115686 tracked LOC under crates/)
          Constitutional governance runtime — deterministic, no floats,
-         cryptographic proofs, 2,839 listed workspace tests
+         cryptographic proofs, 2,841 listed workspace tests
 
 Layer 2: WASM Bridge        (packages/exochain-wasm/)
          140 verified bridge exports — Rust → WebAssembly → JavaScript

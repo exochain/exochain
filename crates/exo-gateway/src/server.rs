@@ -1,5 +1,5 @@
 //! HTTP server skeleton — gateway configuration, lifecycle, and axum routing.
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use axum::{
     Router,
@@ -8,7 +8,7 @@ use axum::{
     response::{IntoResponse, Json},
     routing::{get, post},
 };
-use exo_core::{Did, Hash256, Signature, Timestamp};
+use exo_core::{Did, Hash256, Signature, Timestamp, hlc::HybridClock};
 use exo_gatekeeper::{
     invariants::InvariantSet,
     kernel::{ActionRequest as GkActionRequest, AdjudicationContext, Kernel, Verdict},
@@ -106,26 +106,49 @@ pub struct AppState {
     pub registry: Arc<RwLock<LocalDidRegistry>>,
     /// Constitutional kernel — enforces the 8 invariants on every action.
     pub kernel: Arc<Kernel>,
-    /// Wall-clock milliseconds at server start, used to compute uptime.
-    start_ms: u64,
+    /// HLC timestamp captured at server start, used to compute uptime.
+    start_time: Timestamp,
+    /// HLC source used for default-on gateway runtime timestamps.
+    clock: Arc<Mutex<HybridClock>>,
 }
 
 impl AppState {
     /// Create a new `AppState` with an optional database pool and a shared DID registry.
     pub fn new(pool: Option<sqlx::PgPool>, registry: Arc<RwLock<LocalDidRegistry>>) -> Self {
+        Self::new_with_clock(pool, registry, HybridClock::new())
+    }
+
+    /// Create a new `AppState` with an explicit HLC source.
+    pub fn new_with_clock(
+        pool: Option<sqlx::PgPool>,
+        registry: Arc<RwLock<LocalDidRegistry>>,
+        mut clock: HybridClock,
+    ) -> Self {
         // Bootstrap kernel with the all-invariants set.
         // constitution bytes are hashed for immutability verification.
         let kernel = Kernel::new(b"exochain-constitution-v1", InvariantSet::all());
+        let start_time = clock.now();
         Self {
             pool,
             registry,
             kernel: Arc::new(kernel),
-            start_ms: now_ms(),
+            start_time,
+            clock: Arc::new(Mutex::new(clock)),
+        }
+    }
+
+    fn now_ms(&self) -> u64 {
+        match self.clock.lock() {
+            Ok(mut clock) => clock.now().physical_ms,
+            Err(_) => {
+                tracing::error!("Gateway AppState HLC mutex poisoned while reading timestamp");
+                0
+            }
         }
     }
 
     fn uptime_seconds(&self) -> u64 {
-        now_ms().saturating_sub(self.start_ms) / 1000
+        self.now_ms().saturating_sub(self.start_time.physical_ms) / 1000
     }
 
     /// Return the DB pool or a 503 if none is configured.
@@ -169,7 +192,8 @@ impl AppState {
         // Production path — compiled only when the feature flag is set.
         #[cfg(feature = "production-db")]
         if let Some(pool) = &self.pool {
-            match build_adjudication_context_from_db(pool, actor).await {
+            let now = i64::try_from(self.now_ms()).unwrap_or(i64::MAX);
+            match build_adjudication_context_from_db(pool, actor, now).await {
                 Ok(ctx) => return ctx,
                 Err(e) => {
                     tracing::warn!(
@@ -194,10 +218,6 @@ impl AppState {
             active_challenge_reason: None,
         }
     }
-}
-
-fn now_ms() -> u64 {
-    exo_core::Timestamp::now_utc().physical_ms
 }
 
 const GATEWAY_SERVER_METADATA_INITIATIVE: &str =
@@ -500,13 +520,13 @@ fn generate_session_token() -> Result<String> {
 async fn build_adjudication_context_from_db(
     pool: &sqlx::PgPool,
     actor: &Did,
+    now: i64,
 ) -> Result<AdjudicationContext> {
     use exo_gatekeeper::types::{
         AuthorityChain as GkChain, BailmentState as GkBailment, ConsentRecord, GovernmentBranch,
         Role,
     };
 
-    let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
     let actor_str = actor.as_str();
 
     let role_rows = crate::db::load_agent_roles(pool, actor_str, now)
@@ -1823,10 +1843,13 @@ pub async fn serve_with_extra_routes(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use axum::{body::Body, http::Request};
     use exo_core::{
         Timestamp,
         crypto::{generate_keypair, sign},
+        hlc::HybridClock,
     };
     use exo_identity::did::{DidDocument, VerificationMethod};
     use tower::ServiceExt;
@@ -1835,6 +1858,38 @@ mod tests {
 
     fn state() -> AppState {
         AppState::new(None, Arc::new(RwLock::new(LocalDidRegistry::new())))
+    }
+
+    #[test]
+    fn gateway_uptime_uses_injected_hlc_source() {
+        let wall = Arc::new(AtomicU64::new(80_000));
+        let wall_for_clock = Arc::clone(&wall);
+        let state = AppState::new_with_clock(
+            None,
+            Arc::new(RwLock::new(LocalDidRegistry::new())),
+            HybridClock::with_wall_clock(move || wall_for_clock.load(Ordering::Relaxed)),
+        );
+
+        wall.store(86_000, Ordering::Relaxed);
+
+        assert_eq!(state.uptime_seconds(), 6);
+    }
+
+    #[test]
+    fn gateway_server_runtime_sources_do_not_read_wall_clock_directly() {
+        let source = include_str!("server.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("tests marker present");
+
+        let timestamp_now = format!("{}{}", "Timestamp::", "now_utc()");
+        let system_time_now = format!("{}{}", "SystemTime::", "now()");
+        let instant_now = format!("{}{}", "Instant::", "now()");
+
+        assert!(!production.contains(&timestamp_now));
+        assert!(!production.contains(&system_time_now));
+        assert!(!production.contains(&instant_now));
     }
 
     /// Build a minimal DidDocument for use in registration tests.
