@@ -70,11 +70,15 @@ pub fn execute_node_status(_params: &Value, context: &NodeContext) -> ToolResult
                     "status": "live",
                 })
             }
-            Err(_) => {
+            Err(err) => {
+                // Log the actual fault server-side; surface a generic
+                // message to the client so internal architecture details
+                // (mutex poisoning) don't leak. (A-023)
+                tracing::error!(?err, "reactor state lock poisoned");
                 return ToolResult {
                     content: vec![ToolContent::Text {
                         text: serde_json::json!({
-                            "error": "reactor state mutex poisoned",
+                            "error": "internal error: node state is temporarily unavailable",
                         })
                         .to_string(),
                     }],
