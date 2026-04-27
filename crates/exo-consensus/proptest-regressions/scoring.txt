@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7393f9dde27ba11069da813d1e5be7b670d96688ad5a0082ae0fd9c8ce3f1159 # shrinks to models_agreeing = 419, total_models = 1, rounds_to_convergence = 0, max_rounds = 0, devil = false, minority = 0
