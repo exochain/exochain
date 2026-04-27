@@ -56,6 +56,12 @@ impl fmt::Debug for ReceiptSigningContext {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimSaveEvidence {
+    pub dag_node_hash: Hash256,
+    pub receipt_hash: Option<Hash256>,
+}
+
 // ---------------------------------------------------------------------------
 // ZerodentityStore
 // ---------------------------------------------------------------------------
@@ -160,6 +166,29 @@ impl ZerodentityStore {
         ))
     }
 
+    fn next_dag_parents(&self) -> Vec<Hash256> {
+        self.dag_nodes
+            .last()
+            .map_or_else(Vec::new, |parent| vec![parent.hash])
+    }
+
+    /// Compute the next claim DAG node hash without mutating the store.
+    pub fn next_claim_dag_node_hash(
+        &self,
+        payload_hash: Hash256,
+        timestamp: Timestamp,
+    ) -> anyhow::Result<Hash256> {
+        let Some(context) = &self.receipt_signing else {
+            anyhow::bail!("0dentity DAG node signer is not configured");
+        };
+        Ok(compute_node_hash(
+            &self.next_dag_parents(),
+            &payload_hash,
+            &context.actor_did,
+            &timestamp,
+        ))
+    }
+
     fn signed_dag_node(
         &self,
         payload_hash: Hash256,
@@ -168,10 +197,7 @@ impl ZerodentityStore {
         let Some(context) = &self.receipt_signing else {
             anyhow::bail!("0dentity DAG node signer is not configured");
         };
-        let parents = self
-            .dag_nodes
-            .last()
-            .map_or_else(Vec::new, |parent| vec![parent.hash]);
+        let parents = self.next_dag_parents();
         let hash = compute_node_hash(&parents, &payload_hash, &context.actor_did, &timestamp);
         let signature = (context.signer)(hash.as_bytes());
         if signature.is_empty() {
@@ -289,6 +315,16 @@ impl ZerodentityStore {
         );
         self.attestations.insert(key, att.clone());
         Ok(())
+    }
+
+    /// Return a stored peer attestation by attester and target.
+    pub fn get_attestation(
+        &self,
+        attester: &Did,
+        target: &Did,
+    ) -> anyhow::Result<Option<PeerAttestation>> {
+        let key = (attester.as_str().to_owned(), target.as_str().to_owned());
+        Ok(self.attestations.get(&key).cloned())
     }
 
     // -----------------------------------------------------------------------
@@ -425,8 +461,7 @@ impl ZerodentityStore {
 
     /// Return `true` if an attestation from `attester` to `target` already exists.
     pub fn attestation_exists(&self, attester: &Did, target: &Did) -> anyhow::Result<bool> {
-        let key = (attester.as_str().to_owned(), target.as_str().to_owned());
-        Ok(self.attestations.contains_key(&key))
+        Ok(self.get_attestation(attester, target)?.is_some())
     }
 
     // -----------------------------------------------------------------------
@@ -484,6 +519,15 @@ impl ZerodentityStore {
     ///   `self.trust_receipts` when `claim.status == Verified`.
     #[allow(dead_code)]
     pub fn save_claim(&mut self, claim_id: &str, claim: &IdentityClaim) -> anyhow::Result<()> {
+        self.save_claim_with_evidence(claim_id, claim).map(|_| ())
+    }
+
+    /// Persist a claim and return the signed DAG / receipt evidence produced.
+    pub fn save_claim_with_evidence(
+        &mut self,
+        claim_id: &str,
+        claim: &IdentityClaim,
+    ) -> anyhow::Result<ClaimSaveEvidence> {
         let node = self.signed_dag_node(claim.claim_hash, Timestamp::new(claim.created_ms, 0))?;
         let receipt = if claim.status == ClaimStatus::Verified {
             let verified_ms = claim.verified_ms.unwrap_or(claim.created_ms);
@@ -498,14 +542,19 @@ impl ZerodentityStore {
         };
 
         self.insert_claim(claim_id, claim)?;
+        let dag_node_hash = node.hash;
         self.dag_nodes.push(node);
 
         // Emit TrustReceipt for verified claims.
+        let receipt_hash = receipt.as_ref().map(|receipt| receipt.receipt_hash);
         if let Some(receipt) = receipt {
             self.trust_receipts.push(receipt);
         }
 
-        Ok(())
+        Ok(ClaimSaveEvidence {
+            dag_node_hash,
+            receipt_hash,
+        })
     }
 
     /// Persist an OTP challenge (APE-72 alias for `insert_otp_challenge`).

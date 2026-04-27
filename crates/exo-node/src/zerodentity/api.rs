@@ -24,7 +24,7 @@ use axum::{
 };
 use exo_core::{
     crypto,
-    types::{Did, Hash256, PublicKey, Signature},
+    types::{Did, Hash256, PublicKey, Signature, Timestamp},
 };
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +32,7 @@ use super::{
     DEVICE_BEHAVIORAL_AXES_FEATURE, DEVICE_BEHAVIORAL_AXES_INITIATIVE,
     attestation::{
         CreateAttestationInput, attester_score_impact, build_target_claim, create_attestation,
-        target_score_impact, validate_attestation,
+        target_claim_hash, target_claim_id, target_score_impact, validate_attestation,
     },
     device_behavioral_axes_enabled,
     session_auth::{public_key_from_session_bytes, request_signing_payload, signature_from_hex},
@@ -675,25 +675,21 @@ pub async fn create_peer_attestation(
     let attester_public_key = parse_public_key(req.attester_public_key.as_deref())?;
     let signature = parse_signature(req.signature.as_deref())?;
 
-    // Validate
-    let (attester_claims, already_exists) = {
-        let store = state.store.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "lock poisoned"})),
-            )
-        })?;
-        let claims: Vec<IdentityClaim> = store
-            .get_claims(&attester_did)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(_, c)| c)
-            .collect();
-        let exists = store
-            .attestation_exists(&attester_did, &target_did)
-            .unwrap_or(false);
-        (claims, exists)
-    };
+    let mut store = state.store.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "lock poisoned"})),
+        )
+    })?;
+    let attester_claims: Vec<IdentityClaim> = store
+        .get_claims(&attester_did)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(_, c)| c)
+        .collect();
+    let already_exists = store
+        .attestation_exists(&attester_did, &target_did)
+        .unwrap_or(false);
 
     validate_attestation(&attester_did, &target_did, &attester_claims, already_exists).map_err(
         |e| {
@@ -704,10 +700,20 @@ pub async fn create_peer_attestation(
         },
     )?;
 
-    // Synthetic DAG node hash
-    let dag_node_hash = Hash256::digest(
-        format!("attest:{}:{}", attester_did.as_str(), target_did.as_str()).as_bytes(),
-    );
+    let target_claim_hash = target_claim_hash(&attester_did, &target_did).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+    })?;
+    let dag_node_hash = store
+        .next_claim_dag_node_hash(target_claim_hash, Timestamp::new(now, 0))
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Store error: {e}")})),
+            )
+        })?;
 
     let attestation = create_attestation(CreateAttestationInput {
         attester_did: &attester_did,
@@ -725,32 +731,39 @@ pub async fn create_peer_attestation(
             Json(serde_json::json!({"error": e.to_string()})),
         )
     })?;
-
-    // Persist attestation
-    {
-        let mut store = state.store.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "lock poisoned"})),
-            )
-        })?;
-        store.insert_attestation(&attestation).map_err(|e| {
+    let target_claim = build_target_claim(&attestation, dag_node_hash, now).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+    })?;
+    let claim_id = target_claim_id(&attestation).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+    })?;
+    let evidence = store
+        .save_claim_with_evidence(&claim_id, &target_claim)
+        .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": format!("Store error: {e}")})),
             )
         })?;
-
-        // Add PeerAttestation claim to target's claim set
-        let target_claim = build_target_claim(&attestation, dag_node_hash, now);
-        let claim_id = uuid::Uuid::new_v4().to_string();
-        let _ = store.insert_claim(&claim_id, &target_claim);
-    }
-
-    let receipt_hash = hex::encode(
-        Hash256::digest(format!("attest-receipt:{}", &attestation.attestation_id).as_bytes())
-            .as_bytes(),
-    );
+    store.insert_attestation(&attestation).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Store error: {e}")})),
+        )
+    })?;
+    let receipt_hash = evidence.receipt_hash.ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "Store error: verified attestation claim did not emit a trust receipt"})),
+        )
+    })?;
+    let receipt_hash = hex::encode(receipt_hash.as_bytes());
 
     let att_id = attestation.attestation_id.clone();
 
@@ -883,6 +896,23 @@ mod tests {
         ApiState {
             store: Arc::new(Mutex::new(test_store())),
         }
+    }
+
+    #[test]
+    fn attestation_write_path_does_not_fabricate_claim_ids_or_receipts() {
+        let source = include_str!("api.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .unwrap();
+
+        let uuid_new_v4 = format!("{}{}", "Uuid::", "new_v4()");
+        let qualified_uuid_new_v4 = format!("{}{}", "uuid::Uuid::", "new_v4()");
+        let fabricated_receipt = format!("{}{}", "attest-", "receipt");
+
+        assert!(!production.contains(&uuid_new_v4));
+        assert!(!production.contains(&qualified_uuid_new_v4));
+        assert!(!production.contains(&fabricated_receipt));
     }
 
     fn test_keypair(seed: u8) -> KeyPair {

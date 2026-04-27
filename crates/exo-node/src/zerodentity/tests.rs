@@ -28,7 +28,7 @@ mod tests {
         ClaimStatus, ClaimType, IdentityClaim, IdentitySession, OTP_MAX_ATTEMPTS, OtpChallenge,
         OtpChannel, OtpState, PolarAxes, ZerodentityScore,
         api::{ApiState, zerodentity_api_router},
-        attestation::attestation_signing_payload,
+        attestation::{attestation_signing_payload, target_claim_id},
         onboarding::{OnboardingState, onboarding_router},
         scoring::compute_symmetry,
         store::{SharedZerodentityStore, ZerodentityStore, new_shared_store},
@@ -1587,7 +1587,30 @@ mod tests {
                 .as_str()
                 .is_some_and(|s| !s.is_empty())
         );
+        let attestation_id = body["attestation_id"].as_str().unwrap();
         assert!(body["receipt_hash"].as_str().is_some_and(|s| s.len() == 64));
+
+        let guard = store.lock().unwrap();
+        let target_claims = guard.get_claims(&target).unwrap();
+        assert_eq!(target_claims.len(), 1);
+        let (claim_id, target_claim) = &target_claims[0];
+        let saved_attestation = guard
+            .get_attestation(&attester, &target)
+            .unwrap()
+            .expect("attestation stored");
+        assert_eq!(saved_attestation.attestation_id, attestation_id);
+        assert_eq!(claim_id, &target_claim_id(&saved_attestation).unwrap());
+        assert_eq!(target_claim.dag_node_hash, guard.dag_nodes()[0].hash);
+
+        let receipts = guard.trust_receipts();
+        assert_eq!(receipts.len(), 1);
+        let receipt = &receipts[0];
+        assert_eq!(receipt.action_type, "zerodentity.claim_verified");
+        assert_eq!(receipt.action_hash, target_claim.claim_hash);
+        assert_eq!(
+            body["receipt_hash"].as_str().unwrap(),
+            hex::encode(receipt.receipt_hash.as_bytes())
+        );
     }
 
     #[tokio::test]

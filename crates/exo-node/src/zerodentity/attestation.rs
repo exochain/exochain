@@ -11,6 +11,7 @@ use exo_core::{
     crypto,
     types::{Did, Hash256, PublicKey, Signature},
 };
+use serde::Serialize;
 use thiserror::Error;
 
 use super::types::{AttestationType, ClaimStatus, ClaimType, IdentityClaim, PeerAttestation};
@@ -31,6 +32,8 @@ pub enum AttestationError {
     InvalidSignature,
     #[error("Attestation signing payload encoding failed: {reason}")]
     SigningPayloadEncoding { reason: String },
+    #[error("Attestation target claim encoding failed: {reason}")]
+    TargetClaimEncoding { reason: String },
 }
 
 pub struct CreateAttestationInput<'a> {
@@ -104,6 +107,16 @@ pub fn attestation_signing_payload(
     let mut buf = Vec::new();
     ciborium::ser::into_writer(&tuple, &mut buf).map_err(|e| {
         AttestationError::SigningPayloadEncoding {
+            reason: e.to_string(),
+        }
+    })?;
+    Ok(buf)
+}
+
+fn canonical_cbor<T: Serialize>(value: &T) -> Result<Vec<u8>, AttestationError> {
+    let mut buf = Vec::new();
+    ciborium::ser::into_writer(value, &mut buf).map_err(|e| {
+        AttestationError::TargetClaimEncoding {
             reason: e.to_string(),
         }
     })?;
@@ -207,14 +220,9 @@ pub fn build_target_claim(
     attestation: &PeerAttestation,
     dag_node_hash: Hash256,
     now_ms: u64,
-) -> IdentityClaim {
-    let payload = format!(
-        "attestation:{}:{}",
-        attestation.attester_did.as_str(),
-        attestation.target_did.as_str()
-    );
-    IdentityClaim {
-        claim_hash: Hash256::digest(payload.as_bytes()),
+) -> Result<IdentityClaim, AttestationError> {
+    Ok(IdentityClaim {
+        claim_hash: target_claim_hash(&attestation.attester_did, &attestation.target_did)?,
         subject_did: attestation.target_did.clone(),
         claim_type: ClaimType::PeerAttestation {
             attester_did: attestation.attester_did.clone(),
@@ -225,7 +233,33 @@ pub fn build_target_claim(
         expires_ms: None,
         signature: attestation.signature.clone(),
         dag_node_hash,
-    }
+    })
+}
+
+/// Deterministic content hash for the target's derived peer-attestation claim.
+pub fn target_claim_hash(
+    attester_did: &Did,
+    target_did: &Did,
+) -> Result<Hash256, AttestationError> {
+    let payload = (
+        "exo.zerodentity.target_claim.v1",
+        attester_did.as_str(),
+        target_did.as_str(),
+    );
+    Ok(Hash256::digest(&canonical_cbor(&payload)?))
+}
+
+/// Deterministic store ID for the target's derived peer-attestation claim.
+pub fn target_claim_id(attestation: &PeerAttestation) -> Result<String, AttestationError> {
+    let payload = (
+        "exo.zerodentity.target_claim_id.v1",
+        attestation.attestation_id.as_str(),
+        attestation.attester_did.as_str(),
+        attestation.target_did.as_str(),
+    );
+    Ok(hex::encode(
+        Hash256::digest(&canonical_cbor(&payload)?).as_bytes(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -402,7 +436,7 @@ mod tests {
             signature: signature.clone(),
         })
         .expect("attestation");
-        let claim = build_target_claim(&att, hash(b"dag2"), 600);
+        let claim = build_target_claim(&att, hash(b"dag2"), 600).expect("target claim");
         assert_eq!(claim.subject_did.as_str(), target.as_str());
         assert_eq!(claim.status, ClaimStatus::Verified);
         assert_eq!(claim.signature, signature);
@@ -410,6 +444,39 @@ mod tests {
             claim.claim_type,
             ClaimType::PeerAttestation { .. }
         ));
+    }
+
+    #[test]
+    fn target_claim_id_is_deterministic_and_attestation_bound() {
+        let attester = did("did:exo:attester");
+        let target = did("did:exo:target");
+        let (public_key, secret_key) = keypair(17);
+        let signature = signed_attestation_signature(
+            &attester,
+            &target,
+            &AttestationType::Identity,
+            None,
+            700,
+            &secret_key,
+        );
+        let att = create_attestation(CreateAttestationInput {
+            attester_did: &attester,
+            target_did: &target,
+            attestation_type: AttestationType::Identity,
+            message_hash: None,
+            dag_node_hash: hash(b"dag-a"),
+            created_ms: 700,
+            attester_public_key: public_key,
+            signature,
+        })
+        .expect("attestation");
+        let same = target_claim_id(&att).expect("claim id");
+
+        let mut different = att.clone();
+        different.attestation_id = "different-attestation-id".to_owned();
+
+        assert_eq!(target_claim_id(&att).expect("claim id"), same);
+        assert_ne!(target_claim_id(&different).expect("claim id"), same);
     }
 
     #[test]
