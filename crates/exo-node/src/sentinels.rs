@@ -16,11 +16,12 @@
 //! | ScoreIntegrity | 0dentity scores are deterministically reproducible | 60s |
 
 use std::{
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
+use exo_core::hlc::HybridClock;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -104,12 +105,16 @@ pub type SharedSentinelState = Arc<Mutex<Vec<SentinelStatus>>>;
 pub type AlertSender = mpsc::Sender<SentinelAlert>;
 pub type AlertReceiver = mpsc::Receiver<SentinelAlert>;
 
-#[allow(clippy::as_conversions)]
 pub(crate) fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    static SENTINEL_CLOCK: OnceLock<Mutex<HybridClock>> = OnceLock::new();
+    let clock = SENTINEL_CLOCK.get_or_init(|| Mutex::new(HybridClock::new()));
+    match clock.lock() {
+        Ok(mut clock) => clock.now().physical_ms,
+        Err(_) => {
+            tracing::error!("Sentinel HLC mutex poisoned while reading timestamp");
+            0
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
