@@ -19,7 +19,7 @@ use std::{
 };
 
 use exo_core::types::{Did, Hash256, ReceiptOutcome, Signature, Timestamp, TrustReceipt};
-use exo_dag::dag::DagNode;
+use exo_dag::dag::{DagNode, compute_node_hash};
 
 use super::types::{
     BehavioralSample, ClaimStatus, DeviceFingerprint, IdentityClaim, IdentitySession, OtpChallenge,
@@ -158,6 +158,33 @@ impl ZerodentityStore {
             timestamp,
             &*context.signer,
         ))
+    }
+
+    fn signed_dag_node(
+        &self,
+        payload_hash: Hash256,
+        timestamp: Timestamp,
+    ) -> anyhow::Result<DagNode> {
+        let Some(context) = &self.receipt_signing else {
+            anyhow::bail!("0dentity DAG node signer is not configured");
+        };
+        let parents = self
+            .dag_nodes
+            .last()
+            .map_or_else(Vec::new, |parent| vec![parent.hash]);
+        let hash = compute_node_hash(&parents, &payload_hash, &context.actor_did, &timestamp);
+        let signature = (context.signer)(hash.as_bytes());
+        if signature.is_empty() {
+            anyhow::bail!("0dentity DAG node signer produced an empty signature");
+        }
+        Ok(DagNode {
+            hash,
+            parents,
+            payload_hash,
+            creator_did: context.actor_did.clone(),
+            timestamp,
+            signature,
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -457,6 +484,7 @@ impl ZerodentityStore {
     ///   `self.trust_receipts` when `claim.status == Verified`.
     #[allow(dead_code)]
     pub fn save_claim(&mut self, claim_id: &str, claim: &IdentityClaim) -> anyhow::Result<()> {
+        let node = self.signed_dag_node(claim.claim_hash, Timestamp::new(claim.created_ms, 0))?;
         let receipt = if claim.status == ClaimStatus::Verified {
             let verified_ms = claim.verified_ms.unwrap_or(claim.created_ms);
             Some(self.trust_receipt(
@@ -470,16 +498,6 @@ impl ZerodentityStore {
         };
 
         self.insert_claim(claim_id, claim)?;
-
-        // Record DAG node for this claim.
-        let node = DagNode {
-            hash: claim.dag_node_hash,
-            parents: vec![],
-            payload_hash: claim.claim_hash,
-            creator_did: claim.subject_did.clone(),
-            timestamp: Timestamp::new(claim.created_ms, 0),
-            signature: Signature::Empty,
-        };
         self.dag_nodes.push(node);
 
         // Emit TrustReceipt for verified claims.
@@ -576,21 +594,19 @@ impl ZerodentityStore {
         self.otp_challenges
             .retain(|_, ch| ch.subject_did.as_str() != did.as_str());
 
-        // 6. Tombstone DAG nodes — zero the payload hash
-        for node in &mut self.dag_nodes {
-            if node.creator_did.as_str() == did.as_str() {
-                node.payload_hash = Hash256::ZERO;
-            }
-        }
-
-        // 7. Emit erasure receipt
+        // 6. Emit erasure receipt and append a signed erasure DAG node. The
+        // existing claim nodes remain append-only; erasure is represented as a
+        // new tombstone event.
         let now_ms = crate::sentinels::now_ms();
+        let erasure_hash = Hash256::digest(format!("erase:{}", did.as_str()).as_bytes());
         let receipt = self.trust_receipt(
             "zerodentity.identity_erased",
-            Hash256::digest(format!("erase:{}", did.as_str()).as_bytes()),
+            erasure_hash,
             ReceiptOutcome::Executed,
             Timestamp::new(now_ms, 0),
         )?;
+        let erasure_node = self.signed_dag_node(erasure_hash, Timestamp::new(now_ms, 0))?;
+        self.dag_nodes.push(erasure_node);
         self.trust_receipts.push(receipt);
 
         Ok(revoked_count)
@@ -641,7 +657,7 @@ mod tests {
     use std::sync::Arc;
 
     use exo_core::{
-        crypto::KeyPair,
+        crypto::{KeyPair, verify},
         types::{Did, Hash256, PublicKey, Signature},
     };
 
@@ -810,7 +826,7 @@ mod tests {
 
     #[test]
     fn save_claim_stores_claim_and_dag_node() {
-        let (mut store, _, _) = signed_store(3);
+        let (mut store, node_did, _) = signed_store(3);
         let d = did("did:exo:grace");
         let c = claim(&d, ClaimType::Email);
         store.save_claim("apg-001", &c).unwrap();
@@ -821,7 +837,90 @@ mod tests {
 
         assert_eq!(store.dag_nodes().len(), 1);
         assert_eq!(store.dag_nodes()[0].payload_hash, c.claim_hash);
-        assert_eq!(store.dag_nodes()[0].creator_did, d);
+        assert_eq!(store.dag_nodes()[0].creator_did, node_did);
+    }
+
+    #[test]
+    fn save_claim_dag_node_is_signed_by_node_identity() {
+        let (mut store, node_did, node_public_key) = signed_store(31);
+        let d = did("did:exo:dag-signed-claim");
+        let c = claim(&d, ClaimType::Email);
+        store.save_claim("apg-dag-signed-001", &c).unwrap();
+
+        let node = &store.dag_nodes()[0];
+        assert_eq!(node.creator_did, node_did);
+        assert!(!node.signature.is_empty());
+        assert!(verify(
+            node.hash.as_bytes(),
+            &node.signature,
+            &node_public_key
+        ));
+    }
+
+    #[test]
+    fn save_claim_without_node_signer_is_refused() {
+        let mut store = ZerodentityStore::new();
+        let d = did("did:exo:dag-unsigned-refusal");
+        let c = claim(&d, ClaimType::Email);
+
+        let err = store.save_claim("apg-dag-unsigned-001", &c).unwrap_err();
+
+        assert!(
+            err.to_string().contains("DAG node signer"),
+            "expected DAG signer refusal, got {err}"
+        );
+        assert!(store.dag_nodes().is_empty());
+        assert!(store.get_claims(&d).unwrap().is_empty());
+    }
+
+    #[test]
+    fn save_claim_chains_dag_nodes_to_previous_node() {
+        let (mut store, _, node_public_key) = signed_store(32);
+        let d = did("did:exo:dag-chain");
+        let first = claim(&d, ClaimType::Email);
+        let second = claim(&d, ClaimType::Phone);
+
+        store.save_claim("apg-dag-chain-001", &first).unwrap();
+        store.save_claim("apg-dag-chain-002", &second).unwrap();
+
+        let nodes = store.dag_nodes();
+        assert_eq!(nodes.len(), 2);
+        assert!(nodes[0].parents.is_empty());
+        assert_eq!(nodes[1].parents, vec![nodes[0].hash]);
+        assert!(verify(
+            nodes[0].hash.as_bytes(),
+            &nodes[0].signature,
+            &node_public_key
+        ));
+        assert!(verify(
+            nodes[1].hash.as_bytes(),
+            &nodes[1].signature,
+            &node_public_key
+        ));
+    }
+
+    #[test]
+    fn erase_did_appends_signed_erasure_node_without_mutating_claim_node() {
+        let (mut store, node_did, node_public_key) = signed_store(33);
+        let d = did("did:exo:dag-erasure");
+        let c = claim(&d, ClaimType::Email);
+        store.save_claim("apg-dag-erasure-001", &c).unwrap();
+        let claim_node = store.dag_nodes()[0].clone();
+
+        store.erase_did(&d).unwrap();
+
+        let nodes = store.dag_nodes();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0], claim_node);
+        assert_eq!(nodes[1].creator_did, node_did);
+        assert_eq!(nodes[1].parents, vec![claim_node.hash]);
+        assert_ne!(nodes[1].payload_hash, Hash256::ZERO);
+        assert!(!nodes[1].signature.is_empty());
+        assert!(verify(
+            nodes[1].hash.as_bytes(),
+            &nodes[1].signature,
+            &node_public_key
+        ));
     }
 
     #[test]
@@ -857,7 +956,7 @@ mod tests {
 
     #[test]
     fn save_pending_claim_no_trust_receipt() {
-        let mut store = ZerodentityStore::new();
+        let (mut store, _, _) = signed_store(13);
         let d = did("did:exo:ivan");
         let mut c = claim(&d, ClaimType::GovernmentId);
         c.status = ClaimStatus::Pending;
@@ -1009,15 +1108,18 @@ mod tests {
     }
 
     #[test]
-    fn erase_did_tombstones_dag_nodes() {
+    fn erase_did_appends_erasure_dag_node() {
         let (mut store, _, _) = signed_store(23);
         let d = did("did:exo:dagtest");
         let c = claim(&d, ClaimType::Email);
         store.save_claim("dag-001", &c).unwrap();
 
-        assert_ne!(store.dag_nodes()[0].payload_hash, Hash256::ZERO);
+        let claim_node = store.dag_nodes()[0].clone();
         store.erase_did(&d).unwrap();
-        assert_eq!(store.dag_nodes()[0].payload_hash, Hash256::ZERO);
+        assert_eq!(store.dag_nodes().len(), 2);
+        assert_eq!(store.dag_nodes()[0], claim_node);
+        assert_eq!(store.dag_nodes()[1].parents, vec![claim_node.hash]);
+        assert_ne!(store.dag_nodes()[1].payload_hash, Hash256::ZERO);
     }
 
     // ---- OTP cleanup tests ----
