@@ -152,9 +152,16 @@ mod sse_tests {
     use super::*;
 
     fn test_router() -> Router {
+        let did = exo_core::Did::new("did:exo:test").expect("valid DID");
+        let keypair = exo_core::crypto::KeyPair::from_secret_bytes([0x4D; 32]).unwrap();
+        let public_key = *keypair.public_key();
+        let secret_key = keypair.secret_key().clone();
         let state = SseState {
-            server: Arc::new(McpServer::new(
-                exo_core::Did::new("did:exo:test").expect("valid DID"),
+            server: Arc::new(McpServer::with_authority(
+                did.clone(),
+                did,
+                public_key,
+                Arc::new(move |message: &[u8]| exo_core::crypto::sign(message, &secret_key)),
             )),
         };
         build_sse_router(state)

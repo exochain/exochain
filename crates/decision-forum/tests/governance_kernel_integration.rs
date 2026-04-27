@@ -62,6 +62,58 @@ fn did(s: &str) -> Did {
     Did::new(s).expect("valid DID")
 }
 
+fn signed_authority_link(grantee: &Did) -> GkAuthorityLink {
+    let (pk, sk) = exo_core::crypto::generate_keypair();
+    let grantor = did("did:exo:governance-root");
+    let permissions = PermissionSet::new(vec![Permission::new("enact:decision")]);
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(grantor.as_str().as_bytes());
+    payload.push(0x00);
+    payload.extend_from_slice(grantee.as_str().as_bytes());
+    payload.push(0x00);
+    for permission in &permissions.permissions {
+        payload.extend_from_slice(permission.0.as_bytes());
+        payload.push(0x00);
+    }
+    let message = Hash256::digest(&payload);
+    let signature = exo_core::crypto::sign(message.as_bytes(), &sk);
+
+    GkAuthorityLink {
+        grantor,
+        grantee: grantee.clone(),
+        permissions,
+        signature: signature.to_bytes().to_vec(),
+        grantor_public_key: Some(pk.as_bytes().to_vec()),
+    }
+}
+
+fn signed_provenance(actor: &Did) -> Provenance {
+    let (pk, sk) = exo_core::crypto::generate_keypair();
+    let timestamp = "2026-03-30T00:00:00Z".to_owned();
+    let action_hash = vec![0x01, 0x02, 0x03];
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(actor.as_str().as_bytes());
+    payload.push(0x00);
+    payload.extend_from_slice(&action_hash);
+    payload.push(0x00);
+    payload.extend_from_slice(timestamp.as_bytes());
+    let message = Hash256::digest(&payload);
+    let signature = exo_core::crypto::sign(message.as_bytes(), &sk);
+
+    Provenance {
+        actor: actor.clone(),
+        timestamp,
+        action_hash,
+        signature: signature.to_bytes().to_vec(),
+        public_key: Some(pk.as_bytes().to_vec()),
+        voice_kind: None,
+        independence: None,
+        review_order: None,
+    }
+}
+
 fn test_kernel() -> Kernel {
     Kernel::new(CONSTITUTION, InvariantSet::all())
 }
@@ -127,7 +179,7 @@ fn make_approved_decision(class: DecisionClass, clock: &mut HybridClock) -> Deci
 /// - CP-5: `modifies_kernel` = false (set on ActionRequest)
 /// - CP-6: valid single-link authority chain ending at actor
 /// - CP-7: `quorum_evidence` = None (invariant skips when None)
-/// - CP-8: provenance present, actor matches, non-empty signature
+/// - CP-8: provenance present, actor matches, Ed25519 signature verifies
 fn valid_adj_context(actor: &Did) -> AdjudicationContext {
     AdjudicationContext {
         actor_roles: vec![Role {
@@ -135,13 +187,7 @@ fn valid_adj_context(actor: &Did) -> AdjudicationContext {
             branch: GovernmentBranch::Judicial,
         }],
         authority_chain: AuthorityChain {
-            links: vec![GkAuthorityLink {
-                grantor: did("did:exo:governance-root"),
-                grantee: actor.clone(),
-                permissions: PermissionSet::new(vec![Permission::new("enact:decision")]),
-                signature: vec![0xAB, 0xCD, 0xEF],
-                grantor_public_key: None,
-            }],
+            links: vec![signed_authority_link(actor)],
         },
         consent_records: vec![ConsentRecord {
             subject: did("did:exo:bailor"),
@@ -156,16 +202,7 @@ fn valid_adj_context(actor: &Did) -> AdjudicationContext {
         },
         human_override_preserved: true,
         actor_permissions: PermissionSet::new(vec![Permission::new("enact:decision")]),
-        provenance: Some(Provenance {
-            actor: actor.clone(),
-            timestamp: "2026-03-30T00:00:00Z".into(),
-            action_hash: vec![0x01, 0x02, 0x03],
-            signature: vec![0x04, 0x05, 0x06],
-            public_key: None,
-            voice_kind: None,
-            independence: None,
-            review_order: None,
-        }),
+        provenance: Some(signed_provenance(actor)),
         quorum_evidence: None,
         active_challenge_reason: None,
     }

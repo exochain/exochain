@@ -16,8 +16,8 @@
 //!   - `consent_active: true`
 //!   - `output_marked_ai: true`
 //!   - `human_override_preserved: true`
-//!   - authority chain: synthetic root → actor with `signature: vec![1, 2, 3]`
-//!   - provenance: `action_hash: vec![1, 2, 3]`, `signature: vec![4, 5, 6]`
+//!   - authority chain: configured MCP authority → actor
+//!   - provenance: configured MCP authority signature over the tool action
 //!
 //! These sentinels mean the middleware cannot actually fail on
 //! `ProvenancePresent`, `ConsentRequired`, or `HumanOverride` —
@@ -37,7 +37,8 @@
 //! governance fabric.
 //!
 //! **When RED #2 is resolved (real reactor wiring), this middleware
-//! MUST be rewritten first.** A rewrite must either:
+//! MUST be promoted from node-level authority to live delegated authority.**
+//! A rewrite must either:
 //!   (a) accept real `McpContext` / `AdjudicationContext` from the
 //!       caller and verify the embedded signatures/provenance, or
 //!   (b) decline to adjudicate (return Err) when it cannot construct
@@ -49,7 +50,9 @@
 //! reading the code — DO NOT remove the audit-status section when
 //! adjusting this middleware.
 
-use exo_core::{Did, Hash256, SignerType};
+use std::sync::Arc;
+
+use exo_core::{Did, Hash256, PublicKey, Signature, SignerType};
 use exo_gatekeeper::{
     invariants::InvariantSet,
     kernel::{ActionRequest, AdjudicationContext, Kernel, Verdict},
@@ -68,6 +71,13 @@ use super::error::{McpError, Result};
 /// constitution and all 8 constitutional invariants.
 pub struct ConstitutionalMiddleware {
     kernel: Kernel,
+    authority: Option<McpAuthority>,
+}
+
+struct McpAuthority {
+    did: Did,
+    public_key: PublicKey,
+    signer: Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>,
 }
 
 impl ConstitutionalMiddleware {
@@ -80,17 +90,45 @@ impl ConstitutionalMiddleware {
     #[must_use]
     pub fn new() -> Self {
         tracing::warn!(
-            "mcp::ConstitutionalMiddleware initialized with STUB \
-             adjudication context (has_provenance/consent_active/ \
-             human_override_preserved hardcoded true; signatures are \
-             sentinel vec![1,2,3]/vec![4,5,6]). This middleware only \
-             rubber-stamps read-only MCP tools — mutating tools MUST \
-             be gated separately (see unaudited-mcp-simulation-tools \
-             feature flag). Tracked in \
+            "mcp::ConstitutionalMiddleware initialized without an MCP \
+             authority signer; tool adjudication fails closed until \
+             ConstitutionalMiddleware::with_authority is used."
+        );
+        let kernel = Kernel::new(b"EXOCHAIN Constitutional Trust Fabric", InvariantSet::all());
+        Self {
+            kernel,
+            authority: None,
+        }
+    }
+
+    /// Create middleware bound to a caller-supplied MCP authority signer.
+    ///
+    /// The authority is used to sign the canonical authority/provenance payload
+    /// hashes that the gatekeeper verifies. The surrounding MCP context still
+    /// carries hardcoded consent/provenance booleans until
+    /// `fix-mcp-simulation-tools.md` is resolved.
+    #[must_use]
+    pub fn with_authority(
+        authority_did: Did,
+        authority_public_key: PublicKey,
+        authority_signer: Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>,
+    ) -> Self {
+        tracing::warn!(
+            "mcp::ConstitutionalMiddleware initialized with configured \
+             authority signer but hardcoded MCP context booleans \
+             (has_provenance/consent_active/human_override_preserved). \
+             Mutating tools MUST remain gated separately. Tracked in \
              Initiatives/fix-mcp-simulation-tools.md."
         );
         let kernel = Kernel::new(b"EXOCHAIN Constitutional Trust Fabric", InvariantSet::all());
-        Self { kernel }
+        Self {
+            kernel,
+            authority: Some(McpAuthority {
+                did: authority_did,
+                public_key: authority_public_key,
+                signer: authority_signer,
+            }),
+        }
     }
 
     /// Enforce all 6 MCP rules against the AI actor's context.
@@ -119,6 +157,55 @@ impl ConstitutionalMiddleware {
         })
     }
 
+    fn signed_authority_link(authority: &McpAuthority, grantee: &Did) -> AuthorityLink {
+        let permissions = PermissionSet::new(vec![Permission::new("mcp:tool_call")]);
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(authority.did.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(grantee.as_str().as_bytes());
+        payload.push(0x00);
+        for permission in &permissions.permissions {
+            payload.extend_from_slice(permission.0.as_bytes());
+            payload.push(0x00);
+        }
+        let message = Hash256::digest(&payload);
+        let signature = (authority.signer)(message.as_bytes());
+
+        AuthorityLink {
+            grantor: authority.did.clone(),
+            grantee: grantee.clone(),
+            permissions,
+            signature: signature.to_bytes().to_vec(),
+            grantor_public_key: Some(authority.public_key.as_bytes().to_vec()),
+        }
+    }
+
+    fn signed_provenance(authority: &McpAuthority, actor: &Did, action: &str) -> Provenance {
+        let timestamp = "2026-01-01T00:00:00Z".to_owned();
+        let action_hash = Hash256::digest(action.as_bytes()).as_bytes().to_vec();
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(actor.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(&action_hash);
+        payload.push(0x00);
+        payload.extend_from_slice(timestamp.as_bytes());
+        let message = Hash256::digest(&payload);
+        let signature = (authority.signer)(message.as_bytes());
+
+        Provenance {
+            actor: actor.clone(),
+            timestamp,
+            action_hash,
+            signature: signature.to_bytes().to_vec(),
+            public_key: Some(authority.public_key.as_bytes().to_vec()),
+            voice_kind: None,
+            independence: None,
+            review_order: None,
+        }
+    }
+
     /// Adjudicate an action against all 8 constitutional invariants.
     ///
     /// Builds an `ActionRequest` and `AdjudicationContext` with reasonable
@@ -134,8 +221,14 @@ impl ConstitutionalMiddleware {
             modifies_kernel: false,
         };
 
-        #[allow(clippy::expect_used)] // Static string is always a valid DID.
-        let root_did = Did::new("did:exo:root").expect("static DID is valid");
+        let authority = self.authority.as_ref().ok_or_else(|| {
+            McpError::ConstitutionalViolation(
+                "MCP authority signer is required for kernel adjudication".into(),
+            )
+        })?;
+        if actor_did != &authority.did {
+            return Err(McpError::AuthenticationRequired);
+        }
 
         let adj_context = AdjudicationContext {
             actor_roles: vec![Role {
@@ -143,37 +236,22 @@ impl ConstitutionalMiddleware {
                 branch: GovernmentBranch::Judicial,
             }],
             authority_chain: AuthorityChain {
-                links: vec![AuthorityLink {
-                    grantor: root_did.clone(),
-                    grantee: actor_did.clone(),
-                    permissions: PermissionSet::new(vec![Permission::new("mcp:tool_call")]),
-                    signature: vec![1, 2, 3],
-                    grantor_public_key: None,
-                }],
+                links: vec![Self::signed_authority_link(authority, actor_did)],
             },
             consent_records: vec![ConsentRecord {
-                subject: root_did.clone(),
+                subject: authority.did.clone(),
                 granted_to: actor_did.clone(),
                 scope: "mcp:tools".into(),
                 active: true,
             }],
             bailment_state: BailmentState::Active {
-                bailor: root_did,
+                bailor: authority.did.clone(),
                 bailee: actor_did.clone(),
                 scope: "mcp:tools".into(),
             },
             human_override_preserved: true,
             actor_permissions: PermissionSet::new(vec![Permission::new("mcp:tool_call")]),
-            provenance: Some(Provenance {
-                actor: actor_did.clone(),
-                timestamp: "2026-01-01T00:00:00Z".into(),
-                action_hash: vec![1, 2, 3],
-                signature: vec![4, 5, 6],
-                public_key: None,
-                voice_kind: None,
-                independence: None,
-                review_order: None,
-            }),
+            provenance: Some(Self::signed_provenance(authority, actor_did, action)),
             quorum_evidence: None,
             active_challenge_reason: None,
         };
@@ -221,9 +299,20 @@ mod tests {
         Did::new("did:exo:ai-agent-mcp").expect("valid DID")
     }
 
+    fn signed_middleware() -> ConstitutionalMiddleware {
+        let keypair = exo_core::crypto::KeyPair::from_secret_bytes([0x4D; 32]).unwrap();
+        let public_key = *keypair.public_key();
+        let secret_key = keypair.secret_key().clone();
+        ConstitutionalMiddleware::with_authority(
+            test_did(),
+            public_key,
+            Arc::new(move |message: &[u8]| exo_core::crypto::sign(message, &secret_key)),
+        )
+    }
+
     #[test]
     fn middleware_permits_valid_action() {
-        let mw = ConstitutionalMiddleware::new();
+        let mw = signed_middleware();
         let did = test_did();
         assert!(mw.enforce(&did, "exochain_node_status").is_ok());
     }
@@ -237,10 +326,17 @@ mod tests {
 
     #[test]
     fn middleware_adjudicate_permits_valid() {
-        let mw = ConstitutionalMiddleware::new();
+        let mw = signed_middleware();
         let did = test_did();
         let verdict = mw.adjudicate(&did, "exochain_node_status").unwrap();
         assert!(verdict.is_permitted());
+    }
+
+    #[test]
+    fn middleware_adjudicate_without_authority_fails_closed() {
+        let mw = ConstitutionalMiddleware::new();
+        let did = test_did();
+        assert!(mw.adjudicate(&did, "exochain_node_status").is_err());
     }
 
     #[test]

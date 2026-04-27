@@ -12,15 +12,14 @@
 //!
 //! # Audit status — Onyx-4 R5 (default-off runtime)
 //!
-//! The current infrastructure Holon adjudication context still uses sentinel
-//! authority and provenance signatures (`vec![1, 2, 3]`) with no Ed25519 public
-//! key. That means `ProvenanceVerifiable` can only confirm that bytes are
-//! present, not that the action was signed by a real infrastructure authority.
+//! The infrastructure Holon adjudication context now requires a configured
+//! Ed25519 authority key and signer. The authority chain and provenance are
+//! signed over the same canonical payloads enforced by `exo-gatekeeper`.
 //!
 //! The runtime background manager is therefore disabled by default behind the
 //! `unaudited-infrastructure-holons` feature flag. Enabling the feature means
-//! the operator accepts the recommendation-only Holon runtime while the real
-//! signed authority/provenance context is tracked in
+//! the operator accepts the recommendation-only Holon runtime while the
+//! product decision for shipping infrastructure Holons is tracked in
 //! `Initiatives/fix-onyx-4-r5-holons-stub-context.md`.
 //!
 //! ## Holons
@@ -37,9 +36,9 @@
 #![allow(clippy::expect_used, clippy::as_conversions, clippy::single_match)]
 #![cfg_attr(not(feature = "unaudited-infrastructure-holons"), allow(dead_code))]
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use exo_core::types::Did;
+use exo_core::{Hash256, PublicKey, Signature, types::Did};
 use exo_gatekeeper::{
     combinator::{Combinator, CombinatorInput, Predicate, TransformFn},
     holon::{self, Holon, HolonState},
@@ -118,12 +117,16 @@ pub enum HealthStatus {
 // ---------------------------------------------------------------------------
 
 /// Configuration for infrastructure Holons.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HolonManagerConfig {
     /// This node's DID.
     pub node_did: Did,
     /// Root authority DID for the authority chain.
     pub root_did: Did,
+    /// Ed25519 public key for `root_did`.
+    pub root_public_key: PublicKey,
+    /// Signs canonical authority/provenance payload hashes for infrastructure Holon context.
+    pub root_signer: Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>,
     /// How often to run the topology optimizer (seconds).
     pub topology_interval_secs: u64,
     /// How often to run the scaling advisor (seconds).
@@ -132,11 +135,32 @@ pub struct HolonManagerConfig {
     pub health_interval_secs: u64,
 }
 
+impl std::fmt::Debug for HolonManagerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HolonManagerConfig")
+            .field("node_did", &self.node_did)
+            .field("root_did", &self.root_did)
+            .field("root_public_key", &self.root_public_key)
+            .field("topology_interval_secs", &self.topology_interval_secs)
+            .field("scaling_interval_secs", &self.scaling_interval_secs)
+            .field("health_interval_secs", &self.health_interval_secs)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Default for HolonManagerConfig {
     fn default() -> Self {
+        let keypair = exo_core::crypto::KeyPair::from_secret_bytes([0x48; 32])
+            .expect("default infrastructure Holon key seed");
+        let root_public_key = *keypair.public_key();
+        let root_secret_key = keypair.secret_key().clone();
         Self {
             node_did: Did::new("did:exo:node-default").expect("default DID"),
             root_did: Did::new("did:exo:root").expect("root DID"),
+            root_public_key,
+            root_signer: Arc::new(move |message: &[u8]| {
+                exo_core::crypto::sign(message, &root_secret_key)
+            }),
             topology_interval_secs: 60,
             scaling_interval_secs: 300,
             health_interval_secs: 30,
@@ -260,6 +284,62 @@ pub fn create_infrastructure_kernel() -> Kernel {
 /// Infrastructure Holons operate under the Executive branch with
 /// read-only + recommend permissions. They cannot self-grant or
 /// modify the kernel.
+fn authority_link_message(grantor: &Did, grantee: &Did, permissions: &PermissionSet) -> Hash256 {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(grantor.as_str().as_bytes());
+    payload.push(0x00);
+    payload.extend_from_slice(grantee.as_str().as_bytes());
+    payload.push(0x00);
+    for permission in &permissions.permissions {
+        payload.extend_from_slice(permission.0.as_bytes());
+        payload.push(0x00);
+    }
+    Hash256::digest(&payload)
+}
+
+fn provenance_message(actor: &Did, action_hash: &[u8], timestamp: &str) -> Hash256 {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(actor.as_str().as_bytes());
+    payload.push(0x00);
+    payload.extend_from_slice(action_hash);
+    payload.push(0x00);
+    payload.extend_from_slice(timestamp.as_bytes());
+    Hash256::digest(&payload)
+}
+
+fn signed_authority_link(holon: &Holon, config: &HolonManagerConfig) -> AuthorityLink {
+    let message = authority_link_message(&config.root_did, &holon.id, &holon.capabilities);
+    let signature = (config.root_signer)(message.as_bytes());
+
+    AuthorityLink {
+        grantor: config.root_did.clone(),
+        grantee: holon.id.clone(),
+        permissions: holon.capabilities.clone(),
+        signature: signature.to_bytes().to_vec(),
+        grantor_public_key: Some(config.root_public_key.as_bytes().to_vec()),
+    }
+}
+
+fn signed_provenance(holon: &Holon, config: &HolonManagerConfig) -> Provenance {
+    let timestamp = "2026-04-27T00:00:00Z".to_owned();
+    let action_hash = Hash256::digest(format!("infrastructure-holon-step:{}", holon.id).as_bytes())
+        .as_bytes()
+        .to_vec();
+    let message = provenance_message(&holon.id, &action_hash, &timestamp);
+    let signature = (config.root_signer)(message.as_bytes());
+
+    Provenance {
+        actor: holon.id.clone(),
+        timestamp,
+        action_hash,
+        signature: signature.to_bytes().to_vec(),
+        public_key: Some(config.root_public_key.as_bytes().to_vec()),
+        voice_kind: None,
+        independence: None,
+        review_order: None,
+    }
+}
+
 pub fn build_holon_adjudication_context(
     holon: &Holon,
     config: &HolonManagerConfig,
@@ -270,13 +350,7 @@ pub fn build_holon_adjudication_context(
             branch: GovernmentBranch::Executive,
         }],
         authority_chain: AuthorityChain {
-            links: vec![AuthorityLink {
-                grantor: config.root_did.clone(),
-                grantee: holon.id.clone(),
-                permissions: holon.capabilities.clone(),
-                signature: vec![1, 2, 3], // Placeholder — real system uses Ed25519
-                grantor_public_key: None,
-            }],
+            links: vec![signed_authority_link(holon, config)],
         },
         consent_records: vec![ConsentRecord {
             subject: config.root_did.clone(),
@@ -291,16 +365,7 @@ pub fn build_holon_adjudication_context(
         },
         human_override_preserved: true,
         actor_permissions: holon.capabilities.clone(),
-        provenance: Some(Provenance {
-            actor: holon.id.clone(),
-            timestamp: "0".into(),
-            action_hash: vec![0; 32],
-            signature: vec![1, 2, 3], // Non-empty for ProvenanceVerifiable invariant
-            public_key: None,
-            voice_kind: None,
-            independence: None,
-            review_order: None,
-        }),
+        provenance: Some(signed_provenance(holon, config)),
         quorum_evidence: None,
         active_challenge_reason: None,
     }
@@ -694,10 +759,10 @@ mod tests {
     fn test_config() -> HolonManagerConfig {
         HolonManagerConfig {
             node_did: test_did(),
-            root_did: Did::new("did:exo:root").unwrap(),
             topology_interval_secs: 60,
             scaling_interval_secs: 300,
             health_interval_secs: 30,
+            ..HolonManagerConfig::default()
         }
     }
 
@@ -717,8 +782,8 @@ mod tests {
             "module doc must point at the R5 initiative"
         );
         assert!(
-            src.contains("vec![1, 2, 3]"),
-            "module doc must call out the sentinel adjudication signatures"
+            src.contains("Ed25519 authority key"),
+            "module doc must call out the signed adjudication authority"
         );
     }
 
@@ -948,12 +1013,12 @@ mod tests {
         let (event_tx, mut event_rx) = mpsc::channel(32);
         let config = HolonManagerConfig {
             node_did: test_did(),
-            root_did: Did::new("did:exo:root").unwrap(),
             // Health fires quickly; topology/scaling fire slowly to avoid
             // blocked peer_count() calls (no network loop in test).
             topology_interval_secs: 3600,
             scaling_interval_secs: 3600,
             health_interval_secs: 1,
+            ..HolonManagerConfig::default()
         };
 
         // Spawn a background task to drain network commands (prevents hangs).

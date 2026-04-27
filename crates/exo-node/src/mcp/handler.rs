@@ -5,9 +5,9 @@
 //! constitutional constraints through the middleware, and returns properly
 //! formatted JSON-RPC responses.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
-use exo_core::Did;
+use exo_core::{Did, PublicKey, Signature};
 use serde_json::Value;
 
 use super::{
@@ -39,21 +39,25 @@ pub struct McpServer {
 }
 
 impl McpServer {
-    /// Create a new MCP server for the given actor DID.
-    ///
-    /// Initializes the tool registry with all built-in tools and creates
-    /// a constitutional middleware instance with the full kernel. The
-    /// runtime context is empty — tools that query live node state will
-    /// fall back to template responses. Use `with_context` to bind a
-    /// running node's reactor and DAG store.
+    /// Create a new MCP server with a configured authority signer for
+    /// constitutional adjudication.
     #[must_use]
-    pub fn new(actor_did: Did) -> Self {
+    pub fn with_authority(
+        actor_did: Did,
+        authority_did: Did,
+        authority_public_key: PublicKey,
+        authority_signer: Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>,
+    ) -> Self {
         Self {
             actor_did,
             registry: ToolRegistry::default(),
             resources: ResourceRegistry::default(),
             prompts: PromptRegistry::default(),
-            middleware: ConstitutionalMiddleware::new(),
+            middleware: ConstitutionalMiddleware::with_authority(
+                authority_did,
+                authority_public_key,
+                authority_signer,
+            ),
             context: NodeContext::empty(),
         }
     }
@@ -73,6 +77,30 @@ impl McpServer {
             resources: ResourceRegistry::default(),
             prompts: PromptRegistry::default(),
             middleware: ConstitutionalMiddleware::new(),
+            context,
+        }
+    }
+
+    /// Create a context-bound MCP server with a configured authority signer.
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn with_context_and_authority(
+        actor_did: Did,
+        context: NodeContext,
+        authority_did: Did,
+        authority_public_key: PublicKey,
+        authority_signer: Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>,
+    ) -> Self {
+        Self {
+            actor_did,
+            registry: ToolRegistry::default(),
+            resources: ResourceRegistry::default(),
+            prompts: PromptRegistry::default(),
+            middleware: ConstitutionalMiddleware::with_authority(
+                authority_did,
+                authority_public_key,
+                authority_signer,
+            ),
             context,
         }
     }
@@ -425,7 +453,16 @@ mod tests {
     use super::*;
 
     fn test_server() -> McpServer {
-        McpServer::new(Did::new("did:exo:test-ai-agent").expect("valid DID"))
+        let did = Did::new("did:exo:test-ai-agent").expect("valid DID");
+        let keypair = exo_core::crypto::KeyPair::from_secret_bytes([0x4D; 32]).unwrap();
+        let public_key = *keypair.public_key();
+        let secret_key = keypair.secret_key().clone();
+        McpServer::with_authority(
+            did.clone(),
+            did,
+            public_key,
+            Arc::new(move |message: &[u8]| exo_core::crypto::sign(message, &secret_key)),
+        )
     }
 
     #[test]

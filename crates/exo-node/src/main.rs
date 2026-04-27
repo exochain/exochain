@@ -397,9 +397,15 @@ async fn start_node(
     // --- Infrastructure Holons ---
     #[cfg(feature = "unaudited-infrastructure-holons")]
     {
+        let holon_identity = identity::load_or_create(data_dir)?;
+        let holon_authority_did = holon_identity.did.clone();
+        let holon_authority_public_key = *holon_identity.public_key();
+        let holon_authority_signer = Arc::new(move |message: &[u8]| holon_identity.sign(message));
         let holon_config = HolonManagerConfig {
             node_did: node_identity.did.clone(),
-            root_did: Did::new("did:exo:root").unwrap_or_else(|_| node_identity.did.clone()),
+            root_did: holon_authority_did,
+            root_public_key: holon_authority_public_key,
+            root_signer: holon_authority_signer,
             topology_interval_secs: 60,
             scaling_interval_secs: 300,
             health_interval_secs: 30,
@@ -502,7 +508,7 @@ async fn start_node(
         enabled = holons::infrastructure_holons_enabled(),
         feature_flag = holons::INFRASTRUCTURE_HOLONS_FEATURE,
         initiative = holons::INFRASTRUCTURE_HOLONS_INITIATIVE,
-        "Infrastructure Holons disabled: adjudication context still uses sentinel signatures"
+        "Infrastructure Holons disabled pending product disposition"
     );
 
     // NOTE: /health and /ready are provided by the gateway (exo-gateway)
@@ -829,6 +835,15 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             } else {
                 node_identity.did.clone()
             };
+            if did != node_identity.did {
+                return Err(anyhow::anyhow!(
+                    "MCP actor DID must match the local node identity DID for signed adjudication"
+                ));
+            }
+            let node_identity_for_log = node_identity.did.clone();
+            let mcp_authority_did = node_identity.did.clone();
+            let mcp_authority_public_key = *node_identity.public_key();
+            let mcp_authority_signer = Arc::new(move |message: &[u8]| node_identity.sign(message));
 
             // The standalone `exochain mcp` command does NOT connect to a
             // running node, so we spin up the MCP server with an empty
@@ -840,17 +855,22 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             // context)` where `context` carries the `SharedReactorState`
             // and the `Arc<Mutex<SqliteDagStore>>` so tools return real
             // runtime data.
-            let server = mcp::McpServer::new(did);
+            let server = mcp::McpServer::with_authority(
+                did,
+                mcp_authority_did,
+                mcp_authority_public_key,
+                mcp_authority_signer,
+            );
 
             if let Some(bind) = sse {
                 eprintln!("[exochain-mcp] Starting MCP server on SSE at {bind}...");
-                eprintln!("[exochain-mcp] Node identity: {}", node_identity.did);
+                eprintln!("[exochain-mcp] Node identity: {}", node_identity_for_log);
                 mcp::serve_sse(server, &bind)
                     .await
                     .map_err(|e| anyhow::anyhow!("MCP SSE server error: {e}"))
             } else {
                 eprintln!("[exochain-mcp] Starting MCP server on stdio...");
-                eprintln!("[exochain-mcp] Node identity: {}", node_identity.did);
+                eprintln!("[exochain-mcp] Node identity: {}", node_identity_for_log);
                 mcp::serve_stdio(server)
                     .await
                     .map_err(|e| anyhow::anyhow!("MCP stdio server error: {e}"))

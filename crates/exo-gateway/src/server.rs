@@ -3047,6 +3047,31 @@ mod tests {
     /// all non-provenance invariants.  Mirrors the context that
     /// `build_adjudication_context_from_db` would produce for an actor with
     /// a single role, one active consent record, and a one-link authority chain.
+    fn signed_authority_link(grantor: &Did, grantee: &Did) -> AuthorityLink {
+        let (public_key, secret_key) = generate_keypair();
+        let permissions = PermissionSet::new(vec![Permission::new("vote")]);
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(grantor.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(grantee.as_str().as_bytes());
+        payload.push(0x00);
+        for permission in &permissions.permissions {
+            payload.extend_from_slice(permission.0.as_bytes());
+            payload.push(0x00);
+        }
+        let message = Hash256::digest(&payload);
+        let signature = sign(message.as_bytes(), &secret_key);
+
+        AuthorityLink {
+            grantor: grantor.clone(),
+            grantee: grantee.clone(),
+            permissions,
+            signature: signature.to_bytes().to_vec(),
+            grantor_public_key: Some(public_key.as_bytes().to_vec()),
+        }
+    }
+
     fn valid_db_context(actor: &Did) -> AdjudicationContext {
         let root = Did::new("did:exo:root-grantor").unwrap();
         AdjudicationContext {
@@ -3055,14 +3080,7 @@ mod tests {
                 branch: GovernmentBranch::Executive,
             }],
             authority_chain: AuthorityChain {
-                links: vec![AuthorityLink {
-                    grantor: root.clone(),
-                    grantee: actor.clone(),
-                    permissions: PermissionSet::new(vec![Permission::new("vote")]),
-                    // Non-empty signature satisfies the legacy (no-public-key) path.
-                    signature: vec![0xAB; 8],
-                    grantor_public_key: None,
-                }],
+                links: vec![signed_authority_link(&root, actor)],
             },
             consent_records: vec![ConsentRecord {
                 subject: root.clone(),

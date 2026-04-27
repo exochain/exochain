@@ -20,7 +20,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use exo_core::Did;
+use exo_core::{Did, Hash256};
 use exo_gatekeeper::{
     ActionRequest, AdjudicationContext, Kernel,
     invariants::{ConstitutionalInvariant, InvariantSet},
@@ -72,6 +72,31 @@ fn vote_action(actor: &Did) -> ActionRequest {
     }
 }
 
+fn signed_authority_link(grantor: &Did, grantee: &Did) -> AuthorityLink {
+    let (public_key, secret_key) = exo_core::crypto::generate_keypair();
+    let permissions = PermissionSet::new(vec![Permission::new("vote")]);
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(grantor.as_str().as_bytes());
+    payload.push(0x00);
+    payload.extend_from_slice(grantee.as_str().as_bytes());
+    payload.push(0x00);
+    for permission in &permissions.permissions {
+        payload.extend_from_slice(permission.0.as_bytes());
+        payload.push(0x00);
+    }
+    let message = Hash256::digest(&payload);
+    let signature = exo_core::crypto::sign(message.as_bytes(), &secret_key);
+
+    AuthorityLink {
+        grantor: grantor.clone(),
+        grantee: grantee.clone(),
+        permissions,
+        signature: signature.to_bytes().to_vec(),
+        grantor_public_key: Some(public_key.as_bytes().to_vec()),
+    }
+}
+
 /// Construct a fully-valid `AdjudicationContext` that mirrors what
 /// `build_adjudication_context_from_db` would produce when the actor has a
 /// role, active consent, and a one-link authority chain.
@@ -83,13 +108,7 @@ fn full_db_context(actor: &Did) -> AdjudicationContext {
             branch: GovernmentBranch::Executive,
         }],
         authority_chain: AuthorityChain {
-            links: vec![AuthorityLink {
-                grantor: grantor.clone(),
-                grantee: actor.clone(),
-                permissions: PermissionSet::new(vec![Permission::new("vote")]),
-                signature: vec![0xAB; 8], // non-empty: satisfies legacy path
-                grantor_public_key: None,
-            }],
+            links: vec![signed_authority_link(&grantor, actor)],
         },
         consent_records: vec![ConsentRecord {
             subject: grantor.clone(),
@@ -241,13 +260,7 @@ fn revoked_consent_denies() {
             branch: GovernmentBranch::Executive,
         }],
         authority_chain: AuthorityChain {
-            links: vec![AuthorityLink {
-                grantor: grantor.clone(),
-                grantee: actor.clone(),
-                permissions: PermissionSet::new(vec![Permission::new("vote")]),
-                signature: vec![0xAB; 8],
-                grantor_public_key: None,
-            }],
+            links: vec![signed_authority_link(&grantor, &actor)],
         },
         consent_records: vec![ConsentRecord {
             subject: grantor.clone(),
@@ -309,7 +322,7 @@ fn cross_branch_roles_denies() {
 mod db_roundtrip {
     use std::sync::{Arc, RwLock};
 
-    use exo_core::Did;
+    use exo_core::{Did, Hash256};
     use exo_gatekeeper::{
         ActionRequest, Kernel,
         invariants::{ConstitutionalInvariant, InvariantSet},
@@ -345,6 +358,31 @@ mod db_roundtrip {
             required_permissions: PermissionSet::new(vec![Permission::new("vote")]),
             is_self_grant: false,
             modifies_kernel: false,
+        }
+    }
+
+    fn signed_authority_link(grantor: &Did, grantee: &Did) -> AuthorityLink {
+        let (public_key, secret_key) = exo_core::crypto::generate_keypair();
+        let permissions = PermissionSet::new(vec![Permission::new("vote")]);
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(grantor.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(grantee.as_str().as_bytes());
+        payload.push(0x00);
+        for permission in &permissions.permissions {
+            payload.extend_from_slice(permission.0.as_bytes());
+            payload.push(0x00);
+        }
+        let message = Hash256::digest(&payload);
+        let signature = exo_core::crypto::sign(message.as_bytes(), &secret_key);
+
+        AuthorityLink {
+            grantor: grantor.clone(),
+            grantee: grantee.clone(),
+            permissions,
+            signature: signature.to_bytes().to_vec(),
+            grantor_public_key: Some(public_key.as_bytes().to_vec()),
         }
     }
 
@@ -407,13 +445,7 @@ mod db_roundtrip {
         let actor = did(actor_did);
         let grantor = did(grantor_did);
         let chain = AuthorityChain {
-            links: vec![AuthorityLink {
-                grantor: grantor.clone(),
-                grantee: actor.clone(),
-                permissions: PermissionSet::new(vec![Permission::new("vote")]),
-                signature: vec![0xAB; 8], // non-empty: satisfies legacy path
-                grantor_public_key: None,
-            }],
+            links: vec![signed_authority_link(&grantor, &actor)],
         };
         let chain_json = serde_json::to_value(&chain).unwrap();
         sqlx::query(

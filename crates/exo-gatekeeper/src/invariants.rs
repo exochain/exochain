@@ -281,75 +281,67 @@ fn check_authority_chain_valid(ctx: &InvariantContext) -> Result<(), InvariantVi
         }
     }
 
-    // TNC-01: Cryptographic signature verification (if grantor_public_key is provided).
-    // For each link that carries a public key, verify the Ed25519 signature over the
+    // TNC-01: Cryptographic signature verification.
+    // Every link must carry the grantor public key and verify the Ed25519 signature over the
     // canonical payload: Hash256(grantor_bytes || 0x00 || grantee_bytes || 0x00 ||
-    // permission_bytes).  Links without a public key fall back to non-emptiness check.
+    // permission_bytes).
     for (idx, link) in links.iter().enumerate() {
-        match &link.grantor_public_key {
-            Some(pk_bytes) => {
-                // Validate key length.
-                let pk_arr: [u8; 32] =
-                    pk_bytes
-                        .as_slice()
-                        .try_into()
-                        .map_err(|_| InvariantViolation {
-                            invariant: ConstitutionalInvariant::AuthorityChainValid,
-                            description: format!("link[{idx}] grantor_public_key is not 32 bytes"),
-                            evidence: vec![format!("key_len: {}", pk_bytes.len())],
-                        })?;
+        let pk_bytes = link
+            .grantor_public_key
+            .as_ref()
+            .ok_or_else(|| InvariantViolation {
+                invariant: ConstitutionalInvariant::AuthorityChainValid,
+                description: format!("link[{idx}] missing grantor_public_key"),
+                evidence: vec![format!("grantor: {}", link.grantor)],
+            })?;
 
-                // Validate signature length.
-                let sig_arr: [u8; 64] =
-                    link.signature
-                        .as_slice()
-                        .try_into()
-                        .map_err(|_| InvariantViolation {
-                            invariant: ConstitutionalInvariant::AuthorityChainValid,
-                            description: format!(
-                                "link[{idx}] signature is not 64 bytes (required for Ed25519)"
-                            ),
-                            evidence: vec![format!("sig_len: {}", link.signature.len())],
-                        })?;
+        // Validate key length.
+        let pk_arr: [u8; 32] = pk_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| InvariantViolation {
+                invariant: ConstitutionalInvariant::AuthorityChainValid,
+                description: format!("link[{idx}] grantor_public_key is not 32 bytes"),
+                evidence: vec![format!("key_len: {}", pk_bytes.len())],
+            })?;
 
-                // Compute canonical payload.
-                let mut payload = Vec::new();
-                payload.extend_from_slice(link.grantor.as_str().as_bytes());
-                payload.push(0x00);
-                payload.extend_from_slice(link.grantee.as_str().as_bytes());
-                payload.push(0x00);
-                for perm in &link.permissions.permissions {
-                    payload.extend_from_slice(perm.0.as_bytes());
-                    payload.push(0x00);
-                }
-                let message = Hash256::digest(&payload);
+        // Validate signature length.
+        let sig_arr: [u8; 64] =
+            link.signature
+                .as_slice()
+                .try_into()
+                .map_err(|_| InvariantViolation {
+                    invariant: ConstitutionalInvariant::AuthorityChainValid,
+                    description: format!(
+                        "link[{idx}] signature is not 64 bytes (required for Ed25519)"
+                    ),
+                    evidence: vec![format!("sig_len: {}", link.signature.len())],
+                })?;
 
-                let pubkey = exo_core::PublicKey::from_bytes(pk_arr);
-                let sig = exo_core::Signature::from_bytes(sig_arr);
+        // Compute canonical payload.
+        let mut payload = Vec::new();
+        payload.extend_from_slice(link.grantor.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(link.grantee.as_str().as_bytes());
+        payload.push(0x00);
+        for perm in &link.permissions.permissions {
+            payload.extend_from_slice(perm.0.as_bytes());
+            payload.push(0x00);
+        }
+        let message = Hash256::digest(&payload);
 
-                if !exo_core::crypto::verify(message.as_bytes(), &sig, &pubkey) {
-                    return Err(InvariantViolation {
-                        invariant: ConstitutionalInvariant::AuthorityChainValid,
-                        description: format!(
-                            "link[{idx}] Ed25519 signature is cryptographically invalid"
-                        ),
-                        evidence: vec![
-                            format!("grantor: {}", link.grantor),
-                            format!("grantee: {}", link.grantee),
-                        ],
-                    });
-                }
-            }
-            None => {
-                // Legacy: at minimum the signature must be non-empty.
-                if link.signature.is_empty() {
-                    return Err(InvariantViolation {
-                        invariant: ConstitutionalInvariant::AuthorityChainValid,
-                        description: format!("link[{idx}] has empty signature"),
-                        evidence: vec![format!("grantor: {}", link.grantor)],
-                    });
-                }
-            }
+        let pubkey = exo_core::PublicKey::from_bytes(pk_arr);
+        let sig = exo_core::Signature::from_bytes(sig_arr);
+
+        if !exo_core::crypto::verify(message.as_bytes(), &sig, &pubkey) {
+            return Err(InvariantViolation {
+                invariant: ConstitutionalInvariant::AuthorityChainValid,
+                description: format!("link[{idx}] Ed25519 signature is cryptographically invalid"),
+                evidence: vec![
+                    format!("grantor: {}", link.grantor),
+                    format!("grantee: {}", link.grantee),
+                ],
+            });
         }
     }
 
@@ -407,58 +399,46 @@ fn check_provenance_verifiable(ctx: &InvariantContext) -> Result<(), InvariantVi
                     ],
                 });
             }
-            match &prov.public_key {
-                Some(pk_bytes) => {
-                    // Full Ed25519 verification path (closes GAP-02).
-                    let pk_arr: [u8; 32] =
-                        pk_bytes
-                            .as_slice()
-                            .try_into()
-                            .map_err(|_| InvariantViolation {
-                                invariant: ConstitutionalInvariant::ProvenanceVerifiable,
-                                description: "Provenance public_key is not 32 bytes".into(),
-                                evidence: vec![format!("key_len: {}", pk_bytes.len())],
-                            })?;
-                    let sig_arr: [u8; 64] =
-                        prov.signature
-                            .as_slice()
-                            .try_into()
-                            .map_err(|_| InvariantViolation {
-                                invariant: ConstitutionalInvariant::ProvenanceVerifiable,
-                                description:
-                                    "Provenance signature is not 64 bytes (required for Ed25519)"
-                                        .into(),
-                                evidence: vec![format!("sig_len: {}", prov.signature.len())],
-                            })?;
-                    // Canonical payload: actor || 0x00 || action_hash || 0x00 || timestamp
-                    let mut payload = Vec::new();
-                    payload.extend_from_slice(prov.actor.as_str().as_bytes());
-                    payload.push(0x00);
-                    payload.extend_from_slice(&prov.action_hash);
-                    payload.push(0x00);
-                    payload.extend_from_slice(prov.timestamp.as_bytes());
-                    let message = Hash256::digest(&payload);
-                    let pubkey = exo_core::PublicKey::from_bytes(pk_arr);
-                    let sig = exo_core::Signature::from_bytes(sig_arr);
-                    if !exo_core::crypto::verify(message.as_bytes(), &sig, &pubkey) {
-                        return Err(InvariantViolation {
-                            invariant: ConstitutionalInvariant::ProvenanceVerifiable,
-                            description:
-                                "Provenance Ed25519 signature is cryptographically invalid".into(),
-                            evidence: vec![format!("actor: {}", prov.actor)],
-                        });
-                    }
-                }
-                None => {
-                    // Legacy path: signature must be non-empty.
-                    if !prov.is_signed() {
-                        return Err(InvariantViolation {
-                            invariant: ConstitutionalInvariant::ProvenanceVerifiable,
-                            description: "Provenance metadata is not signed".into(),
-                            evidence: vec![format!("actor: {}", prov.actor)],
-                        });
-                    }
-                }
+            let pk_bytes = prov.public_key.as_ref().ok_or_else(|| InvariantViolation {
+                invariant: ConstitutionalInvariant::ProvenanceVerifiable,
+                description: "Provenance public_key is required for Ed25519 verification".into(),
+                evidence: vec![format!("actor: {}", prov.actor)],
+            })?;
+            let pk_arr: [u8; 32] =
+                pk_bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| InvariantViolation {
+                        invariant: ConstitutionalInvariant::ProvenanceVerifiable,
+                        description: "Provenance public_key is not 32 bytes".into(),
+                        evidence: vec![format!("key_len: {}", pk_bytes.len())],
+                    })?;
+            let sig_arr: [u8; 64] =
+                prov.signature
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| InvariantViolation {
+                        invariant: ConstitutionalInvariant::ProvenanceVerifiable,
+                        description: "Provenance signature is not 64 bytes (required for Ed25519)"
+                            .into(),
+                        evidence: vec![format!("sig_len: {}", prov.signature.len())],
+                    })?;
+            // Canonical payload: actor || 0x00 || action_hash || 0x00 || timestamp
+            let mut payload = Vec::new();
+            payload.extend_from_slice(prov.actor.as_str().as_bytes());
+            payload.push(0x00);
+            payload.extend_from_slice(&prov.action_hash);
+            payload.push(0x00);
+            payload.extend_from_slice(prov.timestamp.as_bytes());
+            let message = Hash256::digest(&payload);
+            let pubkey = exo_core::PublicKey::from_bytes(pk_arr);
+            let sig = exo_core::Signature::from_bytes(sig_arr);
+            if !exo_core::crypto::verify(message.as_bytes(), &sig, &pubkey) {
+                return Err(InvariantViolation {
+                    invariant: ConstitutionalInvariant::ProvenanceVerifiable,
+                    description: "Provenance Ed25519 signature is cryptographically invalid".into(),
+                    evidence: vec![format!("actor: {}", prov.actor)],
+                });
             }
             Ok(())
         }
@@ -484,6 +464,8 @@ mod tests {
 
     fn passing_context() -> InvariantContext {
         let actor = did("did:exo:actor1");
+        let (authority_link, _) = signed_link("did:exo:root", actor.as_str());
+        let (provenance, _, _) = signed_provenance(actor.as_str());
         InvariantContext {
             actor: actor.clone(),
             actor_roles: vec![Role {
@@ -502,28 +484,13 @@ mod tests {
                 active: true,
             }],
             authority_chain: AuthorityChain {
-                links: vec![AuthorityLink {
-                    grantor: did("did:exo:root"),
-                    grantee: actor.clone(),
-                    permissions: PermissionSet::new(vec![Permission::new("read")]),
-                    signature: vec![1, 2, 3],
-                    grantor_public_key: None,
-                }],
+                links: vec![authority_link],
             },
             is_self_grant: false,
             human_override_preserved: true,
             kernel_modification_attempted: false,
             quorum_evidence: None,
-            provenance: Some(Provenance {
-                actor: actor.clone(),
-                timestamp: "2025-01-01T00:00:00Z".into(),
-                action_hash: vec![1, 2, 3],
-                signature: vec![4, 5, 6],
-                public_key: None,
-                voice_kind: None,
-                independence: None,
-                review_order: None,
-            }),
+            provenance: Some(provenance),
             actor_permissions: PermissionSet::new(vec![Permission::new("read")]),
             requested_permissions: PermissionSet::default(),
         }
@@ -771,23 +738,10 @@ mod tests {
             ConstitutionalInvariant::AuthorityChainValid,
         ]));
         let mut ctx = passing_context();
+        let (link1, _) = signed_link("did:exo:root", "did:exo:mid");
+        let (link2, _) = signed_link("did:exo:mid", "did:exo:actor1");
         ctx.authority_chain = AuthorityChain {
-            links: vec![
-                AuthorityLink {
-                    grantor: did("did:exo:root"),
-                    grantee: did("did:exo:mid"),
-                    permissions: PermissionSet::default(),
-                    signature: vec![1],
-                    grantor_public_key: None,
-                },
-                AuthorityLink {
-                    grantor: did("did:exo:mid"),
-                    grantee: ctx.actor.clone(),
-                    permissions: PermissionSet::default(),
-                    signature: vec![2],
-                    grantor_public_key: None,
-                },
-            ],
+            links: vec![link1, link2],
         };
         assert!(enforce_all(&engine, &ctx).is_ok());
     }
@@ -868,17 +822,39 @@ mod tests {
             ConstitutionalInvariant::ProvenanceVerifiable,
         ]));
         let mut ctx = passing_context();
+        let (pk, _) = exo_core::crypto::generate_keypair();
         ctx.provenance = Some(Provenance {
             actor: ctx.actor.clone(),
             timestamp: "t".into(),
             action_hash: vec![1],
             signature: vec![],
-            public_key: None,
+            public_key: Some(pk.as_bytes().to_vec()),
             voice_kind: None,
             independence: None,
             review_order: None,
         });
         assert!(enforce_all(&engine, &ctx).is_err());
+    }
+
+    #[test]
+    fn provenance_fails_without_public_key_even_with_non_empty_signature() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::ProvenanceVerifiable,
+        ]));
+        let mut ctx = passing_context();
+        ctx.provenance = Some(Provenance {
+            actor: ctx.actor.clone(),
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            action_hash: vec![1],
+            signature: vec![7u8; 64],
+            public_key: None,
+            voice_kind: None,
+            independence: None,
+            review_order: None,
+        });
+
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+        assert!(err[0].description.contains("public_key"));
     }
 
     #[test]
@@ -1249,7 +1225,20 @@ mod tests {
     }
 
     #[test]
-    fn authority_chain_fails_empty_signature_no_key() {
+    fn authority_chain_fails_empty_signature_with_public_key() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::AuthorityChainValid,
+        ]));
+        let mut ctx = passing_context();
+        let (mut link, _) = signed_link("did:exo:root", "did:exo:actor1");
+        link.signature.clear();
+        ctx.authority_chain = AuthorityChain { links: vec![link] };
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+        assert!(err[0].description.contains("not 64 bytes"));
+    }
+
+    #[test]
+    fn authority_chain_fails_without_grantor_public_key_even_with_non_empty_signature() {
         let engine = InvariantEngine::new(InvariantSet::with(vec![
             ConstitutionalInvariant::AuthorityChainValid,
         ]));
@@ -1258,13 +1247,14 @@ mod tests {
             links: vec![AuthorityLink {
                 grantor: did("did:exo:root"),
                 grantee: did("did:exo:actor1"),
-                permissions: PermissionSet::default(),
-                signature: vec![], // empty — legacy check fails
+                permissions: PermissionSet::new(vec![Permission::new("read")]),
+                signature: vec![7u8; 64],
                 grantor_public_key: None,
             }],
         };
+
         let err = enforce_all(&engine, &ctx).unwrap_err();
-        assert!(err[0].description.contains("empty signature"));
+        assert!(err[0].description.contains("grantor_public_key"));
     }
 
     #[test]

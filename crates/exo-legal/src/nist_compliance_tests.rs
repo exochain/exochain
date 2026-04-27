@@ -7,7 +7,7 @@
 #[cfg(test)]
 mod nist_compliance {
     use exo_authority::DelegateeKind;
-    use exo_core::{Did, Timestamp};
+    use exo_core::{Did, Hash256, Timestamp};
     use exo_gatekeeper::{
         InvariantEngine, McpRule,
         invariants::{ConstitutionalInvariant, InvariantContext, enforce_all},
@@ -44,8 +44,60 @@ mod nist_compliance {
         Uuid::from_u128(n)
     }
 
+    fn signed_authority_link(grantor: &Did, grantee: &Did) -> AuthorityLink {
+        let (public_key, secret_key) = exo_core::crypto::generate_keypair();
+        let permissions = PermissionSet::new(vec![Permission::new("read")]);
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(grantor.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(grantee.as_str().as_bytes());
+        payload.push(0x00);
+        for permission in &permissions.permissions {
+            payload.extend_from_slice(permission.0.as_bytes());
+            payload.push(0x00);
+        }
+        let message = Hash256::digest(&payload);
+        let signature = exo_core::crypto::sign(message.as_bytes(), &secret_key);
+
+        AuthorityLink {
+            grantor: grantor.clone(),
+            grantee: grantee.clone(),
+            permissions,
+            signature: signature.to_bytes().to_vec(),
+            grantor_public_key: Some(public_key.as_bytes().to_vec()),
+        }
+    }
+
+    fn signed_provenance(actor: &Did) -> Provenance {
+        let (public_key, secret_key) = exo_core::crypto::generate_keypair();
+        let timestamp = "2026-03-20T00:00:00Z".to_owned();
+        let action_hash = vec![1, 2, 3];
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(actor.as_str().as_bytes());
+        payload.push(0x00);
+        payload.extend_from_slice(&action_hash);
+        payload.push(0x00);
+        payload.extend_from_slice(timestamp.as_bytes());
+        let message = Hash256::digest(&payload);
+        let signature = exo_core::crypto::sign(message.as_bytes(), &secret_key);
+
+        Provenance {
+            actor: actor.clone(),
+            timestamp,
+            action_hash,
+            signature: signature.to_bytes().to_vec(),
+            public_key: Some(public_key.as_bytes().to_vec()),
+            voice_kind: None,
+            independence: None,
+            review_order: None,
+        }
+    }
+
     /// Build a passing InvariantContext matching the pattern in invariants.rs tests.
     fn passing_context(actor: &Did) -> InvariantContext {
+        let root = did("root");
         InvariantContext {
             actor: actor.clone(),
             actor_roles: vec![Role {
@@ -64,28 +116,13 @@ mod nist_compliance {
                 active: true,
             }],
             authority_chain: AuthorityChain {
-                links: vec![AuthorityLink {
-                    grantor: did("root"),
-                    grantee: actor.clone(),
-                    permissions: PermissionSet::new(vec![Permission::new("read")]),
-                    signature: vec![1, 2, 3],
-                    grantor_public_key: None,
-                }],
+                links: vec![signed_authority_link(&root, actor)],
             },
             is_self_grant: false,
             human_override_preserved: true,
             kernel_modification_attempted: false,
             quorum_evidence: None,
-            provenance: Some(Provenance {
-                actor: actor.clone(),
-                timestamp: "2026-03-20T00:00:00Z".into(),
-                action_hash: vec![1, 2, 3],
-                signature: vec![4, 5, 6],
-                public_key: None,
-                voice_kind: None,
-                independence: None,
-                review_order: None,
-            }),
+            provenance: Some(signed_provenance(actor)),
             actor_permissions: PermissionSet::new(vec![Permission::new("read")]),
             requested_permissions: PermissionSet::default(),
         }
