@@ -205,6 +205,42 @@ mod tests {
         })
     }
 
+    #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+    fn derived_did(keypair: &KeyPair) -> Did {
+        crate::zerodentity::session_auth::did_from_public_key(keypair.public_key()).unwrap()
+    }
+
+    #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+    fn signed_claim_body(
+        subject_did: &Did,
+        claim_type: &str,
+        provider: Option<&str>,
+        verification_channel: Option<&str>,
+        created_ms: u64,
+        public_keypair: &KeyPair,
+        signing_keypair: &KeyPair,
+    ) -> Value {
+        let payload = crate::zerodentity::session_auth::claim_submission_signing_payload(
+            subject_did,
+            claim_type,
+            provider,
+            verification_channel,
+            created_ms,
+            public_keypair.public_key(),
+        )
+        .unwrap();
+        let signature = signing_keypair.sign(&payload);
+        serde_json::json!({
+            "subject_did": subject_did.as_str(),
+            "claim_type": claim_type,
+            "provider": provider,
+            "verification_channel": verification_channel,
+            "created_ms": created_ms,
+            "public_key": hex::encode(public_keypair.public_key().as_bytes()),
+            "signature": hex::encode(signature.to_bytes())
+        })
+    }
+
     fn request_signature_headers(
         method: &str,
         uri: &str,
@@ -705,14 +741,21 @@ mod tests {
     #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
     async fn submit_claim_returns_200_and_claim_id() {
         let app = onboarding_app(new_shared_store());
+        let keypair = test_keypair(30);
+        let did = derived_did(&keypair);
 
         let resp = post_json(
             &app,
             "/api/v1/0dentity/claims",
-            serde_json::json!({
-                "subject_did": "did:exo:alice",
-                "claim_type": "DisplayName"
-            }),
+            signed_claim_body(
+                &did,
+                "DisplayName",
+                None,
+                None,
+                1_700_000_001,
+                &keypair,
+                &keypair,
+            ),
         )
         .await;
 
@@ -762,15 +805,21 @@ mod tests {
     #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
     async fn submit_claim_with_otp_channel_returns_challenge_id_and_ttl() {
         let app = onboarding_app(new_shared_store());
+        let keypair = test_keypair(31);
+        let did = derived_did(&keypair);
 
         let resp = post_json(
             &app,
             "/api/v1/0dentity/claims",
-            serde_json::json!({
-                "subject_did": "did:exo:alice",
-                "claim_type": "Email",
-                "verification_channel": "Email"
-            }),
+            signed_claim_body(
+                &did,
+                "Email",
+                None,
+                Some("Email"),
+                1_700_000_002,
+                &keypair,
+                &keypair,
+            ),
         )
         .await;
 
@@ -785,21 +834,160 @@ mod tests {
     async fn submit_claim_stores_claim_in_store() {
         let store = new_shared_store();
         let app = onboarding_app(store.clone());
-        let did = td("onb-store-check");
+        let keypair = test_keypair(32);
+        let did = derived_did(&keypair);
+        let created_ms = 1_700_000_003;
 
         post_json(
             &app,
             "/api/v1/0dentity/claims",
-            serde_json::json!({
-                "subject_did": did.as_str(),
-                "claim_type": "Phone"
-            }),
+            signed_claim_body(&did, "Phone", None, None, created_ms, &keypair, &keypair),
         )
         .await;
 
         let claims = store.lock().unwrap().get_claims(&did).unwrap();
         assert_eq!(claims.len(), 1);
         assert_eq!(claims[0].1.claim_type, ClaimType::Phone);
+        assert_eq!(claims[0].1.created_ms, created_ms);
+        assert!(!claims[0].1.signature.is_empty());
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+    async fn submit_claim_rejects_missing_proof_of_possession() {
+        let app = onboarding_app(new_shared_store());
+        let keypair = test_keypair(33);
+        let did = derived_did(&keypair);
+
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/claims",
+            serde_json::json!({
+                "subject_did": did.as_str(),
+                "claim_type": "DisplayName"
+            }),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+    async fn submit_claim_rejects_public_key_that_does_not_derive_subject_did() {
+        let app = onboarding_app(new_shared_store());
+        let keypair = test_keypair(34);
+        let did = td("not-derived-from-key");
+
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/claims",
+            signed_claim_body(
+                &did,
+                "DisplayName",
+                None,
+                None,
+                1_700_000_004,
+                &keypair,
+                &keypair,
+            ),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+    async fn submit_claim_rejects_wrong_key_signature() {
+        let app = onboarding_app(new_shared_store());
+        let keypair = test_keypair(35);
+        let wrong_keypair = test_keypair(36);
+        let did = derived_did(&keypair);
+
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/claims",
+            signed_claim_body(
+                &did,
+                "DisplayName",
+                None,
+                None,
+                1_700_000_005,
+                &keypair,
+                &wrong_keypair,
+            ),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+    async fn submit_claim_rejects_tampered_signed_payload() {
+        let app = onboarding_app(new_shared_store());
+        let keypair = test_keypair(37);
+        let did = derived_did(&keypair);
+        let mut body = signed_claim_body(
+            &did,
+            "DisplayName",
+            None,
+            None,
+            1_700_000_006,
+            &keypair,
+            &keypair,
+        );
+        body["claim_type"] = Value::String("Email".to_owned());
+
+        let resp = post_json(&app, "/api/v1/0dentity/claims", body).await;
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+    async fn submit_claim_rejects_zero_signature() {
+        let app = onboarding_app(new_shared_store());
+        let keypair = test_keypair(38);
+        let did = derived_did(&keypair);
+        let mut body = signed_claim_body(
+            &did,
+            "DisplayName",
+            None,
+            None,
+            1_700_000_007,
+            &keypair,
+            &keypair,
+        );
+        body["signature"] = Value::String(hex::encode([0u8; 64]));
+
+        let resp = post_json(&app, "/api/v1/0dentity/claims", body).await;
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+    async fn submit_claim_rejects_replayed_submission() {
+        let app = onboarding_app(new_shared_store());
+        let keypair = test_keypair(39);
+        let did = derived_did(&keypair);
+        let body = signed_claim_body(
+            &did,
+            "DisplayName",
+            None,
+            None,
+            1_700_000_008,
+            &keypair,
+            &keypair,
+        );
+
+        let first = post_json(&app, "/api/v1/0dentity/claims", body.clone()).await;
+        let second = post_json(&app, "/api/v1/0dentity/claims", body).await;
+
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(second.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]
@@ -2045,18 +2233,15 @@ mod tests {
         let store = new_shared_store();
         let onb = onboarding_app(store.clone());
         let api = api_app(store.clone());
-        let did = td("arc-e2e-001");
-        let did_str = did.as_str();
         let keypair = test_keypair(21);
+        let did = derived_did(&keypair);
+        let did_str = did.as_str();
 
         // ── 1. DisplayName claim ──────────────────────────────────────────
         let resp = post_json(
             &onb,
             "/api/v1/0dentity/claims",
-            serde_json::json!({
-                "subject_did": did_str,
-                "claim_type": "DisplayName"
-            }),
+            signed_claim_body(&did, "DisplayName", None, None, 22_430, &keypair, &keypair),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -2073,10 +2258,7 @@ mod tests {
         let resp = post_json(
             &onb,
             "/api/v1/0dentity/claims",
-            serde_json::json!({
-                "subject_did": did_str,
-                "claim_type": "Email"
-            }),
+            signed_claim_body(&did, "Email", None, None, 22_440, &keypair, &keypair),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -2130,10 +2312,7 @@ mod tests {
         let resp = post_json(
             &onb,
             "/api/v1/0dentity/claims",
-            serde_json::json!({
-                "subject_did": did_str,
-                "claim_type": "Phone"
-            }),
+            signed_claim_body(&did, "Phone", None, None, 22_450, &keypair, &keypair),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);

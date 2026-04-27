@@ -48,6 +48,7 @@ tracing-subscriber = { workspace = true }
 # Crypto (identity bootstrap)
 ed25519-dalek = { workspace = true }
 blake3 = { workspace = true }
+bs58 = { workspace = true }
 rand = { workspace = true }
 sha2 = { workspace = true }
 hmac = { workspace = true }

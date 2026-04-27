@@ -16,7 +16,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 |--------|-------|--------|
 | Rust crates | 20 | `ls -d crates/*/` |
 | Rust source files | 266 | `find crates -name '*.rs'` |
-| Rust LOC | 116444 | `wc -l` |
+| Rust LOC | 115663 | `wc -l` |
 | Workspace tests | 2,861 listed | `cargo test --workspace -- --list` |
 | CI quality gates | 20 | `.github/workflows/ci.yml` numbered gates, plus required aggregator |
 | Published releases | None (pre-release) | `git tag -l` |
@@ -30,7 +30,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 - **Clippy clean** under `-D warnings` for production code
 - **Format clean** under `cargo +nightly fmt --all -- --check`
 - **20 numbered CI quality gates** plus the required "All Constitutional Gates" aggregator are defined and enforced
-- **Traceability matrix** maps 87 requirements — see `governance/traceability_matrix.md`
+- **Traceability matrix** maps 86 requirements — see `governance/traceability_matrix.md`
 - **Threat model** covers 14 threats tracked: 14 mitigated, 0 partial, 0 planned — see `governance/threat_matrix.md`
 - **Constitutional invariants** enforced via the CGR kernel in all governance paths
 - **No floating-point arithmetic** — denied workspace-wide via `#[deny(clippy::float_arithmetic)]`
@@ -57,7 +57,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 ## Architecture
 
 ```
-Layer 1: CGR Kernel         (Rust, 20 crates, 116444 tracked LOC under crates/)
+Layer 1: CGR Kernel         (Rust, 20 crates, 115663 tracked LOC under crates/)
          Constitutional governance runtime — deterministic, no floats,
          cryptographic proofs, 2,861 listed workspace tests
 
@@ -126,7 +126,7 @@ This repository is managed under strict **Judicial Build Governance**. All contr
 
 ### Key Governance Artifacts
 
-* [Traceability Matrix](governance/traceability_matrix.md) — 87 requirements tracked
+* [Traceability Matrix](governance/traceability_matrix.md) — 86 requirements tracked
 * [Threat Model](governance/threat_matrix.md) — 14 mitigated, 0 partial, 0 planned
 * [Quality Gates](governance/quality_gates.md) — 20 numbered CI gates plus required aggregator
 * [Sub-Agent Charters](governance/sub_agents.md) — 11 agent charters documented

@@ -92,7 +92,7 @@ Expected output tail:
 test result: ok. ... passed; 0 failed; 0 ignored; ...
 ```
 
-The current workspace inventory lists **2,687 tests**. The number grows as new crates land; consult
+The current workspace inventory lists **2,861 tests**. The number grows as new crates land; consult
 `governance/traceability_matrix.md` and the `README.md` repo-truth
 table for the latest figure. What matters is `0 failed`.
 
@@ -215,7 +215,7 @@ for first-week work:
 
 | File                                            | Contents                                                                       |
 |-------------------------------------------------|--------------------------------------------------------------------------------|
-| `traceability_matrix.md`                        | 87 requirements → crate → tests → status                                       |
+| `traceability_matrix.md`                        | 86 requirements → crate → tests → status                                       |
 | `threat_matrix.md`                              | 14 threats, status, mitigation mapping                                         |
 | `quality_gates.md`                              | The 8 pull-request gates and release gates                                     |
 | `resolutions/CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY.md` | Council resolution defining AEGIS, SYBIL, authentic plurality, work orders |
@@ -448,7 +448,7 @@ CR-001:
 
 | Artifact                                                | What it is                                              |
 |---------------------------------------------------------|---------------------------------------------------------|
-| [`../../governance/traceability_matrix.md`](../../governance/traceability_matrix.md) | 87 requirements, each mapped to crate/module/tests/status |
+| [`../../governance/traceability_matrix.md`](../../governance/traceability_matrix.md) | 86 requirements, each mapped to crate/module/tests/status |
 | [`../../governance/threat_matrix.md`](../../governance/threat_matrix.md) | 14 threats with mitigation references                    |
 | [`../../governance/quality_gates.md`](../../governance/quality_gates.md) | The 20 numbered CI gates plus required aggregator         |
 | [`../../governance/resolutions/CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY.md`](../../governance/resolutions/CR-001-AEGIS-SYBIL-AUTHENTIC-PLURALITY.md) | The AEGIS / SYBIL resolution (draft, pending ratification) |

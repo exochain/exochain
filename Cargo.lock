@@ -1542,6 +1542,7 @@ dependencies = [
  "async-stream",
  "axum 0.7.9",
  "blake3",
+ "bs58",
  "ciborium",
  "clap",
  "directories",

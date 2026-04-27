@@ -8,6 +8,8 @@ use exo_core::types::{Did, Hash256, PublicKey, Signature};
 use serde::Serialize;
 
 pub(crate) const BOOTSTRAP_SIGNING_DOMAIN: &str = "exo.zerodentity.session_bootstrap.v1";
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+pub(crate) const CLAIM_SUBMISSION_SIGNING_DOMAIN: &str = "exo.zerodentity.claim_submission.v1";
 pub(crate) const REQUEST_SIGNING_DOMAIN: &str = "exo.zerodentity.session_request.v1";
 
 #[derive(Serialize)]
@@ -15,6 +17,18 @@ struct BootstrapSigningPayload<'a> {
     domain: &'static str,
     challenge_id: &'a str,
     subject_did: &'a str,
+    public_key: &'a PublicKey,
+}
+
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+#[derive(Serialize)]
+struct ClaimSubmissionSigningPayload<'a> {
+    domain: &'static str,
+    subject_did: &'a str,
+    claim_type: &'a str,
+    provider: Option<&'a str>,
+    verification_channel: Option<&'a str>,
+    created_ms: u64,
     public_key: &'a PublicKey,
 }
 
@@ -44,6 +58,26 @@ pub(crate) fn bootstrap_signing_payload(
         domain: BOOTSTRAP_SIGNING_DOMAIN,
         challenge_id,
         subject_did: subject_did.as_str(),
+        public_key,
+    })
+}
+
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+pub(crate) fn claim_submission_signing_payload(
+    subject_did: &Did,
+    claim_type: &str,
+    provider: Option<&str>,
+    verification_channel: Option<&str>,
+    created_ms: u64,
+    public_key: &PublicKey,
+) -> Result<Vec<u8>, String> {
+    encode_cbor(&ClaimSubmissionSigningPayload {
+        domain: CLAIM_SUBMISSION_SIGNING_DOMAIN,
+        subject_did: subject_did.as_str(),
+        claim_type,
+        provider,
+        verification_channel,
+        created_ms,
         public_key,
     })
 }
@@ -88,6 +122,14 @@ pub(crate) fn signature_from_hex(value: &str) -> Result<Signature, String> {
     let mut signature = [0u8; 64];
     signature.copy_from_slice(&bytes);
     Ok(Signature::from_bytes(signature))
+}
+
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+pub(crate) fn did_from_public_key(public_key: &PublicKey) -> Result<Did, String> {
+    let key_hash = Hash256::digest(public_key.as_bytes());
+    let method_specific = bs58::encode(key_hash.as_bytes()).into_string();
+    Did::new(&format!("did:exo:{method_specific}"))
+        .map_err(|e| format!("public key DID derivation failed: {e}"))
 }
 
 pub(crate) fn public_key_from_session_bytes(value: &[u8]) -> Result<PublicKey, String> {
@@ -142,6 +184,54 @@ mod tests {
             &public_key(),
         ));
         assert_eq!(first, second);
+    }
+
+    #[test]
+    #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+    fn did_derivation_is_deterministic_and_did_formatted() {
+        let first = must(did_from_public_key(&public_key()));
+        let second = must(did_from_public_key(&public_key()));
+
+        assert_eq!(first, second);
+        assert!(first.as_str().starts_with("did:exo:"));
+    }
+
+    #[test]
+    #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+    fn claim_submission_payload_is_domain_separated_and_deterministic() {
+        let did = did();
+        let first = must(claim_submission_signing_payload(
+            &did,
+            "Email",
+            None,
+            Some("Email"),
+            123,
+            &public_key(),
+        ));
+        let second = must(claim_submission_signing_payload(
+            &did,
+            "Email",
+            None,
+            Some("Email"),
+            123,
+            &public_key(),
+        ));
+        let different_time = must(claim_submission_signing_payload(
+            &did,
+            "Email",
+            None,
+            Some("Email"),
+            124,
+            &public_key(),
+        ));
+
+        assert_eq!(first, second);
+        assert_ne!(first, different_time);
+        assert!(
+            first
+                .windows(CLAIM_SUBMISSION_SIGNING_DOMAIN.len())
+                .any(|w| { w == CLAIM_SUBMISSION_SIGNING_DOMAIN.as_bytes() })
+        );
     }
 
     #[test]

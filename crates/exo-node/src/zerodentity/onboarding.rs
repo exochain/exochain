@@ -11,13 +11,15 @@ use std::sync::{Arc, Mutex};
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
 #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
-use exo_core::types::{Did, Hash256, Signature};
+use exo_core::types::{Did, Hash256};
 use exo_core::{crypto, types::PublicKey};
 use getrandom::getrandom;
 use rand::{SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+use super::session_auth::{claim_submission_signing_payload, did_from_public_key};
 #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
 use super::types::{ClaimStatus, IdentityClaim, OtpChannel};
 use super::{
@@ -75,6 +77,12 @@ pub struct SubmitClaimRequest {
     pub claim_type: String,
     #[serde(default)]
     pub provider: Option<String>,
+    #[serde(default)]
+    pub created_ms: Option<u64>,
+    #[serde(default)]
+    pub public_key: Option<String>,
+    #[serde(default)]
+    pub signature: Option<String>,
     pub verification_channel: Option<String>,
 }
 
@@ -216,6 +224,12 @@ fn parse_claim_type(ct: &str, provider: Option<&str>) -> Option<ClaimType> {
     }
 }
 
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+fn parse_otp_channel(channel: &str) -> Result<OtpChannel, (StatusCode, Json<serde_json::Value>)> {
+    OtpChannel::from_str(channel)
+        .map_err(|_| json_error(StatusCode::BAD_REQUEST, "Invalid OTP channel"))
+}
+
 #[cfg(not(feature = "unaudited-zerodentity-first-touch-onboarding"))]
 fn first_touch_onboarding_refusal() -> (StatusCode, Json<serde_json::Value>) {
     tracing::warn!(
@@ -260,7 +274,6 @@ pub async fn submit_claim(
     Json(req): Json<SubmitClaimRequest>,
 ) -> Result<Json<SubmitClaimResponse>, (StatusCode, Json<serde_json::Value>)> {
     let subject_did = parse_did(&req.subject_did)?;
-    let now = now_ms();
 
     let claim_type =
         parse_claim_type(&req.claim_type, req.provider.as_deref()).ok_or_else(|| {
@@ -269,22 +282,74 @@ pub async fn submit_claim(
                 Json(serde_json::json!({"error": "Unrecognised claim_type"})),
             )
         })?;
+    let created_ms = req
+        .created_ms
+        .ok_or_else(|| json_error(StatusCode::BAD_REQUEST, "created_ms is required"))?;
+    if created_ms == 0 {
+        return Err(json_error(
+            StatusCode::BAD_REQUEST,
+            "created_ms must be non-zero",
+        ));
+    }
 
-    // Build claim payload hash
-    let payload = format!("{}:{}", req.subject_did, req.claim_type);
-    let claim_hash = Hash256::digest(payload.as_bytes());
+    let public_key_hex = req
+        .public_key
+        .as_deref()
+        .ok_or_else(|| json_error(StatusCode::BAD_REQUEST, "public_key is required"))?;
+    let public_key =
+        public_key_from_hex(public_key_hex).map_err(|e| json_error(StatusCode::BAD_REQUEST, e))?;
+    let derived_did = did_from_public_key(&public_key)
+        .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if derived_did != subject_did {
+        return Err(json_error(
+            StatusCode::BAD_REQUEST,
+            "subject_did must equal did:exo:<bs58(blake3(public_key))>",
+        ));
+    }
 
-    let claim_id = Uuid::new_v4().to_string();
+    let signature_hex = req
+        .signature
+        .as_deref()
+        .ok_or_else(|| json_error(StatusCode::BAD_REQUEST, "signature is required"))?;
+    let signature =
+        signature_from_hex(signature_hex).map_err(|e| json_error(StatusCode::BAD_REQUEST, e))?;
+    if signature.is_empty() {
+        return Err(json_error(
+            StatusCode::UNAUTHORIZED,
+            "signature must not be empty",
+        ));
+    }
+
+    let payload = claim_submission_signing_payload(
+        &subject_did,
+        &req.claim_type,
+        req.provider.as_deref(),
+        req.verification_channel.as_deref(),
+        created_ms,
+        &public_key,
+    )
+    .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if !crypto::verify(&payload, &signature, &public_key) {
+        return Err(json_error(
+            StatusCode::UNAUTHORIZED,
+            "signature verification failed",
+        ));
+    }
+
+    let claim_hash = Hash256::digest(&payload);
+    let mut claim_id_input = payload.clone();
+    claim_id_input.extend_from_slice(&signature.to_bytes());
+    let claim_id = hex::encode(Hash256::digest(&claim_id_input).as_bytes());
 
     let claim = IdentityClaim {
         claim_hash,
         subject_did: subject_did.clone(),
         claim_type,
         status: ClaimStatus::Pending,
-        created_ms: now,
+        created_ms,
         verified_ms: None,
         expires_ms: None,
-        signature: Signature::Empty,
+        signature: signature.clone(),
         dag_node_hash: Hash256::digest(claim_id.as_bytes()),
     };
 
@@ -295,6 +360,22 @@ pub async fn submit_claim(
                 Json(serde_json::json!({"error": "Store lock error"})),
             )
         })?;
+        if store
+            .get_claims(&subject_did)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("Store error: {e}")})),
+                )
+            })?
+            .iter()
+            .any(|(existing_id, _)| existing_id == &claim_id)
+        {
+            return Err(json_error(
+                StatusCode::CONFLICT,
+                "claim submission has already been accepted",
+            ));
+        }
         store.insert_claim(&claim_id, &claim).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -305,12 +386,12 @@ pub async fn submit_claim(
 
     // Optionally create OTP challenge for email/phone claims
     let (challenge_id, challenge_ttl_ms) = if let Some(channel_str) = &req.verification_channel {
-        let channel = OtpChannel::from_str(channel_str).unwrap_or(OtpChannel::Email);
+        let channel = parse_otp_channel(channel_str)?;
         let ttl = channel.ttl_ms();
 
         let mut rng = build_rng();
-        let (challenge, _code) =
-            OtpChallenge::new(&subject_did, channel, now, &mut rng).map_err(|_| {
+        let (challenge, _code) = OtpChallenge::new(&subject_did, channel, created_ms, &mut rng)
+            .map_err(|_| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({"error": "OTP generation failed"})),
