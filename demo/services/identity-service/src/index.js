@@ -80,12 +80,32 @@ export const server = http.createServer(async (req, res) => {
 
     // ── Risk Assessment ──
     if (url.pathname === '/api/risk/assess' && req.method === 'POST') {
-      const { subject_did, attester_did, evidence, level, validity_ms } = await parseBody(req);
+      const {
+        subject_did,
+        attester_did,
+        evidence,
+        level,
+        validity_ms,
+        attester_secret_hex,
+        timestamp_ms,
+        timestamp_logical
+      } = await parseBody(req);
+      const missing = [];
+      if (!attester_secret_hex) missing.push('attester_secret_hex');
+      if (timestamp_ms === undefined || timestamp_ms === null) missing.push('timestamp_ms');
+      if (missing.length > 0) {
+        return json(res, 400, { error: 'missing required caller-supplied risk metadata', fields: missing });
+      }
       const result = wasm.wasm_assess_risk(
         subject_did, attester_did,
         new Uint8Array(Buffer.from(evidence || '')),
         JSON.stringify(level || 'Medium'),
-        BigInt(validity_ms || 86400000)
+        JSON.stringify({
+          validity_ms: validity_ms || 86400000,
+          attester_secret_hex,
+          now_physical_ms: Number(timestamp_ms),
+          now_logical: timestamp_logical || 0
+        })
       );
       return json(res, 200, result);
     }
