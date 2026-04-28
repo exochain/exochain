@@ -4,6 +4,7 @@
 
 use exo_core::{
     Did,
+    hash::hash_structured,
     types::{Hash256, Timestamp},
 };
 use serde::{Deserialize, Serialize};
@@ -190,6 +191,14 @@ pub struct Constitution {
     pub signatures: Vec<GovernanceSignature>,
 }
 
+const CONSTITUTION_HASH_DOMAIN: &str = "exo.governance.constitution.v1";
+
+#[derive(Serialize)]
+struct ConstitutionHashPayload<'a> {
+    domain: &'static str,
+    documents: &'a [ConstitutionalDocument],
+}
+
 /// Result of evaluating a constraint.
 #[derive(Clone, Debug)]
 pub struct ConstraintResult {
@@ -202,9 +211,13 @@ pub struct ConstraintResult {
 impl Constitution {
     /// Compute the content hash of this constitution.
     pub fn compute_hash(&self) -> Result<Hash256, GovernanceError> {
-        let canonical = serde_json::to_vec(&self.documents)
-            .map_err(|_| GovernanceError::Serialization("failed to encode constitution".into()))?;
-        Ok(Hash256::digest(&canonical))
+        hash_structured(&ConstitutionHashPayload {
+            domain: CONSTITUTION_HASH_DOMAIN,
+            documents: &self.documents,
+        })
+        .map_err(|e| {
+            GovernanceError::Serialization(format!("constitution canonical CBOR hash failed: {e}"))
+        })
     }
 
     /// Evaluate all constraints against a proposed action (TNC-04: synchronous).
@@ -655,6 +668,12 @@ mod tests {
         }
     }
 
+    #[derive(serde::Serialize)]
+    struct ExpectedConstitutionHashPayload<'a> {
+        domain: &'static str,
+        documents: &'a [ConstitutionalDocument],
+    }
+
     // compute_hash success path: deterministic digest of documents
     #[test]
     fn test_compute_hash_is_deterministic_and_content_addressed() {
@@ -665,8 +684,33 @@ mod tests {
         let c2 = constitution_with(vec![]);
         let h3 = c2.compute_hash().expect("hash ok");
         assert_ne!(h1, h3, "different documents must hash differently");
-        let expected = Hash256::digest(&serde_json::to_vec(&c.documents).unwrap());
+        let expected = exo_core::hash::hash_structured(&ExpectedConstitutionHashPayload {
+            domain: CONSTITUTION_HASH_DOMAIN,
+            documents: &c.documents,
+        })
+        .expect("canonical constitution hash payload");
         assert_eq!(h1, expected);
+    }
+
+    #[test]
+    fn compute_hash_uses_canonical_cbor_not_json() {
+        let source = include_str!("constitution.rs");
+        let body = source
+            .split("pub fn compute_hash")
+            .nth(1)
+            .expect("compute_hash exists")
+            .split("pub fn evaluate_constraints")
+            .next()
+            .expect("compute_hash body exists");
+
+        assert!(
+            !body.contains("serde_json::to_vec"),
+            "Constitution::compute_hash must not hash JSON bytes"
+        );
+        assert!(
+            body.contains("hash_structured") || body.contains("ciborium::"),
+            "Constitution::compute_hash must use canonical CBOR"
+        );
     }
 
     // RequireHumanGate satisfied branch: message "Human gate satisfied"
