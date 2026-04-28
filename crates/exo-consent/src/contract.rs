@@ -127,6 +127,108 @@ impl std::fmt::Display for DataClassification {
     }
 }
 
+impl DataClassification {
+    fn custody_obligations(self) -> &'static str {
+        match self {
+            Self::Public => {
+                "Public data may be stored with baseline integrity controls and publication-safe provenance tracking."
+            }
+            Self::Internal => {
+                "Internal data requires organization-scoped access controls and non-public distribution records."
+            }
+            Self::Confidential => {
+                "Confidential data requires least-privilege access, encrypted storage, encrypted transfer, and access logging."
+            }
+            Self::Restricted => {
+                "Restricted data requires documented need-to-know approval, segregated storage, encrypted transfer, and dual-control access for export."
+            }
+            Self::Regulated => {
+                "Regulated data requires statutory control mapping, jurisdiction-specific handling, audit-ready access logs, and retention policy enforcement."
+            }
+        }
+    }
+
+    fn processing_obligations(self) -> &'static str {
+        match self {
+            Self::Public => {
+                "Public data processing is limited to authorized use, attribution preservation, and integrity checks."
+            }
+            Self::Internal => {
+                "Internal data processing is limited to personnel, services, and agents operating under the bailee's internal authorization boundary."
+            }
+            Self::Confidential => {
+                "Confidential data processing requires purpose-bound authorization and prohibits secondary use without signed amendment."
+            }
+            Self::Restricted => {
+                "Restricted data processing is limited to named workflows and named operators; sub-processing requires explicit bailor approval."
+            }
+            Self::Regulated => {
+                "Regulated data processing is limited to enumerated legal bases and auditable processing records."
+            }
+        }
+    }
+
+    fn breach_notice_obligations(self) -> &'static str {
+        match self {
+            Self::Public => {
+                "Public classification breaches require notice within 10 business days when integrity or attribution is affected."
+            }
+            Self::Internal => {
+                "Internal classification breaches require notice within 5 business days."
+            }
+            Self::Confidential => {
+                "Confidential classification breaches require notice within 72 hours."
+            }
+            Self::Restricted => {
+                "Restricted classification breaches require notice within 24 hours."
+            }
+            Self::Regulated => {
+                "Regulated classification breaches require notice within the shortest applicable legal window, not exceeding 24 hours."
+            }
+        }
+    }
+
+    fn liability_obligations(self) -> &'static str {
+        match self {
+            Self::Public => {
+                "Public data liability remains limited to integrity, availability, and attribution failures."
+            }
+            Self::Internal => {
+                "Internal data liability includes unauthorized internal disclosure and unauthorized retention."
+            }
+            Self::Confidential => {
+                "Confidential data liability includes unauthorized disclosure, unauthorized processing, and control failure."
+            }
+            Self::Restricted => {
+                "Restricted data liability includes unauthorized access, export, delegation, or segregation failure."
+            }
+            Self::Regulated => {
+                "Regulated data liability includes regulatory reporting failure, unlawful processing, and retention violation."
+            }
+        }
+    }
+
+    fn termination_obligations(self) -> &'static str {
+        match self {
+            Self::Public => {
+                "Public data must be returned, deleted, or left published according to the bailor's written instruction."
+            }
+            Self::Internal => {
+                "Internal data must be returned or deleted with an internal access revocation record."
+            }
+            Self::Confidential => {
+                "Confidential data must be returned or destroyed with verifiable destruction evidence."
+            }
+            Self::Restricted => {
+                "Restricted data must be quarantined immediately on termination until return or destruction is receipt-backed."
+            }
+            Self::Regulated => {
+                "Regulated data must follow the governing retention schedule and produce a compliance evidence package on termination."
+            }
+        }
+    }
+}
+
 /// A fully composed contract with all parameters bound and hash computed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComposedContract {
@@ -582,6 +684,26 @@ fn substitute_params(body: &str, params: &ContractParams) -> String {
         &params.data_classification.to_string(),
     );
     result = result.replace(
+        "{{classification_custody_obligations}}",
+        params.data_classification.custody_obligations(),
+    );
+    result = result.replace(
+        "{{classification_processing_obligations}}",
+        params.data_classification.processing_obligations(),
+    );
+    result = result.replace(
+        "{{classification_breach_notice}}",
+        params.data_classification.breach_notice_obligations(),
+    );
+    result = result.replace(
+        "{{classification_liability_obligations}}",
+        params.data_classification.liability_obligations(),
+    );
+    result = result.replace(
+        "{{classification_termination_obligations}}",
+        params.data_classification.termination_obligations(),
+    );
+    result = result.replace(
         "{{liability_cap_bps}}",
         &params.liability_cap_bps.to_string(),
     );
@@ -602,7 +724,7 @@ fn custody_clauses() -> Vec<Clause> {
             id: "custody-data-custody".to_string(),
             category: ClauseCategory::DataCustody,
             title: "Data Custody".to_string(),
-            body: "{{bailee_name}} shall hold {{bailor_name}}'s data in secure custody without modification. Data classification: {{data_classification}}.".to_string(),
+            body: "{{bailee_name}} shall hold {{bailor_name}}'s data in secure custody without modification. Data classification: {{data_classification}}. {{classification_custody_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -610,7 +732,7 @@ fn custody_clauses() -> Vec<Clause> {
             id: "custody-processing-rights".to_string(),
             category: ClauseCategory::ProcessingRights,
             title: "Processing Rights".to_string(),
-            body: "No processing rights are granted. {{bailee_name}} may only store and return data to {{bailor_name}}.".to_string(),
+            body: "No processing rights are granted. {{bailee_name}} may only store and return data to {{bailor_name}}. Any handling must satisfy: {{classification_processing_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -618,7 +740,7 @@ fn custody_clauses() -> Vec<Clause> {
             id: "custody-breach-remedies".to_string(),
             category: ClauseCategory::BreachRemedies,
             title: "Breach Remedies".to_string(),
-            body: "Upon breach, {{bailor_name}} shall receive notice within 5 days. Material breaches trigger a 30-day cure period.".to_string(),
+            body: "Upon breach, {{bailor_name}} shall receive notice under the classification-specific notice rule. {{classification_breach_notice}} Material breaches trigger a 30-day cure period.".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -626,7 +748,7 @@ fn custody_clauses() -> Vec<Clause> {
             id: "custody-liability-caps".to_string(),
             category: ClauseCategory::LiabilityCaps,
             title: "Liability Caps".to_string(),
-            body: "Total liability capped at {{liability_cap_bps}} basis points of assessed value.".to_string(),
+            body: "Total liability capped at {{liability_cap_bps}} basis points of assessed value. {{classification_liability_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -642,7 +764,7 @@ fn custody_clauses() -> Vec<Clause> {
             id: "custody-termination".to_string(),
             category: ClauseCategory::Termination,
             title: "Termination".to_string(),
-            body: "Either party may terminate with 30 days written notice. Data must be returned or destroyed within 15 days of termination.".to_string(),
+            body: "Either party may terminate with 30 days written notice. Data must be returned or destroyed within 15 days of termination. {{classification_termination_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -672,7 +794,7 @@ fn processing_clauses() -> Vec<Clause> {
             id: "processing-data-custody".to_string(),
             category: ClauseCategory::DataCustody,
             title: "Data Custody".to_string(),
-            body: "{{bailee_name}} shall hold {{bailor_name}}'s data in secure custody. Data classification: {{data_classification}}.".to_string(),
+            body: "{{bailee_name}} shall hold {{bailor_name}}'s data in secure custody. Data classification: {{data_classification}}. {{classification_custody_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -680,7 +802,7 @@ fn processing_clauses() -> Vec<Clause> {
             id: "processing-processing-rights".to_string(),
             category: ClauseCategory::ProcessingRights,
             title: "Processing Rights".to_string(),
-            body: "{{bailee_name}} may process {{bailor_name}}'s data for purposes defined in this agreement. Processing scope limited to {{data_classification}} tier data.".to_string(),
+            body: "{{bailee_name}} may process {{bailor_name}}'s data for purposes defined in this agreement. Processing scope limited to {{data_classification}} tier data. {{classification_processing_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -688,7 +810,7 @@ fn processing_clauses() -> Vec<Clause> {
             id: "processing-breach-remedies".to_string(),
             category: ClauseCategory::BreachRemedies,
             title: "Breach Remedies".to_string(),
-            body: "Upon breach, {{bailor_name}} shall receive notice within 3 days. Unauthorized processing constitutes a material breach.".to_string(),
+            body: "Upon breach, {{bailor_name}} shall receive notice under the classification-specific notice rule. {{classification_breach_notice}} Unauthorized processing constitutes a material breach.".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -696,7 +818,7 @@ fn processing_clauses() -> Vec<Clause> {
             id: "processing-liability-caps".to_string(),
             category: ClauseCategory::LiabilityCaps,
             title: "Liability Caps".to_string(),
-            body: "Total liability capped at {{liability_cap_bps}} basis points of assessed value.".to_string(),
+            body: "Total liability capped at {{liability_cap_bps}} basis points of assessed value. {{classification_liability_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -712,7 +834,7 @@ fn processing_clauses() -> Vec<Clause> {
             id: "processing-termination".to_string(),
             category: ClauseCategory::Termination,
             title: "Termination".to_string(),
-            body: "Either party may terminate with 30 days written notice. All processing must cease immediately upon termination notice.".to_string(),
+            body: "Either party may terminate with 30 days written notice. All processing must cease immediately upon termination notice. {{classification_termination_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -742,7 +864,7 @@ fn delegation_clauses() -> Vec<Clause> {
             id: "delegation-data-custody".to_string(),
             category: ClauseCategory::DataCustody,
             title: "Data Custody".to_string(),
-            body: "{{bailee_name}} shall hold {{bailor_name}}'s data and may delegate custody to sub-bailees under equivalent terms. Data classification: {{data_classification}}.".to_string(),
+            body: "{{bailee_name}} shall hold {{bailor_name}}'s data and may delegate custody to sub-bailees under equivalent terms. Data classification: {{data_classification}}. {{classification_custody_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -750,7 +872,7 @@ fn delegation_clauses() -> Vec<Clause> {
             id: "delegation-processing-rights".to_string(),
             category: ClauseCategory::ProcessingRights,
             title: "Processing Rights".to_string(),
-            body: "{{bailee_name}} may process and delegate processing of {{bailor_name}}'s data. Sub-bailees must maintain equivalent or stricter terms.".to_string(),
+            body: "{{bailee_name}} may process and delegate processing of {{bailor_name}}'s data. Sub-bailees must maintain equivalent or stricter terms. {{classification_processing_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -758,7 +880,7 @@ fn delegation_clauses() -> Vec<Clause> {
             id: "delegation-breach-remedies".to_string(),
             category: ClauseCategory::BreachRemedies,
             title: "Breach Remedies".to_string(),
-            body: "Upon breach by {{bailee_name}} or any sub-bailee, {{bailor_name}} shall receive notice within 3 days. {{bailee_name}} remains liable for sub-bailee breaches.".to_string(),
+            body: "Upon breach by {{bailee_name}} or any sub-bailee, {{bailor_name}} shall receive notice under the classification-specific notice rule. {{classification_breach_notice}} {{bailee_name}} remains liable for sub-bailee breaches.".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -766,7 +888,7 @@ fn delegation_clauses() -> Vec<Clause> {
             id: "delegation-liability-caps".to_string(),
             category: ClauseCategory::LiabilityCaps,
             title: "Liability Caps".to_string(),
-            body: "Total liability capped at {{liability_cap_bps}} basis points. {{bailee_name}} bears full liability for sub-bailee actions.".to_string(),
+            body: "Total liability capped at {{liability_cap_bps}} basis points. {{bailee_name}} bears full liability for sub-bailee actions. {{classification_liability_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -782,7 +904,7 @@ fn delegation_clauses() -> Vec<Clause> {
             id: "delegation-termination".to_string(),
             category: ClauseCategory::Termination,
             title: "Termination".to_string(),
-            body: "Either party may terminate with 30 days written notice. All sub-bailments must be terminated within 15 days of primary termination.".to_string(),
+            body: "Either party may terminate with 30 days written notice. All sub-bailments must be terminated within 15 days of primary termination. {{classification_termination_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -812,7 +934,7 @@ fn emergency_clauses() -> Vec<Clause> {
             id: "emergency-data-custody".to_string(),
             category: ClauseCategory::DataCustody,
             title: "Emergency Data Custody".to_string(),
-            body: "{{bailee_name}} granted emergency access to {{bailor_name}}'s data. Access expires {{expiry_date}}. Justification required for all access. Data classification: {{data_classification}}.".to_string(),
+            body: "{{bailee_name}} granted emergency access to {{bailor_name}}'s data. Access expires {{expiry_date}}. Justification required for all access. Data classification: {{data_classification}}. {{classification_custody_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -820,7 +942,7 @@ fn emergency_clauses() -> Vec<Clause> {
             id: "emergency-processing-rights".to_string(),
             category: ClauseCategory::ProcessingRights,
             title: "Emergency Processing Rights".to_string(),
-            body: "{{bailee_name}} may process data only as necessary for emergency resolution. Processing scope: {{data_classification}} tier data. All processing must be logged.".to_string(),
+            body: "{{bailee_name}} may process data only as necessary for emergency resolution. Processing scope: {{data_classification}} tier data. All processing must be logged. {{classification_processing_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -828,7 +950,7 @@ fn emergency_clauses() -> Vec<Clause> {
             id: "emergency-breach-remedies".to_string(),
             category: ClauseCategory::BreachRemedies,
             title: "Breach Remedies".to_string(),
-            body: "Upon breach, {{bailor_name}} shall receive immediate notice. Emergency access revoked instantly upon breach detection.".to_string(),
+            body: "Upon breach, {{bailor_name}} shall receive immediate notice and the classification-specific notice rule applies. {{classification_breach_notice}} Emergency access revoked instantly upon breach detection.".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -836,7 +958,7 @@ fn emergency_clauses() -> Vec<Clause> {
             id: "emergency-liability-caps".to_string(),
             category: ClauseCategory::LiabilityCaps,
             title: "Liability Caps".to_string(),
-            body: "Total liability capped at {{liability_cap_bps}} basis points. Emergency access carries elevated liability.".to_string(),
+            body: "Total liability capped at {{liability_cap_bps}} basis points. Emergency access carries elevated liability. {{classification_liability_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -852,7 +974,7 @@ fn emergency_clauses() -> Vec<Clause> {
             id: "emergency-termination".to_string(),
             category: ClauseCategory::Termination,
             title: "Termination".to_string(),
-            body: "Emergency access automatically terminates at {{expiry_date}}. Either party may terminate immediately with written notice.".to_string(),
+            body: "Emergency access automatically terminates at {{expiry_date}}. Either party may terminate immediately with written notice. {{classification_termination_obligations}}".to_string(),
             required: true,
             jurisdiction: None,
         },
@@ -908,6 +1030,12 @@ mod tests {
         }
     }
 
+    fn test_params_with_classification(data_classification: DataClassification) -> ContractParams {
+        let mut params = test_params();
+        params.data_classification = data_classification;
+        params
+    }
+
     fn ts(ms: u64) -> Timestamp {
         Timestamp::new(ms, 0)
     }
@@ -958,6 +1086,15 @@ mod tests {
     fn compose_custody() -> ComposedContract {
         let template = default_template(BailmentType::Custody);
         compose_test(&template, &test_params())
+    }
+
+    fn rendered_contract_body(contract: &ComposedContract) -> String {
+        contract
+            .rendered_clauses
+            .iter()
+            .map(|clause| clause.rendered_body.clone())
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     #[test]
@@ -1172,6 +1309,128 @@ mod tests {
             !all_bodies.contains("{{"),
             "Unsubstituted placeholders remain"
         );
+    }
+
+    #[test]
+    fn data_classification_renders_tier_specific_obligations() {
+        let template = default_template(BailmentType::Processing);
+        let cases = [
+            (
+                DataClassification::Public,
+                "Public data may be stored with baseline integrity controls",
+                "Public data processing is limited to authorized use",
+                "Public classification breaches require notice within 10 business days",
+                "Public data liability remains limited to integrity, availability, and attribution failures",
+                "Public data must be returned, deleted, or left published according to the bailor's written instruction",
+            ),
+            (
+                DataClassification::Internal,
+                "Internal data requires organization-scoped access controls",
+                "Internal data processing is limited to personnel, services, and agents operating under the bailee's internal authorization boundary",
+                "Internal classification breaches require notice within 5 business days",
+                "Internal data liability includes unauthorized internal disclosure and unauthorized retention",
+                "Internal data must be returned or deleted with an internal access revocation record",
+            ),
+            (
+                DataClassification::Confidential,
+                "Confidential data requires least-privilege access, encrypted storage, encrypted transfer, and access logging",
+                "Confidential data processing requires purpose-bound authorization and prohibits secondary use without signed amendment",
+                "Confidential classification breaches require notice within 72 hours",
+                "Confidential data liability includes unauthorized disclosure, unauthorized processing, and control failure",
+                "Confidential data must be returned or destroyed with verifiable destruction evidence",
+            ),
+            (
+                DataClassification::Restricted,
+                "Restricted data requires documented need-to-know approval, segregated storage, encrypted transfer, and dual-control access for export",
+                "Restricted data processing is limited to named workflows and named operators",
+                "Restricted classification breaches require notice within 24 hours",
+                "Restricted data liability includes unauthorized access, export, delegation, or segregation failure",
+                "Restricted data must be quarantined immediately on termination until return or destruction is receipt-backed",
+            ),
+            (
+                DataClassification::Regulated,
+                "Regulated data requires statutory control mapping, jurisdiction-specific handling, audit-ready access logs, and retention policy enforcement",
+                "Regulated data processing is limited to enumerated legal bases and auditable processing records",
+                "Regulated classification breaches require notice within the shortest applicable legal window, not exceeding 24 hours",
+                "Regulated data liability includes regulatory reporting failure, unlawful processing, and retention violation",
+                "Regulated data must follow the governing retention schedule and produce a compliance evidence package on termination",
+            ),
+        ];
+
+        let mut rendered_bodies = Vec::new();
+        for (
+            classification,
+            custody_obligation,
+            processing_obligation,
+            breach_obligation,
+            liability_obligation,
+            termination_obligation,
+        ) in cases
+        {
+            let contract =
+                compose_test(&template, &test_params_with_classification(classification));
+            let body = rendered_contract_body(&contract);
+            assert!(
+                body.contains(custody_obligation),
+                "{classification:?} custody obligation missing"
+            );
+            assert!(
+                body.contains(processing_obligation),
+                "{classification:?} processing obligation missing"
+            );
+            assert!(
+                body.contains(breach_obligation),
+                "{classification:?} breach obligation missing"
+            );
+            assert!(
+                body.contains(liability_obligation),
+                "{classification:?} liability obligation missing"
+            );
+            assert!(
+                body.contains(termination_obligation),
+                "{classification:?} termination obligation missing"
+            );
+            rendered_bodies.push((classification, body));
+        }
+
+        for (index, (left_classification, left_body)) in rendered_bodies.iter().enumerate() {
+            for (right_classification, right_body) in rendered_bodies.iter().skip(index + 1) {
+                assert_ne!(
+                    left_body, right_body,
+                    "{left_classification:?} and {right_classification:?} rendered identical contract bodies"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn standard_templates_bind_classification_obligation_placeholders() {
+        for bailment_type in [
+            BailmentType::Custody,
+            BailmentType::Processing,
+            BailmentType::Delegation,
+            BailmentType::Emergency,
+        ] {
+            let template = default_template(bailment_type);
+            let template_body = template
+                .clauses
+                .iter()
+                .map(|clause| clause.body.clone())
+                .collect::<Vec<_>>()
+                .join(" ");
+            for placeholder in [
+                "{{classification_custody_obligations}}",
+                "{{classification_processing_obligations}}",
+                "{{classification_breach_notice}}",
+                "{{classification_liability_obligations}}",
+                "{{classification_termination_obligations}}",
+            ] {
+                assert!(
+                    template_body.contains(placeholder),
+                    "{bailment_type:?} standard clauses must bind {placeholder}"
+                );
+            }
+        }
     }
 
     // -- Test 4: compose produces deterministic hash --

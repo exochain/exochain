@@ -9,7 +9,7 @@ tags: [exochain, reference, api, crates]
 
 **API reference for the workspace crates composing the EXOCHAIN constitutional trust fabric.**
 
-20 workspace packages · 120904 lines of Rust under `crates/` · 2,929 listed tests
+20 workspace packages · 121163 lines of Rust under `crates/` · 2,931 listed tests
 
 > Cross-references: [[ARCHITECTURE]], [[GETTING-STARTED]], [[THREAT-MODEL]], [[CONSTITUTIONAL-PROOFS]]
 
@@ -661,9 +661,9 @@ Authority chain verification and delegation management. Tracks delegation of per
 
 | Metric | Value |
 |--------|-------|
-| LOC | 899 |
-| Tests | 54 |
-| Files | 5 |
+| LOC | 3,937 |
+| Tests | 121 |
+| Files | 6 |
 
 ### Purpose
 
@@ -714,7 +714,7 @@ Bailment-conditioned consent enforcement. Implements the legal foundation of con
 
 ### Test Coverage Summary
 
-63 tests covering: bailment lifecycle transitions (all valid/invalid), consent gate enforcement, policy evaluation, default-deny behavior, emergency bailment time limits, terms hash binding.
+121 tests covering: bailment lifecycle transitions (all valid/invalid), consent gate enforcement, policy evaluation, default-deny behavior, emergency bailment time limits, terms hash binding, canonical contract hashing, and classification-specific clause obligations.
 
 > See also: [[ARCHITECTURE]] Section 4 (Consent Layer), [[THREAT-MODEL]] Threat 7 (Consent Bypass), [[CONSTITUTIONAL-PROOFS]] Proof 4 (Consent Completeness)
 
@@ -1155,7 +1155,7 @@ P2P networking and external API types. Provides peer-to-peer protocol message ty
 | exo-identity | 1,533 | 67 | 7 | DID management, risk, Shamir, PACE, keys |
 | exo-governance | 1,236 | 69 | 9 | Quorum, clearance, crosscheck, challenge, audit |
 | exo-authority | 1,235 | 66 | 6 | Authority chains, delegation, permissions |
-| exo-consent | 899 | 54 | 5 | Bailment consent, default-deny |
+| exo-consent | 3,937 | 121 | 6 | Bailment consent, default-deny |
 | exo-escalation | 824 | 43 | 8 | Detection, triage, Sybil adjudication, kanban |
 | exo-legal | 583 | 63 | 8 | Evidence, eDiscovery, privilege, fiduciary, records |
 | exo-gateway | 279 | 27 | 6 | HTTP gateway, auth, consent middleware |
