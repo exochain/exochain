@@ -212,7 +212,7 @@ impl ZerodentityStore {
             outcome,
             timestamp,
             &*context.signer,
-        ))
+        )?)
     }
 
     fn next_dag_parents(&self) -> Vec<Hash256> {
@@ -1087,7 +1087,10 @@ mod tests {
         assert_eq!(r.actor_did, node_did);
         assert_eq!(r.action_hash, c.claim_hash);
         assert_eq!(r.action_type, "zerodentity.claim_verified");
-        assert!(r.verify_signature(&node_public_key));
+        assert!(
+            r.verify_signature(&node_public_key)
+                .expect("verify trust receipt signature")
+        );
     }
 
     #[test]
@@ -1102,8 +1105,12 @@ mod tests {
         assert_eq!(receipt.action_hash, c.claim_hash);
         assert_eq!(receipt.action_type, "zerodentity.claim_verified");
         assert!(!receipt.signature.is_empty());
-        assert!(receipt.verify_hash());
-        assert!(receipt.verify_signature(&node_public_key));
+        assert!(receipt.verify_hash().expect("verify trust receipt hash"));
+        assert!(
+            receipt
+                .verify_signature(&node_public_key)
+                .expect("verify trust receipt signature")
+        );
     }
 
     #[test]
@@ -1220,8 +1227,12 @@ mod tests {
             .unwrap();
         assert_eq!(receipt.actor_did, node_did);
         assert!(!receipt.signature.is_empty());
-        assert!(receipt.verify_hash());
-        assert!(receipt.verify_signature(&node_public_key));
+        assert!(receipt.verify_hash().expect("verify trust receipt hash"));
+        assert!(
+            receipt
+                .verify_signature(&node_public_key)
+                .expect("verify trust receipt signature")
+        );
     }
 
     #[test]

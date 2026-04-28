@@ -1593,7 +1593,7 @@ mod tests {
         let nodes = guard.dag_nodes();
         let erasure_node = nodes.last().expect("erasure dag node");
         assert_eq!(erasure_node.timestamp.physical_ms, 7_777_000);
-        assert!(receipt.verify_hash());
+        assert!(receipt.verify_hash().expect("verify trust receipt hash"));
         assert!(
             result["message"]
                 .as_str()

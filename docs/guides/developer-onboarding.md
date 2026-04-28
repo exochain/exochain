@@ -92,7 +92,7 @@ Expected output tail:
 test result: ok. ... passed; 0 failed; 0 ignored; ...
 ```
 
-The current workspace inventory lists **2,912 tests**. The number grows as new crates land; consult
+The current workspace inventory lists **2,914 tests**. The number grows as new crates land; consult
 `governance/traceability_matrix.md` and the `README.md` repo-truth
 table for the latest figure. What matters is `0 failed`.
 

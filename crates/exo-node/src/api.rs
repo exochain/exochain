@@ -788,6 +788,7 @@ mod tests {
             },
             &*sign_fn,
         )
+        .expect("test trust receipt should encode")
     }
 
     #[tokio::test]

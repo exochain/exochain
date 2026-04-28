@@ -85,7 +85,7 @@ fn commit_receipt_from_certificate(
         .lock()
         .map_err(|_| "Reactor state mutex poisoned while building commit receipt".to_string())?;
 
-    Ok(TrustReceipt::new(
+    TrustReceipt::new(
         s.node_did.clone(),
         authority_hash,
         None,
@@ -94,7 +94,8 @@ fn commit_receipt_from_certificate(
         ReceiptOutcome::Executed,
         timestamp,
         &*s.sign_fn,
-    ))
+    )
+    .map_err(|e| format!("build commit trust receipt: {e}"))
 }
 
 fn sign_proposal(

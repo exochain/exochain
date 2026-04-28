@@ -1161,7 +1161,8 @@ mod tests {
                 logical: 0,
             },
             &*sign_fn,
-        );
+        )
+        .expect("test trust receipt should encode");
 
         let hash = receipt.receipt_hash;
         store.save_receipt(&receipt).unwrap();
@@ -1192,7 +1193,8 @@ mod tests {
                 logical: 0,
             },
             &|_| Signature::Empty,
-        );
+        )
+        .expect("test trust receipt should encode");
 
         let err = store.save_receipt(&receipt).unwrap_err();
 
@@ -1217,7 +1219,8 @@ mod tests {
                 logical: 0,
             },
             &*sign_fn,
-        );
+        )
+        .expect("test trust receipt should encode");
 
         let err = store.save_receipt(&receipt).unwrap_err();
 
@@ -1251,7 +1254,8 @@ mod tests {
                     logical: 0,
                 },
                 &*sign_fn,
-            );
+            )
+            .expect("test trust receipt should encode");
             store.save_receipt(&receipt).unwrap();
         }
 
@@ -1268,7 +1272,8 @@ mod tests {
                 logical: 0,
             },
             &*sign_fn,
-        );
+        )
+        .expect("test trust receipt should encode");
         store.save_receipt(&other).unwrap();
 
         // Query actor-a — should get 3 receipts.
