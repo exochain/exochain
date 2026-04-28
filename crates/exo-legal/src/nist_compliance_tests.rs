@@ -25,8 +25,8 @@ mod nist_compliance {
 
     use crate::{
         ai_transparency::{
-            ReportParams, VerifiedAuthorityClearance, ai_delegation_event_from_link,
-            generate_report, verify_authority_clearance,
+            ReportParams, VerifiedAiDelegationGrant, VerifiedAuthorityClearance, generate_report,
+            verify_ai_delegation_grant, verify_authority_clearance,
         },
         compliance_report::{
             AttestationStatus, ComplianceReportMode, build_report, redact_model_id,
@@ -53,20 +53,14 @@ mod nist_compliance {
     fn verified_report_clearance(requester: &Did) -> VerifiedAuthorityClearance {
         let root = did("report-root");
         let root_key = KeyPair::generate();
-        let mut link = ReportAuthorityLink {
-            delegator_did: root.clone(),
-            delegate_did: requester.clone(),
-            scope: vec![ReportPermission::Read],
-            created: ts(1_000),
-            expires: None,
-            signature: Signature::empty(),
-            depth: 0,
-            delegatee_kind: DelegateeKind::Human,
-        };
-        let payload = link
-            .signing_payload()
-            .expect("authority link signing payload");
-        link.signature = root_key.sign(&payload);
+        let link = signed_report_authority_link(
+            &root,
+            requester,
+            DelegateeKind::Human,
+            &root_key,
+            0,
+            None,
+        );
 
         let chain = ReportAuthorityChain {
             links: vec![link],
@@ -80,6 +74,61 @@ mod nist_compliance {
             }
         })
         .expect("report authority clearance must verify")
+    }
+
+    fn signed_report_authority_link(
+        delegator: &Did,
+        delegate: &Did,
+        delegatee_kind: DelegateeKind,
+        signing_key: &KeyPair,
+        depth: usize,
+        expires: Option<Timestamp>,
+    ) -> ReportAuthorityLink {
+        let mut link = ReportAuthorityLink {
+            delegator_did: delegator.clone(),
+            delegate_did: delegate.clone(),
+            scope: vec![ReportPermission::Read],
+            created: ts(1_000),
+            expires,
+            signature: Signature::empty(),
+            depth,
+            delegatee_kind,
+        };
+        let payload = link
+            .signing_payload()
+            .expect("authority link signing payload");
+        link.signature = signing_key.sign(&payload);
+        link
+    }
+
+    fn verified_ai_delegation_grant(model_id: &str) -> VerifiedAiDelegationGrant {
+        let root = did("ai-delegation-root");
+        let agent = did("ai-agent-42");
+        let root_key = KeyPair::generate();
+        let link = signed_report_authority_link(
+            &root,
+            &agent,
+            DelegateeKind::AiAgent {
+                model_id: model_id.to_owned(),
+            },
+            &root_key,
+            0,
+            Some(ts(2_000)),
+        );
+        let chain = ReportAuthorityChain {
+            links: vec![link],
+            max_depth: 5,
+        };
+
+        verify_ai_delegation_grant(&chain, ts(1_500), |did| {
+            if did == &root {
+                Some(*root_key.public_key())
+            } else {
+                None
+            }
+        })
+        .expect("AI delegation chain must verify")
+        .expect("AI delegation grant must be present")
     }
 
     fn signed_authority_link(grantor: &Did, grantee: &Did) -> AuthorityLink {
@@ -406,45 +455,68 @@ mod nist_compliance {
             "AuthorityChainValid mapping must reference GDPR Art. 5(2) (accountability)"
         );
 
-        // 2. AI delegation events are extracted from AiAgent links.
+        // 2. AI delegation events are extracted only after signed authority
+        //    chain verification of AiAgent links.
         let model_id = "claude-sonnet-4-6";
-        let ai_event = ai_delegation_event_from_link(
-            did("principal"),
-            did("ai-agent-42"),
-            &DelegateeKind::AiAgent {
-                model_id: model_id.to_owned(),
-            },
-            ts(1000),
-            Some(ts(2000)),
-            1,
-        )
-        .expect("AiAgent link must produce a delegation event");
-        assert_eq!(ai_event.model_id, model_id);
-        assert_eq!(ai_event.depth, 1);
+        let ai_grant = verified_ai_delegation_grant(model_id);
+        assert_eq!(ai_grant.event().model_id, model_id);
+        assert_eq!(ai_grant.event().depth, 0);
+        assert_ne!(ai_grant.event().authority_chain_hash, [0u8; 32]);
+        assert_ne!(ai_grant.event().authority_link_hash, [0u8; 32]);
 
-        // 3. Human and Unknown links produce no AI delegation events.
-        assert!(
-            ai_delegation_event_from_link(
-                did("principal"),
-                did("human-bob"),
-                &DelegateeKind::Human,
-                ts(1000),
-                None,
+        // 3. Human and Unknown links verify structurally but produce no AI
+        //    delegation grants.
+        let human_root = did("human-root");
+        let human = did("human-bob");
+        let human_key = KeyPair::generate();
+        let human_chain = ReportAuthorityChain {
+            links: vec![signed_report_authority_link(
+                &human_root,
+                &human,
+                DelegateeKind::Human,
+                &human_key,
                 0,
-            )
-            .is_none(),
+                None,
+            )],
+            max_depth: 5,
+        };
+        let human_result = verify_ai_delegation_grant(&human_chain, ts(1_500), |did| {
+            if did == &human_root {
+                Some(*human_key.public_key())
+            } else {
+                None
+            }
+        })
+        .expect("human authority chain must verify");
+        assert!(
+            human_result.is_none(),
             "Human delegation must not appear in AI delegation events"
         );
-        assert!(
-            ai_delegation_event_from_link(
-                did("principal"),
-                did("legacy"),
-                &DelegateeKind::Unknown,
-                ts(1000),
-                None,
+
+        let unknown_root = did("unknown-root");
+        let unknown = did("legacy");
+        let unknown_key = KeyPair::generate();
+        let unknown_chain = ReportAuthorityChain {
+            links: vec![signed_report_authority_link(
+                &unknown_root,
+                &unknown,
+                DelegateeKind::Unknown,
+                &unknown_key,
                 0,
-            )
-            .is_none(),
+                None,
+            )],
+            max_depth: 5,
+        };
+        let unknown_result = verify_ai_delegation_grant(&unknown_chain, ts(1_500), |did| {
+            if did == &unknown_root {
+                Some(*unknown_key.public_key())
+            } else {
+                None
+            }
+        })
+        .expect("unknown authority chain must verify");
+        assert!(
+            unknown_result.is_none(),
             "Unknown delegation must not appear in AI delegation events"
         );
 
@@ -458,7 +530,7 @@ mod nist_compliance {
             period_end: ts(u64::MAX),
             legal_jurisdiction: "NIST-AI-RMF",
             mcp_log: &mcp_log,
-            ai_delegation_grants: vec![ai_event],
+            ai_delegation_grants: vec![ai_grant],
             ai_delegation_revocations: 1,
             authority_clearance: &clearance,
         })

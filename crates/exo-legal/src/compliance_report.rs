@@ -246,7 +246,7 @@ fn derive_status_and_evidence(
                 format!(
                     "Report generation authorized by verified authority clearance for requester {}. \
                      Chain root {}, leaf {}, depth {}, hash {}. \
-                     {} AI agent delegation grants recorded (DelegateeKind::AiAgent tagged). \
+                     {} AI agent delegation grants recorded from verified authority-chain artifacts. \
                      {} revocations. GDPR Art. 5(2) accountability chain evidence present.",
                     report.authority_clearance.requester.as_str(),
                     report.authority_clearance.chain_root.as_str(),

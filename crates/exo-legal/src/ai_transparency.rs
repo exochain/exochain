@@ -12,7 +12,7 @@
 //! which verifies the requesting actor's authority chain before any report
 //! can be generated.
 
-use exo_authority::{AuthorityChain, DelegateeKind, chain};
+use exo_authority::{AuthorityChain, AuthorityLink, DelegateeKind, chain};
 use exo_core::{Did, PublicKey, Timestamp, hash::hash_structured};
 use exo_gatekeeper::mcp_audit::{
     McpAuditLog, McpEnforcementOutcome, verify_chain as verify_mcp_audit_chain,
@@ -23,6 +23,8 @@ use crate::error::{LegalError, Result};
 
 const AUTHORITY_CLEARANCE_DOMAIN: &str = "exo.legal.ai_transparency.authority_clearance.v1";
 const AUTHORITY_CLEARANCE_SCHEMA_VERSION: u16 = 1;
+const AI_DELEGATION_GRANT_DOMAIN: &str = "exo.legal.ai_transparency.ai_delegation_grant.v1";
+const AI_DELEGATION_GRANT_SCHEMA_VERSION: u16 = 1;
 
 // ---------------------------------------------------------------------------
 // Report structures
@@ -64,6 +66,26 @@ pub struct AiDelegationEvent {
     pub granted_at: Timestamp,
     pub expires_at: Option<Timestamp>,
     pub depth: usize,
+    pub authority_chain_root: Did,
+    pub authority_chain_leaf: Did,
+    pub authority_chain_depth: usize,
+    pub authority_chain_hash: [u8; 32],
+    pub authority_link_hash: [u8; 32],
+}
+
+/// Verified AI delegation artifact that can only be created by authority-chain
+/// verification through [`verify_ai_delegation_grant`].
+#[derive(Debug, Clone)]
+pub struct VerifiedAiDelegationGrant {
+    event: AiDelegationEvent,
+}
+
+impl VerifiedAiDelegationGrant {
+    /// Return the serializable event evidence captured after verification.
+    #[must_use]
+    pub fn event(&self) -> &AiDelegationEvent {
+        &self.event
+    }
 }
 
 /// Per-rule MCP enforcement outcome summary.
@@ -90,7 +112,7 @@ pub struct AiTransparencyReport {
     pub legal_jurisdiction: String,
     /// Total number of actions performed by AI agents during the period.
     pub ai_agent_action_count: u64,
-    /// AI delegation grants observed in the MCP audit log during the period.
+    /// Verified AI delegation grants recorded during the period.
     pub ai_delegation_grants: Vec<AiDelegationEvent>,
     /// Count of AI delegation revocations during the period.
     pub ai_delegation_revocations: u64,
@@ -114,7 +136,8 @@ pub struct ReportParams<'a> {
     pub period_end: Timestamp,
     pub legal_jurisdiction: &'a str,
     pub mcp_log: &'a McpAuditLog,
-    pub ai_delegation_grants: Vec<AiDelegationEvent>,
+    /// Verified AI delegation grants admitted through signed authority chains.
+    pub ai_delegation_grants: Vec<VerifiedAiDelegationGrant>,
     pub ai_delegation_revocations: u64,
     /// Verified authority-chain clearance for the actor generating the report.
     pub authority_clearance: &'a VerifiedAuthorityClearance,
@@ -166,7 +189,10 @@ pub fn generate_report(params: ReportParams<'_>) -> Result<AiTransparencyReport>
         period_end,
         legal_jurisdiction: legal_jurisdiction.to_owned(),
         ai_agent_action_count,
-        ai_delegation_grants,
+        ai_delegation_grants: ai_delegation_grants
+            .into_iter()
+            .map(|grant| grant.event().clone())
+            .collect(),
         ai_delegation_revocations,
         mcp_rule_outcomes,
         mcp_audit_head_hash: mcp_log.head_hash(),
@@ -240,29 +266,78 @@ where
     })
 }
 
-/// Build AI delegation events from authority link data.
+/// Verify an authority chain and extract an AI delegation grant from its leaf.
 ///
-/// Filters links where `delegatee_kind` is [`DelegateeKind::AiAgent`].
-#[must_use]
-pub fn ai_delegation_event_from_link(
-    delegator: Did,
-    delegatee: Did,
-    delegatee_kind: &DelegateeKind,
-    granted_at: Timestamp,
-    expires_at: Option<Timestamp>,
-    depth: usize,
-) -> Option<AiDelegationEvent> {
-    match delegatee_kind {
-        DelegateeKind::AiAgent { model_id } => Some(AiDelegationEvent {
-            delegator,
-            delegatee,
-            model_id: model_id.clone(),
-            granted_at,
-            expires_at,
-            depth,
-        }),
-        DelegateeKind::Human | DelegateeKind::Unknown => None,
+/// Returns `Ok(None)` after successful chain verification when the leaf
+/// delegatee is not an AI agent. This keeps human and legacy delegations out of
+/// AI transparency grant lists without trusting caller-supplied flags.
+///
+/// # Errors
+///
+/// Returns [`LegalError::InvalidStateTransition`] if the timestamp is zero, the
+/// chain is empty, the chain fails signature/scope verification, or the grant
+/// evidence cannot be canonicalized.
+pub fn verify_ai_delegation_grant<F>(
+    authority_chain: &AuthorityChain,
+    verified_at: Timestamp,
+    resolve_key: F,
+) -> Result<Option<VerifiedAiDelegationGrant>>
+where
+    F: Fn(&Did) -> Option<PublicKey>,
+{
+    if verified_at == Timestamp::ZERO {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "AI delegation grant verification timestamp must be non-zero".into(),
+        });
     }
+
+    chain::verify_chain(authority_chain, &verified_at, resolve_key).map_err(|e| {
+        LegalError::InvalidStateTransition {
+            reason: format!("AI delegation authority chain verification failed: {e}"),
+        }
+    })?;
+
+    let chain_root =
+        authority_chain
+            .root()
+            .cloned()
+            .ok_or_else(|| LegalError::InvalidStateTransition {
+                reason: "AI delegation authority chain must not be empty".into(),
+            })?;
+    let chain_leaf =
+        authority_chain
+            .leaf()
+            .cloned()
+            .ok_or_else(|| LegalError::InvalidStateTransition {
+                reason: "AI delegation authority chain must not be empty".into(),
+            })?;
+    let leaf_link =
+        authority_chain
+            .links
+            .last()
+            .ok_or_else(|| LegalError::InvalidStateTransition {
+                reason: "AI delegation authority chain must not be empty".into(),
+            })?;
+
+    let DelegateeKind::AiAgent { model_id } = &leaf_link.delegatee_kind else {
+        return Ok(None);
+    };
+
+    Ok(Some(VerifiedAiDelegationGrant {
+        event: AiDelegationEvent {
+            delegator: leaf_link.delegator_did.clone(),
+            delegatee: leaf_link.delegate_did.clone(),
+            model_id: model_id.clone(),
+            granted_at: leaf_link.created,
+            expires_at: leaf_link.expires,
+            depth: leaf_link.depth,
+            authority_chain_root: chain_root,
+            authority_chain_leaf: chain_leaf,
+            authority_chain_depth: authority_chain.depth(),
+            authority_chain_hash: hash_ai_delegation_chain(authority_chain)?,
+            authority_link_hash: hash_authority_link(leaf_link)?,
+        },
+    }))
 }
 
 fn aggregate_mcp_outcomes(
@@ -306,6 +381,13 @@ struct AuthorityClearanceHashPayload<'a> {
     authority_chain: &'a AuthorityChain,
 }
 
+#[derive(Serialize)]
+struct AiDelegationGrantHashPayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    authority_chain: &'a AuthorityChain,
+}
+
 fn hash_authority_clearance_chain(authority_chain: &AuthorityChain) -> Result<[u8; 32]> {
     let payload = AuthorityClearanceHashPayload {
         domain: AUTHORITY_CLEARANCE_DOMAIN,
@@ -316,6 +398,27 @@ fn hash_authority_clearance_chain(authority_chain: &AuthorityChain) -> Result<[u
         .map(|hash| *hash.as_bytes())
         .map_err(|e| LegalError::InvalidStateTransition {
             reason: format!("authority clearance canonical CBOR hash failed: {e}"),
+        })
+}
+
+fn hash_ai_delegation_chain(authority_chain: &AuthorityChain) -> Result<[u8; 32]> {
+    let payload = AiDelegationGrantHashPayload {
+        domain: AI_DELEGATION_GRANT_DOMAIN,
+        schema_version: AI_DELEGATION_GRANT_SCHEMA_VERSION,
+        authority_chain,
+    };
+    hash_structured(&payload)
+        .map(|hash| *hash.as_bytes())
+        .map_err(|e| LegalError::InvalidStateTransition {
+            reason: format!("AI delegation grant canonical CBOR hash failed: {e}"),
+        })
+}
+
+fn hash_authority_link(link: &AuthorityLink) -> Result<[u8; 32]> {
+    link.id()
+        .map(|hash| *hash.as_bytes())
+        .map_err(|e| LegalError::InvalidStateTransition {
+            reason: format!("AI delegation authority link hash failed: {e}"),
         })
 }
 
@@ -350,20 +453,8 @@ mod tests {
     fn verified_clearance(requester: &Did) -> VerifiedAuthorityClearance {
         let root = did("root-authority");
         let root_key = KeyPair::generate();
-        let mut link = AuthorityLink {
-            delegator_did: root.clone(),
-            delegate_did: requester.clone(),
-            scope: vec![Permission::Read],
-            created: ts(1_000),
-            expires: None,
-            signature: Signature::empty(),
-            depth: 0,
-            delegatee_kind: DelegateeKind::Human,
-        };
-        let payload = link
-            .signing_payload()
-            .expect("authority link signing payload");
-        link.signature = root_key.sign(&payload);
+        let link =
+            signed_authority_link(&root, requester, DelegateeKind::Human, &root_key, 0, None);
 
         let chain = AuthorityChain {
             links: vec![link],
@@ -377,6 +468,61 @@ mod tests {
             }
         })
         .expect("authority clearance must verify")
+    }
+
+    fn signed_authority_link(
+        delegator: &Did,
+        delegate: &Did,
+        delegatee_kind: DelegateeKind,
+        signing_key: &KeyPair,
+        depth: usize,
+        expires: Option<Timestamp>,
+    ) -> AuthorityLink {
+        let mut link = AuthorityLink {
+            delegator_did: delegator.clone(),
+            delegate_did: delegate.clone(),
+            scope: vec![Permission::Read],
+            created: ts(1_000),
+            expires,
+            signature: Signature::empty(),
+            depth,
+            delegatee_kind,
+        };
+        let payload = link
+            .signing_payload()
+            .expect("authority link signing payload");
+        link.signature = signing_key.sign(&payload);
+        link
+    }
+
+    fn verified_ai_grant() -> VerifiedAiDelegationGrant {
+        let root = did("grant-root");
+        let agent = did("agent-1");
+        let root_key = KeyPair::generate();
+        let link = signed_authority_link(
+            &root,
+            &agent,
+            DelegateeKind::AiAgent {
+                model_id: "claude-sonnet-4-6".into(),
+            },
+            &root_key,
+            0,
+            Some(ts(3_000)),
+        );
+        let chain = AuthorityChain {
+            links: vec![link],
+            max_depth: 5,
+        };
+
+        verify_ai_delegation_grant(&chain, ts(2_000), |did| {
+            if did == &root {
+                Some(*root_key.public_key())
+            } else {
+                None
+            }
+        })
+        .expect("AI delegation grant verification succeeds")
+        .expect("AI delegation grant is present")
     }
 
     fn make_log_with_records() -> McpAuditLog {
@@ -445,6 +591,27 @@ mod tests {
         assert!(
             !production.contains("if !clearance_verified"),
             "report generation must not trust a naked clearance boolean"
+        );
+    }
+
+    #[test]
+    fn generate_report_source_does_not_accept_raw_ai_delegation_event_vector() {
+        let source = include_str!("ai_transparency.rs");
+        let production = source
+            .split("// ===========================================================================")
+            .next()
+            .expect("tests section marker present");
+        let report_params = production
+            .split("pub struct ReportParams<'a>")
+            .nth(1)
+            .expect("ReportParams definition present")
+            .split("/// Generate an AI transparency report for the given tenant and time period.")
+            .next()
+            .expect("ReportParams definition boundary present");
+
+        assert!(
+            !report_params.contains("ai_delegation_grants: Vec<AiDelegationEvent>"),
+            "ReportParams must require verified AI delegation grant artifacts, not raw events"
         );
     }
 
@@ -539,33 +706,98 @@ mod tests {
     }
 
     #[test]
-    fn ai_delegation_event_from_human_link_returns_none() {
-        let result = ai_delegation_event_from_link(
-            did("alice"),
-            did("bob"),
-            &DelegateeKind::Human,
-            ts(100),
-            None,
-            0,
-        );
+    fn verify_ai_delegation_grant_from_human_link_returns_none() {
+        let root = did("grant-root");
+        let human = did("human-bob");
+        let root_key = KeyPair::generate();
+        let link = signed_authority_link(&root, &human, DelegateeKind::Human, &root_key, 0, None);
+        let chain = AuthorityChain {
+            links: vec![link],
+            max_depth: 5,
+        };
+
+        let result = verify_ai_delegation_grant(&chain, ts(2_000), |did| {
+            if did == &root {
+                Some(*root_key.public_key())
+            } else {
+                None
+            }
+        })
+        .expect("human authority chain still verifies");
+
         assert!(result.is_none());
     }
 
     #[test]
-    fn ai_delegation_event_from_ai_link_returns_some() {
-        let result = ai_delegation_event_from_link(
-            did("alice"),
-            did("agent-1"),
-            &DelegateeKind::AiAgent {
+    fn verify_ai_delegation_grant_from_ai_link_returns_verified_event() {
+        let grant = verified_ai_grant();
+        let event = grant.event();
+        assert_eq!(event.model_id, "claude-sonnet-4-6");
+        assert_eq!(event.depth, 0);
+        assert_eq!(event.authority_chain_root, did("grant-root"));
+        assert_eq!(event.authority_chain_leaf, did("agent-1"));
+        assert_eq!(event.authority_chain_depth, 1);
+        assert_ne!(event.authority_chain_hash, [0u8; 32]);
+        assert_ne!(event.authority_link_hash, [0u8; 32]);
+    }
+
+    #[test]
+    fn verify_ai_delegation_grant_rejects_tampered_signature() {
+        let root = did("grant-root");
+        let agent = did("agent-1");
+        let root_key = KeyPair::generate();
+        let mut link = signed_authority_link(
+            &root,
+            &agent,
+            DelegateeKind::AiAgent {
                 model_id: "claude-sonnet-4-6".into(),
             },
-            ts(100),
-            Some(ts(200)),
-            1,
+            &root_key,
+            0,
+            None,
         );
-        let event = result.expect("AI link must produce an event");
-        assert_eq!(event.model_id, "claude-sonnet-4-6");
-        assert_eq!(event.depth, 1);
+        link.signature = Signature::from_bytes([0xA5; 64]);
+        let chain = AuthorityChain {
+            links: vec![link],
+            max_depth: 5,
+        };
+
+        let result = verify_ai_delegation_grant(&chain, ts(2_000), |did| {
+            if did == &root {
+                Some(*root_key.public_key())
+            } else {
+                None
+            }
+        });
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn generate_report_with_verified_ai_delegation_grant_succeeds() {
+        let log = McpAuditLog::new();
+        let tenant = did("tenant");
+        let clearance = verified_clearance(&tenant);
+        let grant = verified_ai_grant();
+        let expected_chain_hash = grant.event().authority_chain_hash;
+
+        let report = generate_report(ReportParams {
+            tenant_id: &tenant,
+            period_start: ts(0),
+            period_end: ts(u64::MAX),
+            legal_jurisdiction: "EU-AI-ACT",
+            mcp_log: &log,
+            ai_delegation_grants: vec![grant],
+            ai_delegation_revocations: 0,
+            authority_clearance: &clearance,
+        })
+        .expect("verified AI delegation grant should be accepted");
+
+        assert_eq!(report.ai_delegation_grants.len(), 1);
+        assert_eq!(
+            report.ai_delegation_grants[0].authority_chain_hash,
+            expected_chain_hash
+        );
     }
 
     #[test]
