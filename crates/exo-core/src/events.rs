@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     crypto,
-    types::{CorrelationId, Did, PublicKey, Signature, Timestamp},
+    types::{CorrelationId, Did, PqPublicKey, PublicKey, Signature, Timestamp},
 };
 
 // ---------------------------------------------------------------------------
@@ -120,6 +120,36 @@ pub fn verify_event(event: &Event, public_key: &PublicKey) -> bool {
         return false;
     };
     crypto::verify(&bytes, &event.signature, public_key)
+}
+
+/// Verify that an event's post-quantum signature is valid for the given ML-DSA public key.
+#[must_use]
+pub fn verify_event_pq(event: &Event, public_key: &PqPublicKey) -> bool {
+    let Ok(bytes) = event.signable_bytes() else {
+        return false;
+    };
+    crypto::verify_pq(&bytes, &event.signature, public_key)
+}
+
+/// Verify that an event's hybrid signature is valid for both public keys.
+///
+/// Both Ed25519 and ML-DSA components must verify. Use [`verify_event`] only
+/// for Ed25519-only events.
+#[must_use]
+pub fn verify_event_hybrid(
+    event: &Event,
+    classical_public_key: &PublicKey,
+    pq_public_key: &PqPublicKey,
+) -> bool {
+    let Ok(bytes) = event.signable_bytes() else {
+        return false;
+    };
+    crypto::verify_hybrid(
+        &bytes,
+        &event.signature,
+        classical_public_key,
+        pq_public_key,
+    )
 }
 
 /// Helper: create a signed event.
@@ -304,7 +334,7 @@ pub fn compute_event_id<T: serde::Serialize>(envelope: &T) -> crate::Result<crat
 mod tests {
     use super::*;
     use crate::{
-        crypto::KeyPair,
+        crypto::{self, KeyPair, PqKeyPair},
         types::{CorrelationId, Did, Timestamp},
     };
 
@@ -319,6 +349,17 @@ mod tests {
             kp.secret_key(),
         )
         .expect("sign event")
+    }
+
+    fn make_unsigned_event(source_did: Did) -> Event {
+        Event {
+            id: CorrelationId::new(),
+            timestamp: Timestamp::new(1000, 0),
+            event_type: EventType::AuditEntry,
+            payload: b"test payload".to_vec(),
+            source_did,
+            signature: Signature::Empty,
+        }
     }
 
     #[test]
@@ -358,6 +399,88 @@ mod tests {
         let mut event = make_event(&kp);
         event.event_type = EventType::SybilAlert;
         assert!(!verify_event(&event, kp.public_key()));
+    }
+
+    #[test]
+    fn verify_event_pq_accepts_valid_post_quantum_signature() {
+        let pq = PqKeyPair::generate();
+        let did = Did::new("did:exo:pq-source").expect("valid");
+        let mut event = make_unsigned_event(did);
+        let bytes = event.signable_bytes().expect("serialize signable bytes");
+        event.signature = pq.sign(&bytes).expect("sign pq event");
+
+        assert!(verify_event_pq(&event, pq.public_key()));
+        assert!(
+            !verify_event(&event, &PublicKey::from_bytes([7u8; 32])),
+            "classical verifier must not accept a PQ event signature"
+        );
+    }
+
+    #[test]
+    fn verify_event_pq_rejects_wrong_key_and_tamper() {
+        let pq = PqKeyPair::generate();
+        let wrong_pq = PqKeyPair::generate();
+        let did = Did::new("did:exo:pq-source").expect("valid");
+        let mut event = make_unsigned_event(did);
+        let bytes = event.signable_bytes().expect("serialize signable bytes");
+        event.signature = pq.sign(&bytes).expect("sign pq event");
+
+        assert!(!verify_event_pq(&event, wrong_pq.public_key()));
+
+        event.payload = b"tampered".to_vec();
+        assert!(!verify_event_pq(&event, pq.public_key()));
+    }
+
+    #[test]
+    fn verify_event_hybrid_accepts_valid_dual_signature() {
+        let classical = KeyPair::generate();
+        let (pq_public, pq_secret) = crypto::generate_pq_keypair();
+        let did = Did::new("did:exo:hybrid-source").expect("valid");
+        let mut event = make_unsigned_event(did);
+        let bytes = event.signable_bytes().expect("serialize signable bytes");
+        event.signature = crypto::sign_hybrid(&bytes, classical.secret_key(), &pq_secret)
+            .expect("sign hybrid event");
+
+        assert!(verify_event_hybrid(
+            &event,
+            classical.public_key(),
+            &pq_public
+        ));
+        assert!(
+            !verify_event(&event, classical.public_key()),
+            "classical verifier must not accept a hybrid event signature"
+        );
+    }
+
+    #[test]
+    fn verify_event_hybrid_rejects_wrong_keys_and_tamper() {
+        let classical = KeyPair::generate();
+        let wrong_classical = KeyPair::generate();
+        let (pq_public, pq_secret) = crypto::generate_pq_keypair();
+        let (wrong_pq_public, _) = crypto::generate_pq_keypair();
+        let did = Did::new("did:exo:hybrid-source").expect("valid");
+        let mut event = make_unsigned_event(did);
+        let bytes = event.signable_bytes().expect("serialize signable bytes");
+        event.signature = crypto::sign_hybrid(&bytes, classical.secret_key(), &pq_secret)
+            .expect("sign hybrid event");
+
+        assert!(!verify_event_hybrid(
+            &event,
+            wrong_classical.public_key(),
+            &pq_public
+        ));
+        assert!(!verify_event_hybrid(
+            &event,
+            classical.public_key(),
+            &wrong_pq_public
+        ));
+
+        event.event_type = EventType::SybilAlert;
+        assert!(!verify_event_hybrid(
+            &event,
+            classical.public_key(),
+            &pq_public
+        ));
     }
 
     #[test]
