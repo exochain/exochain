@@ -21,7 +21,7 @@ Updated 2026-03-20 after EXOCHAIN-REM-009 — continuous governance monitoring a
 | **9.4** | **Merkle Mountain Range** | `exo-dag::mmr` | `exo-dag/src/mmr.rs` (mod tests) | 23 | 🟢 |
 | 9.4 | Sparse Merkle Tree | `exo-dag::smt` | `exo-dag/src/smt.rs` (mod tests) | 20 | 🟢 |
 | 9.4 | DAG store + checkpoints | `exo-dag::store` | `exo-dag/src/store.rs` (mod tests) | 10 | 🟢 |
-| **9.5** | **RiskAttestation** | `exo-identity::risk` | `exo-identity/src/risk.rs` (mod tests) | 8 | 🟢 |
+| **9.5** | **RiskAttestation** | `exo-identity::risk` | `exo-identity/src/risk.rs` (mod tests) | 13 | 🟢 |
 
 ## Identity & Key Management (Spec §10)
 
@@ -163,4 +163,4 @@ Updated 2026-03-20 after EXOCHAIN-REM-009 — continuous governance monitoring a
 | **TOTAL** | **86** | **83** | **1** | **2** |
 
 **Coverage: 83/86 requirements traced to code (97%). 2 planned (ExoForge scheduling + React dashboard). 1 partial (T-14 Rust attestation verification).**
-**Workspace inventory: 2,687 listed tests across 20 packages and 266 Rust files.**
+**Workspace inventory: 2,951 listed tests across 20 packages and 266 Rust files.**

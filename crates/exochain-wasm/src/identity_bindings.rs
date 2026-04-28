@@ -150,7 +150,8 @@ pub fn wasm_assess_risk(
         level,
     };
 
-    let attestation = exo_identity::risk::assess_risk(&subject, &context, &secret_key);
+    let attestation = exo_identity::risk::assess_risk(&subject, &context, &secret_key)
+        .map_err(|e| JsValue::from_str(&format!("risk attestation error: {e}")))?;
     to_js_value(&attestation)
 }
 

@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 exo-core = { path = "../exo-core" }
 serde = { workspace = true }
+ciborium = { workspace = true }
 blake3 = { workspace = true }
 bs58 = { workspace = true }
 sha2 = { workspace = true }

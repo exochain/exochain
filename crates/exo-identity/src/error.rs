@@ -60,6 +60,17 @@ pub enum IdentityError {
     #[error("risk attestation expired")]
     AttestationExpired,
 
+    #[error("risk attestation signing payload encoding failed: {reason}")]
+    RiskAttestationSigningPayloadEncoding { reason: String },
+
+    #[error(
+        "risk attestation expiry overflow: now_physical_ms={now_physical_ms}, validity_ms={validity_ms}"
+    )]
+    RiskAttestationExpiryOverflow {
+        now_physical_ms: u64,
+        validity_ms: u64,
+    },
+
     #[error("duplicate DID across PACE levels: {0}")]
     DuplicatePaceDid(Did),
 

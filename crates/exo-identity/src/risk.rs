@@ -3,6 +3,13 @@
 use exo_core::{Did, PublicKey, SecretKey, Signature, Timestamp, crypto};
 use serde::{Deserialize, Serialize};
 
+use crate::error::IdentityError;
+
+/// Domain tag for signed risk-attestation payloads.
+pub const RISK_ATTESTATION_SIGNING_DOMAIN: &str = "exo.identity.risk_attestation.v1";
+
+const RISK_ATTESTATION_SIGNING_SCHEMA_VERSION: u16 = 1;
+
 /// Discrete risk severity levels for identity adjudication, ordered from least to most severe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum RiskLevel {
@@ -39,25 +46,55 @@ impl From<RiskLevel> for u8 {
     }
 }
 
-impl RiskAttestation {
-    #[must_use]
-    fn signing_payload(
-        subject_did: &Did,
-        attester_did: &Did,
-        level: RiskLevel,
-        evidence_hash: &[u8; 32],
-        timestamp: Timestamp,
-        expiry: Timestamp,
-    ) -> Vec<u8> {
-        let mut payload = Vec::new();
-        payload.extend_from_slice(subject_did.as_str().as_bytes());
-        payload.extend_from_slice(attester_did.as_str().as_bytes());
-        payload.extend_from_slice(&[u8::from(level)]);
-        payload.extend_from_slice(evidence_hash);
-        payload.extend_from_slice(&timestamp.physical_ms.to_le_bytes());
-        payload.extend_from_slice(&expiry.physical_ms.to_le_bytes());
-        payload
-    }
+/// Canonical CBOR payload signed by risk attesters.
+///
+/// The domain tag prevents cross-protocol signature reuse. The schema version
+/// allows future payload changes without accepting legacy byte-concat
+/// signatures.
+pub fn risk_attestation_signing_payload(
+    subject_did: &Did,
+    attester_did: &Did,
+    level: RiskLevel,
+    evidence_hash: &[u8; 32],
+    timestamp: Timestamp,
+    expiry: Timestamp,
+) -> Result<Vec<u8>, IdentityError> {
+    let payload = (
+        RISK_ATTESTATION_SIGNING_DOMAIN,
+        RISK_ATTESTATION_SIGNING_SCHEMA_VERSION,
+        subject_did,
+        attester_did,
+        level,
+        evidence_hash,
+        timestamp,
+        expiry,
+    );
+    let mut encoded = Vec::new();
+    ciborium::ser::into_writer(&payload, &mut encoded).map_err(|e| {
+        IdentityError::RiskAttestationSigningPayloadEncoding {
+            reason: e.to_string(),
+        }
+    })?;
+    Ok(encoded)
+}
+
+#[cfg(test)]
+fn legacy_risk_attestation_signing_payload(
+    subject_did: &Did,
+    attester_did: &Did,
+    level: RiskLevel,
+    evidence_hash: &[u8; 32],
+    timestamp: Timestamp,
+    expiry: Timestamp,
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(subject_did.as_str().as_bytes());
+    payload.extend_from_slice(attester_did.as_str().as_bytes());
+    payload.extend_from_slice(&[u8::from(level)]);
+    payload.extend_from_slice(evidence_hash);
+    payload.extend_from_slice(&timestamp.physical_ms.to_le_bytes());
+    payload.extend_from_slice(&expiry.physical_ms.to_le_bytes());
+    payload
 }
 
 /// Input parameters for producing a risk attestation.
@@ -99,27 +136,34 @@ impl RiskPolicy {
 }
 
 /// Create a signed risk attestation for a subject DID using the given context and attester key.
-#[must_use]
 pub fn assess_risk(
     subject: &Did,
     context: &RiskContext,
     attester_key: &SecretKey,
-) -> RiskAttestation {
+) -> Result<RiskAttestation, IdentityError> {
     let evidence_hash: [u8; 32] = *blake3::hash(&context.evidence).as_bytes();
-    let expiry = Timestamp::new(context.now.physical_ms + context.validity_ms, 0);
+    let expiry_physical_ms = context
+        .now
+        .physical_ms
+        .checked_add(context.validity_ms)
+        .ok_or(IdentityError::RiskAttestationExpiryOverflow {
+            now_physical_ms: context.now.physical_ms,
+            validity_ms: context.validity_ms,
+        })?;
+    let expiry = Timestamp::new(expiry_physical_ms, 0);
 
-    let payload = RiskAttestation::signing_payload(
+    let payload = risk_attestation_signing_payload(
         subject,
         &context.attester_did,
         context.level,
         &evidence_hash,
         context.now,
         expiry,
-    );
+    )?;
 
     let signature = crypto::sign(&payload, attester_key);
 
-    RiskAttestation {
+    Ok(RiskAttestation {
         subject_did: subject.clone(),
         attester_did: context.attester_did.clone(),
         level: context.level,
@@ -127,20 +171,25 @@ pub fn assess_risk(
         timestamp: context.now,
         expiry,
         signature,
-    }
+    })
 }
 
 /// Verify the cryptographic signature on a risk attestation against the attester's public key.
 #[must_use]
 pub fn verify_attestation(attestation: &RiskAttestation, attester_key: &PublicKey) -> bool {
-    let payload = RiskAttestation::signing_payload(
+    if attestation.signature.is_empty() || attestation.signature.ed25519_component_is_zero() {
+        return false;
+    }
+    let Ok(payload) = risk_attestation_signing_payload(
         &attestation.subject_did,
         &attestation.attester_did,
         attestation.level,
         &attestation.evidence_hash,
         attestation.timestamp,
         attestation.expiry,
-    );
+    ) else {
+        return false;
+    };
     crypto::verify(&payload, &attestation.signature, attester_key)
 }
 
@@ -177,7 +226,7 @@ mod tests {
         let subject_did = make_did("subject");
         let ctx = make_context(attester_did, RiskLevel::Low);
 
-        let att = assess_risk(&subject_did, &ctx, &sk);
+        let att = assess_risk(&subject_did, &ctx, &sk).expect("risk attestation");
         assert_eq!(att.level, RiskLevel::Low);
         assert_eq!(att.subject_did, subject_did);
         assert!(verify_attestation(&att, &pk));
@@ -190,9 +239,60 @@ mod tests {
         let subject_did = make_did("subject2");
         let ctx = make_context(attester_did, RiskLevel::Medium);
 
-        let att = assess_risk(&subject_did, &ctx, &sk);
+        let att = assess_risk(&subject_did, &ctx, &sk).expect("risk attestation");
         let (wrong_pk, _) = generate_keypair();
         assert!(!verify_attestation(&att, &wrong_pk));
+    }
+
+    #[test]
+    fn verify_rejects_empty_and_zero_signatures() {
+        let (pk, sk) = generate_keypair();
+        let attester_did = make_did("attester-empty");
+        let subject_did = make_did("subject-empty");
+        let ctx = make_context(attester_did, RiskLevel::Low);
+        let mut att = assess_risk(&subject_did, &ctx, &sk).expect("risk attestation");
+
+        att.signature = Signature::Empty;
+        assert!(!verify_attestation(&att, &pk));
+
+        att.signature = Signature::Ed25519([0u8; 64]);
+        assert!(!verify_attestation(&att, &pk));
+    }
+
+    #[test]
+    fn verify_rejects_tampered_attestation() {
+        let (pk, sk) = generate_keypair();
+        let attester_did = make_did("attester-tamper");
+        let subject_did = make_did("subject-tamper");
+        let ctx = make_context(attester_did, RiskLevel::Low);
+        let mut att = assess_risk(&subject_did, &ctx, &sk).expect("risk attestation");
+
+        att.level = RiskLevel::Critical;
+
+        assert!(!verify_attestation(&att, &pk));
+    }
+
+    #[test]
+    fn assess_risk_rejects_expiry_overflow() {
+        let (_pk, sk) = generate_keypair();
+        let attester_did = make_did("attester-overflow");
+        let subject_did = make_did("subject-overflow");
+        let ctx = RiskContext {
+            attester_did,
+            evidence: b"test evidence data".to_vec(),
+            now: Timestamp::new(u64::MAX, 0),
+            validity_ms: 1,
+            level: RiskLevel::Low,
+        };
+
+        let err = assess_risk(&subject_did, &ctx, &sk).expect_err("expiry overflow");
+        assert!(matches!(
+            err,
+            crate::error::IdentityError::RiskAttestationExpiryOverflow {
+                now_physical_ms: u64::MAX,
+                validity_ms: 1
+            }
+        ));
     }
 
     #[test]
@@ -202,7 +302,7 @@ mod tests {
         let subject_did = make_did("subject3");
         let ctx = make_context(attester_did, RiskLevel::Minimal);
 
-        let att = assess_risk(&subject_did, &ctx, &sk);
+        let att = assess_risk(&subject_did, &ctx, &sk).expect("risk attestation");
         assert!(!is_expired(&att, &Timestamp::new(14_999, 0)));
         assert!(is_expired(&att, &Timestamp::new(15_000, 0)));
         assert!(is_expired(&att, &Timestamp::new(20_000, 0)));
@@ -250,7 +350,7 @@ mod tests {
         ] {
             let subject = make_did("target");
             let ctx = make_context(attester_did.clone(), level);
-            let att = assess_risk(&subject, &ctx, &sk);
+            let att = assess_risk(&subject, &ctx, &sk).expect("risk attestation");
             assert_eq!(att.level, level);
             assert!(verify_attestation(&att, &pk));
         }
@@ -263,8 +363,77 @@ mod tests {
         let subject = make_did("target2");
         let ctx = make_context(attester_did, RiskLevel::Low);
 
-        let att1 = assess_risk(&subject, &ctx, &sk);
-        let att2 = assess_risk(&subject, &ctx, &sk);
+        let att1 = assess_risk(&subject, &ctx, &sk).expect("risk attestation");
+        let att2 = assess_risk(&subject, &ctx, &sk).expect("risk attestation");
         assert_eq!(att1.evidence_hash, att2.evidence_hash);
+    }
+
+    #[test]
+    fn risk_attestation_signing_payload_is_domain_separated_cbor() {
+        let subject_did = make_did("payload-subject");
+        let attester_did = make_did("payload-attester");
+        let evidence_hash = [7u8; 32];
+
+        let payload = risk_attestation_signing_payload(
+            &subject_did,
+            &attester_did,
+            RiskLevel::High,
+            &evidence_hash,
+            Timestamp::new(12_000, 3),
+            Timestamp::new(18_000, 4),
+        )
+        .expect("canonical risk payload");
+
+        assert!(
+            payload
+                .windows(b"exo.identity.risk_attestation.v1".len())
+                .any(|window| window == b"exo.identity.risk_attestation.v1"),
+            "domain tag must be encoded inside the signed payload"
+        );
+
+        let payload_again = risk_attestation_signing_payload(
+            &subject_did,
+            &attester_did,
+            RiskLevel::High,
+            &evidence_hash,
+            Timestamp::new(12_000, 3),
+            Timestamp::new(18_000, 4),
+        )
+        .expect("canonical risk payload");
+        assert_eq!(payload, payload_again);
+    }
+
+    #[test]
+    fn verify_rejects_legacy_raw_concat_signature() {
+        let (pk, sk) = generate_keypair();
+        let subject_did = make_did("legacy-subject");
+        let attester_did = make_did("legacy-attester");
+        let evidence_hash = [9u8; 32];
+        let timestamp = Timestamp::new(21_000, 1);
+        let expiry = Timestamp::new(27_000, 2);
+        let legacy_payload = legacy_risk_attestation_signing_payload(
+            &subject_did,
+            &attester_did,
+            RiskLevel::Critical,
+            &evidence_hash,
+            timestamp,
+            expiry,
+        );
+        let legacy_signature = crypto::sign(&legacy_payload, &sk);
+
+        let attestation = RiskAttestation {
+            subject_did,
+            attester_did,
+            level: RiskLevel::Critical,
+            evidence_hash,
+            timestamp,
+            expiry,
+            signature: legacy_signature,
+        };
+
+        assert!(
+            !verify_attestation(&attestation, &pk),
+            "legacy byte-concat signatures must not verify"
+        );
     }
 }

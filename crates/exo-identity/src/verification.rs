@@ -17,6 +17,8 @@ pub enum VerificationCeremonyError {
     InsufficientScore { score: u32 },
     #[error("Invalid attester DID: {0}")]
     InvalidAttesterDid(String),
+    #[error("risk attestation failed: {0}")]
+    RiskAttestation(#[from] crate::error::IdentityError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,12 +169,10 @@ impl VerificationCeremony {
             level,
         };
 
-        let attestation = assess_risk(&self.target_did, &ctx, attester_key);
+        let attestation = assess_risk(&self.target_did, &ctx, attester_key)?;
 
         // Only flip the finalized flag once the real attestation has been
-        // produced successfully. (assess_risk is infallible in this build,
-        // but keeping the ordering explicit guards against future changes
-        // that might make signing fallible.)
+        // produced successfully.
         self.finalized = true;
 
         // Sanity: the returned attestation must verify under the public
