@@ -27,13 +27,15 @@
 //! at fields the caller supplies (`is_self_grant`, `modifies_kernel`,
 //! `actor_roles`).
 //!
-//! **Current blast radius: bounded by the gate on RED #2.** Governance MCP
-//! tools that would otherwise simulate decisions, votes, quorum, decision
-//! status, or amendments refuse by default behind the
+//! **Current blast radius: bounded by the gates on RED #2 and sibling
+//! simulation findings.** Governance MCP tools that would otherwise simulate
+//! decisions, votes, quorum, decision status, or amendments, and legal MCP
+//! tools that would otherwise simulate e-discovery, privilege, safe-harbor,
+//! or fiduciary state, refuse by default behind the
 //! `unaudited-mcp-simulation-tools` feature flag. Non-synthetic read-only
 //! tools (`exochain_list_invariants`, etc.) are the only callers the
-//! middleware currently rubber-stamps, and they can't mutate governance
-//! fabric.
+//! middleware currently rubber-stamps, and they can't mutate governance or
+//! legal fabric.
 //!
 //! **When RED #2 is resolved (real reactor wiring), this middleware
 //! MUST be promoted from node-level authority to live delegated authority.**

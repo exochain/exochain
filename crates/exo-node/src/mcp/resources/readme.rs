@@ -45,7 +45,9 @@ MCP rules and 8 kernel invariants on every action. Read this document first.
 - **proofs (4)** — Create/verify evidence bundles, chain-of-custody checks,
   Merkle proofs, CGR proofs.
 - **legal (4)** — eDiscovery search, privilege assertion, safe-harbor
-  initiation, fiduciary-duty checks.
+  initiation, fiduciary-duty checks. These tools refuse by default unless
+  `unaudited-mcp-simulation-tools` is enabled, because they are not wired to
+  a live legal/evidence store yet.
 - **escalation (4)** — Threat evaluation, case escalation, triage,
   feedback recording.
 - **messaging (3)** — Encrypted send/receive, death-trigger configuration.
@@ -163,5 +165,6 @@ mod tests {
         assert!(text.contains("exochain://constitution"));
         assert!(text.contains("MCP-001"));
         assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("live legal/evidence store"));
     }
 }

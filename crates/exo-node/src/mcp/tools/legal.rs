@@ -1,6 +1,7 @@
 //! Legal MCP tools — e-discovery search, privilege assertion, DGCL safe harbor,
 //! and fiduciary duty compliance checking.
 
+#[cfg(feature = "unaudited-mcp-simulation-tools")]
 use exo_core::Did;
 use serde_json::{Value, json};
 
@@ -9,6 +10,22 @@ use crate::mcp::{
     protocol::{ToolDefinition, ToolResult},
 };
 
+#[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+const MCP_LEGAL_SIMULATION_INITIATIVE: &str = "Initiatives/fix-mcp-legal-simulation-tools.md";
+
+#[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+fn legal_simulation_refused(tool_name: &str) -> ToolResult {
+    super::simulation_tool_refused(
+        tool_name,
+        MCP_LEGAL_SIMULATION_INITIATIVE,
+        "This MCP legal tool returns legal/evidence workflow state without \
+         querying or mutating a live legal/evidence store. It is disabled by \
+         default to avoid false legal-status signals; build with \
+         `unaudited-mcp-simulation-tools` only for explicit dev simulation.",
+    )
+}
+
+#[cfg(feature = "unaudited-mcp-simulation-tools")]
 fn required_nonempty_str<'a>(
     params: &'a Value,
     name: &str,
@@ -24,6 +41,7 @@ fn required_nonempty_str<'a>(
     }
 }
 
+#[cfg(feature = "unaudited-mcp-simulation-tools")]
 fn required_nonzero_u64(params: &Value, name: &str) -> std::result::Result<u64, ToolResult> {
     match params.get(name).and_then(Value::as_u64) {
         Some(value) if value > 0 => Ok(value),
@@ -83,48 +101,57 @@ pub fn ediscovery_search_definition() -> ToolDefinition {
 /// Execute the `exochain_ediscovery_search` tool.
 #[must_use]
 pub fn execute_ediscovery_search(params: &Value, _context: &NodeContext) -> ToolResult {
-    let query = match params.get("query").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: query"}).to_string(),
-            );
-        }
-    };
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        legal_simulation_refused("exochain_ediscovery_search")
+    }
 
-    let scope = params.get("scope").and_then(Value::as_str).unwrap_or("all");
-    let search_id = match required_nonempty_str(params, "search_id") {
-        Ok(value) => value,
-        Err(result) => return result,
-    };
-    let searched_at_ms = match required_nonzero_u64(params, "searched_at_ms") {
-        Ok(value) => value,
-        Err(result) => return result,
-    };
-    let date_range_start = params
-        .get("date_range_start")
-        .and_then(Value::as_str)
-        .map(String::from);
-    let date_range_end = params
-        .get("date_range_end")
-        .and_then(Value::as_str)
-        .map(String::from);
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let query = match params.get("query").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: query"}).to_string(),
+                );
+            }
+        };
 
-    let response = json!({
-        "search_id": search_id,
-        "query": query,
-        "scope": scope,
-        "date_range": {
-            "start": date_range_start,
-            "end": date_range_end,
-        },
-        "results": [],
-        "total_matches": 0,
-        "status": "completed",
-        "searched_at": format!("{}:0", searched_at_ms),
-        "note": "No evidence corpus is loaded in this node instance.",
-    });
-    ToolResult::success(response.to_string())
+        let scope = params.get("scope").and_then(Value::as_str).unwrap_or("all");
+        let search_id = match required_nonempty_str(params, "search_id") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let searched_at_ms = match required_nonzero_u64(params, "searched_at_ms") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let date_range_start = params
+            .get("date_range_start")
+            .and_then(Value::as_str)
+            .map(String::from);
+        let date_range_end = params
+            .get("date_range_end")
+            .and_then(Value::as_str)
+            .map(String::from);
+
+        let response = json!({
+            "search_id": search_id,
+            "query": query,
+            "scope": scope,
+            "date_range": {
+                "start": date_range_start,
+                "end": date_range_end,
+            },
+            "results": [],
+            "total_matches": 0,
+            "status": "completed",
+            "searched_at": format!("{}:0", searched_at_ms),
+            "note": "No evidence corpus is loaded in this node instance.",
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -173,67 +200,76 @@ pub fn assert_privilege_definition() -> ToolDefinition {
 /// Execute the `exochain_assert_privilege` tool.
 #[must_use]
 pub fn execute_assert_privilege(params: &Value, _context: &NodeContext) -> ToolResult {
-    let evidence_id = match params.get("evidence_id").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: evidence_id"}).to_string(),
-            );
-        }
-    };
-    let privilege_type = match params.get("privilege_type").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: privilege_type"}).to_string(),
-            );
-        }
-    };
-    let asserter_did_str = match params.get("asserter_did").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: asserter_did"}).to_string(),
-            );
-        }
-    };
-    let assertion_id = match required_nonempty_str(params, "assertion_id") {
-        Ok(value) => value,
-        Err(result) => return result,
-    };
-    let asserted_at_ms = match required_nonzero_u64(params, "asserted_at_ms") {
-        Ok(value) => value,
-        Err(result) => return result,
-    };
-
-    // Validate privilege type.
-    let valid_types = ["attorney_client", "work_product", "deliberative"];
-    if !valid_types.contains(&privilege_type) {
-        return ToolResult::error(
-            json!({"error": format!(
-                "invalid privilege_type '{}': must be one of {:?}",
-                privilege_type, valid_types
-            )})
-            .to_string(),
-        );
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        legal_simulation_refused("exochain_assert_privilege")
     }
 
-    // Validate DID.
-    if Did::new(asserter_did_str).is_err() {
-        return ToolResult::error(
-            json!({"error": format!("invalid DID format: {asserter_did_str}")}).to_string(),
-        );
-    }
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let evidence_id = match params.get("evidence_id").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: evidence_id"}).to_string(),
+                );
+            }
+        };
+        let privilege_type = match params.get("privilege_type").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: privilege_type"}).to_string(),
+                );
+            }
+        };
+        let asserter_did_str = match params.get("asserter_did").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: asserter_did"}).to_string(),
+                );
+            }
+        };
+        let assertion_id = match required_nonempty_str(params, "assertion_id") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let asserted_at_ms = match required_nonzero_u64(params, "asserted_at_ms") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
 
-    let response = json!({
-        "assertion_id": assertion_id,
-        "evidence_id": evidence_id,
-        "privilege_type": privilege_type,
-        "asserter_did": asserter_did_str,
-        "status": "asserted",
-        "asserted_at": format!("{}:0", asserted_at_ms),
-    });
-    ToolResult::success(response.to_string())
+        // Validate privilege type.
+        let valid_types = ["attorney_client", "work_product", "deliberative"];
+        if !valid_types.contains(&privilege_type) {
+            return ToolResult::error(
+                json!({"error": format!(
+                    "invalid privilege_type '{}': must be one of {:?}",
+                    privilege_type, valid_types
+                )})
+                .to_string(),
+            );
+        }
+
+        // Validate DID.
+        if Did::new(asserter_did_str).is_err() {
+            return ToolResult::error(
+                json!({"error": format!("invalid DID format: {asserter_did_str}")}).to_string(),
+            );
+        }
+
+        let response = json!({
+            "assertion_id": assertion_id,
+            "evidence_id": evidence_id,
+            "privilege_type": privilege_type,
+            "asserter_did": asserter_did_str,
+            "status": "asserted",
+            "asserted_at": format!("{}:0", asserted_at_ms),
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -280,94 +316,104 @@ pub fn initiate_safe_harbor_definition() -> ToolDefinition {
 /// Execute the `exochain_initiate_safe_harbor` tool.
 #[must_use]
 pub fn execute_initiate_safe_harbor(params: &Value, _context: &NodeContext) -> ToolResult {
-    let initiator_did_str = match params.get("initiator_did").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: initiator_did"}).to_string(),
-            );
-        }
-    };
-    let transaction_description = match params
-        .get("transaction_description")
-        .and_then(Value::as_str)
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
     {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: transaction_description"}).to_string(),
-            );
-        }
-    };
-    let interested_parties = match params.get("interested_parties").and_then(Value::as_array) {
-        Some(arr) => arr,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: interested_parties (must be an array)"})
-                    .to_string(),
-            );
-        }
-    };
-    let process_id = match required_nonempty_str(params, "process_id") {
-        Ok(value) => value,
-        Err(result) => return result,
-    };
-    let initiated_at_ms = match required_nonzero_u64(params, "initiated_at_ms") {
-        Ok(value) => value,
-        Err(result) => return result,
-    };
-
-    // Validate initiator DID.
-    if Did::new(initiator_did_str).is_err() {
-        return ToolResult::error(
-            json!({"error": format!("invalid DID format: {initiator_did_str}")}).to_string(),
-        );
+        let _ = params;
+        legal_simulation_refused("exochain_initiate_safe_harbor")
     }
 
-    // Validate each interested party DID.
-    let mut party_dids: Vec<String> = Vec::new();
-    for (i, party) in interested_parties.iter().enumerate() {
-        match party.as_str() {
-            Some(s) => {
-                if Did::new(s).is_err() {
-                    return ToolResult::error(
-                        json!({"error": format!("invalid DID at interested_parties[{i}]: {s}")})
-                            .to_string(),
-                    );
-                }
-                party_dids.push(s.to_owned());
-            }
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let initiator_did_str = match params.get("initiator_did").and_then(Value::as_str) {
+            Some(s) => s,
             None => {
                 return ToolResult::error(
-                    json!({"error": format!("interested_parties[{i}] is not a string")})
+                    json!({"error": "missing required parameter: initiator_did"}).to_string(),
+                );
+            }
+        };
+        let transaction_description = match params
+            .get("transaction_description")
+            .and_then(Value::as_str)
+        {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: transaction_description"})
                         .to_string(),
                 );
             }
+        };
+        let interested_parties = match params.get("interested_parties").and_then(Value::as_array) {
+            Some(arr) => arr,
+            None => {
+                return ToolResult::error(
+                json!({"error": "missing required parameter: interested_parties (must be an array)"})
+                    .to_string(),
+            );
+            }
+        };
+        let process_id = match required_nonempty_str(params, "process_id") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let initiated_at_ms = match required_nonzero_u64(params, "initiated_at_ms") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+
+        // Validate initiator DID.
+        if Did::new(initiator_did_str).is_err() {
+            return ToolResult::error(
+                json!({"error": format!("invalid DID format: {initiator_did_str}")}).to_string(),
+            );
         }
-    }
 
-    let disclosure_requirements: Vec<Value> = party_dids
-        .iter()
-        .map(|did| {
-            json!({
-                "party_did": did,
-                "disclosure_status": "pending",
-                "requires": ["material_interest", "relationship_disclosure"],
+        // Validate each interested party DID.
+        let mut party_dids: Vec<String> = Vec::new();
+        for (i, party) in interested_parties.iter().enumerate() {
+            match party.as_str() {
+                Some(s) => {
+                    if Did::new(s).is_err() {
+                        return ToolResult::error(
+                        json!({"error": format!("invalid DID at interested_parties[{i}]: {s}")})
+                            .to_string(),
+                    );
+                    }
+                    party_dids.push(s.to_owned());
+                }
+                None => {
+                    return ToolResult::error(
+                        json!({"error": format!("interested_parties[{i}] is not a string")})
+                            .to_string(),
+                    );
+                }
+            }
+        }
+
+        let disclosure_requirements: Vec<Value> = party_dids
+            .iter()
+            .map(|did| {
+                json!({
+                    "party_did": did,
+                    "disclosure_status": "pending",
+                    "requires": ["material_interest", "relationship_disclosure"],
+                })
             })
-        })
-        .collect();
+            .collect();
 
-    let response = json!({
-        "process_id": process_id,
-        "initiator_did": initiator_did_str,
-        "transaction_description": transaction_description,
-        "interested_parties": party_dids,
-        "disclosure_requirements": disclosure_requirements,
-        "dgcl_section": "144",
-        "status": "initiated",
-        "initiated_at": format!("{}:0", initiated_at_ms),
-    });
-    ToolResult::success(response.to_string())
+        let response = json!({
+            "process_id": process_id,
+            "initiator_did": initiator_did_str,
+            "transaction_description": transaction_description,
+            "interested_parties": party_dids,
+            "disclosure_requirements": disclosure_requirements,
+            "dgcl_section": "144",
+            "status": "initiated",
+            "initiated_at": format!("{}:0", initiated_at_ms),
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -413,81 +459,90 @@ pub fn check_fiduciary_duty_definition() -> ToolDefinition {
 /// Execute the `exochain_check_fiduciary_duty` tool.
 #[must_use]
 pub fn execute_check_fiduciary_duty(params: &Value, _context: &NodeContext) -> ToolResult {
-    let actor_did_str = match params.get("actor_did").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: actor_did"}).to_string(),
-            );
-        }
-    };
-    let action = match params.get("action").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: action"}).to_string(),
-            );
-        }
-    };
-    let beneficiary_did_str = match params.get("beneficiary_did").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: beneficiary_did"}).to_string(),
-            );
-        }
-    };
-    let check_id = match required_nonempty_str(params, "check_id") {
-        Ok(value) => value,
-        Err(result) => return result,
-    };
-    let checked_at_ms = match required_nonzero_u64(params, "checked_at_ms") {
-        Ok(value) => value,
-        Err(result) => return result,
-    };
-
-    // Validate DIDs.
-    if Did::new(actor_did_str).is_err() {
-        return ToolResult::error(
-            json!({"error": format!("invalid DID format: {actor_did_str}")}).to_string(),
-        );
-    }
-    if Did::new(beneficiary_did_str).is_err() {
-        return ToolResult::error(
-            json!({"error": format!("invalid DID format: {beneficiary_did_str}")}).to_string(),
-        );
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        legal_simulation_refused("exochain_check_fiduciary_duty")
     }
 
-    // Assess fiduciary duties: loyalty, care, good faith.
-    let duties = vec![
-        json!({
-            "duty": "loyalty",
-            "description": "Act in the best interest of the beneficiary, avoiding self-dealing.",
-            "status": "requires_review",
-        }),
-        json!({
-            "duty": "care",
-            "description": "Exercise the care of an ordinarily prudent person.",
-            "status": "requires_review",
-        }),
-        json!({
-            "duty": "good_faith",
-            "description": "Act honestly and not for an improper purpose.",
-            "status": "requires_review",
-        }),
-    ];
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let actor_did_str = match params.get("actor_did").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: actor_did"}).to_string(),
+                );
+            }
+        };
+        let action = match params.get("action").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: action"}).to_string(),
+                );
+            }
+        };
+        let beneficiary_did_str = match params.get("beneficiary_did").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: beneficiary_did"}).to_string(),
+                );
+            }
+        };
+        let check_id = match required_nonempty_str(params, "check_id") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let checked_at_ms = match required_nonzero_u64(params, "checked_at_ms") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
 
-    let response = json!({
-        "check_id": check_id,
-        "actor_did": actor_did_str,
-        "action": action,
-        "beneficiary_did": beneficiary_did_str,
-        "duties_assessed": duties,
-        "overall_status": "requires_review",
-        "checked_at": format!("{}:0", checked_at_ms),
-        "note": "Automated pre-screening complete. Human review required for final determination.",
-    });
-    ToolResult::success(response.to_string())
+        // Validate DIDs.
+        if Did::new(actor_did_str).is_err() {
+            return ToolResult::error(
+                json!({"error": format!("invalid DID format: {actor_did_str}")}).to_string(),
+            );
+        }
+        if Did::new(beneficiary_did_str).is_err() {
+            return ToolResult::error(
+                json!({"error": format!("invalid DID format: {beneficiary_did_str}")}).to_string(),
+            );
+        }
+
+        // Assess fiduciary duties: loyalty, care, good faith.
+        let duties = vec![
+            json!({
+                "duty": "loyalty",
+                "description": "Act in the best interest of the beneficiary, avoiding self-dealing.",
+                "status": "requires_review",
+            }),
+            json!({
+                "duty": "care",
+                "description": "Exercise the care of an ordinarily prudent person.",
+                "status": "requires_review",
+            }),
+            json!({
+                "duty": "good_faith",
+                "description": "Act honestly and not for an improper purpose.",
+                "status": "requires_review",
+            }),
+        ];
+
+        let response = json!({
+            "check_id": check_id,
+            "actor_did": actor_did_str,
+            "action": action,
+            "beneficiary_did": beneficiary_did_str,
+            "duties_assessed": duties,
+            "overall_status": "requires_review",
+            "checked_at": format!("{}:0", checked_at_ms),
+            "note": "Automated pre-screening complete. Human review required for final determination.",
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ===========================================================================
@@ -499,6 +554,19 @@ pub fn execute_check_fiduciary_duty(params: &Value, _context: &NodeContext) -> T
 mod tests {
     use super::*;
 
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    fn assert_legal_simulation_refused(result: ToolResult, tool_name: &str) {
+        assert!(
+            result.is_error,
+            "{tool_name} must refuse by default until legal/evidence stores are wired"
+        );
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_simulation_tool_disabled"));
+        assert!(text.contains(tool_name));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("fix-mcp-legal-simulation-tools.md"));
+    }
+
     // -- ediscovery_search ----------------------------------------------------
 
     #[test]
@@ -509,6 +577,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_ediscovery_search_success() {
         let params = json!({
             "query": "contract breach",
@@ -525,6 +594,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_ediscovery_search_with_scope() {
         let params = json!({
             "query": "merger",
@@ -541,6 +611,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_ediscovery_search_missing_query() {
         let result = execute_ediscovery_search(
             &json!({"search_id": "search-003", "searched_at_ms": 1700000000002_u64}),
@@ -550,10 +621,23 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_ediscovery_search_missing_metadata() {
         let result =
             execute_ediscovery_search(&json!({"query": "contract breach"}), &NodeContext::empty());
         assert!(result.is_error);
+    }
+
+    #[test]
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    fn execute_ediscovery_search_refuses_by_default() {
+        let params = json!({
+            "query": "contract breach",
+            "search_id": "search-001",
+            "searched_at_ms": 1700000000000_u64,
+        });
+        let result = execute_ediscovery_search(&params, &NodeContext::empty());
+        assert_legal_simulation_refused(result, "exochain_ediscovery_search");
     }
 
     // -- assert_privilege -----------------------------------------------------
@@ -566,6 +650,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_assert_privilege_success() {
         let params = json!({
             "evidence_id": "ev123",
@@ -583,6 +668,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_assert_privilege_invalid_type() {
         let params = json!({
             "evidence_id": "ev123",
@@ -596,6 +682,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_assert_privilege_invalid_did() {
         let params = json!({
             "evidence_id": "ev123",
@@ -608,6 +695,20 @@ mod tests {
         assert!(result.is_error);
     }
 
+    #[test]
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    fn execute_assert_privilege_refuses_by_default() {
+        let params = json!({
+            "evidence_id": "ev123",
+            "privilege_type": "attorney_client",
+            "asserter_did": "did:exo:counsel",
+            "assertion_id": "assertion-001",
+            "asserted_at_ms": 1700000000010_u64,
+        });
+        let result = execute_assert_privilege(&params, &NodeContext::empty());
+        assert_legal_simulation_refused(result, "exochain_assert_privilege");
+    }
+
     // -- initiate_safe_harbor -------------------------------------------------
 
     #[test]
@@ -618,6 +719,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_initiate_safe_harbor_success() {
         let params = json!({
             "initiator_did": "did:exo:alice",
@@ -646,6 +748,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_initiate_safe_harbor_invalid_initiator() {
         let params = json!({
             "initiator_did": "bad",
@@ -659,6 +762,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_initiate_safe_harbor_invalid_party() {
         let params = json!({
             "initiator_did": "did:exo:alice",
@@ -671,6 +775,20 @@ mod tests {
         assert!(result.is_error);
     }
 
+    #[test]
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    fn execute_initiate_safe_harbor_refuses_by_default() {
+        let params = json!({
+            "initiator_did": "did:exo:alice",
+            "transaction_description": "Acquisition of subsidiary",
+            "interested_parties": ["did:exo:bob", "did:exo:carol"],
+            "process_id": "safe-harbor-001",
+            "initiated_at_ms": 1700000000020_u64,
+        });
+        let result = execute_initiate_safe_harbor(&params, &NodeContext::empty());
+        assert_legal_simulation_refused(result, "exochain_initiate_safe_harbor");
+    }
+
     // -- check_fiduciary_duty -------------------------------------------------
 
     #[test]
@@ -681,6 +799,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_check_fiduciary_duty_success() {
         let params = json!({
             "actor_did": "did:exo:director",
@@ -699,6 +818,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_check_fiduciary_duty_invalid_actor() {
         let params = json!({
             "actor_did": "bad",
@@ -712,11 +832,57 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_check_fiduciary_duty_missing_action() {
         let result = execute_check_fiduciary_duty(
             &json!({"actor_did": "did:exo:a", "beneficiary_did": "did:exo:b"}),
             &NodeContext::empty(),
         );
         assert!(result.is_error);
+    }
+
+    #[test]
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    fn execute_check_fiduciary_duty_refuses_by_default() {
+        let params = json!({
+            "actor_did": "did:exo:director",
+            "action": "approve merger with personal interest",
+            "beneficiary_did": "did:exo:shareholders",
+            "check_id": "fiduciary-001",
+            "checked_at_ms": 1700000000030_u64,
+        });
+        let result = execute_check_fiduciary_duty(&params, &NodeContext::empty());
+        assert_legal_simulation_refused(result, "exochain_check_fiduciary_duty");
+    }
+
+    #[test]
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    fn default_build_source_guard_refuses_before_legal_status_json() {
+        let source = include_str!("legal.rs");
+        for function in [
+            "execute_ediscovery_search",
+            "execute_assert_privilege",
+            "execute_initiate_safe_harbor",
+            "execute_check_fiduciary_duty",
+        ] {
+            let default_body = source
+                .split(&format!("pub fn {function}"))
+                .nth(1)
+                .expect("function exists")
+                .split("#[cfg(feature = \"unaudited-mcp-simulation-tools\")]")
+                .next()
+                .expect("default body exists");
+            assert!(
+                default_body.contains("legal_simulation_refused"),
+                "{function} must refuse before feature-gated legal simulation behavior"
+            );
+            assert!(
+                !default_body.contains("\"status\": \"completed\"")
+                    && !default_body.contains("\"status\": \"asserted\"")
+                    && !default_body.contains("\"status\": \"initiated\"")
+                    && !default_body.contains("\"overall_status\": \"requires_review\""),
+                "{function} default path must not emit legal-status simulation JSON"
+            );
+        }
     }
 }
