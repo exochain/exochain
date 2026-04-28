@@ -228,6 +228,10 @@ pub fn has_valid_acceptance_proof(bailment: &Bailment) -> bool {
     if bailment.status != BailmentStatus::Active {
         return false;
     }
+    acceptance_proof_verifies(bailment)
+}
+
+fn acceptance_proof_verifies(bailment: &Bailment) -> bool {
     if bailment.signature.is_empty() {
         return false;
     }
@@ -243,6 +247,77 @@ pub fn has_valid_acceptance_proof(bailment: &Bailment) -> bool {
     crypto::verify(&payload, &bailment.signature, &bailee_public_key)
 }
 
+fn require_bailment_party(bailment: &Bailment, actor: &Did) -> Result<(), ConsentError> {
+    if *actor != bailment.bailor_did && *actor != bailment.bailee_did {
+        return Err(ConsentError::Unauthorized(format!(
+            "DID {actor} is neither bailor nor bailee"
+        )));
+    }
+    Ok(())
+}
+
+fn require_bailor(bailment: &Bailment, actor: &Did) -> Result<(), ConsentError> {
+    if *actor != bailment.bailor_did {
+        return Err(ConsentError::Unauthorized(format!(
+            "DID {actor} is not the bailor for bailment {}",
+            bailment.id
+        )));
+    }
+    Ok(())
+}
+
+/// Suspend an active bailment. Either bailor or bailee may pause consent use.
+///
+/// Suspension preserves the original acceptance proof but makes the bailment
+/// inactive until the bailor resumes it. The function verifies the stored
+/// acceptance proof before transitioning so a forged `Active` status bit cannot
+/// be laundered into a legitimate suspended lifecycle state.
+///
+/// # Errors
+/// - `InvalidState` if the bailment is not currently `Active`.
+/// - `Unauthorized` if actor is neither bailor nor bailee.
+/// - `InvalidSignature` if the stored acceptance proof is missing or invalid.
+pub fn suspend(bailment: &mut Bailment, actor: &Did) -> Result<(), ConsentError> {
+    if bailment.status != BailmentStatus::Active {
+        return Err(ConsentError::InvalidState {
+            expected: "Active".into(),
+            actual: bailment.status.to_string(),
+        });
+    }
+    require_bailment_party(bailment, actor)?;
+    if !acceptance_proof_verifies(bailment) {
+        return Err(ConsentError::InvalidSignature);
+    }
+
+    bailment.status = BailmentStatus::Suspended;
+    Ok(())
+}
+
+/// Resume a suspended bailment. Only the bailor may restore consent use.
+///
+/// The bailee's original acceptance signature remains binding; resumption
+/// verifies it again before returning to `Active`.
+///
+/// # Errors
+/// - `InvalidState` if the bailment is not currently `Suspended`.
+/// - `Unauthorized` if actor is not the bailor.
+/// - `InvalidSignature` if the stored acceptance proof is missing or invalid.
+pub fn resume(bailment: &mut Bailment, actor: &Did) -> Result<(), ConsentError> {
+    if bailment.status != BailmentStatus::Suspended {
+        return Err(ConsentError::InvalidState {
+            expected: "Suspended".into(),
+            actual: bailment.status.to_string(),
+        });
+    }
+    require_bailor(bailment, actor)?;
+    if !acceptance_proof_verifies(bailment) {
+        return Err(ConsentError::InvalidSignature);
+    }
+
+    bailment.status = BailmentStatus::Active;
+    Ok(())
+}
+
 /// Terminate a bailment. Either bailor or bailee may terminate.
 ///
 /// # Errors
@@ -255,11 +330,7 @@ pub fn terminate(bailment: &mut Bailment, actor: &Did) -> Result<(), ConsentErro
             actual: bailment.status.to_string(),
         });
     }
-    if *actor != bailment.bailor_did && *actor != bailment.bailee_did {
-        return Err(ConsentError::Unauthorized(format!(
-            "DID {actor} is neither bailor nor bailee"
-        )));
-    }
+    require_bailment_party(bailment, actor)?;
     bailment.status = BailmentStatus::Terminated;
     Ok(())
 }
@@ -302,6 +373,11 @@ mod tests {
         let payload = signing_payload(b).expect("canonical payload");
         let sig = crypto::sign(&payload, &sk);
         (pk, sk, sig)
+    }
+
+    fn accept_test_bailment(b: &mut Bailment) {
+        let (pk, _sk, sig) = sign_as_bailee(b);
+        accept(b, &pk, &sig).expect("test bailment accepts");
     }
 
     fn ts(ms: u64) -> Timestamp {
@@ -568,6 +644,149 @@ mod tests {
     // ================================================================
 
     #[test]
+    fn suspend_active_bailment_by_bailor() {
+        let mut b = propose_test(b"t", BailmentType::Custody);
+        accept_test_bailment(&mut b);
+
+        assert!(suspend(&mut b, &alice()).is_ok());
+
+        assert_eq!(b.status, BailmentStatus::Suspended);
+        assert!(!is_active(&b, &ts(1000)));
+    }
+
+    #[test]
+    fn suspend_active_bailment_by_bailee() {
+        let mut b = propose_test(b"t", BailmentType::Custody);
+        accept_test_bailment(&mut b);
+
+        assert!(suspend(&mut b, &bob()).is_ok());
+
+        assert_eq!(b.status, BailmentStatus::Suspended);
+        assert!(!is_active(&b, &ts(1000)));
+    }
+
+    #[test]
+    fn suspend_rejects_unauthorized_actor() {
+        let mut b = propose_test(b"t", BailmentType::Custody);
+        accept_test_bailment(&mut b);
+
+        assert!(matches!(
+            suspend(&mut b, &charlie()),
+            Err(ConsentError::Unauthorized(_))
+        ));
+        assert_eq!(b.status, BailmentStatus::Active);
+    }
+
+    #[test]
+    fn suspend_rejects_non_active_states() {
+        let mut proposed = propose_test(b"t", BailmentType::Custody);
+        assert_eq!(
+            suspend(&mut proposed, &alice()),
+            Err(ConsentError::InvalidState {
+                expected: "Active".into(),
+                actual: "Proposed".into()
+            })
+        );
+
+        let mut active = propose_test(b"t", BailmentType::Custody);
+        accept_test_bailment(&mut active);
+        suspend(&mut active, &alice()).expect("suspend active bailment");
+        assert_eq!(
+            suspend(&mut active, &alice()),
+            Err(ConsentError::InvalidState {
+                expected: "Active".into(),
+                actual: "Suspended".into()
+            })
+        );
+
+        let mut terminated = propose_test(b"t", BailmentType::Custody);
+        accept_test_bailment(&mut terminated);
+        terminate(&mut terminated, &alice()).expect("terminate active bailment");
+        assert_eq!(
+            suspend(&mut terminated, &alice()),
+            Err(ConsentError::InvalidState {
+                expected: "Active".into(),
+                actual: "Terminated".into()
+            })
+        );
+
+        let mut expired = propose_test(b"t", BailmentType::Custody);
+        expired.status = BailmentStatus::Expired;
+        assert_eq!(
+            suspend(&mut expired, &alice()),
+            Err(ConsentError::InvalidState {
+                expected: "Active".into(),
+                actual: "Expired".into()
+            })
+        );
+    }
+
+    #[test]
+    fn suspend_rejects_status_forged_active_bailment() {
+        let mut b = propose_test(b"t", BailmentType::Custody);
+        b.status = BailmentStatus::Active;
+        b.signature = Signature::from_bytes([0xAB; 64]);
+
+        assert_eq!(
+            suspend(&mut b, &alice()),
+            Err(ConsentError::InvalidSignature)
+        );
+        assert_eq!(b.status, BailmentStatus::Active);
+    }
+
+    #[test]
+    fn resume_suspended_bailment_by_bailor() {
+        let mut b = propose_test(b"t", BailmentType::Custody);
+        accept_test_bailment(&mut b);
+        suspend(&mut b, &bob()).expect("bailee may suspend consent use");
+
+        assert!(resume(&mut b, &alice()).is_ok());
+
+        assert_eq!(b.status, BailmentStatus::Active);
+        assert!(has_valid_acceptance_proof(&b));
+        assert!(is_active(&b, &ts(1000)));
+    }
+
+    #[test]
+    fn resume_rejects_bailee() {
+        let mut b = propose_test(b"t", BailmentType::Custody);
+        accept_test_bailment(&mut b);
+        suspend(&mut b, &alice()).expect("suspend active bailment");
+
+        assert!(matches!(
+            resume(&mut b, &bob()),
+            Err(ConsentError::Unauthorized(_))
+        ));
+        assert_eq!(b.status, BailmentStatus::Suspended);
+    }
+
+    #[test]
+    fn resume_rejects_non_suspended_state() {
+        let mut b = propose_test(b"t", BailmentType::Custody);
+        accept_test_bailment(&mut b);
+
+        assert_eq!(
+            resume(&mut b, &alice()),
+            Err(ConsentError::InvalidState {
+                expected: "Suspended".into(),
+                actual: "Active".into()
+            })
+        );
+    }
+
+    #[test]
+    fn resume_rejects_suspended_without_acceptance_proof() {
+        let mut b = propose_test(b"t", BailmentType::Custody);
+        b.status = BailmentStatus::Suspended;
+
+        assert_eq!(
+            resume(&mut b, &alice()),
+            Err(ConsentError::InvalidSignature)
+        );
+        assert_eq!(b.status, BailmentStatus::Suspended);
+    }
+
+    #[test]
     fn terminate_by_bailor() {
         let mut b = propose_test(b"t", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
@@ -627,7 +846,8 @@ mod tests {
     #[test]
     fn terminate_suspended() {
         let mut b = propose_test(b"t", BailmentType::Custody);
-        b.status = BailmentStatus::Suspended;
+        accept_test_bailment(&mut b);
+        suspend(&mut b, &alice()).expect("suspend active bailment");
         assert!(terminate(&mut b, &alice()).is_ok());
     }
 
@@ -708,7 +928,8 @@ mod tests {
     #[test]
     fn not_active_when_suspended() {
         let mut b = propose_test(b"t", BailmentType::Custody);
-        b.status = BailmentStatus::Suspended;
+        accept_test_bailment(&mut b);
+        suspend(&mut b, &alice()).expect("suspend active bailment");
         assert!(!is_active(&b, &ts(1000)));
     }
 
