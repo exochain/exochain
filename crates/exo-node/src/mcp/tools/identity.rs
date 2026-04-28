@@ -1,13 +1,29 @@
 //! Identity MCP tools — DID creation, resolution, risk assessment, signature
 //! verification, and agent passport retrieval.
 
-use exo_core::{Did, Hash256, crypto};
+use exo_core::crypto;
+#[cfg(feature = "unaudited-mcp-simulation-tools")]
+use exo_core::{Did, Hash256};
 use serde_json::{Value, json};
 
 use crate::mcp::{
     context::NodeContext,
     protocol::{ToolDefinition, ToolResult},
 };
+
+#[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+fn identity_tool_refused(tool_name: &str, reason: &str) -> ToolResult {
+    ToolResult::error(
+        json!({
+            "error": "mcp_identity_tool_disabled",
+            "tool": tool_name,
+            "message": reason,
+            "feature_flag": "unaudited-mcp-simulation-tools",
+            "initiative": "Initiatives/fix-mcp-simulation-tools.md",
+        })
+        .to_string(),
+    )
+}
 
 // ---------------------------------------------------------------------------
 // exochain_create_identity
@@ -35,29 +51,44 @@ pub fn create_identity_definition() -> ToolDefinition {
 /// Execute the `exochain_create_identity` tool.
 #[must_use]
 pub fn execute_create_identity(params: &Value, _context: &NodeContext) -> ToolResult {
-    let label = params
-        .get("label")
-        .and_then(Value::as_str)
-        .unwrap_or("default");
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        identity_tool_refused(
+            "exochain_create_identity",
+            "This MCP identity tool generates key material and returns a DID \
+             without persisting the secret key or registering identity state. \
+             It is disabled by default to avoid false identity-creation \
+             success signals.",
+        )
+    }
 
-    let (public_key, _secret_key) = crypto::generate_keypair();
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let label = params
+            .get("label")
+            .and_then(Value::as_str)
+            .unwrap_or("default");
 
-    let pk_hex = hex::encode(public_key.as_bytes());
+        let (public_key, _secret_key) = crypto::generate_keypair();
 
-    // Build a DID from the hash of the public key.
-    let pk_hash = Hash256::digest(public_key.as_bytes());
-    let did_id = &pk_hash.to_string()[..16];
-    let did_string = format!("did:exo:{did_id}");
+        let pk_hex = hex::encode(public_key.as_bytes());
 
-    let method_id = format!("{did_string}#key-1");
+        // Build a DID from the hash of the public key.
+        let pk_hash = Hash256::digest(public_key.as_bytes());
+        let did_id = &pk_hash.to_string()[..16];
+        let did_string = format!("did:exo:{did_id}");
 
-    let response = json!({
-        "did": did_string,
-        "public_key_hex": pk_hex,
-        "verification_method_id": method_id,
-        "label": label,
-    });
-    ToolResult::success(response.to_string())
+        let method_id = format!("{did_string}#key-1");
+
+        let response = json!({
+            "did": did_string,
+            "public_key_hex": pk_hex,
+            "verification_method_id": method_id,
+            "label": label,
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -87,30 +118,44 @@ pub fn resolve_identity_definition() -> ToolDefinition {
 /// Execute the `exochain_resolve_identity` tool.
 #[must_use]
 pub fn execute_resolve_identity(params: &Value, _context: &NodeContext) -> ToolResult {
-    let did_str = match params.get("did").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: did"}).to_string(),
-            );
-        }
-    };
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        identity_tool_refused(
+            "exochain_resolve_identity",
+            "This MCP identity tool only validates DID format and does not \
+             query a live identity registry. It is disabled by default until \
+             registry-backed DID resolution is wired.",
+        )
+    }
 
-    let valid_format = Did::new(did_str).is_ok();
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let did_str = match params.get("did").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: did"}).to_string(),
+                );
+            }
+        };
 
-    let resolution_status = if valid_format {
-        "format_valid"
-    } else {
-        "invalid_format"
-    };
+        let valid_format = Did::new(did_str).is_ok();
 
-    let response = json!({
-        "did": did_str,
-        "valid_format": valid_format,
-        "did_method": "exo",
-        "resolution_status": resolution_status,
-    });
-    ToolResult::success(response.to_string())
+        let resolution_status = if valid_format {
+            "format_valid"
+        } else {
+            "invalid_format"
+        };
+
+        let response = json!({
+            "did": did_str,
+            "valid_format": valid_format,
+            "did_method": "exo",
+            "resolution_status": resolution_status,
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -145,65 +190,80 @@ pub fn assess_risk_definition() -> ToolDefinition {
 /// Execute the `exochain_assess_risk` tool.
 #[must_use]
 pub fn execute_assess_risk(params: &Value, _context: &NodeContext) -> ToolResult {
-    let did_str = match params.get("did").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: did"}).to_string(),
-            );
-        }
-    };
-
-    if Did::new(did_str).is_err() {
-        return ToolResult::error(
-            json!({"error": format!("invalid DID format: {did_str}")}).to_string(),
-        );
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        identity_tool_refused(
+            "exochain_assess_risk",
+            "This MCP identity tool computes a synthetic risk score from \
+             caller-supplied labels instead of verified evidence in a live \
+             risk store. It is disabled by default until evidence-backed risk \
+             assessment is wired.",
+        )
     }
 
-    let evidence_types: Vec<String> = params
-        .get("evidence_types")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(Value::as_str)
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default();
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let did_str = match params.get("did").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: did"}).to_string(),
+                );
+            }
+        };
 
-    // Compute a risk score based on evidence: each evidence type reduces risk
-    // by 150 basis points from a baseline of 750 (high-ish).
-    let baseline: i64 = 750;
-    let reduction = i64::try_from(evidence_types.len()).unwrap_or(0) * 150;
-    let risk_score = baseline.saturating_sub(reduction).max(0);
+        if Did::new(did_str).is_err() {
+            return ToolResult::error(
+                json!({"error": format!("invalid DID format: {did_str}")}).to_string(),
+            );
+        }
 
-    let risk_level = match risk_score {
-        0..=200 => "low",
-        201..=500 => "medium",
-        501..=800 => "high",
-        _ => "critical",
-    };
-
-    let factors: Vec<Value> = evidence_types
-        .iter()
-        .map(|et| {
-            json!({
-                "type": et,
-                "impact": "reduces_risk",
-                "weight_bps": 150,
+        let evidence_types: Vec<String> = params
+            .get("evidence_types")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect()
             })
-        })
-        .collect();
+            .unwrap_or_default();
 
-    let response = json!({
-        "did": did_str,
-        "risk_score": risk_score,
-        "risk_level": risk_level,
-        "factors": factors,
-        "assessed_at": Value::Null,
-        "assessed_at_source": "unavailable_no_risk_store",
-    });
-    ToolResult::success(response.to_string())
+        // Compute a risk score based on evidence: each evidence type reduces risk
+        // by 150 basis points from a baseline of 750 (high-ish).
+        let baseline: i64 = 750;
+        let reduction = i64::try_from(evidence_types.len()).unwrap_or(0) * 150;
+        let risk_score = baseline.saturating_sub(reduction).max(0);
+
+        let risk_level = match risk_score {
+            0..=200 => "low",
+            201..=500 => "medium",
+            501..=800 => "high",
+            _ => "critical",
+        };
+
+        let factors: Vec<Value> = evidence_types
+            .iter()
+            .map(|et| {
+                json!({
+                    "type": et,
+                    "impact": "reduces_risk",
+                    "weight_bps": 150,
+                })
+            })
+            .collect();
+
+        let response = json!({
+            "did": did_str,
+            "risk_score": risk_score,
+            "risk_level": risk_level,
+            "factors": factors,
+            "assessed_at": Value::Null,
+            "assessed_at_source": "unavailable_no_risk_store",
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -346,44 +406,58 @@ pub fn get_passport_definition() -> ToolDefinition {
 /// Execute the `exochain_get_passport` tool.
 #[must_use]
 pub fn execute_get_passport(params: &Value, _context: &NodeContext) -> ToolResult {
-    let did_str = match params.get("did").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: did"}).to_string(),
-            );
-        }
-    };
-
-    if Did::new(did_str).is_err() {
-        return ToolResult::error(
-            json!({"error": format!("invalid DID format: {did_str}")}).to_string(),
-        );
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        identity_tool_refused(
+            "exochain_get_passport",
+            "This MCP identity tool returns a synthetic empty passport without \
+             querying identity, delegation, consent, or standing stores. It is \
+             disabled by default until live passport resolution is wired.",
+        )
     }
 
-    let response = json!({
-        "did": did_str,
-        "known": false,
-        "identity": {
-            "verification_methods": [],
-            "service_endpoints": [],
-            "revoked": false,
-        },
-        "delegations": {
-            "active_grants": [],
-            "received_grants": [],
-        },
-        "consent": {
-            "active_bailments": [],
-            "pending_proposals": [],
-        },
-        "standing": {
-            "risk_level": "unassessed",
-            "challenges": [],
-            "governance_participation": 0,
-        },
-    });
-    ToolResult::success(response.to_string())
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let did_str = match params.get("did").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: did"}).to_string(),
+                );
+            }
+        };
+
+        if Did::new(did_str).is_err() {
+            return ToolResult::error(
+                json!({"error": format!("invalid DID format: {did_str}")}).to_string(),
+            );
+        }
+
+        let response = json!({
+            "did": did_str,
+            "known": false,
+            "identity": {
+                "verification_methods": [],
+                "service_endpoints": [],
+                "revoked": false,
+            },
+            "delegations": {
+                "active_grants": [],
+                "received_grants": [],
+            },
+            "consent": {
+                "active_bailments": [],
+                "pending_proposals": [],
+            },
+            "standing": {
+                "risk_level": "unassessed",
+                "challenges": [],
+                "governance_participation": 0,
+            },
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ===========================================================================
@@ -403,6 +477,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_create_identity_returns_did() {
         let result = execute_create_identity(&json!({"label": "test-id"}), &NodeContext::empty());
@@ -420,6 +495,19 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_create_identity_refuses_by_default() {
+        let result = execute_create_identity(&json!({"label": "test-id"}), &NodeContext::empty());
+
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_identity_tool_disabled"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("fix-mcp-simulation-tools.md"));
+    }
+
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_create_identity_default_label() {
         let result = execute_create_identity(&json!({}), &NodeContext::empty());
@@ -437,6 +525,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_resolve_identity_valid_did() {
         let result =
@@ -447,6 +536,7 @@ mod tests {
         assert_eq!(v["resolution_status"], "format_valid");
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_resolve_identity_invalid_did() {
         let result = execute_resolve_identity(&json!({"did": "not-a-did"}), &NodeContext::empty());
@@ -454,6 +544,19 @@ mod tests {
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid_format"], false);
         assert_eq!(v["resolution_status"], "invalid_format");
+    }
+
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_resolve_identity_refuses_by_default() {
+        let result =
+            execute_resolve_identity(&json!({"did": "did:exo:alice"}), &NodeContext::empty());
+
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_identity_tool_disabled"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("fix-mcp-simulation-tools.md"));
     }
 
     #[test]
@@ -471,6 +574,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_assess_risk_no_evidence() {
         let result = execute_assess_risk(&json!({"did": "did:exo:target"}), &NodeContext::empty());
@@ -483,6 +587,7 @@ mod tests {
         assert_eq!(v["assessed_at_source"], "unavailable_no_risk_store");
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_assess_risk_with_evidence() {
         let result = execute_assess_risk(
@@ -495,6 +600,18 @@ mod tests {
         assert_eq!(v["risk_score"], 300);
         assert_eq!(v["risk_level"], "medium");
         assert_eq!(v["factors"].as_array().expect("factors").len(), 3);
+    }
+
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_assess_risk_refuses_by_default() {
+        let result = execute_assess_risk(&json!({"did": "did:exo:target"}), &NodeContext::empty());
+
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_identity_tool_disabled"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("fix-mcp-simulation-tools.md"));
     }
 
     #[test]
@@ -566,6 +683,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_get_passport_success() {
         let result = execute_get_passport(&json!({"did": "did:exo:alice"}), &NodeContext::empty());
@@ -579,6 +697,18 @@ mod tests {
         assert!(v.get("standing").is_some());
     }
 
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_get_passport_refuses_by_default() {
+        let result = execute_get_passport(&json!({"did": "did:exo:alice"}), &NodeContext::empty());
+
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_identity_tool_disabled"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("fix-mcp-simulation-tools.md"));
+    }
+
     #[test]
     fn execute_get_passport_invalid_did() {
         let result = execute_get_passport(&json!({"did": "bad"}), &NodeContext::empty());
@@ -589,5 +719,47 @@ mod tests {
     fn execute_get_passport_missing_did() {
         let result = execute_get_passport(&json!({}), &NodeContext::empty());
         assert!(result.is_error);
+    }
+
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn default_identity_tools_do_not_fabricate_state_before_gate() {
+        let src = include_str!("identity.rs")
+            .split("// ===========================================================================\n// Tests")
+            .next()
+            .expect("production source");
+
+        for function in [
+            "execute_create_identity",
+            "execute_resolve_identity",
+            "execute_assess_risk",
+            "execute_get_passport",
+        ] {
+            let section = src
+                .split(&format!("pub fn {function}"))
+                .nth(1)
+                .expect("function section");
+            let before_feature_branch = section
+                .split("#[cfg(feature = \"unaudited-mcp-simulation-tools\")]")
+                .next()
+                .expect("default branch");
+
+            assert!(
+                before_feature_branch.contains("identity_tool_refused"),
+                "{function} must refuse before any unaudited simulation behavior"
+            );
+            assert!(
+                !before_feature_branch.contains("crypto::generate_keypair"),
+                "{function} must not generate key material in the default build"
+            );
+            assert!(
+                !before_feature_branch.contains("\"risk_score\""),
+                "{function} must not synthesize risk output in the default build"
+            );
+            assert!(
+                !before_feature_branch.contains("\"known\""),
+                "{function} must not synthesize passport output in the default build"
+            );
+        }
     }
 }
