@@ -21,6 +21,20 @@ use exo_core::{
     },
 };
 
+macro_rules! correlation_id {
+    () => {
+        CorrelationId::from_uuid(uuid::Uuid::from_u128(u128::from(line!())))
+    };
+}
+
+fn indexed_correlation_id(base: u128, index: usize) -> CorrelationId {
+    let offset = match u128::try_from(index) {
+        Ok(value) => value,
+        Err(_) => panic!("test correlation index must fit in u128"),
+    };
+    CorrelationId::from_uuid(uuid::Uuid::from_u128(base + offset))
+}
+
 // ---------------------------------------------------------------------------
 // Helper: multi-actor governance scenario
 // ---------------------------------------------------------------------------
@@ -63,14 +77,14 @@ impl GovernanceActors {
 fn multi_actor_signed_event_chain_with_merkle_proof() {
     let actors = GovernanceActors::new();
     let mut clock = HybridClock::new();
-    let mut tx = Transaction::new(CorrelationId::new());
+    let mut tx = Transaction::new(correlation_id!());
 
     // Phase 1: Proposer submits
     let t1 = tx
         .transition(BctsState::Submitted, &actors.proposer.0, &mut clock)
         .expect("submit ok");
     let event1 = create_signed_event(
-        CorrelationId::new(),
+        correlation_id!(),
         t1.timestamp,
         EventType::TransactionStateChanged,
         t1.receipt_hash.as_bytes().to_vec(),
@@ -85,7 +99,7 @@ fn multi_actor_signed_event_chain_with_merkle_proof() {
         .transition(BctsState::IdentityResolved, &actors.reviewer1.0, &mut clock)
         .expect("identity ok");
     let event2 = create_signed_event(
-        CorrelationId::new(),
+        correlation_id!(),
         t2.timestamp,
         EventType::TransactionStateChanged,
         t2.receipt_hash.as_bytes().to_vec(),
@@ -100,7 +114,7 @@ fn multi_actor_signed_event_chain_with_merkle_proof() {
         .transition(BctsState::ConsentValidated, &actors.reviewer2.0, &mut clock)
         .expect("consent ok");
     let event3 = create_signed_event(
-        CorrelationId::new(),
+        correlation_id!(),
         t3.timestamp,
         EventType::TransactionStateChanged,
         t3.receipt_hash.as_bytes().to_vec(),
@@ -115,7 +129,7 @@ fn multi_actor_signed_event_chain_with_merkle_proof() {
         .transition(BctsState::Deliberated, &actors.steward.0, &mut clock)
         .expect("deliberation ok");
     let event4 = create_signed_event(
-        CorrelationId::new(),
+        correlation_id!(),
         t4.timestamp,
         EventType::TransactionStateChanged,
         t4.receipt_hash.as_bytes().to_vec(),
@@ -163,7 +177,7 @@ fn denial_remediation_resubmission_with_full_proof_chain() {
     let kp = KeyPair::generate();
     let actor = Did::new("did:exo:lifecycle-actor").expect("valid");
     let mut clock = HybridClock::new();
-    let mut tx = Transaction::new(CorrelationId::new());
+    let mut tx = Transaction::new(correlation_id!());
 
     // Submit → Deny → Remediate → Re-submit → Continue to Approved
     let transitions = [
@@ -183,12 +197,12 @@ fn denial_remediation_resubmission_with_full_proof_chain() {
     ];
 
     let mut events = Vec::new();
-    for &target in &transitions {
+    for (index, &target) in transitions.iter().enumerate() {
         let t = tx
             .transition(target, &actor, &mut clock)
             .expect("transition ok");
         let event = create_signed_event(
-            CorrelationId::new(),
+            indexed_correlation_id(2_000, index),
             t.timestamp,
             EventType::TransactionStateChanged,
             t.receipt_hash.as_bytes().to_vec(),
@@ -245,7 +259,7 @@ fn hybrid_crypto_custody_chain() {
     // Sign each transition receipt with hybrid crypto
     let actor = Did::new("did:exo:hybrid-actor").expect("valid");
     let mut clock = HybridClock::new();
-    let mut tx = Transaction::new(CorrelationId::new());
+    let mut tx = Transaction::new(correlation_id!());
 
     let states = [
         BctsState::Submitted,
@@ -299,7 +313,7 @@ fn pq_only_custody_chain() {
     let pq_kp = PqKeyPair::generate();
     let actor = Did::new("did:exo:pq-actor").expect("valid");
     let mut clock = HybridClock::new();
-    let mut tx = Transaction::new(CorrelationId::new());
+    let mut tx = Transaction::new(correlation_id!());
 
     for &s in &[
         BctsState::Submitted,
@@ -326,7 +340,7 @@ fn escalation_path_proof() {
     let actor = Did::new("did:exo:escalation-actor").expect("valid");
     let mut clock = HybridClock::new();
     let kp = KeyPair::generate();
-    let mut tx = Transaction::new(CorrelationId::new());
+    let mut tx = Transaction::new(correlation_id!());
 
     // Submit → IdentityResolved → ConsentValidated → Deliberated → Escalated
     tx.transition(BctsState::Submitted, &actor, &mut clock)
@@ -342,7 +356,7 @@ fn escalation_path_proof() {
         .expect("escalation ok");
 
     let event = create_signed_event(
-        CorrelationId::new(),
+        correlation_id!(),
         t_esc.timestamp,
         EventType::TransactionStateChanged,
         t_esc.receipt_hash.as_bytes().to_vec(),
@@ -363,7 +377,7 @@ fn escalation_path_proof() {
 fn receipt_chain_tamper_detection() {
     let actor = Did::new("did:exo:tamper-actor").expect("valid");
     let mut clock = HybridClock::new();
-    let mut tx = Transaction::new(CorrelationId::new());
+    let mut tx = Transaction::new(correlation_id!());
 
     for &s in &[
         BctsState::Submitted,
@@ -399,8 +413,8 @@ fn concurrent_transactions_hlc_ordering() {
     let mut clock = HybridClock::new();
     let actors = GovernanceActors::new();
 
-    let mut tx_a = Transaction::new(CorrelationId::new());
-    let mut tx_b = Transaction::new(CorrelationId::new());
+    let mut tx_a = Transaction::new(correlation_id!());
+    let mut tx_b = Transaction::new(correlation_id!());
 
     let t_a1 = tx_a
         .transition(BctsState::Submitted, &actors.proposer.0, &mut clock)
@@ -506,7 +520,7 @@ fn pq_keypair_accessors_and_debug() {
 fn invalid_transition_rejected() {
     let actor = Did::new("did:exo:invalid-actor").expect("valid");
     let mut clock = HybridClock::new();
-    let mut tx = Transaction::new(CorrelationId::new());
+    let mut tx = Transaction::new(correlation_id!());
 
     // Draft → Approved (skipping required states) should fail
     let result = tx.transition(BctsState::Approved, &actor, &mut clock);
@@ -698,7 +712,7 @@ fn bailment_transaction_lifecycle() {
     let actor = Did::new("did:exo:bailment-actor").expect("valid");
     let mut clock = HybridClock::new();
 
-    let mut tx = Transaction::new(CorrelationId::new());
+    let mut tx = Transaction::new(correlation_id!());
     assert_eq!(tx.state(), BctsState::Draft);
     assert!(tx.receipt_chain().is_empty());
 

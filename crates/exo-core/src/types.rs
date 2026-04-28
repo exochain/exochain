@@ -613,12 +613,6 @@ impl fmt::Display for Did {
 pub struct CorrelationId(Uuid);
 
 impl CorrelationId {
-    /// Generate a new random correlation ID.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-
     /// Wrap an existing UUID.
     #[must_use]
     pub const fn from_uuid(uuid: Uuid) -> Self {
@@ -629,12 +623,6 @@ impl CorrelationId {
     #[must_use]
     pub const fn as_uuid(&self) -> &Uuid {
         &self.0
-    }
-}
-
-impl Default for CorrelationId {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -1547,27 +1535,40 @@ mod tests {
     // -- CorrelationId -----------------------------------------------------
 
     #[test]
-    fn correlation_id_new() {
-        let c1 = CorrelationId::new();
-        let c2 = CorrelationId::new();
+    fn correlation_id_production_api_does_not_generate_random_ids() {
+        let source = include_str!("types.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source section exists");
+
+        assert!(
+            !production.contains("Uuid::new_v4()"),
+            "CorrelationId must be caller-supplied, not generated from UUID v4 randomness"
+        );
+        assert!(
+            !production.contains("impl Default for CorrelationId"),
+            "CorrelationId must not provide a random Default implementation"
+        );
+    }
+
+    #[test]
+    fn correlation_id_requires_explicit_uuid() {
+        let c1 = CorrelationId::from_uuid(Uuid::from_u128(1));
+        let c2 = CorrelationId::from_uuid(Uuid::from_u128(2));
         assert_ne!(c1, c2);
     }
 
     #[test]
-    fn correlation_id_default() {
-        let _c = CorrelationId::default();
-    }
-
-    #[test]
     fn correlation_id_from_uuid() {
-        let uuid = Uuid::new_v4();
+        let uuid = Uuid::from_u128(42);
         let c = CorrelationId::from_uuid(uuid);
         assert_eq!(*c.as_uuid(), uuid);
     }
 
     #[test]
     fn correlation_id_display_debug() {
-        let c = CorrelationId::new();
+        let c = CorrelationId::from_uuid(Uuid::from_u128(7));
         let disp = c.to_string();
         assert!(!disp.is_empty());
         let dbg = format!("{c:?}");
@@ -1583,7 +1584,7 @@ mod tests {
 
     #[test]
     fn correlation_id_serde() {
-        let c = CorrelationId::new();
+        let c = CorrelationId::from_uuid(Uuid::from_u128(9));
         let json = serde_json::to_string(&c).expect("ser");
         let c2: CorrelationId = serde_json::from_str(&json).expect("de");
         assert_eq!(c, c2);

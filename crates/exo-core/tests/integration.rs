@@ -15,6 +15,20 @@ use exo_core::{
     types::{CorrelationId, DeterministicMap, Did, Hash256, Timestamp, Version},
 };
 
+macro_rules! correlation_id {
+    () => {
+        CorrelationId::from_uuid(uuid::Uuid::from_u128(u128::from(line!())))
+    };
+}
+
+fn indexed_correlation_id(base: u128, index: usize) -> CorrelationId {
+    let offset = match u128::try_from(index) {
+        Ok(value) => value,
+        Err(_) => panic!("test correlation index must fit in u128"),
+    };
+    CorrelationId::from_uuid(uuid::Uuid::from_u128(base + offset))
+}
+
 // ---------------------------------------------------------------------------
 // Full BCTS lifecycle with crypto + events
 // ---------------------------------------------------------------------------
@@ -24,7 +38,7 @@ fn full_bcts_lifecycle_with_signed_events() {
     let kp = KeyPair::generate();
     let actor = Did::new("did:exo:integration-actor").expect("valid");
     let mut clock = HybridClock::new();
-    let mut tx = Transaction::new(CorrelationId::new());
+    let mut tx = Transaction::new(correlation_id!());
 
     let steps = [
         BctsState::Submitted,
@@ -39,12 +53,12 @@ fn full_bcts_lifecycle_with_signed_events() {
         BctsState::Closed,
     ];
 
-    for &target in &steps {
+    for (index, &target) in steps.iter().enumerate() {
         let transition = tx.transition(target, &actor, &mut clock).expect("ok");
 
         // Create a signed event for each transition
         let event = create_signed_event(
-            CorrelationId::new(),
+            indexed_correlation_id(1_000, index),
             transition.timestamp,
             EventType::TransactionStateChanged,
             transition.receipt_hash.as_bytes().to_vec(),
@@ -67,7 +81,7 @@ fn full_bcts_lifecycle_with_signed_events() {
 fn receipt_chain_merkle_tree() {
     let actor = Did::new("did:exo:merkle-actor").expect("valid");
     let mut clock = HybridClock::new();
-    let mut tx = Transaction::new(CorrelationId::new());
+    let mut tx = Transaction::new(correlation_id!());
 
     for &s in &[
         BctsState::Submitted,
@@ -189,12 +203,12 @@ fn hlc_ordering_across_transactions() {
     let mut clock = HybridClock::new();
     let actor = Did::new("did:exo:hlc-actor").expect("valid");
 
-    let mut tx1 = Transaction::new(CorrelationId::new());
+    let mut tx1 = Transaction::new(correlation_id!());
     let t1 = tx1
         .transition(BctsState::Submitted, &actor, &mut clock)
         .expect("ok");
 
-    let mut tx2 = Transaction::new(CorrelationId::new());
+    let mut tx2 = Transaction::new(correlation_id!());
     let t2 = tx2
         .transition(BctsState::Submitted, &actor, &mut clock)
         .expect("ok");
@@ -211,7 +225,7 @@ fn hlc_ordering_across_transactions() {
 #[test]
 fn re_exports_available() {
     // These types should be available from the crate root
-    let _cid = CorrelationId::new();
+    let _cid = correlation_id!();
     let _ts = Timestamp::new(0, 0);
     let _v = Version::ZERO;
     let _h = Hash256::ZERO;
@@ -227,7 +241,7 @@ fn re_exports_available() {
 fn denial_remediation_resubmission() {
     let mut clock = HybridClock::new();
     let actor = Did::new("did:exo:cycle-actor").expect("valid");
-    let mut tx = Transaction::new(CorrelationId::new());
+    let mut tx = Transaction::new(correlation_id!());
 
     // Submit -> Deny -> Remediate -> Resubmit -> succeed
     tx.transition(BctsState::Submitted, &actor, &mut clock)

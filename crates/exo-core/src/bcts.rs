@@ -264,6 +264,12 @@ impl BailmentTransaction for Transaction {
 mod tests {
     use super::*;
 
+    macro_rules! correlation_id {
+        () => {
+            CorrelationId::from_uuid(uuid::Uuid::from_u128(u128::from(line!())))
+        };
+    }
+
     fn test_clock() -> HybridClock {
         let counter = std::sync::atomic::AtomicU64::new(1000);
         HybridClock::with_wall_clock(move || {
@@ -402,7 +408,7 @@ mod tests {
 
     #[test]
     fn new_transaction_is_draft() {
-        let cid = CorrelationId::new();
+        let cid = correlation_id!();
         let tx = Transaction::new(cid);
         assert_eq!(tx.state(), BctsState::Draft);
         assert!(tx.receipt_chain().is_empty());
@@ -414,7 +420,7 @@ mod tests {
     fn happy_path_full_lifecycle() {
         let mut clock = test_clock();
         let actor = test_did();
-        let mut tx = Transaction::new(CorrelationId::new());
+        let mut tx = Transaction::new(correlation_id!());
 
         let steps = [
             BctsState::Submitted,
@@ -446,7 +452,7 @@ mod tests {
     fn invalid_transition_from_draft_to_closed() {
         let mut clock = test_clock();
         let actor = test_did();
-        let mut tx = Transaction::new(CorrelationId::new());
+        let mut tx = Transaction::new(correlation_id!());
 
         let err = tx
             .transition(BctsState::Closed, &actor, &mut clock)
@@ -460,7 +466,7 @@ mod tests {
     fn invalid_transition_from_closed() {
         let mut clock = test_clock();
         let actor = test_did();
-        let mut tx = Transaction::new(CorrelationId::new());
+        let mut tx = Transaction::new(correlation_id!());
 
         // Go to Closed via happy path
         for &s in &[
@@ -489,7 +495,7 @@ mod tests {
     fn denial_path() {
         let mut clock = test_clock();
         let actor = test_did();
-        let mut tx = Transaction::new(CorrelationId::new());
+        let mut tx = Transaction::new(correlation_id!());
 
         tx.transition(BctsState::Submitted, &actor, &mut clock)
             .expect("ok");
@@ -503,7 +509,7 @@ mod tests {
     fn escalation_path() {
         let mut clock = test_clock();
         let actor = test_did();
-        let mut tx = Transaction::new(CorrelationId::new());
+        let mut tx = Transaction::new(correlation_id!());
 
         for &s in &[
             BctsState::Submitted,
@@ -524,7 +530,7 @@ mod tests {
     fn remediation_path() {
         let mut clock = test_clock();
         let actor = test_did();
-        let mut tx = Transaction::new(CorrelationId::new());
+        let mut tx = Transaction::new(correlation_id!());
 
         tx.transition(BctsState::Submitted, &actor, &mut clock)
             .expect("ok");
@@ -542,7 +548,7 @@ mod tests {
     fn receipt_chain_grows_monotonically() {
         let mut clock = test_clock();
         let actor = test_did();
-        let mut tx = Transaction::new(CorrelationId::new());
+        let mut tx = Transaction::new(correlation_id!());
 
         tx.transition(BctsState::Submitted, &actor, &mut clock)
             .expect("ok");
@@ -560,7 +566,7 @@ mod tests {
     fn transition_records_correct_actor() {
         let mut clock = test_clock();
         let actor = Did::new("did:exo:alice").expect("valid");
-        let mut tx = Transaction::new(CorrelationId::new());
+        let mut tx = Transaction::new(correlation_id!());
 
         let t = tx
             .transition(BctsState::Submitted, &actor, &mut clock)
@@ -572,7 +578,7 @@ mod tests {
     fn transition_timestamps_are_monotonic() {
         let mut clock = test_clock();
         let actor = test_did();
-        let mut tx = Transaction::new(CorrelationId::new());
+        let mut tx = Transaction::new(correlation_id!());
 
         tx.transition(BctsState::Submitted, &actor, &mut clock)
             .expect("ok");
@@ -587,7 +593,7 @@ mod tests {
     fn verify_receipt_chain_detects_tampering() {
         let mut clock = test_clock();
         let actor = test_did();
-        let mut tx = Transaction::new(CorrelationId::new());
+        let mut tx = Transaction::new(correlation_id!());
 
         tx.transition(BctsState::Submitted, &actor, &mut clock)
             .expect("ok");
@@ -604,7 +610,7 @@ mod tests {
     fn transaction_serde_roundtrip() {
         let mut clock = test_clock();
         let actor = test_did();
-        let mut tx = Transaction::new(CorrelationId::new());
+        let mut tx = Transaction::new(correlation_id!());
         tx.transition(BctsState::Submitted, &actor, &mut clock)
             .expect("ok");
 
@@ -657,7 +663,7 @@ mod tests {
     fn escalated_to_denied_to_remediated_to_submitted() {
         let mut clock = test_clock();
         let actor = test_did();
-        let mut tx = Transaction::new(CorrelationId::new());
+        let mut tx = Transaction::new(correlation_id!());
 
         for &s in &[
             BctsState::Submitted,
@@ -679,7 +685,7 @@ mod tests {
     fn escalated_to_remediated() {
         let mut clock = test_clock();
         let actor = test_did();
-        let mut tx = Transaction::new(CorrelationId::new());
+        let mut tx = Transaction::new(correlation_id!());
 
         for &s in &[
             BctsState::Submitted,

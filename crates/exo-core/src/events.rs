@@ -338,10 +338,16 @@ mod tests {
         types::{CorrelationId, Did, Timestamp},
     };
 
+    macro_rules! correlation_id {
+        () => {
+            CorrelationId::from_uuid(uuid::Uuid::from_u128(u128::from(line!())))
+        };
+    }
+
     fn make_event(kp: &KeyPair) -> Event {
         let did = Did::new("did:exo:test-source").expect("valid");
         create_signed_event(
-            CorrelationId::new(),
+            correlation_id!(),
             Timestamp::new(1000, 0),
             EventType::AuditEntry,
             b"test payload".to_vec(),
@@ -353,7 +359,7 @@ mod tests {
 
     fn make_unsigned_event(source_did: Did) -> Event {
         Event {
-            id: CorrelationId::new(),
+            id: correlation_id!(),
             timestamp: Timestamp::new(1000, 0),
             event_type: EventType::AuditEntry,
             payload: b"test payload".to_vec(),
@@ -569,7 +575,7 @@ mod tests {
         let kp = KeyPair::generate();
         let did = Did::new("did:exo:empty-payload").expect("valid");
         let event = create_signed_event(
-            CorrelationId::new(),
+            correlation_id!(),
             Timestamp::new(500, 1),
             EventType::Custom("empty".into()),
             Vec::new(),
@@ -586,7 +592,7 @@ mod tests {
         let did = Did::new("did:exo:large-payload").expect("valid");
         let payload = vec![0xab_u8; 10_000];
         let event = create_signed_event(
-            CorrelationId::new(),
+            correlation_id!(),
             Timestamp::new(500, 1),
             EventType::AuditEntry,
             payload,
