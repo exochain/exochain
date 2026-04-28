@@ -235,7 +235,7 @@ impl ZerodentityStore {
             &payload_hash,
             &context.actor_did,
             &timestamp,
-        ))
+        )?)
     }
 
     fn signed_dag_node(
@@ -247,7 +247,7 @@ impl ZerodentityStore {
             anyhow::bail!("0dentity DAG node signer is not configured");
         };
         let parents = self.next_dag_parents();
-        let hash = compute_node_hash(&parents, &payload_hash, &context.actor_did, &timestamp);
+        let hash = compute_node_hash(&parents, &payload_hash, &context.actor_did, &timestamp)?;
         let signature = (context.signer)(hash.as_bytes());
         if signature.is_empty() {
             anyhow::bail!("0dentity DAG node signer produced an empty signature");

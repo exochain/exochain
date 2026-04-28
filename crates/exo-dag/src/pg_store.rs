@@ -534,7 +534,7 @@ mod tests {
         // All-0xFF payload hash
         let payload_hash = Hash256::from_bytes([0xFF; 32]);
         let timestamp = Timestamp::new(1000, 1);
-        let hash = crate::dag::compute_node_hash(&[], &payload_hash, &creator, &timestamp);
+        let hash = crate::dag::compute_node_hash(&[], &payload_hash, &creator, &timestamp).unwrap();
         let signature = (*sign_fn)(hash.as_bytes());
 
         let node = DagNode {

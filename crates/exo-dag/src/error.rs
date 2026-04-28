@@ -41,6 +41,9 @@ pub enum DagError {
     #[error("mmr error: {0}")]
     MmrError(String),
 
+    #[error("serialization error: {0}")]
+    Serialization(String),
+
     #[error("store error: {0}")]
     StoreError(String),
 }

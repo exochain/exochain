@@ -93,7 +93,7 @@ pub async fn verify_stored_integrity(store: &impl DagStore, hash: &Hash256) -> R
         &node.payload_hash,
         &node.creator_did,
         &node.timestamp,
-    );
+    )?;
 
     Ok(recomputed == node.hash)
 }
@@ -152,7 +152,7 @@ mod tests {
             parent.timestamp.physical_ms + 1,
             parent.timestamp.logical + 1,
         );
-        let hash = compute_node_hash(&[parent.hash], &payload_hash, &creator, &timestamp);
+        let hash = compute_node_hash(&[parent.hash], &payload_hash, &creator, &timestamp).unwrap();
         let signature = (*sign_fn)(hash.as_bytes());
 
         DagNode {
@@ -168,7 +168,7 @@ mod tests {
     fn make_node_at(timestamp: Timestamp) -> DagNode {
         let creator = test_did();
         let payload_hash = Hash256::digest(b"timestamped-node");
-        let hash = compute_node_hash(&[], &payload_hash, &creator, &timestamp);
+        let hash = compute_node_hash(&[], &payload_hash, &creator, &timestamp).unwrap();
         let sign_fn = make_sign_fn();
         let signature = (*sign_fn)(hash.as_bytes());
 
@@ -242,7 +242,7 @@ mod tests {
         let creator = test_did();
         let payload_hash = Hash256::digest(b"bad-child");
         let timestamp = Timestamp::new(0, 0); // Before genesis
-        let hash = compute_node_hash(&[genesis.hash], &payload_hash, &creator, &timestamp);
+        let hash = compute_node_hash(&[genesis.hash], &payload_hash, &creator, &timestamp).unwrap();
         let sign_fn = make_sign_fn();
         let signature = (*sign_fn)(hash.as_bytes());
 

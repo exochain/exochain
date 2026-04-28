@@ -4,7 +4,10 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use exo_core::types::{Did, Hash256, Signature, Timestamp};
+use exo_core::{
+    hash::hash_structured,
+    types::{Did, Hash256, Signature, Timestamp},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{DagError, Result};
@@ -64,7 +67,7 @@ impl Default for HybridClock {
 /// A node in the append-only DAG.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DagNode {
-    /// Blake3 hash of (sorted parents || payload_hash || creator_did || timestamp).
+    /// Domain-tagged canonical CBOR hash of the node's identity fields.
     pub hash: Hash256,
     /// Parent node hashes, sorted for determinism.
     pub parents: Vec<Hash256>,
@@ -78,23 +81,36 @@ pub struct DagNode {
     pub signature: Signature,
 }
 
+const DAG_NODE_HASH_DOMAIN: &str = "exo.dag.node.v1";
+
+#[derive(Serialize)]
+struct DagNodeHashPayload<'a> {
+    domain: &'static str,
+    parents: &'a [Hash256],
+    payload_hash: &'a Hash256,
+    creator_did: &'a Did,
+    timestamp: &'a Timestamp,
+}
+
 /// Compute the canonical hash of a DAG node from its fields.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns [`DagError::Serialization`] if canonical CBOR encoding fails.
 pub fn compute_node_hash(
     parents: &[Hash256],
     payload_hash: &Hash256,
     creator_did: &Did,
     timestamp: &Timestamp,
-) -> Hash256 {
-    let mut hasher = blake3::Hasher::new();
-    for p in parents {
-        hasher.update(p.as_bytes());
-    }
-    hasher.update(payload_hash.as_bytes());
-    hasher.update(creator_did.as_str().as_bytes());
-    hasher.update(&timestamp.physical_ms.to_le_bytes());
-    hasher.update(&timestamp.logical.to_le_bytes());
-    Hash256::from_bytes(*hasher.finalize().as_bytes())
+) -> Result<Hash256> {
+    hash_structured(&DagNodeHashPayload {
+        domain: DAG_NODE_HASH_DOMAIN,
+        parents,
+        payload_hash,
+        creator_did,
+        timestamp,
+    })
+    .map_err(|e| DagError::Serialization(format!("dag node canonical CBOR hash failed: {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +176,7 @@ pub fn append(
 
     let payload_hash = Hash256::digest(payload);
     let timestamp = clock.tick();
-    let hash = compute_node_hash(&sorted_parents, &payload_hash, creator, &timestamp);
+    let hash = compute_node_hash(&sorted_parents, &payload_hash, creator, &timestamp)?;
 
     // Check for duplicate
     if dag.nodes.contains_key(&hash) {
@@ -309,7 +325,7 @@ pub fn verify_node(
         &node.payload_hash,
         &node.creator_did,
         &node.timestamp,
-    );
+    )?;
     if expected_hash != node.hash {
         return Err(DagError::InvalidSignature(node.hash));
     }
@@ -368,6 +384,15 @@ mod tests {
             let h = blake3::hash(data);
             sig.as_bytes()[..32] == *h.as_bytes()
         })
+    }
+
+    #[derive(Serialize)]
+    struct ExpectedNodeHashPayload<'a> {
+        domain: &'static str,
+        parents: &'a [Hash256],
+        payload_hash: &'a Hash256,
+        creator_did: &'a Did,
+        timestamp: &'a Timestamp,
     }
 
     #[test]
@@ -661,9 +686,47 @@ mod tests {
         let creator = test_did("did:exo:test");
         let ts = Timestamp::new(1000, 1);
 
-        let h1 = compute_node_hash(&parents, &payload, &creator, &ts);
-        let h2 = compute_node_hash(&parents, &payload, &creator, &ts);
+        let h1 = compute_node_hash(&parents, &payload, &creator, &ts).expect("hash ok");
+        let h2 = compute_node_hash(&parents, &payload, &creator, &ts).expect("hash ok");
         assert_eq!(h1, h2);
+        let expected = exo_core::hash::hash_structured(&ExpectedNodeHashPayload {
+            domain: DAG_NODE_HASH_DOMAIN,
+            parents: &parents,
+            payload_hash: &payload,
+            creator_did: &creator,
+            timestamp: &ts,
+        })
+        .expect("canonical node hash payload");
+        assert_eq!(h1, expected);
+    }
+
+    #[test]
+    fn compute_node_hash_uses_canonical_cbor_not_byte_concat() {
+        let source = include_str!("dag.rs");
+        let body = source
+            .split("pub fn compute_node_hash")
+            .nth(1)
+            .expect("compute_node_hash exists")
+            .split("// ---------------------------------------------------------------------------\n// Dag")
+            .next()
+            .expect("compute_node_hash body exists");
+
+        assert!(
+            !body.contains("blake3::Hasher::new"),
+            "compute_node_hash must not hash byte-concat fields directly"
+        );
+        assert!(
+            !body.contains("hasher.update"),
+            "compute_node_hash must not hash byte-concat fields directly"
+        );
+        assert!(
+            !body.contains("to_le_bytes"),
+            "compute_node_hash must not hash platform byte-order encodings directly"
+        );
+        assert!(
+            body.contains("hash_structured") || body.contains("ciborium::"),
+            "compute_node_hash must use canonical CBOR"
+        );
     }
 
     #[test]
