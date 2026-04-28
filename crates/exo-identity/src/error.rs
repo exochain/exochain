@@ -1,6 +1,6 @@
 //! Identity-specific error types for the EXOCHAIN identity subsystem.
 
-use exo_core::Did;
+use exo_core::{Did, Timestamp};
 
 /// Errors that can occur during identity operations.
 #[derive(Debug, thiserror::Error)]
@@ -16,6 +16,13 @@ pub enum IdentityError {
 
     #[error("invalid signature")]
     InvalidSignature,
+
+    #[error("non-monotonic timestamp for DID {did}: current={current}, proposed={proposed}")]
+    NonMonotonicTimestamp {
+        did: Did,
+        current: Timestamp,
+        proposed: Timestamp,
+    },
 
     #[error("invalid revocation proof for DID: {0}")]
     InvalidRevocationProof(Did),

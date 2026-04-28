@@ -19,11 +19,16 @@ pub trait DidRegistry {
     fn revoke(&mut self, did: &Did, proof: &RevocationProof) -> Result<(), IdentityError>;
 
     /// Rotate the key for a DID after verifying the proof.
+    ///
+    /// `updated` must be supplied by the caller's deterministic execution
+    /// context, normally an `exo_core::hlc::HybridClock`, and must advance
+    /// past the current document timestamp.
     fn rotate_key(
         &mut self,
         did: &Did,
         new_key: &PublicKey,
         proof: &Signature,
+        updated: Timestamp,
     ) -> Result<(), IdentityError>;
 }
 
@@ -93,6 +98,7 @@ impl DidRegistry for LocalDidRegistry {
         did: &Did,
         new_key: &PublicKey,
         proof: &Signature,
+        updated: Timestamp,
     ) -> Result<(), IdentityError> {
         let doc = self
             .documents
@@ -113,8 +119,16 @@ impl DidRegistry for LocalDidRegistry {
             return Err(IdentityError::InvalidSignature);
         }
 
+        if updated <= doc.updated {
+            return Err(IdentityError::NonMonotonicTimestamp {
+                did: did.clone(),
+                current: doc.updated,
+                proposed: updated,
+            });
+        }
+
         doc.public_keys.push(*new_key);
-        doc.updated = Timestamp::new(doc.updated.physical_ms + 1, 0);
+        doc.updated = updated;
         Ok(())
     }
 }
@@ -189,10 +203,43 @@ mod tests {
         let (new_pk, _) = generate_keypair();
         let proof = sign(new_pk.as_bytes(), &sk);
 
-        reg.rotate_key(&did, &new_pk, &proof).unwrap();
+        reg.rotate_key(&did, &new_pk, &proof, Timestamp::new(1001, 0))
+            .unwrap();
 
         let resolved = reg.resolve(&did).unwrap();
         assert_eq!(resolved.public_keys.len(), 2);
+        assert_eq!(resolved.updated, Timestamp::new(1001, 0));
+    }
+
+    #[test]
+    fn rotate_key_rejects_non_advancing_updated_timestamp() {
+        let (pk, sk) = generate_keypair();
+        let did = make_did("dora");
+        let doc = make_doc(did.clone(), pk);
+
+        let mut reg = LocalDidRegistry::new();
+        reg.register(doc).unwrap();
+
+        let (new_pk, _) = generate_keypair();
+        let proof = sign(new_pk.as_bytes(), &sk);
+        let err = reg
+            .rotate_key(&did, &new_pk, &proof, Timestamp::new(1000, 0))
+            .unwrap_err();
+
+        assert!(matches!(err, IdentityError::NonMonotonicTimestamp { .. }));
+        let resolved = reg.resolve(&did).unwrap();
+        assert_eq!(resolved.public_keys, vec![pk]);
+        assert_eq!(resolved.updated, Timestamp::new(1000, 0));
+    }
+
+    #[test]
+    fn rotate_key_does_not_fabricate_timestamp_from_existing_document() {
+        let source = std::fs::read_to_string("src/registry.rs").expect("read registry source");
+        let forbidden = ["physical_ms", " + ", "1"].concat();
+        assert!(
+            !source.contains(&forbidden),
+            "DID key rotation must use a caller-supplied HLC timestamp"
+        );
     }
 
     #[test]

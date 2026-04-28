@@ -254,7 +254,8 @@ mod tests {
 
         let (new_pk, _new_sk) = generate_keypair();
         let proof = sign(new_pk.as_bytes(), &sk);
-        reg.rotate_key(&did, &new_pk, &proof).unwrap();
+        reg.rotate_key(&did, &new_pk, &proof, Timestamp::new(1001, 0))
+            .unwrap();
 
         let resolved = reg.resolve(&did).unwrap();
         assert_eq!(resolved.public_keys.len(), 2);
@@ -269,7 +270,9 @@ mod tests {
         let proof = sign(new_pk.as_bytes(), &sk);
 
         let mut reg = LocalDidRegistry::new();
-        let err = reg.rotate_key(&did, &new_pk, &proof).unwrap_err();
+        let err = reg
+            .rotate_key(&did, &new_pk, &proof, Timestamp::new(1001, 0))
+            .unwrap_err();
         assert!(matches!(err, IdentityError::DidNotFound(_)));
     }
 
@@ -290,7 +293,9 @@ mod tests {
 
         let (new_pk, _) = generate_keypair();
         let proof = sign(new_pk.as_bytes(), &sk);
-        let err = reg.rotate_key(&did, &new_pk, &proof).unwrap_err();
+        let err = reg
+            .rotate_key(&did, &new_pk, &proof, Timestamp::new(1001, 0))
+            .unwrap_err();
         assert!(matches!(err, IdentityError::DidRevoked(_)));
     }
 
@@ -306,7 +311,9 @@ mod tests {
         let (new_pk, _) = generate_keypair();
         let (_other_pk, other_sk) = generate_keypair();
         let bad_proof = sign(new_pk.as_bytes(), &other_sk);
-        let err = reg.rotate_key(&did, &new_pk, &bad_proof).unwrap_err();
+        let err = reg
+            .rotate_key(&did, &new_pk, &bad_proof, Timestamp::new(1001, 0))
+            .unwrap_err();
         assert!(matches!(err, IdentityError::InvalidSignature));
     }
 
