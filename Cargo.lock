@@ -1609,6 +1609,7 @@ name = "exo-proofs"
 version = "0.1.0-beta"
 dependencies = [
  "blake3",
+ "ciborium",
  "exo-core",
  "serde",
  "serde_json",

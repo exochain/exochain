@@ -1,6 +1,6 @@
 //! Unified proof verifier -- dispatches to the appropriate proof system.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
     error::{ProofError, Result},
@@ -51,8 +51,8 @@ pub struct ZkmlBundle {
 
 /// Verify any proof type given its serialized form and public inputs.
 ///
-/// The `proof_bytes` should be a JSON-encoded bundle appropriate for the
-/// proof type. The `public_inputs_bytes` contains the JSON-encoded public inputs.
+/// The `proof_bytes` must be a canonical CBOR bundle appropriate for the proof
+/// type. The `public_inputs_bytes` contains canonical CBOR public inputs.
 pub fn verify_any(
     proof_type: ProofType,
     proof_bytes: &[u8],
@@ -65,29 +65,28 @@ pub fn verify_any(
     }
 }
 
-fn verify_snark(proof_bytes: &[u8], public_inputs_bytes: &[u8]) -> Result<bool> {
-    let bundle: SnarkBundle = serde_json::from_slice(proof_bytes)
-        .map_err(|e| ProofError::DeserializationError(e.to_string()))?;
+fn decode_cbor<T: DeserializeOwned>(bytes: &[u8], label: &'static str) -> Result<T> {
+    ciborium::from_reader(bytes).map_err(|e| {
+        ProofError::DeserializationError(format!("{label}: canonical CBOR decode failed: {e}"))
+    })
+}
 
-    let public_inputs: Vec<u64> = serde_json::from_slice(public_inputs_bytes)
-        .map_err(|e| ProofError::DeserializationError(e.to_string()))?;
+fn verify_snark(proof_bytes: &[u8], public_inputs_bytes: &[u8]) -> Result<bool> {
+    let bundle: SnarkBundle = decode_cbor(proof_bytes, "snark proof bundle")?;
+    let public_inputs: Vec<u64> = decode_cbor(public_inputs_bytes, "snark public inputs")?;
 
     snark::verify(&bundle.vk, &bundle.proof, &public_inputs)
 }
 
 fn verify_stark(proof_bytes: &[u8], public_inputs_bytes: &[u8]) -> Result<bool> {
-    let bundle: StarkBundle = serde_json::from_slice(proof_bytes)
-        .map_err(|e| ProofError::DeserializationError(e.to_string()))?;
-
-    let public_inputs: Vec<u64> = serde_json::from_slice(public_inputs_bytes)
-        .map_err(|e| ProofError::DeserializationError(e.to_string()))?;
+    let bundle: StarkBundle = decode_cbor(proof_bytes, "stark proof bundle")?;
+    let public_inputs: Vec<u64> = decode_cbor(public_inputs_bytes, "stark public inputs")?;
 
     stark::verify_stark(&bundle.proof, &public_inputs)
 }
 
 fn verify_zkml(proof_bytes: &[u8]) -> Result<bool> {
-    let bundle: ZkmlBundle = serde_json::from_slice(proof_bytes)
-        .map_err(|e| ProofError::DeserializationError(e.to_string()))?;
+    let bundle: ZkmlBundle = decode_cbor(proof_bytes, "zkml proof bundle")?;
 
     zkml::verify_inference(&bundle.proof)
 }
@@ -95,6 +94,27 @@ fn verify_zkml(proof_bytes: &[u8]) -> Result<bool> {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod canonical_encoding_contract_tests {
+    #[test]
+    fn verify_any_uses_canonical_cbor_not_json() {
+        let source = include_str!("verifier.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("production section exists");
+
+        assert!(
+            !production.contains("serde_json::from_slice"),
+            "proof verifier must not decode proof bundles or public inputs as JSON"
+        );
+        assert!(
+            production.contains("ciborium::from_reader"),
+            "proof verifier must decode proof bundles and public inputs as canonical CBOR"
+        );
+    }
+}
 
 #[cfg(all(test, feature = "unaudited-pedagogical-proofs"))]
 mod tests {
@@ -107,6 +127,12 @@ mod tests {
         stark::StarkConfig,
         zkml::{self, ModelCommitment},
     };
+
+    fn cbor_bytes<T: Serialize>(value: &T) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        ciborium::into_writer(value, &mut encoded).expect("canonical CBOR encode");
+        encoded
+    }
 
     /// x * y = z
     #[derive(Debug)]
@@ -142,11 +168,73 @@ mod tests {
         let proof = snark::prove(&pk, &circuit, &[3, 4, 12]).unwrap();
 
         let bundle = SnarkBundle { vk, proof };
-        let proof_bytes = serde_json::to_vec(&bundle).unwrap();
-        let public_inputs_bytes = serde_json::to_vec(&vec![3u64, 12u64]).unwrap();
+        let proof_bytes = cbor_bytes(&bundle);
+        let public_inputs_bytes = cbor_bytes(&vec![3u64, 12u64]);
 
         let result = verify_any(ProofType::Snark, &proof_bytes, &public_inputs_bytes).unwrap();
         assert!(result);
+    }
+
+    #[test]
+    fn verify_any_snark_accepts_canonical_cbor() {
+        let circuit = MulCircuit {
+            x: Some(3),
+            y: Some(4),
+            z: Some(12),
+        };
+        let (pk, vk) = snark::setup(&circuit).unwrap();
+        let proof = snark::prove(&pk, &circuit, &[3, 4, 12]).unwrap();
+
+        let bundle = SnarkBundle { vk, proof };
+        let proof_bytes = cbor_bytes(&bundle);
+        let public_inputs_bytes = cbor_bytes(&vec![3u64, 12u64]);
+
+        let result = verify_any(ProofType::Snark, &proof_bytes, &public_inputs_bytes).unwrap();
+        assert!(result);
+    }
+
+    #[test]
+    fn verify_any_rejects_json_snark_bundle() {
+        let circuit = MulCircuit {
+            x: Some(3),
+            y: Some(4),
+            z: Some(12),
+        };
+        let (pk, vk) = snark::setup(&circuit).unwrap();
+        let proof = snark::prove(&pk, &circuit, &[3, 4, 12]).unwrap();
+
+        let bundle = SnarkBundle { vk, proof };
+        let proof_bytes = serde_json::to_vec(&bundle).unwrap();
+        let public_inputs_bytes = serde_json::to_vec(&vec![3u64, 12u64]).unwrap();
+
+        let err = verify_any(ProofType::Snark, &proof_bytes, &public_inputs_bytes).unwrap_err();
+        assert!(matches!(err, ProofError::DeserializationError(_)));
+    }
+
+    #[test]
+    fn verify_any_rejects_json_stark_bundle() {
+        let config = StarkConfig::default_config();
+        let trace: Vec<Vec<u64>> = vec![vec![1, 2], vec![3, 4], vec![5, 6]];
+        let proof = crate::stark::prove_stark(&trace, &[], &config).unwrap();
+
+        let bundle = StarkBundle { proof };
+        let proof_bytes = serde_json::to_vec(&bundle).unwrap();
+        let public_inputs_bytes = cbor_bytes(&vec![1u64, 2u64]);
+
+        let err = verify_any(ProofType::Stark, &proof_bytes, &public_inputs_bytes).unwrap_err();
+        assert!(matches!(err, ProofError::DeserializationError(_)));
+    }
+
+    #[test]
+    fn verify_any_rejects_json_zkml_bundle() {
+        let model = ModelCommitment::new(b"arch", b"weights", 1);
+        let proof = zkml::prove_inference(&model, b"input", b"output").unwrap();
+
+        let bundle = ZkmlBundle { proof };
+        let proof_bytes = serde_json::to_vec(&bundle).unwrap();
+
+        let err = verify_any(ProofType::Zkml, &proof_bytes, b"[]").unwrap_err();
+        assert!(matches!(err, ProofError::DeserializationError(_)));
     }
 
     #[test]
@@ -160,8 +248,8 @@ mod tests {
         let proof = snark::prove(&pk, &circuit, &[3, 4, 12]).unwrap();
 
         let bundle = SnarkBundle { vk, proof };
-        let proof_bytes = serde_json::to_vec(&bundle).unwrap();
-        let wrong_inputs = serde_json::to_vec(&vec![3u64, 13u64]).unwrap();
+        let proof_bytes = cbor_bytes(&bundle);
+        let wrong_inputs = cbor_bytes(&vec![3u64, 13u64]);
 
         let result = verify_any(ProofType::Snark, &proof_bytes, &wrong_inputs).unwrap();
         assert!(!result);
@@ -174,8 +262,8 @@ mod tests {
         let proof = crate::stark::prove_stark(&trace, &[], &config).unwrap();
 
         let bundle = StarkBundle { proof };
-        let proof_bytes = serde_json::to_vec(&bundle).unwrap();
-        let public_inputs_bytes = serde_json::to_vec(&vec![1u64, 2u64]).unwrap();
+        let proof_bytes = cbor_bytes(&bundle);
+        let public_inputs_bytes = cbor_bytes(&vec![1u64, 2u64]);
 
         let result = verify_any(ProofType::Stark, &proof_bytes, &public_inputs_bytes).unwrap();
         assert!(result);
@@ -187,7 +275,7 @@ mod tests {
         let proof = zkml::prove_inference(&model, b"input", b"output").unwrap();
 
         let bundle = ZkmlBundle { proof };
-        let proof_bytes = serde_json::to_vec(&bundle).unwrap();
+        let proof_bytes = cbor_bytes(&bundle);
 
         let result = verify_any(ProofType::Zkml, &proof_bytes, b"[]").unwrap();
         assert!(result);
@@ -200,7 +288,7 @@ mod tests {
         proof.output_hash = exo_core::types::Hash256::ZERO;
 
         let bundle = ZkmlBundle { proof };
-        let proof_bytes = serde_json::to_vec(&bundle).unwrap();
+        let proof_bytes = cbor_bytes(&bundle);
 
         let result = verify_any(ProofType::Zkml, &proof_bytes, b"[]").unwrap();
         assert!(!result);
@@ -208,7 +296,7 @@ mod tests {
 
     #[test]
     fn verify_any_bad_proof_bytes() {
-        let err = verify_any(ProofType::Snark, b"not json", b"[]").unwrap_err();
+        let err = verify_any(ProofType::Snark, b"not cbor", b"[]").unwrap_err();
         assert!(matches!(err, ProofError::DeserializationError(_)));
     }
 
@@ -223,9 +311,10 @@ mod tests {
         let proof = snark::prove(&pk, &circuit, &[3, 4, 12]).unwrap();
 
         let bundle = SnarkBundle { vk, proof };
-        let proof_bytes = serde_json::to_vec(&bundle).unwrap();
+        let proof_bytes = cbor_bytes(&bundle);
+        let legacy_json_inputs = serde_json::to_vec(&vec![3u64, 12u64]).unwrap();
 
-        let err = verify_any(ProofType::Snark, &proof_bytes, b"not json").unwrap_err();
+        let err = verify_any(ProofType::Snark, &proof_bytes, &legacy_json_inputs).unwrap_err();
         assert!(matches!(err, ProofError::DeserializationError(_)));
     }
 
@@ -248,7 +337,7 @@ mod tests {
 
     #[test]
     fn verify_any_stark_bad_proof_bytes() {
-        let err = verify_any(ProofType::Stark, b"not json", b"[]").unwrap_err();
+        let err = verify_any(ProofType::Stark, b"not cbor", b"[]").unwrap_err();
         assert!(matches!(err, ProofError::DeserializationError(_)));
     }
 
@@ -258,14 +347,15 @@ mod tests {
         let trace: Vec<Vec<u64>> = vec![vec![1, 2], vec![3, 4]];
         let proof = crate::stark::prove_stark(&trace, &[], &config).unwrap();
         let bundle = StarkBundle { proof };
-        let proof_bytes = serde_json::to_vec(&bundle).unwrap();
-        let err = verify_any(ProofType::Stark, &proof_bytes, b"not json").unwrap_err();
+        let proof_bytes = cbor_bytes(&bundle);
+        let legacy_json_inputs = serde_json::to_vec(&vec![1u64, 2u64]).unwrap();
+        let err = verify_any(ProofType::Stark, &proof_bytes, &legacy_json_inputs).unwrap_err();
         assert!(matches!(err, ProofError::DeserializationError(_)));
     }
 
     #[test]
     fn verify_any_zkml_bad_proof_bytes() {
-        let err = verify_any(ProofType::Zkml, b"not json", b"[]").unwrap_err();
+        let err = verify_any(ProofType::Zkml, b"not cbor", b"[]").unwrap_err();
         assert!(matches!(err, ProofError::DeserializationError(_)));
     }
 }
