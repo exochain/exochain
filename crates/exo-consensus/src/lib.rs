@@ -532,6 +532,15 @@ mod tests {
     }
 
     #[test]
+    fn production_session_source_has_no_silent_default_final_consensus() {
+        let source = production_source("src/session.rs");
+        assert!(
+            !source.contains("unwrap_or_default"),
+            "production session finalization must fail closed instead of defaulting missing synthesis"
+        );
+    }
+
+    #[test]
     fn production_hashing_source_has_no_json_or_silent_default_fallback() {
         for file in ["src/round.rs", "src/record.rs"] {
             let source = production_source(file);

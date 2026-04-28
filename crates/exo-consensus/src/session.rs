@@ -218,6 +218,17 @@ impl DeliberationSession {
                 "Rounds exist but last() failed".into(),
             ));
         };
+        let final_consensus = last_round
+            .synthesis
+            .as_deref()
+            .map(str::trim)
+            .filter(|synthesis| !synthesis.is_empty())
+            .ok_or_else(|| {
+                ConsensusError::StateError(
+                    "Cannot finalize round with missing synthesis evidence".into(),
+                )
+            })?
+            .to_string();
         let mut minority_reports = Vec::new();
 
         let claim_sets = position_claim_sets(&last_round.positions);
@@ -272,7 +283,7 @@ impl DeliberationSession {
             session_id: self.session_id.clone(),
             question: self.question.clone(),
             rounds: self.rounds.clone(),
-            final_consensus: last_round.synthesis.clone().unwrap_or_default(),
+            final_consensus,
             minority_reports,
             panel_confidence_index_bps: pci,
             rounds_to_convergence: u32::try_from(self.rounds.len()).unwrap_or(0),
@@ -488,6 +499,56 @@ mod tests {
                     msg.contains("Cannot finalize without any rounds"),
                     "unexpected state error message: {msg}"
                 );
+            }
+            other => panic!("expected StateError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn finalize_rejects_round_without_synthesis_evidence() {
+        let panel = Panel::default_panel(DecisionClass::Routine);
+        let provider = DeterministicResponseProvider::with_positions(routine_responses(
+            "shared position",
+            &["shared claim"],
+        ));
+        let mut session = DeliberationSession::new("s".into(), panel, "Q?".into(), provider);
+        session
+            .execute_round(timing(1))
+            .expect("round executes with synthesis");
+        session.rounds[0].synthesis = None;
+
+        let err = session
+            .finalize(finalization_timing())
+            .expect_err("missing synthesis evidence must fail closed");
+
+        match err {
+            ConsensusError::StateError(message) => {
+                assert!(message.contains("missing synthesis"));
+            }
+            other => panic!("expected StateError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn finalize_rejects_blank_synthesis_evidence() {
+        let panel = Panel::default_panel(DecisionClass::Routine);
+        let provider = DeterministicResponseProvider::with_positions(routine_responses(
+            "shared position",
+            &["shared claim"],
+        ));
+        let mut session = DeliberationSession::new("s".into(), panel, "Q?".into(), provider);
+        session
+            .execute_round(timing(1))
+            .expect("round executes with synthesis");
+        session.rounds[0].synthesis = Some("   ".to_string());
+
+        let err = session
+            .finalize(finalization_timing())
+            .expect_err("blank synthesis evidence must fail closed");
+
+        match err {
+            ConsensusError::StateError(message) => {
+                assert!(message.contains("missing synthesis"));
             }
             other => panic!("expected StateError, got {other:?}"),
         }
