@@ -50,7 +50,8 @@ fn full_bcts_lifecycle_with_signed_events() {
             transition.receipt_hash.as_bytes().to_vec(),
             actor.clone(),
             kp.secret_key(),
-        );
+        )
+        .expect("sign event");
         assert!(verify_event(&event, kp.public_key()));
     }
 

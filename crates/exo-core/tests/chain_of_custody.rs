@@ -76,7 +76,8 @@ fn multi_actor_signed_event_chain_with_merkle_proof() {
         t1.receipt_hash.as_bytes().to_vec(),
         actors.proposer.0.clone(),
         actors.proposer.1.secret_key(),
-    );
+    )
+    .expect("sign event");
     assert!(verify_event(&event1, actors.proposer.1.public_key()));
 
     // Phase 2: Identity resolution by reviewer1
@@ -90,7 +91,8 @@ fn multi_actor_signed_event_chain_with_merkle_proof() {
         t2.receipt_hash.as_bytes().to_vec(),
         actors.reviewer1.0.clone(),
         actors.reviewer1.1.secret_key(),
-    );
+    )
+    .expect("sign event");
     assert!(verify_event(&event2, actors.reviewer1.1.public_key()));
 
     // Phase 3: Consent validation by reviewer2
@@ -104,7 +106,8 @@ fn multi_actor_signed_event_chain_with_merkle_proof() {
         t3.receipt_hash.as_bytes().to_vec(),
         actors.reviewer2.0.clone(),
         actors.reviewer2.1.secret_key(),
-    );
+    )
+    .expect("sign event");
     assert!(verify_event(&event3, actors.reviewer2.1.public_key()));
 
     // Phase 4: Deliberation by steward
@@ -118,7 +121,8 @@ fn multi_actor_signed_event_chain_with_merkle_proof() {
         t4.receipt_hash.as_bytes().to_vec(),
         actors.steward.0.clone(),
         actors.steward.1.secret_key(),
-    );
+    )
+    .expect("sign event");
     assert!(verify_event(&event4, actors.steward.1.public_key()));
 
     // Verify receipt chain integrity
@@ -190,7 +194,8 @@ fn denial_remediation_resubmission_with_full_proof_chain() {
             t.receipt_hash.as_bytes().to_vec(),
             actor.clone(),
             kp.secret_key(),
-        );
+        )
+        .expect("sign event");
         assert!(verify_event(&event, kp.public_key()));
         events.push(event);
     }
@@ -343,7 +348,8 @@ fn escalation_path_proof() {
         t_esc.receipt_hash.as_bytes().to_vec(),
         actor.clone(),
         kp.secret_key(),
-    );
+    )
+    .expect("sign event");
     assert!(verify_event(&event, kp.public_key()));
     tx.verify_receipt_chain().expect("chain valid");
     assert_eq!(tx.state(), BctsState::Escalated);

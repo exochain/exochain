@@ -292,6 +292,7 @@ pub fn wasm_create_signed_event(
     let ts = caller_timestamp(timestamp_physical_ms, timestamp_logical, "event timestamp")?;
 
     let event =
-        exo_core::events::create_signed_event(corr, ts, event_type, payload.to_vec(), did, &secret);
+        exo_core::events::create_signed_event(corr, ts, event_type, payload.to_vec(), did, &secret)
+            .map_err(|e| JsValue::from_str(&format!("event signing error: {e}")))?;
     to_js_value(&event)
 }

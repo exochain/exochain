@@ -4,6 +4,8 @@
 //! be verified independently.  Events carry a CBOR-encoded payload and are
 //! attributed to a DID via an Ed25519 signature.
 
+use std::io::Write;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -72,8 +74,11 @@ impl Event {
     ///
     /// The signed content is: `id || timestamp || event_type || payload || source_did`
     /// serialized as CBOR.
-    #[must_use]
-    pub fn signable_bytes(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// Returns `ExoError::SerializationError` if CBOR encoding fails.
+    pub fn write_signable_bytes<W: Write>(&self, writer: W) -> crate::Result<()> {
         #[derive(Serialize)]
         struct Signable<'a> {
             id: &'a CorrelationId,
@@ -89,23 +94,39 @@ impl Event {
             payload: &self.payload,
             source_did: &self.source_did,
         };
+        ciborium::into_writer(&s, writer)?;
+        Ok(())
+    }
+
+    /// Construct the canonical bytes that are signed.
+    ///
+    /// The signed content is: `id || timestamp || event_type || payload || source_did`
+    /// serialized as CBOR.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ExoError::SerializationError` if CBOR encoding fails.
+    pub fn signable_bytes(&self) -> crate::Result<Vec<u8>> {
         let mut buf = Vec::new();
-        // CBOR encoding of simple struct types cannot fail in practice,
-        // but we handle the error path defensively rather than panicking.
-        #[allow(clippy::expect_used)] // Infallible for flat serde structs; defensive only
-        ciborium::into_writer(&s, &mut buf).unwrap_or_else(|_| buf.clear());
-        buf
+        self.write_signable_bytes(&mut buf)?;
+        Ok(buf)
     }
 }
 
 /// Verify that an event's signature is valid for the given public key.
 #[must_use]
 pub fn verify_event(event: &Event, public_key: &PublicKey) -> bool {
-    let bytes = event.signable_bytes();
+    let Ok(bytes) = event.signable_bytes() else {
+        return false;
+    };
     crypto::verify(&bytes, &event.signature, public_key)
 }
 
 /// Helper: create a signed event.
+///
+/// # Errors
+///
+/// Returns `ExoError::SerializationError` if canonical event serialization fails.
 pub fn create_signed_event(
     id: CorrelationId,
     timestamp: Timestamp,
@@ -113,7 +134,7 @@ pub fn create_signed_event(
     payload: Vec<u8>,
     source_did: Did,
     secret_key: &crate::types::SecretKey,
-) -> Event {
+) -> crate::Result<Event> {
     // Build a temporary event with a dummy signature to compute signable bytes
     let mut event = Event {
         id,
@@ -123,9 +144,9 @@ pub fn create_signed_event(
         source_did,
         signature: Signature::from_bytes([0u8; 64]),
     };
-    let bytes = event.signable_bytes();
+    let bytes = event.signable_bytes()?;
     event.signature = crypto::sign(&bytes, secret_key);
-    event
+    Ok(event)
 }
 
 // ---------------------------------------------------------------------------
@@ -297,6 +318,7 @@ mod tests {
             did,
             kp.secret_key(),
         )
+        .expect("sign event")
     }
 
     #[test]
@@ -377,9 +399,29 @@ mod tests {
     fn signable_bytes_deterministic() {
         let kp = KeyPair::generate();
         let event = make_event(&kp);
-        let b1 = event.signable_bytes();
-        let b2 = event.signable_bytes();
+        let b1 = event.signable_bytes().expect("serialize signable bytes");
+        let b2 = event.signable_bytes().expect("serialize signable bytes");
         assert_eq!(b1, b2);
+    }
+
+    #[test]
+    fn signable_bytes_writer_error_is_returned() {
+        struct FailingWriter;
+
+        impl std::io::Write for FailingWriter {
+            fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("intentional signable writer failure"))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let kp = KeyPair::generate();
+        let event = make_event(&kp);
+        let error = event.write_signable_bytes(FailingWriter).unwrap_err();
+        assert!(matches!(error, crate::ExoError::SerializationError { .. }));
     }
 
     #[test]
@@ -410,7 +452,8 @@ mod tests {
             Vec::new(),
             did,
             kp.secret_key(),
-        );
+        )
+        .expect("sign event");
         assert!(verify_event(&event, kp.public_key()));
     }
 
@@ -426,7 +469,8 @@ mod tests {
             payload,
             did,
             kp.secret_key(),
-        );
+        )
+        .expect("sign event");
         assert!(verify_event(&event, kp.public_key()));
     }
 
