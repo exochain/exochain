@@ -33,7 +33,7 @@ pub fn unlock(
     sender_ed25519_public: &PublicKey,
 ) -> Result<Vec<u8>, MessagingError> {
     // 1. Verify the sender's signature
-    let signable = envelope.signable_bytes();
+    let signable = envelope.signing_payload()?;
     if !crypto::verify(&signable, &envelope.signature, sender_ed25519_public) {
         return Err(MessagingError::SignatureVerificationFailed);
     }
@@ -76,13 +76,29 @@ mod tests {
     use super::*;
     use crate::{
         compose::{ComposeMetadata, lock_and_send},
-        envelope::ContentType,
+        envelope::{ContentType, EncryptedEnvelope},
         kex::X25519KeyPair,
     };
 
     fn metadata(suffix: u128) -> ComposeMetadata {
         ComposeMetadata::new(Uuid::from_u128(suffix), Timestamp::new(8_000, 0))
             .expect("valid compose metadata")
+    }
+
+    fn legacy_signable_bytes(envelope: &EncryptedEnvelope) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(envelope.id.as_bytes());
+        buf.extend_from_slice(envelope.sender_did.as_str().as_bytes());
+        buf.extend_from_slice(envelope.recipient_did.as_str().as_bytes());
+        buf.extend_from_slice(&envelope.ephemeral_public_key);
+        buf.extend_from_slice(&envelope.ciphertext);
+        buf.extend_from_slice(&[u8::from(envelope.content_type)]);
+        buf.extend_from_slice(envelope.plaintext_hash.as_bytes());
+        buf.extend_from_slice(&[u8::from(envelope.release_on_death)]);
+        buf.extend_from_slice(&envelope.release_delay_hours.to_le_bytes());
+        buf.extend_from_slice(&envelope.created.physical_ms.to_le_bytes());
+        buf.extend_from_slice(&envelope.created.logical.to_le_bytes());
+        buf
     }
 
     #[test]
@@ -162,6 +178,35 @@ mod tests {
         assert!(
             matches!(result, Err(MessagingError::SignatureVerificationFailed)),
             "wrong sender key should fail signature verification"
+        );
+    }
+
+    #[test]
+    fn unlock_rejects_legacy_byte_concat_signature() {
+        let sender_did = Did::new("did:exo:alice").unwrap();
+        let recipient_did = Did::new("did:exo:bob").unwrap();
+        let (sender_pk, sender_sk) = generate_keypair();
+        let recipient_kp = X25519KeyPair::generate();
+
+        let mut envelope = lock_and_send(
+            b"secret",
+            ContentType::Secret,
+            &sender_did,
+            &recipient_did,
+            &sender_sk,
+            &recipient_kp.public,
+            metadata(0x018f_7a96_8ad0_7c4f_8e0f_1111_1111_1121),
+            false,
+            0,
+        )
+        .expect("lock_and_send");
+
+        envelope.signature = exo_core::crypto::sign(&legacy_signable_bytes(&envelope), &sender_sk);
+
+        let result = unlock(&envelope, &recipient_kp.secret, &sender_pk);
+        assert!(
+            matches!(result, Err(MessagingError::SignatureVerificationFailed)),
+            "legacy byte-concat signatures must not verify"
         );
     }
 

@@ -173,7 +173,9 @@ pub fn wasm_verify_message_signature(
     pk_arr.copy_from_slice(&pk_bytes);
     let sender_pk = exo_core::PublicKey::from_bytes(pk_arr);
 
-    let signable = envelope.signable_bytes();
+    let signable = envelope
+        .signing_payload()
+        .map_err(|e| JsValue::from_str(&format!("signature payload failed: {e}")))?;
     Ok(exo_core::crypto::verify(
         &signable,
         &envelope.signature,

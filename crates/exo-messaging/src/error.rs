@@ -18,6 +18,9 @@ pub enum MessagingError {
     #[error("death-trigger confirmation payload encoding failed: {0}")]
     DeathConfirmationPayloadEncoding(String),
 
+    #[error("envelope signing payload encoding failed: {0}")]
+    EnvelopeSigningPayloadEncoding(String),
+
     #[error("invalid envelope: {0}")]
     InvalidEnvelope(String),
 

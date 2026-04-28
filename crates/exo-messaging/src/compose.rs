@@ -114,7 +114,7 @@ pub fn lock_and_send(
     };
 
     // 6. Sign the envelope
-    let signable = envelope.signable_bytes();
+    let signable = envelope.signing_payload()?;
     let signature = exo_core::crypto::sign(&signable, sender_signing_key);
     envelope.signature = signature;
 
