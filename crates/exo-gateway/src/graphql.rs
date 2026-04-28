@@ -304,6 +304,25 @@ fn now_str() -> String {
     Timestamp::now_utc().to_string()
 }
 
+#[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+fn graphql_execution_disabled_error() -> async_graphql::Error {
+    async_graphql::Error::new(format!(
+        "unaudited_graphql_api_disabled: GraphQL resolver execution is disabled by default; enable `{UNAUDITED_GRAPHQL_API_FEATURE}` only for audited development use. See {UNAUDITED_GRAPHQL_API_INITIATIVE} and {UNAUDITED_GRAPHQL_API_MEMO}."
+    ))
+}
+
+fn guard_graphql_execution() -> GqlResult<()> {
+    #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+    {
+        Err(graphql_execution_disabled_error())
+    }
+
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
+    {
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Schema type alias
 // ---------------------------------------------------------------------------
@@ -330,6 +349,7 @@ pub struct QueryRoot;
 impl QueryRoot {
     /// Fetch a single decision by ID.
     async fn decision(&self, ctx: &Context<'_>, id: ID) -> GqlResult<Option<GqlDecision>> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let guard = state.lock().await;
         Ok(guard.decisions.get(id.as_str()).map(|r| r.decision.clone()))
@@ -344,6 +364,7 @@ impl QueryRoot {
         limit: Option<i32>,
         offset: Option<i32>,
     ) -> GqlResult<Vec<GqlDecision>> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let guard = state.lock().await;
         let offset = usize::try_from(offset.unwrap_or(0).max(0)).unwrap_or(0);
@@ -366,6 +387,7 @@ impl QueryRoot {
         ctx: &Context<'_>,
         actor_did: String,
     ) -> GqlResult<GqlAuthorityChain> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let guard = state.lock().await;
         let chain_length = i32::try_from(
@@ -390,6 +412,7 @@ impl QueryRoot {
         tenant_id: ID,
         #[graphql(default)] version: Option<String>,
     ) -> GqlResult<GqlConstitution> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let guard = state.lock().await;
         let _ = version; // version pinning reserved for DB layer
@@ -410,6 +433,7 @@ impl QueryRoot {
         ctx: &Context<'_>,
         actor_did: String,
     ) -> GqlResult<Vec<GqlDelegation>> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let guard = state.lock().await;
         let results = guard
@@ -427,6 +451,7 @@ impl QueryRoot {
         ctx: &Context<'_>,
         decision_id: ID,
     ) -> GqlResult<Vec<GqlAuditEntry>> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let guard = state.lock().await;
         Ok(guard
@@ -442,6 +467,7 @@ impl QueryRoot {
         _ctx: &Context<'_>,
         proof_id: ID,
     ) -> GqlResult<GqlVerificationResult> {
+        guard_graphql_execution()?;
         Ok(GqlVerificationResult {
             proof_type: "Unavailable".into(),
             valid: false,
@@ -458,6 +484,7 @@ impl QueryRoot {
     /// Returns the registration status and key counts for the given DID.
     /// Wired end-to-end to `exo-identity::LocalDidRegistry` (APE-35 acceptance criterion).
     async fn resolve_identity(&self, ctx: &Context<'_>, did: ID) -> GqlResult<GqlIdentity> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let guard = state.lock().await;
         let did_str = did.to_string();
@@ -505,6 +532,7 @@ impl QueryRoot {
         scope: String,
         action_type: String,
     ) -> GqlResult<GqlConsentResult> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let guard = state.lock().await;
         let subject_str = subject.to_string();
@@ -578,6 +606,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         input: CreateDecisionInput,
     ) -> GqlResult<GqlDecision> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let mut guard = state.lock().await;
         let id = Uuid::new_v4().to_string();
@@ -620,6 +649,7 @@ impl MutationRoot {
         new_status: String,
         reason: Option<String>,
     ) -> GqlResult<GqlDecision> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let mut guard = state.lock().await;
         let id_str = id.to_string();
@@ -652,6 +682,7 @@ impl MutationRoot {
         choice: String,
         rationale: Option<String>,
     ) -> GqlResult<GqlVote> {
+        guard_graphql_execution()?;
         let valid_choices = ["APPROVE", "REJECT", "ABSTAIN"];
         if !valid_choices.contains(&choice.as_str()) {
             return Err(async_graphql::Error::new(format!(
@@ -698,6 +729,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         input: GrantDelegationInput,
     ) -> GqlResult<GqlDelegation> {
+        guard_graphql_execution()?;
         if input.expires_in_hours <= 0 {
             return Err(async_graphql::Error::new("expires_in_hours must be > 0"));
         }
@@ -724,6 +756,7 @@ impl MutationRoot {
 
     /// Revoke an existing delegation by ID.
     async fn revoke_delegation(&self, ctx: &Context<'_>, id: ID) -> GqlResult<GqlDelegation> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let mut guard = state.lock().await;
         let id_str = id.to_string();
@@ -742,6 +775,7 @@ impl MutationRoot {
         decision_id: ID,
         grounds: String,
     ) -> GqlResult<GqlChallenge> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let mut guard = state.lock().await;
         let id_str = decision_id.to_string();
@@ -785,6 +819,7 @@ impl MutationRoot {
         decision_id: ID,
         justification: String,
     ) -> GqlResult<GqlEmergencyAction> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let mut guard = state.lock().await;
         let id_str = decision_id.to_string();
@@ -835,6 +870,7 @@ impl MutationRoot {
         description: String,
         nature: String,
     ) -> GqlResult<GqlConflictDisclosure> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let mut guard = state.lock().await;
         let id_str = decision_id.to_string();
@@ -864,6 +900,7 @@ impl MutationRoot {
         tenant_id: ID,
         amendment: String,
     ) -> GqlResult<GqlConstitution> {
+        guard_graphql_execution()?;
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let mut guard = state.lock().await;
         let new_hash =
@@ -902,16 +939,28 @@ impl SubscriptionRoot {
         &self,
         ctx: &Context<'_>,
         decision_id: ID,
-    ) -> impl Stream<Item = GqlDecision> {
-        let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>().clone();
-        let id_str = decision_id.to_string();
-        let mut rx = state.lock().await.event_tx.subscribe();
-        stream! {
-            loop {
-                match rx.recv().await {
-                    Ok(GovEvent::DecisionUpdated(d)) if d.id.to_string() == id_str => yield d,
-                    Ok(_) => {}
-                    Err(_) => break,
+    ) -> impl Stream<Item = GqlResult<GqlDecision>> {
+        #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+        {
+            let _ = (ctx, decision_id);
+            let error = graphql_execution_disabled_error();
+            return stream! {
+                yield Err(error);
+            };
+        }
+
+        #[cfg(feature = "unaudited-gateway-graphql-api")]
+        {
+            let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>().clone();
+            let id_str = decision_id.to_string();
+            let mut rx = state.lock().await.event_tx.subscribe();
+            stream! {
+                loop {
+                    match rx.recv().await {
+                        Ok(GovEvent::DecisionUpdated(d)) if d.id.to_string() == id_str => yield Ok(d),
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
                 }
             }
         }
@@ -922,18 +971,30 @@ impl SubscriptionRoot {
         &self,
         ctx: &Context<'_>,
         actor_did: String,
-    ) -> impl Stream<Item = GqlDelegation> {
-        let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>().clone();
-        let did = actor_did;
-        let mut rx = state.lock().await.event_tx.subscribe();
-        stream! {
-            loop {
-                match rx.recv().await {
-                    Ok(GovEvent::DelegationExpiring(d)) if d.delegatee == did || d.delegator == did => {
-                        yield d
+    ) -> impl Stream<Item = GqlResult<GqlDelegation>> {
+        #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+        {
+            let _ = (ctx, actor_did);
+            let error = graphql_execution_disabled_error();
+            return stream! {
+                yield Err(error);
+            };
+        }
+
+        #[cfg(feature = "unaudited-gateway-graphql-api")]
+        {
+            let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>().clone();
+            let did = actor_did;
+            let mut rx = state.lock().await.event_tx.subscribe();
+            stream! {
+                loop {
+                    match rx.recv().await {
+                        Ok(GovEvent::DelegationExpiring(d)) if d.delegatee == did || d.delegator == did => {
+                            yield Ok(d)
+                        }
+                        Ok(_) => {}
+                        Err(_) => break,
                     }
-                    Ok(_) => {}
-                    Err(_) => break,
                 }
             }
         }
@@ -944,16 +1005,28 @@ impl SubscriptionRoot {
         &self,
         ctx: &Context<'_>,
         tenant_id: ID,
-    ) -> impl Stream<Item = GqlEmergencyAction> {
-        let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>().clone();
-        let tid = tenant_id.to_string();
-        let mut rx = state.lock().await.event_tx.subscribe();
-        stream! {
-            loop {
-                match rx.recv().await {
-                    Ok(GovEvent::EmergencyActionCreated(a)) if a.tenant_id == tid => yield a,
-                    Ok(_) => {}
-                    Err(_) => break,
+    ) -> impl Stream<Item = GqlResult<GqlEmergencyAction>> {
+        #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+        {
+            let _ = (ctx, tenant_id);
+            let error = graphql_execution_disabled_error();
+            return stream! {
+                yield Err(error);
+            };
+        }
+
+        #[cfg(feature = "unaudited-gateway-graphql-api")]
+        {
+            let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>().clone();
+            let tid = tenant_id.to_string();
+            let mut rx = state.lock().await.event_tx.subscribe();
+            stream! {
+                loop {
+                    match rx.recv().await {
+                        Ok(GovEvent::EmergencyActionCreated(a)) if a.tenant_id == tid => yield Ok(a),
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
                 }
             }
         }
@@ -1041,6 +1114,120 @@ mod tests {
         build_schema(AppState::new_arc())
     }
 
+    #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+    #[tokio::test]
+    async fn direct_schema_execution_default_off_refuses_mutations() {
+        let schema = build_test_schema();
+        let res = schema
+            .execute(
+                r#"mutation {
+                    createDecision(input: {
+                        tenantId: "t1",
+                        title: "Must Refuse",
+                        body: "body text",
+                        decisionClass: "Operational"
+                    }) { id status title tenantId }
+                }"#,
+            )
+            .await;
+
+        assert!(
+            !res.errors.is_empty(),
+            "direct schema execution must be refused when unaudited GraphQL is disabled"
+        );
+        let message = res.errors[0].message.as_str();
+        assert!(message.contains("unaudited_graphql_api_disabled"));
+        assert!(message.contains(UNAUDITED_GRAPHQL_API_FEATURE));
+        assert!(message.contains(UNAUDITED_GRAPHQL_API_INITIATIVE));
+    }
+
+    #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+    #[tokio::test]
+    async fn direct_schema_execution_default_off_refuses_queries() {
+        let schema = build_test_schema();
+        let res = schema
+            .execute(r#"{ decisions(tenantId: "t1") { id status } }"#)
+            .await;
+
+        assert!(
+            !res.errors.is_empty(),
+            "direct schema execution must not bypass the default-off GraphQL gate"
+        );
+        let message = res.errors[0].message.as_str();
+        assert!(message.contains("unaudited_graphql_api_disabled"));
+        assert!(message.contains(UNAUDITED_GRAPHQL_API_FEATURE));
+        assert!(message.contains(UNAUDITED_GRAPHQL_API_INITIATIVE));
+    }
+
+    #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+    #[tokio::test]
+    async fn direct_schema_execution_default_off_refuses_subscriptions() {
+        use async_graphql::futures_util::StreamExt;
+
+        let schema = build_test_schema();
+        let mut stream = schema.execute_stream(
+            r#"subscription { decisionUpdated(decisionId: "decision-1") { id status } }"#,
+        );
+        let res = stream.next().await.expect("subscription response");
+
+        assert!(
+            !res.errors.is_empty(),
+            "direct subscription execution must not bypass the default-off GraphQL gate"
+        );
+        let message = res.errors[0].message.as_str();
+        assert!(message.contains("unaudited_graphql_api_disabled"));
+        assert!(message.contains(UNAUDITED_GRAPHQL_API_FEATURE));
+        assert!(message.contains(UNAUDITED_GRAPHQL_API_INITIATIVE));
+    }
+
+    #[test]
+    fn production_graphql_resolvers_have_default_off_guards() {
+        let production = include_str!("graphql.rs")
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("production section");
+        let query_section = production
+            .split("#[Object]\nimpl QueryRoot")
+            .nth(1)
+            .expect("query section")
+            .split("// ---------------------------------------------------------------------------\n// Mutation resolvers")
+            .next()
+            .expect("query section end");
+        let mutation_section = production
+            .split("#[Object]\nimpl MutationRoot")
+            .nth(1)
+            .expect("mutation section")
+            .split("// ---------------------------------------------------------------------------\n// Subscription resolvers")
+            .next()
+            .expect("mutation section end");
+        let subscription_section = production
+            .split("#[Subscription]\nimpl SubscriptionRoot")
+            .nth(1)
+            .expect("subscription section")
+            .split("// ---------------------------------------------------------------------------\n// Schema builder and axum router")
+            .next()
+            .expect("subscription section end");
+
+        assert_eq!(
+            query_section.matches("    async fn ").count(),
+            query_section.matches("guard_graphql_execution()?;").count(),
+            "every GraphQL query resolver must call the default-off execution guard"
+        );
+        assert_eq!(
+            mutation_section.matches("    async fn ").count(),
+            mutation_section
+                .matches("guard_graphql_execution()?;")
+                .count(),
+            "every GraphQL mutation resolver must call the default-off execution guard"
+        );
+        assert_eq!(
+            subscription_section.matches("    async fn ").count(),
+            subscription_section.matches("yield Err(error);").count(),
+            "every GraphQL subscription resolver must yield the default-off refusal error"
+        );
+    }
+
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn query_decisions_empty() {
         let schema = build_test_schema();
@@ -1052,6 +1239,7 @@ mod tests {
         assert_eq!(data["decisions"], serde_json::json!([]));
     }
 
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn mutation_create_and_query_decision() {
         let schema = build_test_schema();
@@ -1091,6 +1279,7 @@ mod tests {
         assert_eq!(qdata["decision"]["title"], "Test Decision");
     }
 
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn mutation_cast_vote_ok() {
         let schema = build_test_schema();
@@ -1120,6 +1309,7 @@ mod tests {
         assert_eq!(vdata["castVote"]["choice"], "APPROVE");
     }
 
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn mutation_cast_vote_invalid_choice() {
         let schema = build_test_schema();
@@ -1146,6 +1336,7 @@ mod tests {
         assert!(!vote.errors.is_empty());
     }
 
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn mutation_advance_decision() {
         let schema = build_test_schema();
@@ -1174,6 +1365,7 @@ mod tests {
         assert_eq!(adata["advanceDecision"]["status"], "DELIBERATION");
     }
 
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn mutation_grant_and_revoke_delegation() {
         let schema = build_test_schema();
@@ -1218,6 +1410,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn query_audit_trail_after_mutations() {
         let schema = build_test_schema();
@@ -1256,6 +1449,7 @@ mod tests {
         assert_eq!(entries[0]["sequence"], 1);
     }
 
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn mutation_raise_challenge_sets_contested() {
         let schema = build_test_schema();
@@ -1295,6 +1489,7 @@ mod tests {
         assert_eq!(qdata["decision"]["status"], "CONTESTED");
     }
 
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn mutation_amend_constitution_bumps_version() {
         let schema = build_test_schema();
@@ -1312,6 +1507,7 @@ mod tests {
         assert_eq!(adata["amendConstitution"]["version"], "1.0.1");
     }
 
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn query_constitution_default() {
         let schema = build_test_schema();
@@ -1324,6 +1520,7 @@ mod tests {
         assert_eq!(data["constitution"]["version"], "1.0.0");
     }
 
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn mutation_emergency_action_creates_record() {
         let schema = build_test_schema();
@@ -1352,6 +1549,7 @@ mod tests {
         assert_eq!(edata["takeEmergencyAction"]["decisionId"], id);
     }
 
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn schema_introspection_has_required_types() {
         let schema = build_test_schema();
@@ -1396,6 +1594,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// APE-35: resolveIdentity returns `registered: false` for an unknown DID.
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn query_resolve_identity_unknown_did() {
         let schema = build_test_schema();
@@ -1412,6 +1611,7 @@ mod tests {
 
     /// APE-35: resolveIdentity returns `registered: true` after a DID is added
     /// to the shared registry (end-to-end through LocalDidRegistry).
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn query_resolve_identity_registered_did() {
         use exo_core::Timestamp as Ts;
@@ -1459,6 +1659,7 @@ mod tests {
     /// SPLINE-R2: evaluateConsent must fail closed when GraphQL has no verified
     /// consent evidence source. The resolver must not fabricate an active
     /// bailment for the requested subject/actor pair.
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn query_evaluate_consent_denies_without_verified_consent_evidence() {
         let schema = build_test_schema();
@@ -1487,6 +1688,7 @@ mod tests {
     /// SPLINE-R3: verifyProof must not treat arbitrary proof IDs as valid.
     /// The GraphQL schema has no proof bytes, public inputs, or verified proof
     /// store wired, so it must fail closed instead of using hash parity.
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn query_verify_proof_refuses_arbitrary_proof_id() {
         let schema = build_test_schema();
@@ -1511,6 +1713,7 @@ mod tests {
     }
 
     /// APE-35: resolveIdentity rejects malformed DIDs with a GraphQL error.
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn query_resolve_identity_invalid_did_returns_error() {
         let schema = build_test_schema();
@@ -1521,6 +1724,7 @@ mod tests {
     }
 
     /// APE-35: schema introspection includes the new identity + consent types.
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
     async fn schema_includes_identity_and_consent_types() {
         let schema = build_test_schema();

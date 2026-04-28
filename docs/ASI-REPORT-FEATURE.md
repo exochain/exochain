@@ -27,7 +27,7 @@ EXOCHAIN takes a different approach. Instead of aspirational guidelines, it prov
 
 ## What EXOCHAIN Is
 
-EXOCHAIN is a constitutional trust fabric: 20 Rust workspace packages, 118764 lines of Rust under `crates/`, 2,918 listed tests, and a formal proof chain demonstrating its intended governance properties.
+EXOCHAIN is a constitutional trust fabric: 20 Rust workspace packages, 118968 lines of Rust under `crates/`, 2,904 listed tests, and a formal proof chain demonstrating its intended governance properties.
 
 It implements a three-branch constitutional model — legislative, executive, and judicial — where:
 
@@ -187,7 +187,7 @@ The conventional approach to AI safety assumes we need to solve alignment — ma
 
 The analogy is constitutional democracy. We don't require every citizen to have perfect values. We require every action to comply with constitutional constraints — and we enforce those constraints through an independent judiciary that cannot be overruled by popular vote or executive fiat.
 
-EXOCHAIN is that judiciary for AI systems. Its five constitutional properties, backed by formal proofs and 2,918 listed workspace tests, provide the structural guarantee that:
+EXOCHAIN is that judiciary for AI systems. Its five constitutional properties, backed by formal proofs and 2,904 listed workspace tests, provide the structural guarantee that:
 
 1. No AI system can grant itself capabilities
 2. No AI system can forge consensus
@@ -195,7 +195,7 @@ EXOCHAIN is that judiciary for AI systems. Its five constitutional properties, b
 4. A human can always intervene
 5. The rules themselves cannot be changed
 
-These aren't aspirational. They're enforced at the type level, the runtime level, and the cryptographic level. They are as immutable as the code that implements them — and that code is verified by formal proofs, 2,918 listed workspace tests, and a constitutional governance process that governs its own evolution.
+These aren't aspirational. They're enforced at the type level, the runtime level, and the cryptographic level. They are as immutable as the code that implements them — and that code is verified by formal proofs, 2,904 listed workspace tests, and a constitutional governance process that governs its own evolution.
 
 ---
 
