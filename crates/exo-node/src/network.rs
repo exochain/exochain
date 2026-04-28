@@ -9,14 +9,13 @@
     clippy::collapsible_match
 )]
 
-use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-    time::Duration,
-};
+use std::time::Duration;
 
 use exo_api::p2p::{PeerId as ExoPeerId, PeerInfo, PeerRegistry, RateLimiter};
-use exo_core::types::{Did, Hash256, Timestamp};
+use exo_core::{
+    hash::hash_structured,
+    types::{Did, Hash256, Timestamp},
+};
 use futures::StreamExt;
 use libp2p::{
     Multiaddr, PeerId, Swarm, SwarmBuilder, gossipsub, identify, kad, mdns, noise, ping,
@@ -26,6 +25,15 @@ use libp2p::{
 use tokio::sync::mpsc;
 
 use crate::wire::{self, WireMessage, topics};
+
+const GOSSIPSUB_MESSAGE_ID_DOMAIN: &str = "exo.node.gossipsub.message-id.v1";
+
+#[derive(serde::Serialize)]
+struct GossipsubMessageIdPayload<'a> {
+    domain: &'static str,
+    topic: &'a str,
+    data: &'a [u8],
+}
 
 // ---------------------------------------------------------------------------
 // Composed network behaviour
@@ -106,12 +114,7 @@ pub fn build_swarm(config: &NetworkConfig) -> anyhow::Result<Swarm<ExochainBehav
         .with_quic()
         .with_behaviour(|keypair| {
             // Gossipsub configuration
-            let message_id_fn = |message: &gossipsub::Message| {
-                let mut hasher = DefaultHasher::new();
-                message.data.hash(&mut hasher);
-                message.topic.hash(&mut hasher);
-                gossipsub::MessageId::from(hasher.finish().to_string())
-            };
+            let message_id_fn = canonical_gossipsub_message_id;
 
             let gossipsub_config = gossipsub::ConfigBuilder::default()
                 .heartbeat_interval(Duration::from_secs(10))
@@ -172,6 +175,33 @@ pub fn build_swarm(config: &NetworkConfig) -> anyhow::Result<Swarm<ExochainBehav
         .build();
 
     Ok(swarm)
+}
+
+fn canonical_gossipsub_message_id(message: &gossipsub::Message) -> gossipsub::MessageId {
+    match canonical_gossipsub_message_id_for_parts(message.topic.as_str(), &message.data) {
+        Ok(id) => id,
+        Err(error) => {
+            tracing::error!(
+                err = %error,
+                "failed to encode canonical gossipsub message id payload"
+            );
+            gossipsub::MessageId::new(b"exo.node.gossipsub.message-id.serialization-error")
+        }
+    }
+}
+
+fn canonical_gossipsub_message_id_for_parts(
+    topic: &str,
+    data: &[u8],
+) -> anyhow::Result<gossipsub::MessageId> {
+    let payload = GossipsubMessageIdPayload {
+        domain: GOSSIPSUB_MESSAGE_ID_DOMAIN,
+        topic,
+        data,
+    };
+    let hash = hash_structured(&payload)
+        .map_err(|error| anyhow::anyhow!("canonical gossipsub message id encoding: {error}"))?;
+    Ok(gossipsub::MessageId::new(hash.as_bytes()))
 }
 
 /// Start listening on configured ports.
@@ -541,6 +571,44 @@ mod tests {
         };
         let swarm = build_swarm(&config);
         assert!(swarm.is_ok());
+    }
+
+    #[test]
+    fn production_gossipsub_message_ids_do_not_use_default_hasher() {
+        let source = include_str!("network.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source section exists");
+        assert!(
+            !production.contains("DefaultHasher"),
+            "gossipsub message IDs must not use process-seeded DefaultHasher"
+        );
+    }
+
+    #[test]
+    fn gossipsub_message_ids_are_canonical_and_domain_separated() {
+        let id_a = canonical_gossipsub_message_id_for_parts("exo/consensus", b"payload")
+            .expect("canonical message id");
+        let id_b = canonical_gossipsub_message_id_for_parts("exo/consensus", b"payload")
+            .expect("canonical message id");
+        let different_topic =
+            canonical_gossipsub_message_id_for_parts("exo/governance", b"payload")
+                .expect("canonical message id");
+        let different_payload = canonical_gossipsub_message_id_for_parts("exo/consensus", b"other")
+            .expect("canonical message id");
+
+        assert_eq!(id_a, id_b);
+        assert_ne!(id_a, different_topic);
+        assert_ne!(id_a, different_payload);
+
+        let expected = hash_structured(&GossipsubMessageIdPayload {
+            domain: GOSSIPSUB_MESSAGE_ID_DOMAIN,
+            topic: "exo/consensus",
+            data: b"payload",
+        })
+        .expect("canonical hash");
+        assert_eq!(id_a.to_string(), expected.to_string());
     }
 
     #[tokio::test]
