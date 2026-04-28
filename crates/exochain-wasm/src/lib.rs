@@ -134,12 +134,12 @@ mod source_guard_tests {
         );
 
         let forbidden = [
-            "HybridClock::new()",
-            "generate_keypair()",
-            "Timestamp::now_utc()",
+            "HybridClock::new()".to_string(),
+            "generate_keypair()".to_string(),
+            ["Timestamp::", "now_utc()"].concat(),
         ];
 
-        for pattern in forbidden {
+        for pattern in &forbidden {
             assert!(
                 !source.contains(pattern),
                 "identity WASM risk binding must not fabricate signer or time with {pattern}"
@@ -158,12 +158,12 @@ mod source_guard_tests {
         );
 
         let forbidden = [
-            "CorrelationId::new()",
-            "HybridClock::new()",
-            "Timestamp::now_utc()",
+            "CorrelationId::new()".to_string(),
+            "HybridClock::new()".to_string(),
+            ["Timestamp::", "now_utc()"].concat(),
         ];
 
-        for pattern in forbidden {
+        for pattern in &forbidden {
             assert!(
                 !source.contains(pattern),
                 "core WASM event bindings must not fabricate event metadata with {pattern}"

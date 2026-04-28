@@ -394,8 +394,9 @@ mod tests {
         ] {
             let src = std::fs::read_to_string(path).expect("MCP tool source readable");
             let operational_src = src.split("#[cfg(test)]").next().expect("source prefix");
+            let forbidden_timestamp = ["Timestamp::", "now_utc"].concat();
             assert!(
-                !operational_src.contains("Timestamp::now_utc"),
+                !operational_src.contains(&forbidden_timestamp),
                 "{path} must not read local wall-clock time in MCP tool handlers"
             );
             assert!(

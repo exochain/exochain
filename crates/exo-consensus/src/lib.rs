@@ -508,8 +508,9 @@ mod tests {
     #[test]
     fn production_session_source_has_no_system_time_or_mock_boundary() {
         let source = production_source("src/session.rs");
+        let forbidden_timestamp = ["Timestamp::", "now_utc()"].concat();
         assert!(
-            !source.contains("Timestamp::now_utc()"),
+            !source.contains(&forbidden_timestamp),
             "production session code must not synthesize wall-clock timestamps"
         );
         assert!(

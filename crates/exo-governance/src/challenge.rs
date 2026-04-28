@@ -178,8 +178,9 @@ mod tests {
             !source.contains("Uuid::new_v4"),
             "governance challenges must not fabricate UUIDs internally"
         );
+        let forbidden_timestamp = ["Timestamp::", "now_utc"].concat();
         assert!(
-            !source.contains("Timestamp::now_utc"),
+            !source.contains(&forbidden_timestamp),
             "governance challenges and pause orders must not read wall-clock time internally"
         );
     }

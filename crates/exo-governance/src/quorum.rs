@@ -823,14 +823,14 @@ mod tests {
             Approval {
                 approver_did: d_alice.clone(),
                 role: Role::Steward,
-                timestamp: Timestamp::now_utc(),
+                timestamp: Timestamp::new(10_000, 0),
                 signature: test_sig(),
                 independence_attestation: Some(alice_att),
             },
             Approval {
                 approver_did: d_bob.clone(),
                 role: Role::Governor,
-                timestamp: Timestamp::now_utc(),
+                timestamp: Timestamp::new(10_001, 0),
                 signature: test_sig(),
                 independence_attestation: Some(bob_att),
             },
@@ -840,7 +840,7 @@ mod tests {
             min_approvals: 2,
             min_independent: 2,
             required_roles: vec![],
-            timeout: Timestamp::now_utc(),
+            timeout: Timestamp::new(20_000, 0),
         };
 
         // Structural-only counts both. (This is the bug.)
@@ -880,7 +880,7 @@ mod tests {
         let approvals = vec![Approval {
             approver_did: d_alice.clone(),
             role: Role::Steward,
-            timestamp: Timestamp::now_utc(),
+            timestamp: Timestamp::new(10_000, 0),
             signature: test_sig(),
             independence_attestation: Some(att),
         }];
@@ -888,7 +888,7 @@ mod tests {
             min_approvals: 1,
             min_independent: 1,
             required_roles: vec![],
-            timeout: Timestamp::now_utc(),
+            timeout: Timestamp::new(20_000, 0),
         };
 
         // Resolver that returns None for everything — attestation cannot

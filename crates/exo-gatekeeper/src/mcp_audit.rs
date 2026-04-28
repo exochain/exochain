@@ -216,8 +216,9 @@ mod tests {
             !source.contains("Uuid::new_v4"),
             "MCP audit records must not fabricate nondeterministic UUIDs internally"
         );
+        let forbidden_timestamp = ["Timestamp::", "now_utc"].concat();
         assert!(
-            !source.contains("Timestamp::now_utc"),
+            !source.contains(&forbidden_timestamp),
             "MCP audit records must not read wall-clock time internally"
         );
     }

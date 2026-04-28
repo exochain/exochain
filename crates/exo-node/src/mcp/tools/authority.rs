@@ -1290,7 +1290,8 @@ mod tests {
             .split("// ===========================================================================")
             .next()
             .expect("tests separator present");
-        assert!(!adjudicate_body.contains("Timestamp::now_utc"));
+        let forbidden_timestamp = ["Timestamp::", "now_utc"].concat();
+        assert!(!adjudicate_body.contains(&forbidden_timestamp));
         assert!(!adjudicate_body.contains("signature: vec![1, 2, 3]"));
         assert!(!adjudicate_body.contains("grantor_public_key: None"));
         assert!(adjudicate_body.contains("parse_verified_adjudication_context"));

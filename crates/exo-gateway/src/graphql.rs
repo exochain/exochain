@@ -37,7 +37,7 @@ use exo_consent::policy::{
     ActionRequest as ConsentActionRequest, ConsentDecision, ConsentPolicy, ConsentRequirement,
     PolicyEngine,
 };
-use exo_core::{Did, Hash256, Timestamp};
+use exo_core::{Did, Hash256, Timestamp, hlc::HybridClock};
 use exo_identity::registry::{DidRegistry, LocalDidRegistry};
 use tokio::sync::{Mutex, broadcast};
 use uuid::Uuid;
@@ -222,6 +222,7 @@ pub struct AppState {
     emergency_actions: BTreeMap<String, GqlEmergencyAction>,
     constitution: GqlConstitution,
     next_audit_seq: i32,
+    clock: HybridClock,
     event_tx: broadcast::Sender<GovEvent>,
     /// Shared DID registry — wired from `server::AppState` for identity resolution.
     registry: Arc<RwLock<LocalDidRegistry>>,
@@ -243,6 +244,14 @@ impl AppState {
 
     /// Create a new `AppState` with the given shared DID registry.
     pub fn with_registry(registry: Arc<RwLock<LocalDidRegistry>>) -> Self {
+        Self::with_registry_and_clock(registry, HybridClock::new())
+    }
+
+    /// Create a new `AppState` with the given shared DID registry and HLC.
+    pub fn with_registry_and_clock(
+        registry: Arc<RwLock<LocalDidRegistry>>,
+        clock: HybridClock,
+    ) -> Self {
         let (event_tx, _) = broadcast::channel(256);
         Self {
             decisions: BTreeMap::new(),
@@ -254,6 +263,7 @@ impl AppState {
                 hash: Hash256::digest(b"constitution-v1").to_string(),
             },
             next_audit_seq: 1,
+            clock,
             event_tx,
             registry,
             consent_engine: PolicyEngine::new(),
@@ -270,12 +280,24 @@ impl AppState {
         Arc::new(Mutex::new(Self::with_registry(registry)))
     }
 
+    fn next_timestamp(&mut self) -> Timestamp {
+        self.clock.now()
+    }
+
+    fn now_str(&mut self) -> String {
+        self.next_timestamp().to_string()
+    }
+
     fn append_audit(&mut self, decision_id: &str, event_type: &str, actor: &str) {
+        if !self.decisions.contains_key(decision_id) {
+            return;
+        }
+
+        let seq = self.next_audit_seq;
+        self.next_audit_seq += 1;
+        let ts = self.now_str();
+
         if let Some(rec) = self.decisions.get_mut(decision_id) {
-            let seq = self.next_audit_seq;
-            self.next_audit_seq += 1;
-            let ts = now_str();
-            // Chain receipt hash: Blake3 of (prev_hash | event_type | actor | seq)
             let prev_hash = rec
                 .audit_trail
                 .last()
@@ -298,10 +320,6 @@ impl AppState {
         Hash256::digest(format!("{}|{}|{}", d.id.as_str(), d.status, d.votes.len()).as_bytes())
             .to_string()
     }
-}
-
-fn now_str() -> String {
-    Timestamp::now_utc().to_string()
 }
 
 #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
@@ -611,6 +629,7 @@ impl MutationRoot {
         let mut guard = state.lock().await;
         let id = Uuid::new_v4().to_string();
         let body_hash = Hash256::digest(input.body.as_bytes()).to_string();
+        let created_at = guard.now_str();
         let decision = GqlDecision {
             id: ID::from(id.clone()),
             tenant_id: input.tenant_id,
@@ -618,7 +637,7 @@ impl MutationRoot {
             title: input.title,
             decision_class: input.decision_class,
             author: "system".into(), // caller DID injected by auth layer in production
-            created_at: now_str(),
+            created_at,
             votes: Vec::new(),
             challenges: Vec::new(),
             content_hash: body_hash,
@@ -692,25 +711,34 @@ impl MutationRoot {
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let mut guard = state.lock().await;
         let id_str = decision_id.to_string();
-        let rec = guard
+        let duplicate_vote = guard
             .decisions
-            .get_mut(&id_str)
-            .ok_or_else(|| async_graphql::Error::new(format!("decision {id_str} not found")))?;
+            .get(&id_str)
+            .ok_or_else(|| async_graphql::Error::new(format!("decision {id_str} not found")))?
+            .decision
+            .votes
+            .iter()
+            .any(|v| v.voter == "did:exo:caller");
+        if duplicate_vote {
+            return Err(async_graphql::Error::new("duplicate vote from this DID"));
+        }
         // Caller DID comes from auth context in production; use placeholder here.
         let voter = "did:exo:caller".to_string();
-        let (vote, decision) = {
-            if rec.decision.votes.iter().any(|v| v.voter == voter) {
-                return Err(async_graphql::Error::new("duplicate vote from this DID"));
-            }
-            let vote = GqlVote {
-                voter: voter.clone(),
-                choice,
-                rationale,
-                timestamp: now_str(),
-            };
+        let timestamp = guard.now_str();
+        let vote = GqlVote {
+            voter: voter.clone(),
+            choice,
+            rationale,
+            timestamp,
+        };
+        let decision = if let Some(rec) = guard.decisions.get_mut(&id_str) {
             rec.decision.votes.push(vote.clone());
             rec.decision.content_hash = AppState::compute_decision_hash(&rec.decision);
-            (vote, rec.decision.clone())
+            rec.decision.clone()
+        } else {
+            return Err(async_graphql::Error::new(format!(
+                "decision {id_str} not found"
+            )));
         };
         guard.append_audit(&id_str, "VoteCast", &voter);
         if guard
@@ -736,7 +764,7 @@ impl MutationRoot {
         let state = ctx.data_unchecked::<Arc<Mutex<AppState>>>();
         let mut guard = state.lock().await;
         let id = Uuid::new_v4().to_string();
-        let now = Timestamp::now_utc();
+        let now = guard.next_timestamp();
         let expires_ms = now.physical_ms.saturating_add(
             u64::try_from(input.expires_in_hours)
                 .unwrap_or(0)
@@ -830,7 +858,7 @@ impl MutationRoot {
             )));
         }
         let action_id = Uuid::new_v4().to_string();
-        let now = Timestamp::now_utc();
+        let now = guard.next_timestamp();
         // Ratification deadline: 24 hours from now.
         let deadline_ms = now.physical_ms.saturating_add(86_400_000);
         let action = GqlEmergencyAction {
@@ -879,7 +907,7 @@ impl MutationRoot {
             discloser: "did:exo:caller".into(),
             description: description.clone(),
             nature: nature.clone(),
-            timestamp: now_str(),
+            timestamp: guard.now_str(),
         };
         guard.append_audit(
             &id_str,
@@ -1112,6 +1140,16 @@ mod tests {
 
     fn build_test_schema() -> GovSchema {
         build_schema(AppState::new_arc())
+    }
+
+    #[test]
+    fn app_state_timestamps_advance_through_hybrid_clock() {
+        let registry = Arc::new(RwLock::new(LocalDidRegistry::new()));
+        let mut state =
+            AppState::with_registry_and_clock(registry, HybridClock::with_wall_clock(|| 42_000));
+
+        assert_eq!(state.next_timestamp(), Timestamp::new(42_000, 0));
+        assert_eq!(state.next_timestamp(), Timestamp::new(42_000, 1));
     }
 
     #[cfg(not(feature = "unaudited-gateway-graphql-api"))]

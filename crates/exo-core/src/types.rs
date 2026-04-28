@@ -682,28 +682,6 @@ impl Timestamp {
         logical: 0,
     };
 
-    /// Create a timestamp from the current system clock (non-deterministic).
-    #[must_use]
-    pub fn now_utc() -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
-        let millis = {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis();
-            u64::try_from(ms).unwrap_or(u64::MAX)
-        };
-        #[cfg(target_arch = "wasm32")]
-        #[allow(clippy::as_conversions)] // js_sys::Date::now() returns f64; safe truncation
-        let millis = js_sys::Date::now() as u64;
-
-        Self {
-            physical_ms: millis,
-            logical: 0,
-        }
-    }
-
     /// Check if this timestamp is expired relative to `now`.
     /// Returns true if `self <= now`.
     #[must_use]
@@ -1628,6 +1606,21 @@ mod tests {
     }
 
     #[test]
+    fn timestamp_impl_has_no_wall_clock_constructor() {
+        let source = std::fs::read_to_string("src/types.rs").expect("read types source");
+        let impl_start = source.find("impl Timestamp {").expect("Timestamp impl");
+        let impl_end = source[impl_start..]
+            .find("impl PartialOrd for Timestamp")
+            .expect("Timestamp ordering impl");
+        let timestamp_impl = &source[impl_start..impl_start + impl_end];
+
+        let forbidden_timestamp_constructor = ["now", "_utc"].concat();
+        assert!(!timestamp_impl.contains(&forbidden_timestamp_constructor));
+        assert!(!timestamp_impl.contains("SystemTime::now"));
+        assert!(!timestamp_impl.contains("js_sys::Date::now"));
+    }
+
+    #[test]
     fn timestamp_ordering() {
         let t1 = Timestamp::new(100, 0);
         let t2 = Timestamp::new(100, 1);
@@ -1964,7 +1957,7 @@ mod tests {
             "test.action".into(),
             Hash256::digest(b"payload"),
             ReceiptOutcome::Executed,
-            Timestamp::now_utc(),
+            Timestamp::new(1_700_000_004_000, 0),
             &test_sign_fn,
         )
         .expect("trust receipt should encode");
