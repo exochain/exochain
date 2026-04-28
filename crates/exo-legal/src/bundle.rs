@@ -234,14 +234,13 @@ where
 // ---------------------------------------------------------------------------
 
 const BUNDLE_VERSION: u32 = 1;
+#[cfg(test)]
 const BUNDLE_DOMAIN: &[u8] = b"exo:bundle:v1:";
+const BUNDLE_HASH_DOMAIN: &str = "exo.legal.bundle.hash.v1";
+const BUNDLE_HASH_SCHEMA_VERSION: u32 = 1;
+const BUNDLE_EVENT_CHAIN_DOMAIN: &str = "exo.legal.bundle.event_chain.v1";
+const BUNDLE_EVIDENCE_HASHES_DOMAIN: &str = "exo.legal.bundle.evidence_hashes.v1";
 const BUNDLE_SIGNATURE_DOMAIN: &str = "exo.legal.bundle.signature.v1";
-
-/// Safe usize → u64 conversion (infallible on ≤64-bit platforms).
-#[allow(clippy::as_conversions)]
-fn len_u64(n: usize) -> u64 {
-    n as u64
-}
 
 /// Safe usize → u32 conversion (saturating for safety).
 #[allow(clippy::as_conversions)]
@@ -299,9 +298,9 @@ pub fn assemble(input: BundleAssemblyInput) -> Result<EvidenceBundle> {
     };
 
     // Compute hash and build verification steps
-    let hash = compute_bundle_hash(&bundle);
+    let hash = compute_bundle_hash(&bundle)?;
     bundle.bundle_hash = hash;
-    bundle.verification.verification_steps = build_verification_steps(&bundle);
+    bundle.verification.verification_steps = build_verification_steps(&bundle)?;
 
     Ok(bundle)
 }
@@ -351,126 +350,71 @@ fn validate_causal_chain(events: &[BundleEvent]) -> Result<()> {
 // Hashing
 // ---------------------------------------------------------------------------
 
-/// Compute the deterministic BLAKE3 root hash of a bundle.
+/// Canonical CBOR payload hashed to produce a bundle root.
 ///
-/// Covers all content fields except `bundle_hash` and `signatures`.
-#[must_use]
-pub fn compute_bundle_hash(bundle: &EvidenceBundle) -> Hash256 {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(BUNDLE_DOMAIN);
-
-    // Identity
-    hasher.update(bundle.id.as_bytes());
-    hasher.update(&bundle.version.to_le_bytes());
-    hasher.update(&bundle.created_at.physical_ms.to_le_bytes());
-    hasher.update(&bundle.created_at.logical.to_le_bytes());
-
-    // Subject
-    hasher.update(bundle.subject.subject_type.as_tag().as_bytes());
-    hasher.update(bundle.subject.subject_id.as_bytes());
-    hasher.update(bundle.subject.title.as_bytes());
-    hasher.update(bundle.subject.description.as_bytes());
-
-    // Events (length-prefixed)
-    hasher.update(&len_u64(bundle.events.len()).to_le_bytes());
-    for event in &bundle.events {
-        hasher.update(&event.sequence.to_le_bytes());
-        hasher.update(event.event_hash.as_bytes());
-        hasher.update(event.event_type.as_bytes());
-        hasher.update(event.actor.to_string().as_bytes());
-        hasher.update(&event.timestamp.physical_ms.to_le_bytes());
-        hasher.update(&event.timestamp.logical.to_le_bytes());
-        hasher.update(event.payload_summary.as_bytes());
-        hasher.update(&len_u64(event.parent_hashes.len()).to_le_bytes());
-        for ph in &event.parent_hashes {
-            hasher.update(ph.as_bytes());
+/// The payload excludes `bundle_hash`, bundle signer `signatures`, and derived
+/// verification steps. It includes checkpoint validator signatures because they
+/// are part of the DAG anchor content sealed by the bundle.
+///
+/// # Errors
+/// Returns `LegalError` if canonical payload serialization fails.
+pub fn bundle_hash_payload(bundle: &EvidenceBundle) -> Result<Vec<u8>> {
+    let payload = (
+        BUNDLE_HASH_DOMAIN,
+        BUNDLE_HASH_SCHEMA_VERSION,
+        &bundle.id,
+        bundle.version,
+        bundle.created_at,
+        &bundle.subject,
+        &bundle.events,
+        &bundle.evidence_items,
+        &bundle.consent_records,
+        &bundle.contract_summary,
+        &bundle.certification,
+        &bundle.dag_anchor,
+        bundle.verification.format_version,
+        &bundle.verification.hash_algorithm,
+    );
+    let mut encoded = Vec::new();
+    ciborium::into_writer(&payload, &mut encoded).map_err(|e| {
+        LegalError::InvalidStateTransition {
+            reason: format!("bundle hash payload CBOR serialization failed: {e}"),
         }
-        hasher.update(event.dag_node_hash.as_bytes());
-    }
-
-    // Evidence items
-    hasher.update(&len_u64(bundle.evidence_items.len()).to_le_bytes());
-    for ev in &bundle.evidence_items {
-        hasher.update(ev.id.as_bytes());
-        hasher.update(ev.type_tag.as_bytes());
-        hasher.update(ev.hash.as_bytes());
-        hasher.update(ev.creator.to_string().as_bytes());
-        hasher.update(&ev.timestamp.physical_ms.to_le_bytes());
-        hasher.update(&ev.timestamp.logical.to_le_bytes());
-    }
-
-    // Consent records
-    hasher.update(&len_u64(bundle.consent_records.len()).to_le_bytes());
-    for c in &bundle.consent_records {
-        hasher.update(c.bailment_id.as_bytes());
-        hasher.update(c.bailor.to_string().as_bytes());
-        hasher.update(c.bailee.to_string().as_bytes());
-        hasher.update(c.bailment_type.as_bytes());
-        hasher.update(c.terms_hash.as_bytes());
-        hasher.update(c.status.as_bytes());
-    }
-
-    // Contract summary (optional)
-    if let Some(cs) = &bundle.contract_summary {
-        hasher.update(&[0x01]);
-        hasher.update(cs.contract_id.as_bytes());
-        hasher.update(cs.contract_hash.as_bytes());
-        hasher.update(cs.template_name.as_bytes());
-        hasher.update(&len_u64(cs.parties.len()).to_le_bytes());
-        for p in &cs.parties {
-            hasher.update(p.to_string().as_bytes());
-        }
-        hasher.update(&len_u64(cs.key_terms.len()).to_le_bytes());
-        for t in &cs.key_terms {
-            hasher.update(t.as_bytes());
-        }
-    } else {
-        hasher.update(&[0x00]);
-    }
-
-    // Certification (optional)
-    if let Some(cert) = &bundle.certification {
-        hasher.update(&[0x01]);
-        hasher.update(cert.cert_hash.as_bytes());
-    } else {
-        hasher.update(&[0x00]);
-    }
-
-    // DAG anchor
-    hasher.update(&bundle.dag_anchor.checkpoint_height.to_le_bytes());
-    hasher.update(bundle.dag_anchor.event_root.as_bytes());
-    hasher.update(bundle.dag_anchor.state_root.as_bytes());
-    hasher.update(&bundle.dag_anchor.anchored_at.physical_ms.to_le_bytes());
-    hasher.update(&bundle.dag_anchor.anchored_at.logical.to_le_bytes());
-
-    // Verification manifest (hash algorithm + format version, not steps —
-    // steps are derived from the hash so including them would be circular)
-    hasher.update(&bundle.verification.format_version.to_le_bytes());
-    hasher.update(bundle.verification.hash_algorithm.as_bytes());
-
-    Hash256::from_bytes(*hasher.finalize().as_bytes())
+    })?;
+    Ok(encoded)
 }
 
-fn build_verification_steps(bundle: &EvidenceBundle) -> Vec<VerificationStep> {
-    let event_hashes: Vec<Hash256> = bundle.events.iter().map(|e| e.event_hash).collect();
-    let event_chain_hash = {
-        let mut h = blake3::Hasher::new();
-        for eh in &event_hashes {
-            h.update(eh.as_bytes());
+/// Compute the deterministic BLAKE3 root hash of a canonical CBOR bundle payload.
+///
+/// Covers all content fields except `bundle_hash`, signer `signatures`, and
+/// derived verification steps.
+///
+/// # Errors
+/// Returns `LegalError` if canonical payload serialization fails.
+pub fn compute_bundle_hash(bundle: &EvidenceBundle) -> Result<Hash256> {
+    let payload = bundle_hash_payload(bundle)?;
+    Ok(Hash256::digest(&payload))
+}
+
+fn canonical_input_hash(domain: &str, input_hashes: &[Hash256]) -> Result<Hash256> {
+    let payload = (domain, BUNDLE_HASH_SCHEMA_VERSION, input_hashes);
+    let mut encoded = Vec::new();
+    ciborium::into_writer(&payload, &mut encoded).map_err(|e| {
+        LegalError::InvalidStateTransition {
+            reason: format!("verification input hash CBOR serialization failed: {e}"),
         }
-        Hash256::from_bytes(*h.finalize().as_bytes())
-    };
+    })?;
+    Ok(Hash256::digest(&encoded))
+}
+
+fn build_verification_steps(bundle: &EvidenceBundle) -> Result<Vec<VerificationStep>> {
+    let event_hashes: Vec<Hash256> = bundle.events.iter().map(|e| e.event_hash).collect();
+    let event_chain_hash = canonical_input_hash(BUNDLE_EVENT_CHAIN_DOMAIN, &event_hashes)?;
 
     let evidence_hashes: Vec<Hash256> = bundle.evidence_items.iter().map(|e| e.hash).collect();
-    let evidence_hash = {
-        let mut h = blake3::Hasher::new();
-        for eh in &evidence_hashes {
-            h.update(eh.as_bytes());
-        }
-        Hash256::from_bytes(*h.finalize().as_bytes())
-    };
+    let evidence_hash = canonical_input_hash(BUNDLE_EVIDENCE_HASHES_DOMAIN, &evidence_hashes)?;
 
-    vec![
+    Ok(vec![
         VerificationStep {
             step_number: 1,
             description: "Verify event chain hash".into(),
@@ -489,7 +433,7 @@ fn build_verification_steps(bundle: &EvidenceBundle) -> Vec<VerificationStep> {
             input_hashes: vec![bundle.bundle_hash],
             expected_output: bundle.bundle_hash,
         },
-    ]
+    ])
 }
 
 // ---------------------------------------------------------------------------
@@ -529,7 +473,7 @@ fn verify_inner(
     bundle: &EvidenceBundle,
     resolver: Option<&dyn BundleSignerKeyResolver>,
 ) -> Result<VerificationResult> {
-    let recomputed = compute_bundle_hash(bundle);
+    let recomputed = compute_bundle_hash(bundle)?;
     let hash_valid = recomputed == bundle.bundle_hash;
 
     let event_chain_valid = validate_event_ordering(&bundle.events).is_ok();
@@ -705,7 +649,7 @@ pub fn sign(
             reason: "signer role must not be empty".into(),
         });
     }
-    if compute_bundle_hash(bundle) != bundle.bundle_hash {
+    if compute_bundle_hash(bundle)? != bundle.bundle_hash {
         return Err(LegalError::InvalidStateTransition {
             reason: "bundle hash must be current before signing".into(),
         });
@@ -873,6 +817,107 @@ mod tests {
         assemble(input).unwrap()
     }
 
+    fn legacy_len_u64(n: usize) -> u64 {
+        #[allow(clippy::as_conversions)]
+        {
+            n as u64
+        }
+    }
+
+    fn legacy_bundle_hash(bundle: &EvidenceBundle) -> Hash256 {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(BUNDLE_DOMAIN);
+
+        hasher.update(bundle.id.as_bytes());
+        hasher.update(&bundle.version.to_le_bytes());
+        hasher.update(&bundle.created_at.physical_ms.to_le_bytes());
+        hasher.update(&bundle.created_at.logical.to_le_bytes());
+
+        hasher.update(bundle.subject.subject_type.as_tag().as_bytes());
+        hasher.update(bundle.subject.subject_id.as_bytes());
+        hasher.update(bundle.subject.title.as_bytes());
+        hasher.update(bundle.subject.description.as_bytes());
+
+        hasher.update(&legacy_len_u64(bundle.events.len()).to_le_bytes());
+        for event in &bundle.events {
+            hasher.update(&event.sequence.to_le_bytes());
+            hasher.update(event.event_hash.as_bytes());
+            hasher.update(event.event_type.as_bytes());
+            hasher.update(event.actor.to_string().as_bytes());
+            hasher.update(&event.timestamp.physical_ms.to_le_bytes());
+            hasher.update(&event.timestamp.logical.to_le_bytes());
+            hasher.update(event.payload_summary.as_bytes());
+            hasher.update(&legacy_len_u64(event.parent_hashes.len()).to_le_bytes());
+            for ph in &event.parent_hashes {
+                hasher.update(ph.as_bytes());
+            }
+            hasher.update(event.dag_node_hash.as_bytes());
+        }
+
+        hasher.update(&legacy_len_u64(bundle.evidence_items.len()).to_le_bytes());
+        for ev in &bundle.evidence_items {
+            hasher.update(ev.id.as_bytes());
+            hasher.update(ev.type_tag.as_bytes());
+            hasher.update(ev.hash.as_bytes());
+            hasher.update(ev.creator.to_string().as_bytes());
+            hasher.update(&ev.timestamp.physical_ms.to_le_bytes());
+            hasher.update(&ev.timestamp.logical.to_le_bytes());
+        }
+
+        hasher.update(&legacy_len_u64(bundle.consent_records.len()).to_le_bytes());
+        for c in &bundle.consent_records {
+            hasher.update(c.bailment_id.as_bytes());
+            hasher.update(c.bailor.to_string().as_bytes());
+            hasher.update(c.bailee.to_string().as_bytes());
+            hasher.update(c.bailment_type.as_bytes());
+            hasher.update(c.terms_hash.as_bytes());
+            hasher.update(c.status.as_bytes());
+        }
+
+        if let Some(cs) = &bundle.contract_summary {
+            hasher.update(&[0x01]);
+            hasher.update(cs.contract_id.as_bytes());
+            hasher.update(cs.contract_hash.as_bytes());
+            hasher.update(cs.template_name.as_bytes());
+            hasher.update(&legacy_len_u64(cs.parties.len()).to_le_bytes());
+            for p in &cs.parties {
+                hasher.update(p.to_string().as_bytes());
+            }
+            hasher.update(&legacy_len_u64(cs.key_terms.len()).to_le_bytes());
+            for t in &cs.key_terms {
+                hasher.update(t.as_bytes());
+            }
+        } else {
+            hasher.update(&[0x00]);
+        }
+
+        if let Some(cert) = &bundle.certification {
+            hasher.update(&[0x01]);
+            hasher.update(cert.cert_hash.as_bytes());
+        } else {
+            hasher.update(&[0x00]);
+        }
+
+        hasher.update(&bundle.dag_anchor.checkpoint_height.to_le_bytes());
+        hasher.update(bundle.dag_anchor.event_root.as_bytes());
+        hasher.update(bundle.dag_anchor.state_root.as_bytes());
+        hasher.update(&bundle.dag_anchor.anchored_at.physical_ms.to_le_bytes());
+        hasher.update(&bundle.dag_anchor.anchored_at.logical.to_le_bytes());
+
+        hasher.update(&bundle.verification.format_version.to_le_bytes());
+        hasher.update(bundle.verification.hash_algorithm.as_bytes());
+
+        Hash256::from_bytes(*hasher.finalize().as_bytes())
+    }
+
+    fn canonical_verification_input_hash(domain: &str, input_hashes: &[Hash256]) -> Hash256 {
+        let payload = (domain, 1u32, input_hashes);
+        let mut encoded = Vec::new();
+        ciborium::into_writer(&payload, &mut encoded)
+            .expect("canonical verification step input payload");
+        Hash256::digest(&encoded)
+    }
+
     // -- Tests ------------------------------------------------------------
 
     #[test]
@@ -944,13 +989,97 @@ mod tests {
                 bundle_hash: Hash256::ZERO,
                 signatures: vec![],
             };
-            b.bundle_hash = compute_bundle_hash(&b);
+            b.bundle_hash = compute_bundle_hash(&b).unwrap();
             b
         };
 
         let b1 = mk("same-id");
         let b2 = mk("same-id");
         assert_eq!(b1.bundle_hash, b2.bundle_hash);
+    }
+
+    #[test]
+    fn bundle_hash_payload_is_domain_separated_cbor() {
+        type DecodedBundleHashPayload = (
+            String,
+            u32,
+            String,
+            u32,
+            Timestamp,
+            BundleSubject,
+            Vec<BundleEvent>,
+            Vec<Evidence>,
+            Vec<ConsentSummary>,
+            Option<ContractSummary>,
+            Option<CertSnapshot>,
+            DagAnchor,
+            u32,
+            String,
+        );
+
+        let bundle = assemble_full();
+        let payload = bundle_hash_payload(&bundle).unwrap();
+        let legacy_payload_hash = legacy_bundle_hash(&bundle);
+        let decoded: DecodedBundleHashPayload = ciborium::de::from_reader(payload.as_slice())
+            .expect("bundle hash payload decodes as canonical CBOR tuple");
+
+        assert_ne!(Hash256::digest(&payload), legacy_payload_hash);
+        assert_eq!(decoded.0, BUNDLE_HASH_DOMAIN);
+        assert_eq!(decoded.1, 1);
+        assert_eq!(decoded.2, bundle.id);
+        assert_eq!(
+            decoded.11.validator_signatures.len(),
+            bundle.dag_anchor.validator_signatures.len()
+        );
+        assert_eq!(
+            decoded.11.validator_signatures[0].validator_did,
+            bundle.dag_anchor.validator_signatures[0].validator_did
+        );
+        assert_eq!(
+            decoded.11.validator_signatures[0].signature,
+            bundle.dag_anchor.validator_signatures[0].signature
+        );
+    }
+
+    #[test]
+    fn verify_rejects_legacy_byte_concat_bundle_hash() {
+        let mut bundle = assemble_full();
+        bundle.bundle_hash = legacy_bundle_hash(&bundle);
+
+        let result = verify(&bundle).unwrap();
+
+        assert!(!result.hash_valid);
+        assert!(!result.overall);
+    }
+
+    #[test]
+    fn bundle_hash_changes_when_validator_signature_changes() {
+        let mut bundle = assemble_minimal();
+        let original = compute_bundle_hash(&bundle).unwrap();
+        bundle.dag_anchor.validator_signatures[0].signature = Signature::from_bytes([0xbb; 64]);
+
+        let changed = compute_bundle_hash(&bundle).unwrap();
+
+        assert_ne!(changed, original);
+    }
+
+    #[test]
+    fn verification_steps_use_domain_separated_cbor_hashes() {
+        let bundle = assemble_full();
+        let event_hashes: Vec<Hash256> = bundle.events.iter().map(|e| e.event_hash).collect();
+        let evidence_hashes: Vec<Hash256> = bundle.evidence_items.iter().map(|e| e.hash).collect();
+
+        assert_eq!(
+            bundle.verification.verification_steps[0].expected_output,
+            canonical_verification_input_hash("exo.legal.bundle.event_chain.v1", &event_hashes)
+        );
+        assert_eq!(
+            bundle.verification.verification_steps[1].expected_output,
+            canonical_verification_input_hash(
+                "exo.legal.bundle.evidence_hashes.v1",
+                &evidence_hashes
+            )
+        );
     }
 
     #[test]
@@ -981,7 +1110,7 @@ mod tests {
                 bundle_hash: Hash256::ZERO,
                 signatures: vec![],
             };
-            b.bundle_hash = compute_bundle_hash(&b);
+            b.bundle_hash = compute_bundle_hash(&b).unwrap();
             b
         };
 
@@ -1055,7 +1184,7 @@ mod tests {
         let bundle = assemble_minimal();
         let json = render_json(&bundle).unwrap();
         let parsed: EvidenceBundle = serde_json::from_str(&json).unwrap();
-        let recomputed = compute_bundle_hash(&parsed);
+        let recomputed = compute_bundle_hash(&parsed).unwrap();
         assert_eq!(recomputed, bundle.bundle_hash);
     }
 
@@ -1173,7 +1302,7 @@ mod tests {
                 bundle_hash: Hash256::ZERO,
                 signatures: vec![],
             };
-            b.bundle_hash = compute_bundle_hash(&b);
+            b.bundle_hash = compute_bundle_hash(&b).unwrap();
             b
         };
 
@@ -1220,7 +1349,7 @@ mod tests {
                 bundle_hash: Hash256::ZERO,
                 signatures: vec![],
             };
-            b.bundle_hash = compute_bundle_hash(&b);
+            b.bundle_hash = compute_bundle_hash(&b).unwrap();
             b.bundle_hash
         };
         let all = [
@@ -1495,7 +1624,7 @@ mod tests {
                 bundle_hash: Hash256::ZERO,
                 signatures: vec![],
             };
-            b.bundle_hash = compute_bundle_hash(&b);
+            b.bundle_hash = compute_bundle_hash(&b).unwrap();
             b.bundle_hash
         };
         assert_ne!(mk(Some(cert)), mk(None));
