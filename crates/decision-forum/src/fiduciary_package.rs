@@ -24,8 +24,13 @@
 //! All scoring uses integer arithmetic only — no floating-point — per
 //! constitutional determinism requirement (`float_arithmetic = "deny"`).
 
-use exo_core::types::Hash256;
+use exo_core::{hash::hash_structured, types::Hash256};
 use serde::{Deserialize, Serialize};
+
+use crate::error::{ForumError, Result};
+
+const FIDUCIARY_PACKAGE_HASH_DOMAIN: &str = "decision.forum.fiduciary_package.v1";
+const FIDUCIARY_PACKAGE_HASH_SCHEMA_VERSION: u16 = 1;
 
 // ---------------------------------------------------------------------------
 // Prong evidence containers
@@ -206,22 +211,22 @@ impl FiduciaryDefensePackage {
     ///
     /// Computes `package_hash` over all prong data so any field mutation is
     /// detectable.
-    #[must_use]
     pub fn generate(
         decision_hash: Hash256,
         prong_disinterestedness: ProngDisinterestedness,
         prong_informed_basis: ProngInformedBasis,
         prong_good_faith: ProngGoodFaith,
         prong_rational_basis: ProngRationalBasis,
-    ) -> Self {
+    ) -> Result<Self> {
         let package_hash = compute_package_hash(
             &decision_hash,
             &prong_disinterestedness,
             &prong_informed_basis,
             &prong_good_faith,
             &prong_rational_basis,
-        );
-        Self {
+            Self::DISCLAIMER,
+        )?;
+        Ok(Self {
             decision_hash,
             prong_disinterestedness,
             prong_informed_basis,
@@ -229,7 +234,7 @@ impl FiduciaryDefensePackage {
             prong_rational_basis,
             package_hash,
             disclaimer: Self::DISCLAIMER,
-        }
+        })
     }
 
     /// Overall BJR defensibility score in basis points (0–10_000 ≡ 0.00%–100.00%).
@@ -250,16 +255,16 @@ impl FiduciaryDefensePackage {
     }
 
     /// Verify the package has not been tampered with since generation.
-    #[must_use]
-    pub fn verify(&self) -> bool {
+    pub fn verify(&self) -> Result<bool> {
         let expected = compute_package_hash(
             &self.decision_hash,
             &self.prong_disinterestedness,
             &self.prong_informed_basis,
             &self.prong_good_faith,
             &self.prong_rational_basis,
-        );
-        expected == self.package_hash
+            self.disclaimer,
+        )?;
+        Ok(expected == self.package_hash)
     }
 }
 
@@ -267,49 +272,48 @@ impl FiduciaryDefensePackage {
 // Internal
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Serialize)]
+struct FiduciaryPackageHashPayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    decision_hash: &'a Hash256,
+    prong_disinterestedness: &'a ProngDisinterestedness,
+    prong_informed_basis: &'a ProngInformedBasis,
+    prong_good_faith: &'a ProngGoodFaith,
+    prong_rational_basis: &'a ProngRationalBasis,
+    disclaimer: &'a str,
+}
+
+fn fiduciary_package_hash_payload<'a>(
+    decision_hash: &'a Hash256,
+    p1: &'a ProngDisinterestedness,
+    p2: &'a ProngInformedBasis,
+    p3: &'a ProngGoodFaith,
+    p4: &'a ProngRationalBasis,
+) -> FiduciaryPackageHashPayload<'a> {
+    FiduciaryPackageHashPayload {
+        domain: FIDUCIARY_PACKAGE_HASH_DOMAIN,
+        schema_version: FIDUCIARY_PACKAGE_HASH_SCHEMA_VERSION,
+        decision_hash,
+        prong_disinterestedness: p1,
+        prong_informed_basis: p2,
+        prong_good_faith: p3,
+        prong_rational_basis: p4,
+        disclaimer: FiduciaryDefensePackage::DISCLAIMER,
+    }
+}
+
 fn compute_package_hash(
     decision_hash: &Hash256,
     p1: &ProngDisinterestedness,
     p2: &ProngInformedBasis,
     p3: &ProngGoodFaith,
     p4: &ProngRationalBasis,
-) -> Hash256 {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"fjp:v1:");
-    hasher.update(decision_hash.as_bytes());
-    // Prong 1
-    hasher.update(&p1.total_members.to_le_bytes());
-    hasher.update(&p1.recused_count.to_le_bytes());
-    hasher.update(&p1.disinterested_voters.to_le_bytes());
-    hasher.update(&[u8::from(p1.majority_disinterested)]);
-    for h in &p1.disclosure_record_hashes {
-        hasher.update(h.as_bytes());
-    }
-    // Prong 2
-    hasher.update(&p2.voters_who_reviewed.to_le_bytes());
-    hasher.update(&p2.total_voters.to_le_bytes());
-    hasher.update(&[u8::from(p2.materials_complete_before_vote)]);
-    for h in &p2.evidence_manifest_hashes {
-        hasher.update(h.as_bytes());
-    }
-    // Prong 3
-    hasher.update(&p3.alternatives_count.to_le_bytes());
-    hasher.update(&p3.dissent_records.to_le_bytes());
-    hasher.update(&[u8::from(p3.process_compliant)]);
-    for h in &p3.deliberation_hashes {
-        hasher.update(h.as_bytes());
-    }
-    // Prong 4
-    if let Some(h) = &p4.selected_rationale_hash {
-        hasher.update(h.as_bytes());
-    }
-    if let Some(h) = &p4.risk_assessment_hash {
-        hasher.update(h.as_bytes());
-    }
-    for h in &p4.supporting_evidence_hashes {
-        hasher.update(h.as_bytes());
-    }
-    Hash256::from_bytes(*hasher.finalize().as_bytes())
+    disclaimer: &str,
+) -> Result<Hash256> {
+    let mut payload = fiduciary_package_hash_payload(decision_hash, p1, p2, p3, p4);
+    payload.disclaimer = disclaimer;
+    hash_structured(&payload).map_err(ForumError::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -361,6 +365,65 @@ mod tests {
     }
 
     #[test]
+    fn fiduciary_package_hash_payload_is_domain_separated_cbor() {
+        let decision_hash = decision_hash();
+        let p1 = full_prong1();
+        let p2 = full_prong2();
+        let p3 = full_prong3();
+        let p4 = full_prong4();
+        let payload = fiduciary_package_hash_payload(&decision_hash, &p1, &p2, &p3, &p4);
+        assert_eq!(payload.domain, FIDUCIARY_PACKAGE_HASH_DOMAIN);
+        assert_eq!(
+            payload.schema_version,
+            FIDUCIARY_PACKAGE_HASH_SCHEMA_VERSION
+        );
+        assert_eq!(*payload.decision_hash, decision_hash);
+    }
+
+    #[test]
+    fn package_hash_distinguishes_optional_rationale_and_risk_slots() {
+        let shared = Hash256::digest(b"shared-optional-hash");
+        let p4_rationale = ProngRationalBasis {
+            selected_rationale_hash: Some(shared),
+            risk_assessment_hash: None,
+            supporting_evidence_hashes: vec![],
+        };
+        let p4_risk = ProngRationalBasis {
+            selected_rationale_hash: None,
+            risk_assessment_hash: Some(shared),
+            supporting_evidence_hashes: vec![],
+        };
+        let pkg_rationale = FiduciaryDefensePackage::generate(
+            decision_hash(),
+            full_prong1(),
+            full_prong2(),
+            full_prong3(),
+            p4_rationale,
+        )
+        .expect("package");
+        let pkg_risk = FiduciaryDefensePackage::generate(
+            decision_hash(),
+            full_prong1(),
+            full_prong2(),
+            full_prong3(),
+            p4_risk,
+        )
+        .expect("package");
+        assert_ne!(pkg_rationale.package_hash, pkg_risk.package_hash);
+    }
+
+    #[test]
+    fn fiduciary_production_source_has_no_raw_package_hashing() {
+        let production = include_str!("fiduciary_package.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+        assert!(!production.contains("blake3::Hasher"));
+        assert!(!production.contains("hasher.update"));
+        assert!(!production.contains("to_le_bytes"));
+    }
+
+    #[test]
     fn defense_package_four_prong_completeness() {
         let pkg = FiduciaryDefensePackage::generate(
             decision_hash(),
@@ -368,7 +431,8 @@ mod tests {
             full_prong2(),
             full_prong3(),
             full_prong4(),
-        );
+        )
+        .expect("package");
         // All four prongs have content.
         assert!(pkg.prong_disinterestedness.total_members > 0);
         assert!(pkg.prong_informed_basis.total_voters > 0);
@@ -384,7 +448,8 @@ mod tests {
             full_prong2(),
             full_prong3(),
             full_prong4(),
-        );
+        )
+        .expect("package");
         let score = pkg.bjr_defensibility_score_bps();
         assert!(score <= 10_000, "score must be in [0, 10_000] bps");
         assert!(
@@ -401,9 +466,10 @@ mod tests {
             full_prong2(),
             full_prong3(),
             full_prong4(),
-        );
+        )
+        .expect("package");
         assert!(
-            pkg.verify(),
+            pkg.verify().expect("verify"),
             "package must verify immediately after generation"
         );
     }
@@ -416,10 +482,14 @@ mod tests {
             full_prong2(),
             full_prong3(),
             full_prong4(),
-        );
+        )
+        .expect("package");
         // Mutate a field after sealing.
         pkg.prong_disinterestedness.recused_count = 99;
-        assert!(!pkg.verify(), "tampered package must fail verification");
+        assert!(
+            !pkg.verify().expect("verify"),
+            "tampered package must fail verification"
+        );
     }
 
     #[test]
@@ -430,7 +500,8 @@ mod tests {
             full_prong2(),
             full_prong3(),
             full_prong4(),
-        );
+        )
+        .expect("package");
         assert!(
             pkg.disclaimer.contains("not a legal opinion"),
             "package must include legal disclaimer"

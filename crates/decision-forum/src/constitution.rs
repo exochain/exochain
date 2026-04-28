@@ -5,10 +5,16 @@
 //! conflict resolution hierarchy:
 //! Articles > Bylaws > Resolutions > Charters > Policies (GOV-006).
 
-use exo_core::types::{Did, Hash256, Signature, Timestamp, Version};
+use exo_core::{
+    hash::hash_structured,
+    types::{Did, Hash256, Signature, Timestamp, Version},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ForumError, Result};
+
+const CONSTITUTION_CORPUS_HASH_DOMAIN: &str = "decision.forum.constitution_corpus.v1";
+const CONSTITUTION_CORPUS_HASH_SCHEMA_VERSION: u16 = 1;
 
 /// Document tier in the conflict resolution hierarchy (GOV-006).
 /// Articles override Bylaws, Bylaws override Resolutions, etc.
@@ -59,16 +65,15 @@ pub struct ConstitutionCorpus {
 impl ConstitutionCorpus {
     /// Create a new constitution from a set of articles. Computes the
     /// corpus hash deterministically.
-    #[must_use]
-    pub fn new(articles: Vec<Article>) -> Self {
-        let hash = compute_corpus_hash(&articles);
-        ConstitutionCorpus {
+    pub fn new(articles: Vec<Article>) -> Result<Self> {
+        let hash = compute_corpus_hash(&articles)?;
+        Ok(ConstitutionCorpus {
             version: Version::ZERO.next(),
             hash,
             articles,
             ratified_at: None,
             amendment_count: 0,
-        }
+        })
     }
 
     /// Returns true if the constitution has been ratified.
@@ -143,7 +148,7 @@ pub fn amend(
     }
     corpus.articles.push(amendment);
     corpus.version = corpus.version.next();
-    corpus.hash = compute_corpus_hash(&corpus.articles);
+    corpus.hash = compute_corpus_hash(&corpus.articles)?;
     corpus.amendment_count += 1;
     Ok(())
 }
@@ -167,14 +172,24 @@ pub fn dry_run_amendment(corpus: &ConstitutionCorpus, proposed: &Article) -> Res
     Ok(conflicts)
 }
 
-/// Compute a deterministic hash over all articles in the corpus.
-fn compute_corpus_hash(articles: &[Article]) -> Hash256 {
-    let mut hasher = blake3::Hasher::new();
-    for a in articles {
-        hasher.update(a.text_hash.as_bytes());
-        hasher.update(a.id.as_bytes());
+#[derive(Debug, Clone, Serialize)]
+struct CorpusHashPayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    articles: &'a [Article],
+}
+
+fn corpus_hash_payload(articles: &[Article]) -> CorpusHashPayload<'_> {
+    CorpusHashPayload {
+        domain: CONSTITUTION_CORPUS_HASH_DOMAIN,
+        schema_version: CONSTITUTION_CORPUS_HASH_SCHEMA_VERSION,
+        articles,
     }
-    Hash256::from_bytes(*hasher.finalize().as_bytes())
+}
+
+/// Compute a deterministic hash over all articles in the corpus.
+fn compute_corpus_hash(articles: &[Article]) -> Result<Hash256> {
+    hash_structured(&corpus_hash_payload(articles)).map_err(ForumError::from)
 }
 
 #[cfg(test)]
@@ -214,14 +229,16 @@ mod tests {
 
     #[test]
     fn new_not_ratified() {
-        let c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)]);
+        let c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)])
+            .expect("valid corpus");
         assert!(!c.is_ratified());
         assert_eq!(c.version, Version::ZERO.next());
     }
 
     #[test]
     fn ratify_ok() {
-        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)]);
+        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)])
+            .expect("valid corpus");
         ratify(
             &mut c,
             &[(did("a"), sig()), (did("b"), sig())],
@@ -234,14 +251,16 @@ mod tests {
 
     #[test]
     fn ratify_quorum_not_met() {
-        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)]);
+        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)])
+            .expect("valid corpus");
         let err = ratify(&mut c, &[(did("a"), sig())], &quorum(), Timestamp::ZERO).unwrap_err();
         assert!(matches!(err, ForumError::QuorumNotMet { .. }));
     }
 
     #[test]
     fn ratify_already() {
-        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)]);
+        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)])
+            .expect("valid corpus");
         ratify(
             &mut c,
             &[(did("a"), sig()), (did("b"), sig())],
@@ -262,7 +281,8 @@ mod tests {
 
     #[test]
     fn empty_sig_not_counted() {
-        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)]);
+        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)])
+            .expect("valid corpus");
         assert!(
             ratify(
                 &mut c,
@@ -276,7 +296,8 @@ mod tests {
 
     #[test]
     fn amend_ok() {
-        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)]);
+        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)])
+            .expect("valid corpus");
         ratify(
             &mut c,
             &[(did("a"), sig()), (did("b"), sig())],
@@ -299,7 +320,8 @@ mod tests {
 
     #[test]
     fn amend_not_ratified() {
-        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)]);
+        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)])
+            .expect("valid corpus");
         assert!(
             amend(
                 &mut c,
@@ -312,7 +334,8 @@ mod tests {
 
     #[test]
     fn amend_no_valid_sigs() {
-        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)]);
+        let mut c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)])
+            .expect("valid corpus");
         ratify(
             &mut c,
             &[(did("a"), sig()), (did("b"), sig())],
@@ -332,7 +355,7 @@ mod tests {
 
     #[test]
     fn conflict_resolution_hierarchy() {
-        let c = ConstitutionCorpus::new(vec![]);
+        let c = ConstitutionCorpus::new(vec![]).expect("valid corpus");
         let art = article("a1", DocumentTier::Articles);
         let bylaw = article("b1", DocumentTier::Bylaws);
         assert_eq!(c.resolve_conflict(&art, &bylaw).id, "a1");
@@ -341,21 +364,67 @@ mod tests {
 
     #[test]
     fn dry_run_detects_conflict() {
-        let c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)]);
+        let c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)])
+            .expect("valid corpus");
         let conflicts = dry_run_amendment(&c, &article("a1", DocumentTier::Articles)).expect("ok");
         assert_eq!(conflicts.len(), 1);
     }
 
     #[test]
     fn dry_run_no_conflict() {
-        let c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)]);
+        let c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)])
+            .expect("valid corpus");
         let conflicts = dry_run_amendment(&c, &article("a2", DocumentTier::Bylaws)).expect("ok");
         assert!(conflicts.is_empty());
     }
 
     #[test]
+    fn corpus_hash_payload_is_domain_separated_cbor() {
+        let articles = vec![article("a1", DocumentTier::Articles)];
+        let payload = corpus_hash_payload(&articles);
+        assert_eq!(payload.domain, CONSTITUTION_CORPUS_HASH_DOMAIN);
+        assert_eq!(
+            payload.schema_version,
+            CONSTITUTION_CORPUS_HASH_SCHEMA_VERSION
+        );
+        assert_eq!(payload.articles.len(), 1);
+        assert_eq!(payload.articles[0].id, "a1");
+    }
+
+    #[test]
+    fn corpus_hash_changes_when_article_title_changes() {
+        let base = article("a1", DocumentTier::Articles);
+        let mut renamed = base.clone();
+        renamed.title = "renamed article".into();
+        let c1 = ConstitutionCorpus::new(vec![base]).expect("valid corpus");
+        let c2 = ConstitutionCorpus::new(vec![renamed]).expect("valid corpus");
+        assert_ne!(c1.hash, c2.hash);
+    }
+
+    #[test]
+    fn corpus_hash_changes_when_article_status_changes() {
+        let base = article("a1", DocumentTier::Articles);
+        let mut repealed = base.clone();
+        repealed.status = ArticleStatus::Repealed;
+        let c1 = ConstitutionCorpus::new(vec![base]).expect("valid corpus");
+        let c2 = ConstitutionCorpus::new(vec![repealed]).expect("valid corpus");
+        assert_ne!(c1.hash, c2.hash);
+    }
+
+    #[test]
+    fn constitution_production_source_has_no_raw_corpus_hashing() {
+        let production = include_str!("constitution.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+        assert!(!production.contains("blake3::Hasher"));
+        assert!(!production.contains("hasher.update"));
+    }
+
+    #[test]
     fn find_article() {
-        let c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)]);
+        let c = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)])
+            .expect("valid corpus");
         assert!(c.find_article("a1").is_some());
         assert!(c.find_article("nope").is_none());
     }
@@ -365,15 +434,18 @@ mod tests {
         let mut c = ConstitutionCorpus::new(vec![
             article("a1", DocumentTier::Articles),
             article("a2", DocumentTier::Articles),
-        ]);
+        ])
+        .expect("valid corpus");
         c.articles[1].status = ArticleStatus::Repealed;
         assert_eq!(c.active_article_count(), 1);
     }
 
     #[test]
     fn hash_deterministic() {
-        let c1 = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)]);
-        let c2 = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)]);
+        let c1 = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)])
+            .expect("valid corpus");
+        let c2 = ConstitutionCorpus::new(vec![article("a1", DocumentTier::Articles)])
+            .expect("valid corpus");
         assert_eq!(c1.hash, c2.hash);
     }
 

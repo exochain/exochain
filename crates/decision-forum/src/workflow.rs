@@ -5,12 +5,16 @@
 
 use exo_core::{
     bcts::BctsState,
+    hash::hash_structured,
     types::{Hash256, Timestamp},
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::{ForumError, Result};
+
+const WORKFLOW_RECEIPT_HASH_DOMAIN: &str = "decision.forum.workflow_receipt.v1";
+const WORKFLOW_RECEIPT_HASH_SCHEMA_VERSION: u16 = 1;
 
 /// A workflow stage corresponding to a BCTS state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,27 +152,63 @@ pub struct WorkflowReceipt {
     pub receipt_hash: Hash256,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct WorkflowReceiptHashPayload {
+    domain: &'static str,
+    schema_version: u16,
+    workflow_id: Uuid,
+    stage: BctsState,
+    decision_id: Uuid,
+    timestamp: Timestamp,
+}
+
+fn workflow_receipt_hash_payload(
+    workflow_id: Uuid,
+    stage: BctsState,
+    decision_id: Uuid,
+    timestamp: Timestamp,
+) -> WorkflowReceiptHashPayload {
+    WorkflowReceiptHashPayload {
+        domain: WORKFLOW_RECEIPT_HASH_DOMAIN,
+        schema_version: WORKFLOW_RECEIPT_HASH_SCHEMA_VERSION,
+        workflow_id,
+        stage,
+        decision_id,
+        timestamp,
+    }
+}
+
 /// Generate a receipt for a workflow stage.
-#[must_use]
 pub fn generate_receipt(
     workflow_id: Uuid,
     stage: BctsState,
     decision_id: Uuid,
     timestamp: Timestamp,
-) -> WorkflowReceipt {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(workflow_id.as_bytes());
-    hasher.update(decision_id.as_bytes());
-    hasher.update(&timestamp.physical_ms.to_le_bytes());
-    hasher.update(&u64::from(timestamp.logical).to_le_bytes());
-    hasher.update(format!("{stage:?}").as_bytes());
-    WorkflowReceipt {
+) -> Result<WorkflowReceipt> {
+    if workflow_id.is_nil() {
+        return Err(ForumError::InvalidProvenance {
+            reason: "workflow receipt workflow_id must not be nil".into(),
+        });
+    }
+    if decision_id.is_nil() {
+        return Err(ForumError::InvalidProvenance {
+            reason: "workflow receipt decision_id must not be nil".into(),
+        });
+    }
+    if timestamp == Timestamp::ZERO {
+        return Err(ForumError::InvalidProvenance {
+            reason: "workflow receipt timestamp must be non-zero HLC".into(),
+        });
+    }
+    let payload = workflow_receipt_hash_payload(workflow_id, stage, decision_id, timestamp);
+    let receipt_hash = hash_structured(&payload).map_err(ForumError::from)?;
+    Ok(WorkflowReceipt {
         workflow_id,
         stage,
         decision_id,
         timestamp,
-        receipt_hash: Hash256::from_bytes(*hasher.finalize().as_bytes()),
-    }
+        receipt_hash,
+    })
 }
 
 #[cfg(test)]
@@ -215,22 +255,84 @@ mod tests {
     }
 
     #[test]
+    fn workflow_receipt_hash_payload_is_domain_separated_cbor() {
+        let wf_id = Uuid::from_u128(90);
+        let dec_id = Uuid::from_u128(91);
+        let ts = Timestamp::new(1000, 1);
+        let payload = workflow_receipt_hash_payload(wf_id, BctsState::Submitted, dec_id, ts);
+        assert_eq!(payload.domain, WORKFLOW_RECEIPT_HASH_DOMAIN);
+        assert_eq!(payload.schema_version, WORKFLOW_RECEIPT_HASH_SCHEMA_VERSION);
+        assert_eq!(payload.workflow_id, wf_id);
+        assert_eq!(payload.decision_id, dec_id);
+        assert_eq!(payload.stage, BctsState::Submitted);
+        assert_eq!(payload.timestamp, ts);
+    }
+
+    #[test]
+    fn workflow_receipt_rejects_legacy_raw_concat_hash() {
+        let wf_id = Uuid::from_u128(92);
+        let dec_id = Uuid::from_u128(93);
+        let ts = Timestamp::new(1000, 1);
+        let receipt = generate_receipt(wf_id, BctsState::Submitted, dec_id, ts).expect("receipt");
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(wf_id.as_bytes());
+        hasher.update(dec_id.as_bytes());
+        hasher.update(&ts.physical_ms.to_le_bytes());
+        hasher.update(&u64::from(ts.logical).to_le_bytes());
+        hasher.update(format!("{:?}", BctsState::Submitted).as_bytes());
+        let legacy = Hash256::from_bytes(*hasher.finalize().as_bytes());
+        assert_ne!(receipt.receipt_hash, legacy);
+    }
+
+    #[test]
+    fn generate_receipt_rejects_placeholder_inputs() {
+        let ts = Timestamp::new(1000, 1);
+        let err = generate_receipt(Uuid::nil(), BctsState::Submitted, Uuid::from_u128(94), ts)
+            .unwrap_err();
+        assert!(matches!(err, ForumError::InvalidProvenance { .. }));
+
+        let err = generate_receipt(Uuid::from_u128(95), BctsState::Submitted, Uuid::nil(), ts)
+            .unwrap_err();
+        assert!(matches!(err, ForumError::InvalidProvenance { .. }));
+
+        let err = generate_receipt(
+            Uuid::from_u128(96),
+            BctsState::Submitted,
+            Uuid::from_u128(97),
+            Timestamp::ZERO,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ForumError::InvalidProvenance { .. }));
+    }
+
+    #[test]
+    fn workflow_production_source_has_no_raw_receipt_hashing() {
+        let production = include_str!("workflow.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+        assert!(!production.contains("blake3::Hasher"));
+        assert!(!production.contains("hasher.update"));
+        assert!(!production.contains("format!(\"{stage:?}\""));
+    }
+
+    #[test]
     fn generate_receipt_deterministic() {
-        let wf_id = Uuid::nil();
-        let dec_id = Uuid::nil();
-        let ts = Timestamp::new(1000, 0);
-        let r1 = generate_receipt(wf_id, BctsState::Submitted, dec_id, ts);
-        let r2 = generate_receipt(wf_id, BctsState::Submitted, dec_id, ts);
+        let wf_id = Uuid::from_u128(98);
+        let dec_id = Uuid::from_u128(99);
+        let ts = Timestamp::new(1000, 1);
+        let r1 = generate_receipt(wf_id, BctsState::Submitted, dec_id, ts).expect("receipt");
+        let r2 = generate_receipt(wf_id, BctsState::Submitted, dec_id, ts).expect("receipt");
         assert_eq!(r1.receipt_hash, r2.receipt_hash);
     }
 
     #[test]
     fn receipt_differs_per_stage() {
-        let wf_id = Uuid::nil();
-        let dec_id = Uuid::nil();
-        let ts = Timestamp::new(1000, 0);
-        let r1 = generate_receipt(wf_id, BctsState::Submitted, dec_id, ts);
-        let r2 = generate_receipt(wf_id, BctsState::Approved, dec_id, ts);
+        let wf_id = Uuid::from_u128(100);
+        let dec_id = Uuid::from_u128(101);
+        let ts = Timestamp::new(1000, 1);
+        let r1 = generate_receipt(wf_id, BctsState::Submitted, dec_id, ts).expect("receipt");
+        let r2 = generate_receipt(wf_id, BctsState::Approved, dec_id, ts).expect("receipt");
         assert_ne!(r1.receipt_hash, r2.receipt_hash);
     }
 
