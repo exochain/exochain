@@ -3,10 +3,13 @@
 //! A bailment is a trust relationship where a bailor entrusts property (data/authority)
 //! to a bailee under specific terms. No action may proceed without an active bailment.
 
-use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto};
+use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto, hash::hash_structured};
 use serde::{Deserialize, Serialize};
 
 use crate::error::ConsentError;
+
+/// Domain-separation tag for hashing bailment proposal terms.
+pub const BAILMENT_TERMS_HASH_DOMAIN: &str = "exo.bailment.terms.v1";
 
 /// The type of bailment relationship.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -64,10 +67,13 @@ pub struct Bailment {
 /// Callers must supply the proposal ID and creation timestamp from their
 /// deterministic execution context. The constructor rejects empty IDs and
 /// zero timestamps so consensus/audit-significant bailments cannot silently
-/// carry placeholder metadata.
+/// carry placeholder metadata. The supplied `terms` bytes are never hashed
+/// directly; [`terms_hash`] wraps them in a versioned domain tag and hashes
+/// the canonical CBOR representation.
 ///
 /// # Errors
-/// Returns `Denied` if `id` is empty or `created` is [`Timestamp::ZERO`].
+/// - `Denied` if `id` is empty or `created` is [`Timestamp::ZERO`].
+/// - `Serialization` if canonical CBOR terms hashing fails.
 pub fn propose(
     bailor: &Did,
     bailee: &Did,
@@ -78,18 +84,34 @@ pub fn propose(
 ) -> Result<Bailment, ConsentError> {
     let id = id.into();
     validate_constructor_metadata("bailment id", &id, "created", &created)?;
+    let terms_hash = terms_hash(terms)?;
 
     Ok(Bailment {
         id,
         bailor_did: bailor.clone(),
         bailee_did: bailee.clone(),
         bailment_type,
-        terms_hash: Hash256::digest(terms),
+        terms_hash,
         created,
         expires: None,
         status: BailmentStatus::Proposed,
         signature: Signature::empty(),
         bailee_public_key: None,
+    })
+}
+
+/// Hash bailment proposal terms through a versioned canonical-CBOR boundary.
+///
+/// The input is a byte representation of the proposed terms, but the digest is
+/// computed over `(BAILMENT_TERMS_HASH_DOMAIN, terms)` encoded as CBOR. This
+/// prevents a caller from defining the cryptographic preimage shape implicitly
+/// by choosing arbitrary raw bytes.
+///
+/// # Errors
+/// Returns `Serialization` if canonical CBOR encoding fails.
+pub fn terms_hash(terms: &[u8]) -> Result<Hash256, ConsentError> {
+    hash_structured(&(BAILMENT_TERMS_HASH_DOMAIN, terms)).map_err(|e| {
+        ConsentError::Serialization(format!("bailment terms hash encoding failed: {e}"))
     })
 }
 
@@ -259,7 +281,7 @@ pub fn is_active(bailment: &Bailment, now: &Timestamp) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use exo_core::SecretKey;
+    use exo_core::{SecretKey, hash::hash_structured};
 
     use super::*;
 
@@ -321,6 +343,32 @@ mod tests {
         assert!(
             !source.contains(&now_pattern),
             "bailment proposals must receive caller-supplied HLC timestamps"
+        );
+    }
+
+    #[test]
+    fn bailment_proposal_terms_hash_is_domain_separated_canonical_cbor() {
+        let b = propose_test_with_metadata(
+            b"terms",
+            BailmentType::Custody,
+            "bailment-canonical-terms",
+            ts(1234),
+        );
+        let expected = hash_structured(&(BAILMENT_TERMS_HASH_DOMAIN, b"terms".as_slice()))
+            .expect("canonical terms hash");
+
+        assert_eq!(b.terms_hash, expected);
+        assert_ne!(b.terms_hash, Hash256::digest(b"terms"));
+    }
+
+    #[test]
+    fn bailment_proposal_does_not_digest_terms_as_raw_bytes() {
+        let source = include_str!("bailment.rs");
+        let direct_terms_digest_pattern = format!("{}{}", "Hash256::digest(", "terms)");
+
+        assert!(
+            !source.contains(&direct_terms_digest_pattern),
+            "bailment proposals must hash terms through a domain-separated canonical-CBOR boundary"
         );
     }
 
@@ -510,7 +558,7 @@ mod tests {
     fn accept_rejects_tampered_terms() {
         let mut b = propose_test(b"t-original", BailmentType::Custody);
         let (pk, _sk, sig) = sign_as_bailee(&b);
-        b.terms_hash = Hash256::digest(b"t-swapped");
+        b.terms_hash = terms_hash(b"t-swapped").expect("canonical terms hash");
         assert_eq!(
             accept(&mut b, &pk, &sig),
             Err(ConsentError::InvalidSignature)
