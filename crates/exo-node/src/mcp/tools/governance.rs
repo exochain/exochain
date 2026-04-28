@@ -3,11 +3,10 @@
 //!
 //! # Simulation gate (Onyx pass 3, RED #2)
 //!
-//! The mutating tools (`exochain_create_decision`, `exochain_cast_vote`,
-//! `exochain_propose_amendment`) currently synthesize response JSON
-//! without persisting to any store or touching the reactor. Behind
-//! the scenes, they don't actually create decisions, record votes,
-//! or register amendments on-chain.
+//! The governance tools currently synthesize response JSON without a backing
+//! governance store or reactor. Behind the scenes, they don't actually create
+//! decisions, record votes, register amendments on-chain, or query persisted
+//! quorum/status state.
 //!
 //! Until these are wired to the real governance flow (see
 //! `Initiatives/fix-mcp-simulation-tools.md`), they are gated behind
@@ -328,37 +327,52 @@ pub fn check_quorum_definition() -> ToolDefinition {
 /// Execute the `exochain_check_quorum` tool.
 #[must_use]
 pub fn execute_check_quorum(params: &Value, _context: &NodeContext) -> ToolResult {
-    let decision_id = match params.get("decision_id").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: decision_id"}).to_string(),
-            );
-        }
-    };
-    let threshold = match params.get("threshold").and_then(Value::as_u64) {
-        Some(n) => n,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing or invalid required parameter: threshold (must be a positive integer)"}).to_string(),
-            );
-        }
-    };
-
-    if decision_id.is_empty() {
-        return ToolResult::error(json!({"error": "decision_id must not be empty"}).to_string());
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        return simulation_refused("exochain_check_quorum");
     }
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        tracing::warn!(
+            "UNAUDITED MCP simulation tool in use: exochain_check_quorum. \
+             Returns synthetic zero-vote quorum data without querying a \
+             governance store. Gated by `unaudited-mcp-simulation-tools` \
+             feature."
+        );
+        let decision_id = match params.get("decision_id").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: decision_id"}).to_string(),
+                );
+            }
+        };
+        let threshold = match params.get("threshold").and_then(Value::as_u64) {
+            Some(n) => n,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing or invalid required parameter: threshold (must be a positive integer)"}).to_string(),
+                );
+            }
+        };
 
-    // No persistent vote registry yet — always report zero votes.
-    let response = json!({
-        "decision_id": decision_id,
-        "threshold": threshold,
-        "total_votes": 0,
-        "authentic_approvals": 0,
-        "synthetic_excluded": 0,
-        "quorum_met": false,
-    });
-    ToolResult::success(response.to_string())
+        if decision_id.is_empty() {
+            return ToolResult::error(
+                json!({"error": "decision_id must not be empty"}).to_string(),
+            );
+        }
+
+        let response = json!({
+            "decision_id": decision_id,
+            "threshold": threshold,
+            "total_votes": 0,
+            "authentic_approvals": 0,
+            "synthetic_excluded": 0,
+            "quorum_met": false,
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -388,25 +402,40 @@ pub fn get_decision_status_definition() -> ToolDefinition {
 /// Execute the `exochain_get_decision_status` tool.
 #[must_use]
 pub fn execute_get_decision_status(params: &Value, _context: &NodeContext) -> ToolResult {
-    let decision_id = match params.get("decision_id").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = params;
+        return simulation_refused("exochain_get_decision_status");
+    }
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        tracing::warn!(
+            "UNAUDITED MCP simulation tool in use: exochain_get_decision_status. \
+             Returns synthetic unknown status without querying a governance \
+             store. Gated by `unaudited-mcp-simulation-tools` feature."
+        );
+        let decision_id = match params.get("decision_id").and_then(Value::as_str) {
+            Some(s) => s,
+            None => {
+                return ToolResult::error(
+                    json!({"error": "missing required parameter: decision_id"}).to_string(),
+                );
+            }
+        };
+
+        if decision_id.is_empty() {
             return ToolResult::error(
-                json!({"error": "missing required parameter: decision_id"}).to_string(),
+                json!({"error": "decision_id must not be empty"}).to_string(),
             );
         }
-    };
 
-    if decision_id.is_empty() {
-        return ToolResult::error(json!({"error": "decision_id must not be empty"}).to_string());
+        let response = json!({
+            "decision_id": decision_id,
+            "status": "unknown",
+            "message": "Decision not found in local state",
+        });
+        ToolResult::success(response.to_string())
     }
-
-    let response = json!({
-        "decision_id": decision_id,
-        "status": "unknown",
-        "message": "Decision not found in local state",
-    });
-    ToolResult::success(response.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -683,6 +712,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_check_quorum_success() {
         let result = execute_check_quorum(
@@ -700,6 +730,7 @@ mod tests {
         assert_eq!(v["total_votes"], 0);
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_check_quorum_missing_threshold() {
         let result = execute_check_quorum(&json!({"decision_id": "abc123"}), &NodeContext::empty());
@@ -715,6 +746,7 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_get_decision_status_success() {
         let result =
@@ -725,6 +757,7 @@ mod tests {
         assert_eq!(v["status"], "unknown");
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_get_decision_status_empty_id() {
         let result =
@@ -858,6 +891,47 @@ mod tests {
         let text = result.content[0].text();
         assert!(text.contains("mcp_simulation_tool_disabled"));
         assert!(text.contains("exochain_cast_vote"));
+    }
+
+    /// Same refusal for check_quorum — no synthesized zero-vote tally.
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_check_quorum_refused_without_feature_flag() {
+        let result = execute_check_quorum(
+            &json!({
+                "decision_id": "abc",
+                "threshold": 3,
+            }),
+            &NodeContext::empty(),
+        );
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_simulation_tool_disabled"));
+        assert!(text.contains("exochain_check_quorum"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("Initiatives/fix-mcp-simulation-tools.md"));
+        assert!(
+            text.contains("governance store"),
+            "refusal body must explain the missing backing store, got: {text}"
+        );
+    }
+
+    /// Same refusal for get_decision_status — no synthesized unknown status.
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    #[test]
+    fn execute_get_decision_status_refused_without_feature_flag() {
+        let result =
+            execute_get_decision_status(&json!({"decision_id": "abc"}), &NodeContext::empty());
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_simulation_tool_disabled"));
+        assert!(text.contains("exochain_get_decision_status"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+        assert!(text.contains("Initiatives/fix-mcp-simulation-tools.md"));
+        assert!(
+            text.contains("governance store"),
+            "refusal body must explain the missing backing store, got: {text}"
+        );
     }
 
     /// Same refusal for propose_amendment — no synthesized amendment_id.

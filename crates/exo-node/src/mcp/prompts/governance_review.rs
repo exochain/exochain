@@ -78,6 +78,10 @@ Before answering, call the following MCP tools to gather context:
 - `exochain_verify_authority_chain` on the proposer DID
 - `exochain_list_invariants` to re-load the current invariant set
 
+If a tool returns `mcp_simulation_tool_disabled`, cite that refusal as missing
+evidence. Do not infer quorum, decision status, or authority validity from
+synthetic or absent MCP state.
+
 Produce your review in this exact structure:
 
 1. **Stakeholders** — who is affected (by branch: legislative / executive / judicial)
@@ -133,6 +137,8 @@ mod tests {
         let text = result.messages[0].content.text();
         assert!(text.contains("dec-123"));
         assert!(text.contains("Expand BCTS scope"));
+        assert!(text.contains("mcp_simulation_tool_disabled"));
+        assert!(text.contains("Do not infer quorum"));
     }
 
     #[test]

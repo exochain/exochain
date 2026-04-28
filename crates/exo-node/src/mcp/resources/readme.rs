@@ -34,8 +34,9 @@ MCP rules and 8 kernel invariants on every action. Read this document first.
   terminate consent. `ConsentRequired` (invariant #2) means nothing works
   without active consent.
 - **governance (5)** — Create decisions, cast votes, check quorum, inspect
-  status, propose amendments. `QuorumLegitimate` (invariant #7) enforces
-  2/3 threshold evidence.
+  status, propose amendments. These tools refuse by default unless
+  `unaudited-mcp-simulation-tools` is enabled, because they are not wired to
+  the live governance store/reactor yet.
 - **authority (4)** — Delegate authority, verify chains, check permissions,
   run kernel adjudication. `AuthorityChainValid` (invariant #6) is checked
   here.
@@ -161,5 +162,6 @@ mod tests {
         assert!(text.contains("# EXOCHAIN MCP Server"));
         assert!(text.contains("exochain://constitution"));
         assert!(text.contains("MCP-001"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
     }
 }
