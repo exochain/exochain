@@ -19,12 +19,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
-use super::session_auth::{claim_submission_signing_payload, did_from_public_key};
+use super::session_auth::claim_submission_signing_payload;
 #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
 use super::types::{ClaimStatus, IdentityClaim, OtpChannel};
 use super::{
     otp::OtpResult,
-    session_auth::{bootstrap_signing_payload, public_key_from_hex, signature_from_hex},
+    session_auth::{
+        bootstrap_signing_payload, did_from_public_key, public_key_from_hex, signature_from_hex,
+    },
     store::ZerodentityStore,
     types::{ClaimType, IdentitySession, OtpChallenge, ZerodentityScore},
 };
@@ -183,6 +185,14 @@ fn verify_bootstrap_signature(
 
     let public_key =
         public_key_from_hex(public_key_hex).map_err(|e| json_error(StatusCode::BAD_REQUEST, e))?;
+    let derived_did = did_from_public_key(&public_key)
+        .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if derived_did != challenge.subject_did {
+        return Err(json_error(
+            StatusCode::UNAUTHORIZED,
+            "public_key does not derive the challenged subject_did",
+        ));
+    }
     let signature =
         signature_from_hex(signature_hex).map_err(|e| json_error(StatusCode::BAD_REQUEST, e))?;
     if signature.is_empty() {
@@ -657,6 +667,19 @@ mod tests {
         assert!(!default_handler.contains("Uuid::new_v4()"));
         assert!(!default_handler.contains("Signature::Empty"));
         assert!(!default_handler.contains("insert_claim"));
+    }
+
+    #[test]
+    fn verify_bootstrap_signature_binds_public_key_to_challenged_did() {
+        let source = include_str!("onboarding.rs");
+        let verifier = source
+            .split("fn verify_bootstrap_signature")
+            .nth(1)
+            .and_then(|section| section.split("Ok(public_key)").next())
+            .expect("verify_bootstrap_signature must have an explicit function body");
+
+        assert!(verifier.contains("did_from_public_key(&public_key)"));
+        assert!(verifier.contains("derived_did != challenge.subject_did"));
     }
 
     #[test]

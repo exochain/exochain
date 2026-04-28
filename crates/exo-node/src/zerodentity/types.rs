@@ -413,7 +413,7 @@ pub struct PeerAttestation {
 /// Spec §8.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdentitySession {
-    /// Opaque session token (UUID v4 in hex).
+    /// Opaque session token issued after verified onboarding bootstrap.
     pub session_token: String,
     /// The DID authenticated by this session.
     pub subject_did: Did,

@@ -124,7 +124,6 @@ pub(crate) fn signature_from_hex(value: &str) -> Result<Signature, String> {
     Ok(Signature::from_bytes(signature))
 }
 
-#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
 pub(crate) fn did_from_public_key(public_key: &PublicKey) -> Result<Did, String> {
     let key_hash = Hash256::digest(public_key.as_bytes());
     let method_specific = bs58::encode(key_hash.as_bytes()).into_string();

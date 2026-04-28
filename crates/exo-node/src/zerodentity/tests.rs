@@ -205,7 +205,6 @@ mod tests {
         })
     }
 
-    #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
     fn derived_did(keypair: &KeyPair) -> Did {
         crate::zerodentity::session_auth::did_from_public_key(keypair.public_key()).unwrap()
     }
@@ -994,8 +993,8 @@ mod tests {
     async fn verify_otp_correct_code_returns_verified_and_session_token() {
         let store = new_shared_store();
         let app = onboarding_app(store.clone());
-        let did = td("otp-ok-01");
         let keypair = test_keypair(1);
+        let did = derived_did(&keypair);
         // Far-future dispatched_ms so TTL check won't trigger on wall clock
         let dispatched_ms = u64::MAX / 2;
 
@@ -1068,9 +1067,9 @@ mod tests {
     async fn verify_otp_success_rejects_wrong_bootstrap_key() {
         let store = new_shared_store();
         let app = onboarding_app(store.clone());
-        let did = td("otp-bootstrap-wrong-key");
         let keypair = test_keypair(2);
         let wrong_keypair = test_keypair(3);
+        let did = derived_did(&keypair);
         let dispatched_ms = u64::MAX / 2;
 
         let mut rng = seeded_rng(0xCAFE_1011);
@@ -1100,6 +1099,34 @@ mod tests {
                 "public_key": hex::encode(keypair.public_key().as_bytes()),
                 "bootstrap_signature": hex::encode(wrong_signature.to_bytes())
             }),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn verify_otp_rejects_bootstrap_key_that_does_not_derive_subject_did() {
+        let store = new_shared_store();
+        let app = onboarding_app(store.clone());
+        let did = td("otp-bootstrap-unbound-key");
+        let keypair = test_keypair(4);
+        let dispatched_ms = u64::MAX / 2;
+
+        let mut rng = seeded_rng(0xCAFE_1012);
+        let (challenge, code) =
+            OtpChallenge::new(&did, OtpChannel::Email, dispatched_ms, &mut rng).unwrap();
+        let cid = challenge.challenge_id.clone();
+        store
+            .lock()
+            .unwrap()
+            .insert_otp_challenge(&challenge)
+            .unwrap();
+
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/verify",
+            bootstrap_verify_body(&cid, &code, &did, &keypair),
         )
         .await;
 
