@@ -270,18 +270,22 @@ impl Signature {
         Self::Ed25519(bytes)
     }
 
-    /// Return the inner bytes for Ed25519 signatures.
-    /// Panics if called on non-Ed25519 variants (use `ed25519_bytes()` for fallible access).
+    /// Return the inner bytes for legacy Ed25519 signatures.
+    ///
+    /// # Panics
+    /// Panics if called on non-Ed25519 variants. Use [`Self::ed25519_bytes`]
+    /// for fallible Ed25519-compatible access or [`Self::to_bytes`] for
+    /// algorithm-agnostic byte serialization.
+    #[deprecated(
+        since = "0.1.0-beta",
+        note = "use ed25519_bytes() for fallible Ed25519-compatible access or to_bytes() for algorithm-agnostic serialization"
+    )]
     #[must_use]
     pub fn as_bytes(&self) -> &[u8; 64] {
         match self {
             Self::Ed25519(b) => b,
-            Self::Hybrid { classical, .. } => classical,
-            Self::PostQuantum(_) | Self::Empty => {
-                // Return a static reference for compatibility; callers should
-                // migrate to ed25519_bytes() for proper handling.
-                static ZEROS: [u8; 64] = [0u8; 64];
-                &ZEROS
+            Self::Hybrid { .. } | Self::PostQuantum(_) | Self::Empty => {
+                panic!("Signature::as_bytes() is only valid for Ed25519 signatures")
             }
         }
     }
@@ -294,6 +298,16 @@ impl Signature {
             Self::Hybrid { classical, .. } => Some(classical),
             Self::PostQuantum(_) | Self::Empty => None,
         }
+    }
+
+    /// Return true when the Ed25519-compatible component is the all-zero sentinel.
+    ///
+    /// This preserves the explicit null-signature guard without relying on
+    /// [`Self::as_bytes`], which is intentionally Ed25519-only.
+    #[must_use]
+    pub fn ed25519_component_is_zero(&self) -> bool {
+        self.ed25519_bytes()
+            .is_some_and(|raw| raw.iter().all(|b| *b == 0))
     }
 
     /// Return all signature bytes as a slice (algorithm-agnostic).
@@ -1204,9 +1218,36 @@ mod tests {
     // -- Signature ---------------------------------------------------------
 
     #[test]
+    #[allow(deprecated)]
     fn signature_from_bytes() {
         let sig = Signature::from_bytes([0xffu8; 64]);
         assert_eq!(sig.as_bytes(), &[0xff; 64]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Signature::as_bytes() is only valid for Ed25519 signatures")]
+    #[allow(deprecated)]
+    fn signature_as_bytes_panics_for_empty_instead_of_returning_zero_sentinel() {
+        let _ = Signature::Empty.as_bytes();
+    }
+
+    #[test]
+    #[should_panic(expected = "Signature::as_bytes() is only valid for Ed25519 signatures")]
+    #[allow(deprecated)]
+    fn signature_as_bytes_panics_for_post_quantum_instead_of_returning_zero_sentinel() {
+        let _ = Signature::PostQuantum(vec![1, 2, 3]).as_bytes();
+    }
+
+    #[test]
+    #[should_panic(expected = "Signature::as_bytes() is only valid for Ed25519 signatures")]
+    #[allow(deprecated)]
+    fn signature_as_bytes_panics_for_hybrid_to_prevent_classical_downgrade() {
+        let signature = Signature::Hybrid {
+            classical: [0xab; 64],
+            pq: vec![1, 2, 3],
+        };
+
+        let _ = signature.as_bytes();
     }
 
     #[test]
@@ -1216,6 +1257,20 @@ mod tests {
         assert_eq!(Signature::Empty.ed25519_bytes(), None);
         let pq = Signature::PostQuantum(vec![1, 2, 3]);
         assert_eq!(pq.ed25519_bytes(), None);
+    }
+
+    #[test]
+    fn signature_ed25519_component_zero_detection_is_explicit() {
+        assert!(Signature::from_bytes([0u8; 64]).ed25519_component_is_zero());
+        assert!(!Signature::from_bytes([1u8; 64]).ed25519_component_is_zero());
+        assert!(!Signature::PostQuantum(vec![1, 2, 3]).ed25519_component_is_zero());
+        assert!(!Signature::Empty.ed25519_component_is_zero());
+
+        let hybrid_zero_classical = Signature::Hybrid {
+            classical: [0u8; 64],
+            pq: vec![1, 2, 3],
+        };
+        assert!(hybrid_zero_classical.ed25519_component_is_zero());
     }
 
     #[test]

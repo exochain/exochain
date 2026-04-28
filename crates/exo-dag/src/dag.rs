@@ -406,7 +406,8 @@ mod tests {
     fn make_verify_fn() -> VerifyFn {
         Box::new(|data: &[u8], sig: &Signature| {
             let h = blake3::hash(data);
-            sig.as_bytes()[..32] == *h.as_bytes()
+            sig.ed25519_bytes()
+                .is_some_and(|raw| raw[..32] == *h.as_bytes())
         })
     }
 

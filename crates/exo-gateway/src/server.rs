@@ -2814,7 +2814,7 @@ mod tests {
             "authTimestampLogical": timestamp.logical,
             "observedAt": observed_at.physical_ms,
             "observedAtLogical": observed_at.logical,
-            "signature": hex::encode(signature.as_bytes())
+            "signature": hex::encode(signature.to_bytes())
         });
 
         let response = handle_auth_login(

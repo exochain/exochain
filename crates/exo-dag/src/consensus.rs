@@ -132,8 +132,7 @@ impl Vote {
         if self.signature.is_empty() {
             return false;
         }
-        let raw = self.signature.as_bytes();
-        if !raw.is_empty() && raw.iter().all(|b| *b == 0) {
+        if self.signature.ed25519_component_is_zero() {
             return false;
         }
         let Ok(payload) = self.signing_payload() else {
@@ -169,8 +168,7 @@ impl Proposal {
         if signature.is_empty() {
             return false;
         }
-        let raw = signature.as_bytes();
-        if !raw.is_empty() && raw.iter().all(|b| *b == 0) {
+        if signature.ed25519_component_is_zero() {
             return false;
         }
         let Ok(payload) = self.signing_payload() else {
@@ -1207,17 +1205,15 @@ mod tests {
     // Coverage completion tests — exercise remaining error branches.
     // -----------------------------------------------------------------------
 
-    // Covers Vote::verify_signature line 137: non-empty, all-zero (non-Ed25519) sig.
+    // Covers Vote::verify_signature rejecting a non-Ed25519 signature without
+    // relying on the legacy Signature::as_bytes() zero sentinel.
     #[test]
-    fn vote_verify_signature_rejects_all_zero_postquantum_bytes() {
+    fn vote_verify_signature_rejects_postquantum_signature() {
         let (pk_a, _sk_a) = crypto::generate_keypair();
         let v = Vote {
             voter: Did::new("did:exo:alice").unwrap(),
             round: 0,
             node_hash: Hash256::ZERO,
-            // PostQuantum variant -> is_empty() == false (vec non-empty),
-            // but as_bytes() returns the static ZEROS buffer, exercising
-            // the all-zero sentinel guard.
             signature: Signature::PostQuantum(vec![1u8; 64]),
         };
         assert!(!v.verify_signature(&pk_a));
@@ -1235,17 +1231,16 @@ mod tests {
         assert!(!p.verify_signature(&pk_a, &Signature::empty()));
     }
 
-    // Covers Proposal::verify_signature line 174: non-empty, all-zero sentinel.
+    // Covers Proposal::verify_signature rejecting a non-Ed25519 signature without
+    // relying on the legacy Signature::as_bytes() zero sentinel.
     #[test]
-    fn proposal_verify_signature_rejects_all_zero_postquantum_bytes() {
+    fn proposal_verify_signature_rejects_postquantum_signature() {
         let (pk_a, _sk_a) = crypto::generate_keypair();
         let p = Proposal {
             proposer: Did::new("did:exo:alice").unwrap(),
             round: 0,
             node_hash: Hash256::ZERO,
         };
-        // Same trick as the vote test: non-empty PostQuantum whose
-        // as_bytes() returns the all-zero static buffer.
         let sig = Signature::PostQuantum(vec![1u8; 64]);
         assert!(!p.verify_signature(&pk_a, &sig));
     }

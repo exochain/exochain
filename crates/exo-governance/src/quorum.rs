@@ -78,8 +78,7 @@ impl IndependenceAttestation {
             return false;
         };
         // Empty signatures are an explicit "unsigned" sentinel and must not verify.
-        let raw = self.signature.as_bytes();
-        if raw.is_empty() || raw.iter().all(|b| *b == 0) {
+        if self.signature.is_empty() || self.signature.ed25519_component_is_zero() {
             return false;
         }
         crypto::verify(&payload, &self.signature, public_key)
@@ -1200,7 +1199,7 @@ mod tests {
         assert!(PublicKeyResolver::resolve(&resolver, &did("other")).is_none());
     }
 
-    // Covers verify_signature's empty-signature early reject (Signature::Empty → 64 zeros).
+    // Covers verify_signature's empty-signature early reject.
     #[test]
     fn verify_signature_rejects_empty_variant() {
         let (pk, _sk) = crypto::generate_keypair();

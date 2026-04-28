@@ -638,7 +638,7 @@ mod tests {
         let params = json!({
             "public_key_hex": hex::encode(pk.as_bytes()),
             "message_hex": hex::encode(message),
-            "signature_hex": hex::encode(sig.as_bytes()),
+            "signature_hex": hex::encode(sig.to_bytes()),
         });
         let result = execute_verify_signature(&params, &NodeContext::empty());
         assert!(!result.is_error);

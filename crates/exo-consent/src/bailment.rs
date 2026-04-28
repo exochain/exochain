@@ -181,7 +181,7 @@ pub fn accept(
     // callers who forget to check is_empty() and pass an Ed25519 with
     // all-zero bytes, which some backends treat as a valid point but
     // is a well-known null-signature attack shape.
-    if bailee_signature.as_bytes().iter().all(|b| *b == 0) {
+    if bailee_signature.ed25519_component_is_zero() {
         return Err(ConsentError::InvalidSignature);
     }
 
@@ -209,7 +209,7 @@ pub fn has_valid_acceptance_proof(bailment: &Bailment) -> bool {
     if bailment.signature.is_empty() {
         return false;
     }
-    if bailment.signature.as_bytes().iter().all(|b| *b == 0) {
+    if bailment.signature.ed25519_component_is_zero() {
         return false;
     }
     let Some(bailee_public_key) = bailment.bailee_public_key else {

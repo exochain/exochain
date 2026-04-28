@@ -475,8 +475,7 @@ fn canonical_scope(scope: &[Permission]) -> Result<Vec<Permission>, AuthorityErr
 }
 
 fn signature_is_all_zero(signature: &Signature) -> bool {
-    let raw = signature.as_bytes();
-    !raw.is_empty() && raw.iter().all(|b| *b == 0)
+    signature.ed25519_component_is_zero()
 }
 
 #[cfg(test)]

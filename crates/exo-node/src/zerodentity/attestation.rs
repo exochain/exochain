@@ -140,8 +140,7 @@ pub fn verify_attestation_signature(
     if signature.is_empty() {
         return false;
     }
-    let raw = signature.as_bytes();
-    if !raw.is_empty() && raw.iter().all(|b| *b == 0) {
+    if signature.ed25519_component_is_zero() {
         return false;
     }
     let Ok(payload) = attestation_signing_payload(

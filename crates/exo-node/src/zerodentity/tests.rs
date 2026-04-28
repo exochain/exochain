@@ -100,7 +100,7 @@ mod tests {
             "message_hash": message_hash.map(|h| hex::encode(h.as_bytes())),
             "created_ms": created_ms,
             "attester_public_key": hex::encode(public_key.as_bytes()),
-            "signature": hex::encode(signature.as_bytes())
+            "signature": hex::encode(signature.to_bytes())
         })
     }
 

@@ -222,7 +222,7 @@ impl VerificationCeremony {
                 IdentityProof::Signature(sig, pk, msg) => {
                     let mut h = blake3::Hasher::new();
                     h.update(b"proof.signature.v1");
-                    h.update(sig.as_bytes());
+                    h.update(&sig.to_bytes());
                     h.update(pk.as_bytes());
                     h.update(msg);
                     ("Signature", *h.finalize().as_bytes())
