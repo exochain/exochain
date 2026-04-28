@@ -254,7 +254,7 @@ fn derive_status_and_evidence(
                     report.authority_clearance.chain_depth,
                     hex_encode(&report.authority_clearance.chain_hash),
                     ai_grants,
-                    report.ai_delegation_revocations
+                    report.ai_delegation_revocations.len()
                 ),
             )
         }
@@ -407,7 +407,7 @@ mod tests {
             legal_jurisdiction: "EU-AI-ACT",
             mcp_log: &McpAuditLog::new(),
             ai_delegation_grants: vec![],
-            ai_delegation_revocations: 0,
+            ai_delegation_revocations: vec![],
             authority_clearance: &clearance,
         })
         .expect("ok")

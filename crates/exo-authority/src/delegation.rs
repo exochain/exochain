@@ -10,6 +10,10 @@ use crate::{
     permission::Permission,
 };
 
+/// Domain tag for authority delegation revocation signatures.
+pub const AUTHORITY_REVOCATION_SIGNING_DOMAIN: &str = "exo.authority.revocation.v1";
+const AUTHORITY_REVOCATION_SIGNING_SCHEMA_VERSION: u16 = 1;
+
 /// Registry of all active delegations.
 #[derive(Debug, Default)]
 pub struct DelegationRegistry {
@@ -30,6 +34,192 @@ pub struct DelegationGrant<'a> {
     pub now: &'a Timestamp,
     pub delegatee_kind: DelegateeKind,
     pub delegator_public_key: &'a PublicKey,
+}
+
+/// Caller-supplied fields for a signed delegation revocation.
+pub struct DelegationRevocationGrant<'a> {
+    pub link_id: &'a Hash256,
+    pub revoker: &'a Did,
+    pub revoked_at: &'a Timestamp,
+    pub revoker_public_key: &'a PublicKey,
+}
+
+#[derive(serde::Serialize)]
+struct AuthorityRevocationSigningPayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    revoked_link_hash: &'a Hash256,
+    revoker_did: &'a Did,
+    revoked_at: &'a Timestamp,
+}
+
+/// Signed evidence that an authority link was revoked by its delegator.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AuthorityRevocation {
+    pub revoked_link: AuthorityLink,
+    pub revoked_link_hash: Hash256,
+    pub revoker_did: Did,
+    pub revoked_at: Timestamp,
+    pub signature: Signature,
+}
+
+impl AuthorityRevocation {
+    /// Create and verify a signed revocation artifact for an authority link.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthorityError`] when the revoker is not the original
+    /// delegator, the revocation timestamp is invalid, canonical payload
+    /// encoding fails, or the revocation signature does not verify.
+    pub fn for_link(
+        revoked_link: AuthorityLink,
+        revoker: &Did,
+        revoked_at: &Timestamp,
+        revoker_public_key: &PublicKey,
+        sign_fn: impl FnOnce(&[u8]) -> Signature,
+    ) -> Result<Self, AuthorityError> {
+        let revoked_link_hash = revoked_link.id()?;
+        let mut revocation = Self {
+            revoked_link,
+            revoked_link_hash,
+            revoker_did: revoker.clone(),
+            revoked_at: *revoked_at,
+            signature: Signature::empty(),
+        };
+
+        revocation.validate_structure()?;
+        let payload = revocation.signing_payload()?;
+        let signature = sign_fn(&payload);
+        if signature.is_empty() {
+            return Err(AuthorityError::InvalidSignature { index: 0 });
+        }
+        if !crypto::verify(&payload, &signature, revoker_public_key) {
+            return Err(AuthorityError::InvalidSignature { index: 0 });
+        }
+        revocation.signature = signature;
+        Ok(revocation)
+    }
+
+    /// Compute the deterministic ID for this revocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthorityError::SigningPayloadEncoding`] if canonical CBOR
+    /// encoding of the signed payload fails.
+    pub fn id(&self) -> Result<Hash256, AuthorityError> {
+        Ok(Hash256::digest(&self.signing_payload()?))
+    }
+
+    /// Canonical revocation payload signed by the revoker.
+    ///
+    /// The payload is domain-separated CBOR and excludes the signature itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthorityError::SigningPayloadEncoding`] if canonical CBOR
+    /// encoding fails.
+    pub fn signing_payload(&self) -> Result<Vec<u8>, AuthorityError> {
+        let payload = AuthorityRevocationSigningPayload {
+            domain: AUTHORITY_REVOCATION_SIGNING_DOMAIN,
+            schema_version: AUTHORITY_REVOCATION_SIGNING_SCHEMA_VERSION,
+            revoked_link_hash: &self.revoked_link_hash,
+            revoker_did: &self.revoker_did,
+            revoked_at: &self.revoked_at,
+        };
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(&payload, &mut buf).map_err(|e| {
+            AuthorityError::SigningPayloadEncoding {
+                reason: e.to_string(),
+            }
+        })?;
+        Ok(buf)
+    }
+
+    /// Verify this revocation and the revoked authority link.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthorityError`] when the artifact is structurally invalid,
+    /// the revocation signature is missing or forged, or the revoked link's
+    /// original delegation signature cannot be verified.
+    pub fn verify<F>(&self, resolve_key: F) -> Result<(), AuthorityError>
+    where
+        F: Fn(&Did) -> Option<PublicKey>,
+    {
+        self.validate_structure()?;
+
+        if self.signature.is_empty() {
+            return Err(AuthorityError::InvalidSignature { index: 0 });
+        }
+        let revoker_public_key =
+            resolve_key(&self.revoker_did).ok_or(AuthorityError::InvalidSignature { index: 0 })?;
+        let payload = self.signing_payload()?;
+        if !crypto::verify(&payload, &self.signature, &revoker_public_key) {
+            return Err(AuthorityError::InvalidSignature { index: 0 });
+        }
+
+        if self.revoked_link.signature.is_empty() {
+            return Err(AuthorityError::InvalidSignature {
+                index: self.revoked_link.depth,
+            });
+        }
+        let delegator_public_key = resolve_key(&self.revoked_link.delegator_did).ok_or(
+            AuthorityError::InvalidSignature {
+                index: self.revoked_link.depth,
+            },
+        )?;
+        let link_payload = self.revoked_link.signing_payload()?;
+        if !crypto::verify(
+            &link_payload,
+            &self.revoked_link.signature,
+            &delegator_public_key,
+        ) {
+            return Err(AuthorityError::InvalidSignature {
+                index: self.revoked_link.depth,
+            });
+        }
+
+        Ok(())
+    }
+
+    fn validate_structure(&self) -> Result<(), AuthorityError> {
+        if self.revoked_at == Timestamp::ZERO {
+            return Err(AuthorityError::InvalidDelegation {
+                reason: "revocation timestamp must be non-zero".into(),
+            });
+        }
+        if self.revoked_at < self.revoked_link.created {
+            return Err(AuthorityError::InvalidDelegation {
+                reason: "revocation timestamp must not precede delegation creation".into(),
+            });
+        }
+        if let Some(expires) = &self.revoked_link.expires {
+            if expires.is_expired(&self.revoked_at) {
+                return Err(AuthorityError::ExpiredLink {
+                    index: self.revoked_link.depth,
+                });
+            }
+        }
+        if self.revoker_did != self.revoked_link.delegator_did {
+            return Err(AuthorityError::PermissionDenied(format!(
+                "revoker {} is not delegator {} for revoked link",
+                self.revoker_did.as_str(),
+                self.revoked_link.delegator_did.as_str()
+            )));
+        }
+
+        let computed_link_hash = self.revoked_link.id()?;
+        if computed_link_hash != self.revoked_link_hash {
+            return Err(AuthorityError::InvalidDelegation {
+                reason: format!(
+                    "revoked link hash mismatch: expected {}, computed {}",
+                    self.revoked_link_hash, computed_link_hash
+                ),
+            });
+        }
+
+        Ok(())
+    }
 }
 
 impl DelegationRegistry {
@@ -142,6 +332,37 @@ impl DelegationRegistry {
         }
 
         Ok(())
+    }
+
+    /// Revoke a delegation by its link ID and return signed revocation evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthorityError::NotFound`] if the link does not exist, or
+    /// signature/validation errors when the revocation artifact cannot be
+    /// verified before removal.
+    pub fn revoke_delegation_signed(
+        &mut self,
+        grant: DelegationRevocationGrant<'_>,
+        sign_fn: impl FnOnce(&[u8]) -> Signature,
+    ) -> Result<AuthorityRevocation, AuthorityError> {
+        let DelegationRevocationGrant {
+            link_id,
+            revoker,
+            revoked_at,
+            revoker_public_key,
+        } = grant;
+
+        let link = self
+            .links
+            .get(link_id)
+            .cloned()
+            .ok_or_else(|| AuthorityError::NotFound(format!("{link_id:?}")))?;
+
+        let revocation =
+            AuthorityRevocation::for_link(link, revoker, revoked_at, revoker_public_key, sign_fn)?;
+        self.revoke_delegation(link_id)?;
+        Ok(revocation)
     }
 
     /// Find a delegation chain from `from` to `to`.
@@ -487,6 +708,97 @@ mod tests {
         let id = link.id().unwrap();
         assert!(reg.revoke_delegation(&id).is_ok());
         assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn signed_revoke_delegation_returns_verifiable_revocation() {
+        let mut reg = DelegationRegistry::new();
+        let alice_key = KeyPair::generate();
+        let alice = did("alice");
+        let alice_public_key = public_key(&alice_key);
+        let link =
+            signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
+        let id = link.id().unwrap();
+
+        let revocation = reg
+            .revoke_delegation_signed(
+                DelegationRevocationGrant {
+                    link_id: &id,
+                    revoker: &alice,
+                    revoked_at: &ts(6_000),
+                    revoker_public_key: &alice_public_key,
+                },
+                |payload| alice_key.sign(payload),
+            )
+            .unwrap();
+
+        assert_eq!(revocation.revoked_link_hash, id);
+        assert!(!revocation.signature.is_empty());
+        assert_eq!(reg.len(), 0);
+        assert!(
+            revocation
+                .verify(|did| {
+                    if did == &alice {
+                        Some(alice_public_key)
+                    } else {
+                        None
+                    }
+                })
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn signed_revoke_delegation_rejects_wrong_key_signature() {
+        let mut reg = DelegationRegistry::new();
+        let alice_key = KeyPair::generate();
+        let wrong_key = KeyPair::generate();
+        let alice = did("alice");
+        let alice_public_key = public_key(&alice_key);
+        let link =
+            signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
+        let id = link.id().unwrap();
+
+        let result = reg.revoke_delegation_signed(
+            DelegationRevocationGrant {
+                link_id: &id,
+                revoker: &alice,
+                revoked_at: &ts(6_000),
+                revoker_public_key: &alice_public_key,
+            },
+            |payload| wrong_key.sign(payload),
+        );
+
+        assert!(matches!(
+            result,
+            Err(AuthorityError::InvalidSignature { index: 0 })
+        ));
+        assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn signed_revoke_delegation_rejects_non_delegator_revoker() {
+        let mut reg = DelegationRegistry::new();
+        let alice_key = KeyPair::generate();
+        let bob_key = KeyPair::generate();
+        let bob = did("bob");
+        let bob_public_key = public_key(&bob_key);
+        let link =
+            signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
+        let id = link.id().unwrap();
+
+        let result = reg.revoke_delegation_signed(
+            DelegationRevocationGrant {
+                link_id: &id,
+                revoker: &bob,
+                revoked_at: &ts(6_000),
+                revoker_public_key: &bob_public_key,
+            },
+            |payload| bob_key.sign(payload),
+        );
+
+        assert!(matches!(result, Err(AuthorityError::PermissionDenied(_))));
+        assert_eq!(reg.len(), 1);
     }
 
     #[test]

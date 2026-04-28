@@ -12,7 +12,7 @@
 //! which verifies the requesting actor's authority chain before any report
 //! can be generated.
 
-use exo_authority::{AuthorityChain, AuthorityLink, DelegateeKind, chain};
+use exo_authority::{AuthorityChain, AuthorityLink, AuthorityRevocation, DelegateeKind, chain};
 use exo_core::{Did, PublicKey, Timestamp, hash::hash_structured};
 use exo_gatekeeper::mcp_audit::{
     McpAuditLog, McpEnforcementOutcome, verify_chain as verify_mcp_audit_chain,
@@ -25,6 +25,9 @@ const AUTHORITY_CLEARANCE_DOMAIN: &str = "exo.legal.ai_transparency.authority_cl
 const AUTHORITY_CLEARANCE_SCHEMA_VERSION: u16 = 1;
 const AI_DELEGATION_GRANT_DOMAIN: &str = "exo.legal.ai_transparency.ai_delegation_grant.v1";
 const AI_DELEGATION_GRANT_SCHEMA_VERSION: u16 = 1;
+const AI_DELEGATION_REVOCATION_DOMAIN: &str =
+    "exo.legal.ai_transparency.ai_delegation_revocation.v1";
+const AI_DELEGATION_REVOCATION_SCHEMA_VERSION: u16 = 1;
 
 // ---------------------------------------------------------------------------
 // Report structures
@@ -88,6 +91,42 @@ impl VerifiedAiDelegationGrant {
     }
 }
 
+/// Summary of a verified AI agent delegation revocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiDelegationRevocationEvent {
+    pub delegator: Did,
+    pub delegatee: Did,
+    /// The model identifier — may be redacted in compliance reports.
+    pub model_id: String,
+    pub granted_at: Timestamp,
+    pub expires_at: Option<Timestamp>,
+    pub revoked_at: Timestamp,
+    pub revoker: Did,
+    pub depth: usize,
+    pub authority_chain_root: Did,
+    pub authority_chain_leaf: Did,
+    pub authority_chain_depth: usize,
+    pub authority_chain_hash: [u8; 32],
+    pub authority_link_hash: [u8; 32],
+    pub revocation_hash: [u8; 32],
+}
+
+/// Verified AI delegation revocation artifact that can only be created by
+/// authority-chain and signed-revocation verification through
+/// [`verify_ai_delegation_revocation`].
+#[derive(Debug, Clone)]
+pub struct VerifiedAiDelegationRevocation {
+    event: AiDelegationRevocationEvent,
+}
+
+impl VerifiedAiDelegationRevocation {
+    /// Return the serializable event evidence captured after verification.
+    #[must_use]
+    pub fn event(&self) -> &AiDelegationRevocationEvent {
+        &self.event
+    }
+}
+
 /// Per-rule MCP enforcement outcome summary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpOutcomeSummary {
@@ -114,8 +153,8 @@ pub struct AiTransparencyReport {
     pub ai_agent_action_count: u64,
     /// Verified AI delegation grants recorded during the period.
     pub ai_delegation_grants: Vec<AiDelegationEvent>,
-    /// Count of AI delegation revocations during the period.
-    pub ai_delegation_revocations: u64,
+    /// Verified AI delegation revocations recorded during the period.
+    pub ai_delegation_revocations: Vec<AiDelegationRevocationEvent>,
     /// Per-rule breakdown of MCP enforcement outcomes.
     pub mcp_rule_outcomes: Vec<McpOutcomeSummary>,
     /// Head hash of the MCP audit log after full-chain verification.
@@ -138,7 +177,8 @@ pub struct ReportParams<'a> {
     pub mcp_log: &'a McpAuditLog,
     /// Verified AI delegation grants admitted through signed authority chains.
     pub ai_delegation_grants: Vec<VerifiedAiDelegationGrant>,
-    pub ai_delegation_revocations: u64,
+    /// Verified AI delegation revocations admitted through signed revocation artifacts.
+    pub ai_delegation_revocations: Vec<VerifiedAiDelegationRevocation>,
     /// Verified authority-chain clearance for the actor generating the report.
     pub authority_clearance: &'a VerifiedAuthorityClearance,
 }
@@ -193,7 +233,10 @@ pub fn generate_report(params: ReportParams<'_>) -> Result<AiTransparencyReport>
             .into_iter()
             .map(|grant| grant.event().clone())
             .collect(),
-        ai_delegation_revocations,
+        ai_delegation_revocations: ai_delegation_revocations
+            .into_iter()
+            .map(|revocation| revocation.event().clone())
+            .collect(),
         mcp_rule_outcomes,
         mcp_audit_head_hash: mcp_log.head_hash(),
         authority_clearance: authority_clearance.evidence().clone(),
@@ -340,6 +383,114 @@ where
     }))
 }
 
+/// Verify an authority chain and signed revocation artifact, then extract an
+/// AI delegation revocation from the chain leaf.
+///
+/// Returns `Ok(None)` after successful chain and revocation verification when
+/// the revoked leaf delegatee is not an AI agent. This keeps human and legacy
+/// delegation revocations out of AI transparency lists without trusting caller
+/// supplied flags or counts.
+///
+/// # Errors
+///
+/// Returns [`LegalError::InvalidStateTransition`] if the verification timestamp
+/// is zero, the revocation is in the future relative to verification, the
+/// authority chain is empty or invalid at the revocation time, the signed
+/// revocation artifact is invalid, the revocation does not bind to the chain
+/// leaf, or the event evidence cannot be canonicalized.
+pub fn verify_ai_delegation_revocation<F>(
+    authority_chain: &AuthorityChain,
+    revocation: &AuthorityRevocation,
+    verified_at: Timestamp,
+    resolve_key: F,
+) -> Result<Option<VerifiedAiDelegationRevocation>>
+where
+    F: Fn(&Did) -> Option<PublicKey>,
+{
+    if verified_at == Timestamp::ZERO {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "AI delegation revocation verification timestamp must be non-zero".into(),
+        });
+    }
+    if revocation.revoked_at > verified_at {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "AI delegation revocation must not be in the future relative to verification"
+                .into(),
+        });
+    }
+
+    chain::verify_chain(authority_chain, &revocation.revoked_at, &resolve_key).map_err(|e| {
+        LegalError::InvalidStateTransition {
+            reason: format!("AI delegation revocation authority chain verification failed: {e}"),
+        }
+    })?;
+    revocation
+        .verify(&resolve_key)
+        .map_err(|e| LegalError::InvalidStateTransition {
+            reason: format!("AI delegation revocation signature verification failed: {e}"),
+        })?;
+
+    let chain_root =
+        authority_chain
+            .root()
+            .cloned()
+            .ok_or_else(|| LegalError::InvalidStateTransition {
+                reason: "AI delegation revocation authority chain must not be empty".into(),
+            })?;
+    let chain_leaf =
+        authority_chain
+            .leaf()
+            .cloned()
+            .ok_or_else(|| LegalError::InvalidStateTransition {
+                reason: "AI delegation revocation authority chain must not be empty".into(),
+            })?;
+    let leaf_link =
+        authority_chain
+            .links
+            .last()
+            .ok_or_else(|| LegalError::InvalidStateTransition {
+                reason: "AI delegation revocation authority chain must not be empty".into(),
+            })?;
+
+    if &revocation.revoked_link != leaf_link {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "AI delegation revocation artifact does not match authority chain leaf".into(),
+        });
+    }
+    if revocation.revoked_link_hash
+        != AuthorityLink::id(leaf_link).map_err(|e| LegalError::InvalidStateTransition {
+            reason: format!("AI delegation revocation leaf hash failed: {e}"),
+        })?
+    {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "AI delegation revocation hash does not match authority chain leaf".into(),
+        });
+    }
+
+    let DelegateeKind::AiAgent { model_id } = &leaf_link.delegatee_kind else {
+        return Ok(None);
+    };
+
+    Ok(Some(VerifiedAiDelegationRevocation {
+        event: AiDelegationRevocationEvent {
+            delegator: leaf_link.delegator_did.clone(),
+            delegatee: leaf_link.delegate_did.clone(),
+            model_id: model_id.clone(),
+            granted_at: leaf_link.created,
+            expires_at: leaf_link.expires,
+            revoked_at: revocation.revoked_at,
+            revoker: revocation.revoker_did.clone(),
+            depth: leaf_link.depth,
+            authority_chain_root: chain_root,
+            authority_chain_leaf: chain_leaf,
+            authority_chain_depth: authority_chain.depth(),
+            authority_chain_hash: hash_ai_delegation_revocation_chain(authority_chain)?,
+            authority_link_hash: hash_authority_link(leaf_link)?,
+            revocation_hash: hash_authority_revocation(revocation)?,
+        },
+    }))
+}
+
 fn aggregate_mcp_outcomes(
     log: &McpAuditLog,
     period_start: Timestamp,
@@ -388,6 +539,13 @@ struct AiDelegationGrantHashPayload<'a> {
     authority_chain: &'a AuthorityChain,
 }
 
+#[derive(Serialize)]
+struct AiDelegationRevocationHashPayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    authority_chain: &'a AuthorityChain,
+}
+
 fn hash_authority_clearance_chain(authority_chain: &AuthorityChain) -> Result<[u8; 32]> {
     let payload = AuthorityClearanceHashPayload {
         domain: AUTHORITY_CLEARANCE_DOMAIN,
@@ -414,11 +572,33 @@ fn hash_ai_delegation_chain(authority_chain: &AuthorityChain) -> Result<[u8; 32]
         })
 }
 
+fn hash_ai_delegation_revocation_chain(authority_chain: &AuthorityChain) -> Result<[u8; 32]> {
+    let payload = AiDelegationRevocationHashPayload {
+        domain: AI_DELEGATION_REVOCATION_DOMAIN,
+        schema_version: AI_DELEGATION_REVOCATION_SCHEMA_VERSION,
+        authority_chain,
+    };
+    hash_structured(&payload)
+        .map(|hash| *hash.as_bytes())
+        .map_err(|e| LegalError::InvalidStateTransition {
+            reason: format!("AI delegation revocation canonical CBOR hash failed: {e}"),
+        })
+}
+
 fn hash_authority_link(link: &AuthorityLink) -> Result<[u8; 32]> {
     link.id()
         .map(|hash| *hash.as_bytes())
         .map_err(|e| LegalError::InvalidStateTransition {
             reason: format!("AI delegation authority link hash failed: {e}"),
+        })
+}
+
+fn hash_authority_revocation(revocation: &AuthorityRevocation) -> Result<[u8; 32]> {
+    revocation
+        .id()
+        .map(|hash| *hash.as_bytes())
+        .map_err(|e| LegalError::InvalidStateTransition {
+            reason: format!("AI delegation authority revocation hash failed: {e}"),
         })
 }
 
@@ -525,6 +705,44 @@ mod tests {
         .expect("AI delegation grant is present")
     }
 
+    fn verified_ai_revocation() -> VerifiedAiDelegationRevocation {
+        let root = did("revocation-root");
+        let agent = did("agent-revoked");
+        let root_key = KeyPair::generate();
+        let link = signed_authority_link(
+            &root,
+            &agent,
+            DelegateeKind::AiAgent {
+                model_id: "claude-sonnet-4-6-revoked".into(),
+            },
+            &root_key,
+            0,
+            Some(ts(3_000)),
+        );
+        let revocation = AuthorityRevocation::for_link(
+            link.clone(),
+            &root,
+            &ts(2_000),
+            root_key.public_key(),
+            |payload| root_key.sign(payload),
+        )
+        .expect("authority revocation signs");
+        let chain = AuthorityChain {
+            links: vec![link],
+            max_depth: 5,
+        };
+
+        verify_ai_delegation_revocation(&chain, &revocation, ts(2_500), |did| {
+            if did == &root {
+                Some(*root_key.public_key())
+            } else {
+                None
+            }
+        })
+        .expect("AI delegation revocation verification succeeds")
+        .expect("AI delegation revocation is present")
+    }
+
     fn make_log_with_records() -> McpAuditLog {
         let mut log = McpAuditLog::new();
         let r1 = create_record(
@@ -566,7 +784,7 @@ mod tests {
             legal_jurisdiction: "EU-AI-ACT",
             mcp_log: &log,
             ai_delegation_grants: vec![],
-            ai_delegation_revocations: 0,
+            ai_delegation_revocations: vec![],
             authority_clearance: &clearance,
         });
 
@@ -612,6 +830,27 @@ mod tests {
         assert!(
             !report_params.contains("ai_delegation_grants: Vec<AiDelegationEvent>"),
             "ReportParams must require verified AI delegation grant artifacts, not raw events"
+        );
+    }
+
+    #[test]
+    fn generate_report_source_does_not_accept_raw_ai_delegation_revocation_count() {
+        let source = include_str!("ai_transparency.rs");
+        let production = source
+            .split("// ===========================================================================")
+            .next()
+            .expect("tests section marker present");
+        let report_params = production
+            .split("pub struct ReportParams<'a>")
+            .nth(1)
+            .expect("ReportParams definition present")
+            .split("/// Generate an AI transparency report for the given tenant and time period.")
+            .next()
+            .expect("ReportParams definition boundary present");
+
+        assert!(
+            !report_params.contains("ai_delegation_revocations: u64"),
+            "ReportParams must require verified AI delegation revocation artifacts, not raw counts"
         );
     }
 
@@ -663,7 +902,7 @@ mod tests {
             legal_jurisdiction: "EU-AI-ACT",
             mcp_log: &log,
             ai_delegation_grants: vec![],
-            ai_delegation_revocations: 0,
+            ai_delegation_revocations: vec![],
             authority_clearance: &clearance,
         })
         .expect("report generation should succeed");
@@ -685,7 +924,7 @@ mod tests {
             legal_jurisdiction: "NIST-AI-RMF",
             mcp_log: &log,
             ai_delegation_grants: vec![],
-            ai_delegation_revocations: 0,
+            ai_delegation_revocations: vec![],
             authority_clearance: &clearance,
         })
         .expect("ok");
@@ -774,6 +1013,104 @@ mod tests {
     }
 
     #[test]
+    fn verify_ai_delegation_revocation_from_ai_link_returns_verified_event() {
+        let revocation = verified_ai_revocation();
+        let event = revocation.event();
+        assert_eq!(event.model_id, "claude-sonnet-4-6-revoked");
+        assert_eq!(event.depth, 0);
+        assert_eq!(event.revoked_at, ts(2_000));
+        assert_eq!(event.revoker, did("revocation-root"));
+        assert_eq!(event.authority_chain_root, did("revocation-root"));
+        assert_eq!(event.authority_chain_leaf, did("agent-revoked"));
+        assert_eq!(event.authority_chain_depth, 1);
+        assert_ne!(event.authority_chain_hash, [0u8; 32]);
+        assert_ne!(event.authority_link_hash, [0u8; 32]);
+        assert_ne!(event.revocation_hash, [0u8; 32]);
+    }
+
+    #[test]
+    fn verify_ai_delegation_revocation_from_human_link_returns_none() {
+        let root = did("human-revocation-root");
+        let human = did("human-revoked");
+        let root_key = KeyPair::generate();
+        let link = signed_authority_link(
+            &root,
+            &human,
+            DelegateeKind::Human,
+            &root_key,
+            0,
+            Some(ts(3_000)),
+        );
+        let revocation = AuthorityRevocation::for_link(
+            link.clone(),
+            &root,
+            &ts(2_000),
+            root_key.public_key(),
+            |payload| root_key.sign(payload),
+        )
+        .expect("authority revocation signs");
+        let chain = AuthorityChain {
+            links: vec![link],
+            max_depth: 5,
+        };
+
+        let result = verify_ai_delegation_revocation(&chain, &revocation, ts(2_500), |did| {
+            if did == &root {
+                Some(*root_key.public_key())
+            } else {
+                None
+            }
+        })
+        .expect("human revocation authority chain still verifies");
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn verify_ai_delegation_revocation_rejects_tampered_signature() {
+        let root = did("tampered-revocation-root");
+        let agent = did("tampered-agent");
+        let root_key = KeyPair::generate();
+        let wrong_key = KeyPair::generate();
+        let link = signed_authority_link(
+            &root,
+            &agent,
+            DelegateeKind::AiAgent {
+                model_id: "tampered-model".into(),
+            },
+            &root_key,
+            0,
+            Some(ts(3_000)),
+        );
+        let mut revocation = AuthorityRevocation::for_link(
+            link.clone(),
+            &root,
+            &ts(2_000),
+            root_key.public_key(),
+            |payload| root_key.sign(payload),
+        )
+        .expect("authority revocation signs");
+        let payload = revocation
+            .signing_payload()
+            .expect("revocation signing payload");
+        revocation.signature = wrong_key.sign(&payload);
+        let chain = AuthorityChain {
+            links: vec![link],
+            max_depth: 5,
+        };
+
+        let result = verify_ai_delegation_revocation(&chain, &revocation, ts(2_500), |did| {
+            if did == &root {
+                Some(*root_key.public_key())
+            } else {
+                None
+            }
+        });
+
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn generate_report_with_verified_ai_delegation_grant_succeeds() {
         let log = McpAuditLog::new();
         let tenant = did("tenant");
@@ -788,7 +1125,7 @@ mod tests {
             legal_jurisdiction: "EU-AI-ACT",
             mcp_log: &log,
             ai_delegation_grants: vec![grant],
-            ai_delegation_revocations: 0,
+            ai_delegation_revocations: vec![],
             authority_clearance: &clearance,
         })
         .expect("verified AI delegation grant should be accepted");
@@ -797,6 +1134,33 @@ mod tests {
         assert_eq!(
             report.ai_delegation_grants[0].authority_chain_hash,
             expected_chain_hash
+        );
+    }
+
+    #[test]
+    fn generate_report_with_verified_ai_delegation_revocation_succeeds() {
+        let log = McpAuditLog::new();
+        let tenant = did("tenant");
+        let clearance = verified_clearance(&tenant);
+        let revocation = verified_ai_revocation();
+        let expected_revocation_hash = revocation.event().revocation_hash;
+
+        let report = generate_report(ReportParams {
+            tenant_id: &tenant,
+            period_start: ts(0),
+            period_end: ts(u64::MAX),
+            legal_jurisdiction: "EU-AI-ACT",
+            mcp_log: &log,
+            ai_delegation_grants: vec![],
+            ai_delegation_revocations: vec![revocation],
+            authority_clearance: &clearance,
+        })
+        .expect("verified AI delegation revocation should be accepted");
+
+        assert_eq!(report.ai_delegation_revocations.len(), 1);
+        assert_eq!(
+            report.ai_delegation_revocations[0].revocation_hash,
+            expected_revocation_hash
         );
     }
 
@@ -826,7 +1190,7 @@ mod tests {
             legal_jurisdiction: "EU-AI-ACT",
             mcp_log: &log,
             ai_delegation_grants: vec![],
-            ai_delegation_revocations: 0,
+            ai_delegation_revocations: vec![],
             authority_clearance: &clearance,
         })
         .expect("ok");

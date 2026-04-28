@@ -8,7 +8,7 @@
 mod nist_compliance {
     use exo_authority::{
         AuthorityChain as ReportAuthorityChain, AuthorityLink as ReportAuthorityLink,
-        DelegateeKind, Permission as ReportPermission,
+        AuthorityRevocation, DelegateeKind, Permission as ReportPermission,
     };
     use exo_core::{Did, Hash256, Signature, Timestamp, crypto::KeyPair};
     use exo_gatekeeper::{
@@ -25,8 +25,9 @@ mod nist_compliance {
 
     use crate::{
         ai_transparency::{
-            ReportParams, VerifiedAiDelegationGrant, VerifiedAuthorityClearance, generate_report,
-            verify_ai_delegation_grant, verify_authority_clearance,
+            ReportParams, VerifiedAiDelegationGrant, VerifiedAiDelegationRevocation,
+            VerifiedAuthorityClearance, generate_report, verify_ai_delegation_grant,
+            verify_ai_delegation_revocation, verify_authority_clearance,
         },
         compliance_report::{
             AttestationStatus, ComplianceReportMode, build_report, redact_model_id,
@@ -129,6 +130,44 @@ mod nist_compliance {
         })
         .expect("AI delegation chain must verify")
         .expect("AI delegation grant must be present")
+    }
+
+    fn verified_ai_delegation_revocation(model_id: &str) -> VerifiedAiDelegationRevocation {
+        let root = did("ai-revocation-root");
+        let agent = did("ai-agent-revoked");
+        let root_key = KeyPair::generate();
+        let link = signed_report_authority_link(
+            &root,
+            &agent,
+            DelegateeKind::AiAgent {
+                model_id: model_id.to_owned(),
+            },
+            &root_key,
+            0,
+            Some(ts(2_500)),
+        );
+        let revocation = AuthorityRevocation::for_link(
+            link.clone(),
+            &root,
+            &ts(2_000),
+            root_key.public_key(),
+            |payload| root_key.sign(payload),
+        )
+        .expect("AI delegation revocation must sign");
+        let chain = ReportAuthorityChain {
+            links: vec![link],
+            max_depth: 5,
+        };
+
+        verify_ai_delegation_revocation(&chain, &revocation, ts(2_250), |did| {
+            if did == &root {
+                Some(*root_key.public_key())
+            } else {
+                None
+            }
+        })
+        .expect("AI delegation revocation chain must verify")
+        .expect("AI delegation revocation must be present")
     }
 
     fn signed_authority_link(grantor: &Did, grantee: &Did) -> AuthorityLink {
@@ -390,7 +429,7 @@ mod nist_compliance {
             legal_jurisdiction: "EU-AI-ACT",
             mcp_log: &mcp_log,
             ai_delegation_grants: vec![],
-            ai_delegation_revocations: 0,
+            ai_delegation_revocations: vec![],
             authority_clearance: &clearance,
         })
         .expect("transparency report generation must succeed");
@@ -524,6 +563,7 @@ mod nist_compliance {
         let tenant = did("tenant-beta");
         let mcp_log = McpAuditLog::new();
         let clearance = verified_report_clearance(&tenant);
+        let ai_revocation = verified_ai_delegation_revocation(model_id);
         let report = generate_report(ReportParams {
             tenant_id: &tenant,
             period_start: ts(0),
@@ -531,12 +571,12 @@ mod nist_compliance {
             legal_jurisdiction: "NIST-AI-RMF",
             mcp_log: &mcp_log,
             ai_delegation_grants: vec![ai_grant],
-            ai_delegation_revocations: 1,
+            ai_delegation_revocations: vec![ai_revocation],
             authority_clearance: &clearance,
         })
         .expect("transparency report must succeed");
         assert_eq!(report.ai_delegation_grants.len(), 1);
-        assert_eq!(report.ai_delegation_revocations, 1);
+        assert_eq!(report.ai_delegation_revocations.len(), 1);
 
         // 5. Full mode preserves plaintext model_id.
         let result_full = redact_model_id(&tenant, model_id, &ComplianceReportMode::Full);
