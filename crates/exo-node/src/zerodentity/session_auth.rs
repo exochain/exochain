@@ -11,6 +11,7 @@ pub(crate) const BOOTSTRAP_SIGNING_DOMAIN: &str = "exo.zerodentity.session_boots
 #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
 pub(crate) const CLAIM_SUBMISSION_SIGNING_DOMAIN: &str = "exo.zerodentity.claim_submission.v1";
 pub(crate) const REQUEST_SIGNING_DOMAIN: &str = "exo.zerodentity.session_request.v1";
+pub(crate) const SESSION_TOKEN_DOMAIN: &str = "exo.zerodentity.session_token.v1";
 
 #[derive(Serialize)]
 struct BootstrapSigningPayload<'a> {
@@ -40,6 +41,16 @@ struct RequestSigningPayload<'a> {
     session_token: &'a str,
     nonce: &'a str,
     body_hash: &'a Hash256,
+}
+
+#[derive(Serialize)]
+struct SessionTokenPayload<'a> {
+    domain: &'static str,
+    challenge_id: &'a str,
+    subject_did: &'a str,
+    public_key: &'a PublicKey,
+    bootstrap_signature: &'a Signature,
+    hmac_secret: &'a [u8; 32],
 }
 
 fn encode_cbor<T: Serialize>(payload: &T) -> Result<Vec<u8>, String> {
@@ -97,6 +108,24 @@ pub(crate) fn request_signing_payload(
         nonce,
         body_hash,
     })
+}
+
+pub(crate) fn session_token_from_bootstrap(
+    challenge_id: &str,
+    subject_did: &Did,
+    public_key: &PublicKey,
+    bootstrap_signature: &Signature,
+    hmac_secret: &[u8; 32],
+) -> Result<String, String> {
+    let encoded = encode_cbor(&SessionTokenPayload {
+        domain: SESSION_TOKEN_DOMAIN,
+        challenge_id,
+        subject_did: subject_did.as_str(),
+        public_key,
+        bootstrap_signature,
+        hmac_secret,
+    })?;
+    Ok(hex::encode(Hash256::digest(&encoded).as_bytes()))
 }
 
 pub(crate) fn public_key_from_hex(value: &str) -> Result<PublicKey, String> {
@@ -249,6 +278,48 @@ mod tests {
 
         assert_ne!(first, different_nonce);
         assert_ne!(first, different_body);
+    }
+
+    #[test]
+    fn session_token_is_deterministic_and_bound_to_bootstrap_material() {
+        let did = did();
+        let public_key = public_key();
+        let signature = Signature::from_bytes([9u8; 64]);
+        let secret = [8u8; 32];
+
+        let first = must(session_token_from_bootstrap(
+            "challenge-1",
+            &did,
+            &public_key,
+            &signature,
+            &secret,
+        ));
+        let second = must(session_token_from_bootstrap(
+            "challenge-1",
+            &did,
+            &public_key,
+            &signature,
+            &secret,
+        ));
+        let different_challenge = must(session_token_from_bootstrap(
+            "challenge-2",
+            &did,
+            &public_key,
+            &signature,
+            &secret,
+        ));
+        let different_signature = must(session_token_from_bootstrap(
+            "challenge-1",
+            &did,
+            &public_key,
+            &Signature::from_bytes([10u8; 64]),
+            &secret,
+        ));
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 64);
+        assert_ne!(first, different_challenge);
+        assert_ne!(first, different_signature);
     }
 
     #[test]

@@ -1034,6 +1034,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn verify_otp_replay_after_success_returns_conflict() {
+        let store = new_shared_store();
+        let app = onboarding_app(store.clone());
+        let keypair = test_keypair(11);
+        let did = derived_did(&keypair);
+        let dispatched_ms = u64::MAX / 2;
+
+        let mut rng = seeded_rng(0xCAFE_1020);
+        let (challenge, code) =
+            OtpChallenge::new(&did, OtpChannel::Email, dispatched_ms, &mut rng).unwrap();
+        let cid = challenge.challenge_id.clone();
+        store
+            .lock()
+            .unwrap()
+            .insert_otp_challenge(&challenge)
+            .unwrap();
+
+        let first = post_json(
+            &app,
+            "/api/v1/0dentity/verify",
+            bootstrap_verify_body(&cid, &code, &did, &keypair),
+        )
+        .await;
+        let second = post_json(
+            &app,
+            "/api/v1/0dentity/verify",
+            bootstrap_verify_body(&cid, &code, &did, &keypair),
+        )
+        .await;
+
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(second.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
     async fn verify_otp_success_without_bootstrap_signature_returns_400() {
         let store = new_shared_store();
         let app = onboarding_app(store.clone());

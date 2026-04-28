@@ -41,6 +41,8 @@ pub const OTP_RESEND_COOLDOWN_MS: u64 = 60_000;
 pub enum OtpResult {
     /// Code was correct.
     Success,
+    /// The challenge was already consumed by a successful verification.
+    AlreadyVerified,
     /// Code was wrong; `attempts_remaining` indicates how many more tries before lockout.
     WrongCode { attempts_remaining: u32 },
     /// The challenge TTL has expired.
@@ -122,7 +124,7 @@ impl OtpChallenge {
     pub fn verify(&mut self, code: &str, now_ms: u64) -> OtpResult {
         // Already in a terminal or locked state?
         match self.state {
-            OtpState::Verified => return OtpResult::Success,
+            OtpState::Verified => return OtpResult::AlreadyVerified,
             OtpState::LockedOut => {
                 // Compute when lock expires
                 let locked_until = self.dispatched_ms + self.ttl_ms + OTP_LOCKOUT_MS;
@@ -416,7 +418,7 @@ mod tests {
     // ---- verify: early-return branches for terminal states ----
 
     #[test]
-    fn verify_on_already_verified_returns_success_without_incrementing_attempts() {
+    fn verify_on_already_verified_returns_already_verified_without_incrementing_attempts() {
         let mut rng = test_rng();
         let did = test_did();
         let now = 0u64;
@@ -427,7 +429,7 @@ mod tests {
         assert_eq!(ch.state, OtpState::Verified);
         let attempts_before = ch.attempts;
         // Second verify hits the Verified early-return (line 127)
-        assert_eq!(ch.verify("wrong", now + 2_000), OtpResult::Success);
+        assert_eq!(ch.verify("wrong", now + 2_000), OtpResult::AlreadyVerified);
         assert_eq!(
             ch.attempts, attempts_before,
             "attempts must not change on re-verify"

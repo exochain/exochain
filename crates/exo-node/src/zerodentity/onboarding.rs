@@ -12,11 +12,13 @@ use std::sync::{Arc, Mutex};
 use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
 #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
 use exo_core::types::{Did, Hash256};
-use exo_core::{crypto, types::PublicKey};
+use exo_core::{
+    crypto,
+    types::{PublicKey, Signature},
+};
 use getrandom::getrandom;
 use rand::{SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
 use super::session_auth::claim_submission_signing_payload;
@@ -25,7 +27,8 @@ use super::types::{ClaimStatus, IdentityClaim, OtpChannel};
 use super::{
     otp::OtpResult,
     session_auth::{
-        bootstrap_signing_payload, did_from_public_key, public_key_from_hex, signature_from_hex,
+        bootstrap_signing_payload, did_from_public_key, public_key_from_hex,
+        session_token_from_bootstrap, signature_from_hex,
     },
     store::ZerodentityStore,
     types::{ClaimType, IdentitySession, OtpChallenge, ZerodentityScore},
@@ -170,10 +173,15 @@ fn lock_store(
         .map_err(|_| json_error(StatusCode::INTERNAL_SERVER_ERROR, "Store lock error"))
 }
 
+struct VerifiedBootstrap {
+    public_key: PublicKey,
+    signature: Signature,
+}
+
 fn verify_bootstrap_signature(
     req: &VerifyOtpRequest,
     challenge: &OtpChallenge,
-) -> Result<PublicKey, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<VerifiedBootstrap, (StatusCode, Json<serde_json::Value>)> {
     let public_key_hex = req
         .public_key
         .as_deref()
@@ -212,7 +220,10 @@ fn verify_bootstrap_signature(
         ));
     }
 
-    Ok(public_key)
+    Ok(VerifiedBootstrap {
+        public_key,
+        signature,
+    })
 }
 
 #[cfg_attr(
@@ -441,54 +452,55 @@ pub async fn verify_otp(
     Json(req): Json<VerifyOtpRequest>,
 ) -> Result<Json<VerifyOtpResponse>, (StatusCode, Json<serde_json::Value>)> {
     let now = now_ms();
-
-    let mut challenge = {
-        let store = lock_store(&state)?;
-        store
-            .get_otp_challenge(&req.challenge_id)
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": format!("Store error: {e}")})),
-                )
-            })?
-            .ok_or_else(|| {
-                (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({"error": "Challenge not found"})),
-                )
-            })?
-    };
+    let mut store = lock_store(&state)?;
+    let mut challenge = store
+        .get_otp_challenge(&req.challenge_id)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Store error: {e}")})),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Challenge not found"})),
+            )
+        })?;
 
     let result = challenge.verify(&req.code, now);
 
     match result {
         OtpResult::Success => {
-            let public_key = verify_bootstrap_signature(&req, &challenge)?;
-            let session_token = Uuid::new_v4().to_string();
+            let bootstrap = verify_bootstrap_signature(&req, &challenge)?;
+            let session_token = session_token_from_bootstrap(
+                &challenge.challenge_id,
+                &challenge.subject_did,
+                &bootstrap.public_key,
+                &bootstrap.signature,
+                &challenge.hmac_secret,
+            )
+            .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
             let session = IdentitySession {
                 session_token: session_token.clone(),
                 subject_did: challenge.subject_did.clone(),
-                public_key: public_key.as_bytes().to_vec(),
+                public_key: bootstrap.public_key.as_bytes().to_vec(),
                 created_ms: now,
                 last_active_ms: now,
                 revoked: false,
             };
-            {
-                let mut store = lock_store(&state)?;
-                store.update_otp_challenge(&challenge).map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({"error": format!("Store error: {e}")})),
-                    )
-                })?;
-                store.insert_session(&session).map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({"error": format!("Store error: {e}")})),
-                    )
-                })?;
-            }
+            store.update_otp_challenge(&challenge).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("Store error: {e}")})),
+                )
+            })?;
+            store.insert_session(&session).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("Store error: {e}")})),
+                )
+            })?;
             Ok(Json(VerifyOtpResponse {
                 verified: true,
                 session_token: Some(session_token),
@@ -496,8 +508,11 @@ pub async fn verify_otp(
                 message: "Verification successful".into(),
             }))
         }
+        OtpResult::AlreadyVerified => Err(json_error(
+            StatusCode::CONFLICT,
+            "Challenge has already been verified",
+        )),
         OtpResult::WrongCode { attempts_remaining } => {
-            let mut store = lock_store(&state)?;
             store.update_otp_challenge(&challenge).map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -512,7 +527,6 @@ pub async fn verify_otp(
             }))
         }
         OtpResult::Expired => {
-            let mut store = lock_store(&state)?;
             store.update_otp_challenge(&challenge).map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -522,7 +536,6 @@ pub async fn verify_otp(
             Err(json_error(StatusCode::GONE, "Challenge has expired"))
         }
         OtpResult::Locked { .. } => {
-            let mut store = lock_store(&state)?;
             store.update_otp_challenge(&challenge).map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -680,6 +693,45 @@ mod tests {
 
         assert!(verifier.contains("did_from_public_key(&public_key)"));
         assert!(verifier.contains("derived_did != challenge.subject_did"));
+    }
+
+    #[test]
+    fn verify_otp_does_not_mint_uuid_session_tokens() {
+        let source = include_str!("onboarding.rs");
+        let verifier = source
+            .split("pub async fn verify_otp")
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("// POST /api/v1/0dentity/verify/resend")
+                    .next()
+            })
+            .expect("verify_otp must have an explicit function body");
+
+        assert!(
+            !verifier.contains("Uuid::new_v4()"),
+            "session tokens must be derived from verified bootstrap material, not UUID v4"
+        );
+    }
+
+    #[test]
+    fn verify_otp_consumes_challenge_and_session_in_one_store_lock() {
+        let source = include_str!("onboarding.rs");
+        let verifier = source
+            .split("pub async fn verify_otp")
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("// POST /api/v1/0dentity/verify/resend")
+                    .next()
+            })
+            .expect("verify_otp must have an explicit function body");
+        let lock_count = verifier.matches("lock_store(&state)").count();
+
+        assert_eq!(
+            lock_count, 1,
+            "OTP verification, challenge consumption, and session insertion must be one critical section"
+        );
     }
 
     #[test]
