@@ -11,6 +11,7 @@
 
 use exo_core::types::{Did, Hash256};
 use hmac::{Hmac, Mac};
+#[cfg(any(test, feature = "unaudited-zerodentity-first-touch-onboarding"))]
 use rand::RngCore;
 use sha2::Sha256;
 use thiserror::Error;
@@ -60,6 +61,8 @@ pub enum OtpResult {
 pub enum OtpError {
     #[error("HMAC key length invalid")]
     InvalidKeyLength,
+    #[error("OTP HMAC secret must not be all zero")]
+    InvalidSecret,
 }
 
 // ---------------------------------------------------------------------------
@@ -76,6 +79,7 @@ impl OtpChallenge {
     /// - `channel`: delivery channel (email or SMS)
     /// - `now_ms`: current epoch time in milliseconds (from HLC)
     /// - `rng`: caller-provided RNG (must not be `SystemRng` in test contexts)
+    #[cfg(any(test, feature = "unaudited-zerodentity-first-touch-onboarding"))]
     pub fn new(
         subject_did: &Did,
         channel: OtpChannel,
@@ -86,14 +90,31 @@ impl OtpChallenge {
         let mut secret = [0u8; 32];
         rng.fill_bytes(&mut secret);
 
-        let code = derive_code(&secret, subject_did.as_str(), now_ms)?;
+        Self::from_secret(subject_did, channel, now_ms, secret)
+    }
+
+    /// Create an OTP challenge from caller-supplied HMAC secret material.
+    ///
+    /// This is the deterministic constructor for trust-boundary callers that
+    /// derive challenge entropy from already verified evidence.
+    pub fn from_secret(
+        subject_did: &Did,
+        channel: OtpChannel,
+        now_ms: u64,
+        hmac_secret: [u8; 32],
+    ) -> Result<(Self, String), OtpError> {
+        if hmac_secret == [0u8; 32] {
+            return Err(OtpError::InvalidSecret);
+        }
+
+        let code = derive_code(&hmac_secret, subject_did.as_str(), now_ms)?;
         let code_str = format!("{code:06}");
 
         // Derive challenge_id from BLAKE3 of (subject_did || now_ms || secret)
         let mut id_input = Vec::with_capacity(100);
         id_input.extend_from_slice(subject_did.as_str().as_bytes());
         id_input.extend_from_slice(&now_ms.to_le_bytes());
-        id_input.extend_from_slice(&secret);
+        id_input.extend_from_slice(&hmac_secret);
         let id_hash = Hash256::digest(&id_input);
         let challenge_id = hex::encode(id_hash.as_bytes());
         let ttl_ms = channel.ttl_ms();
@@ -102,7 +123,7 @@ impl OtpChallenge {
             challenge_id,
             subject_did: subject_did.clone(),
             channel,
-            hmac_secret: secret,
+            hmac_secret,
             dispatched_ms: now_ms,
             ttl_ms,
             attempts: 0,
@@ -279,6 +300,33 @@ mod tests {
             code.chars().all(|c| c.is_ascii_digit()),
             "code must be digits"
         );
+    }
+
+    #[test]
+    fn from_secret_is_deterministic_and_uses_supplied_secret() {
+        let did = test_did();
+        let secret = [7u8; 32];
+        let (first, first_code) =
+            OtpChallenge::from_secret(&did, OtpChannel::Email, 42_000, secret).expect("new ok");
+        let (second, second_code) =
+            OtpChallenge::from_secret(&did, OtpChannel::Email, 42_000, secret).expect("new ok");
+
+        assert_eq!(first.challenge_id, second.challenge_id);
+        assert_eq!(first_code, second_code);
+
+        let (different, different_code) =
+            OtpChallenge::from_secret(&did, OtpChannel::Email, 42_000, [8u8; 32]).expect("new ok");
+        assert_ne!(first.challenge_id, different.challenge_id);
+        assert_ne!(first_code, different_code);
+    }
+
+    #[test]
+    fn from_secret_rejects_zero_secret() {
+        let did = test_did();
+        let err = OtpChallenge::from_secret(&did, OtpChannel::Email, 42_000, [0u8; 32])
+            .expect_err("zero secret must fail");
+
+        assert!(matches!(err, OtpError::InvalidSecret));
     }
 
     #[test]

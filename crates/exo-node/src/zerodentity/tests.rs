@@ -18,6 +18,7 @@ mod tests {
     };
     use exo_core::{
         crypto::{self, KeyPair},
+        hlc::HybridClock,
         types::{Did, Hash256, PublicKey, SecretKey, Signature},
     };
     use rand::{SeedableRng, rngs::StdRng};
@@ -279,7 +280,14 @@ mod tests {
     }
 
     fn onboarding_app(store: SharedZerodentityStore) -> Router {
-        onboarding_router(OnboardingState { store })
+        onboarding_router(OnboardingState::new(store))
+    }
+
+    fn onboarding_app_with_fixed_clock(store: SharedZerodentityStore, now_ms: u64) -> Router {
+        onboarding_router(OnboardingState::new_with_clock(
+            store,
+            HybridClock::with_wall_clock(move || now_ms),
+        ))
     }
 
     fn api_app(store: SharedZerodentityStore) -> Router {
@@ -1354,6 +1362,78 @@ mod tests {
         let new_cid = body["challenge_id"].as_str().unwrap().to_owned();
         assert_ne!(new_cid, cid, "resend must return a fresh challenge_id");
         assert!(body["ttl_ms"].as_u64().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn resend_otp_after_cooldown_consumes_original_challenge() {
+        let store = new_shared_store();
+        let app = onboarding_app_with_fixed_clock(store.clone(), 120_000);
+        let did = td("otp-resend-consumes-original");
+
+        let mut rng = seeded_rng(0xBEEF_0103);
+        let (challenge, _) = OtpChallenge::new(&did, OtpChannel::Email, 1, &mut rng).unwrap();
+        let cid = challenge.challenge_id.clone();
+        store
+            .lock()
+            .unwrap()
+            .insert_otp_challenge(&challenge)
+            .unwrap();
+
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/verify/resend",
+            serde_json::json!({
+                "challenge_id": cid
+            }),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        let new_cid = body["challenge_id"].as_str().unwrap();
+
+        let guard = store.lock().unwrap();
+        let original = guard.get_otp_challenge(&cid).unwrap().unwrap();
+        let replacement = guard.get_otp_challenge(new_cid).unwrap().unwrap();
+        assert_eq!(original.state, OtpState::Expired);
+        assert_eq!(replacement.state, OtpState::Pending);
+    }
+
+    #[tokio::test]
+    async fn resend_otp_uses_injected_hlc_timestamp() {
+        let store = new_shared_store();
+        let app = onboarding_app_with_fixed_clock(store.clone(), 180_000);
+        let did = td("otp-resend-clock");
+
+        let mut rng = seeded_rng(0xBEEF_0104);
+        let (challenge, _) = OtpChallenge::new(&did, OtpChannel::Email, 1, &mut rng).unwrap();
+        let cid = challenge.challenge_id.clone();
+        store
+            .lock()
+            .unwrap()
+            .insert_otp_challenge(&challenge)
+            .unwrap();
+
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/verify/resend",
+            serde_json::json!({
+                "challenge_id": cid
+            }),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        let new_cid = body["challenge_id"].as_str().unwrap();
+        let replacement = store
+            .lock()
+            .unwrap()
+            .get_otp_challenge(new_cid)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(replacement.dispatched_ms, 180_000);
     }
 
     #[tokio::test]

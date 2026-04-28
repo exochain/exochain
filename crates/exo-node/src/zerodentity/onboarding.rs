@@ -14,11 +14,16 @@ use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
 use exo_core::types::{Did, Hash256};
 use exo_core::{
     crypto,
+    hlc::HybridClock,
     types::{PublicKey, Signature},
 };
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
 use getrandom::getrandom;
+use hmac::{Hmac, Mac};
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
 use rand::{SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 
 #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
 use super::session_auth::claim_submission_signing_payload;
@@ -31,8 +36,12 @@ use super::{
         session_token_from_bootstrap, signature_from_hex,
     },
     store::ZerodentityStore,
-    types::{ClaimType, IdentitySession, OtpChallenge, ZerodentityScore},
+    types::{ClaimType, IdentitySession, OtpChallenge, OtpState, ZerodentityScore},
 };
+
+type HmacSha256 = Hmac<Sha256>;
+
+const OTP_RESEND_DERIVATION_DOMAIN: &[u8] = b"exo.zerodentity.otp.resend.v1";
 
 // ---------------------------------------------------------------------------
 // Shared state
@@ -42,6 +51,30 @@ use super::{
 #[derive(Clone)]
 pub struct OnboardingState {
     pub store: Arc<Mutex<ZerodentityStore>>,
+    clock: Arc<Mutex<HybridClock>>,
+}
+
+impl OnboardingState {
+    #[must_use]
+    pub fn new(store: Arc<Mutex<ZerodentityStore>>) -> Self {
+        Self::new_with_clock(store, HybridClock::new())
+    }
+
+    #[must_use]
+    pub fn new_with_clock(store: Arc<Mutex<ZerodentityStore>>, clock: HybridClock) -> Self {
+        Self {
+            store,
+            clock: Arc::new(Mutex::new(clock)),
+        }
+    }
+
+    fn now_ms(&self) -> Result<u64, (StatusCode, Json<serde_json::Value>)> {
+        let mut clock = self
+            .clock
+            .lock()
+            .map_err(|_| json_error(StatusCode::INTERNAL_SERVER_ERROR, "Clock lock error"))?;
+        Ok(clock.now().physical_ms)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -137,10 +170,7 @@ const FIRST_TOUCH_ONBOARDING_FEATURE: &str = "unaudited-zerodentity-first-touch-
 #[cfg(not(feature = "unaudited-zerodentity-first-touch-onboarding"))]
 const FIRST_TOUCH_ONBOARDING_INITIATIVE: &str = "fix-onyx-4-r1-onboarding-auth.md";
 
-fn now_ms() -> u64 {
-    exo_core::hlc::HybridClock::new().now().physical_ms
-}
-
+#[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
 fn build_rng() -> StdRng {
     let mut seed = [0u8; 32];
     let _ = getrandom(&mut seed);
@@ -171,6 +201,31 @@ fn lock_store(
         .store
         .lock()
         .map_err(|_| json_error(StatusCode::INTERNAL_SERVER_ERROR, "Store lock error"))
+}
+
+fn derive_resend_secret(
+    challenge: &OtpChallenge,
+    now_ms: u64,
+) -> Result<[u8; 32], (StatusCode, Json<serde_json::Value>)> {
+    let mut mac = HmacSha256::new_from_slice(&challenge.hmac_secret).map_err(|_| {
+        json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "OTP resend secret derivation failed",
+        )
+    })?;
+    mac.update(OTP_RESEND_DERIVATION_DOMAIN);
+    mac.update(challenge.challenge_id.as_bytes());
+    mac.update(challenge.subject_did.as_str().as_bytes());
+    mac.update(match challenge.channel {
+        super::types::OtpChannel::Email => b"email",
+        super::types::OtpChannel::Sms => b"sms",
+    });
+    mac.update(&now_ms.to_le_bytes());
+
+    let bytes = mac.finalize().into_bytes();
+    let mut secret = [0u8; 32];
+    secret.copy_from_slice(&bytes);
+    Ok(secret)
 }
 
 struct VerifiedBootstrap {
@@ -451,7 +506,7 @@ pub async fn verify_otp(
     State(state): State<OnboardingState>,
     Json(req): Json<VerifyOtpRequest>,
 ) -> Result<Json<VerifyOtpResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let now = now_ms();
+    let now = state.now_ms()?;
     let mut store = lock_store(&state)?;
     let mut challenge = store
         .get_otp_challenge(&req.challenge_id)
@@ -559,30 +614,22 @@ pub async fn resend_otp(
     State(state): State<OnboardingState>,
     Json(req): Json<ResendOtpRequest>,
 ) -> Result<Json<ResendOtpResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let now = now_ms();
-
-    let challenge = {
-        let store = state.store.lock().map_err(|_| {
+    let now = state.now_ms()?;
+    let mut store = lock_store(&state)?;
+    let mut challenge = store
+        .get_otp_challenge(&req.challenge_id)
+        .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "Store lock error"})),
+                Json(serde_json::json!({"error": format!("Store error: {e}")})),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Challenge not found"})),
             )
         })?;
-        store
-            .get_otp_challenge(&req.challenge_id)
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": format!("Store error: {e}")})),
-                )
-            })?
-            .ok_or_else(|| {
-                (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({"error": "Challenge not found"})),
-                )
-            })?
-    };
 
     if !challenge.can_resend(now) {
         return Err((
@@ -591,13 +638,12 @@ pub async fn resend_otp(
         ));
     }
 
-    // Create a fresh challenge
-    let mut rng = build_rng();
-    let (new_challenge, _code) = OtpChallenge::new(
+    let resend_secret = derive_resend_secret(&challenge, now)?;
+    let (new_challenge, _code) = OtpChallenge::from_secret(
         &challenge.subject_did,
         challenge.channel.clone(),
         now,
-        &mut rng,
+        resend_secret,
     )
     .map_err(|_| {
         (
@@ -608,16 +654,19 @@ pub async fn resend_otp(
 
     let ttl = new_challenge.ttl_ms;
     let new_id = new_challenge.challenge_id.clone();
-
-    {
-        let mut store = state.store.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "Store lock error"})),
-            )
-        })?;
-        let _ = store.insert_otp_challenge(&new_challenge);
-    }
+    challenge.state = OtpState::Expired;
+    store.update_otp_challenge(&challenge).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Store error: {e}")})),
+        )
+    })?;
+    store.insert_otp_challenge(&new_challenge).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Store error: {e}")})),
+        )
+    })?;
 
     Ok(Json(ResendOtpResponse {
         challenge_id: new_id,
@@ -731,6 +780,29 @@ mod tests {
         assert_eq!(
             lock_count, 1,
             "OTP verification, challenge consumption, and session insertion must be one critical section"
+        );
+    }
+
+    #[test]
+    fn resend_otp_does_not_generate_runtime_rng_or_global_clock() {
+        let source = include_str!("onboarding.rs");
+        let resend = source
+            .split("pub async fn resend_otp")
+            .nth(1)
+            .and_then(|section| section.split("// Router").next())
+            .expect("resend_otp must have an explicit function body");
+
+        assert!(
+            !resend.contains("build_rng()"),
+            "resend must derive replacement challenge material from existing challenge evidence"
+        );
+        assert!(
+            !resend.contains("OtpChallenge::new("),
+            "resend must not depend on runtime RNG challenge construction"
+        );
+        assert!(
+            !resend.contains("let now = now_ms()"),
+            "resend must read time through OnboardingState's injected HLC"
         );
     }
 
