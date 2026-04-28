@@ -25,6 +25,18 @@ use super::{
     tools::ToolRegistry,
 };
 
+fn serialize_json_rpc_response(response: &JsonRpcResponse) -> String {
+    match serde_json::to_string(response) {
+        Ok(serialized) => serialized,
+        Err(error) => {
+            tracing::error!(err = %error, "failed to serialize JSON-RPC response");
+            format!(
+                "{{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{{\"code\":{INTERNAL_ERROR},\"message\":\"internal error: failed to serialize JSON-RPC response\"}}}}"
+            )
+        }
+    }
+}
+
 /// MCP server that processes JSON-RPC messages from AI clients.
 ///
 /// Each server instance is bound to a specific actor DID, ensuring that
@@ -134,7 +146,7 @@ impl McpServer {
             Ok(req) => req,
             Err(e) => {
                 let resp = JsonRpcResponse::error(None, PARSE_ERROR, format!("parse error: {e}"));
-                return Some(serde_json::to_string(&resp).unwrap_or_default());
+                return Some(serialize_json_rpc_response(&resp));
             }
         };
 
@@ -143,7 +155,7 @@ impl McpServer {
         request.id.as_ref()?;
 
         let response = self.dispatch(&request);
-        Some(serde_json::to_string(&response).unwrap_or_default())
+        Some(serialize_json_rpc_response(&response))
     }
 
     /// Dispatch a parsed JSON-RPC request to the appropriate handler.
@@ -214,12 +226,19 @@ impl McpServer {
 
     /// Handle `tools/list` — returns all registered tools.
     fn handle_tools_list(&self, request: &JsonRpcRequest) -> JsonRpcResponse {
-        let tools: Vec<Value> = self
-            .registry
-            .list()
-            .into_iter()
-            .filter_map(|t| serde_json::to_value(t).ok())
-            .collect();
+        let mut tools: Vec<Value> = Vec::new();
+        for tool in self.registry.list() {
+            match serde_json::to_value(tool) {
+                Ok(value) => tools.push(value),
+                Err(e) => {
+                    return JsonRpcResponse::error(
+                        request.id.clone(),
+                        INTERNAL_ERROR,
+                        format!("tool definition serialization error: {e}"),
+                    );
+                }
+            }
+        }
 
         JsonRpcResponse::success(request.id.clone(), serde_json::json!({ "tools": tools }))
     }
@@ -318,12 +337,19 @@ impl McpServer {
 
     /// Handle `resources/list` — return all registered resource definitions.
     fn handle_resources_list(&self, request: &JsonRpcRequest) -> JsonRpcResponse {
-        let resources: Vec<Value> = self
-            .resources
-            .list()
-            .into_iter()
-            .filter_map(|r| serde_json::to_value(r).ok())
-            .collect();
+        let mut resources: Vec<Value> = Vec::new();
+        for resource in self.resources.list() {
+            match serde_json::to_value(resource) {
+                Ok(value) => resources.push(value),
+                Err(e) => {
+                    return JsonRpcResponse::error(
+                        request.id.clone(),
+                        INTERNAL_ERROR,
+                        format!("resource definition serialization error: {e}"),
+                    );
+                }
+            }
+        }
 
         JsonRpcResponse::success(
             request.id.clone(),
@@ -377,12 +403,19 @@ impl McpServer {
 
     /// Handle `prompts/list` — return all registered prompt definitions.
     fn handle_prompts_list(&self, request: &JsonRpcRequest) -> JsonRpcResponse {
-        let prompts: Vec<Value> = self
-            .prompts
-            .list()
-            .into_iter()
-            .filter_map(|p| serde_json::to_value(p).ok())
-            .collect();
+        let mut prompts: Vec<Value> = Vec::new();
+        for prompt in self.prompts.list() {
+            match serde_json::to_value(prompt) {
+                Ok(value) => prompts.push(value),
+                Err(e) => {
+                    return JsonRpcResponse::error(
+                        request.id.clone(),
+                        INTERNAL_ERROR,
+                        format!("prompt definition serialization error: {e}"),
+                    );
+                }
+            }
+        }
 
         JsonRpcResponse::success(
             request.id.clone(),
@@ -591,6 +624,24 @@ mod tests {
         let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
         assert!(parsed.error.is_some());
         assert_eq!(parsed.error.unwrap().code, PARSE_ERROR);
+    }
+
+    #[test]
+    fn handler_production_source_fails_closed_on_serialization_errors() {
+        let source = include_str!("handler.rs");
+        let production = source
+            .split("// ===========================================================================\n// Tests")
+            .next()
+            .expect("handler production section must be present");
+
+        assert!(
+            !production.contains("unwrap_or_default()"),
+            "MCP handler must not hide JSON-RPC serialization failures behind empty strings"
+        );
+        assert!(
+            !production.contains(".filter_map(|"),
+            "MCP handler list endpoints must not silently drop unserializable entries"
+        );
     }
 
     #[test]
