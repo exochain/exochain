@@ -116,6 +116,20 @@ pub struct ForgeState {
     clock: HybridClock,
 }
 
+fn serialize_dashboard_json<T: Serialize>(
+    field: &'static str,
+    value: &T,
+) -> Result<String, StatusCode> {
+    serde_json::to_string(value).map_err(|error| {
+        tracing::error!(
+            field,
+            err = %error,
+            "failed to serialize ExoForge dashboard state"
+        );
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
+}
+
 // ─── Request / Response bodies ──────────────────────────────────────
 
 /// Request body for updating a task's status.
@@ -939,9 +953,9 @@ async fn serve_dashboard(
         tracing::error!("ForgeState mutex poisoned in serve_dashboard");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let tasks_json = serde_json::to_string(&s.tasks).unwrap_or_default();
-    let stats_json = serde_json::to_string(&s.stats()).unwrap_or_default();
-    let log_json = serde_json::to_string(&s.activity_log).unwrap_or_default();
+    let tasks_json = serialize_dashboard_json("tasks", &s.tasks)?;
+    let stats_json = serialize_dashboard_json("stats", &s.stats())?;
+    let log_json = serialize_dashboard_json("activity_log", &s.activity_log)?;
     drop(s);
 
     Ok(Html(format!(
@@ -1618,6 +1632,25 @@ mod tests {
         );
     }
 
+    struct FailingSerialize;
+
+    impl Serialize for FailingSerialize {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            Err(serde::ser::Error::custom(
+                "intentional dashboard serialization failure",
+            ))
+        }
+    }
+
+    #[test]
+    fn dashboard_json_serialization_fails_closed() {
+        let result = serialize_dashboard_json("tasks", &FailingSerialize);
+        assert_eq!(result, Err(StatusCode::INTERNAL_SERVER_ERROR));
+    }
+
     #[test]
     fn production_source_has_no_float_wall_clock_or_hashset_escape_hatches() {
         let source = include_str!("exoforge.rs");
@@ -1629,6 +1662,7 @@ mod tests {
         assert!(!production.contains("float_arithmetic"));
         assert!(!production.contains("f64"));
         assert!(!production.contains("SystemTime::now"));
+        assert!(!production.contains("unwrap_or_default()"));
         let hash_set = "Hash".to_owned() + "Set";
         assert!(!source.contains(&hash_set));
     }
