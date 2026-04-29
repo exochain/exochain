@@ -41,6 +41,7 @@ mod zerodentity;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    net::IpAddr,
     sync::{Arc, Mutex},
 };
 
@@ -67,23 +68,67 @@ async fn main() {
 }
 
 /// Parse a list of validator DID strings, falling back to just this node's DID.
-fn parse_validator_set(cli_validators: &Option<Vec<String>>, node_did: &Did) -> BTreeSet<Did> {
+fn parse_validator_set(
+    cli_validators: &Option<Vec<String>>,
+    node_did: &Did,
+) -> anyhow::Result<BTreeSet<Did>> {
     if let Some(vals) = cli_validators {
-        vals.iter()
-            .filter_map(|s| match Did::new(s) {
-                Ok(d) => Some(d),
-                Err(e) => {
-                    tracing::warn!(did = %s, err = %e, "Invalid validator DID — skipping");
-                    None
-                }
-            })
-            .collect()
+        if vals.is_empty() {
+            anyhow::bail!("validator set must not be empty when --validators is supplied");
+        }
+        let mut parsed = BTreeSet::new();
+        for raw in vals {
+            let did =
+                Did::new(raw).map_err(|e| anyhow::anyhow!("invalid validator DID '{raw}': {e}"))?;
+            if !parsed.insert(did.clone()) {
+                anyhow::bail!("duplicate validator DID '{did}' in --validators");
+            }
+        }
+        Ok(parsed)
     } else {
         // Default: this node is the sole validator (standalone mode).
         let mut set = BTreeSet::new();
         set.insert(node_did.clone());
-        set
+        Ok(set)
     }
+}
+
+fn parse_seed_addrs(seed: &[String]) -> anyhow::Result<Vec<libp2p::Multiaddr>> {
+    if seed.is_empty() {
+        anyhow::bail!("at least one seed address is required for join");
+    }
+
+    let mut parsed = Vec::with_capacity(seed.len());
+    for raw in seed {
+        if raw.starts_with('/') {
+            let addr = raw.parse::<libp2p::Multiaddr>().map_err(|e| {
+                anyhow::anyhow!("invalid seed address '{raw}': malformed multiaddr: {e}")
+            })?;
+            parsed.push(addr);
+            continue;
+        }
+
+        let (host, port) = raw.split_once(':').ok_or_else(|| {
+            anyhow::anyhow!("invalid seed address '{raw}': expected host:port or /multiaddr")
+        })?;
+        if host.is_empty() || port.is_empty() || port.contains(':') {
+            anyhow::bail!("invalid seed address '{raw}': expected host:port or /multiaddr");
+        }
+        let port_number = port
+            .parse::<u16>()
+            .map_err(|e| anyhow::anyhow!("invalid seed address '{raw}': invalid TCP port: {e}"))?;
+        let multiaddr = match host.parse::<IpAddr>() {
+            Ok(IpAddr::V4(_)) => format!("/ip4/{host}/tcp/{port_number}"),
+            Ok(IpAddr::V6(_)) => format!("/ip6/{host}/tcp/{port_number}"),
+            Err(_) => format!("/dns4/{host}/tcp/{port_number}"),
+        };
+        let addr = multiaddr.parse::<libp2p::Multiaddr>().map_err(|e| {
+            anyhow::anyhow!("invalid seed address '{raw}': could not build multiaddr: {e}")
+        })?;
+        parsed.push(addr);
+    }
+
+    Ok(parsed)
 }
 
 fn parse_public_key_hex(value: &str) -> anyhow::Result<PublicKey> {
@@ -283,7 +328,7 @@ async fn start_node(
     let node_metrics = metrics::create_metrics();
 
     // --- Consensus reactor ---
-    let validator_set = parse_validator_set(validators, &node_identity.did);
+    let validator_set = parse_validator_set(validators, &node_identity.did)?;
     let validator_public_keys = resolve_validator_public_keys(
         validator_public_key_entries,
         &node_identity,
@@ -853,23 +898,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 .unwrap_or(cfg.api_port);
             let p2p_port = p2p_port.unwrap_or(cfg.p2p_port);
 
-            // Parse seed addresses into multiaddrs.
-            let seed_addrs: Vec<libp2p::Multiaddr> = seed
-                .iter()
-                .filter_map(|s| {
-                    if s.starts_with('/') {
-                        s.parse().ok()
-                    } else {
-                        let parts: Vec<&str> = s.split(':').collect();
-                        if parts.len() == 2 {
-                            format!("/ip4/{}/tcp/{}", parts[0], parts[1]).parse().ok()
-                        } else {
-                            tracing::warn!(seed = %s, "Invalid seed address format");
-                            None
-                        }
-                    }
-                })
-                .collect();
+            let seed_addrs = parse_seed_addrs(&seed)?;
 
             start_node(
                 &data_dir,
@@ -956,5 +985,78 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     .map_err(|e| anyhow::anyhow!("MCP stdio server error: {e}"))
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn local_node_did() -> Did {
+        Did::new("did:exo:local").unwrap()
+    }
+
+    #[test]
+    fn parse_validator_set_defaults_to_local_node_when_absent() {
+        let node_did = local_node_did();
+        let validators = parse_validator_set(&None, &node_did).unwrap();
+
+        assert_eq!(validators.len(), 1);
+        assert!(validators.contains(&node_did));
+    }
+
+    #[test]
+    fn parse_validator_set_rejects_invalid_did() {
+        let err = parse_validator_set(
+            &Some(vec!["did:exo:valid".to_owned(), "not-a-did".to_owned()]),
+            &local_node_did(),
+        )
+        .unwrap_err();
+
+        let text = err.to_string();
+        assert!(text.contains("invalid validator DID"));
+        assert!(text.contains("not-a-did"));
+    }
+
+    #[test]
+    fn parse_validator_set_rejects_duplicate_did() {
+        let err = parse_validator_set(
+            &Some(vec!["did:exo:alice".to_owned(), "did:exo:alice".to_owned()]),
+            &local_node_did(),
+        )
+        .unwrap_err();
+
+        let text = err.to_string();
+        assert!(text.contains("duplicate validator DID"));
+        assert!(text.contains("did:exo:alice"));
+    }
+
+    #[test]
+    fn parse_seed_addrs_rejects_malformed_seed() {
+        let err = parse_seed_addrs(&[
+            "/ip4/127.0.0.1/tcp/4001".to_owned(),
+            "seed-without-port".to_owned(),
+        ])
+        .unwrap_err();
+
+        let text = err.to_string();
+        assert!(text.contains("invalid seed address"));
+        assert!(text.contains("seed-without-port"));
+    }
+
+    #[test]
+    fn parse_seed_addrs_parses_multiaddr_ip_and_dns_host_port() {
+        let addrs = parse_seed_addrs(&[
+            "/ip4/127.0.0.1/tcp/4001".to_owned(),
+            "192.0.2.10:4002".to_owned(),
+            "seed1.exochain.io:4003".to_owned(),
+        ])
+        .unwrap();
+
+        assert_eq!(addrs.len(), 3);
+        assert_eq!(addrs[0].to_string(), "/ip4/127.0.0.1/tcp/4001");
+        assert_eq!(addrs[1].to_string(), "/ip4/192.0.2.10/tcp/4002");
+        assert_eq!(addrs[2].to_string(), "/dns4/seed1.exochain.io/tcp/4003");
     }
 }
