@@ -195,6 +195,13 @@ fn json_error(
     (status, Json(serde_json::json!({ "error": error.into() })))
 }
 
+fn store_error(error: impl std::fmt::Display) -> (StatusCode, Json<serde_json::Value>) {
+    json_error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("Store error: {error}"),
+    )
+}
+
 fn path_and_query(uri: &axum::http::Uri) -> String {
     uri.path_and_query()
         .map_or_else(|| uri.path().to_owned(), |value| value.as_str().to_owned())
@@ -432,7 +439,7 @@ pub async fn get_score(
     })?;
 
     // Check if DID exists
-    let claims_raw = store.get_claims(&did).unwrap_or_default();
+    let claims_raw = store.get_claims(&did).map_err(store_error)?;
     if claims_raw.is_empty() {
         return Err((
             StatusCode::NOT_FOUND,
@@ -441,15 +448,15 @@ pub async fn get_score(
     }
 
     let claims: Vec<IdentityClaim> = claims_raw.into_iter().map(|(_, c)| c).collect();
-    let fingerprints = store.get_fingerprints(&did).unwrap_or_default();
-    let behavioral = store.get_behavioral_samples(&did).unwrap_or_default();
+    let fingerprints = store.get_fingerprints(&did).map_err(store_error)?;
+    let behavioral = store.get_behavioral_samples(&did).map_err(store_error)?;
     let as_of_ms = score_as_of_ms(&claims, &fingerprints, &behavioral, params.as_of_ms)?;
 
     let score = ZerodentityScore::compute(&did, &claims, &fingerprints, &behavioral, as_of_ms);
 
     let history = store
         .get_score_history(&did, None, None)
-        .unwrap_or_default();
+        .map_err(store_error)?;
 
     Ok(Json(ScoreResponse {
         subject_did: did.to_string(),
@@ -493,12 +500,15 @@ pub async fn list_claims(
                 Json(serde_json::json!({"error": "lock poisoned"})),
             )
         })?;
-        let session = store.get_session(&token).ok().flatten().ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "Invalid or expired session"})),
-            )
-        })?;
+        let session = store
+            .get_session(&token)
+            .map_err(store_error)?
+            .ok_or_else(|| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({"error": "Invalid or expired session"})),
+                )
+            })?;
         if session.subject_did.as_str() != did.as_str() {
             return Err((
                 StatusCode::FORBIDDEN,
@@ -513,7 +523,7 @@ pub async fn list_claims(
             Json(serde_json::json!({"error": "lock poisoned"})),
         )
     })?;
-    let all_claims = store.get_claims(&did).unwrap_or_default();
+    let all_claims = store.get_claims(&did).map_err(store_error)?;
 
     // Filter by status
     let filtered: Vec<(String, IdentityClaim)> = all_claims
@@ -584,7 +594,7 @@ pub async fn score_history(
     })?;
     let snapshots = store
         .get_score_history(&did, params.from_ms, params.to_ms)
-        .unwrap_or_default();
+        .map_err(store_error)?;
 
     let items: Vec<HistorySnapshot> = snapshots
         .iter()
@@ -631,12 +641,15 @@ pub async fn list_fingerprints(
                 Json(serde_json::json!({"error": "lock poisoned"})),
             )
         })?;
-        let session = store.get_session(&token).ok().flatten().ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "Invalid or expired session"})),
-            )
-        })?;
+        let session = store
+            .get_session(&token)
+            .map_err(store_error)?
+            .ok_or_else(|| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({"error": "Invalid or expired session"})),
+                )
+            })?;
         if session.subject_did.as_str() != did.as_str() {
             return Err((
                 StatusCode::FORBIDDEN,
@@ -651,7 +664,7 @@ pub async fn list_fingerprints(
             Json(serde_json::json!({"error": "lock poisoned"})),
         )
     })?;
-    let fps = store.get_fingerprints(&did).unwrap_or_default();
+    let fps = store.get_fingerprints(&did).map_err(store_error)?;
     let items: Vec<FingerprintItem> = fps
         .iter()
         .map(|fp| FingerprintItem {
@@ -716,13 +729,13 @@ pub async fn create_peer_attestation(
     })?;
     let attester_claims: Vec<IdentityClaim> = store
         .get_claims(&attester_did)
-        .unwrap_or_default()
+        .map_err(store_error)?
         .into_iter()
         .map(|(_, c)| c)
         .collect();
     let already_exists = store
         .attestation_exists(&attester_did, &target_did)
-        .unwrap_or(false);
+        .map_err(store_error)?;
 
     validate_attestation(&attester_did, &target_did, &attester_claims, already_exists).map_err(
         |e| {
@@ -996,6 +1009,19 @@ mod tests {
             .unwrap();
 
         assert!(!score_section.contains("now_ms()"));
+    }
+
+    #[test]
+    fn api_handlers_do_not_discard_store_read_errors() {
+        let source = include_str!("api.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .unwrap();
+
+        assert!(!production.contains(".unwrap_or_default()"));
+        assert!(!production.contains(".unwrap_or(false)"));
+        assert!(!production.contains(".ok().flatten()"));
     }
 
     #[test]
