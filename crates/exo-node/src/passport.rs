@@ -234,7 +234,8 @@ async fn handle_passport(
             computed_ms: s.computed_ms,
         });
 
-        let standing = build_standing_profile(known, &did_obj, &zd);
+        let standing = build_standing_profile(known, &did_obj, &zd)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
         (score_profile, standing)
     };
@@ -315,7 +316,8 @@ async fn handle_standing(
             "Zerodentity store unavailable".to_string(),
         )
     })?;
-    let standing = build_standing_profile(known, &did_obj, &zd);
+    let standing = build_standing_profile(known, &did_obj, &zd)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(Json(StandingResponse {
         did,
@@ -372,10 +374,15 @@ fn build_standing_profile(
     known: bool,
     did: &exo_core::types::Did,
     zd_store: &crate::zerodentity::store::ZerodentityStore,
-) -> StandingProfile {
+) -> Result<StandingProfile, String> {
     use crate::zerodentity::types::{ClaimStatus, ClaimType};
 
-    let claims = zd_store.get_claims(did).unwrap_or_default();
+    let claims = zd_store.get_claims(did).map_err(|e| {
+        format!(
+            "Zerodentity claims unavailable for DID {}: {e}",
+            did.as_str()
+        )
+    })?;
 
     // Check if all claims are revoked (identity erased).
     let all_revoked =
@@ -410,13 +417,13 @@ fn build_standing_profile(
         "unknown"
     };
 
-    StandingProfile {
+    Ok(StandingProfile {
         status: status.into(),
         revoked: all_revoked,
         sanctioned: false,
         sybil_challenge_hold: sybil_hold,
         risk_level: risk_level.into(),
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -465,6 +472,22 @@ mod tests {
         })
     }
 
+    #[test]
+    fn passport_standing_does_not_discard_zerodentity_read_errors() {
+        let source = include_str!("passport.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .unwrap();
+        let standing_profile = production
+            .split("fn build_standing_profile")
+            .nth(1)
+            .and_then(|section| section.split("// ---------------------------------------------------------------------------\n// Router construction").next())
+            .unwrap();
+
+        assert!(!standing_profile.contains(".unwrap_or_default()"));
+    }
+
     fn test_passport_state() -> Arc<PassportApiState> {
         let validators: BTreeSet<Did> = (0..4)
             .map(|i| Did::new(&format!("did:exo:v{i}")).unwrap())
@@ -487,6 +510,32 @@ mod tests {
             store,
             zerodentity_store: new_shared_store(),
         })
+    }
+
+    #[tokio::test]
+    async fn standing_fails_closed_when_claim_read_fails() {
+        let state = test_passport_state();
+        {
+            let mut zd = state.zerodentity_store.lock().unwrap();
+            zd.inject_read_failure(crate::zerodentity::store::ZerodentityReadFailure::Claims);
+        }
+
+        let app = passport_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/agents/did:exo:v0/standing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        let message = String::from_utf8(body.to_vec()).unwrap();
+        assert!(message.contains("Zerodentity claims unavailable"));
+        assert!(message.contains("did:exo:v0"));
     }
 
     #[tokio::test]

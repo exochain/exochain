@@ -278,11 +278,50 @@ fn check_score_integrity(zerodentity: &SharedZerodentityStore) -> SentinelStatus
     };
 
     // Extract plain IdentityClaims from (claim_id, claim) tuples.
-    let raw_claims = zstore.get_claims(&did).unwrap_or_default();
+    let raw_claims = match zstore.get_claims(&did) {
+        Ok(claims) => claims,
+        Err(e) => {
+            return SentinelStatus {
+                check: SentinelCheck::ScoreIntegrity,
+                healthy: false,
+                message: format!(
+                    "Zerodentity claims unavailable for DID {}: {e}",
+                    did.as_str()
+                ),
+                last_run_ms: now_ms(),
+            };
+        }
+    };
     let claims_plain: Vec<crate::zerodentity::types::IdentityClaim> =
         raw_claims.into_iter().map(|(_, c)| c).collect();
-    let fingerprints = zstore.get_fingerprints(&did).unwrap_or_default();
-    let behavioral = zstore.get_behavioral_samples(&did).unwrap_or_default();
+    let fingerprints = match zstore.get_fingerprints(&did) {
+        Ok(fingerprints) => fingerprints,
+        Err(e) => {
+            return SentinelStatus {
+                check: SentinelCheck::ScoreIntegrity,
+                healthy: false,
+                message: format!(
+                    "Zerodentity fingerprints unavailable for DID {}: {e}",
+                    did.as_str()
+                ),
+                last_run_ms: now_ms(),
+            };
+        }
+    };
+    let behavioral = match zstore.get_behavioral_samples(&did) {
+        Ok(behavioral) => behavioral,
+        Err(e) => {
+            return SentinelStatus {
+                check: SentinelCheck::ScoreIntegrity,
+                healthy: false,
+                message: format!(
+                    "Zerodentity behavioral samples unavailable for DID {}: {e}",
+                    did.as_str()
+                ),
+                last_run_ms: now_ms(),
+            };
+        }
+    };
 
     // Release the lock before running compute (can be non-trivial).
     drop(zstore);
@@ -587,6 +626,164 @@ mod tests {
     }
 
     #[test]
+    fn score_integrity_sentinel_does_not_discard_zerodentity_read_errors() {
+        let source = include_str!("sentinels.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .unwrap();
+        let score_integrity = production
+            .split("fn check_score_integrity")
+            .nth(1)
+            .and_then(|section| section.split("fn check_otp_cleanup").next())
+            .unwrap();
+
+        assert!(!score_integrity.contains(".unwrap_or_default()"));
+    }
+
+    #[test]
+    fn score_integrity_fails_closed_on_claim_read_error() {
+        let zerodentity = crate::zerodentity::store::new_shared_store();
+        {
+            let did = Did::new("did:exo:scored").unwrap();
+            let mut store = zerodentity.lock().unwrap();
+            store.put_score(ZerodentityScore::compute(&did, &[], &[], &[], 1000));
+            store.inject_read_failure(crate::zerodentity::store::ZerodentityReadFailure::Claims);
+        }
+
+        let status = check_score_integrity(&zerodentity);
+
+        assert!(!status.healthy);
+        assert_eq!(status.check, SentinelCheck::ScoreIntegrity);
+        assert!(status.message.contains("Zerodentity claims unavailable"));
+    }
+
+    #[test]
+    fn score_integrity_fails_closed_on_fingerprint_read_error() {
+        let zerodentity = crate::zerodentity::store::new_shared_store();
+        {
+            let did = Did::new("did:exo:scored").unwrap();
+            let mut store = zerodentity.lock().unwrap();
+            store.put_score(ZerodentityScore::compute(&did, &[], &[], &[], 1000));
+            store.inject_read_failure(
+                crate::zerodentity::store::ZerodentityReadFailure::Fingerprints,
+            );
+        }
+
+        let status = check_score_integrity(&zerodentity);
+
+        assert!(!status.healthy);
+        assert_eq!(status.check, SentinelCheck::ScoreIntegrity);
+        assert!(
+            status
+                .message
+                .contains("Zerodentity fingerprints unavailable")
+        );
+    }
+
+    #[test]
+    fn score_integrity_fails_closed_on_behavioral_read_error() {
+        let zerodentity = crate::zerodentity::store::new_shared_store();
+        {
+            let did = Did::new("did:exo:scored").unwrap();
+            let mut store = zerodentity.lock().unwrap();
+            store.put_score(ZerodentityScore::compute(&did, &[], &[], &[], 1000));
+            store
+                .inject_read_failure(crate::zerodentity::store::ZerodentityReadFailure::Behavioral);
+        }
+
+        let status = check_score_integrity(&zerodentity);
+
+        assert!(!status.healthy);
+        assert_eq!(status.check, SentinelCheck::ScoreIntegrity);
+        assert!(
+            status
+                .message
+                .contains("Zerodentity behavioral samples unavailable")
+        );
+    }
+
+    #[test]
+    fn score_integrity_verifies_matching_score() {
+        let zerodentity = crate::zerodentity::store::new_shared_store();
+        {
+            let did = Did::new("did:exo:scored").unwrap();
+            let mut store = zerodentity.lock().unwrap();
+            store.put_score(ZerodentityScore::compute(&did, &[], &[], &[], 1000));
+        }
+
+        let status = check_score_integrity(&zerodentity);
+
+        assert!(status.healthy);
+        assert_eq!(status.check, SentinelCheck::ScoreIntegrity);
+        assert!(status.message.contains("Score integrity verified"));
+    }
+
+    #[test]
+    fn score_integrity_detects_score_drift() {
+        let zerodentity = crate::zerodentity::store::new_shared_store();
+        {
+            let did = Did::new("did:exo:scored").unwrap();
+            let mut score = ZerodentityScore::compute(&did, &[], &[], &[], 1000);
+            score.composite = score.composite.saturating_add(1000).min(10_000);
+            let mut store = zerodentity.lock().unwrap();
+            store.put_score(score);
+        }
+
+        let status = check_score_integrity(&zerodentity);
+
+        assert!(!status.healthy);
+        assert_eq!(status.check, SentinelCheck::ScoreIntegrity);
+        assert!(status.message.contains("Score drift"));
+    }
+
+    #[test]
+    fn otp_cleanup_reports_clean_when_no_expired_pending_challenges() {
+        let zerodentity = crate::zerodentity::store::new_shared_store();
+
+        let status = check_otp_cleanup(&zerodentity);
+
+        assert!(status.healthy);
+        assert_eq!(status.check, SentinelCheck::OtpCleanup);
+        assert_eq!(status.message, "No expired pending OTP challenges");
+    }
+
+    #[test]
+    fn otp_cleanup_removes_expired_pending_challenges() {
+        let zerodentity = crate::zerodentity::store::new_shared_store();
+        {
+            let now = now_ms();
+            let challenge = crate::zerodentity::types::OtpChallenge {
+                challenge_id: "expired-otp".into(),
+                subject_did: Did::new("did:exo:otp").unwrap(),
+                channel: crate::zerodentity::types::OtpChannel::Email,
+                hmac_secret: [7u8; 32],
+                dispatched_ms: now.saturating_sub(10_000),
+                ttl_ms: 1,
+                attempts: 0,
+                max_attempts: 3,
+                state: crate::zerodentity::types::OtpState::Pending,
+            };
+            zerodentity
+                .lock()
+                .unwrap()
+                .insert_otp_challenge(&challenge)
+                .unwrap();
+        }
+
+        let status = check_otp_cleanup(&zerodentity);
+
+        assert!(status.healthy);
+        assert_eq!(status.check, SentinelCheck::OtpCleanup);
+        assert!(
+            status
+                .message
+                .contains("Cleaned up 1 expired OTP challenge")
+        );
+        assert!(zerodentity.lock().unwrap().all_otp_challenges().is_empty());
+    }
+
+    #[test]
     fn liveness_check_healthy() {
         let reactor = test_reactor();
         let mut prev = 0;
@@ -688,5 +885,54 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results[0].healthy);
         assert!(!results[1].healthy);
+    }
+
+    #[tokio::test]
+    async fn sentinel_loop_updates_state_and_emits_unhealthy_alert() {
+        let validators: BTreeSet<Did> = (0..3)
+            .map(|i| Did::new(&format!("did:exo:v{i}")).unwrap())
+            .collect();
+        let config = ReactorConfig {
+            node_did: Did::new("did:exo:v0").unwrap(),
+            is_validator: true,
+            validators,
+            validator_public_keys: std::collections::BTreeMap::new(),
+            round_timeout_ms: 5000,
+        };
+        let reactor = create_reactor_state(&config, make_sign_fn(), None);
+        let store = test_store();
+        let zerodentity = crate::zerodentity::store::new_shared_store();
+        let sentinel_state: SharedSentinelState = Arc::new(Mutex::new(Vec::new()));
+        let (alert_tx, mut alert_rx) = tokio::sync::mpsc::channel(4);
+
+        let task = tokio::spawn(run_sentinel_loop(
+            reactor,
+            store,
+            zerodentity,
+            Arc::clone(&sentinel_state),
+            alert_tx,
+            Duration::from_millis(50),
+        ));
+
+        let alert = tokio::time::timeout(Duration::from_secs(1), alert_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        task.abort();
+        let aborted = task.await.unwrap_err();
+        assert!(aborted.is_cancelled());
+
+        assert_eq!(alert.check, SentinelCheck::QuorumHealth);
+        assert_eq!(alert.severity, Severity::Critical);
+        assert!(alert.message.contains("BELOW BFT MINIMUM"));
+
+        let statuses = sentinel_state.lock().unwrap().clone();
+        assert_eq!(statuses.len(), 6);
+        assert!(statuses.iter().any(|status| {
+            status.check == SentinelCheck::QuorumHealth
+                && !status.healthy
+                && status.message.contains("BELOW BFT MINIMUM")
+        }));
     }
 }

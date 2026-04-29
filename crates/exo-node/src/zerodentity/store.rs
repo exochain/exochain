@@ -72,6 +72,14 @@ pub struct ErasureEvidence {
     pub receipt_hash: Hash256,
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ZerodentityReadFailure {
+    Claims,
+    Fingerprints,
+    Behavioral,
+}
+
 fn canonicalize_claim_entries(claims: &mut [(String, IdentityClaim)]) {
     claims.sort_by(|(left_id, left), (right_id, right)| {
         left.created_ms
@@ -158,6 +166,12 @@ pub struct ZerodentityStore {
     trust_receipts: Vec<TrustReceipt>,
     /// Node identity signer used to emit verifiable trust receipts.
     receipt_signing: Option<ReceiptSigningContext>,
+    #[cfg(test)]
+    fail_claim_reads: bool,
+    #[cfg(test)]
+    fail_fingerprint_reads: bool,
+    #[cfg(test)]
+    fail_behavioral_reads: bool,
 }
 
 impl ZerodentityStore {
@@ -182,6 +196,21 @@ impl ZerodentityStore {
     /// Configure the node identity used to sign store-emitted trust receipts.
     pub fn set_receipt_signer(&mut self, actor_did: Did, signer: ReceiptSigner) {
         self.receipt_signing = Some(ReceiptSigningContext::new(actor_did, signer));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_read_failure(&mut self, failure: ZerodentityReadFailure) {
+        match failure {
+            ZerodentityReadFailure::Claims => {
+                self.fail_claim_reads = true;
+            }
+            ZerodentityReadFailure::Fingerprints => {
+                self.fail_fingerprint_reads = true;
+            }
+            ZerodentityReadFailure::Behavioral => {
+                self.fail_behavioral_reads = true;
+            }
+        }
     }
 
     /// Open the 0dentity store.
@@ -409,6 +438,10 @@ impl ZerodentityStore {
     ///
     /// Returns an empty `Vec` (not an error) when the DID has no claims.
     pub fn get_claims(&self, did: &Did) -> anyhow::Result<Vec<(String, IdentityClaim)>> {
+        #[cfg(test)]
+        if self.fail_claim_reads {
+            anyhow::bail!("injected 0dentity claims read failure");
+        }
         let mut claims = self.claims.get(did.as_str()).cloned().unwrap_or_default();
         canonicalize_claim_entries(&mut claims);
         Ok(claims)
@@ -432,6 +465,10 @@ impl ZerodentityStore {
 
     /// Return all device fingerprints for a DID.
     pub fn get_fingerprints(&self, did: &Did) -> anyhow::Result<Vec<DeviceFingerprint>> {
+        #[cfg(test)]
+        if self.fail_fingerprint_reads {
+            anyhow::bail!("injected 0dentity fingerprint read failure");
+        }
         let mut fingerprints = self
             .fingerprints
             .get(did.as_str())
@@ -443,6 +480,10 @@ impl ZerodentityStore {
 
     /// Return all behavioral samples for a DID.
     pub fn get_behavioral_samples(&self, did: &Did) -> anyhow::Result<Vec<BehavioralSample>> {
+        #[cfg(test)]
+        if self.fail_behavioral_reads {
+            anyhow::bail!("injected 0dentity behavioral read failure");
+        }
         let mut samples = self
             .behavioral
             .get(did.as_str())

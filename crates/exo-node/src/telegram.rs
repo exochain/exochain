@@ -418,7 +418,19 @@ pub fn build_zerodentity_alerts_message(
         }
 
         // 2. Fingerprint consistency.
-        let fps = zstore.get_fingerprints(did).unwrap_or_default();
+        let fps = match zstore.get_fingerprints(did) {
+            Ok(fps) => fps,
+            Err(e) => {
+                return (
+                    format!(
+                        "\u{274c} <b>0dentity Alerts</b>\n\
+                         0dentity alert scan unavailable while reading fingerprints for <code>{}</code>: {e}",
+                        did.as_str()
+                    ),
+                    vec![],
+                );
+            }
+        };
         if let Some(latest) = fps.last() {
             if let Some(consistency) = latest.consistency_score_bp {
                 if consistency < ALERT_FINGERPRINT_LOW_BP {
@@ -862,6 +874,47 @@ mod tests {
             round_timeout_ms: 5000,
         };
         create_reactor_state(&config, make_sign_fn(), None)
+    }
+
+    #[test]
+    fn zerodentity_alerts_do_not_discard_store_read_errors() {
+        let source = include_str!("telegram.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .unwrap();
+        let alerts = production
+            .split("pub fn build_zerodentity_alerts_message")
+            .nth(1)
+            .and_then(|section| section.split("/// Build the /sentinels response.").next())
+            .unwrap();
+
+        assert!(!alerts.contains(".unwrap_or_default()"));
+    }
+
+    #[test]
+    fn zerodentity_alerts_fail_closed_on_fingerprint_read_error() {
+        let zerodentity = crate::zerodentity::store::new_shared_store();
+        {
+            let did = Did::new("did:exo:alerted").unwrap();
+            let mut store = zerodentity.lock().unwrap();
+            store.put_score(crate::zerodentity::types::ZerodentityScore::compute(
+                &did,
+                &[],
+                &[],
+                &[],
+                1000,
+            ));
+            store.inject_read_failure(
+                crate::zerodentity::store::ZerodentityReadFailure::Fingerprints,
+            );
+        }
+
+        let (text, keyboard) = build_zerodentity_alerts_message(&zerodentity);
+
+        assert!(text.contains("0dentity alert scan unavailable"));
+        assert!(text.contains("did:exo:alerted"));
+        assert!(keyboard.is_empty());
     }
 
     #[test]
