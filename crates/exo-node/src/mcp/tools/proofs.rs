@@ -1,7 +1,10 @@
 //! Proofs MCP tools — evidence creation, chain of custody verification,
 //! Merkle proof generation, and CGR kernel proof verification.
 
-use exo_core::{Did, Hash256, Timestamp};
+use exo_core::{
+    Did, Hash256, Timestamp,
+    hash::{merkle_proof, merkle_root},
+};
 use exo_legal::evidence::{
     create_evidence_from_hash, custody_chain_digest, transfer_custody, verify_chain_of_custody,
 };
@@ -488,17 +491,17 @@ pub fn execute_verify_chain_of_custody(params: &Value, _context: &NodeContext) -
 pub fn generate_merkle_proof_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_generate_merkle_proof".to_owned(),
-        description: "Generate a Merkle inclusion proof for a target leaf given a set of leaves. Computes the actual Merkle root and proof path.".to_owned(),
+        description: "Generate a verifier-compatible Merkle inclusion proof for a target event hash given a set of event hashes. Computes the actual Merkle root and proof path.".to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
                 "leaves": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Array of hex-encoded leaf values."
+                    "description": "Array of 64-character hex-encoded Hash256 event hashes."
                 },
                 "target_index": {
-                    "type": "number",
+                    "type": "integer",
                     "description": "Zero-based index of the target leaf."
                 }
             },
@@ -541,21 +544,21 @@ pub fn execute_generate_merkle_proof(params: &Value, _context: &NodeContext) -> 
         );
     }
 
-    // Hash each leaf.
-    let mut hashes: Vec<Hash256> = Vec::new();
+    // Parse each supplied leaf as the exact event hash consumed by
+    // exochain_verify_inclusion. Do not hash arbitrary caller bytes here.
+    let mut hashes: Vec<Hash256> = Vec::with_capacity(leaves_val.len());
     for (i, leaf) in leaves_val.iter().enumerate() {
         match leaf.as_str() {
-            Some(s) => {
-                let bytes = match hex::decode(s) {
-                    Ok(b) => b,
-                    Err(_) => {
-                        return ToolResult::error(
-                            json!({"error": format!("invalid hex at leaf index {i}")}).to_string(),
-                        );
-                    }
-                };
-                hashes.push(Hash256::digest(&bytes));
-            }
+            Some(s) => match parse_hash256_hex(s, &format!("leaf at index {i}")) {
+                Ok(hash) if hash != Hash256::ZERO => hashes.push(hash),
+                Ok(_) => {
+                    return ToolResult::error(
+                        json!({"error": format!("leaf at index {i} must not be Hash256::ZERO")})
+                            .to_string(),
+                    );
+                }
+                Err(result) => return result,
+            },
             None => {
                 return ToolResult::error(
                     json!({"error": format!("leaf at index {i} is not a string")}).to_string(),
@@ -564,53 +567,22 @@ pub fn execute_generate_merkle_proof(params: &Value, _context: &NodeContext) -> 
         }
     }
 
-    // Build the Merkle tree bottom-up and collect the proof path.
-    let mut proof: Vec<String> = Vec::new();
-    let mut current_level = hashes;
-    let mut idx = target_index;
-
-    while current_level.len() > 1 {
-        let mut next_level: Vec<Hash256> = Vec::new();
-        let mut i = 0;
-        while i < current_level.len() {
-            let left = &current_level[i];
-            let right = if i + 1 < current_level.len() {
-                &current_level[i + 1]
-            } else {
-                &current_level[i] // duplicate last if odd
-            };
-
-            // If this pair contains our target, record the sibling.
-            if i == (idx & !1) {
-                if idx % 2 == 0 {
-                    if i + 1 < current_level.len() {
-                        proof.push(right.to_string());
-                    } else {
-                        proof.push(left.to_string());
-                    }
-                } else {
-                    proof.push(left.to_string());
-                }
-            }
-
-            let mut combined = left.as_bytes().to_vec();
-            combined.extend_from_slice(right.as_bytes());
-            next_level.push(Hash256::digest(&combined));
-
-            i += 2;
-        }
-        idx /= 2;
-        current_level = next_level;
-    }
-
-    let root = current_level[0].to_string();
-    let target_leaf = leaves_val[target_index].as_str().unwrap_or("");
+    let root_hash = merkle_root(&hashes);
+    let proof_hashes = match merkle_proof(&hashes, target_index) {
+        Ok(proof) => proof.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        Err(err) => return ToolResult::error(json!({"error": err.to_string()}).to_string()),
+    };
+    let target_hash = hashes[target_index].to_string();
 
     let response = json!({
-        "root": root,
-        "target_leaf": target_leaf,
+        "root": root_hash.to_string(),
+        "root_hash": root_hash.to_string(),
+        "target_leaf": target_hash,
+        "target_hash": target_hash,
+        "event_hash": target_hash,
         "target_index": target_index,
-        "proof": proof,
+        "proof": proof_hashes,
+        "proof_hashes": proof_hashes,
         "leaf_count": leaves_val.len(),
     });
     ToolResult::success(response.to_string())
@@ -709,6 +681,7 @@ pub fn execute_verify_cgr_proof(params: &Value, _context: &NodeContext) -> ToolR
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::mcp::tools::ledger::execute_verify_inclusion;
 
     // -- create_evidence ------------------------------------------------------
 
@@ -953,17 +926,97 @@ mod tests {
 
     #[test]
     fn execute_generate_merkle_proof_success() {
+        let leaves = [
+            Hash256::digest(b"event-0").to_string(),
+            Hash256::digest(b"event-1").to_string(),
+            Hash256::digest(b"event-2").to_string(),
+            Hash256::digest(b"event-3").to_string(),
+        ];
         let params = json!({
-            "leaves": ["aabb", "ccdd", "eeff", "1122"],
+            "leaves": leaves,
             "target_index": 1,
         });
         let result = execute_generate_merkle_proof(&params, &NodeContext::empty());
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
-        assert!(v["root"].as_str().is_some());
+        assert!(v["root_hash"].as_str().is_some());
+        assert_eq!(v["root"], v["root_hash"]);
+        assert_eq!(v["event_hash"], leaves[1]);
+        assert_eq!(v["target_hash"], leaves[1]);
         assert_eq!(v["target_index"], 1);
         assert_eq!(v["leaf_count"], 4);
-        assert!(!v["proof"].as_array().expect("proof array").is_empty());
+        assert_eq!(v["proof"], v["proof_hashes"]);
+        assert!(
+            !v["proof_hashes"]
+                .as_array()
+                .expect("proof array")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn execute_generate_merkle_proof_output_verifies_with_verify_inclusion() {
+        let leaves = [
+            Hash256::digest(b"event-0").to_string(),
+            Hash256::digest(b"event-1").to_string(),
+            Hash256::digest(b"event-2").to_string(),
+        ];
+        let result = execute_generate_merkle_proof(
+            &json!({
+                "leaves": leaves,
+                "target_index": 2,
+            }),
+            &NodeContext::empty(),
+        );
+        assert!(!result.is_error, "{}", result.content[0].text());
+        let generated: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+
+        let verify_result = execute_verify_inclusion(
+            &json!({
+                "event_hash": generated["event_hash"].clone(),
+                "proof_hashes": generated["proof_hashes"].clone(),
+                "root_hash": generated["root_hash"].clone(),
+                "target_index": generated["target_index"].clone(),
+            }),
+            &NodeContext::empty(),
+        );
+        assert!(
+            !verify_result.is_error,
+            "{}",
+            verify_result.content[0].text()
+        );
+        let verified: Value =
+            serde_json::from_str(verify_result.content[0].text()).expect("valid JSON");
+        assert_eq!(verified["verified"], true);
+        assert_eq!(verified["computed_root"], generated["root_hash"]);
+    }
+
+    #[test]
+    fn execute_generate_merkle_proof_rejects_short_raw_leaf_bytes() {
+        let params = json!({"leaves": ["aabb", "ccdd"], "target_index": 0});
+        let result = execute_generate_merkle_proof(&params, &NodeContext::empty());
+        assert!(result.is_error);
+        assert!(
+            result.content[0].text().contains("32 bytes"),
+            "Merkle generation must accept event hashes, not hash arbitrary short raw leaf bytes"
+        );
+    }
+
+    #[test]
+    fn execute_generate_merkle_proof_rejects_zero_leaf_hashes() {
+        let params = json!({
+            "leaves": [
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                Hash256::digest(b"event-1").to_string()
+            ],
+            "target_index": 0,
+        });
+        let result = execute_generate_merkle_proof(&params, &NodeContext::empty());
+        assert!(result.is_error);
+        assert!(
+            result.content[0].text().contains("Hash256::ZERO"),
+            "zero leaf hashes are placeholders and must be refused"
+        );
     }
 
     #[test]

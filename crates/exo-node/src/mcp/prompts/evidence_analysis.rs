@@ -75,7 +75,7 @@ Collection context:
 Required tool calls before answering:
 - `exochain_verify_chain_of_custody` with the bundle's evidence UUID, content
   hash, creator DID, creation HLC, transfer list, and verification HLC
-- `exochain_generate_merkle_proof` for the bundle's event hash
+- `exochain_generate_merkle_proof` with the bundle's 32-byte event hash set
 - `exochain_verify_inclusion` against the latest checkpoint
 - `exochain_get_event` for each referenced event in the bundle
 - `exochain_verify_signature` on every signer surfaced by the above

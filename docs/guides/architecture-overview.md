@@ -399,7 +399,7 @@ dispatches `tools/call` requests to the appropriate handler.
 | Authority      | 3                    | Delegate, verify chain, check permission                         | `tools/authority.rs`                        |
 | Kernel         | 1                    | `exochain_adjudicate_action` — single-call kernel adjudication   | (dispatched to `governance.rs`)             |
 | Ledger         | 4                    | Submit event, get event, inclusion proof, get checkpoint         | `tools/ledger.rs`                           |
-| Proofs         | 4                    | Evidence envelopes, custody-chain verification, Merkle proof, fail-closed CGR proof verifier placeholder | `tools/proofs.rs`                           |
+| Proofs         | 4                    | Evidence envelopes, custody-chain verification, verifier-compatible Merkle proofs, fail-closed CGR proof verifier placeholder | `tools/proofs.rs`                           |
 | Legal          | 4                    | eDiscovery, privilege, DGCL §144 safe harbour, fiduciary duty    | `tools/legal.rs`                            |
 | Escalation     | 4                    | Evaluate threat, escalate case, triage, feedback                 | `tools/escalation.rs`                       |
 | Messaging      | 3                    | Send encrypted, receive encrypted, configure death trigger       | `tools/messaging.rs`                        |
