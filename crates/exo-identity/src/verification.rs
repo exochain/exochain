@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
-use exo_core::{Did, SecretKey, Signature, Timestamp};
+use exo_core::{Did, Hash256, PublicKey, SecretKey, Signature, Timestamp, hash::hash_structured};
+use serde::Serialize;
 use thiserror::Error;
 
 use crate::risk::{RiskAttestation, RiskContext, RiskLevel, assess_risk};
@@ -17,13 +18,24 @@ pub enum VerificationCeremonyError {
     InsufficientScore { score: u32 },
     #[error("Invalid attester DID: {0}")]
     InvalidAttesterDid(String),
+    #[error("verification ceremony evidence encoding failed: {reason}")]
+    EvidenceEncoding { reason: String },
     #[error("risk attestation failed: {0}")]
     RiskAttestation(#[from] crate::error::IdentityError),
 }
 
+/// Domain tag for canonical verification ceremony evidence.
+pub const VERIFICATION_CEREMONY_EVIDENCE_DOMAIN: &str =
+    "exo.identity.verification_ceremony.evidence.v1";
+
+const VERIFICATION_CEREMONY_EVIDENCE_SCHEMA_VERSION: u16 = 1;
+const VERIFICATION_CEREMONY_PROOF_MATERIAL_HASH_DOMAIN: &str =
+    "exo.identity.verification_ceremony.proof_material.v1";
+const VERIFICATION_CEREMONY_PROOF_MATERIAL_HASH_SCHEMA_VERSION: u16 = 1;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IdentityProof {
-    Signature(Signature, exo_core::PublicKey, Vec<u8>), // sig, pubkey, message
+    Signature(Signature, PublicKey, Vec<u8>), // sig, pubkey, message
     Otp(String),
     WebAuthnAssertion(Vec<u8>),
     KycToken(String),
@@ -36,6 +48,57 @@ pub struct VerificationCeremony {
     pub initiated_at: Timestamp,
     pub proofs: Vec<IdentityProof>,
     pub finalized: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct VerificationCeremonyEvidencePayload {
+    domain: &'static str,
+    schema_version: u16,
+    target_did: Did,
+    session_id: String,
+    initiated_at: Timestamp,
+    proofs: Vec<VerificationProofEvidencePayload>,
+}
+
+#[derive(Debug, Serialize)]
+struct VerificationProofEvidencePayload {
+    index: u64,
+    kind: &'static str,
+    material_hash: Hash256,
+}
+
+#[derive(Serialize)]
+struct SignatureProofMaterialPayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    kind: &'static str,
+    signature: &'a Signature,
+    public_key: &'a PublicKey,
+    message: &'a [u8],
+}
+
+#[derive(Serialize)]
+struct OtpProofMaterialPayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    kind: &'static str,
+    token: &'a str,
+}
+
+#[derive(Serialize)]
+struct WebAuthnProofMaterialPayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    kind: &'static str,
+    assertion: &'a [u8],
+}
+
+#[derive(Serialize)]
+struct KycProofMaterialPayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    kind: &'static str,
+    token: &'a str,
 }
 
 impl VerificationCeremony {
@@ -112,10 +175,9 @@ impl VerificationCeremony {
     ///   verifiable with `risk::verify_attestation` against that pubkey.
     ///
     /// The evidence bytes over which the attestation's `evidence_hash`
-    /// is computed are a canonical summary of the submitted proofs
-    /// (one domain-separated line per proof, in submission order).
-    /// This binds the attestation to the exact proof set that produced
-    /// the risk score.
+    /// is computed are a domain-separated canonical CBOR summary of the
+    /// submitted proofs in submission order. This binds the attestation to the
+    /// exact proof set that produced the risk score.
     pub fn finalize(
         &mut self,
         now: Timestamp,
@@ -153,10 +215,10 @@ impl VerificationCeremony {
             RiskLevel::Minimal
         };
 
-        // Build canonical evidence bytes summarizing the proof set.
+        // Build canonical CBOR evidence bytes summarizing the proof set.
         // The attestation's evidence_hash will be blake3 over these bytes
         // (computed inside risk::assess_risk).
-        let evidence = self.canonical_evidence();
+        let evidence = self.canonical_evidence()?;
 
         // Validity: 1 year from `now`, matching the previous behavior.
         const ONE_YEAR_MS: u64 = 31_536_000_000;
@@ -191,72 +253,96 @@ impl VerificationCeremony {
         Ok(attestation)
     }
 
-    /// Canonical byte serialization of this ceremony's proof set, used
-    /// as input to the attestation's `evidence_hash`. Format is:
+    /// Canonical CBOR serialization of this ceremony's proof set, used
+    /// as input to the attestation's `evidence_hash`.
     ///
-    /// ```text
-    /// "exo.verification.ceremony.v1\n"
-    /// "<target_did>\n"
-    /// "<session_id>\n"
-    /// "<initiated_at_ms>\n"
-    /// "proof\t<index>\t<kind>\t<hash_hex>\n" ... (one per proof)
-    /// ```
-    ///
-    /// Where `<hash_hex>` is the blake3 hash (32 bytes, hex-encoded) of
-    /// a kind-tagged canonical encoding of the proof's contents. This
-    /// binds the attestation to an exact proof set and ordering while
-    /// keeping raw proof material (e.g. OTPs, KYC tokens) out of the
-    /// evidence payload.
-    fn canonical_evidence(&self) -> Vec<u8> {
+    /// The evidence payload binds the exact target DID, session ID, full
+    /// initiation HLC timestamp, proof ordering, proof kind, and per-proof
+    /// canonical material hash. Raw OTP, KYC, and WebAuthn material does not
+    /// appear directly in the evidence bytes.
+    fn canonical_evidence(&self) -> Result<Vec<u8>, VerificationCeremonyError> {
+        let payload = self.evidence_payload()?;
         let mut out = Vec::new();
-        out.extend_from_slice(b"exo.verification.ceremony.v1\n");
-        out.extend_from_slice(self.target_did.as_str().as_bytes());
-        out.push(b'\n');
-        out.extend_from_slice(self.session_id.as_bytes());
-        out.push(b'\n');
-        out.extend_from_slice(self.initiated_at.physical_ms.to_string().as_bytes());
-        out.push(b'\n');
-
-        for (idx, proof) in self.proofs.iter().enumerate() {
-            let (kind, material_hash) = match proof {
-                IdentityProof::Signature(sig, pk, msg) => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(b"proof.signature.v1");
-                    h.update(&sig.to_bytes());
-                    h.update(pk.as_bytes());
-                    h.update(msg);
-                    ("Signature", *h.finalize().as_bytes())
-                }
-                IdentityProof::Otp(token) => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(b"proof.otp.v1");
-                    h.update(token.as_bytes());
-                    ("Otp", *h.finalize().as_bytes())
-                }
-                IdentityProof::WebAuthnAssertion(bytes) => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(b"proof.webauthn.v1");
-                    h.update(bytes);
-                    ("WebAuthnAssertion", *h.finalize().as_bytes())
-                }
-                IdentityProof::KycToken(token) => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(b"proof.kyc.v1");
-                    h.update(token.as_bytes());
-                    ("KycToken", *h.finalize().as_bytes())
-                }
-            };
-            out.extend_from_slice(b"proof\t");
-            out.extend_from_slice(idx.to_string().as_bytes());
-            out.push(b'\t');
-            out.extend_from_slice(kind.as_bytes());
-            out.push(b'\t');
-            for byte in material_hash {
-                out.extend_from_slice(format!("{byte:02x}").as_bytes());
+        ciborium::ser::into_writer(&payload, &mut out).map_err(|e| {
+            VerificationCeremonyError::EvidenceEncoding {
+                reason: e.to_string(),
             }
-            out.push(b'\n');
+        })?;
+        Ok(out)
+    }
+
+    fn evidence_payload(
+        &self,
+    ) -> Result<VerificationCeremonyEvidencePayload, VerificationCeremonyError> {
+        let mut proofs = Vec::with_capacity(self.proofs.len());
+        for (idx, proof) in self.proofs.iter().enumerate() {
+            let index =
+                u64::try_from(idx).map_err(|e| VerificationCeremonyError::EvidenceEncoding {
+                    reason: format!("proof index does not fit u64: {e}"),
+                })?;
+            proofs.push(VerificationProofEvidencePayload {
+                index,
+                kind: proof.kind(),
+                material_hash: proof.material_hash()?,
+            });
         }
-        out
+
+        Ok(VerificationCeremonyEvidencePayload {
+            domain: VERIFICATION_CEREMONY_EVIDENCE_DOMAIN,
+            schema_version: VERIFICATION_CEREMONY_EVIDENCE_SCHEMA_VERSION,
+            target_did: self.target_did.clone(),
+            session_id: self.session_id.clone(),
+            initiated_at: self.initiated_at,
+            proofs,
+        })
+    }
+}
+
+impl IdentityProof {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Signature(..) => "Signature",
+            Self::Otp(_) => "Otp",
+            Self::WebAuthnAssertion(_) => "WebAuthnAssertion",
+            Self::KycToken(_) => "KycToken",
+        }
+    }
+
+    fn material_hash(&self) -> Result<Hash256, VerificationCeremonyError> {
+        let hash_result = match self {
+            Self::Signature(signature, public_key, message) => {
+                hash_structured(&SignatureProofMaterialPayload {
+                    domain: VERIFICATION_CEREMONY_PROOF_MATERIAL_HASH_DOMAIN,
+                    schema_version: VERIFICATION_CEREMONY_PROOF_MATERIAL_HASH_SCHEMA_VERSION,
+                    kind: self.kind(),
+                    signature,
+                    public_key,
+                    message,
+                })
+            }
+            Self::Otp(token) => hash_structured(&OtpProofMaterialPayload {
+                domain: VERIFICATION_CEREMONY_PROOF_MATERIAL_HASH_DOMAIN,
+                schema_version: VERIFICATION_CEREMONY_PROOF_MATERIAL_HASH_SCHEMA_VERSION,
+                kind: self.kind(),
+                token,
+            }),
+            Self::WebAuthnAssertion(assertion) => hash_structured(&WebAuthnProofMaterialPayload {
+                domain: VERIFICATION_CEREMONY_PROOF_MATERIAL_HASH_DOMAIN,
+                schema_version: VERIFICATION_CEREMONY_PROOF_MATERIAL_HASH_SCHEMA_VERSION,
+                kind: self.kind(),
+                assertion,
+            }),
+            Self::KycToken(token) => hash_structured(&KycProofMaterialPayload {
+                domain: VERIFICATION_CEREMONY_PROOF_MATERIAL_HASH_DOMAIN,
+                schema_version: VERIFICATION_CEREMONY_PROOF_MATERIAL_HASH_SCHEMA_VERSION,
+                kind: self.kind(),
+                token,
+            }),
+        };
+
+        hash_result.map_err(|e| VerificationCeremonyError::EvidenceEncoding {
+            reason: e.to_string(),
+        })
     }
 }
 
@@ -761,5 +847,82 @@ mod tests {
         assert_ne!(a, d_diff_kyc);
         // Non-zero sanity (also asserted by debug_assert in finalize).
         assert_ne!(a, [0u8; 32]);
+    }
+
+    #[test]
+    fn canonical_evidence_binds_initiated_at_hlc_logical_counter() {
+        fn evidence_hash_for(initiated_at: Timestamp) -> [u8; 32] {
+            let did = Did::new("did:exo:canon-hlc-logical").unwrap();
+            let mut ceremony =
+                VerificationCeremony::new(did, "sess-canon-hlc".to_string(), initiated_at);
+            ceremony
+                .submit_proof(
+                    IdentityProof::KycToken("kyc-logical".to_string()),
+                    Timestamp::new(2000, 0),
+                )
+                .unwrap();
+
+            let (_pk, sk) = generate_keypair();
+            let attester = Did::new("did:exo:att-canon-hlc").unwrap();
+            ceremony
+                .finalize(Timestamp::new(2010, 0), &attester, &sk)
+                .unwrap()
+                .evidence_hash
+        }
+
+        let logical_zero = evidence_hash_for(Timestamp::new(1000, 0));
+        let logical_one = evidence_hash_for(Timestamp::new(1000, 1));
+
+        assert_ne!(
+            logical_zero, logical_one,
+            "verification ceremony evidence must bind the full HLC, not only physical_ms"
+        );
+    }
+
+    #[test]
+    fn canonical_evidence_payload_is_domain_separated_cbor() {
+        let did = Did::new("did:exo:canon-cbor").unwrap();
+        let mut ceremony =
+            VerificationCeremony::new(did, "sess-cbor".to_string(), Timestamp::new(1000, 2));
+        ceremony
+            .submit_proof(
+                IdentityProof::Otp("otp-cbor".to_string()),
+                Timestamp::new(1001, 0),
+            )
+            .unwrap();
+
+        let evidence = ceremony.canonical_evidence().unwrap();
+
+        assert!(
+            !evidence.starts_with(b"exo.verification.ceremony.v1\n"),
+            "verification ceremony evidence must not use the legacy line format"
+        );
+        assert!(
+            evidence
+                .windows(b"exo.identity.verification_ceremony.evidence.v1".len())
+                .any(|window| window == b"exo.identity.verification_ceremony.evidence.v1"),
+            "canonical evidence must include a domain tag in the CBOR payload"
+        );
+
+        let decoded: ciborium::value::Value =
+            ciborium::de::from_reader(evidence.as_slice()).expect("canonical evidence CBOR");
+        assert!(
+            matches!(decoded, ciborium::value::Value::Map(_)),
+            "canonical evidence should decode as a structured CBOR map"
+        );
+    }
+
+    #[test]
+    fn verification_evidence_source_has_no_raw_proof_hash_streaming() {
+        let source = include_str!("verification.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+
+        assert!(
+            !production.contains("blake3::Hasher"),
+            "verification ceremony evidence must use domain-separated canonical CBOR, not raw BLAKE3 streaming"
+        );
     }
 }
