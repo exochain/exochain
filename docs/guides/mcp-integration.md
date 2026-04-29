@@ -287,7 +287,7 @@ Use these at session start to let the agent self-orient.
 | Tool | Purpose |
 |---|---|
 | `exochain_submit_event` | Append a signed event to the ledger. |
-| `exochain_get_event` | Fetch an event by hash. |
+| `exochain_get_event` | Fetch a DAG node by 32-byte event hash when a live store is attached; returns payload hash, creator DID, parents, children, timestamp, signature metadata, and committed height if available. |
 | `exochain_verify_inclusion` | Prove a given event is in a given checkpoint. |
 | `exochain_get_checkpoint` | Fetch the latest signed checkpoint. |
 

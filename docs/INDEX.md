@@ -10,7 +10,7 @@ tags: [exochain, documentation, index]
 
 **Constitutional Trust Fabric for Safe Superintelligence Governance**
 
-123923 lines of Rust under `crates/` · 20 workspace packages · 2,999 listed tests · 40 MCP tools · 8 constitutional invariants
+124090 lines of Rust under `crates/` · 20 workspace packages · 3,002 listed tests · 40 MCP tools · 8 constitutional invariants
 
 ---
 

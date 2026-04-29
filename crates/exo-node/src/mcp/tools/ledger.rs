@@ -152,7 +152,7 @@ pub fn get_event_definition() -> ToolDefinition {
 /// Execute the `exochain_get_event` tool.
 #[must_use]
 pub fn execute_get_event(params: &Value, context: &NodeContext) -> ToolResult {
-    let event_hash = match params.get("event_hash").and_then(Value::as_str) {
+    let event_hash_raw = match params.get("event_hash").and_then(Value::as_str) {
         Some(s) => s,
         None => {
             return ToolResult::error(
@@ -161,27 +161,85 @@ pub fn execute_get_event(params: &Value, context: &NodeContext) -> ToolResult {
         }
     };
 
-    // Validate hex format.
-    if hex::decode(event_hash).is_err() {
-        return ToolResult::error(
-            json!({"error": "invalid event_hash: not valid hexadecimal"}).to_string(),
-        );
-    }
+    let event_hash = match decode_hash256_hex("event_hash", event_hash_raw) {
+        Ok(hash) => hash,
+        Err(error) => return ToolResult::error(json!({"error": error}).to_string()),
+    };
 
-    // When a DAG store is attached, we differentiate the response so
-    // callers know the lookup was attempted against real state.
-    if context.has_store() {
+    if let Some(store) = context.store.as_ref() {
+        let guard = match store.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::error!("MCP ledger get_event store mutex poisoned");
+                return ToolResult::error(
+                    json!({"error": "ledger store is temporarily unavailable"}).to_string(),
+                );
+            }
+        };
+
+        let node = match guard.get_sync(&event_hash) {
+            Ok(node) => node,
+            Err(e) => {
+                return ToolResult::error(
+                    json!({"error": format!("store event lookup failed: {e}")}).to_string(),
+                );
+            }
+        };
+
+        let Some(node) = node else {
+            let response = json!({
+                "event_hash": event_hash.to_string(),
+                "found": false,
+                "status": "not_found",
+                "source": "attached_store",
+            });
+            return ToolResult::success(response.to_string());
+        };
+
+        let children = match guard.children(&event_hash) {
+            Ok(children) => children,
+            Err(e) => {
+                return ToolResult::error(
+                    json!({"error": format!("store child lookup failed: {e}")}).to_string(),
+                );
+            }
+        };
+        let committed_height = match guard.committed_height_for(&event_hash) {
+            Ok(height) => height,
+            Err(e) => {
+                return ToolResult::error(
+                    json!({"error": format!("store commit lookup failed: {e}")}).to_string(),
+                );
+            }
+        };
+
+        let parents: Vec<String> = node.parents.iter().map(ToString::to_string).collect();
+        let children_hex: Vec<String> = children.iter().map(ToString::to_string).collect();
         let response = json!({
-            "event_hash": event_hash,
-            "found": false,
-            "status": "known_store_but_lookup_not_yet_implemented",
-            "suggestion": "Store is attached; this MCP tool cannot retrieve event bodies.",
+            "event_hash": node.hash.to_string(),
+            "found": true,
+            "status": "found",
+            "source": "attached_store",
+            "payload_hash": node.payload_hash.to_string(),
+            "payload_hash_size": node.payload_hash.as_bytes().len(),
+            "creator_did": node.creator_did.to_string(),
+            "parents": parents,
+            "parent_count": node.parents.len(),
+            "children": children_hex,
+            "child_count": children.len(),
+            "committed": committed_height.is_some(),
+            "committed_height": committed_height,
+            "timestamp": node.timestamp.to_string(),
+            "timestamp_physical_ms": node.timestamp.physical_ms,
+            "timestamp_logical": node.timestamp.logical,
+            "signature_algorithm": node.signature.algorithm(),
+            "signature_hex": node.signature.to_string(),
         });
         return ToolResult::success(response.to_string());
     }
 
     let response = json!({
-        "event_hash": event_hash,
+        "event_hash": event_hash.to_string(),
         "found": false,
         "status": "not_found_no_store",
         "suggestion": "No DAG store is attached to this MCP server; run within a live node to query events.",
@@ -444,9 +502,62 @@ pub fn execute_get_checkpoint(params: &Value, context: &NodeContext) -> ToolResu
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use exo_core::hash::{merkle_proof, merkle_root};
+    use std::sync::{Arc, Mutex};
+
+    use exo_core::{
+        hash::{merkle_proof, merkle_root},
+        types::{Did, Signature},
+    };
+    use exo_dag::dag::{Dag, DeterministicDagClock, append};
 
     use super::*;
+
+    fn make_sign_fn() -> Box<dyn Fn(&[u8]) -> Signature> {
+        Box::new(|data: &[u8]| {
+            let digest = blake3::hash(data);
+            let mut signature = [0u8; 64];
+            signature[..32].copy_from_slice(digest.as_bytes());
+            Signature::from_bytes(signature)
+        })
+    }
+
+    fn context_with_store_node() -> (NodeContext, tempfile::TempDir, Hash256, Hash256) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut store = crate::store::SqliteDagStore::open(dir.path()).expect("store");
+
+        let mut dag = Dag::new();
+        let mut clock = DeterministicDagClock::new();
+        let creator = Did::new("did:exo:mcp-ledger-test").expect("valid DID");
+        let sign_fn = make_sign_fn();
+
+        let genesis =
+            append(&mut dag, &[], b"genesis", &creator, &*sign_fn, &mut clock).expect("genesis");
+        let child = append(
+            &mut dag,
+            &[genesis.hash],
+            b"child",
+            &creator,
+            &*sign_fn,
+            &mut clock,
+        )
+        .expect("child");
+
+        store.put_sync(genesis.clone()).expect("put genesis");
+        store.put_sync(child.clone()).expect("put child");
+        store
+            .mark_committed_sync(&genesis.hash, 1)
+            .expect("commit genesis");
+
+        (
+            NodeContext {
+                store: Some(Arc::new(Mutex::new(store))),
+                ..NodeContext::empty()
+            },
+            dir,
+            genesis.hash,
+            child.hash,
+        )
+    }
 
     fn test_hash_pair(left: &Hash256, right: &Hash256) -> Hash256 {
         let mut combined = [0u8; 64];
@@ -539,7 +650,7 @@ mod tests {
 
     #[test]
     fn execute_get_event_not_found() {
-        let params = json!({"event_hash": "abcdef0123456789"});
+        let params = json!({"event_hash": Hash256::digest(b"missing-event").to_string()});
         let result = execute_get_event(&params, &NodeContext::empty());
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
@@ -554,9 +665,65 @@ mod tests {
     }
 
     #[test]
+    fn execute_get_event_rejects_short_event_hash() {
+        let result = execute_get_event(
+            &json!({"event_hash": "abcdef0123456789"}),
+            &NodeContext::empty(),
+        );
+
+        assert!(result.is_error);
+        assert!(result.content[0].text().contains("32-byte"));
+        assert!(result.content[0].text().contains("event_hash"));
+    }
+
+    #[test]
     fn execute_get_event_missing_hash() {
         let result = execute_get_event(&json!({}), &NodeContext::empty());
         assert!(result.is_error);
+    }
+
+    #[test]
+    fn execute_get_event_reads_attached_store_node() {
+        let (context, _dir, genesis_hash, child_hash) = context_with_store_node();
+
+        let result = execute_get_event(&json!({"event_hash": child_hash.to_string()}), &context);
+
+        assert!(!result.is_error);
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+        assert_eq!(v["found"], true);
+        assert_eq!(v["status"], "found");
+        assert_eq!(v["event_hash"], child_hash.to_string());
+        assert_eq!(v["creator_did"], "did:exo:mcp-ledger-test");
+        assert_eq!(v["parent_count"], 1);
+        assert_eq!(v["parents"][0], genesis_hash.to_string());
+        assert_eq!(v["child_count"], 0);
+        assert_eq!(v["committed"], false);
+        assert!(v["committed_height"].is_null());
+        assert_eq!(v["payload_hash_size"], 32);
+        assert_eq!(v["timestamp"], "0:2");
+        assert_eq!(v["timestamp_physical_ms"], 0);
+        assert_eq!(v["timestamp_logical"], 2);
+        assert_eq!(v["signature_algorithm"], "Ed25519");
+        assert_eq!(
+            v["signature_hex"].as_str().expect("signature hex").len(),
+            128
+        );
+    }
+
+    #[test]
+    fn execute_get_event_reports_committed_height_from_attached_store() {
+        let (context, _dir, genesis_hash, _child_hash) = context_with_store_node();
+
+        let result = execute_get_event(&json!({"event_hash": genesis_hash.to_string()}), &context);
+
+        assert!(!result.is_error);
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+        assert_eq!(v["found"], true);
+        assert_eq!(v["status"], "found");
+        assert_eq!(v["committed"], true);
+        assert_eq!(v["committed_height"], 1);
+        assert_eq!(v["parent_count"], 0);
+        assert_eq!(v["child_count"], 1);
     }
 
     // -- verify_inclusion -----------------------------------------------------
