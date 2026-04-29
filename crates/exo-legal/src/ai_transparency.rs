@@ -222,6 +222,12 @@ pub fn generate_report(params: ReportParams<'_>) -> Result<AiTransparencyReport>
 
     // Aggregate MCP rule outcomes.
     let mcp_rule_outcomes = aggregate_mcp_outcomes(mcp_log, period_start, period_end);
+    let mcp_audit_head_hash =
+        mcp_log
+            .head_hash()
+            .map_err(|e| LegalError::InvalidStateTransition {
+                reason: format!("MCP audit head hash failed before transparency report: {e}"),
+            })?;
 
     Ok(AiTransparencyReport {
         tenant_id: tenant_id.clone(),
@@ -238,7 +244,7 @@ pub fn generate_report(params: ReportParams<'_>) -> Result<AiTransparencyReport>
             .map(|revocation| revocation.event().clone())
             .collect(),
         mcp_rule_outcomes,
-        mcp_audit_head_hash: mcp_log.head_hash(),
+        mcp_audit_head_hash,
         authority_clearance: authority_clearance.evidence().clone(),
     })
 }
@@ -909,7 +915,10 @@ mod tests {
         assert_eq!(report.ai_agent_action_count, 2);
         assert_eq!(report.legal_jurisdiction, "EU-AI-ACT");
         assert_eq!(report.authority_clearance.requester, tenant);
-        assert_eq!(report.mcp_audit_head_hash, log.head_hash());
+        assert_eq!(
+            report.mcp_audit_head_hash,
+            log.head_hash().expect("MCP audit head hash")
+        );
     }
 
     #[test]

@@ -9,11 +9,27 @@
 //! typed enum rather than a plain `String` prevents injection of fabricated
 //! rule identifiers into the tamper-evident chain.
 
-use exo_core::{Did, Timestamp};
+use exo_core::{Did, Timestamp, hash::hash_structured};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{error::GatekeeperError, mcp::McpRule};
+
+const MCP_AUDIT_RECORD_HASH_DOMAIN: &str = "exo.gatekeeper.mcp_audit_record.v1";
+const MCP_AUDIT_RECORD_HASH_SCHEMA_VERSION: u16 = 1;
+
+#[derive(Debug, Clone, Serialize)]
+struct McpAuditRecordHashPayload {
+    domain: &'static str,
+    schema_version: u16,
+    record_id: Uuid,
+    timestamp: Timestamp,
+    rule: McpRule,
+    actor: Did,
+    outcome: McpEnforcementOutcome,
+    data_residency_region: Option<String>,
+    chain_hash: [u8; 32],
+}
 
 // ---------------------------------------------------------------------------
 // Enforcement outcome
@@ -60,20 +76,26 @@ pub struct McpAuditRecord {
 // Hash function
 // ---------------------------------------------------------------------------
 
-fn hash_record(r: &McpAuditRecord) -> [u8; 32] {
-    let mut h = blake3::Hasher::new();
-    h.update(r.id.as_bytes());
-    h.update(&r.timestamp.physical_ms.to_le_bytes());
-    h.update(&r.timestamp.logical.to_le_bytes());
-    // Rule is hashed via its debug representation for determinism.
-    h.update(format!("{:?}", r.rule).as_bytes());
-    h.update(r.actor.as_str().as_bytes());
-    h.update(format!("{:?}", r.outcome).as_bytes());
-    if let Some(region) = &r.data_residency_region {
-        h.update(region.as_bytes());
+fn mcp_audit_record_hash_payload(r: &McpAuditRecord) -> McpAuditRecordHashPayload {
+    McpAuditRecordHashPayload {
+        domain: MCP_AUDIT_RECORD_HASH_DOMAIN,
+        schema_version: MCP_AUDIT_RECORD_HASH_SCHEMA_VERSION,
+        record_id: r.id,
+        timestamp: r.timestamp,
+        rule: r.rule,
+        actor: r.actor.clone(),
+        outcome: r.outcome,
+        data_residency_region: r.data_residency_region.clone(),
+        chain_hash: r.chain_hash,
     }
-    h.update(&r.chain_hash);
-    *h.finalize().as_bytes()
+}
+
+fn hash_record(r: &McpAuditRecord) -> Result<[u8; 32], GatekeeperError> {
+    hash_structured(&mcp_audit_record_hash_payload(r))
+        .map(|hash| *hash.as_bytes())
+        .map_err(|e| GatekeeperError::McpAuditHashEncodingFailed {
+            reason: format!("MCP audit record canonical CBOR hash failed: {e}"),
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -96,9 +118,16 @@ impl McpAuditLog {
     }
 
     /// Hash of the last record; `[0u8; 32]` for an empty log.
-    #[must_use]
-    pub fn head_hash(&self) -> [u8; 32] {
-        self.records.last().map(hash_record).unwrap_or([0u8; 32])
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GatekeeperError::McpAuditHashEncodingFailed`] if canonical
+    /// CBOR hashing of the latest record fails.
+    pub fn head_hash(&self) -> Result<[u8; 32], GatekeeperError> {
+        match self.records.last() {
+            Some(record) => hash_record(record),
+            None => Ok([0u8; 32]),
+        }
     }
 
     #[must_use]
@@ -119,7 +148,7 @@ impl McpAuditLog {
 /// does not match the current log head — indicating either an ordering error
 /// or tampering.
 pub fn append(log: &mut McpAuditLog, record: McpAuditRecord) -> Result<(), GatekeeperError> {
-    if record.chain_hash != log.head_hash() {
+    if record.chain_hash != log.head_hash()? {
         return Err(GatekeeperError::McpAuditChainBroken {
             index: log.records.len(),
         });
@@ -138,7 +167,7 @@ pub fn verify_chain(log: &McpAuditLog) -> Result<(), GatekeeperError> {
         if record.chain_hash != prev {
             return Err(GatekeeperError::McpAuditChainBroken { index: i });
         }
-        prev = hash_record(record);
+        prev = hash_record(record)?;
     }
     Ok(())
 }
@@ -171,7 +200,7 @@ pub fn create_record(
         actor,
         outcome,
         data_residency_region,
-        chain_hash: log.head_hash(),
+        chain_hash: log.head_hash()?,
     })
 }
 
@@ -207,6 +236,80 @@ mod tests {
             .find("// ===========================================================================")
             .expect("tests section marker must exist");
         &source[start..start + end]
+    }
+
+    fn production_source() -> &'static str {
+        let source = include_str!("mcp_audit.rs");
+        let end = source
+            .find("// ===========================================================================")
+            .expect("tests section marker must exist");
+        &source[..end]
+    }
+
+    fn sample_record() -> McpAuditRecord {
+        McpAuditRecord {
+            id: record_id(0xD001),
+            timestamp: Timestamp::new(1000, 4),
+            rule: McpRule::Mcp003ProvenanceRequired,
+            actor: did("agent"),
+            outcome: McpEnforcementOutcome::Blocked,
+            data_residency_region: Some("EU-WEST-1".into()),
+            chain_hash: [0x22u8; 32],
+        }
+    }
+
+    #[test]
+    fn mcp_audit_record_hash_payload_is_domain_separated_cbor() {
+        let record = sample_record();
+        let payload = mcp_audit_record_hash_payload(&record);
+        assert_eq!(payload.domain, MCP_AUDIT_RECORD_HASH_DOMAIN);
+        assert_eq!(payload.schema_version, 1);
+        assert_eq!(payload.record_id, record.id);
+        assert_eq!(payload.timestamp, record.timestamp);
+        assert_eq!(payload.rule, record.rule);
+        assert_eq!(payload.actor, record.actor);
+        assert_eq!(payload.outcome, record.outcome);
+        assert_eq!(payload.data_residency_region, record.data_residency_region);
+        assert_eq!(payload.chain_hash, record.chain_hash);
+    }
+
+    #[test]
+    fn mcp_audit_record_hash_rejects_legacy_debug_concat_hash() {
+        let record = sample_record();
+        let mut h = blake3::Hasher::new();
+        h.update(record.id.as_bytes());
+        h.update(&record.timestamp.physical_ms.to_le_bytes());
+        h.update(&record.timestamp.logical.to_le_bytes());
+        h.update(format!("{:?}", record.rule).as_bytes());
+        h.update(record.actor.as_str().as_bytes());
+        h.update(format!("{:?}", record.outcome).as_bytes());
+        if let Some(region) = &record.data_residency_region {
+            h.update(region.as_bytes());
+        }
+        h.update(&record.chain_hash);
+        let legacy = *h.finalize().as_bytes();
+
+        assert_ne!(
+            hash_record(&record).expect("canonical MCP audit hash"),
+            legacy
+        );
+    }
+
+    #[test]
+    fn mcp_audit_production_source_has_no_raw_hash_loop_or_debug_string_hashing() {
+        let production = production_source();
+        assert!(
+            !production.contains("blake3::Hasher"),
+            "MCP audit hashes must use domain-separated canonical CBOR"
+        );
+        assert!(
+            !production.contains("format!(\"{:?}\""),
+            "MCP audit hashes must not bind rule/outcome through debug strings"
+        );
+        assert!(
+            !production.contains("unwrap_or([0u8; 32])"),
+            "MCP audit hashing must not hide hash failures behind a zero hash"
+        );
     }
 
     #[test]
@@ -300,14 +403,14 @@ mod tests {
     #[test]
     fn head_hash_changes_on_append() {
         let mut log = McpAuditLog::new();
-        let h0 = log.head_hash();
+        let h0 = log.head_hash().expect("empty MCP audit head hash");
         assert_eq!(h0, [0u8; 32]);
         append_ok(
             &mut log,
             McpRule::Mcp003ProvenanceRequired,
             McpEnforcementOutcome::Allowed,
         );
-        assert_ne!(log.head_hash(), h0);
+        assert_ne!(log.head_hash().expect("MCP audit head hash"), h0);
     }
 
     #[test]
@@ -321,7 +424,10 @@ mod tests {
             data_residency_region: None,
             chain_hash: [0u8; 32],
         };
-        assert_eq!(hash_record(&r), hash_record(&r));
+        assert_eq!(
+            hash_record(&r).expect("first MCP audit record hash"),
+            hash_record(&r).expect("second MCP audit record hash")
+        );
     }
 
     #[test]

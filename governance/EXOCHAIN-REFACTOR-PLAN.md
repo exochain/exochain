@@ -68,7 +68,7 @@ All refactor work flows through the Syntaxis Builder system:
 - [ ] Complete Section 8 work orders from CR-001
 - [ ] Achieve release-blocking acceptance standard (CR-001 Section 9)
 
-> **Completion notes**: Historical March 2026 completion claim; superseded numerically by Wave E Basalt. Current measured state is 20 workspace packages, 122665 Rust LOC under `crates/`, 2,972 listed workspace tests, 20 numbered CI gates plus aggregator, traceability rows at 83 implemented / 1 partial / 2 planned, and threat matrix rows at 14 implemented / 0 partial / 0 planned. Section 9 acceptance criteria remain open while any traceability row is partial or planned. Post-quantum signature support (Ed25519/PostQuantum/Hybrid) is implemented.
+> **Completion notes**: Historical March 2026 completion claim; superseded numerically by Wave E Basalt. Current measured state is 20 workspace packages, 122789 Rust LOC under `crates/`, 2,975 listed workspace tests, 20 numbered CI gates plus aggregator, traceability rows at 83 implemented / 1 partial / 2 planned, and threat matrix rows at 14 implemented / 0 partial / 0 planned. Section 9 acceptance criteria remain open while any traceability row is partial or planned. Post-quantum signature support (Ed25519/PostQuantum/Hybrid) is implemented.
 
 ## Active Resolutions
 

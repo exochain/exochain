@@ -40,6 +40,9 @@ pub enum GatekeeperError {
 
     #[error("MCP audit record invalid: {reason}")]
     McpAuditInvalidRecord { reason: String },
+
+    #[error("MCP audit hash encoding failed: {reason}")]
+    McpAuditHashEncodingFailed { reason: String },
 }
 
 impl From<exo_core::ExoError> for GatekeeperError {
@@ -76,6 +79,12 @@ mod tests {
                     reason: "missing deterministic metadata".into(),
                 },
                 "missing deterministic metadata",
+            ),
+            (
+                GatekeeperError::McpAuditHashEncodingFailed {
+                    reason: "canonical CBOR failed".into(),
+                },
+                "canonical CBOR failed",
             ),
         ];
         for (err, fragment) in cases {
