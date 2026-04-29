@@ -6,10 +6,25 @@
 //!
 //! Satisfies: GOV-005 (authority chain), TNC-03 (audit continuity), LEG-001 (business records)
 
-use exo_core::{Did, Hash256, Timestamp};
+use exo_core::{Did, Hash256, Timestamp, hash::hash_structured};
 use serde::{Deserialize, Serialize};
 
 use crate::types::GovernanceSignature;
+
+const CUSTODY_EVENT_HASH_DOMAIN: &str = "exo.governance.custody_event.v1";
+const CUSTODY_EVENT_HASH_SCHEMA_VERSION: u16 = 1;
+
+#[derive(Clone, Debug, Serialize)]
+struct CustodyEventHashPayload {
+    domain: &'static str,
+    schema_version: u16,
+    sequence: u64,
+    record_hash: Hash256,
+    prev_event_hash: Option<Hash256>,
+    actor_id: Did,
+    action: CustodyAction,
+    timestamp: Timestamp,
+}
 
 /// Actions that produce CustodyEvents.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -129,11 +144,11 @@ impl CustodyChain {
         record_hash: Hash256,
         timestamp: Timestamp,
         signature: Option<GovernanceSignature>,
-    ) -> &CustodyEvent {
+    ) -> Result<&CustodyEvent, CustodyChainError> {
         let prev_event_hash = self.events.last().map(|e| e.event_hash);
         let sequence = self.next_sequence;
 
-        // Compute event hash over canonical fields
+        // Compute event hash over canonical fields.
         let event_hash = Self::compute_event_hash(
             sequence,
             &record_hash,
@@ -141,7 +156,7 @@ impl CustodyChain {
             &actor_id,
             &action,
             &timestamp,
-        );
+        )?;
 
         let event = CustodyEvent {
             id: format!("ce-{}-{}", self.decision_id.as_bytes()[0], sequence),
@@ -160,7 +175,7 @@ impl CustodyChain {
         self.events.push(event);
         // SAFETY: we just pushed, so `last()` is guaranteed `Some`.
         // Using indexing instead of `expect` for constitutional lint compliance.
-        &self.events[self.events.len() - 1]
+        Ok(&self.events[self.events.len() - 1])
     }
 
     /// Verify the integrity of the custody chain.
@@ -216,7 +231,7 @@ impl CustodyChain {
                 &event.actor_id,
                 &event.action,
                 &event.timestamp,
-            );
+            )?;
             if recomputed != event.event_hash {
                 return Err(CustodyChainError::HashMismatch {
                     sequence: event.sequence,
@@ -274,10 +289,6 @@ impl CustodyChain {
     }
 
     /// Compute the hash of a custody event from its canonical fields.
-    ///
-    /// Uses blake3 for deterministic hashing. The action is serialized
-    /// via CBOR (through `exo_core::hash::hash_structured`) for canonical
-    /// byte representation.
     fn compute_event_hash(
         sequence: u64,
         record_hash: &Hash256,
@@ -285,22 +296,38 @@ impl CustodyChain {
         actor_id: &Did,
         action: &CustodyAction,
         timestamp: &Timestamp,
-    ) -> Hash256 {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&sequence.to_le_bytes());
-        hasher.update(record_hash.as_bytes());
-        if let Some(prev) = prev_event_hash {
-            hasher.update(prev.as_bytes());
-        }
-        hasher.update(actor_id.as_str().as_bytes());
-        // Use CBOR canonical serialization for the action via exo_core
-        let action_hash = exo_core::hash::hash_structured(action).unwrap_or(Hash256::ZERO);
-        hasher.update(action_hash.as_bytes());
-        hasher.update(&timestamp.physical_ms.to_le_bytes());
-        hasher.update(&timestamp.logical.to_le_bytes());
+    ) -> Result<Hash256, CustodyChainError> {
+        hash_structured(&custody_event_hash_payload(
+            sequence,
+            record_hash,
+            prev_event_hash,
+            actor_id,
+            action,
+            timestamp,
+        ))
+        .map_err(|e| CustodyChainError::HashEncodingFailed {
+            reason: format!("custody event canonical CBOR hash failed: {e}"),
+        })
+    }
+}
 
-        let hash = hasher.finalize();
-        Hash256::from_bytes(*hash.as_bytes())
+fn custody_event_hash_payload(
+    sequence: u64,
+    record_hash: &Hash256,
+    prev_event_hash: Option<&Hash256>,
+    actor_id: &Did,
+    action: &CustodyAction,
+    timestamp: &Timestamp,
+) -> CustodyEventHashPayload {
+    CustodyEventHashPayload {
+        domain: CUSTODY_EVENT_HASH_DOMAIN,
+        schema_version: CUSTODY_EVENT_HASH_SCHEMA_VERSION,
+        sequence,
+        record_hash: *record_hash,
+        prev_event_hash: prev_event_hash.copied(),
+        actor_id: actor_id.clone(),
+        action: action.clone(),
+        timestamp: *timestamp,
     }
 }
 
@@ -325,6 +352,8 @@ pub enum CustodyChainError {
         expected: Hash256,
         actual: Hash256,
     },
+    /// Canonical CBOR event hash encoding failed.
+    HashEncodingFailed { reason: String },
 }
 
 impl std::fmt::Display for CustodyChainError {
@@ -342,6 +371,9 @@ impl std::fmt::Display for CustodyChainError {
             }
             Self::HashMismatch { sequence, .. } => {
                 write!(f, "Event hash mismatch at sequence {sequence}")
+            }
+            Self::HashEncodingFailed { reason } => {
+                write!(f, "Custody event hash encoding failed: {reason}")
             }
         }
     }
@@ -365,6 +397,89 @@ mod tests {
         Did::new(&format!("did:exo:{name}")).expect("valid")
     }
 
+    fn production_source() -> &'static str {
+        let source = include_str!("custody.rs");
+        let end = source
+            .find("#[cfg(test)]")
+            .expect("tests marker must exist");
+        &source[..end]
+    }
+
+    #[test]
+    fn custody_event_hash_payload_is_domain_separated_cbor() {
+        let record_hash = Hash256::digest(b"record-v1");
+        let prev_event_hash = Some(Hash256::digest(b"prev-event"));
+        let actor = test_did("alice");
+        let action = CustodyAction::AdvanceStatus {
+            from: "draft".into(),
+            to: "review".into(),
+        };
+        let timestamp = test_ts(1000);
+
+        let payload = custody_event_hash_payload(
+            7,
+            &record_hash,
+            prev_event_hash.as_ref(),
+            &actor,
+            &action,
+            &timestamp,
+        );
+
+        assert_eq!(payload.domain, CUSTODY_EVENT_HASH_DOMAIN);
+        assert_eq!(payload.schema_version, 1);
+        assert_eq!(payload.sequence, 7);
+        assert_eq!(payload.record_hash, record_hash);
+        assert_eq!(payload.prev_event_hash, prev_event_hash);
+        assert_eq!(payload.actor_id, actor);
+        assert_eq!(payload.action, action);
+        assert_eq!(payload.timestamp, timestamp);
+    }
+
+    #[test]
+    fn custody_event_hash_rejects_legacy_raw_concat_hash() {
+        let record_hash = Hash256::digest(b"record-v1");
+        let prev_event_hash = Some(Hash256::digest(b"prev-event"));
+        let actor = test_did("alice");
+        let action = CustodyAction::Approve;
+        let timestamp = test_ts(1000);
+
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&7u64.to_le_bytes());
+        hasher.update(record_hash.as_bytes());
+        hasher.update(prev_event_hash.as_ref().expect("prev").as_bytes());
+        hasher.update(actor.as_str().as_bytes());
+        let action_hash = exo_core::hash::hash_structured(&action).expect("action hash");
+        hasher.update(action_hash.as_bytes());
+        hasher.update(&timestamp.physical_ms.to_le_bytes());
+        hasher.update(&timestamp.logical.to_le_bytes());
+        let legacy = Hash256::from_bytes(*hasher.finalize().as_bytes());
+
+        let canonical = CustodyChain::compute_event_hash(
+            7,
+            &record_hash,
+            prev_event_hash.as_ref(),
+            &actor,
+            &action,
+            &timestamp,
+        )
+        .expect("canonical custody hash");
+
+        assert_ne!(canonical, legacy);
+    }
+
+    #[test]
+    fn custody_production_source_has_no_raw_hash_loop_or_zero_fallback() {
+        let production = production_source();
+        assert!(
+            !production.contains("blake3::Hasher"),
+            "custody event hashes must use domain-separated canonical CBOR"
+        );
+        assert!(
+            !production.contains("unwrap_or(Hash256::ZERO)"),
+            "custody event hashing must fail closed instead of using a zero hash"
+        );
+    }
+
     #[test]
     fn test_custody_chain_creation() {
         let chain = CustodyChain::new(Hash256::digest(b"decision-1"));
@@ -378,27 +493,31 @@ mod tests {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-1"));
         let record_hash = Hash256::digest(b"record-v1");
 
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            record_hash,
-            test_ts(1000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                record_hash,
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
 
         assert_eq!(chain.len(), 1);
         assert_eq!(chain.events[0].sequence, 0);
         assert!(chain.events[0].prev_event_hash.is_none());
 
-        chain.append(
-            test_did("bob"),
-            CustodyRole::Reviewer,
-            CustodyAction::Approve,
-            record_hash,
-            test_ts(2000),
-            None,
-        );
+        chain
+            .append(
+                test_did("bob"),
+                CustodyRole::Reviewer,
+                CustodyAction::Approve,
+                record_hash,
+                test_ts(2000),
+                None,
+            )
+            .expect("append custody event");
 
         assert_eq!(chain.len(), 2);
         assert_eq!(chain.events[1].sequence, 1);
@@ -413,32 +532,38 @@ mod tests {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-1"));
         let record_hash = Hash256::digest(b"record-v1");
 
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            record_hash,
-            test_ts(1000),
-            None,
-        );
-        chain.append(
-            test_did("bob"),
-            CustodyRole::Reviewer,
-            CustodyAction::Approve,
-            record_hash,
-            test_ts(2000),
-            None,
-        );
-        chain.append(
-            test_did("carol"),
-            CustodyRole::Steward,
-            CustodyAction::IssueClearance {
-                certificate_id: "cert-1".to_string(),
-            },
-            record_hash,
-            test_ts(3000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                record_hash,
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
+        chain
+            .append(
+                test_did("bob"),
+                CustodyRole::Reviewer,
+                CustodyAction::Approve,
+                record_hash,
+                test_ts(2000),
+                None,
+            )
+            .expect("append custody event");
+        chain
+            .append(
+                test_did("carol"),
+                CustodyRole::Steward,
+                CustodyAction::IssueClearance {
+                    certificate_id: "cert-1".to_string(),
+                },
+                record_hash,
+                test_ts(3000),
+                None,
+            )
+            .expect("append custody event");
 
         assert!(chain.verify_integrity().is_ok());
     }
@@ -448,22 +573,26 @@ mod tests {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-1"));
         let record_hash = Hash256::digest(b"record-v1");
 
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            record_hash,
-            test_ts(1000),
-            None,
-        );
-        chain.append(
-            test_did("bob"),
-            CustodyRole::Reviewer,
-            CustodyAction::Approve,
-            record_hash,
-            test_ts(2000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                record_hash,
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
+        chain
+            .append(
+                test_did("bob"),
+                CustodyRole::Reviewer,
+                CustodyAction::Approve,
+                record_hash,
+                test_ts(2000),
+                None,
+            )
+            .expect("append custody event");
 
         // Tamper with the first event's hash
         chain.events[0].event_hash = Hash256::digest(b"tampered");
@@ -475,32 +604,38 @@ mod tests {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-1"));
         let record_hash = Hash256::digest(b"record-v1");
 
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            record_hash,
-            test_ts(1000),
-            None,
-        );
-        chain.append(
-            test_did("bob"),
-            CustodyRole::Reviewer,
-            CustodyAction::Approve,
-            record_hash,
-            test_ts(2000),
-            None,
-        );
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Comment {
-                content: "Updated rationale".to_string(),
-            },
-            record_hash,
-            test_ts(3000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                record_hash,
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
+        chain
+            .append(
+                test_did("bob"),
+                CustodyRole::Reviewer,
+                CustodyAction::Approve,
+                record_hash,
+                test_ts(2000),
+                None,
+            )
+            .expect("append custody event");
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Comment {
+                    content: "Updated rationale".to_string(),
+                },
+                record_hash,
+                test_ts(3000),
+                None,
+            )
+            .expect("append custody event");
 
         let alice_events = chain.events_by_actor("did:exo:alice");
         assert_eq!(alice_events.len(), 2);
@@ -511,40 +646,48 @@ mod tests {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-1"));
         let record_hash = Hash256::digest(b"record-v1");
 
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            record_hash,
-            test_ts(1000),
-            None,
-        );
-        chain.append(
-            test_did("bob"),
-            CustodyRole::Reviewer,
-            CustodyAction::Approve,
-            record_hash,
-            test_ts(2000),
-            None,
-        );
-        chain.append(
-            test_did("carol"),
-            CustodyRole::Reviewer,
-            CustodyAction::Reject,
-            record_hash,
-            test_ts(3000),
-            None,
-        );
-        chain.append(
-            test_did("dave"),
-            CustodyRole::Observer,
-            CustodyAction::Comment {
-                content: "I agree with Carol".to_string(),
-            },
-            record_hash,
-            test_ts(4000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                record_hash,
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
+        chain
+            .append(
+                test_did("bob"),
+                CustodyRole::Reviewer,
+                CustodyAction::Approve,
+                record_hash,
+                test_ts(2000),
+                None,
+            )
+            .expect("append custody event");
+        chain
+            .append(
+                test_did("carol"),
+                CustodyRole::Reviewer,
+                CustodyAction::Reject,
+                record_hash,
+                test_ts(3000),
+                None,
+            )
+            .expect("append custody event");
+        chain
+            .append(
+                test_did("dave"),
+                CustodyRole::Observer,
+                CustodyAction::Comment {
+                    content: "I agree with Carol".to_string(),
+                },
+                record_hash,
+                test_ts(4000),
+                None,
+            )
+            .expect("append custody event");
 
         let attestations = chain.attestations();
         assert_eq!(attestations.len(), 2); // Approve + Reject
@@ -555,18 +698,20 @@ mod tests {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-1"));
         let record_hash = Hash256::digest(b"record-v1");
 
-        chain.append(
-            test_did("ai-assistant"),
-            CustodyRole::AiAgent {
-                delegation_id: Hash256::digest(b"delegation-001"),
-            },
-            CustodyAction::Comment {
-                content: "Automated analysis complete".to_string(),
-            },
-            record_hash,
-            test_ts(1000),
-            None,
-        );
+        chain
+            .append(
+                test_did("ai-assistant"),
+                CustodyRole::AiAgent {
+                    delegation_id: Hash256::digest(b"delegation-001"),
+                },
+                CustodyAction::Comment {
+                    content: "Automated analysis complete".to_string(),
+                },
+                record_hash,
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
 
         assert_eq!(chain.len(), 1);
         assert!(matches!(chain.events[0].role, CustodyRole::AiAgent { .. }));
@@ -577,16 +722,18 @@ mod tests {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-1"));
         let record_hash = Hash256::digest(b"record-v1");
 
-        chain.append(
-            test_did("steward"),
-            CustodyRole::Steward,
-            CustodyAction::EmergencyAction {
-                reason: "Security breach detected".to_string(),
-            },
-            record_hash,
-            test_ts(1000),
-            None,
-        );
+        chain
+            .append(
+                test_did("steward"),
+                CustodyRole::Steward,
+                CustodyAction::EmergencyAction {
+                    reason: "Security breach detected".to_string(),
+                },
+                record_hash,
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
 
         assert!(chain.verify_integrity().is_ok());
     }
@@ -609,14 +756,16 @@ mod tests {
     fn test_latest_and_is_empty_after_append() {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-latest"));
         let record_hash = Hash256::digest(b"record-v1");
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            record_hash,
-            test_ts(1000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                record_hash,
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
         assert!(!chain.is_empty());
         let latest = chain.latest().expect("non-empty");
         assert_eq!(latest.sequence, 0);
@@ -629,14 +778,16 @@ mod tests {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-sig"));
         let record_hash = Hash256::digest(b"record-v1");
         let sig = test_signature();
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            record_hash,
-            test_ts(1000),
-            Some(sig.clone()),
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                record_hash,
+                test_ts(1000),
+                Some(sig.clone()),
+            )
+            .expect("append custody event");
         let stored = chain.events[0]
             .signature
             .as_ref()
@@ -650,14 +801,16 @@ mod tests {
     fn test_append_returns_last_event_reference() {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-ret"));
         let record_hash = Hash256::digest(b"record-v1");
-        let ev = chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            record_hash,
-            test_ts(1000),
-            None,
-        );
+        let ev = chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                record_hash,
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
         assert_eq!(ev.sequence, 0);
         assert!(ev.prev_event_hash.is_none());
         let id = ev.id.clone();
@@ -668,14 +821,16 @@ mod tests {
     #[test]
     fn test_verify_integrity_invalid_genesis_link() {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-ig"));
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            Hash256::digest(b"r"),
-            test_ts(1000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                Hash256::digest(b"r"),
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
         chain.events[0].prev_event_hash = Some(Hash256::digest(b"unexpected"));
         let err = chain.verify_integrity().expect_err("must be error");
         assert!(matches!(err, CustodyChainError::InvalidGenesisLink));
@@ -686,22 +841,26 @@ mod tests {
     fn test_verify_integrity_broken_link() {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-bl"));
         let record_hash = Hash256::digest(b"r");
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            record_hash,
-            test_ts(1000),
-            None,
-        );
-        chain.append(
-            test_did("bob"),
-            CustodyRole::Reviewer,
-            CustodyAction::Approve,
-            record_hash,
-            test_ts(2000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                record_hash,
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
+        chain
+            .append(
+                test_did("bob"),
+                CustodyRole::Reviewer,
+                CustodyAction::Approve,
+                record_hash,
+                test_ts(2000),
+                None,
+            )
+            .expect("append custody event");
         let bogus = Hash256::digest(b"bogus-prev");
         chain.events[1].prev_event_hash = Some(bogus);
         let err = chain.verify_integrity().expect_err("must be error");
@@ -721,22 +880,26 @@ mod tests {
     fn test_verify_integrity_missing_link() {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-ml"));
         let record_hash = Hash256::digest(b"r");
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            record_hash,
-            test_ts(1000),
-            None,
-        );
-        chain.append(
-            test_did("bob"),
-            CustodyRole::Reviewer,
-            CustodyAction::Approve,
-            record_hash,
-            test_ts(2000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                record_hash,
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
+        chain
+            .append(
+                test_did("bob"),
+                CustodyRole::Reviewer,
+                CustodyAction::Approve,
+                record_hash,
+                test_ts(2000),
+                None,
+            )
+            .expect("append custody event");
         chain.events[1].prev_event_hash = None;
         let err = chain.verify_integrity().expect_err("must be error");
         assert!(matches!(
@@ -750,14 +913,16 @@ mod tests {
     fn test_verify_integrity_sequence_gap() {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-sg"));
         let record_hash = Hash256::digest(b"r");
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            record_hash,
-            test_ts(1000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                record_hash,
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
         chain.events[0].sequence = 99;
         let err = chain.verify_integrity().expect_err("must be error");
         match err {
@@ -774,14 +939,16 @@ mod tests {
     fn test_verify_integrity_hash_mismatch_variant() {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-hm"));
         let record_hash = Hash256::digest(b"r");
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            record_hash,
-            test_ts(1000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                record_hash,
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
         let tampered = Hash256::digest(b"tampered");
         chain.events[0].event_hash = tampered;
         let err = chain.verify_integrity().expect_err("must be error");
@@ -848,22 +1015,26 @@ mod tests {
         bytes[0] = 0x2a;
         let decision_id = Hash256::from_bytes(bytes);
         let mut chain = CustodyChain::new(decision_id);
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            Hash256::digest(b"r"),
-            test_ts(1000),
-            None,
-        );
-        chain.append(
-            test_did("bob"),
-            CustodyRole::Reviewer,
-            CustodyAction::Approve,
-            Hash256::digest(b"r"),
-            test_ts(2000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                Hash256::digest(b"r"),
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
+        chain
+            .append(
+                test_did("bob"),
+                CustodyRole::Reviewer,
+                CustodyAction::Approve,
+                Hash256::digest(b"r"),
+                test_ts(2000),
+                None,
+            )
+            .expect("append custody event");
         assert_eq!(chain.events[0].id, "ce-42-0");
         assert_eq!(chain.events[1].id, "ce-42-1");
     }
@@ -874,14 +1045,16 @@ mod tests {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-mono"));
         assert_eq!(chain.next_sequence, 0);
         for i in 0..3 {
-            chain.append(
-                test_did("alice"),
-                CustodyRole::Proposer,
-                CustodyAction::Create,
-                Hash256::digest(b"r"),
-                test_ts(1000 + i),
-                None,
-            );
+            chain
+                .append(
+                    test_did("alice"),
+                    CustodyRole::Proposer,
+                    CustodyAction::Create,
+                    Hash256::digest(b"r"),
+                    test_ts(1000 + i),
+                    None,
+                )
+                .expect("append custody event");
         }
         assert_eq!(chain.next_sequence, 3);
         assert_eq!(chain.len(), 3);
@@ -891,22 +1064,26 @@ mod tests {
     #[test]
     fn test_events_by_actor_nonmatching_filtered_out() {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-filter"));
-        chain.append(
-            test_did("alice"),
-            CustodyRole::Proposer,
-            CustodyAction::Create,
-            Hash256::digest(b"r"),
-            test_ts(1000),
-            None,
-        );
-        chain.append(
-            test_did("bob"),
-            CustodyRole::Reviewer,
-            CustodyAction::Approve,
-            Hash256::digest(b"r"),
-            test_ts(2000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::Proposer,
+                CustodyAction::Create,
+                Hash256::digest(b"r"),
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
+        chain
+            .append(
+                test_did("bob"),
+                CustodyRole::Reviewer,
+                CustodyAction::Approve,
+                Hash256::digest(b"r"),
+                test_ts(2000),
+                None,
+            )
+            .expect("append custody event");
         assert!(chain.events_by_actor("did:exo:charlie").is_empty());
         let bobs = chain.events_by_actor("did:exo:bob");
         assert_eq!(bobs.len(), 1);
@@ -930,14 +1107,16 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            chain.append(
-                test_did("alice"),
-                CustodyRole::Reviewer,
-                action,
-                r,
-                test_ts(1000 + u64::try_from(i).expect("small")),
-                None,
-            );
+            chain
+                .append(
+                    test_did("alice"),
+                    CustodyRole::Reviewer,
+                    action,
+                    r,
+                    test_ts(1000 + u64::try_from(i).expect("small")),
+                    None,
+                )
+                .expect("append custody event");
         }
         let atts = chain.attestations();
         assert_eq!(atts.len(), 4);
@@ -977,19 +1156,21 @@ mod tests {
     #[test]
     fn test_custody_chain_serde_roundtrip() {
         let mut chain = CustodyChain::new(Hash256::digest(b"decision-serde"));
-        chain.append(
-            test_did("alice"),
-            CustodyRole::AiAgent {
-                delegation_id: Hash256::digest(b"d"),
-            },
-            CustodyAction::Custom {
-                action: "sign-off".to_string(),
-                metadata: Some("ok".to_string()),
-            },
-            Hash256::digest(b"r"),
-            test_ts(1000),
-            None,
-        );
+        chain
+            .append(
+                test_did("alice"),
+                CustodyRole::AiAgent {
+                    delegation_id: Hash256::digest(b"d"),
+                },
+                CustodyAction::Custom {
+                    action: "sign-off".to_string(),
+                    metadata: Some("ok".to_string()),
+                },
+                Hash256::digest(b"r"),
+                test_ts(1000),
+                None,
+            )
+            .expect("append custody event");
         let json = serde_json::to_string(&chain).expect("serialize");
         let decoded: CustodyChain = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded.events.len(), 1);

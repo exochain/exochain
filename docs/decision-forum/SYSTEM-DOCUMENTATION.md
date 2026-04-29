@@ -6,7 +6,7 @@ created: 2026-03-19
 publication: "The ASI Report — LinkedIn Newsletter"
 tags: [decision-forum, governance, constitutional, asi-safety, exochain]
 status: publication-ready
-codebase: "20 workspace packages | 122375 LOC Rust under crates/ | 266 source files | 2,966 listed tests"
+codebase: "20 workspace packages | 122665 LOC Rust under crates/ | 266 source files | 2,972 listed tests"
 ---
 
 # decision.forum — System Documentation
@@ -20,9 +20,9 @@ This document is the exhaustive technical reference for the decision.forum gover
 | Metric | Value |
 |--------|-------|
 | Workspace packages | 20 |
-| Rust LOC under `crates/` | 122375 |
+| Rust LOC under `crates/` | 122665 |
 | Rust source files | 273 |
-| Listed workspace tests | 2,966 |
+| Listed workspace tests | 2,972 |
 | Test gate | `cargo test --workspace` in CI Gate 2 |
 | decision-forum crate LOC | 3,800 |
 | decision-forum tests | 131 |

@@ -124,7 +124,7 @@ open tarpaulin-report.html
 ```
 
 A clean build produces zero errors and zero warnings. The current workspace
-inventory lists 2,966 tests; the exact executed count can change as doctests and
+inventory lists 2,972 tests; the exact executed count can change as doctests and
 integration targets evolve. What matters is zero failures:
 
 ```

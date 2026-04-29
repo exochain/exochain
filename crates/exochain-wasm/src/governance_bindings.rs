@@ -141,10 +141,13 @@ pub fn wasm_audit_append(
     .map_err(|e| JsValue::from_str(&format!("Audit error: {e}")))?;
     exo_governance::audit::append(&mut log, entry)
         .map_err(|e| JsValue::from_str(&format!("Audit error: {e}")))?;
+    let head_hash = log
+        .head_hash()
+        .map_err(|e| JsValue::from_str(&format!("Audit error: {e}")))?;
     // AuditLog doesn't derive Serialize, return summary
     to_js_value(&serde_json::json!({
         "entries": log.len(),
-        "head_hash": hex::encode(log.head_hash()),
+        "head_hash": hex::encode(head_hash),
     }))
 }
 

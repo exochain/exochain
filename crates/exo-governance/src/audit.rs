@@ -1,10 +1,26 @@
 //! Governance audit trail — append-only, hash-chained log.
 
-use exo_core::{Did, Hash256, Timestamp};
+use exo_core::{Did, Hash256, Timestamp, hash::hash_structured};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::errors::GovernanceError;
+
+const AUDIT_ENTRY_HASH_DOMAIN: &str = "exo.governance.audit_entry.v1";
+const AUDIT_ENTRY_HASH_SCHEMA_VERSION: u16 = 1;
+
+#[derive(Debug, Clone, Serialize)]
+struct AuditEntryHashPayload {
+    domain: &'static str,
+    schema_version: u16,
+    entry_id: Uuid,
+    timestamp: Timestamp,
+    actor: Did,
+    action: String,
+    result: String,
+    evidence_hash: [u8; 32],
+    chain_hash: [u8; 32],
+}
 
 /// A single entry in the hash-chained audit log, linking to the previous entry via `chain_hash`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,9 +50,16 @@ impl AuditLog {
     }
 
     /// Return the hash of the most recent entry, or all-zeros if the log is empty.
-    #[must_use]
-    pub fn head_hash(&self) -> [u8; 32] {
-        self.entries.last().map(hash_entry).unwrap_or([0u8; 32])
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GovernanceError::Serialization`] if canonical CBOR hashing of
+    /// the latest entry fails.
+    pub fn head_hash(&self) -> Result<[u8; 32], GovernanceError> {
+        match self.entries.last() {
+            Some(entry) => hash_entry(entry),
+            None => Ok([0u8; 32]),
+        }
     }
 
     /// Return the number of entries in the audit log.
@@ -51,25 +74,37 @@ impl AuditLog {
     }
 }
 
-fn hash_entry(entry: &AuditEntry) -> [u8; 32] {
-    let mut h = blake3::Hasher::new();
-    h.update(entry.id.as_bytes());
-    h.update(&entry.timestamp.physical_ms.to_le_bytes());
-    h.update(&entry.timestamp.logical.to_le_bytes());
-    h.update(entry.actor.as_str().as_bytes());
-    h.update(entry.action.as_bytes());
-    h.update(entry.result.as_bytes());
-    h.update(&entry.evidence_hash);
-    h.update(&entry.chain_hash);
-    *h.finalize().as_bytes()
+fn audit_entry_hash_payload(entry: &AuditEntry) -> AuditEntryHashPayload {
+    AuditEntryHashPayload {
+        domain: AUDIT_ENTRY_HASH_DOMAIN,
+        schema_version: AUDIT_ENTRY_HASH_SCHEMA_VERSION,
+        entry_id: entry.id,
+        timestamp: entry.timestamp,
+        actor: entry.actor.clone(),
+        action: entry.action.clone(),
+        result: entry.result.clone(),
+        evidence_hash: entry.evidence_hash,
+        chain_hash: entry.chain_hash,
+    }
+}
+
+fn hash_entry(entry: &AuditEntry) -> Result<[u8; 32], GovernanceError> {
+    hash_structured(&audit_entry_hash_payload(entry))
+        .map(|hash| *hash.as_bytes())
+        .map_err(|e| {
+            GovernanceError::Serialization(format!("audit entry canonical CBOR hash failed: {e}"))
+        })
 }
 
 /// Append an entry to the audit log, verifying its chain hash matches the current head.
 pub fn append(log: &mut AuditLog, entry: AuditEntry) -> Result<(), GovernanceError> {
-    let head = log.head_hash();
+    let head = log.head_hash()?;
     if entry.chain_hash != head {
+        let sequence = u64::try_from(log.entries.len()).map_err(|_| {
+            GovernanceError::Serialization("audit log length does not fit u64 sequence".into())
+        })?;
         return Err(GovernanceError::AuditChainBroken {
-            sequence: u64::try_from(log.entries.len()).unwrap_or(u64::MAX),
+            sequence,
             expected: Hash256(head),
             actual: Hash256(entry.chain_hash),
         });
@@ -83,13 +118,16 @@ pub fn verify_chain(log: &AuditLog) -> Result<(), GovernanceError> {
     let mut prev = [0u8; 32];
     for (i, entry) in log.entries.iter().enumerate() {
         if entry.chain_hash != prev {
+            let sequence = u64::try_from(i).map_err(|_| {
+                GovernanceError::Serialization("audit log index does not fit u64 sequence".into())
+            })?;
             return Err(GovernanceError::AuditChainBroken {
-                sequence: u64::try_from(i).unwrap_or(u64::MAX),
+                sequence,
                 expected: Hash256(prev),
                 actual: Hash256(entry.chain_hash),
             });
         }
-        prev = hash_entry(entry);
+        prev = hash_entry(entry)?;
     }
     Ok(())
 }
@@ -124,7 +162,7 @@ pub fn create_entry(
         action,
         result,
         evidence_hash,
-        chain_hash: log.head_hash(),
+        chain_hash: log.head_hash()?,
     })
 }
 
@@ -152,6 +190,71 @@ mod tests {
             .find("#[cfg(test)]")
             .expect("tests marker must exist");
         &source[start..start + end]
+    }
+
+    fn production_source() -> &'static str {
+        let source = include_str!("audit.rs");
+        let end = source
+            .find("#[cfg(test)]")
+            .expect("tests marker must exist");
+        &source[..end]
+    }
+
+    fn sample_entry() -> AuditEntry {
+        AuditEntry {
+            id: entry_id(0xD001),
+            timestamp: Timestamp::new(1000, 7),
+            actor: did("test"),
+            action: "test".into(),
+            result: "ok".into(),
+            evidence_hash: [0x11u8; 32],
+            chain_hash: [0x22u8; 32],
+        }
+    }
+
+    #[test]
+    fn audit_entry_hash_payload_is_domain_separated_cbor() {
+        let entry = sample_entry();
+        let payload = audit_entry_hash_payload(&entry);
+        assert_eq!(payload.domain, AUDIT_ENTRY_HASH_DOMAIN);
+        assert_eq!(payload.schema_version, 1);
+        assert_eq!(payload.entry_id, entry.id);
+        assert_eq!(payload.timestamp, entry.timestamp);
+        assert_eq!(payload.actor, entry.actor);
+        assert_eq!(payload.action, entry.action);
+        assert_eq!(payload.result, entry.result);
+        assert_eq!(payload.evidence_hash, entry.evidence_hash);
+        assert_eq!(payload.chain_hash, entry.chain_hash);
+    }
+
+    #[test]
+    fn audit_entry_hash_rejects_legacy_raw_concat_hash() {
+        let entry = sample_entry();
+        let mut h = blake3::Hasher::new();
+        h.update(entry.id.as_bytes());
+        h.update(&entry.timestamp.physical_ms.to_le_bytes());
+        h.update(&entry.timestamp.logical.to_le_bytes());
+        h.update(entry.actor.as_str().as_bytes());
+        h.update(entry.action.as_bytes());
+        h.update(entry.result.as_bytes());
+        h.update(&entry.evidence_hash);
+        h.update(&entry.chain_hash);
+        let legacy = *h.finalize().as_bytes();
+
+        assert_ne!(hash_entry(&entry).expect("canonical audit hash"), legacy);
+    }
+
+    #[test]
+    fn audit_production_source_has_no_raw_hash_loop() {
+        let production = production_source();
+        assert!(
+            !production.contains("blake3::Hasher"),
+            "governance audit hashes must use domain-separated canonical CBOR"
+        );
+        assert!(
+            !production.contains("unwrap_or([0u8; 32])"),
+            "audit hashing must not hide serialization failures behind a zero hash"
+        );
     }
 
     #[test]
@@ -234,10 +337,10 @@ mod tests {
     #[test]
     fn head_hash_changes() {
         let mut log = AuditLog::new();
-        let h0 = log.head_hash();
+        let h0 = log.head_hash().expect("empty head hash");
         assert_eq!(h0, [0u8; 32]);
         make_and_append(&mut log, "a1");
-        assert_ne!(log.head_hash(), h0);
+        assert_ne!(log.head_hash().expect("head hash"), h0);
     }
     #[test]
     fn deterministic_hash() {
@@ -250,7 +353,10 @@ mod tests {
             evidence_hash: [0u8; 32],
             chain_hash: [0u8; 32],
         };
-        assert_eq!(hash_entry(&e), hash_entry(&e));
+        assert_eq!(
+            hash_entry(&e).expect("first hash"),
+            hash_entry(&e).expect("second hash")
+        );
     }
 
     #[test]
