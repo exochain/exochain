@@ -48,7 +48,8 @@ pub fn wasm_check_fiduciary_duty(duty_json: &str, actions_json: &str) -> Result<
 pub fn wasm_ediscovery_search(request_json: &str, corpus_json: &str) -> Result<JsValue, JsValue> {
     let request: exo_legal::ediscovery::DiscoveryRequest = from_json_str(request_json)?;
     let corpus: Vec<exo_legal::evidence::Evidence> = from_json_str(corpus_json)?;
-    let response = exo_legal::ediscovery::search(&request, &corpus);
+    let response = exo_legal::ediscovery::search(&request, &corpus)
+        .map_err(|e| JsValue::from_str(&format!("eDiscovery error: {e}")))?;
     to_js_value(&response)
 }
 

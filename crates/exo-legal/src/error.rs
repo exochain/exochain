@@ -22,6 +22,8 @@ pub enum LegalError {
     FiduciaryViolation { reason: String },
     #[error("discovery scope too broad: {reason}")]
     DiscoveryScopeTooBoard { reason: String },
+    #[error("eDiscovery production hash encoding failed: {reason}")]
+    DiscoveryHashEncodingFailed { reason: String },
     #[error("retention policy violation: {reason}")]
     RetentionViolation { reason: String },
     #[error("disclosure required for action: {action}")]
@@ -57,6 +59,7 @@ mod tests {
             Box::new(LegalError::PrivilegeAlreadyAsserted(id)),
             Box::new(LegalError::FiduciaryViolation { reason: "x".into() }),
             Box::new(LegalError::DiscoveryScopeTooBoard { reason: "x".into() }),
+            Box::new(LegalError::DiscoveryHashEncodingFailed { reason: "x".into() }),
             Box::new(LegalError::RetentionViolation { reason: "x".into() }),
             Box::new(LegalError::DisclosureRequired {
                 action: "vote".into(),
