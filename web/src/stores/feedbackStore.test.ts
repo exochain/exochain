@@ -334,6 +334,29 @@ describe('feedbackStore.ts — Feedback store', () => {
         })
       )
     })
+
+    it('sends gateway-required actor binding metadata', () => {
+      localStorage.setItem('df_token', 'test-token')
+
+      const { result } = renderHook(() => useFeedbackStore())
+
+      act(() => {
+        result.current.openReporter('widget-1', 'decisions')
+        result.current.fileIssue({
+          title: 'Gateway Metadata',
+          description: 'Test',
+          severity: 'high',
+          category: 'security',
+        })
+      })
+
+      const [, init] = vi.mocked(global.fetch).mock.calls[0]
+      const headers = init?.headers as Record<string, string>
+      const body = JSON.parse(init?.body as string)
+
+      expect(body.createdAt).toBeGreaterThan(0)
+      expect(headers['x-exo-auth-observed-at-ms']).toBe(String(body.updatedAt))
+    })
   })
 
   // ─────────────────────────────────────────────────────────────

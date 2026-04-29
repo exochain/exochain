@@ -47,6 +47,7 @@ use crate::{
 
 const XSRF_COOKIE_PREFIX: &str = "XSRF-TOKEN=";
 const CSRF_HEADER_NAME: &str = "x-csrf-token";
+const AUTH_OBSERVED_AT_MS_HEADER: &str = "x-exo-auth-observed-at-ms";
 const GLOBAL_CONCURRENCY_LIMIT: usize = 1024;
 
 // ---------------------------------------------------------------------------
@@ -1417,6 +1418,143 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
         .map(|s| s.trim().to_owned())
 }
 
+fn require_bearer_token(headers: &HeaderMap) -> Result<String> {
+    extract_bearer_token(headers).ok_or_else(|| GatewayError::AuthenticationFailed {
+        reason: "missing or malformed Authorization header".to_owned(),
+    })
+}
+
+fn required_observed_at_ms_header(headers: &HeaderMap) -> Result<i64> {
+    let raw = headers
+        .get(AUTH_OBSERVED_AT_MS_HEADER)
+        .ok_or_else(|| {
+            GatewayError::BadRequest(format!(
+                "missing required '{AUTH_OBSERVED_AT_MS_HEADER}' header"
+            ))
+        })?
+        .to_str()
+        .map_err(|_| {
+            GatewayError::BadRequest(format!(
+                "'{AUTH_OBSERVED_AT_MS_HEADER}' header must be valid UTF-8"
+            ))
+        })?;
+    let observed_at = raw.parse::<i64>().map_err(|e| {
+        GatewayError::BadRequest(format!(
+            "'{AUTH_OBSERVED_AT_MS_HEADER}' header must be an integer millisecond timestamp: {e}"
+        ))
+    })?;
+    if observed_at <= 0 {
+        return Err(GatewayError::BadRequest(format!(
+            "'{AUTH_OBSERVED_AT_MS_HEADER}' header must be non-zero"
+        )));
+    }
+    Ok(observed_at)
+}
+
+async fn require_authenticated_session_actor_from_header(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Did> {
+    let token = require_bearer_token(headers)?;
+    let observed_at = required_observed_at_ms_header(headers)?;
+    require_authenticated_session_actor_for_token(state, &token, observed_at).await
+}
+
+async fn require_authenticated_session_actor(
+    state: &AppState,
+    headers: &HeaderMap,
+    observed_at_ms: i64,
+) -> Result<Did> {
+    let token = require_bearer_token(headers)?;
+    require_authenticated_session_actor_for_token(state, &token, observed_at_ms).await
+}
+
+async fn require_authenticated_session_actor_for_token(
+    state: &AppState,
+    token: &str,
+    observed_at_ms: i64,
+) -> Result<Did> {
+    if observed_at_ms <= 0 {
+        return Err(GatewayError::BadRequest(
+            "session authentication observed_at must be caller-supplied and non-zero".into(),
+        ));
+    }
+    let db = state.require_db()?;
+    let actor_did: Option<String> = sqlx::query_scalar(
+        "SELECT actor_did FROM sessions \
+         WHERE token = $1 AND revoked = false AND expires_at > $2",
+    )
+    .bind(token)
+    .bind(observed_at_ms)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| GatewayError::Internal(format!("session actor lookup failed: {e}")))?;
+
+    let actor_did = actor_did.ok_or_else(|| GatewayError::AuthenticationFailed {
+        reason: "session token expired, revoked, or not found".to_owned(),
+    })?;
+    Did::new(&actor_did).map_err(|e| {
+        GatewayError::Internal(format!(
+            "session actor DID stored in database is invalid: {actor_did}: {e}"
+        ))
+    })
+}
+
+fn reject_caller_supplied_identity_field(body: &serde_json::Value, field: &str) -> Result<()> {
+    if body
+        .as_object()
+        .is_some_and(|object| object.contains_key(field))
+    {
+        return Err(GatewayError::BadRequest(format!(
+            "{field} is derived from the authenticated session actor and must not be supplied"
+        )));
+    }
+    Ok(())
+}
+
+fn reject_caller_supplied_builtin_layout(body: &serde_json::Value) -> Result<()> {
+    let Some(value) = body.as_object().and_then(|object| object.get("isBuiltIn")) else {
+        return Ok(());
+    };
+    match value.as_bool() {
+        Some(false) | None => Ok(()),
+        Some(true) => Err(GatewayError::BadRequest(
+            "built-in layout templates are code-owned and cannot be persisted by callers".into(),
+        )),
+    }
+}
+
+fn auth_boundary_error_response(err: GatewayError) -> Response {
+    match err {
+        GatewayError::AuthenticationFailed { reason } => (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "authentication failed",
+                "message": reason,
+            })),
+        )
+            .into_response(),
+        GatewayError::BadRequest(reason) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": reason })),
+        )
+            .into_response(),
+        GatewayError::Internal(reason) if reason.contains("no database configured") => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "database not configured",
+                "message": reason,
+            })),
+        )
+            .into_response(),
+        other => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": other.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 fn is_csrf_protected_method(method: &Method) -> bool {
     matches!(
         *method,
@@ -1489,8 +1627,24 @@ async fn require_csrf_double_submit(
 /// PUT /api/v1/layout-templates — upsert a layout template.
 async fn handle_layout_template_put(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    let metadata = match LayoutTemplateMetadata::from_body(&body) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
+    let actor =
+        match require_authenticated_session_actor(&state, &headers, metadata.updated_at).await {
+            Ok(actor) => actor,
+            Err(e) => return auth_boundary_error_response(e),
+        };
+    if let Err(e) = reject_caller_supplied_identity_field(&body, "userDid") {
+        return metadata_error_response(e);
+    }
+    if let Err(e) = reject_caller_supplied_builtin_layout(&body) {
+        return metadata_error_response(e);
+    }
     let db = match state.require_db() {
         Ok(pool) => pool,
         Err(_) => {
@@ -1520,39 +1674,30 @@ async fn handle_layout_template_put(
         .get("hiddenPanels")
         .cloned()
         .unwrap_or(serde_json::json!([]));
-    let is_built_in = body
-        .get("isBuiltIn")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let metadata = match LayoutTemplateMetadata::from_body(&body) {
-        Ok(metadata) => metadata,
-        Err(e) => return metadata_error_response(e),
-    };
-
-    // Extract user DID from bearer token session if available.
-    // For now, accept an optional `userDid` field in the body.
-    let user_did_owned = body
-        .get("userDid")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_owned());
-    let user_did = user_did_owned.as_deref();
 
     match crate::db::upsert_layout_template(
         db,
         &id,
-        user_did,
+        Some(actor.as_str()),
         name,
         &layout_json,
         &hidden_panels,
-        is_built_in,
+        false,
         metadata.created_at,
         metadata.updated_at,
     )
     .await
     {
-        Ok(()) => (
+        Ok(true) => (
             StatusCode::OK,
             Json(serde_json::json!({ "id": id, "status": "saved" })),
+        )
+            .into_response(),
+        Ok(false) => (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "layout template belongs to another actor or is code-owned"
+            })),
         )
             .into_response(),
         Err(e) => (
@@ -1566,8 +1711,13 @@ async fn handle_layout_template_put(
 /// DELETE /api/v1/layout-templates/:id — delete a user layout template.
 async fn handle_layout_template_delete(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    let actor = match require_authenticated_session_actor_from_header(&state, &headers).await {
+        Ok(actor) => actor,
+        Err(e) => return auth_boundary_error_response(e),
+    };
     let db = match state.require_db() {
         Ok(pool) => pool,
         Err(_) => {
@@ -1578,7 +1728,7 @@ async fn handle_layout_template_delete(
                 .into_response();
         }
     };
-    match crate::db::delete_layout_template(db, &id).await {
+    match crate::db::delete_layout_template(db, &id, actor.as_str()).await {
         Ok(true) => (
             StatusCode::OK,
             Json(serde_json::json!({ "id": id, "status": "deleted" })),
@@ -1598,7 +1748,14 @@ async fn handle_layout_template_delete(
 }
 
 /// GET /api/v1/layout-templates — list all layout templates.
-async fn handle_layout_templates_list(State(state): State<AppState>) -> impl IntoResponse {
+async fn handle_layout_templates_list(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let actor = match require_authenticated_session_actor_from_header(&state, &headers).await {
+        Ok(actor) => actor,
+        Err(e) => return auth_boundary_error_response(e),
+    };
     let db = match state.require_db() {
         Ok(pool) => pool,
         Err(_) => {
@@ -1609,7 +1766,7 @@ async fn handle_layout_templates_list(State(state): State<AppState>) -> impl Int
                 .into_response();
         }
     };
-    match crate::db::list_layout_templates(db, None).await {
+    match crate::db::list_layout_templates(db, Some(actor.as_str())).await {
         Ok(rows) => {
             let templates: Vec<serde_json::Value> = rows
                 .into_iter()
@@ -1638,8 +1795,21 @@ async fn handle_layout_templates_list(State(state): State<AppState>) -> impl Int
 /// POST /api/v1/feedback-issues — file a new feedback issue.
 async fn handle_feedback_issue_create(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    let metadata = match FeedbackIssueCreateMetadata::from_body(&body) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
+    let actor =
+        match require_authenticated_session_actor(&state, &headers, metadata.created_at).await {
+            Ok(actor) => actor,
+            Err(e) => return auth_boundary_error_response(e),
+        };
+    if let Err(e) = reject_caller_supplied_identity_field(&body, "reporterDid") {
+        return metadata_error_response(e);
+    }
     let db = match state.require_db() {
         Ok(pool) => pool,
         Err(_) => {
@@ -1670,10 +1840,6 @@ async fn handle_feedback_issue_create(
                 .into_response();
         }
     };
-    let metadata = match FeedbackIssueCreateMetadata::from_body(&body) {
-        Ok(metadata) => metadata,
-        Err(e) => return metadata_error_response(e),
-    };
     let description = body
         .get("description")
         .and_then(|v| v.as_str())
@@ -1690,11 +1856,6 @@ async fn handle_feedback_issue_create(
         .get("sourceModuleType")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let reporter_did_owned = body
-        .get("reporterDid")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_owned());
-    let reporter_did = reporter_did_owned.as_deref();
     let widget_state = body.get("widgetState");
     let browser_info = body.get("browserInfo");
 
@@ -1707,7 +1868,7 @@ async fn handle_feedback_issue_create(
         category,
         &source_widget_id,
         source_module_type,
-        reporter_did,
+        Some(actor.as_str()),
         widget_state,
         browser_info,
         metadata.created_at,
@@ -1728,7 +1889,14 @@ async fn handle_feedback_issue_create(
 }
 
 /// GET /api/v1/feedback-issues — list feedback issues.
-async fn handle_feedback_issues_list(State(state): State<AppState>) -> impl IntoResponse {
+async fn handle_feedback_issues_list(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let actor = match require_authenticated_session_actor_from_header(&state, &headers).await {
+        Ok(actor) => actor,
+        Err(e) => return auth_boundary_error_response(e),
+    };
     let db = match state.require_db() {
         Ok(pool) => pool,
         Err(_) => {
@@ -1739,7 +1907,7 @@ async fn handle_feedback_issues_list(State(state): State<AppState>) -> impl Into
                 .into_response();
         }
     };
-    match crate::db::list_feedback_issues(db, None).await {
+    match crate::db::list_feedback_issues(db, Some(actor.as_str()), None).await {
         Ok(rows) => {
             let issues: Vec<serde_json::Value> = rows
                 .into_iter()
@@ -1773,9 +1941,19 @@ async fn handle_feedback_issues_list(State(state): State<AppState>) -> impl Into
 /// PATCH /api/v1/feedback-issues/:id — update issue status/assignment.
 async fn handle_feedback_issue_update(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    let metadata = match FeedbackIssueUpdateMetadata::from_body(&body) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
+    let actor =
+        match require_authenticated_session_actor(&state, &headers, metadata.updated_at).await {
+            Ok(actor) => actor,
+            Err(e) => return auth_boundary_error_response(e),
+        };
     let db = match state.require_db() {
         Ok(pool) => pool,
         Err(_) => {
@@ -1800,14 +1978,11 @@ async fn handle_feedback_issue_update(
         .and_then(|v| v.as_str())
         .map(|s| s.to_owned());
     let notes = notes_owned.as_deref();
-    let metadata = match FeedbackIssueUpdateMetadata::from_body(&body) {
-        Ok(metadata) => metadata,
-        Err(e) => return metadata_error_response(e),
-    };
 
     match crate::db::update_feedback_issue_status(
         db,
         &id,
+        actor.as_str(),
         status,
         agent_team,
         notes,
@@ -3204,6 +3379,97 @@ mod tests {
         assert!(
             matches!(&err, GatewayError::BadRequest(reason) if reason.contains("updatedAt")),
             "expected updatedAt refusal, got {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dashboard_persistence_routes_reject_missing_bearer_before_db() {
+        let requests = [
+            (
+                Method::PUT,
+                "/api/v1/layout-templates",
+                Some(serde_json::json!({
+                    "id": "layout-1",
+                    "name": "Layout",
+                    "layout": [],
+                    "hiddenPanels": [],
+                    "createdAt": 10_000,
+                    "updatedAt": 10_001
+                })),
+            ),
+            (Method::GET, "/api/v1/layout-templates", None),
+            (Method::DELETE, "/api/v1/layout-templates/layout-1", None),
+            (
+                Method::POST,
+                "/api/v1/feedback-issues",
+                Some(serde_json::json!({
+                    "id": "issue-1",
+                    "title": "Bad panel state",
+                    "sourceWidgetId": "panel-1",
+                    "createdAt": 10_000
+                })),
+            ),
+            (Method::GET, "/api/v1/feedback-issues", None),
+            (
+                Method::PATCH,
+                "/api/v1/feedback-issues/issue-1",
+                Some(serde_json::json!({
+                    "status": "triaged",
+                    "updatedAt": 10_001
+                })),
+            ),
+        ];
+
+        for (method, uri, body) in requests {
+            let app = build_router(state());
+            let request_body = body
+                .map(|value| Body::from(value.to_string()))
+                .unwrap_or_else(Body::empty);
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method(method.clone())
+                        .uri(uri)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(request_body)
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "{method} {uri} must reject missing bearer before DB access"
+            );
+        }
+    }
+
+    #[test]
+    fn dashboard_persistence_handlers_do_not_trust_body_identity_scope() {
+        let source = include_str!("server.rs");
+        let layout_put = source_between(
+            source,
+            "async fn handle_layout_template_put",
+            "/// DELETE /api/v1/layout-templates/:id",
+        );
+        let feedback_create = source_between(
+            source,
+            "async fn handle_feedback_issue_create",
+            "/// GET /api/v1/feedback-issues",
+        );
+
+        assert!(
+            !layout_put.contains(".get(\"userDid\")"),
+            "layout user_did must come from the authenticated session actor"
+        );
+        assert!(
+            !layout_put.contains(".get(\"isBuiltIn\")"),
+            "callers must not be able to persist code-owned built-in templates"
+        );
+        assert!(
+            !feedback_create.contains(".get(\"reporterDid\")"),
+            "feedback reporter_did must come from the authenticated session actor"
         );
     }
 

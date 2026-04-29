@@ -51,13 +51,18 @@ async function saveToServer(template: LayoutTemplate) {
   try {
     await fetch('/api/v1/layout-templates', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('df_token')}` },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${localStorage.getItem('df_token')}`,
+        'x-exo-auth-observed-at-ms': String(template.updatedAt),
+      },
       body: JSON.stringify({
         id: template.id,
         name: template.name,
         layout: JSON.stringify(template.layout),
         hiddenPanels: template.hiddenPanels,
         isBuiltIn: template.isBuiltIn,
+        createdAt: template.createdAt,
         updatedAt: template.updatedAt,
       }),
     })
@@ -66,9 +71,13 @@ async function saveToServer(template: LayoutTemplate) {
 
 async function deleteFromServer(id: string) {
   try {
+    const observedAt = Date.now()
     await fetch(`/api/v1/layout-templates/${id}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${localStorage.getItem('df_token')}` },
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('df_token')}`,
+        'x-exo-auth-observed-at-ms': String(observedAt),
+      },
     })
   } catch { /* best-effort */ }
 }

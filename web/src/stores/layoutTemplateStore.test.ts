@@ -1259,6 +1259,26 @@ describe('useLayoutTemplateStore', () => {
       )
     })
 
+    it('should send gateway-required actor binding metadata', () => {
+      localStorage.setItem('df_token', 'test-token-123')
+
+      const { result } = renderHook(() => useLayoutTemplateStore())
+
+      act(() => {
+        result.current.setEditMode(true)
+        result.current.updateDraftLayout([{ i: 'panel-1', x: 0, y: 0, w: 6, h: 4 }])
+        result.current.saveAsTemplate('Gateway Metadata')
+      })
+
+      const [, init] = vi.mocked(global.fetch).mock.calls[0]
+      const headers = init?.headers as Record<string, string>
+      const body = JSON.parse(init?.body as string)
+
+      expect(body.createdAt).toBeGreaterThan(0)
+      expect(body.updatedAt).toBeGreaterThan(0)
+      expect(headers['x-exo-auth-observed-at-ms']).toBe(String(body.updatedAt))
+    })
+
     it('should continue on server sync failure (fire-and-forget)', () => {
       ;(global.fetch as any).mockRejectedValueOnce(new Error('Network error'))
 

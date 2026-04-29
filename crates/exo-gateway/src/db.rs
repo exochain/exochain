@@ -924,16 +924,17 @@ pub async fn upsert_layout_template(
     is_built_in: bool,
     created_at: i64,
     updated_at: i64,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
         "INSERT INTO layout_templates (id, user_did, name, layout_json, hidden_panels, is_built_in, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (id) DO UPDATE SET name = $3, layout_json = $4, hidden_panels = $5, updated_at = $8"
+         ON CONFLICT (id) DO UPDATE SET name = $3, layout_json = $4, hidden_panels = $5, updated_at = $8
+         WHERE layout_templates.user_did = $2 AND layout_templates.is_built_in = false"
     )
     .bind(id).bind(user_did).bind(name).bind(layout_json).bind(hidden_panels)
     .bind(is_built_in).bind(created_at).bind(updated_at)
     .execute(pool).await?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 /// List all layout templates for a user (or all templates if `user_did` is None).
@@ -954,12 +955,20 @@ pub async fn list_layout_templates(
     }
 }
 
-/// Delete a layout template by ID (refuses to delete built-in templates).
-pub async fn delete_layout_template(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM layout_templates WHERE id = $1 AND is_built_in = false")
-        .bind(id)
-        .execute(pool)
-        .await?;
+/// Delete an actor-owned layout template by ID (refuses built-in templates).
+pub async fn delete_layout_template(
+    pool: &PgPool,
+    id: &str,
+    user_did: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "DELETE FROM layout_templates \
+         WHERE id = $1 AND user_did = $2 AND is_built_in = false",
+    )
+    .bind(id)
+    .bind(user_did)
+    .execute(pool)
+    .await?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -1017,20 +1026,38 @@ pub async fn insert_feedback_issue(
 /// List feedback issues, optionally filtered by status.
 pub async fn list_feedback_issues(
     pool: &PgPool,
+    reporter_did: Option<&str>,
     status_filter: Option<&str>,
 ) -> Result<Vec<FeedbackIssueRow>, sqlx::Error> {
-    if let Some(status) = status_filter {
-        sqlx::query_as::<_, FeedbackIssueRow>(
-            "SELECT id, title, description, severity, category, status, source_widget_id, source_module_type, \
-             reporter_did, assigned_agent_team, widget_state, browser_info, resolution_notes, created_at, updated_at \
-             FROM feedback_issues WHERE status = $1 ORDER BY created_at DESC"
-        ).bind(status).fetch_all(pool).await
-    } else {
-        sqlx::query_as::<_, FeedbackIssueRow>(
-            "SELECT id, title, description, severity, category, status, source_widget_id, source_module_type, \
-             reporter_did, assigned_agent_team, widget_state, browser_info, resolution_notes, created_at, updated_at \
-             FROM feedback_issues ORDER BY created_at DESC"
-        ).fetch_all(pool).await
+    match (reporter_did, status_filter) {
+        (Some(reporter), Some(status)) => {
+            sqlx::query_as::<_, FeedbackIssueRow>(
+                "SELECT id, title, description, severity, category, status, source_widget_id, source_module_type, \
+                 reporter_did, assigned_agent_team, widget_state, browser_info, resolution_notes, created_at, updated_at \
+                 FROM feedback_issues WHERE reporter_did = $1 AND status = $2 ORDER BY created_at DESC"
+            ).bind(reporter).bind(status).fetch_all(pool).await
+        }
+        (Some(reporter), None) => {
+            sqlx::query_as::<_, FeedbackIssueRow>(
+                "SELECT id, title, description, severity, category, status, source_widget_id, source_module_type, \
+                 reporter_did, assigned_agent_team, widget_state, browser_info, resolution_notes, created_at, updated_at \
+                 FROM feedback_issues WHERE reporter_did = $1 ORDER BY created_at DESC"
+            ).bind(reporter).fetch_all(pool).await
+        }
+        (None, Some(status)) => {
+            sqlx::query_as::<_, FeedbackIssueRow>(
+                "SELECT id, title, description, severity, category, status, source_widget_id, source_module_type, \
+                 reporter_did, assigned_agent_team, widget_state, browser_info, resolution_notes, created_at, updated_at \
+                 FROM feedback_issues WHERE status = $1 ORDER BY created_at DESC"
+            ).bind(status).fetch_all(pool).await
+        }
+        (None, None) => {
+            sqlx::query_as::<_, FeedbackIssueRow>(
+                "SELECT id, title, description, severity, category, status, source_widget_id, source_module_type, \
+                 reporter_did, assigned_agent_team, widget_state, browser_info, resolution_notes, created_at, updated_at \
+                 FROM feedback_issues ORDER BY created_at DESC"
+            ).fetch_all(pool).await
+        }
     }
 }
 
@@ -1038,6 +1065,7 @@ pub async fn list_feedback_issues(
 pub async fn update_feedback_issue_status(
     pool: &PgPool,
     id: &str,
+    reporter_did: &str,
     status: &str,
     assigned_agent_team: Option<&str>,
     resolution_notes: Option<&str>,
@@ -1045,10 +1073,10 @@ pub async fn update_feedback_issue_status(
 ) -> Result<bool, sqlx::Error> {
     let result = sqlx::query(
         "UPDATE feedback_issues SET status = $1, assigned_agent_team = COALESCE($2, assigned_agent_team), \
-         resolution_notes = COALESCE($3, resolution_notes), updated_at = $4 WHERE id = $5"
+         resolution_notes = COALESCE($3, resolution_notes), updated_at = $4 WHERE id = $5 AND reporter_did = $6"
     )
     .bind(status).bind(assigned_agent_team).bind(resolution_notes)
-    .bind(updated_at).bind(id)
+    .bind(updated_at).bind(id).bind(reporter_did)
     .execute(pool).await?;
     Ok(result.rows_affected() > 0)
 }

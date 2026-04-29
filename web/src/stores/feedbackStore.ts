@@ -75,6 +75,7 @@ async function submitToServer(issue: FeedbackIssue) {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${localStorage.getItem('df_token')}`,
+        'x-exo-auth-observed-at-ms': String(issue.updatedAt),
       },
       body: JSON.stringify(issue),
     })
