@@ -221,8 +221,8 @@ scope boundary at the AI layer.
 **How to comply.** When your consent record is revoked or suspended,
 stop acting. Do not try to continue under the previous consent. Do
 not try to apply consent from a different BCTS scope. When in doubt,
-call `exochain_check_consent` (§4) to confirm active consent before
-proceeding.
+call `exochain_check_consent` (§4); a registry-unavailable error is
+not active consent, so stop until a live consent source is available.
 
 ---
 

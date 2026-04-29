@@ -77,7 +77,9 @@ Load the kernel context before auditing:
 - `exochain_node_status` — consensus round, height, validator set
 - `exochain_list_invariants` — canonical invariant list
 - `exochain_get_checkpoint` at the cited timestamp (or latest)
-- `exochain_list_bailments` for the scope
+- `exochain_list_bailments` for the scope; if it returns
+  `mcp_consent_registry_unavailable`, record that no live consent registry was
+  available for the audit
 - Read resource `exochain://constitution` and BLAKE3-hash it to confirm
   the kernel hash matches the current binary
 

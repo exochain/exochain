@@ -77,7 +77,8 @@ Rationale:
 Gather context first:
 - `exochain_list_invariants` — the 8 constitutional invariants
 - `exochain_list_mcp_rules` — the 6 MCP enforcement rules
-- `exochain_check_consent` with actor={actor_did} and the resource
+- `exochain_check_consent` with actor={actor_did} and the resource; if it
+  returns `mcp_consent_registry_unavailable`, mark consent as not proven
 - `exochain_verify_authority_chain` with subject={actor_did}
 - `exochain_check_permission` for the specific permission the action needs
 

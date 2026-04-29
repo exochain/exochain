@@ -64,8 +64,9 @@ The kernel enforces 8 invariants on **every** action. Read
 
 1. **Separation of Powers** — You cannot hold legislative + executive +
    judicial roles at once. MCP agents are assigned the `Judicial` branch.
-2. **Consent Required** — No active bailment → denial. Always check
-   `exochain_check_consent` before acting on a resource.
+2. **Consent Required** — No active bailment → denial. Call
+   `exochain_check_consent` before acting on a resource, and treat
+   `mcp_consent_registry_unavailable` as no proof of consent.
 3. **No Self-Grant** — You cannot widen your own permissions. Delegation
    must come from an authority chain rooted in a human signer.
 4. **Human Override** — Your actions must remain reversible by a human
@@ -96,7 +97,8 @@ Read `exochain://mcp-rules` for the authoritative list. In short:
 - **Always call `exochain_node_status` first** — this tells you whether
   you're talking to a live consensus node or a standalone stdio session.
 - **Before any write-like action**, call `exochain_check_consent` and
-  `exochain_verify_authority_chain` on the actor. If either fails, stop.
+  `exochain_verify_authority_chain` on the actor. If either fails, or if the
+  consent registry is unavailable, stop.
 - **For reviews and audits**, use the prompts `governance_review`,
   `compliance_check`, `evidence_analysis`, `constitutional_audit` via
   `prompts/get`. They hand you a structured template filled with your

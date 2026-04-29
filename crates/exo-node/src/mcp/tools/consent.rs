@@ -11,6 +11,23 @@ use crate::mcp::{
     protocol::{ToolDefinition, ToolResult},
 };
 
+#[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+const MCP_CONSENT_READ_INITIATIVE: &str = "Initiatives/fix-mcp-consent-read-store-refusal.md";
+
+#[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+fn consent_registry_unavailable(tool_name: &str) -> ToolResult {
+    ToolResult::error(
+        json!({
+            "error": "mcp_consent_registry_unavailable",
+            "tool": tool_name,
+            "message": "This MCP consent read has no live consent registry attached, so it cannot prove active consent or enumerate bailments. Build with `unaudited-mcp-simulation-tools` only for explicit dev simulation.",
+            "feature_flag": "unaudited-mcp-simulation-tools",
+            "initiative": MCP_CONSENT_READ_INITIATIVE,
+        })
+        .to_string(),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // exochain_propose_bailment
 // ---------------------------------------------------------------------------
@@ -151,7 +168,7 @@ pub fn execute_propose_bailment(params: &Value, _context: &NodeContext) -> ToolR
 pub fn check_consent_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_check_consent".to_owned(),
-        description: "Check whether active consent exists for a specific actor and scope. Returns consent status and details.".to_owned(),
+        description: "Check whether active consent can be proven for a specific actor and scope. The default MCP context has no consent registry and refuses rather than fabricating absence.".to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -196,14 +213,23 @@ pub fn execute_check_consent(params: &Value, _context: &NodeContext) -> ToolResu
         );
     }
 
-    // No persistent consent registry yet — report no active consent.
-    let response = json!({
-        "actor": actor_str,
-        "scope": scope,
-        "consent_active": false,
-        "bailment_state": "none",
-    });
-    ToolResult::success(response.to_string())
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = scope;
+        consent_registry_unavailable("exochain_check_consent")
+    }
+
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let response = json!({
+            "actor": actor_str,
+            "scope": scope,
+            "consent_active": false,
+            "bailment_state": "none",
+            "source": "simulation_no_consent_registry",
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +241,7 @@ pub fn execute_check_consent(params: &Value, _context: &NodeContext) -> ToolResu
 pub fn list_bailments_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_list_bailments".to_owned(),
-        description: "List all bailments (active, proposed, terminated) for a given DID."
+        description: "List bailments for a given DID when a live consent registry is wired. The default MCP context refuses rather than returning a fabricated empty registry."
             .to_owned(),
         input_schema: json!({
             "type": "object",
@@ -266,13 +292,23 @@ pub fn execute_list_bailments(params: &Value, _context: &NodeContext) -> ToolRes
         );
     }
 
-    let response = json!({
-        "did": did_str,
-        "filter": filter,
-        "bailments": [],
-        "count": 0,
-    });
-    ToolResult::success(response.to_string())
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
+    {
+        let _ = filter;
+        consent_registry_unavailable("exochain_list_bailments")
+    }
+
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    {
+        let response = json!({
+            "did": did_str,
+            "filter": filter,
+            "bailments": [],
+            "count": 0,
+            "source": "simulation_no_consent_registry",
+        });
+        ToolResult::success(response.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -449,8 +485,26 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
     #[test]
-    fn execute_check_consent_success() {
+    fn execute_check_consent_refuses_without_live_registry() {
+        let result = execute_check_consent(
+            &json!({
+                "actor_did": "did:exo:alice",
+                "scope": "data:medical",
+            }),
+            &NodeContext::empty(),
+        );
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_consent_registry_unavailable"));
+        assert!(text.contains("fix-mcp-consent-read-store-refusal.md"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+    }
+
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    #[test]
+    fn execute_check_consent_simulation_success() {
         let result = execute_check_consent(
             &json!({
                 "actor_did": "did:exo:alice",
@@ -462,6 +516,7 @@ mod tests {
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["consent_active"], false);
         assert_eq!(v["bailment_state"], "none");
+        assert_eq!(v["source"], "simulation_no_consent_registry");
     }
 
     #[test]
@@ -496,8 +551,21 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    #[cfg(not(feature = "unaudited-mcp-simulation-tools"))]
     #[test]
-    fn execute_list_bailments_success() {
+    fn execute_list_bailments_refuses_without_live_registry() {
+        let result =
+            execute_list_bailments(&json!({"did": "did:exo:alice"}), &NodeContext::empty());
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_consent_registry_unavailable"));
+        assert!(text.contains("fix-mcp-consent-read-store-refusal.md"));
+        assert!(text.contains("unaudited-mcp-simulation-tools"));
+    }
+
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
+    #[test]
+    fn execute_list_bailments_simulation_success() {
         let result =
             execute_list_bailments(&json!({"did": "did:exo:alice"}), &NodeContext::empty());
         assert!(!result.is_error);
@@ -505,8 +573,10 @@ mod tests {
         assert_eq!(v["count"], 0);
         assert_eq!(v["filter"], "all");
         assert!(v["bailments"].as_array().expect("arr").is_empty());
+        assert_eq!(v["source"], "simulation_no_consent_registry");
     }
 
+    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_list_bailments_with_filter() {
         let result = execute_list_bailments(

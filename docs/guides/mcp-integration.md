@@ -258,10 +258,10 @@ Use these at session start to let the agent self-orient.
 
 | Tool | Purpose |
 |---|---|
-| `exochain_propose_bailment` | Propose a scoped, time-bounded consent. Input: `{ bailor_did, bailee_did, scope, duration_hours? }`. |
-| `exochain_check_consent` | Is there active consent for actor+scope? Input: `{ actor_did, scope }`. |
-| `exochain_list_bailments` | List bailments the agent knows about. |
-| `exochain_terminate_bailment` | Revoke a bailment — effect is immediate (invariant `ConsentRequired`). |
+| `exochain_propose_bailment` | Simulation-gated proposal surface. Default build refuses instead of fabricating consent state. |
+| `exochain_check_consent` | Requires a live consent registry. Default build refuses with `mcp_consent_registry_unavailable`; that is no proof of active consent. |
+| `exochain_list_bailments` | Requires a live consent registry. Default build refuses rather than returning a fabricated empty registry. |
+| `exochain_terminate_bailment` | Simulation-gated revocation surface. Default build refuses instead of mutating imaginary consent state. |
 
 ### Governance (5)
 
@@ -391,8 +391,8 @@ A Claude agent performing a real governance operation end-to-end. In practice th
 
 ```
 1.  exochain_create_identity              -> actor DID + public key
-2.  exochain_propose_bailment              -> proposal_id (scope="governance:vote")
-3.  exochain_check_consent                 -> ensure active consent
+2.  REST consent flow / live registry      -> create or locate active bailment
+3.  exochain_check_consent                 -> prove active consent; stop on registry-unavailable errors
 4.  exochain_create_decision               -> decision_id
 5.  exochain_cast_vote    (x N validators) -> record approvals
 6.  exochain_check_quorum                  -> met=true at threshold
@@ -673,7 +673,7 @@ Every deny carries the invariant name. Common cases:
 | Message substring | Cause | Fix |
 |---|---|---|
 | `NoSelfGrant` | Actor tried to grant itself permissions | Route the grant through a distinct grantor DID. |
-| `ConsentRequired` | No active bailment for the scope | Call `exochain_propose_bailment` first. |
+| `ConsentRequired` | No active bailment for the scope | Use the real consent flow or a live consent registry; feature-gated MCP simulations are not consent proof. |
 | `AuthorityChainValid` | Chain broken or terminal mismatch | Inspect via `exochain_verify_authority_chain`. |
 | `KernelImmutability` | Tried to modify the constitution | Use the amendment proposal process instead. |
 | `ProvenanceVerifiable` | Missing signature or timestamp | Ensure the calling agent's identity is set (`--actor-did`). |
