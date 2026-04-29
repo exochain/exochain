@@ -567,6 +567,99 @@ fn generate_session_token() -> Result<String> {
 // Production DB adjudication context resolver (APE-53)
 // ---------------------------------------------------------------------------
 
+#[cfg(any(test, feature = "production-db"))]
+fn build_adjudication_context_from_rows(
+    actor: &Did,
+    role_rows: &[crate::db::AgentRoleRow],
+    consent_rows: &[crate::db::ConsentRecordRow],
+    chain_row: Option<&crate::db::AuthorityChainRow>,
+) -> Result<AdjudicationContext> {
+    use exo_gatekeeper::types::{
+        AuthorityChain as GkChain, BailmentState as GkBailment, ConsentRecord, GovernmentBranch,
+        Role,
+    };
+
+    let actor_roles: Vec<Role> = role_rows
+        .iter()
+        .map(|r| {
+            let branch = match r.branch.as_str() {
+                "executive" => GovernmentBranch::Executive,
+                "legislative" => GovernmentBranch::Legislative,
+                "judicial" => GovernmentBranch::Judicial,
+                other => {
+                    return Err(GatewayError::Internal(format!(
+                        "adjudication role row unknown role branch for actor '{}' role '{}': '{}'",
+                        r.agent_did, r.role, other
+                    )));
+                }
+            };
+            Ok(Role {
+                name: r.role.clone(),
+                branch,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let consent_records: Vec<ConsentRecord> = consent_rows
+        .iter()
+        .map(|r| {
+            let subject = Did::new(&r.subject_did).map_err(|e| {
+                GatewayError::Internal(format!(
+                    "adjudication consent subject DID invalid for actor '{}' scope '{}': '{}' ({e})",
+                    r.actor_did, r.scope, r.subject_did
+                ))
+            })?;
+            Ok(ConsentRecord {
+                subject,
+                granted_to: actor.clone(),
+                scope: r.scope.clone(),
+                active: r.status == "active",
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let bailment_state = match consent_rows.iter().find(|r| r.status == "active") {
+        Some(r) => {
+            let bailor = Did::new(&r.subject_did).map_err(|e| {
+                GatewayError::Internal(format!(
+                    "adjudication consent subject DID invalid for active bailment actor '{}' scope '{}': '{}' ({e})",
+                    r.actor_did, r.scope, r.subject_did
+                ))
+            })?;
+            GkBailment::Active {
+                bailor,
+                bailee: actor.clone(),
+                scope: r.scope.clone(),
+            }
+        }
+        None => GkBailment::None,
+    };
+
+    let authority_chain = match chain_row {
+        Some(row) => serde_json::from_value::<GkChain>(row.chain_json.clone()).map_err(|e| {
+            GatewayError::Internal(format!(
+                "adjudication authority chain JSON invalid for actor '{}': {e}",
+                row.actor_did
+            ))
+        })?,
+        None => GkChain::default(),
+    };
+
+    Ok(AdjudicationContext {
+        actor_roles,
+        authority_chain,
+        consent_records,
+        bailment_state,
+        human_override_preserved: true,
+        actor_permissions: PermissionSet::new(vec![Permission::new("vote")]),
+        // Provenance is per-action, not per-actor; callers that need full
+        // ProvenanceVerifiable enforcement must attach it before adjudication.
+        provenance: None,
+        quorum_evidence: None,
+        active_challenge_reason: None,
+    })
+}
+
 /// Build an `AdjudicationContext` by loading the actor's roles, consent
 /// records, and authority chain from the live database.
 ///
@@ -582,11 +675,6 @@ async fn build_adjudication_context_from_db(
     actor: &Did,
     now: i64,
 ) -> Result<AdjudicationContext> {
-    use exo_gatekeeper::types::{
-        AuthorityChain as GkChain, BailmentState as GkBailment, ConsentRecord, GovernmentBranch,
-        Role,
-    };
-
     let actor_str = actor.as_str();
 
     let role_rows = crate::db::load_agent_roles(pool, actor_str, now)
@@ -601,70 +689,7 @@ async fn build_adjudication_context_from_db(
         .await
         .map_err(|e| GatewayError::Internal(format!("adjudication chain query: {e}")))?;
 
-    // Convert role rows → `Role` values.
-    let actor_roles: Vec<Role> = role_rows
-        .iter()
-        .map(|r| {
-            let branch = match r.branch.as_str() {
-                "legislative" => GovernmentBranch::Legislative,
-                "judicial" => GovernmentBranch::Judicial,
-                _ => GovernmentBranch::Executive,
-            };
-            Role {
-                name: r.role.clone(),
-                branch,
-            }
-        })
-        .collect();
-
-    // Convert consent rows → `ConsentRecord` values.
-    let consent_records: Vec<ConsentRecord> = consent_rows
-        .iter()
-        .filter_map(|r| {
-            let subject = Did::new(&r.subject_did).ok()?;
-            Some(ConsentRecord {
-                subject,
-                granted_to: actor.clone(),
-                scope: r.scope.clone(),
-                active: r.status == "active",
-            })
-        })
-        .collect();
-
-    // Derive `BailmentState` from the first active consent record.
-    // `BailmentState::None` is the safe default when no active consent exists.
-    let bailment_state = consent_rows
-        .iter()
-        .find(|r| r.status == "active")
-        .and_then(|r| {
-            let bailor = Did::new(&r.subject_did).ok()?;
-            Some(GkBailment::Active {
-                bailor,
-                bailee: actor.clone(),
-                scope: r.scope.clone(),
-            })
-        })
-        .unwrap_or(GkBailment::None);
-
-    // Deserialise the stored `AuthorityChain` blob; fall back to empty chain.
-    let authority_chain = chain_row
-        .as_ref()
-        .and_then(|row| serde_json::from_value::<GkChain>(row.chain_json.clone()).ok())
-        .unwrap_or_default();
-
-    Ok(AdjudicationContext {
-        actor_roles,
-        authority_chain,
-        consent_records,
-        bailment_state,
-        human_override_preserved: true,
-        actor_permissions: PermissionSet::new(vec![Permission::new("vote")]),
-        // Provenance is per-action, not per-actor; callers that need full
-        // ProvenanceVerifiable enforcement must attach it before adjudication.
-        provenance: None,
-        quorum_evidence: None,
-        active_challenge_reason: None,
-    })
+    build_adjudication_context_from_rows(actor, &role_rows, &consent_rows, chain_row.as_ref())
 }
 
 // ---------------------------------------------------------------------------
@@ -3526,6 +3551,116 @@ mod tests {
             is_self_grant: false,
             modifies_kernel: false,
         }
+    }
+
+    fn db_role_row(actor: &Did, branch: &str) -> crate::db::AgentRoleRow {
+        crate::db::AgentRoleRow {
+            agent_did: actor.as_str().to_string(),
+            role: "voter".to_string(),
+            branch: branch.to_string(),
+            granted_by: "did:exo:root-grantor".to_string(),
+            valid_from: 1,
+            expires_at: None,
+        }
+    }
+
+    fn db_consent_row(actor: &Did, subject_did: &str) -> crate::db::ConsentRecordRow {
+        crate::db::ConsentRecordRow {
+            subject_did: subject_did.to_string(),
+            actor_did: actor.as_str().to_string(),
+            scope: "data:vote".to_string(),
+            bailment_type: "standard".to_string(),
+            status: "active".to_string(),
+            created_at: 1,
+            expires_at: None,
+        }
+    }
+
+    fn db_authority_chain_row(
+        actor: &Did,
+        chain_json: serde_json::Value,
+    ) -> crate::db::AuthorityChainRow {
+        crate::db::AuthorityChainRow {
+            actor_did: actor.as_str().to_string(),
+            chain_json,
+            valid_from: 1,
+            expires_at: None,
+        }
+    }
+
+    fn assert_internal_error_contains(result: Result<AdjudicationContext>, expected: &str) {
+        match result {
+            Err(GatewayError::Internal(reason)) => {
+                assert!(
+                    reason.contains(expected),
+                    "error reason {reason:?} did not contain {expected:?}"
+                );
+            }
+            Err(other) => panic!("expected internal error, got {other}"),
+            Ok(_) => panic!("expected internal error, got adjudication context"),
+        }
+    }
+
+    #[test]
+    fn adjudication_context_rows_reject_unknown_role_branch() {
+        let actor = Did::new("did:exo:alice").unwrap();
+        let role_rows = vec![db_role_row(&actor, "tribunal")];
+
+        let result = build_adjudication_context_from_rows(&actor, &role_rows, &[], None);
+
+        assert_internal_error_contains(result, "unknown role branch");
+    }
+
+    #[test]
+    fn adjudication_context_rows_reject_malformed_consent_subject_did() {
+        let actor = Did::new("did:exo:alice").unwrap();
+        let consent_rows = vec![db_consent_row(&actor, "not-a-did")];
+
+        let result = build_adjudication_context_from_rows(&actor, &[], &consent_rows, None);
+
+        assert_internal_error_contains(result, "consent subject DID");
+    }
+
+    #[test]
+    fn adjudication_context_rows_reject_malformed_authority_chain_json() {
+        let actor = Did::new("did:exo:alice").unwrap();
+        let chain_row = db_authority_chain_row(
+            &actor,
+            serde_json::json!({
+                "links": "not-an-array"
+            }),
+        );
+
+        let result = build_adjudication_context_from_rows(&actor, &[], &[], Some(&chain_row));
+
+        assert_internal_error_contains(result, "authority chain JSON");
+    }
+
+    #[test]
+    fn adjudication_context_rows_build_valid_db_context() {
+        let kernel = adjudication_kernel();
+        let actor = Did::new("did:exo:alice").unwrap();
+        let valid_context = valid_db_context(&actor);
+        let role_rows = vec![db_role_row(&actor, "executive")];
+        let consent_rows = vec![db_consent_row(&actor, "did:exo:root-grantor")];
+        let chain_row = db_authority_chain_row(
+            &actor,
+            serde_json::to_value(&valid_context.authority_chain).unwrap(),
+        );
+
+        let ctx = build_adjudication_context_from_rows(
+            &actor,
+            &role_rows,
+            &consent_rows,
+            Some(&chain_row),
+        )
+        .unwrap();
+        let verdict = kernel.adjudicate(&vote_action(&actor), &ctx);
+
+        assert_eq!(ctx.actor_roles.len(), 1);
+        assert_eq!(ctx.consent_records.len(), 1);
+        assert!(matches!(ctx.bailment_state, BailmentState::Active { .. }));
+        assert!(verdict.is_permitted(), "valid DB rows must be permitted");
     }
 
     /// [APE-53 test 1] Scaffold remains deny-all regardless of feature flag.
