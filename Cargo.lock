@@ -1582,6 +1582,7 @@ dependencies = [
  "exo-gateway",
  "exo-governance",
  "exo-identity",
+ "exo-legal",
  "futures",
  "getrandom 0.2.16",
  "hex",

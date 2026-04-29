@@ -1,10 +1,13 @@
 //! Evidence chain management — litigation-grade evidence tracking.
 
-use exo_core::{Did, Hash256, Timestamp};
+use exo_core::{Did, Hash256, Timestamp, hash::hash_structured};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::{LegalError, Result};
+
+const EVIDENCE_CUSTODY_CHAIN_DIGEST_DOMAIN: &str = "exo.legal.evidence.custody_chain.v1";
+const EVIDENCE_CUSTODY_CHAIN_DIGEST_SCHEMA_VERSION: u16 = 1;
 
 /// Whether a piece of evidence has been admitted, challenged, excluded, or is still pending review.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,18 +39,28 @@ pub struct Evidence {
     pub admissibility_status: AdmissibilityStatus,
 }
 
-/// Create evidence with a real HLC timestamp.
-///
-/// # Errors
-/// Returns `LegalError` if the timestamp is `Timestamp::ZERO` (placeholder).
-/// Evidence must carry a real timestamp for litigation-grade provenance.
-pub fn create_evidence(
-    id: Uuid,
-    data: &[u8],
-    creator: &Did,
-    type_tag: &str,
+#[derive(Debug, Clone, Serialize)]
+struct EvidenceCustodyTransferDigestPayload {
+    from: Did,
+    to: Did,
     timestamp: Timestamp,
-) -> Result<Evidence> {
+    reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EvidenceCustodyChainDigestPayload {
+    domain: &'static str,
+    schema_version: u16,
+    evidence_id: Uuid,
+    type_tag: String,
+    content_hash: Hash256,
+    creator: Did,
+    created_at: Timestamp,
+    admissibility_status: AdmissibilityStatus,
+    transfers: Vec<EvidenceCustodyTransferDigestPayload>,
+}
+
+fn validate_evidence_metadata(id: Uuid, type_tag: &str, timestamp: Timestamp) -> Result<()> {
     if id.is_nil() {
         return Err(LegalError::InvalidStateTransition {
             reason: "evidence ID must be caller-supplied and non-nil".into(),
@@ -64,10 +77,54 @@ pub fn create_evidence(
                 .into(),
         });
     }
+    Ok(())
+}
+
+/// Create evidence with a real HLC timestamp.
+///
+/// # Errors
+/// Returns `LegalError` if the timestamp is `Timestamp::ZERO` (placeholder).
+/// Evidence must carry a real timestamp for litigation-grade provenance.
+pub fn create_evidence(
+    id: Uuid,
+    data: &[u8],
+    creator: &Did,
+    type_tag: &str,
+    timestamp: Timestamp,
+) -> Result<Evidence> {
+    validate_evidence_metadata(id, type_tag, timestamp)?;
     Ok(Evidence {
         id,
         type_tag: type_tag.to_string(),
         hash: Hash256::digest(data),
+        creator: creator.clone(),
+        timestamp,
+        chain_of_custody: Vec::new(),
+        admissibility_status: AdmissibilityStatus::Pending,
+    })
+}
+
+/// Create evidence when the caller already has the canonical content hash.
+///
+/// # Errors
+/// Returns `LegalError` if the ID, type tag, timestamp, or hash is a placeholder.
+pub fn create_evidence_from_hash(
+    id: Uuid,
+    content_hash: Hash256,
+    creator: &Did,
+    type_tag: &str,
+    timestamp: Timestamp,
+) -> Result<Evidence> {
+    validate_evidence_metadata(id, type_tag, timestamp)?;
+    if content_hash == Hash256::ZERO {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "evidence content hash must not be Hash256::ZERO".into(),
+        });
+    }
+    Ok(Evidence {
+        id,
+        type_tag: type_tag.to_string(),
+        hash: content_hash,
         creator: creator.clone(),
         timestamp,
         chain_of_custody: Vec::new(),
@@ -136,6 +193,42 @@ pub fn verify_chain_of_custody(evidence: &Evidence) -> Result<()> {
     Ok(())
 }
 
+fn evidence_custody_chain_digest_payload(evidence: &Evidence) -> EvidenceCustodyChainDigestPayload {
+    EvidenceCustodyChainDigestPayload {
+        domain: EVIDENCE_CUSTODY_CHAIN_DIGEST_DOMAIN,
+        schema_version: EVIDENCE_CUSTODY_CHAIN_DIGEST_SCHEMA_VERSION,
+        evidence_id: evidence.id,
+        type_tag: evidence.type_tag.clone(),
+        content_hash: evidence.hash,
+        creator: evidence.creator.clone(),
+        created_at: evidence.timestamp,
+        admissibility_status: evidence.admissibility_status.clone(),
+        transfers: evidence
+            .chain_of_custody
+            .iter()
+            .map(|transfer| EvidenceCustodyTransferDigestPayload {
+                from: transfer.from.clone(),
+                to: transfer.to.clone(),
+                timestamp: transfer.timestamp,
+                reason: transfer.reason.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// Computes a domain-separated canonical CBOR digest for the evidence custody chain.
+///
+/// # Errors
+/// Returns `LegalError` if the custody chain is broken or canonical CBOR hashing fails.
+pub fn custody_chain_digest(evidence: &Evidence) -> Result<Hash256> {
+    verify_chain_of_custody(evidence)?;
+    hash_structured(&evidence_custody_chain_digest_payload(evidence)).map_err(|e| {
+        LegalError::EvidenceHashEncodingFailed {
+            reason: format!("evidence custody-chain canonical CBOR hash failed: {e}"),
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,6 +282,21 @@ mod tests {
     fn create_hashes_data() {
         let ev = create_evidence(id(0x104), b"x", &did("a"), "d", ts(1000)).unwrap();
         assert_eq!(ev.hash, Hash256::digest(b"x"));
+    }
+    #[test]
+    fn create_evidence_from_hash_uses_caller_supplied_hash() {
+        let evidence_hash = Hash256::digest(b"already-hashed-evidence");
+        let ev =
+            create_evidence_from_hash(id(0x120), evidence_hash, &did("a"), "d", ts(1000)).unwrap();
+        assert_eq!(ev.hash, evidence_hash);
+        assert_eq!(ev.id, id(0x120));
+        assert_eq!(ev.creator, did("a"));
+        assert_eq!(ev.timestamp, ts(1000));
+    }
+    #[test]
+    fn create_evidence_from_hash_rejects_zero_hash() {
+        let result = create_evidence_from_hash(id(0x121), Hash256::ZERO, &did("a"), "d", ts(1000));
+        assert!(result.is_err());
     }
     #[test]
     fn create_rejects_zero_timestamp() {
@@ -277,5 +385,29 @@ mod tests {
         transfer_custody(&mut ev, &a, &b, ts(2000), "first transfer").unwrap();
         transfer_custody(&mut ev, &b, &c, ts(3000), "second transfer").unwrap();
         assert!(ev.chain_of_custody[1].timestamp > ev.chain_of_custody[0].timestamp);
+    }
+    #[test]
+    fn custody_chain_digest_binds_transfer_reason_and_logical_time() {
+        let evidence_hash = Hash256::digest(b"evidence-hash");
+        let (a, b) = (did("a"), did("b"));
+        let mut ev_a =
+            create_evidence_from_hash(id(0x122), evidence_hash, &a, "d", ts(1000)).unwrap();
+        let mut ev_b =
+            create_evidence_from_hash(id(0x122), evidence_hash, &a, "d", ts(1000)).unwrap();
+
+        transfer_custody(&mut ev_a, &a, &b, Timestamp::new(2000, 0), "first transfer").unwrap();
+        transfer_custody(
+            &mut ev_b,
+            &a,
+            &b,
+            Timestamp::new(2000, 1),
+            "alternate transfer",
+        )
+        .unwrap();
+
+        assert_ne!(
+            custody_chain_digest(&ev_a).unwrap(),
+            custody_chain_digest(&ev_b).unwrap()
+        );
     }
 }

@@ -24,6 +24,8 @@ pub enum LegalError {
     DiscoveryScopeTooBoard { reason: String },
     #[error("eDiscovery production hash encoding failed: {reason}")]
     DiscoveryHashEncodingFailed { reason: String },
+    #[error("evidence hash encoding failed: {reason}")]
+    EvidenceHashEncodingFailed { reason: String },
     #[error("retention policy violation: {reason}")]
     RetentionViolation { reason: String },
     #[error("disclosure required for action: {action}")]
@@ -60,6 +62,7 @@ mod tests {
             Box::new(LegalError::FiduciaryViolation { reason: "x".into() }),
             Box::new(LegalError::DiscoveryScopeTooBoard { reason: "x".into() }),
             Box::new(LegalError::DiscoveryHashEncodingFailed { reason: "x".into() }),
+            Box::new(LegalError::EvidenceHashEncodingFailed { reason: "x".into() }),
             Box::new(LegalError::RetentionViolation { reason: "x".into() }),
             Box::new(LegalError::DisclosureRequired {
                 action: "vote".into(),

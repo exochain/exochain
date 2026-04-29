@@ -1,8 +1,12 @@
 //! Proofs MCP tools — evidence creation, chain of custody verification,
 //! Merkle proof generation, and CGR kernel proof verification.
 
-use exo_core::{Did, Hash256};
+use exo_core::{Did, Hash256, Timestamp};
+use exo_legal::evidence::{
+    create_evidence_from_hash, custody_chain_digest, transfer_custody, verify_chain_of_custody,
+};
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 use crate::mcp::{
     context::NodeContext,
@@ -11,16 +15,114 @@ use crate::mcp::{
 
 const MCP_CGR_PROOF_INITIATIVE: &str = "Initiatives/fix-mcp-cgr-proof-verification-stub.md";
 
+fn tool_error(message: impl Into<String>) -> ToolResult {
+    let message = message.into();
+    ToolResult::error(json!({"error": message}).to_string())
+}
+
 fn required_nonzero_u64(params: &Value, name: &str) -> std::result::Result<u64, ToolResult> {
     match params.get(name).and_then(Value::as_u64) {
         Some(value) if value > 0 => Ok(value),
-        Some(_) => Err(ToolResult::error(
-            json!({"error": format!("{name} must be a nonzero integer")}).to_string(),
-        )),
-        None => Err(ToolResult::error(
-            json!({"error": format!("missing required parameter: {name}")}).to_string(),
-        )),
+        Some(_) => Err(tool_error(format!("{name} must be a nonzero integer"))),
+        None => Err(tool_error(format!("missing required parameter: {name}"))),
     }
+}
+
+fn required_u32(params: &Value, name: &str) -> std::result::Result<u32, ToolResult> {
+    match params.get(name).and_then(Value::as_u64) {
+        Some(value) if value <= u64::from(u32::MAX) => Ok(value as u32),
+        Some(_) => Err(tool_error(format!("{name} must fit in u32"))),
+        None => Err(tool_error(format!("missing required parameter: {name}"))),
+    }
+}
+
+fn required_nonempty_str<'a>(
+    params: &'a Value,
+    name: &str,
+) -> std::result::Result<&'a str, ToolResult> {
+    match params.get(name).and_then(Value::as_str) {
+        Some(value) if !value.trim().is_empty() => Ok(value),
+        Some(_) => Err(tool_error(format!("{name} must not be empty"))),
+        None => Err(tool_error(format!("missing required parameter: {name}"))),
+    }
+}
+
+fn required_transfer_nonempty_str<'a>(
+    transfer: &'a Value,
+    index: usize,
+    name: &str,
+) -> std::result::Result<&'a str, ToolResult> {
+    match transfer.get(name).and_then(Value::as_str) {
+        Some(value) if !value.trim().is_empty() => Ok(value),
+        Some(_) => Err(tool_error(format!(
+            "chain entry {index}: {name} must not be empty"
+        ))),
+        None => Err(tool_error(format!(
+            "chain entry {index}: missing required field: {name}"
+        ))),
+    }
+}
+
+fn required_transfer_nonzero_u64(
+    transfer: &Value,
+    index: usize,
+    name: &str,
+) -> std::result::Result<u64, ToolResult> {
+    match transfer.get(name).and_then(Value::as_u64) {
+        Some(value) if value > 0 => Ok(value),
+        Some(_) => Err(tool_error(format!(
+            "chain entry {index}: {name} must be a nonzero integer"
+        ))),
+        None => Err(tool_error(format!(
+            "chain entry {index}: missing required field: {name}"
+        ))),
+    }
+}
+
+fn required_transfer_u32(
+    transfer: &Value,
+    index: usize,
+    name: &str,
+) -> std::result::Result<u32, ToolResult> {
+    match transfer.get(name).and_then(Value::as_u64) {
+        Some(value) if value <= u64::from(u32::MAX) => Ok(value as u32),
+        Some(_) => Err(tool_error(format!(
+            "chain entry {index}: {name} must fit in u32"
+        ))),
+        None => Err(tool_error(format!(
+            "chain entry {index}: missing required field: {name}"
+        ))),
+    }
+}
+
+fn parse_uuid(value: &str, name: &str) -> std::result::Result<Uuid, ToolResult> {
+    Uuid::parse_str(value).map_err(|err| tool_error(format!("{name} must be a valid UUID: {err}")))
+}
+
+fn parse_did(value: &str, name: &str) -> std::result::Result<Did, ToolResult> {
+    Did::new(value).map_err(|err| tool_error(format!("{name} must be a valid DID: {err}")))
+}
+
+fn parse_hash256_hex(value: &str, name: &str) -> std::result::Result<Hash256, ToolResult> {
+    let decoded =
+        hex::decode(value).map_err(|err| tool_error(format!("{name} must be hex: {err}")))?;
+    if decoded.len() != 32 {
+        return Err(tool_error(format!(
+            "{name} must decode to exactly 32 bytes, got {}",
+            decoded.len()
+        )));
+    }
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(&decoded);
+    Ok(Hash256::from_bytes(bytes))
+}
+
+fn final_custodian(evidence: &exo_legal::evidence::Evidence) -> &Did {
+    evidence
+        .chain_of_custody
+        .last()
+        .map(|transfer| &transfer.to)
+        .unwrap_or(&evidence.creator)
 }
 
 // ---------------------------------------------------------------------------
@@ -140,31 +242,76 @@ pub fn execute_create_evidence(params: &Value, _context: &NodeContext) -> ToolRe
 pub fn verify_chain_of_custody_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_verify_chain_of_custody".to_owned(),
-        description: "Verify the integrity of an evidence chain of custody, checking for gaps and unauthorized transfers.".to_owned(),
+        description: "Verify the integrity of an evidence chain of custody using EXOCHAIN legal evidence rules, checking UUID/DID/hash metadata, transfer continuity, reasons, and monotonic HLC timestamps.".to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
                 "evidence_id": {
                     "type": "string",
-                    "description": "The evidence ID to verify."
+                    "description": "UUID of the evidence record to verify."
+                },
+                "evidence_type": {
+                    "type": "string",
+                    "description": "Evidence type tag recorded at creation."
+                },
+                "content_hash": {
+                    "type": "string",
+                    "description": "64-character hex-encoded Hash256 of the evidence content."
+                },
+                "creator_did": {
+                    "type": "string",
+                    "description": "DID of the original evidence creator."
+                },
+                "created_at_ms": {
+                    "type": "integer",
+                    "description": "Caller-supplied nonzero HLC physical milliseconds for evidence creation."
+                },
+                "created_at_logical": {
+                    "type": "integer",
+                    "description": "Caller-supplied HLC logical counter for evidence creation."
                 },
                 "chain": {
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "custodian": { "type": "string" },
-                            "action": { "type": "string" }
-                        }
+                            "from_did": { "type": "string" },
+                            "to_did": { "type": "string" },
+                            "transferred_at_ms": { "type": "integer" },
+                            "transferred_at_logical": { "type": "integer" },
+                            "reason": { "type": "string" }
+                        },
+                        "required": [
+                            "from_did",
+                            "to_did",
+                            "transferred_at_ms",
+                            "transferred_at_logical",
+                            "reason"
+                        ],
+                        "additionalProperties": false
                     },
-                    "description": "Array of custody entries with custodian and action fields."
+                    "description": "Array of custody transfer records. The original creator is supplied separately; an empty transfer chain means the creator still has custody."
                 },
                 "verified_at_ms": {
                     "type": "integer",
                     "description": "Caller-supplied nonzero HLC physical milliseconds for verification."
+                },
+                "verified_at_logical": {
+                    "type": "integer",
+                    "description": "Caller-supplied HLC logical counter for verification."
                 }
             },
-            "required": ["evidence_id", "chain", "verified_at_ms"],
+            "required": [
+                "evidence_id",
+                "evidence_type",
+                "content_hash",
+                "creator_did",
+                "created_at_ms",
+                "created_at_logical",
+                "chain",
+                "verified_at_ms",
+                "verified_at_logical"
+            ],
             "additionalProperties": false,
         }),
     }
@@ -173,62 +320,145 @@ pub fn verify_chain_of_custody_definition() -> ToolDefinition {
 /// Execute the `exochain_verify_chain_of_custody` tool.
 #[must_use]
 pub fn execute_verify_chain_of_custody(params: &Value, _context: &NodeContext) -> ToolResult {
-    let evidence_id = match params.get("evidence_id").and_then(Value::as_str) {
-        Some(s) => s,
-        None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: evidence_id"}).to_string(),
-            );
-        }
+    let evidence_id_str = match required_nonempty_str(params, "evidence_id") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let evidence_id = match parse_uuid(evidence_id_str, "evidence_id") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let evidence_type = match required_nonempty_str(params, "evidence_type") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let content_hash_str = match required_nonempty_str(params, "content_hash") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let content_hash = match parse_hash256_hex(content_hash_str, "content_hash") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let creator_did_str = match required_nonempty_str(params, "creator_did") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let creator_did = match parse_did(creator_did_str, "creator_did") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let created_at_ms = match required_nonzero_u64(params, "created_at_ms") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let created_at_logical = match required_u32(params, "created_at_logical") {
+        Ok(value) => value,
+        Err(result) => return result,
     };
     let chain = match params.get("chain").and_then(Value::as_array) {
         Some(arr) => arr,
         None => {
-            return ToolResult::error(
-                json!({"error": "missing required parameter: chain (must be an array)"})
-                    .to_string(),
-            );
+            return tool_error("missing required parameter: chain (must be an array)");
         }
     };
     let verified_at_ms = match required_nonzero_u64(params, "verified_at_ms") {
         Ok(value) => value,
         Err(result) => return result,
     };
+    let verified_at_logical = match required_u32(params, "verified_at_logical") {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
 
-    if chain.is_empty() {
-        return ToolResult::error(
-            json!({"error": "chain must contain at least one entry"}).to_string(),
+    let mut evidence = match create_evidence_from_hash(
+        evidence_id,
+        content_hash,
+        &creator_did,
+        evidence_type,
+        Timestamp::new(created_at_ms, created_at_logical),
+    ) {
+        Ok(value) => value,
+        Err(err) => return tool_error(err.to_string()),
+    };
+
+    for (i, entry) in chain.iter().enumerate() {
+        let from_did_str = match required_transfer_nonempty_str(entry, i, "from_did") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let to_did_str = match required_transfer_nonempty_str(entry, i, "to_did") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let transferred_at_ms = match required_transfer_nonzero_u64(entry, i, "transferred_at_ms") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let transferred_at_logical = match required_transfer_u32(entry, i, "transferred_at_logical")
+        {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let reason = match required_transfer_nonempty_str(entry, i, "reason") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let from_did = match parse_did(from_did_str, &format!("chain entry {i} from_did")) {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let to_did = match parse_did(to_did_str, &format!("chain entry {i} to_did")) {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+
+        if let Err(err) = transfer_custody(
+            &mut evidence,
+            &from_did,
+            &to_did,
+            Timestamp::new(transferred_at_ms, transferred_at_logical),
+            reason,
+        ) {
+            return ToolResult::success(
+                json!({
+                    "evidence_id": evidence_id_str,
+                    "chain_length": chain.len(),
+                    "valid": false,
+                    "issues": [err.to_string()],
+                    "verified_at": Timestamp::new(verified_at_ms, verified_at_logical).to_string(),
+                })
+                .to_string(),
+            );
+        }
+    }
+
+    if let Err(err) = verify_chain_of_custody(&evidence) {
+        return ToolResult::success(
+            json!({
+                "evidence_id": evidence_id_str,
+                "chain_length": chain.len(),
+                "valid": false,
+                "issues": [err.to_string()],
+                "verified_at": Timestamp::new(verified_at_ms, verified_at_logical).to_string(),
+            })
+            .to_string(),
         );
     }
 
-    // Validate chain continuity: each entry must have custodian and action.
-    let mut issues: Vec<String> = Vec::new();
-    for (i, entry) in chain.iter().enumerate() {
-        if entry.get("custodian").and_then(Value::as_str).is_none() {
-            issues.push(format!("entry {i}: missing custodian"));
-        }
-        if entry.get("action").and_then(Value::as_str).is_none() {
-            issues.push(format!("entry {i}: missing action"));
-        }
-    }
-
-    // Check that the first entry is a creation action.
-    if let Some(first) = chain.first() {
-        if let Some(action) = first.get("action").and_then(Value::as_str) {
-            if action != "created" {
-                issues.push("first entry action should be 'created'".to_owned());
-            }
-        }
-    }
-
-    let valid = issues.is_empty();
+    let custody_digest = match custody_chain_digest(&evidence) {
+        Ok(value) => value,
+        Err(err) => return tool_error(err.to_string()),
+    };
 
     let response = json!({
-        "evidence_id": evidence_id,
+        "evidence_id": evidence_id_str,
         "chain_length": chain.len(),
-        "valid": valid,
-        "issues": issues,
-        "verified_at": format!("{}:0", verified_at_ms),
+        "valid": true,
+        "issues": [],
+        "final_custodian": final_custodian(&evidence).to_string(),
+        "custody_digest": custody_digest.to_string(),
+        "verified_at": Timestamp::new(verified_at_ms, verified_at_logical).to_string(),
     });
     ToolResult::success(response.to_string())
 }
@@ -541,44 +771,111 @@ mod tests {
         assert!(!def.description.is_empty());
     }
 
+    fn valid_custody_verification_params() -> Value {
+        json!({
+            "evidence_id": "00000000-0000-0000-0000-000000000111",
+            "evidence_type": "document",
+            "content_hash": "0101010101010101010101010101010101010101010101010101010101010101",
+            "creator_did": "did:exo:alice",
+            "created_at_ms": 1_700_000_000_000_u64,
+            "created_at_logical": 0_u64,
+            "chain": [
+                {
+                    "from_did": "did:exo:alice",
+                    "to_did": "did:exo:bob",
+                    "transferred_at_ms": 1_700_000_000_100_u64,
+                    "transferred_at_logical": 0_u64,
+                    "reason": "signed release to records custodian"
+                },
+                {
+                    "from_did": "did:exo:bob",
+                    "to_did": "did:exo:carol",
+                    "transferred_at_ms": 1_700_000_000_200_u64,
+                    "transferred_at_logical": 0_u64,
+                    "reason": "litigation hold transfer"
+                }
+            ],
+            "verified_at_ms": 1_700_000_000_300_u64,
+            "verified_at_logical": 0_u64,
+        })
+    }
+
     #[test]
-    fn execute_verify_chain_of_custody_valid() {
-        let params = json!({
-            "evidence_id": "abc123",
+    fn execute_verify_chain_of_custody_rejects_shape_only_chain() {
+        let legacy_shape_only_params = json!({
+            "evidence_id": "00000000-0000-0000-0000-000000000222",
             "chain": [
                 {"custodian": "did:exo:alice", "action": "created"},
                 {"custodian": "did:exo:bob", "action": "transferred"},
             ],
             "verified_at_ms": 1700000000001_u64,
         });
+        let result =
+            execute_verify_chain_of_custody(&legacy_shape_only_params, &NodeContext::empty());
+        assert!(result.is_error);
+        assert!(
+            result.content[0].text().contains("evidence_type"),
+            "shape-only verification must be refused with required evidence metadata"
+        );
+    }
+
+    #[test]
+    fn execute_verify_chain_of_custody_accepts_legal_evidence_chain() {
+        let params = valid_custody_verification_params();
         let result = execute_verify_chain_of_custody(&params, &NodeContext::empty());
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid"], true);
         assert_eq!(v["chain_length"], 2);
+        assert_eq!(v["final_custodian"], "did:exo:carol");
+        assert_eq!(
+            v["custody_digest"].as_str().expect("custody digest").len(),
+            64
+        );
     }
 
     #[test]
-    fn execute_verify_chain_of_custody_invalid() {
-        let params = json!({
-            "evidence_id": "abc123",
-            "chain": [
-                {"custodian": "did:exo:alice", "action": "transferred"},
-            ],
-            "verified_at_ms": 1700000000001_u64,
-        });
+    fn execute_verify_chain_of_custody_rejects_broken_transfer_continuity() {
+        let mut params = valid_custody_verification_params();
+        params["chain"][1]["from_did"] = json!("did:exo:alice");
         let result = execute_verify_chain_of_custody(&params, &NodeContext::empty());
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["valid"], false);
+        assert!(
+            v["issues"][0]
+                .as_str()
+                .expect("issue")
+                .contains("current custodian")
+        );
     }
 
     #[test]
-    fn execute_verify_chain_of_custody_empty() {
-        let params =
-            json!({"evidence_id": "abc", "chain": [], "verified_at_ms": 1700000000001_u64});
+    fn execute_verify_chain_of_custody_rejects_non_monotonic_transfer_timestamps() {
+        let mut params = valid_custody_verification_params();
+        params["chain"][1]["transferred_at_ms"] = json!(1_700_000_000_050_u64);
         let result = execute_verify_chain_of_custody(&params, &NodeContext::empty());
-        assert!(result.is_error);
+        assert!(!result.is_error);
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+        assert_eq!(v["valid"], false);
+        assert!(
+            v["issues"][0]
+                .as_str()
+                .expect("issue")
+                .contains("must be after previous timestamp")
+        );
+    }
+
+    #[test]
+    fn execute_verify_chain_of_custody_allows_creator_only_chain() {
+        let mut params = valid_custody_verification_params();
+        params["chain"] = json!([]);
+        let result = execute_verify_chain_of_custody(&params, &NodeContext::empty());
+        assert!(!result.is_error);
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+        assert_eq!(v["valid"], true);
+        assert_eq!(v["chain_length"], 0);
+        assert_eq!(v["final_custodian"], "did:exo:alice");
     }
 
     // -- generate_merkle_proof ------------------------------------------------
