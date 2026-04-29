@@ -34,6 +34,8 @@ pub enum LegalError {
     RecordNotFound(Uuid),
     #[error("invalid state transition: {reason}")]
     InvalidStateTransition { reason: String },
+    #[error("FRE 902(11) certificate hash encoding failed: {reason}")]
+    CertificationHashEncodingFailed { reason: String },
 }
 
 /// Convenience alias for results that carry a [`LegalError`].
@@ -63,6 +65,7 @@ mod tests {
             Box::new(LegalError::ConflictOfInterest { reason: "x".into() }),
             Box::new(LegalError::RecordNotFound(id)),
             Box::new(LegalError::InvalidStateTransition { reason: "x".into() }),
+            Box::new(LegalError::CertificationHashEncodingFailed { reason: "x".into() }),
         ];
         for c in &cases {
             assert!(!c.to_string().is_empty());
