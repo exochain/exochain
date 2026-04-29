@@ -42,8 +42,9 @@ MCP rules and 8 kernel invariants on every action. Read this document first.
   here.
 - **ledger (4)** — Submit events to the DAG, read events, verify inclusion,
   fetch checkpoints.
-- **proofs (4)** — Create/verify evidence bundles, chain-of-custody checks,
-  Merkle proofs, CGR proofs.
+- **proofs (4)** — Construct legal evidence envelopes, verify custody-chain
+  metadata and continuity, generate Merkle proofs, and refuse CGR proof
+  verification until a production verifier is wired.
 - **legal (4)** — eDiscovery search, privilege assertion, safe-harbor
   initiation, fiduciary-duty checks. These tools refuse by default unless
   `unaudited-mcp-simulation-tools` is enabled, because they are not wired to

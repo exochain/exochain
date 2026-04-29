@@ -327,8 +327,9 @@ inclusion proofs — for admissibility review.
 2. `tools/call` → `exochain_verify_inclusion` for each event in the
    bundle against the bundle's checkpoint.
 3. `tools/call` → `exochain_verify_chain_of_custody` for the
-   bundle's custody chain. Every transfer must be signed and
-   time-ordered.
+   bundle's custody chain. The tool checks UUID/DID/hash metadata,
+   transfer continuity, non-empty reasons, and HLC ordering; it does
+   not accept signatures as proof of transfer authority.
 4. Do not treat `exochain_verify_cgr_proof` as a verifier in default
    builds. It refuses hash-only CGR proof claims until proof bytes,
    public inputs, checkpoint roots, validator signatures, and a

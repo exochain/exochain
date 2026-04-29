@@ -295,8 +295,8 @@ Use these at session start to let the agent self-orient.
 
 | Tool | Purpose |
 |---|---|
-| `exochain_create_evidence` | Bundle evidence with a chain-of-custody record. |
-| `exochain_verify_chain_of_custody` | Verify an evidence bundle end-to-end. |
+| `exochain_create_evidence` | Construct a verifier-compatible legal evidence envelope from UUID, content hash, creator DID, and creation HLC; this does not persist evidence. |
+| `exochain_verify_chain_of_custody` | Verify evidence UUID/DID/hash metadata, transfer continuity, transfer reasons, and monotonic HLC timestamps. |
 | `exochain_generate_merkle_proof` | Produce a Merkle inclusion proof for a leaf. |
 | `exochain_verify_cgr_proof` | Refuses CGR proof verification until proof bytes, public inputs, checkpoint roots, validator signatures, and a production verifier are wired. |
 
