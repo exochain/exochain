@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::mcp::{
     context::NodeContext,
-    protocol::{ToolContent, ToolDefinition, ToolResult},
+    protocol::{ToolDefinition, ToolResult},
 };
 
 // ---------------------------------------------------------------------------
@@ -75,15 +75,12 @@ pub fn execute_node_status(_params: &Value, context: &NodeContext) -> ToolResult
                 // message to the client so internal architecture details
                 // (mutex poisoning) don't leak. (A-023)
                 tracing::error!(?err, "reactor state lock poisoned");
-                return ToolResult {
-                    content: vec![ToolContent::Text {
-                        text: serde_json::json!({
-                            "error": "internal error: node state is temporarily unavailable",
-                        })
-                        .to_string(),
-                    }],
-                    is_error: true,
-                };
+                return ToolResult::error(
+                    serde_json::json!({
+                        "error": "internal error: node state is temporarily unavailable",
+                    })
+                    .to_string(),
+                );
             }
         }
     } else {
@@ -98,12 +95,7 @@ pub fn execute_node_status(_params: &Value, context: &NodeContext) -> ToolResult
         })
     };
 
-    ToolResult {
-        content: vec![ToolContent::Text {
-            text: serde_json::to_string_pretty(&status).unwrap_or_else(|_| "{}".to_string()),
-        }],
-        is_error: false,
-    }
+    ToolResult::json_success(&status)
 }
 
 // ---------------------------------------------------------------------------
@@ -196,12 +188,7 @@ pub fn execute_list_invariants(_params: &Value, _context: &NodeContext) -> ToolR
         "invariants": invariants,
     });
 
-    ToolResult {
-        content: vec![ToolContent::Text {
-            text: serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),
-        }],
-        is_error: false,
-    }
+    ToolResult::json_success(&output)
 }
 
 // ---------------------------------------------------------------------------
@@ -257,12 +244,7 @@ pub fn execute_list_mcp_rules(_params: &Value, _context: &NodeContext) -> ToolRe
         "rules": rules,
     });
 
-    ToolResult {
-        content: vec![ToolContent::Text {
-            text: serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),
-        }],
-        is_error: false,
-    }
+    ToolResult::json_success(&output)
 }
 
 // ===========================================================================
@@ -272,6 +254,7 @@ pub fn execute_list_mcp_rules(_params: &Value, _context: &NodeContext) -> ToolRe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcp::protocol::ToolContent;
 
     #[test]
     fn tool_node_status_definition() {

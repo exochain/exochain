@@ -98,13 +98,7 @@ pub(crate) fn build_payload() -> Value {
 #[must_use]
 pub fn read(_context: &NodeContext) -> ResourceContent {
     let payload = build_payload();
-    let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
-
-    ResourceContent {
-        uri: "exochain://mcp-rules".into(),
-        mime_type: Some("application/json".into()),
-        text: Some(text),
-    }
+    ResourceContent::json("exochain://mcp-rules", &payload)
 }
 
 #[cfg(test)]

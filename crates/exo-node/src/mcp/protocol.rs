@@ -162,6 +162,24 @@ impl ToolResult {
             is_error: true,
         }
     }
+
+    /// Create a JSON success result, failing closed if serialization fails.
+    #[must_use]
+    pub fn json_success<T>(payload: &T) -> Self
+    where
+        T: Serialize + ?Sized,
+    {
+        match serde_json::to_string_pretty(payload) {
+            Ok(text) => Self::success(text),
+            Err(err) => Self::error(
+                serde_json::json!({
+                    "error": "mcp_tool_result_serialization_failed",
+                    "message": err.to_string(),
+                })
+                .to_string(),
+            ),
+        }
+    }
 }
 
 /// MCP Resource definition.
@@ -187,6 +205,32 @@ pub struct ResourceContent {
     pub mime_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+}
+
+impl ResourceContent {
+    /// Create JSON resource content, failing closed if serialization fails.
+    #[must_use]
+    pub fn json<T>(uri: impl Into<String>, payload: &T) -> Self
+    where
+        T: Serialize + ?Sized,
+    {
+        let uri = uri.into();
+        let text = match serde_json::to_string_pretty(payload) {
+            Ok(text) => text,
+            Err(err) => serde_json::json!({
+                "error": "mcp_resource_serialization_failed",
+                "uri": uri.clone(),
+                "message": err.to_string(),
+            })
+            .to_string(),
+        };
+
+        Self {
+            uri,
+            mime_type: Some("application/json".into()),
+            text: Some(text),
+        }
+    }
 }
 
 /// MCP Prompt definition.
@@ -427,6 +471,57 @@ mod tests {
         };
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["is_error"], true);
+    }
+
+    struct FailingSerialize;
+
+    impl serde::Serialize for FailingSerialize {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            Err(serde::ser::Error::custom(
+                "intentional serialization failure",
+            ))
+        }
+    }
+
+    #[test]
+    fn tool_result_json_success_fails_closed_on_serialization_error() {
+        let result = ToolResult::json_success(&FailingSerialize);
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_tool_result_serialization_failed"));
+        assert!(text.contains("intentional serialization failure"));
+        assert_ne!(text, "{}");
+    }
+
+    #[test]
+    fn resource_content_json_fails_closed_on_serialization_error() {
+        let content = ResourceContent::json("exochain://test", &FailingSerialize);
+        let text = content.text.expect("error JSON present");
+        assert!(text.contains("mcp_resource_serialization_failed"));
+        assert!(text.contains("exochain://test"));
+        assert!(text.contains("intentional serialization failure"));
+        assert_ne!(text, "{}");
+    }
+
+    #[test]
+    fn mcp_json_emitters_do_not_fallback_to_empty_objects() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        for path in [
+            "src/mcp/tools/node.rs",
+            "src/mcp/resources/node_status.rs",
+            "src/mcp/resources/invariants.rs",
+            "src/mcp/resources/mcp_rules.rs",
+            "src/mcp/resources/tools_summary.rs",
+        ] {
+            let source = std::fs::read_to_string(manifest_dir.join(path)).unwrap();
+            assert!(
+                !source.contains("unwrap_or_else(|_| \"{}\".to_string())"),
+                "{path} must fail closed instead of suppressing serialization errors as {{}}"
+            );
+        }
     }
 
     #[test]
