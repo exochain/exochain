@@ -103,10 +103,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Clippy (library and binary code, deny all warnings)
-        run: cargo clippy --workspace --lib --bins -- -D warnings
-      - name: Clippy (test code, allow expect/unwrap in tests)
-        run: cargo clippy --workspace --tests --benches -- -D warnings -A clippy::expect_used -A clippy::unwrap_used
+      - name: Clippy (all workspace targets, deny all warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   # -----------------------------------------------------------------------
   # Gate 5: Format

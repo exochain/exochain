@@ -16,7 +16,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 |--------|-------|--------|
 | Rust crates | 20 | `ls -d crates/*/` |
 | Rust source files | 266 | `find crates -name '*.rs'` |
-| Rust LOC | 125165 | `wc -l` |
+| Rust LOC | 145594 | `wc -l` |
 | Workspace tests | 3,029 listed | `cargo test --workspace -- --list` |
 | CI quality gates | 20 | `.github/workflows/ci.yml` numbered gates, plus required aggregator |
 | Published releases | None (pre-release) | `git tag -l` |
@@ -27,7 +27,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 
 - **3,029 workspace tests are listed** by `cargo test --workspace -- --list`; CI Gate 2 runs them in debug and release modes
 - **Build succeeds** for all library crates, binaries, tests, and benchmarks
-- **Clippy clean** under `-D warnings` for production code
+- **Clippy clean** under `-D warnings` for all workspace targets
 - **Format clean** under `cargo +nightly fmt --all -- --check`
 - **20 numbered CI quality gates** plus the required "All Constitutional Gates" aggregator are defined and enforced
 - **Traceability matrix** maps 86 requirements — see `governance/traceability_matrix.md`
@@ -57,7 +57,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 ## Architecture
 
 ```
-Layer 1: CGR Kernel         (Rust, 20 crates, 125165 tracked LOC under crates/)
+Layer 1: CGR Kernel         (Rust, 20 crates, 145594 tracked LOC under crates/)
          Constitutional governance runtime — deterministic, no floats,
          cryptographic proofs, 3,029 listed workspace tests
 
@@ -196,7 +196,7 @@ cargo build --workspace --all-targets
 cargo test --workspace
 
 # Lint (strict — no warnings allowed)
-cargo clippy --workspace --lib --bins -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 
 # Format check
 cargo +nightly fmt --all -- --check

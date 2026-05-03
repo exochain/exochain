@@ -77,6 +77,12 @@ expected_gates=$(grep -E 'name: "Gate [0-9]+' .github/workflows/ci.yml | sed -E 
 actual_gates=$(jq '.ci_gates.numbered' "$json_file")
 [ "$actual_gates" = "$expected_gates" ] || fail "CI gate count $actual_gates != $expected_gates"
 
+grep -F 'cargo clippy --workspace --all-targets -- -D warnings' .github/workflows/ci.yml >/dev/null \
+  || fail "CI clippy gate must cover all workspace targets"
+if grep -nE 'cargo clippy --workspace --(lib|bins|tests|benches)' .github/workflows/ci.yml; then
+  fail "CI clippy gate must not split target classes; use --all-targets"
+fi
+
 test_mode=$(jq -r '.tests.mode' "$json_file")
 [ "$test_mode" = "skipped" ] || fail "--skip-tests should report tests.mode=skipped, got $test_mode"
 
