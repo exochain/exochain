@@ -23,6 +23,11 @@ use std::{
 };
 
 use exo_core::types::{Did, PublicKey};
+use exo_dag::{
+    append::verify_node_creator_signature,
+    dag::{DagNode, compute_node_hash},
+    error::{DagError, Result as DagResult},
+};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -32,11 +37,6 @@ use crate::{
         DagSyncRequestMsg, DagSyncResponseMsg, StateSnapshotChunkMsg, StateSnapshotRequestMsg,
         WireMessage, topics,
     },
-};
-use exo_dag::{
-    append::verify_node_creator_signature,
-    dag::{DagNode, compute_node_hash},
-    error::{DagError, Result as DagResult},
 };
 
 const MAX_SNAPSHOT_CHUNK_SIZE: u32 = 500;

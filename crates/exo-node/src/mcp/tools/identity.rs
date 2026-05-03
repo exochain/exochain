@@ -1,8 +1,7 @@
 //! Identity MCP tools — DID creation, resolution, risk assessment, signature
 //! verification, and agent passport retrieval.
 
-use exo_core::Did;
-use exo_core::crypto;
+use exo_core::{Did, crypto};
 use serde_json::{Value, json};
 
 use crate::mcp::{

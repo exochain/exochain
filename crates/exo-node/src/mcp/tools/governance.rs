@@ -555,7 +555,6 @@ mod tests {
         assert!(!text.contains(&synthetic_timestamp));
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_create_decision_invalid_proposer() {
         let result = execute_create_decision(
@@ -569,7 +568,6 @@ mod tests {
         assert!(result.is_error);
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_create_decision_invalid_proposer_does_not_echo_input() {
         let attacker_input = "bad-forged-log-line";
@@ -588,7 +586,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_create_decision_rejects_oversized_title_and_description() {
         let oversized_title = "T".repeat(65_537);
@@ -614,7 +611,6 @@ mod tests {
         assert!(result.is_error);
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_create_decision_missing_title() {
         let result = execute_create_decision(
@@ -654,7 +650,6 @@ mod tests {
         assert!(!text.contains("voice_kind"));
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_cast_vote_invalid_choice() {
         let result = execute_cast_vote(
@@ -668,7 +663,6 @@ mod tests {
         assert!(result.is_error);
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_cast_vote_invalid_choice_does_not_echo_input() {
         let attacker_input = "maybe-forged-log-line";
@@ -687,7 +681,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_cast_vote_rejects_oversized_rationale() {
         let oversized_rationale = "R".repeat(65_537);
@@ -703,7 +696,6 @@ mod tests {
         assert!(result.is_error);
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_cast_vote_invalid_voter() {
         let result = execute_cast_vote(
@@ -744,11 +736,51 @@ mod tests {
         assert!(!text.contains(&synthetic_tally_field));
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_check_quorum_missing_threshold() {
         let result = execute_check_quorum(&json!({"decision_id": "abc123"}), &NodeContext::empty());
         assert!(result.is_error);
+    }
+
+    #[test]
+    fn execute_check_quorum_rejects_empty_id_and_zero_threshold() {
+        let empty_id = execute_check_quorum(
+            &json!({
+                "decision_id": "",
+                "threshold": 1,
+            }),
+            &NodeContext::empty(),
+        );
+        assert!(empty_id.is_error);
+        assert!(empty_id.content[0].text().contains("must not be empty"));
+
+        let zero_threshold = execute_check_quorum(
+            &json!({
+                "decision_id": "abc123",
+                "threshold": 0,
+            }),
+            &NodeContext::empty(),
+        );
+        assert!(zero_threshold.is_error);
+        let text = zero_threshold.content[0].text();
+        assert!(text.contains("mcp_governance_invalid_parameter"));
+        assert!(text.contains("threshold"));
+    }
+
+    #[test]
+    fn execute_check_quorum_rejects_oversized_id() {
+        let oversized_id = "D".repeat(MAX_GOVERNANCE_MCP_ID_BYTES + 1);
+        let result = execute_check_quorum(
+            &json!({
+                "decision_id": oversized_id,
+                "threshold": 1,
+            }),
+            &NodeContext::empty(),
+        );
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_governance_input_too_large"));
+        assert!(text.contains("decision_id"));
     }
 
     // -- get_decision_status -----------------------------------------------
@@ -772,12 +804,24 @@ mod tests {
         assert!(!text.contains("Decision not found"));
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_get_decision_status_empty_id() {
         let result =
             execute_get_decision_status(&json!({"decision_id": ""}), &NodeContext::empty());
         assert!(result.is_error);
+    }
+
+    #[test]
+    fn execute_get_decision_status_rejects_oversized_id() {
+        let oversized_id = "D".repeat(MAX_GOVERNANCE_MCP_ID_BYTES + 1);
+        let result = execute_get_decision_status(
+            &json!({"decision_id": oversized_id}),
+            &NodeContext::empty(),
+        );
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_governance_input_too_large"));
+        assert!(text.contains("decision_id"));
     }
 
     // -- propose_amendment -------------------------------------------------
@@ -807,7 +851,6 @@ mod tests {
         assert!(!text.contains(&synthetic_timestamp));
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_propose_amendment_invalid_target() {
         let result = execute_propose_amendment(
@@ -822,7 +865,6 @@ mod tests {
         assert!(result.is_error);
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_propose_amendment_invalid_target_does_not_echo_input() {
         let attacker_input = "invalid-target-forged-log-line";
@@ -842,7 +884,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_propose_amendment_rejects_oversized_title_and_description() {
         let oversized_title = "T".repeat(65_537);
@@ -870,7 +911,6 @@ mod tests {
         assert!(result.is_error);
     }
 
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     #[test]
     fn execute_propose_amendment_invalid_proposer() {
         let result = execute_propose_amendment(

@@ -538,8 +538,9 @@ impl NetworkHandle {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
-    use super::*;
     use libp2p_core::multiaddr::Protocol;
+
+    use super::*;
 
     #[test]
     fn libp2p_peer_to_exo_deterministic() {

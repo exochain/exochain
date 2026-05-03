@@ -647,10 +647,13 @@ mod tests {
 
     const EXPECTED_MAX_PEER_EXCHANGE_PEERS: usize = 256;
     const EXPECTED_MAX_PEER_ADDRESSES: usize = 16;
+    const EXPECTED_MAX_PEER_ADDRESS_BYTES: usize = 512;
     const EXPECTED_MAX_DAG_SYNC_TIP_HASHES: usize = 128;
+    const EXPECTED_MAX_DAG_NODES_PER_MESSAGE: usize = 500;
     const EXPECTED_MAX_DAG_NODE_PARENTS: usize = 1024;
     const EXPECTED_MAX_WIRE_GOVERNANCE_PAYLOAD_BYTES: usize = 64 * 1024;
     const EXPECTED_MAX_COMMIT_CERTIFICATE_VOTES: usize = 1024;
+    const EXPECTED_MAX_POST_QUANTUM_SIGNATURE_BYTES: usize = 3_309;
 
     fn test_did() -> Did {
         Did::new("did:exo:test-node").unwrap()
@@ -764,6 +767,66 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_consensus_proposal_preserves_node_and_hybrid_signature() {
+        let node_hash = test_hash(b"proposal-node");
+        let msg = WireMessage::ConsensusProposal(ConsensusProposalMsg {
+            proposal: Proposal {
+                proposer: test_did(),
+                round: 9,
+                node_hash,
+            },
+            node: test_node(vec![test_hash(b"parent-1"), test_hash(b"parent-2")]),
+            signature: Signature::Hybrid {
+                classical: [4u8; 64],
+                pq: vec![5u8; 96],
+            },
+        });
+
+        let bytes = encode(&msg).unwrap();
+        let decoded = decode(&bytes).unwrap();
+
+        match decoded {
+            WireMessage::ConsensusProposal(proposal) => {
+                assert_eq!(proposal.proposal.round, 9);
+                assert_eq!(proposal.proposal.node_hash, node_hash);
+                assert_eq!(proposal.node.parents.len(), 2);
+                match proposal.signature {
+                    Signature::Hybrid { classical, pq } => {
+                        assert_eq!(classical, [4u8; 64]);
+                        assert_eq!(pq, vec![5u8; 96]);
+                    }
+                    other => panic!("expected hybrid signature, got {other:?}"),
+                }
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_consensus_commit_preserves_certificate_votes() {
+        let node_hash = test_hash(b"committed-node");
+        let msg = WireMessage::ConsensusCommit(ConsensusCommitMsg {
+            certificate: CommitCertificate {
+                node_hash,
+                votes: vec![test_vote(1), test_vote(2), test_vote(3)],
+                round: 11,
+            },
+        });
+
+        let bytes = encode(&msg).unwrap();
+        let decoded = decode(&bytes).unwrap();
+
+        match decoded {
+            WireMessage::ConsensusCommit(commit) => {
+                assert_eq!(commit.certificate.node_hash, node_hash);
+                assert_eq!(commit.certificate.votes.len(), 3);
+                assert_eq!(commit.certificate.round, 11);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
     fn roundtrip_state_snapshot_request() {
         let msg = WireMessage::StateSnapshotRequest(StateSnapshotRequestMsg {
             sender: test_did(),
@@ -776,6 +839,35 @@ mod tests {
             WireMessage::StateSnapshotRequest(req) => {
                 assert_eq!(req.from_height, 42);
                 assert_eq!(req.chunk_size, 50);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_state_snapshot_chunk_preserves_post_quantum_node_signature() {
+        let mut node = test_node(vec![]);
+        node.signature = Signature::PostQuantum(vec![7u8; 128]);
+        let msg = WireMessage::StateSnapshotChunk(StateSnapshotChunkMsg {
+            sender: test_did(),
+            from_height: 12,
+            nodes: vec![node],
+            to_height: 12,
+            has_more: true,
+        });
+
+        let bytes = encode(&msg).unwrap();
+        let decoded = decode(&bytes).unwrap();
+
+        match decoded {
+            WireMessage::StateSnapshotChunk(chunk) => {
+                assert_eq!(chunk.from_height, 12);
+                assert_eq!(chunk.to_height, 12);
+                assert!(chunk.has_more);
+                match &chunk.nodes[0].signature {
+                    Signature::PostQuantum(pq) => assert_eq!(pq, &vec![7u8; 128]),
+                    other => panic!("expected post-quantum signature, got {other:?}"),
+                }
             }
             _ => panic!("wrong variant"),
         }
@@ -865,6 +957,25 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_peer_address_over_byte_limit() {
+        let oversized_address = "a".repeat(EXPECTED_MAX_PEER_ADDRESS_BYTES + 1);
+        let msg = WireMessage::PeerExchange(PeerExchangeMsg {
+            sender: test_did(),
+            peers: vec![WirePeerInfo {
+                did: test_did(),
+                addresses: vec![oversized_address],
+                public_key_hash: test_hash(b"peer-key"),
+                last_seen: Timestamp::new(1_000, 0),
+            }],
+        });
+        let bytes = encode(&msg).unwrap();
+
+        let err = decode(&bytes).expect_err("peer with oversized address must fail");
+
+        assert!(err.contains("peer address"));
+    }
+
+    #[test]
     fn decode_rejects_dag_sync_request_with_too_many_tip_hashes() {
         let tip_hashes = (0..=EXPECTED_MAX_DAG_SYNC_TIP_HASHES)
             .map(|idx| test_hash(format!("tip-{idx}").as_bytes()))
@@ -879,6 +990,27 @@ mod tests {
         let err = decode(&bytes).expect_err("oversized tip hash request must fail");
 
         assert!(err.contains("DAG sync tip hashes"));
+    }
+
+    #[test]
+    fn decode_rejects_dag_sync_response_with_too_many_nodes() {
+        let nodes = (0..=EXPECTED_MAX_DAG_NODES_PER_MESSAGE)
+            .map(|idx| {
+                let mut node = test_node(vec![]);
+                node.hash = test_hash(format!("node-{idx}").as_bytes());
+                node
+            })
+            .collect();
+        let msg = WireMessage::DagSyncResponse(DagSyncResponseMsg {
+            sender: test_did(),
+            nodes,
+            has_more: false,
+        });
+        let bytes = encode(&msg).unwrap();
+
+        let err = decode(&bytes).expect_err("DAG sync response with too many nodes must fail");
+
+        assert!(err.contains("DAG nodes"));
     }
 
     #[test]
@@ -931,5 +1063,45 @@ mod tests {
         let err = decode(&bytes).expect_err("oversized commit certificate must fail");
 
         assert!(err.contains("commit certificate votes"));
+    }
+
+    #[test]
+    fn deserialize_rejects_short_ed25519_signature_from_untrusted_envelope() {
+        let msg = WireMessage::GovernanceEvent(GovernanceEventMsg {
+            sender: test_did(),
+            event_type: GovernanceEventType::AuditEntry,
+            payload: b"audit".to_vec(),
+            timestamp: Timestamp::new(1000, 1),
+            signature: Signature::from_bytes([3u8; 64]),
+        });
+        let mut value = serde_json::to_value(&msg).unwrap();
+        value["GovernanceEvent"]["signature"] = serde_json::json!({ "Ed25519": [1, 2, 3] });
+
+        let err = serde_json::from_value::<WireMessage>(value)
+            .expect_err("short Ed25519 signatures must fail during deserialization");
+
+        assert!(err.to_string().contains("64 bytes"));
+    }
+
+    #[test]
+    fn deserialize_rejects_oversized_post_quantum_signature_from_untrusted_envelope() {
+        let mut node = test_node(vec![]);
+        node.signature = Signature::PostQuantum(vec![7u8; 128]);
+        let msg = WireMessage::StateSnapshotChunk(StateSnapshotChunkMsg {
+            sender: test_did(),
+            from_height: 12,
+            nodes: vec![node],
+            to_height: 12,
+            has_more: false,
+        });
+        let mut value = serde_json::to_value(&msg).unwrap();
+        value["StateSnapshotChunk"]["nodes"][0]["signature"] = serde_json::json!({
+            "PostQuantum": vec![9u8; EXPECTED_MAX_POST_QUANTUM_SIGNATURE_BYTES + 1],
+        });
+
+        let err = serde_json::from_value::<WireMessage>(value)
+            .expect_err("oversized post-quantum signatures must fail during deserialization");
+
+        assert!(err.to_string().contains("post-quantum signature bytes"));
     }
 }

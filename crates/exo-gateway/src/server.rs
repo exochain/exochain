@@ -1,6 +1,7 @@
 //! HTTP server skeleton — gateway configuration, lifecycle, and axum routing.
 use std::{
     fmt,
+    net::SocketAddr,
     sync::{Arc, Mutex, RwLock},
 };
 
@@ -13,6 +14,7 @@ use axum::{
     response::{IntoResponse, Json, Response},
     routing::{get, post},
 };
+use axum_server::tls_rustls::RustlsConfig;
 use exo_core::{Did, Hash256, Signature, Timestamp, hlc::HybridClock};
 use exo_gatekeeper::{
     invariants::InvariantSet,
@@ -107,9 +109,34 @@ pub fn start(config: GatewayConfig) -> Result<GatewayHandle> {
             "max_connections must be > 0".into(),
         ));
     }
+    validate_tls_config(config.tls_config.as_ref())?;
     Ok(GatewayHandle {
         config,
         running: true,
+    })
+}
+
+fn validate_tls_config(tls_config: Option<&TlsConfig>) -> Result<()> {
+    if let Some(tls) = tls_config {
+        if tls.cert_path.trim().is_empty() {
+            return Err(GatewayError::BadRequest(
+                "tls_config.cert_path cannot be empty".into(),
+            ));
+        }
+        if tls.key_path.trim().is_empty() {
+            return Err(GatewayError::BadRequest(
+                "tls_config.key_path cannot be empty".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn parse_tls_bind_address(bind_address: &str) -> Result<SocketAddr> {
+    bind_address.parse::<SocketAddr>().map_err(|e| {
+        GatewayError::BadRequest(format!(
+            "tls_config requires bind_address to be an explicit socket address: {e}"
+        ))
     })
 }
 
@@ -2265,12 +2292,44 @@ pub async fn serve_with_extra_routes(
     pool: Option<sqlx::PgPool>,
     extra: Option<Router>,
 ) -> Result<()> {
+    validate_tls_config(config.tls_config.as_ref())?;
     let registry = Arc::new(RwLock::new(LocalDidRegistry::new()));
     let state = AppState::new(pool, registry);
     let mut app = build_router(state);
 
     if let Some(extra_router) = extra {
         app = app.merge(extra_router);
+    }
+
+    if let Some(tls_config) = config.tls_config.as_ref() {
+        let bind_address = parse_tls_bind_address(&config.bind_address)?;
+        if rustls::crypto::ring::default_provider()
+            .install_default()
+            .is_err()
+        {
+            tracing::debug!("Rustls crypto provider was already installed");
+        }
+        let rustls_config =
+            RustlsConfig::from_pem_file(&tls_config.cert_path, &tls_config.key_path)
+                .await
+                .map_err(|e| GatewayError::Internal(format!("TLS configuration failed: {e}")))?;
+        let handle = axum_server::Handle::new();
+        let server = axum_server::bind_rustls(bind_address, rustls_config)
+            .handle(handle.clone())
+            .serve(app.into_make_service());
+
+        tracing::info!("exo-gateway listening with TLS on {}", config.bind_address);
+
+        tokio::pin!(server);
+        let result = tokio::select! {
+            result = &mut server => result,
+            () = shutdown_signal() => {
+                handle.graceful_shutdown(None);
+                (&mut server).await
+            }
+        };
+
+        return result.map_err(|e| GatewayError::Internal(format!("server error: {e}")));
     }
 
     let listener = TcpListener::bind(&config.bind_address)
@@ -2590,6 +2649,91 @@ mod tests {
         };
         let h = start(c).unwrap();
         assert!(h.config.tls_config.is_some());
+    }
+
+    #[test]
+    fn start_tls_rejects_empty_certificate_or_key_paths() {
+        for tls_config in [
+            TlsConfig {
+                cert_path: String::new(),
+                key_path: "key.pem".into(),
+            },
+            TlsConfig {
+                cert_path: "cert.pem".into(),
+                key_path: String::new(),
+            },
+            TlsConfig {
+                cert_path: "  ".into(),
+                key_path: "key.pem".into(),
+            },
+            TlsConfig {
+                cert_path: "cert.pem".into(),
+                key_path: "\t".into(),
+            },
+        ] {
+            let config = GatewayConfig {
+                tls_config: Some(tls_config),
+                ..Default::default()
+            };
+
+            assert!(
+                start(config).is_err(),
+                "configured TLS must require non-empty cert and key paths"
+            );
+        }
+    }
+
+    #[test]
+    fn serve_with_tls_uses_rustls_instead_of_plain_tcp() {
+        let source = include_str!("server.rs");
+        let serve = source_between(
+            source,
+            "pub async fn serve_with_extra_routes",
+            "// ---------------------------------------------------------------------------\n// Tests",
+        );
+
+        assert!(
+            serve.contains("RustlsConfig::from_pem_file"),
+            "TLS-configured gateway startup must load the configured certificate and key"
+        );
+        assert!(
+            serve.contains("bind_rustls"),
+            "TLS-configured gateway startup must bind a Rustls HTTPS server"
+        );
+        assert!(
+            serve.contains("config.tls_config.as_ref()"),
+            "gateway startup must branch on tls_config instead of ignoring it"
+        );
+        assert!(
+            serve.contains("TcpListener::bind(&config.bind_address)"),
+            "plaintext startup remains available only when tls_config is absent"
+        );
+    }
+
+    #[test]
+    fn serve_with_tls_installs_rustls_provider_before_loading_pem() {
+        let source = include_str!("server.rs");
+        let serve = source_between(
+            source,
+            "pub async fn serve_with_extra_routes",
+            "// ---------------------------------------------------------------------------\n// Tests",
+        );
+
+        let provider = serve
+            .find("default_provider")
+            .expect("TLS branch must select the Rustls ring crypto provider explicitly");
+        let provider_install = provider
+            + serve[provider..]
+                .find("install_default")
+                .expect("TLS branch must install the Rustls crypto provider explicitly");
+        let pem_load = serve
+            .find("RustlsConfig::from_pem_file")
+            .expect("TLS branch must load the configured PEM material");
+
+        assert!(
+            provider_install < pem_load,
+            "Rustls provider must be installed before loading PEM TLS configuration"
+        );
     }
 
     // --- Router integration tests (no network listener needed) ---

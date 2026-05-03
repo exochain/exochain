@@ -1,13 +1,14 @@
 /**
  * Bridge Verification Test — WASM binding smoke-test harness
  *
- * Calls the covered exported wasm_ bridge functions with valid minimal inputs
- * and verifies each returns without throwing.
+ * Calls the covered exported wasm_ bridge functions with valid minimal inputs,
+ * and verifies intentionally disabled raw-secret entry points fail closed.
  *
  * Run:  node packages/exochain-wasm/test/bridge_verification.mjs
  */
 
 import { createRequire } from 'node:module';
+import { createPrivateKey, createPublicKey, generateKeyPairSync, sign as nodeSign } from 'node:crypto';
 const require = createRequire(import.meta.url);
 const wasm = require('../wasm/exochain_wasm.js');
 
@@ -43,6 +44,51 @@ function setup(fn) {
   try { return fn(); } catch { return undefined; }
 }
 
+function expectErrorContains(label, fn, expected) {
+  try {
+    fn();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes(expected)) {
+      throw new Error(`${label} returned unexpected error: ${msg}`);
+    }
+    return true;
+  }
+  throw new Error(`${label} must fail closed`);
+}
+
+function signatureJsonFromHex(signatureHex) {
+  return { Ed25519: Array.from(Buffer.from(signatureHex, 'hex')) };
+}
+
+function publicKeyHexFromPublicKey(publicKey) {
+  const der = publicKey.export({ type: 'spki', format: 'der' });
+  return Buffer.from(der).subarray(-32).toString('hex');
+}
+
+function signerFromPrivateKey(privateKey) {
+  const publicKey = createPublicKey(privateKey);
+  return {
+    publicKeyHex: publicKeyHexFromPublicKey(publicKey),
+    signHex: (message) => nodeSign(null, Buffer.from(message), privateKey).toString('hex')
+  };
+}
+
+function randomEd25519Signer() {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  return signerFromPrivateKey(privateKey);
+}
+
+function seededEd25519Signer(secretHex) {
+  const pkcs8SeedPrefix = Buffer.from('302e020100300506032b657004220420', 'hex');
+  const privateKey = createPrivateKey({
+    key: Buffer.concat([pkcs8SeedPrefix, Buffer.from(secretHex, 'hex')]),
+    format: 'der',
+    type: 'pkcs8'
+  });
+  return signerFromPrivateKey(privateKey);
+}
+
 // Convenience constants
 const ZERO_32_HEX   = '0'.repeat(64);
 const NONZERO_32_HEX = '11'.repeat(32);
@@ -65,19 +111,9 @@ const UUID_4 = '00000000-0000-0000-0000-000000000004';
 
 // Pre-compute a valid Ed25519 keypair result for reuse
 const ephResult = wasm.wasm_sign_with_ephemeral_key(TEXT_BYTES);
-
-function publicKeyForSecret(secretHex) {
-  return wasm.wasm_ed25519_public_from_secret(secretHex);
-}
-
-function signatureHexFromJson(signatureJson) {
-  const signature = typeof signatureJson === 'string' ? JSON.parse(signatureJson) : signatureJson;
-  const bytes = signature.Ed25519;
-  if (!Array.isArray(bytes) || bytes.length !== 64) {
-    throw new Error('expected Ed25519 signature bytes');
-  }
-  return Buffer.from(bytes).toString('hex');
-}
+const signer1 = seededEd25519Signer(DUMMY_SECRET_HEX);
+const signer2 = seededEd25519Signer(DUMMY_SECRET_HEX_2);
+const signer3 = seededEd25519Signer(DUMMY_SECRET_HEX_3);
 
 function hashBytes(hashValue) {
   if (Array.isArray(hashValue)) return hashValue;
@@ -145,11 +181,19 @@ test('wasm_verify_merkle_proof', () =>
 test('wasm_verify', () =>
   wasm.wasm_verify(TEXT_BYTES, JSON.stringify(ephResult.signature), ephResult.public_key));
 
-test('wasm_sign', () =>
-  wasm.wasm_sign(TEXT_BYTES, DUMMY_SECRET_HEX));
+test('wasm_sign rejects raw secret-key signing', () =>
+  expectErrorContains(
+    'wasm_sign',
+    () => wasm.wasm_sign(TEXT_BYTES, DUMMY_SECRET_HEX),
+    'raw secret-key signing is disabled'
+  ));
 
-test('wasm_ed25519_public_from_secret', () =>
-  wasm.wasm_ed25519_public_from_secret(DUMMY_SECRET_HEX));
+test('wasm_ed25519_public_from_secret rejects raw secret-key derivation', () =>
+  expectErrorContains(
+    'wasm_ed25519_public_from_secret',
+    () => wasm.wasm_ed25519_public_from_secret(DUMMY_SECRET_HEX),
+    'raw secret-key public derivation is disabled'
+  ));
 
 const EVENT_SEED = new TextEncoder().encode('event-seed-1');
 const EVENT_ID = wasm.wasm_compute_event_id(EVENT_SEED);
@@ -168,23 +212,62 @@ test('wasm_compute_event_id', () => {
 
 console.log('\n--- Events ---');
 
-test('wasm_create_signed_event', () =>
-  wasm.wasm_create_signed_event(
+test('wasm_create_signed_event rejects raw secret-key event signing', () =>
+  expectErrorContains(
+    'wasm_create_signed_event',
+    () => wasm.wasm_create_signed_event(
+      JSON.stringify('AuditEntry'),
+      TEXT_BYTES,
+      TEST_DID,
+      DUMMY_SECRET_HEX,
+      EVENT_ID,
+      NOW_MS,
+      7
+    ),
+    'raw secret-key event signing is disabled'
+  ));
+
+const eventSigningPayloadHex = setup(() =>
+  wasm.wasm_event_signing_payload(
     JSON.stringify('AuditEntry'),
     TEXT_BYTES,
     TEST_DID,
-    DUMMY_SECRET_HEX,
     EVENT_ID,
     NOW_MS,
     7
   ));
+const eventSignatureJson = eventSigningPayloadHex
+  ? signatureJsonFromHex(signer1.signHex(Buffer.from(eventSigningPayloadHex, 'hex')))
+  : null;
 
-const signedEvent = setup(() =>
-  wasm.wasm_create_signed_event(
+test('wasm_event_signing_payload', () => {
+  if (!eventSigningPayloadHex || eventSigningPayloadHex.length === 0) {
+    throw new Error('event signing payload must be non-empty');
+  }
+  return eventSigningPayloadHex;
+});
+
+test('wasm_create_event_with_signature', () => {
+  if (!eventSignatureJson) throw new Error('skipped -- no event signature');
+  return wasm.wasm_create_event_with_signature(
     JSON.stringify('AuditEntry'),
     TEXT_BYTES,
     TEST_DID,
-    DUMMY_SECRET_HEX,
+    JSON.stringify(eventSignatureJson),
+    signer1.publicKeyHex,
+    EVENT_ID,
+    NOW_MS,
+    7
+  );
+});
+
+const signedEvent = setup(() =>
+  eventSignatureJson && wasm.wasm_create_event_with_signature(
+    JSON.stringify('AuditEntry'),
+    TEXT_BYTES,
+    TEST_DID,
+    JSON.stringify(eventSignatureJson),
+    signer1.publicKeyHex,
     EVENT_ID,
     NOW_MS,
     7
@@ -198,8 +281,7 @@ test('wasm_verify_event', () => {
   if (BigInt(signedEvent.timestamp?.physical_ms) !== NOW_MS || signedEvent.timestamp?.logical !== 7) {
     throw new Error('signed event did not preserve caller-supplied HLC timestamp');
   }
-  const pubKey = publicKeyForSecret(DUMMY_SECRET_HEX);
-  return wasm.wasm_verify_event(JSON.stringify(signedEvent), pubKey);
+  return wasm.wasm_verify_event(JSON.stringify(signedEvent), signer1.publicKeyHex);
 });
 
 // =========================================================================
@@ -210,51 +292,48 @@ console.log('\n--- Messaging / Death Verification ---');
 
 test('wasm_generate_x25519_keypair', () => {
   const keypair = wasm.wasm_generate_x25519_keypair();
-  if (keypair.public_key_hex.length !== 64 || keypair.secret_key_hex.length !== 64) {
-    throw new Error('X25519 keypair must return 32-byte public and secret keys');
+  if (keypair.public_key_hex.length !== 64 || keypair.secret_key_hex !== undefined) {
+    throw new Error('X25519 keypair must return only the 32-byte public key');
   }
   return keypair;
 });
 
 const recipientKex = setup(() => wasm.wasm_generate_x25519_keypair());
 
-test('wasm_x25519_public_from_secret', () => {
-  if (!recipientKex) throw new Error('skipped -- no recipient X25519 keypair');
-  const derived = wasm.wasm_x25519_public_from_secret(recipientKex.secret_key_hex);
-  if (derived.public_key_hex !== recipientKex.public_key_hex) {
-    throw new Error('derived X25519 public key must match generated keypair');
-  }
-  return derived;
-});
+test('wasm_x25519_public_from_secret rejects raw X25519 secret derivation', () =>
+  expectErrorContains(
+    'wasm_x25519_public_from_secret',
+    () => wasm.wasm_x25519_public_from_secret(DUMMY_SECRET_HEX),
+    'raw X25519 secret public derivation is disabled'
+  ));
 
-test('wasm_encrypt_message', () => {
+test('wasm_encrypt_message rejects raw sender signing', () => {
   if (!recipientKex) throw new Error('skipped -- no recipient X25519 keypair');
-  const envelope = wasm.wasm_encrypt_message(
-    'bridge encrypted message',
-    JSON.stringify('Text'),
-    TEST_DID,
-    TEST_DID_2,
-    DUMMY_SECRET_HEX,
-    recipientKex.public_key_hex,
-    '018f7a96-8ad0-7c4f-8e0f-111111111201',
-    7000n,
-    0,
-    false,
-    0
+  return expectErrorContains(
+    'wasm_encrypt_message',
+    () => wasm.wasm_encrypt_message(
+      'bridge encrypted message',
+      JSON.stringify('Text'),
+      TEST_DID,
+      TEST_DID_2,
+      DUMMY_SECRET_HEX,
+      recipientKex.public_key_hex,
+      '018f7a96-8ad0-7c4f-8e0f-111111111201',
+      7000n,
+      0,
+      false,
+      0
+    ),
+    'raw Ed25519 sender signing is disabled'
   );
-  if (envelope.sender_did !== TEST_DID || envelope.recipient_did !== TEST_DID_2) {
-    throw new Error('encrypted envelope must retain sender and recipient DIDs');
-  }
-  return envelope;
 });
 
-const encryptedEnvelope = setup(() =>
-  recipientKex && wasm.wasm_encrypt_message(
+const preparedEnvelope = setup(() =>
+  recipientKex && wasm.wasm_prepare_encrypted_message(
     'bridge encrypted message',
     JSON.stringify('Text'),
     TEST_DID,
     TEST_DID_2,
-    DUMMY_SECRET_HEX,
     recipientKex.public_key_hex,
     '018f7a96-8ad0-7c4f-8e0f-111111111202',
     7001n,
@@ -262,37 +341,68 @@ const encryptedEnvelope = setup(() =>
     false,
     0
   ));
-const encryptedSenderPublicKey = setup(() => publicKeyForSecret(DUMMY_SECRET_HEX));
+const encryptedEnvelopeSignatureHex = preparedEnvelope
+  ? signer1.signHex(Buffer.from(preparedEnvelope.signing_payload_hex, 'hex'))
+  : null;
+
+test('wasm_prepare_encrypted_message', () => {
+  if (!preparedEnvelope) throw new Error('skipped -- no prepared envelope');
+  if (preparedEnvelope.envelope.sender_did !== TEST_DID || preparedEnvelope.envelope.recipient_did !== TEST_DID_2) {
+    throw new Error('prepared envelope must retain sender and recipient DIDs');
+  }
+  if (!preparedEnvelope.signing_payload_hex) {
+    throw new Error('prepared envelope must expose signing payload');
+  }
+  return preparedEnvelope;
+});
+
+test('wasm_attach_message_signature', () => {
+  if (!preparedEnvelope || !encryptedEnvelopeSignatureHex) {
+    throw new Error('skipped -- no prepared envelope signature');
+  }
+  return wasm.wasm_attach_message_signature(
+    JSON.stringify(preparedEnvelope.envelope),
+    signer1.publicKeyHex,
+    encryptedEnvelopeSignatureHex
+  );
+});
+
+const encryptedEnvelope = setup(() =>
+  preparedEnvelope && encryptedEnvelopeSignatureHex && wasm.wasm_attach_message_signature(
+    JSON.stringify(preparedEnvelope.envelope),
+    signer1.publicKeyHex,
+    encryptedEnvelopeSignatureHex
+  ));
 
 test('wasm_verify_message_signature', () => {
-  if (!encryptedEnvelope || !encryptedSenderPublicKey) {
+  if (!encryptedEnvelope) {
     throw new Error('skipped -- no encrypted envelope');
   }
   const ok = wasm.wasm_verify_message_signature(
     JSON.stringify(encryptedEnvelope),
-    encryptedSenderPublicKey
+    signer1.publicKeyHex
   );
   if (!ok) throw new Error('message signature must verify with sender public key');
   return ok;
 });
 
 test('wasm_decrypt_message', () => {
-  if (!encryptedEnvelope || !recipientKex || !encryptedSenderPublicKey) {
+  if (!encryptedEnvelope) {
     throw new Error('skipped -- no encrypted envelope');
   }
-  const decrypted = wasm.wasm_decrypt_message(
-    JSON.stringify(encryptedEnvelope),
-    recipientKex.secret_key_hex,
-    encryptedSenderPublicKey
+  return expectErrorContains(
+    'wasm_decrypt_message',
+    () => wasm.wasm_decrypt_message(
+      JSON.stringify(encryptedEnvelope),
+      NONZERO_32_HEX,
+      signer1.publicKeyHex
+    ),
+    'decryption failed'
   );
-  if (decrypted.plaintext !== 'bridge encrypted message') {
-    throw new Error('decrypted plaintext mismatch');
-  }
-  return decrypted;
 });
 
-const initiatorPublicKey = setup(() => publicKeyForSecret(DUMMY_SECRET_HEX_2));
-const trusteePublicKey = setup(() => publicKeyForSecret(DUMMY_SECRET_HEX_3));
+const initiatorPublicKey = signer2.publicKeyHex;
+const trusteePublicKey = signer3.publicKeyHex;
 const deathTrusteesJson = setup(() => {
   if (!initiatorPublicKey || !trusteePublicKey) {
     throw new Error('missing death-verification public keys');
@@ -324,7 +434,7 @@ const deathInitialPayload = setup(() =>
     deathClaimNonceHex
   ));
 const deathInitialSignatureHex = setup(() =>
-  deathInitialPayload && signatureHexFromJson(wasm.wasm_sign(deathInitialPayload, DUMMY_SECRET_HEX_2)));
+  deathInitialPayload && signer2.signHex(deathInitialPayload));
 
 test('wasm_death_verification_new', () => {
   if (!deathTrusteesJson || !deathInitialSignatureHex) {
@@ -375,9 +485,7 @@ const deathConfirmationPayload = setup(() =>
     TEST_DID_3
   ));
 const deathConfirmationSignatureHex = setup(() =>
-  deathConfirmationPayload && signatureHexFromJson(
-    wasm.wasm_sign(deathConfirmationPayload, DUMMY_SECRET_HEX_3)
-  ));
+  deathConfirmationPayload && signer3.signHex(deathConfirmationPayload));
 
 test('wasm_death_verification_confirm', () => {
   if (!deathState || !trusteePublicKey || !deathConfirmationSignatureHex) {
@@ -793,6 +901,22 @@ const ventureCommander = {
   commandbase_profile: null
 };
 
+function catapultAgent(slot, did, displayName, offsetMs) {
+  return {
+    did,
+    slot,
+    display_name: displayName,
+    capabilities: ['command', 'operations'],
+    status: 'Active',
+    last_heartbeat: { physical_ms: NOW_NUM + offsetMs, logical: 0 },
+    budget_spent_cents: 0,
+    budget_limit_cents: 1000000,
+    hired_at: { physical_ms: NOW_NUM + offsetMs, logical: 0 },
+    hired_by: TEST_DID,
+    commandbase_profile: null
+  };
+}
+
 test('wasm_hire_agent', () => {
   if (!catapultNewco) throw new Error('skipped -- no Catapult newco from setup');
   const hired = wasm.wasm_hire_agent(
@@ -832,13 +956,24 @@ test('wasm_roster_status', () => {
 
 test('wasm_oda_authority_chain', () => {
   if (!catapultNewco) throw new Error('skipped -- no Catapult newco from setup');
-  const hired = wasm.wasm_hire_agent(
+  const withCommander = wasm.wasm_hire_agent(
     JSON.stringify(catapultNewco),
     JSON.stringify(ventureCommander)
   );
-  const chain = wasm.wasm_oda_authority_chain(JSON.stringify(hired));
+  const withDeputy = wasm.wasm_hire_agent(
+    JSON.stringify(withCommander),
+    JSON.stringify(catapultAgent('OperationsDeputy', 'did:exo:operations-deputy', 'Bridge Operations Deputy', 55))
+  );
+  const completePaceRoster = wasm.wasm_hire_agent(
+    JSON.stringify(withDeputy),
+    JSON.stringify(catapultAgent('ProcessArchitect', 'did:exo:process-architect', 'Bridge Process Architect', 60))
+  );
+  const chain = wasm.wasm_oda_authority_chain(JSON.stringify(completePaceRoster));
   if (chain.primary !== TEST_DID_3) {
     throw new Error('PACE primary authority should be the VentureCommander in bridge fixture');
+  }
+  if (chain.alternates[0] !== 'did:exo:operations-deputy' || chain.contingency[0] !== 'did:exo:process-architect') {
+    throw new Error('PACE authority chain must include staffed alternate and contingency slots');
   }
   return chain;
 });
@@ -1045,7 +1180,6 @@ test('wasm_verify_franchise_receipt_chain', () => {
 console.log('\n--- Risk Assessment ---');
 
 test('wasm_assess_risk and wasm_verify_risk_attestation use caller signer and caller HLC', () => {
-  const attesterPublicKey = publicKeyForSecret(DUMMY_SECRET_HEX);
   const attestation = wasm.wasm_assess_risk(
     TEST_DID,
     TEST_DID_2,
@@ -1058,7 +1192,7 @@ test('wasm_assess_risk and wasm_verify_risk_attestation use caller signer and ca
       now_logical: 0
     })
   );
-  if (!wasm.wasm_verify_risk_attestation(JSON.stringify(attestation), attesterPublicKey)) {
+  if (!wasm.wasm_verify_risk_attestation(JSON.stringify(attestation), signer1.publicKeyHex)) {
     throw new Error('risk attestation must verify against caller-supplied attester key');
   }
   if (attestation.timestamp.physical_ms !== NOW_NUM || attestation.timestamp.logical !== 0) {
@@ -1301,13 +1435,19 @@ test('wasm_audit_verify', () => {
 test('wasm_check_clearance', () => {
   // Clearance levels: None, ReadOnly, Contributor, Reviewer, Steward, Governor
   const policy = {
-    default_level: 'ReadOnly',
     actions: {
-      read: { required_level: 'ReadOnly' },
-      write: { required_level: 'Contributor' }
-    }
+      read: { required_level: 'ReadOnly', quorum_policy: null, independence_required: false },
+      write: { required_level: 'Contributor', quorum_policy: null, independence_required: false }
+    },
+    policy_hash: ZERO_32_BYTES
   };
-  return wasm.wasm_check_clearance(TEST_DID, 'read', JSON.stringify(policy));
+  const registry = [{ did: TEST_DID, level: 'ReadOnly' }];
+  return wasm.wasm_check_clearance(
+    TEST_DID,
+    'read',
+    JSON.stringify(policy),
+    JSON.stringify(registry)
+  );
 });
 
 // =========================================================================
@@ -1356,7 +1496,8 @@ test('wasm_close_deliberation', () => {
   };
   return wasm.wasm_close_deliberation(
     JSON.stringify(deliberation),
-    JSON.stringify(quorumPolicy)
+    JSON.stringify(quorumPolicy),
+    JSON.stringify([])
   );
 });
 
@@ -1419,7 +1560,8 @@ test('wasm_compute_quorum', () => {
   };
   return wasm.wasm_compute_quorum(
     JSON.stringify(approvals),
-    JSON.stringify(policy)
+    JSON.stringify(policy),
+    JSON.stringify([])
   );
 });
 
@@ -1755,6 +1897,7 @@ test('wasm_ratify_constitution', () => {
     JSON.stringify(corpus),
     JSON.stringify(sigs),
     JSON.stringify(quorum),
+    JSON.stringify([]),
     NOW_MS
   );
 });
@@ -1762,14 +1905,15 @@ test('wasm_ratify_constitution', () => {
 test('wasm_amend_constitution', () => {
   const corpus = { version: 1, hash: ZERO_32_BYTES, articles: [], ratified_at: NOW_TS, amendment_count: 0 };
   const amendment = { id: 'art-1', title: 'Test', tier: 'Articles', text_hash: ZERO_32_BYTES, status: 'Active' };
-  // amend requires at least one non-empty signature — 64 bytes = 128 hex chars
-  // All-zero is treated as empty, so set one byte to 01
-  const dummySig64Hex = '01' + '00'.repeat(63);
-  const sigs = [[TEST_DID, dummySig64Hex]];
+  const sigs = [];
+  const quorum = { required_signatures: 0, required_fraction_pct: 0 };
   return wasm.wasm_amend_constitution(
     JSON.stringify(corpus),
     JSON.stringify(amendment),
-    JSON.stringify(sigs)
+    JSON.stringify(sigs),
+    JSON.stringify(quorum),
+    JSON.stringify([]),
+    NOW_MS
   );
 });
 

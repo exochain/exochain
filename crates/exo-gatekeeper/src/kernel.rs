@@ -160,8 +160,10 @@ impl Kernel {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::invariants::{authority_link_signature_message, provenance_signature_message};
-    use crate::types::{AuthorityLink, GovernmentBranch, Permission, QuorumVote};
+    use crate::{
+        invariants::{authority_link_signature_message, provenance_signature_message},
+        types::{AuthorityLink, GovernmentBranch, Permission, QuorumVote},
+    };
 
     const CONSTITUTION: &[u8] = b"We the people of the EXOCHAIN...";
 

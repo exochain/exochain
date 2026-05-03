@@ -58,6 +58,8 @@ tokio = { version = "1", features = ["full"] }
 
 # HTTP server
 axum = { version = "0.7", features = ["json", "macros"] }
+axum-server = { version = "0.8", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tower = { version = "0.4", features = ["util", "limit"] }
 tower-http = { version = "0.5", features = ["trace", "cors"] }
 

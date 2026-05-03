@@ -91,7 +91,15 @@ pub fn read(context: &NodeContext) -> ResourceContent {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        sync::Arc,
+    };
+
+    use exo_core::{Did, Hash256, Signature, types::PublicKey};
+
     use super::*;
+    use crate::reactor::{ReactorConfig, create_reactor_state};
 
     #[test]
     fn definition_has_uri() {
@@ -116,5 +124,52 @@ mod tests {
         let text = content.text.expect("text present");
         let parsed: Value = serde_json::from_str(&text).expect("valid JSON");
         assert!(parsed["version"].is_string());
+    }
+
+    #[test]
+    fn read_with_live_reactor_reports_consensus_snapshot() {
+        let node_did = Did::new("did:exo:validator-1").expect("valid DID");
+        let other_validator = Did::new("did:exo:validator-2").expect("valid DID");
+        let validators = BTreeSet::from([node_did.clone(), other_validator.clone()]);
+        let validator_public_keys = BTreeMap::from([
+            (node_did.clone(), PublicKey::from_bytes([1u8; 32])),
+            (other_validator, PublicKey::from_bytes([2u8; 32])),
+        ]);
+        let reactor_state = create_reactor_state(
+            &ReactorConfig {
+                node_did: node_did.clone(),
+                is_validator: true,
+                validators,
+                validator_public_keys,
+                round_timeout_ms: 1_000,
+            },
+            Arc::new(|_| Signature::empty()),
+            None,
+        );
+        {
+            let mut state = reactor_state.lock().expect("reactor state lock");
+            state.consensus.current_round = 7;
+            state.consensus.committed.push(Hash256::digest(b"node-1"));
+            state.consensus.committed.push(Hash256::digest(b"node-2"));
+        }
+        let context = NodeContext {
+            reactor_state: Some(reactor_state),
+            store: None,
+            node_did: Some(node_did.to_string()),
+        };
+
+        let content = read(&context);
+        let text = content.text.expect("text present");
+        let parsed: Value = serde_json::from_str(&text).expect("valid JSON");
+
+        assert_eq!(parsed["status"], "live");
+        assert_eq!(parsed["node_did"], node_did.to_string());
+        assert_eq!(parsed["consensus_round"], 7);
+        assert_eq!(parsed["committed_height"], 2);
+        assert_eq!(parsed["validator_count"], 2);
+        assert_eq!(parsed["is_validator"], true);
+        let validator_entries = parsed["validators"].as_array().expect("validators array");
+        assert_eq!(validator_entries.len(), 2);
+        assert_eq!(parsed["has_store"], false);
     }
 }

@@ -25,6 +25,8 @@ uuid = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
+axum-server = { workspace = true, features = ["tls-rustls-no-provider"] }
+rustls = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 sqlx = { workspace = true }

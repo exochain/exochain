@@ -310,6 +310,36 @@ mod sse_tests {
         );
     }
 
+    #[test]
+    fn constant_time_eq_matches_only_equal_same_length_tokens() {
+        assert!(constant_time_eq(b"token-123", b"token-123"));
+        assert!(!constant_time_eq(b"token-123", b"token-124"));
+        assert!(!constant_time_eq(b"token-123", b"token-1234"));
+    }
+
+    #[test]
+    fn parse_sse_bind_addr_accepts_loopback_only_forms() {
+        let literal = parse_sse_bind_addr("127.0.0.1:3030").unwrap();
+        assert_eq!(literal, SocketAddr::from((Ipv4Addr::LOCALHOST, 3030)));
+
+        let localhost = parse_sse_bind_addr("localhost:3031").unwrap();
+        assert_eq!(localhost, SocketAddr::from((Ipv4Addr::LOCALHOST, 3031)));
+    }
+
+    #[test]
+    fn parse_sse_bind_addr_rejects_remote_and_ambiguous_binds() {
+        let remote = parse_sse_bind_addr("0.0.0.0:3030").unwrap_err();
+        assert_eq!(remote.kind(), ErrorKind::PermissionDenied);
+        assert!(remote.to_string().contains("loopback"));
+
+        let ambiguous = parse_sse_bind_addr(":3030").unwrap_err();
+        assert_eq!(ambiguous.kind(), ErrorKind::InvalidInput);
+
+        let invalid_localhost = parse_sse_bind_addr("localhost:not-a-port").unwrap_err();
+        assert_eq!(invalid_localhost.kind(), ErrorKind::InvalidInput);
+        assert!(invalid_localhost.to_string().contains("invalid localhost"));
+    }
+
     #[tokio::test]
     async fn sse_health_returns_ok() {
         let router = test_router();
@@ -339,6 +369,22 @@ mod sse_tests {
 
         let res = router.oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn sse_message_rejects_wrong_bearer_token() {
+        let router = test_router();
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.0.0"}}}"#;
+        let req = Request::builder()
+            .method("POST")
+            .uri("/mcp/message")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer wrong-token")
+            .body(Body::from(body))
+            .unwrap();
+
+        let res = router.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

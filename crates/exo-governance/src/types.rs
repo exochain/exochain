@@ -9,9 +9,10 @@
 //! - [`EvidenceRef`] for legal evidence attachment (LEG-004, LEG-006)
 //! - [`FailureAction`] for constitutional constraint violation responses
 
+use std::cmp::Ordering;
+
 use exo_core::{Did, Hash256, Signature, Timestamp};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
 
 /// Tenant identifier — opaque string, unique per organization.
 pub type TenantId = String;

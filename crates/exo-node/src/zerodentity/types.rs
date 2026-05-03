@@ -678,9 +678,8 @@ impl std::str::FromStr for OtpState {
 mod tests {
     use std::str::FromStr;
 
-    use crate::zerodentity::OTP_MAX_ATTEMPTS;
-
     use super::*;
+    use crate::zerodentity::OTP_MAX_ATTEMPTS;
 
     // ---- AttestationType ----
 
