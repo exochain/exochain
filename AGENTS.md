@@ -98,6 +98,84 @@ exo-core
           -> decision-forum
 ```
 
+## Core vs Adjacent Surface Rules
+
+Core is core. Adjacent products, demos, customer-zero apps, portfolio sites, and
+integration scaffolds are not automatically part of the EXOCHAIN constitutional
+trust fabric just because they live near it or reference it.
+
+### Required Classification
+
+Before triage, planning, coding, or remediation, classify every finding and every
+changed path as exactly one of:
+
+- **EXOCHAIN core** — Rust workspace crates, governance/runtime logic, canonical
+  cryptography, DAG, consent, authority, gatekeeper, node, gateway, SDK, WASM,
+  proofs, tenant, messaging, CI gates, and constitutional governance artifacts.
+- **Core runtime adapter** — code that directly exposes or transports core
+  invariants across APIs, MCP, WASM, P2P, persistence, or deployment.
+- **Adjacent surface** — CommandBase, crosschecked.ai, livesafe.ai, customer-zero
+  apps, websites, demos, dashboards, generated prototypes, or product shells that
+  are not themselves the canonical Rust trust fabric.
+- **Imported evidence** — external HTML reports, zip files, screenshots, logs,
+  generated scans, or consultant readouts. These are inputs for verification, not
+  source-of-truth code.
+- **Third-party/vendor** — vendored packages, generated dependency trees, build
+  artifacts, archives, or upstream code not owned by EXOCHAIN.
+
+If a path cannot be classified quickly, stop and classify it before editing. Do
+not blend core and adjacent remediation in one commit unless the adjacent code is
+the actual runtime adapter proving access to core enforcement.
+
+### Remediation Priority
+
+1. Live, reproducible EXOCHAIN core vulnerabilities come first.
+2. Core runtime adapters come second when they expose core state, signatures,
+   credentials, governance outcomes, or external write paths.
+3. Adjacent surfaces come after core unless they are already deployed as the
+   production entrypoint for core trust decisions.
+4. Documentation and portfolio cleanup follow verified code remediation.
+
+Do not claim an adjacent fix remediates a core vulnerability. Do not claim a core
+invariant protects an adjacent app unless the app calls the relevant core API and
+has tests proving the enforcement boundary.
+
+### External Findings
+
+External reports from auditors, consultants, scanners, or AI systems are
+hypotheses. For each reported concern:
+
+1. Reproduce against current `main` or the branch under review, because reports
+   may be stale.
+2. Locate the actual owned file and runtime path. If the file is generated,
+   archived, imported evidence, or third-party code, record that disposition.
+3. Write a failing regression test or deterministic source guard before changing
+   production code.
+4. Fix the smallest owned enforcement boundary that blocks the exploit class.
+5. Re-run focused tests, touched-crate tests, relevant workspace gates, and a
+   bypass search for sibling ingress paths.
+6. Commit core remediations separately from adjacent-surface hardening.
+
+### Adding Adjacent Surfaces
+
+Any new adjacent product or surface, including CommandBase, crosschecked.ai,
+livesafe.ai, or future portfolio apps, must include an explicit ownership and
+trust-boundary statement before code lands:
+
+- owner and release status (`prototype`, `internal`, `customer-zero`, or
+  `production`);
+- whether it is allowed to make constitutional trust claims;
+- which EXOCHAIN core APIs it calls, if any;
+- threat model for secrets, identity, consent, authority, provenance, and
+  external writes;
+- test command and CI gate for that surface;
+- deployment boundary and credentials model.
+
+Adjacent surfaces must fail closed on missing secrets, must not expose bootstrap
+tokens or private key material through health/status/debug endpoints, must not
+ship hardcoded production credentials, and must not use development fallbacks in
+production code paths.
+
 ## How to Add a New Crate
 
 Use the scaffolding generator:
@@ -347,6 +425,14 @@ assert_eq!(output.fields.get("processed").unwrap(), "true");
 
 ## What Not to Do
 
+- Do not stub, shortcut, skip, postpone, leave `TODO`, or create "future phase"
+  placeholders in production or remediation work.
+- Do not remediate a report without first confirming the issue still exists in
+  current code.
+- Do not treat imported reports, zip files, generated artifacts, or third-party
+  source as owned EXOCHAIN code without classification.
+- Do not let adjacent surfaces claim constitutional enforcement without a tested
+  call path into EXOCHAIN core.
 - Do not use `HashMap` or `HashSet` anywhere.
 - Do not use floating-point numbers (`f32`, `f64`) anywhere.
 - Do not call `std::time::SystemTime::now()` or `Instant::now()`.
