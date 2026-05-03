@@ -9,7 +9,7 @@ use axum::{
     Router,
     body::Body,
     extract::{DefaultBodyLimit, Path, State},
-    http::{HeaderMap, Method, Request, StatusCode, header},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Json, Response},
     routing::{get, post},
@@ -55,6 +55,10 @@ const XSRF_COOKIE_PREFIX: &str = "XSRF-TOKEN=";
 const CSRF_HEADER_NAME: &str = "x-csrf-token";
 const AUTH_OBSERVED_AT_MS_HEADER: &str = "x-exo-auth-observed-at-ms";
 const GLOBAL_CONCURRENCY_LIMIT: usize = 1024;
+const STRICT_TRANSPORT_SECURITY_VALUE: &str = "max-age=63072000; includeSubDomains";
+const CONTENT_SECURITY_POLICY_VALUE: &str =
+    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+const PERMISSIONS_POLICY_VALUE: &str = "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -1767,6 +1771,35 @@ async fn require_csrf_double_submit(
     }
 }
 
+fn insert_static_response_header(headers: &mut HeaderMap, name: &'static str, value: &'static str) {
+    headers.insert(
+        HeaderName::from_static(name),
+        HeaderValue::from_static(value),
+    );
+}
+
+async fn attach_gateway_security_headers(request: Request<Body>, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+
+    insert_static_response_header(headers, "x-content-type-options", "nosniff");
+    insert_static_response_header(headers, "x-frame-options", "DENY");
+    insert_static_response_header(headers, "referrer-policy", "no-referrer");
+    insert_static_response_header(
+        headers,
+        "strict-transport-security",
+        STRICT_TRANSPORT_SECURITY_VALUE,
+    );
+    insert_static_response_header(
+        headers,
+        "content-security-policy",
+        CONTENT_SECURITY_POLICY_VALUE,
+    );
+    insert_static_response_header(headers, "permissions-policy", PERMISSIONS_POLICY_VALUE);
+
+    response
+}
+
 // ---------------------------------------------------------------------------
 // Dashboard handlers (layout templates + feedback issues)
 // ---------------------------------------------------------------------------
@@ -2226,6 +2259,8 @@ pub fn build_router(state: AppState) -> Router {
 fn apply_gateway_layers(router: Router, concurrency_limit: usize) -> Router {
     router
         .layer(middleware::from_fn(require_csrf_double_submit))
+        // Attach browser-facing hardening headers to every gateway response. (F-116)
+        .layer(middleware::from_fn(attach_gateway_security_headers))
         // Cap inbound body size before the handler reads a single byte. (A-022)
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         // Emit structured tracing spans for every request/response.
@@ -2539,6 +2574,57 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(next_response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn gateway_layers_attach_security_headers() {
+        let app = build_router(state());
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let headers = resp.headers();
+        assert_eq!(
+            headers
+                .get("x-content-type-options")
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff")
+        );
+        assert_eq!(
+            headers.get("x-frame-options").and_then(|v| v.to_str().ok()),
+            Some("DENY")
+        );
+        assert_eq!(
+            headers.get("referrer-policy").and_then(|v| v.to_str().ok()),
+            Some("no-referrer")
+        );
+        assert_eq!(
+            headers
+                .get("strict-transport-security")
+                .and_then(|v| v.to_str().ok()),
+            Some("max-age=63072000; includeSubDomains")
+        );
+        assert_eq!(
+            headers
+                .get("content-security-policy")
+                .and_then(|v| v.to_str().ok()),
+            Some("default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+        );
+        assert_eq!(
+            headers
+                .get("permissions-policy")
+                .and_then(|v| v.to_str().ok()),
+            Some(
+                "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()",
+            )
+        );
     }
 
     /// Build a minimal DidDocument for use in registration tests.
