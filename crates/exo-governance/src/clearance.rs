@@ -2,10 +2,18 @@
 
 use std::collections::BTreeMap;
 
-use exo_core::Did;
+use exo_core::{Did, Timestamp, hash::hash_structured};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use crate::quorum::QuorumPolicy;
+use crate::{
+    audit::{self, AuditLog},
+    errors::GovernanceError,
+    quorum::QuorumPolicy,
+};
+
+const CLEARANCE_ASSIGNMENT_EVIDENCE_DOMAIN: &str = "exo.governance.clearance_assignment.v1";
+const CLEARANCE_ASSIGNMENT_EVIDENCE_SCHEMA_VERSION: u16 = 1;
 
 /// Hierarchical clearance level from None (lowest) to Governor (highest).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -57,13 +65,60 @@ pub struct ClearancePolicy {
     pub policy_hash: [u8; 32],
 }
 
+/// Caller-supplied metadata for a clearance assignment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClearanceAssignment {
+    pub entry_id: Uuid,
+    pub timestamp: Timestamp,
+    pub assigner: Did,
+    pub subject: Did,
+    pub level: ClearanceLevel,
+}
+
+/// Deterministic receipt proving the registry mutation and its audit evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClearanceAssignmentReceipt {
+    pub audit_entry_id: Uuid,
+    pub timestamp: Timestamp,
+    pub assigner: Did,
+    pub subject: Did,
+    pub previous_level: ClearanceLevel,
+    pub assigned_level: ClearanceLevel,
+    pub evidence_hash: [u8; 32],
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ClearanceAssignmentEvidencePayload {
+    domain: &'static str,
+    schema_version: u16,
+    audit_entry_id: Uuid,
+    timestamp: Timestamp,
+    assigner: Did,
+    assigner_level: ClearanceLevel,
+    subject: Did,
+    previous_level: ClearanceLevel,
+    assigned_level: ClearanceLevel,
+}
+
 /// Maps DIDs to their assigned clearance levels.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClearanceRegistry {
-    pub entries: BTreeMap<Did, ClearanceLevel>,
+    entries: BTreeMap<Did, ClearanceLevel>,
 }
 
 impl ClearanceRegistry {
+    /// Build a registry from a previously verified state snapshot.
+    #[must_use]
+    pub fn from_verified_snapshot(entries: BTreeMap<Did, ClearanceLevel>) -> Self {
+        Self { entries }
+    }
+
+    /// Return the immutable clearance state snapshot.
+    #[must_use]
+    pub fn entries(&self) -> &BTreeMap<Did, ClearanceLevel> {
+        &self.entries
+    }
+
     /// Return the clearance level for the given actor, defaulting to `None`.
     #[must_use]
     pub fn get_level(&self, actor: &Did) -> ClearanceLevel {
@@ -72,10 +127,104 @@ impl ClearanceRegistry {
             .copied()
             .unwrap_or(ClearanceLevel::None)
     }
-    /// Assign or update the clearance level for the given actor.
-    pub fn set_level(&mut self, actor: Did, level: ClearanceLevel) {
-        self.entries.insert(actor, level);
+
+    /// Assign or update clearance through an audited authorization boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GovernanceError::ConstitutionalViolation`] when the assignment
+    /// is self-directed, the assigner is not a Governor, or the assignment would
+    /// set a level equal to or above the assigner's own clearance. Returns audit
+    /// and serialization errors from the underlying append-only audit log.
+    pub fn assign_level(
+        &mut self,
+        audit_log: &mut AuditLog,
+        assignment: ClearanceAssignment,
+    ) -> Result<ClearanceAssignmentReceipt, GovernanceError> {
+        if assignment.assigner == assignment.subject {
+            return Err(GovernanceError::ConstitutionalViolation {
+                constraint_id: "NoSelfGrant".into(),
+                reason: format!(
+                    "actor {} cannot assign its own clearance",
+                    assignment.assigner
+                ),
+            });
+        }
+
+        let assigner_level = self.get_level(&assignment.assigner);
+        if assigner_level != ClearanceLevel::Governor {
+            return Err(GovernanceError::ConstitutionalViolation {
+                constraint_id: "ClearanceAuthority".into(),
+                reason: format!(
+                    "assigner {} has clearance {assigner_level}; Governor required",
+                    assignment.assigner
+                ),
+            });
+        }
+        if assignment.level >= assigner_level {
+            return Err(GovernanceError::ConstitutionalViolation {
+                constraint_id: "ClearanceCeiling".into(),
+                reason: format!(
+                    "assigner {} with clearance {assigner_level} cannot assign {}",
+                    assignment.assigner, assignment.level
+                ),
+            });
+        }
+
+        let previous_level = self.get_level(&assignment.subject);
+        let evidence_hash =
+            clearance_assignment_evidence_hash(&assignment, assigner_level, previous_level)?;
+        let audit_entry = audit::create_entry(
+            audit_log,
+            assignment.entry_id,
+            assignment.timestamp,
+            assignment.assigner.clone(),
+            "clearance.assign".into(),
+            format!(
+                "subject={} previous={previous_level} assigned={}",
+                assignment.subject, assignment.level
+            ),
+            evidence_hash,
+        )?;
+        audit::append(audit_log, audit_entry)?;
+
+        self.entries
+            .insert(assignment.subject.clone(), assignment.level);
+        Ok(ClearanceAssignmentReceipt {
+            audit_entry_id: assignment.entry_id,
+            timestamp: assignment.timestamp,
+            assigner: assignment.assigner,
+            subject: assignment.subject,
+            previous_level,
+            assigned_level: assignment.level,
+            evidence_hash,
+        })
     }
+}
+
+fn clearance_assignment_evidence_hash(
+    assignment: &ClearanceAssignment,
+    assigner_level: ClearanceLevel,
+    previous_level: ClearanceLevel,
+) -> Result<[u8; 32], GovernanceError> {
+    let payload = ClearanceAssignmentEvidencePayload {
+        domain: CLEARANCE_ASSIGNMENT_EVIDENCE_DOMAIN,
+        schema_version: CLEARANCE_ASSIGNMENT_EVIDENCE_SCHEMA_VERSION,
+        audit_entry_id: assignment.entry_id,
+        timestamp: assignment.timestamp,
+        assigner: assignment.assigner.clone(),
+        assigner_level,
+        subject: assignment.subject.clone(),
+        previous_level,
+        assigned_level: assignment.level,
+    };
+    hash_structured(&payload)
+        .map(|hash| *hash.as_bytes())
+        .map_err(|e| {
+            GovernanceError::Serialization(format!(
+                "clearance assignment canonical CBOR hash failed: {e}"
+            ))
+        })
 }
 
 /// Result of a clearance check: granted (with policy hash), denied, or insufficient independence.
@@ -156,6 +305,47 @@ mod tests {
         }
     }
 
+    fn timestamp(ms: u64) -> exo_core::Timestamp {
+        exo_core::Timestamp::new(ms, 0)
+    }
+
+    fn audit_id(value: u128) -> uuid::Uuid {
+        uuid::Uuid::from_u128(value)
+    }
+
+    fn assignment(
+        assigner: Did,
+        subject: Did,
+        level: ClearanceLevel,
+        entry_id: uuid::Uuid,
+    ) -> ClearanceAssignment {
+        ClearanceAssignment {
+            entry_id,
+            timestamp: timestamp(10_000),
+            assigner,
+            subject,
+            level,
+        }
+    }
+
+    fn snapshot_registry(entries: Vec<(Did, ClearanceLevel)>) -> ClearanceRegistry {
+        let mut levels = BTreeMap::new();
+        for (did, level) in entries {
+            assert!(
+                levels.insert(did, level).is_none(),
+                "test registry snapshots must not contain duplicates"
+            );
+        }
+        ClearanceRegistry::from_verified_snapshot(levels)
+    }
+
+    fn production_source() -> &'static str {
+        include_str!("clearance.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source")
+    }
+
     fn setup() -> (ClearancePolicy, ClearanceRegistry) {
         let mut p = ClearancePolicy::default();
         p.actions
@@ -172,10 +362,11 @@ mod tests {
             "govern".into(),
             make_action_policy(ClearanceLevel::Governor),
         );
-        let mut r = ClearanceRegistry::default();
-        r.set_level(did("alice"), ClearanceLevel::Governor);
-        r.set_level(did("bob"), ClearanceLevel::Contributor);
-        r.set_level(did("carol"), ClearanceLevel::ReadOnly);
+        let r = snapshot_registry(vec![
+            (did("alice"), ClearanceLevel::Governor),
+            (did("bob"), ClearanceLevel::Contributor),
+            (did("carol"), ClearanceLevel::ReadOnly),
+        ]);
         (p, r)
     }
 
@@ -267,10 +458,132 @@ mod tests {
     }
     #[test]
     fn registry_set_get() {
-        let mut r = ClearanceRegistry::default();
         let d = did("test");
-        r.set_level(d.clone(), ClearanceLevel::Steward);
+        let r = snapshot_registry(vec![(d.clone(), ClearanceLevel::Steward)]);
         assert_eq!(r.get_level(&d), ClearanceLevel::Steward);
+    }
+
+    #[test]
+    fn registry_has_no_public_unchecked_mutation_surface() {
+        let source = production_source();
+        assert!(
+            !source.contains("pub entries:"),
+            "clearance entries must not be publicly mutable"
+        );
+        assert!(
+            !source.contains("pub fn set_level("),
+            "clearance assignment must pass through the audited authorization boundary"
+        );
+    }
+
+    #[test]
+    fn governor_assignment_updates_registry_and_appends_audit_entry() {
+        let governor = did("governor");
+        let subject = did("delegate");
+        let mut registry = snapshot_registry(vec![(governor.clone(), ClearanceLevel::Governor)]);
+        let mut audit_log = crate::audit::AuditLog::new();
+
+        let receipt = registry
+            .assign_level(
+                &mut audit_log,
+                assignment(
+                    governor.clone(),
+                    subject.clone(),
+                    ClearanceLevel::Steward,
+                    audit_id(0xC1EA),
+                ),
+            )
+            .expect("governor may assign lower clearance");
+
+        assert_eq!(registry.get_level(&subject), ClearanceLevel::Steward);
+        assert_eq!(receipt.subject, subject);
+        assert_eq!(receipt.previous_level, ClearanceLevel::None);
+        assert_eq!(receipt.assigned_level, ClearanceLevel::Steward);
+        assert_eq!(audit_log.len(), 1);
+        assert_eq!(audit_log.entries[0].actor, governor);
+        assert_eq!(audit_log.entries[0].action, "clearance.assign");
+        assert_eq!(audit_log.entries[0].evidence_hash, receipt.evidence_hash);
+        crate::audit::verify_chain(&audit_log).expect("assignment audit entry must chain");
+    }
+
+    #[test]
+    fn clearance_assignment_rejects_self_grant_without_mutation_or_audit() {
+        let actor = did("actor");
+        let mut registry = snapshot_registry(vec![(actor.clone(), ClearanceLevel::Governor)]);
+        let mut audit_log = crate::audit::AuditLog::new();
+
+        let err = registry
+            .assign_level(
+                &mut audit_log,
+                assignment(
+                    actor.clone(),
+                    actor.clone(),
+                    ClearanceLevel::Steward,
+                    audit_id(0xC1EB),
+                ),
+            )
+            .expect_err("actors must not assign their own clearance");
+
+        assert!(matches!(
+            err,
+            crate::GovernanceError::ConstitutionalViolation { .. }
+        ));
+        assert_eq!(registry.get_level(&actor), ClearanceLevel::Governor);
+        assert!(audit_log.is_empty());
+    }
+
+    #[test]
+    fn clearance_assignment_enforces_superior_clearance_ceiling() {
+        let steward = did("steward");
+        let subject = did("subject");
+        let mut registry = snapshot_registry(vec![(steward.clone(), ClearanceLevel::Steward)]);
+        let mut audit_log = crate::audit::AuditLog::new();
+
+        let err = registry
+            .assign_level(
+                &mut audit_log,
+                assignment(
+                    steward,
+                    subject.clone(),
+                    ClearanceLevel::Steward,
+                    audit_id(0xC1EC),
+                ),
+            )
+            .expect_err("assigner must not assign its own level or higher");
+
+        assert!(matches!(
+            err,
+            crate::GovernanceError::ConstitutionalViolation { .. }
+        ));
+        assert_eq!(registry.get_level(&subject), ClearanceLevel::None);
+        assert!(audit_log.is_empty());
+    }
+
+    #[test]
+    fn clearance_assignment_rejects_invalid_audit_metadata_before_mutation() {
+        let governor = did("governor");
+        let subject = did("subject");
+        let mut registry = snapshot_registry(vec![(governor.clone(), ClearanceLevel::Governor)]);
+        let mut audit_log = crate::audit::AuditLog::new();
+
+        let err = registry
+            .assign_level(
+                &mut audit_log,
+                assignment(
+                    governor,
+                    subject.clone(),
+                    ClearanceLevel::Reviewer,
+                    uuid::Uuid::nil(),
+                ),
+            )
+            .expect_err("assignment requires caller-supplied audit metadata");
+
+        assert!(matches!(
+            err,
+            crate::GovernanceError::InvalidGovernanceMetadata { .. }
+        ));
+        assert_eq!(registry.get_level(&subject), ClearanceLevel::None);
+        assert!(audit_log.is_empty());
     }
     #[test]
     fn insufficient_independence_variant() {
@@ -296,8 +609,7 @@ mod tests {
                 independence_required: true,
             },
         );
-        let mut r = ClearanceRegistry::default();
-        r.set_level(did("alice"), ClearanceLevel::Governor);
+        let r = snapshot_registry(vec![(did("alice"), ClearanceLevel::Governor)]);
         assert!(matches!(
             check_clearance(&did("alice"), "critical", &p, &r),
             ClearanceDecision::InsufficientIndependence { .. }
@@ -323,8 +635,7 @@ mod tests {
                 independence_required: true,
             },
         );
-        let mut r = ClearanceRegistry::default();
-        r.set_level(did("alice"), ClearanceLevel::Governor);
+        let r = snapshot_registry(vec![(did("alice"), ClearanceLevel::Governor)]);
         assert!(matches!(
             check_clearance(&did("alice"), "critical", &p, &r),
             ClearanceDecision::InsufficientIndependence { .. }
@@ -354,8 +665,7 @@ mod tests {
                 independence_required: true,
             },
         );
-        let mut r = ClearanceRegistry::default();
-        r.set_level(did("alice"), ClearanceLevel::Governor);
+        let r = snapshot_registry(vec![(did("alice"), ClearanceLevel::Governor)]);
         assert_eq!(
             check_clearance(&did("alice"), "critical", &p, &r),
             ClearanceDecision::Granted { policy_hash: hash }
@@ -371,8 +681,7 @@ mod tests {
         };
         p.actions
             .insert("read".into(), make_action_policy(ClearanceLevel::ReadOnly));
-        let mut r = ClearanceRegistry::default();
-        r.set_level(did("alice"), ClearanceLevel::Governor);
+        let r = snapshot_registry(vec![(did("alice"), ClearanceLevel::Governor)]);
         assert_eq!(
             check_clearance(&did("alice"), "read", &p, &r),
             ClearanceDecision::Granted { policy_hash: hash }

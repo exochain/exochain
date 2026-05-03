@@ -60,7 +60,7 @@ Updated 2026-03-20 after EXOCHAIN-REM-009 — continuous governance monitoring a
 | **13.1** | **Independence-aware quorum** | `exo-governance::quorum` | `exo-governance/src/quorum.rs` (mod tests) | 10 | 🟢 |
 | 13.2 | Challenge / contestation | `exo-governance::challenge` | `exo-governance/src/challenge.rs` (mod tests) | 12 | 🟢 |
 | 13.3 | Crosscheck + coordination detection | `exo-governance::crosscheck` | `exo-governance/src/crosscheck.rs` (mod tests) | 11 | 🟢 |
-| 13.4 | Independence-aware clearance | `exo-governance::clearance` | `exo-governance/src/clearance.rs` (mod tests) | 10 | 🟢 |
+| 13.4 | Independence-aware clearance | `exo-governance::clearance` | `exo-governance/src/clearance.rs` (mod tests) | 19 | 🟢 |
 | 13.5 | Deliberation + voting | `exo-governance::deliberation` | `exo-governance/src/deliberation.rs` (mod tests) | 9 | 🟢 |
 | 13.6 | Conflict disclosure + recusal | `exo-governance::conflict` | `exo-governance/src/conflict.rs` (mod tests) | 9 | 🟢 |
 | 13.7 | Hash-chained audit log | `exo-governance::audit` | `exo-governance/src/audit.rs` (mod tests) | 7 | 🟢 |
@@ -163,4 +163,4 @@ Updated 2026-03-20 after EXOCHAIN-REM-009 — continuous governance monitoring a
 | **TOTAL** | **86** | **83** | **1** | **2** |
 
 **Coverage: 83/86 requirements traced to code (97%). 2 planned (ExoForge scheduling + React dashboard). 1 partial (T-14 Rust attestation verification).**
-**Workspace inventory: 3,001 listed tests across 20 packages and 266 Rust files.**
+**Workspace inventory: 3,617 listed tests across 20 packages and 266 Rust files.**

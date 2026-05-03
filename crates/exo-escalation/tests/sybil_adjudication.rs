@@ -33,7 +33,10 @@ use exo_gatekeeper::{
         PermissionSet, Provenance, Role,
     },
 };
-use exo_governance::clearance::{ClearanceLevel, ClearanceRegistry};
+use exo_governance::{
+    audit::AuditLog,
+    clearance::{ClearanceAssignment, ClearanceLevel, ClearanceRegistry},
+};
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -223,10 +226,25 @@ fn full_detection_to_reinstatement_flow() {
     advance_sybil_stage(&mut case, SybilStage::EvidentaryReview).unwrap();
 
     // ── Stage 5: Clearance downgrade via exo-governance registry ─────────────
-    let mut registry = ClearanceRegistry::default();
-    registry.set_level(actor.clone(), ClearanceLevel::Governor);
+    let clearance_admin = did("did:exo:clearance-admin");
+    let mut clearance_entries = std::collections::BTreeMap::new();
+    clearance_entries.insert(clearance_admin.clone(), ClearanceLevel::Governor);
+    clearance_entries.insert(actor.clone(), ClearanceLevel::Governor);
+    let mut registry = ClearanceRegistry::from_verified_snapshot(clearance_entries);
     // Sybil evidence causes downgrade to ReadOnly
-    registry.set_level(actor.clone(), ClearanceLevel::ReadOnly);
+    let mut clearance_audit_log = AuditLog::new();
+    registry
+        .assign_level(
+            &mut clearance_audit_log,
+            ClearanceAssignment {
+                entry_id: uuid(0xCE),
+                timestamp: ts(1_300),
+                assigner: clearance_admin,
+                subject: actor.clone(),
+                level: ClearanceLevel::ReadOnly,
+            },
+        )
+        .unwrap();
     assert_eq!(registry.get_level(&actor), ClearanceLevel::ReadOnly);
     advance_sybil_stage(&mut case, SybilStage::ClearanceDowngrade).unwrap();
 

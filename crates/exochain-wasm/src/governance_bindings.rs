@@ -126,17 +126,17 @@ fn parse_clearance_registry(
         "clearance registry",
         MAX_WASM_CLEARANCE_REGISTRY_ENTRIES,
     )?;
-    let mut registry = exo_governance::clearance::ClearanceRegistry::default();
+    let mut registry_entries = std::collections::BTreeMap::new();
     for entry in entries {
         let did = exo_core::Did::new(&entry.did)
             .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
-        if registry.entries.insert(did.clone(), entry.level).is_some() {
+        if registry_entries.insert(did.clone(), entry.level).is_some() {
             return Err(JsValue::from_str(&format!(
                 "duplicate clearance registry entry for {did}"
             )));
         }
     }
-    Ok(registry)
+    Ok(exo_governance::clearance::ClearanceRegistry::from_verified_snapshot(registry_entries))
 }
 
 /// Compute cryptographically verified quorum result from approvals, policy, and signer keys.
