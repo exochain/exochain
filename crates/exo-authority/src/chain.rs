@@ -283,6 +283,10 @@ where
 /// and scope must have narrowed properly through the chain.
 #[must_use]
 pub fn has_permission(chain: &AuthorityChain, permission: &Permission) -> bool {
+    if chain.links.is_empty() {
+        return false;
+    }
+
     // All links must contain the permission (scope narrows but must include it)
     chain
         .links
@@ -707,7 +711,7 @@ mod tests {
             links: vec![],
             max_depth: 5,
         };
-        assert!(has_permission(&chain, &Permission::Read));
+        assert!(!has_permission(&chain, &Permission::Read));
     }
 
     #[test]
