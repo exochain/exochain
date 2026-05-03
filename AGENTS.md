@@ -104,6 +104,15 @@ Core is core. Adjacent products, demos, customer-zero apps, portfolio sites, and
 integration scaffolds are not automatically part of the EXOCHAIN constitutional
 trust fabric just because they live near it or reference it.
 
+### Core-First Operating Rule
+
+AI coding agents must protect the canonical Rust trust fabric before expanding,
+polishing, or hardening adjacent surfaces. When an external report mixes EXOCHAIN
+with CommandBase, crosschecked.ai, livesafe.ai, demos, archives, or generated
+applications, split the corpus into independently triaged records before editing.
+Do not allow the urgency of an adjacent surface to obscure a live core issue, and
+do not let adjacent code expand the trusted computing base by proximity.
+
 ### Required Classification
 
 Before triage, planning, coding, or remediation, classify every finding and every
@@ -127,6 +136,26 @@ If a path cannot be classified quickly, stop and classify it before editing. Do
 not blend core and adjacent remediation in one commit unless the adjacent code is
 the actual runtime adapter proving access to core enforcement.
 
+### Adjacent Surface Intake Gate
+
+Do not add, import, or materially modify an adjacent surface until the change
+includes a concise intake record in the relevant PR description, plan, or
+surface-owned documentation. The intake record must state:
+
+- owner and accountable maintainer;
+- deployment status (`prototype`, `internal`, `customer-zero`, or `production`);
+- whether the surface is allowed to make EXOCHAIN constitutional trust claims;
+- whether the surface can read or write EXOCHAIN core state, signatures,
+  credentials, governance outcomes, consent records, or provenance records;
+- exact trust boundary between the adjacent surface and EXOCHAIN core;
+- surface-specific test command and CI gate;
+- secrets inventory and runtime configuration source;
+- rollback or disablement path if the surface leaks, misroutes, or misstates
+  core trust decisions.
+
+If the intake record cannot be completed, quarantine the surface as adjacent and
+do not wire it into core runtime paths.
+
 ### Remediation Priority
 
 1. Live, reproducible EXOCHAIN core vulnerabilities come first.
@@ -139,6 +168,23 @@ the actual runtime adapter proving access to core enforcement.
 Do not claim an adjacent fix remediates a core vulnerability. Do not claim a core
 invariant protects an adjacent app unless the app calls the relevant core API and
 has tests proving the enforcement boundary.
+
+### No Trust Claim By Proximity
+
+Marketing copy, screenshots, diagrams, generated prototypes, local demos, and
+portfolio pages do not prove constitutional enforcement. An adjacent surface may
+claim EXOCHAIN protection only when:
+
+- the runtime path invokes the relevant EXOCHAIN core API or verified adapter;
+- tests prove fail-closed behavior when the core API rejects, times out, or is
+  unavailable;
+- the surface cannot mint, cache, or simulate consent, authority, provenance, or
+  governance outcomes outside core enforcement;
+- status, health, debug, telemetry, and error responses cannot disclose
+  bootstrap tokens, private keys, raw secrets, authority chains, or tenant data.
+
+If these conditions are not proven, describe the surface as unaudited adjacent
+code and do not imply constitutional guarantees.
 
 ### External Findings
 
@@ -155,6 +201,12 @@ hypotheses. For each reported concern:
 5. Re-run focused tests, touched-crate tests, relevant workspace gates, and a
    bypass search for sibling ingress paths.
 6. Commit core remediations separately from adjacent-surface hardening.
+
+Imported evidence must remain read-only. Do not commit external HTML reports,
+zip archives, screenshots, generated scanner output, or consultant artifacts as
+source files. Extract the actionable claim, affected owned path, reproduction
+status, disposition, and validation command into a triage record or remediation
+plan.
 
 ### Adding Adjacent Surfaces
 
@@ -175,6 +227,40 @@ Adjacent surfaces must fail closed on missing secrets, must not expose bootstrap
 tokens or private key material through health/status/debug endpoints, must not
 ship hardcoded production credentials, and must not use development fallbacks in
 production code paths.
+
+### Core Regression Firewall
+
+Every adjacent-surface PR must prove that it did not alter EXOCHAIN core behavior
+unless the change is explicitly classified as a core runtime adapter. The PR must
+include:
+
+- a path classification list for every touched file;
+- a statement of whether any `crates/`, `packages/exochain-wasm/`,
+  `governance/`, `tools/`, CI, or deployment contract changed;
+- focused tests for the adjacent surface and any adapter boundary it calls;
+- the normal core gates when core, adapter, CI, governance, or deployment files
+  changed;
+- a bypass search for sibling ingress paths when the surface accepts credentials,
+  signatures, consent, governance actions, tenant identifiers, webhooks, or
+  external writes.
+
+Adjacent surfaces must not share core bootstrap keys, production signing keys,
+tenant secrets, or emergency override credentials. Use separate secret scopes and
+fail closed if any required secret is absent or malformed.
+
+### Commit and PR Isolation
+
+Use separate commits and preferably separate PRs for:
+
+- EXOCHAIN core vulnerability remediation;
+- core runtime adapter hardening;
+- adjacent-surface hardening;
+- imported-evidence triage;
+- documentation, portfolio, or agent-rule updates.
+
+Only combine these categories when the code cannot be validated independently.
+If combined, the PR description must explain why and list the exact tests proving
+both the core invariant and the adjacent boundary.
 
 ## How to Add a New Crate
 
