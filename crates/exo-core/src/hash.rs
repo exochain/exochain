@@ -12,6 +12,9 @@ use crate::{
     types::Hash256,
 };
 
+const MERKLE_LEAF_DOMAIN: u8 = 0x00;
+const MERKLE_PARENT_DOMAIN: u8 = 0x01;
+
 /// Compute the blake3 hash of raw bytes.
 #[must_use]
 pub fn canonical_hash(data: &[u8]) -> Hash256 {
@@ -32,7 +35,7 @@ pub fn hash_structured<T: Serialize>(value: &T) -> Result<Hash256> {
 /// Compute a deterministic Merkle root from a slice of leaf hashes.
 ///
 /// - Empty input returns `Hash256::ZERO`.
-/// - Single leaf returns the leaf itself.
+/// - Single leaf returns `H(0x00 || leaf)`.
 /// - Otherwise, leaves are paired left-to-right; an odd leaf is promoted
 ///   (duplicated) to fill the pair.  This process repeats until one root
 ///   remains.
@@ -41,11 +44,8 @@ pub fn merkle_root(leaves: &[Hash256]) -> Hash256 {
     if leaves.is_empty() {
         return Hash256::ZERO;
     }
-    if leaves.len() == 1 {
-        return leaves[0];
-    }
 
-    let mut current: Vec<Hash256> = leaves.to_vec();
+    let mut current: Vec<Hash256> = leaves.iter().map(hash_leaf).collect();
     while current.len() > 1 {
         let mut next = Vec::with_capacity(current.len().div_ceil(2));
         let mut i = 0;
@@ -67,8 +67,8 @@ pub fn merkle_root(leaves: &[Hash256]) -> Hash256 {
 
 /// Generate a Merkle proof for the leaf at `index`.
 ///
-/// Returns the sibling hashes needed to reconstruct the root, along with
-/// the directions (false = left sibling, true = right sibling path element).
+/// Returns the sibling node hashes needed to reconstruct the root. Leaf
+/// siblings are returned in their domain-separated `H(0x00 || leaf)` form.
 ///
 /// # Errors
 ///
@@ -82,7 +82,7 @@ pub fn merkle_proof(leaves: &[Hash256], index: usize) -> Result<Vec<Hash256>> {
     }
 
     let mut proof = Vec::new();
-    let mut current: Vec<Hash256> = leaves.to_vec();
+    let mut current: Vec<Hash256> = leaves.iter().map(hash_leaf).collect();
     let mut idx = index;
 
     while current.len() > 1 {
@@ -110,9 +110,10 @@ pub fn merkle_proof(leaves: &[Hash256], index: usize) -> Result<Vec<Hash256>> {
 
 /// Verify a Merkle proof.
 ///
-/// Given the expected `root`, a `leaf` hash, the `proof` (sibling hashes),
-/// and the `index` of the leaf in the original tree, returns `true` if the
-/// proof is valid.
+/// Given the expected `root`, a raw `leaf` hash as supplied to
+/// [`merkle_root`], the `proof` (domain-separated sibling node hashes),
+/// and the `index` of the leaf in the original tree, returns `true` if
+/// the proof is valid.
 #[must_use]
 pub fn verify_merkle_proof(
     root: &Hash256,
@@ -127,7 +128,7 @@ pub fn verify_merkle_proof(
 /// Reconstruct the Merkle root implied by a leaf, proof path, and leaf index.
 #[must_use]
 pub fn merkle_root_from_proof(leaf: &Hash256, proof: &[Hash256], index: usize) -> Hash256 {
-    let mut current = *leaf;
+    let mut current = hash_leaf(leaf);
     let mut idx = index;
 
     for sibling in proof {
@@ -152,12 +153,22 @@ pub fn hash256_eq_constant_time(left: &Hash256, right: &Hash256) -> bool {
     diff == 0
 }
 
-/// Hash two nodes together: `H(left || right)`.
+/// Hash a leaf into the Merkle leaf domain: `H(0x00 || leaf)`.
+#[must_use]
+fn hash_leaf(leaf: &Hash256) -> Hash256 {
+    let mut combined = [0u8; 33];
+    combined[0] = MERKLE_LEAF_DOMAIN;
+    combined[1..].copy_from_slice(leaf.as_bytes());
+    canonical_hash(&combined)
+}
+
+/// Hash two nodes together in the Merkle parent domain: `H(0x01 || left || right)`.
 #[must_use]
 fn hash_pair(left: &Hash256, right: &Hash256) -> Hash256 {
-    let mut combined = [0u8; 64];
-    combined[..32].copy_from_slice(left.as_bytes());
-    combined[32..].copy_from_slice(right.as_bytes());
+    let mut combined = [0u8; 65];
+    combined[0] = MERKLE_PARENT_DOMAIN;
+    combined[1..33].copy_from_slice(left.as_bytes());
+    combined[33..].copy_from_slice(right.as_bytes());
     canonical_hash(&combined)
 }
 
@@ -214,7 +225,32 @@ mod tests {
     #[test]
     fn merkle_root_single() {
         let leaf = Hash256::digest(b"only");
-        assert_eq!(merkle_root(&[leaf]), leaf);
+        assert_eq!(merkle_root(&[leaf]), hash_leaf(&leaf));
+    }
+
+    fn raw_concat_pair_hash_for_test(left: &Hash256, right: &Hash256) -> Hash256 {
+        let mut combined = [0u8; 64];
+        combined[..32].copy_from_slice(left.as_bytes());
+        combined[32..].copy_from_slice(right.as_bytes());
+        canonical_hash(&combined)
+    }
+
+    #[test]
+    fn merkle_root_uses_distinct_leaf_and_parent_domains() {
+        let leaf = Hash256::digest(b"domain-separated-leaf");
+        assert_ne!(
+            merkle_root(&[leaf]),
+            leaf,
+            "single-leaf Merkle roots must not be interchangeable with raw leaf hashes"
+        );
+
+        let right = Hash256::digest(b"domain-separated-right");
+        let raw_parent_hash = raw_concat_pair_hash_for_test(&leaf, &right);
+        assert_ne!(
+            merkle_root(&[leaf, right]),
+            raw_parent_hash,
+            "interior Merkle nodes must not use the raw H(left || right) domain"
+        );
     }
 
     #[test]
@@ -222,8 +258,8 @@ mod tests {
         let a = Hash256::digest(b"a");
         let b = Hash256::digest(b"b");
         let root = merkle_root(&[a, b]);
-        // Should be hash_pair(a, b)
-        let expected = hash_pair(&a, &b);
+        // Should be hash_pair(hash_leaf(a), hash_leaf(b)).
+        let expected = hash_pair(&hash_leaf(&a), &hash_leaf(&b));
         assert_eq!(root, expected);
     }
 
@@ -233,10 +269,13 @@ mod tests {
         let b = Hash256::digest(b"b");
         let c = Hash256::digest(b"c");
         let root = merkle_root(&[a, b, c]);
-        // Level 1: hash_pair(a,b), hash_pair(c,c)
-        // Level 0: hash_pair(hash_pair(a,b), hash_pair(c,c))
-        let ab = hash_pair(&a, &b);
-        let cc = hash_pair(&c, &c);
+        // Level 1: hash_pair(hash_leaf(a), hash_leaf(b)), hash_pair(hash_leaf(c), hash_leaf(c))
+        // Level 0: hash_pair(level_1_left, level_1_right)
+        let a_leaf = hash_leaf(&a);
+        let b_leaf = hash_leaf(&b);
+        let c_leaf = hash_leaf(&c);
+        let ab = hash_pair(&a_leaf, &b_leaf);
+        let cc = hash_pair(&c_leaf, &c_leaf);
         let expected = hash_pair(&ab, &cc);
         assert_eq!(root, expected);
     }
@@ -245,8 +284,9 @@ mod tests {
     fn merkle_root_four_leaves() {
         let leaves: Vec<Hash256> = (0..4u8).map(|i| Hash256::digest(&[i])).collect();
         let root = merkle_root(&leaves);
-        let ab = hash_pair(&leaves[0], &leaves[1]);
-        let cd = hash_pair(&leaves[2], &leaves[3]);
+        let leaf_nodes: Vec<Hash256> = leaves.iter().map(hash_leaf).collect();
+        let ab = hash_pair(&leaf_nodes[0], &leaf_nodes[1]);
+        let cd = hash_pair(&leaf_nodes[2], &leaf_nodes[3]);
         let expected = hash_pair(&ab, &cd);
         assert_eq!(root, expected);
     }

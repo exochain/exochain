@@ -16,7 +16,10 @@ use exo_core::{
         verify, verify_hybrid, verify_pq,
     },
     events::{EventType, create_signed_event, verify_event},
-    hash::{canonical_hash, hash_structured, merkle_proof, merkle_root, verify_merkle_proof},
+    hash::{
+        canonical_hash, hash_structured, merkle_proof, merkle_root, merkle_root_from_proof,
+        verify_merkle_proof,
+    },
     hlc::HybridClock,
     types::{
         CorrelationId, DeterministicMap, Did, Hash256, Signature, SignerType, Timestamp, Version,
@@ -552,8 +555,10 @@ fn merkle_proof_single_leaf() {
     let hash = canonical_hash(b"single leaf");
     let leaves = vec![hash];
     let root = merkle_root(&leaves);
-    assert_eq!(root, hash);
+    assert_ne!(root, hash);
     let proof = merkle_proof(&leaves, 0).expect("ok");
+    assert!(proof.is_empty());
+    assert_eq!(merkle_root_from_proof(&hash, &proof, 0), root);
     assert!(verify_merkle_proof(&root, &hash, &proof, 0));
 }
 
