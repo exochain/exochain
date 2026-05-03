@@ -14,20 +14,21 @@ use crate::error::{DagError, Result};
 // ---------------------------------------------------------------------------
 
 const TREE_DEPTH: usize = 256;
+const SMT_EMPTY_LEAF_DOMAIN: &[u8] = b"smt:empty:leaf";
+const SMT_LEAF_DOMAIN: &[u8] = b"smt:leaf:";
+const SMT_PARENT_DOMAIN: &[u8] = b"smt:node:";
 
 fn default_hash(level: usize) -> Hash256 {
-    let mut h = Hash256::digest(b"smt:empty:leaf");
+    let mut h = Hash256::digest(SMT_EMPTY_LEAF_DOMAIN);
     for _ in 0..level {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(h.as_bytes());
-        hasher.update(h.as_bytes());
-        h = Hash256::from_bytes(*hasher.finalize().as_bytes());
+        h = hash_pair(&h, &h);
     }
     h
 }
 
 fn hash_pair(left: &Hash256, right: &Hash256) -> Hash256 {
     let mut hasher = blake3::Hasher::new();
+    hasher.update(SMT_PARENT_DOMAIN);
     hasher.update(left.as_bytes());
     hasher.update(right.as_bytes());
     Hash256::from_bytes(*hasher.finalize().as_bytes())
@@ -35,7 +36,7 @@ fn hash_pair(left: &Hash256, right: &Hash256) -> Hash256 {
 
 fn hash_leaf(value: &[u8]) -> Hash256 {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"smt:leaf:");
+    hasher.update(SMT_LEAF_DOMAIN);
     hasher.update(value);
     Hash256::from_bytes(*hasher.finalize().as_bytes())
 }
@@ -274,6 +275,13 @@ pub fn verify_proof(
 mod tests {
     use super::*;
 
+    fn raw_concat_pair_hash_for_test(left: &Hash256, right: &Hash256) -> Hash256 {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(left.as_bytes());
+        hasher.update(right.as_bytes());
+        Hash256::from_bytes(*hasher.finalize().as_bytes())
+    }
+
     #[test]
     fn empty_tree_root() {
         let tree = SparseMerkleTree::new();
@@ -281,6 +289,24 @@ mod tests {
         assert_eq!(root, default_hash(TREE_DEPTH));
         assert!(tree.is_empty());
         assert_eq!(tree.len(), 0);
+    }
+
+    #[test]
+    fn smt_parent_hashes_use_distinct_node_domain() {
+        let left = Hash256::digest(b"smt-left");
+        let right = Hash256::digest(b"smt-right");
+        assert_ne!(
+            hash_pair(&left, &right),
+            raw_concat_pair_hash_for_test(&left, &right),
+            "SMT parent nodes must not use raw H(left || right)"
+        );
+
+        let empty_leaf = default_hash(0);
+        assert_ne!(
+            default_hash(1),
+            raw_concat_pair_hash_for_test(&empty_leaf, &empty_leaf),
+            "SMT empty parent defaults must use the same domain-separated parent hash"
+        );
     }
 
     #[test]
