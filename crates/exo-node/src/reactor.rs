@@ -1202,7 +1202,11 @@ pub async fn broadcast_governance_event(
     let (sender, timestamp, signature) =
         with_reactor_state_blocking(Arc::clone(state), "broadcast_governance", move |s| {
             let sig = (s.sign_fn)(&payload_for_signature);
-            Ok((s.node_did.clone(), Timestamp::ZERO, sig))
+            let timestamp = s
+                .clock
+                .try_tick()
+                .map_err(|e| format!("governance event timestamp: {e}"))?;
+            Ok((s.node_did.clone(), timestamp, sig))
         })
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -1406,6 +1410,27 @@ mod tests {
     }
 
     #[test]
+    fn broadcast_governance_event_source_does_not_emit_placeholder_timestamp() {
+        let source = include_str!("reactor.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("tests marker present");
+        let broadcaster = production
+            .split("pub async fn broadcast_governance_event")
+            .nth(1)
+            .expect("governance broadcaster present")
+            .split("// ---------------------------------------------------------------------------")
+            .next()
+            .expect("governance broadcaster end");
+
+        assert!(
+            !broadcaster.contains("Timestamp::ZERO"),
+            "governance broadcasts must use the reactor monotonic timestamp source, not Timestamp::ZERO"
+        );
+    }
+
+    #[test]
     fn create_reactor_state_initializes() {
         let validators = make_validators(4);
         let config = config_for(Did::new("did:exo:v0").unwrap(), true, validators.clone());
@@ -1530,6 +1555,39 @@ mod tests {
         assert_ne!(receipt.authority_chain_hash, Hash256::ZERO);
         assert_eq!(receipt.action_hash, node.hash);
         assert!(!receipt.signature.is_empty());
+    }
+
+    #[tokio::test]
+    async fn broadcast_governance_event_publishes_nonzero_timestamp() {
+        let validators = make_validators(4);
+        let config = config_for(Did::new("did:exo:v0").unwrap(), true, validators);
+        let state = create_reactor_state(&config, make_sign_fn(), None);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(32);
+        let net_handle = NetworkHandle::new(cmd_tx);
+
+        broadcast_governance_event(
+            &state,
+            &net_handle,
+            GovernanceEventType::AuditEntry,
+            b"audit".to_vec(),
+        )
+        .await
+        .expect("governance event broadcast");
+
+        let command = cmd_rx.recv().await.expect("published network command");
+        let crate::network::NetworkCommand::Publish { topic, message } = command else {
+            panic!("expected publish command");
+        };
+        assert_eq!(topic, topics::GOVERNANCE);
+
+        let WireMessage::GovernanceEvent(event) = message else {
+            panic!("expected governance event");
+        };
+        assert_ne!(
+            event.timestamp,
+            Timestamp::ZERO,
+            "governance broadcasts must carry a non-placeholder monotonic timestamp"
+        );
     }
 
     #[tokio::test]
