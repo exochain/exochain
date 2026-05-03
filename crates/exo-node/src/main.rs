@@ -408,6 +408,7 @@ async fn start_node(
         &node_identity,
         &validator_set,
     )?;
+    let sync_validator_public_keys = validator_public_keys.clone();
     let reactor_config = ReactorConfig {
         node_did: node_identity.did.clone(),
         is_validator: validator,
@@ -458,6 +459,7 @@ async fn start_node(
     // --- Sync engine ---
     let sync_config = SyncConfig {
         node_did: node_identity.did.clone(),
+        validator_public_keys: sync_validator_public_keys.clone(),
         chunk_size: 100,
         max_sync_nodes: 200,
     };
@@ -477,6 +479,7 @@ async fn start_node(
         let mut sync_for_join = SyncEngine::new(
             SyncConfig {
                 node_did: node_identity.did.clone(),
+                validator_public_keys: sync_validator_public_keys.clone(),
                 chunk_size: 100,
                 max_sync_nodes: 200,
             },

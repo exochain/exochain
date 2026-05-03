@@ -17,9 +17,12 @@
 //! `DagSyncResponse`) and operates over the gossipsub + direct messaging
 //! layer.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 
-use exo_core::types::Did;
+use exo_core::types::{Did, PublicKey};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -29,6 +32,11 @@ use crate::{
         DagSyncRequestMsg, DagSyncResponseMsg, StateSnapshotChunkMsg, StateSnapshotRequestMsg,
         WireMessage, topics,
     },
+};
+use exo_dag::{
+    append::verify_node_creator_signature,
+    dag::{DagNode, compute_node_hash},
+    error::{DagError, Result as DagResult},
 };
 
 const MAX_SNAPSHOT_CHUNK_SIZE: u32 = 500;
@@ -80,6 +88,8 @@ fn snapshot_node_height(from_height: u64, index: usize) -> anyhow::Result<u64> {
 pub struct SyncConfig {
     /// This node's DID.
     pub node_did: Did,
+    /// Public keys authorized to sign externally synced DAG nodes.
+    pub validator_public_keys: BTreeMap<Did, PublicKey>,
     /// Maximum number of nodes per snapshot chunk.
     pub chunk_size: u32,
     /// Maximum number of nodes per DAG sync response.
@@ -90,10 +100,53 @@ impl Default for SyncConfig {
     fn default() -> Self {
         Self {
             node_did: static_did("did:exo:default"),
+            validator_public_keys: BTreeMap::new(),
             chunk_size: 100,
             max_sync_nodes: 200,
         }
     }
+}
+
+fn validate_incoming_sync_node(
+    store: &SqliteDagStore,
+    accepted_nodes: &BTreeMap<exo_core::types::Hash256, DagNode>,
+    node: &DagNode,
+    public_keys: &BTreeMap<Did, PublicKey>,
+) -> DagResult<()> {
+    let mut sorted_parents = node.parents.clone();
+    sorted_parents.sort();
+    sorted_parents.dedup();
+    if sorted_parents != node.parents {
+        return Err(DagError::InvalidSignature(node.hash));
+    }
+
+    let expected_hash = compute_node_hash(
+        &node.parents,
+        &node.payload_hash,
+        &node.creator_did,
+        &node.timestamp,
+    )?;
+    if expected_hash != node.hash {
+        return Err(DagError::InvalidSignature(node.hash));
+    }
+
+    for parent_hash in &node.parents {
+        let stored_parent = if let Some(parent) = accepted_nodes.get(parent_hash) {
+            Some(parent.clone())
+        } else {
+            store.get_sync(parent_hash)?
+        };
+        let parent = stored_parent.ok_or(DagError::ParentNotFound(*parent_hash))?;
+        if node.timestamp <= parent.timestamp {
+            return Err(DagError::StoreError(format!(
+                "causality violation: synced node timestamp {:?} <= parent timestamp {:?}",
+                node.timestamp, parent.timestamp
+            )));
+        }
+    }
+
+    let resolver = |did: &Did| public_keys.get(did).copied();
+    verify_node_creator_signature(node, &resolver)
 }
 
 // ---------------------------------------------------------------------------
@@ -363,6 +416,7 @@ impl SyncEngine {
         // Store the nodes and mark them as committed.
         let from_height = msg.from_height;
         let nodes = msg.nodes;
+        let public_keys = self.config.validator_public_keys.clone();
         if let Err(e) = with_store_blocking(
             Arc::clone(&self.store),
             "handle_snapshot_chunk",
@@ -371,6 +425,12 @@ impl SyncEngine {
                 for (i, node) in nodes.into_iter().enumerate() {
                     let height = snapshot_node_height(from_height, i)?;
                     nodes_with_heights.push((node, height));
+                }
+
+                let mut accepted_nodes = BTreeMap::new();
+                for (node, _) in &nodes_with_heights {
+                    validate_incoming_sync_node(store, &accepted_nodes, node, &public_keys)?;
+                    accepted_nodes.insert(node.hash, node.clone());
                 }
 
                 for (node, height) in nodes_with_heights {
@@ -545,10 +605,17 @@ impl SyncEngine {
 
         let has_more = msg.has_more;
         let nodes = msg.nodes;
+        let public_keys = self.config.validator_public_keys.clone();
         if let Err(e) = with_store_blocking(
             Arc::clone(&self.store),
             "handle_dag_sync_response",
             move |store| {
+                let mut accepted_nodes = BTreeMap::new();
+                for node in &nodes {
+                    validate_incoming_sync_node(store, &accepted_nodes, node, &public_keys)?;
+                    accepted_nodes.insert(node.hash, node.clone());
+                }
+
                 for node in nodes {
                     let hash = node.hash;
                     if let Err(e) = store.put_sync(node) {
@@ -632,19 +699,39 @@ pub async fn run_sync_engine(mut engine: SyncEngine, mut net_events: mpsc::Recei
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use exo_core::types::{Did, Signature};
+    use exo_core::{
+        crypto::KeyPair,
+        types::{Did, PublicKey, Signature},
+    };
     use exo_dag::dag::{Dag, DeterministicDagClock, append};
     use tokio::sync::mpsc;
 
     use super::*;
 
+    fn test_keypair() -> KeyPair {
+        KeyPair::from_secret_bytes([0x5C; 32]).expect("valid test secret key")
+    }
+
+    fn test_public_key() -> PublicKey {
+        *test_keypair().public_key()
+    }
+
+    fn test_validator_public_keys() -> BTreeMap<Did, PublicKey> {
+        BTreeMap::from([(test_did(), test_public_key())])
+    }
+
+    fn sync_config(chunk_size: u32, max_sync_nodes: u32) -> SyncConfig {
+        SyncConfig {
+            node_did: test_did(),
+            validator_public_keys: test_validator_public_keys(),
+            chunk_size,
+            max_sync_nodes,
+        }
+    }
+
     fn make_sign_fn() -> Box<dyn Fn(&[u8]) -> Signature> {
-        Box::new(|data: &[u8]| {
-            let h = blake3::hash(data);
-            let mut sig = [0u8; 64];
-            sig[..32].copy_from_slice(h.as_bytes());
-            Signature::from_bytes(sig)
-        })
+        let keypair = test_keypair();
+        Box::new(move |data: &[u8]| keypair.sign(data))
     }
 
     fn test_did() -> Did {
@@ -789,16 +876,7 @@ mod tests {
         let net_handle = NetworkHandle::new(cmd_tx);
 
         let (event_tx, mut event_rx) = mpsc::channel(32);
-        let engine = SyncEngine::new(
-            SyncConfig {
-                node_did: test_did(),
-                chunk_size: 5,
-                max_sync_nodes: 200,
-            },
-            store,
-            net_handle,
-            event_tx,
-        );
+        let engine = SyncEngine::new(sync_config(5, 200), store, net_handle, event_tx);
 
         // Simulate a snapshot request from a peer.
         let request = StateSnapshotRequestMsg {
@@ -868,11 +946,7 @@ mod tests {
 
         let (event_tx, mut event_rx) = mpsc::channel(32);
         let mut engine = SyncEngine::new(
-            SyncConfig {
-                node_did: test_did(),
-                chunk_size: 100,
-                max_sync_nodes: 200,
-            },
+            sync_config(100, 200),
             Arc::clone(&store),
             net_handle,
             event_tx,
@@ -933,6 +1007,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn snapshot_chunk_rejects_forged_node_signature() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteDagStore::open(dir.path()).unwrap();
+        let store = Arc::new(Mutex::new(store));
+
+        let (cmd_tx, _cmd_rx) = mpsc::channel(256);
+        let net_handle = NetworkHandle::new(cmd_tx);
+
+        let (event_tx, mut event_rx) = mpsc::channel(32);
+        let mut engine = SyncEngine::new(
+            sync_config(100, 200),
+            Arc::clone(&store),
+            net_handle,
+            event_tx,
+        );
+
+        let sign_fn = make_sign_fn();
+        let did = test_did();
+        let mut dag = Dag::new();
+        let mut clock = DeterministicDagClock::new();
+        let mut node = append(
+            &mut dag,
+            &[],
+            b"forged-snapshot-node",
+            &did,
+            &*sign_fn,
+            &mut clock,
+        )
+        .unwrap();
+        node.signature = Signature::from_bytes([0u8; 64]);
+
+        engine.syncing = true;
+        let chunk = StateSnapshotChunkMsg {
+            sender: Did::new("did:exo:sender").unwrap(),
+            from_height: 1,
+            nodes: vec![node.clone()],
+            to_height: 1,
+            has_more: false,
+        };
+
+        engine.handle_snapshot_chunk(chunk).await;
+
+        let st = store.lock().unwrap();
+        assert!(
+            !st.contains_sync(&node.hash).unwrap(),
+            "sync must reject forged DAG nodes before persistence"
+        );
+        assert_eq!(st.committed_height_value().unwrap(), 0);
+        assert!(
+            event_rx.try_recv().is_err(),
+            "rejected forged chunks must not emit progress or completion"
+        );
+    }
+
+    #[tokio::test]
+    async fn dag_sync_response_rejects_forged_node_signature() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteDagStore::open(dir.path()).unwrap();
+        let store = Arc::new(Mutex::new(store));
+
+        let (cmd_tx, _cmd_rx) = mpsc::channel(256);
+        let net_handle = NetworkHandle::new(cmd_tx);
+
+        let (event_tx, _event_rx) = mpsc::channel(32);
+        let mut engine = SyncEngine::new(
+            sync_config(100, 200),
+            Arc::clone(&store),
+            net_handle,
+            event_tx,
+        );
+
+        let sign_fn = make_sign_fn();
+        let did = test_did();
+        let mut dag = Dag::new();
+        let mut clock = DeterministicDagClock::new();
+        let mut node = append(
+            &mut dag,
+            &[],
+            b"forged-dag-sync-node",
+            &did,
+            &*sign_fn,
+            &mut clock,
+        )
+        .unwrap();
+        node.signature = Signature::from_bytes([0u8; 64]);
+
+        let response = DagSyncResponseMsg {
+            sender: Did::new("did:exo:sender").unwrap(),
+            nodes: vec![node.clone()],
+            has_more: false,
+        };
+
+        engine.handle_dag_sync_response(response).await;
+
+        let st = store.lock().unwrap();
+        assert!(
+            !st.contains_sync(&node.hash).unwrap(),
+            "DAG sync responses must reject forged nodes before persistence"
+        );
+    }
+
+    #[tokio::test]
     async fn unsolicited_snapshot_chunk_is_rejected_without_mutating_store() {
         let dir = tempfile::tempdir().unwrap();
         let store = SqliteDagStore::open(dir.path()).unwrap();
@@ -943,11 +1119,7 @@ mod tests {
 
         let (event_tx, mut event_rx) = mpsc::channel(32);
         let mut engine = SyncEngine::new(
-            SyncConfig {
-                node_did: test_did(),
-                chunk_size: 100,
-                max_sync_nodes: 200,
-            },
+            sync_config(100, 200),
             Arc::clone(&store),
             net_handle,
             event_tx,
@@ -1006,11 +1178,7 @@ mod tests {
 
         let (event_tx, mut event_rx) = mpsc::channel(32);
         let mut engine = SyncEngine::new(
-            SyncConfig {
-                node_did: test_did(),
-                chunk_size: 100,
-                max_sync_nodes: 200,
-            },
+            sync_config(100, 200),
             Arc::clone(&store),
             net_handle,
             event_tx,
@@ -1082,16 +1250,7 @@ mod tests {
         let net_handle = NetworkHandle::new(cmd_tx);
 
         let (event_tx, _event_rx) = mpsc::channel(32);
-        let engine = SyncEngine::new(
-            SyncConfig {
-                node_did: test_did(),
-                chunk_size: 100,
-                max_sync_nodes: 200,
-            },
-            store,
-            net_handle,
-            event_tx,
-        );
+        let engine = SyncEngine::new(sync_config(100, 200), store, net_handle, event_tx);
 
         // Request snapshot from height 5, but our store is empty (height 0).
         let request = StateSnapshotRequestMsg {
@@ -1119,16 +1278,7 @@ mod tests {
         let net_handle = NetworkHandle::new(cmd_tx);
 
         let (event_tx, _event_rx) = mpsc::channel(32);
-        let mut engine = SyncEngine::new(
-            SyncConfig {
-                node_did: test_did(),
-                chunk_size: 50,
-                max_sync_nodes: 200,
-            },
-            store,
-            net_handle,
-            event_tx,
-        );
+        let mut engine = SyncEngine::new(sync_config(50, 200), store, net_handle, event_tx);
 
         engine.request_sync().await.unwrap();
         assert!(engine.needs_sync());
@@ -1165,16 +1315,7 @@ mod tests {
         let (cmd_tx, mut cmd_rx) = mpsc::channel(256);
         let net_handle = NetworkHandle::new(cmd_tx);
         let (event_tx, _event_rx) = mpsc::channel(32);
-        let mut engine = SyncEngine::new(
-            SyncConfig {
-                node_did: test_did(),
-                chunk_size: 50,
-                max_sync_nodes: 200,
-            },
-            store,
-            net_handle,
-            event_tx,
-        );
+        let mut engine = SyncEngine::new(sync_config(50, 200), store, net_handle, event_tx);
 
         let err = engine.request_sync().await.unwrap_err();
 
@@ -1192,16 +1333,7 @@ mod tests {
         let net_handle = NetworkHandle::new(cmd_tx);
 
         let (event_tx, _event_rx) = mpsc::channel(32);
-        let engine = SyncEngine::new(
-            SyncConfig {
-                node_did: test_did(),
-                chunk_size: 100,
-                max_sync_nodes: 200,
-            },
-            store,
-            net_handle,
-            event_tx,
-        );
+        let engine = SyncEngine::new(sync_config(100, 200), store, net_handle, event_tx);
 
         // Request DAG sync with different tips (triggers response).
         let request = DagSyncRequestMsg {

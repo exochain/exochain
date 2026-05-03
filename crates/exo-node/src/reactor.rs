@@ -31,6 +31,7 @@ use exo_core::{
     types::{Did, Hash256, PublicKey, ReceiptOutcome, Signature, Timestamp, TrustReceipt},
 };
 use exo_dag::{
+    append::verify_node_creator_signature,
     consensus::{self, CommitCertificate, ConsensusConfig, ConsensusState, Proposal, Vote},
     dag::{Dag, DagNode, DeterministicDagClock, append},
 };
@@ -543,6 +544,8 @@ fn validate_proposal<R: consensus::PublicKeyResolver>(
             msg.proposal.node_hash, msg.node.hash
         ));
     }
+    verify_node_creator_signature(&msg.node, resolver)
+        .map_err(|e| format!("proposal DAG node creator signature invalid: {e}"))?;
     Ok(())
 }
 
@@ -1761,6 +1764,23 @@ mod tests {
         let msg = proposal_msg_for(proposer, 0, 0, node);
 
         validate_proposal(&msg, &validators, &resolver).unwrap();
+    }
+
+    #[test]
+    fn validate_proposal_rejects_forged_node_signature() {
+        let validators = make_validators(1);
+        let proposer = Did::new("did:exo:v0").unwrap();
+        let resolver = validator_keys_for_single(&proposer, key_for_validator_index(0));
+        let mut node = make_node_for_test();
+        node.signature = Signature::from_bytes([0u8; 64]);
+        let msg = proposal_msg_for(proposer, 0, 0, node);
+
+        let err = validate_proposal(&msg, &validators, &resolver).unwrap_err();
+
+        assert!(
+            err.contains("proposal DAG node creator signature invalid"),
+            "network proposals must reject forged attached DAG nodes, got: {err}"
+        );
     }
 
     #[test]

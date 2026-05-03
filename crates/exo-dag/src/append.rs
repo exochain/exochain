@@ -8,9 +8,13 @@
 //! These checks implement the normative HLC check (EXOCHAIN Specification v2.2): event > parent,
 //! preventing Byzantine clock manipulation in the trust fabric.
 
-use exo_core::types::{Hash256, Timestamp};
+use exo_core::{
+    crypto,
+    types::{Hash256, Timestamp},
+};
 
 use crate::{
+    consensus::PublicKeyResolver,
     dag::compute_node_hash,
     error::{DagError, Result},
     store::DagStore,
@@ -36,6 +40,7 @@ pub async fn validated_append(
     store: &mut impl DagStore,
     node: crate::dag::DagNode,
     validation_time: Timestamp,
+    public_keys: &impl PublicKeyResolver,
 ) -> Result<()> {
     // 1. Validation-time skew check: reject future-dated nodes
     if node.timestamp.physical_ms > 0 {
@@ -64,8 +69,48 @@ pub async fn validated_append(
         }
     }
 
-    // 3. Persist
+    // 3. Creator signature verification. External append must prove that
+    // creator_did controls the key configured for this DAG node signer.
+    verify_node_creator_signature(&node, public_keys)?;
+
+    // 4. Persist
     store.put(node).await
+}
+
+/// Verify a DAG node's canonical identity and creator signature.
+///
+/// This is intentionally resolver-based: a DID alone does not contain enough
+/// public-key material to prove authorship. Callers handling external DAG
+/// input must supply a governance/identity backed key resolver and fail closed
+/// when a creator key is unknown.
+pub fn verify_node_creator_signature(
+    node: &crate::dag::DagNode,
+    public_keys: &impl PublicKeyResolver,
+) -> Result<()> {
+    let mut sorted_parents = node.parents.clone();
+    sorted_parents.sort();
+    sorted_parents.dedup();
+    if sorted_parents != node.parents {
+        return Err(DagError::InvalidSignature(node.hash));
+    }
+
+    let expected_hash = compute_node_hash(
+        &node.parents,
+        &node.payload_hash,
+        &node.creator_did,
+        &node.timestamp,
+    )?;
+    if expected_hash != node.hash {
+        return Err(DagError::InvalidSignature(node.hash));
+    }
+
+    let Some(public_key) = public_keys.resolve(&node.creator_did) else {
+        return Err(DagError::InvalidSignature(node.hash));
+    };
+    if !crypto::verify(node.hash.as_bytes(), &node.signature, &public_key) {
+        return Err(DagError::InvalidSignature(node.hash));
+    }
+    Ok(())
 }
 
 /// Verify integrity of a stored node: check that its hash is correctly
@@ -105,7 +150,10 @@ pub async fn verify_stored_integrity(store: &impl DagStore, hash: &Hash256) -> R
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use exo_core::types::{Did, Signature, Timestamp};
+    use exo_core::{
+        crypto::KeyPair,
+        types::{Did, PublicKey, Signature, Timestamp},
+    };
 
     use super::*;
     use crate::{
@@ -119,13 +167,29 @@ mod tests {
 
     type SignFn = Box<dyn Fn(&[u8]) -> Signature>;
 
+    fn test_keypair() -> KeyPair {
+        KeyPair::from_secret_bytes([0xD5; 32]).expect("valid test secret key")
+    }
+
+    fn test_public_key() -> PublicKey {
+        *test_keypair().public_key()
+    }
+
+    fn test_resolver() -> impl PublicKeyResolver {
+        let did = test_did();
+        let public_key = test_public_key();
+        move |candidate: &Did| {
+            if candidate == &did {
+                Some(public_key)
+            } else {
+                None
+            }
+        }
+    }
+
     fn make_sign_fn() -> SignFn {
-        Box::new(|data: &[u8]| {
-            let h = blake3::hash(data);
-            let mut sig = [0u8; 64];
-            sig[..32].copy_from_slice(h.as_bytes());
-            Signature::from_bytes(sig)
-        })
+        let keypair = test_keypair();
+        Box::new(move |data: &[u8]| keypair.sign(data))
     }
 
     fn make_test_node() -> DagNode {
@@ -212,9 +276,15 @@ mod tests {
         store.put(genesis.clone()).await.expect("put genesis");
 
         let child = make_child_node(&genesis);
-        validated_append(&mut store, child.clone(), validation_time_for(&child))
-            .await
-            .expect("validated append");
+        let resolver = test_resolver();
+        validated_append(
+            &mut store,
+            child.clone(),
+            validation_time_for(&child),
+            &resolver,
+        )
+        .await
+        .expect("validated append");
 
         assert!(store.contains(&child.hash).await.expect("contains"));
     }
@@ -226,10 +296,95 @@ mod tests {
         let genesis = make_test_node();
         let child = make_child_node(&genesis);
 
-        let err = validated_append(&mut store, child.clone(), validation_time_for(&child))
-            .await
-            .unwrap_err();
+        let resolver = test_resolver();
+        let err = validated_append(
+            &mut store,
+            child.clone(),
+            validation_time_for(&child),
+            &resolver,
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(err, DagError::ParentNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn validated_append_rejects_forged_external_signature() {
+        let mut store = MemoryStore::new();
+        let genesis = make_test_node();
+        store.put(genesis.clone()).await.expect("put genesis");
+
+        let mut child = make_child_node(&genesis);
+        child.signature = Signature::from_bytes([0u8; 64]);
+
+        let resolver = test_resolver();
+        let err = validated_append(
+            &mut store,
+            child.clone(),
+            validation_time_for(&child),
+            &resolver,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(err, DagError::InvalidSignature(hash) if hash == child.hash),
+            "external DAG append must reject forged node signatures, got: {err:?}"
+        );
+        assert!(
+            !store.contains(&child.hash).await.expect("contains"),
+            "forged external node must not be persisted"
+        );
+    }
+
+    #[tokio::test]
+    async fn validated_append_rejects_mismatched_canonical_hash() {
+        let mut store = MemoryStore::new();
+        let genesis = make_test_node();
+        store.put(genesis.clone()).await.expect("put genesis");
+
+        let mut child = make_child_node(&genesis);
+        child.payload_hash = Hash256::digest(b"tampered");
+
+        let resolver = test_resolver();
+        let err = validated_append(
+            &mut store,
+            child.clone(),
+            validation_time_for(&child),
+            &resolver,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(err, DagError::InvalidSignature(hash) if hash == child.hash),
+            "external DAG append must reject nodes whose hash does not match canonical fields, got: {err:?}"
+        );
+        assert!(!store.contains(&child.hash).await.expect("contains"));
+    }
+
+    #[tokio::test]
+    async fn validated_append_rejects_unknown_creator_key() {
+        let mut store = MemoryStore::new();
+        let genesis = make_test_node();
+        store.put(genesis.clone()).await.expect("put genesis");
+
+        let child = make_child_node(&genesis);
+        let unknown_key_resolver = |_did: &Did| -> Option<PublicKey> { None };
+        let err = validated_append(
+            &mut store,
+            child.clone(),
+            validation_time_for(&child),
+            &unknown_key_resolver,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(err, DagError::InvalidSignature(hash) if hash == child.hash),
+            "external DAG append must fail closed without a creator public key, got: {err:?}"
+        );
+        assert!(!store.contains(&child.hash).await.expect("contains"));
     }
 
     #[tokio::test]
@@ -255,10 +410,12 @@ mod tests {
             signature,
         };
 
+        let resolver = test_resolver();
         let err = validated_append(
             &mut store,
             bad_child.clone(),
             validation_time_for(&bad_child),
+            &resolver,
         )
         .await
         .unwrap_err();
@@ -273,7 +430,8 @@ mod tests {
         let mut store = MemoryStore::new();
         let node = make_node_at(Timestamp::new(2_001, 0));
 
-        let err = validated_append(&mut store, node, Timestamp::new(1_500, 0))
+        let resolver = test_resolver();
+        let err = validated_append(&mut store, node, Timestamp::new(1_500, 0), &resolver)
             .await
             .unwrap_err();
 
@@ -292,9 +450,15 @@ mod tests {
         let mut store = MemoryStore::new();
         let node = make_node_at(Timestamp::new(2_000, 0));
 
-        validated_append(&mut store, node.clone(), Timestamp::new(1_500, 0))
-            .await
-            .expect("node inside validation-time tolerance");
+        let resolver = test_resolver();
+        validated_append(
+            &mut store,
+            node.clone(),
+            Timestamp::new(1_500, 0),
+            &resolver,
+        )
+        .await
+        .expect("node inside validation-time tolerance");
 
         assert!(store.contains(&node.hash).await.expect("contains"));
     }
@@ -345,9 +509,15 @@ mod tests {
         let mut store = MemoryStore::new();
         let genesis = make_test_node();
         // Genesis has no parents — should pass validation
-        validated_append(&mut store, genesis.clone(), validation_time_for(&genesis))
-            .await
-            .expect("genesis append");
+        let resolver = test_resolver();
+        validated_append(
+            &mut store,
+            genesis.clone(),
+            validation_time_for(&genesis),
+            &resolver,
+        )
+        .await
+        .expect("genesis append");
         assert!(store.contains(&genesis.hash).await.expect("contains"));
     }
 }
