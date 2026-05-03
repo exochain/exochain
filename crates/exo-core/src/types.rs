@@ -874,10 +874,28 @@ impl Version {
     /// The initial version.
     pub const ZERO: Self = Self(0);
 
+    /// The maximum representable version.
+    pub const MAX: Self = Self(u64::MAX);
+
+    /// Return the next version, or `None` if this version is already at
+    /// [`Version::MAX`].
+    #[must_use]
+    pub const fn checked_next(self) -> Option<Self> {
+        match self.0.checked_add(1) {
+            Some(next) => Some(Self(next)),
+            None => None,
+        }
+    }
+
     /// Increment and return the next version.
+    ///
+    /// Saturates at [`Version::MAX`] instead of wrapping back to zero.
     #[must_use]
     pub const fn next(self) -> Self {
-        Self(self.0 + 1)
+        match self.checked_next() {
+            Some(next) => next,
+            None => Self::MAX,
+        }
     }
 
     /// Return the raw counter value.
@@ -1900,6 +1918,18 @@ mod tests {
     fn version_next() {
         let v = Version::ZERO.next().next().next();
         assert_eq!(v.value(), 3);
+    }
+
+    #[test]
+    fn version_next_saturates_at_u64_max_instead_of_wrapping() {
+        let v = Version(u64::MAX).next();
+        assert_eq!(v.value(), u64::MAX);
+    }
+
+    #[test]
+    fn version_checked_next_reports_overflow() {
+        assert_eq!(Version::ZERO.checked_next(), Some(Version(1)));
+        assert_eq!(Version::MAX.checked_next(), None);
     }
 
     #[test]
