@@ -477,7 +477,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_ediscovery_search_refuses_without_legal_runtime_even_with_simulation_feature() {
         let params = json!({
             "query": "contract breach",
@@ -489,7 +488,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_ediscovery_search_with_scope() {
         let params = json!({
             "query": "merger",
@@ -504,7 +502,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_ediscovery_search_missing_query() {
         let result = execute_ediscovery_search(
             &json!({"search_id": "search-003", "searched_at_ms": 1700000000002_u64}),
@@ -514,7 +511,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_ediscovery_search_missing_metadata() {
         let result =
             execute_ediscovery_search(&json!({"query": "contract breach"}), &NodeContext::empty());
@@ -543,7 +539,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_assert_privilege_refuses_without_legal_runtime_even_with_simulation_feature() {
         let params = json!({
             "evidence_id": "ev123",
@@ -557,7 +552,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_assert_privilege_invalid_type() {
         let params = json!({
             "evidence_id": "ev123",
@@ -571,7 +565,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_assert_privilege_invalid_did() {
         let params = json!({
             "evidence_id": "ev123",
@@ -608,7 +601,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_initiate_safe_harbor_refuses_without_legal_runtime_even_with_simulation_feature() {
         let params = json!({
             "initiator_did": "did:exo:alice",
@@ -622,7 +614,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_initiate_safe_harbor_invalid_initiator() {
         let params = json!({
             "initiator_did": "bad",
@@ -636,7 +627,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_initiate_safe_harbor_invalid_party() {
         let params = json!({
             "initiator_did": "did:exo:alice",
@@ -650,7 +640,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_initiate_safe_harbor_rejects_excessive_interested_parties() {
         let interested_parties: Vec<Value> = (0..=MAX_SAFE_HARBOR_INTERESTED_PARTIES)
             .map(|i| Value::String(format!("did:exo:party-{i}")))
@@ -697,7 +686,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_check_fiduciary_duty_refuses_without_legal_runtime_even_with_simulation_feature() {
         let params = json!({
             "actor_did": "did:exo:director",
@@ -711,7 +699,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_check_fiduciary_duty_invalid_actor() {
         let params = json!({
             "actor_did": "bad",
@@ -725,7 +712,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_check_fiduciary_duty_missing_action() {
         let result = execute_check_fiduciary_duty(
             &json!({"actor_did": "did:exo:a", "beneficiary_did": "did:exo:b"}),
@@ -792,7 +778,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unaudited-mcp-simulation-tools")]
     fn execute_initiate_safe_harbor_rejects_oversized_party_did_without_echoing_it() {
         let oversized = format!("did:exo:{}", "a".repeat(MAX_LEGAL_DID_BYTES + 1));
         let params = json!({
