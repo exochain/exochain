@@ -208,6 +208,8 @@ fn check_quorum_health(reactor: &SharedReactorState) -> SentinelStatus {
     }
 }
 
+const RECEIPT_INTEGRITY_SAMPLE_LIMIT: u32 = 10;
+
 /// Spot-check recent trust receipts for hash integrity.
 fn check_receipt_integrity(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus {
     let st = match store.lock() {
@@ -223,14 +225,10 @@ fn check_receipt_integrity(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus
         }
     };
 
-    // Load the 10 most recent receipts across all actors.
-    // We query via a raw SQL since load_receipts_by_actor requires an actor.
-    // For the sentinel, we'll check receipts from a known actor or skip if none.
-    // Simplified: check committed height is sane as a proxy.
-    let height = match st.committed_height_value() {
-        Ok(height) => height,
+    let receipts = match st.load_recent_receipts(RECEIPT_INTEGRITY_SAMPLE_LIMIT) {
+        Ok(receipts) => receipts,
         Err(e) => {
-            tracing::error!(err = %e, "Failed to read committed height in receipt sentinel");
+            tracing::error!(err = %e, "Failed to load receipts in receipt integrity sentinel");
             return SentinelStatus {
                 check: SentinelCheck::ReceiptIntegrity,
                 healthy: false,
@@ -240,10 +238,47 @@ fn check_receipt_integrity(store: &Arc<Mutex<SqliteDagStore>>) -> SentinelStatus
         }
     };
 
+    if receipts.is_empty() {
+        return SentinelStatus {
+            check: SentinelCheck::ReceiptIntegrity,
+            healthy: true,
+            message: "No trust receipts available for integrity check".into(),
+            last_run_ms: now_ms(),
+        };
+    }
+
+    for receipt in &receipts {
+        match receipt.verify_hash() {
+            Ok(true) => {}
+            Ok(false) => {
+                return SentinelStatus {
+                    check: SentinelCheck::ReceiptIntegrity,
+                    healthy: false,
+                    message: format!(
+                        "Receipt hash verification failed for {}",
+                        receipt.receipt_hash
+                    ),
+                    last_run_ms: now_ms(),
+                };
+            }
+            Err(e) => {
+                return SentinelStatus {
+                    check: SentinelCheck::ReceiptIntegrity,
+                    healthy: false,
+                    message: format!(
+                        "Receipt hash verification error for {}: {e}",
+                        receipt.receipt_hash
+                    ),
+                    last_run_ms: now_ms(),
+                };
+            }
+        }
+    }
+
     SentinelStatus {
         check: SentinelCheck::ReceiptIntegrity,
         healthy: true,
-        message: format!("Receipt store operational — committed height {height}"),
+        message: format!("Verified {} recent trust receipt hash(es)", receipts.len()),
         last_run_ms: now_ms(),
     }
 }
@@ -687,7 +722,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use exo_core::types::{Did, Signature};
+    use exo_core::types::{Did, Hash256, Signature};
     use tower::ServiceExt;
 
     use super::*;
@@ -734,6 +769,29 @@ mod tests {
         conn.execute(
             "INSERT INTO committed (hash, height) VALUES (?1, ?2)",
             rusqlite::params![hash.as_slice(), -1_i64],
+        )
+        .unwrap();
+        std::mem::forget(dir);
+        Arc::new(Mutex::new(store))
+    }
+
+    fn store_with_malformed_receipt() -> Arc<Mutex<SqliteDagStore>> {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteDagStore::open(dir.path()).unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("dag.db")).unwrap();
+        let receipt_hash = Hash256::digest(b"malformed-receipt");
+        conn.execute(
+            "INSERT INTO trust_receipts
+             (receipt_hash, actor_did, action_type, outcome, timestamp_ms, cbor_data)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                receipt_hash.0.as_slice(),
+                "did:exo:actor-a",
+                "dag.commit",
+                "Executed",
+                1_700_000_000_000_i64,
+                [0xff_u8].as_slice(),
+            ],
         )
         .unwrap();
         std::mem::forget(dir);
@@ -1074,6 +1132,21 @@ mod tests {
     }
 
     #[test]
+    fn receipt_integrity_source_verifies_receipt_hashes() {
+        let source = include_str!("sentinels.rs");
+        let receipt_integrity = source
+            .split("fn check_receipt_integrity")
+            .nth(1)
+            .and_then(|section| section.split("fn check_score_integrity").next())
+            .unwrap();
+
+        assert!(
+            receipt_integrity.contains(".verify_hash()"),
+            "ReceiptIntegrity sentinel must verify persisted trust receipt hashes"
+        );
+    }
+
+    #[test]
     fn receipt_integrity_empty_store() {
         let store = test_store();
         let status = check_receipt_integrity(&store);
@@ -1081,13 +1154,44 @@ mod tests {
     }
 
     #[test]
-    fn receipt_integrity_fails_closed_on_store_height_error() {
-        let store = store_with_negative_committed_height();
+    fn receipt_integrity_fails_closed_on_receipt_decode_error() {
+        let store = store_with_malformed_receipt();
         let status = check_receipt_integrity(&store);
 
         assert!(!status.healthy);
         assert_eq!(status.check, SentinelCheck::ReceiptIntegrity);
-        assert!(status.message.contains("committed.height"));
+        assert!(status.message.contains("CBOR decode receipt"));
+    }
+
+    #[test]
+    fn receipt_integrity_detects_tampered_receipt_hash() {
+        use exo_core::types::{ReceiptOutcome, Timestamp, TrustReceipt};
+
+        let store = test_store();
+        let sign_fn = make_sign_fn();
+        let mut receipt = TrustReceipt::new(
+            Did::new("did:exo:actor-a").unwrap(),
+            Hash256::digest(b"authority"),
+            None,
+            "dag.commit".to_string(),
+            Hash256::digest(b"action-payload"),
+            ReceiptOutcome::Executed,
+            Timestamp {
+                physical_ms: 1_700_000_000_000,
+                logical: 0,
+            },
+            &*sign_fn,
+        )
+        .expect("test trust receipt should encode");
+        receipt.action_type = "dag.commit.tampered".to_string();
+        assert!(!receipt.verify_hash().unwrap());
+        store.lock().unwrap().save_receipt(&receipt).unwrap();
+
+        let status = check_receipt_integrity(&store);
+
+        assert!(!status.healthy);
+        assert_eq!(status.check, SentinelCheck::ReceiptIntegrity);
+        assert!(status.message.contains("hash verification failed"));
     }
 
     #[test]

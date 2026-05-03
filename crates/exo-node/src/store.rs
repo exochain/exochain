@@ -493,6 +493,37 @@ impl SqliteDagStore {
         Ok(receipts)
     }
 
+    /// Load recent trust receipts across all actors, ordered deterministically.
+    pub fn load_recent_receipts(
+        &self,
+        limit: u32,
+    ) -> DagResult<Vec<exo_core::types::TrustReceipt>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT cbor_data FROM trust_receipts
+                 ORDER BY timestamp_ms DESC, receipt_hash ASC
+                 LIMIT ?1",
+            )
+            .map_err(store_err)?;
+
+        let rows = stmt
+            .query_map(params![limit], |row| {
+                let data: Vec<u8> = row.get(0)?;
+                Ok(data)
+            })
+            .map_err(store_err)?;
+
+        let mut receipts = Vec::new();
+        for row in rows {
+            let data = row.map_err(store_err)?;
+            let receipt: exo_core::types::TrustReceipt = ciborium::from_reader(&data[..])
+                .map_err(|e| store_err(format!("CBOR decode receipt: {e}")))?;
+            receipts.push(receipt);
+        }
+        Ok(receipts)
+    }
+
     /// Find all child nodes of a given parent hash.
     pub fn children(&self, parent_hash: &Hash256) -> DagResult<Vec<Hash256>> {
         let mut stmt = self
@@ -1381,6 +1412,46 @@ mod tests {
         // Query unknown actor — should get 0.
         let none = store.load_receipts_by_actor("did:exo:unknown", 10).unwrap();
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn receipt_load_recent_across_actors_orders_and_limits() {
+        use exo_core::types::{ReceiptOutcome, Timestamp, TrustReceipt};
+        let mut store = temp_store();
+        let sign_fn = make_sign_fn();
+
+        let actors = [
+            "did:exo:actor-a",
+            "did:exo:actor-b",
+            "did:exo:actor-c",
+            "did:exo:actor-d",
+        ];
+        for (idx, actor) in actors.iter().enumerate() {
+            let timestamp = Timestamp {
+                physical_ms: 1_000_000 + u64::try_from(idx).unwrap() * 1000,
+                logical: 0,
+            };
+            let receipt = TrustReceipt::new(
+                Did::new(actor).unwrap(),
+                Hash256::digest(format!("authority-{idx}").as_bytes()),
+                None,
+                format!("action.{idx}"),
+                Hash256::digest(format!("payload-{idx}").as_bytes()),
+                ReceiptOutcome::Executed,
+                timestamp,
+                &*sign_fn,
+            )
+            .expect("test trust receipt should encode");
+            store.save_receipt(&receipt).unwrap();
+        }
+
+        let recent = store.load_recent_receipts(3).unwrap();
+
+        assert_eq!(recent.len(), 3);
+        assert_eq!(recent[0].actor_did.to_string(), "did:exo:actor-d");
+        assert_eq!(recent[1].actor_did.to_string(), "did:exo:actor-c");
+        assert_eq!(recent[2].actor_did.to_string(), "did:exo:actor-b");
+        assert!(recent.iter().all(|receipt| receipt.verify_hash().unwrap()));
     }
 
     #[test]
