@@ -3128,7 +3128,7 @@ mod tests {
 
     #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
-    async fn graphql_post_feature_on_preserves_existing_mutation_behavior() {
+    async fn graphql_post_feature_on_refuses_mutations_without_verified_authz_context() {
         let app = build_router(state());
         let body = serde_json::json!({
             "query": "mutation { createDecision(input: { tenantId: \"t1\", title: \"x\", body: \"y\", decisionClass: \"Routine\" }) { id status author } }"
@@ -3149,9 +3149,13 @@ mod tests {
             .await
             .unwrap();
         let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert!(val["errors"].is_null(), "unexpected errors: {val}");
-        assert_eq!(val["data"]["createDecision"]["status"], "CREATED");
-        assert_eq!(val["data"]["createDecision"]["author"], "system");
+        let errors = val["errors"].as_array().expect("GraphQL errors array");
+        assert!(
+            errors.iter().any(|error| error["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("unaudited_graphql_mutations_disabled"))),
+            "feature-on GraphQL mutations must fail closed without verified authz context: {val}"
+        );
     }
 
     #[tokio::test]

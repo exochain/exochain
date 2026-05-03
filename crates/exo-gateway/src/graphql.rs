@@ -453,6 +453,17 @@ fn guard_graphql_execution() -> GqlResult<()> {
     }
 }
 
+fn graphql_mutation_execution_disabled_error() -> async_graphql::Error {
+    async_graphql::Error::new(format!(
+        "unaudited_graphql_mutations_disabled: GraphQL mutations require a verified authenticated actor and constitutional adjudication context before writes are enabled. See {UNAUDITED_GRAPHQL_API_INITIATIVE} and {UNAUDITED_GRAPHQL_API_MEMO}."
+    ))
+}
+
+fn guard_graphql_mutation_execution() -> GqlResult<()> {
+    guard_graphql_execution()?;
+    Err(graphql_mutation_execution_disabled_error())
+}
+
 fn app_state_from_context<'ctx>(ctx: &'ctx Context<'_>) -> GqlResult<&'ctx Arc<Mutex<AppState>>> {
     ctx.data::<Arc<Mutex<AppState>>>()
 }
@@ -763,7 +774,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         input: CreateDecisionInput,
     ) -> GqlResult<GqlDecision> {
-        guard_graphql_execution()?;
+        guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
         let mut guard = state.lock().await;
         let created = guard.next_timestamp()?;
@@ -818,7 +829,7 @@ impl MutationRoot {
         new_status: String,
         reason: Option<String>,
     ) -> GqlResult<GqlDecision> {
-        guard_graphql_execution()?;
+        guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
         let mut guard = state.lock().await;
         let id_str = id.to_string();
@@ -851,7 +862,7 @@ impl MutationRoot {
         choice: String,
         rationale: Option<String>,
     ) -> GqlResult<GqlVote> {
-        guard_graphql_execution()?;
+        guard_graphql_mutation_execution()?;
         let valid_choices = ["APPROVE", "REJECT", "ABSTAIN"];
         if !valid_choices.contains(&choice.as_str()) {
             return Err(async_graphql::Error::new(format!(
@@ -907,7 +918,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         input: GrantDelegationInput,
     ) -> GqlResult<GqlDelegation> {
-        guard_graphql_execution()?;
+        guard_graphql_mutation_execution()?;
         if input.expires_in_hours <= 0 {
             return Err(async_graphql::Error::new("expires_in_hours must be > 0"));
         }
@@ -945,7 +956,7 @@ impl MutationRoot {
 
     /// Revoke an existing delegation by ID.
     async fn revoke_delegation(&self, ctx: &Context<'_>, id: ID) -> GqlResult<GqlDelegation> {
-        guard_graphql_execution()?;
+        guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
         let mut guard = state.lock().await;
         let id_str = id.to_string();
@@ -964,7 +975,7 @@ impl MutationRoot {
         decision_id: ID,
         grounds: String,
     ) -> GqlResult<GqlChallenge> {
-        guard_graphql_execution()?;
+        guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
         let mut guard = state.lock().await;
         let id_str = decision_id.to_string();
@@ -1015,7 +1026,7 @@ impl MutationRoot {
         decision_id: ID,
         justification: String,
     ) -> GqlResult<GqlEmergencyAction> {
-        guard_graphql_execution()?;
+        guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
         let mut guard = state.lock().await;
         let id_str = decision_id.to_string();
@@ -1078,7 +1089,7 @@ impl MutationRoot {
         description: String,
         nature: String,
     ) -> GqlResult<GqlConflictDisclosure> {
-        guard_graphql_execution()?;
+        guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
         let mut guard = state.lock().await;
         let id_str = decision_id.to_string();
@@ -1108,7 +1119,7 @@ impl MutationRoot {
         tenant_id: ID,
         amendment: String,
     ) -> GqlResult<GqlConstitution> {
-        guard_graphql_execution()?;
+        guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
         let mut guard = state.lock().await;
         let new_hash = graphql_hash_hex(&GraphqlConstitutionHashPayload {
@@ -1451,9 +1462,9 @@ mod tests {
         assert_eq!(
             mutation_section.matches("    async fn ").count(),
             mutation_section
-                .matches("guard_graphql_execution()?;")
+                .matches("guard_graphql_mutation_execution()?;")
                 .count(),
-            "every GraphQL mutation resolver must call the default-off execution guard"
+            "every GraphQL mutation resolver must call the mutation guard, which preserves the default-off execution guard and fail-closes unaudited writes"
         );
         assert_eq!(
             subscription_section.matches("    async fn ").count(),
@@ -1552,6 +1563,29 @@ mod tests {
         assert!(
             !production.contains("graphql_playground_handler"),
             "gateway GraphQL router must not route GET /graphql to playground HTML"
+        );
+    }
+
+    #[test]
+    fn graphql_mutation_resolvers_fail_closed_before_state_mutation() {
+        let production = include_str!("graphql.rs")
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("production section");
+        let mutation_section = production
+            .split("#[Object]\nimpl MutationRoot")
+            .nth(1)
+            .expect("mutation section")
+            .split("// ---------------------------------------------------------------------------\n// Subscription resolvers")
+            .next()
+            .expect("mutation section end");
+
+        assert_eq!(
+            mutation_section.matches("    async fn ").count(),
+            mutation_section
+                .matches("guard_graphql_mutation_execution()?;")
+                .count(),
+            "every GraphQL mutation resolver must fail closed before reading or mutating state"
         );
     }
 
@@ -1657,213 +1691,105 @@ mod tests {
     }
 
     #[cfg(feature = "unaudited-gateway-graphql-api")]
+    fn assert_graphql_mutation_refused(response: &async_graphql::Response) {
+        assert!(
+            response.errors.iter().any(|error| error
+                .message
+                .contains("unaudited_graphql_mutations_disabled")),
+            "unauthenticated GraphQL mutations must fail closed, got {:?}",
+            response.errors
+        );
+    }
+
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
-    async fn mutation_create_and_query_decision() {
+    async fn all_graphql_mutations_refuse_without_verified_authz_context() {
+        let schema = build_test_schema();
+
+        for mutation in [
+            r#"mutation {
+                createDecision(input: {
+                    tenantId: "t1",
+                    title: "Must Refuse",
+                    body: "body text",
+                    decisionClass: "Operational"
+                }) { id status title tenantId }
+            }"#,
+            r#"mutation {
+                advanceDecision(
+                    id: "decision-1",
+                    newStatus: "DELIBERATION"
+                ) { id status }
+            }"#,
+            r#"mutation {
+                castVote(decisionId: "decision-1", choice: "APPROVE") { voter choice }
+            }"#,
+            r#"mutation {
+                grantDelegation(input: {
+                    delegateeDid: "did:exo:bob",
+                    scope: "vote",
+                    expiresInHours: 48
+                }) { id delegatee active }
+            }"#,
+            r#"mutation {
+                revokeDelegation(id: "delegation-1") { id active }
+            }"#,
+            r#"mutation {
+                raiseChallenge(decisionId: "decision-1", grounds: "procedural error") {
+                    id grounds status
+                }
+            }"#,
+            r#"mutation {
+                takeEmergencyAction(decisionId: "decision-1", justification: "system failure") {
+                    id decisionId
+                }
+            }"#,
+            r#"mutation {
+                discloseConflict(
+                    decisionId: "decision-1",
+                    description: "outside interest",
+                    nature: "financial"
+                ) { discloser nature }
+            }"#,
+            r#"mutation {
+                amendConstitution(tenantId: "t1", amendment: "add-article-7") {
+                    tenantId version hash
+                }
+            }"#,
+        ] {
+            let response = schema.execute(mutation).await;
+            assert_graphql_mutation_refused(&response);
+        }
+    }
+
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
+    #[tokio::test]
+    async fn refused_create_decision_does_not_persist_state() {
         let schema = build_test_schema();
         let create = schema
             .execute(
                 r#"mutation {
                     createDecision(input: {
                         tenantId: "t1",
-                        title: "Test Decision",
+                        title: "Must Refuse",
                         body: "body text",
                         decisionClass: "Operational"
                     }) { id status title tenantId }
                 }"#,
             )
             .await;
-        assert!(
-            create.errors.is_empty(),
-            "create errors: {:?}",
-            create.errors
-        );
-        let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"]
-            .as_str()
-            .expect("id")
-            .to_string();
-        assert_eq!(data["createDecision"]["status"], "CREATED");
+        assert_graphql_mutation_refused(&create);
 
-        // Query it back.
         let query = schema
-            .execute(format!(
-                r#"{{ decision(id: "{id}") {{ id status title }} }}"#
-            ))
+            .execute(r#"{ decisions(tenantId: "t1") { id status title } }"#)
             .await;
         assert!(query.errors.is_empty(), "query errors: {:?}", query.errors);
         let qdata = query.data.into_json().expect("data");
-        assert_eq!(qdata["decision"]["status"], "CREATED");
-        assert_eq!(qdata["decision"]["title"], "Test Decision");
-    }
-
-    #[cfg(feature = "unaudited-gateway-graphql-api")]
-    #[tokio::test]
-    async fn mutation_cast_vote_ok() {
-        let schema = build_test_schema();
-        let create = schema
-            .execute(
-                r#"mutation {
-                    createDecision(input: {
-                        tenantId: "t1", title: "Vote Test",
-                        body: "b", decisionClass: "Operational"
-                    }) { id }
-                }"#,
-            )
-            .await;
-        let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"]
-            .as_str()
-            .expect("id")
-            .to_string();
-
-        let vote = schema
-            .execute(format!(
-                r#"mutation {{ castVote(decisionId: "{id}", choice: "APPROVE") {{ voter choice }} }}"#
-            ))
-            .await;
-        assert!(vote.errors.is_empty(), "vote errors: {:?}", vote.errors);
-        let vdata = vote.data.into_json().expect("data");
-        assert_eq!(vdata["castVote"]["choice"], "APPROVE");
-    }
-
-    #[cfg(feature = "unaudited-gateway-graphql-api")]
-    #[tokio::test]
-    async fn mutation_cast_vote_invalid_choice() {
-        let schema = build_test_schema();
-        let create = schema
-            .execute(
-                r#"mutation {
-                    createDecision(input: {
-                        tenantId: "t1", title: "V", body: "b", decisionClass: "Routine"
-                    }) { id }
-                }"#,
-            )
-            .await;
-        let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"]
-            .as_str()
-            .expect("id")
-            .to_string();
-
-        let vote = schema
-            .execute(format!(
-                r#"mutation {{ castVote(decisionId: "{id}", choice: "MAYBE") {{ voter }} }}"#
-            ))
-            .await;
-        assert!(!vote.errors.is_empty());
-    }
-
-    #[cfg(feature = "unaudited-gateway-graphql-api")]
-    #[tokio::test]
-    async fn mutation_advance_decision() {
-        let schema = build_test_schema();
-        let create = schema
-            .execute(
-                r#"mutation {
-                    createDecision(input: {
-                        tenantId: "t1", title: "Advance", body: "b", decisionClass: "Routine"
-                    }) { id }
-                }"#,
-            )
-            .await;
-        let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"]
-            .as_str()
-            .expect("id")
-            .to_string();
-
-        let adv = schema
-            .execute(format!(
-                r#"mutation {{ advanceDecision(id: "{id}", newStatus: "DELIBERATION") {{ id status }} }}"#
-            ))
-            .await;
-        assert!(adv.errors.is_empty(), "advance errors: {:?}", adv.errors);
-        let adata = adv.data.into_json().expect("data");
-        assert_eq!(adata["advanceDecision"]["status"], "DELIBERATION");
-    }
-
-    #[cfg(feature = "unaudited-gateway-graphql-api")]
-    #[tokio::test]
-    async fn mutation_grant_and_revoke_delegation() {
-        let schema = build_test_schema();
-        let grant = schema
-            .execute(
-                r#"mutation {
-                    grantDelegation(input: {
-                        delegateeDid: "did:exo:bob",
-                        scope: "vote",
-                        expiresInHours: 48
-                    }) { id delegatee active }
-                }"#,
-            )
-            .await;
-        assert!(grant.errors.is_empty(), "grant errors: {:?}", grant.errors);
-        let gdata = grant.data.into_json().expect("data");
-        let del_id = gdata["grantDelegation"]["id"]
-            .as_str()
-            .expect("id")
-            .to_string();
-        assert!(
-            gdata["grantDelegation"]["active"]
-                .as_bool()
-                .unwrap_or(false)
+        assert_eq!(
+            qdata["decisions"],
+            serde_json::json!([]),
+            "refused mutation must not persist a decision"
         );
-
-        let revoke = schema
-            .execute(format!(
-                r#"mutation {{ revokeDelegation(id: "{del_id}") {{ id active }} }}"#
-            ))
-            .await;
-        assert!(
-            revoke.errors.is_empty(),
-            "revoke errors: {:?}",
-            revoke.errors
-        );
-        let rdata = revoke.data.into_json().expect("data");
-        assert!(
-            !rdata["revokeDelegation"]["active"]
-                .as_bool()
-                .unwrap_or(true)
-        );
-    }
-
-    #[cfg(feature = "unaudited-gateway-graphql-api")]
-    #[tokio::test]
-    async fn query_audit_trail_after_mutations() {
-        let schema = build_test_schema();
-        let create = schema
-            .execute(
-                r#"mutation {
-                    createDecision(input: {
-                        tenantId: "t1", title: "Audit", body: "b", decisionClass: "Routine"
-                    }) { id }
-                }"#,
-            )
-            .await;
-        let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"]
-            .as_str()
-            .expect("id")
-            .to_string();
-
-        // Cast a vote to add a second audit entry.
-        schema
-            .execute(format!(
-                r#"mutation {{ castVote(decisionId: "{id}", choice: "REJECT") {{ voter }} }}"#
-            ))
-            .await;
-
-        let trail = schema
-            .execute(format!(
-                r#"{{ auditTrail(decisionId: "{id}") {{ sequence eventType receiptHash }} }}"#
-            ))
-            .await;
-        assert!(trail.errors.is_empty(), "trail errors: {:?}", trail.errors);
-        let tdata = trail.data.into_json().expect("data");
-        let entries = tdata["auditTrail"].as_array().expect("array");
-        assert!(entries.len() >= 2, "expected at least 2 audit entries");
-        // Sequences must be ascending.
-        assert_eq!(entries[0]["sequence"], 1);
     }
 
     #[cfg(feature = "unaudited-gateway-graphql-api")]
@@ -1884,92 +1810,6 @@ mod tests {
             "error must name the missing decision, got {:?}",
             trail.errors
         );
-    }
-
-    #[cfg(feature = "unaudited-gateway-graphql-api")]
-    #[tokio::test]
-    async fn mutation_disclose_conflict_unknown_decision_errors() {
-        let schema = build_test_schema();
-
-        let disclosure = schema
-            .execute(
-                r#"mutation {
-                    discloseConflict(
-                        decisionId: "missing-decision",
-                        description: "outside interest",
-                        nature: "financial"
-                    ) { discloser nature }
-                }"#,
-            )
-            .await;
-
-        assert!(
-            !disclosure.errors.is_empty(),
-            "conflict disclosure must not succeed without an existing decision"
-        );
-        assert!(
-            disclosure.errors[0].message.contains("missing-decision"),
-            "error must name the missing decision, got {:?}",
-            disclosure.errors
-        );
-    }
-
-    #[cfg(feature = "unaudited-gateway-graphql-api")]
-    #[tokio::test]
-    async fn mutation_raise_challenge_sets_contested() {
-        let schema = build_test_schema();
-        let create = schema
-            .execute(
-                r#"mutation {
-                    createDecision(input: {
-                        tenantId: "t1", title: "Challenge", body: "b", decisionClass: "Operational"
-                    }) { id }
-                }"#,
-            )
-            .await;
-        let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"]
-            .as_str()
-            .expect("id")
-            .to_string();
-
-        let challenge = schema
-            .execute(format!(
-                r#"mutation {{ raiseChallenge(decisionId: "{id}", grounds: "procedural error") {{ id grounds status }} }}"#
-            ))
-            .await;
-        assert!(
-            challenge.errors.is_empty(),
-            "challenge errors: {:?}",
-            challenge.errors
-        );
-        let cdata = challenge.data.into_json().expect("data");
-        assert_eq!(cdata["raiseChallenge"]["status"], "OPEN");
-
-        // Decision status must now be CONTESTED.
-        let q = schema
-            .execute(format!(r#"{{ decision(id: "{id}") {{ status }} }}"#))
-            .await;
-        let qdata = q.data.into_json().expect("data");
-        assert_eq!(qdata["decision"]["status"], "CONTESTED");
-    }
-
-    #[cfg(feature = "unaudited-gateway-graphql-api")]
-    #[tokio::test]
-    async fn mutation_amend_constitution_bumps_version() {
-        let schema = build_test_schema();
-        let amend = schema
-            .execute(
-                r#"mutation {
-                    amendConstitution(tenantId: "t1", amendment: "add-article-7") {
-                        tenantId version hash
-                    }
-                }"#,
-            )
-            .await;
-        assert!(amend.errors.is_empty(), "amend errors: {:?}", amend.errors);
-        let adata = amend.data.into_json().expect("data");
-        assert_eq!(adata["amendConstitution"]["version"], "1.0.1");
     }
 
     #[cfg(feature = "unaudited-gateway-graphql-api")]
@@ -2003,35 +1843,6 @@ mod tests {
             "error must name the missing tenant, got {:?}",
             res.errors
         );
-    }
-
-    #[cfg(feature = "unaudited-gateway-graphql-api")]
-    #[tokio::test]
-    async fn mutation_emergency_action_creates_record() {
-        let schema = build_test_schema();
-        let create = schema
-            .execute(
-                r#"mutation {
-                    createDecision(input: {
-                        tenantId: "t1", title: "Emergency", body: "b", decisionClass: "Strategic"
-                    }) { id }
-                }"#,
-            )
-            .await;
-        let data = create.data.into_json().expect("data");
-        let id = data["createDecision"]["id"]
-            .as_str()
-            .expect("id")
-            .to_string();
-
-        let ea = schema
-            .execute(format!(
-                r#"mutation {{ takeEmergencyAction(decisionId: "{id}", justification: "system failure") {{ id decisionId }} }}"#
-            ))
-            .await;
-        assert!(ea.errors.is_empty(), "ea errors: {:?}", ea.errors);
-        let edata = ea.data.into_json().expect("data");
-        assert_eq!(edata["takeEmergencyAction"]["decisionId"], id);
     }
 
     #[cfg(feature = "unaudited-gateway-graphql-api")]
