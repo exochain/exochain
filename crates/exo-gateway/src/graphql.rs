@@ -30,9 +30,13 @@ use async_graphql::{
 #[cfg(feature = "unaudited-gateway-graphql-api")]
 use async_graphql_axum::{GraphQL, GraphQLSubscription};
 use async_stream::stream;
+use axum::Router;
+#[cfg(not(feature = "unaudited-gateway-graphql-api"))]
+use axum::routing::get;
+#[cfg(feature = "unaudited-gateway-graphql-api")]
+use axum::routing::post_service;
 #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
 use axum::{Json, http::StatusCode};
-use axum::{Router, routing::get};
 use exo_consent::policy::{
     ActionRequest as ConsentActionRequest, ConsentDecision, ConsentPolicy, ConsentRequirement,
     PolicyEngine,
@@ -474,6 +478,8 @@ pub const UNAUDITED_GRAPHQL_API_FEATURE: &str = "unaudited-gateway-graphql-api";
 pub const UNAUDITED_GRAPHQL_API_INITIATIVE: &str = "Initiatives/fix-spline-r1-graphql-auth-gate.md";
 pub const UNAUDITED_GRAPHQL_API_MEMO: &str =
     "exochain/council-intake/exo-spline-gateway-api-messaging.md";
+pub const GRAPHQL_MAX_QUERY_DEPTH: usize = 12;
+pub const GRAPHQL_MAX_QUERY_COMPLEXITY: usize = 256;
 pub const GRAPHQL_CONSENT_FABRICATION_INITIATIVE: &str =
     "Initiatives/fix-spline-r2-graphql-consent-fabrication.md";
 pub const GRAPHQL_PROOF_STUB_INITIATIVE: &str = "Initiatives/fix-spline-r3-graphql-proof-stub.md";
@@ -1261,13 +1267,15 @@ impl SubscriptionRoot {
 /// Build the executable `GovSchema` with shared `AppState` data.
 pub fn build_schema(state: Arc<Mutex<AppState>>) -> GovSchema {
     Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
+        .disable_introspection()
+        .limit_depth(GRAPHQL_MAX_QUERY_DEPTH)
+        .limit_complexity(GRAPHQL_MAX_QUERY_COMPLEXITY)
         .data(state)
         .finish()
 }
 
 /// Construct the axum `Router` with:
 /// - `POST /graphql` — query and mutation handler
-/// - `GET  /graphql` — GraphQL Playground (development)
 /// - `GET  /graphql/ws` — WebSocket subscription endpoint
 #[cfg(feature = "unaudited-gateway-graphql-api")]
 pub fn graphql_router(schema: GovSchema) -> Router {
@@ -1278,34 +1286,24 @@ pub fn graphql_router(schema: GovSchema) -> Router {
         "unaudited gateway GraphQL API enabled"
     );
     Router::new()
-        .route(
-            "/graphql",
-            get(graphql_playground_handler).post_service(GraphQL::new(schema.clone())),
-        )
+        .route("/graphql", post_service(GraphQL::new(schema.clone())))
         .route_service("/graphql/ws", GraphQLSubscription::new(schema))
 }
 
 /// Construct the default-safe GraphQL router.
 ///
-/// The playground remains available for local schema inspection, but executable
 /// GraphQL operations are refused unless `unaudited-gateway-graphql-api` is
 /// explicitly enabled. This avoids exposing resolver-local placeholder caller
-/// identity, fabricated consent, and proof-verification scaffolding.
+/// identity, fabricated consent, proof-verification scaffolding, and unauthenticated
+/// playground HTML.
 #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
 pub fn graphql_router(_schema: GovSchema) -> Router {
     Router::new()
         .route(
             "/graphql",
-            get(graphql_playground_handler).post(graphql_refusal_handler),
+            get(graphql_refusal_handler).post(graphql_refusal_handler),
         )
         .route("/graphql/ws", get(graphql_refusal_handler))
-}
-
-async fn graphql_playground_handler() -> impl axum::response::IntoResponse {
-    axum::response::Html(async_graphql::http::playground_source(
-        async_graphql::http::GraphQLPlaygroundConfig::new("/graphql")
-            .subscription_endpoint("/graphql/ws"),
-    ))
 }
 
 #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
@@ -1505,6 +1503,55 @@ mod tests {
         assert!(
             production.contains("hash_structured"),
             "GraphQL hashes must use canonical structured hashing"
+        );
+    }
+
+    #[test]
+    fn graphql_schema_builder_disables_introspection_and_limits_query_cost() {
+        let production = include_str!("graphql.rs")
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("production section");
+        let builder = production
+            .split("pub fn build_schema")
+            .nth(1)
+            .expect("schema builder")
+            .split("/// Construct the axum `Router`")
+            .next()
+            .expect("schema builder end");
+
+        assert!(
+            builder.contains(".disable_introspection()"),
+            "GraphQL schema must disable introspection in executable gateway schemas"
+        );
+        assert!(
+            builder.contains(".limit_depth(GRAPHQL_MAX_QUERY_DEPTH)"),
+            "GraphQL schema must set an explicit query depth limit"
+        );
+        assert!(
+            builder.contains(".limit_complexity(GRAPHQL_MAX_QUERY_COMPLEXITY)"),
+            "GraphQL schema must set an explicit query complexity limit"
+        );
+    }
+
+    #[test]
+    fn graphql_router_does_not_expose_playground_html() {
+        let production = include_str!("graphql.rs")
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("production section");
+
+        assert!(
+            !production.contains("playground_source"),
+            "gateway GraphQL router must not serve unauthenticated playground HTML"
+        );
+        assert!(
+            !production.contains("GraphQLPlaygroundConfig"),
+            "gateway GraphQL router must not configure unauthenticated playground HTML"
+        );
+        assert!(
+            !production.contains("graphql_playground_handler"),
+            "gateway GraphQL router must not route GET /graphql to playground HTML"
         );
     }
 
@@ -1989,36 +2036,56 @@ mod tests {
 
     #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
-    async fn schema_introspection_has_required_types() {
+    async fn schema_introspection_queries_are_disabled() {
         let schema = build_test_schema();
         let res = schema.execute(r#"{ __schema { types { name } } }"#).await;
+        let data = res.data.into_json().expect("data");
         assert!(
-            res.errors.is_empty(),
-            "introspection errors: {:?}",
+            data["__schema"].is_null(),
+            "gateway executable schema must not return introspection data: {data}"
+        );
+    }
+
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
+    #[tokio::test]
+    async fn schema_sdl_has_required_types_without_enabling_introspection() {
+        let schema = build_test_schema();
+        let sdl = schema.sdl();
+        for required in [
+            "type GqlDecision",
+            "type GqlVote",
+            "type GqlDelegation",
+            "type GqlAuditEntry",
+            "type GqlEmergencyAction",
+            "type QueryRoot",
+            "type MutationRoot",
+            "type SubscriptionRoot",
+        ] {
+            assert!(sdl.contains(required), "missing SDL type: {required}");
+        }
+    }
+
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
+    #[tokio::test]
+    async fn schema_rejects_queries_over_complexity_limit() {
+        let schema = build_test_schema();
+        let expected_complexity_limit = 256usize;
+        let repeated_fields = (0..expected_complexity_limit + 1)
+            .map(|idx| format!("a{idx}: decisions(tenantId: \"t1\") {{ id }}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let res = schema.execute(format!("{{ {repeated_fields} }}")).await;
+        assert!(
+            !res.errors.is_empty(),
+            "queries beyond the configured complexity limit must be rejected"
+        );
+        assert!(
+            res.errors
+                .iter()
+                .any(|error| error.message.contains("too complex")),
+            "unexpected complexity-limit errors: {:?}",
             res.errors
         );
-        let data = res.data.into_json().expect("data");
-        let type_names: Vec<String> = data["__schema"]["types"]
-            .as_array()
-            .expect("types array")
-            .iter()
-            .filter_map(|t| t["name"].as_str().map(str::to_owned))
-            .collect();
-        for required in [
-            "GqlDecision",
-            "GqlVote",
-            "GqlDelegation",
-            "GqlAuditEntry",
-            "GqlEmergencyAction",
-            "QueryRoot",
-            "MutationRoot",
-            "SubscriptionRoot",
-        ] {
-            assert!(
-                type_names.contains(&required.to_string()),
-                "missing type: {required}"
-            );
-        }
     }
 
     #[test]
@@ -2161,29 +2228,15 @@ mod tests {
         assert!(!res.errors.is_empty(), "expected error for invalid DID");
     }
 
-    /// APE-35: schema introspection includes the new identity + consent types.
+    /// APE-35: schema SDL includes the new identity + consent types without
+    /// enabling runtime introspection.
     #[cfg(feature = "unaudited-gateway-graphql-api")]
     #[tokio::test]
-    async fn schema_includes_identity_and_consent_types() {
+    async fn schema_sdl_includes_identity_and_consent_types() {
         let schema = build_test_schema();
-        let res = schema.execute(r#"{ __schema { types { name } } }"#).await;
-        assert!(
-            res.errors.is_empty(),
-            "introspection errors: {:?}",
-            res.errors
-        );
-        let data = res.data.into_json().expect("data");
-        let type_names: Vec<String> = data["__schema"]["types"]
-            .as_array()
-            .expect("types array")
-            .iter()
-            .filter_map(|t| t["name"].as_str().map(str::to_owned))
-            .collect();
-        for required in ["GqlIdentity", "GqlConsentResult"] {
-            assert!(
-                type_names.contains(&required.to_string()),
-                "missing type: {required}"
-            );
+        let sdl = schema.sdl();
+        for required in ["type GqlIdentity", "type GqlConsentResult"] {
+            assert!(sdl.contains(required), "missing SDL type: {required}");
         }
     }
 }

@@ -3044,8 +3044,9 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
+    #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
     #[tokio::test]
-    async fn graphql_playground_returns_200() {
+    async fn graphql_get_default_off_returns_403_with_initiative() {
         let app = build_router(state());
         let resp = app
             .oneshot(
@@ -3056,7 +3057,17 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(val["error"], "unaudited_graphql_api_disabled");
+        assert_eq!(val["feature_flag"], "unaudited-gateway-graphql-api");
+        assert_eq!(
+            val["initiative"],
+            "Initiatives/fix-spline-r1-graphql-auth-gate.md"
+        );
     }
 
     #[cfg(not(feature = "unaudited-gateway-graphql-api"))]
