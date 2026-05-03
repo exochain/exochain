@@ -553,13 +553,6 @@ mod tests {
         )
     }
 
-    fn test_hash_pair(left: &Hash256, right: &Hash256) -> Hash256 {
-        let mut combined = [0u8; 64];
-        combined[..32].copy_from_slice(left.as_bytes());
-        combined[32..].copy_from_slice(right.as_bytes());
-        Hash256::digest(&combined)
-    }
-
     fn assert_ledger_runtime_unavailable(result: &ToolResult, tool_name: &str) {
         assert!(result.is_error);
         let text = result.content[0].text();
@@ -811,15 +804,20 @@ mod tests {
 
     #[test]
     fn execute_verify_inclusion_valid_proof() {
-        let event_hash = Hash256::digest(b"event-left");
-        let sibling = Hash256::digest(b"event-right");
-        let expected_root = test_hash_pair(&event_hash, &sibling);
+        let leaves = [
+            Hash256::digest(b"event-left"),
+            Hash256::digest(b"event-right"),
+        ];
+        let target_index = 0;
+        let expected_root = merkle_root(&leaves);
+        let proof = merkle_proof(&leaves, target_index).expect("core proof");
+        let proof_hashes: Vec<String> = proof.iter().map(ToString::to_string).collect();
 
         let params = json!({
-            "event_hash": event_hash.to_string(),
-            "proof_hashes": [sibling.to_string()],
+            "event_hash": leaves[target_index].to_string(),
+            "proof_hashes": proof_hashes,
             "root_hash": expected_root.to_string(),
-            "target_index": 0,
+            "target_index": target_index,
         });
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
         assert!(!result.is_error);
@@ -829,15 +827,20 @@ mod tests {
 
     #[test]
     fn execute_verify_inclusion_valid_right_hand_proof() {
-        let left_hash = Hash256::digest(b"event-left");
-        let right_hash = Hash256::digest(b"event-right");
-        let expected_root = test_hash_pair(&left_hash, &right_hash);
+        let leaves = [
+            Hash256::digest(b"event-left"),
+            Hash256::digest(b"event-right"),
+        ];
+        let target_index = 1;
+        let expected_root = merkle_root(&leaves);
+        let proof = merkle_proof(&leaves, target_index).expect("core proof");
+        let proof_hashes: Vec<String> = proof.iter().map(ToString::to_string).collect();
 
         let params = json!({
-            "event_hash": right_hash.to_string(),
-            "proof_hashes": [left_hash.to_string()],
+            "event_hash": leaves[target_index].to_string(),
+            "proof_hashes": proof_hashes,
             "root_hash": expected_root.to_string(),
-            "target_index": 1,
+            "target_index": target_index,
         });
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
         assert!(!result.is_error);
