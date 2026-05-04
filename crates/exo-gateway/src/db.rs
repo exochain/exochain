@@ -4,7 +4,7 @@
 //! Complex governance objects (DecisionObject, Delegation) are stored as
 //! JSONB payloads with indexed scalar columns for efficient queries.
 
-use std::fmt;
+use std::{fmt, time::Duration};
 
 use serde_json::Value as JsonValue;
 use sqlx::{
@@ -14,6 +14,7 @@ use sqlx::{
 use thiserror::Error;
 
 pub const MAX_DB_LIST_ROWS: i64 = 1_000;
+const DB_POOL_ACQUIRE_TIMEOUT_SECS: u64 = 5;
 
 #[derive(Debug, Error)]
 pub enum DbInitError {
@@ -37,6 +38,9 @@ pub enum DbInitError {
 pub async fn init_pool(database_url: &str) -> Result<PgPool, DbInitError> {
     let pool = PgPoolOptions::new()
         .max_connections(10)
+        // SQLx 0.8 bounds both waiting for a pooled connection and opening a
+        // new connection through acquire_timeout.
+        .acquire_timeout(Duration::from_secs(DB_POOL_ACQUIRE_TIMEOUT_SECS))
         .connect(database_url)
         .await
         .map_err(|source| DbInitError::Connect { source })?;
@@ -1238,6 +1242,22 @@ mod tests {
                 "{name} must bind the centralized row limit for every fetch_all query"
             );
         }
+    }
+
+    #[test]
+    fn pool_initialization_sets_explicit_connection_acquire_timeout() {
+        let source = production_source();
+        let init_pool = function_source(source, "init_pool");
+
+        assert!(
+            source.contains("const DB_POOL_ACQUIRE_TIMEOUT_SECS: u64"),
+            "gateway DB pool timeout must be explicit and centrally named"
+        );
+        assert!(
+            init_pool
+                .contains(".acquire_timeout(Duration::from_secs(DB_POOL_ACQUIRE_TIMEOUT_SECS))"),
+            "gateway DB pool initialization must bound waits for pooled or newly opened connections"
+        );
     }
 
     #[test]
