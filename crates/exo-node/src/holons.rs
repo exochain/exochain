@@ -1395,6 +1395,9 @@ mod tests {
         tokio::spawn(async move {
             while let Some(cmd) = cmd_rx.recv().await {
                 match cmd {
+                    crate::network::NetworkCommand::Publish { reply, .. } => {
+                        let _ = reply.send(Ok(()));
+                    }
                     crate::network::NetworkCommand::PeerCount { reply } => {
                         let _ = reply.send(0);
                     }

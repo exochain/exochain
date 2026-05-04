@@ -1466,7 +1466,8 @@ mod tests {
         let store = Arc::new(Mutex::new(SqliteDagStore::open(dir.path()).unwrap()));
 
         // Create a network handle (will fail on publish, but we test the local logic)
-        let (cmd_tx, _cmd_rx) = mpsc::channel(32);
+        let (cmd_tx, cmd_rx) = mpsc::channel(32);
+        drop(cmd_rx);
         let net_handle = NetworkHandle::new(cmd_tx);
 
         let _result = submit_proposal(&state, &store, &net_handle, b"test payload").await;
@@ -1565,19 +1566,35 @@ mod tests {
         let (cmd_tx, mut cmd_rx) = mpsc::channel(32);
         let net_handle = NetworkHandle::new(cmd_tx);
 
-        broadcast_governance_event(
-            &state,
-            &net_handle,
-            GovernanceEventType::AuditEntry,
-            b"audit".to_vec(),
-        )
-        .await
-        .expect("governance event broadcast");
+        let broadcast_task = {
+            let state = Arc::clone(&state);
+            let net_handle = net_handle.clone();
+            tokio::spawn(async move {
+                broadcast_governance_event(
+                    &state,
+                    &net_handle,
+                    GovernanceEventType::AuditEntry,
+                    b"audit".to_vec(),
+                )
+                .await
+            })
+        };
 
         let command = cmd_rx.recv().await.expect("published network command");
-        let crate::network::NetworkCommand::Publish { topic, message } = command else {
+        let crate::network::NetworkCommand::Publish {
+            topic,
+            message,
+            reply,
+        } = command
+        else {
             panic!("expected publish command");
         };
+        reply.send(Ok(())).expect("publish ack receiver active");
+        broadcast_task
+            .await
+            .expect("broadcast task joins")
+            .expect("governance event broadcast");
+
         assert_eq!(topic, topics::GOVERNANCE);
 
         let WireMessage::GovernanceEvent(event) = message else {

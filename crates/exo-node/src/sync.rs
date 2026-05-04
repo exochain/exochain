@@ -722,6 +722,29 @@ mod tests {
         Did::new("did:exo:test-sync").unwrap()
     }
 
+    fn acking_network_handle() -> (NetworkHandle, Arc<Mutex<Vec<WireMessage>>>) {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(256);
+        let published = Arc::new(Mutex::new(Vec::new()));
+        let published_for_task = Arc::clone(&published);
+
+        tokio::spawn(async move {
+            while let Some(cmd) = cmd_rx.recv().await {
+                match cmd {
+                    crate::network::NetworkCommand::Publish { message, reply, .. } => {
+                        published_for_task.lock().unwrap().push(message);
+                        let _ = reply.send(Ok(()));
+                    }
+                    crate::network::NetworkCommand::PeerCount { reply } => {
+                        let _ = reply.send(0);
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        (NetworkHandle::new(cmd_tx), published)
+    }
+
     #[test]
     fn sync_engine_store_access_uses_spawn_blocking() {
         let source = include_str!("sync.rs");
@@ -856,8 +879,7 @@ mod tests {
         let (store, _hashes) = build_store_with_committed_nodes(10);
         let store = Arc::new(Mutex::new(store));
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel(256);
-        let net_handle = NetworkHandle::new(cmd_tx);
+        let (net_handle, published) = acking_network_handle();
 
         let (event_tx, mut event_rx) = mpsc::channel(32);
         let engine = SyncEngine::new(sync_config(5, 200), store, net_handle, event_tx);
@@ -872,15 +894,7 @@ mod tests {
         engine.handle_snapshot_request(request).await;
 
         // Collect published messages.
-        let mut published = Vec::new();
-        while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
-                crate::network::NetworkCommand::Publish { message, .. } => {
-                    published.push(message);
-                }
-                _ => {}
-            }
-        }
+        let published = published.lock().unwrap().clone();
 
         // Should have 2 chunks (5 nodes each, total 10).
         assert_eq!(
@@ -1377,8 +1391,7 @@ mod tests {
         let db_path = dir.path().join("dag.db");
         let store = Arc::new(Mutex::new(store));
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel(256);
-        let net_handle = NetworkHandle::new(cmd_tx);
+        let (net_handle, published) = acking_network_handle();
         let (event_tx, _event_rx) = mpsc::channel(32);
         let mut engine = SyncEngine::new(
             sync_config(100, 200),
@@ -1421,7 +1434,7 @@ mod tests {
         engine.handle_dag_sync_response(response).await;
 
         assert!(
-            cmd_rx.try_recv().is_err(),
+            published.lock().unwrap().is_empty(),
             "DAG sync storage failure must not request the next batch"
         );
     }
@@ -1433,8 +1446,7 @@ mod tests {
         let db_path = dir.path().join("dag.db");
         let store = Arc::new(Mutex::new(store));
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel(256);
-        let net_handle = NetworkHandle::new(cmd_tx);
+        let (net_handle, published) = acking_network_handle();
         let (event_tx, _event_rx) = mpsc::channel(32);
         let mut engine = SyncEngine::new(
             sync_config(100, 200),
@@ -1499,7 +1511,7 @@ mod tests {
             );
         }
         assert!(
-            cmd_rx.try_recv().is_err(),
+            published.lock().unwrap().is_empty(),
             "rolled-back DAG sync failure must not request the next batch"
         );
     }
@@ -1510,8 +1522,7 @@ mod tests {
         let store = SqliteDagStore::open(dir.path()).unwrap();
         let store = Arc::new(Mutex::new(store));
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel(256);
-        let net_handle = NetworkHandle::new(cmd_tx);
+        let (net_handle, published) = acking_network_handle();
 
         let (event_tx, _event_rx) = mpsc::channel(32);
         let engine = SyncEngine::new(sync_config(100, 200), store, net_handle, event_tx);
@@ -1527,7 +1538,7 @@ mod tests {
 
         // Should not publish anything since we're behind.
         assert!(
-            cmd_rx.try_recv().is_err(),
+            published.lock().unwrap().is_empty(),
             "Should not serve snapshot when behind"
         );
     }
@@ -1538,8 +1549,7 @@ mod tests {
         let store = SqliteDagStore::open(dir.path()).unwrap();
         let store = Arc::new(Mutex::new(store));
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel(256);
-        let net_handle = NetworkHandle::new(cmd_tx);
+        let (net_handle, published) = acking_network_handle();
 
         let (event_tx, _event_rx) = mpsc::channel(32);
         let mut engine = SyncEngine::new(sync_config(50, 200), store, net_handle, event_tx);
@@ -1548,18 +1558,13 @@ mod tests {
         assert!(engine.needs_sync());
 
         // Check that a request was published.
-        let cmd = cmd_rx.try_recv().unwrap();
-        match cmd {
-            crate::network::NetworkCommand::Publish { message, .. } => {
-                match message {
-                    WireMessage::StateSnapshotRequest(req) => {
-                        assert_eq!(req.from_height, 1); // height 0 + 1
-                        assert_eq!(req.chunk_size, 50);
-                    }
-                    _ => panic!("Expected StateSnapshotRequest"),
-                }
+        let published = published.lock().unwrap();
+        match published.first().expect("snapshot request published") {
+            WireMessage::StateSnapshotRequest(req) => {
+                assert_eq!(req.from_height, 1); // height 0 + 1
+                assert_eq!(req.chunk_size, 50);
             }
-            _ => panic!("Expected Publish command"),
+            _ => panic!("Expected StateSnapshotRequest"),
         }
     }
 
@@ -1576,8 +1581,7 @@ mod tests {
         .unwrap();
         let store = Arc::new(Mutex::new(store));
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel(256);
-        let net_handle = NetworkHandle::new(cmd_tx);
+        let (net_handle, published) = acking_network_handle();
         let (event_tx, _event_rx) = mpsc::channel(32);
         let mut engine = SyncEngine::new(sync_config(50, 200), store, net_handle, event_tx);
 
@@ -1585,7 +1589,7 @@ mod tests {
 
         assert!(err.to_string().contains("committed.height"));
         assert!(!engine.needs_sync());
-        assert!(cmd_rx.try_recv().is_err());
+        assert!(published.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1593,8 +1597,7 @@ mod tests {
         let (store, _hashes) = build_store_with_committed_nodes(5);
         let store = Arc::new(Mutex::new(store));
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel(256);
-        let net_handle = NetworkHandle::new(cmd_tx);
+        let (net_handle, published) = acking_network_handle();
 
         let (event_tx, _event_rx) = mpsc::channel(32);
         let engine = SyncEngine::new(sync_config(100, 200), store, net_handle, event_tx);
@@ -1609,16 +1612,13 @@ mod tests {
         engine.handle_dag_sync_request(request).await;
 
         // Should respond with some nodes.
-        let cmd = cmd_rx.try_recv().unwrap();
-        match cmd {
-            crate::network::NetworkCommand::Publish { message, .. } => match message {
-                WireMessage::DagSyncResponse(resp) => {
-                    assert!(!resp.nodes.is_empty(), "Should send some nodes");
-                    assert!(resp.nodes.len() <= 10);
-                }
-                _ => panic!("Expected DagSyncResponse"),
-            },
-            _ => panic!("Expected Publish command"),
+        let published = published.lock().unwrap();
+        match published.first().expect("DAG sync response published") {
+            WireMessage::DagSyncResponse(resp) => {
+                assert!(!resp.nodes.is_empty(), "Should send some nodes");
+                assert!(resp.nodes.len() <= 10);
+            }
+            _ => panic!("Expected DagSyncResponse"),
         }
     }
 }

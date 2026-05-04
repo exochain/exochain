@@ -626,7 +626,13 @@ mod tests {
         let store = Arc::new(Mutex::new(SqliteDagStore::open(dir.path()).unwrap()));
 
         let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(32);
-        tokio::spawn(async move { while cmd_rx.recv().await.is_some() {} });
+        tokio::spawn(async move {
+            while let Some(command) = cmd_rx.recv().await {
+                if let crate::network::NetworkCommand::Publish { reply, .. } = command {
+                    let _ = reply.send(Ok(()));
+                }
+            }
+        });
         let net_handle = NetworkHandle::new(cmd_tx);
 
         Arc::new(NodeApiState {

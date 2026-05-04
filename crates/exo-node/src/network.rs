@@ -35,6 +35,9 @@ use crate::wire::{self, WireMessage, topics};
 
 const GOSSIPSUB_MESSAGE_ID_DOMAIN: &str = "exo.node.gossipsub.message-id.v1";
 const IDENTIFY_AGENT_VERSION: &str = "exochain/1.0";
+const NETWORK_PUBLISH_MAX_ATTEMPTS: usize = 3;
+const NETWORK_PUBLISH_RETRY_BACKOFF_MS: u64 = 50;
+const NETWORK_PUBLISH_ACK_TIMEOUT_MS: u64 = 5_000;
 
 #[derive(serde::Serialize)]
 struct GossipsubMessageIdPayload<'a> {
@@ -69,7 +72,11 @@ pub struct ExochainBehaviour {
 #[derive(Debug)]
 pub enum NetworkCommand {
     /// Publish a wire message to a gossipsub topic.
-    Publish { topic: String, message: WireMessage },
+    Publish {
+        topic: String,
+        message: WireMessage,
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     /// Dial a peer at a multiaddr.
     #[allow(dead_code)] // Used when governance API enables dynamic peer dialing
     Dial { addr: Multiaddr },
@@ -390,22 +397,30 @@ pub async fn run_network_loop(
             // Process application commands
             Some(cmd) = cmd_rx.recv() => {
                 match cmd {
-                    NetworkCommand::Publish { topic, message } => {
-                        match wire::encode(&message) {
+                    NetworkCommand::Publish { topic, message, reply } => {
+                        let result = match wire::encode(&message) {
                             Ok(bytes) => {
                                 let topic = gossipsub::IdentTopic::new(topic);
                                 match swarm.behaviour_mut().gossipsub.publish(topic, bytes) {
                                     Ok(msg_id) => {
                                         tracing::debug!(%msg_id, "Published message");
+                                        Ok(())
                                     }
                                     Err(e) => {
-                                        tracing::warn!(err = %e, "Failed to publish");
+                                        let reason = format!("gossipsub publish failed: {e}");
+                                        tracing::warn!(err = %reason, "Failed to publish");
+                                        Err(reason)
                                     }
                                 }
                             }
                             Err(e) => {
-                                tracing::warn!(err = %e, "Failed to encode message");
+                                let reason = format!("wire encode failed: {e}");
+                                tracing::warn!(err = %reason, "Failed to encode message");
+                                Err(reason)
                             }
+                        };
+                        if reply.send(result).is_err() {
+                            tracing::warn!("Network publish reply receiver dropped");
                         }
                     }
 
@@ -500,13 +515,43 @@ impl NetworkHandle {
 
     /// Publish a wire message to a gossipsub topic.
     pub async fn publish(&self, topic: &str, message: WireMessage) -> anyhow::Result<()> {
+        let mut last_error = None;
+        for attempt in 1..=NETWORK_PUBLISH_MAX_ATTEMPTS {
+            match self.publish_once(topic, message.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(err) => {
+                    last_error = Some(err);
+                    if attempt < NETWORK_PUBLISH_MAX_ATTEMPTS {
+                        tokio::time::sleep(Duration::from_millis(NETWORK_PUBLISH_RETRY_BACKOFF_MS))
+                            .await;
+                    }
+                }
+            }
+        }
+
+        Err(last_error
+            .unwrap_or_else(|| anyhow::anyhow!("publish failed without a recorded error")))
+    }
+
+    async fn publish_once(&self, topic: &str, message: WireMessage) -> anyhow::Result<()> {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         self.cmd_tx
             .send(NetworkCommand::Publish {
                 topic: topic.to_string(),
                 message,
+                reply: reply_tx,
             })
             .await
-            .map_err(|_| anyhow::anyhow!("Network task has stopped"))
+            .map_err(|_| anyhow::anyhow!("Network task has stopped"))?;
+
+        tokio::time::timeout(
+            Duration::from_millis(NETWORK_PUBLISH_ACK_TIMEOUT_MS),
+            reply_rx,
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Network publish acknowledgement timed out"))?
+        .map_err(|_| anyhow::anyhow!("Network task dropped publish acknowledgement"))?
+        .map_err(|err| anyhow::anyhow!(err))
     }
 
     /// Dial a peer at a multiaddr.
@@ -678,6 +723,70 @@ mod tests {
         // connect through loopback and make this assertion nondeterministic.
         let count = handle.peer_count().await.unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn network_handle_publish_reports_gossipsub_failure() {
+        let swarm = build_swarm().unwrap();
+
+        let (cmd_tx, cmd_rx) = mpsc::channel(32);
+        let (event_tx, _event_rx) = mpsc::channel(32);
+
+        let handle = NetworkHandle::new(cmd_tx);
+        tokio::spawn(run_network_loop(swarm, cmd_rx, event_tx));
+
+        let oversized_msg = WireMessage::GovernanceEvent(wire::GovernanceEventMsg {
+            sender: Did::new("did:exo:network-publisher").unwrap(),
+            event_type: wire::GovernanceEventType::AuditEntry,
+            payload: vec![0; wire::MAX_WIRE_MESSAGE_BYTES + 1],
+            timestamp: Timestamp::ZERO,
+            signature: exo_core::types::Signature::empty(),
+        });
+
+        let result = handle.publish(topics::GOVERNANCE, oversized_msg).await;
+
+        assert!(
+            result.is_err(),
+            "publish must return the network-layer failure instead of only confirming queueing"
+        );
+    }
+
+    #[tokio::test]
+    async fn network_handle_publish_retries_until_acknowledged() {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(32);
+        let handle = NetworkHandle::new(cmd_tx);
+        let publish_task = tokio::spawn(async move {
+            let message = WireMessage::PeerExchange(wire::PeerExchangeMsg {
+                sender: Did::new("did:exo:network-retry").unwrap(),
+                peers: Vec::new(),
+            });
+            handle.publish(topics::PEER_EXCHANGE, message).await
+        });
+
+        for attempt in 1..=2 {
+            let command = tokio::time::timeout(Duration::from_secs(1), cmd_rx.recv())
+                .await
+                .expect("publish command should arrive before timeout")
+                .expect("publish command should be sent");
+            let NetworkCommand::Publish { topic, reply, .. } = command else {
+                panic!("expected publish command");
+            };
+            assert_eq!(topic, topics::PEER_EXCHANGE);
+            if attempt == 1 {
+                reply
+                    .send(Err("transient publish failure".into()))
+                    .expect("first publish attempt should be waiting");
+            } else {
+                reply
+                    .send(Ok(()))
+                    .expect("second publish attempt should be waiting");
+            }
+        }
+
+        publish_task
+            .await
+            .expect("publish task joins")
+            .expect("publish succeeds after retry");
     }
 
     async fn wait_for_tcp_listen_addr(swarm: &mut Swarm<ExochainBehaviour>) -> Multiaddr {
