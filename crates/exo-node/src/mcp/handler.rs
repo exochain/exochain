@@ -29,6 +29,10 @@ use super::{
 /// The limit is intentionally well below Axum's default body limit so the
 /// protocol handler and HTTP transport enforce the same deterministic bound.
 pub const MAX_JSON_RPC_MESSAGE_BYTES: usize = 64 * 1024;
+const MAX_PROMPT_NAME_BYTES: usize = 128;
+const MAX_PROMPT_ARGUMENT_COUNT: usize = 16;
+const MAX_PROMPT_ARGUMENT_KEY_BYTES: usize = 64;
+const MAX_PROMPT_ARGUMENT_VALUE_BYTES: usize = 4 * 1024;
 
 fn serialize_json_rpc_response(response: &JsonRpcResponse) -> String {
     match serde_json::to_string(response) {
@@ -471,18 +475,55 @@ impl McpServer {
                 );
             }
         };
+        if name.len() > MAX_PROMPT_NAME_BYTES {
+            return JsonRpcResponse::error(
+                request.id.clone(),
+                INVALID_PARAMS,
+                format!("prompt name may contain at most {MAX_PROMPT_NAME_BYTES} bytes"),
+            );
+        }
 
         let mut args: BTreeMap<String, String> = BTreeMap::new();
         if let Some(arg_value) = params.get("arguments") {
-            if let Some(obj) = arg_value.as_object() {
-                for (k, v) in obj {
-                    let string_value = match v {
-                        Value::String(s) => s.clone(),
-                        Value::Null => String::new(),
-                        other => other.to_string(),
-                    };
-                    args.insert(k.clone(), string_value);
+            let Some(obj) = arg_value.as_object() else {
+                return JsonRpcResponse::error(
+                    request.id.clone(),
+                    INVALID_PARAMS,
+                    "prompt arguments must be an object".into(),
+                );
+            };
+            if obj.len() > MAX_PROMPT_ARGUMENT_COUNT {
+                return JsonRpcResponse::error(
+                    request.id.clone(),
+                    INVALID_PARAMS,
+                    format!("prompts/get accepts at most {MAX_PROMPT_ARGUMENT_COUNT} arguments"),
+                );
+            }
+            for (key, value) in obj {
+                if key.len() > MAX_PROMPT_ARGUMENT_KEY_BYTES {
+                    return JsonRpcResponse::error(
+                        request.id.clone(),
+                        INVALID_PARAMS,
+                        format!(
+                            "prompt argument names may contain at most {MAX_PROMPT_ARGUMENT_KEY_BYTES} bytes"
+                        ),
+                    );
                 }
+                let string_value = match value {
+                    Value::String(s) => s.clone(),
+                    Value::Null => String::new(),
+                    other => other.to_string(),
+                };
+                if string_value.len() > MAX_PROMPT_ARGUMENT_VALUE_BYTES {
+                    return JsonRpcResponse::error(
+                        request.id.clone(),
+                        INVALID_PARAMS,
+                        format!(
+                            "prompt argument '{key}' may contain at most {MAX_PROMPT_ARGUMENT_VALUE_BYTES} bytes"
+                        ),
+                    );
+                }
+                args.insert(key.clone(), string_value);
             }
         }
 
@@ -1009,6 +1050,141 @@ mod tests {
         let text = messages[0]["content"]["text"].as_str().unwrap();
         assert!(text.contains("dec-100"));
         assert!(text.contains("Sample decision"));
+    }
+
+    #[test]
+    fn handler_prompts_get_rejects_oversized_argument_value() {
+        let server = test_server();
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 84,
+            "method": "prompts/get",
+            "params": {
+                "name": "constitutional_audit",
+                "arguments": {
+                    "scope": "node",
+                    "focus": "x".repeat(MAX_PROMPT_ARGUMENT_VALUE_BYTES + 1)
+                }
+            }
+        })
+        .to_string();
+
+        let response = server.handle_message(&msg).unwrap();
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        let error = parsed.error.expect("oversized prompt argument must fail");
+        assert_eq!(error.code, INVALID_PARAMS);
+        assert_eq!(
+            error.message,
+            format!(
+                "prompt argument 'focus' may contain at most {MAX_PROMPT_ARGUMENT_VALUE_BYTES} bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn handler_prompts_get_rejects_oversized_name() {
+        let server = test_server();
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 85,
+            "method": "prompts/get",
+            "params": {
+                "name": "x".repeat(MAX_PROMPT_NAME_BYTES + 1),
+                "arguments": {}
+            }
+        })
+        .to_string();
+
+        let response = server.handle_message(&msg).unwrap();
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        let error = parsed.error.expect("oversized prompt name must fail");
+        assert_eq!(error.code, INVALID_PARAMS);
+        assert_eq!(
+            error.message,
+            format!("prompt name may contain at most {MAX_PROMPT_NAME_BYTES} bytes")
+        );
+    }
+
+    #[test]
+    fn handler_prompts_get_rejects_non_object_arguments() {
+        let server = test_server();
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 86,
+            "method": "prompts/get",
+            "params": {
+                "name": "governance_review",
+                "arguments": ["decision_id", "dec-1"]
+            }
+        })
+        .to_string();
+
+        let response = server.handle_message(&msg).unwrap();
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        let error = parsed.error.expect("non-object prompt arguments must fail");
+        assert_eq!(error.code, INVALID_PARAMS);
+        assert_eq!(error.message, "prompt arguments must be an object");
+    }
+
+    #[test]
+    fn handler_prompts_get_rejects_too_many_arguments() {
+        let server = test_server();
+        let mut arguments = serde_json::Map::new();
+        for idx in 0..=MAX_PROMPT_ARGUMENT_COUNT {
+            arguments.insert(format!("arg_{idx}"), serde_json::json!("value"));
+        }
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 87,
+            "method": "prompts/get",
+            "params": {
+                "name": "governance_review",
+                "arguments": serde_json::Value::Object(arguments)
+            }
+        })
+        .to_string();
+
+        let response = server.handle_message(&msg).unwrap();
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        let error = parsed.error.expect("too many prompt arguments must fail");
+        assert_eq!(error.code, INVALID_PARAMS);
+        assert_eq!(
+            error.message,
+            format!("prompts/get accepts at most {MAX_PROMPT_ARGUMENT_COUNT} arguments")
+        );
+    }
+
+    #[test]
+    fn handler_prompts_get_rejects_oversized_argument_name() {
+        let server = test_server();
+        let mut arguments = serde_json::Map::new();
+        arguments.insert(
+            "x".repeat(MAX_PROMPT_ARGUMENT_KEY_BYTES + 1),
+            serde_json::json!("value"),
+        );
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 88,
+            "method": "prompts/get",
+            "params": {
+                "name": "governance_review",
+                "arguments": serde_json::Value::Object(arguments)
+            }
+        })
+        .to_string();
+
+        let response = server.handle_message(&msg).unwrap();
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        let error = parsed
+            .error
+            .expect("oversized prompt argument name must fail");
+        assert_eq!(error.code, INVALID_PARAMS);
+        assert_eq!(
+            error.message,
+            format!(
+                "prompt argument names may contain at most {MAX_PROMPT_ARGUMENT_KEY_BYTES} bytes"
+            )
+        );
     }
 
     #[test]
