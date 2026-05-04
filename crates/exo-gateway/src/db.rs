@@ -1151,6 +1151,24 @@ mod tests {
         source.split("#[cfg(test)]").next().unwrap_or(source)
     }
 
+    fn migration_sources() -> String {
+        [
+            include_str!("../migrations/20260316000001_initial_schema.sql"),
+            include_str!("../migrations/20260330000001_create_sessions.sql"),
+            include_str!("../migrations/20260330000002_create_adjudication_tables.sql"),
+            include_str!("../migrations/20260407000001_create_dashboard_tables.sql"),
+            include_str!("../migrations/20260425000001_add_decision_id_to_audit_entries.sql"),
+            include_str!("../migrations/20260426000001_livesafe_composite_basis_points.sql"),
+            include_str!("../migrations/20260427000001_create_conflict_declarations.sql"),
+            include_str!("../migrations/20260504000001_add_gateway_runtime_query_indexes.sql"),
+        ]
+        .join("\n")
+    }
+
+    fn compact_sql(sql: &str) -> String {
+        sql.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
     fn function_source<'a>(source: &'a str, name: &str) -> &'a str {
         let signature = format!("pub async fn {name}");
         let start = source
@@ -1240,6 +1258,28 @@ mod tests {
                 body.matches(".bind(MAX_DB_LIST_ROWS)").count(),
                 expected_limit_clauses,
                 "{name} must bind the centralized row limit for every fetch_all query"
+            );
+        }
+    }
+
+    #[test]
+    fn gateway_runtime_query_filters_have_migration_indexes() {
+        let migrations = compact_sql(&migration_sources());
+
+        for index_sql in [
+            "CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);",
+            "CREATE INDEX IF NOT EXISTS idx_agents_tenant_created_at ON agents(tenant_id, created_at);",
+            "CREATE INDEX IF NOT EXISTS idx_agents_created_at ON agents(created_at);",
+            "CREATE INDEX IF NOT EXISTS idx_decisions_tenant_created_at_ms ON decisions(tenant_id, created_at_ms);",
+            "CREATE INDEX IF NOT EXISTS idx_decisions_created_at_ms ON decisions(created_at_ms);",
+            "CREATE INDEX IF NOT EXISTS idx_delegations_created_at_ms ON delegations(created_at_ms);",
+            "CREATE INDEX IF NOT EXISTS idx_delegations_active_delegatee ON delegations(delegatee) WHERE revoked_at IS NULL;",
+            "CREATE INDEX IF NOT EXISTS idx_delegations_active_delegator ON delegations(delegator) WHERE revoked_at IS NULL;",
+            "CREATE INDEX IF NOT EXISTS idx_audit_entries_actor_event_type ON audit_entries(actor, event_type);",
+        ] {
+            assert!(
+                migrations.contains(index_sql),
+                "gateway migration set must include runtime query index: {index_sql}"
             );
         }
     }
