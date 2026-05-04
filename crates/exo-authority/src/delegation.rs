@@ -265,10 +265,18 @@ impl DelegationRegistry {
                 reason: "expiration must be later than created timestamp".into(),
             });
         }
-        if let DelegateeKind::AiAgent { model_id } = &delegatee_kind {
-            if model_id.trim().is_empty() {
+        match &delegatee_kind {
+            DelegateeKind::Human => {}
+            DelegateeKind::AiAgent { model_id } => {
+                if model_id.trim().is_empty() {
+                    return Err(AuthorityError::InvalidDelegation {
+                        reason: "AI-agent delegatee kind requires a non-empty model_id".into(),
+                    });
+                }
+            }
+            DelegateeKind::Unknown => {
                 return Err(AuthorityError::InvalidDelegation {
-                    reason: "AI-agent delegatee kind requires a non-empty model_id".into(),
+                    reason: "delegatee kind must be Human or AiAgent for new delegations".into(),
                 });
             }
         }
@@ -636,6 +644,67 @@ mod tests {
             result,
             Err(AuthorityError::InvalidSignature { index: 0 })
         ));
+    }
+
+    #[test]
+    fn delegate_rejects_unknown_delegatee_kind_for_new_grants() {
+        let mut reg = DelegationRegistry::new();
+        let keypair = KeyPair::generate();
+        let public_key = public_key(&keypair);
+        let from = did("alice");
+        let to = did("bob");
+
+        let result = reg.delegate(
+            DelegationGrant {
+                from: &from,
+                to: &to,
+                scope: &[Permission::Read],
+                expires: ts(10000),
+                now: &now(),
+                delegatee_kind: DelegateeKind::Unknown,
+                delegator_public_key: &public_key,
+            },
+            |payload| keypair.sign(payload),
+        );
+
+        assert!(matches!(
+            result,
+            Err(AuthorityError::InvalidDelegation { reason })
+                if reason.contains("delegatee kind")
+        ));
+    }
+
+    #[test]
+    fn delegate_accepts_ai_agent_delegatee_kind_with_model_id() {
+        let mut reg = DelegationRegistry::new();
+        let keypair = KeyPair::generate();
+        let public_key = public_key(&keypair);
+        let from = did("alice");
+        let to = did("agent");
+
+        let link = reg
+            .delegate(
+                DelegationGrant {
+                    from: &from,
+                    to: &to,
+                    scope: &[Permission::Read],
+                    expires: ts(10000),
+                    now: &now(),
+                    delegatee_kind: DelegateeKind::AiAgent {
+                        model_id: "exo-agent-v1".to_owned(),
+                    },
+                    delegator_public_key: &public_key,
+                },
+                |payload| keypair.sign(payload),
+            )
+            .expect("valid AI-agent delegation");
+
+        assert_eq!(
+            link.delegatee_kind,
+            DelegateeKind::AiAgent {
+                model_id: "exo-agent-v1".to_owned()
+            }
+        );
     }
 
     #[test]
