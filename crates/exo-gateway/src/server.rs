@@ -30,7 +30,6 @@ use exo_identity::{
 };
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use tokio::net::TcpListener;
 use tower::limit::GlobalConcurrencyLimitLayer;
 use tower_http::trace::TraceLayer;
@@ -1286,9 +1285,10 @@ async fn handle_decision_get(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_authenticated_session_actor_from_header(&state, &headers).await {
-        return auth_boundary_error_response(e);
-    }
+    let actor = match require_authenticated_session_user_from_header(&state, &headers).await {
+        Ok(actor) => actor,
+        Err(e) => return auth_boundary_error_response(e),
+    };
     let db = match state.require_db() {
         Ok(pool) => pool,
         Err(_) => {
@@ -1299,17 +1299,8 @@ async fn handle_decision_get(
                 .into_response();
         }
     };
-    match sqlx::query("SELECT payload FROM decisions WHERE id_hash = $1")
-        .bind(&id)
-        .fetch_optional(db)
-        .await
-    {
-        Ok(Some(row)) => match row.try_get::<serde_json::Value, _>("payload") {
-            Ok(payload) => Json::<serde_json::Value>(payload).into_response(),
-            Err(e) => {
-                internal_error_response(e, "decision payload decode", "decision lookup failed")
-            }
-        },
+    match db::find_decision(db, &id, &actor.tenant_id).await {
+        Ok(Some(row)) => Json::<serde_json::Value>(row.payload).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "decision not found" })),
@@ -1807,6 +1798,20 @@ async fn require_authenticated_session_actor_from_header(
     let token = require_bearer_token(headers)?;
     let observed_at = required_observed_at_ms_header(headers)?;
     require_authenticated_session_actor_for_token(state, &token, observed_at).await
+}
+
+async fn require_authenticated_session_user_from_header(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<db::UserRow> {
+    let actor = require_authenticated_session_actor_from_header(state, headers).await?;
+    let db = state.require_db()?;
+    db::find_user_by_did(db, actor.as_str())
+        .await
+        .map_err(|e| GatewayError::Internal(format!("session user lookup failed: {e}")))?
+        .ok_or_else(|| GatewayError::AuthenticationFailed {
+            reason: "authenticated session actor has no tenant profile".to_owned(),
+        })
 }
 
 async fn require_authenticated_session_actor(
@@ -3188,6 +3193,32 @@ mod tests {
         .unwrap();
     }
 
+    async fn insert_test_user(pool: &sqlx::PgPool, did: &str, tenant_id: &str) {
+        let email = format!("{did}@example.invalid");
+        sqlx::query("DELETE FROM users WHERE did = $1 OR email = $2")
+            .bind(did)
+            .bind(&email)
+            .execute(pool)
+            .await
+            .unwrap();
+        db::insert_user(
+            pool,
+            did,
+            "Reader",
+            &email,
+            &serde_json::json!(["reader"]),
+            tenant_id,
+            10_000_i64,
+            "Active",
+            "Unenrolled",
+            "redacted-test-hash",
+            "redacted-test-salt",
+            false,
+        )
+        .await
+        .unwrap();
+    }
+
     // --- GatewayConfig / start() (existing tests preserved) ---
 
     #[test]
@@ -3643,6 +3674,7 @@ mod tests {
         ] {
             let auth = handler
                 .find("require_authenticated_session_actor_from_header")
+                .or_else(|| handler.find("require_authenticated_session_user_from_header"))
                 .unwrap_or_else(|| panic!("{name} must authenticate the bearer session"));
             let read = handler
                 .find(state_read)
@@ -3652,6 +3684,29 @@ mod tests {
                 "{name} must authenticate before reading protected gateway state"
             );
         }
+    }
+
+    #[test]
+    fn decision_get_uses_authenticated_actor_tenant_for_lookup() {
+        let source = include_str!("server.rs");
+        let handler = source_between(
+            source,
+            "async fn handle_decision_get",
+            "/// GET /api/v1/audit/:decision_id",
+        );
+
+        assert!(
+            handler.contains("require_authenticated_session_user_from_header"),
+            "decision get must load the authenticated session actor's tenant profile"
+        );
+        assert!(
+            handler.contains("db::find_decision(db, &id, &actor.tenant_id)"),
+            "decision get must query decisions using the authenticated actor tenant"
+        );
+        assert!(
+            !handler.contains("SELECT payload FROM decisions WHERE id_hash = $1"),
+            "decision get must not perform an unscoped id_hash lookup"
+        );
     }
 
     #[test]
@@ -4253,7 +4308,8 @@ mod tests {
             Some(pool) => pool,
             None => return,
         };
-        insert_test_session(&pool, "decision-get-token", "did:exo:reader").await;
+        insert_test_user(&pool, "did:exo:decision-reader", "tenant-read").await;
+        insert_test_session(&pool, "decision-get-token", "did:exo:decision-reader").await;
         sqlx::query("DELETE FROM decisions WHERE id_hash = $1")
             .bind("decision-get-authenticated")
             .execute(&pool)
@@ -4309,6 +4365,84 @@ mod tests {
             .unwrap();
         sqlx::query("DELETE FROM sessions WHERE token = $1")
             .bind("decision-get-token")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM users WHERE did = $1")
+            .bind("did:exo:decision-reader")
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn decision_get_rejects_cross_tenant_session_actor() {
+        let pool = match gateway_test_pool().await {
+            Some(pool) => pool,
+            None => return,
+        };
+        insert_test_user(&pool, "did:exo:tenant-b-reader", "tenant-b").await;
+        insert_test_session(
+            &pool,
+            "decision-get-cross-tenant-token",
+            "did:exo:tenant-b-reader",
+        )
+        .await;
+        sqlx::query("DELETE FROM decisions WHERE id_hash = $1")
+            .bind("decision-get-cross-tenant")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let payload = serde_json::json!({
+            "id": "decision-get-cross-tenant",
+            "tenant_id": "tenant-a",
+            "status": "Open",
+        });
+        db::insert_decision(
+            &pool,
+            "decision-get-cross-tenant",
+            "tenant-a",
+            "Open",
+            "Cross-tenant read",
+            "Routine",
+            "did:exo:author",
+            11_000,
+            "exochain-constitution-v1",
+            &payload,
+        )
+        .await
+        .unwrap();
+
+        let app = build_router(AppState::new(
+            Some(pool.clone()),
+            Arc::new(RwLock::new(LocalDidRegistry::new())),
+        ));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/decisions/decision-get-cross-tenant")
+                    .header("authorization", "Bearer decision-get-cross-tenant-token")
+                    .header(AUTH_OBSERVED_AT_MS_HEADER, "15000")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        sqlx::query("DELETE FROM decisions WHERE id_hash = $1")
+            .bind("decision-get-cross-tenant")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM sessions WHERE token = $1")
+            .bind("decision-get-cross-tenant-token")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM users WHERE did = $1")
+            .bind("did:exo:tenant-b-reader")
             .execute(&pool)
             .await
             .unwrap();

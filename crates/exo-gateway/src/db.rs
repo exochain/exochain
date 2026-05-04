@@ -115,11 +115,14 @@ pub async fn find_user_by_did(pool: &PgPool, did: &str) -> Result<Option<UserRow
     ).bind(did).fetch_optional(pool).await
 }
 
-/// List all users ordered by creation time.
-pub async fn list_users_db(pool: &PgPool) -> Result<Vec<PublicUserRow>, sqlx::Error> {
+/// List users for a tenant ordered by creation time.
+pub async fn list_users_db(
+    pool: &PgPool,
+    tenant_id: &str,
+) -> Result<Vec<PublicUserRow>, sqlx::Error> {
     sqlx::query_as::<_, PublicUserRow>(
-        "SELECT did, display_name, email, roles, tenant_id, created_at, status, pace_status, mfa_enabled FROM users ORDER BY created_at LIMIT $1"
-    ).bind(MAX_DB_LIST_ROWS).fetch_all(pool).await
+        "SELECT did, display_name, email, roles, tenant_id, created_at, status, pace_status, mfa_enabled FROM users WHERE tenant_id = $1 ORDER BY created_at LIMIT $2"
+    ).bind(tenant_id).bind(MAX_DB_LIST_ROWS).fetch_all(pool).await
 }
 
 /// Update a user's PACE enrollment status.
@@ -352,17 +355,21 @@ pub async fn upsert_decision(
 pub async fn find_decision(
     pool: &PgPool,
     id_hash: &str,
+    tenant_id: &str,
 ) -> Result<Option<DecisionRow>, sqlx::Error> {
     sqlx::query_as::<_, DecisionRow>(
-        "SELECT id_hash, tenant_id, status, title, decision_class, author, created_at_ms, constitution_version, payload FROM decisions WHERE id_hash = $1"
-    ).bind(id_hash).fetch_optional(pool).await
+        "SELECT id_hash, tenant_id, status, title, decision_class, author, created_at_ms, constitution_version, payload FROM decisions WHERE id_hash = $1 AND tenant_id = $2"
+    ).bind(id_hash).bind(tenant_id).fetch_optional(pool).await
 }
 
-/// List all decisions ordered by creation timestamp.
-pub async fn list_decisions_db(pool: &PgPool) -> Result<Vec<DecisionRow>, sqlx::Error> {
+/// List decisions for a tenant ordered by creation timestamp.
+pub async fn list_decisions_db(
+    pool: &PgPool,
+    tenant_id: &str,
+) -> Result<Vec<DecisionRow>, sqlx::Error> {
     sqlx::query_as::<_, DecisionRow>(
-        "SELECT id_hash, tenant_id, status, title, decision_class, author, created_at_ms, constitution_version, payload FROM decisions ORDER BY created_at_ms LIMIT $1"
-    ).bind(MAX_DB_LIST_ROWS).fetch_all(pool).await
+        "SELECT id_hash, tenant_id, status, title, decision_class, author, created_at_ms, constitution_version, payload FROM decisions WHERE tenant_id = $1 ORDER BY created_at_ms LIMIT $2"
+    ).bind(tenant_id).bind(MAX_DB_LIST_ROWS).fetch_all(pool).await
 }
 
 /// Update a decision's status and JSONB payload by its content hash.
@@ -1161,6 +1168,7 @@ mod tests {
             include_str!("../migrations/20260426000001_livesafe_composite_basis_points.sql"),
             include_str!("../migrations/20260427000001_create_conflict_declarations.sql"),
             include_str!("../migrations/20260504000001_add_gateway_runtime_query_indexes.sql"),
+            include_str!("../migrations/20260504000002_add_gateway_tenant_scope_indexes.sql"),
         ]
         .join("\n")
     }
@@ -1177,6 +1185,16 @@ mod tests {
         let after_start = &source[start..];
         let end = after_start.find("\n/// ").unwrap_or(after_start.len());
         &after_start[..end]
+    }
+
+    fn contains_in_order(source: &str, first: &str, second: &str) -> bool {
+        let Some(first_index) = source.find(first) else {
+            return false;
+        };
+        let Some(second_index) = source.find(second) else {
+            return false;
+        };
+        first_index < second_index
     }
 
     #[test]
@@ -1268,6 +1286,7 @@ mod tests {
 
         for index_sql in [
             "CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);",
+            "CREATE INDEX IF NOT EXISTS idx_users_tenant_created_at ON users(tenant_id, created_at);",
             "CREATE INDEX IF NOT EXISTS idx_agents_tenant_created_at ON agents(tenant_id, created_at);",
             "CREATE INDEX IF NOT EXISTS idx_agents_created_at ON agents(created_at);",
             "CREATE INDEX IF NOT EXISTS idx_decisions_tenant_created_at_ms ON decisions(tenant_id, created_at_ms);",
@@ -1282,6 +1301,60 @@ mod tests {
                 "gateway migration set must include runtime query index: {index_sql}"
             );
         }
+    }
+
+    #[test]
+    fn user_and_decision_list_queries_require_tenant_scope() {
+        let source = production_source();
+        let users = function_source(source, "list_users_db");
+        let decisions = function_source(source, "list_decisions_db");
+
+        assert!(
+            users.contains("tenant_id: &str"),
+            "list_users_db must require an explicit tenant scope"
+        );
+        assert!(
+            compact_sql(users)
+                .contains("FROM users WHERE tenant_id = $1 ORDER BY created_at LIMIT $2"),
+            "list_users_db must filter by tenant_id before ordering or limiting rows"
+        );
+        assert!(
+            contains_in_order(users, ".bind(tenant_id)", ".bind(MAX_DB_LIST_ROWS)"),
+            "list_users_db must bind tenant_id before the row limit"
+        );
+
+        assert!(
+            decisions.contains("tenant_id: &str"),
+            "list_decisions_db must require an explicit tenant scope"
+        );
+        assert!(
+            compact_sql(decisions)
+                .contains("FROM decisions WHERE tenant_id = $1 ORDER BY created_at_ms LIMIT $2"),
+            "list_decisions_db must filter by tenant_id before ordering or limiting rows"
+        );
+        assert!(
+            contains_in_order(decisions, ".bind(tenant_id)", ".bind(MAX_DB_LIST_ROWS)"),
+            "list_decisions_db must bind tenant_id before the row limit"
+        );
+    }
+
+    #[test]
+    fn decision_lookup_requires_tenant_scope() {
+        let source = production_source();
+        let lookup = function_source(source, "find_decision");
+
+        assert!(
+            lookup.contains("tenant_id: &str"),
+            "find_decision must require an explicit tenant scope"
+        );
+        assert!(
+            compact_sql(lookup).contains("FROM decisions WHERE id_hash = $1 AND tenant_id = $2"),
+            "find_decision must include tenant_id in the decision lookup predicate"
+        );
+        assert!(
+            contains_in_order(lookup, ".bind(id_hash)", ".bind(tenant_id)"),
+            "find_decision must bind id_hash and tenant_id together"
+        );
     }
 
     #[test]
