@@ -452,7 +452,8 @@ impl AppState {
 #[derive(Debug)]
 enum RegistryBlockingError {
     Registration(IdentityError),
-    Operation(String),
+    Authentication(String),
+    Persistence(String),
     Join(String),
 }
 
@@ -460,7 +461,8 @@ impl fmt::Display for RegistryBlockingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Registration(error) => write!(f, "registry registration failed: {error}"),
-            Self::Operation(error) => write!(f, "registry operation failed: {error}"),
+            Self::Authentication(error) => write!(f, "registry authentication failed: {error}"),
+            Self::Persistence(error) => write!(f, "registry persistence failed: {error}"),
             Self::Join(error) => write!(f, "registry blocking task failed: {error}"),
         }
     }
@@ -508,6 +510,22 @@ async fn registry_register_document(
     .map_err(|e| RegistryBlockingError::Join(e.to_string()))?
 }
 
+async fn registry_cache_document(
+    registry: Arc<RwLock<LocalDidRegistry>>,
+    doc: DidDocument,
+) -> std::result::Result<(), RegistryBlockingError> {
+    tokio::task::spawn_blocking(move || {
+        let mut reg = registry.write().unwrap_or_else(|e| e.into_inner());
+        match reg.register(doc) {
+            Ok(()) | Err(IdentityError::DuplicateDid(_)) => Ok(()),
+            Err(IdentityError::RegistryCapacityExceeded { .. }) => Ok(()),
+            Err(error) => Err(RegistryBlockingError::Registration(error)),
+        }
+    })
+    .await
+    .map_err(|e| RegistryBlockingError::Join(e.to_string()))?
+}
+
 async fn registry_resolve_document(
     registry: Arc<RwLock<LocalDidRegistry>>,
     did: Did,
@@ -520,6 +538,53 @@ async fn registry_resolve_document(
     .map_err(|e| RegistryBlockingError::Join(e.to_string()))?
 }
 
+fn validate_did_document_for_registration(
+    doc: &DidDocument,
+) -> std::result::Result<(), IdentityError> {
+    let mut registry = LocalDidRegistry::with_max_documents(1);
+    registry.register(doc.clone())
+}
+
+async fn register_did_document(
+    state: &AppState,
+    doc: DidDocument,
+) -> std::result::Result<(), RegistryBlockingError> {
+    if let Some(pool) = state.pool.as_ref() {
+        validate_did_document_for_registration(&doc)
+            .map_err(RegistryBlockingError::Registration)?;
+        let inserted = db::insert_did_document(pool, &doc)
+            .await
+            .map_err(|e| RegistryBlockingError::Persistence(e.to_string()))?;
+        if !inserted {
+            return Err(RegistryBlockingError::Registration(
+                IdentityError::DuplicateDid(doc.id.clone()),
+            ));
+        }
+        registry_cache_document(Arc::clone(&state.registry), doc).await
+    } else {
+        registry_register_document(Arc::clone(&state.registry), doc).await
+    }
+}
+
+async fn resolve_did_document(
+    state: &AppState,
+    did: Did,
+) -> std::result::Result<Option<DidDocument>, RegistryBlockingError> {
+    if let Some(pool) = state.pool.as_ref() {
+        let did_str = did.as_str().to_owned();
+        let Some(doc) = db::find_did_document(pool, &did_str)
+            .await
+            .map_err(|e| RegistryBlockingError::Persistence(e.to_string()))?
+        else {
+            return Ok(None);
+        };
+        registry_cache_document(Arc::clone(&state.registry), doc.clone()).await?;
+        Ok(Some(doc))
+    } else {
+        registry_resolve_document(Arc::clone(&state.registry), did).await
+    }
+}
+
 async fn registry_list_dids(
     registry: Arc<RwLock<LocalDidRegistry>>,
 ) -> std::result::Result<Vec<String>, RegistryBlockingError> {
@@ -529,6 +594,16 @@ async fn registry_list_dids(
     })
     .await
     .map_err(|e| RegistryBlockingError::Join(e.to_string()))?
+}
+
+async fn list_dids(state: &AppState) -> std::result::Result<Vec<String>, RegistryBlockingError> {
+    if let Some(pool) = state.pool.as_ref() {
+        db::list_did_document_ids(pool)
+            .await
+            .map_err(|e| RegistryBlockingError::Persistence(e.to_string()))
+    } else {
+        registry_list_dids(Arc::clone(&state.registry)).await
+    }
 }
 
 async fn registry_len(
@@ -552,10 +627,42 @@ async fn registry_authenticate_session_login(
         let reg = registry.read().unwrap_or_else(|e| e.into_inner());
         authenticate_session_login(&did, &metadata, &proof, &*reg)
             .map(|_| ())
-            .map_err(|e| RegistryBlockingError::Operation(e.to_string()))
+            .map_err(|e| RegistryBlockingError::Authentication(e.to_string()))
     })
     .await
     .map_err(|e| RegistryBlockingError::Join(e.to_string()))?
+}
+
+async fn authenticate_session_login_with_state(
+    state: &AppState,
+    did: String,
+    metadata: SessionIssueMetadata,
+    proof: SessionLoginProof,
+) -> std::result::Result<(), RegistryBlockingError> {
+    if let Some(pool) = state.pool.as_ref() {
+        let Some(doc) = db::find_did_document(pool, &did)
+            .await
+            .map_err(|e| RegistryBlockingError::Persistence(e.to_string()))?
+        else {
+            return Err(RegistryBlockingError::Authentication(
+                "DID is not registered".to_owned(),
+            ));
+        };
+        registry_cache_document(Arc::clone(&state.registry), doc.clone()).await?;
+        tokio::task::spawn_blocking(move || {
+            let mut registry = LocalDidRegistry::with_max_documents(1);
+            registry
+                .register(doc)
+                .map_err(RegistryBlockingError::Registration)?;
+            authenticate_session_login(&did, &metadata, &proof, &registry)
+                .map(|_| ())
+                .map_err(|e| RegistryBlockingError::Authentication(e.to_string()))
+        })
+        .await
+        .map_err(|e| RegistryBlockingError::Join(e.to_string()))?
+    } else {
+        registry_authenticate_session_login(Arc::clone(&state.registry), did, metadata, proof).await
+    }
 }
 
 fn decode_conflict_declaration_payload(
@@ -1064,7 +1171,7 @@ async fn handle_auth_register(
     Json(doc): Json<DidDocument>,
 ) -> impl IntoResponse {
     let did_str = doc.id.as_str().to_owned();
-    match registry_register_document(Arc::clone(&state.registry), doc).await {
+    match register_did_document(&state, doc).await {
         Ok(()) => (
             StatusCode::CREATED,
             Json(serde_json::json!({ "did": did_str, "status": "registered" })),
@@ -1095,7 +1202,7 @@ async fn handle_auth_me(State(state): State<AppState>, headers: HeaderMap) -> im
         Ok(actor) => actor,
         Err(e) => return auth_boundary_error_response(e),
     };
-    match registry_resolve_document(Arc::clone(&state.registry), did).await {
+    match resolve_did_document(&state, did).await {
         Ok(Some(doc)) => Json(doc).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
@@ -1123,7 +1230,7 @@ async fn handle_agents_list(
     if let Err(e) = require_authenticated_session_actor_from_header(&state, &headers).await {
         return auth_boundary_error_response(e);
     }
-    match registry_list_dids(Arc::clone(&state.registry)).await {
+    match list_dids(&state).await {
         Ok(dids) => Json(serde_json::json!({ "agents": dids })).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "DID registry listing failed");
@@ -1157,7 +1264,7 @@ async fn handle_agent_get(
                 .into_response();
         }
     };
-    match registry_resolve_document(Arc::clone(&state.registry), did).await {
+    match resolve_did_document(&state, did).await {
         Ok(Some(doc)) => Json(doc).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
@@ -1196,7 +1303,7 @@ async fn handle_identity_score(
                 .into_response();
         }
     };
-    match registry_resolve_document(Arc::clone(&state.registry), did).await {
+    match resolve_did_document(&state, did).await {
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
@@ -1292,7 +1399,7 @@ async fn handle_users_list(State(state): State<AppState>, headers: HeaderMap) ->
     if let Err(e) = require_authenticated_session_actor_from_header(&state, &headers).await {
         return auth_boundary_error_response(e);
     }
-    match registry_list_dids(Arc::clone(&state.registry)).await {
+    match list_dids(&state).await {
         Ok(dids) => Json(serde_json::json!({ "users": dids })).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "DID registry listing failed");
@@ -1400,7 +1507,7 @@ async fn handle_agents_enroll(
     Json(doc): Json<DidDocument>,
 ) -> impl IntoResponse {
     let did_str = doc.id.as_str().to_owned();
-    match registry_register_document(Arc::clone(&state.registry), doc).await {
+    match register_did_document(&state, doc).await {
         Ok(()) => (
             StatusCode::CREATED,
             Json(serde_json::json!({ "did": did_str, "status": "enrolled" })),
@@ -1482,16 +1589,9 @@ async fn handle_auth_login(
         Ok(proof) => proof,
         Err(e) => return metadata_error_response(e),
     };
-    match registry_authenticate_session_login(
-        Arc::clone(&state.registry),
-        did_str.clone(),
-        metadata,
-        proof,
-    )
-    .await
-    {
+    match authenticate_session_login_with_state(&state, did_str.clone(), metadata, proof).await {
         Ok(()) => {}
-        Err(RegistryBlockingError::Operation(e)) => {
+        Err(RegistryBlockingError::Authentication(e)) => {
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({
@@ -3691,9 +3791,9 @@ mod tests {
         );
 
         for (name, handler, state_read) in [
-            ("agents list", agents_list, "registry_list_dids"),
-            ("agent get", agent_get, "registry_resolve_document"),
-            ("users list", users_list, "registry_list_dids"),
+            ("agents list", agents_list, "list_dids"),
+            ("agent get", agent_get, "resolve_did_document"),
+            ("users list", users_list, "list_dids"),
             ("decision get", decision_get, "state.require_db"),
             ("audit trail", audit_trail, "state.require_db"),
         ] {
@@ -3796,6 +3896,95 @@ mod tests {
                 "\"/api/v1/agents/enroll\",post(handle_agents_enroll).layer(DefaultBodyLimit::max(MAX_DID_DOCUMENT_BODY_BYTES))"
             ),
             "agents/enroll must apply the DID document body budget at the route"
+        );
+    }
+
+    #[test]
+    fn db_configured_identity_paths_do_not_depend_on_local_did_memory() {
+        let source = include_str!("server.rs");
+
+        let auth_register = source_between(
+            source,
+            "async fn handle_auth_register",
+            "/// GET /api/v1/auth/me",
+        );
+        assert!(
+            auth_register.contains("register_did_document(&state, doc).await"),
+            "auth/register must persist through the AppState DB-backed DID path when a pool is configured"
+        );
+        assert!(
+            !auth_register.contains("registry_register_document(Arc::clone(&state.registry), doc)"),
+            "auth/register must not write only to LocalDidRegistry"
+        );
+
+        let auth_me = source_between(
+            source,
+            "async fn handle_auth_me",
+            "/// GET /api/v1/auth/agents",
+        );
+        assert!(
+            auth_me.contains("resolve_did_document(&state, did).await"),
+            "auth/me must resolve persisted DID documents after a restart"
+        );
+
+        let agents_list = source_between(
+            source,
+            "async fn handle_agents_list",
+            "/// GET /api/v1/agents/:did",
+        );
+        assert!(
+            agents_list.contains("list_dids(&state).await"),
+            "agents list must read persisted DID ids when a DB pool is configured"
+        );
+
+        let agent_get = source_between(
+            source,
+            "async fn handle_agent_get",
+            "/// GET /api/v1/identity/:did/score",
+        );
+        assert!(
+            agent_get.contains("resolve_did_document(&state, did).await"),
+            "agent lookup must resolve persisted DID documents after a restart"
+        );
+
+        let agents_enroll = source_between(
+            source,
+            "async fn handle_agents_enroll",
+            "// ---------------------------------------------------------------------------\n// Session auth handlers",
+        );
+        assert!(
+            agents_enroll.contains("register_did_document(&state, doc).await"),
+            "agents/enroll must share the DB-backed DID persistence path"
+        );
+
+        let auth_login = source_between(
+            source,
+            "async fn handle_auth_login",
+            "/// POST /api/v1/auth/token",
+        );
+        assert!(
+            auth_login.contains("authenticate_session_login_with_state(&state,"),
+            "login proof verification must use the persisted DID document path when a DB pool is configured"
+        );
+
+        let identity_score = source_between(
+            source,
+            "async fn handle_identity_score",
+            "/// GET /api/v1/identity/status",
+        );
+        assert!(
+            identity_score.contains("resolve_did_document(&state, did).await"),
+            "identity score must resolve persisted DID documents after a restart"
+        );
+
+        let users_list = source_between(
+            source,
+            "async fn handle_users_list",
+            "/// GET /api/v1/decisions/:id",
+        );
+        assert!(
+            users_list.contains("list_dids(&state).await"),
+            "users list must read persisted DID ids when a DB pool is configured"
         );
     }
 
@@ -4591,8 +4780,23 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query("DELETE FROM did_documents WHERE did = $1")
+            .bind(did)
+            .execute(&pool)
+            .await
+            .unwrap();
 
         let (registry, sk) = signing_registry();
+        let did_key = Did::new(did).unwrap();
+        let doc = registry
+            .read()
+            .unwrap()
+            .resolve(&did_key)
+            .expect("signing DID document")
+            .clone();
+        db::insert_did_document(&pool, &doc)
+            .await
+            .expect("persist signing DID document");
         let metadata = SessionIssueMetadata {
             created_at: 10_000,
             expires_at: 20_000,
@@ -4613,7 +4817,10 @@ mod tests {
         });
 
         let response = handle_auth_login(
-            State(AppState::new(Some(pool.clone()), registry)),
+            State(AppState::new(
+                Some(pool.clone()),
+                Arc::new(RwLock::new(LocalDidRegistry::new())),
+            )),
             Json(body),
         )
         .await
@@ -4635,6 +4842,11 @@ mod tests {
         assert!(!rows[0].get::<bool, _>("revoked"));
 
         sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
+            .bind(did)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM did_documents WHERE did = $1")
             .bind(did)
             .execute(&pool)
             .await

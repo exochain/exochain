@@ -6,6 +6,7 @@
 
 use std::{fmt, time::Duration};
 
+use exo_identity::did::DidDocument;
 use serde_json::Value as JsonValue;
 use sqlx::{
     Row,
@@ -35,6 +36,38 @@ pub enum DecisionUpdateError {
     #[error("decision update matched no rows for id_hash {id_hash}")]
     MissingDecision { id_hash: String },
     #[error("failed to update decision row")]
+    Query {
+        #[source]
+        source: sqlx::Error,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum DidDocumentPersistenceError {
+    #[error("DID document timestamp is out of database range for {did} field {field}: {value}")]
+    TimestampOutOfRange {
+        did: String,
+        field: &'static str,
+        value: u64,
+    },
+    #[error("failed to serialize DID document for {did}")]
+    Serialize {
+        did: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("failed to deserialize persisted DID document for {did}")]
+    Deserialize {
+        did: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("persisted DID document row key {row_did} does not match payload id {document_did}")]
+    DocumentDidMismatch {
+        row_did: String,
+        document_did: String,
+    },
+    #[error("DID document persistence query failed")]
     Query {
         #[source]
         source: sqlx::Error,
@@ -75,6 +108,102 @@ pub async fn next_hlc(pool: &PgPool) -> Result<i64, sqlx::Error> {
         .fetch_one(pool)
         .await?;
     Ok(row.get::<i64, _>("counter"))
+}
+
+// ---------------------------------------------------------------------------
+// DID documents
+// ---------------------------------------------------------------------------
+
+fn timestamp_ms_to_i64(
+    did: &str,
+    field: &'static str,
+    value: u64,
+) -> Result<i64, DidDocumentPersistenceError> {
+    i64::try_from(value).map_err(|_| DidDocumentPersistenceError::TimestampOutOfRange {
+        did: did.to_owned(),
+        field,
+        value,
+    })
+}
+
+pub async fn insert_did_document(
+    pool: &PgPool,
+    doc: &DidDocument,
+) -> Result<bool, DidDocumentPersistenceError> {
+    let did = doc.id.as_str();
+    let document =
+        serde_json::to_value(doc).map_err(|source| DidDocumentPersistenceError::Serialize {
+            did: did.to_owned(),
+            source,
+        })?;
+    let created_at_ms = timestamp_ms_to_i64(did, "created", doc.created.physical_ms)?;
+    let updated_at_ms = timestamp_ms_to_i64(did, "updated", doc.updated.physical_ms)?;
+
+    let result = sqlx::query(
+        "INSERT INTO did_documents (did, document, created_at_ms, updated_at_ms, revoked) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (did) DO NOTHING",
+    )
+    .bind(did)
+    .bind(document)
+    .bind(created_at_ms)
+    .bind(updated_at_ms)
+    .bind(doc.revoked)
+    .execute(pool)
+    .await
+    .map_err(|source| DidDocumentPersistenceError::Query { source })?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn find_did_document(
+    pool: &PgPool,
+    did: &str,
+) -> Result<Option<DidDocument>, DidDocumentPersistenceError> {
+    let row = sqlx::query(
+        "SELECT document \
+         FROM did_documents \
+         WHERE did = $1 AND revoked = false",
+    )
+    .bind(did)
+    .fetch_optional(pool)
+    .await
+    .map_err(|source| DidDocumentPersistenceError::Query { source })?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let document = row.get::<JsonValue, _>("document");
+    let doc = serde_json::from_value::<DidDocument>(document).map_err(|source| {
+        DidDocumentPersistenceError::Deserialize {
+            did: did.to_owned(),
+            source,
+        }
+    })?;
+    if doc.id.as_str() != did {
+        return Err(DidDocumentPersistenceError::DocumentDidMismatch {
+            row_did: did.to_owned(),
+            document_did: doc.id.as_str().to_owned(),
+        });
+    }
+    Ok(Some(doc))
+}
+
+pub async fn list_did_document_ids(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT did \
+         FROM did_documents \
+         WHERE revoked = false \
+         ORDER BY did \
+         LIMIT $1",
+    )
+    .bind(MAX_DB_LIST_ROWS)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| row.get::<String, _>("did"))
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -1190,6 +1319,20 @@ mod tests {
         .join("\n")
     }
 
+    fn migration_sources_from_disk() -> String {
+        let migration_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let mut entries = std::fs::read_dir(&migration_dir)
+            .expect("read migrations directory")
+            .map(|entry| entry.expect("migration dir entry").path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        entries
+            .into_iter()
+            .map(|path| std::fs::read_to_string(path).expect("read migration"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn compact_sql(sql: &str) -> String {
         sql.split_whitespace().collect::<Vec<_>>().join(" ")
     }
@@ -1318,6 +1461,38 @@ mod tests {
                 "gateway migration set must include runtime query index: {index_sql}"
             );
         }
+    }
+
+    #[test]
+    fn did_documents_have_durable_schema_and_persistence_helpers() {
+        let migrations = compact_sql(&migration_sources_from_disk());
+        assert!(
+            migrations.contains("CREATE TABLE IF NOT EXISTS did_documents ("),
+            "DB-backed gateway identity must persist DID documents instead of relying on LocalDidRegistry memory"
+        );
+        assert!(
+            migrations.contains("did TEXT PRIMARY KEY"),
+            "persisted DID documents must be keyed by DID"
+        );
+        assert!(
+            migrations.contains("document JSONB NOT NULL"),
+            "persisted DID documents must retain the canonical serialized document payload"
+        );
+
+        let source = production_source();
+        let insert_source = function_source(source, "insert_did_document");
+        assert!(insert_source.contains("INSERT INTO did_documents"));
+        assert!(insert_source.contains("ON CONFLICT (did) DO NOTHING"));
+        assert!(insert_source.contains("rows_affected()"));
+
+        let lookup_source = function_source(source, "find_did_document");
+        assert!(lookup_source.contains("FROM did_documents"));
+        assert!(lookup_source.contains("serde_json::from_value"));
+
+        let list_source = function_source(source, "list_did_document_ids");
+        assert!(list_source.contains("FROM did_documents"));
+        assert!(list_source.contains("LIMIT $"));
+        assert!(list_source.contains(".bind(MAX_DB_LIST_ROWS)"));
     }
 
     #[test]
