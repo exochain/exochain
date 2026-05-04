@@ -312,7 +312,7 @@ pub async fn vote_handler(
     Json(body): Json<VoteRequest>,
 ) -> impl IntoResponse {
     let actor = match state
-        .require_authenticated_session_actor_from_header(&headers)
+        .require_authenticated_session_user_from_header(&headers)
         .await
     {
         Ok(actor) => actor,
@@ -328,7 +328,7 @@ pub async fn vote_handler(
                 .into_response();
         }
     };
-    if actor != voter_did {
+    if actor.did != voter_did {
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({
@@ -433,10 +433,13 @@ pub async fn vote_handler(
     };
 
     // Load and deserialize DecisionObject from DB.
-    let row = sqlx::query("SELECT tenant_id, payload FROM decisions WHERE id_hash = $1 FOR UPDATE")
-        .bind(&body.decision_id)
-        .fetch_optional(&mut *tx)
-        .await;
+    let row = sqlx::query(
+        "SELECT tenant_id, payload FROM decisions WHERE id_hash = $1 AND tenant_id = $2 FOR UPDATE",
+    )
+    .bind(&body.decision_id)
+    .bind(&actor.tenant_id)
+    .fetch_optional(&mut *tx)
+    .await;
     let (tenant_id, payload_val): (String, Value) = match row {
         Ok(Some(r)) => {
             let tenant_id = match r.try_get::<String, _>("tenant_id") {
@@ -609,11 +612,13 @@ pub async fn vote_handler(
     };
 
     // Persist updated decision.
-    if let Err(e) = sqlx::query("UPDATE decisions SET payload = $1 WHERE id_hash = $2")
-        .bind(&updated_payload)
-        .bind(&body.decision_id)
-        .execute(&mut *tx)
-        .await
+    if let Err(e) =
+        sqlx::query("UPDATE decisions SET payload = $1 WHERE id_hash = $2 AND tenant_id = $3")
+            .bind(&updated_payload)
+            .bind(&body.decision_id)
+            .bind(&actor.tenant_id)
+            .execute(&mut *tx)
+            .await
     {
         tracing::error!(error = %e, "failed to persist vote");
         return (
@@ -1095,7 +1100,7 @@ mod tests {
             .next()
             .expect("vote handler source end");
         let auth_index = vote_handler
-            .find("require_authenticated_session_actor_from_header")
+            .find("require_authenticated_session_user_from_header")
             .expect("vote handler must authenticate a bearer session");
         let conflict_index = vote_handler
             .find("load_conflict_declarations(&voter_did)")
@@ -1109,7 +1114,7 @@ mod tests {
             "vote handler must authenticate before conflict and kernel checks"
         );
         assert!(
-            vote_handler.contains("if actor != voter_did"),
+            vote_handler.contains("if actor.did != voter_did"),
             "vote handler must reject body voter_did spoofing"
         );
     }
@@ -1156,6 +1161,42 @@ mod tests {
         assert!(
             !vote_handler.contains(".execute(db)"),
             "vote handler must not update the mutable decision outside the transaction"
+        );
+    }
+
+    #[test]
+    fn vote_handler_scopes_decision_mutation_to_authenticated_actor_tenant() {
+        let source = include_str!("handlers.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker present");
+        let vote_handler = production
+            .split("pub async fn vote_handler")
+            .nth(1)
+            .expect("vote handler source present")
+            .split("// ── Health handler")
+            .next()
+            .expect("vote handler source end");
+
+        assert!(
+            vote_handler.contains("require_authenticated_session_user_from_header(&headers)"),
+            "vote handler must derive tenant scope from the authenticated session actor"
+        );
+        assert!(
+            vote_handler
+                .contains("FROM decisions WHERE id_hash = $1 AND tenant_id = $2 FOR UPDATE"),
+            "vote handler must lock only the decision row in the actor tenant"
+        );
+        assert!(
+            vote_handler.contains(".bind(&actor.tenant_id)"),
+            "vote handler must bind the authenticated actor tenant to decision queries"
+        );
+        assert!(
+            vote_handler.contains(
+                "UPDATE decisions SET payload = $1 WHERE id_hash = $2 AND tenant_id = $3"
+            ),
+            "vote handler must update only the decision row in the actor tenant"
         );
     }
 

@@ -269,6 +269,14 @@ pub struct AppState {
     rate_limiter: Arc<Mutex<GatewayRateLimiter>>,
 }
 
+/// Non-secret authenticated session profile used to carry tenant scope across
+/// gateway runtime adapter boundaries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedSessionUser {
+    pub did: Did,
+    pub tenant_id: String,
+}
+
 impl AppState {
     /// Create a new `AppState` with an optional database pool and a shared DID registry.
     pub fn new(pool: Option<sqlx::PgPool>, registry: Arc<RwLock<LocalDidRegistry>>) -> Self {
@@ -341,6 +349,28 @@ impl AppState {
         let token = require_bearer_token(headers)?;
         let observed_at = required_observed_at_ms_header(headers)?;
         require_authenticated_session_actor_for_token(self, &token, observed_at).await
+    }
+
+    /// Resolve the authenticated actor and its tenant scope from DB-backed
+    /// bearer session state.
+    pub async fn require_authenticated_session_user_from_header(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<AuthenticatedSessionUser> {
+        let did = self
+            .require_authenticated_session_actor_from_header(headers)
+            .await?;
+        let db = self.require_db()?;
+        let user = db::find_user_by_did(db, did.as_str())
+            .await
+            .map_err(|e| GatewayError::Internal(format!("session user lookup failed: {e}")))?
+            .ok_or_else(|| GatewayError::AuthenticationFailed {
+                reason: "authenticated session actor has no tenant profile".to_owned(),
+            })?;
+        Ok(AuthenticatedSessionUser {
+            did,
+            tenant_id: user.tenant_id,
+        })
     }
 
     /// Return the number of registered DIDs without blocking a Tokio worker
@@ -1803,15 +1833,10 @@ async fn require_authenticated_session_actor_from_header(
 async fn require_authenticated_session_user_from_header(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<db::UserRow> {
-    let actor = require_authenticated_session_actor_from_header(state, headers).await?;
-    let db = state.require_db()?;
-    db::find_user_by_did(db, actor.as_str())
+) -> Result<AuthenticatedSessionUser> {
+    state
+        .require_authenticated_session_user_from_header(headers)
         .await
-        .map_err(|e| GatewayError::Internal(format!("session user lookup failed: {e}")))?
-        .ok_or_else(|| GatewayError::AuthenticationFailed {
-            reason: "authenticated session actor has no tenant profile".to_owned(),
-        })
 }
 
 async fn require_authenticated_session_actor(
