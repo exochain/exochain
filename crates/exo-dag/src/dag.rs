@@ -280,6 +280,37 @@ pub fn ancestors(dag: &Dag, hash: &Hash256) -> Vec<Hash256> {
     topological_sort(dag, &hashes)
 }
 
+fn has_ancestor_path(dag: &Dag, start: &Hash256, target: &Hash256) -> bool {
+    let mut visited = BTreeSet::new();
+    let mut queue = VecDeque::new();
+
+    if let Some(node) = dag.nodes.get(start) {
+        for parent in &node.parents {
+            if parent == target {
+                return true;
+            }
+            if visited.insert(*parent) {
+                queue.push_back(*parent);
+            }
+        }
+    }
+
+    while let Some(current) = queue.pop_front() {
+        if let Some(node) = dag.nodes.get(&current) {
+            for parent in &node.parents {
+                if parent == target {
+                    return true;
+                }
+                if visited.insert(*parent) {
+                    queue.push_back(*parent);
+                }
+            }
+        }
+    }
+
+    false
+}
+
 /// Topological sort of a set of node hashes.
 fn topological_sort(dag: &Dag, hashes: &[Hash256]) -> Vec<Hash256> {
     let hash_set: BTreeSet<Hash256> = hashes.iter().copied().collect();
@@ -386,11 +417,8 @@ pub fn verify_node(
     }
 
     // Check for cycles: node's hash must not appear in its own ancestors
-    if !node.parents.is_empty() {
-        let ancs = ancestors(dag, &node.hash);
-        if ancs.contains(&node.hash) {
-            return Err(DagError::CycleDetected(node.hash));
-        }
+    if !node.parents.is_empty() && has_ancestor_path(dag, &node.hash, &node.hash) {
+        return Err(DagError::CycleDetected(node.hash));
     }
 
     Ok(())
@@ -408,13 +436,27 @@ mod tests {
     type SignFn = Box<dyn Fn(&[u8]) -> Signature>;
     type VerifyFn = Box<dyn Fn(&[u8], &Signature) -> bool>;
 
-    #[test]
-    fn dag_module_does_not_define_local_hybrid_clock() {
-        let source = include_str!("dag.rs");
-        let production = source
+    fn production_source() -> &'static str {
+        include_str!("dag.rs")
             .split("// ---------------------------------------------------------------------------\n// Tests")
             .next()
-            .expect("production section exists");
+            .expect("production section exists")
+    }
+
+    fn function_source<'a>(source: &'a str, name: &str) -> &'a str {
+        let marker = format!("pub fn {name}(");
+        let start = source.find(&marker).expect("function must be present");
+        let after_start = &source[start..];
+        let next_fn = after_start
+            .find("\n}\n\n")
+            .map(|idx| idx + "\n}\n".len())
+            .expect("function body must terminate");
+        &after_start[..next_fn]
+    }
+
+    #[test]
+    fn dag_module_does_not_define_local_hybrid_clock() {
+        let production = production_source();
 
         assert!(
             !production.contains("pub struct HybridClock")
@@ -424,6 +466,20 @@ mod tests {
         assert!(
             production.contains("pub struct DeterministicDagClock"),
             "exo-dag append tests/helpers should use an explicitly deterministic DAG clock type"
+        );
+    }
+
+    #[test]
+    fn verify_node_cycle_check_does_not_materialize_full_ancestor_list() {
+        let verify_node = function_source(production_source(), "verify_node");
+
+        assert!(
+            !verify_node.contains("ancestors(dag, &node.hash)"),
+            "verify_node must not allocate and topologically sort the full ancestor list on the verification path"
+        );
+        assert!(
+            !verify_node.contains(".contains(&node.hash)"),
+            "verify_node must use early-exit ancestor reachability instead of scanning a materialized list"
         );
     }
 
@@ -622,6 +678,23 @@ mod tests {
     fn ancestors_nonexistent_node() {
         let dag = Dag::new();
         assert!(ancestors(&dag, &Hash256::ZERO).is_empty());
+    }
+
+    #[test]
+    fn ancestor_path_detection_uses_parent_reachability() {
+        let mut dag = Dag::new();
+        let mut clock = DeterministicDagClock::new();
+        let creator = test_did("did:exo:alice");
+        let sign_fn = make_sign_fn();
+
+        let g = append(&mut dag, &[], b"g", &creator, &*sign_fn, &mut clock).unwrap();
+        let c1 = append(&mut dag, &[g.hash], b"c1", &creator, &*sign_fn, &mut clock).unwrap();
+        let c2 = append(&mut dag, &[c1.hash], b"c2", &creator, &*sign_fn, &mut clock).unwrap();
+
+        assert!(has_ancestor_path(&dag, &c2.hash, &g.hash));
+        assert!(has_ancestor_path(&dag, &c2.hash, &c1.hash));
+        assert!(!has_ancestor_path(&dag, &g.hash, &c2.hash));
+        assert!(!has_ancestor_path(&dag, &Hash256::ZERO, &g.hash));
     }
 
     #[test]
