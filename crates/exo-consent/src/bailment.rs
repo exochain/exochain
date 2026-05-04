@@ -185,6 +185,40 @@ pub fn signing_payload(bailment: &Bailment) -> Result<Vec<u8>, ConsentError> {
     Ok(buf)
 }
 
+/// Canonical CBOR signing payload for bailment termination.
+///
+/// The payload binds an actor's termination authorization to the bailment
+/// identity fields, current lifecycle state, optional expiration, and the
+/// actor DID. Including the current state prevents a signature gathered for
+/// one lifecycle state from being replayed after the bailment changes state.
+///
+/// # Errors
+/// Returns `Serialization` on CBOR encoding failure.
+pub fn termination_signing_payload(
+    bailment: &Bailment,
+    actor: &Did,
+) -> Result<Vec<u8>, ConsentError> {
+    let tuple = (
+        "exo.bailment.terminate.v1",
+        &bailment.id,
+        &bailment.bailor_did,
+        &bailment.bailee_did,
+        &bailment.bailment_type,
+        &bailment.terms_hash,
+        &bailment.created,
+        &bailment.expires,
+        &bailment.status,
+        actor,
+    );
+    let mut buf = Vec::new();
+    ciborium::ser::into_writer(&tuple, &mut buf).map_err(|e| {
+        ConsentError::Serialization(format!(
+            "bailment termination signing payload encoding failed: {e}"
+        ))
+    })?;
+    Ok(buf)
+}
+
 /// Accept a proposed bailment. Transitions `Proposed` -> `Active`.
 ///
 /// **Closes GAP-012.** The previous implementation checked only that the
@@ -348,6 +382,46 @@ pub fn terminate(bailment: &mut Bailment, actor: &Did) -> Result<(), ConsentErro
         });
     }
     require_bailment_party(bailment, actor)?;
+    bailment.status = BailmentStatus::Terminated;
+    Ok(())
+}
+
+/// Terminate a bailment only after verifying actor proof-of-control.
+///
+/// `resolve_actor_public_key` must resolve the actor DID from a trusted DID
+/// registry or equivalent authenticated key source. The signature must verify
+/// over [`termination_signing_payload`]. This prevents external adapters from
+/// treating a caller-supplied DID string as authorization.
+///
+/// # Errors
+/// - `InvalidState` if already terminated or expired.
+/// - `Unauthorized` if actor is neither bailor nor bailee.
+/// - `InvalidSignature` if the actor key is unresolved, the signature is a
+///   placeholder/sentinel, or verification fails.
+/// - `Serialization` on canonical encoding failure.
+pub fn terminate_verified(
+    bailment: &mut Bailment,
+    actor: &Did,
+    resolve_actor_public_key: impl FnOnce(&Did) -> Option<PublicKey>,
+    actor_signature: &Signature,
+) -> Result<(), ConsentError> {
+    if bailment.status == BailmentStatus::Terminated || bailment.status == BailmentStatus::Expired {
+        return Err(ConsentError::InvalidState {
+            expected: "Active, Proposed, or Suspended".into(),
+            actual: bailment.status.to_string(),
+        });
+    }
+    require_bailment_party(bailment, actor)?;
+    if actor_signature.is_empty() || actor_signature.ed25519_component_is_zero() {
+        return Err(ConsentError::InvalidSignature);
+    }
+
+    let actor_public_key = resolve_actor_public_key(actor).ok_or(ConsentError::InvalidSignature)?;
+    let payload = termination_signing_payload(bailment, actor)?;
+    if !crypto::verify(&payload, actor_signature, &actor_public_key) {
+        return Err(ConsentError::InvalidSignature);
+    }
+
     bailment.status = BailmentStatus::Terminated;
     Ok(())
 }
@@ -892,6 +966,84 @@ mod tests {
         accept_test_bailment(&mut b);
         suspend(&mut b, &alice()).expect("suspend active bailment");
         assert!(terminate(&mut b, &alice()).is_ok());
+    }
+
+    #[test]
+    fn termination_signing_payload_binds_actor_and_state() {
+        let mut active = propose_test(b"t", BailmentType::Custody);
+        accept_test_bailment(&mut active);
+
+        let actor = alice();
+        let payload = termination_signing_payload(&active, &actor).expect("termination payload");
+        let same_payload =
+            termination_signing_payload(&active, &actor).expect("same termination payload");
+        assert_eq!(payload, same_payload);
+
+        let different_actor =
+            termination_signing_payload(&active, &bob()).expect("different actor payload");
+        assert_ne!(payload, different_actor);
+
+        let mut suspended = active.clone();
+        suspend(&mut suspended, &actor).expect("suspend");
+        let different_state =
+            termination_signing_payload(&suspended, &actor).expect("suspended payload");
+        assert_ne!(payload, different_state);
+    }
+
+    #[test]
+    fn terminate_verified_rejects_unresolved_actor_key() {
+        let mut b = propose_test(b"t", BailmentType::Custody);
+        accept_test_bailment(&mut b);
+        let actor = alice();
+        let signature = Signature::Empty;
+
+        let err = terminate_verified(&mut b, &actor, |_| None, &signature)
+            .expect_err("missing DID key must fail closed");
+
+        assert_eq!(err, ConsentError::InvalidSignature);
+        assert_eq!(b.status, BailmentStatus::Active);
+    }
+
+    #[test]
+    fn terminate_verified_rejects_wrong_signature_and_preserves_state() {
+        let mut b = propose_test(b"t", BailmentType::Custody);
+        accept_test_bailment(&mut b);
+        let actor = alice();
+        let (actor_pk, _actor_sk) = crypto::generate_keypair();
+        let (_wrong_pk, wrong_sk) = crypto::generate_keypair();
+        let payload = termination_signing_payload(&b, &actor).expect("termination payload");
+        let wrong_signature = crypto::sign(&payload, &wrong_sk);
+
+        let err = terminate_verified(
+            &mut b,
+            &actor,
+            |did| (did == &actor).then_some(actor_pk),
+            &wrong_signature,
+        )
+        .expect_err("wrong signature must fail");
+
+        assert_eq!(err, ConsentError::InvalidSignature);
+        assert_eq!(b.status, BailmentStatus::Active);
+    }
+
+    #[test]
+    fn terminate_verified_allows_party_with_resolved_signature() {
+        let mut b = propose_test(b"t", BailmentType::Custody);
+        accept_test_bailment(&mut b);
+        let actor = alice();
+        let (actor_pk, actor_sk) = crypto::generate_keypair();
+        let payload = termination_signing_payload(&b, &actor).expect("termination payload");
+        let signature = crypto::sign(&payload, &actor_sk);
+
+        terminate_verified(
+            &mut b,
+            &actor,
+            |did| (did == &actor).then_some(actor_pk),
+            &signature,
+        )
+        .expect("party signature should authorize termination");
+
+        assert_eq!(b.status, BailmentStatus::Terminated);
     }
 
     #[test]

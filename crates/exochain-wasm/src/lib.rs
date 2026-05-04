@@ -78,6 +78,49 @@ mod source_guard_tests {
     }
 
     #[test]
+    fn wasm_consent_termination_refuses_unsigned_actor_did_bridge() {
+        let source = include_str!("consent_bindings.rs");
+        let termination = source
+            .split("pub fn wasm_terminate_bailment(")
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("pub fn wasm_terminate_bailment_signed(")
+                    .next()
+            })
+            .expect("wasm_terminate_bailment source");
+        let signed_termination = source
+            .split("pub fn wasm_terminate_bailment_signed(")
+            .nth(1)
+            .expect("wasm_terminate_bailment_signed source");
+
+        assert!(
+            termination.contains("unsigned bailment termination is disabled"),
+            "legacy WASM bailment termination must fail closed instead of trusting actor_did"
+        );
+        assert!(
+            !termination.contains("exo_consent::bailment::terminate(&mut bailment, &actor)"),
+            "legacy WASM bailment termination must not reach the core state transition"
+        );
+        assert!(
+            source.contains("pub fn wasm_bailment_termination_payload("),
+            "WASM consent bridge must expose the canonical termination payload for external signing"
+        );
+        assert!(
+            source.contains("pub fn wasm_terminate_bailment_signed("),
+            "WASM consent bridge must keep the signed termination entrypoint fail-closed"
+        );
+        assert!(
+            signed_termination.contains("untrusted_wasm_bailment_termination_error"),
+            "WASM signed termination must fail closed instead of trusting caller-supplied key material"
+        );
+        assert!(
+            !signed_termination.contains("terminate_verified"),
+            "WASM signed termination must not call core termination without trusted DID resolution"
+        );
+    }
+
+    #[test]
     fn wasm_governance_bridge_requires_caller_supplied_metadata() {
         let source = include_str!("governance_bindings.rs");
         let forbidden = [

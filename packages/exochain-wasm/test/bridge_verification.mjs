@@ -734,11 +734,41 @@ const activeBailment = setup(() =>
     JSON.stringify(bailSig.signature)
   ));
 
-test('wasm_terminate_bailment', () => {
+test('wasm_bailment_termination_payload', () => {
   if (!activeBailment) throw new Error('skipped -- no active bailment from setup');
-  return wasm.wasm_terminate_bailment(
+  const payload = wasm.wasm_bailment_termination_payload(
     JSON.stringify(activeBailment),
     TEST_DID
+  );
+  if (!payload || payload.length === 0) {
+    throw new Error('termination payload must be non-empty');
+  }
+  return payload;
+});
+
+test('wasm_terminate_bailment rejects unsigned termination', () => {
+  if (!activeBailment) throw new Error('skipped -- no active bailment from setup');
+  return expectErrorContains(
+    'wasm_terminate_bailment',
+    () => wasm.wasm_terminate_bailment(
+      JSON.stringify(activeBailment),
+      TEST_DID
+    ),
+    'unsigned bailment termination is disabled'
+  );
+});
+
+test('wasm_terminate_bailment_signed rejects caller-supplied DID key material', () => {
+  if (!activeBailment) throw new Error('skipped -- no active bailment from setup');
+  return expectErrorContains(
+    'wasm_terminate_bailment_signed',
+    () => wasm.wasm_terminate_bailment_signed(
+      JSON.stringify(activeBailment),
+      TEST_DID,
+      JSON.stringify([[TEST_DID, signer1.publicKeyHex]]),
+      JSON.stringify(signatureJsonFromHex(signer1.signHex(TEXT_BYTES)))
+    ),
+    'cannot trust caller-supplied DID key material'
   );
 });
 
