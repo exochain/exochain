@@ -20,6 +20,7 @@ pub enum Role {
     Governor,
     Reviewer,
     Contributor,
+    /// Read-only participant; may observe governance but cannot satisfy quorum.
     Observer,
 }
 
@@ -200,6 +201,11 @@ fn invalid_quorum_policy(reason: impl Into<String>) -> QuorumResult {
     }
 }
 
+#[must_use]
+fn role_counts_toward_quorum(role: &Role) -> bool {
+    !matches!(role, Role::Observer)
+}
+
 fn validate_policy(policy: &QuorumPolicy) -> Option<QuorumResult> {
     if policy.min_approvals == 0 {
         return Some(invalid_quorum_policy(
@@ -209,6 +215,15 @@ fn validate_policy(policy: &QuorumPolicy) -> Option<QuorumResult> {
     if policy.min_independent > policy.min_approvals {
         return Some(invalid_quorum_policy(
             "min_independent must not exceed min_approvals",
+        ));
+    }
+    if policy
+        .required_roles
+        .iter()
+        .any(|role| !role_counts_toward_quorum(role))
+    {
+        return Some(invalid_quorum_policy(
+            "Observer cannot be a required quorum role",
         ));
     }
     None
@@ -233,19 +248,36 @@ pub fn compute_quorum(approvals: &[Approval], policy: &QuorumPolicy) -> QuorumRe
         };
     }
 
-    let total_count = approvals.len();
+    let quorum_eligible_approvals: Vec<&Approval> = approvals
+        .iter()
+        .filter(|approval| role_counts_toward_quorum(&approval.role))
+        .collect();
+
+    let total_count = quorum_eligible_approvals.len();
 
     if total_count < policy.min_approvals {
-        return QuorumResult::NotMet {
-            reason: format!(
+        let has_non_quorum_role = approvals
+            .iter()
+            .any(|approval| !role_counts_toward_quorum(&approval.role));
+        let reason = if has_non_quorum_role {
+            format!(
+                "insufficient approvals: {total_count} < {} quorum-eligible required (Observer cannot satisfy quorum)",
+                policy.min_approvals
+            )
+        } else {
+            format!(
                 "insufficient approvals: {total_count} < {}",
                 policy.min_approvals
-            ),
+            )
         };
+        return QuorumResult::NotMet { reason };
     }
 
     for required_role in &policy.required_roles {
-        if !approvals.iter().any(|a| &a.role == required_role) {
+        if !quorum_eligible_approvals
+            .iter()
+            .any(|a| &a.role == required_role)
+        {
             return QuorumResult::NotMet {
                 reason: format!("missing required role: {}", required_role.as_str()),
             };
@@ -256,7 +288,7 @@ pub fn compute_quorum(approvals: &[Approval], policy: &QuorumPolicy) -> QuorumRe
         return verified_quorum_required();
     }
 
-    let independent_count = approvals
+    let independent_count = quorum_eligible_approvals
         .iter()
         .filter(|a| {
             a.independence_attestation
@@ -379,26 +411,44 @@ pub fn compute_quorum_verified<R: PublicKeyResolver>(
         })
         .collect();
 
-    let total_count = verified_approvals.len();
+    let quorum_eligible_approvals: Vec<&Approval> = verified_approvals
+        .iter()
+        .copied()
+        .filter(|approval| role_counts_toward_quorum(&approval.role))
+        .collect();
+
+    let total_count = quorum_eligible_approvals.len();
 
     if total_count < policy.min_approvals {
-        return QuorumResult::NotMet {
-            reason: format!(
+        let has_verified_non_quorum_role = verified_approvals
+            .iter()
+            .any(|approval| !role_counts_toward_quorum(&approval.role));
+        let reason = if has_verified_non_quorum_role {
+            format!(
+                "insufficient verified approvals: {total_count} quorum-eligible verified of {} required (Observer cannot satisfy quorum)",
+                policy.min_approvals
+            )
+        } else {
+            format!(
                 "insufficient verified approvals: {total_count} verified of {} required",
                 policy.min_approvals
-            ),
+            )
         };
+        return QuorumResult::NotMet { reason };
     }
 
     for required_role in &policy.required_roles {
-        if !verified_approvals.iter().any(|a| &a.role == required_role) {
+        if !quorum_eligible_approvals
+            .iter()
+            .any(|a| &a.role == required_role)
+        {
             return QuorumResult::NotMet {
                 reason: format!("missing required role: {}", required_role.as_str()),
             };
         }
     }
 
-    let independent_count = verified_approvals
+    let independent_count = quorum_eligible_approvals
         .iter()
         .filter(|a| {
             a.independence_attestation.as_ref().is_some_and(|att| {
@@ -1134,6 +1184,30 @@ mod tests {
     }
 
     #[test]
+    fn quorum_policy_rejects_observer_as_required_role() {
+        let resolver = |_did: &Did| -> Option<PublicKey> { None };
+        let policy = QuorumPolicy {
+            min_approvals: 1,
+            min_independent: 0,
+            required_roles: vec![Role::Observer],
+            timeout: Timestamp::new(999_999, 0),
+        };
+
+        for result in [
+            compute_quorum(&[], &policy),
+            compute_quorum_verified(&[], &policy, &resolver),
+        ] {
+            match result {
+                QuorumResult::NotMet { reason } => {
+                    assert!(reason.contains("invalid quorum policy"));
+                    assert!(reason.contains("Observer cannot be a required quorum role"));
+                }
+                other => panic!("Observer must not be a required quorum role, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn compute_quorum_verified_rejects_duplicate_approver_dids() {
         let (pk_alice, sk_alice) = crypto::generate_keypair();
         let alice = did("alice");
@@ -1156,6 +1230,86 @@ mod tests {
             }
             other => panic!("duplicate approver must not inflate verified quorum, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn compute_quorum_verified_rejects_observer_approvals() {
+        let (pk_observer, sk_observer) = crypto::generate_keypair();
+        let observer = did("observer");
+        let approval = signed_approval_with_attestation(
+            &observer,
+            Role::Observer,
+            Timestamp::new(1000, 0),
+            &sk_observer,
+            None,
+        );
+        let resolver = |d: &Did| -> Option<PublicKey> {
+            if *d == observer {
+                Some(pk_observer)
+            } else {
+                None
+            }
+        };
+        let policy = QuorumPolicy {
+            min_approvals: 1,
+            min_independent: 0,
+            required_roles: vec![],
+            timeout: Timestamp::new(999_999, 0),
+        };
+
+        match compute_quorum_verified(&[approval], &policy, &resolver) {
+            QuorumResult::NotMet { reason } => {
+                assert!(reason.contains("Observer") || reason.contains("observer"));
+            }
+            other => panic!("observer approval must not satisfy verified quorum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compute_quorum_verified_excludes_observers_from_total_count() {
+        let (pk_alice, sk_alice) = crypto::generate_keypair();
+        let (pk_observer, sk_observer) = crypto::generate_keypair();
+        let alice = did("alice");
+        let observer = did("observer");
+        let approvals = vec![
+            signed_approval_with_attestation(
+                &alice,
+                Role::Steward,
+                Timestamp::new(1000, 0),
+                &sk_alice,
+                None,
+            ),
+            signed_approval_with_attestation(
+                &observer,
+                Role::Observer,
+                Timestamp::new(1001, 0),
+                &sk_observer,
+                None,
+            ),
+        ];
+        let resolver = |d: &Did| -> Option<PublicKey> {
+            if *d == alice {
+                Some(pk_alice)
+            } else if *d == observer {
+                Some(pk_observer)
+            } else {
+                None
+            }
+        };
+        let policy = QuorumPolicy {
+            min_approvals: 1,
+            min_independent: 0,
+            required_roles: vec![Role::Steward],
+            timeout: Timestamp::new(999_999, 0),
+        };
+
+        assert_eq!(
+            compute_quorum_verified(&approvals, &policy, &resolver),
+            QuorumResult::Met {
+                independent_count: 0,
+                total_count: 1,
+            }
+        );
     }
 
     #[test]
