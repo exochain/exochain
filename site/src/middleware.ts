@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 // Hard surface separation: /app/* requires extranet session, /internal/*
-// requires intranet session. Login pages and the loginless root of each
-// surface are always allowed through to render the login UI.
+// requires intranet session. Login pages are served outside these protected
+// app shells so they do not run the layout redirect checks.
 //
 // In v0 the cookie payload is a JSON string. In v0.5+ this becomes a JWT
 // with audience claims and signature verification.
@@ -29,7 +29,11 @@ export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   if (pathname.startsWith('/app')) {
-    if (pathname === '/app/login') return NextResponse.next();
+    if (pathname === '/app/login') {
+      const loginUrl = req.nextUrl.clone();
+      loginUrl.pathname = '/login';
+      return NextResponse.rewrite(loginUrl);
+    }
     const sess = readSession(req);
     if (!sess || sess.surface !== 'extranet') {
       const url = req.nextUrl.clone();
@@ -41,7 +45,11 @@ export function middleware(req: NextRequest) {
   }
 
   if (pathname.startsWith('/internal')) {
-    if (pathname === '/internal/login') return NextResponse.next();
+    if (pathname === '/internal/login') {
+      const loginUrl = req.nextUrl.clone();
+      loginUrl.pathname = '/internal-login';
+      return NextResponse.rewrite(loginUrl);
+    }
     const sess = readSession(req);
     if (!sess || sess.surface !== 'intranet') {
       const url = req.nextUrl.clone();
