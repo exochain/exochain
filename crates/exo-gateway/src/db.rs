@@ -74,6 +74,38 @@ pub enum DidDocumentPersistenceError {
     },
 }
 
+#[derive(Debug, Error)]
+pub enum GatewayIdentityErasureError {
+    #[error("identity erasure timestamp must be positive: {erased_at_ms}")]
+    InvalidTimestamp { erased_at_ms: i64 },
+    #[error("gateway identity erasure query failed")]
+    Query {
+        #[source]
+        source: sqlx::Error,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GatewayIdentityErasureSummary {
+    pub did_documents_tombstoned: u64,
+    pub users_deleted: u64,
+    pub agents_deleted: u64,
+    pub sessions_deleted: u64,
+    pub identity_scores_deleted: u64,
+    pub enrollment_log_deleted: u64,
+    pub livesafe_identities_deleted: u64,
+    pub scan_receipts_deleted: u64,
+    pub consent_anchors_deleted: u64,
+    pub trustee_shards_deleted: u64,
+    pub agent_roles_deleted: u64,
+    pub consent_records_deleted: u64,
+    pub authority_chains_deleted: u64,
+    pub delegations_deleted: u64,
+    pub layout_templates_deleted: u64,
+    pub feedback_issues_deleted: u64,
+    pub conflict_declarations_deleted: u64,
+}
+
 // ---------------------------------------------------------------------------
 // Pool initialization
 // ---------------------------------------------------------------------------
@@ -204,6 +236,185 @@ pub async fn list_did_document_ids(pool: &PgPool) -> Result<Vec<String>, sqlx::E
         .into_iter()
         .map(|row| row.get::<String, _>("did"))
         .collect())
+}
+
+pub async fn erase_gateway_identity_records(
+    pool: &PgPool,
+    did: &str,
+    erased_at_ms: i64,
+) -> Result<GatewayIdentityErasureSummary, GatewayIdentityErasureError> {
+    if erased_at_ms <= 0 {
+        return Err(GatewayIdentityErasureError::InvalidTimestamp { erased_at_ms });
+    }
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|source| GatewayIdentityErasureError::Query { source })?;
+    let tombstone = serde_json::json!({
+        "schema": "exo.gateway.did_document_tombstone.v1",
+        "erased": true
+    });
+
+    let did_documents_tombstoned = sqlx::query(
+        "UPDATE did_documents \
+         SET document = $2, updated_at_ms = $3, revoked = true, erased_at_ms = $3 \
+         WHERE did = $1",
+    )
+    .bind(did)
+    .bind(tombstone)
+    .bind(erased_at_ms)
+    .execute(&mut *tx)
+    .await
+    .map_err(|source| GatewayIdentityErasureError::Query { source })?
+    .rows_affected();
+
+    let sessions_deleted = sqlx::query("DELETE FROM sessions WHERE actor_did = $1")
+        .bind(did)
+        .execute(&mut *tx)
+        .await
+        .map_err(|source| GatewayIdentityErasureError::Query { source })?
+        .rows_affected();
+
+    let users_deleted = sqlx::query("DELETE FROM users WHERE did = $1")
+        .bind(did)
+        .execute(&mut *tx)
+        .await
+        .map_err(|source| GatewayIdentityErasureError::Query { source })?
+        .rows_affected();
+
+    let agents_deleted = sqlx::query("DELETE FROM agents WHERE did = $1 OR owner_did = $1")
+        .bind(did)
+        .execute(&mut *tx)
+        .await
+        .map_err(|source| GatewayIdentityErasureError::Query { source })?
+        .rows_affected();
+
+    let identity_scores_deleted = sqlx::query("DELETE FROM identity_scores WHERE did = $1")
+        .bind(did)
+        .execute(&mut *tx)
+        .await
+        .map_err(|source| GatewayIdentityErasureError::Query { source })?
+        .rows_affected();
+
+    let enrollment_log_deleted = sqlx::query("DELETE FROM enrollment_log WHERE did = $1")
+        .bind(did)
+        .execute(&mut *tx)
+        .await
+        .map_err(|source| GatewayIdentityErasureError::Query { source })?
+        .rows_affected();
+
+    let livesafe_identities_deleted = sqlx::query("DELETE FROM livesafe_identities WHERE did = $1")
+        .bind(did)
+        .execute(&mut *tx)
+        .await
+        .map_err(|source| GatewayIdentityErasureError::Query { source })?
+        .rows_affected();
+
+    let scan_receipts_deleted =
+        sqlx::query("DELETE FROM scan_receipts WHERE subscriber_did = $1 OR responder_did = $1")
+            .bind(did)
+            .execute(&mut *tx)
+            .await
+            .map_err(|source| GatewayIdentityErasureError::Query { source })?
+            .rows_affected();
+
+    let consent_anchors_deleted =
+        sqlx::query("DELETE FROM consent_anchors WHERE subscriber_did = $1 OR provider_did = $1")
+            .bind(did)
+            .execute(&mut *tx)
+            .await
+            .map_err(|source| GatewayIdentityErasureError::Query { source })?
+            .rows_affected();
+
+    let trustee_shards_deleted = sqlx::query(
+        "DELETE FROM trustee_shard_status WHERE subscriber_did = $1 OR trustee_did = $1",
+    )
+    .bind(did)
+    .execute(&mut *tx)
+    .await
+    .map_err(|source| GatewayIdentityErasureError::Query { source })?
+    .rows_affected();
+
+    let agent_roles_deleted =
+        sqlx::query("DELETE FROM agent_roles WHERE agent_did = $1 OR granted_by = $1")
+            .bind(did)
+            .execute(&mut *tx)
+            .await
+            .map_err(|source| GatewayIdentityErasureError::Query { source })?
+            .rows_affected();
+
+    let consent_records_deleted =
+        sqlx::query("DELETE FROM consent_records WHERE subject_did = $1 OR actor_did = $1")
+            .bind(did)
+            .execute(&mut *tx)
+            .await
+            .map_err(|source| GatewayIdentityErasureError::Query { source })?
+            .rows_affected();
+
+    let authority_chains_deleted = sqlx::query("DELETE FROM authority_chains WHERE actor_did = $1")
+        .bind(did)
+        .execute(&mut *tx)
+        .await
+        .map_err(|source| GatewayIdentityErasureError::Query { source })?
+        .rows_affected();
+
+    let delegations_deleted =
+        sqlx::query("DELETE FROM delegations WHERE delegator = $1 OR delegatee = $1")
+            .bind(did)
+            .execute(&mut *tx)
+            .await
+            .map_err(|source| GatewayIdentityErasureError::Query { source })?
+            .rows_affected();
+
+    let layout_templates_deleted = sqlx::query("DELETE FROM layout_templates WHERE user_did = $1")
+        .bind(did)
+        .execute(&mut *tx)
+        .await
+        .map_err(|source| GatewayIdentityErasureError::Query { source })?
+        .rows_affected();
+
+    let feedback_issues_deleted =
+        sqlx::query("DELETE FROM feedback_issues WHERE reporter_did = $1")
+            .bind(did)
+            .execute(&mut *tx)
+            .await
+            .map_err(|source| GatewayIdentityErasureError::Query { source })?
+            .rows_affected();
+
+    let conflict_declarations_deleted = sqlx::query(
+        "DELETE FROM conflict_declarations \
+         WHERE declarant_did = $1 OR related_dids @> jsonb_build_array($1::text)",
+    )
+    .bind(did)
+    .execute(&mut *tx)
+    .await
+    .map_err(|source| GatewayIdentityErasureError::Query { source })?
+    .rows_affected();
+
+    tx.commit()
+        .await
+        .map_err(|source| GatewayIdentityErasureError::Query { source })?;
+
+    Ok(GatewayIdentityErasureSummary {
+        did_documents_tombstoned,
+        users_deleted,
+        agents_deleted,
+        sessions_deleted,
+        identity_scores_deleted,
+        enrollment_log_deleted,
+        livesafe_identities_deleted,
+        scan_receipts_deleted,
+        consent_anchors_deleted,
+        trustee_shards_deleted,
+        agent_roles_deleted,
+        consent_records_deleted,
+        authority_chains_deleted,
+        delegations_deleted,
+        layout_templates_deleted,
+        feedback_issues_deleted,
+        conflict_declarations_deleted,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1298,6 +1509,7 @@ pub async fn update_feedback_issue_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use exo_core::{Did, Timestamp};
 
     fn production_source() -> &'static str {
         let source = include_str!("db.rs");
@@ -1315,6 +1527,8 @@ mod tests {
             include_str!("../migrations/20260427000001_create_conflict_declarations.sql"),
             include_str!("../migrations/20260504000001_add_gateway_runtime_query_indexes.sql"),
             include_str!("../migrations/20260504000002_add_gateway_tenant_scope_indexes.sql"),
+            include_str!("../migrations/20260504000003_create_did_documents.sql"),
+            include_str!("../migrations/20260504000004_add_gateway_identity_erasure.sql"),
         ]
         .join("\n")
     }
@@ -1355,6 +1569,67 @@ mod tests {
             return false;
         };
         first_index < second_index
+    }
+
+    async fn gateway_test_pool() -> Option<PgPool> {
+        let url = std::env::var("DATABASE_URL").ok()?;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .ok()?;
+        sqlx::migrate!("./migrations").run(&pool).await.ok()?;
+        Some(pool)
+    }
+
+    async fn cleanup_identity_erasure_fixture(pool: &PgPool, did: &str) -> Result<(), sqlx::Error> {
+        for statement in [
+            "DELETE FROM did_documents WHERE did = $1",
+            "DELETE FROM sessions WHERE actor_did = $1",
+            "DELETE FROM users WHERE did = $1",
+            "DELETE FROM agents WHERE did = $1 OR owner_did = $1",
+            "DELETE FROM identity_scores WHERE did = $1",
+            "DELETE FROM enrollment_log WHERE did = $1",
+            "DELETE FROM livesafe_identities WHERE did = $1",
+            "DELETE FROM scan_receipts WHERE subscriber_did = $1 OR responder_did = $1",
+            "DELETE FROM consent_anchors WHERE subscriber_did = $1 OR provider_did = $1",
+            "DELETE FROM trustee_shard_status WHERE subscriber_did = $1 OR trustee_did = $1",
+            "DELETE FROM agent_roles WHERE agent_did = $1 OR granted_by = $1",
+            "DELETE FROM consent_records WHERE subject_did = $1 OR actor_did = $1",
+            "DELETE FROM authority_chains WHERE actor_did = $1",
+            "DELETE FROM delegations WHERE delegator = $1 OR delegatee = $1",
+            "DELETE FROM layout_templates WHERE user_did = $1",
+            "DELETE FROM feedback_issues WHERE reporter_did = $1",
+            "DELETE FROM conflict_declarations WHERE declarant_did = $1 OR related_dids @> jsonb_build_array($1::text)",
+        ] {
+            sqlx::query(statement).bind(did).execute(pool).await?;
+        }
+        Ok(())
+    }
+
+    async fn count_rows_by_did(
+        pool: &PgPool,
+        statement: &str,
+        did: &str,
+    ) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar(statement)
+            .bind(did)
+            .fetch_one(pool)
+            .await
+    }
+
+    fn minimal_doc(did_str: &str) -> DidDocument {
+        DidDocument {
+            id: Did::new(did_str).expect("valid DID"),
+            public_keys: vec![],
+            authentication: vec![],
+            verification_methods: vec![],
+            hybrid_verification_methods: vec![],
+            service_endpoints: vec![],
+            created: Timestamp::ZERO,
+            updated: Timestamp::ZERO,
+            revoked: false,
+        }
     }
 
     #[test]
@@ -1493,6 +1768,291 @@ mod tests {
         assert!(list_source.contains("FROM did_documents"));
         assert!(list_source.contains("LIMIT $"));
         assert!(list_source.contains(".bind(MAX_DB_LIST_ROWS)"));
+    }
+
+    #[test]
+    fn gateway_identity_erasure_has_durable_tombstone_schema_and_helper() {
+        let migrations = compact_sql(&migration_sources_from_disk());
+        assert!(
+            migrations
+                .contains("ALTER TABLE did_documents ADD COLUMN IF NOT EXISTS erased_at_ms BIGINT"),
+            "gateway DID erasure must persist a tombstone timestamp so erased DIDs cannot be re-registered after process restart"
+        );
+
+        let source = production_source();
+        let helper = function_source(source, "erase_gateway_identity_records");
+        for table in [
+            "did_documents",
+            "users",
+            "agents",
+            "sessions",
+            "identity_scores",
+            "enrollment_log",
+            "livesafe_identities",
+            "scan_receipts",
+            "consent_anchors",
+            "trustee_shard_status",
+            "agent_roles",
+            "consent_records",
+            "authority_chains",
+            "delegations",
+            "layout_templates",
+            "feedback_issues",
+            "conflict_declarations",
+        ] {
+            assert!(
+                helper.contains(table),
+                "gateway identity erasure helper must cover durable DID-linked table {table}"
+            );
+        }
+        assert!(
+            helper.contains("revoked = true") && helper.contains("erased_at_ms"),
+            "DID document erasure must tombstone the DID instead of deleting the reuse guard"
+        );
+    }
+
+    #[tokio::test]
+    async fn erase_gateway_identity_records_tombstones_did_and_removes_durable_identity_rows()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let Some(pool) = gateway_test_pool().await else {
+            return Ok(());
+        };
+        let did = "did:exo:erasure-db-subject";
+        cleanup_identity_erasure_fixture(&pool, did).await?;
+
+        let doc = minimal_doc(did);
+        insert_did_document(&pool, &doc).await?;
+        sqlx::query(
+            "INSERT INTO sessions (token, actor_did, created_at, expires_at, revoked) \
+             VALUES ($1, $2, $3, $4, false)",
+        )
+        .bind("erasure-db-session")
+        .bind(did)
+        .bind(1_000_i64)
+        .bind(2_000_i64)
+        .execute(&pool)
+        .await?;
+        insert_user(
+            &pool,
+            did,
+            "Erasure Subject",
+            "erasure-db-subject@example.invalid",
+            &serde_json::json!(["subject"]),
+            "tenant-erasure",
+            1_000,
+            "Active",
+            "Complete",
+            "hash-to-delete",
+            "salt-to-delete",
+            false,
+        )
+        .await?;
+        insert_agent(
+            &pool,
+            did,
+            "Erasure Agent",
+            "agent",
+            did,
+            "tenant-erasure",
+            &serde_json::json!(["read"]),
+            "Trusted",
+            7_500,
+            None,
+            "Complete",
+            1_000,
+            "Active",
+            "Routine",
+        )
+        .await?;
+        upsert_identity_score(
+            &pool,
+            did,
+            7_500,
+            "Trusted",
+            &serde_json::json!({"registered": true}),
+            1_000,
+        )
+        .await?;
+        insert_enrollment(&pool, did, "user", "pace", 1_000, did, "audit").await?;
+        insert_livesafe_identity(
+            &pool,
+            did,
+            7_500,
+            "Complete",
+            "Issued",
+            1_000,
+            Some("anchor"),
+        )
+        .await?;
+        insert_scan_receipt(
+            &pool,
+            "erasure-db-scan",
+            did,
+            "did:exo:responder",
+            Some("40.0,-70.0"),
+            1_000,
+            2_000,
+            "scan-audit",
+            Some("scan-anchor"),
+        )
+        .await?;
+        insert_consent_anchor(
+            &pool,
+            "erasure-db-consent",
+            did,
+            "did:exo:provider",
+            &serde_json::json!(["location"]),
+            1_000,
+            Some(2_000),
+            "consent-audit",
+        )
+        .await?;
+        insert_trustee_shard(&pool, did, "did:exo:trustee", "guardian", true, Some(1_000)).await?;
+        sqlx::query(
+            "INSERT INTO agent_roles (agent_did, role, branch, granted_by, valid_from, expires_at) \
+             VALUES ($1, $2, $3, $4, $5, NULL)",
+        )
+        .bind(did)
+        .bind("operator")
+        .bind("executive")
+        .bind(did)
+        .bind(1_000_i64)
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO consent_records (subject_did, actor_did, scope, bailment_type, status, created_at, expires_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, NULL)",
+        )
+        .bind(did)
+        .bind("did:exo:actor")
+        .bind("read")
+        .bind("standard")
+        .bind("active")
+        .bind(1_000_i64)
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO authority_chains (actor_did, chain_json, valid_from, expires_at) \
+             VALUES ($1, $2, $3, NULL)",
+        )
+        .bind(did)
+        .bind(serde_json::json!({"chain": []}))
+        .bind(1_000_i64)
+        .execute(&pool)
+        .await?;
+        insert_delegation(
+            &pool,
+            "erasure-db-delegation",
+            "tenant-erasure",
+            did,
+            "did:exo:delegatee",
+            1_000,
+            2_000,
+            "exochain-constitution-v1",
+            &serde_json::json!({"delegator": did}),
+        )
+        .await?;
+        upsert_layout_template(
+            &pool,
+            "erasure-db-layout",
+            Some(did),
+            "Subject layout",
+            &serde_json::json!([{"id": "panel", "x": 0, "y": 0}]),
+            &serde_json::json!(["hidden"]),
+            false,
+            1_000,
+            1_000,
+        )
+        .await?;
+        insert_feedback_issue(
+            &pool,
+            "erasure-db-feedback",
+            "Subject feedback",
+            "remove reporter DID",
+            "medium",
+            "privacy",
+            "identity-panel",
+            "dashboard",
+            Some(did),
+            Some(&serde_json::json!({"did": did})),
+            Some(&serde_json::json!({"userAgent": "test"})),
+            1_000,
+        )
+        .await?;
+        sqlx::query(
+            "INSERT INTO conflict_declarations (id_hash, declarant_did, nature, related_dids, timestamp_physical_ms, timestamp_logical, payload) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind("erasure-db-conflict")
+        .bind(did)
+        .bind("test conflict")
+        .bind(serde_json::json!(["did:exo:related"]))
+        .bind(1_000_i64)
+        .bind(0_i32)
+        .bind(serde_json::json!({"declarant_did": did}))
+        .execute(&pool)
+        .await?;
+
+        let summary = erase_gateway_identity_records(&pool, did, 9_000).await?;
+
+        assert_eq!(summary.did_documents_tombstoned, 1);
+        assert_eq!(summary.sessions_deleted, 1);
+        assert_eq!(summary.users_deleted, 1);
+        assert_eq!(summary.agents_deleted, 1);
+        assert_eq!(summary.identity_scores_deleted, 1);
+        assert_eq!(summary.enrollment_log_deleted, 1);
+        assert_eq!(summary.livesafe_identities_deleted, 1);
+        assert_eq!(summary.scan_receipts_deleted, 1);
+        assert_eq!(summary.consent_anchors_deleted, 1);
+        assert_eq!(summary.trustee_shards_deleted, 1);
+        assert_eq!(summary.agent_roles_deleted, 1);
+        assert_eq!(summary.consent_records_deleted, 1);
+        assert_eq!(summary.authority_chains_deleted, 1);
+        assert_eq!(summary.delegations_deleted, 1);
+        assert_eq!(summary.layout_templates_deleted, 1);
+        assert_eq!(summary.feedback_issues_deleted, 1);
+        assert_eq!(summary.conflict_declarations_deleted, 1);
+
+        assert!(find_did_document(&pool, did).await?.is_none());
+        let tombstone =
+            sqlx::query("SELECT revoked, erased_at_ms, document FROM did_documents WHERE did = $1")
+                .bind(did)
+                .fetch_one(&pool)
+                .await?;
+        assert!(tombstone.get::<bool, _>("revoked"));
+        assert_eq!(tombstone.get::<Option<i64>, _>("erased_at_ms"), Some(9_000));
+        assert_eq!(
+            tombstone.get::<JsonValue, _>("document")["schema"],
+            "exo.gateway.did_document_tombstone.v1"
+        );
+        assert!(
+            !insert_did_document(&pool, &doc).await?,
+            "erased DID tombstone must block DID document re-registration"
+        );
+
+        for statement in [
+            "SELECT COUNT(*) FROM sessions WHERE actor_did = $1",
+            "SELECT COUNT(*) FROM users WHERE did = $1",
+            "SELECT COUNT(*) FROM agents WHERE did = $1 OR owner_did = $1",
+            "SELECT COUNT(*) FROM identity_scores WHERE did = $1",
+            "SELECT COUNT(*) FROM enrollment_log WHERE did = $1",
+            "SELECT COUNT(*) FROM livesafe_identities WHERE did = $1",
+            "SELECT COUNT(*) FROM scan_receipts WHERE subscriber_did = $1 OR responder_did = $1",
+            "SELECT COUNT(*) FROM consent_anchors WHERE subscriber_did = $1 OR provider_did = $1",
+            "SELECT COUNT(*) FROM trustee_shard_status WHERE subscriber_did = $1 OR trustee_did = $1",
+            "SELECT COUNT(*) FROM agent_roles WHERE agent_did = $1 OR granted_by = $1",
+            "SELECT COUNT(*) FROM consent_records WHERE subject_did = $1 OR actor_did = $1",
+            "SELECT COUNT(*) FROM authority_chains WHERE actor_did = $1",
+            "SELECT COUNT(*) FROM delegations WHERE delegator = $1 OR delegatee = $1",
+            "SELECT COUNT(*) FROM layout_templates WHERE user_did = $1",
+            "SELECT COUNT(*) FROM feedback_issues WHERE reporter_did = $1",
+            "SELECT COUNT(*) FROM conflict_declarations WHERE declarant_did = $1 OR related_dids @> jsonb_build_array($1::text)",
+        ] {
+            assert_eq!(count_rows_by_did(&pool, statement, did).await?, 0);
+        }
+
+        cleanup_identity_erasure_fixture(&pool, did).await?;
+        Ok(())
     }
 
     #[test]

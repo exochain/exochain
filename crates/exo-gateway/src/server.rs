@@ -861,6 +861,22 @@ impl AdvancePaceMetadata {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IdentityErasureMetadata {
+    erased_at: i64,
+}
+
+impl IdentityErasureMetadata {
+    fn from_optional_body(body: Option<&serde_json::Value>) -> Result<Self> {
+        let body = body.ok_or_else(|| {
+            metadata_error("identity erasure requires caller-supplied erasedAt metadata")
+        })?;
+        Ok(Self {
+            erased_at: required_nonzero_i64(body, "erasedAt")?,
+        })
+    }
+}
+
 fn required_nonempty_string(body: &serde_json::Value, field: &str) -> Result<String> {
     let value = body
         .get(field)
@@ -1342,6 +1358,105 @@ async fn handle_identity_score(
                 .into_response()
         }
     }
+}
+
+/// DELETE /api/v1/identity/:did — erase DB-backed gateway identity records.
+///
+/// Requires a DB-backed bearer session whose actor DID exactly matches the path
+/// DID, plus caller-supplied `erasedAt` metadata. The DID document is
+/// tombstoned so the erased DID remains permanently unusable after restart.
+async fn handle_identity_erasure(
+    State(state): State<AppState>,
+    Path(did_str): Path<String>,
+    headers: HeaderMap,
+    body: Option<Json<serde_json::Value>>,
+) -> impl IntoResponse {
+    let did = match Did::new(&did_str) {
+        Ok(d) => d,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "invalid DID format" })),
+            )
+                .into_response();
+        }
+    };
+    let actor = match state
+        .require_authenticated_session_actor_from_header(&headers)
+        .await
+    {
+        Ok(actor) => actor,
+        Err(e) => return auth_boundary_error_response(e),
+    };
+    if actor != did {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "forbidden",
+                "message": "authenticated session actor does not match identity erasure target"
+            })),
+        )
+            .into_response();
+    }
+    let body_ref = body.as_ref().map(|Json(value)| value);
+    let metadata = match IdentityErasureMetadata::from_optional_body(body_ref) {
+        Ok(metadata) => metadata,
+        Err(e) => return metadata_error_response(e),
+    };
+    let db = match state.require_db() {
+        Ok(pool) => pool,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "database unavailable"})),
+            )
+                .into_response();
+        }
+    };
+    let summary = match db::erase_gateway_identity_records(db, did.as_str(), metadata.erased_at)
+        .await
+    {
+        Ok(summary) => summary,
+        Err(db::GatewayIdentityErasureError::InvalidTimestamp { .. }) => {
+            return metadata_error_response(metadata_error(
+                "identity erasure erasedAt must be a positive non-zero epoch millisecond",
+            ));
+        }
+        Err(e) => return internal_error_response(e, "identity erasure", "identity erasure failed"),
+    };
+
+    let mut erased_records = BTreeMap::new();
+    erased_records.insert("did_documents_tombstoned", summary.did_documents_tombstoned);
+    erased_records.insert("users_deleted", summary.users_deleted);
+    erased_records.insert("agents_deleted", summary.agents_deleted);
+    erased_records.insert("sessions_deleted", summary.sessions_deleted);
+    erased_records.insert("identity_scores_deleted", summary.identity_scores_deleted);
+    erased_records.insert("enrollment_log_deleted", summary.enrollment_log_deleted);
+    erased_records.insert(
+        "livesafe_identities_deleted",
+        summary.livesafe_identities_deleted,
+    );
+    erased_records.insert("scan_receipts_deleted", summary.scan_receipts_deleted);
+    erased_records.insert("consent_anchors_deleted", summary.consent_anchors_deleted);
+    erased_records.insert("trustee_shards_deleted", summary.trustee_shards_deleted);
+    erased_records.insert("agent_roles_deleted", summary.agent_roles_deleted);
+    erased_records.insert("consent_records_deleted", summary.consent_records_deleted);
+    erased_records.insert("authority_chains_deleted", summary.authority_chains_deleted);
+    erased_records.insert("delegations_deleted", summary.delegations_deleted);
+    erased_records.insert("layout_templates_deleted", summary.layout_templates_deleted);
+    erased_records.insert("feedback_issues_deleted", summary.feedback_issues_deleted);
+    erased_records.insert(
+        "conflict_declarations_deleted",
+        summary.conflict_declarations_deleted,
+    );
+
+    Json(serde_json::json!({
+        "status": "identity_erased",
+        "subject_did": did_str,
+        "erased_at": metadata.erased_at,
+        "records": erased_records,
+    }))
+    .into_response()
 }
 
 /// GET /api/v1/tenants/:id/constitution — return the ExoChain constitutional invariants.
@@ -2552,6 +2667,10 @@ fn build_unlayered_router(state: AppState) -> Router {
         )
         // Identity
         .route("/api/v1/identity/:did/score", get(handle_identity_score))
+        .route(
+            "/api/v1/identity/:did",
+            axum::routing::delete(handle_identity_erasure),
+        )
         // Tenant
         .route(
             "/api/v1/tenants/:id/constitution",
@@ -3344,6 +3463,21 @@ mod tests {
         .unwrap();
     }
 
+    async fn cleanup_identity_erasure_route_fixture(pool: &sqlx::PgPool, did: &str) {
+        for statement in [
+            "DELETE FROM did_documents WHERE did = $1",
+            "DELETE FROM sessions WHERE actor_did = $1",
+            "DELETE FROM users WHERE did = $1",
+            "DELETE FROM identity_scores WHERE did = $1",
+        ] {
+            sqlx::query(statement)
+                .bind(did)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+    }
+
     // --- GatewayConfig / start() (existing tests preserved) ---
 
     #[test]
@@ -3970,7 +4104,7 @@ mod tests {
         let identity_score = source_between(
             source,
             "async fn handle_identity_score",
-            "/// GET /api/v1/identity/status",
+            "/// DELETE /api/v1/identity/:did",
         );
         assert!(
             identity_score.contains("resolve_did_document(&state, did).await"),
@@ -3985,6 +4119,46 @@ mod tests {
         assert!(
             users_list.contains("list_dids(&state).await"),
             "users list must read persisted DID ids when a DB pool is configured"
+        );
+    }
+
+    #[test]
+    fn identity_erasure_route_requires_authenticated_self_session_before_db_write() {
+        let source = include_str!("server.rs");
+        let handler = source_between(
+            source,
+            "async fn handle_identity_erasure",
+            "/// GET /api/v1/tenants/:id/constitution",
+        );
+        let router = source_between(
+            source,
+            "fn build_unlayered_router",
+            "fn gateway_rate_limit_key",
+        );
+        let compact_router: String = router.chars().filter(|ch| !ch.is_whitespace()).collect();
+
+        let auth = handler
+            .find("require_authenticated_session_actor_from_header")
+            .expect("identity erasure must authenticate a bearer session");
+        let self_check = handler
+            .find("if actor != did")
+            .expect("identity erasure must reject path-DID spoofing");
+        let metadata = handler
+            .find("IdentityErasureMetadata::from_optional_body")
+            .expect("identity erasure must require caller-supplied erasure metadata");
+        let db_write = handler
+            .find("db::erase_gateway_identity_records")
+            .expect("identity erasure must call the durable DB erasure helper");
+
+        assert!(
+            auth < self_check && self_check < metadata && metadata < db_write,
+            "identity erasure must authenticate, enforce owner-only path DID, require deterministic metadata, then erase durable records"
+        );
+        assert!(
+            compact_router.contains(
+                "\"/api/v1/identity/:did\",axum::routing::delete(handle_identity_erasure)"
+            ),
+            "gateway must expose a DELETE identity erasure route, not only an in-memory 0dentity route"
         );
     }
 
@@ -4437,6 +4611,85 @@ mod tests {
         let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(val["registered"], true);
         assert!(val["score_bps"].as_u64().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn identity_erasure_route_tombstones_did_and_invalidates_session() {
+        use sqlx::Row;
+
+        let pool = match gateway_test_pool().await {
+            Some(pool) => pool,
+            None => return,
+        };
+        let did = "did:exo:erasure-route-subject";
+        cleanup_identity_erasure_route_fixture(&pool, did).await;
+        db::insert_did_document(&pool, &minimal_doc(did))
+            .await
+            .unwrap();
+        insert_test_user(&pool, did, "tenant-erasure-route").await;
+        db::upsert_identity_score(
+            &pool,
+            did,
+            7_500,
+            "Trusted",
+            &serde_json::json!({"registered": true}),
+            10_000,
+        )
+        .await
+        .unwrap();
+        insert_test_session(&pool, "identity-erasure-route-token", did).await;
+
+        let app = build_router(AppState::new(
+            Some(pool.clone()),
+            Arc::new(RwLock::new(LocalDidRegistry::new())),
+        ));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/v1/identity/{did}"))
+                    .header("authorization", "Bearer identity-erasure-route-token")
+                    .header(AUTH_OBSERVED_AT_MS_HEADER, "15000")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"erasedAt":16000}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(val["status"], "identity_erased");
+        assert_eq!(val["subject_did"], did);
+        assert_eq!(val["records"]["did_documents_tombstoned"], 1);
+        assert_eq!(val["records"]["sessions_deleted"], 1);
+        assert_eq!(val["records"]["users_deleted"], 1);
+        assert_eq!(val["records"]["identity_scores_deleted"], 1);
+
+        assert!(db::find_did_document(&pool, did).await.unwrap().is_none());
+        let tombstone =
+            sqlx::query("SELECT revoked, erased_at_ms FROM did_documents WHERE did = $1")
+                .bind(did)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(tombstone.get::<bool, _>("revoked"));
+        assert_eq!(
+            tombstone.get::<Option<i64>, _>("erased_at_ms"),
+            Some(16_000)
+        );
+        let session_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE actor_did = $1")
+                .bind(did)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(session_count, 0);
+
+        cleanup_identity_erasure_route_fixture(&pool, did).await;
     }
 
     #[tokio::test]
