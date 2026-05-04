@@ -51,12 +51,12 @@ impl AuditLog {
 }
 
 /// Consent check — default-deny. Returns Ok if consent is explicitly granted.
-pub fn consent_middleware(actor: &Did, _action: &str, consent_granted: bool) -> Result<()> {
+pub fn consent_middleware(_actor: &Did, _action: &str, consent_granted: bool) -> Result<()> {
     if consent_granted {
         Ok(())
     } else {
         Err(GatewayError::ConsentDenied {
-            reason: format!("no consent for {actor}"),
+            reason: "no active consent for actor".into(),
         })
     }
 }
@@ -117,6 +117,20 @@ mod tests {
     fn consent_denied() {
         assert!(consent_middleware(&did("a"), "read", false).is_err());
     }
+
+    #[test]
+    fn consent_denial_does_not_display_raw_did() {
+        let sensitive_did = did("privacy-sensitive-consent-subject");
+        let error = consent_middleware(&sensitive_did, "read", false)
+            .expect_err("missing consent must be rejected")
+            .to_string();
+
+        assert!(
+            !error.contains(sensitive_did.as_str()),
+            "consent denial display must not expose raw DID identifiers: {error}"
+        );
+    }
+
     #[test]
     fn governance_allow() {
         assert!(governance_middleware(&did("a"), "r", &Verdict::Allow).is_ok());

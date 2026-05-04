@@ -292,7 +292,7 @@ pub fn authenticate(
 ) -> Result<AuthenticatedActor> {
     // 1. Validate DID format.
     let did = Did::new(&request.actor_did).map_err(|_| GatewayError::AuthenticationFailed {
-        reason: format!("invalid DID: {}", request.actor_did),
+        reason: "invalid DID".into(),
     })?;
 
     // 2. Reject empty / all-zero signatures (covers Signature::Empty and
@@ -310,7 +310,7 @@ pub fn authenticate(
     let doc = registry
         .resolve(&did)
         .ok_or_else(|| GatewayError::AuthenticationFailed {
-            reason: format!("DID not registered: {}", request.actor_did),
+            reason: "DID not registered".into(),
         })?;
 
     // 5. Find the first active verification method.
@@ -319,10 +319,7 @@ pub fn authenticate(
         .iter()
         .find(|m| m.active)
         .ok_or_else(|| GatewayError::AuthenticationFailed {
-            reason: format!(
-                "no active verification method for DID: {}",
-                request.actor_did
-            ),
+            reason: "no active verification method for DID".into(),
         })?;
 
     // 6. Cryptographically verify the Ed25519 signature over body_hash.
@@ -548,6 +545,47 @@ mod tests {
     }
 
     #[test]
+    fn authentication_failure_messages_do_not_echo_request_dids() {
+        let (reg, _) = registry_with_alice();
+        let signature = Signature::from_bytes({
+            let mut s = [0u8; 64];
+            s[0] = 1;
+            s
+        });
+        let invalid_raw_did = "not-a-did-private-identifier";
+        let invalid_request = Request {
+            actor_did: invalid_raw_did.into(),
+            action: "read".into(),
+            body_hash: Hash256::ZERO,
+            signature: signature.clone(),
+            timestamp: req_ts(),
+        };
+        let invalid_error = authenticate(&invalid_request, &reg, auth_metadata())
+            .expect_err("invalid DID must be rejected")
+            .to_string();
+        assert!(
+            !invalid_error.contains(invalid_raw_did),
+            "authentication errors must not echo malformed DID input: {invalid_error}"
+        );
+
+        let unregistered_did = "did:exo:privacy-sensitive-subject";
+        let unregistered_request = Request {
+            actor_did: unregistered_did.into(),
+            action: "read".into(),
+            body_hash: Hash256::ZERO,
+            signature,
+            timestamp: req_ts(),
+        };
+        let unregistered_error = authenticate(&unregistered_request, &reg, auth_metadata())
+            .expect_err("unknown DID must be rejected")
+            .to_string();
+        assert!(
+            !unregistered_error.contains(unregistered_did),
+            "authentication errors must not echo unknown DIDs: {unregistered_error}"
+        );
+    }
+
+    #[test]
     fn auth_empty_sig() {
         let (reg, _) = registry_with_alice();
         let r = Request {
@@ -687,6 +725,26 @@ mod tests {
             !production.contains(&forbidden_system_time),
             "gateway auth must not read wall-clock time"
         );
+    }
+
+    #[test]
+    fn auth_production_does_not_format_request_dids_into_errors() {
+        let source = include_str!("auth.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+
+        for pattern in [
+            r#"format!("invalid DID: {}", request.actor_did)"#,
+            r#"format!("DID not registered: {}", request.actor_did)"#,
+            r#"format!("no active verification method for DID: {}", request.actor_did)"#,
+        ] {
+            assert!(
+                !production.contains(pattern),
+                "authentication diagnostics must not format raw request DIDs: {pattern}"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------

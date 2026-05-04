@@ -426,7 +426,6 @@ impl AppState {
                 Ok(ctx) => return ctx,
                 Err(e) => {
                     tracing::warn!(
-                        actor = %actor,
                         error = %e,
                         "DB adjudication context query failed; falling back to WO-009 scaffold"
                     );
@@ -457,10 +456,27 @@ enum RegistryBlockingError {
     Join(String),
 }
 
+fn identity_registration_log_reason(error: &IdentityError) -> &'static str {
+    match error {
+        IdentityError::DuplicateDid(_) => "duplicate_did",
+        IdentityError::RegistryCapacityExceeded { .. } => "registry_capacity_exceeded",
+        IdentityError::InvalidDidDocumentField { .. } => "invalid_did_document_field",
+        IdentityError::DidDocumentFieldTooLarge { .. } => "did_document_field_too_large",
+        IdentityError::DidRevoked(_) => "did_revoked",
+        IdentityError::NonMonotonicTimestamp { .. } => "non_monotonic_timestamp",
+        IdentityError::DuplicatePaceDid(_) => "duplicate_pace_did",
+        _ => "identity_registration_failed",
+    }
+}
+
 impl fmt::Display for RegistryBlockingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Registration(error) => write!(f, "registry registration failed: {error}"),
+            Self::Registration(error) => write!(
+                f,
+                "registry registration failed: {}",
+                identity_registration_log_reason(error)
+            ),
             Self::Authentication(error) => write!(f, "registry authentication failed: {error}"),
             Self::Persistence(error) => write!(f, "registry persistence failed: {error}"),
             Self::Join(error) => write!(f, "registry blocking task failed: {error}"),
@@ -680,10 +696,9 @@ fn validate_conflict_declaration(
     declaration: ConflictDeclaration,
 ) -> std::result::Result<ConflictDeclaration, GatewayError> {
     if &declaration.declarant_did != actor {
-        return Err(GatewayError::Internal(format!(
-            "stored conflict declaration for {} was returned while loading {}",
-            declaration.declarant_did, actor
-        )));
+        return Err(GatewayError::Internal(
+            "stored conflict declaration was returned for a different declarant".into(),
+        ));
     }
     if declaration.nature.trim().is_empty() {
         return Err(GatewayError::Internal(
@@ -1040,8 +1055,8 @@ fn build_adjudication_context_from_rows(
                 "judicial" => GovernmentBranch::Judicial,
                 other => {
                     return Err(GatewayError::Internal(format!(
-                        "adjudication role row unknown role branch for actor '{}' role '{}': '{}'",
-                        r.agent_did, r.role, other
+                        "adjudication role row unknown role branch for role '{}': '{}'",
+                        r.role, other
                     )));
                 }
             };
@@ -1055,10 +1070,10 @@ fn build_adjudication_context_from_rows(
     let consent_records: Vec<ConsentRecord> = consent_rows
         .iter()
         .map(|r| {
-            let subject = Did::new(&r.subject_did).map_err(|e| {
+            let subject = Did::new(&r.subject_did).map_err(|_| {
                 GatewayError::Internal(format!(
-                    "adjudication consent subject DID invalid for actor '{}' scope '{}': '{}' ({e})",
-                    r.actor_did, r.scope, r.subject_did
+                    "adjudication consent subject DID invalid for scope '{}'",
+                    r.scope
                 ))
             })?;
             Ok(ConsentRecord {
@@ -1072,10 +1087,10 @@ fn build_adjudication_context_from_rows(
 
     let bailment_state = match consent_rows.iter().find(|r| r.status == "active") {
         Some(r) => {
-            let bailor = Did::new(&r.subject_did).map_err(|e| {
+            let bailor = Did::new(&r.subject_did).map_err(|_| {
                 GatewayError::Internal(format!(
-                    "adjudication consent subject DID invalid for active bailment actor '{}' scope '{}': '{}' ({e})",
-                    r.actor_did, r.scope, r.subject_did
+                    "adjudication consent subject DID invalid for active bailment scope '{}'",
+                    r.scope
                 ))
             })?;
             GkBailment::Active {
@@ -1089,10 +1104,7 @@ fn build_adjudication_context_from_rows(
 
     let authority_chain = match chain_row {
         Some(row) => serde_json::from_value::<GkChain>(row.chain_json.clone()).map_err(|e| {
-            GatewayError::Internal(format!(
-                "adjudication authority chain JSON invalid for actor '{}': {e}",
-                row.actor_did
-            ))
+            GatewayError::Internal(format!("adjudication authority chain JSON invalid: {e}"))
         })?,
         None => GkChain::default(),
     };
@@ -1194,7 +1206,10 @@ async fn handle_auth_register(
         )
             .into_response(),
         Err(RegistryBlockingError::Registration(e)) => {
-            tracing::warn!(error = %e, did = %did_str, "DID registration rejected");
+            tracing::warn!(
+                reason = identity_registration_log_reason(&e),
+                "DID registration rejected"
+            );
             did_registration_rejection_response(e, "DID already registered")
         }
         Err(e) => {
@@ -1629,7 +1644,10 @@ async fn handle_agents_enroll(
         )
             .into_response(),
         Err(RegistryBlockingError::Registration(e)) => {
-            tracing::warn!(error = %e, did = %did_str, "agent enrollment rejected");
+            tracing::warn!(
+                reason = identity_registration_log_reason(&e),
+                "agent enrollment rejected"
+            );
             did_registration_rejection_response(e, "DID already enrolled")
         }
         Err(e) => {
@@ -2087,10 +2105,8 @@ async fn require_authenticated_session_actor_for_token(
     let actor_did = actor_did.ok_or_else(|| GatewayError::AuthenticationFailed {
         reason: "session token expired, revoked, or not found".to_owned(),
     })?;
-    Did::new(&actor_did).map_err(|e| {
-        GatewayError::Internal(format!(
-            "session actor DID stored in database is invalid: {actor_did}: {e}"
-        ))
+    Did::new(&actor_did).map_err(|_| {
+        GatewayError::Internal("session actor DID stored in database is invalid".into())
     })
 }
 
@@ -4159,6 +4175,87 @@ mod tests {
                 "\"/api/v1/identity/:did\",axum::routing::delete(handle_identity_erasure)"
             ),
             "gateway must expose a DELETE identity erasure route, not only an in-memory 0dentity route"
+        );
+    }
+
+    #[test]
+    fn gateway_production_logs_do_not_emit_raw_did_identifiers() {
+        let source = include_str!("server.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("tests marker present");
+
+        for pattern in [
+            "actor = %actor",
+            "did = %did_str",
+            "actor_did = %",
+            "subject_did = %",
+            "declarant_did = %",
+        ] {
+            assert!(
+                !production.contains(pattern),
+                "gateway logs must not emit raw DID identifiers: {pattern}"
+            );
+        }
+    }
+
+    #[test]
+    fn gateway_internal_errors_do_not_display_raw_did_identifiers() {
+        let actor = Did::new("did:exo:privacy-sensitive-actor").unwrap();
+        let related = Did::new("did:exo:privacy-sensitive-related").unwrap();
+        let declaration = ConflictDeclaration {
+            declarant_did: related.clone(),
+            nature: "financial conflict".into(),
+            related_dids: vec![actor.clone()],
+            timestamp: Timestamp::new(1, 0),
+        };
+        let conflict_error = validate_conflict_declaration(&actor, declaration)
+            .expect_err("mismatched stored declaration must be rejected")
+            .to_string();
+        assert!(
+            !conflict_error.contains(actor.as_str()) && !conflict_error.contains(related.as_str()),
+            "stored conflict declaration errors must not expose raw DID identifiers: {conflict_error}"
+        );
+
+        let role_rows = vec![crate::db::AgentRoleRow {
+            agent_did: actor.as_str().to_owned(),
+            role: "voter".to_owned(),
+            branch: "tribunal".to_owned(),
+            granted_by: related.as_str().to_owned(),
+            valid_from: 1,
+            expires_at: None,
+        }];
+        let role_error = build_adjudication_context_from_rows(&actor, &role_rows, &[], None)
+            .expect_err("unknown role branch must be rejected")
+            .to_string();
+        assert!(
+            !role_error.contains(actor.as_str()) && !role_error.contains(related.as_str()),
+            "adjudication role errors must not expose raw DID identifiers: {role_error}"
+        );
+
+        let consent_rows = vec![crate::db::ConsentRecordRow {
+            subject_did: related.as_str().to_owned(),
+            actor_did: actor.as_str().to_owned(),
+            scope: "data:vote".to_owned(),
+            bailment_type: "standard".to_owned(),
+            status: "active".to_owned(),
+            created_at: 1,
+            expires_at: None,
+        }];
+        let chain_row = crate::db::AuthorityChainRow {
+            actor_did: actor.as_str().to_owned(),
+            chain_json: serde_json::json!({ "links": "not-an-array" }),
+            valid_from: 1,
+            expires_at: None,
+        };
+        let chain_error =
+            build_adjudication_context_from_rows(&actor, &[], &consent_rows, Some(&chain_row))
+                .expect_err("malformed authority chain JSON must be rejected")
+                .to_string();
+        assert!(
+            !chain_error.contains(actor.as_str()) && !chain_error.contains(related.as_str()),
+            "adjudication chain errors must not expose raw DID identifiers: {chain_error}"
         );
     }
 

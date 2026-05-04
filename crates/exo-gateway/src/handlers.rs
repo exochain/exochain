@@ -657,7 +657,7 @@ pub async fn vote_handler(
     )
     .await
     {
-        tracing::error!(error = %e, voter_did = %body.voter_did, "audit write failed");
+        tracing::error!(error = %e, "audit write failed");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "audit write failed"})),
@@ -828,6 +828,26 @@ mod tests {
             assert!(
                 !production.contains(pattern),
                 "HTTP response bodies must not expose raw internal error details: {pattern}"
+            );
+        }
+    }
+
+    #[test]
+    fn handlers_do_not_emit_raw_did_fields_to_error_logs() {
+        let source = include_str!("handlers.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker present");
+
+        for pattern in [
+            "voter_did = %body.voter_did",
+            "actor_did = %",
+            "subject_did = %",
+        ] {
+            assert!(
+                !production.contains(pattern),
+                "handler logs must not emit raw DID identifiers: {pattern}"
             );
         }
     }

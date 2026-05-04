@@ -94,9 +94,9 @@ pub fn process_request(
 }
 
 /// Default-deny: a request with no consent is always rejected.
-pub fn default_deny_check(actor: &Did, action: &str) -> Result<()> {
+pub fn default_deny_check(_actor: &Did, action: &str) -> Result<()> {
     Err(GatewayError::ConsentDenied {
-        reason: format!("default-deny: {actor} cannot {action} without explicit consent"),
+        reason: format!("default-deny: {action} requires explicit consent"),
     })
 }
 
@@ -291,6 +291,20 @@ mod tests {
         let did = Did::new("did:exo:alice").unwrap();
         assert!(default_deny_check(&did, "write").is_err());
     }
+
+    #[test]
+    fn default_deny_does_not_display_raw_did() {
+        let sensitive_did = Did::new("did:exo:privacy-sensitive-route-subject").unwrap();
+        let error = default_deny_check(&sensitive_did, "write")
+            .expect_err("default deny must reject missing consent")
+            .to_string();
+
+        assert!(
+            !error.contains(sensitive_did.as_str()),
+            "default-deny display must not expose raw DID identifiers: {error}"
+        );
+    }
+
     #[test]
     fn route_serde() {
         for r in [

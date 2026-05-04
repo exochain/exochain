@@ -44,25 +44,25 @@ pub enum DecisionUpdateError {
 
 #[derive(Debug, Error)]
 pub enum DidDocumentPersistenceError {
-    #[error("DID document timestamp is out of database range for {did} field {field}: {value}")]
+    #[error("DID document timestamp is out of database range for field {field}: {value}")]
     TimestampOutOfRange {
         did: String,
         field: &'static str,
         value: u64,
     },
-    #[error("failed to serialize DID document for {did}")]
+    #[error("failed to serialize DID document")]
     Serialize {
         did: String,
         #[source]
         source: serde_json::Error,
     },
-    #[error("failed to deserialize persisted DID document for {did}")]
+    #[error("failed to deserialize persisted DID document")]
     Deserialize {
         did: String,
         #[source]
         source: serde_json::Error,
     },
-    #[error("persisted DID document row key {row_did} does not match payload id {document_did}")]
+    #[error("persisted DID document row key does not match payload id")]
     DocumentDidMismatch {
         row_did: String,
         document_did: String,
@@ -1768,6 +1768,46 @@ mod tests {
         assert!(list_source.contains("FROM did_documents"));
         assert!(list_source.contains("LIMIT $"));
         assert!(list_source.contains(".bind(MAX_DB_LIST_ROWS)"));
+    }
+
+    #[test]
+    fn did_document_persistence_errors_do_not_display_raw_dids() {
+        let sensitive_did = "did:exo:persistence-sensitive-subject";
+        let payload_did = "did:exo:persistence-payload-subject";
+        let serde_source =
+            serde_json::from_str::<serde_json::Value>("{").expect_err("invalid JSON source");
+
+        let errors = [
+            DidDocumentPersistenceError::TimestampOutOfRange {
+                did: sensitive_did.to_owned(),
+                field: "created",
+                value: 42,
+            }
+            .to_string(),
+            DidDocumentPersistenceError::Serialize {
+                did: sensitive_did.to_owned(),
+                source: serde_source,
+            }
+            .to_string(),
+            DidDocumentPersistenceError::Deserialize {
+                did: sensitive_did.to_owned(),
+                source: serde_json::from_str::<serde_json::Value>("{")
+                    .expect_err("invalid JSON source"),
+            }
+            .to_string(),
+            DidDocumentPersistenceError::DocumentDidMismatch {
+                row_did: sensitive_did.to_owned(),
+                document_did: payload_did.to_owned(),
+            }
+            .to_string(),
+        ];
+
+        for error in errors {
+            assert!(
+                !error.contains(sensitive_did) && !error.contains(payload_did),
+                "persistence error display must not expose raw DID identifiers: {error}"
+            );
+        }
     }
 
     #[test]
