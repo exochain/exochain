@@ -4,6 +4,14 @@
  * Defines all 23 node types with their validation, execution,
  * and council panel requirements.
  */
+const {
+  deterministicId,
+  hashCanonical,
+  hlcToString,
+  normalizeBasisPoints,
+  ratioBasisPoints,
+  timestampFromContext
+} = require('./determinism');
 
 /**
  * Base Node class - all node types extend this
@@ -66,12 +74,14 @@ class IdentityVerifyNode extends SyntaxisNode {
 
   execute(context) {
     const { identity, verificationMethod, nonce } = context.inputs;
+    const timestampHlc = timestampFromContext(context);
     const verified = this._performVerification(identity, verificationMethod, nonce);
     return {
       outputs: {
         identityId: identity.id,
         verified,
-        verificationTimestamp: Date.now(),
+        verificationTimestamp: hlcToString(timestampHlc),
+        verificationTimestampHlc: timestampHlc,
         method: verificationMethod
       },
       nextState: verified ? 'VERIFIED' : 'VERIFICATION_FAILED',
@@ -110,6 +120,7 @@ class AuthorityCheckNode extends SyntaxisNode {
 
   execute(context) {
     const { subjectId, requiredAuthority, scope } = context.inputs;
+    const timestampHlc = timestampFromContext(context);
     const authorized = this._checkAuthority(subjectId, requiredAuthority, scope);
     return {
       outputs: {
@@ -117,7 +128,8 @@ class AuthorityCheckNode extends SyntaxisNode {
         authorized,
         authorityLevel: authorized ? requiredAuthority : 'NONE',
         scope,
-        checkedAt: Date.now()
+        checkedAt: hlcToString(timestampHlc),
+        checkedAtHlc: timestampHlc
       },
       nextState: authorized ? 'AUTHORIZED' : 'UNAUTHORIZED',
       errors: authorized ? [] : [`Subject ${subjectId} not authorized for ${requiredAuthority}`]
@@ -158,7 +170,8 @@ class AuthorityDelegateNode extends SyntaxisNode {
 
   execute(context) {
     const { delegatorId, delegateeId, authority, expiresAt } = context.inputs;
-    const delegated = this._createDelegation(delegatorId, delegateeId, authority, expiresAt);
+    const timestampHlc = timestampFromContext(context);
+    const delegated = this._createDelegation(delegatorId, delegateeId, authority, expiresAt, timestampHlc);
     return {
       outputs: {
         delegationId: delegated.id,
@@ -166,7 +179,8 @@ class AuthorityDelegateNode extends SyntaxisNode {
         delegateeId,
         authority,
         expiresAt: expiresAt || null,
-        createdAt: Date.now()
+        createdAt: hlcToString(timestampHlc),
+        createdAtHlc: timestampHlc
       },
       nextState: 'DELEGATED',
       errors: []
@@ -177,9 +191,15 @@ class AuthorityDelegateNode extends SyntaxisNode {
     return ['Identity Panel', 'Governance Panel'];
   }
 
-  _createDelegation(delegatorId, delegateeId, authority, expiresAt) {
+  _createDelegation(delegatorId, delegateeId, authority, expiresAt, timestampHlc) {
     return {
-      id: `delegation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: deterministicId('delegation', {
+        authority,
+        delegateeId,
+        delegatorId,
+        expiresAt: expiresAt || null,
+        timestampHlc
+      }),
       delegatorId,
       delegateeId,
       authority,
@@ -212,7 +232,14 @@ class ConsentRequestNode extends SyntaxisNode {
 
   execute(context) {
     const { requesterId, consentType, recipientIds, consentData } = context.inputs;
-    const requestId = this._generateConsentRequest(requesterId, consentType, recipientIds, consentData);
+    const timestampHlc = timestampFromContext(context);
+    const requestId = this._generateConsentRequest(
+      requesterId,
+      consentType,
+      recipientIds,
+      consentData,
+      timestampHlc
+    );
     return {
       outputs: {
         consentRequestId: requestId,
@@ -220,7 +247,8 @@ class ConsentRequestNode extends SyntaxisNode {
         consentType,
         recipientCount: recipientIds.length,
         status: 'PENDING',
-        createdAt: Date.now()
+        createdAt: hlcToString(timestampHlc),
+        createdAtHlc: timestampHlc
       },
       nextState: 'AWAITING_CONSENT',
       errors: []
@@ -231,8 +259,14 @@ class ConsentRequestNode extends SyntaxisNode {
     return ['Consent Panel'];
   }
 
-  _generateConsentRequest(requesterId, consentType, recipientIds, consentData) {
-    return `consent_req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  _generateConsentRequest(requesterId, consentType, recipientIds, consentData, timestampHlc) {
+    return deterministicId('consent_req', {
+      consentData,
+      consentType,
+      recipientIds,
+      requesterId,
+      timestampHlc
+    });
   }
 }
 
@@ -253,18 +287,30 @@ class ConsentVerifyNode extends SyntaxisNode {
   }
 
   execute(context) {
-    const { consentRequestId, recipientResponses, requiredConsent } = context.inputs;
-    const { allConsented, consentRate } = this._verifyConsent(recipientResponses, requiredConsent);
+    const { consentRequestId, recipientResponses } = context.inputs;
+    const timestampHlc = timestampFromContext(context);
+    const requiredConsentBasisPoints = normalizeBasisPoints(
+      context.inputs.requiredConsentBasisPoints,
+      'requiredConsentBasisPoints',
+      10000
+    );
+    const { allConsented, consentBasisPoints } = this._verifyConsent(
+      recipientResponses,
+      requiredConsentBasisPoints
+    );
     return {
       outputs: {
         consentRequestId,
         allConsented,
-        consentRate,
+        consentBasisPoints,
         totalResponses: Object.keys(recipientResponses).length,
-        verifiedAt: Date.now()
+        verifiedAt: hlcToString(timestampHlc),
+        verifiedAtHlc: timestampHlc
       },
       nextState: allConsented ? 'CONSENT_VERIFIED' : 'CONSENT_INSUFFICIENT',
-      errors: allConsented ? [] : [`Consent threshold not met (${(consentRate * 100).toFixed(1)}% >= ${(requiredConsent * 100).toFixed(1)}% required)`]
+      errors: allConsented ? [] : [
+        `Consent threshold not met (${consentBasisPoints} bps >= ${requiredConsentBasisPoints} bps required)`
+      ]
     };
   }
 
@@ -272,13 +318,13 @@ class ConsentVerifyNode extends SyntaxisNode {
     return ['Consent Panel'];
   }
 
-  _verifyConsent(recipientResponses, requiredConsent = 1.0) {
+  _verifyConsent(recipientResponses, requiredConsentBasisPoints = 10000) {
     const responses = Object.values(recipientResponses);
     const consents = responses.filter(r => r.consent === true).length;
-    const consentRate = responses.length > 0 ? consents / responses.length : 0;
+    const consentBasisPoints = ratioBasisPoints(consents, responses.length);
     return {
-      allConsented: consentRate >= (requiredConsent || 1.0),
-      consentRate
+      allConsented: consentBasisPoints >= requiredConsentBasisPoints,
+      consentBasisPoints
     };
   }
 }
@@ -304,14 +350,16 @@ class ConsentRevokeNode extends SyntaxisNode {
 
   execute(context) {
     const { consentRequestId, revokerId, revocationReason } = context.inputs;
-    const revocationId = this._performRevocation(consentRequestId, revokerId);
+    const timestampHlc = timestampFromContext(context);
+    const revocationId = this._performRevocation(consentRequestId, revokerId, timestampHlc);
     return {
       outputs: {
         revocationId,
         consentRequestId,
         revokerId,
         revocationReason,
-        revokedAt: Date.now()
+        revokedAt: hlcToString(timestampHlc),
+        revokedAtHlc: timestampHlc
       },
       nextState: 'CONSENT_REVOKED',
       errors: []
@@ -322,8 +370,12 @@ class ConsentRevokeNode extends SyntaxisNode {
     return ['Consent Panel'];
   }
 
-  _performRevocation(consentRequestId, revokerId) {
-    return `revoke_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  _performRevocation(consentRequestId, revokerId, timestampHlc) {
+    return deterministicId('revoke', {
+      consentRequestId,
+      revokerId,
+      timestampHlc
+    });
   }
 }
 
@@ -351,7 +403,8 @@ class GovernanceProposeNode extends SyntaxisNode {
 
   execute(context) {
     const { proposerId, proposalType, proposalContent, affectedPanels } = context.inputs;
-    const proposalId = this._createProposal(proposerId, proposalType, proposalContent);
+    const timestampHlc = timestampFromContext(context);
+    const proposalId = this._createProposal(proposerId, proposalType, proposalContent, timestampHlc);
     return {
       outputs: {
         proposalId,
@@ -359,7 +412,8 @@ class GovernanceProposeNode extends SyntaxisNode {
         proposalType,
         affectedPanelCount: affectedPanels.length,
         status: 'PROPOSED',
-        createdAt: Date.now()
+        createdAt: hlcToString(timestampHlc),
+        createdAtHlc: timestampHlc
       },
       nextState: 'UNDER_REVIEW',
       errors: []
@@ -370,8 +424,13 @@ class GovernanceProposeNode extends SyntaxisNode {
     return ['Governance Panel'];
   }
 
-  _createProposal(proposerId, proposalType, proposalContent) {
-    return `proposal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  _createProposal(proposerId, proposalType, proposalContent, timestampHlc) {
+    return deterministicId('proposal', {
+      proposalContent,
+      proposalType,
+      proposerId,
+      timestampHlc
+    });
   }
 }
 
@@ -396,6 +455,7 @@ class GovernanceVoteNode extends SyntaxisNode {
 
   execute(context) {
     const { proposalId, panelVotes } = context.inputs;
+    const timestampHlc = timestampFromContext(context);
     const { passed, voteCount, resultDetails } = this._tallifyVotes(panelVotes);
     return {
       outputs: {
@@ -403,7 +463,8 @@ class GovernanceVoteNode extends SyntaxisNode {
         passed,
         voteCount,
         resultDetails,
-        votedAt: Date.now()
+        votedAt: hlcToString(timestampHlc),
+        votedAtHlc: timestampHlc
       },
       nextState: passed ? 'PASSED' : 'FAILED',
       errors: []
@@ -454,14 +515,16 @@ class GovernanceResolveNode extends SyntaxisNode {
 
   execute(context) {
     const { proposalId, voteResult, resolutionDetails } = context.inputs;
-    const resolutionId = this._createResolution(proposalId, voteResult);
+    const timestampHlc = timestampFromContext(context);
+    const resolutionId = this._createResolution(proposalId, voteResult, timestampHlc);
     return {
       outputs: {
         resolutionId,
         proposalId,
         voteResult,
         resolutionStatus: voteResult === 'PASSED' ? 'APPROVED' : 'REJECTED',
-        resolvedAt: Date.now(),
+        resolvedAt: hlcToString(timestampHlc),
+        resolvedAtHlc: timestampHlc,
         details: resolutionDetails || {}
       },
       nextState: voteResult === 'PASSED' ? 'RESOLVED_APPROVED' : 'RESOLVED_REJECTED',
@@ -473,8 +536,12 @@ class GovernanceResolveNode extends SyntaxisNode {
     return ['Governance Panel'];
   }
 
-  _createResolution(proposalId, voteResult) {
-    return `resolution_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  _createResolution(proposalId, voteResult, timestampHlc) {
+    return deterministicId('resolution', {
+      proposalId,
+      timestampHlc,
+      voteResult
+    });
   }
 }
 
@@ -499,15 +566,17 @@ class KernelAdjudicateNode extends SyntaxisNode {
 
   execute(context) {
     const { conflictId, conflictType, evidenceProofs } = context.inputs;
-    const adjudication = this._adjudicate(conflictId, conflictType, evidenceProofs);
+    const timestampHlc = timestampFromContext(context);
+    const adjudication = this._adjudicate(conflictId, conflictType, evidenceProofs, timestampHlc);
     return {
       outputs: {
         adjudicationId: adjudication.id,
         conflictId,
         verdict: adjudication.verdict,
-        confidence: adjudication.confidence,
+        confidenceBasisPoints: adjudication.confidenceBasisPoints,
         reasoning: adjudication.reasoning,
-        adjudicatedAt: Date.now()
+        adjudicatedAt: hlcToString(timestampHlc),
+        adjudicatedAtHlc: timestampHlc
       },
       nextState: adjudication.verdict === 'VALID' ? 'ADJUDICATED_VALID' : 'ADJUDICATED_INVALID',
       errors: []
@@ -518,13 +587,18 @@ class KernelAdjudicateNode extends SyntaxisNode {
     return ['Kernel Panel'];
   }
 
-  _adjudicate(conflictId, conflictType, evidenceProofs) {
+  _adjudicate(conflictId, conflictType, evidenceProofs, timestampHlc) {
     const validProofs = evidenceProofs.filter(p => p && p.hash).length;
-    const confidence = validProofs / Math.max(evidenceProofs.length, 1);
+    const confidenceBasisPoints = ratioBasisPoints(validProofs, evidenceProofs.length);
     return {
-      id: `adjudication_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      verdict: confidence > 0.5 ? 'VALID' : 'INVALID',
-      confidence,
+      id: deterministicId('adjudication', {
+        conflictId,
+        conflictType,
+        evidenceProofs,
+        timestampHlc
+      }),
+      verdict: confidenceBasisPoints > 5000 ? 'VALID' : 'INVALID',
+      confidenceBasisPoints,
       reasoning: `Evaluated ${evidenceProofs.length} proofs with ${validProofs} valid`
     };
   }
@@ -551,12 +625,14 @@ class InvariantCheckNode extends SyntaxisNode {
 
   execute(context) {
     const { invariantId, invariantRule, stateSnapshot } = context.inputs;
+    const timestampHlc = timestampFromContext(context);
     const satisfied = this._checkInvariant(invariantRule, stateSnapshot);
     return {
       outputs: {
         invariantId,
         satisfied,
-        checkedAt: Date.now(),
+        checkedAt: hlcToString(timestampHlc),
+        checkedAtHlc: timestampHlc,
         ruleType: invariantRule.type,
         stateCovered: Object.keys(stateSnapshot).length
       },
@@ -600,14 +676,16 @@ class ProofGenerateNode extends SyntaxisNode {
 
   execute(context) {
     const { dataHash, prover, proofType, proofData } = context.inputs;
-    const proof = this._generateProof(dataHash, prover, proofType, proofData);
+    const timestampHlc = timestampFromContext(context);
+    const proof = this._generateProof(dataHash, prover, proofType, proofData, timestampHlc);
     return {
       outputs: {
         proofId: proof.id,
         proofHash: proof.hash,
         proofType,
         prover,
-        generatedAt: Date.now(),
+        generatedAt: hlcToString(timestampHlc),
+        generatedAtHlc: timestampHlc,
         dataHash
       },
       nextState: 'PROOF_GENERATED',
@@ -619,10 +697,16 @@ class ProofGenerateNode extends SyntaxisNode {
     return ['Kernel Panel'];
   }
 
-  _generateProof(dataHash, prover, proofType, proofData) {
+  _generateProof(dataHash, prover, proofType, proofData, timestampHlc) {
     return {
-      id: `proof_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      hash: `proof_hash_${dataHash.slice(0, 16)}`,
+      id: deterministicId('proof', {
+        dataHash,
+        proofData: proofData || {},
+        proofType,
+        prover,
+        timestampHlc
+      }),
+      hash: `proof_hash_${hashCanonical({ dataHash, proofData: proofData || {}, proofType, prover }).slice(0, 32)}`,
       type: proofType,
       prover,
       data: proofData || {}
@@ -651,13 +735,15 @@ class ProofVerifyNode extends SyntaxisNode {
 
   execute(context) {
     const { proofId, proofHash, verifier } = context.inputs;
+    const timestampHlc = timestampFromContext(context);
     const verified = this._verifyProof(proofId, proofHash);
     return {
       outputs: {
         proofId,
         verified,
         verifier,
-        verifiedAt: Date.now(),
+        verifiedAt: hlcToString(timestampHlc),
+        verifiedAtHlc: timestampHlc,
         integrity: verified ? 'INTACT' : 'CORRUPTED'
       },
       nextState: verified ? 'PROOF_VERIFIED' : 'PROOF_INVALID',
@@ -696,14 +782,16 @@ class DagAppendNode extends SyntaxisNode {
 
   execute(context) {
     const { dagId, nodeData, parentHashes } = context.inputs;
-    const dagNode = this._appendToDAG(dagId, nodeData, parentHashes);
+    const timestampHlc = timestampFromContext(context);
+    const dagNode = this._appendToDAG(dagId, nodeData, parentHashes, timestampHlc);
     return {
       outputs: {
         dagNodeId: dagNode.id,
         dagId,
         nodeHash: dagNode.hash,
         parentCount: parentHashes.length,
-        appendedAt: Date.now()
+        appendedAt: hlcToString(timestampHlc),
+        appendedAtHlc: timestampHlc
       },
       nextState: 'APPENDED_TO_DAG',
       errors: []
@@ -714,9 +802,14 @@ class DagAppendNode extends SyntaxisNode {
     return ['Kernel Panel'];
   }
 
-  _appendToDAG(dagId, nodeData, parentHashes) {
-    const nodeId = `dag_node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const nodeHash = `${dagId}_${Buffer.from(JSON.stringify(nodeData)).toString('base64').slice(0, 32)}`;
+  _appendToDAG(dagId, nodeData, parentHashes, timestampHlc) {
+    const nodeId = deterministicId('dag_node', {
+      dagId,
+      nodeData,
+      parentHashes,
+      timestampHlc
+    });
+    const nodeHash = `${dagId}_${hashCanonical({ nodeData, parentHashes }).slice(0, 32)}`;
     return {
       id: nodeId,
       hash: nodeHash,
@@ -751,14 +844,16 @@ class EscalationTriggerNode extends SyntaxisNode {
 
   execute(context) {
     const { escalationReason, escalationLevel, affectedComponent, additionalData } = context.inputs;
-    const escalationId = this._createEscalation(escalationReason, escalationLevel);
+    const timestampHlc = timestampFromContext(context);
+    const escalationId = this._createEscalation(escalationReason, escalationLevel, timestampHlc);
     return {
       outputs: {
         escalationId,
         escalationLevel,
         affectedComponent,
         reason: escalationReason,
-        createdAt: Date.now(),
+        createdAt: hlcToString(timestampHlc),
+        createdAtHlc: timestampHlc,
         requiresHumanReview: escalationLevel !== 'WARNING'
       },
       nextState: 'ESCALATED',
@@ -770,8 +865,12 @@ class EscalationTriggerNode extends SyntaxisNode {
     return ['Escalation Panel'];
   }
 
-  _createEscalation(reason, level) {
-    return `escalation_${level.toLowerCase()}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  _createEscalation(reason, level, timestampHlc) {
+    return deterministicId(`escalation_${level.toLowerCase()}`, {
+      level,
+      reason,
+      timestampHlc
+    });
   }
 }
 
@@ -799,7 +898,13 @@ class HumanOverrideNode extends SyntaxisNode {
 
   execute(context) {
     const { escalationId, overrideDecision, overridingAuthority, justification } = context.inputs;
-    const overrideId = this._recordOverride(escalationId, overrideDecision, overridingAuthority);
+    const timestampHlc = timestampFromContext(context);
+    const overrideId = this._recordOverride(
+      escalationId,
+      overrideDecision,
+      overridingAuthority,
+      timestampHlc
+    );
     return {
       outputs: {
         overrideId,
@@ -807,7 +912,8 @@ class HumanOverrideNode extends SyntaxisNode {
         decision: overrideDecision,
         authority: overridingAuthority,
         justification,
-        overriddenAt: Date.now()
+        overriddenAt: hlcToString(timestampHlc),
+        overriddenAtHlc: timestampHlc
       },
       nextState: 'HUMAN_OVERRIDDEN',
       errors: []
@@ -818,8 +924,13 @@ class HumanOverrideNode extends SyntaxisNode {
     return ['Executive Panel'];
   }
 
-  _recordOverride(escalationId, decision, authority) {
-    return `override_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  _recordOverride(escalationId, decision, authority, timestampHlc) {
+    return deterministicId('override', {
+      authority,
+      decision,
+      escalationId,
+      timestampHlc
+    });
   }
 }
 
@@ -848,14 +959,16 @@ class TenantIsolateNode extends SyntaxisNode {
 
   execute(context) {
     const { tenantId, isolationLevel, resourceScope } = context.inputs;
-    const isolation = this._createIsolation(tenantId, isolationLevel, resourceScope);
+    const timestampHlc = timestampFromContext(context);
+    const isolation = this._createIsolation(tenantId, isolationLevel, resourceScope, timestampHlc);
     return {
       outputs: {
         isolationId: isolation.id,
         tenantId,
         isolationLevel,
         resourceCount: Object.keys(resourceScope).length,
-        createdAt: Date.now()
+        createdAt: hlcToString(timestampHlc),
+        createdAtHlc: timestampHlc
       },
       nextState: 'TENANT_ISOLATED',
       errors: []
@@ -866,9 +979,14 @@ class TenantIsolateNode extends SyntaxisNode {
     return ['Infrastructure Panel'];
   }
 
-  _createIsolation(tenantId, level, scope) {
+  _createIsolation(tenantId, level, scope, timestampHlc) {
     return {
-      id: `isolation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: deterministicId('isolation', {
+        level,
+        scope,
+        tenantId,
+        timestampHlc
+      }),
       tenantId,
       level,
       scope
@@ -897,14 +1015,16 @@ class MCPEnforceNode extends SyntaxisNode {
 
   execute(context) {
     const { mcpInstanceId, enforcementPolicy, constraints } = context.inputs;
-    const enforcement = this._enforcePolicy(mcpInstanceId, enforcementPolicy, constraints);
+    const timestampHlc = timestampFromContext(context);
+    const enforcement = this._enforcePolicy(mcpInstanceId, enforcementPolicy, constraints, timestampHlc);
     return {
       outputs: {
         enforcementId: enforcement.id,
         mcpInstanceId,
         policyApplied: true,
         constraintCount: constraints.length,
-        enforcedAt: Date.now()
+        enforcedAt: hlcToString(timestampHlc),
+        enforcedAtHlc: timestampHlc
       },
       nextState: 'MCP_ENFORCED',
       errors: []
@@ -915,9 +1035,14 @@ class MCPEnforceNode extends SyntaxisNode {
     return ['AI Panel'];
   }
 
-  _enforcePolicy(instanceId, policy, constraints) {
+  _enforcePolicy(instanceId, policy, constraints, timestampHlc) {
     return {
-      id: `enforce_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: deterministicId('enforce', {
+        constraints,
+        instanceId,
+        policy,
+        timestampHlc
+      }),
       instanceId,
       policy,
       constraints
@@ -947,12 +1072,14 @@ class CombinatorSequenceNode extends SyntaxisNode {
 
   execute(context) {
     const { steps, executionMode } = context.inputs;
+    const timestampHlc = timestampFromContext(context);
     return {
       outputs: {
         stepCount: steps.length,
         executionMode,
-        sequenceId: `seq_${Date.now()}`,
-        startedAt: Date.now()
+        sequenceId: deterministicId('seq', { executionMode, steps, timestampHlc }),
+        startedAt: hlcToString(timestampHlc),
+        startedAtHlc: timestampHlc
       },
       nextState: 'SEQUENCE_STARTED',
       errors: []
@@ -982,12 +1109,14 @@ class CombinatorParallelNode extends SyntaxisNode {
 
   execute(context) {
     const { branches, joinStrategy } = context.inputs;
+    const timestampHlc = timestampFromContext(context);
     return {
       outputs: {
         branchCount: branches.length,
         joinStrategy,
-        parallelId: `par_${Date.now()}`,
-        startedAt: Date.now()
+        parallelId: deterministicId('par', { branches, joinStrategy, timestampHlc }),
+        startedAt: hlcToString(timestampHlc),
+        startedAtHlc: timestampHlc
       },
       nextState: 'PARALLEL_STARTED',
       errors: []
@@ -1020,13 +1149,15 @@ class CombinatorChoiceNode extends SyntaxisNode {
 
   execute(context) {
     const { condition, trueBranch, falseBranch } = context.inputs;
+    const timestampHlc = timestampFromContext(context);
     const conditionMet = this._evaluateCondition(condition);
     return {
       outputs: {
         conditionMet,
         selectedBranch: conditionMet ? 'TRUE' : 'FALSE',
-        choiceId: `choice_${Date.now()}`,
-        evaluatedAt: Date.now()
+        choiceId: deterministicId('choice', { condition, falseBranch, timestampHlc, trueBranch }),
+        evaluatedAt: hlcToString(timestampHlc),
+        evaluatedAtHlc: timestampHlc
       },
       nextState: conditionMet ? 'BRANCH_TRUE' : 'BRANCH_FALSE',
       errors: []
@@ -1064,13 +1195,20 @@ class CombinatorGuardNode extends SyntaxisNode {
 
   execute(context) {
     const { guardCondition, guardedAction, fallbackAction } = context.inputs;
+    const timestampHlc = timestampFromContext(context);
     const guardPassed = this._checkGuard(guardCondition);
     return {
       outputs: {
         guardPassed,
         executedAction: guardPassed ? 'GUARDED' : 'FALLBACK',
-        guardId: `guard_${Date.now()}`,
-        checkedAt: Date.now()
+        guardId: deterministicId('guard', {
+          fallbackAction,
+          guardCondition,
+          guardedAction,
+          timestampHlc
+        }),
+        checkedAt: hlcToString(timestampHlc),
+        checkedAtHlc: timestampHlc
       },
       nextState: guardPassed ? 'GUARD_PASSED' : 'FALLBACK_EXECUTED',
       errors: []
@@ -1107,13 +1245,20 @@ class CombinatorTransformNode extends SyntaxisNode {
 
   execute(context) {
     const { sourceData, transformation, targetSchema } = context.inputs;
+    const timestampHlc = timestampFromContext(context);
     const transformed = this._transform(sourceData, transformation);
     return {
       outputs: {
         transformedData: transformed,
         targetSchema,
-        transformId: `transform_${Date.now()}`,
-        transformedAt: Date.now()
+        transformId: deterministicId('transform', {
+          sourceData,
+          targetSchema,
+          timestampHlc,
+          transformation
+        }),
+        transformedAt: hlcToString(timestampHlc),
+        transformedAtHlc: timestampHlc
       },
       nextState: 'TRANSFORMED',
       errors: []

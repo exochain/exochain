@@ -11,6 +11,11 @@ const {
   BCTS_STATES
 } = require('./index');
 
+const CREATED_AT_HLC = { physicalMs: 1700000000000, logical: 0 };
+const SECURITY_HLC = { physicalMs: 1700000000000, logical: 1 };
+const INFRA_HLC = { physicalMs: 1700000000000, logical: 2 };
+const DEPLOYMENT_HLC = { physicalMs: 1700000000001, logical: 0 };
+
 /**
  * Run all tests
  */
@@ -65,8 +70,9 @@ async function runTests() {
       name: 'Update Voting Threshold',
       author: 'GOVERNANCE_PANEL',
       tags: ['critical', 'governance'],
-      consentThreshold: 0.75,
-      maxDuration: 604800000
+      consentThresholdBasisPoints: 7500,
+      maxDuration: 604800000,
+      createdAtHlc: CREATED_AT_HLC
     });
     console.log(`Solution ID: ${amendmentSolution.solutionId}`);
     console.log(`Type: ${amendmentSolution.solutionType}`);
@@ -83,7 +89,8 @@ async function runTests() {
       patchSeverity: 'CRITICAL',
       affectedSystems: ['AUTH_SERVICE', 'LEDGER_SERVICE'],
       testingRequired: true,
-      rolloutPhase: 1
+      rolloutPhase: 1,
+      createdAtHlc: SECURITY_HLC
     });
     console.log(`Solution ID: ${securitySolution.solutionId}`);
     console.log(`Type: ${securitySolution.solutionType}`);
@@ -114,15 +121,16 @@ async function runTests() {
       proposer: 'GOVERNANCE_PANEL',
       content: {
         amendmentType: 'VOTING_THRESHOLD',
-        oldThreshold: 0.67,
-        newThreshold: 0.75
+        oldThresholdBasisPoints: 6700,
+        newThresholdBasisPoints: 7500
       },
       affectedPanels: ['Governance Panel', 'Consent Panel'],
       requiresConsent: true,
-      requiredConsentLevel: 0.8,
+      requiredConsentBasisPoints: 8000,
       faultTolerant: true,
       rollbackOnFailure: true,
-      maxDuration: 604800000
+      maxDuration: 604800000,
+      createdAtHlc: CREATED_AT_HLC
     };
 
     const workflow = engine.compileSyntaxis(mockCouncilVerdict, mockProposal);
@@ -165,12 +173,13 @@ async function runTests() {
     console.log('-----------------------');
     const deployment = engine.deploySolution(amendmentSolution, {
       path: '/exoforge/deployments',
-      environment: 'PRODUCTION'
+      environment: 'PRODUCTION',
+      deploymentHlc: DEPLOYMENT_HLC
     });
     console.log(`Deployment ID: ${deployment.deploymentId}`);
     console.log(`Solution ID: ${deployment.solutionId}`);
     console.log(`Status: ${deployment.status}`);
-    console.log(`Duration: ${deployment.duration}ms`);
+    console.log(`Duration: ${deployment.durationLogicalTicks} logical ticks`);
     console.log(`Stages Completed: ${deployment.stages.length}`);
     deployment.stages.forEach((stage, idx) => {
       console.log(`  ${idx + 1}. ${stage.name}: ${stage.description}`);
@@ -214,7 +223,8 @@ async function runTests() {
       changeScope: 'FULL_DATABASE_MIGRATION',
       maintenanceWindow: '2024-04-15T00:00:00Z',
       blueGreenStrategy: true,
-      consentThreshold: 0.75
+      consentThresholdBasisPoints: 7500,
+      createdAtHlc: INFRA_HLC
     });
     console.log(`Solution: ${infraSolution.name}`);
     console.log(`Nodes in Sequence: ${infraSolution.nodeSequence.length}`);

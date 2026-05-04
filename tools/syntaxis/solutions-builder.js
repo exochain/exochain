@@ -5,8 +5,16 @@
  * Each template is a pre-configured Syntaxis workflow that can be customized.
  */
 
-const { SyntaxisCompiler, PROPOSAL_TYPE_MAPPINGS } = require('./compiler');
+const { SyntaxisCompiler, STANDARD_BCTS_FLOW } = require('./compiler');
 const { NODE_IMPLEMENTATIONS } = require('./nodes');
+const {
+  advanceHlc,
+  compareHlc,
+  deterministicId,
+  hlcToString,
+  normalizeBasisPoints,
+  normalizeHlc
+} = require('./determinism');
 
 /**
  * Pre-built solution templates for common workflows
@@ -27,17 +35,17 @@ const SOLUTION_TEMPLATES = {
       'dag-append'
     ],
     requiredPanels: ['Identity Panel', 'Governance Panel', 'Consent Panel', 'Kernel Panel'],
-    stateFlow: ['INITIALIZED', 'IDENTITY_VERIFIED', 'CONSENT_PHASE', 'GOVERNANCE_REVIEW', 'GOVERNANCE_PASSED', 'EXECUTION_READY', 'EXECUTING'],
+    stateFlow: STANDARD_BCTS_FLOW,
     defaultConfig: {
       requiresConsent: true,
-      consentThreshold: 0.8,
+      consentThresholdBasisPoints: 8000,
       requiresHumanApproval: true,
       maxDuration: 604800000, // 7 days
       faultTolerant: true,
       rollbackOnFailure: true
     },
     customizable: [
-      'consentThreshold',
+      'consentThresholdBasisPoints',
       'maxDuration',
       'affectedPanels',
       'amendmentScope'
@@ -60,7 +68,7 @@ const SOLUTION_TEMPLATES = {
       'dag-append'
     ],
     requiredPanels: ['Governance Panel', 'Identity Panel', 'Infrastructure Panel', 'Kernel Panel'],
-    stateFlow: ['INITIALIZED', 'IDENTITY_VERIFIED', 'AUTHORIZED', 'EXECUTION_READY', 'EXECUTING', 'COMPLETED'],
+    stateFlow: STANDARD_BCTS_FLOW,
     defaultConfig: {
       isolationLevel: 'LOGICAL',
       requiresConsent: false,
@@ -92,7 +100,7 @@ const SOLUTION_TEMPLATES = {
       'dag-append'
     ],
     requiredPanels: ['Governance Panel', 'Kernel Panel'],
-    stateFlow: ['INITIALIZED', 'GOVERNANCE_REVIEW', 'EXECUTION_READY', 'EXECUTING', 'COMPLETED'],
+    stateFlow: STANDARD_BCTS_FLOW,
     defaultConfig: {
       requiresConsent: false,
       requiresHumanApproval: false,
@@ -126,10 +134,10 @@ const SOLUTION_TEMPLATES = {
       'dag-append'
     ],
     requiredPanels: ['Identity Panel', 'Governance Panel', 'Kernel Panel', 'Escalation Panel', 'Executive Panel'],
-    stateFlow: ['INITIALIZED', 'IDENTITY_VERIFIED', 'DISPUTE_ESCALATION', 'GOVERNANCE_REVIEW', 'EXECUTION_READY', 'EXECUTING', 'COMPLETED'],
+    stateFlow: STANDARD_BCTS_FLOW,
     defaultConfig: {
       requiresConsent: true,
-      consentThreshold: 1.0,
+      consentThresholdBasisPoints: 10000,
       requiresHumanApproval: true,
       maxDuration: 300000, // 5 minutes (urgent)
       faultTolerant: false,
@@ -159,11 +167,11 @@ const SOLUTION_TEMPLATES = {
       'dag-append'
     ],
     requiredPanels: ['Governance Panel', 'Identity Panel', 'Infrastructure Panel', 'AI Panel', 'Kernel Panel'],
-    stateFlow: ['INITIALIZED', 'IDENTITY_VERIFIED', 'AUTHORIZED', 'EXECUTION_READY', 'EXECUTING', 'COMPLETED'],
+    stateFlow: STANDARD_BCTS_FLOW,
     defaultConfig: {
       isolationLevel: 'PHYSICAL',
       requiresConsent: true,
-      consentThreshold: 0.75,
+      consentThresholdBasisPoints: 7500,
       requiresHumanApproval: true,
       maxDuration: 1800000, // 30 minutes
       faultTolerant: true,
@@ -193,10 +201,10 @@ const SOLUTION_TEMPLATES = {
       'dag-append'
     ],
     requiredPanels: ['Identity Panel', 'Governance Panel', 'Consent Panel', 'Kernel Panel'],
-    stateFlow: ['INITIALIZED', 'IDENTITY_VERIFIED', 'AUTHORIZED', 'CONSENT_PHASE', 'GOVERNANCE_REVIEW', 'GOVERNANCE_PASSED', 'EXECUTION_READY'],
+    stateFlow: STANDARD_BCTS_FLOW,
     defaultConfig: {
       requiresConsent: true,
-      consentThreshold: 0.8,
+      consentThresholdBasisPoints: 8000,
       requiresHumanApproval: true,
       maxDuration: 3600000, // 1 hour
       faultTolerant: true,
@@ -224,7 +232,7 @@ const SOLUTION_TEMPLATES = {
       'dag-append'
     ],
     requiredPanels: ['Escalation Panel', 'Kernel Panel', 'Executive Panel', 'Consent Panel', 'Governance Panel'],
-    stateFlow: ['INITIALIZED', 'DISPUTE_ESCALATION', 'GOVERNANCE_REVIEW', 'EXECUTION_READY', 'COMPLETED'],
+    stateFlow: STANDARD_BCTS_FLOW,
     defaultConfig: {
       requiresConsent: true,
       requiresHumanApproval: true,
@@ -261,26 +269,36 @@ class SolutionsBuilder {
       throw new Error(`Unknown solution type: ${solutionType}`);
     }
 
+    const createdAtHlc = normalizeHlc(config.createdAtHlc, 'createdAtHlc');
+    const solutionConfig = { ...config };
+    delete solutionConfig.createdAtHlc;
+
     const template = this.templates[solutionType];
     const solution = {
-      solutionId: `solution_${solutionType}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      solutionId: deterministicId(`solution_${solutionType}`, {
+        config: solutionConfig,
+        createdAtHlc,
+        solutionType,
+        templateId: template.id
+      }),
       solutionType,
       templateId: template.id,
-      name: config.name || template.name,
-      description: config.description || template.description,
+      name: solutionConfig.name || template.name,
+      description: solutionConfig.description || template.description,
       category: template.category,
-      createdAt: Date.now(),
+      createdAt: hlcToString(createdAtHlc),
+      createdAtHlc,
       status: 'CREATED',
       nodeSequence: [...template.nodeSequence],
       requiredPanels: [...template.requiredPanels],
       stateFlow: [...template.stateFlow],
-      config: this._mergeConfigs(template.defaultConfig, config),
-      customizations: this._buildCustomizations(template, config),
+      config: this._mergeConfigs(template.defaultConfig, solutionConfig),
+      customizations: this._buildCustomizations(template, solutionConfig),
       metadata: {
         version: '1.0',
-        author: config.author || 'SYSTEM',
-        tags: config.tags || [],
-        notes: config.notes || ''
+        author: solutionConfig.author || 'SYSTEM',
+        tags: solutionConfig.tags || [],
+        notes: solutionConfig.notes || ''
       }
     };
 
@@ -297,13 +315,21 @@ class SolutionsBuilder {
     if (!solution || !solution.solutionId) {
       throw new Error('Invalid solution object');
     }
+    const targetConfig = typeof target === 'string' ? { path: target } : { ...(target || {}) };
+    const deploymentHlc = normalizeHlc(targetConfig.deploymentHlc, 'target.deploymentHlc');
+    delete targetConfig.deploymentHlc;
 
     const deployment = {
-      deploymentId: `deployment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      deploymentId: deterministicId('deployment', {
+        deploymentHlc,
+        solutionId: solution.solutionId,
+        target: targetConfig
+      }),
       solutionId: solution.solutionId,
       solutionType: solution.solutionType,
-      target: typeof target === 'string' ? { path: target } : target,
-      startTime: Date.now(),
+      target: targetConfig,
+      startTime: hlcToString(deploymentHlc),
+      startTimeHlc: deploymentHlc,
       status: 'DEPLOYING',
       stages: []
     };
@@ -313,6 +339,10 @@ class SolutionsBuilder {
     if (!validation.valid) {
       deployment.status = 'VALIDATION_FAILED';
       deployment.errors = validation.errors;
+      const completedAtHlc = advanceHlc(deploymentHlc, 1);
+      deployment.completedAt = hlcToString(completedAtHlc);
+      deployment.completedAtHlc = completedAtHlc;
+      deployment.durationLogicalTicks = completedAtHlc.logical - deploymentHlc.logical;
       this.deploymentLog.push(deployment);
       return deployment;
     }
@@ -324,17 +354,21 @@ class SolutionsBuilder {
       deployment.workflow = workflow;
 
       // Execute deployment stages
-      const stageResults = this._executeDeploymentStages(solution, workflow);
+      const stageResults = this._executeDeploymentStages(solution, workflow, deploymentHlc);
       deployment.stages = stageResults;
       deployment.status = stageResults.every(s => s.success) ? 'DEPLOYED' : 'PARTIAL_FAILURE';
-      deployment.completedAt = Date.now();
-      deployment.duration = deployment.completedAt - deployment.startTime;
+      const completedAtHlc = advanceHlc(deploymentHlc, stageResults.length + 1);
+      deployment.completedAt = hlcToString(completedAtHlc);
+      deployment.completedAtHlc = completedAtHlc;
+      deployment.durationLogicalTicks = stageResults.length + 1;
 
     } catch (error) {
       deployment.status = 'DEPLOYMENT_FAILED';
       deployment.error = error.message;
-      deployment.completedAt = Date.now();
-      deployment.duration = deployment.completedAt - deployment.startTime;
+      const completedAtHlc = advanceHlc(deploymentHlc, 1);
+      deployment.completedAt = hlcToString(completedAtHlc);
+      deployment.completedAtHlc = completedAtHlc;
+      deployment.durationLogicalTicks = 1;
     }
 
     this.deploymentLog.push(deployment);
@@ -381,13 +415,17 @@ class SolutionsBuilder {
       throw new Error('Invalid solution object');
     }
 
+    const modifiedAtHlc = normalizeHlc(customization.modifiedAtHlc, 'modifiedAtHlc');
+    const customizationFields = { ...customization };
+    delete customizationFields.modifiedAtHlc;
+
     const template = this.templates[solution.solutionType];
     if (!template) {
       throw new Error(`Unknown solution type: ${solution.solutionType}`);
     }
 
     // Validate customization fields
-    const invalidFields = Object.keys(customization).filter(
+    const invalidFields = Object.keys(customizationFields).filter(
       field => !template.customizable.includes(field)
     );
     if (invalidFields.length > 0) {
@@ -397,9 +435,10 @@ class SolutionsBuilder {
     const customized = JSON.parse(JSON.stringify(solution));
     customized.customizations = {
       ...customized.customizations,
-      ...customization
+      ...customizationFields
     };
-    customized.lastModified = Date.now();
+    customized.lastModified = hlcToString(modifiedAtHlc);
+    customized.lastModifiedHlc = modifiedAtHlc;
 
     return customized;
   }
@@ -420,15 +459,15 @@ class SolutionsBuilder {
       history = history.filter(d => d.status === filter.status);
     }
 
-    if (filter.startTime) {
-      history = history.filter(d => d.startTime >= filter.startTime);
+    if (filter.startHlc) {
+      history = history.filter(d => compareHlc(d.startTimeHlc, filter.startHlc) >= 0);
     }
 
-    if (filter.endTime) {
-      history = history.filter(d => d.startTime <= filter.endTime);
+    if (filter.endHlc) {
+      history = history.filter(d => compareHlc(d.startTimeHlc, filter.endHlc) <= 0);
     }
 
-    return history.sort((a, b) => b.startTime - a.startTime);
+    return history.sort((a, b) => compareHlc(b.startTimeHlc, a.startTimeHlc));
   }
 
   /**
@@ -436,7 +475,7 @@ class SolutionsBuilder {
    */
 
   _mergeConfigs(defaultConfig, customConfig) {
-    return {
+    const merged = {
       ...defaultConfig,
       ...Object.fromEntries(
         Object.entries(customConfig).filter(([key]) =>
@@ -444,6 +483,14 @@ class SolutionsBuilder {
         )
       )
     };
+    if (Object.prototype.hasOwnProperty.call(merged, 'consentThresholdBasisPoints')) {
+      merged.consentThresholdBasisPoints = normalizeBasisPoints(
+        merged.consentThresholdBasisPoints,
+        'consentThresholdBasisPoints',
+        defaultConfig.consentThresholdBasisPoints
+      );
+    }
+    return merged;
   }
 
   _buildCustomizations(template, config) {
@@ -512,30 +559,35 @@ class SolutionsBuilder {
       executor: solution.metadata.author,
       affectedPanels: solution.requiredPanels,
       requiresConsent: solution.config.requiresConsent,
-      requiredConsentLevel: solution.config.consentThreshold || 0.8,
       faultTolerant: solution.config.faultTolerant,
       rollbackOnFailure: solution.config.rollbackOnFailure,
-      maxDuration: solution.config.maxDuration
+      maxDuration: solution.config.maxDuration,
+      createdAtHlc: solution.createdAtHlc
     };
+    if (Object.prototype.hasOwnProperty.call(solution.config, 'consentThresholdBasisPoints')) {
+      proposal.requiredConsentBasisPoints = solution.config.consentThresholdBasisPoints;
+    }
 
     // Compile workflow
     const workflow = this.compiler.compileSyntaxis(mockVerdict, proposal);
     return workflow;
   }
 
-  _executeDeploymentStages(solution, workflow) {
+  _executeDeploymentStages(solution, workflow, deploymentHlc) {
     const stages = [
       {
         name: 'PRE_DEPLOYMENT_CHECKS',
         description: 'Validate solution readiness',
         success: true,
-        completedAt: Date.now()
+        completedAt: hlcToString(advanceHlc(deploymentHlc, 1)),
+        completedAtHlc: advanceHlc(deploymentHlc, 1)
       },
       {
         name: 'WORKFLOW_GENERATION',
         description: `Generated workflow ${workflow.workflowId}`,
         success: true,
-        completedAt: Date.now()
+        completedAt: hlcToString(advanceHlc(deploymentHlc, 2)),
+        completedAtHlc: advanceHlc(deploymentHlc, 2)
       },
       {
         name: 'NODE_EXECUTION',
@@ -545,21 +597,24 @@ class SolutionsBuilder {
           nodeId: node.id,
           type: node.type,
           status: 'COMPLETED',
-          executionTime: Math.random() * 5000
+          executionTicks: workflow.nodes.indexOf(node) + 1
         })),
-        completedAt: Date.now()
+        completedAt: hlcToString(advanceHlc(deploymentHlc, 3)),
+        completedAtHlc: advanceHlc(deploymentHlc, 3)
       },
       {
         name: 'VERIFICATION',
         description: 'Verifying workflow execution',
         success: true,
-        completedAt: Date.now()
+        completedAt: hlcToString(advanceHlc(deploymentHlc, 4)),
+        completedAtHlc: advanceHlc(deploymentHlc, 4)
       },
       {
         name: 'FINALIZATION',
         description: 'Finalizing deployment',
         success: true,
-        completedAt: Date.now()
+        completedAt: hlcToString(advanceHlc(deploymentHlc, 5)),
+        completedAtHlc: advanceHlc(deploymentHlc, 5)
       }
     ];
 

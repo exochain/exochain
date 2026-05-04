@@ -4,7 +4,7 @@
   "description": "Syntaxis Protocol Engine - Intermediary protocol translating council governance decisions into executable workflow definitions for ExoForge",
   "main": "index.js",
   "scripts": {
-    "test": "node test.js",
+    "test": "node determinism.test.js && node test.js",
     "validate": "node validate.js"
   },
   "keywords": [

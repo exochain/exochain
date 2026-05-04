@@ -6,6 +6,14 @@
  */
 
 const { NODE_IMPLEMENTATIONS } = require('./nodes');
+const {
+  canonicalJson,
+  deterministicId,
+  hashCanonical,
+  hlcToString,
+  normalizeBasisPoints,
+  normalizeHlc
+} = require('./determinism');
 
 /**
  * BCTS State Transition Map
@@ -28,6 +36,23 @@ const BCTS_TRANSITIONS = {
   'CLOSED': []
 };
 
+const STANDARD_BCTS_FLOW = [
+  'INITIALIZED',
+  'IDENTITY_REQUIRED',
+  'IDENTITY_VERIFIED',
+  'AUTHORITY_CHECK',
+  'AUTHORIZED',
+  'CONSENT_PHASE',
+  'CONSENT_VERIFIED',
+  'GOVERNANCE_REVIEW',
+  'GOVERNANCE_PASSED',
+  'EXECUTION_READY',
+  'EXECUTING',
+  'COMPLETED',
+  'FINALIZED',
+  'CLOSED'
+];
+
 /**
  * Proposal type to Syntaxis node mappings
  */
@@ -35,37 +60,37 @@ const PROPOSAL_TYPE_MAPPINGS = {
   'governance-amendment': {
     nodes: ['governance-propose', 'consent-request', 'governance-vote', 'governance-resolve', 'kernel-adjudicate'],
     requiredPanels: ['Governance Panel', 'Consent Panel', 'Kernel Panel'],
-    stateFlow: ['INITIALIZED', 'CONSENT_PHASE', 'GOVERNANCE_REVIEW', 'GOVERNANCE_PASSED', 'EXECUTION_READY']
+    stateFlow: STANDARD_BCTS_FLOW
   },
   'feature-implementation': {
     nodes: ['governance-propose', 'authority-delegate', 'proof-generate', 'tenant-isolate', 'combinator-sequence'],
     requiredPanels: ['Governance Panel', 'Identity Panel', 'Kernel Panel', 'Infrastructure Panel'],
-    stateFlow: ['INITIALIZED', 'IDENTITY_VERIFIED', 'AUTHORIZED', 'EXECUTION_READY', 'EXECUTING']
+    stateFlow: STANDARD_BCTS_FLOW
   },
   'bug-fix': {
     nodes: ['governance-propose', 'proof-generate', 'proof-verify', 'combinator-sequence', 'dag-append'],
     requiredPanels: ['Governance Panel', 'Kernel Panel'],
-    stateFlow: ['INITIALIZED', 'GOVERNANCE_REVIEW', 'EXECUTION_READY', 'EXECUTING', 'COMPLETED']
+    stateFlow: STANDARD_BCTS_FLOW
   },
   'security-patch': {
     nodes: ['governance-propose', 'identity-verify', 'proof-generate', 'kernel-adjudicate', 'invariant-check'],
     requiredPanels: ['Governance Panel', 'Identity Panel', 'Kernel Panel'],
-    stateFlow: ['INITIALIZED', 'IDENTITY_VERIFIED', 'AUTHORIZED', 'GOVERNANCE_PASSED', 'EXECUTION_READY']
+    stateFlow: STANDARD_BCTS_FLOW
   },
   'infrastructure-change': {
     nodes: ['governance-propose', 'authority-check', 'tenant-isolate', 'combinator-parallel', 'mcp-enforce'],
     requiredPanels: ['Governance Panel', 'Identity Panel', 'Infrastructure Panel', 'AI Panel'],
-    stateFlow: ['INITIALIZED', 'IDENTITY_VERIFIED', 'AUTHORIZED', 'EXECUTION_READY', 'EXECUTING']
+    stateFlow: STANDARD_BCTS_FLOW
   },
   'escalation-resolution': {
     nodes: ['escalation-trigger', 'kernel-adjudicate', 'human-override', 'consent-verify'],
     requiredPanels: ['Escalation Panel', 'Kernel Panel', 'Executive Panel', 'Consent Panel'],
-    stateFlow: ['INITIALIZED', 'GOVERNANCE_REVIEW', 'DISPUTE_ESCALATION', 'EXECUTION_READY', 'COMPLETED']
+    stateFlow: STANDARD_BCTS_FLOW
   },
   'access-control-update': {
     nodes: ['identity-verify', 'authority-delegate', 'consent-request', 'authority-check', 'governance-vote'],
     requiredPanels: ['Identity Panel', 'Governance Panel', 'Consent Panel'],
-    stateFlow: ['INITIALIZED', 'IDENTITY_VERIFIED', 'CONSENT_PHASE', 'GOVERNANCE_REVIEW', 'GOVERNANCE_PASSED']
+    stateFlow: STANDARD_BCTS_FLOW
   }
 };
 
@@ -95,6 +120,11 @@ class SyntaxisCompiler {
     }
 
     const proposalMapping = this.proposalTypeMappers[proposal.type];
+    const createdAtHlc = normalizeHlc(
+      proposal.createdAtHlc ?? councilVerdict.createdAtHlc,
+      'createdAtHlc'
+    );
+    const createdAt = hlcToString(createdAtHlc);
 
     // Build the node graph
     const nodes = [];
@@ -102,14 +132,21 @@ class SyntaxisCompiler {
     const dependencies = {};
 
     // Create nodes based on proposal type
-    for (const nodeType of proposalMapping.nodes) {
+    for (let index = 0; index < proposalMapping.nodes.length; index++) {
+      const nodeType = proposalMapping.nodes[index];
       const node = {
-        id: `node_${nodeType}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        id: deterministicId(`node_${nodeType}`, {
+          createdAtHlc,
+          index,
+          nodeType,
+          proposalId: proposal.id,
+          verdictId: councilVerdict.id
+        }),
         type: nodeType,
         category: this._getCategoryForNodeType(nodeType),
-        inputs: this._buildNodeInputs(nodeType, councilVerdict, proposal),
+        inputs: this._buildNodeInputs(nodeType, councilVerdict, proposal, createdAtHlc),
         requiredPanels: NODE_IMPLEMENTATIONS[nodeType].getRequiredPanels(),
-        requiredConsent: this._getConsentRequirement(nodeType),
+        requiredConsentBasisPoints: this._getConsentRequirementBasisPoints(nodeType),
         timeoutMs: this._getNodeTimeout(nodeType),
         retryPolicy: this._getRetryPolicy(nodeType),
         fallback: null
@@ -130,11 +167,18 @@ class SyntaxisCompiler {
 
     // Build final workflow
     const workflow = {
-      workflowId: `workflow_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      workflowId: deterministicId('workflow', {
+        createdAtHlc,
+        nodeTypes: proposalMapping.nodes,
+        proposalId: proposal.id,
+        proposalType: proposal.type,
+        verdictId: councilVerdict.id
+      }),
       proposalId: proposal.id,
       proposalType: proposal.type,
       councilVerdictId: councilVerdict.id,
-      createdAt: Date.now(),
+      createdAt,
+      createdAtHlc,
       status: 'COMPILED',
       nodes,
       dependencies,
@@ -187,6 +231,11 @@ class SyntaxisCompiler {
       if (!nodeImpl) {
         errors.push(`Unknown node type: ${node.type}`);
         continue;
+      }
+      try {
+        normalizeHlc(node.inputs?.timestampHlc, `Node ${node.id}: timestampHlc`);
+      } catch (error) {
+        errors.push(`Node ${node.id}: timestampHlc is required (${error.message})`);
       }
 
       const validation = nodeImpl.validate(node.inputs);
@@ -243,7 +292,7 @@ class SyntaxisCompiler {
 
     // Header
     yaml.push('# Syntaxis Workflow to Archon DAG Conversion');
-    yaml.push(`# Generated: ${new Date().toISOString()}`);
+    yaml.push(`# Generated HLC: ${syntaxisWorkflow.createdAt}`);
     yaml.push(`# Workflow ID: ${syntaxisWorkflow.workflowId}`);
     yaml.push('');
 
@@ -269,7 +318,7 @@ class SyntaxisCompiler {
       yaml.push(`    category: "${node.category}"`);
       yaml.push(`    timeout_ms: ${node.timeoutMs}`);
       yaml.push(`    required_panels: [${node.requiredPanels.map(p => `"${p}"`).join(', ')}]`);
-      yaml.push(`    required_consent: ${node.requiredConsent}`);
+      yaml.push(`    required_consent_basis_points: ${node.requiredConsentBasisPoints}`);
       yaml.push('    inputs:');
 
       // Add inputs
@@ -280,8 +329,10 @@ class SyntaxisCompiler {
           yaml.push(`      ${key}: ${value}`);
         } else if (Array.isArray(value)) {
           yaml.push(`      ${key}: [${value.map(v => typeof v === 'string' ? `"${v}"` : v).join(', ')}]`);
+        } else if (value && typeof value === 'object') {
+          yaml.push(`      ${key}: ${canonicalJson(value)}`);
         } else {
-          yaml.push(`      ${key}: {}`);
+          yaml.push(`      ${key}: null`);
         }
       }
 
@@ -345,11 +396,12 @@ class SyntaxisCompiler {
     return categoryMap[nodeType] || 'Unknown';
   }
 
-  _buildNodeInputs(nodeType, councilVerdict, proposal) {
+  _buildNodeInputs(nodeType, councilVerdict, proposal, createdAtHlc) {
     const baseInputs = {
       proposalId: proposal.id,
       verdictId: councilVerdict.id,
-      timestamp: Date.now()
+      timestamp: hlcToString(createdAtHlc),
+      timestampHlc: createdAtHlc
     };
 
     switch (nodeType) {
@@ -358,7 +410,11 @@ class SyntaxisCompiler {
           ...baseInputs,
           identity: { id: proposal.proposer },
           verificationMethod: 'cryptographic',
-          nonce: Math.random().toString(36).substr(2, 9)
+          nonce: deterministicId('nonce', {
+            createdAtHlc,
+            proposalId: proposal.id,
+            verdictId: councilVerdict.id
+          })
         };
 
       case 'authority-check':
@@ -391,7 +447,11 @@ class SyntaxisCompiler {
           ...baseInputs,
           consentRequestId: `consent_req_${proposal.id}`,
           recipientResponses: councilVerdict.consentResponses || {},
-          requiredConsent: proposal.requiredConsentLevel || 0.8
+          requiredConsentBasisPoints: normalizeBasisPoints(
+            proposal.requiredConsentBasisPoints,
+            'proposal.requiredConsentBasisPoints',
+            8000
+          )
         };
 
       case 'governance-propose':
@@ -414,7 +474,7 @@ class SyntaxisCompiler {
         return {
           ...baseInputs,
           proposalId: proposal.id,
-          voteResult: councilVerdict.status || 'PENDING',
+          voteResult: this._normalizeVoteResult(councilVerdict.status),
           resolutionDetails: councilVerdict.resolution || {}
         };
 
@@ -534,14 +594,14 @@ class SyntaxisCompiler {
     }
   }
 
-  _getConsentRequirement(nodeType) {
+  _getConsentRequirementBasisPoints(nodeType) {
     const requiresConsent = [
       'consent-request',
       'consent-verify',
       'authority-delegate',
       'governance-propose'
     ];
-    return requiresConsent.includes(nodeType) ? 0.8 : 0;
+    return requiresConsent.includes(nodeType) ? 8000 : 0;
   }
 
   _getNodeTimeout(nodeType) {
@@ -610,20 +670,27 @@ class SyntaxisCompiler {
   }
 
   _hashObject(obj) {
-    // Simple hash function for demonstration
-    const str = JSON.stringify(obj);
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
+    return `0x${hashCanonical(obj)}`;
+  }
+
+  _normalizeVoteResult(status) {
+    const normalized = {
+      APPROVED: 'PASSED',
+      PASSED: 'PASSED',
+      REJECTED: 'FAILED',
+      FAILED: 'FAILED',
+      DISPUTED: 'DISPUTED'
+    }[status];
+    if (!normalized) {
+      throw new Error(`Unsupported council verdict status: ${status}`);
     }
-    return `0x${Math.abs(hash).toString(16)}`;
+    return normalized;
   }
 }
 
 module.exports = {
   SyntaxisCompiler,
   BCTS_TRANSITIONS,
-  PROPOSAL_TYPE_MAPPINGS
+  PROPOSAL_TYPE_MAPPINGS,
+  STANDARD_BCTS_FLOW
 };

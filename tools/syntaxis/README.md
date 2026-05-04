@@ -168,17 +168,23 @@ A customized workflow template for common governance patterns. Solutions:
 const { createSyntaxisEngine } = require('@exochain/syntaxis');
 
 const engine = createSyntaxisEngine();
+const createdAtHlc = { physicalMs: 1700000000000, logical: 0 };
+const deploymentHlc = { physicalMs: 1700000000001, logical: 0 };
 
 // Create a governance amendment solution
 const solution = engine.createSolution('governance-amendment', {
   name: 'Update Voting Threshold',
   author: 'GOVERNANCE_PANEL',
-  consentThreshold: 0.75,
-  maxDuration: 604800000 // 7 days
+  consentThresholdBasisPoints: 7500,
+  maxDuration: 604800000, // 7 days
+  createdAtHlc
 });
 
 // Deploy the solution
-const deployment = engine.deploySolution(solution, '/exoforge/deployments');
+const deployment = engine.deploySolution(solution, {
+  path: '/exoforge/deployments',
+  deploymentHlc
+});
 console.log(`Deployment ID: ${deployment.deploymentId}`);
 console.log(`Status: ${deployment.status}`);
 ```
@@ -208,7 +214,9 @@ const proposal = {
   content: { patchVersion: '1.2.3' },
   affectedPanels: ['Governance Panel', 'Kernel Panel'],
   requiresConsent: true,
-  faultTolerant: true
+  requiredConsentBasisPoints: 8000,
+  faultTolerant: true,
+  createdAtHlc
 };
 
 // Compile to workflow
@@ -249,6 +257,7 @@ console.log(`Categories: ${stats.totalCategories}`);
 
 - **`compileSyntaxis(councilVerdict, proposal): Object`**
   - Compiles a council verdict and proposal into a Syntaxis workflow
+  - Requires `proposal.createdAtHlc` or `councilVerdict.createdAtHlc`
   - Returns: Complete workflow definition with all nodes and dependencies
 
 - **`validateSyntaxisWorkflow(workflow): Object`**
@@ -262,12 +271,12 @@ console.log(`Categories: ${stats.totalCategories}`);
 - **`createSolution(solutionType, config): Object`**
   - Creates a custom solution from a template
   - solutionType: One of the 7 solution types
-  - config: Customization parameters
+  - config: Customization parameters, including required `createdAtHlc`
   - Returns: Complete solution definition
 
 - **`deploySolution(solution, target): Object`**
   - Deploys a solution through the ExoForge pipeline
-  - target: Deployment path or configuration object
+  - target: Configuration object including required `deploymentHlc`
   - Returns: Deployment result with status and stages
 
 - **`listSolutionTemplates(): Array`**
