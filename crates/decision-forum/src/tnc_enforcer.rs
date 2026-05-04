@@ -225,10 +225,22 @@ mod tests {
         hlc::HybridClock,
         types::{Did, Hash256},
     };
+    use exo_gatekeeper::{
+        authority_link_signature_message,
+        invariants::InvariantSet,
+        kernel::{ActionRequest, AdjudicationContext, Kernel},
+        provenance_signature_message,
+        types::{
+            AuthorityChain, AuthorityLink as GatekeeperAuthorityLink, BailmentState, ConsentRecord,
+            GovernmentBranch, PermissionSet, Provenance, Role,
+        },
+    };
     use uuid::Uuid;
 
     use super::*;
     use crate::decision_object::*;
+
+    const CONSTITUTION: &[u8] = b"EXOCHAIN TNC test constitution";
 
     fn test_clock() -> HybridClock {
         let counter = AtomicU64::new(1000);
@@ -271,6 +283,99 @@ mod tests {
         })
         .expect("ok");
         d
+    }
+
+    fn signed_authority_link(
+        actor: &Did,
+        permission: exo_gatekeeper::types::Permission,
+    ) -> GatekeeperAuthorityLink {
+        let (pk, sk) = exo_core::crypto::generate_keypair();
+        let grantor = Did::new("did:exo:governance-root").expect("valid DID");
+        let mut link = GatekeeperAuthorityLink {
+            grantor,
+            grantee: actor.clone(),
+            permissions: PermissionSet::new(vec![permission]),
+            signature: Vec::new(),
+            grantor_public_key: Some(pk.as_bytes().to_vec()),
+        };
+        let message = authority_link_signature_message(&link).expect("canonical link payload");
+        let signature = exo_core::crypto::sign(message.as_bytes(), &sk);
+        link.signature = signature.to_bytes().to_vec();
+        link
+    }
+
+    fn signed_provenance(actor: &Did) -> Provenance {
+        let (pk, sk) = exo_core::crypto::generate_keypair();
+        let mut provenance = Provenance {
+            actor: actor.clone(),
+            timestamp: "2026-04-30T00:00:00Z".to_owned(),
+            action_hash: vec![0x54, 0x4E, 0x43],
+            signature: Vec::new(),
+            public_key: Some(pk.as_bytes().to_vec()),
+            voice_kind: None,
+            independence: None,
+            review_order: None,
+        };
+        let message =
+            provenance_signature_message(&provenance).expect("canonical provenance payload");
+        let signature = exo_core::crypto::sign(message.as_bytes(), &sk);
+        provenance.signature = signature.to_bytes().to_vec();
+        provenance
+    }
+
+    fn transition_action(actor: &Did, from: BctsState, to: BctsState) -> ActionRequest {
+        let required = bcts_transition_permission(from, to);
+        ActionRequest {
+            actor: actor.clone(),
+            action: bcts_transition_action_name(from, to),
+            required_permissions: PermissionSet::new(vec![required]),
+            is_self_grant: false,
+            modifies_kernel: false,
+        }
+    }
+
+    fn transition_context(actor: &Did, from: BctsState, to: BctsState) -> AdjudicationContext {
+        let permission = bcts_transition_permission(from, to);
+        AdjudicationContext {
+            actor_roles: vec![Role {
+                name: "transition-judge".into(),
+                branch: GovernmentBranch::Judicial,
+            }],
+            authority_chain: AuthorityChain {
+                links: vec![signed_authority_link(actor, permission.clone())],
+            },
+            consent_records: vec![ConsentRecord {
+                subject: Did::new("did:exo:bailor").expect("valid DID"),
+                granted_to: actor.clone(),
+                scope: "bcts:transition".into(),
+                active: true,
+            }],
+            bailment_state: BailmentState::Active {
+                bailor: Did::new("did:exo:bailor").expect("valid DID"),
+                bailee: actor.clone(),
+                scope: "bcts:transition".into(),
+            },
+            human_override_preserved: true,
+            actor_permissions: PermissionSet::new(vec![permission]),
+            provenance: Some(signed_provenance(actor)),
+            quorum_evidence: None,
+            active_challenge_reason: None,
+        }
+    }
+
+    fn transition_ok(
+        decision: &mut DecisionObject,
+        to: BctsState,
+        actor: &Did,
+        timestamp: exo_core::Timestamp,
+    ) {
+        let from = decision.state;
+        let kernel = Kernel::new(CONSTITUTION, InvariantSet::all());
+        let action = transition_action(actor, from, to);
+        let context = transition_context(actor, from, to);
+        decision
+            .transition_adjudicated_at(to, actor, timestamp, &kernel, &action, &context)
+            .expect("transition ok");
     }
 
     #[test]
@@ -363,7 +468,7 @@ mod tests {
             BctsState::Closed,
         ] {
             let ts = clock.now().expect("HLC timestamp");
-            d.transition_at(s, &actor, ts).expect("ok");
+            transition_ok(&mut d, s, &actor, ts);
         }
         let ctx = passing_ctx(&d);
         let err = enforce_tnc_08(&ctx).unwrap_err();

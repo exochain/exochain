@@ -11,6 +11,10 @@ use exo_core::{
     hash::hash_structured,
     types::{DeterministicMap, Did, Hash256, Timestamp},
 };
+use exo_gatekeeper::{
+    kernel::{ActionRequest, AdjudicationContext, Kernel, Verdict},
+    types::Permission,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -101,6 +105,21 @@ pub struct LifecycleReceipt {
     pub receipt_hash: Hash256,
 }
 
+const BCTS_TRANSITION_ACTION_PREFIX: &str = "bcts:transition";
+
+/// Stable action name used when submitting a BCTS state transition to the
+/// constitutional kernel.
+#[must_use]
+pub fn bcts_transition_action_name(from: BctsState, to: BctsState) -> String {
+    format!("{BCTS_TRANSITION_ACTION_PREFIX}:{from}->{to}")
+}
+
+/// Stable permission required for a BCTS state transition.
+#[must_use]
+pub fn bcts_transition_permission(from: BctsState, to: BctsState) -> Permission {
+    Permission::new(bcts_transition_action_name(from, to))
+}
+
 /// The core Decision Object.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionObject {
@@ -166,13 +185,53 @@ impl DecisionObject {
         self.state == BctsState::Closed
     }
 
-    /// Transition the decision to a new BCTS state, recording a receipt.
+    /// Raw BCTS transitions are disabled in production. Use
+    /// [`Self::transition_adjudicated_at`] so the constitutional kernel
+    /// adjudicates the transition before state is mutated.
     pub fn transition_at(
+        &mut self,
+        _to: BctsState,
+        _actor: &Did,
+        _timestamp: Timestamp,
+    ) -> Result<()> {
+        Err(ForumError::ConstitutionalConflict {
+            reason: "raw BCTS decision transition requires Kernel::adjudicate via transition_adjudicated_at".into(),
+        })
+    }
+
+    /// Transition the decision to a new BCTS state after a permitted kernel
+    /// adjudication, recording a receipt.
+    pub fn transition_adjudicated_at(
         &mut self,
         to: BctsState,
         actor: &Did,
         timestamp: Timestamp,
+        kernel: &Kernel,
+        action: &ActionRequest,
+        context: &AdjudicationContext,
     ) -> Result<()> {
+        self.validate_transition_preconditions(to, timestamp)?;
+        validate_transition_action_binding(self.state, to, actor, action)?;
+
+        match kernel.adjudicate(action, context) {
+            Verdict::Permitted => self.apply_transition_at(to, actor, timestamp),
+            Verdict::Denied { violations } => {
+                let reason = violations
+                    .iter()
+                    .map(|v| format!("{}: {}", v.invariant.id(), v.description))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                Err(ForumError::ConstitutionalConflict {
+                    reason: format!("BCTS transition denied by kernel: {reason}"),
+                })
+            }
+            Verdict::Escalated { reason } => Err(ForumError::ConstitutionalConflict {
+                reason: format!("BCTS transition escalated by kernel: {reason}"),
+            }),
+        }
+    }
+
+    fn validate_transition_preconditions(&self, to: BctsState, timestamp: Timestamp) -> Result<()> {
         if self.is_terminal() {
             return Err(ForumError::DecisionImmutable);
         }
@@ -183,7 +242,15 @@ impl DecisionObject {
             });
         }
         self.validate_transition_timestamp(timestamp)?;
+        Ok(())
+    }
 
+    fn apply_transition_at(
+        &mut self,
+        to: BctsState,
+        actor: &Did,
+        timestamp: Timestamp,
+    ) -> Result<()> {
         let receipt_hash = self.compute_receipt_hash(self.state, to, &timestamp, actor)?;
 
         self.receipt_chain.push(LifecycleReceipt {
@@ -306,6 +373,44 @@ impl DecisionObject {
     }
 }
 
+fn validate_transition_action_binding(
+    from: BctsState,
+    to: BctsState,
+    actor: &Did,
+    action: &ActionRequest,
+) -> Result<()> {
+    if &action.actor != actor {
+        return Err(ForumError::ConstitutionalConflict {
+            reason: format!(
+                "BCTS transition actor {actor} does not match adjudicated action actor {}",
+                action.actor
+            ),
+        });
+    }
+
+    let expected_action = bcts_transition_action_name(from, to);
+    if action.action != expected_action {
+        return Err(ForumError::ConstitutionalConflict {
+            reason: format!(
+                "BCTS transition requires action {expected_action}, got {}",
+                action.action
+            ),
+        });
+    }
+
+    let required = bcts_transition_permission(from, to);
+    if !action.required_permissions.contains(&required) {
+        return Err(ForumError::ConstitutionalConflict {
+            reason: format!(
+                "BCTS transition action must require permission {}",
+                required.0
+            ),
+        });
+    }
+
+    Ok(())
+}
+
 fn validate_uuid(id: Uuid, label: &str) -> Result<()> {
     if id.is_nil() {
         return Err(ForumError::InvalidProvenance {
@@ -329,8 +434,19 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use exo_core::hlc::HybridClock;
+    use exo_gatekeeper::{
+        authority_link_signature_message,
+        invariants::InvariantSet,
+        provenance_signature_message,
+        types::{
+            AuthorityChain, AuthorityLink as GatekeeperAuthorityLink, BailmentState, ConsentRecord,
+            GovernmentBranch, PermissionSet, Provenance, Role,
+        },
+    };
 
     use super::*;
+
+    const CONSTITUTION: &[u8] = b"EXOCHAIN decision object test constitution";
 
     fn test_clock() -> HybridClock {
         let counter = AtomicU64::new(1000);
@@ -339,6 +455,103 @@ mod tests {
 
     fn test_did() -> Did {
         Did::new("did:exo:test-actor").expect("valid")
+    }
+
+    fn signed_authority_link(actor: &Did, permission: Permission) -> GatekeeperAuthorityLink {
+        let (pk, sk) = exo_core::crypto::generate_keypair();
+        let grantor = Did::new("did:exo:governance-root").expect("valid DID");
+        let mut link = GatekeeperAuthorityLink {
+            grantor,
+            grantee: actor.clone(),
+            permissions: PermissionSet::new(vec![permission]),
+            signature: Vec::new(),
+            grantor_public_key: Some(pk.as_bytes().to_vec()),
+        };
+        let message = authority_link_signature_message(&link).expect("canonical link payload");
+        let signature = exo_core::crypto::sign(message.as_bytes(), &sk);
+        link.signature = signature.to_bytes().to_vec();
+        link
+    }
+
+    fn signed_provenance(actor: &Did) -> Provenance {
+        let (pk, sk) = exo_core::crypto::generate_keypair();
+        let mut provenance = Provenance {
+            actor: actor.clone(),
+            timestamp: "2026-04-30T00:00:00Z".to_owned(),
+            action_hash: vec![0xB7, 0xC5],
+            signature: Vec::new(),
+            public_key: Some(pk.as_bytes().to_vec()),
+            voice_kind: None,
+            independence: None,
+            review_order: None,
+        };
+        let message =
+            provenance_signature_message(&provenance).expect("canonical provenance payload");
+        let signature = exo_core::crypto::sign(message.as_bytes(), &sk);
+        provenance.signature = signature.to_bytes().to_vec();
+        provenance
+    }
+
+    fn transition_action(actor: &Did, from: BctsState, to: BctsState) -> ActionRequest {
+        let required = bcts_transition_permission(from, to);
+        ActionRequest {
+            actor: actor.clone(),
+            action: bcts_transition_action_name(from, to),
+            required_permissions: PermissionSet::new(vec![required]),
+            is_self_grant: false,
+            modifies_kernel: false,
+        }
+    }
+
+    fn transition_context(actor: &Did, from: BctsState, to: BctsState) -> AdjudicationContext {
+        let permission = bcts_transition_permission(from, to);
+        AdjudicationContext {
+            actor_roles: vec![Role {
+                name: "transition-judge".into(),
+                branch: GovernmentBranch::Judicial,
+            }],
+            authority_chain: AuthorityChain {
+                links: vec![signed_authority_link(actor, permission.clone())],
+            },
+            consent_records: vec![ConsentRecord {
+                subject: Did::new("did:exo:bailor").expect("valid DID"),
+                granted_to: actor.clone(),
+                scope: "bcts:transition".into(),
+                active: true,
+            }],
+            bailment_state: BailmentState::Active {
+                bailor: Did::new("did:exo:bailor").expect("valid DID"),
+                bailee: actor.clone(),
+                scope: "bcts:transition".into(),
+            },
+            human_override_preserved: true,
+            actor_permissions: PermissionSet::new(vec![permission]),
+            provenance: Some(signed_provenance(actor)),
+            quorum_evidence: None,
+            active_challenge_reason: None,
+        }
+    }
+
+    fn adjudicated_transition_result(
+        decision: &mut DecisionObject,
+        to: BctsState,
+        actor: &Did,
+        timestamp: Timestamp,
+    ) -> Result<()> {
+        let from = decision.state;
+        let kernel = Kernel::new(CONSTITUTION, InvariantSet::all());
+        let action = transition_action(actor, from, to);
+        let context = transition_context(actor, from, to);
+        decision.transition_adjudicated_at(to, actor, timestamp, &kernel, &action, &context)
+    }
+
+    fn transition_ok(
+        decision: &mut DecisionObject,
+        to: BctsState,
+        actor: &Did,
+        timestamp: Timestamp,
+    ) {
+        adjudicated_transition_result(decision, to, actor, timestamp).expect("transition ok");
     }
 
     fn make_decision(clock: &mut HybridClock) -> DecisionObject {
@@ -398,33 +611,41 @@ mod tests {
         let actor = test_did();
         let mut d = make_decision(&mut clock);
 
-        d.transition_at(BctsState::Submitted, &actor, Timestamp::new(10_001, 0))
-            .expect("submitted");
+        transition_ok(
+            &mut d,
+            BctsState::Submitted,
+            &actor,
+            Timestamp::new(10_001, 0),
+        );
 
-        let zero = d
-            .transition_at(BctsState::IdentityResolved, &actor, Timestamp::ZERO)
-            .unwrap_err();
+        let zero = adjudicated_transition_result(
+            &mut d,
+            BctsState::IdentityResolved,
+            &actor,
+            Timestamp::ZERO,
+        )
+        .unwrap_err();
         assert!(matches!(zero, ForumError::InvalidProvenance { .. }));
 
-        let regressive = d
-            .transition_at(
-                BctsState::IdentityResolved,
-                &actor,
-                Timestamp::new(10_000, 0),
-            )
-            .unwrap_err();
+        let regressive = adjudicated_transition_result(
+            &mut d,
+            BctsState::IdentityResolved,
+            &actor,
+            Timestamp::new(10_000, 0),
+        )
+        .unwrap_err();
         assert!(matches!(regressive, ForumError::InvalidProvenance { .. }));
         assert_eq!(
             regressive.to_string(),
             "invalid provenance metadata: transition timestamp 10000:0 must be greater than prior timestamp 10001:0"
         );
 
-        d.transition_at(
+        transition_ok(
+            &mut d,
             BctsState::IdentityResolved,
             &actor,
             Timestamp::new(10_002, 0),
-        )
-        .expect("monotonic transition");
+        );
     }
 
     #[test]
@@ -444,10 +665,68 @@ mod tests {
         let mut clock = test_clock();
         let mut d = make_decision(&mut clock);
         let ts = clock.now().expect("HLC timestamp");
-        d.transition_at(BctsState::Submitted, &test_did(), ts)
-            .expect("ok");
+        transition_ok(&mut d, BctsState::Submitted, &test_did(), ts);
         assert_eq!(d.state, BctsState::Submitted);
         assert_eq!(d.receipt_chain.len(), 1);
+    }
+
+    #[test]
+    fn raw_transition_without_kernel_adjudication_fails_closed() {
+        let mut clock = test_clock();
+        let actor = test_did();
+        let mut d = make_decision(&mut clock);
+        let ts = clock.now().expect("HLC timestamp");
+
+        let err = d
+            .transition_at(BctsState::Submitted, &actor, ts)
+            .expect_err("raw BCTS decision transition must require kernel adjudication");
+
+        assert!(matches!(err, ForumError::ConstitutionalConflict { .. }));
+        assert_eq!(d.state, BctsState::Draft);
+        assert!(d.receipt_chain.is_empty());
+    }
+
+    #[test]
+    fn adjudicated_transition_denies_kernel_denial_without_mutating() {
+        let mut clock = test_clock();
+        let actor = test_did();
+        let mut d = make_decision(&mut clock);
+        let to = BctsState::Submitted;
+        let ts = clock.now().expect("HLC timestamp");
+        let kernel = Kernel::new(CONSTITUTION, InvariantSet::all());
+        let action = transition_action(&actor, d.state, to);
+        let mut context = transition_context(&actor, d.state, to);
+        context.provenance = None;
+
+        let err = d
+            .transition_adjudicated_at(to, &actor, ts, &kernel, &action, &context)
+            .expect_err("kernel denial must fail the transition");
+
+        assert!(matches!(err, ForumError::ConstitutionalConflict { .. }));
+        assert!(err.to_string().contains("provenance-verifiable"));
+        assert_eq!(d.state, BctsState::Draft);
+        assert!(d.receipt_chain.is_empty());
+    }
+
+    #[test]
+    fn adjudicated_transition_rejects_unbound_action_without_mutating() {
+        let mut clock = test_clock();
+        let actor = test_did();
+        let mut d = make_decision(&mut clock);
+        let to = BctsState::Submitted;
+        let ts = clock.now().expect("HLC timestamp");
+        let kernel = Kernel::new(CONSTITUTION, InvariantSet::all());
+        let action = transition_action(&actor, BctsState::Submitted, BctsState::Denied);
+        let context = transition_context(&actor, BctsState::Submitted, BctsState::Denied);
+
+        let err = d
+            .transition_adjudicated_at(to, &actor, ts, &kernel, &action, &context)
+            .expect_err("mismatched kernel action must fail the transition");
+
+        assert!(matches!(err, ForumError::ConstitutionalConflict { .. }));
+        assert!(err.to_string().contains("requires action"));
+        assert_eq!(d.state, BctsState::Draft);
+        assert!(d.receipt_chain.is_empty());
     }
 
     #[test]
@@ -455,9 +734,8 @@ mod tests {
         let mut clock = test_clock();
         let mut d = make_decision(&mut clock);
         let ts = clock.now().expect("HLC timestamp");
-        let err = d
-            .transition_at(BctsState::Closed, &test_did(), ts)
-            .unwrap_err();
+        let err =
+            adjudicated_transition_result(&mut d, BctsState::Closed, &test_did(), ts).unwrap_err();
         assert!(matches!(err, ForumError::InvalidTransition { .. }));
     }
 
@@ -480,7 +758,7 @@ mod tests {
         ];
         for s in steps {
             let ts = clock.now().expect("HLC timestamp");
-            d.transition_at(s, &actor, ts).expect("ok");
+            transition_ok(&mut d, s, &actor, ts);
         }
         assert!(d.is_terminal());
         assert_eq!(d.receipt_chain.len(), 10);
@@ -504,10 +782,10 @@ mod tests {
             BctsState::Closed,
         ] {
             let ts = clock.now().expect("HLC timestamp");
-            d.transition_at(s, &actor, ts).expect("ok");
+            transition_ok(&mut d, s, &actor, ts);
         }
         let ts = clock.now().expect("HLC timestamp");
-        assert!(d.transition_at(BctsState::Draft, &actor, ts).is_err());
+        assert!(adjudicated_transition_result(&mut d, BctsState::Draft, &actor, ts).is_err());
         assert!(
             d.add_vote(Vote {
                 voter_did: actor.clone(),
@@ -592,8 +870,7 @@ mod tests {
         let mut d = make_decision(&mut clock);
         let h1 = d.content_hash().expect("ok");
         let ts = clock.now().expect("HLC timestamp");
-        d.transition_at(BctsState::Submitted, &actor, ts)
-            .expect("ok");
+        transition_ok(&mut d, BctsState::Submitted, &actor, ts);
         let h2 = d.content_hash().expect("ok");
         assert_ne!(h1, h2);
     }
@@ -604,11 +881,9 @@ mod tests {
         let actor = test_did();
         let mut d = make_decision(&mut clock);
         let ts = clock.now().expect("HLC timestamp");
-        d.transition_at(BctsState::Submitted, &actor, ts)
-            .expect("ok");
+        transition_ok(&mut d, BctsState::Submitted, &actor, ts);
         let ts = clock.now().expect("HLC timestamp");
-        d.transition_at(BctsState::IdentityResolved, &actor, ts)
-            .expect("ok");
+        transition_ok(&mut d, BctsState::IdentityResolved, &actor, ts);
         assert_ne!(
             d.receipt_chain[0].receipt_hash,
             d.receipt_chain[1].receipt_hash

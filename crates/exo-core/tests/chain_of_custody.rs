@@ -10,7 +10,10 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use exo_core::{
-    bcts::{BailmentTransaction, BctsState, Transaction},
+    bcts::{
+        BailmentTransaction, BctsState, BctsTransitionAdjudicator, BctsTransitionRequest,
+        Transaction,
+    },
     crypto::{
         KeyPair, PqKeyPair, generate_keypair, generate_pq_keypair, sign, sign_hybrid, sign_pq,
         verify, verify_hybrid, verify_pq,
@@ -25,6 +28,14 @@ use exo_core::{
         CorrelationId, DeterministicMap, Did, Hash256, Signature, SignerType, Timestamp, Version,
     },
 };
+
+struct AllowAllAdjudicator;
+
+impl BctsTransitionAdjudicator for AllowAllAdjudicator {
+    fn adjudicate_transition(&self, _request: &BctsTransitionRequest) -> exo_core::Result<()> {
+        Ok(())
+    }
+}
 
 macro_rules! correlation_id {
     () => {
@@ -86,7 +97,12 @@ fn multi_actor_signed_event_chain_with_merkle_proof() {
 
     // Phase 1: Proposer submits
     let t1 = tx
-        .transition(BctsState::Submitted, &actors.proposer.0, &mut clock)
+        .transition(
+            BctsState::Submitted,
+            &actors.proposer.0,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
         .expect("submit ok");
     let event1 = create_signed_event(
         correlation_id!(),
@@ -101,7 +117,12 @@ fn multi_actor_signed_event_chain_with_merkle_proof() {
 
     // Phase 2: Identity resolution by reviewer1
     let t2 = tx
-        .transition(BctsState::IdentityResolved, &actors.reviewer1.0, &mut clock)
+        .transition(
+            BctsState::IdentityResolved,
+            &actors.reviewer1.0,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
         .expect("identity ok");
     let event2 = create_signed_event(
         correlation_id!(),
@@ -116,7 +137,12 @@ fn multi_actor_signed_event_chain_with_merkle_proof() {
 
     // Phase 3: Consent validation by reviewer2
     let t3 = tx
-        .transition(BctsState::ConsentValidated, &actors.reviewer2.0, &mut clock)
+        .transition(
+            BctsState::ConsentValidated,
+            &actors.reviewer2.0,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
         .expect("consent ok");
     let event3 = create_signed_event(
         correlation_id!(),
@@ -131,7 +157,12 @@ fn multi_actor_signed_event_chain_with_merkle_proof() {
 
     // Phase 4: Deliberation by steward
     let t4 = tx
-        .transition(BctsState::Deliberated, &actors.steward.0, &mut clock)
+        .transition(
+            BctsState::Deliberated,
+            &actors.steward.0,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
         .expect("deliberation ok");
     let event4 = create_signed_event(
         correlation_id!(),
@@ -204,7 +235,7 @@ fn denial_remediation_resubmission_with_full_proof_chain() {
     let mut events = Vec::new();
     for (index, &target) in transitions.iter().enumerate() {
         let t = tx
-            .transition(target, &actor, &mut clock)
+            .transition(target, &actor, &mut clock, &AllowAllAdjudicator)
             .expect("transition ok");
         let event = create_signed_event(
             indexed_correlation_id(2_000, index),
@@ -274,7 +305,9 @@ fn hybrid_crypto_custody_chain() {
 
     let mut hybrid_sigs = Vec::new();
     for &s in &states {
-        let t = tx.transition(s, &actor, &mut clock).expect("ok");
+        let t = tx
+            .transition(s, &actor, &mut clock, &AllowAllAdjudicator)
+            .expect("ok");
         let sig =
             sign_hybrid(t.receipt_hash.as_bytes(), &classical_sk, &pq_sk).expect("hybrid sign");
         assert!(
@@ -326,7 +359,9 @@ fn pq_only_custody_chain() {
         BctsState::ConsentValidated,
         BctsState::Deliberated,
     ] {
-        let t = tx.transition(s, &actor, &mut clock).expect("ok");
+        let t = tx
+            .transition(s, &actor, &mut clock, &AllowAllAdjudicator)
+            .expect("ok");
         let sig = pq_kp.sign(t.receipt_hash.as_bytes()).expect("pq sign");
         assert!(
             pq_kp.verify(t.receipt_hash.as_bytes(), &sig),
@@ -348,16 +383,41 @@ fn escalation_path_proof() {
     let mut tx = Transaction::new(correlation_id!());
 
     // Submit → IdentityResolved → ConsentValidated → Deliberated → Escalated
-    tx.transition(BctsState::Submitted, &actor, &mut clock)
-        .expect("ok");
-    tx.transition(BctsState::IdentityResolved, &actor, &mut clock)
-        .expect("ok");
-    tx.transition(BctsState::ConsentValidated, &actor, &mut clock)
-        .expect("ok");
-    tx.transition(BctsState::Deliberated, &actor, &mut clock)
-        .expect("ok");
+    tx.transition(
+        BctsState::Submitted,
+        &actor,
+        &mut clock,
+        &AllowAllAdjudicator,
+    )
+    .expect("ok");
+    tx.transition(
+        BctsState::IdentityResolved,
+        &actor,
+        &mut clock,
+        &AllowAllAdjudicator,
+    )
+    .expect("ok");
+    tx.transition(
+        BctsState::ConsentValidated,
+        &actor,
+        &mut clock,
+        &AllowAllAdjudicator,
+    )
+    .expect("ok");
+    tx.transition(
+        BctsState::Deliberated,
+        &actor,
+        &mut clock,
+        &AllowAllAdjudicator,
+    )
+    .expect("ok");
     let t_esc = tx
-        .transition(BctsState::Escalated, &actor, &mut clock)
+        .transition(
+            BctsState::Escalated,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
         .expect("escalation ok");
 
     let event = create_signed_event(
@@ -389,7 +449,8 @@ fn receipt_chain_tamper_detection() {
         BctsState::IdentityResolved,
         BctsState::ConsentValidated,
     ] {
-        tx.transition(s, &actor, &mut clock).expect("ok");
+        tx.transition(s, &actor, &mut clock, &AllowAllAdjudicator)
+            .expect("ok");
     }
 
     // Chain should be valid before tampering
@@ -422,13 +483,28 @@ fn concurrent_transactions_hlc_ordering() {
     let mut tx_b = Transaction::new(correlation_id!());
 
     let t_a1 = tx_a
-        .transition(BctsState::Submitted, &actors.proposer.0, &mut clock)
+        .transition(
+            BctsState::Submitted,
+            &actors.proposer.0,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
         .expect("ok");
     let t_b1 = tx_b
-        .transition(BctsState::Submitted, &actors.reviewer1.0, &mut clock)
+        .transition(
+            BctsState::Submitted,
+            &actors.reviewer1.0,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
         .expect("ok");
     let t_a2 = tx_a
-        .transition(BctsState::IdentityResolved, &actors.reviewer2.0, &mut clock)
+        .transition(
+            BctsState::IdentityResolved,
+            &actors.reviewer2.0,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
         .expect("ok");
 
     // Strict HLC ordering: t_a1 < t_b1 < t_a2
@@ -528,18 +604,28 @@ fn invalid_transition_rejected() {
     let mut tx = Transaction::new(correlation_id!());
 
     // Draft → Approved (skipping required states) should fail
-    let result = tx.transition(BctsState::Approved, &actor, &mut clock);
+    let result = tx.transition(
+        BctsState::Approved,
+        &actor,
+        &mut clock,
+        &AllowAllAdjudicator,
+    );
     assert!(
         result.is_err(),
         "skipping from Draft to Approved must be rejected"
     );
 
     // Draft → Submitted is valid
-    tx.transition(BctsState::Submitted, &actor, &mut clock)
-        .expect("ok");
+    tx.transition(
+        BctsState::Submitted,
+        &actor,
+        &mut clock,
+        &AllowAllAdjudicator,
+    )
+    .expect("ok");
 
     // Submitted → Closed (skipping) should fail
-    let result2 = tx.transition(BctsState::Closed, &actor, &mut clock);
+    let result2 = tx.transition(BctsState::Closed, &actor, &mut clock, &AllowAllAdjudicator);
     assert!(
         result2.is_err(),
         "skipping from Submitted to Closed must be rejected"
@@ -723,8 +809,13 @@ fn bailment_transaction_lifecycle() {
     assert_eq!(tx.state(), BctsState::Draft);
     assert!(tx.receipt_chain().is_empty());
 
-    tx.transition(BctsState::Submitted, &actor, &mut clock)
-        .expect("ok");
+    tx.transition(
+        BctsState::Submitted,
+        &actor,
+        &mut clock,
+        &AllowAllAdjudicator,
+    )
+    .expect("ok");
     assert_eq!(tx.state(), BctsState::Submitted);
     assert_eq!(tx.receipt_chain().len(), 1);
 

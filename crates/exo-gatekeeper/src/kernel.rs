@@ -3,7 +3,10 @@
 //! The kernel is immutable after initialization. It holds the invariant set
 //! and constitution hash, and adjudicates every action request.
 
-use exo_core::Did;
+use exo_core::{
+    Did, ExoError,
+    bcts::{BctsTransitionAdjudicator, BctsTransitionRequest},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -43,7 +46,7 @@ impl Verdict {
 // ---------------------------------------------------------------------------
 
 /// A request submitted to the kernel for adjudication against constitutional invariants.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionRequest {
     pub actor: Did,
     pub action: String,
@@ -57,7 +60,7 @@ pub struct ActionRequest {
 // ---------------------------------------------------------------------------
 
 /// Contextual evidence (roles, authority chain, consent, etc.) supplied alongside an action request.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdjudicationContext {
     pub actor_roles: Vec<Role>,
     pub authority_chain: AuthorityChain,
@@ -149,6 +152,59 @@ impl Kernel {
     #[must_use]
     pub fn invariant_engine(&self) -> &InvariantEngine {
         &self.invariant_engine
+    }
+}
+
+/// Adapter that binds a BCTS transition boundary to a concrete kernel
+/// adjudication request and context.
+pub struct KernelBctsAdjudicator<'a> {
+    kernel: &'a Kernel,
+    action: &'a ActionRequest,
+    context: &'a AdjudicationContext,
+}
+
+impl<'a> KernelBctsAdjudicator<'a> {
+    #[must_use]
+    pub fn new(
+        kernel: &'a Kernel,
+        action: &'a ActionRequest,
+        context: &'a AdjudicationContext,
+    ) -> Self {
+        Self {
+            kernel,
+            action,
+            context,
+        }
+    }
+}
+
+impl BctsTransitionAdjudicator for KernelBctsAdjudicator<'_> {
+    fn adjudicate_transition(&self, request: &BctsTransitionRequest) -> exo_core::Result<()> {
+        if self.action.actor != request.actor_did {
+            return Err(ExoError::InvariantViolation {
+                description: format!(
+                    "BCTS transition actor {} does not match adjudicated action actor {}",
+                    request.actor_did, self.action.actor
+                ),
+            });
+        }
+
+        match self.kernel.adjudicate(self.action, self.context) {
+            Verdict::Permitted => Ok(()),
+            Verdict::Denied { violations } => {
+                let reason = violations
+                    .iter()
+                    .map(|v| format!("{}: {}", v.invariant.id(), v.description))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                Err(ExoError::InvariantViolation {
+                    description: format!("BCTS transition denied by kernel: {reason}"),
+                })
+            }
+            Verdict::Escalated { reason } => Err(ExoError::InvariantViolation {
+                description: format!("BCTS transition escalated by kernel: {reason}"),
+            }),
+        }
     }
 }
 

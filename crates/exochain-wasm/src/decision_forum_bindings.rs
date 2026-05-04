@@ -1,6 +1,7 @@
 //! Decision Forum bindings: DecisionObject lifecycle, constitution, TNC enforcement,
 //! contestation, accountability, workflow, emergency
 
+use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
 use crate::serde_bridge::*;
@@ -9,6 +10,19 @@ const MAX_WASM_FORUM_EMERGENCY_ACTIONS: usize = 4_096;
 const MAX_WASM_FORUM_CHALLENGES: usize = 4_096;
 const MAX_WASM_FORUM_SIGNATURES: usize = 1_024;
 const MAX_WASM_FORUM_PUBLIC_KEYS: usize = 1_024;
+const MAX_WASM_FORUM_CONSTITUTION_BYTES: usize = 1_048_576;
+
+#[derive(Deserialize)]
+struct WasmDecisionTransitionAdjudicatedRequest {
+    decision: decision_forum::decision_object::DecisionObject,
+    to_state: exo_core::bcts::BctsState,
+    actor_did: String,
+    timestamp_ms: u64,
+    timestamp_logical: u32,
+    invariant_set: exo_gatekeeper::invariants::InvariantSet,
+    action: exo_gatekeeper::kernel::ActionRequest,
+    context: exo_gatekeeper::kernel::AdjudicationContext,
+}
 
 /// Create a new DecisionObject with full BCTS lifecycle
 #[wasm_bindgen]
@@ -47,15 +61,42 @@ pub fn wasm_transition_decision(
     timestamp_ms: u64,
     timestamp_logical: u32,
 ) -> Result<JsValue, JsValue> {
-    let mut decision: decision_forum::decision_object::DecisionObject =
-        from_json_str(decision_json)?;
-    let to_state: exo_core::bcts::BctsState = from_json_str(to_state_json)?;
-    let actor =
-        exo_core::Did::new(actor_did).map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
+    let _ = (
+        decision_json,
+        to_state_json,
+        actor_did,
+        timestamp_ms,
+        timestamp_logical,
+    );
+    Err(JsValue::from_str(
+        "unadjudicated decision transitions are disabled; use wasm_transition_decision_adjudicated",
+    ))
+}
+
+/// Transition a DecisionObject to a new BCTS state after kernel adjudication.
+#[wasm_bindgen]
+pub fn wasm_transition_decision_adjudicated(
+    request_json: &str,
+    constitution: &[u8],
+) -> Result<JsValue, JsValue> {
+    ensure_constitution_bytes(constitution.len())?;
+    let WasmDecisionTransitionAdjudicatedRequest {
+        mut decision,
+        to_state,
+        actor_did,
+        timestamp_ms,
+        timestamp_logical,
+        invariant_set,
+        action,
+        context,
+    } = from_json_str(request_json)?;
+    let actor = exo_core::Did::new(&actor_did)
+        .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
     let ts = exo_core::types::Timestamp::new(timestamp_ms, timestamp_logical);
+    let kernel = exo_gatekeeper::kernel::Kernel::new(constitution, invariant_set);
 
     decision
-        .transition_at(to_state, &actor, ts)
+        .transition_adjudicated_at(to_state, &actor, ts, &kernel, &action, &context)
         .map_err(|e| JsValue::from_str(&format!("Transition error: {e}")))?;
     to_js_value(&decision)
 }
@@ -820,6 +861,15 @@ fn parse_public_key_pairs(
         public_keys.insert(did, exo_core::PublicKey::from_bytes(arr));
     }
     Ok(public_keys)
+}
+
+fn ensure_constitution_bytes(len: usize) -> Result<(), JsValue> {
+    if len > MAX_WASM_FORUM_CONSTITUTION_BYTES {
+        return Err(JsValue::from_str(
+            "constitution exceeds maximum WASM decision-forum size",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -360,6 +360,44 @@ mod source_guard_tests {
     }
 
     #[test]
+    fn wasm_decision_transition_requires_kernel_adjudication() {
+        let source = include_str!("decision_forum_bindings.rs");
+        let legacy_transition = source
+            .split("pub fn wasm_transition_decision(")
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("pub fn wasm_transition_decision_adjudicated(")
+                    .next()
+            })
+            .expect("legacy decision transition export source");
+
+        assert!(
+            legacy_transition.contains("unadjudicated decision transitions are disabled"),
+            "legacy WASM decision transition must fail closed without a kernel verdict"
+        );
+        assert!(
+            !legacy_transition.contains(".transition_at("),
+            "legacy WASM decision transition must not reach the raw BCTS transition"
+        );
+        assert!(
+            source.contains("Kernel::new") && source.contains(".transition_adjudicated_at("),
+            "WASM decision bridge must expose a kernel-adjudicated transition entrypoint"
+        );
+        assert!(
+            source.contains("WasmDecisionTransitionAdjudicatedRequest")
+                && source.contains("request_json"),
+            "WASM adjudicated decision transition must use a typed bounded request JSON instead of a wide argument list"
+        );
+        assert!(
+            !source.contains(
+                "timestamp_logical: u32,\n    constitution: &[u8],\n    invariant_set_json: &str,"
+            ),
+            "WASM adjudicated decision transition must not expose a clippy-wide argument list"
+        );
+    }
+
+    #[test]
     fn wasm_messaging_bridge_requires_caller_supplied_envelope_metadata() {
         let source = include_str!("messaging_bindings.rs");
         assert!(

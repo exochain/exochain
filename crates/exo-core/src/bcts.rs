@@ -108,6 +108,37 @@ pub struct BctsTransition {
     pub actor_did: Did,
 }
 
+/// Deterministic intent supplied to constitutional adjudicators before a BCTS
+/// state mutation is applied.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BctsTransitionRequest {
+    pub correlation_id: CorrelationId,
+    pub from_state: BctsState,
+    pub to_state: BctsState,
+    pub actor_did: Did,
+    pub prior_receipt_hash: Hash256,
+}
+
+/// Constitutional gate invoked by BCTS before applying a valid state transition.
+pub trait BctsTransitionAdjudicator {
+    /// Adjudicate the transition intent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when constitutional invariants deny or escalate the
+    /// transition request.
+    fn adjudicate_transition(&self, request: &BctsTransitionRequest) -> Result<()>;
+}
+
+impl<F> BctsTransitionAdjudicator for F
+where
+    F: Fn(&BctsTransitionRequest) -> Result<()>,
+{
+    fn adjudicate_transition(&self, request: &BctsTransitionRequest) -> Result<()> {
+        self(request)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // BailmentTransaction trait
 // ---------------------------------------------------------------------------
@@ -128,6 +159,7 @@ pub trait BailmentTransaction {
         to: BctsState,
         actor: &Did,
         clock: &mut HybridClock,
+        adjudicator: &dyn BctsTransitionAdjudicator,
     ) -> Result<BctsTransition>;
 
     /// The chain of receipt hashes for every transition so far.
@@ -241,6 +273,7 @@ impl BailmentTransaction for Transaction {
         to: BctsState,
         actor: &Did,
         clock: &mut HybridClock,
+        adjudicator: &dyn BctsTransitionAdjudicator,
     ) -> Result<BctsTransition> {
         let from = self.current_state;
         if !from.can_transition_to(to) {
@@ -249,6 +282,15 @@ impl BailmentTransaction for Transaction {
                 to: to.to_string(),
             });
         }
+
+        let prior_receipt_hash = self.receipt_chain.last().copied().unwrap_or(Hash256::ZERO);
+        adjudicator.adjudicate_transition(&BctsTransitionRequest {
+            correlation_id: self.correlation_id,
+            from_state: from,
+            to_state: to,
+            actor_did: actor.clone(),
+            prior_receipt_hash,
+        })?;
 
         let timestamp = clock.now()?;
         let receipt_hash = self.compute_receipt(from, to, &timestamp, actor)?;
@@ -300,6 +342,14 @@ mod tests {
 
     fn test_did() -> Did {
         Did::new("did:exo:test-actor").expect("valid")
+    }
+
+    struct AllowAllAdjudicator;
+
+    impl BctsTransitionAdjudicator for AllowAllAdjudicator {
+        fn adjudicate_transition(&self, _request: &BctsTransitionRequest) -> Result<()> {
+            Ok(())
+        }
     }
 
     // -- BctsState ---------------------------------------------------------
@@ -438,6 +488,99 @@ mod tests {
     }
 
     #[test]
+    fn transition_invokes_adjudicator_before_state_mutation() {
+        struct DenyingAdjudicator;
+
+        impl BctsTransitionAdjudicator for DenyingAdjudicator {
+            fn adjudicate_transition(&self, _request: &BctsTransitionRequest) -> Result<()> {
+                Err(ExoError::InvariantViolation {
+                    description: "test denial".into(),
+                })
+            }
+        }
+
+        let mut clock = test_clock();
+        let actor = test_did();
+        let mut tx = Transaction::new(correlation_id!());
+
+        let err = tx
+            .transition(
+                BctsState::Submitted,
+                &actor,
+                &mut clock,
+                &DenyingAdjudicator,
+            )
+            .expect_err("transition must fail before mutation when adjudication denies");
+
+        assert!(matches!(err, ExoError::InvariantViolation { .. }));
+        assert_eq!(tx.state(), BctsState::Draft);
+        assert!(tx.receipt_chain().is_empty());
+        assert!(tx.transitions().is_empty());
+    }
+
+    #[test]
+    fn transition_supplies_canonical_request_to_adjudicator() {
+        use std::cell::RefCell;
+
+        struct RecordingAdjudicator {
+            request: RefCell<Option<BctsTransitionRequest>>,
+        }
+
+        impl BctsTransitionAdjudicator for RecordingAdjudicator {
+            fn adjudicate_transition(&self, request: &BctsTransitionRequest) -> Result<()> {
+                self.request.replace(Some(request.clone()));
+                Ok(())
+            }
+        }
+
+        let mut clock = test_clock();
+        let actor = test_did();
+        let correlation_id = correlation_id!();
+        let mut tx = Transaction::new(correlation_id);
+        let adjudicator = RecordingAdjudicator {
+            request: RefCell::new(None),
+        };
+
+        tx.transition(BctsState::Submitted, &actor, &mut clock, &adjudicator)
+            .expect("transition ok");
+
+        let request = adjudicator
+            .request
+            .take()
+            .expect("adjudicator received request");
+        assert_eq!(request.correlation_id, correlation_id);
+        assert_eq!(request.from_state, BctsState::Draft);
+        assert_eq!(request.to_state, BctsState::Submitted);
+        assert_eq!(request.actor_did, actor);
+        assert_eq!(request.prior_receipt_hash, Hash256::ZERO);
+    }
+
+    #[test]
+    fn transition_source_invokes_adjudicator_before_hlc_and_mutation() {
+        let source = include_str!("bcts.rs");
+        let implementation = source
+            .split("impl BailmentTransaction for Transaction")
+            .nth(1)
+            .expect("transaction impl");
+        let adjudicator_call = implementation
+            .find("adjudicator.adjudicate_transition")
+            .expect("adjudicator call");
+        let hlc_tick = implementation.find("clock.now()").expect("HLC tick");
+        let mutation = implementation
+            .find("self.current_state = to")
+            .expect("state mutation");
+
+        assert!(
+            adjudicator_call < hlc_tick,
+            "BCTS must adjudicate before consuming an HLC tick"
+        );
+        assert!(
+            adjudicator_call < mutation,
+            "BCTS must adjudicate before mutating state"
+        );
+    }
+
+    #[test]
     fn happy_path_full_lifecycle() {
         let mut clock = test_clock();
         let actor = test_did();
@@ -458,7 +601,7 @@ mod tests {
 
         for (i, &target) in steps.iter().enumerate() {
             let t = tx
-                .transition(target, &actor, &mut clock)
+                .transition(target, &actor, &mut clock, &AllowAllAdjudicator)
                 .expect("transition ok");
             assert_eq!(t.to_state, target);
             assert_eq!(tx.state(), target);
@@ -476,7 +619,7 @@ mod tests {
         let mut tx = Transaction::new(correlation_id!());
 
         let err = tx
-            .transition(BctsState::Closed, &actor, &mut clock)
+            .transition(BctsState::Closed, &actor, &mut clock, &AllowAllAdjudicator)
             .unwrap_err();
         assert!(matches!(err, ExoError::InvalidTransition { .. }));
         // State should not have changed
@@ -502,12 +645,13 @@ mod tests {
             BctsState::Recorded,
             BctsState::Closed,
         ] {
-            tx.transition(s, &actor, &mut clock).expect("ok");
+            tx.transition(s, &actor, &mut clock, &AllowAllAdjudicator)
+                .expect("ok");
         }
 
         // Closed is terminal
         let err = tx
-            .transition(BctsState::Draft, &actor, &mut clock)
+            .transition(BctsState::Draft, &actor, &mut clock, &AllowAllAdjudicator)
             .unwrap_err();
         assert!(matches!(err, ExoError::InvalidTransition { .. }));
     }
@@ -518,9 +662,14 @@ mod tests {
         let actor = test_did();
         let mut tx = Transaction::new(correlation_id!());
 
-        tx.transition(BctsState::Submitted, &actor, &mut clock)
-            .expect("ok");
-        tx.transition(BctsState::Denied, &actor, &mut clock)
+        tx.transition(
+            BctsState::Submitted,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
+        .expect("ok");
+        tx.transition(BctsState::Denied, &actor, &mut clock, &AllowAllAdjudicator)
             .expect("ok");
         assert_eq!(tx.state(), BctsState::Denied);
         tx.verify_receipt_chain().expect("chain valid");
@@ -541,7 +690,8 @@ mod tests {
             BctsState::Deliberated,
             BctsState::Verified,
         ] {
-            tx.transition(s, &actor, &mut clock).expect("ok");
+            tx.transition(s, &actor, &mut clock, &AllowAllAdjudicator)
+                .expect("ok");
         }
         assert_eq!(tx.state(), BctsState::Verified);
         tx.verify_receipt_chain().expect("chain valid");
@@ -553,14 +703,29 @@ mod tests {
         let actor = test_did();
         let mut tx = Transaction::new(correlation_id!());
 
-        tx.transition(BctsState::Submitted, &actor, &mut clock)
+        tx.transition(
+            BctsState::Submitted,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
+        .expect("ok");
+        tx.transition(BctsState::Denied, &actor, &mut clock, &AllowAllAdjudicator)
             .expect("ok");
-        tx.transition(BctsState::Denied, &actor, &mut clock)
-            .expect("ok");
-        tx.transition(BctsState::Remediated, &actor, &mut clock)
-            .expect("ok");
-        tx.transition(BctsState::Submitted, &actor, &mut clock)
-            .expect("ok");
+        tx.transition(
+            BctsState::Remediated,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
+        .expect("ok");
+        tx.transition(
+            BctsState::Submitted,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
+        .expect("ok");
         assert_eq!(tx.state(), BctsState::Submitted);
         tx.verify_receipt_chain().expect("chain valid");
     }
@@ -571,12 +736,22 @@ mod tests {
         let actor = test_did();
         let mut tx = Transaction::new(correlation_id!());
 
-        tx.transition(BctsState::Submitted, &actor, &mut clock)
-            .expect("ok");
+        tx.transition(
+            BctsState::Submitted,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
+        .expect("ok");
         assert_eq!(tx.receipt_chain().len(), 1);
 
-        tx.transition(BctsState::IdentityResolved, &actor, &mut clock)
-            .expect("ok");
+        tx.transition(
+            BctsState::IdentityResolved,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
+        .expect("ok");
         assert_eq!(tx.receipt_chain().len(), 2);
 
         // Each receipt should be unique
@@ -590,7 +765,12 @@ mod tests {
         let mut tx = Transaction::new(correlation_id!());
 
         let t = tx
-            .transition(BctsState::Submitted, &actor, &mut clock)
+            .transition(
+                BctsState::Submitted,
+                &actor,
+                &mut clock,
+                &AllowAllAdjudicator,
+            )
             .expect("ok");
         assert_eq!(t.actor_did, actor);
     }
@@ -601,10 +781,20 @@ mod tests {
         let actor = test_did();
         let mut tx = Transaction::new(correlation_id!());
 
-        tx.transition(BctsState::Submitted, &actor, &mut clock)
-            .expect("ok");
-        tx.transition(BctsState::IdentityResolved, &actor, &mut clock)
-            .expect("ok");
+        tx.transition(
+            BctsState::Submitted,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
+        .expect("ok");
+        tx.transition(
+            BctsState::IdentityResolved,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
+        .expect("ok");
 
         let ts = &tx.transitions();
         assert!(ts[0].timestamp < ts[1].timestamp);
@@ -616,10 +806,20 @@ mod tests {
         let actor = test_did();
         let mut tx = Transaction::new(correlation_id!());
 
-        tx.transition(BctsState::Submitted, &actor, &mut clock)
-            .expect("ok");
-        tx.transition(BctsState::IdentityResolved, &actor, &mut clock)
-            .expect("ok");
+        tx.transition(
+            BctsState::Submitted,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
+        .expect("ok");
+        tx.transition(
+            BctsState::IdentityResolved,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
+        .expect("ok");
 
         // Tamper with a receipt
         tx.receipt_chain[0] = Hash256::ZERO;
@@ -632,8 +832,13 @@ mod tests {
         let mut clock = test_clock();
         let actor = test_did();
         let mut tx = Transaction::new(correlation_id!());
-        tx.transition(BctsState::Submitted, &actor, &mut clock)
-            .expect("ok");
+        tx.transition(
+            BctsState::Submitted,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
+        .expect("ok");
 
         let json = serde_json::to_string(&tx).expect("ser");
         let tx2: Transaction = serde_json::from_str(&json).expect("de");
@@ -696,7 +901,8 @@ mod tests {
             BctsState::Remediated,
             BctsState::Submitted,
         ] {
-            tx.transition(s, &actor, &mut clock).expect("ok");
+            tx.transition(s, &actor, &mut clock, &AllowAllAdjudicator)
+                .expect("ok");
         }
         assert_eq!(tx.state(), BctsState::Submitted);
         tx.verify_receipt_chain().expect("chain valid");
@@ -717,7 +923,8 @@ mod tests {
             BctsState::Remediated,
             BctsState::Submitted,
         ] {
-            tx.transition(s, &actor, &mut clock).expect("ok");
+            tx.transition(s, &actor, &mut clock, &AllowAllAdjudicator)
+                .expect("ok");
         }
         tx.verify_receipt_chain().expect("chain valid");
     }

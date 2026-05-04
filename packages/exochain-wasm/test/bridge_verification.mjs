@@ -1808,14 +1808,53 @@ test('wasm_add_vote', () => {
   return wasm.wasm_add_vote(decJson, JSON.stringify(vote));
 });
 
-test('wasm_transition_decision', () =>
-  wasm.wasm_transition_decision(
-    decJson,
-    JSON.stringify('Submitted'),
-    TEST_DID,
-    BigInt(NOW_NUM + 1),
-    0
+test('wasm_transition_decision rejects unadjudicated transition', () =>
+  expectErrorContains(
+    'wasm_transition_decision',
+    () => wasm.wasm_transition_decision(
+      decJson,
+      JSON.stringify('Submitted'),
+      TEST_DID,
+      BigInt(NOW_NUM + 1),
+      0
+    ),
+    'unadjudicated decision transitions are disabled'
   ));
+
+test('wasm_transition_decision_adjudicated', () => {
+  if (!decision) throw new Error('skipped -- no decision from setup');
+  const transitionPermission = 'bcts:transition:Draft->Submitted';
+  const request = {
+    decision,
+    to_state: 'Submitted',
+    actor_did: TEST_DID,
+    timestamp_ms: NOW_NUM + 1,
+    timestamp_logical: 0,
+    invariant_set: { invariants: [] },
+    action: {
+      actor: TEST_DID,
+      action: transitionPermission,
+      required_permissions: { permissions: [transitionPermission] },
+      is_self_grant: false,
+      modifies_kernel: false
+    },
+    context: {
+      actor_roles: [],
+      authority_chain: { links: [] },
+      consent_records: [],
+      bailment_state: 'None',
+      human_override_preserved: true,
+      actor_permissions: { permissions: [transitionPermission] },
+      provenance: null,
+      quorum_evidence: null,
+      active_challenge_reason: null
+    }
+  };
+  return wasm.wasm_transition_decision_adjudicated(
+    JSON.stringify(request),
+    new TextEncoder().encode('bridge constitution')
+  );
+});
 
 test('wasm_check_quorum', () => {
   const registry = {

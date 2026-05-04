@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use decision_forum::{
     decision_object::{
         ActorKind, AuthorityLink as ForumAuthorityLink, DecisionClass, DecisionObject,
-        DecisionObjectInput, EvidenceItem,
+        DecisionObjectInput, EvidenceItem, bcts_transition_action_name, bcts_transition_permission,
     },
     tnc_enforcer::{TncContext, enforce_all as enforce_tnc_all},
 };
@@ -64,10 +64,10 @@ fn did(s: &str) -> Did {
     Did::new(s).expect("valid DID")
 }
 
-fn signed_authority_link(grantee: &Did) -> GkAuthorityLink {
+fn signed_authority_link_for_permission(grantee: &Did, permission: Permission) -> GkAuthorityLink {
     let (pk, sk) = exo_core::crypto::generate_keypair();
     let grantor = did("did:exo:governance-root");
-    let permissions = PermissionSet::new(vec![Permission::new("enact:decision")]);
+    let permissions = PermissionSet::new(vec![permission]);
 
     let mut link = GkAuthorityLink {
         grantor,
@@ -80,6 +80,10 @@ fn signed_authority_link(grantee: &Did) -> GkAuthorityLink {
     let signature = exo_core::crypto::sign(message.as_bytes(), &sk);
     link.signature = signature.to_bytes().to_vec();
     link
+}
+
+fn signed_authority_link(grantee: &Did) -> GkAuthorityLink {
+    signed_authority_link_for_permission(grantee, Permission::new("enact:decision"))
 }
 
 fn signed_provenance(actor: &Did) -> Provenance {
@@ -141,6 +145,7 @@ fn make_approved_decision(class: DecisionClass, clock: &mut HybridClock) -> Deci
     .expect("add evidence");
 
     // Advance through the full BCTS happy-path lifecycle.
+    let kernel = test_kernel();
     for state in [
         BctsState::Submitted,
         BctsState::IdentityResolved,
@@ -151,7 +156,9 @@ fn make_approved_decision(class: DecisionClass, clock: &mut HybridClock) -> Deci
         BctsState::Approved,
     ] {
         let ts = clock.now().expect("HLC timestamp");
-        d.transition_at(state, &actor, ts)
+        let action = transition_action(&actor, d.state, state);
+        let context = transition_context(&actor, d.state, state);
+        d.transition_adjudicated_at(state, &actor, ts, &kernel, &action, &context)
             .expect("lifecycle transition");
     }
 
@@ -206,6 +213,30 @@ fn enact_action(actor: &Did) -> ActionRequest {
         is_self_grant: false,
         modifies_kernel: false,
     }
+}
+
+fn transition_action(actor: &Did, from: BctsState, to: BctsState) -> ActionRequest {
+    let permission = bcts_transition_permission(from, to);
+    ActionRequest {
+        actor: actor.clone(),
+        action: bcts_transition_action_name(from, to),
+        required_permissions: PermissionSet::new(vec![permission]),
+        is_self_grant: false,
+        modifies_kernel: false,
+    }
+}
+
+fn transition_context(actor: &Did, from: BctsState, to: BctsState) -> AdjudicationContext {
+    let permission = bcts_transition_permission(from, to);
+    let mut context = valid_adj_context(actor);
+    context.authority_chain = AuthorityChain {
+        links: vec![signed_authority_link_for_permission(
+            actor,
+            permission.clone(),
+        )],
+    };
+    context.actor_permissions = PermissionSet::new(vec![permission]);
+    context
 }
 
 // ---------------------------------------------------------------------------
@@ -399,8 +430,17 @@ fn full_lifecycle_adjudicated_at_each_transition() {
 
     for state in transitions {
         let ts = clock.now().expect("HLC timestamp");
-        d.transition_at(state, &actor, ts)
-            .expect("lifecycle transition");
+        let transition_action = transition_action(&actor, d.state, state);
+        let transition_context = transition_context(&actor, d.state, state);
+        d.transition_adjudicated_at(
+            state,
+            &actor,
+            ts,
+            &kernel,
+            &transition_action,
+            &transition_context,
+        )
+        .expect("lifecycle transition");
         let verdict = kernel.adjudicate(&action, &context);
         assert!(
             verdict.is_permitted(),
@@ -617,10 +657,14 @@ fn denied_forum_decision_correlates_with_kernel_denial() {
     })
     .expect("add link");
     let ts = clock.now().expect("HLC timestamp");
-    d.transition_at(BctsState::Submitted, &actor, ts)
+    let action = transition_action(&actor, d.state, BctsState::Submitted);
+    let context = transition_context(&actor, d.state, BctsState::Submitted);
+    d.transition_adjudicated_at(BctsState::Submitted, &actor, ts, &kernel, &action, &context)
         .expect("submit");
     let ts = clock.now().expect("HLC timestamp");
-    d.transition_at(BctsState::Denied, &actor, ts)
+    let action = transition_action(&actor, d.state, BctsState::Denied);
+    let context = transition_context(&actor, d.state, BctsState::Denied);
+    d.transition_adjudicated_at(BctsState::Denied, &actor, ts, &kernel, &action, &context)
         .expect("deny");
     assert_eq!(d.state, BctsState::Denied);
 

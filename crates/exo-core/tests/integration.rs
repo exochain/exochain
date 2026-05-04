@@ -6,7 +6,10 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use exo_core::{
-    bcts::{BailmentTransaction, BctsState, Transaction},
+    bcts::{
+        BailmentTransaction, BctsState, BctsTransitionAdjudicator, BctsTransitionRequest,
+        Transaction,
+    },
     crypto::KeyPair,
     events::{EventType, create_signed_event, verify_event},
     hash::{canonical_hash, hash_structured, merkle_proof, merkle_root, verify_merkle_proof},
@@ -16,6 +19,14 @@ use exo_core::{
     },
     types::{CorrelationId, DeterministicMap, Did, Hash256, Timestamp, Version},
 };
+
+struct AllowAllAdjudicator;
+
+impl BctsTransitionAdjudicator for AllowAllAdjudicator {
+    fn adjudicate_transition(&self, _request: &BctsTransitionRequest) -> exo_core::Result<()> {
+        Ok(())
+    }
+}
 
 macro_rules! correlation_id {
     () => {
@@ -56,7 +67,9 @@ fn full_bcts_lifecycle_with_signed_events() {
     ];
 
     for (index, &target) in steps.iter().enumerate() {
-        let transition = tx.transition(target, &actor, &mut clock).expect("ok");
+        let transition = tx
+            .transition(target, &actor, &mut clock, &AllowAllAdjudicator)
+            .expect("ok");
 
         // Create a signed event for each transition
         let event = create_signed_event(
@@ -91,7 +104,8 @@ fn receipt_chain_merkle_tree() {
         BctsState::ConsentValidated,
         BctsState::Deliberated,
     ] {
-        tx.transition(s, &actor, &mut clock).expect("ok");
+        tx.transition(s, &actor, &mut clock, &AllowAllAdjudicator)
+            .expect("ok");
     }
 
     let receipts = tx.receipt_chain();
@@ -207,12 +221,22 @@ fn hlc_ordering_across_transactions() {
 
     let mut tx1 = Transaction::new(correlation_id!());
     let t1 = tx1
-        .transition(BctsState::Submitted, &actor, &mut clock)
+        .transition(
+            BctsState::Submitted,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
         .expect("ok");
 
     let mut tx2 = Transaction::new(correlation_id!());
     let t2 = tx2
-        .transition(BctsState::Submitted, &actor, &mut clock)
+        .transition(
+            BctsState::Submitted,
+            &actor,
+            &mut clock,
+            &AllowAllAdjudicator,
+        )
         .expect("ok");
 
     // t2 must be after t1
@@ -246,16 +270,36 @@ fn denial_remediation_resubmission() {
     let mut tx = Transaction::new(correlation_id!());
 
     // Submit -> Deny -> Remediate -> Resubmit -> succeed
-    tx.transition(BctsState::Submitted, &actor, &mut clock)
+    tx.transition(
+        BctsState::Submitted,
+        &actor,
+        &mut clock,
+        &AllowAllAdjudicator,
+    )
+    .expect("ok");
+    tx.transition(BctsState::Denied, &actor, &mut clock, &AllowAllAdjudicator)
         .expect("ok");
-    tx.transition(BctsState::Denied, &actor, &mut clock)
-        .expect("ok");
-    tx.transition(BctsState::Remediated, &actor, &mut clock)
-        .expect("ok");
-    tx.transition(BctsState::Submitted, &actor, &mut clock)
-        .expect("ok");
-    tx.transition(BctsState::IdentityResolved, &actor, &mut clock)
-        .expect("ok");
+    tx.transition(
+        BctsState::Remediated,
+        &actor,
+        &mut clock,
+        &AllowAllAdjudicator,
+    )
+    .expect("ok");
+    tx.transition(
+        BctsState::Submitted,
+        &actor,
+        &mut clock,
+        &AllowAllAdjudicator,
+    )
+    .expect("ok");
+    tx.transition(
+        BctsState::IdentityResolved,
+        &actor,
+        &mut clock,
+        &AllowAllAdjudicator,
+    )
+    .expect("ok");
 
     assert_eq!(tx.state(), BctsState::IdentityResolved);
     assert_eq!(tx.receipt_chain().len(), 5);
