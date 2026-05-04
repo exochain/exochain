@@ -42,6 +42,7 @@ use crate::{
 // ---------------------------------------------------------------------------
 
 const TELEGRAM_HTTP_TIMEOUT_SECS: u64 = 30;
+const TELEGRAM_POLL_FAILURE_BACKOFF_MS: u64 = 1_000;
 const MAX_TELEGRAM_UPDATE_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Serialize)]
@@ -343,15 +344,13 @@ impl Adjutant {
         }
     }
 
-    /// Poll for new updates (long-poll, 10s timeout).
-    pub async fn poll_updates(&mut self) -> Vec<Update> {
+    async fn poll_updates_result(&mut self) -> Result<Vec<Update>, String> {
         let base_url = self.api_url("getUpdates");
         let Some(offset) = next_update_offset(self.last_update_id) else {
-            tracing::warn!(
-                last_update_id = self.last_update_id,
-                "Telegram update offset cannot advance without overflow"
-            );
-            return Vec::new();
+            return Err(format!(
+                "telegram update offset overflow after update id {}",
+                self.last_update_id
+            ));
         };
         let url = Zeroizing::new(format!(
             "{}?offset={}&timeout=10",
@@ -361,33 +360,24 @@ impl Adjutant {
 
         let resp = match self.client.get(url.as_str()).send().await {
             Ok(r) => r,
-            Err(e) => {
-                tracing::debug!(err = %e, "Telegram poll failed");
-                return Vec::new();
-            }
+            Err(e) => return Err(format!("telegram poll failed: {e}")),
         };
 
         let bytes = match read_telegram_update_body(resp).await {
             Ok(bytes) => bytes,
-            Err(e) => {
-                tracing::debug!(err = %e, "Telegram update body read failed");
-                return Vec::new();
-            }
+            Err(e) => return Err(format!("telegram update body read failed: {e}")),
         };
 
         let updates = match parse_updates_response(bytes.as_ref()) {
             Ok(updates) => updates,
-            Err(e) => {
-                tracing::debug!(err = %e, "Telegram update response rejected");
-                return Vec::new();
-            }
+            Err(e) => return Err(format!("telegram update response rejected: {e}")),
         };
 
         if let Some(last) = updates.last() {
             self.last_update_id = last.update_id;
         }
 
-        updates
+        Ok(updates)
     }
 
     /// Acknowledge a callback query (removes the "loading" indicator).
@@ -929,7 +919,19 @@ pub async fn run_adjutant(
             }
 
             // Poll for Telegram updates.
-            updates = adjutant.poll_updates() => {
+            poll_result = adjutant.poll_updates_result() => {
+                let updates = match poll_result {
+                    Ok(updates) => updates,
+                    Err(e) => {
+                        tracing::debug!(err = %e, "Telegram poll failed; backing off before retry");
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            TELEGRAM_POLL_FAILURE_BACKOFF_MS,
+                        ))
+                        .await;
+                        Vec::new()
+                    }
+                };
+
                 // Parse the configured authorized chat id once per batch.
                 // If it fails to parse (misconfigured env), we fail-closed:
                 // no commands are dispatched.
@@ -1491,7 +1493,7 @@ mod tests {
             .next()
             .unwrap();
         let poll_updates = production
-            .split("pub async fn poll_updates")
+            .split("async fn poll_updates_result")
             .nth(1)
             .and_then(|section| section.split("/// Acknowledge a callback query").next())
             .unwrap();
@@ -1500,6 +1502,33 @@ mod tests {
         assert!(!poll_updates.contains(".bytes().await"));
         assert!(poll_updates.contains("read_telegram_update_body"));
         assert!(poll_updates.contains("parse_updates_response"));
+    }
+
+    #[test]
+    fn run_adjutant_backs_off_after_telegram_poll_failures() {
+        let source = include_str!("telegram.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .unwrap();
+        let run_adjutant = production
+            .split("pub async fn run_adjutant")
+            .nth(1)
+            .and_then(|section| section.split("async fn handle_command").next())
+            .unwrap();
+
+        assert!(
+            run_adjutant.contains("poll_updates_result"),
+            "run_adjutant must distinguish failed polls from successful empty long-poll responses"
+        );
+        assert!(
+            run_adjutant.contains("TELEGRAM_POLL_FAILURE_BACKOFF_MS"),
+            "failed Telegram polls must use a bounded backoff instead of immediate repolling"
+        );
+        assert!(
+            run_adjutant.contains("tokio::time::sleep"),
+            "Telegram poll failure backoff must sleep before the next poll attempt"
+        );
     }
 
     #[test]
