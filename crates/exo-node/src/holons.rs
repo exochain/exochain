@@ -35,13 +35,7 @@
 
 #![cfg_attr(not(feature = "unaudited-infrastructure-holons"), allow(dead_code))]
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use exo_core::{
     PublicKey, Signature,
@@ -163,18 +157,6 @@ impl std::fmt::Debug for HolonManagerConfig {
     }
 }
 
-/// Build a deterministic monotonic timestamp source for tests and defaults.
-#[must_use]
-pub fn deterministic_provenance_timestamp_source(
-    start_physical_ms: u64,
-) -> Arc<dyn Fn() -> Result<Timestamp, String> + Send + Sync> {
-    let next_physical_ms = Arc::new(AtomicU64::new(start_physical_ms.max(1)));
-    Arc::new(move || {
-        let physical_ms = next_physical_ms.fetch_add(1, Ordering::Relaxed);
-        Ok(Timestamp::new(physical_ms, 0))
-    })
-}
-
 /// Build an HLC-backed provenance timestamp source for runtime Holon steps.
 #[must_use]
 pub fn hlc_provenance_timestamp_source() -> Arc<dyn Fn() -> Result<Timestamp, String> + Send + Sync>
@@ -212,15 +194,6 @@ fn did_with_static_fallback(candidate: String, fallback: &'static str) -> Did {
     }
 }
 
-fn default_holon_keypair() -> exo_core::crypto::KeyPair {
-    match exo_core::crypto::KeyPair::from_secret_bytes([0x48; 32]) {
-        Ok(keypair) => keypair,
-        Err(error) => {
-            unreachable!("hardcoded infrastructure Holon key seed must be valid: {error}")
-        }
-    }
-}
-
 fn ratio_basis_points(numerator: usize, denominator: usize) -> u32 {
     if denominator == 0 {
         return 0;
@@ -234,26 +207,6 @@ fn ratio_basis_points(numerator: usize, denominator: usize) -> u32 {
 
 fn usize_to_u64_saturating(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
-}
-
-impl Default for HolonManagerConfig {
-    fn default() -> Self {
-        let keypair = default_holon_keypair();
-        let root_public_key = *keypair.public_key();
-        let root_secret_key = keypair.secret_key().clone();
-        Self {
-            node_did: static_did("did:exo:node-default"),
-            root_did: static_did("did:exo:root"),
-            root_public_key,
-            root_signer: Arc::new(move |message: &[u8]| {
-                exo_core::crypto::sign(message, &root_secret_key)
-            }),
-            provenance_timestamp_source: deterministic_provenance_timestamp_source(1),
-            topology_interval_secs: 60,
-            scaling_interval_secs: 300,
-            health_interval_secs: 30,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -973,20 +926,48 @@ pub async fn run_holon_manager(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
 
     fn test_did() -> Did {
         Did::new("did:exo:test-node").unwrap()
     }
 
-    fn test_config() -> HolonManagerConfig {
+    fn deterministic_provenance_timestamp_source(
+        start_physical_ms: u64,
+    ) -> Arc<dyn Fn() -> Result<Timestamp, String> + Send + Sync> {
+        let next_physical_ms = Arc::new(AtomicU64::new(start_physical_ms.max(1)));
+        Arc::new(move || {
+            let physical_ms = next_physical_ms.fetch_add(1, Ordering::Relaxed);
+            Ok(Timestamp::new(physical_ms, 0))
+        })
+    }
+
+    fn test_config_with_intervals(
+        topology_interval_secs: u64,
+        scaling_interval_secs: u64,
+        health_interval_secs: u64,
+    ) -> HolonManagerConfig {
+        let keypair = exo_core::crypto::KeyPair::from_secret_bytes([0x48; 32]).unwrap();
+        let root_public_key = *keypair.public_key();
+        let root_secret_key = keypair.secret_key().clone();
         HolonManagerConfig {
             node_did: test_did(),
-            topology_interval_secs: 60,
-            scaling_interval_secs: 300,
-            health_interval_secs: 30,
-            ..HolonManagerConfig::default()
+            root_did: Did::new("did:exo:test-root").unwrap(),
+            root_public_key,
+            root_signer: Arc::new(move |message: &[u8]| {
+                exo_core::crypto::sign(message, &root_secret_key)
+            }),
+            provenance_timestamp_source: deterministic_provenance_timestamp_source(1),
+            topology_interval_secs,
+            scaling_interval_secs,
+            health_interval_secs,
         }
+    }
+
+    fn test_config() -> HolonManagerConfig {
+        test_config_with_intervals(60, 300, 30)
     }
 
     #[test]
@@ -1007,6 +988,28 @@ mod tests {
         assert!(
             src.contains("Ed25519 authority key"),
             "module doc must call out the signed adjudication authority"
+        );
+    }
+
+    #[test]
+    fn production_holon_config_does_not_compile_default_authority_secret() {
+        let source = include_str!("holons.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker present");
+
+        assert!(
+            !production.contains("impl Default for HolonManagerConfig"),
+            "production Holon config must not provide a default authority identity"
+        );
+        assert!(
+            !production.contains("default_holon_keypair"),
+            "production Holon config must not carry a default authority keypair helper"
+        );
+        assert!(
+            !production.contains("from_secret_bytes([0x48; 32])"),
+            "production Holon config must not compile a hardcoded authority secret"
         );
     }
 
@@ -1384,15 +1387,9 @@ mod tests {
         let net_handle = NetworkHandle::new(cmd_tx);
 
         let (event_tx, mut event_rx) = mpsc::channel(32);
-        let config = HolonManagerConfig {
-            node_did: test_did(),
-            // Health fires quickly; topology/scaling fire slowly to avoid
-            // blocked peer_count() calls (no network loop in test).
-            topology_interval_secs: 3600,
-            scaling_interval_secs: 3600,
-            health_interval_secs: 1,
-            ..HolonManagerConfig::default()
-        };
+        // Health fires quickly; topology/scaling fire slowly to avoid
+        // blocked peer_count() calls (no network loop in test).
+        let config = test_config_with_intervals(3600, 3600, 1);
 
         // Spawn a background task to drain network commands (prevents hangs).
         tokio::spawn(async move {
