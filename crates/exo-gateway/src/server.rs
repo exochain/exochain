@@ -334,6 +334,16 @@ impl AppState {
             .ok_or_else(|| GatewayError::Internal("database unavailable".into()))
     }
 
+    /// Resolve the authenticated actor from the DB-backed bearer session.
+    pub async fn require_authenticated_session_actor_from_header(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<Did> {
+        let token = require_bearer_token(headers)?;
+        let observed_at = required_observed_at_ms_header(headers)?;
+        require_authenticated_session_actor_for_token(self, &token, observed_at).await
+    }
+
     /// Return the number of registered DIDs without blocking a Tokio worker
     /// on the synchronous registry lock.
     pub async fn registry_len(&self) -> Result<usize> {
@@ -1617,6 +1627,7 @@ async fn handle_auth_saml_callback() -> (StatusCode, Json<serde_json::Value>) {
 async fn handle_advance_pace(
     State(state): State<AppState>,
     Path(did_str): Path<String>,
+    headers: HeaderMap,
     body: Option<Json<serde_json::Value>>,
 ) -> impl IntoResponse {
     let did = match Did::new(&did_str) {
@@ -1629,10 +1640,27 @@ async fn handle_advance_pace(
                 .into_response();
         }
     };
+    let actor = match state
+        .require_authenticated_session_actor_from_header(&headers)
+        .await
+    {
+        Ok(actor) => actor,
+        Err(e) => return auth_boundary_error_response(e),
+    };
+    if actor != did {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "forbidden",
+                "message": "authenticated session actor does not match advance-pace target"
+            })),
+        )
+            .into_response();
+    }
     // Build an adjudication context for this actor.
-    let ctx = state.build_adjudication_context(&did).await;
+    let ctx = state.build_adjudication_context(&actor).await;
     let action = GkActionRequest {
-        actor: did.clone(),
+        actor: actor.clone(),
         action: "advance_pace".into(),
         required_permissions: PermissionSet::new(vec![Permission::new("advance_pace")]),
         is_self_grant: false,
@@ -1817,7 +1845,7 @@ fn reject_caller_supplied_builtin_layout(body: &serde_json::Value) -> Result<()>
     }
 }
 
-fn auth_boundary_error_response(err: GatewayError) -> Response {
+pub(crate) fn auth_boundary_error_response(err: GatewayError) -> Response {
     match err {
         GatewayError::AuthenticationFailed { reason } => (
             StatusCode::UNAUTHORIZED,
@@ -3850,7 +3878,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn vote_route_without_conflict_register_returns_503() {
+    async fn vote_route_missing_session_returns_401_before_conflict_register_lookup() {
         let body = serde_json::to_string(&serde_json::json!({
             "decision_id": "d1",
             "voter_did": "did:exo:alice",
@@ -3874,10 +3902,8 @@ mod tests {
             )
             .await
             .unwrap();
-        // Conflict adjudication is a required vote precondition. Without a
-        // DB-backed standing conflict register, the route fails closed before
-        // reaching kernel adjudication.
-        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     // --- Identity score endpoint tests ---
@@ -4556,6 +4582,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn advance_pace_handler_authenticates_session_actor_before_adjudication() {
+        let source = include_str!("server.rs");
+        let handler = source_between(
+            source,
+            "async fn handle_advance_pace",
+            "// ---------------------------------------------------------------------------\n// Legal / eDiscovery handlers",
+        );
+        let auth_index = handler
+            .find("require_authenticated_session_actor_from_header")
+            .expect("advance_pace must authenticate a bearer session");
+        let context_index = handler
+            .find("build_adjudication_context(&actor)")
+            .expect("advance_pace must adjudicate the authenticated session actor");
+        let kernel_index = handler
+            .find("state.kernel.adjudicate")
+            .expect("advance_pace must retain kernel adjudication");
+
+        assert!(
+            auth_index < context_index && context_index < kernel_index,
+            "advance_pace must authenticate before building the adjudication context"
+        );
+        assert!(
+            handler.contains("if actor != did"),
+            "advance_pace must reject path-DID spoofing"
+        );
+        assert!(
+            !handler.contains("actor: did.clone()"),
+            "advance_pace must not use the caller-controlled path DID as the action actor"
+        );
+    }
+
     fn source_between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
         let start_index = source.find(start).expect("source start marker");
         let after_start = &source[start_index..];
@@ -4565,12 +4623,38 @@ mod tests {
 
     #[tokio::test]
     async fn advance_pace_without_authority_returns_403() {
-        let app = build_router(state());
+        let pool = match gateway_test_pool().await {
+            Some(pool) => pool,
+            None => return,
+        };
+        sqlx::query("DELETE FROM sessions WHERE token = $1")
+            .bind("advance-no-authority-token")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO sessions (token, actor_did, created_at, expires_at, revoked) \
+             VALUES ($1, $2, $3, $4, false)",
+        )
+        .bind("advance-no-authority-token")
+        .bind("did:exo:alice")
+        .bind(1_000_i64)
+        .bind(20_000_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = build_router(AppState::new(
+            Some(pool.clone()),
+            Arc::new(RwLock::new(LocalDidRegistry::new())),
+        ));
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/api/v1/agents/did:exo:alice/advance-pace")
+                    .header("authorization", "Bearer advance-no-authority-token")
+                    .header(AUTH_OBSERVED_AT_MS_HEADER, "10000")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -4578,10 +4662,34 @@ mod tests {
             .unwrap();
         // Kernel rejects before DB check: no consent + no authority chain.
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+        sqlx::query("DELETE FROM sessions WHERE token = $1")
+            .bind("advance-no-authority-token")
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
-    async fn user_advance_pace_without_authority_returns_403() {
+    async fn advance_pace_missing_session_returns_401_before_trusting_path_did() {
+        let app = build_router(state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/agents/did:exo:pace-target/advance-pace")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"queuedAt":9000}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn user_advance_pace_missing_session_returns_401() {
         let app = build_router(state());
         let resp = app
             .oneshot(
@@ -4593,7 +4701,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

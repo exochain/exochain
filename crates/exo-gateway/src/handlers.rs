@@ -7,7 +7,12 @@
 
 use std::io::{self, Write};
 
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+};
 use decision_forum::{
     decision_object::{ActorKind, DecisionObject, Vote, VoteChoice},
     quorum::{QuorumCheckResult, QuorumRegistry, check_quorum, verify_quorum_precondition},
@@ -24,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::Row;
 
-use crate::server::AppState;
+use crate::server::{AppState, auth_boundary_error_response};
 
 // ── Violation 3 fix: CBOR canonical hashing ──────────────────────────────
 
@@ -303,8 +308,16 @@ impl VoteRequest {
 /// Handle a vote submission with conflict-of-interest and authority chain checks.
 pub async fn vote_handler(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<VoteRequest>,
 ) -> impl IntoResponse {
+    let actor = match state
+        .require_authenticated_session_actor_from_header(&headers)
+        .await
+    {
+        Ok(actor) => actor,
+        Err(e) => return auth_boundary_error_response(e),
+    };
     let voter_did = match exo_core::Did::new(&body.voter_did) {
         Ok(d) => d,
         Err(_) => {
@@ -315,6 +328,16 @@ pub async fn vote_handler(
                 .into_response();
         }
     };
+    if actor != voter_did {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "forbidden",
+                "message": "authenticated session actor does not match voter_did"
+            })),
+        )
+            .into_response();
+    }
     let affected_dids = match body.caller_supplied_affected_dids() {
         Ok(dids) => dids,
         Err(e) => {
@@ -1054,6 +1077,40 @@ mod tests {
         assert!(
             production.contains("check_and_block(&voter_did, &conflicts)"),
             "vote handler must use the enforcing conflict gate, not advisory-only recusal checks"
+        );
+    }
+
+    #[test]
+    fn vote_handler_authenticates_session_actor_before_conflict_and_kernel_checks() {
+        let source = include_str!("handlers.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker present");
+        let vote_handler = production
+            .split("pub async fn vote_handler")
+            .nth(1)
+            .expect("vote handler source present")
+            .split("// Verify quorum precondition")
+            .next()
+            .expect("vote handler source end");
+        let auth_index = vote_handler
+            .find("require_authenticated_session_actor_from_header")
+            .expect("vote handler must authenticate a bearer session");
+        let conflict_index = vote_handler
+            .find("load_conflict_declarations(&voter_did)")
+            .expect("vote handler must retain conflict lookup");
+        let kernel_index = vote_handler
+            .find("state.kernel.adjudicate")
+            .expect("vote handler must retain kernel adjudication");
+
+        assert!(
+            auth_index < conflict_index && conflict_index < kernel_index,
+            "vote handler must authenticate before conflict and kernel checks"
+        );
+        assert!(
+            vote_handler.contains("if actor != voter_did"),
+            "vote handler must reject body voter_did spoofing"
         );
     }
 
