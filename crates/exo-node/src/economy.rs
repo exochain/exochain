@@ -37,25 +37,23 @@ use tower::limit::ConcurrencyLimitLayer;
 const MAX_ECONOMY_API_BODY_BYTES: usize = 64 * 1024;
 const MAX_ECONOMY_API_CONCURRENT_REQUESTS: usize = 64;
 
+pub type SettlementSigner = Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>;
+
 /// Shared state for economy route handlers.
 #[derive(Clone)]
 pub struct EconomyApiState {
     pub store: Arc<Mutex<InMemoryEconomyStore>>,
+    settlement_signer: SettlementSigner,
 }
 
 impl EconomyApiState {
     /// Construct a fresh state seeded with the zero-launch policy.
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(settlement_signer: SettlementSigner) -> Self {
         Self {
             store: Arc::new(Mutex::new(InMemoryEconomyStore::new())),
+            settlement_signer,
         }
-    }
-}
-
-impl Default for EconomyApiState {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -146,7 +144,9 @@ fn map_economy_error(err: EconomyError) -> ApiError {
         | EconomyError::SettlementOverAllocated { .. } => {
             (StatusCode::UNPROCESSABLE_ENTITY, err.to_string())
         }
-        EconomyError::Serialization { .. } | EconomyError::ZeroLaunchInvariantViolated { .. } => {
+        EconomyError::Serialization { .. }
+        | EconomyError::EmptySettlementSignature { .. }
+        | EconomyError::ZeroLaunchInvariantViolated { .. } => {
             (StatusCode::INTERNAL_SERVER_ERROR, "economy error".into())
         }
     }
@@ -181,13 +181,14 @@ async fn handle_settle(
 ) -> ApiResult<Json<SettlementReceipt>> {
     let quote_hash = parse_hash(&payload.quote_hash_hex)?;
     let context = payload.context;
+    let settlement_signer = Arc::clone(&state.settlement_signer);
     let receipt = with_store_blocking(state, move |store| {
         let stored = store
             .get_quote(&quote_hash)
             .map_err(map_economy_error)?
             .ok_or_else(|| map_economy_error(EconomyError::QuoteNotFound))?;
-        let receipt =
-            settle(&stored, &context, |_| Signature::empty()).map_err(map_economy_error)?;
+        let receipt = settle(&stored, &context, |payload| (settlement_signer)(payload))
+            .map_err(map_economy_error)?;
         store
             .put_receipt(receipt.clone())
             .map_err(map_economy_error)?;
@@ -248,14 +249,29 @@ mod tests {
         body::{self, Body},
         http::{Method, Request},
     };
-    use exo_core::{Did, Timestamp};
+    use exo_core::{
+        Did, Timestamp,
+        crypto::{self, KeyPair},
+        types::PublicKey,
+    };
     use exo_economy::{ActorClass, AssuranceClass, EventClass, ZeroFeeReason};
     use tower::ServiceExt;
 
     use super::*;
 
+    fn test_keypair() -> KeyPair {
+        KeyPair::from_secret_bytes([0xEC; 32]).unwrap()
+    }
+
+    fn fresh_signed_state() -> (Arc<EconomyApiState>, PublicKey) {
+        let keypair = test_keypair();
+        let public_key = *keypair.public_key();
+        let signer: SettlementSigner = Arc::new(move |payload: &[u8]| keypair.sign(payload));
+        (Arc::new(EconomyApiState::new(signer)), public_key)
+    }
+
     fn fresh_state() -> Arc<EconomyApiState> {
-        Arc::new(EconomyApiState::new())
+        fresh_signed_state().0
     }
 
     fn baseline_inputs() -> PricingInputs {
@@ -311,7 +327,7 @@ mod tests {
 
     #[tokio::test]
     async fn settle_creates_zero_priced_receipt() {
-        let state = fresh_state();
+        let (state, public_key) = fresh_signed_state();
         let app = economy_router(Arc::clone(&state));
 
         // Step 1: quote.
@@ -361,6 +377,18 @@ mod tests {
             serde_json::from_slice(&read_body(response).await).unwrap();
         assert_eq!(receipt.charged_amount_micro_exo, 0);
         assert!(receipt.zero_fee_reason.is_some());
+        assert!(
+            !receipt.signature.is_empty(),
+            "economy settlement receipts must be signed by the node identity"
+        );
+        assert!(
+            crypto::verify(
+                receipt.content_hash.as_bytes(),
+                &receipt.signature,
+                &public_key
+            ),
+            "economy settlement receipt signature must verify against the node identity"
+        );
     }
 
     #[tokio::test]
@@ -521,6 +549,14 @@ mod tests {
         assert!(
             production.contains("ConcurrencyLimitLayer::new("),
             "economy router must apply local admission control"
+        );
+        assert!(
+            production.contains("settlement_signer"),
+            "economy settlement must use the configured node identity signer"
+        );
+        assert!(
+            !production.contains("Signature::empty()"),
+            "production economy settlement must not fabricate empty receipt signatures"
         );
     }
 }

@@ -76,7 +76,13 @@ where
         signature: Signature::empty(),
     };
     receipt.content_hash = canonical_content_hash(&receipt)?;
-    receipt.signature = sign(receipt.content_hash.as_bytes());
+    let signature = sign(receipt.content_hash.as_bytes());
+    if signature.is_empty() {
+        return Err(EconomyError::EmptySettlementSignature {
+            receipt_id: context.receipt_id.clone(),
+        });
+    }
+    receipt.signature = signature;
     Ok(receipt)
 }
 
@@ -176,6 +182,17 @@ mod tests {
         ctx.now = Timestamp::new(q.expires_at.physical_ms + 1, q.expires_at.logical);
         let err = settle(&q, &ctx, |_| fixed_signature()).unwrap_err();
         assert!(matches!(err, EconomyError::QuoteExpired));
+    }
+
+    #[test]
+    fn settle_rejects_empty_signer_output() {
+        let policy = PricingPolicy::zero_launch_default();
+        let q = quote(&policy, &baseline_inputs(), "q-1".into()).unwrap();
+        let err = settle(&q, &baseline_context(), |_| Signature::empty()).unwrap_err();
+        assert!(matches!(
+            err,
+            EconomyError::EmptySettlementSignature { receipt_id } if receipt_id == "rec-1"
+        ));
     }
 
     #[test]

@@ -52,6 +52,10 @@ pub enum EconomyError {
     #[error("economy settlement amount {amount} exceeds charged amount {charged}")]
     SettlementOverAllocated { amount: u128, charged: u128 },
 
+    /// Settlement signer returned an empty placeholder signature.
+    #[error("economy settlement receipt `{receipt_id}` signer returned an empty signature")]
+    EmptySettlementSignature { receipt_id: String },
+
     /// Constant-evaluation invariant in the zero-launch policy was violated.
     #[error("zero-launch invariant violated: {reason}")]
     ZeroLaunchInvariantViolated { reason: String },
@@ -119,6 +123,9 @@ mod tests {
             EconomyError::SettlementOverAllocated {
                 amount: 10,
                 charged: 5,
+            },
+            EconomyError::EmptySettlementSignature {
+                receipt_id: "rec".into(),
             },
             EconomyError::ZeroLaunchInvariantViolated { reason: "x".into() },
             EconomyError::InvalidInput { reason: "x".into() },

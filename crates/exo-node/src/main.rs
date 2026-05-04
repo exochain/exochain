@@ -863,7 +863,11 @@ async fn start_node(
     );
 
     // Build the economy API router (zero-priced launch settlement).
-    let economy_state = Arc::new(economy::EconomyApiState::new());
+    let economy_settlement_signer: economy::SettlementSigner = {
+        let identity = identity::load_or_create(data_dir)?;
+        Arc::new(move |payload: &[u8]| identity.sign(payload))
+    };
+    let economy_state = Arc::new(economy::EconomyApiState::new(economy_settlement_signer));
     let economy_router = economy::economy_router(Arc::clone(&economy_state));
     tracing::info!(
         "Economy router ready — /api/v1/economy/{{quote,settle,receipts/:id,policy/active}} (zero-priced launch policy active)"
