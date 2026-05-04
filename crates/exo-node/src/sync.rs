@@ -433,18 +433,7 @@ impl SyncEngine {
                     accepted_nodes.insert(node.hash, node.clone());
                 }
 
-                for (node, height) in nodes_with_heights {
-                    let hash = node.hash;
-
-                    if let Err(e) = store.put_sync(node) {
-                        tracing::warn!(err = %e, %hash, "Failed to store synced node");
-                        continue;
-                    }
-
-                    if let Err(e) = store.mark_committed_sync(&hash, height) {
-                        tracing::warn!(err = %e, %hash, height, "Failed to mark committed");
-                    }
-                }
+                store.put_committed_many_sync(&nodes_with_heights)?;
                 Ok(())
             },
         )
@@ -616,12 +605,7 @@ impl SyncEngine {
                     accepted_nodes.insert(node.hash, node.clone());
                 }
 
-                for node in nodes {
-                    let hash = node.hash;
-                    if let Err(e) = store.put_sync(node) {
-                        tracing::warn!(err = %e, %hash, "Failed to store synced node");
-                    }
-                }
+                store.put_many_sync(&nodes)?;
                 Ok(())
             },
         )
@@ -1237,6 +1221,286 @@ mod tests {
         assert!(
             event_rx.try_recv().is_err(),
             "rejected chunks must not emit progress or completion events"
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_chunk_storage_failure_does_not_emit_progress_or_complete() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteDagStore::open(dir.path()).unwrap();
+        let db_path = dir.path().join("dag.db");
+        let store = Arc::new(Mutex::new(store));
+
+        let (cmd_tx, _cmd_rx) = mpsc::channel(256);
+        let net_handle = NetworkHandle::new(cmd_tx);
+        let (event_tx, mut event_rx) = mpsc::channel(32);
+        let mut engine = SyncEngine::new(
+            sync_config(100, 200),
+            Arc::clone(&store),
+            net_handle,
+            event_tx,
+        );
+
+        let sign_fn = make_sign_fn();
+        let did = test_did();
+        let mut dag = Dag::new();
+        let mut clock = DeterministicDagClock::new();
+        let node = append(
+            &mut dag,
+            &[],
+            b"storage-failure-snapshot-node",
+            &did,
+            &*sign_fn,
+            &mut clock,
+        )
+        .unwrap();
+
+        rusqlite::Connection::open(&db_path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER reject_synced_snapshot_node
+                 BEFORE INSERT ON dag_nodes
+                 BEGIN
+                   SELECT RAISE(FAIL, 'reject synced snapshot node');
+                 END;",
+            )
+            .unwrap();
+
+        engine.syncing = true;
+        let chunk = StateSnapshotChunkMsg {
+            sender: Did::new("did:exo:sender").unwrap(),
+            from_height: 1,
+            nodes: vec![node],
+            to_height: 1,
+            has_more: false,
+        };
+
+        engine.handle_snapshot_chunk(chunk).await;
+
+        assert!(
+            engine.needs_sync(),
+            "snapshot storage failure must keep sync incomplete"
+        );
+        assert!(
+            event_rx.try_recv().is_err(),
+            "snapshot storage failure must not emit progress or completion events"
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_chunk_storage_failure_rolls_back_partial_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteDagStore::open(dir.path()).unwrap();
+        let db_path = dir.path().join("dag.db");
+        let store = Arc::new(Mutex::new(store));
+
+        let (cmd_tx, _cmd_rx) = mpsc::channel(256);
+        let net_handle = NetworkHandle::new(cmd_tx);
+        let (event_tx, mut event_rx) = mpsc::channel(32);
+        let mut engine = SyncEngine::new(
+            sync_config(100, 200),
+            Arc::clone(&store),
+            net_handle,
+            event_tx,
+        );
+
+        let sign_fn = make_sign_fn();
+        let did = test_did();
+        let mut dag = Dag::new();
+        let mut clock = DeterministicDagClock::new();
+        let node1 = append(
+            &mut dag,
+            &[],
+            b"partial-storage-snapshot-node-1",
+            &did,
+            &*sign_fn,
+            &mut clock,
+        )
+        .unwrap();
+        let node2 = append(
+            &mut dag,
+            &[node1.hash],
+            b"partial-storage-snapshot-node-2",
+            &did,
+            &*sign_fn,
+            &mut clock,
+        )
+        .unwrap();
+
+        let rejected_hash = hex::encode(node2.hash.0);
+        rusqlite::Connection::open(&db_path)
+            .unwrap()
+            .execute_batch(&format!(
+                "CREATE TRIGGER reject_second_snapshot_node
+                 BEFORE INSERT ON dag_nodes
+                 WHEN NEW.hash = X'{rejected_hash}'
+                 BEGIN
+                   SELECT RAISE(FAIL, 'reject second snapshot node');
+                 END;"
+            ))
+            .unwrap();
+
+        engine.syncing = true;
+        let chunk = StateSnapshotChunkMsg {
+            sender: Did::new("did:exo:sender").unwrap(),
+            from_height: 1,
+            nodes: vec![node1.clone(), node2.clone()],
+            to_height: 2,
+            has_more: false,
+        };
+
+        engine.handle_snapshot_chunk(chunk).await;
+
+        {
+            let st = store.lock().unwrap();
+            assert!(
+                !st.contains_sync(&node1.hash).unwrap(),
+                "snapshot batch failure must roll back node 1"
+            );
+            assert!(
+                !st.contains_sync(&node2.hash).unwrap(),
+                "snapshot batch failure must not persist node 2"
+            );
+            assert_eq!(st.committed_height_value().unwrap(), 0);
+        }
+        assert!(engine.needs_sync());
+        assert!(
+            event_rx.try_recv().is_err(),
+            "rolled-back snapshot chunks must not emit progress or completion events"
+        );
+    }
+
+    #[tokio::test]
+    async fn dag_sync_response_storage_failure_does_not_request_next_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteDagStore::open(dir.path()).unwrap();
+        let db_path = dir.path().join("dag.db");
+        let store = Arc::new(Mutex::new(store));
+
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(256);
+        let net_handle = NetworkHandle::new(cmd_tx);
+        let (event_tx, _event_rx) = mpsc::channel(32);
+        let mut engine = SyncEngine::new(
+            sync_config(100, 200),
+            Arc::clone(&store),
+            net_handle,
+            event_tx,
+        );
+
+        let sign_fn = make_sign_fn();
+        let did = test_did();
+        let mut dag = Dag::new();
+        let mut clock = DeterministicDagClock::new();
+        let node = append(
+            &mut dag,
+            &[],
+            b"storage-failure-dag-response-node",
+            &did,
+            &*sign_fn,
+            &mut clock,
+        )
+        .unwrap();
+
+        rusqlite::Connection::open(&db_path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER reject_synced_dag_response_node
+                 BEFORE INSERT ON dag_nodes
+                 BEGIN
+                   SELECT RAISE(FAIL, 'reject synced dag response node');
+                 END;",
+            )
+            .unwrap();
+
+        let response = DagSyncResponseMsg {
+            sender: Did::new("did:exo:sender").unwrap(),
+            nodes: vec![node],
+            has_more: true,
+        };
+
+        engine.handle_dag_sync_response(response).await;
+
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "DAG sync storage failure must not request the next batch"
+        );
+    }
+
+    #[tokio::test]
+    async fn dag_sync_response_storage_failure_rolls_back_partial_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteDagStore::open(dir.path()).unwrap();
+        let db_path = dir.path().join("dag.db");
+        let store = Arc::new(Mutex::new(store));
+
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(256);
+        let net_handle = NetworkHandle::new(cmd_tx);
+        let (event_tx, _event_rx) = mpsc::channel(32);
+        let mut engine = SyncEngine::new(
+            sync_config(100, 200),
+            Arc::clone(&store),
+            net_handle,
+            event_tx,
+        );
+
+        let sign_fn = make_sign_fn();
+        let did = test_did();
+        let mut dag = Dag::new();
+        let mut clock = DeterministicDagClock::new();
+        let node1 = append(
+            &mut dag,
+            &[],
+            b"partial-storage-dag-response-node-1",
+            &did,
+            &*sign_fn,
+            &mut clock,
+        )
+        .unwrap();
+        let node2 = append(
+            &mut dag,
+            &[node1.hash],
+            b"partial-storage-dag-response-node-2",
+            &did,
+            &*sign_fn,
+            &mut clock,
+        )
+        .unwrap();
+
+        let rejected_hash = hex::encode(node2.hash.0);
+        rusqlite::Connection::open(&db_path)
+            .unwrap()
+            .execute_batch(&format!(
+                "CREATE TRIGGER reject_second_dag_response_node
+                 BEFORE INSERT ON dag_nodes
+                 WHEN NEW.hash = X'{rejected_hash}'
+                 BEGIN
+                   SELECT RAISE(FAIL, 'reject second dag response node');
+                 END;"
+            ))
+            .unwrap();
+
+        let response = DagSyncResponseMsg {
+            sender: Did::new("did:exo:sender").unwrap(),
+            nodes: vec![node1.clone(), node2.clone()],
+            has_more: true,
+        };
+
+        engine.handle_dag_sync_response(response).await;
+
+        {
+            let st = store.lock().unwrap();
+            assert!(
+                !st.contains_sync(&node1.hash).unwrap(),
+                "DAG sync batch failure must roll back node 1"
+            );
+            assert!(
+                !st.contains_sync(&node2.hash).unwrap(),
+                "DAG sync batch failure must not persist node 2"
+            );
+        }
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "rolled-back DAG sync failure must not request the next batch"
         );
     }
 

@@ -602,6 +602,26 @@ impl SqliteDagStore {
 // ---------------------------------------------------------------------------
 
 impl SqliteDagStore {
+    fn insert_node_tx(tx: &rusqlite::Transaction<'_>, node: &DagNode) -> DagResult<()> {
+        let cbor = Self::encode_node(node)?;
+
+        tx.execute(
+            "INSERT OR IGNORE INTO dag_nodes (hash, cbor_payload) VALUES (?1, ?2)",
+            params![node.hash.0.as_slice(), cbor],
+        )
+        .map_err(store_err)?;
+
+        for parent in &node.parents {
+            tx.execute(
+                "INSERT OR IGNORE INTO dag_parents (child_hash, parent_hash) VALUES (?1, ?2)",
+                params![node.hash.0.as_slice(), parent.0.as_slice()],
+            )
+            .map_err(store_err)?;
+        }
+
+        Ok(())
+    }
+
     /// Sync version of `DagStore::get`.
     pub fn get_sync(&self, hash: &Hash256) -> DagResult<Option<DagNode>> {
         let mut stmt = self
@@ -621,24 +641,32 @@ impl SqliteDagStore {
 
     /// Sync version of `DagStore::put`.
     pub fn put_sync(&mut self, node: DagNode) -> DagResult<()> {
-        let cbor = Self::encode_node(&node)?;
+        self.put_many_sync(&[node])
+    }
 
-        self.conn
-            .execute(
-                "INSERT OR IGNORE INTO dag_nodes (hash, cbor_payload) VALUES (?1, ?2)",
-                params![node.hash.0.as_slice(), cbor],
+    /// Persist a batch of DAG nodes atomically.
+    pub fn put_many_sync(&mut self, nodes: &[DagNode]) -> DagResult<()> {
+        let tx = self.conn.transaction().map_err(store_err)?;
+        for node in nodes {
+            Self::insert_node_tx(&tx, node)?;
+        }
+        tx.commit().map_err(store_err)?;
+        Ok(())
+    }
+
+    /// Persist and mark a batch of DAG nodes as committed atomically.
+    pub fn put_committed_many_sync(&mut self, nodes: &[(DagNode, u64)]) -> DagResult<()> {
+        let tx = self.conn.transaction().map_err(store_err)?;
+        for (node, height) in nodes {
+            Self::insert_node_tx(&tx, node)?;
+            let height = sqlite_u64_to_i64(*height, "committed.height")?;
+            tx.execute(
+                "INSERT OR REPLACE INTO committed (hash, height) VALUES (?1, ?2)",
+                params![node.hash.0.as_slice(), height],
             )
             .map_err(store_err)?;
-
-        for parent in &node.parents {
-            self.conn
-                .execute(
-                    "INSERT OR IGNORE INTO dag_parents (child_hash, parent_hash) VALUES (?1, ?2)",
-                    params![node.hash.0.as_slice(), parent.0.as_slice()],
-                )
-                .map_err(store_err)?;
         }
-
+        tx.commit().map_err(store_err)?;
         Ok(())
     }
 
