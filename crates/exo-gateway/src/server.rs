@@ -1,5 +1,6 @@
 //! HTTP server skeleton — gateway configuration, lifecycle, and axum routing.
 use std::{
+    collections::BTreeMap,
     fmt,
     net::SocketAddr,
     sync::{Arc, Mutex, RwLock},
@@ -8,7 +9,7 @@ use std::{
 use axum::{
     Router,
     body::Body,
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Path, State},
     http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Json, Response},
@@ -55,10 +56,112 @@ const XSRF_COOKIE_PREFIX: &str = "XSRF-TOKEN=";
 const CSRF_HEADER_NAME: &str = "x-csrf-token";
 const AUTH_OBSERVED_AT_MS_HEADER: &str = "x-exo-auth-observed-at-ms";
 const GLOBAL_CONCURRENCY_LIMIT: usize = 1024;
+const GATEWAY_RATE_LIMIT_REQUESTS_PER_WINDOW: u32 = 120;
+const GATEWAY_RATE_LIMIT_WINDOW_MS: u64 = 60_000;
+const GATEWAY_RATE_LIMIT_MAX_CLIENTS: usize = 16_384;
 const STRICT_TRANSPORT_SECURITY_VALUE: &str = "max-age=63072000; includeSubDomains";
 const CONTENT_SECURITY_POLICY_VALUE: &str =
     "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const PERMISSIONS_POLICY_VALUE: &str = "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatewayRateLimitOutcome {
+    Allowed,
+    Limited { retry_after_ms: u64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GatewayRateLimitBucket {
+    window_start_ms: u64,
+    request_count: u32,
+    last_seen_ms: u64,
+}
+
+#[derive(Debug)]
+struct GatewayRateLimiter {
+    clients: BTreeMap<String, GatewayRateLimitBucket>,
+    max_requests_per_window: u32,
+    window_ms: u64,
+    max_tracked_clients: usize,
+}
+
+impl Default for GatewayRateLimiter {
+    fn default() -> Self {
+        Self::with_limits(
+            GATEWAY_RATE_LIMIT_REQUESTS_PER_WINDOW,
+            GATEWAY_RATE_LIMIT_WINDOW_MS,
+            GATEWAY_RATE_LIMIT_MAX_CLIENTS,
+        )
+    }
+}
+
+impl GatewayRateLimiter {
+    fn with_limits(
+        max_requests_per_window: u32,
+        window_ms: u64,
+        max_tracked_clients: usize,
+    ) -> Self {
+        Self {
+            clients: BTreeMap::new(),
+            max_requests_per_window,
+            window_ms,
+            max_tracked_clients,
+        }
+    }
+
+    fn check(&mut self, client_key: &str, now_ms: u64) -> GatewayRateLimitOutcome {
+        if self.max_requests_per_window == 0 || self.window_ms == 0 {
+            return GatewayRateLimitOutcome::Limited {
+                retry_after_ms: self.window_ms.max(1),
+            };
+        }
+
+        self.prune_stale(now_ms);
+
+        if let Some(bucket) = self.clients.get_mut(client_key) {
+            let elapsed_ms = now_ms.saturating_sub(bucket.window_start_ms);
+            if elapsed_ms >= self.window_ms {
+                *bucket = GatewayRateLimitBucket {
+                    window_start_ms: now_ms,
+                    request_count: 1,
+                    last_seen_ms: now_ms,
+                };
+                return GatewayRateLimitOutcome::Allowed;
+            }
+
+            bucket.last_seen_ms = now_ms;
+            if bucket.request_count >= self.max_requests_per_window {
+                return GatewayRateLimitOutcome::Limited {
+                    retry_after_ms: self.window_ms.saturating_sub(elapsed_ms).max(1),
+                };
+            }
+            bucket.request_count = bucket.request_count.saturating_add(1);
+            return GatewayRateLimitOutcome::Allowed;
+        }
+
+        if self.clients.len() >= self.max_tracked_clients {
+            return GatewayRateLimitOutcome::Limited {
+                retry_after_ms: self.window_ms,
+            };
+        }
+
+        self.clients.insert(
+            client_key.to_owned(),
+            GatewayRateLimitBucket {
+                window_start_ms: now_ms,
+                request_count: 1,
+                last_seen_ms: now_ms,
+            },
+        );
+        GatewayRateLimitOutcome::Allowed
+    }
+
+    fn prune_stale(&mut self, now_ms: u64) {
+        let retention_ms = self.window_ms.saturating_mul(2).max(self.window_ms);
+        self.clients
+            .retain(|_, bucket| now_ms.saturating_sub(bucket.last_seen_ms) <= retention_ms);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -162,6 +265,8 @@ pub struct AppState {
     start_time: Timestamp,
     /// HLC source used for default-on gateway runtime timestamps.
     clock: Arc<Mutex<HybridClock>>,
+    /// Default-on per-client request-rate admission state.
+    rate_limiter: Arc<Mutex<GatewayRateLimiter>>,
 }
 
 impl AppState {
@@ -192,20 +297,26 @@ impl AppState {
             kernel: Arc::new(kernel),
             start_time,
             clock: Arc::new(Mutex::new(clock)),
+            rate_limiter: Arc::new(Mutex::new(GatewayRateLimiter::default())),
         }
     }
 
+    fn try_now_ms(&self) -> std::result::Result<u64, &'static str> {
+        let mut clock = self
+            .clock
+            .lock()
+            .map_err(|_| "Gateway AppState HLC mutex poisoned while reading timestamp")?;
+        clock
+            .now()
+            .map(|timestamp| timestamp.physical_ms)
+            .map_err(|_| "Gateway AppState HLC exhausted while reading timestamp")
+    }
+
     fn now_ms(&self) -> u64 {
-        match self.clock.lock() {
-            Ok(mut clock) => match clock.now() {
-                Ok(timestamp) => timestamp.physical_ms,
-                Err(err) => {
-                    tracing::error!(error = %err, "Gateway AppState HLC exhausted while reading timestamp");
-                    0
-                }
-            },
-            Err(_) => {
-                tracing::error!("Gateway AppState HLC mutex poisoned while reading timestamp");
+        match self.try_now_ms() {
+            Ok(now_ms) => now_ms,
+            Err(message) => {
+                tracing::error!(message, "Gateway AppState timestamp unavailable");
                 0
             }
         }
@@ -2177,13 +2288,25 @@ async fn handle_feedback_issue_update(
 /// All 20 `RestRoute` paths are registered.  Unimplemented handlers return
 /// 501 until the full handler stack lands in a follow-up PR.
 pub fn build_router(state: AppState) -> Router {
+    build_router_with_extra_routes(state, None)
+}
+
+fn build_router_with_extra_routes(state: AppState, extra: Option<Router>) -> Router {
+    let mut router = build_unlayered_router(state.clone());
+    if let Some(extra_router) = extra {
+        router = router.merge(extra_router);
+    }
+    apply_gateway_layers(router, state, GLOBAL_CONCURRENCY_LIMIT)
+}
+
+fn build_unlayered_router(state: AppState) -> Router {
     // GraphQL sub-router shares the gateway's DID registry so that
     // `resolveIdentity` queries see any DIDs registered via REST.
     let gql_state = graphql::AppState::new_arc_with_registry(state.registry.clone());
     let schema = graphql::build_schema(gql_state);
     let gql_router = graphql::graphql_router(schema);
 
-    let router = Router::new()
+    Router::new()
         // Probes
         .route("/health", get(handle_health))
         .route("/ready", get(handle_ready))
@@ -2251,14 +2374,72 @@ pub fn build_router(state: AppState) -> Router {
         )
         .with_state(state)
         // GraphQL sub-router has its own state — merge after with_state()
-        .merge(gql_router);
-
-    apply_gateway_layers(router, GLOBAL_CONCURRENCY_LIMIT)
+        .merge(gql_router)
 }
 
-fn apply_gateway_layers(router: Router, concurrency_limit: usize) -> Router {
+fn gateway_rate_limit_key(request: &Request<Body>) -> String {
+    request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(address)| address.ip().to_string())
+        .unwrap_or_else(|| "unknown-client".to_owned())
+}
+
+fn gateway_rate_limit_response(retry_after_ms: u64) -> Response {
+    let retry_after_seconds = retry_after_ms.saturating_add(999) / 1000;
+    let mut response =
+        (StatusCode::TOO_MANY_REQUESTS, "gateway rate limit exceeded").into_response();
+    if let Ok(value) = HeaderValue::from_str(&retry_after_seconds.max(1).to_string()) {
+        response.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+    response
+}
+
+async fn enforce_gateway_rate_limit(
+    State(state): State<AppState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let client_key = gateway_rate_limit_key(&request);
+    let now_ms = match state.try_now_ms() {
+        Ok(now_ms) => now_ms,
+        Err(message) => {
+            tracing::error!(message, "Gateway rate limiter timestamp unavailable");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "gateway rate limiter unavailable",
+            )
+                .into_response();
+        }
+    };
+
+    let outcome = match state.rate_limiter.lock() {
+        Ok(mut limiter) => limiter.check(&client_key, now_ms),
+        Err(_) => {
+            tracing::error!("Gateway rate limiter mutex poisoned");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "gateway rate limiter unavailable",
+            )
+                .into_response();
+        }
+    };
+
+    match outcome {
+        GatewayRateLimitOutcome::Allowed => next.run(request).await,
+        GatewayRateLimitOutcome::Limited { retry_after_ms } => {
+            gateway_rate_limit_response(retry_after_ms)
+        }
+    }
+}
+
+fn apply_gateway_layers(router: Router, state: AppState, concurrency_limit: usize) -> Router {
     router
         .layer(middleware::from_fn(require_csrf_double_submit))
+        .layer(middleware::from_fn_with_state(
+            state,
+            enforce_gateway_rate_limit,
+        ))
         // Attach browser-facing hardening headers to every gateway response. (F-116)
         .layer(middleware::from_fn(attach_gateway_security_headers))
         // Cap inbound body size before the handler reads a single byte. (A-022)
@@ -2319,9 +2500,8 @@ pub async fn serve(config: GatewayConfig, pool: Option<sqlx::PgPool>) -> Result<
 
 /// Like [`serve`] but merges an additional [`Router`] into the app.
 ///
-/// The `extra` router is merged *after* the gateway's own routes, giving
-/// callers a way to inject endpoints (e.g. `/metrics`) without modifying
-/// this crate.
+/// The `extra` router is merged before gateway-wide layers are applied so
+/// injected endpoints (e.g. `/metrics`) share the same admission controls.
 pub async fn serve_with_extra_routes(
     config: GatewayConfig,
     pool: Option<sqlx::PgPool>,
@@ -2330,11 +2510,7 @@ pub async fn serve_with_extra_routes(
     validate_tls_config(config.tls_config.as_ref())?;
     let registry = Arc::new(RwLock::new(LocalDidRegistry::new()));
     let state = AppState::new(pool, registry);
-    let mut app = build_router(state);
-
-    if let Some(extra_router) = extra {
-        app = app.merge(extra_router);
-    }
+    let app = build_router_with_extra_routes(state, extra);
 
     if let Some(tls_config) = config.tls_config.as_ref() {
         let bind_address = parse_tls_bind_address(&config.bind_address)?;
@@ -2351,7 +2527,7 @@ pub async fn serve_with_extra_routes(
         let handle = axum_server::Handle::new();
         let server = axum_server::bind_rustls(bind_address, rustls_config)
             .handle(handle.clone())
-            .serve(app.into_make_service());
+            .serve(app.into_make_service_with_connect_info::<SocketAddr>());
 
         tracing::info!("exo-gateway listening with TLS on {}", config.bind_address);
 
@@ -2373,10 +2549,13 @@ pub async fn serve_with_extra_routes(
 
     tracing::info!("exo-gateway listening on {}", config.bind_address);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|e| GatewayError::Internal(format!("server error: {e}")))?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .map_err(|e| GatewayError::Internal(format!("server error: {e}")))?;
 
     Ok(())
 }
@@ -2389,11 +2568,16 @@ pub async fn serve_with_extra_routes(
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use std::{
+        net::SocketAddr,
         sync::atomic::{AtomicU64, Ordering},
         time::Duration,
     };
 
-    use axum::{body::Body, http::Request};
+    use axum::{
+        body::Body,
+        extract::ConnectInfo,
+        http::{Request, header},
+    };
     use exo_core::{
         Timestamp,
         crypto::{generate_keypair, sign},
@@ -2407,6 +2591,38 @@ mod tests {
 
     fn state() -> AppState {
         AppState::new(None, Arc::new(RwLock::new(LocalDidRegistry::new())))
+    }
+
+    async fn probe() -> StatusCode {
+        StatusCode::OK
+    }
+
+    fn rate_limited_state(
+        max_requests_per_window: u32,
+        window_ms: u64,
+        wall: Arc<AtomicU64>,
+    ) -> AppState {
+        let wall_for_clock = Arc::clone(&wall);
+        let mut state = AppState::new_with_clock(
+            None,
+            Arc::new(RwLock::new(LocalDidRegistry::new())),
+            HybridClock::with_wall_clock(move || wall_for_clock.load(Ordering::Relaxed)),
+        );
+        state.rate_limiter = Arc::new(Mutex::new(GatewayRateLimiter::with_limits(
+            max_requests_per_window,
+            window_ms,
+            8,
+        )));
+        state
+    }
+
+    fn request_from(path: &str, address: SocketAddr, forwarded_for: &str) -> Request<Body> {
+        Request::builder()
+            .uri(path)
+            .header("x-forwarded-for", forwarded_for)
+            .extension(ConnectInfo(address))
+            .body(Body::empty())
+            .unwrap()
     }
 
     #[test]
@@ -2524,7 +2740,7 @@ mod tests {
             StatusCode::OK
         }
 
-        let state = HoldState {
+        let hold_state = HoldState {
             entered: Arc::new(Notify::new()),
             release: Arc::new(Notify::new()),
         };
@@ -2532,7 +2748,8 @@ mod tests {
             Router::new()
                 .route("/hold", get(hold))
                 .route("/probe", get(probe))
-                .with_state(state.clone()),
+                .with_state(hold_state.clone()),
+            state(),
             1,
         );
 
@@ -2540,7 +2757,7 @@ mod tests {
             app.clone()
                 .oneshot(Request::builder().uri("/hold").body(Body::empty()).unwrap()),
         );
-        state.entered.notified().await;
+        hold_state.entered.notified().await;
 
         let queued = tokio::time::timeout(
             Duration::from_millis(50),
@@ -2557,7 +2774,7 @@ mod tests {
             "request must queue while the limit is held"
         );
 
-        state.release.notify_one();
+        hold_state.release.notify_one();
         let first_response = first.await.unwrap().unwrap();
         assert_eq!(first_response.status(), StatusCode::OK);
 
@@ -2574,6 +2791,195 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(next_response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn gateway_rejects_requests_over_default_per_client_rate_budget() {
+        let app = build_router(state());
+
+        for _ in 0..GATEWAY_RATE_LIMIT_REQUESTS_PER_WINDOW {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/health")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_ne!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        }
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            response.headers().get(header::RETRY_AFTER),
+            Some(&HeaderValue::from_static("60"))
+        );
+    }
+
+    #[tokio::test]
+    async fn gateway_rate_limit_resets_after_hlc_window() {
+        let wall = Arc::new(AtomicU64::new(10_000));
+        let state = rate_limited_state(1, 60_000, Arc::clone(&wall));
+        let app = apply_gateway_layers(
+            Router::new().route("/probe", get(probe)),
+            state,
+            GLOBAL_CONCURRENCY_LIMIT,
+        );
+
+        let first = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let second = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        wall.store(70_000, Ordering::Relaxed);
+
+        let third = app
+            .oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(third.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn gateway_rate_limit_uses_socket_ip_not_spoofable_forwarded_headers() {
+        let wall = Arc::new(AtomicU64::new(25_000));
+        let state = rate_limited_state(1, 60_000, wall);
+        let app = apply_gateway_layers(
+            Router::new().route("/probe", get(probe)),
+            state,
+            GLOBAL_CONCURRENCY_LIMIT,
+        );
+
+        let same_ip_first = app
+            .clone()
+            .oneshot(request_from(
+                "/probe",
+                "192.0.2.10:1000".parse().unwrap(),
+                "203.0.113.77",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(same_ip_first.status(), StatusCode::OK);
+
+        let same_ip_new_port = app
+            .clone()
+            .oneshot(request_from(
+                "/probe",
+                "192.0.2.10:2000".parse().unwrap(),
+                "203.0.113.88",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(same_ip_new_port.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let different_socket_ip_same_forwarded_header = app
+            .oneshot(request_from(
+                "/probe",
+                "192.0.2.11:1000".parse().unwrap(),
+                "203.0.113.77",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            different_socket_ip_same_forwarded_header.status(),
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn gateway_extra_routes_receive_rate_limit_layers() {
+        let wall = Arc::new(AtomicU64::new(40_000));
+        let state = rate_limited_state(1, 60_000, wall);
+        let app = build_router_with_extra_routes(
+            state,
+            Some(Router::new().route("/metrics", get(probe))),
+        );
+
+        let first = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let second = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[test]
+    fn gateway_rate_limit_source_uses_hlc_btreemap_and_socket_identity() {
+        let source = include_str!("server.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("production section");
+
+        assert!(
+            production.contains("BTreeMap<"),
+            "gateway rate limiter must use deterministic BTreeMap storage"
+        );
+        assert!(
+            production.contains("from_fn_with_state")
+                && production.contains("enforce_gateway_rate_limit"),
+            "gateway router must install a stateful request-rate middleware"
+        );
+        assert!(
+            production.contains("HybridClock") && !production.contains("Instant::now()"),
+            "gateway rate limiting must use the gateway HLC source, not system Instant"
+        );
+        assert!(
+            production.contains("ConnectInfo<SocketAddr>")
+                && !production.contains("x-forwarded-for"),
+            "gateway rate limiting must key clients from socket identity, not spoofable forwarding headers"
+        );
     }
 
     #[tokio::test]
