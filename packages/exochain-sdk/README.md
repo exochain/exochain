@@ -58,11 +58,17 @@ import { BailmentBuilder } from '@exochain/sdk/consent';
 const proposal = await new BailmentBuilder(alice.did, bob.did)
   .scope('data:medical')
   .durationHours(24)
+  .createdAtHlc(1_700_000_000_000, 0)
   .build();
 
 // proposal.proposalId is a deterministic, content-addressed hash — two
-// parties independently building the same proposal get the same id.
+// parties independently building the same proposal with the same HLC
+// timestamp get the same id.
 ```
+
+`createdAtHlc(physicalMs, logical)` must come from the caller's deterministic
+HLC execution context, such as the gateway or adjudication context. The SDK
+does not read wall-clock time while building consent records.
 
 ### 3. Propose a decision, cast votes, check quorum
 
@@ -127,7 +133,7 @@ export:
 | -------------------------- | ------------------------------------------------------ |
 | `@exochain/sdk`            | Everything — `ExochainClient`, all domain primitives   |
 | `@exochain/sdk/identity`   | `Identity`, `validateDid`, `isDid`, `deriveDid`        |
-| `@exochain/sdk/consent`    | `BailmentBuilder`, `BailmentProposal`                  |
+| `@exochain/sdk/consent`    | `BailmentBuilder`, `BailmentProposal`, `HlcTimestamp`  |
 | `@exochain/sdk/governance` | `Decision`, `DecisionBuilder`, `Vote`, `VoteChoice`    |
 | `@exochain/sdk/authority`  | `AuthorityChainBuilder`, `ChainLink`, `ValidatedChain` |
 | `@exochain/sdk/crypto`     | `sha256`, `sha256Hex`, `sha256Hash`, hex helpers       |
@@ -255,7 +261,7 @@ try {
   await new BailmentBuilder(alice.did, bob.did).build();
 } catch (err) {
   if (err instanceof ConsentError) {
-    // scope / duration missing — tell the user
+    // scope / duration / caller-supplied HLC missing — tell the user
   }
   throw err;
 }

@@ -26,7 +26,7 @@ export { Identity, deriveDid } from './identity/keypair.js';
 export { validateDid, isDid } from './identity/did.js';
 
 export { BailmentBuilder } from './consent/bailment.js';
-export type { BailmentProposal } from './consent/bailment.js';
+export type { BailmentProposal, HlcTimestamp } from './consent/bailment.js';
 
 export { Decision, DecisionBuilder } from './governance/decision.js';
 export type { DecisionStatus } from './governance/decision.js';

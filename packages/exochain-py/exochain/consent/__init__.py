@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from .bailment import BailmentBuilder, BailmentProposal
+from .bailment import BailmentBuilder, BailmentProposal, HlcTimestamp
 
-__all__ = ["BailmentBuilder", "BailmentProposal"]
+__all__ = ["BailmentBuilder", "BailmentProposal", "HlcTimestamp"]

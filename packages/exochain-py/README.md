@@ -42,10 +42,16 @@ proposal = (
     BailmentBuilder(alice.did, bob.did)
     .scope("read:medical-records")
     .duration_hours(48)
+    .created_at_hlc(1_700_000_000_000, 0)
     .build()
 )
 print(proposal.proposal_id)   # deterministic SHA-256 id
 ```
+
+`created_at_hlc(physical_ms, logical)` must come from the caller's deterministic
+HLC execution context, such as the gateway or adjudication context. The SDK does
+not source timestamps from process wall-clock APIs while building consent
+records.
 
 ### Governance — propose a decision, cast votes, check quorum
 
@@ -98,7 +104,7 @@ asyncio.run(main())
 | Domain       | Symbol(s)                                               |
 |--------------|---------------------------------------------------------|
 | Identity     | `Identity`, `validate_did`, `is_did`                    |
-| Consent      | `BailmentBuilder`, `BailmentProposal`                   |
+| Consent      | `BailmentBuilder`, `BailmentProposal`, `HlcTimestamp`   |
 | Governance   | `DecisionBuilder`, `Decision`, `Vote`, `VoteChoice`     |
 | Authority    | `AuthorityChainBuilder`, `ValidatedChain`, `ChainLink`  |
 | Crypto       | `sha256`, `sha256_hex`                                  |

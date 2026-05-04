@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from .authority.chain import AuthorityChainBuilder, ChainLink, ValidatedChain
 from .client import ExochainClient
-from .consent.bailment import BailmentBuilder, BailmentProposal
+from .consent.bailment import BailmentBuilder, BailmentProposal, HlcTimestamp
 from .crypto.hash import sha256, sha256_hex
 from .errors import (
     AuthorityError,
@@ -65,6 +65,7 @@ __all__ = [
     "ExochainError",
     "GovernanceError",
     "Hash256Hex",
+    "HlcTimestamp",
     "HttpTransport",
     "Identity",
     "IdentityError",
