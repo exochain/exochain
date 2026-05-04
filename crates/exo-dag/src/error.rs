@@ -61,6 +61,9 @@ pub enum DagError {
     #[error("sparse merkle tree error: {0}")]
     SmtError(String),
 
+    #[error("MMR position out of bounds: requested position {position}, leaf count {leaf_count}")]
+    MmrPositionOutOfBounds { position: usize, leaf_count: usize },
+
     #[error("mmr error: {0}")]
     MmrError(String),
 

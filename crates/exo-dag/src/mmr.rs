@@ -6,6 +6,8 @@
 use exo_core::types::Hash256;
 use serde::{Deserialize, Serialize};
 
+use crate::error::{DagError, Result};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -40,6 +42,22 @@ fn bag_peaks(peaks: &[Hash256]) -> Hash256 {
     Hash256::from_bytes(*hasher.finalize().as_bytes())
 }
 
+fn peak_leaf_counts(leaf_count: usize) -> Vec<usize> {
+    let mut remaining = leaf_count;
+    let mut counts = Vec::new();
+
+    while remaining > 0 {
+        let mut peak_leaf_count = 1usize;
+        while peak_leaf_count <= remaining / 2 {
+            peak_leaf_count *= 2;
+        }
+        counts.push(peak_leaf_count);
+        remaining -= peak_leaf_count;
+    }
+
+    counts
+}
+
 // ---------------------------------------------------------------------------
 // MmrProof
 // ---------------------------------------------------------------------------
@@ -53,6 +71,8 @@ pub struct MmrProof {
     pub peak_index: usize,
     /// All peak hashes (needed for root reconstruction).
     pub peaks: Vec<Hash256>,
+    /// Number of leaves in the MMR when the proof was generated.
+    pub leaf_count: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -217,15 +237,14 @@ pub fn root(mmr: &MerkleMountainRange) -> Hash256 {
 }
 
 /// Generate a proof for a leaf at the given position.
-pub fn prove(mmr: &MerkleMountainRange, position: usize) -> MmrProof {
+pub fn prove(mmr: &MerkleMountainRange, position: usize) -> Result<MmrProof> {
     let peak_hashes: Vec<Hash256> = mmr.peaks.iter().map(|p| p.hash).collect();
 
     if position >= mmr.leaves.len() {
-        return MmrProof {
-            siblings: Vec::new(),
-            peak_index: 0,
-            peaks: peak_hashes,
-        };
+        return Err(DagError::MmrPositionOutOfBounds {
+            position,
+            leaf_count: mmr.leaves.len(),
+        });
     }
 
     // Find which peak contains this leaf
@@ -242,33 +261,46 @@ pub fn prove(mmr: &MerkleMountainRange, position: usize) -> MmrProof {
     let local_leaf_idx = position - leaf_offset;
     let siblings = mmr.peaks[peak_idx].proof_path(local_leaf_idx);
 
-    MmrProof {
+    Ok(MmrProof {
         siblings,
         peak_index: peak_idx,
         peaks: peak_hashes,
-    }
+        leaf_count: mmr.leaves.len(),
+    })
 }
 
 /// Verify an MMR proof.
 pub fn verify_proof(mmr_root: &Hash256, leaf: &Hash256, position: usize, proof: &MmrProof) -> bool {
+    if proof.leaf_count == 0 || position >= proof.leaf_count {
+        return false;
+    }
     if proof.peaks.is_empty() {
         return false;
     }
-    if proof.peak_index >= proof.peaks.len() {
+
+    let peak_leaf_counts = peak_leaf_counts(proof.leaf_count);
+    if proof.peaks.len() != peak_leaf_counts.len() || proof.peak_index >= proof.peaks.len() {
         return false;
     }
 
     let mut current = hash_leaf(leaf);
-    let depth = proof.siblings.len();
-    let max_shift = usize::try_from(usize::BITS).unwrap_or(usize::MAX);
-    if depth >= max_shift {
+    let peak_leaf_count = peak_leaf_counts[proof.peak_index];
+    let expected_depth = match usize::try_from(peak_leaf_count.trailing_zeros()) {
+        Ok(depth) => depth,
+        Err(_) => return false,
+    };
+    if proof.siblings.len() != expected_depth {
         return false;
     }
-    let tree_leaves = 1usize << depth;
-    let local_idx = position % tree_leaves;
+
+    let peak_offset: usize = peak_leaf_counts[..proof.peak_index].iter().sum();
+    if position < peak_offset || position >= peak_offset + peak_leaf_count {
+        return false;
+    }
+    let local_idx = position - peak_offset;
 
     // Walk from leaf to peak root
-    let mut node_idx = (tree_leaves - 1) + local_idx;
+    let mut node_idx = (peak_leaf_count - 1) + local_idx;
     for sibling in &proof.siblings {
         if node_idx % 2 == 1 {
             // We're left child
@@ -382,7 +414,7 @@ mod tests {
         let leaf = Hash256::digest(b"leaf0");
         append(&mut mmr, leaf);
         let r = root(&mmr);
-        let proof = prove(&mmr, 0);
+        let proof = prove(&mmr, 0).unwrap();
         assert!(verify_proof(&r, &leaf, 0, &proof));
     }
 
@@ -395,10 +427,10 @@ mod tests {
         append(&mut mmr, l1);
         let r = root(&mmr);
 
-        let p0 = prove(&mmr, 0);
+        let p0 = prove(&mmr, 0).unwrap();
         assert!(verify_proof(&r, &l0, 0, &p0));
 
-        let p1 = prove(&mmr, 1);
+        let p1 = prove(&mmr, 1).unwrap();
         assert!(verify_proof(&r, &l1, 1, &p1));
     }
 
@@ -411,7 +443,7 @@ mod tests {
         }
         let r = root(&mmr);
         for (i, leaf) in leaves.iter().enumerate() {
-            let proof = prove(&mmr, i);
+            let proof = prove(&mmr, i).unwrap();
             assert!(verify_proof(&r, leaf, i, &proof), "Failed at pos {i}");
         }
     }
@@ -425,7 +457,7 @@ mod tests {
         }
         let r = root(&mmr);
         for (i, leaf) in leaves.iter().enumerate() {
-            let proof = prove(&mmr, i);
+            let proof = prove(&mmr, i).unwrap();
             assert!(verify_proof(&r, leaf, i, &proof), "Failed at pos {i}");
         }
     }
@@ -440,7 +472,7 @@ mod tests {
             }
             let r = root(&mmr);
             for (i, leaf) in leaves.iter().enumerate() {
-                let proof = prove(&mmr, i);
+                let proof = prove(&mmr, i).unwrap();
                 assert!(
                     verify_proof(&r, leaf, i, &proof),
                     "Failed at pos {i} with {count} leaves"
@@ -455,7 +487,7 @@ mod tests {
         let leaf = Hash256::digest(b"real");
         append(&mut mmr, leaf);
         let r = root(&mmr);
-        let proof = prove(&mmr, 0);
+        let proof = prove(&mmr, 0).unwrap();
         let wrong = Hash256::digest(b"wrong");
         assert!(!verify_proof(&r, &wrong, 0, &proof));
     }
@@ -465,7 +497,7 @@ mod tests {
         let mut mmr = MerkleMountainRange::new();
         let leaf = Hash256::digest(b"leaf");
         append(&mut mmr, leaf);
-        let proof = prove(&mmr, 0);
+        let proof = prove(&mmr, 0).unwrap();
         assert!(!verify_proof(&Hash256::ZERO, &leaf, 0, &proof));
     }
 
@@ -473,9 +505,59 @@ mod tests {
     fn proof_out_of_bounds() {
         let mut mmr = MerkleMountainRange::new();
         append(&mut mmr, Hash256::digest(b"leaf"));
-        let proof = prove(&mmr, 999);
+        let err = prove(&mmr, 999).unwrap_err();
+        assert!(matches!(
+            err,
+            DagError::MmrPositionOutOfBounds {
+                position: 999,
+                leaf_count: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn proof_for_real_leaf_fails_out_of_bounds_position() {
+        let mut mmr = MerkleMountainRange::new();
+        let leaf = Hash256::digest(b"leaf");
+        append(&mut mmr, leaf);
+        let proof = prove(&mmr, 0).unwrap();
         let r = root(&mmr);
-        assert!(!verify_proof(&r, &Hash256::digest(b"fake"), 999, &proof));
+
+        assert!(
+            !verify_proof(&r, &leaf, 999, &proof),
+            "proof verifier must reject positions outside the proved MMR leaf set"
+        );
+    }
+
+    #[test]
+    fn proof_fails_when_replayed_at_another_peak_position() {
+        let mut mmr = MerkleMountainRange::new();
+        let leaves: Vec<Hash256> = (0..5u8).map(|i| Hash256::digest(&[i])).collect();
+        for leaf in &leaves {
+            append(&mut mmr, *leaf);
+        }
+        let proof = prove(&mmr, 4).unwrap();
+        let r = root(&mmr);
+
+        assert!(
+            !verify_proof(&r, &leaves[4], 0, &proof),
+            "proof verifier must bind the position to the proof peak layout"
+        );
+    }
+
+    #[test]
+    fn proof_fails_when_leaf_count_is_tampered() {
+        let mut mmr = MerkleMountainRange::new();
+        let leaf = Hash256::digest(b"leaf");
+        append(&mut mmr, leaf);
+        let mut proof = prove(&mmr, 0).unwrap();
+        proof.leaf_count = 2;
+        let r = root(&mmr);
+
+        assert!(
+            !verify_proof(&r, &leaf, 0, &proof),
+            "proof verifier must reject tampered MMR leaf counts"
+        );
     }
 
     #[test]
@@ -484,6 +566,7 @@ mod tests {
             siblings: Vec::new(),
             peak_index: 0,
             peaks: Vec::new(),
+            leaf_count: 0,
         };
         assert!(!verify_proof(&Hash256::ZERO, &Hash256::ZERO, 0, &proof));
     }
@@ -494,17 +577,19 @@ mod tests {
             siblings: Vec::new(),
             peak_index: 5,
             peaks: vec![Hash256::ZERO],
+            leaf_count: 1,
         };
         assert!(!verify_proof(&Hash256::ZERO, &Hash256::ZERO, 0, &proof));
     }
 
     #[test]
-    fn verify_rejects_proof_depth_that_would_shift_overflow() {
+    fn verify_rejects_unexpected_proof_depth() {
         let overflowing_depth = usize::try_from(usize::BITS).unwrap_or(usize::MAX);
         let proof = MmrProof {
             siblings: vec![Hash256::ZERO; overflowing_depth],
             peak_index: 0,
             peaks: vec![Hash256::ZERO],
+            leaf_count: 1,
         };
         assert!(!verify_proof(&Hash256::ZERO, &Hash256::ZERO, 0, &proof));
     }
@@ -525,7 +610,7 @@ mod tests {
         assert_eq!(mmr.peaks.len(), 1);
         let r = root(&mmr);
         for (i, leaf) in leaves.iter().enumerate() {
-            let proof = prove(&mmr, i);
+            let proof = prove(&mmr, i).unwrap();
             assert!(verify_proof(&r, leaf, i, &proof));
         }
     }
@@ -553,7 +638,7 @@ mod proptests {
             }
             let r = root(&mmr);
             for (i, leaf) in leaves.iter().enumerate() {
-                let proof = prove(&mmr, i);
+                let proof = prove(&mmr, i).unwrap();
                 prop_assert!(
                     verify_proof(&r, leaf, i, &proof),
                     "Failed at position {i} with {} leaves",
@@ -589,7 +674,7 @@ mod proptests {
             let pos = pos_idx % leaves.len();
             if wrong != leaves[pos] {
                 let r = root(&mmr);
-                let proof = prove(&mmr, pos);
+                let proof = prove(&mmr, pos).unwrap();
                 prop_assert!(!verify_proof(&r, &wrong, pos, &proof));
             }
         }
