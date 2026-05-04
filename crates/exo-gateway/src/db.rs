@@ -30,6 +30,17 @@ pub enum DbInitError {
     },
 }
 
+#[derive(Debug, Error)]
+pub enum DecisionUpdateError {
+    #[error("decision update matched no rows for id_hash {id_hash}")]
+    MissingDecision { id_hash: String },
+    #[error("failed to update decision row")]
+    Query {
+        #[source]
+        source: sqlx::Error,
+    },
+}
+
 // ---------------------------------------------------------------------------
 // Pool initialization
 // ---------------------------------------------------------------------------
@@ -378,13 +389,19 @@ pub async fn update_decision(
     id_hash: &str,
     status: &str,
     payload: &JsonValue,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE decisions SET status = $1, payload = $2 WHERE id_hash = $3")
+) -> Result<(), DecisionUpdateError> {
+    let result = sqlx::query("UPDATE decisions SET status = $1, payload = $2 WHERE id_hash = $3")
         .bind(status)
         .bind(payload)
         .bind(id_hash)
         .execute(pool)
-        .await?;
+        .await
+        .map_err(|source| DecisionUpdateError::Query { source })?;
+    if result.rows_affected() == 0 {
+        return Err(DecisionUpdateError::MissingDecision {
+            id_hash: id_hash.to_owned(),
+        });
+    }
     Ok(())
 }
 
@@ -1354,6 +1371,33 @@ mod tests {
         assert!(
             contains_in_order(lookup, ".bind(id_hash)", ".bind(tenant_id)"),
             "find_decision must bind id_hash and tenant_id together"
+        );
+    }
+
+    #[test]
+    fn update_decision_reports_missing_rows() {
+        let source = production_source();
+        let update = function_source(source, "update_decision");
+
+        assert!(
+            source.contains("pub enum DecisionUpdateError"),
+            "update_decision must use a typed error for missing-row decisions"
+        );
+        assert!(
+            update.contains("-> Result<(), DecisionUpdateError>"),
+            "update_decision must distinguish SQL failures from missing decision rows"
+        );
+        assert!(
+            update.contains("rows_affected()"),
+            "update_decision must inspect PgQueryResult row count"
+        );
+        assert!(
+            update.contains("DecisionUpdateError::MissingDecision"),
+            "update_decision must return a missing-row error when no decision is updated"
+        );
+        assert!(
+            !update.contains(".execute(pool).await?;\n    Ok(())"),
+            "update_decision must not discard PgQueryResult and report success"
         );
     }
 
