@@ -13,10 +13,10 @@ use crate::{
     types::Timestamp,
 };
 
-/// Maximum tolerable forward drift in milliseconds.
+/// Default maximum tolerable forward drift in milliseconds.
 /// If a remote timestamp is more than this far ahead of our local physical
 /// source, we reject it as drift.
-const MAX_DRIFT_MS: u64 = 60_000; // 60 seconds
+const MAX_DRIFT_MS: u64 = 5_000; // 5 seconds
 /// Deterministic non-zero epoch for default clocks. This intentionally keeps
 /// zero-epoch records stale without reading host wall-clock time.
 const DEFAULT_DETERMINISTIC_PHYSICAL_MS: u64 = 1_000_000;
@@ -33,6 +33,8 @@ pub struct HybridClock {
     physical: u64,
     /// Logical counter within the same physical millisecond.
     logical: u32,
+    /// Maximum tolerated remote forward drift for this clock.
+    max_drift_ms: u64,
     /// Physical source — returns current HLC physical milliseconds.
     physical_source: Box<dyn Fn() -> Result<u64> + Send>,
 }
@@ -45,6 +47,7 @@ impl HybridClock {
         Self {
             physical: 0,
             logical: 0,
+            max_drift_ms: MAX_DRIFT_MS,
             physical_source: Box::new(move || {
                 next_physical_ms
                     .fetch_update(
@@ -63,11 +66,16 @@ impl HybridClock {
     /// Create a clock with a custom physical source.
     #[must_use]
     pub fn with_wall_clock(physical_source: impl Fn() -> u64 + Send + 'static) -> Self {
-        Self {
-            physical: 0,
-            logical: 0,
-            physical_source: Box::new(move || Ok(physical_source())),
-        }
+        Self::with_wall_clock_and_max_drift(physical_source, MAX_DRIFT_MS)
+    }
+
+    /// Create a clock with a custom physical source and drift tolerance.
+    #[must_use]
+    pub fn with_wall_clock_and_max_drift(
+        physical_source: impl Fn() -> u64 + Send + 'static,
+        max_drift_ms: u64,
+    ) -> Self {
+        Self::with_fallible_wall_clock_and_max_drift(move || Ok(physical_source()), max_drift_ms)
     }
 
     /// Create a clock with a fallible physical source.
@@ -75,11 +83,27 @@ impl HybridClock {
     pub fn with_fallible_wall_clock(
         physical_source: impl Fn() -> Result<u64> + Send + 'static,
     ) -> Self {
+        Self::with_fallible_wall_clock_and_max_drift(physical_source, MAX_DRIFT_MS)
+    }
+
+    /// Create a clock with a fallible physical source and drift tolerance.
+    #[must_use]
+    pub fn with_fallible_wall_clock_and_max_drift(
+        physical_source: impl Fn() -> Result<u64> + Send + 'static,
+        max_drift_ms: u64,
+    ) -> Self {
         Self {
             physical: 0,
             logical: 0,
+            max_drift_ms,
             physical_source: Box::new(physical_source),
         }
+    }
+
+    /// Return this clock's configured maximum forward drift in milliseconds.
+    #[must_use]
+    pub fn max_drift_ms(&self) -> u64 {
+        self.max_drift_ms
     }
 
     /// Generate the next timestamp.
@@ -110,10 +134,10 @@ impl HybridClock {
         let physical_now = (self.physical_source)()?;
 
         // Drift guard
-        if remote.physical_ms > physical_now.saturating_add(MAX_DRIFT_MS) {
+        if remote.physical_ms > physical_now.saturating_add(self.max_drift_ms) {
             return Err(ExoError::ClockDrift {
                 physical_ms: remote.physical_ms,
-                tolerance_ms: MAX_DRIFT_MS,
+                tolerance_ms: self.max_drift_ms,
             });
         }
 
@@ -180,6 +204,7 @@ impl core::fmt::Debug for HybridClock {
         f.debug_struct("HybridClock")
             .field("physical", &self.physical)
             .field("logical", &self.logical)
+            .field("max_drift_ms", &self.max_drift_ms)
             .finish()
     }
 }
@@ -299,11 +324,51 @@ mod tests {
     }
 
     #[test]
+    fn update_rejects_remote_more_than_default_five_seconds_ahead() {
+        let (mut clock, _wall) = test_clock(1000);
+        let remote = Timestamp::new(1000 + 5_001, 0);
+
+        let err = clock
+            .update(&remote)
+            .expect_err("default HLC drift tolerance must be no more than five seconds");
+
+        assert!(matches!(
+            err,
+            ExoError::ClockDrift {
+                physical_ms: 6001,
+                tolerance_ms: 5000
+            }
+        ));
+    }
+
+    #[test]
     fn update_accepts_at_drift_boundary() {
         let (mut clock, _wall) = test_clock(1000);
         let remote = Timestamp::new(1000 + MAX_DRIFT_MS, 0);
         let result = clock.update(&remote);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn update_uses_deployment_configured_drift_tolerance() {
+        let mut boundary_clock = HybridClock::with_wall_clock_and_max_drift(|| 1000, 12_000);
+        let boundary = boundary_clock
+            .update(&Timestamp::new(13_000, 0))
+            .expect("configured drift boundary should be accepted");
+        assert_eq!(boundary, Timestamp::new(13_000, 1));
+
+        let mut over_boundary_clock = HybridClock::with_wall_clock_and_max_drift(|| 1000, 12_000);
+        let err = over_boundary_clock
+            .update(&Timestamp::new(13_001, 0))
+            .expect_err("remote timestamp beyond configured drift must be rejected");
+
+        assert!(matches!(
+            err,
+            ExoError::ClockDrift {
+                physical_ms: 13001,
+                tolerance_ms: 12000
+            }
+        ));
     }
 
     #[test]
