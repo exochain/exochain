@@ -21902,8 +21902,14 @@ function runRefinementCycle(targetId) {
   const assignment = db.prepare(`
     SELECT tm.id, tm.name FROM refinement_team_assignments rta
     JOIN team_members tm ON rta.member_id = tm.id
+    LEFT JOIN refinement_candidates active
+      ON active.assigned_member_id = tm.id
+     AND active.target_id = rta.target_id
+     AND active.status = 'in_progress'
     WHERE rta.target_id = ? AND rta.enabled = 1 AND tm.status = 'active'
-    ORDER BY RANDOM() LIMIT 1
+    GROUP BY tm.id
+    ORDER BY COUNT(active.id) ASC, tm.id ASC
+    LIMIT 1
   `).get(targetId);
 
   if (!assignment) {

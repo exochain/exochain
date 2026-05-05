@@ -130,7 +130,21 @@ app.post('/api/refinement/candidates/:id/refine', (req, res) => {
     let memberId = candidate.assigned_member_id;
 
     if (!memberId) {
-      const assignment = db.prepare(`SELECT tm.id FROM refinement_team_assignments rta JOIN team_members tm ON rta.member_id = tm.id WHERE rta.target_id = ? AND rta.enabled = 1 AND tm.status = 'active' ORDER BY RANDOM() LIMIT 1`).get(candidate.target_id);
+      const assignment = db.prepare(`
+        SELECT tm.id
+        FROM refinement_team_assignments rta
+        JOIN team_members tm ON rta.member_id = tm.id
+        LEFT JOIN refinement_candidates active
+          ON active.assigned_member_id = tm.id
+         AND active.target_id = rta.target_id
+         AND active.status = 'in_progress'
+        WHERE rta.target_id = ?
+          AND rta.enabled = 1
+          AND tm.status = 'active'
+        GROUP BY tm.id
+        ORDER BY COUNT(active.id) ASC, tm.id ASC
+        LIMIT 1
+      `).get(candidate.target_id);
       if (!assignment) return res.status(400).json({ error: 'No enabled team members for this target' });
       memberId = assignment.id;
     }
