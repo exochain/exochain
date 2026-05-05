@@ -111,7 +111,10 @@ impl<'de> Deserialize<'de> for RetryPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CheckpointId(pub String);
 
-/// Duration in milliseconds (deterministic, no floating-point).
+/// Deterministic timeout budget.
+///
+/// The value is counted as reducer steps, not wall-clock time. This preserves
+/// pure reduction semantics while still bounding combinator work.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Duration(pub u64);
 
@@ -132,7 +135,7 @@ pub enum Combinator {
     Transform(Box<Combinator>, TransformFn),
     /// Retry with policy.
     Retry(Box<Combinator>, RetryPolicy),
-    /// Time-bounded (simulated in deterministic mode).
+    /// Step-budget bounded; fails when inner reduction exceeds the budget.
     Timeout(Box<Combinator>, Duration),
     /// Resumable checkpoint.
     Checkpoint(Box<Combinator>, CheckpointId),
@@ -352,7 +355,14 @@ pub fn reduce(
     input: &CombinatorInput,
 ) -> Result<CombinatorOutput, GatekeeperError> {
     validate_combinator_structure(combinator)?;
-    reduce_inner(combinator, input, 0)
+    let mut budgets = Vec::new();
+    reduce_inner(combinator, input, 0, &mut budgets)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ReductionBudget {
+    limit: u64,
+    remaining: u64,
 }
 
 fn validate_combinator_structure(combinator: &Combinator) -> Result<(), GatekeeperError> {
@@ -415,6 +425,7 @@ fn reduce_inner(
     combinator: &Combinator,
     input: &CombinatorInput,
     depth: usize,
+    budgets: &mut Vec<ReductionBudget>,
 ) -> Result<CombinatorOutput, GatekeeperError> {
     if depth > MAX_COMBINATOR_DEPTH {
         return Err(GatekeeperError::CombinatorError(format!(
@@ -422,6 +433,7 @@ fn reduce_inner(
             depth, MAX_COMBINATOR_DEPTH
         )));
     }
+    charge_reduction_step(budgets)?;
 
     match combinator {
         Combinator::Identity => Ok(CombinatorOutput::from_input(input)),
@@ -432,7 +444,7 @@ fn reduce_inner(
             let mut last_output = CombinatorOutput::from_input(input);
 
             for (i, c) in combinators.iter().enumerate() {
-                match reduce_inner(c, &current_input, depth + 1) {
+                match reduce_inner(c, &current_input, depth + 1, budgets) {
                     Ok(output) => {
                         // Feed output as next input.
                         current_input = CombinatorInput {
@@ -440,6 +452,7 @@ fn reduce_inner(
                         };
                         last_output = output;
                     }
+                    Err(e @ GatekeeperError::Timeout(_)) => return Err(e),
                     Err(e) => {
                         return Err(GatekeeperError::CombinatorError(format!(
                             "Sequence step {} failed: {}",
@@ -456,10 +469,11 @@ fn reduce_inner(
             let mut merged = CombinatorOutput::from_input(input);
 
             for (i, c) in combinators.iter().enumerate() {
-                match reduce_inner(c, input, depth + 1) {
+                match reduce_inner(c, input, depth + 1, budgets) {
                     Ok(output) => {
                         merged.merge(&output);
                     }
+                    Err(e @ GatekeeperError::Timeout(_)) => return Err(e),
                     Err(e) => {
                         return Err(GatekeeperError::CombinatorError(format!(
                             "Parallel branch {} failed: {}",
@@ -474,8 +488,9 @@ fn reduce_inner(
         Combinator::Choice(combinators) => {
             enforce_branch_width("Choice", combinators.len())?;
             for c in combinators {
-                match reduce_inner(c, input, depth + 1) {
+                match reduce_inner(c, input, depth + 1, budgets) {
                     Ok(output) => return Ok(output),
+                    Err(e @ GatekeeperError::Timeout(_)) => return Err(e),
                     Err(_) => continue,
                 }
             }
@@ -491,11 +506,11 @@ fn reduce_inner(
                     predicate.name
                 )));
             }
-            reduce_inner(inner, input, depth + 1)
+            reduce_inner(inner, input, depth + 1, budgets)
         }
 
         Combinator::Transform(inner, transform) => {
-            let mut output = reduce_inner(inner, input, depth + 1)?;
+            let mut output = reduce_inner(inner, input, depth + 1, budgets)?;
             output.set(transform.output_key.clone(), transform.output_value.clone());
             Ok(output)
         }
@@ -504,11 +519,12 @@ fn reduce_inner(
             policy.validate()?;
             let mut last_err = None;
             for attempt in 0..=policy.max_retries {
-                match reduce_inner(inner, input, depth + 1) {
+                match reduce_inner(inner, input, depth + 1, budgets) {
                     Ok(mut output) => {
                         output.set("retry_attempts", attempt.to_string());
                         return Ok(output);
                     }
+                    Err(e @ GatekeeperError::Timeout(_)) => return Err(e),
                     Err(e) => {
                         last_err = Some(e);
                     }
@@ -519,19 +535,37 @@ fn reduce_inner(
         }
 
         Combinator::Timeout(inner, duration) => {
-            // In deterministic mode, we simulate timeout by simply running.
-            // Real timeout enforcement is at the Holon runtime level.
-            let mut output = reduce_inner(inner, input, depth + 1)?;
+            budgets.push(ReductionBudget {
+                limit: duration.0,
+                remaining: duration.0,
+            });
+            let result = reduce_inner(inner, input, depth + 1, budgets);
+            let popped = budgets.pop();
+            debug_assert!(
+                popped.is_some(),
+                "timeout reduction budget stack must remain balanced"
+            );
+            let mut output = result?;
             output.set("timeout_budget_ms", duration.0.to_string());
             Ok(output)
         }
 
         Combinator::Checkpoint(inner, checkpoint_id) => {
-            let mut output = reduce_inner(inner, input, depth + 1)?;
+            let mut output = reduce_inner(inner, input, depth + 1, budgets)?;
             output.checkpoint = Some(checkpoint_id.clone());
             Ok(output)
         }
     }
+}
+
+fn charge_reduction_step(budgets: &mut [ReductionBudget]) -> Result<(), GatekeeperError> {
+    for budget in budgets {
+        if budget.remaining == 0 {
+            return Err(GatekeeperError::Timeout(budget.limit));
+        }
+        budget.remaining -= 1;
+    }
+    Ok(())
 }
 
 fn enforce_branch_width(kind: &str, len: usize) -> Result<(), GatekeeperError> {
@@ -992,6 +1026,42 @@ mod tests {
             output.fields.get("timeout_budget_ms"),
             Some(&"5000".to_string())
         );
+    }
+
+    #[test]
+    fn timeout_rejects_inner_reduction_exceeding_deterministic_budget() {
+        let input = sample_input();
+        let timed = Combinator::Timeout(
+            Box::new(Combinator::Sequence(vec![
+                Combinator::Identity,
+                Combinator::Identity,
+            ])),
+            Duration(1),
+        );
+
+        let err = match reduce(&timed, &input) {
+            Ok(output) => panic!("over-budget timeout reduction must fail: {output:?}"),
+            Err(err) => err,
+        };
+        assert_eq!(err, GatekeeperError::Timeout(1));
+    }
+
+    #[test]
+    fn choice_does_not_swallow_timeout_budget_exhaustion() {
+        let input = sample_input();
+        let timed_choice = Combinator::Timeout(
+            Box::new(Combinator::Choice(vec![
+                Combinator::Sequence(vec![Combinator::Identity, Combinator::Identity]),
+                Combinator::Identity,
+            ])),
+            Duration(1),
+        );
+
+        let err = match reduce(&timed_choice, &input) {
+            Ok(output) => panic!("timeout exhaustion must not fall through to Choice: {output:?}"),
+            Err(err) => err,
+        };
+        assert_eq!(err, GatekeeperError::Timeout(1));
     }
 
     // --- Checkpoint ---
