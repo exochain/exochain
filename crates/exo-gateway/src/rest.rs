@@ -21,8 +21,6 @@ pub enum RestRoute {
     CreateDecision,
     /// POST /api/v1/auth/token
     AuthToken,
-    /// POST /api/v1/auth/saml/callback
-    SamlCallback,
     /// GET /api/v1/tenants/:id/constitution
     GetConstitution,
     /// POST /api/v1/ediscovery/export
@@ -70,7 +68,6 @@ impl RestRoute {
             | RestRoute::ListUsers => "GET",
             RestRoute::CreateDecision
             | RestRoute::AuthToken
-            | RestRoute::SamlCallback
             | RestRoute::EDiscoveryExport
             | RestRoute::AuthRegister
             | RestRoute::AuthLogin
@@ -89,7 +86,6 @@ impl RestRoute {
             RestRoute::GetDecision => "/api/v1/decisions/:id",
             RestRoute::CreateDecision => "/api/v1/decisions",
             RestRoute::AuthToken => "/api/v1/auth/token",
-            RestRoute::SamlCallback => "/api/v1/auth/saml/callback",
             RestRoute::GetConstitution => "/api/v1/tenants/:id/constitution",
             RestRoute::EDiscoveryExport => "/api/v1/ediscovery/export",
             RestRoute::AuditTrail => "/api/v1/audit/:decision_id",
@@ -115,7 +111,6 @@ impl RestRoute {
             RestRoute::GetDecision,
             RestRoute::CreateDecision,
             RestRoute::AuthToken,
-            RestRoute::SamlCallback,
             RestRoute::GetConstitution,
             RestRoute::EDiscoveryExport,
             RestRoute::AuditTrail,
@@ -159,7 +154,6 @@ mod tests {
         assert_eq!(RestRoute::GetDecision.path(), "/api/v1/decisions/:id");
         assert_eq!(RestRoute::CreateDecision.path(), "/api/v1/decisions");
         assert_eq!(RestRoute::AuthToken.path(), "/api/v1/auth/token");
-        assert_eq!(RestRoute::SamlCallback.path(), "/api/v1/auth/saml/callback");
         assert_eq!(
             RestRoute::GetConstitution.path(),
             "/api/v1/tenants/:id/constitution"
@@ -207,6 +201,6 @@ mod tests {
     #[test]
     fn test_all_routes() {
         let routes = RestRoute::all();
-        assert_eq!(routes.len(), 20);
+        assert_eq!(routes.len(), 19);
     }
 }
