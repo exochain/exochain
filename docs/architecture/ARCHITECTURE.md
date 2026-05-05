@@ -201,54 +201,56 @@ See [[exo-gatekeeper/src/kernel.rs]] and [[exo-gatekeeper/src/invariants.rs]].
 
 ## 5. The Combinator Algebra
 
-The combinator reduction engine in [[exo-gatekeeper/src/combinator.rs]] provides a second enforcement mechanism: constitutional invariants can be encoded as typed combinatory logic expressions and mechanically reduced to `true` or `false`.
+The combinator reduction engine in [[exo-gatekeeper/src/combinator.rs]]
+composes deterministic governance and Holon programs. It does not replace the
+kernel invariant engine; the kernel still adjudicates requests against the eight
+constitutional invariants before and after runtime actions.
+
+The reducer contract is `reduce(combinator, input)`:
+
+```
+reduce(combinator, input) -> Result<CombinatorOutput, GatekeeperError>
+```
+
+Inputs and outputs are explicit envelopes. `CombinatorInput` carries
+`BTreeMap<String, String>` fields. `CombinatorOutput` carries deterministic
+fields plus an optional `CheckpointId`.
 
 ### 5.1 Combinator Basis
 
-EXOCHAIN uses a typed combinatory logic with 5 primitive combinators and domain-specific extensions:
-
-**Primitive combinators (Turing-complete basis):**
-
-| Combinator | Semantics | Reduction Rule |
-|---|---|---|
-| **S** | Composition with sharing | `(S f g x) -> (f x (g x))` |
-| **K** | Constant projection | `(K x y) -> x` |
-| **I** | Identity | `(I x) -> x` |
-| **B** | Function composition | `(B f g x) -> f (g x)` |
-| **C** | Argument flip | `(C f x y) -> f y x` |
-
-**Governance-specific combinators:**
+EXOCHAIN currently exposes these reducer terms:
 
 | Combinator | Semantics |
 |---|---|
-| `NOT`, `AND`, `OR`, `IMPLIES` | Propositional logic connectives |
-| `FORALL`, `EXISTS` | Bounded quantification over finite domains |
-| `EQUALS`, `LESS_THAN`, `GTE` | Comparison operators |
-| `LOOKUP` | Context value lookup from `ReductionContext` bindings |
+| `Identity` | Return the input fields unchanged |
+| `Sequence` | Execute children in order, threading each output into the next input |
+| `Parallel` | Execute children against the same input and deterministically merge outputs |
+| `Choice` | Try children in order and return the first successful output |
+| `Guard` | Require a named predicate over an input field before reducing the inner term |
+| `Transform` | Reduce the inner term, then set one output key/value pair |
+| `Retry` | Re-run an inner term up to a bounded retry budget after ordinary failures |
+| `Timeout` | Carry a deterministic reduction budget without reading wall-clock time |
+| `Checkpoint` | Reduce the inner term and attach a resumable checkpoint identifier |
 
-### 5.2 Invariant Encoding
+### 5.2 Reduction Boundaries
 
-Constitutional invariants are encoded as combinator terms. For example, INV-002 (no self-grant) becomes:
-
-```
-NOT(EQUALS(LOOKUP("author_did"), LOOKUP("target_did")))
-```
-
-INV-005 (alignment floor) becomes:
-
-```
-GTE(LOOKUP("alignment_score"), LOOKUP("min_alignment"))
-```
-
-The `encode_invariant()` function translates invariant IDs to combinator terms that, when reduced with the appropriate `ReductionContext` bindings, produce `Reduced(Bool(true))` for satisfaction or `Reduced(Bool(false))` for violation.
+The reducer is intentionally small. It composes already-typed governance actions
+and records deterministic fields; it does not call external services, consult
+system time, generate randomness, or mint constitutional authority. Invariant
+checks remain in [[exo-gatekeeper/src/invariants.rs]] and kernel adjudication
+remains in [[exo-gatekeeper/src/kernel.rs]].
 
 ### 5.3 Determinism Guarantee
 
 The combinator engine is deterministic by construction:
 
-- **No floating-point** in the reduction path. The `TypedValue` domain uses `u64` for naturals and `bool` for logic.
-- **Bounded reduction** via `max_reductions`. The Omega combinator `(S I I)(S I I)` --- a classic non-terminating term --- halts within the step limit.
-- **Complete trace** recorded in `ReductionTrace`. Every reduction step records the rule applied, the before/after term, and the step number. This trace constitutes the type-level proof.
+- **No floating-point** in the reduction path. Inputs and outputs use strings in
+  deterministic `BTreeMap` envelopes.
+- **Bounded structure** through `MAX_COMBINATOR_DEPTH`,
+  `MAX_COMBINATOR_BRANCH_WIDTH`, and `MAX_COMBINATOR_NODE_COUNT`.
+- **Bounded retries** through `MAX_RETRY_ATTEMPTS`.
+- **No host clock dependency** in `Timeout`; timeout data is deterministic
+  reducer metadata rather than a call to system time.
 
 ---
 
@@ -533,7 +535,7 @@ exo-core           (leaf node; no internal dependencies)
 | [[exo-core/src/hlc.rs]] | `HybridLogicalClock`, `new_event()` with catch-up semantics |
 | [[exo-gatekeeper/src/kernel.rs]] | `CgrKernel`, `verify_transition()`, all 8 `check_inv*` methods |
 | [[exo-gatekeeper/src/invariants.rs]] | `InvariantRegistry::canonical()`, content-addressed invariant definitions |
-| [[exo-gatekeeper/src/combinator.rs]] | `CombinatorTerm`, `CombinatorEngine::reduce()`, `encode_invariant()` |
+| [[exo-gatekeeper/src/combinator.rs]] | `Combinator`, `reduce()`, `CombinatorInput`, `CombinatorOutput` |
 | [[exo-gatekeeper/src/holon.rs]] | `Holon`, `HolonStatus`, `HolonType`, capability model |
 | [[decision-forum/src/decision_object.rs]] | `DecisionObject`, BCTS-backed lifecycle receipts, votes, evidence, authority chain |
 | [[exo-governance/src/crosscheck.rs]] | `CrosscheckReport`, `OpinionProvenance`, `verify_provenance_compliance()` |

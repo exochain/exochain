@@ -947,6 +947,46 @@ mod tests {
     }
 
     #[test]
+    fn architecture_docs_match_current_combinator_api() {
+        let docs = include_str!("../../../docs/architecture/ARCHITECTURE.md");
+        for stale in [
+            "CombinatorTerm",
+            "CombinatorEngine",
+            "encode_invariant()",
+            "ReductionContext",
+            "Reduced(Bool",
+            "5 primitive combinators",
+            "Turing-complete basis",
+            "`NOT`, `AND`, `OR`, `IMPLIES`",
+            "`LOOKUP`",
+        ] {
+            assert!(
+                !docs.contains(stale),
+                "architecture docs must not reference stale combinator API: {stale}"
+            );
+        }
+        for required in [
+            "`Identity`",
+            "`Sequence`",
+            "`Parallel`",
+            "`Choice`",
+            "`Guard`",
+            "`Transform`",
+            "`Retry`",
+            "`Timeout`",
+            "`Checkpoint`",
+            "`CombinatorInput`",
+            "`CombinatorOutput`",
+            "`reduce(combinator, input)`",
+        ] {
+            assert!(
+                docs.contains(required),
+                "architecture docs must describe current combinator API: {required}"
+            );
+        }
+    }
+
+    #[test]
     fn deserialization_rejects_excessive_branch_width() {
         let mut json = String::from("{\"Sequence\":[");
         for idx in 0..257 {
