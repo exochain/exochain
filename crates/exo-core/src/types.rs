@@ -417,15 +417,31 @@ impl Signature {
     }
 
     /// The empty signature placeholder.
+    ///
+    /// Signature::EMPTY is a construction-time placeholder only. It is
+    /// acceptable for fixture setup, unsigned draft records, or wire decoding
+    /// before signature validation has run. Any runtime path that requires a
+    /// cryptographic signature must be rejected before cryptographic verification
+    /// when this value is present.
+    ///
+    /// It must not be accepted as authorization, consent, provenance, quorum, or finality evidence.
     pub const EMPTY: Self = Self::Empty;
 
     /// Create an empty (placeholder) signature.
+    ///
+    /// Use this only when constructing an unsigned value that will be signed or
+    /// rejected before use. Verified consensus, authority, consent, provenance,
+    /// and receipt paths must treat the result as absent signature evidence.
     #[must_use]
     pub const fn empty() -> Self {
         Self::Empty
     }
 
     /// Check if this signature is the empty placeholder.
+    ///
+    /// Security-sensitive callers should treat `true` as a hard failure, not as
+    /// a value to pass into algorithm-specific verification. The all-zero
+    /// Ed25519 sentinel is also considered empty for this boundary check.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         match self {
@@ -1428,6 +1444,27 @@ mod tests {
             pq: vec![1, 2, 3],
         };
         assert!(hybrid_zero_classical.ed25519_component_is_zero());
+    }
+
+    #[test]
+    fn signature_empty_boundary_is_documented() {
+        let source = include_str!("types.rs");
+        let production = source
+            .split("// ===========================================================================\n// Tests")
+            .next()
+            .expect("types production source must precede tests");
+
+        for required in [
+            "Signature::EMPTY is a construction-time placeholder only",
+            "fixture setup, unsigned draft records, or wire decoding",
+            "must be rejected before cryptographic verification",
+            "must not be accepted as authorization, consent, provenance, quorum, or finality evidence",
+        ] {
+            assert!(
+                production.contains(required),
+                "Signature::EMPTY boundary docs must state: {required}"
+            );
+        }
     }
 
     #[test]
