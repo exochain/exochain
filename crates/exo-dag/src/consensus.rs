@@ -47,6 +47,17 @@ impl ConsensusConfig {
     }
 
     /// The quorum size required for a commit: > 2/3 of validators.
+    ///
+    /// For nonzero `n`, `n - ((n - 1) / 3) equals floor(2n / 3) + 1`, the
+    /// smallest integer strictly greater than two thirds of the validator set.
+    /// Writing `n = 3f + r`:
+    ///
+    /// - n = 3f + 0 -> quorum = 2f + 1
+    /// - n = 3f + 1 -> quorum = 2f + 1
+    /// - n = 3f + 2 -> quorum = 2f + 2
+    ///
+    /// This form avoids multiplying the validator count by two, so it remains
+    /// overflow-safe for large validator sets.
     #[must_use]
     pub fn quorum_size(&self) -> usize {
         let n = self.validators.len();
@@ -652,6 +663,27 @@ mod tests {
             !production.contains("2 * n"),
             "quorum_size must not compute 2 * n before division"
         );
+    }
+
+    #[test]
+    fn quorum_size_docs_prove_strict_two_thirds_equivalence() {
+        let source = include_str!("consensus.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+
+        for required in [
+            "n - ((n - 1) / 3) equals floor(2n / 3) + 1",
+            "n = 3f + 0 -> quorum = 2f + 1",
+            "n = 3f + 1 -> quorum = 2f + 1",
+            "n = 3f + 2 -> quorum = 2f + 2",
+        ] {
+            assert!(
+                production.contains(required),
+                "quorum_size docs must prove strict >2/3 equivalence: {required}"
+            );
+        }
     }
 
     #[test]
