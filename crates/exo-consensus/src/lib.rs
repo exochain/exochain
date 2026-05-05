@@ -558,6 +558,31 @@ mod tests {
         }
     }
 
+    #[test]
+    fn crate_readme_documents_ai_consensus_contract() {
+        let readme_path = format!("{}/README.md", env!("CARGO_MANIFEST_DIR"));
+        let readme = std::fs::read_to_string(&readme_path)
+            .unwrap_or_else(|err| panic!("{readme_path} must exist: {err}"));
+
+        for required in [
+            "EXOCHAIN AI Consensus",
+            "panel confidence index",
+            "basis points",
+            "5,000",
+            "3,000",
+            "2,000",
+            "devil advocate",
+            "minority report",
+            "deterministic",
+            "fail closed",
+        ] {
+            assert!(
+                readme.contains(required),
+                "crate README must document the AI consensus contract: {required}"
+            );
+        }
+    }
+
     fn routine_panel_responses(
         response_text: &str,
         claims: &[&str],
