@@ -19,6 +19,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 
 // Mock database implementation
 class MockDatabase {
@@ -860,6 +862,38 @@ test('Proposal ID generation is unique', (t) => {
   const prop2 = orchestrator.generateProposal(finding2);
 
   assert.notStrictEqual(prop1.proposal_id, prop2.proposal_id);
+});
+
+test('Proposal ID generation uses deterministic local sequence and finding hash', (t) => {
+  const { orchestrator } = createTestOrchestrator();
+  const finding = {
+    type: 'high_error_rate',
+    severity: 'high',
+    message: 'Error rate high',
+    metric: 'error_rate',
+    value: 0.15,
+    timestamp: '2026-04-10 12:00:00'
+  };
+
+  const prop1 = orchestrator.generateProposal(finding);
+  const prop2 = orchestrator.generateProposal(finding);
+
+  assert.match(prop1.proposal_id, /^proposal-20260410120000-000001-[0-9a-f]{12}$/);
+  assert.match(prop2.proposal_id, /^proposal-20260410120000-000002-[0-9a-f]{12}$/);
+  assert.equal(prop1.proposal_id.slice(-12), prop2.proposal_id.slice(-12));
+});
+
+test('Proposal ID source does not use wall clock or randomness', (t) => {
+  const source = fs.readFileSync(path.join(__dirname, 'cqi-orchestrator.js'), 'utf8');
+  const start = source.indexOf('function generateProposalId');
+  assert.notEqual(start, -1, 'generateProposalId must exist');
+  const end = source.indexOf('/**\n   * Determine BCTS branch', start);
+  assert.notEqual(end, -1, 'generateProposalId section must have stable end marker');
+  const section = source.slice(start, end);
+
+  assert.doesNotMatch(section, /Date\.now\s*\(/, 'proposal IDs must use caller-supplied localNow');
+  assert.doesNotMatch(section, /Math\.random\s*\(/, 'proposal IDs must not use runtime randomness');
+  assert.match(section, /stableStringify/, 'proposal IDs must hash a stable finding representation');
 });
 
 test('Module factory pattern - createOrchestrator returns correct instance', (t) => {

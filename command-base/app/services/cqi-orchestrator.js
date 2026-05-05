@@ -26,6 +26,7 @@ const crypto = require('crypto');
 
 module.exports = function(db, helpers) {
   const { localNow } = helpers;
+  let proposalSequence = 0;
 
   // ══════════════════════════════════════════════════════════════════════════════
   // SECTION 1: INTERNAL UTILITIES
@@ -40,14 +41,35 @@ module.exports = function(db, helpers) {
     return crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');
   }
 
+  function stableStringify(value) {
+    if (Array.isArray(value)) {
+      return `[${value.map(stableStringify).join(',')}]`;
+    }
+    if (value && typeof value === 'object') {
+      return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value);
+  }
+
+  function normalizeProposalTimestamp(value) {
+    const digits = String(value).replace(/\D/g, '');
+    if (digits.length >= 14) return digits.slice(0, 14);
+    return digits.padEnd(14, '0') || '00000000000000';
+  }
+
   /**
    * Generate a unique proposal ID.
-   * @returns {string} Proposal ID (proposal-TIMESTAMP-RANDOM)
+   * @returns {string} Proposal ID (proposal-YYYYMMDDHHMMSS-SEQUENCE-HASH)
    */
-  function generateProposalId() {
-    const ts = Date.now();
-    const rand = Math.random().toString(36).substring(2, 8);
-    return `proposal-${ts}-${rand}`;
+  function generateProposalId(finding, observedAt) {
+    proposalSequence += 1;
+    const sequence = String(proposalSequence).padStart(6, '0');
+    const findingHash = crypto
+      .createHash('sha256')
+      .update(stableStringify({ finding, observedAt }))
+      .digest('hex')
+      .slice(0, 12);
+    return `proposal-${normalizeProposalTimestamp(observedAt)}-${sequence}-${findingHash}`;
   }
 
   /**
@@ -383,8 +405,8 @@ module.exports = function(db, helpers) {
      * @returns {object} Proposal { proposal_id, finding_summary, patch_diff, affected_modules, test_criteria }
      */
     generateProposal(finding) {
-      const proposalId = generateProposalId();
       const now = localNow();
+      const proposalId = generateProposalId(finding, now);
 
       let patchDiff = '';
       const affectedModules = [];
