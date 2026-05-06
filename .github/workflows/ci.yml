@@ -153,7 +153,7 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@5bb39ff5d5a0e94dc9e2dc94eced0c6129743a57
         with:
           command: check
-      - name: Security-critical dependency pin guard
+      - name: Workspace dependency exact pin guard
         run: bash tools/test_security_critical_dependencies_pinned.sh
 
   # -----------------------------------------------------------------------

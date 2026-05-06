@@ -5,6 +5,26 @@ cd "$(dirname "$0")/.."
 
 manifest="Cargo.toml"
 
+python3 - <<'PY'
+import sys
+import tomllib
+
+with open("Cargo.toml", "rb") as manifest:
+    dependencies = tomllib.load(manifest)["workspace"]["dependencies"]
+
+unpinned = []
+for name, spec in sorted(dependencies.items()):
+    version = spec if isinstance(spec, str) else spec.get("version")
+    if version and not version.startswith("="):
+        unpinned.append(f"{name} ({version})")
+
+if unpinned:
+    print("workspace dependencies must be exactly pinned:", file=sys.stderr)
+    for dependency in unpinned:
+        print(f"  - {dependency}", file=sys.stderr)
+    sys.exit(1)
+PY
+
 require_exact_pin() {
   local crate="$1"
   local version="$2"
@@ -33,4 +53,4 @@ require_exact_pin "rand" "0.8.6"
 require_exact_pin "zeroize" "1.8.2"
 require_exact_pin "ml-dsa" "0.1.0-rc.7"
 
-echo "security-critical dependency pin test passed"
+echo "workspace dependency exact pin test passed"
