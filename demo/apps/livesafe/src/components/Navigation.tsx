@@ -32,7 +32,7 @@ export default function Navigation({ displayName, onLogout }: Props) {
             Live<span className="text-blue-400">Safe</span>
           </h1>
         </div>
-        <p className="text-[10px] text-white/20 mt-1">Powered by EXOCHAIN</p>
+        <p className="text-[10px] text-white/20 mt-1">EXOCHAIN-adjacent prototype</p>
       </div>
 
       {/* User */}

@@ -1,6 +1,4 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth, type AuthState } from '@/hooks/useAuth';
 import { Shield } from 'lucide-react';
 
 interface Props {
@@ -8,81 +6,24 @@ interface Props {
 }
 
 export default function Login({ mode: initialMode = 'login' }: Props) {
-  const { login } = useAuth();
-  const navigate = useNavigate();
   const [mode, setMode] = useState(initialMode);
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [passphrase, setPassphrase] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState('');
-  const [wasmReady, setWasmReady] = useState(false);
+  const cryptoUnavailable =
+    'LiveSafe EXOCHAIN crypto is unavailable: this adjacent prototype has no tested browser WASM/core adapter configured';
 
   useEffect(() => {
-    import('@/wasm/exochain_wasm').then(async (wasm) => {
-      await wasm.default();
-      setWasmReady(true);
-      setStatus('Secure kernel ready');
-    }).catch(() => setStatus(''));
-  }, []);
+    setStatus(cryptoUnavailable);
+  }, [cryptoUnavailable]);
 
   const handleSubmit = async () => {
     if (!passphrase) return;
     setIsLoading(true);
-    setStatus('Deriving secure identity...');
-
-    try {
-      // Derive identity from passphrase (zero-knowledge)
-      const encoder = new TextEncoder();
-      const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(passphrase));
-      const hashArray = new Uint8Array(hashBuffer);
-      const passphraseHash = Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('');
-
-      // Generate X25519 keypair via WASM
-      let x25519Public = '', x25519Secret = '';
-      if (wasmReady) {
-        const wasm = await import('@/wasm/exochain_wasm');
-        const kp = wasm.wasm_generate_x25519_keypair();
-        x25519Public = kp.public_key_hex;
-        x25519Secret = kp.secret_key_hex;
-      } else {
-        const bytes = new Uint8Array(32);
-        crypto.getRandomValues(bytes);
-        x25519Public = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-        x25519Secret = x25519Public;
-      }
-
-      const did = `did:exo:${passphraseHash.slice(0, 16)}`;
-      const name = displayName || `User-${passphraseHash.slice(0, 8)}`;
-
-      // Non-blocking profile registration
-      try {
-        const ctrl = new AbortController();
-        setTimeout(() => ctrl.abort(), 1500);
-        await fetch('/api/profile', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ did, display_name: name, email, x25519_public_key_hex: x25519Public }),
-          signal: ctrl.signal,
-        });
-      } catch { /* backend may be unavailable */ }
-
-      const authState: AuthState = {
-        did,
-        displayName: name,
-        email: email || `${passphraseHash.slice(0, 8)}@livesafe.ai`,
-        x25519PublicHex: x25519Public,
-        x25519SecretHex: x25519Secret,
-        passphraseHash,
-      };
-
-      login(authState);
-      navigate('/dashboard');
-    } catch (err) {
-      setStatus(`Error: ${err instanceof Error ? err.message : 'Unknown'}`);
-    } finally {
-      setIsLoading(false);
-    }
+    setStatus(cryptoUnavailable);
+    setIsLoading(false);
   };
 
   return (

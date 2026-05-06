@@ -30,9 +30,9 @@ const features = [
   },
   {
     icon: ScrollText,
-    title: 'Constitutional Governance',
+    title: 'Structured Governance',
     description:
-      'Decision classes from Operational to Constitutional ensure proportional review depth and quorum requirements.',
+      'Decision classes ensure proportional review depth and quorum requirements for this adjacent prototype.',
   },
   {
     icon: Grid3X3,
@@ -119,7 +119,7 @@ export default function Landing() {
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
           <p className="text-xs text-gray-500">
             Powered by{' '}
-            <span className="font-medium text-gray-400">EXOCHAIN</span> Trust Fabric
+            EXOCHAIN-adjacent prototype
           </p>
           <p className="text-xs text-gray-500">CrossChecked.ai v0.1.0</p>
         </div>

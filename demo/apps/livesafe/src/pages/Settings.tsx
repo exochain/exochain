@@ -93,7 +93,7 @@ export default function Settings() {
         </div>
         <div className="text-xs text-white/30 space-y-1">
           <p>Version: 0.1.0-beta</p>
-          <p>Trust Fabric: EXOCHAIN v0.1.0-beta</p>
+          <p>EXOCHAIN-adjacent prototype</p>
           <p>Key Sharding: Shamir (3-of-4 threshold)</p>
           <p>ICE Card: QR/NFC with consent-gated access</p>
           <p>PACE: Primary / Alternate / Contingency / Emergency</p>

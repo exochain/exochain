@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { useAuth } from '@/hooks/useAuth';
 import { PACE_ROLES } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import {
-  Users, Plus, X, Shield, CheckCircle, Clock, UserPlus, Key,
+  Users, X, Shield, CheckCircle, Clock, UserPlus, Key,
 } from 'lucide-react';
 
 interface PaceMember {
@@ -21,7 +20,6 @@ const RELATIONSHIPS = [
 ];
 
 export default function PaceNetwork() {
-  const { auth } = useAuth();
   const [members, setMembers] = useState<PaceMember[]>([]);
   const [showInvite, setShowInvite] = useState(false);
   const [inviteRole, setInviteRole] = useState('');

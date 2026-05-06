@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "surface-policy:check": "node scripts/check-surface-policy.mjs",
+    "audit:moderate": "npm audit --audit-level=moderate"
   },
   "dependencies": {
     "react": "^19.1.0",

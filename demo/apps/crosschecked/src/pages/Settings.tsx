@@ -48,9 +48,9 @@ export default function Settings() {
             <p className="text-sm text-gray-300 mt-1">v0.1.0-beta</p>
           </div>
           <div>
-            <label className="text-xs text-gray-500 uppercase tracking-wider">Trust Fabric</label>
+            <label className="text-xs text-gray-500 uppercase tracking-wider">Trust Boundary</label>
             <p className="text-sm text-gray-300 mt-1">
-              EXOCHAIN CGR Kernel -- hash-chained custody, multi-panel crosscheck, constitutional governance
+              EXOCHAIN-adjacent prototype; core enforcement requires tested runtime adapter calls
             </p>
           </div>
           <div>
@@ -76,7 +76,7 @@ export default function Settings() {
           <ShieldCheck className="w-5 h-5 text-xc-purple-400" />
         </div>
         <p className="text-sm font-heading font-semibold text-white">
-          Powered by <span className="text-xc-indigo-400">EXOCHAIN</span>
+          EXOCHAIN-adjacent prototype
         </p>
         <p className="text-xs text-gray-500 mt-1">
           Cryptographic governance runtime for plural intelligence
