@@ -9,6 +9,10 @@ const fs = require('fs');
 // ── Structured logger — must come before any console.* calls ──
 const logger = require('./logger');
 logger.overrideConsole();
+const {
+  configureWebhookSecretSetting,
+  requireWebhookSecret,
+} = require('./lib/webhook-auth');
 
 const http = require('http');
 const https = require('https');
@@ -368,8 +372,8 @@ function scheduleWalCheckpoint() {
 
 scheduleWalCheckpoint();
 
-// Seed webhook_secret setting (empty = open for initial setup)
-db.exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('webhook_secret', '')`);
+// Seed webhook_secret setting; empty or missing values fail closed at webhook ingress.
+configureWebhookSecretSetting(db);
 
 // Seed backup_dir setting (empty = use DEFAULT_BACKUP_DIR / BACKUP_DIR env var)
 db.exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('backup_dir', '')`);
@@ -8706,13 +8710,9 @@ async function dispatchNotification(notification) {
 // POST /api/webhooks/sms — Twilio sends incoming SMS here
 app.post('/api/webhooks/sms', (req, res) => {
   try {
-    // Webhook authentication
-    const webhookSecret = db.prepare(`SELECT value FROM system_settings WHERE key = 'webhook_secret'`).get();
-    if (webhookSecret && webhookSecret.value) {
-      const provided = req.headers['x-webhook-secret'] || req.query.secret;
-      if (provided !== webhookSecret.value) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
+    const webhookAuth = requireWebhookSecret(req, db);
+    if (!webhookAuth.ok) {
+      return res.status(webhookAuth.status).json(webhookAuth.body);
     }
 
     const from = req.body.From || 'unknown';
@@ -8779,13 +8779,9 @@ app.post('/api/webhooks/sms', (req, res) => {
 // POST /api/webhooks/slack — Slack sends events/commands here
 app.post('/api/webhooks/slack', (req, res) => {
   try {
-    // Webhook authentication
-    const webhookSecret = db.prepare(`SELECT value FROM system_settings WHERE key = 'webhook_secret'`).get();
-    if (webhookSecret && webhookSecret.value) {
-      const provided = req.headers['x-webhook-secret'] || req.query.secret;
-      if (provided !== webhookSecret.value) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
+    const webhookAuth = requireWebhookSecret(req, db);
+    if (!webhookAuth.ok) {
+      return res.status(webhookAuth.status).json(webhookAuth.body);
     }
 
     // Handle Slack URL verification challenge
