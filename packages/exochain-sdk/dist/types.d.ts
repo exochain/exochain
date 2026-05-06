@@ -49,4 +49,40 @@ export interface HealthResponse {
     readonly version: string;
     readonly uptime: number;
 }
+/** EXOCHAIN economy object kinds stored behind the HonorGood adapter routes. */
+export type EconomyObjectKind = 'mission' | 'contribution_receipt' | 'legacy_receipt' | 'honorgood_ruleset' | 'value_contribution_node' | 'contribution_offer' | 'contribution_acceptance' | 'bailment_terms' | 'bailment_wrapper' | 'adoption_event' | 'use_event' | 'value_event' | 'mission_settlement' | 'automated_settlement_event';
+/** Hash-linked anchor returned when EXOCHAIN records an economy object. */
+export interface EconomyRecordAnchor {
+    readonly anchor_hash: Hash256;
+    readonly previous_anchor_hash: Hash256;
+    readonly object_kind: EconomyObjectKind;
+    readonly object_id: Hash256;
+    readonly object_hash: Hash256;
+    readonly created_at: unknown;
+}
+/** Generic response shape for economy object creation routes. */
+export interface EconomyObjectResponse<T = unknown> {
+    readonly object: T;
+    readonly anchor: EconomyRecordAnchor;
+}
+/** Request body for deterministic mission settlement creation. */
+export interface MissionSettlementRequest {
+    readonly mission_id: Hash256;
+    readonly ruleset_id: Hash256;
+    readonly gross_revenue_micro_exo: string | number;
+    readonly pass_through_expenses_micro_exo: string | number;
+    readonly zero_fee_reason?: string | null;
+    readonly prev_settlement_hash?: Hash256 | null;
+    readonly created_at: unknown;
+}
+/** Request body for deterministic automated value-for-value settlement. */
+export interface AutomatedSettlementRequest {
+    readonly value_event_id: Hash256;
+    readonly automation_authority_ref: unknown;
+    readonly preapproved_terms_hash: Hash256;
+    readonly basis_amounts: Record<string, string | number>;
+    readonly zero_fee_reason?: string | null;
+    readonly preconditions: unknown;
+    readonly created_at_hlc: unknown;
+}
 //# sourceMappingURL=types.d.ts.map

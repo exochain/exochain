@@ -8,6 +8,11 @@
 
 import { TransportError } from '../errors.js';
 import type { HealthResponse } from '../types.js';
+import {
+  assertJsonObject,
+  validateHealthResponse,
+  type JsonObject,
+} from '../validation.js';
 
 /** Options for {@link HttpTransport}. */
 export interface HttpTransportOptions {
@@ -42,17 +47,17 @@ export class HttpTransport {
 
   /** Gateway `/health` probe. */
   public async health(): Promise<HealthResponse> {
-    return this.get<HealthResponse>('/health');
+    return validateHealthResponse(await this.get('/health'));
   }
 
-  /** Issue a GET and parse the JSON body as `T`. */
-  public async get<T>(path: string): Promise<T> {
-    return this.request<T>('GET', path);
+  /** Issue a GET and parse the JSON body as untrusted data. */
+  public async get(path: string): Promise<unknown> {
+    return this.request('GET', path);
   }
 
-  /** Issue a POST with a JSON body and parse the JSON response as `T`. */
-  public async post<T>(path: string, body: unknown): Promise<T> {
-    return this.request<T>('POST', path, body);
+  /** Issue a POST with a JSON body and parse the JSON response as untrusted data. */
+  public async post(path: string, body: JsonObject): Promise<unknown> {
+    return this.request('POST', path, assertJsonObject(body, `${path} request body`));
   }
 
   async #abortable(): Promise<{ signal: AbortSignal; cancel: () => void }> {
@@ -61,7 +66,7 @@ export class HttpTransport {
     return { signal: ctrl.signal, cancel: () => clearTimeout(id) };
   }
 
-  async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  async request(method: string, path: string, body?: JsonObject): Promise<unknown> {
     const url = `${this.#baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
     const headers: Record<string, string> = { accept: 'application/json' };
     if (this.#apiKey !== undefined) {
@@ -95,10 +100,11 @@ export class HttpTransport {
       });
     }
     if (text.length === 0) {
-      return undefined as unknown as T;
+      return undefined;
     }
     try {
-      return JSON.parse(text) as T;
+      const parsed: unknown = JSON.parse(text);
+      return parsed;
     } catch (err) {
       throw new TransportError('failed to parse JSON response', {
         cause: err,

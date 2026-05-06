@@ -383,9 +383,13 @@ const transport = new HttpTransport('http://127.0.0.1:8080', {
   timeout: 15_000,                     // ms
 });
 
-const health = await transport.get<{ status: string; version: string; uptime: number }>('/health');
+const health = await transport.get('/health');
 console.log(health);
 ```
+
+Low-level transport methods return `unknown`; prefer `ExochainClient` for
+validated domain responses, or validate raw transport payloads before trusting
+fields.
 
 ### `ExochainClient` (high-level)
 
@@ -425,6 +429,11 @@ await client.governance.castVote(decisionId, {
   choice: 'approve',
 });
 ```
+
+Typed client methods validate gateway response shapes before returning branded
+`Did`, `Hash256`, quorum, and economy anchor values. Mutating calls must receive
+a JSON object body; the SDK rejects arrays, primitives, functions, cycles, and
+non-finite numbers before sending the request.
 
 All transport errors surface as `TransportError` (see next section).
 

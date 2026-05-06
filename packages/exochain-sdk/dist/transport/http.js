@@ -6,6 +6,7 @@
  * free.
  */
 import { TransportError } from '../errors.js';
+import { assertJsonObject, validateHealthResponse, } from '../validation.js';
 /** Small fetch wrapper that serializes and deserializes JSON bodies. */
 export class HttpTransport {
     #baseUrl;
@@ -28,15 +29,15 @@ export class HttpTransport {
     }
     /** Gateway `/health` probe. */
     async health() {
-        return this.get('/health');
+        return validateHealthResponse(await this.get('/health'));
     }
-    /** Issue a GET and parse the JSON body as `T`. */
+    /** Issue a GET and parse the JSON body as untrusted data. */
     async get(path) {
         return this.request('GET', path);
     }
-    /** Issue a POST with a JSON body and parse the JSON response as `T`. */
+    /** Issue a POST with a JSON body and parse the JSON response as untrusted data. */
     async post(path, body) {
-        return this.request('POST', path, body);
+        return this.request('POST', path, assertJsonObject(body, `${path} request body`));
     }
     async #abortable() {
         const ctrl = new AbortController();
@@ -79,7 +80,8 @@ export class HttpTransport {
             return undefined;
         }
         try {
-            return JSON.parse(text);
+            const parsed = JSON.parse(text);
+            return parsed;
         }
         catch (err) {
             throw new TransportError('failed to parse JSON response', {

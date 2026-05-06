@@ -1,6 +1,7 @@
 import { test } from 'node:test';
-import { deepEqual, strictEqual } from 'node:assert/strict';
+import { deepEqual, rejects, strictEqual } from 'node:assert/strict';
 import { ExochainClient } from '../src/client.js';
+import { TransportError } from '../src/errors.js';
 import type { Hash256 } from '../src/types.js';
 
 const HASH = '1111111111111111111111111111111111111111111111111111111111111111' as Hash256;
@@ -44,6 +45,53 @@ test('EconomyApi routes mission creation through EXOCHAIN economy API', async ()
   deepEqual(JSON.parse(calls[0]?.body ?? '{}'), { mission_id: HASH, name: 'mission' });
   strictEqual(result.anchor.object_kind, 'mission');
   strictEqual((result.object as { mission_id: Hash256 }).mission_id, HASH);
+});
+
+test('EconomyApi rejects non-object mutating bodies before fetch', async () => {
+  const calls: RequestInit[] = [];
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    if (init !== undefined) calls.push(init);
+    return jsonResponse({
+      object: { mission_id: HASH },
+      anchor: {
+        anchor_hash: HASH,
+        previous_anchor_hash: HASH,
+        object_kind: 'mission',
+        object_id: HASH,
+        object_hash: HASH,
+        created_at: { physical_ms: 1, logical: 0 },
+      },
+    });
+  };
+  const client = new ExochainClient({
+    baseUrl: 'https://node.example',
+    fetch: fetchImpl,
+  });
+
+  await rejects(() => client.economy.createMission('mission' as never), TransportError);
+
+  strictEqual(calls.length, 0);
+});
+
+test('EconomyApi validates creation response anchors', async () => {
+  const fetchImpl: typeof fetch = async () =>
+    jsonResponse({
+      object: { mission_id: HASH },
+      anchor: {
+        anchor_hash: 'not-a-hash',
+        previous_anchor_hash: HASH,
+        object_kind: 'mission',
+        object_id: HASH,
+        object_hash: HASH,
+        created_at: { physical_ms: 1, logical: 0 },
+      },
+    });
+  const client = new ExochainClient({
+    baseUrl: 'https://node.example',
+    fetch: fetchImpl,
+  });
+
+  await rejects(() => client.economy.createMission({ mission_id: HASH }), TransportError);
 });
 
 test('EconomyApi reads legacy receipts from EXOCHAIN economy API', async () => {

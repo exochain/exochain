@@ -6,6 +6,7 @@
  * free.
  */
 import type { HealthResponse } from '../types.js';
+import { type JsonObject } from '../validation.js';
 /** Options for {@link HttpTransport}. */
 export interface HttpTransportOptions {
     /** Optional API key sent as `Authorization: Bearer <apiKey>`. */
@@ -21,10 +22,10 @@ export declare class HttpTransport {
     constructor(baseUrl: string, opts?: HttpTransportOptions);
     /** Gateway `/health` probe. */
     health(): Promise<HealthResponse>;
-    /** Issue a GET and parse the JSON body as `T`. */
-    get<T>(path: string): Promise<T>;
-    /** Issue a POST with a JSON body and parse the JSON response as `T`. */
-    post<T>(path: string, body: unknown): Promise<T>;
-    request<T>(method: string, path: string, body?: unknown): Promise<T>;
+    /** Issue a GET and parse the JSON body as untrusted data. */
+    get(path: string): Promise<unknown>;
+    /** Issue a POST with a JSON body and parse the JSON response as untrusted data. */
+    post(path: string, body: JsonObject): Promise<unknown>;
+    request(method: string, path: string, body?: JsonObject): Promise<unknown>;
 }
 //# sourceMappingURL=http.d.ts.map

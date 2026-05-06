@@ -4,6 +4,7 @@
  * authority) wraps the shared {@link HttpTransport}.
  */
 import { HttpTransport } from './transport/http.js';
+import { assertJsonObject, validateDecisionState, validateDidResponse, validateEconomyObjectResponse, validateHashResponse, } from './validation.js';
 // -----------------------------------------------------------------------------
 // Domain API surfaces
 // -----------------------------------------------------------------------------
@@ -19,7 +20,8 @@ export class IdentityApi {
     }
     /** Register a DID document via `POST /identity/did`. */
     async register(document) {
-        return this.#http.post('/identity/did', document);
+        const body = assertJsonObject(document, 'identity.register request body');
+        return validateDidResponse(await this.#http.post('/identity/did', body), 'identity.register response');
     }
 }
 /** Consent / bailment gateway calls. */
@@ -30,7 +32,7 @@ export class ConsentApi {
     }
     /** Submit a bailment proposal for processing. */
     async proposeBailment(body) {
-        return this.#http.post('/consent/bailment', body);
+        return validateHashResponse(await this.#http.post('/consent/bailment', body), 'proposalId', 'consent.proposeBailment response');
     }
     /** Fetch a bailment proposal by its content-addressed ID. */
     async getBailment(proposalId) {
@@ -45,7 +47,7 @@ export class GovernanceApi {
     }
     /** Create a decision via `POST /governance/decision`. */
     async createDecision(body) {
-        return this.#http.post('/governance/decision', body);
+        return validateHashResponse(await this.#http.post('/governance/decision', body), 'decisionId', 'governance.createDecision response');
     }
     /** Cast a vote on an existing decision. */
     async castVote(decisionId, body) {
@@ -53,7 +55,7 @@ export class GovernanceApi {
     }
     /** Fetch a decision's current state (including tallied quorum). */
     async getDecision(decisionId) {
-        return this.#http.get(`/governance/decision/${encodeURIComponent(decisionId)}`);
+        return validateDecisionState(await this.#http.get(`/governance/decision/${encodeURIComponent(decisionId)}`));
     }
 }
 /** Authority chain gateway calls. */
@@ -64,7 +66,7 @@ export class AuthorityApi {
     }
     /** Submit a validated authority chain for persistence. */
     async submitChain(chain) {
-        return this.#http.post('/authority/chain', chain);
+        return validateHashResponse(await this.#http.post('/authority/chain', chain), 'chainId', 'authority.submitChain response');
     }
     /** Fetch an authority chain by id. */
     async getChain(chainId) {
@@ -77,53 +79,60 @@ export class EconomyApi {
     constructor(http) {
         this.#http = http;
     }
+    async #postObject(path, body, context) {
+        const request = assertJsonObject(body, `${context} request body`);
+        return validateEconomyObjectResponse(await this.#http.post(path, request), `${context} response`);
+    }
+    async #getObject(path, context) {
+        return assertJsonObject(await this.#http.get(path), `${context} response`);
+    }
     async createMission(body) {
-        return this.#http.post('/api/v1/economy/missions', body);
+        return this.#postObject('/api/v1/economy/missions', body, 'economy.createMission');
     }
     async getMission(id) {
-        return this.#http.get(`/api/v1/economy/missions/${encodeURIComponent(id)}`);
+        return this.#getObject(`/api/v1/economy/missions/${encodeURIComponent(id)}`, 'economy.getMission');
     }
     async createContributionReceipt(body) {
-        return this.#http.post('/api/v1/economy/contribution-receipts', body);
+        return this.#postObject('/api/v1/economy/contribution-receipts', body, 'economy.createContributionReceipt');
     }
     async createLegacyReceipt(body) {
-        return this.#http.post('/api/v1/economy/legacy-receipts', body);
+        return this.#postObject('/api/v1/economy/legacy-receipts', body, 'economy.createLegacyReceipt');
     }
     async getLegacyReceipt(id) {
-        return this.#http.get(`/api/v1/economy/legacy-receipts/${encodeURIComponent(id)}`);
+        return this.#getObject(`/api/v1/economy/legacy-receipts/${encodeURIComponent(id)}`, 'economy.getLegacyReceipt');
     }
     async createRuleset(body) {
-        return this.#http.post('/api/v1/economy/rulesets', body);
+        return this.#postObject('/api/v1/economy/rulesets', body, 'economy.createRuleset');
     }
     async createContributionNode(body) {
-        return this.#http.post('/api/v1/economy/contribution-nodes', body);
+        return this.#postObject('/api/v1/economy/contribution-nodes', body, 'economy.createContributionNode');
     }
     async createContributionOffer(body) {
-        return this.#http.post('/api/v1/economy/contribution-offers', body);
+        return this.#postObject('/api/v1/economy/contribution-offers', body, 'economy.createContributionOffer');
     }
     async createContributionAcceptance(body) {
-        return this.#http.post('/api/v1/economy/contribution-acceptances', body);
+        return this.#postObject('/api/v1/economy/contribution-acceptances', body, 'economy.createContributionAcceptance');
     }
     async createBailmentTerms(body) {
-        return this.#http.post('/api/v1/economy/bailment-terms', body);
+        return this.#postObject('/api/v1/economy/bailment-terms', body, 'economy.createBailmentTerms');
     }
     async createBailmentWrapper(body) {
-        return this.#http.post('/api/v1/economy/bailment-wrappers', body);
+        return this.#postObject('/api/v1/economy/bailment-wrappers', body, 'economy.createBailmentWrapper');
     }
     async createAdoptionEvent(body) {
-        return this.#http.post('/api/v1/economy/adoption-events', body);
+        return this.#postObject('/api/v1/economy/adoption-events', body, 'economy.createAdoptionEvent');
     }
     async createUseEvent(body) {
-        return this.#http.post('/api/v1/economy/use-events', body);
+        return this.#postObject('/api/v1/economy/use-events', body, 'economy.createUseEvent');
     }
     async createValueEvent(body) {
-        return this.#http.post('/api/v1/economy/value-events', body);
+        return this.#postObject('/api/v1/economy/value-events', body, 'economy.createValueEvent');
     }
     async createMissionSettlement(body) {
-        return this.#http.post('/api/v1/economy/mission-settlements', body);
+        return this.#postObject('/api/v1/economy/mission-settlements', body, 'economy.createMissionSettlement');
     }
     async createAutomatedSettlement(body) {
-        return this.#http.post('/api/v1/economy/automated-settlements', body);
+        return this.#postObject('/api/v1/economy/automated-settlements', body, 'economy.createAutomatedSettlement');
     }
 }
 // -----------------------------------------------------------------------------

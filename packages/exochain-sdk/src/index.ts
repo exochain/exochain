@@ -21,6 +21,7 @@ export const PROTOCOL_VERSION = '0.1.0-beta';
 export * from './types.js';
 export * from './errors.js';
 export * from './client.js';
+export type { JsonObject, JsonValue } from './validation.js';
 
 export { Identity, deriveDid } from './identity/keypair.js';
 export { validateDid, isDid } from './identity/did.js';

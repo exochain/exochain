@@ -179,13 +179,19 @@ const transport = new HttpTransport({
   fetch: globalThis.fetch, // inject a custom fetch (e.g. undici, msw)
 });
 
-const res = await transport.request<{ version: string }>('GET', '/health');
+const res = await transport.request('GET', '/health');
 ```
 
 `ExochainClient` wraps `HttpTransport` and exposes per-domain resources
 (`client.identity.resolve`, `client.consent.propose`, etc.). Prefer the
 client for normal use; drop down to `HttpTransport` only when you need raw
-control.
+control. Raw transport methods return `unknown`; callers that use them directly
+must validate response shapes before trusting fields.
+
+Typed `ExochainClient` methods validate gateway response shapes at runtime
+before returning branded `Did`, `Hash256`, quorum, and economy anchor values.
+Mutating calls require a JSON object body and reject arrays, primitives,
+functions, cycles, and non-finite numbers before the request is sent.
 
 ## Browser vs Node considerations
 
