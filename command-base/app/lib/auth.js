@@ -3,7 +3,8 @@
 /**
  * Shared Auth Middleware — ExoChain CommandBase
  *
- * JWT-style session tokens using Ed25519 (via WASM) with HMAC-SHA256 fallback.
+ * JWT-style session tokens using Ed25519 (via WASM) with explicit
+ * HMAC-SHA256 fallback configuration.
  *
  * Token format:  base64url(header) . base64url(payload) . base64url(signature)
  *
@@ -24,8 +25,25 @@ const crypto = require('crypto');
 /** Default token TTL in seconds (1 hour). */
 const DEFAULT_TTL_SECONDS = 3600;
 
-/** HMAC fallback secret — override via EXOCHAIN_AUTH_SECRET env var. */
-const HMAC_SECRET = process.env.EXOCHAIN_AUTH_SECRET || 'exochain-dev-secret-change-in-production';
+const HISTORICAL_DEV_HMAC_SECRET = 'exochain-dev-secret-change-in-production';
+const MIN_HMAC_SECRET_BYTES = 32;
+
+function configuredHmacSecret() {
+  const secret = process.env.EXOCHAIN_AUTH_SECRET;
+  if (!secret) {
+    throw new Error('EXOCHAIN_AUTH_SECRET is required when the WASM Ed25519 backend is unavailable');
+  }
+  if (secret === HISTORICAL_DEV_HMAC_SECRET) {
+    throw new Error('Refusing to use the historical development HMAC secret for session tokens');
+  }
+  const byteLength = Buffer.byteLength(secret, 'utf8');
+  if (byteLength < MIN_HMAC_SECRET_BYTES) {
+    throw new Error(
+      `EXOCHAIN_AUTH_SECRET must be at least ${MIN_HMAC_SECRET_BYTES} bytes, got ${byteLength}`,
+    );
+  }
+  return secret;
+}
 
 // ---------------------------------------------------------------------------
 // WASM loader — lazy, non-fatal
@@ -75,7 +93,7 @@ function base64urlDecode(str) {
 // ---------------------------------------------------------------------------
 
 /**
- * Sign a message using Ed25519 (WASM) or HMAC-SHA256 (fallback).
+ * Sign a message using Ed25519 (WASM) or explicitly configured HMAC-SHA256.
  * @param {string} message - The message to sign (header.payload)
  * @returns {string} Base64url-encoded signature
  */
@@ -86,8 +104,7 @@ function sign(message) {
     const sigBytes = wasm.wasm_ed25519_sign(Buffer.from(message, 'utf8'));
     return base64urlEncode(sigBytes);
   }
-  // HMAC-SHA256 fallback
-  const hmac = crypto.createHmac('sha256', HMAC_SECRET);
+  const hmac = crypto.createHmac('sha256', configuredHmacSecret());
   hmac.update(message);
   return base64urlEncode(hmac.digest());
 }
@@ -107,9 +124,14 @@ function verify(message, signature) {
   }
   // HMAC-SHA256 fallback: recompute and compare
   const expected = sign(message);
+  const expectedBytes = Buffer.from(expected, 'utf8');
+  const signatureBytes = Buffer.from(signature, 'utf8');
+  if (expectedBytes.length !== signatureBytes.length) {
+    return false;
+  }
   return crypto.timingSafeEqual(
-    Buffer.from(expected, 'utf8'),
-    Buffer.from(signature, 'utf8')
+    expectedBytes,
+    signatureBytes
   );
 }
 
@@ -173,7 +195,13 @@ function verifyToken(token) {
   const signingInput = `${headerB64}.${payloadB64}`;
 
   // Verify signature
-  if (!verify(signingInput, signature)) {
+  let signatureValid;
+  try {
+    signatureValid = verify(signingInput, signature);
+  } catch (err) {
+    return { valid: false, error: err.message };
+  }
+  if (!signatureValid) {
     return { valid: false, error: 'Invalid signature' };
   }
 

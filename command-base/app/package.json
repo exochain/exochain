@@ -9,6 +9,7 @@
     "audit:fix": "npm audit fix --force --audit-level=high",
     "audit:report": "npm audit --json > audit-report.json && echo 'Audit report written to audit-report.json'",
     "audit:moderate": "npm audit --audit-level=moderate",
+    "auth:check": "node --test lib/auth.test.js",
     "dependency-policy:check": "node scripts/check-dependency-policy.js",
     "surface-policy:check": "node scripts/check-surface-policy.js",
     "preinstall": "npm audit --audit-level=critical || true"
