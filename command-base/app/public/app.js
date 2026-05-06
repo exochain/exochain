@@ -32459,8 +32459,8 @@
       +     '<div class="intake-drop-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg></div>'
       +     '<div class="intake-drop-text">Drop files or folders here</div>'
       +     '<div class="intake-drop-subtext">or click to browse</div>'
-      +     '<div class="intake-drop-types">Accepted: .md, .txt, .js, .py, .json, .ts, .css, .html, .yaml, .yml, .toml, .pdf, .zip</div>'
-      +     '<input type="file" id="intake-file-input" multiple style="display:none" accept=".md,.txt,.js,.py,.json,.ts,.css,.html,.yaml,.yml,.toml,.pdf,.zip" />'
+      +     '<div class="intake-drop-types">Accepted: .md, .txt, .js, .jsx, .ts, .tsx, .py, .rs, .go, .json, .csv, .css, .yaml, .yml, .toml, .pdf, .zip, images</div>'
+      +     '<input type="file" id="intake-file-input" multiple style="display:none" accept=".md,.txt,.js,.jsx,.ts,.tsx,.py,.rs,.go,.json,.csv,.css,.yaml,.yml,.toml,.pdf,.zip,.png,.jpg,.jpeg,.gif,.webp" />'
       +   '</div>'
       // Attached files list
       +   '<div class="intake-section" id="intake-attached-section" style="display:none">'
@@ -32482,7 +32482,7 @@
       +       '<button class="intake-btn intake-btn-secondary" id="intake-browse-folder-btn">Browse Folder</button>'
       +       '<button class="intake-btn intake-btn-secondary" id="intake-browse-file-btn">Browse File</button>'
       +       '<input type="file" id="intake-folder-input" webkitdirectory multiple style="display:none" />'
-      +       '<input type="file" id="intake-single-file-input" multiple style="display:none" accept=".md,.txt,.js,.py,.json,.ts,.css,.html,.yaml,.yml,.toml,.pdf,.zip" />'
+      +       '<input type="file" id="intake-single-file-input" multiple style="display:none" accept=".md,.txt,.js,.jsx,.ts,.tsx,.py,.rs,.go,.json,.csv,.css,.yaml,.yml,.toml,.pdf,.zip,.png,.jpg,.jpeg,.gif,.webp" />'
       +     '</div>'
       +   '</div>'
       // Additional context
@@ -32531,7 +32531,7 @@
     });
 
     function processFiles(fileList) {
-      var acceptedExts = ['.md','.txt','.js','.py','.json','.ts','.css','.html','.yaml','.yml','.toml','.pdf','.zip'];
+      var acceptedExts = ['.md','.txt','.js','.jsx','.ts','.tsx','.py','.rs','.go','.json','.csv','.css','.yaml','.yml','.toml','.pdf','.zip','.png','.jpg','.jpeg','.gif','.webp'];
       for (var i = 0; i < fileList.length; i++) {
         var file = fileList[i];
         var ext = '.' + file.name.split('.').pop().toLowerCase();
@@ -32542,7 +32542,7 @@
             intakeFiles.push({ name: f.name, content: ev.target.result, size: f.size });
             renderAttached();
           };
-          if (fext === '.pdf' || fext === '.zip') {
+          if (fext === '.pdf' || fext === '.zip' || ['.png','.jpg','.jpeg','.gif','.webp'].indexOf(fext) !== -1) {
             reader.readAsDataURL(f);
           } else {
             reader.readAsText(f);
@@ -32622,7 +32622,7 @@
       var folderName = files[0].webkitRelativePath ? files[0].webkitRelativePath.split('/')[0] : 'folder';
       var folderEntry = { name: folderName, path: folderName, fileCount: 0, fileContents: [] };
 
-      var acceptedExts = ['.md','.txt','.js','.py','.json','.ts','.css','.html','.yaml','.yml','.toml'];
+      var acceptedExts = ['.md','.txt','.js','.jsx','.ts','.tsx','.py','.rs','.go','.json','.csv','.css','.yaml','.yml','.toml'];
       var pending = 0;
       for (var i = 0; i < files.length && i < 30; i++) {
         var ext = '.' + files[i].name.split('.').pop().toLowerCase();
