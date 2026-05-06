@@ -4,8 +4,9 @@
 // identity, authority, consent, legal, escalation
 
 import { createRequire } from 'module';
+import { readFileSync } from 'fs';
 const require = createRequire(import.meta.url);
-const wasm = require('./wasm/exochain_wasm.js');
+let wasm;
 
 let passed = 0;
 let failed = 0;
@@ -26,8 +27,45 @@ function assert(condition, msg) {
   if (!condition) throw new Error(msg || 'Assertion failed');
 }
 
+function assertThrowsContaining(fn, expected) {
+  try {
+    fn();
+  } catch (e) {
+    const message = e.message || String(e);
+    assert(message.includes(expected), `expected error containing "${expected}", got "${message}"`);
+    return;
+  }
+  throw new Error(`expected error containing "${expected}"`);
+}
+
+function hexToBytes(hex) {
+  assert(hex.length % 2 === 0, 'hex string must have an even number of characters');
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
 const TEST_DID = 'did:exo:test-actor';
 const DUMMY_SECRET_HEX = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+
+// ═══════════════════════════════════════════════════════════════
+// PACKAGE METADATA
+// ═══════════════════════════════════════════════════════════════
+console.log('\n── Package Metadata ──');
+
+test('package license matches EXOCHAIN Apache-2.0 license position', () => {
+  const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+  assert(pkg.license === 'Apache-2.0', `expected Apache-2.0 license, got ${pkg.license}`);
+});
+
+if (failed > 0) {
+  console.log('\nPackage metadata checks failed; skipping generated WASM runtime checks.');
+  process.exit(1);
+}
+
+wasm = require('./wasm/exochain_wasm.js');
 
 // ═══════════════════════════════════════════════════════════════
 // CORE BINDINGS
@@ -46,26 +84,48 @@ test('hash_structured produces deterministic hash', () => {
   assert(h1 === h2, 'same input should produce same hash');
 });
 
-test('generate_keypair returns pub+secret', () => {
+test('generate_keypair returns public key only', () => {
   const kp = wasm.wasm_generate_keypair();
   assert(kp.public_key, 'should have public_key');
   assert(kp.public_key.length === 64, `public key should be 64 hex chars, got ${kp.public_key.length}`);
+  assert(kp.secret_key === undefined, 'secret_key must not cross the WASM boundary');
 });
 
-test('sign + verify round-trip', () => {
-  const publicKey = wasm.wasm_ed25519_public_from_secret(DUMMY_SECRET_HEX);
+test('ephemeral sign + verify round-trip', () => {
   const msg = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
-  const sig = wasm.wasm_sign(msg, DUMMY_SECRET_HEX);
-  const valid = wasm.wasm_verify(msg, sig, publicKey);
+  const signed = wasm.wasm_sign_with_ephemeral_key(msg);
+  const valid = wasm.wasm_verify(msg, JSON.stringify(signed.signature), signed.public_key);
   assert(valid === true, 'signature should verify');
 });
 
-test('verify rejects bad signature', () => {
-  const publicKey = wasm.wasm_ed25519_public_from_secret(DUMMY_SECRET_HEX);
+test('verify rejects mismatched message', () => {
   const msg = new Uint8Array([1, 2, 3]);
-  const sig = wasm.wasm_sign(msg, DUMMY_SECRET_HEX);
-  const bad = wasm.wasm_verify(new Uint8Array([4, 5, 6]), sig, publicKey);
+  const signed = wasm.wasm_sign_with_ephemeral_key(msg);
+  const bad = wasm.wasm_verify(new Uint8Array([4, 5, 6]), JSON.stringify(signed.signature), signed.public_key);
   assert(bad === false, 'bad message should not verify');
+});
+
+test('raw secret-key crypto entrypoints fail closed', () => {
+  assertThrowsContaining(
+    () => wasm.wasm_sign(new Uint8Array([1, 2, 3]), DUMMY_SECRET_HEX),
+    'raw secret-key signing is disabled at the WASM boundary',
+  );
+  assertThrowsContaining(
+    () => wasm.wasm_ed25519_public_from_secret(DUMMY_SECRET_HEX),
+    'raw secret-key public derivation is disabled at the WASM boundary',
+  );
+  assertThrowsContaining(
+    () => wasm.wasm_create_signed_event(
+      '"GovernanceDecision"',
+      new Uint8Array([1, 2, 3]),
+      TEST_DID,
+      DUMMY_SECRET_HEX,
+      '018f7a96-8ad0-7c4f-8e0f-111111111101',
+      7100n,
+      0,
+    ),
+    'raw secret-key event signing is disabled at the WASM boundary',
+  );
 });
 
 test('bcts_valid_transitions returns array for Draft', () => {
@@ -82,14 +142,31 @@ test('bcts_is_terminal — Closed is terminal', () => {
   assert(wasm.wasm_bcts_is_terminal('"Closed"') === true);
 });
 
-test('create_signed_event', () => {
-  const evt = wasm.wasm_create_signed_event(
+test('create_event_with_signature accepts externally signed payload', () => {
+  const payload = new Uint8Array([1, 2, 3]);
+  const eventId = wasm.wasm_compute_event_id(new Uint8Array([101, 118, 101, 110, 116]));
+  const timestampPhysicalMs = 7100n;
+  const signingPayloadHex = wasm.wasm_event_signing_payload(
     '"GovernanceDecision"',
-    new Uint8Array([1, 2, 3]),
+    payload,
     TEST_DID,
-    DUMMY_SECRET_HEX,
+    eventId,
+    timestampPhysicalMs,
+    0,
+  );
+  const signed = wasm.wasm_sign_with_ephemeral_key(hexToBytes(signingPayloadHex));
+  const evt = wasm.wasm_create_event_with_signature(
+    '"GovernanceDecision"',
+    payload,
+    TEST_DID,
+    JSON.stringify(signed.signature),
+    signed.public_key,
+    eventId,
+    timestampPhysicalMs,
+    0,
   );
   assert(evt.source_did === TEST_DID, `source_did should be ${TEST_DID}, got ${evt.source_did}`);
+  assert(wasm.wasm_verify_event(JSON.stringify(evt), signed.public_key) === true, 'event signature should verify');
 });
 
 test('merkle_root computes root from 32-byte hex leaves', () => {
@@ -154,10 +231,14 @@ test('check_clearance for Governor', () => {
       "approve_decision": { required_level: "Governor" }
     }
   };
+  const registry = [
+    { did: 'did:exo:alice', level: 'Governor' }
+  ];
   const result = wasm.wasm_check_clearance(
     'did:exo:alice',
     'approve_decision',
-    JSON.stringify(policy)
+    JSON.stringify(policy),
+    JSON.stringify(registry)
   );
   assert(result.status === 'Granted', `expected Granted, got ${result.status}`);
 });
@@ -245,9 +326,15 @@ test('decision_content_hash produces hash', () => {
 // ═══════════════════════════════════════════════════════════════
 console.log('\n── Identity Bindings ──');
 
-test('shamir_split splits secret into shares', () => {
+test('shamir_split_with_entropy splits secret into shares', () => {
   const secret = new Uint8Array([42, 99, 17, 255, 0, 128]);
-  const result = wasm.wasm_shamir_split(secret, 2, 3);
+  const entropy = new Uint8Array([
+    11, 23, 37, 41, 53, 67, 79, 83,
+    97, 101, 113, 127, 131, 139, 149, 157,
+    163, 173, 181, 191, 197, 199, 211, 223,
+    227, 229, 233, 239, 241, 251, 7, 19,
+  ]);
+  const result = wasm.wasm_shamir_split_with_entropy(secret, 2, 3, entropy);
   assert(Array.isArray(result), 'should return array of shares');
   assert(result.length === 3, `should have 3 shares, got ${result.length}`);
 });

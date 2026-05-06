@@ -14,7 +14,7 @@
     "test:wasm": "node packages/exochain-wasm/test.mjs",
     "test:services": "vitest run --workspace vitest.workspace.js --project services",
     "test:react": "vitest run --workspace vitest.workspace.js --project web",
-    "build:wasm": "cd .. && wasm-pack build crates/exochain-wasm --target nodejs --release --out-dir demo/packages/exochain-wasm/wasm",
+    "build:wasm": "bash scripts/build-wasm.sh",
     "dev": "docker compose -f infra/docker-compose.yml up --build"
   },
   "devDependencies": {
