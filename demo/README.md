@@ -175,7 +175,7 @@ See [docs/guides/ARCHON-INTEGRATION.md](../docs/guides/ARCHON-INTEGRATION.md) fo
 
 | Variable | Description | Default |
 |---|---|---|
-| `DATABASE_URL` | PostgreSQL connection string | `postgres://exochain:exochain@localhost:5432/exochain` |
+| `DATABASE_URL` | PostgreSQL connection string | Required; no default |
 | `PORT` | Service listen port | Varies per service (see table above) |
 | `NODE_ENV` | Runtime environment | `development` |
 

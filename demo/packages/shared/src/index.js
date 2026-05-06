@@ -1,13 +1,28 @@
 // @exochain/shared — Database pool + WASM initialization
-import pg from 'pg';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
 
 let pool = null;
 let wasmModule = null;
+let pgModule = null;
+
+function getPg() {
+  if (!pgModule) {
+    pgModule = require('pg');
+  }
+  return pgModule;
+}
 
 export function getPool() {
   if (!pool) {
+    const { DATABASE_URL } = process.env;
+    if (!DATABASE_URL || DATABASE_URL.trim() === '') {
+      throw new Error('DATABASE_URL is required for the ExoChain demo shared database pool');
+    }
+    const pg = getPg();
     pool = new pg.Pool({
-      connectionString: process.env.DATABASE_URL || 'postgres://exochain:exochain_dev@localhost:5432/exochain',
+      connectionString: DATABASE_URL,
     });
   }
   return pool;

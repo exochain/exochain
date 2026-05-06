@@ -6,7 +6,8 @@ set -euo pipefail
 DEMO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$DEMO_DIR"
 
-export DATABASE_URL="${DATABASE_URL:-postgres://exochain:exochain_dev@localhost:5432/exochain}"
+: "${DATABASE_URL:?set DATABASE_URL to a PostgreSQL connection string before running demo/scripts/dev.sh}"
+export DATABASE_URL
 
 echo "═══════════════════════════════════════════════════════════"
 echo "  ExoChain Demo — Starting Services"

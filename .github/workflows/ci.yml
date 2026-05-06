@@ -241,6 +241,8 @@ jobs:
         run: bash tools/test_repo_truth.sh
       - name: Audit policy documentation truth
         run: bash tools/test_audit_policy_docs.sh
+      - name: Demo secret boundary
+        run: bash tools/test_demo_secret_boundaries.sh
       - name: CR-001 status consistency
         run: bash tools/test_cr001_status.sh
       - name: GAP registry truth
