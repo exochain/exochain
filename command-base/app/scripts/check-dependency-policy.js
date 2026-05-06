@@ -8,6 +8,8 @@ const appRoot = join(__dirname, '..');
 const pkg = JSON.parse(readFileSync(join(appRoot, 'package.json'), 'utf8'));
 const lock = JSON.parse(readFileSync(join(appRoot, 'package-lock.json'), 'utf8'));
 
+const scripts = pkg.scripts || {};
+
 function dependencyRange(name) {
   const range = pkg.dependencies && pkg.dependencies[name];
   assert.ok(range, `${name} must be declared as a production dependency`);
@@ -42,5 +44,12 @@ assert.equal(
   undefined,
   `locked multer package must not be deprecated: ${lockedMulter.deprecated}`,
 );
+
+for (const [name, command] of Object.entries(scripts)) {
+  assert.ok(
+    !/\bnpm\s+audit\b.*\|\|\s*true/.test(command),
+    `${name} must not suppress npm audit failures with || true`,
+  );
+}
 
 console.log('CommandBase dependency policy OK');

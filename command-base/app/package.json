@@ -12,7 +12,7 @@
     "auth:check": "node --test lib/auth.test.js",
     "dependency-policy:check": "node scripts/check-dependency-policy.js",
     "surface-policy:check": "node scripts/check-surface-policy.js",
-    "preinstall": "npm audit --audit-level=critical || true"
+    "preinstall": "npm audit --audit-level=critical"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
