@@ -42,3 +42,56 @@ printf '6\n' > "$RESULTS_DIR/rust/total_count"
 generate_report
 grep -F "Determinism: Failed (normalized Rust test summaries differ)" \
     "$RESULTS_DIR/report.txt" > /dev/null
+
+declare -F run_hash_vectors > /dev/null || {
+    echo "run_hash_vectors function missing" >&2
+    exit 1
+}
+
+HASH_RESULTS="$TMP_DIR/hash-results"
+GOOD_VECTORS="$TMP_DIR/good-hash-vectors"
+BAD_VECTORS="$TMP_DIR/bad-hash-vectors"
+mkdir -p "$HASH_RESULTS" "$GOOD_VECTORS" "$BAD_VECTORS"
+
+cat > "$GOOD_VECTORS/hash_blake3.json" <<'EOF'
+{
+  "name": "BLAKE3 hash of canonical CBOR",
+  "category": "crypto_hash",
+  "input": {
+    "canonical_cbor_hex": "a1616101"
+  },
+  "expected": {
+    "blake3_hex": "74a1c68dabb660207c842b9b7dd0953a6a8e8158bb397c5bd4ea9fceda0c4c96"
+  }
+}
+EOF
+
+run_hash_vectors "$GOOD_VECTORS" "$HASH_RESULTS/good"
+
+cat > "$BAD_VECTORS/hash_blake3.json" <<'EOF'
+{
+  "name": "BLAKE3 hash rejects incorrect expected output",
+  "category": "crypto_hash",
+  "input": {
+    "canonical_cbor_hex": "a1616101"
+  },
+  "expected": {
+    "blake3_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}
+EOF
+
+set +e
+run_hash_vectors "$BAD_VECTORS" "$HASH_RESULTS/bad"
+bad_status=$?
+set -e
+
+if [ "$bad_status" -eq 0 ]; then
+    echo "bad canonical hash vector unexpectedly passed" >&2
+    exit 1
+fi
+
+if grep -nE 'for now|would invoke|placeholder' "$SCRIPT_DIR/compare.sh"; then
+    echo "cross-implementation harness must not describe unimplemented vector runners as passing" >&2
+    exit 1
+fi

@@ -137,6 +137,82 @@ capture_rust_test_summary() {
     return "$cargo_status"
 }
 
+count_hash_vectors() {
+    local vectors_dir="$1"
+    local count=0
+
+    for vector_file in "$vectors_dir"/*.json; do
+        [ -e "$vector_file" ] || continue
+        if jq -e '(.input.canonical_cbor_hex? | type == "string") and (.expected.blake3_hex? | type == "string")' "$vector_file" >/dev/null; then
+            count=$((count + 1))
+        fi
+    done
+
+    echo "$count"
+}
+
+ensure_local_node_deps() {
+    local output_dir="$1"
+
+    if [ -d "$SCRIPT_DIR/node_modules" ]; then
+        return 0
+    fi
+
+    log_info "Installing local cross-implementation Node dependencies..."
+    if (cd "$SCRIPT_DIR" && npm ci > "$output_dir/npm_ci.txt" 2>&1); then
+        return 0
+    fi
+
+    log_fail "npm ci failed for tools/cross-impl-test"
+    if $VERBOSE; then
+        tail -20 "$output_dir/npm_ci.txt"
+    fi
+    return 1
+}
+
+run_hash_vectors() {
+    local vectors_dir="$1"
+    local output_dir="$2"
+    mkdir -p "$output_dir"
+
+    local hash_vector_count
+    hash_vector_count="$(count_hash_vectors "$vectors_dir")"
+    if [ "$hash_vector_count" -eq 0 ]; then
+        log_fail "No canonical hash vectors found in $vectors_dir"
+        return 1
+    fi
+
+    log_info "Verifying $hash_vector_count canonical hash vector(s)..."
+
+    if EXOCHAIN_CROSS_IMPL_HASH_VECTORS="$vectors_dir" \
+        cargo test -p exo-core cross_impl_hash_vectors_match_golden -- --exact --nocapture \
+        > "$output_dir/rust_hash_vectors.txt" 2>&1; then
+        log_pass "Rust canonical hash vectors passed"
+    else
+        log_fail "Rust canonical hash vectors failed"
+        if $VERBOSE; then
+            tail -40 "$output_dir/rust_hash_vectors.txt"
+        fi
+        return 1
+    fi
+
+    ensure_local_node_deps "$output_dir" || return 1
+
+    if EXOCHAIN_CROSS_IMPL_HASH_VECTORS="$vectors_dir" \
+        node "$SCRIPT_DIR/index.js" > "$output_dir/node_hash_vectors.txt" 2>&1; then
+        log_pass "Node canonical hash vectors passed"
+    else
+        log_fail "Node canonical hash vectors failed"
+        if $VERBOSE; then
+            tail -40 "$output_dir/node_hash_vectors.txt"
+        fi
+        return 1
+    fi
+
+    echo "$hash_vector_count" > "$output_dir/pass_count"
+    echo "$hash_vector_count" > "$output_dir/total_count"
+}
+
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
@@ -187,17 +263,17 @@ setup() {
 create_default_vectors() {
     mkdir -p "$VECTORS_DIR"
 
-    # Vector 1: BLAKE3 hash consistency
+    # Vector 1: BLAKE3 hash consistency over canonical CBOR bytes.
     cat > "$VECTORS_DIR/hash_blake3.json" <<'VECTOR_EOF'
 {
     "name": "BLAKE3 hash of canonical CBOR",
-    "category": "crypto",
+    "category": "crypto_hash",
     "input": {
-        "data": {"action": "create", "actor": "did:exo:alice", "target": "resource-001"},
-        "encoding": "cbor_canonical"
+        "canonical_cbor_hex": "a1616101"
     },
     "expected": {
-        "description": "BLAKE3 hash of the CBOR-encoded input object with sorted keys"
+        "blake3_hex": "74a1c68dabb660207c842b9b7dd0953a6a8e8158bb397c5bd4ea9fceda0c4c96",
+        "description": "BLAKE3 hash of the canonical CBOR map {\"a\": 1}"
     }
 }
 VECTOR_EOF
@@ -341,31 +417,14 @@ run_rust_tests() {
         return 1
     fi
 
-    # Run each vector through the Rust implementation
-    local vector_count=0
-    local pass_count=0
+    run_hash_vectors "$VECTORS_DIR" "$rust_results/hash_vectors" || return 1
 
-    for vector_file in "$VECTORS_DIR"/*.json; do
-        local vector_name
-        vector_name=$(jq -r '.name' "$vector_file")
-        local category
-        category=$(jq -r '.category' "$vector_file")
-        vector_count=$((vector_count + 1))
+    local pass_count
+    local vector_count
+    pass_count="$(cat "$rust_results/hash_vectors/pass_count")"
+    vector_count="$(cat "$rust_results/hash_vectors/total_count")"
 
-        log_verbose "Vector: $vector_name ($category)"
-
-        # Extract the input and write to a temp file for the Rust runner
-        local input_file="$rust_results/input_${vector_count}.json"
-        local output_file="$rust_results/output_${vector_count}.json"
-        jq '.input' "$vector_file" > "$input_file"
-
-        # For now, mark as passed if the relevant crate tests pass
-        # A full runner would invoke a dedicated binary
-        pass_count=$((pass_count + 1))
-        log_verbose "  Rust: category=$category [delegated to cargo test]"
-    done
-
-    log_pass "Rust: $pass_count/$vector_count vectors processed"
+    log_pass "Rust/Node canonical hash vectors: $pass_count/$vector_count verified"
     echo "$pass_count" > "$rust_results/pass_count"
     echo "$vector_count" > "$rust_results/total_count"
 }
