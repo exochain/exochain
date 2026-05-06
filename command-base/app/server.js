@@ -9357,6 +9357,34 @@ const PROJECT_IMPROVEMENT_SEEDS = {
   ]
 };
 
+function compareTemplateText(left, right) {
+  const l = String(left || '').trim().toLowerCase();
+  const r = String(right || '').trim().toLowerCase();
+  if (l < r) return -1;
+  if (l > r) return 1;
+  return 0;
+}
+
+function deterministicTemplateOrder(left, right) {
+  const sourceOrder = left.sourceIndex - right.sourceIndex;
+  if (sourceOrder !== 0) return sourceOrder;
+
+  for (const field of ['category', 'impact', 'effort', 'title', 'tagline', 'description']) {
+    const leftValue = left.template && left.template[field];
+    const rightValue = right.template && right.template[field];
+    const byField = compareTemplateText(leftValue, rightValue);
+    if (byField !== 0) return byField;
+  }
+  return 0;
+}
+
+function rankTemplatesDeterministically(templates) {
+  return templates
+    .map((template, sourceIndex) => ({ template, sourceIndex }))
+    .sort(deterministicTemplateOrder)
+    .map(entry => entry.template);
+}
+
 /**
  * Auto-fill a project-specific improvement chamber.
  */
@@ -9376,8 +9404,7 @@ function autoFillProjectChamber(projectId) {
   // Get seeds for this project
   const seeds = PROJECT_IMPROVEMENT_SEEDS[project.name] || PROJECT_IMPROVEMENT_SEEDS['default'];
   const availableSeeds = seeds.filter(s => !existingTitles.includes(s.title.toLowerCase()));
-  const shuffled = availableSeeds.sort(() => Math.random() - 0.5);
-  const batch = shuffled.slice(0, needed);
+  const batch = rankTemplatesDeterministically(availableSeeds).slice(0, needed);
 
   let inserted = 0;
   for (const s of batch) {
@@ -10556,9 +10583,7 @@ function autoFillBrainstorm() {
   // Find templates not already used
   const available = BRAINSTORM_TEMPLATES.filter(t => !existingTitles.includes(t.title.toLowerCase()));
 
-  // Shuffle and pick what we need
-  const shuffled = available.sort(() => Math.random() - 0.5);
-  const toInsert = shuffled.slice(0, needed);
+  const toInsert = rankTemplatesDeterministically(available).slice(0, needed);
 
   for (const t of toInsert) {
     db.prepare(`INSERT INTO idea_board (title, tagline, description, category, status, generated_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)`)
