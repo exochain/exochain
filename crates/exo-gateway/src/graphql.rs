@@ -491,6 +491,8 @@ pub const UNAUDITED_GRAPHQL_API_MEMO: &str =
     "exochain/council-intake/exo-spline-gateway-api-messaging.md";
 pub const GRAPHQL_MAX_QUERY_DEPTH: usize = 12;
 pub const GRAPHQL_MAX_QUERY_COMPLEXITY: usize = 256;
+pub const GRAPHQL_MAX_DECISIONS_LIMIT: i32 = 200;
+pub const GRAPHQL_MAX_DECISIONS_OFFSET: i32 = 10_000;
 pub const GRAPHQL_CONSENT_FABRICATION_INITIATIVE: &str =
     "Initiatives/fix-spline-r2-graphql-consent-fabrication.md";
 pub const GRAPHQL_PROOF_STUB_INITIATIVE: &str = "Initiatives/fix-spline-r3-graphql-proof-stub.md";
@@ -524,10 +526,14 @@ impl QueryRoot {
         guard_graphql_execution()?;
         let state = app_state_from_context(ctx)?;
         let guard = state.lock().await;
-        let offset =
-            graphql_nonnegative_i32_to_usize(offset.unwrap_or(0).max(0), "decisions.offset")?;
-        let limit =
-            graphql_nonnegative_i32_to_usize(limit.unwrap_or(50).clamp(1, 200), "decisions.limit")?;
+        let offset = graphql_nonnegative_i32_to_usize(
+            offset.unwrap_or(0).clamp(0, GRAPHQL_MAX_DECISIONS_OFFSET),
+            "decisions.offset",
+        )?;
+        let limit = graphql_nonnegative_i32_to_usize(
+            limit.unwrap_or(50).clamp(1, GRAPHQL_MAX_DECISIONS_LIMIT),
+            "decisions.limit",
+        )?;
         let results: Vec<GqlDecision> = guard
             .decisions
             .values()
@@ -1688,6 +1694,49 @@ mod tests {
         assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
         let data = res.data.into_json().expect("data");
         assert_eq!(data["decisions"], serde_json::json!([]));
+    }
+
+    #[cfg(feature = "unaudited-gateway-graphql-api")]
+    #[tokio::test]
+    async fn query_decisions_clamps_oversized_offset() {
+        let mut state = AppState::new();
+        for index in 0..10_002 {
+            let id = format!("decision-{index:05}");
+            state.decisions.insert(
+                id.clone(),
+                DecisionRecord {
+                    decision: GqlDecision {
+                        id: ID::from(id),
+                        tenant_id: "tenant-a".to_owned(),
+                        status: "CREATED".to_owned(),
+                        title: format!("Decision {index:05}"),
+                        decision_class: "Routine".to_owned(),
+                        author: "did:exo:author".to_owned(),
+                        created_at: "1:0".to_owned(),
+                        votes: Vec::new(),
+                        challenges: Vec::new(),
+                        content_hash: Hash256::digest(format!("decision-{index:05}").as_bytes())
+                            .to_string(),
+                    },
+                    audit_trail: Vec::new(),
+                },
+            );
+        }
+        let schema = build_schema(Arc::new(Mutex::new(state)));
+
+        let res = schema
+            .execute(r#"{ decisions(tenantId: "tenant-a", limit: 1, offset: 10001) { id title } }"#)
+            .await;
+
+        assert!(res.errors.is_empty(), "errors: {:?}", res.errors);
+        let data = res.data.into_json().expect("data");
+        assert_eq!(
+            data["decisions"],
+            serde_json::json!([
+                {"id": "decision-10000", "title": "Decision 10000"}
+            ]),
+            "oversized offsets must clamp to the gateway GraphQL offset ceiling"
+        );
     }
 
     #[cfg(feature = "unaudited-gateway-graphql-api")]
