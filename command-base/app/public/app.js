@@ -10732,9 +10732,7 @@
   }
 
   function renderProviderCard(p) {
-    var maskedKey = p.api_key || '';
-    if (maskedKey.length > 8) maskedKey = maskedKey.slice(0, 4) + '****' + maskedKey.slice(-4);
-    else if (maskedKey.length > 0) maskedKey = '****' + maskedKey.slice(-4);
+    var maskedKey = p.api_key ? maskApiKey(p.api_key) : '';
     var html = '<div class="provider-card" data-provider-id="' + p.id + '">';
     html += '<div class="provider-card-header">';
     html += '<div class="provider-card-title">';
@@ -10756,10 +10754,7 @@
     html += '<div class="provider-detail-row">';
     html += '<span class="provider-detail-label">API Key</span>';
     html += '<span class="provider-detail-value provider-api-key-display">';
-    html += '<code class="provider-masked-key" data-full-key="' + escHtml(p.api_key || '') + '" data-masked="' + escHtml(maskedKey) + '">' + escHtml(maskedKey || 'None') + '</code>';
-    if (p.api_key) {
-      html += ' <button class="provider-key-toggle" title="Show/Hide">Show</button>';
-    }
+    html += '<code class="provider-masked-key" data-masked="' + escHtml(maskedKey) + '">' + escHtml(maskedKey || 'None') + '</code>';
     html += '</span>';
     html += '</div>';
     html += '<div class="provider-detail-row">';
@@ -10783,6 +10778,8 @@
   function renderProviderForm(existingProvider) {
     var p = existingProvider || {};
     var isEdit = !!p.id;
+    var apiKeyValue = isEdit ? '' : (p.api_key || '');
+    var apiKeyPlaceholder = isEdit ? 'Leave blank to keep existing key' : 'sk-...';
     var html = '<div class="provider-form">';
     html += '<div class="provider-form-title">' + (isEdit ? 'Edit Provider' : 'Add New Provider') + '</div>';
     html += '<div class="provider-form-grid">';
@@ -10808,7 +10805,7 @@
     html += '</div>';
     html += '<div class="config-field">';
     html += '<label>API Key</label>';
-    html += '<input type="password" class="pf-api-key" value="' + escHtml(p.api_key || '') + '" placeholder="sk-...">';
+    html += '<input type="password" class="pf-api-key" value="' + escHtml(apiKeyValue) + '" placeholder="' + escHtml(apiKeyPlaceholder) + '">';
     html += '</div>';
     html += '<div class="config-field">';
     html += '<label>Default Model</label>';
@@ -11109,22 +11106,6 @@
         });
       }
 
-      // Show/Hide API key
-      var keyToggle = card.querySelector('.provider-key-toggle');
-      if (keyToggle) {
-        keyToggle.addEventListener('click', function() {
-          var codeEl = card.querySelector('.provider-masked-key');
-          var fullKey = codeEl.dataset.fullKey;
-          var masked = codeEl.dataset.masked;
-          if (keyToggle.textContent === 'Show') {
-            codeEl.textContent = fullKey;
-            keyToggle.textContent = 'Hide';
-          } else {
-            codeEl.textContent = masked;
-            keyToggle.textContent = 'Show';
-          }
-        });
-      }
     });
   }
 
@@ -11174,7 +11155,10 @@
 
         if (!name) { showToast('Provider name is required', 'error'); return; }
 
-        var body = { name: name, type: type, base_url: base_url, api_key: api_key, default_model: default_model, enabled: 1 };
+        var body = { name: name, type: type, base_url: base_url, default_model: default_model, enabled: 1 };
+        if (!existingProvider || api_key) {
+          body.api_key = api_key;
+        }
 
         // Include session fields for perplexity/session_token types
         if (type === 'perplexity' || type === 'session_token') {

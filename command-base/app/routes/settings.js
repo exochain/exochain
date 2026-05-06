@@ -3,6 +3,50 @@ module.exports = function(app, db, helpers) {
   const { broadcast, localNow, createNotification, authRateLimiter, apiRateLimiter, spawnMemberTerminal } = helpers;
   const stmt = helpers.stmt || ((sql) => db.prepare(sql));
 
+function maskCredential(value) {
+  if (!value) return '****';
+  const raw = String(value);
+  if (raw.length <= 4) return '****';
+  return '****' + raw.slice(-4);
+}
+
+function maskApiKey(key) {
+  if (!key) return null;
+  const raw = String(key);
+  if (raw.length <= 8) return '••••';
+  return '••••' + raw.slice(-8);
+}
+
+function isSensitiveSettingKey(key) {
+  const lower = String(key || '').toLowerCase();
+  return lower === 'webhook_secret'
+    || lower === 'anthropic_api_key'
+    || lower === 'oauth_token'
+    || lower.endsWith('_token')
+    || lower.endsWith('_key')
+    || lower.endsWith('_secret')
+    || lower.endsWith('_password')
+    || lower.endsWith('_passwd')
+    || lower.endsWith('_auth')
+    || lower.endsWith('_sid')
+    || lower.endsWith('_apikey')
+    || lower.startsWith('auth_')
+    || lower.startsWith('secret_')
+    || lower.startsWith('token_')
+    || lower.startsWith('api_key_')
+    || lower.includes('api_key')
+    || lower.includes('apikey')
+    || lower.includes('access_key')
+    || lower.includes('client_secret');
+}
+
+function looksMaskedSecretValue(value) {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return /[•*]{2,}/.test(trimmed);
+}
+
 // GET /api/model-sources — list all configured model sources with live status
 app.get('/api/model-sources', async (req, res) => {
   try {
@@ -567,6 +611,9 @@ app.post('/api/llm/providers', (req, res) => {
     if (!type || !['claude', 'openai', 'ollama', 'perplexity', 'custom'].includes(type)) {
       return res.status(400).json({ error: 'type must be one of: claude, openai, ollama, perplexity, custom' });
     }
+    if (looksMaskedSecretValue(api_key)) {
+      return res.status(400).json({ error: 'api_key must be an unmasked secret value' });
+    }
     const now = localNow();
     const configStr = JSON.stringify(config || {});
     const result = db.prepare(`
@@ -607,7 +654,15 @@ app.put('/api/llm/providers/:id', (req, res) => {
         if (f === 'type' && !['claude', 'openai', 'ollama', 'perplexity', 'custom'].includes(req.body[f])) {
           return res.status(400).json({ error: 'type must be one of: claude, openai, ollama, perplexity, custom' });
         }
-        if (f === 'config') {
+        if (f === 'api_key') {
+          if (looksMaskedSecretValue(req.body[f])) {
+            return res.status(400).json({
+              error: 'api_key must be omitted to keep the existing key or supplied as a new unmasked secret'
+            });
+          }
+          updates.push('api_key = ?');
+          values.push(req.body[f]);
+        } else if (f === 'config') {
           updates.push('config = ?');
           values.push(JSON.stringify(req.body[f]));
         } else if (f === 'enabled') {
