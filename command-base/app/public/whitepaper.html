@@ -777,8 +777,11 @@
     }
 
     // ── Main Render ─────────────────────────────────────
-    // Auth: get API key for authenticated requests
+    // Auth: use caller-provided key when present; status never discloses it.
     var _wpApiKey = null;
+    try {
+      _wpApiKey = localStorage.getItem('cb_api_key') || null;
+    } catch (_) {}
     async function wpFetch(url, extraOpts) {
       var opts = Object.assign({}, extraOpts || {});
       opts.headers = Object.assign({}, opts.headers || {});
@@ -791,12 +794,12 @@
       var refreshTime = document.getElementById('wp-refresh-time');
 
       try {
-        // Bootstrap auth key
+        // Confirm auth state without bootstrapping secrets.
         if (!_wpApiKey) {
           try {
             var authRes = await fetch('/api/auth/status');
             var authData = await authRes.json();
-            if (authData.key) { _wpApiKey = authData.key; document.cookie = 'cb_auth=' + authData.key + ';path=/;SameSite=Strict'; }
+            if (!authData.authenticated) _wpApiKey = null;
           } catch(e) {}
         }
 
@@ -959,7 +962,7 @@
             '<li style="margin-bottom:8px"><strong style="color:var(--accent)">Modularized Routes</strong> &mdash; 16 domain-specific route files (governance, companies, projects, etc.) extracted from the monolith. Core server handles DB setup, middleware, engines, and spawning.</li>' +
             '<li style="margin-bottom:8px"><strong style="color:var(--accent)">Dual Inference</strong> &mdash; Claude (Sonnet/Opus) for code tasks requiring tool use. Nemotron/qwen3-coder on DGX Spark (GB10, 128GB RAM) for free analysis, reviews, digestion. SSH tunnel at localhost:11435.</li>' +
             '<li style="margin-bottom:8px"><strong style="color:var(--accent)">Task Forces</strong> &mdash; External execution teams with their own DB, process management, and auto-guardian. Survive server crashes. Anti-bias enforcement prevents builders from reviewing their own work.</li>' +
-            '<li style="margin-bottom:8px"><strong style="color:var(--accent)">API Key Auth</strong> &mdash; Auto-generated 256-bit key on first boot. All /api/* routes protected. Frontend auto-authenticates via /api/auth/status bootstrap.</li>' +
+            '<li style="margin-bottom:8px"><strong style="color:var(--accent)">API Key Auth</strong> &mdash; Auto-generated 256-bit key on first boot. All /api/* routes protected. Auth status reports boolean state and never discloses the key.</li>' +
             '<li style="margin-bottom:8px"><strong style="color:var(--accent)">Prepared Statement Cache</strong> &mdash; All SQL queries go through a stmt() cache to avoid re-parsing.</li>' +
             '<li style="margin-bottom:8px"><strong style="color:var(--accent)">In-Memory TTL Cache</strong> &mdash; team_members (30s TTL) and system_settings (10s TTL) cached in-process to eliminate hot-path DB round-trips.</li>' +
             '<li style="margin-bottom:8px"><strong style="color:var(--accent)">Resource Management</strong> &mdash; Per-device resource profiles (Mac: 60% RAM cap for protection, Spark: 98% for full utilization). Process breakdown shows grouped app-level resource usage. Emergency kill buttons for instant model termination.</li>' +

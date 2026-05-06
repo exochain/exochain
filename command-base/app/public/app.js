@@ -96,10 +96,11 @@
     if (cached && Date.now() - cached.ts < ttl) {
       return cached.data;
     }
-    var opts = {};
+    var opts = { headers: {} };
     if (cached && cached.etag) {
-      opts.headers = { 'If-None-Match': cached.etag };
+      opts.headers['If-None-Match'] = cached.etag;
     }
+    if (_cbApiKey) opts.headers['X-API-Key'] = _cbApiKey;
     const res = await fetch(`/api/${endpoint}`, opts);
     if (res.status === 304) {
       // Server confirmed cache is still valid — refresh TTL
@@ -127,13 +128,17 @@
     }
   }
 
-  // ── API Auth: fetch key from server, include in all requests ──
+  // API Auth: use caller-provided key when present; status never discloses it.
   var _cbApiKey = null;
+  try {
+    _cbApiKey = localStorage.getItem('cb_api_key') || null;
+  } catch (_) {}
   (async function() {
     try {
-      var r = await fetch('/api/auth/status');
+      var authOpts = _cbApiKey ? { headers: { 'X-API-Key': _cbApiKey } } : {};
+      var r = await fetch('/api/auth/status', authOpts);
       var d = await r.json();
-      if (d.key) { _cbApiKey = d.key; document.cookie = 'cb_auth=' + d.key + ';path=/;SameSite=Strict'; }
+      if (!d.authenticated && _cbApiKey) _cbApiKey = null;
     } catch (_) {}
   })();
 

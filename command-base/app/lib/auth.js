@@ -24,8 +24,19 @@ const crypto = require('crypto');
 /** Default token TTL in seconds (1 hour). */
 const DEFAULT_TTL_SECONDS = 3600;
 
-/** HMAC fallback secret — override via EXOCHAIN_AUTH_SECRET env var. */
-const HMAC_SECRET = process.env.EXOCHAIN_AUTH_SECRET || 'exochain-dev-secret-change-in-production';
+/** Minimum HMAC fallback secret length in bytes. */
+const MIN_HMAC_SECRET_BYTES = 32;
+
+function getHmacSecret() {
+  const secret = process.env.EXOCHAIN_AUTH_SECRET;
+  if (!secret || typeof secret !== 'string' || secret.trim() === '') {
+    throw new Error('EXOCHAIN_AUTH_SECRET must be set when WASM Ed25519 signing is unavailable');
+  }
+  if (Buffer.byteLength(secret, 'utf8') < MIN_HMAC_SECRET_BYTES) {
+    throw new Error('EXOCHAIN_AUTH_SECRET must be at least 32 bytes when HMAC signing is used');
+  }
+  return secret;
+}
 
 // ---------------------------------------------------------------------------
 // WASM loader — lazy, non-fatal
@@ -87,7 +98,7 @@ function sign(message) {
     return base64urlEncode(sigBytes);
   }
   // HMAC-SHA256 fallback
-  const hmac = crypto.createHmac('sha256', HMAC_SECRET);
+  const hmac = crypto.createHmac('sha256', getHmacSecret());
   hmac.update(message);
   return base64urlEncode(hmac.digest());
 }
@@ -107,6 +118,7 @@ function verify(message, signature) {
   }
   // HMAC-SHA256 fallback: recompute and compare
   const expected = sign(message);
+  if (expected.length !== signature.length) return false;
   return crypto.timingSafeEqual(
     Buffer.from(expected, 'utf8'),
     Buffer.from(signature, 'utf8')
@@ -172,8 +184,14 @@ function verifyToken(token) {
   const [headerB64, payloadB64, signature] = parts;
   const signingInput = `${headerB64}.${payloadB64}`;
 
-  // Verify signature
-  if (!verify(signingInput, signature)) {
+  let signatureValid;
+  try {
+    signatureValid = verify(signingInput, signature);
+  } catch (err) {
+    return { valid: false, error: err.message };
+  }
+
+  if (!signatureValid) {
     return { valid: false, error: 'Invalid signature' };
   }
 
@@ -256,6 +274,7 @@ module.exports = {
   // Exposed for testing
   _sign: sign,
   _verify: verify,
+  _getHmacSecret: getHmacSecret,
   _base64urlEncode: base64urlEncode,
   _base64urlDecode: base64urlDecode,
 };

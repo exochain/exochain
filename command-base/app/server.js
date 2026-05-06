@@ -15,6 +15,10 @@ const https = require('https');
 const { URL } = require('url');
 const crypto = require('crypto');
 const zlib = require('zlib');
+const {
+  buildAuthStatus,
+  isApiAuthenticated,
+} = require('./lib/api-key-auth');
 const app = express();
 
 // Trust the first proxy hop (Cloudflare, nginx, Railway, etc.) so that
@@ -3413,16 +3417,12 @@ function getApiAuthKey() {
   return _apiAuthKey;
 }
 app.get('/api/auth/status', (req, res) => {
-  res.json({ authenticated: true, key: getApiAuthKey() });
+  res.json(buildAuthStatus(req, getApiAuthKey()));
 });
 app.use('/api', (req, res, next) => {
-  // Exempt auth status and whitepaper data (non-sensitive, needed before auth bootstrap)
-  if (req.path === '/auth/status' || req.path.startsWith('/whitepaper/')) return next();
-  const key = getApiAuthKey();
-  const headerKey = req.headers['x-api-key'];
-  const cookieMatch = (req.headers.cookie || '').match(/cb_auth=([^;]+)/);
-  const cookieKey = cookieMatch ? cookieMatch[1] : null;
-  if (headerKey === key || cookieKey === key) return next();
+  // Exempt whitepaper data only; auth status is a route, not a key bootstrap.
+  if (req.path.startsWith('/whitepaper/')) return next();
+  if (isApiAuthenticated(req, getApiAuthKey())) return next();
   res.status(401).json({ error: 'Unauthorized — missing or invalid API key' });
 });
 
