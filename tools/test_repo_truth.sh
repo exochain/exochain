@@ -77,6 +77,21 @@ expected_gates=$(grep -E 'name: "Gate [0-9]+' .github/workflows/ci.yml | sed -E 
 actual_gates=$(jq '.ci_gates.numbered' "$json_file")
 [ "$actual_gates" = "$expected_gates" ] || fail "CI gate count $actual_gates != $expected_gates"
 
+workspace_license=$(awk -F '"' '/^license =/ { print $2; exit }' Cargo.toml)
+[ "$workspace_license" = "Apache-2.0" ] || fail "workspace license must remain Apache-2.0, got ${workspace_license:-<missing>}"
+
+check_package_license() {
+  local package_file="$1"
+  local package_license
+  package_license=$(jq -r '.license // "<missing>"' "$package_file")
+  [ "$package_license" = "$workspace_license" ] \
+    || fail "$package_file license must match workspace license $workspace_license, got $package_license"
+}
+
+check_package_license packages/exochain-sdk/package.json
+check_package_license packages/exochain-wasm/wasm/package.json
+check_package_license demo/packages/exochain-wasm/package.json
+
 grep -F 'cargo clippy --workspace --all-targets -- -D warnings' .github/workflows/ci.yml >/dev/null \
   || fail "CI clippy gate must cover all workspace targets"
 if grep -nE 'cargo clippy --workspace --(lib|bins|tests|benches)' .github/workflows/ci.yml; then

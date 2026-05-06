@@ -4,7 +4,7 @@
   "description": "ExoChain governance engine — WebAssembly bindings for Node.js",
   "main": "index.js",
   "types": "wasm/exochain_wasm.d.ts",
-  "license": "AGPL-3.0-or-later",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/exochain/exochain"
