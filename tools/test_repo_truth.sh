@@ -83,6 +83,11 @@ if grep -nE 'cargo clippy --workspace --(lib|bins|tests|benches)' .github/workfl
   fail "CI clippy gate must not split target classes; use --all-targets"
 fi
 
+grep -F 'unwrap_used = "deny"' Cargo.toml >/dev/null \
+  || fail "workspace must deny clippy::unwrap_used instead of warning"
+grep -F 'expect_used = "deny"' Cargo.toml >/dev/null \
+  || fail "workspace must deny clippy::expect_used instead of warning"
+
 test_mode=$(jq -r '.tests.mode' "$json_file")
 [ "$test_mode" = "skipped" ] || fail "--skip-tests should report tests.mode=skipped, got $test_mode"
 

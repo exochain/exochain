@@ -111,8 +111,8 @@ float_arithmetic = "deny"
 float_cmp = "deny"
 float_cmp_const = "deny"
 as_conversions = "warn"
-unwrap_used = "warn"
-expect_used = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
 
 [profile.release]
 lto = true
