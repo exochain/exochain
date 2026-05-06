@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { getFamily, inviteFamily } from '@/lib/api';
-import { Shield, Plus, X, UserPlus, CheckCircle, Clock } from 'lucide-react';
+import { Shield, X, UserPlus, CheckCircle, Clock } from 'lucide-react';
 
 const RELATIONSHIPS = [
   'Spouse/Partner', 'Child', 'Parent', 'Sibling', 'Grandchild',

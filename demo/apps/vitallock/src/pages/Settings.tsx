@@ -86,7 +86,7 @@ export default function Settings() {
         </div>
         <div className="text-xs text-zinc-400 space-y-1">
           <p>Version: 0.1.0-beta</p>
-          <p>Trust Fabric: EXOCHAIN v0.1.0-beta</p>
+          <p>EXOCHAIN-adjacent prototype</p>
           <p>Encryption: X25519 + XChaCha20-Poly1305</p>
           <p>Key Sharding: Shamir (3-of-4 threshold)</p>
           <p>Post-Quantum: ML-DSA-65 (NIST FIPS 204) ready</p>

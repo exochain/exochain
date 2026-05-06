@@ -5,31 +5,28 @@
  * The server never sees plaintext.
  */
 
-import init, {
-  wasm_generate_x25519_keypair,
-  wasm_ed25519_public_from_secret,
-  wasm_encrypt_message,
-  wasm_decrypt_message,
-  wasm_verify_message_signature,
-  wasm_shamir_split,
-  wasm_death_verification_initial_signing_payload,
-  wasm_death_verification_new,
-  wasm_death_verification_confirmation_signing_payload,
-  wasm_death_verification_confirm,
-} from '@/wasm/exochain_wasm';
-
 let initialized = false;
+const CRYPTO_BOUNDARY_ERROR =
+  'VitalLock EXOCHAIN crypto is unavailable: this adjacent prototype has no tested browser WASM/core adapter configured';
+
+function unavailable(): never {
+  throw new Error(CRYPTO_BOUNDARY_ERROR);
+}
 
 /** Initialize the WASM module. Must be called before any crypto operation. */
 export async function initCrypto(): Promise<void> {
-  if (initialized) return;
-  await init();
-  initialized = true;
+  initialized = false;
+  unavailable();
+}
+
+export function cryptoUnavailableMessage(): string {
+  return CRYPTO_BOUNDARY_ERROR;
 }
 
 /** Derive an Ed25519 public key hex string from a caller-held secret key. */
 export function ed25519PublicFromSecret(secretKeyHex: string): string {
-  return wasm_ed25519_public_from_secret(secretKeyHex);
+  void secretKeyHex;
+  return unavailable();
 }
 
 /** Check if WASM is initialized. */
@@ -46,7 +43,7 @@ export interface X25519KeyPair {
 
 /** Generate an X25519 keypair (for encryption key exchange). */
 export function generateX25519Keypair(): X25519KeyPair {
-  return wasm_generate_x25519_keypair();
+  return unavailable();
 }
 
 // ── Message Encryption (E2E) ──
@@ -82,9 +79,9 @@ export function encryptMessage(
   releaseOnDeath: boolean = false,
   releaseDelayHours: number = 0,
 ): EncryptedEnvelope {
-  return wasm_encrypt_message(
+  void [
     plaintext,
-    JSON.stringify(contentType),
+    contentType,
     senderDid,
     recipientDid,
     senderSigningKeyHex,
@@ -94,7 +91,8 @@ export function encryptMessage(
     createdLogical,
     releaseOnDeath,
     releaseDelayHours,
-  );
+  ];
+  return unavailable();
 }
 
 /**
@@ -106,11 +104,8 @@ export function decryptMessage(
   recipientX25519SecretHex: string,
   senderEd25519PublicHex: string,
 ): { plaintext: string; content_type: string } {
-  return wasm_decrypt_message(
-    envelopeJson,
-    recipientX25519SecretHex,
-    senderEd25519PublicHex,
-  );
+  void [envelopeJson, recipientX25519SecretHex, senderEd25519PublicHex];
+  return unavailable();
 }
 
 /** Verify the sender's signature without decrypting. */
@@ -118,7 +113,8 @@ export function verifyMessageSignature(
   envelopeJson: string,
   senderEd25519PublicHex: string,
 ): boolean {
-  return wasm_verify_message_signature(envelopeJson, senderEd25519PublicHex);
+  void [envelopeJson, senderEd25519PublicHex];
+  return unavailable();
 }
 
 // ── Shamir Secret Sharing ──
@@ -138,7 +134,8 @@ export function shamirSplit(
   threshold: number = 3,
   shares: number = 4,
 ): ShamirShare[] {
-  return wasm_shamir_split(secret, threshold, shares);
+  void [secret, threshold, shares];
+  return unavailable();
 }
 
 // ── Death Verification ──
@@ -171,13 +168,8 @@ export function deathVerificationInitialSigningPayload(
   claimNonceHex: string,
   requiredConfirmations: number = 3,
 ): Uint8Array {
-  return wasm_death_verification_initial_signing_payload(
-    subjectDid,
-    initiatedByDid,
-    requiredConfirmations,
-    JSON.stringify(authorizedTrustees),
-    claimNonceHex,
-  );
+  void [subjectDid, initiatedByDid, authorizedTrustees, claimNonceHex, requiredConfirmations];
+  return unavailable();
 }
 
 /** Create a new death verification request. */
@@ -191,16 +183,17 @@ export function createDeathVerification(
   createdLogical: number,
   requiredConfirmations: number = 3,
 ): DeathVerificationState {
-  return wasm_death_verification_new(
+  void [
     subjectDid,
     initiatedByDid,
     requiredConfirmations,
-    JSON.stringify(authorizedTrustees),
+    authorizedTrustees,
     claimNonceHex,
     initiatorSignatureHex,
     createdPhysicalMs,
     createdLogical,
-  );
+  ];
+  return unavailable();
 }
 
 /** Compute the bytes a trustee must sign to confirm an existing death claim. */
@@ -208,7 +201,8 @@ export function deathVerificationConfirmationSigningPayload(
   stateJson: string,
   trusteeDid: string,
 ): Uint8Array {
-  return wasm_death_verification_confirmation_signing_payload(stateJson, trusteeDid);
+  void [stateJson, trusteeDid];
+  return unavailable();
 }
 
 /** Add a trustee confirmation to a death verification. */
@@ -220,12 +214,13 @@ export function confirmDeathVerification(
   confirmedPhysicalMs: bigint,
   confirmedLogical: number,
 ): { verified: boolean; confirmations_remaining: number; state: DeathVerificationState } {
-  return wasm_death_verification_confirm(
+  void [
     stateJson,
     trusteeDid,
     trusteePublicKeyHex,
     signatureHex,
     confirmedPhysicalMs,
     confirmedLogical,
-  );
+  ];
+  return unavailable();
 }

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth, type AuthState } from '@/hooks/useAuth';
 import {
-  initCrypto, isCryptoReady,
+  cryptoUnavailableMessage, initCrypto, isCryptoReady,
   generateX25519Keypair as genX25519Wasm,
 } from '@/lib/crypto';
 
@@ -15,7 +15,9 @@ export default function Login() {
 
   // Initialize WASM on mount
   useEffect(() => {
-    initCrypto().then(() => setStatus('EXOCHAIN CGR Kernel ready'));
+    initCrypto()
+      .then(() => setStatus('EXOCHAIN-adjacent crypto adapter ready'))
+      .catch(() => setStatus(cryptoUnavailableMessage()));
   }, []);
 
   const handleSubmit = async () => {

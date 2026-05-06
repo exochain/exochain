@@ -52,7 +52,8 @@ export const openMessage = (data: {
 export const getAfterlifeMessages = (did: string) =>
   request<Array<{
     id: string; recipient_did: string; content_type: string;
-    subject: string | null; release_delay_hours: number; released: boolean;
+    subject: string | null; created_at_ms: number;
+    release_delay_hours: number; released: boolean;
   }>>(`/messages/afterlife/${did}`);
 
 // ── PACE Network ──

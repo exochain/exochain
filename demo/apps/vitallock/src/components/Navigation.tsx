@@ -31,7 +31,7 @@ export default function Navigation({ displayName, odentityScore, onLogout }: Pro
         <h1 className="text-2xl font-bold tracking-tighter">
           VITAL<span className="text-emerald-400">LOCK</span>
         </h1>
-        <p className="text-[10px] text-zinc-500 mt-1">Powered by EXOCHAIN</p>
+        <p className="text-[10px] text-zinc-500 mt-1">EXOCHAIN-adjacent prototype</p>
       </div>
 
       {/* User + Score */}
