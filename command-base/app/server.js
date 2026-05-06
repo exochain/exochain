@@ -9096,29 +9096,32 @@ function assignMember(taskCategory, projectId) {
     ORDER BY
       running_tasks ASC,
       completed_tasks ASC,
-      RANDOM()
+      tm.id ASC
     LIMIT 5
   `).all();
 
   if (candidates.length === 0) {
     // Fallback: any active specialist, least loaded
     const fallback = db.prepare(`
-      SELECT id, name, role FROM team_members
-      WHERE status = 'active' AND tier = 'specialist'
-      ORDER BY (SELECT COUNT(*) FROM active_processes WHERE member_id = team_members.id AND status = 'completed') ASC, RANDOM()
+      SELECT id, name, role,
+        (SELECT COUNT(*) FROM active_processes WHERE member_id = team_members.id AND status = 'running') as running_tasks,
+        (SELECT COUNT(*) FROM active_processes WHERE member_id = team_members.id AND status = 'completed') as completed_tasks
+      FROM team_members
+      WHERE status = 'active'
+        AND tier = 'specialist'
+      ORDER BY running_tasks ASC, completed_tasks ASC, id ASC
       LIMIT 1
     `).get();
     return fallback || null;
   }
 
-  // If project specified, prefer members with affinity (but not always — 70/30 split for growth)
+  // If project specified, prefer the first affinity member in load-sorted order.
   if (projectId) {
     const affinityMember = candidates.find(c => {
       const affinity = db.prepare('SELECT id FROM project_affinity WHERE project_id = ? AND member_id = ?').get(projectId, c.id);
       return affinity !== undefined;
     });
-    // 70% chance affinity member, 30% chance someone new (growth opportunity)
-    if (affinityMember && Math.random() < 0.7) {
+    if (affinityMember) {
       return affinityMember;
     }
   }
