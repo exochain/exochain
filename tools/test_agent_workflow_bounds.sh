@@ -56,4 +56,8 @@ for workflow in .archon/workflows/*.yaml; do
   fi
 done
 
+require_file ".github/workflows/ci.yml"
+require_pattern ".github/workflows/ci.yml" 'bash tools/test_agent_prompt_boundaries\.sh' "agent prompt boundary CI gate"
+require_pattern ".github/workflows/ci.yml" 'bash tools/test_agent_workflow_bounds\.sh' "agent workflow bound CI gate"
+
 printf 'agent workflow bound test passed\n'

@@ -255,6 +255,10 @@ jobs:
         run: bash tools/test_deployment_readiness_probes.sh
       - name: Docker production database feature contract
         run: bash tools/test_docker_production_db_feature.sh
+      - name: Agent prompt boundary contract
+        run: bash tools/test_agent_prompt_boundaries.sh
+      - name: Agent workflow loop-bound contract
+        run: bash tools/test_agent_workflow_bounds.sh
       - name: Core fuzz target compile contract
         run: bash tools/test_core_fuzz_targets.sh
 
