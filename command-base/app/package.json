@@ -9,7 +9,7 @@
     "audit:fix": "npm audit fix --force --audit-level=high",
     "audit:report": "npm audit --json > audit-report.json && echo 'Audit report written to audit-report.json'",
     "audit:moderate": "npm audit --audit-level=moderate",
-    "preinstall": "npm audit --audit-level=critical || true"
+    "preinstall": "npm audit --audit-level=critical"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -17,7 +17,7 @@
     "better-sqlite3": "^12.8.0",
     "compression": "^1.8.1",
     "express": "^4.21.0",
-    "multer": "^1.4.5-lts.1",
+    "multer": "2.1.1",
     "ws": "^8.20.0"
   }
 }

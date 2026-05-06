@@ -237,6 +237,8 @@ jobs:
         run: bash tools/test_github_actions_pinned.sh
       - name: CI tool installer supply-chain hardening
         run: bash tools/test_ci_supply_chain_hardening.sh
+      - name: CommandBase adjacent supply-chain hardening
+        run: bash tools/test_commandbase_supply_chain.sh
       - name: Repo truth and public claims
         run: bash tools/test_repo_truth.sh
       - name: Audit policy documentation truth
