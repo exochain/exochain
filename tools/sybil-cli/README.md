@@ -20,6 +20,17 @@ Everything is **file-backed** (Git-friendly) so decisions are diffable, reviewab
 pip install -r requirements.txt
 ```
 
+## Neo4j configuration
+
+`graph_schema.py` fails closed unless Neo4j connection settings are supplied
+explicitly:
+
+```bash
+export NEO4J_URI="<neo4j-bolt-uri>"
+export NEO4J_USERNAME="<neo4j-username>"
+export NEO4J_PASSWORD="<secret-from-your-password-manager>"
+```
+
 ---
 
 ## Initialize store

@@ -239,6 +239,8 @@ jobs:
         run: bash tools/test_ci_supply_chain_hardening.sh
       - name: Repo truth and public claims
         run: bash tools/test_repo_truth.sh
+      - name: Sybil CLI secret boundary
+        run: bash tools/test_sybil_cli_secret_boundaries.sh
       - name: Audit policy documentation truth
         run: bash tools/test_audit_policy_docs.sh
       - name: Consensus liveness documentation truth

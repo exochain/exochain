@@ -1,10 +1,24 @@
+import os
+
 from langchain.graphs.neo4j_graph import Neo4jGraph
 
-graph = Neo4jGraph(
-    url="bolt://localhost:7687",
-    username="neo4j",
-    password="password"  # secure via env var in prod
-)
+
+def required_neo4j_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"Missing required Neo4j configuration: {name}")
+    return value
+
+
+def build_graph() -> Neo4jGraph:
+    return Neo4jGraph(
+        url=required_neo4j_env("NEO4J_URI"),
+        username=required_neo4j_env("NEO4J_USERNAME"),
+        password=required_neo4j_env("NEO4J_PASSWORD"),
+    )
+
+
+graph = build_graph()
 
 # Example Cypher Model Definitions:
 # :Interaction - {id, text, timestamp, model}
