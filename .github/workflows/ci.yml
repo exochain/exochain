@@ -7,7 +7,7 @@
 #   - Determinism: no floats, no HashMap, canonical serialization
 #   - Clippy float_arithmetic = deny (workspace lint)
 #   - 90%+ line coverage
-#   - Zero dependency vulnerabilities
+#   - Dependency audit gates with documented advisory exceptions
 #   - License compliance (Apache-2.0; no copyleft contamination)
 
 name: EXOCHAIN Constitutional CI
@@ -132,14 +132,13 @@ jobs:
         run: cargo install cargo-audit
       - name: Audit dependencies (strict — vulnerabilities, unsound, unmaintained)
         # Historically this denied all warning classes, including yanked.
-        # That fails today because `core2` was yanked
-        # post-hoc by its maintainer and there is no safe upgrade path —
-        # libp2p-core still depends on it. We deny the three classes we
-        # can actually act on (vulnerability / unsound / unmaintained)
-        # and let `yanked` land as a warning only. The specific yanked
-        # crate (core2) is documented in deny.toml and .cargo/audit.toml
-        # with reachability analysis.
+        # Gate 6 denies the three classes we can act on immediately:
+        # vulnerability, unsound, and unmaintained. Yanked advisories remain
+        # warnings unless a separate vulnerability/unsound/unmaintained
+        # advisory is attached.
         run: cargo audit --deny unsound --deny unmaintained
+      - name: Audit ignore policy stays current
+        run: bash tools/test_audit_ignore_policy.sh
 
   # -----------------------------------------------------------------------
   # Gate 7: Deny (license + advisory compliance)

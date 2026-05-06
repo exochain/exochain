@@ -1,40 +1,39 @@
 # EXOCHAIN cargo-audit configuration
 #
-# cargo-audit scans the full Cargo.lock (including crates behind
-# disabled features and dev-only transitive deps), so this list is
-# LARGER than deny.toml's ignore list. Both files must be kept in
-# sync with reachability analysis — see deny.toml for the full
-# prose rationale per advisory.
-#
-# Gate 6 reads this file while running:
+# Gate 6 runs:
 # cargo audit --deny unsound --deny unmaintained
 #
-# Yanked advisories are warning-only under Gate 6 today. The current exception
-# is core2 via multihash/libp2p-core, where no safe upstream upgrade path is
-# available yet; keep that reachability analysis synchronized with deny.toml.
+# cargo-audit scans the full Cargo.lock, including compile-time and transitive
+# dependency paths. Every ignored advisory below must correspond to an advisory
+# currently emitted by an unconfigured cargo-audit run; stale ignores are blocked
+# by tools/test_audit_ignore_policy.sh.
+#
+# Yanked advisories are warning-only under Gate 6 today. No yanked advisory is
+# currently suppressed in this file.
 
 [advisories]
 ignore = [
-    # ring 0.16.x AES panic — debug-only overflow-check path.
-    "RUSTSEC-2025-0009",
-    # ring 0.16.x unmaintained.
-    "RUSTSEC-2025-0010",
-    # paste unmaintained proc-macro (via async-graphql).
+    # paste — no longer maintained.
+    # Transitive proc-macro utility via async-graphql; no runtime code path.
     "RUSTSEC-2024-0436",
-    # rsa Marvin timing attack (via sqlx; mysql feature OFF; path unreachable).
+
+    # rsa Marvin timing attack.
+    # Present through SQLx MySQL support pulled by the upstream SQLx macro stack.
+    # EXOCHAIN runtime DB access is PostgreSQL-only; MySQL connection support is
+    # not exposed by any owned runtime configuration.
     "RUSTSEC-2023-0071",
-    # instant unmaintained (via libp2p-gossipsub/futures-ticker; no-std shim).
-    "RUSTSEC-2024-0384",
-    # lru IterMut stacked-borrows (via libp2p-identify; workspace does not
-    # call IterMut).
-    "RUSTSEC-2026-0002",
-    # core2 yanked (via multihash/libp2p-core; no safe upstream upgrade).
-    "RUSTSEC-2026-0105",
-    # rustls-webpki URI name-constraint bug (libp2p-tls only; peer-identity
-    # auth, not WebPKI name constraints).
+
+    # rustls-webpki URI name-constraint bug.
+    # Present through the Rustls stack used by axum-server, reqwest, SQLx, and
+    # libp2p. EXOCHAIN does not accept URI name constraints as an authority
+    # source for constitutional identity or delegation.
     "RUSTSEC-2026-0098",
-    # rustls-webpki wildcard name-constraint bug; same reachability.
+
+    # rustls-webpki wildcard name-constraint bug; same reachability analysis as
+    # RUSTSEC-2026-0098.
     "RUSTSEC-2026-0099",
-    # rustls-webpki CRL-parse panic; workspace does not use CRL paths.
+
+    # rustls-webpki CRL parsing panic.
+    # EXOCHAIN does not configure CRL parsing on owned TLS paths.
     "RUSTSEC-2026-0104",
 ]

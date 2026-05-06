@@ -31,6 +31,11 @@ for file in "${current_policy_files[@]}"; do
     echo "$file must not overstate advisory rejection while documented ignores exist" >&2
     exit 1
   fi
+
+  if grep -q "Zero dependency vulnerabilities" "$file"; then
+    echo "$file must not claim zero dependency vulnerabilities while advisory ignores exist" >&2
+    exit 1
+  fi
 done
 
 grep -q "cargo audit --deny unsound --deny unmaintained" .github/workflows/ci.yml || {
