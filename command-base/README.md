@@ -1,13 +1,19 @@
 # CommandBase.ai
 
-cognitiveplane.ai Hypervisor -- operational command center for AI agents under constitutional governance.
+cognitiveplane.ai Hypervisor -- adjacent operational command center for AI
+agents that can call tested EXOCHAIN runtime adapters.
 
 ## What This Is
 
-- **Not a dashboard.** A command center with real authority delegation, consent enforcement, trust receipts, challenge surfaces, and kill switches.
-- All governance logic executes in Rust via WebAssembly (110 WASM-bridged functions).
-- Every action produces a cryptographically hash-chained governance receipt.
-- Constitutional invariants are enforced at the kernel level -- no overrides, no exceptions.
+- **Adjacent surface, not core.** CommandBase is not the canonical EXOCHAIN
+  Rust trust fabric; see `ADJACENT-SURFACE-INTAKE.md` for ownership,
+  deployment status, and trust-boundary rules.
+- Governance-sensitive paths may call generated EXOCHAIN WebAssembly bindings
+  or tested runtime adapters. CommandBase itself does not mint, cache, or
+  simulate constitutional decisions outside those call paths.
+- Receipt and enforcement claims apply only to routes that are backed by tested
+  WASM/core-adapter calls and fail closed when that boundary rejects, times out,
+  or is unavailable.
 
 ## Architecture
 
@@ -79,4 +85,6 @@ cd command-base && npm install && npm start
 - Archived agents in `Team/archived/`
 - Research briefs in `Team/research-brief-*.md`
 
-Every agent operates under constitutional authority delegated through the WASM bridge. Agent actions are receipt-chained and auditable.
+Agent workflows may call the EXOCHAIN WASM bridge. Only tested bridge-backed
+paths may be described as constitutionally enforced, receipt-chained, or
+auditable by EXOCHAIN core.
