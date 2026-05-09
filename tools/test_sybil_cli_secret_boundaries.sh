@@ -10,17 +10,17 @@ SOURCE="tools/sybil-cli/graph_schema.py"
 
 [[ -f "$SOURCE" ]] || fail "missing $SOURCE"
 
-if rg -n 'password\s*=\s*["'\'']password["'\'']|username\s*=\s*["'\'']neo4j["'\'']|bolt://localhost:7687' "$SOURCE" >/dev/null; then
+if grep -En 'password[[:space:]]*=[[:space:]]*["'\'']password["'\'']|username[[:space:]]*=[[:space:]]*["'\'']neo4j["'\'']|bolt://localhost:7687' "$SOURCE" >/dev/null; then
   fail "Neo4j connection settings must come from required environment variables, not literals"
 fi
 
 for required in NEO4J_URI NEO4J_USERNAME NEO4J_PASSWORD; do
-  if ! rg -n "$required" "$SOURCE" >/dev/null; then
+  if ! grep -Fn "$required" "$SOURCE" >/dev/null; then
     fail "$SOURCE must read required $required configuration"
   fi
 done
 
-if ! rg -n 'Missing required Neo4j configuration' "$SOURCE" >/dev/null; then
+if ! grep -Fn 'Missing required Neo4j configuration' "$SOURCE" >/dev/null; then
   fail "$SOURCE must fail closed with a clear missing-configuration error"
 fi
 
