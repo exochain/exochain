@@ -196,13 +196,13 @@ fn valid_adj_context(actor: &Did) -> AdjudicationContext {
         consent_records: vec![ConsentRecord {
             subject: did("did:exo:bailor"),
             granted_to: actor.clone(),
-            scope: "governance:decision".into(),
+            scope: "enact:decision".into(),
             active: true,
         }],
         bailment_state: BailmentState::Active {
             bailor: did("did:exo:bailor"),
             bailee: actor.clone(),
-            scope: "governance:decision".into(),
+            scope: "enact:decision".into(),
         },
         human_override_preserved: true,
         actor_permissions: PermissionSet::new(vec![Permission::new("enact:decision")]),
@@ -237,6 +237,7 @@ fn transition_action(actor: &Did, from: BctsState, to: BctsState) -> ActionReque
 
 fn transition_context(actor: &Did, from: BctsState, to: BctsState) -> AdjudicationContext {
     let permission = bcts_transition_permission(from, to);
+    let scope_label = permission.0.clone();
     let mut context = valid_adj_context(actor);
     context.authority_chain = AuthorityChain {
         links: vec![signed_authority_link_for_permission(
@@ -253,6 +254,14 @@ fn transition_context(actor: &Did, from: BctsState, to: BctsState) -> Adjudicati
         }
     }
     context.actor_permissions = PermissionSet::new(vec![permission]);
+    context.consent_records[0].scope = scope_label.clone();
+    if let BailmentState::Active {
+        scope: bailment_scope,
+        ..
+    } = &mut context.bailment_state
+    {
+        *bailment_scope = scope_label;
+    }
     context
 }
 

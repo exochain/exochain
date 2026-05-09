@@ -576,9 +576,9 @@ fn check_quorum_legitimate(ctx: &InvariantContext) -> Result<(), InvariantViolat
                 });
             }
 
-            // CR-001 §8.3: synthetic voices SHALL never be counted as distinct
-            // humans. Use is_met_authentic() which excludes Synthetic-voiced
-            // votes from the approval count.
+            // CR-001 §8.3: quorum requires signed human voter provenance.
+            // Synthetic, missing-provenance, actor-mismatched, and unsigned
+            // approvals do not count toward the authentic human threshold.
             if !evidence.is_met_authentic() {
                 let authentic_approvals = evidence.distinct_authentic_approved_voter_count();
                 let synthetic_excluded = evidence.synthetic_vote_count();
@@ -1238,18 +1238,8 @@ mod tests {
         ctx.quorum_evidence = Some(QuorumEvidence {
             threshold: 2,
             votes: vec![
-                QuorumVote {
-                    voter: did("did:exo:v1"),
-                    approved: true,
-                    signature: vec![1],
-                    provenance: None,
-                },
-                QuorumVote {
-                    voter: did("did:exo:v2"),
-                    approved: true,
-                    signature: vec![2],
-                    provenance: None,
-                },
+                make_vote("did:exo:v1", true, 1, Some(VoiceKind::Human)),
+                make_vote("did:exo:v2", true, 2, Some(VoiceKind::Human)),
             ],
         });
         assert!(enforce_all(&engine, &ctx).is_ok());
@@ -1413,12 +1403,12 @@ mod tests {
         QuorumVote {
             voter: did(voter),
             approved,
-            signature: vec![sig],
+            signature: vec![sig; 64],
             provenance: voice.map(|vk| Provenance {
                 actor: did(voter),
                 timestamp: "t".into(),
                 action_hash: vec![1],
-                signature: vec![sig],
+                signature: vec![sig; 64],
                 public_key: None,
                 voice_kind: Some(vk),
                 independence: None,
@@ -1505,8 +1495,7 @@ mod tests {
     }
 
     #[test]
-    fn quorum_passes_legacy_votes_no_provenance() {
-        // Legacy votes (provenance=None) are not excluded
+    fn quorum_fails_legacy_votes_no_provenance() {
         let engine = InvariantEngine::new(InvariantSet::with(vec![
             ConstitutionalInvariant::QuorumLegitimate,
         ]));
@@ -1528,7 +1517,34 @@ mod tests {
                 },
             ],
         });
-        assert!(enforce_all(&engine, &ctx).is_ok());
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+        assert_eq!(err[0].invariant, ConstitutionalInvariant::QuorumLegitimate);
+        assert!(
+            err[0].description.contains("authentic"),
+            "votes without provenance must not count as authentic quorum evidence"
+        );
+    }
+
+    #[test]
+    fn quorum_fails_unsigned_human_vote_provenance() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::QuorumLegitimate,
+        ]));
+        let mut ctx = passing_context();
+        let mut vote = make_vote("did:exo:h1", true, 1, Some(VoiceKind::Human));
+        vote.provenance.as_mut().expect("provenance").signature = Vec::new();
+        ctx.quorum_evidence = Some(QuorumEvidence {
+            threshold: 1,
+            votes: vec![vote],
+        });
+
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+
+        assert_eq!(err[0].invariant, ConstitutionalInvariant::QuorumLegitimate);
+        assert!(
+            err[0].description.contains("authentic"),
+            "unsigned human provenance must not count as authentic quorum evidence"
+        );
     }
 
     #[test]
