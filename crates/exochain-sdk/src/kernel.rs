@@ -30,9 +30,9 @@
 //! use exo_core::Did;
 //!
 //! let authority = exochain_sdk::identity::Identity::generate("authority");
+//! let actor = exochain_sdk::identity::Identity::generate("alice");
 //! let kernel = ConstitutionalKernel::with_authority_identity(authority);
-//! let actor = Did::new("did:exo:alice").expect("valid");
-//! let verdict = kernel.adjudicate(&actor, "data:medical:read");
+//! let verdict = kernel.adjudicate_as(&actor, "data:medical:read");
 //! assert!(verdict.is_permitted());
 //! ```
 
@@ -141,7 +141,7 @@ impl KernelVerdict {
 ///
 /// Provides a minimal adjudication interface suitable for common SDK use
 /// cases: a single actor performing an action, with caller-supplied authority
-/// signing material, signed provenance, and an active bailment from that
+/// signing material, actor-signed provenance, and an active bailment from that
 /// authority. Callers needing fine-grained control over the adjudication
 /// context should use [`exo_gatekeeper::Kernel`] directly.
 ///
@@ -152,12 +152,12 @@ impl KernelVerdict {
 /// use exo_core::Did;
 ///
 /// let authority = exochain_sdk::identity::Identity::generate("authority");
+/// let actor = exochain_sdk::identity::Identity::generate("alice");
 /// let kernel = ConstitutionalKernel::with_authority_identity(authority);
 /// assert!(kernel.verify_integrity());
 /// assert_eq!(kernel.invariant_count(), 8);
 ///
-/// let actor = Did::new("did:exo:alice").expect("valid");
-/// let verdict = kernel.adjudicate(&actor, "read:profile");
+/// let verdict = kernel.adjudicate_as(&actor, "read:profile");
 /// assert!(verdict.is_permitted());
 /// ```
 pub struct ConstitutionalKernel {
@@ -172,6 +172,44 @@ struct KernelAuthority {
     did: Did,
     public_key: PublicKey,
     signer: AuthoritySigner,
+}
+
+#[derive(Clone, Copy)]
+struct AdjudicationFlags {
+    is_self_grant: bool,
+    modifies_kernel: bool,
+    include_bailment: bool,
+    human_override_preserved: bool,
+}
+
+impl AdjudicationFlags {
+    const DEFAULT: Self = Self {
+        is_self_grant: false,
+        modifies_kernel: false,
+        include_bailment: true,
+        human_override_preserved: true,
+    };
+
+    const SELF_GRANT: Self = Self {
+        is_self_grant: true,
+        ..Self::DEFAULT
+    };
+
+    const KERNEL_MODIFICATION: Self = Self {
+        modifies_kernel: true,
+        ..Self::DEFAULT
+    };
+
+    const WITHOUT_BAILMENT: Self = Self {
+        include_bailment: false,
+        ..Self::DEFAULT
+    };
+}
+
+struct ActorProvenanceSigner<'a> {
+    actor: &'a Did,
+    public_key: &'a PublicKey,
+    signer: &'a dyn Fn(&[u8]) -> Signature,
 }
 
 impl ConstitutionalKernel {
@@ -199,8 +237,9 @@ impl ConstitutionalKernel {
     ///
     /// This is the common SDK path: the identity's DID becomes the authority
     /// grantor and bailor for the default adjudication context, and its secret
-    /// key signs the canonical authority/provenance payloads that the kernel
-    /// verifies.
+    /// key signs the canonical authority payloads that the kernel verifies.
+    /// Actor provenance must still be signed by the actor identity through
+    /// [`Self::adjudicate_as`].
     ///
     /// # Examples
     ///
@@ -267,14 +306,17 @@ impl ConstitutionalKernel {
     /// - An active bailment from the configured authority to `actor` scoped to
     ///   `action`.
     /// - Full human-override preservation.
-    /// - Signed provenance with timestamp `"sdk"`.
+    /// - Signed provenance with timestamp `"sdk"` when `actor` is the
+    ///   authority DID itself.
     ///
     /// If the kernel was created with [`Self::new`] rather than
     /// [`Self::with_authority`] or [`Self::with_authority_identity`], this
     /// method fails closed with a denied verdict.
     ///
-    /// Callers needing richer context should reach for
-    /// [`exo_gatekeeper::Kernel`] directly.
+    /// Passing an arbitrary DID without its signer fails closed. Use
+    /// [`Self::adjudicate_as`] when acting for a distinct SDK identity, or
+    /// reach for [`exo_gatekeeper::Kernel`] directly when building a fully
+    /// resolved adjudication context.
     ///
     /// The action is flagged as `is_self_grant = false` and
     /// `modifies_kernel = false` by default. Helpers are available for the
@@ -287,17 +329,28 @@ impl ConstitutionalKernel {
     ///
     /// ```
     /// use exochain_sdk::kernel::ConstitutionalKernel;
-    /// use exo_core::Did;
     ///
     /// let authority = exochain_sdk::identity::Identity::generate("authority");
+    /// let actor = authority.did().clone();
     /// let kernel = ConstitutionalKernel::with_authority_identity(authority);
-    /// let actor = Did::new("did:exo:alice").expect("valid");
     /// let verdict = kernel.adjudicate(&actor, "data:read");
     /// assert!(verdict.is_permitted());
     /// ```
     #[must_use]
     pub fn adjudicate(&self, actor: &Did, action: &str) -> KernelVerdict {
-        self.adjudicate_internal(actor, action, false, false, true, true)
+        self.adjudicate_internal(actor, action, AdjudicationFlags::DEFAULT)
+    }
+
+    /// Adjudicate `action` performed by `actor` using actor-signed
+    /// provenance and authority-signed delegation.
+    ///
+    /// This is the normal SDK path for actions performed by a principal other
+    /// than the configured authority. The actor identity signs the provenance
+    /// payload, and the trusted provenance key map is populated from that
+    /// same actor identity rather than from the authority signer.
+    #[must_use]
+    pub fn adjudicate_as(&self, actor: &crate::identity::Identity, action: &str) -> KernelVerdict {
+        self.adjudicate_identity_internal(actor, action, AdjudicationFlags::DEFAULT)
     }
 
     /// Same as [`Self::adjudicate`] but sets `is_self_grant = true` so the
@@ -310,17 +363,26 @@ impl ConstitutionalKernel {
     ///
     /// ```
     /// use exochain_sdk::kernel::ConstitutionalKernel;
-    /// use exo_core::Did;
     ///
     /// let authority = exochain_sdk::identity::Identity::generate("authority");
+    /// let actor = exochain_sdk::identity::Identity::generate("self-granter");
     /// let kernel = ConstitutionalKernel::with_authority_identity(authority);
-    /// let actor = Did::new("did:exo:self-granter").expect("valid");
-    /// let verdict = kernel.adjudicate_self_grant(&actor, "escalate-self");
+    /// let verdict = kernel.adjudicate_self_grant_as(&actor, "escalate-self");
     /// assert!(verdict.is_denied());
     /// ```
     #[must_use]
     pub fn adjudicate_self_grant(&self, actor: &Did, action: &str) -> KernelVerdict {
-        self.adjudicate_internal(actor, action, true, false, true, true)
+        self.adjudicate_internal(actor, action, AdjudicationFlags::SELF_GRANT)
+    }
+
+    /// Same as [`Self::adjudicate_as`] but sets `is_self_grant = true`.
+    #[must_use]
+    pub fn adjudicate_self_grant_as(
+        &self,
+        actor: &crate::identity::Identity,
+        action: &str,
+    ) -> KernelVerdict {
+        self.adjudicate_identity_internal(actor, action, AdjudicationFlags::SELF_GRANT)
     }
 
     /// Same as [`Self::adjudicate`] but sets `modifies_kernel = true` so the
@@ -330,17 +392,26 @@ impl ConstitutionalKernel {
     ///
     /// ```
     /// use exochain_sdk::kernel::ConstitutionalKernel;
-    /// use exo_core::Did;
     ///
     /// let authority = exochain_sdk::identity::Identity::generate("authority");
+    /// let actor = exochain_sdk::identity::Identity::generate("patcher");
     /// let kernel = ConstitutionalKernel::with_authority_identity(authority);
-    /// let actor = Did::new("did:exo:patcher").expect("valid");
-    /// let verdict = kernel.adjudicate_kernel_modification(&actor, "patch-kernel");
+    /// let verdict = kernel.adjudicate_kernel_modification_as(&actor, "patch-kernel");
     /// assert!(verdict.is_denied());
     /// ```
     #[must_use]
     pub fn adjudicate_kernel_modification(&self, actor: &Did, action: &str) -> KernelVerdict {
-        self.adjudicate_internal(actor, action, false, true, true, true)
+        self.adjudicate_internal(actor, action, AdjudicationFlags::KERNEL_MODIFICATION)
+    }
+
+    /// Same as [`Self::adjudicate_as`] but sets `modifies_kernel = true`.
+    #[must_use]
+    pub fn adjudicate_kernel_modification_as(
+        &self,
+        actor: &crate::identity::Identity,
+        action: &str,
+    ) -> KernelVerdict {
+        self.adjudicate_identity_internal(actor, action, AdjudicationFlags::KERNEL_MODIFICATION)
     }
 
     /// Same as [`Self::adjudicate`] but omits the default bailment so the
@@ -350,17 +421,26 @@ impl ConstitutionalKernel {
     ///
     /// ```
     /// use exochain_sdk::kernel::ConstitutionalKernel;
-    /// use exo_core::Did;
     ///
     /// let authority = exochain_sdk::identity::Identity::generate("authority");
+    /// let actor = exochain_sdk::identity::Identity::generate("unauth");
     /// let kernel = ConstitutionalKernel::with_authority_identity(authority);
-    /// let actor = Did::new("did:exo:unauth").expect("valid");
-    /// let verdict = kernel.adjudicate_without_bailment(&actor, "read-data");
+    /// let verdict = kernel.adjudicate_without_bailment_as(&actor, "read-data");
     /// assert!(verdict.is_denied());
     /// ```
     #[must_use]
     pub fn adjudicate_without_bailment(&self, actor: &Did, action: &str) -> KernelVerdict {
-        self.adjudicate_internal(actor, action, false, false, false, true)
+        self.adjudicate_internal(actor, action, AdjudicationFlags::WITHOUT_BAILMENT)
+    }
+
+    /// Same as [`Self::adjudicate_as`] but omits the default bailment.
+    #[must_use]
+    pub fn adjudicate_without_bailment_as(
+        &self,
+        actor: &crate::identity::Identity,
+        action: &str,
+    ) -> KernelVerdict {
+        self.adjudicate_identity_internal(actor, action, AdjudicationFlags::WITHOUT_BAILMENT)
     }
 
     /// Verify that the kernel's stored constitution hash matches the
@@ -415,9 +495,10 @@ impl ConstitutionalKernel {
     }
 
     fn signed_provenance(
-        authority: &KernelAuthority,
         actor: &Did,
         action: &str,
+        actor_public_key: &PublicKey,
+        actor_signer: &dyn Fn(&[u8]) -> Signature,
     ) -> exo_core::Result<Provenance> {
         let timestamp = "sdk".to_owned();
         let action_hash = Hash256::digest(action.as_bytes()).as_bytes().to_vec();
@@ -427,25 +508,40 @@ impl ConstitutionalKernel {
             timestamp,
             action_hash,
             signature: Vec::new(),
-            public_key: Some(authority.public_key.as_bytes().to_vec()),
+            public_key: Some(actor_public_key.as_bytes().to_vec()),
             voice_kind: None,
             independence: None,
             review_order: None,
         };
         let message = provenance_signature_message(&provenance)?;
-        let signature = (authority.signer)(message.as_bytes());
+        let signature = actor_signer(message.as_bytes());
         provenance.signature = signature.to_bytes().to_vec();
         Ok(provenance)
+    }
+
+    fn adjudicate_identity_internal(
+        &self,
+        actor: &crate::identity::Identity,
+        action: &str,
+        flags: AdjudicationFlags,
+    ) -> KernelVerdict {
+        let signer = |message: &[u8]| actor.sign(message);
+        self.adjudicate_internal_with_actor_provenance(
+            action,
+            flags,
+            ActorProvenanceSigner {
+                actor: actor.did(),
+                public_key: actor.public_key(),
+                signer: &signer,
+            },
+        )
     }
 
     fn adjudicate_internal(
         &self,
         actor: &Did,
         action: &str,
-        is_self_grant: bool,
-        modifies_kernel: bool,
-        include_bailment: bool,
-        human_override_preserved: bool,
+        flags: AdjudicationFlags,
     ) -> KernelVerdict {
         let Some(authority) = self.authority.as_ref() else {
             return KernelVerdict::Denied {
@@ -454,28 +550,58 @@ impl ConstitutionalKernel {
                 ],
             };
         };
+        if actor != &authority.did {
+            return KernelVerdict::Denied {
+                violations: vec![
+                    "ProvenanceVerifiable: SDK actor identity signer is required for non-authority actor provenance".into(),
+                ],
+            };
+        }
+        self.adjudicate_internal_with_actor_provenance(
+            action,
+            flags,
+            ActorProvenanceSigner {
+                actor,
+                public_key: &authority.public_key,
+                signer: authority.signer.as_ref(),
+            },
+        )
+    }
 
+    fn adjudicate_internal_with_actor_provenance(
+        &self,
+        action: &str,
+        flags: AdjudicationFlags,
+        actor_provenance: ActorProvenanceSigner<'_>,
+    ) -> KernelVerdict {
+        let Some(authority) = self.authority.as_ref() else {
+            return KernelVerdict::Denied {
+                violations: vec![
+                    "AuthorityChainValid: SDK authority signer is required for adjudication".into(),
+                ],
+            };
+        };
         let permissions = PermissionSet::new(vec![Permission::new("read")]);
         let request = ActionRequest {
-            actor: actor.clone(),
+            actor: actor_provenance.actor.clone(),
             action: action.to_owned(),
             required_permissions: permissions.clone(),
-            is_self_grant,
-            modifies_kernel,
+            is_self_grant: flags.is_self_grant,
+            modifies_kernel: flags.modifies_kernel,
         };
 
         let scope = action.to_owned();
 
-        let (bailment_state, consent_records) = if include_bailment {
+        let (bailment_state, consent_records) = if flags.include_bailment {
             (
                 BailmentState::Active {
                     bailor: authority.did.clone(),
-                    bailee: actor.clone(),
+                    bailee: actor_provenance.actor.clone(),
                     scope: scope.clone(),
                 },
                 vec![ConsentRecord {
                     subject: authority.did.clone(),
-                    granted_to: actor.clone(),
+                    granted_to: actor_provenance.actor.clone(),
                     scope,
                     active: true,
                 }],
@@ -484,7 +610,11 @@ impl ConstitutionalKernel {
             (BailmentState::None, Vec::new())
         };
 
-        let authority_link = match Self::signed_authority_link(authority, actor, &permissions) {
+        let authority_link = match Self::signed_authority_link(
+            authority,
+            actor_provenance.actor,
+            &permissions,
+        ) {
             Ok(link) => link,
             Err(err) => {
                 return KernelVerdict::Denied {
@@ -494,7 +624,12 @@ impl ConstitutionalKernel {
                 };
             }
         };
-        let provenance = match Self::signed_provenance(authority, actor, action) {
+        let provenance = match Self::signed_provenance(
+            actor_provenance.actor,
+            action,
+            actor_provenance.public_key,
+            actor_provenance.signer,
+        ) {
             Ok(provenance) => provenance,
             Err(err) => {
                 return KernelVerdict::Denied {
@@ -516,8 +651,8 @@ impl ConstitutionalKernel {
         }
         let mut trusted_provenance_keys = TrustedProvenanceKeys::default();
         trusted_provenance_keys.insert(
-            actor.clone(),
-            vec![authority.public_key.as_bytes().to_vec()],
+            actor_provenance.actor.clone(),
+            vec![actor_provenance.public_key.as_bytes().to_vec()],
         );
 
         let context = AdjudicationContext {
@@ -528,7 +663,7 @@ impl ConstitutionalKernel {
             authority_chain,
             consent_records,
             bailment_state,
-            human_override_preserved,
+            human_override_preserved: flags.human_override_preserved,
             actor_permissions: permissions,
             trusted_authority_keys,
             trusted_provenance_keys,
@@ -606,12 +741,32 @@ mod tests {
     #[test]
     fn valid_action_permitted() {
         let k = signed_kernel();
-        let actor = did("did:exo:valid-actor");
-        let verdict = k.adjudicate(&actor, "read-medical-record");
+        let actor = crate::identity::Identity::generate("valid-actor");
+        let verdict = k.adjudicate_as(&actor, "read-medical-record");
         assert!(
             verdict.is_permitted(),
             "expected Permitted, got {verdict:?}"
         );
+    }
+
+    #[test]
+    fn adjudicate_rejects_authority_key_synthesized_as_actor_provenance_key() {
+        let k = signed_kernel();
+        let actor = did("did:exo:arbitrary-actor");
+        let verdict = k.adjudicate(&actor, "read-medical-record");
+        assert!(
+            verdict.is_denied(),
+            "authority signer must not be accepted as arbitrary actor provenance, got {verdict:?}"
+        );
+        match verdict {
+            KernelVerdict::Denied { violations } => {
+                assert!(
+                    violations.iter().any(|v| v.contains("Provenance")),
+                    "denial must identify provenance key binding: {violations:?}"
+                );
+            }
+            other => panic!("expected Denied, got {other:?}"),
+        }
     }
 
     #[test]
@@ -631,8 +786,8 @@ mod tests {
     #[test]
     fn self_grant_denied() {
         let k = signed_kernel();
-        let actor = did("did:exo:self-granter");
-        let verdict = k.adjudicate_self_grant(&actor, "escalate-self");
+        let actor = crate::identity::Identity::generate("self-granter");
+        let verdict = k.adjudicate_self_grant_as(&actor, "escalate-self");
         assert!(verdict.is_denied(), "expected Denied, got {verdict:?}");
         match verdict {
             KernelVerdict::Denied { violations } => {
@@ -650,16 +805,16 @@ mod tests {
     #[test]
     fn kernel_modification_denied() {
         let k = signed_kernel();
-        let actor = did("did:exo:patcher");
-        let verdict = k.adjudicate_kernel_modification(&actor, "patch-kernel");
+        let actor = crate::identity::Identity::generate("patcher");
+        let verdict = k.adjudicate_kernel_modification_as(&actor, "patch-kernel");
         assert!(verdict.is_denied(), "expected Denied, got {verdict:?}");
     }
 
     #[test]
     fn no_bailment_denied() {
         let k = signed_kernel();
-        let actor = did("did:exo:unauth");
-        let verdict = k.adjudicate_without_bailment(&actor, "read-data");
+        let actor = crate::identity::Identity::generate("unauth");
+        let verdict = k.adjudicate_without_bailment_as(&actor, "read-data");
         assert!(verdict.is_denied(), "expected Denied, got {verdict:?}");
     }
 
@@ -672,6 +827,20 @@ mod tests {
         assert!(
             !source.contains("format!(\"{:?}: {}\", v.invariant, v.description)"),
             "SDK violation labels must use stable invariant IDs"
+        );
+    }
+
+    #[test]
+    fn sdk_source_does_not_synthesize_authority_key_as_actor_provenance() {
+        let source = include_str!("kernel.rs")
+            .split("// ===========================================================================\n// Tests")
+            .next()
+            .expect("production section");
+        assert!(
+            !source.contains(
+                "trusted_provenance_keys.insert(\n            actor.clone(),\n            vec![authority.public_key.as_bytes().to_vec()],"
+            ),
+            "SDK trusted provenance keys must come from actor identity material, not authority key substitution"
         );
     }
 

@@ -234,6 +234,11 @@ impl ConstitutionalMiddleware {
                 "MCP authority signer is required for verified MCP invocation context".into(),
             )
         })?;
+        if actor_did != &authority.did {
+            return Err(McpError::ConstitutionalViolation(
+                "MCP actor provenance key must be resolved independently of the configured authority signer".into(),
+            ));
+        }
         let public_key = authority.public_key.as_bytes().to_vec();
         let mut trusted_authority_keys = TrustedAuthorityKeys::default();
         trusted_authority_keys.insert(authority.did.clone(), vec![public_key.clone()]);
@@ -377,6 +382,10 @@ mod tests {
         Did::new("did:exo:ai-agent-mcp").expect("valid DID")
     }
 
+    fn other_did() -> Did {
+        Did::new("did:exo:other-mcp-actor").expect("valid DID")
+    }
+
     fn signed_middleware() -> ConstitutionalMiddleware {
         let keypair = exo_core::crypto::KeyPair::from_secret_bytes([0x4D; 32]).unwrap();
         let public_key = *keypair.public_key();
@@ -389,7 +398,11 @@ mod tests {
     }
 
     fn signed_tool_call_params(action: &str) -> Value {
-        let actor = test_did();
+        signed_tool_call_params_for_actor(action, &test_did())
+    }
+
+    fn signed_tool_call_params_for_actor(action: &str, actor: &Did) -> Value {
+        let authority = test_did();
         let keypair = exo_core::crypto::KeyPair::from_secret_bytes([0x4D; 32]).unwrap();
         let public_key = *keypair.public_key();
         let secret_key = keypair.secret_key().clone();
@@ -402,7 +415,7 @@ mod tests {
                 .collect(),
         );
         let mut authority_link = exo_gatekeeper::types::AuthorityLink {
-            grantor: actor.clone(),
+            grantor: authority.clone(),
             grantee: actor.clone(),
             permissions: permission_set,
             signature: Vec::new(),
@@ -444,7 +457,7 @@ mod tests {
                     ],
                     "authority_chain": [
                         {
-                        "grantor": actor.as_str(),
+                        "grantor": authority.as_str(),
                         "grantee": actor.as_str(),
                         "permissions": permissions,
                         "signature": hex::encode(authority_link.signature),
@@ -453,7 +466,7 @@ mod tests {
                     ],
                     "consent_records": [
                         {
-                            "subject": actor.as_str(),
+                            "subject": authority.as_str(),
                             "granted_to": actor.as_str(),
                             "scope": "mcp:tools",
                             "active": true,
@@ -461,7 +474,7 @@ mod tests {
                     ],
                     "bailment_state": {
                         "state": "Active",
-                        "bailor": actor.as_str(),
+                        "bailor": authority.as_str(),
                         "bailee": actor.as_str(),
                         "scope": "mcp:tools",
                     },
@@ -487,6 +500,24 @@ mod tests {
         assert!(
             mw.enforce_tool_call(&did, action, &signed_tool_call_params(action))
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn middleware_rejects_authority_key_synthesized_as_other_actor_provenance() {
+        let mw = signed_middleware();
+        let actor = other_did();
+        let action = "exochain_node_status";
+        let err = mw
+            .enforce_tool_call(
+                &actor,
+                action,
+                &signed_tool_call_params_for_actor(action, &actor),
+            )
+            .expect_err("middleware must not map authority key to arbitrary actor DID");
+        assert!(
+            err.to_string().contains("provenance"),
+            "unexpected error: {err}"
         );
     }
 
@@ -644,6 +675,20 @@ mod tests {
         assert!(
             production.contains("violation.rule.id()"),
             "MCP middleware errors must expose explicit stable MCP rule identifiers"
+        );
+    }
+
+    #[test]
+    fn production_source_does_not_synthesize_authority_key_as_actor_provenance() {
+        let src = std::fs::read_to_string("src/mcp/middleware.rs")
+            .expect("middleware.rs readable from crate root");
+        let production = src
+            .split("// ===========================================================================\n// Tests")
+            .next()
+            .expect("middleware production section must be present");
+        assert!(
+            production.contains("actor_did != &authority.did"),
+            "MCP middleware must not map the configured authority key to a different actor DID without a resolver"
         );
     }
 

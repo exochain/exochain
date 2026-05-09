@@ -13,8 +13,9 @@
 //! # Audit status — Onyx-4 R5 (default-off runtime)
 //!
 //! The infrastructure Holon adjudication context now requires a configured
-//! Ed25519 authority key and signer. The authority chain and provenance are
-//! signed over the same canonical payloads enforced by `exo-gatekeeper`.
+//! Ed25519 authority key and signer plus a distinct DID-bound actor signer for
+//! each Holon. Authority chains and provenance are signed over the same
+//! canonical payloads enforced by `exo-gatekeeper`.
 //!
 //! The runtime background manager is therefore disabled by default behind the
 //! `unaudited-infrastructure-holons` feature flag. Enabling the feature means
@@ -35,7 +36,7 @@
 
 #![cfg_attr(not(feature = "unaudited-infrastructure-holons"), allow(dead_code))]
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use exo_core::{
     PublicKey, Signature,
@@ -131,8 +132,16 @@ pub struct HolonManagerConfig {
     pub root_did: Did,
     /// Ed25519 public key for `root_did`.
     pub root_public_key: PublicKey,
-    /// Signs canonical authority/provenance payload hashes for infrastructure Holon context.
+    /// Signs canonical authority payload hashes for infrastructure Holon context.
     pub root_signer: Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>,
+    /// DID used for the topology Holon actor.
+    pub topology_holon_did: Did,
+    /// DID used for the scaling Holon actor.
+    pub scaling_holon_did: Did,
+    /// DID used for the health Holon actor.
+    pub health_holon_did: Did,
+    /// DID-bound Holon actor public keys and signers used for provenance.
+    pub holon_actor_keys: BTreeMap<Did, HolonActorKey>,
     /// Supplies deterministic HLC metadata for each signed Holon provenance record.
     pub provenance_timestamp_source: Arc<dyn Fn() -> Result<Timestamp, String> + Send + Sync>,
     /// How often to run the topology optimizer (seconds).
@@ -143,12 +152,34 @@ pub struct HolonManagerConfig {
     pub health_interval_secs: u64,
 }
 
+/// DID-bound actor key and signer for one infrastructure Holon.
+#[derive(Clone)]
+pub struct HolonActorKey {
+    /// Public key resolved for the Holon actor DID.
+    pub public_key: PublicKey,
+    /// Signs canonical provenance payloads for the Holon actor DID.
+    pub signer: Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>,
+}
+
+impl std::fmt::Debug for HolonActorKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HolonActorKey")
+            .field("public_key", &self.public_key)
+            .field("signer", &"<holon-actor-signer>")
+            .finish()
+    }
+}
+
 impl std::fmt::Debug for HolonManagerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HolonManagerConfig")
             .field("node_did", &self.node_did)
             .field("root_did", &self.root_did)
             .field("root_public_key", &self.root_public_key)
+            .field("topology_holon_did", &self.topology_holon_did)
+            .field("scaling_holon_did", &self.scaling_holon_did)
+            .field("health_holon_did", &self.health_holon_did)
+            .field("holon_actor_key_count", &self.holon_actor_keys.len())
             .field("provenance_timestamp_source", &"<deterministic-hlc-source>")
             .field("topology_interval_secs", &self.topology_interval_secs)
             .field("scaling_interval_secs", &self.scaling_interval_secs)
@@ -222,6 +253,11 @@ pub fn create_topology_holon(node_did: &Did) -> Holon {
         "did:exo:archon-topology",
     );
 
+    create_topology_holon_with_did(holon_did)
+}
+
+/// Create the topology optimizer Holon for an already-resolved Holon DID.
+pub fn create_topology_holon_with_did(holon_did: Did) -> Holon {
     holon::spawn(
         holon_did,
         PermissionSet::new(vec![
@@ -260,6 +296,11 @@ pub fn create_scaling_holon(node_did: &Did) -> Holon {
         "did:exo:archon-scaling",
     );
 
+    create_scaling_holon_with_did(holon_did)
+}
+
+/// Create the scaling advisor Holon for an already-resolved Holon DID.
+pub fn create_scaling_holon_with_did(holon_did: Did) -> Holon {
     holon::spawn(
         holon_did,
         PermissionSet::new(vec![
@@ -298,6 +339,11 @@ pub fn create_health_holon(node_did: &Did) -> Holon {
         "did:exo:archon-health",
     );
 
+    create_health_holon_with_did(holon_did)
+}
+
+/// Create the health monitor Holon for an already-resolved Holon DID.
+pub fn create_health_holon_with_did(holon_did: Did) -> Holon {
     holon::spawn(
         holon_did,
         PermissionSet::new(vec![
@@ -359,7 +405,7 @@ fn signed_authority_link(
 
 fn signed_provenance(
     holon: &Holon,
-    config: &HolonManagerConfig,
+    actor_key: &HolonActorKey,
     provenance_timestamp: Timestamp,
 ) -> Result<Provenance, String> {
     let timestamp = provenance_timestamp.to_string();
@@ -377,14 +423,14 @@ fn signed_provenance(
         timestamp,
         action_hash,
         signature: Vec::new(),
-        public_key: Some(config.root_public_key.as_bytes().to_vec()),
+        public_key: Some(actor_key.public_key.as_bytes().to_vec()),
         voice_kind: None,
         independence: None,
         review_order: None,
     };
     let message = provenance_signature_message(&provenance)
         .map_err(|err| format!("failed to encode provenance signature payload: {err}"))?;
-    let signature = (config.root_signer)(message.as_bytes());
+    let signature = (actor_key.signer)(message.as_bytes());
     provenance.signature = signature.to_bytes().to_vec();
     Ok(provenance)
 }
@@ -402,6 +448,12 @@ pub fn build_holon_adjudication_context(
     config: &HolonManagerConfig,
 ) -> Result<AdjudicationContext, String> {
     let provenance_timestamp = next_provenance_timestamp(config)?;
+    let actor_key = config.holon_actor_keys.get(&holon.id).ok_or_else(|| {
+        format!(
+            "Holon actor signer is required for DID-bound provenance: {}",
+            holon.id
+        )
+    })?;
     let authority_chain = AuthorityChain {
         links: vec![signed_authority_link(holon, config)?],
     };
@@ -414,7 +466,7 @@ pub fn build_holon_adjudication_context(
     let mut trusted_provenance_keys = TrustedProvenanceKeys::default();
     trusted_provenance_keys.insert(
         holon.id.clone(),
-        vec![config.root_public_key.as_bytes().to_vec()],
+        vec![actor_key.public_key.as_bytes().to_vec()],
     );
     Ok(AdjudicationContext {
         actor_roles: vec![Role {
@@ -437,7 +489,7 @@ pub fn build_holon_adjudication_context(
         actor_permissions: holon.capabilities.clone(),
         trusted_authority_keys,
         trusted_provenance_keys,
-        provenance: Some(signed_provenance(holon, config, provenance_timestamp)?),
+        provenance: Some(signed_provenance(holon, actor_key, provenance_timestamp)?),
         quorum_evidence: None,
         active_challenge_reason: None,
     })
@@ -641,9 +693,9 @@ pub async fn run_holon_manager(
 ) {
     let kernel = create_infrastructure_kernel();
 
-    let mut topology_holon = create_topology_holon(&config.node_did);
-    let mut scaling_holon = create_scaling_holon(&config.node_did);
-    let mut health_holon = create_health_holon(&config.node_did);
+    let mut topology_holon = create_topology_holon_with_did(config.topology_holon_did.clone());
+    let mut scaling_holon = create_scaling_holon_with_did(config.scaling_holon_did.clone());
+    let mut health_holon = create_health_holon_with_did(config.health_holon_did.clone());
 
     let mut topology_timer =
         tokio::time::interval(Duration::from_secs(config.topology_interval_secs));
@@ -964,16 +1016,43 @@ mod tests {
         scaling_interval_secs: u64,
         health_interval_secs: u64,
     ) -> HolonManagerConfig {
+        let node_did = test_did();
+        let topology_holon_did = create_topology_holon(&node_did).id;
+        let scaling_holon_did = create_scaling_holon(&node_did).id;
+        let health_holon_did = create_health_holon(&node_did).id;
         let keypair = exo_core::crypto::KeyPair::from_secret_bytes([0x48; 32]).unwrap();
         let root_public_key = *keypair.public_key();
         let root_secret_key = keypair.secret_key().clone();
+        let mut holon_actor_keys = BTreeMap::new();
+        for (holon_did, secret_seed) in [
+            (topology_holon_did.clone(), [0x51; 32]),
+            (scaling_holon_did.clone(), [0x52; 32]),
+            (health_holon_did.clone(), [0x53; 32]),
+        ] {
+            let keypair = exo_core::crypto::KeyPair::from_secret_bytes(secret_seed).unwrap();
+            let public_key = *keypair.public_key();
+            let secret_key = keypair.secret_key().clone();
+            holon_actor_keys.insert(
+                holon_did,
+                HolonActorKey {
+                    public_key,
+                    signer: Arc::new(move |message: &[u8]| {
+                        exo_core::crypto::sign(message, &secret_key)
+                    }),
+                },
+            );
+        }
         HolonManagerConfig {
-            node_did: test_did(),
+            node_did,
             root_did: Did::new("did:exo:test-root").unwrap(),
             root_public_key,
             root_signer: Arc::new(move |message: &[u8]| {
                 exo_core::crypto::sign(message, &root_secret_key)
             }),
+            topology_holon_did,
+            scaling_holon_did,
+            health_holon_did,
+            holon_actor_keys,
             provenance_timestamp_source: deterministic_provenance_timestamp_source(1),
             topology_interval_secs,
             scaling_interval_secs,
@@ -1003,6 +1082,10 @@ mod tests {
         assert!(
             src.contains("Ed25519 authority key"),
             "module doc must call out the signed adjudication authority"
+        );
+        assert!(
+            src.contains("distinct DID-bound actor signer"),
+            "module doc must call out per-Holon provenance actor signers"
         );
     }
 
@@ -1053,6 +1136,24 @@ mod tests {
         assert!(
             production.contains("hash_structured"),
             "Holon provenance action hashes must use canonical structured hashing"
+        );
+    }
+
+    #[test]
+    fn production_holon_source_does_not_synthesize_root_key_as_actor_provenance() {
+        let source = include_str!("holons.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker present");
+        assert!(
+            !production.contains("trusted_provenance_keys.insert(\n        holon.id.clone(),\n        vec![config.root_public_key.as_bytes().to_vec()],"),
+            "Holon trusted provenance keys must come from DID-bound Holon actor keys, not the root authority key"
+        );
+        assert!(
+            !production
+                .contains("\n        public_key: Some(config.root_public_key.as_bytes().to_vec())"),
+            "Holon provenance must not be signed as the Holon actor with the root authority key"
         );
     }
 
@@ -1174,6 +1275,19 @@ mod tests {
         assert!(
             result.is_err(),
             "Holon context construction must fail closed on zero provenance HLC metadata"
+        );
+    }
+
+    #[test]
+    fn holon_context_rejects_root_key_synthesized_as_holon_provenance_key() {
+        let mut config = test_config();
+        let h = create_health_holon(&test_did());
+        config.holon_actor_keys.remove(&h.id);
+        let err = build_holon_adjudication_context(&h, &config)
+            .expect_err("Holon provenance must require a DID-bound Holon signer");
+        assert!(
+            err.contains("Holon actor signer"),
+            "unexpected error: {err}"
         );
     }
 
