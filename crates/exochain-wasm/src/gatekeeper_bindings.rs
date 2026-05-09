@@ -11,6 +11,8 @@ use crate::serde_bridge::*;
 #[derive(serde::Deserialize)]
 struct WasmInvariantRequest {
     actor: exo_core::Did,
+    #[serde(default)]
+    action: String,
     actor_roles: Vec<exo_gatekeeper::types::Role>,
     bailment_state: exo_gatekeeper::types::BailmentState,
     consent_records: Vec<exo_gatekeeper::types::ConsentRecord>,
@@ -69,6 +71,7 @@ pub fn wasm_enforce_invariants(request_json: &str) -> Result<JsValue, JsValue> {
 
     let context = exo_gatekeeper::invariants::InvariantContext {
         actor: req.actor,
+        action: req.action,
         actor_roles: req.actor_roles,
         bailment_state: req.bailment_state,
         consent_records: req.consent_records,
@@ -256,7 +259,7 @@ mod tests {
     fn active_bailment() -> BailmentState {
         BailmentState::Active {
             bailor: Did::new("did:exo:bailor").expect("valid"),
-            bailee: Did::new("did:exo:bailee").expect("valid"),
+            bailee: actor(),
             scope: "test-scope".to_string(),
         }
     }
@@ -319,10 +322,11 @@ mod tests {
 
         InvariantContext {
             actor: actor(),
+            action: "test-scope".to_string(),
             actor_roles: vec![],
             bailment_state: active_bailment(),
             consent_records: vec![ConsentRecord {
-                subject: Did::new("did:exo:subject").expect("valid"),
+                subject: Did::new("did:exo:bailor").expect("valid"),
                 granted_to: actor(),
                 scope: "test-scope".to_string(),
                 active: true,

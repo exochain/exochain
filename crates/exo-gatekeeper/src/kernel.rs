@@ -110,6 +110,7 @@ impl Kernel {
 
         let inv_ctx = InvariantContext {
             actor: action.actor.clone(),
+            action: action.action.clone(),
             actor_roles: context.actor_roles.clone(),
             bailment_state: context.bailment_state.clone(),
             consent_records: context.consent_records.clone(),
@@ -274,7 +275,7 @@ mod tests {
     fn valid_action(actor: &Did) -> ActionRequest {
         ActionRequest {
             actor: actor.clone(),
-            action: "read medical record".into(),
+            action: "data:medical".into(),
             required_permissions: PermissionSet::new(vec![Permission::new("read")]),
             is_self_grant: false,
             modifies_kernel: false,

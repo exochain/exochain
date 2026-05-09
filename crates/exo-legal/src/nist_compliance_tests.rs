@@ -223,6 +223,7 @@ mod nist_compliance {
         }
         InvariantContext {
             actor: actor.clone(),
+            action: "data:test".into(),
             actor_roles: vec![Role {
                 name: "operator".into(),
                 branch: GovernmentBranch::Executive,

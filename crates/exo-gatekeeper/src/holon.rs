@@ -239,13 +239,13 @@ mod tests {
             consent_records: vec![ConsentRecord {
                 subject: did("did:exo:owner"),
                 granted_to: actor.clone(),
-                scope: "data".into(),
+                scope: "holon_step".into(),
                 active: true,
             }],
             bailment_state: BailmentState::Active {
                 bailor: did("did:exo:owner"),
                 bailee: actor.clone(),
-                scope: "data".into(),
+                scope: "holon_step".into(),
             },
             human_override_preserved: true,
             actor_permissions: PermissionSet::new(vec![Permission::new("read")]),

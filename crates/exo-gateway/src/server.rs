@@ -7745,7 +7745,7 @@ mod tests {
         )
         .bind(root.to_string())
         .bind(did)
-        .bind("pace:advance")
+        .bind("advance_pace")
         .bind("constitutional_pace")
         .bind("active")
         .bind(1_000_i64)
@@ -8351,10 +8351,18 @@ mod tests {
     }
 
     fn db_consent_row(actor: &Did, subject_did: &str) -> crate::db::ConsentRecordRow {
+        db_consent_row_with_scope(actor, subject_did, "data:vote")
+    }
+
+    fn db_consent_row_with_scope(
+        actor: &Did,
+        subject_did: &str,
+        scope: &str,
+    ) -> crate::db::ConsentRecordRow {
         crate::db::ConsentRecordRow {
             subject_did: subject_did.to_string(),
             actor_did: actor.as_str().to_string(),
-            scope: "data:vote".to_string(),
+            scope: scope.to_string(),
             bailment_type: "standard".to_string(),
             status: "active".to_string(),
             created_at: 1,
@@ -8513,7 +8521,11 @@ mod tests {
             )],
         };
         let role_rows = vec![db_role_row(&actor, "worker", "executive")];
-        let consent_rows = vec![db_consent_row(&actor, root.as_str())];
+        let consent_rows = vec![db_consent_row_with_scope(
+            &actor,
+            root.as_str(),
+            "advance_pace",
+        )];
         let chain_row =
             db_authority_chain_row(&actor, serde_json::to_value(&authority_chain).unwrap());
         let trusted_authority_keys = trusted_authority_keys_for_test_chain(&authority_chain);
@@ -8539,6 +8551,44 @@ mod tests {
         assert!(
             verdict.is_permitted(),
             "F-010: action permission backed by DB authority-chain scope must be permitted"
+        );
+    }
+
+    #[test]
+    fn adjudication_context_rows_reject_unrelated_active_consent_scope_for_action() {
+        let kernel = adjudication_kernel();
+        let actor = Did::new("did:exo:pace-agent").unwrap();
+        let root = Did::new("did:exo:root-grantor").unwrap();
+        let authority_chain = AuthorityChain {
+            links: vec![signed_authority_link_for_permissions(
+                &root,
+                &actor,
+                PermissionSet::new(vec![Permission::new("advance_pace")]),
+            )],
+        };
+        let role_rows = vec![db_role_row(&actor, "worker", "executive")];
+        let consent_rows = vec![db_consent_row_with_scope(
+            &actor,
+            root.as_str(),
+            "data:vote",
+        )];
+        let chain_row =
+            db_authority_chain_row(&actor, serde_json::to_value(&authority_chain).unwrap());
+        let trusted_authority_keys = trusted_authority_keys_for_test_chain(&authority_chain);
+
+        let ctx = build_adjudication_context_from_rows(
+            &actor,
+            &role_rows,
+            &consent_rows,
+            Some(&chain_row),
+            trusted_authority_keys,
+        )
+        .unwrap();
+        let verdict = kernel.adjudicate(&action_for_permission(&actor, "advance_pace"), &ctx);
+
+        assert!(
+            !verdict.is_permitted(),
+            "active consent for an unrelated scope must not authorize advance_pace"
         );
     }
 

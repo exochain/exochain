@@ -71,6 +71,8 @@ pub const INFRASTRUCTURE_HOLONS_FEATURE: &str = "unaudited-infrastructure-holons
 pub const INFRASTRUCTURE_HOLONS_INITIATIVE: &str =
     "Initiatives/fix-onyx-4-r5-holons-stub-context.md";
 
+const INFRASTRUCTURE_HOLON_STEP_SCOPE: &str = "holon_step";
+
 /// Whether the unaudited infrastructure Holon runtime is compiled in.
 #[must_use]
 pub const fn infrastructure_holons_enabled() -> bool {
@@ -420,13 +422,13 @@ pub fn build_holon_adjudication_context(
         consent_records: vec![ConsentRecord {
             subject: config.root_did.clone(),
             granted_to: holon.id.clone(),
-            scope: "infrastructure-monitoring".into(),
+            scope: INFRASTRUCTURE_HOLON_STEP_SCOPE.into(),
             active: true,
         }],
         bailment_state: BailmentState::Active {
             bailor: config.root_did.clone(),
             bailee: holon.id.clone(),
-            scope: "infrastructure".into(),
+            scope: INFRASTRUCTURE_HOLON_STEP_SCOPE.into(),
         },
         human_override_preserved: true,
         actor_permissions: holon.capabilities.clone(),

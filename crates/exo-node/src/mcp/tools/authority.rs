@@ -228,6 +228,7 @@ fn validate_authority_chain(
     ]));
     let context = InvariantContext {
         actor: terminal_actor.clone(),
+        action: String::new(),
         actor_roles: Vec::new(),
         bailment_state: BailmentState::None,
         consent_records: Vec::new(),

@@ -89,6 +89,7 @@ impl InvariantSet {
 #[derive(Debug, Clone)]
 pub struct InvariantContext {
     pub actor: Did,
+    pub action: String,
     pub actor_roles: Vec<Role>,
     pub bailment_state: BailmentState,
     pub consent_records: Vec<ConsentRecord>,
@@ -279,28 +280,94 @@ fn check_separation_of_powers(ctx: &InvariantContext) -> Result<(), InvariantVio
 }
 
 fn check_consent_required(ctx: &InvariantContext) -> Result<(), InvariantViolation> {
-    if !ctx.bailment_state.is_active() {
+    let (bailor, bailee, bailment_scope) = match &ctx.bailment_state {
+        BailmentState::Active {
+            bailor,
+            bailee,
+            scope,
+        } => (bailor, bailee, scope),
+        _ => {
+            return Err(InvariantViolation {
+                invariant: ConstitutionalInvariant::ConsentRequired,
+                description: "No active bailment for this action".into(),
+                evidence: bailment_state_evidence(&ctx.bailment_state),
+            });
+        }
+    };
+
+    if bailee != &ctx.actor {
         return Err(InvariantViolation {
             invariant: ConstitutionalInvariant::ConsentRequired,
-            description: "No active bailment for this action".into(),
-            evidence: bailment_state_evidence(&ctx.bailment_state),
+            description: "Active bailment bailee does not match action actor".into(),
+            evidence: vec![format!("actor: {}", ctx.actor), format!("bailee: {bailee}")],
         });
     }
-    let has_active = ctx
-        .consent_records
-        .iter()
-        .any(|c| c.granted_to == ctx.actor && c.active);
+
+    if !scope_authorizes_request(bailment_scope, &ctx.action, &ctx.requested_permissions) {
+        return Err(InvariantViolation {
+            invariant: ConstitutionalInvariant::ConsentRequired,
+            description: "Active bailment scope does not authorize requested action".into(),
+            evidence: vec![
+                format!("action: {}", ctx.action),
+                format!("scope: {bailment_scope}"),
+            ],
+        });
+    }
+
+    let has_active = ctx.consent_records.iter().any(|c| {
+        c.active && c.granted_to == ctx.actor && c.subject == *bailor && c.scope == *bailment_scope
+    });
     if !has_active {
         return Err(InvariantViolation {
             invariant: ConstitutionalInvariant::ConsentRequired,
-            description: "No active consent record for actor".into(),
+            description: "No active consent record matching actor, bailor, and scope".into(),
             evidence: vec![
                 format!("actor: {}", ctx.actor),
+                format!("bailor: {bailor}"),
+                format!("scope: {bailment_scope}"),
                 format!("records: {}", ctx.consent_records.len()),
             ],
         });
     }
     Ok(())
+}
+
+fn scope_authorizes_request(scope: &str, action: &str, requested: &PermissionSet) -> bool {
+    let scope = scope.trim();
+    if scope.is_empty() {
+        return false;
+    }
+
+    let action = action.trim();
+    if !action.is_empty()
+        && (scope == action
+            || action.starts_with(scope)
+                && action
+                    .as_bytes()
+                    .get(scope.len())
+                    .is_some_and(|separator| matches!(separator, b':' | b'/' | b'.')))
+    {
+        return true;
+    }
+
+    if requested.is_empty() {
+        return action.is_empty();
+    }
+
+    requested
+        .permissions
+        .iter()
+        .any(|permission| scope_authorizes_permission(scope, permission.0.trim()))
+}
+
+fn scope_authorizes_permission(scope: &str, permission: &str) -> bool {
+    if permission.is_empty() {
+        return false;
+    }
+    scope == permission
+        || scope
+            .strip_suffix(permission)
+            .is_some_and(|prefix| matches!(prefix.as_bytes().last(), Some(b':' | b'/' | b'.')))
 }
 
 fn check_no_self_grant(ctx: &InvariantContext) -> Result<(), InvariantViolation> {
@@ -666,6 +733,7 @@ mod tests {
         );
         InvariantContext {
             actor: actor.clone(),
+            action: "data:medical".into(),
             actor_roles: vec![Role {
                 name: "judge".into(),
                 branch: GovernmentBranch::Judicial,
@@ -891,6 +959,73 @@ mod tests {
         let mut ctx = passing_context();
         ctx.consent_records[0].granted_to = did("did:exo:other");
         assert!(enforce_all(&engine, &ctx).is_err());
+    }
+
+    #[test]
+    fn consent_fails_active_bailment_for_different_bailee() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::ConsentRequired,
+        ]));
+        let mut ctx = passing_context();
+        ctx.bailment_state = BailmentState::Active {
+            bailor: did("did:exo:bailor"),
+            bailee: did("did:exo:other-bailee"),
+            scope: "data:medical".into(),
+        };
+
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+
+        assert_eq!(err[0].invariant, ConstitutionalInvariant::ConsentRequired);
+        assert!(
+            err[0].description.contains("bailee"),
+            "ConsentRequired must bind active bailment to the action actor: {err:?}"
+        );
+    }
+
+    #[test]
+    fn consent_fails_unrelated_active_scope() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::ConsentRequired,
+        ]));
+        let mut ctx = passing_context();
+        ctx.requested_permissions = PermissionSet::new(vec![Permission::new("advance_pace")]);
+        ctx.bailment_state = BailmentState::Active {
+            bailor: did("did:exo:bailor"),
+            bailee: ctx.actor.clone(),
+            scope: "data:vote".into(),
+        };
+        ctx.consent_records = vec![ConsentRecord {
+            subject: did("did:exo:bailor"),
+            granted_to: ctx.actor.clone(),
+            scope: "data:vote".into(),
+            active: true,
+        }];
+
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+
+        assert_eq!(err[0].invariant, ConstitutionalInvariant::ConsentRequired);
+        assert!(
+            err[0].description.contains("scope"),
+            "ConsentRequired must bind active consent scope to the requested action: {err:?}"
+        );
+    }
+
+    #[test]
+    fn consent_fails_unrelated_action_without_requested_permissions() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::ConsentRequired,
+        ]));
+        let mut ctx = passing_context();
+        ctx.action = "advance_pace".into();
+        ctx.requested_permissions = PermissionSet::new(vec![]);
+
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+
+        assert_eq!(err[0].invariant, ConstitutionalInvariant::ConsentRequired);
+        assert!(
+            err[0].description.contains("scope"),
+            "ConsentRequired must bind a non-empty action even when no permission set is provided: {err:?}"
+        );
     }
 
     #[test]
