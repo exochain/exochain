@@ -126,6 +126,8 @@ pub fn wasm_validation_invariant_request() -> Result<JsValue, JsValue> {
         .map_err(|_| gatekeeper_boundary_error("validation invariant actor DID failed"))?;
     let grantor = exo_core::Did::new("did:exo:validation-root")
         .map_err(|_| gatekeeper_boundary_error("validation invariant grantor DID failed"))?;
+    let bailor = exo_core::Did::new("did:exo:validation-bailor")
+        .map_err(|_| gatekeeper_boundary_error("validation bailor DID failed"))?;
     let permissions = PermissionSet::default();
     let mut authority_link = AuthorityLink {
         grantor: grantor.clone(),
@@ -165,17 +167,15 @@ pub fn wasm_validation_invariant_request() -> Result<JsValue, JsValue> {
 
     to_js_value(&serde_json::json!({
         "actor": actor,
+        "action": "validation-scope",
         "actor_roles": [],
         "bailment_state": BailmentState::Active {
-            bailor: exo_core::Did::new("did:exo:validation-bailor")
-                .map_err(|_| gatekeeper_boundary_error("validation bailor DID failed"))?,
-            bailee: exo_core::Did::new("did:exo:validation-bailee")
-                .map_err(|_| gatekeeper_boundary_error("validation bailee DID failed"))?,
+            bailor: bailor.clone(),
+            bailee: actor.clone(),
             scope: "validation-scope".to_string(),
         },
         "consent_records": [ConsentRecord {
-            subject: exo_core::Did::new("did:exo:validation-subject")
-                .map_err(|_| gatekeeper_boundary_error("validation subject DID failed"))?,
+            subject: bailor,
             granted_to: actor.clone(),
             scope: "validation-scope".to_string(),
             active: true,
