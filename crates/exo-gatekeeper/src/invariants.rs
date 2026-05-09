@@ -7,8 +7,9 @@ use exo_core::{Did, Hash256, hash::hash_structured};
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    AuthorityChain, AuthorityLink, BailmentState, ConsentRecord, GovernmentBranch, PermissionSet,
-    Provenance, QuorumEvidence, Role, TrustedAuthorityKeys,
+    AuthorityChain, AuthorityLink, BailmentState, ConsentRecord, GovernmentBranch,
+    MAX_AUTHORITY_CHAIN_LINKS, PermissionSet, Provenance, QuorumEvidence, Role,
+    TrustedAuthorityKeys,
 };
 
 // ---------------------------------------------------------------------------
@@ -409,6 +410,15 @@ fn check_authority_chain_valid(ctx: &InvariantContext) -> Result<(), InvariantVi
             invariant: ConstitutionalInvariant::AuthorityChainValid,
             description: "Authority chain is empty — no delegation path".into(),
             evidence: vec!["authority_chain: empty".into()],
+        });
+    }
+    if ctx.authority_chain.depth() > MAX_AUTHORITY_CHAIN_LINKS {
+        return Err(InvariantViolation {
+            invariant: ConstitutionalInvariant::AuthorityChainValid,
+            description: format!(
+                "Authority chain may contain at most {MAX_AUTHORITY_CHAIN_LINKS} signed links"
+            ),
+            evidence: vec![format!("depth: {}", ctx.authority_chain.depth())],
         });
     }
     let links = &ctx.authority_chain.links;
@@ -1797,6 +1807,44 @@ mod tests {
             err[0].description.contains("grantor_public_key")
                 && err[0].description.contains("unresolved"),
             "self-attested grantor public keys must not satisfy AuthorityChainValid: {err:?}"
+        );
+    }
+
+    #[test]
+    fn authority_chain_rejects_excessive_depth_in_core() {
+        let engine = InvariantEngine::new(InvariantSet::with(vec![
+            ConstitutionalInvariant::AuthorityChainValid,
+        ]));
+        let mut ctx = passing_context();
+        let mut links = Vec::new();
+        ctx.trusted_authority_keys = TrustedAuthorityKeys::default();
+        for idx in 0..=MAX_AUTHORITY_CHAIN_LINKS {
+            let grantor = if idx == 0 {
+                "did:exo:root".to_string()
+            } else {
+                format!("did:exo:delegate-{idx}")
+            };
+            let grantee = if idx == MAX_AUTHORITY_CHAIN_LINKS {
+                ctx.actor.to_string()
+            } else {
+                format!("did:exo:delegate-{}", idx + 1)
+            };
+            let (link, pk) = signed_link(&grantor, &grantee);
+            ctx.trusted_authority_keys
+                .insert(link.grantor.clone(), vec![pk.as_bytes().to_vec()]);
+            links.push(link);
+        }
+        ctx.authority_chain = AuthorityChain { links };
+
+        let err = enforce_all(&engine, &ctx).unwrap_err();
+
+        assert_eq!(
+            err[0].invariant,
+            ConstitutionalInvariant::AuthorityChainValid
+        );
+        assert!(
+            err[0].description.contains("at most"),
+            "oversized signed authority chains must fail closed in gatekeeper core: {err:?}"
         );
     }
 

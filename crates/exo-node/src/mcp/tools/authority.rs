@@ -17,8 +17,9 @@ use exo_gatekeeper::{
     },
     kernel::{ActionRequest, AdjudicationContext, Kernel, Verdict},
     types::{
-        AuthorityChain, AuthorityLink, BailmentState, ConsentRecord, GovernmentBranch, Permission,
-        PermissionSet, Provenance, Role, TrustedAuthorityKeys,
+        AuthorityChain, AuthorityLink, BailmentState, ConsentRecord, GovernmentBranch,
+        MAX_AUTHORITY_CHAIN_LINKS, Permission, PermissionSet, Provenance, Role,
+        TrustedAuthorityKeys,
     },
 };
 use serde_json::{Value, json};
@@ -30,7 +31,6 @@ use crate::mcp::{
 
 /// Constitution bytes used to initialise the CGR Kernel for adjudication.
 const CONSTITUTION: &[u8] = b"We the people of the EXOCHAIN constitutional trust fabric...";
-const MAX_AUTHORITY_CHAIN_LINKS: usize = 5;
 const MAX_AUTHORITY_DID_BYTES: usize = 512;
 const MAX_AUTHORITY_ACTION_BYTES: usize = 16 * 1024;
 const MAX_PERMISSION_SET_ENTRIES: usize = 64;

@@ -286,6 +286,8 @@ pub struct AuthorityLink {
 /// resolved key material for the claimed grantor DID.
 pub type TrustedAuthorityKeys = BTreeMap<Did, Vec<Vec<u8>>>;
 
+pub const MAX_AUTHORITY_CHAIN_LINKS: usize = 5;
+
 const ED25519_SIGNATURE_LEN: usize = 64;
 
 // ---------------------------------------------------------------------------
