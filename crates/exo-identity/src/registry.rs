@@ -125,6 +125,22 @@ pub fn verify_did_registration_proof(
 ) -> Result<(), IdentityError> {
     validate_registered_did_document(doc)?;
 
+    let expected_did = crate::did::did_from_public_key(&proof.public_key).map_err(|e| {
+        IdentityError::InvalidRegistrationProof {
+            did: doc.id.clone(),
+            reason: format!("proof public key cannot derive a valid self-certifying DID: {e}"),
+        }
+    })?;
+    if doc.id != expected_did {
+        return Err(IdentityError::InvalidRegistrationProof {
+            did: doc.id.clone(),
+            reason: format!(
+                "document id is not bound to the registration proof key: expected {}",
+                expected_did
+            ),
+        });
+    }
+
     if !doc.public_keys.iter().any(|key| key == &proof.public_key) {
         return Err(IdentityError::InvalidRegistrationProof {
             did: doc.id.clone(),
@@ -600,7 +616,7 @@ mod tests {
     #[test]
     fn register_with_proof_accepts_document_signed_by_declared_key() {
         let (pk, sk) = generate_keypair();
-        let did = make_did("proof-registered");
+        let did = crate::did::did_from_public_key(&pk).unwrap();
         let doc = make_doc(did.clone(), pk);
         let proof = registration_proof(&doc, pk, &sk);
 
@@ -610,6 +626,24 @@ mod tests {
         let resolved = reg.resolve(&did).unwrap();
         assert_eq!(resolved.id, did);
         assert_eq!(resolved.public_keys, vec![pk]);
+    }
+
+    #[test]
+    fn register_with_proof_rejects_did_not_derived_from_declared_key() {
+        let (pk, sk) = generate_keypair();
+        let doc = make_doc_with_label("claimed-by-attacker-key", pk);
+        let proof = registration_proof(&doc, pk, &sk);
+
+        let mut reg = LocalDidRegistry::new();
+        let err = reg
+            .register_with_proof(doc, &proof)
+            .expect_err("registration must bind did:exo id to the declared signing key");
+
+        assert!(matches!(
+            err,
+            IdentityError::InvalidRegistrationProof { .. }
+        ));
+        assert_eq!(reg.len(), 0);
     }
 
     #[test]

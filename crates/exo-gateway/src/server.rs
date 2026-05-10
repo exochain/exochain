@@ -5326,7 +5326,8 @@ mod tests {
     #[tokio::test]
     async fn auth_register_accepts_valid_registration_proof() {
         let (public_key, secret_key) = generate_keypair();
-        let doc = keyed_doc("did:exo:tester", public_key);
+        let did = exo_identity::did::did_from_public_key(&public_key).unwrap();
+        let doc = did_document_with_ed25519_key(&did, &public_key);
         let body = registration_request_body(&doc, &public_key, &secret_key);
         let app = build_router(state());
         let resp = app
@@ -5341,6 +5342,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn auth_register_rejects_non_self_certifying_did_claim() {
+        let (public_key, secret_key) = generate_keypair();
+        let doc = keyed_doc("did:exo:claimed-by-attacker-key", public_key);
+        let body = registration_request_body(&doc, &public_key, &secret_key);
+        let app = build_router(state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -5368,7 +5390,8 @@ mod tests {
     #[tokio::test]
     async fn auth_register_duplicate_returns_409() {
         let (public_key, secret_key) = generate_keypair();
-        let doc = keyed_doc("did:exo:dup", public_key);
+        let did = exo_identity::did::did_from_public_key(&public_key).unwrap();
+        let doc = did_document_with_ed25519_key(&did, &public_key);
         let registry = Arc::new(RwLock::new(LocalDidRegistry::new()));
         registry.write().unwrap().register(doc.clone()).unwrap();
         let st = AppState::new(None, registry);
@@ -5402,7 +5425,8 @@ mod tests {
         }
 
         let st = AppState::new(None, registry);
-        let overflow_doc = keyed_doc("did:exo:capacity-overflow", pk);
+        let overflow_did = exo_identity::did::did_from_public_key(&pk).unwrap();
+        let overflow_doc = did_document_with_ed25519_key(&overflow_did, &pk);
         let body = registration_request_body(&overflow_doc, &pk, &sk);
         let app = build_router(st);
         let resp = app
@@ -6546,7 +6570,8 @@ mod tests {
     #[tokio::test]
     async fn agents_enroll_returns_201() {
         let (public_key, secret_key) = generate_keypair();
-        let doc = keyed_doc("did:exo:enrollee", public_key);
+        let did = exo_identity::did::did_from_public_key(&public_key).unwrap();
+        let doc = did_document_with_ed25519_key(&did, &public_key);
         let body = registration_request_body(&doc, &public_key, &secret_key);
         let app = build_router(state());
         let resp = app
