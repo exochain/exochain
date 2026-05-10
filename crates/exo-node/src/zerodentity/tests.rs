@@ -1523,10 +1523,71 @@ mod tests {
 
     #[tokio::test]
     async fn get_score_unknown_did_returns_404() {
-        let app = api_app(new_shared_store());
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let did = td("nobody");
+        let token = "score-unknown-session-token";
 
-        let resp = get_req(&app, "/api/v1/0dentity/did:exo:nobody/score").await;
+        store
+            .lock()
+            .unwrap()
+            .insert_session(&make_session(&did, token, 1_000_000))
+            .unwrap();
+
+        let resp = get_with_auth(
+            &app,
+            &format!("/api/v1/0dentity/{}/score", did.as_str()),
+            token,
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn get_score_without_auth_returns_401() {
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let did = td("api-score-noauth");
+
+        store
+            .lock()
+            .unwrap()
+            .insert_claim(
+                "c1",
+                &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
+            )
+            .unwrap();
+
+        let resp = get_req(&app, &format!("/api/v1/0dentity/{}/score", did.as_str())).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn get_score_wrong_did_session_returns_403() {
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let alice = td("api-score-403-alice");
+        let bob = td("api-score-403-bob");
+        let bob_token = "score-bob-session-token";
+
+        {
+            let mut s = store.lock().unwrap();
+            s.insert_claim(
+                "a-c1",
+                &make_claim(&alice, ClaimType::Email, ClaimStatus::Verified, 1_000),
+            )
+            .unwrap();
+            s.insert_session(&make_session(&bob, bob_token, 1_000_000))
+                .unwrap();
+        }
+
+        let resp = get_with_auth(
+            &app,
+            &format!("/api/v1/0dentity/{}/score", alice.as_str()),
+            bob_token,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -1534,9 +1595,12 @@ mod tests {
         let store = new_shared_store();
         let app = api_app(store.clone());
         let did = td("api-score-01");
+        let token = "score-session-token-01";
 
         {
             let mut s = store.lock().unwrap();
+            s.insert_session(&make_session(&did, token, 1_000_000))
+                .unwrap();
             s.insert_claim(
                 "e1",
                 &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
@@ -1549,7 +1613,12 @@ mod tests {
             .unwrap();
         }
 
-        let resp = get_req(&app, &format!("/api/v1/0dentity/{}/score", did.as_str())).await;
+        let resp = get_with_auth(
+            &app,
+            &format!("/api/v1/0dentity/{}/score", did.as_str()),
+            token,
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
         assert_eq!(body["axes"]["communication"].as_u64().unwrap(), 8_700);
@@ -1562,9 +1631,12 @@ mod tests {
         let store = new_shared_store();
         let app = api_app(store.clone());
         let did = td("api-score-evidence-time");
+        let token = "score-session-evidence-time";
 
         {
             let mut s = store.lock().unwrap();
+            s.insert_session(&make_session(&did, token, 1_000_000))
+                .unwrap();
             s.insert_claim(
                 "e1",
                 &make_claim(&did, ClaimType::Email, ClaimStatus::Verified, 1_000),
@@ -1577,7 +1649,12 @@ mod tests {
             .unwrap();
         }
 
-        let resp = get_req(&app, &format!("/api/v1/0dentity/{}/score", did.as_str())).await;
+        let resp = get_with_auth(
+            &app,
+            &format!("/api/v1/0dentity/{}/score", did.as_str()),
+            token,
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
         assert_eq!(body["computed_ms"].as_u64().unwrap(), 2_500);
@@ -1588,19 +1665,23 @@ mod tests {
         let store = new_shared_store();
         let app = api_app(store.clone());
         let did = td("api-score-explicit-time");
+        let token = "score-session-explicit-time";
 
-        store
-            .lock()
-            .unwrap()
-            .insert_claim(
+        {
+            let mut s = store.lock().unwrap();
+            s.insert_session(&make_session(&did, token, 1_000_000))
+                .unwrap();
+            s.insert_claim(
                 "c1",
                 &make_claim(&did, ClaimType::DisplayName, ClaimStatus::Verified, 1_000),
             )
             .unwrap();
+        }
 
-        let resp = get_req(
+        let resp = get_with_auth(
             &app,
             &format!("/api/v1/0dentity/{}/score?as_of_ms=123456", did.as_str()),
+            token,
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -1613,19 +1694,23 @@ mod tests {
         let store = new_shared_store();
         let app = api_app(store.clone());
         let did = td("api-score-zero-time");
+        let token = "score-session-zero-time";
 
-        store
-            .lock()
-            .unwrap()
-            .insert_claim(
+        {
+            let mut s = store.lock().unwrap();
+            s.insert_session(&make_session(&did, token, 1_000_000))
+                .unwrap();
+            s.insert_claim(
                 "c1",
                 &make_claim(&did, ClaimType::DisplayName, ClaimStatus::Verified, 1_000),
             )
             .unwrap();
+        }
 
-        let resp = get_req(
+        let resp = get_with_auth(
             &app,
             &format!("/api/v1/0dentity/{}/score?as_of_ms=0", did.as_str()),
+            token,
         )
         .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -1639,6 +1724,7 @@ mod tests {
     #[tokio::test]
     async fn get_score_is_invariant_to_claim_insertion_order() {
         let did = td("api-score-canonical-order");
+        let token = "score-session-canonical-order";
         let older_post_quantum = make_signed_claim(
             &did,
             ClaimType::Email,
@@ -1657,6 +1743,8 @@ mod tests {
         let ordered_store = new_shared_store();
         {
             let mut s = ordered_store.lock().unwrap();
+            s.insert_session(&make_session(&did, token, 1_000_000))
+                .unwrap();
             s.insert_claim("older", &older_post_quantum).unwrap();
             s.insert_claim("newer", &newer_ed25519).unwrap();
         }
@@ -1665,19 +1753,23 @@ mod tests {
         let reversed_store = new_shared_store();
         {
             let mut s = reversed_store.lock().unwrap();
+            s.insert_session(&make_session(&did, token, 1_000_000))
+                .unwrap();
             s.insert_claim("newer", &newer_ed25519).unwrap();
             s.insert_claim("older", &older_post_quantum).unwrap();
         }
         let reversed_app = api_app(reversed_store);
 
-        let ordered_resp = get_req(
+        let ordered_resp = get_with_auth(
             &ordered_app,
             &format!("/api/v1/0dentity/{}/score", did.as_str()),
+            token,
         )
         .await;
-        let reversed_resp = get_req(
+        let reversed_resp = get_with_auth(
             &reversed_app,
             &format!("/api/v1/0dentity/{}/score", did.as_str()),
+            token,
         )
         .await;
 
@@ -1703,17 +1795,25 @@ mod tests {
         let store = new_shared_store();
         let app = api_app(store.clone());
         let did = td("api-score-02");
+        let token = "score-session-dag-hash";
 
-        store
-            .lock()
-            .unwrap()
-            .insert_claim(
+        {
+            let mut s = store.lock().unwrap();
+            s.insert_session(&make_session(&did, token, 1_000_000))
+                .unwrap();
+            s.insert_claim(
                 "c1",
                 &make_claim(&did, ClaimType::DisplayName, ClaimStatus::Verified, 1_000),
             )
             .unwrap();
+        }
 
-        let resp = get_req(&app, &format!("/api/v1/0dentity/{}/score", did.as_str())).await;
+        let resp = get_with_auth(
+            &app,
+            &format!("/api/v1/0dentity/{}/score", did.as_str()),
+            token,
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
         let hash_str = body["dag_state_hash"].as_str().unwrap();
@@ -1806,12 +1906,69 @@ mod tests {
 
     #[tokio::test]
     async fn score_history_empty_did_returns_empty_snapshots() {
-        let app = api_app(new_shared_store());
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let did = td("no-history");
+        let token = "history-empty-session-token";
 
-        let resp = get_req(&app, "/api/v1/0dentity/did:exo:no-history/score/history").await;
+        store
+            .lock()
+            .unwrap()
+            .insert_session(&make_session(&did, token, 1_000_000))
+            .unwrap();
+
+        let resp = get_with_auth(
+            &app,
+            &format!("/api/v1/0dentity/{}/score/history", did.as_str()),
+            token,
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
         assert_eq!(body["snapshots"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn score_history_without_auth_returns_401() {
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let did = td("api-history-noauth");
+
+        store
+            .lock()
+            .unwrap()
+            .put_score(make_score(&did, 4_000, 1_000));
+
+        let resp = get_req(
+            &app,
+            &format!("/api/v1/0dentity/{}/score/history", did.as_str()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn score_history_wrong_did_session_returns_403() {
+        let store = new_shared_store();
+        let app = api_app(store.clone());
+        let alice = td("api-history-403-alice");
+        let bob = td("api-history-403-bob");
+        let bob_token = "history-bob-session-token";
+
+        {
+            let mut s = store.lock().unwrap();
+            s.put_score(make_score(&alice, 4_000, 1_000));
+            s.insert_session(&make_session(&bob, bob_token, 1_000_000))
+                .unwrap();
+        }
+
+        let resp = get_with_auth(
+            &app,
+            &format!("/api/v1/0dentity/{}/score/history", alice.as_str()),
+            bob_token,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -1819,9 +1976,12 @@ mod tests {
         let store = new_shared_store();
         let app = api_app(store.clone());
         let did = td("api-history-01");
+        let token = "history-session-token-01";
 
         {
             let mut s = store.lock().unwrap();
+            s.insert_session(&make_session(&did, token, 1_000_000))
+                .unwrap();
             for (bp, ms) in [(1_000u32, 1_000u64), (3_000, 5_000), (6_000, 9_000)] {
                 let mut score = make_score(&did, bp, ms);
                 score.computed_ms = ms;
@@ -1829,9 +1989,10 @@ mod tests {
             }
         }
 
-        let resp = get_req(
+        let resp = get_with_auth(
             &app,
             &format!("/api/v1/0dentity/{}/score/history", did.as_str()),
+            token,
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -2451,9 +2612,12 @@ mod tests {
         let store = new_shared_store();
         let app = api_app(store.clone());
         let did = td("api-hist-filter");
+        let token = "history-filter-session-token";
 
         {
             let mut s = store.lock().unwrap();
+            s.insert_session(&make_session(&did, token, 1_000_000))
+                .unwrap();
             for (bp, ms) in [(1_000u32, 1_000u64), (2_000, 5_000), (3_000, 10_000)] {
                 let mut score = make_score(&did, bp, ms);
                 score.computed_ms = ms;
@@ -2461,12 +2625,13 @@ mod tests {
             }
         }
 
-        let resp = get_req(
+        let resp = get_with_auth(
             &app,
             &format!(
                 "/api/v1/0dentity/{}/score/history?from_ms=3000&to_ms=7000",
                 did.as_str()
             ),
+            token,
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
