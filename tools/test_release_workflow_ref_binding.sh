@@ -23,8 +23,10 @@ for job in release-build sbom-and-attest publish; do
   [[ -n "$block" ]] || fail "job $job is missing"
   grep -F 'id: release-ref' <<<"$block" >/dev/null \
     || fail "job $job must resolve the release source ref before checkout"
-  grep -F 'refs/tags/v${{ inputs.version }}' <<<"$block" >/dev/null \
-    || fail "job $job must use the signed version tag for non-dry-run releases"
+  grep -F 'RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}' <<<"$block" >/dev/null \
+    || fail "job $job must consume the validated release tag"
+  grep -F 'printf '\''ref=refs/tags/%s\n'\'' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"' <<<"$block" >/dev/null \
+    || fail "job $job must use the signed validated tag for non-dry-run releases"
   grep -F '${GITHUB_SHA}' <<<"$block" >/dev/null \
     || fail "job $job must keep dry-run builds anchored to the dispatched workflow SHA"
   grep -F 'ref: ${{ steps.release-ref.outputs.ref }}' <<<"$block" >/dev/null \
