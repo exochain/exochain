@@ -46,6 +46,47 @@ function proposal() {
   };
 }
 
+function identityProof(identityId, method, nonce, publicKey = 'ed25519-test-public-key') {
+  return {
+    subjectId: identityId,
+    method,
+    nonce,
+    publicKey,
+    signature: 'ed25519-test-signature',
+    proofHash: `0x${hashCanonical({
+      identityId,
+      method,
+      nonce,
+      publicKey
+    })}`
+  };
+}
+
+function delegationLink({ grantorId, granteeId, authority, scope, previousChainHash = null }) {
+  const signatureHash = `0x${hashCanonical({
+    authority,
+    granteeId,
+    grantorId,
+    scope,
+    signature: 'ed25519-test-signature'
+  })}`;
+  return {
+    grantorId,
+    granteeId,
+    authority,
+    scope,
+    signatureHash,
+    chainHash: `0x${hashCanonical({
+      authority,
+      granteeId,
+      grantorId,
+      previousChainHash,
+      scope,
+      signatureHash
+    })}`
+  };
+}
+
 function run() {
   const compiler = new SyntaxisCompiler();
 
@@ -111,6 +152,98 @@ function run() {
   });
   assert.strictEqual(adjudication.outputs.confidenceBasisPoints, 6666);
   assert.ok(!Object.prototype.hasOwnProperty.call(adjudication.outputs, 'confidence'));
+
+  const shapeOnlyIdentity = NODE_IMPLEMENTATIONS['identity-verify'].execute({
+    inputs: {
+      identity: { id: 'did:exo:shape-only' },
+      verificationMethod: 'cryptographic',
+      nonce: 'nonce-shape-only',
+      timestampHlc: HLC
+    }
+  });
+  assert.strictEqual(
+    shapeOnlyIdentity.outputs.verified,
+    false,
+    'identity-verify must not mark shape-only identity inputs as verified'
+  );
+  assert.strictEqual(shapeOnlyIdentity.nextState, 'VERIFICATION_FAILED');
+
+  const identityNonce = 'nonce-bound';
+  const verifiedIdentity = NODE_IMPLEMENTATIONS['identity-verify'].execute({
+    inputs: {
+      identity: { id: 'did:exo:verified' },
+      verificationMethod: 'cryptographic',
+      nonce: identityNonce,
+      proof: identityProof('did:exo:verified', 'cryptographic', identityNonce),
+      timestampHlc: HLC
+    }
+  });
+  assert.strictEqual(verifiedIdentity.outputs.verified, true);
+  assert.strictEqual(verifiedIdentity.nextState, 'VERIFIED');
+
+  const shapeOnlyAuthority = NODE_IMPLEMENTATIONS['authority-check'].execute({
+    inputs: {
+      subjectId: 'did:exo:shape-only',
+      requiredAuthority: 'GOVERNANCE_PROPOSER',
+      scope: 'security-patch',
+      timestampHlc: HLC
+    }
+  });
+  assert.strictEqual(
+    shapeOnlyAuthority.outputs.authorized,
+    false,
+    'authority-check must not mark subject/scope strings as authorized without delegation evidence'
+  );
+  assert.strictEqual(shapeOnlyAuthority.nextState, 'UNAUTHORIZED');
+
+  const validDelegationChain = [
+    delegationLink({
+      grantorId: 'did:exo:root',
+      granteeId: 'did:exo:verified',
+      authority: 'GOVERNANCE_PROPOSER',
+      scope: 'security-patch'
+    })
+  ];
+  const verifiedAuthority = NODE_IMPLEMENTATIONS['authority-check'].execute({
+    inputs: {
+      subjectId: 'did:exo:verified',
+      requiredAuthority: 'GOVERNANCE_PROPOSER',
+      scope: 'security-patch',
+      delegationChain: validDelegationChain,
+      timestampHlc: HLC
+    }
+  });
+  assert.strictEqual(verifiedAuthority.outputs.authorized, true);
+  assert.strictEqual(verifiedAuthority.nextState, 'AUTHORIZED');
+
+  assert.strictEqual(
+    first.invariantCoverage.GOVERNANCE_AUTHORITY.covered,
+    false,
+    'compiled workflows must not mark governance authority covered without authority evidence'
+  );
+  assert.strictEqual(
+    first.invariantCoverage.PROOF_VALIDITY.covered,
+    false,
+    'compiled workflows must not mark proof validity covered without proof evidence'
+  );
+  assert.strictEqual(
+    first.invariantCoverage.KERNEL_INTEGRITY.covered,
+    false,
+    'compiled workflows must not mark kernel integrity covered without kernel evidence'
+  );
+  const evidencedWorkflow = compiler.compileSyntaxis(
+    {
+      ...verdict(),
+      invariantEvidence: {
+        KERNEL_INTEGRITY: {
+          nodeType: 'kernel-adjudicate',
+          evidenceHash: `0x${'22'.repeat(32)}`
+        }
+      }
+    },
+    proposal()
+  );
+  assert.strictEqual(evidencedWorkflow.invariantCoverage.KERNEL_INTEGRITY.covered, true);
 
   const proofInputs = {
     dataHash: `0x${'11'.repeat(32)}`,

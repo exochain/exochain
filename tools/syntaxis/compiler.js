@@ -53,6 +53,14 @@ const STANDARD_BCTS_FLOW = [
   'CLOSED'
 ];
 
+function isObjectRecord(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.length > 0;
+}
+
 /**
  * Proposal type to Syntaxis node mappings
  */
@@ -163,7 +171,11 @@ class SyntaxisCompiler {
     }
 
     // Validate constitutional invariants
-    const invariantChecks = this._validateInvariants(proposal, councilVerdict);
+    const invariantChecks = this._validateInvariants(
+      proposal,
+      councilVerdict,
+      proposalMapping.nodes
+    );
 
     // Build final workflow
     const workflow = {
@@ -414,7 +426,8 @@ class SyntaxisCompiler {
             createdAtHlc,
             proposalId: proposal.id,
             verdictId: councilVerdict.id
-          })
+          }),
+          proof: proposal.identityProof || councilVerdict.identityProof || null
         };
 
       case 'authority-check':
@@ -422,7 +435,8 @@ class SyntaxisCompiler {
           ...baseInputs,
           subjectId: proposal.proposer,
           requiredAuthority: 'GOVERNANCE_PROPOSER',
-          scope: proposal.type
+          scope: proposal.type,
+          delegationChain: proposal.delegationChain || councilVerdict.delegationChain || []
         };
 
       case 'authority-delegate':
@@ -641,13 +655,31 @@ class SyntaxisCompiler {
     };
   }
 
-  _validateInvariants(proposal, verdict) {
-    return {
-      'GOVERNANCE_AUTHORITY': { covered: true, nodeId: 'authority-check' },
-      'CONSENT_COVERAGE': { covered: true, nodeId: 'consent-verify' },
-      'PROOF_VALIDITY': { covered: true, nodeId: 'proof-verify' },
-      'KERNEL_INTEGRITY': { covered: true, nodeId: 'kernel-adjudicate' }
+  _validateInvariants(proposal, verdict, nodeTypes = []) {
+    const evidence = isObjectRecord(verdict.invariantEvidence) ? verdict.invariantEvidence : {};
+    const requirements = {
+      GOVERNANCE_AUTHORITY: 'authority-check',
+      CONSENT_COVERAGE: 'consent-verify',
+      PROOF_VALIDITY: 'proof-verify',
+      KERNEL_INTEGRITY: 'kernel-adjudicate'
     };
+
+    const coverage = {};
+    for (const [invariant, nodeType] of Object.entries(requirements)) {
+      const record = evidence[invariant];
+      const covered = (
+        nodeTypes.includes(nodeType) &&
+        isObjectRecord(record) &&
+        record.nodeType === nodeType &&
+        isNonEmptyString(record.evidenceHash)
+      );
+      coverage[invariant] = {
+        covered,
+        nodeId: nodeType,
+        evidenceHash: covered ? record.evidenceHash : null
+      };
+    }
+    return coverage;
   }
 
   _mapNodesToBCTS(nodes, stateFlow) {

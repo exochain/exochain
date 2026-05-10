@@ -10,8 +10,8 @@ The Syntaxis Protocol Engine is an intermediary protocol that translates council
 
 #### Core Governance Nodes (10 nodes)
 - **Identity & Access (3 nodes)**
-  - `identity-verify`: Verifies identity of request initiator
-  - `authority-check`: Checks if subject has required authority
+  - `identity-verify`: Verifies caller-supplied identity evidence bound to the request initiator
+  - `authority-check`: Checks if subject has required authority through delegation evidence
   - `authority-delegate`: Delegates authority between subjects
 
 - **Consent (3 nodes)**

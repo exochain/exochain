@@ -82,8 +82,8 @@ const BCTS_STATES = {
 const NODE_REGISTRY = {
   'identity-verify': {
     category: 'Identity & Access',
-    description: 'Verifies identity of request initiator',
-    requiredInputs: ['identity', 'verificationMethod', 'nonce'],
+    description: 'Verifies identity evidence bound to the request initiator',
+    requiredInputs: ['identity', 'verificationMethod', 'nonce', 'proof'],
     outputs: ['identityId', 'verified', 'verificationTimestamp'],
     bctsTransition: 'IDENTITY_REQUIRED -> IDENTITY_VERIFIED',
     requiredPanels: ['Identity Panel'],
@@ -93,8 +93,8 @@ const NODE_REGISTRY = {
 
   'authority-check': {
     category: 'Identity & Access',
-    description: 'Checks if subject has required authority for action',
-    requiredInputs: ['subjectId', 'requiredAuthority', 'scope'],
+    description: 'Checks if subject has required authority through delegation evidence',
+    requiredInputs: ['subjectId', 'requiredAuthority', 'scope', 'delegationChain'],
     outputs: ['subjectId', 'authorized', 'authorityLevel'],
     bctsTransition: 'IDENTITY_VERIFIED -> AUTHORIZED',
     requiredPanels: ['Identity Panel'],

@@ -18,6 +18,14 @@ function isObjectRecord(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isNonZeroHash(value) {
+  return isNonEmptyString(value) && !/^0x?0+$/.test(value);
+}
+
 /**
  * Base Node class - all node types extend this
  */
@@ -74,16 +82,21 @@ class IdentityVerifyNode extends SyntaxisNode {
     if (!inputs.nonce) {
       errors.push('nonce is required');
     }
+    const proof = inputs.proof || inputs.identity?.proof;
+    if (!isObjectRecord(proof)) {
+      errors.push('proof is required and must be an object');
+    }
     return { valid: errors.length === 0, errors };
   }
 
   execute(context) {
     const { identity, verificationMethod, nonce } = context.inputs;
+    const proof = context.inputs.proof || identity?.proof;
     const timestampHlc = timestampFromContext(context);
-    const verified = this._performVerification(identity, verificationMethod, nonce);
+    const verified = this._performVerification(identity, verificationMethod, nonce, proof);
     return {
       outputs: {
-        identityId: identity.id,
+        identityId: identity?.id,
         verified,
         verificationTimestamp: hlcToString(timestampHlc),
         verificationTimestampHlc: timestampHlc,
@@ -98,9 +111,26 @@ class IdentityVerifyNode extends SyntaxisNode {
     return ['Identity Panel'];
   }
 
-  _performVerification(identity, method, nonce) {
-    // In production, would verify cryptographic signatures, delegation chains, or audit logs
-    return !!(identity && identity.id && nonce);
+  _performVerification(identity, method, nonce, proof) {
+    if (!isObjectRecord(identity) || !isObjectRecord(proof)) {
+      return false;
+    }
+    if (!isNonEmptyString(identity.id) || !isNonEmptyString(method) || !isNonEmptyString(nonce)) {
+      return false;
+    }
+    if (proof.subjectId !== identity.id || proof.method !== method || proof.nonce !== nonce) {
+      return false;
+    }
+    if (!isNonEmptyString(proof.publicKey) || !isNonEmptyString(proof.signature)) {
+      return false;
+    }
+    const expectedProofHash = `0x${hashCanonical({
+      identityId: identity.id,
+      method,
+      nonce,
+      publicKey: proof.publicKey
+    })}`;
+    return proof.proofHash === expectedProofHash;
   }
 }
 
@@ -120,13 +150,16 @@ class AuthorityCheckNode extends SyntaxisNode {
     if (!inputs.scope) {
       errors.push('scope is required');
     }
+    if (!Array.isArray(inputs.delegationChain) || inputs.delegationChain.length === 0) {
+      errors.push('delegationChain must be a non-empty array');
+    }
     return { valid: errors.length === 0, errors };
   }
 
   execute(context) {
-    const { subjectId, requiredAuthority, scope } = context.inputs;
+    const { subjectId, requiredAuthority, scope, delegationChain } = context.inputs;
     const timestampHlc = timestampFromContext(context);
-    const authorized = this._checkAuthority(subjectId, requiredAuthority, scope);
+    const authorized = this._checkAuthority(subjectId, requiredAuthority, scope, delegationChain);
     return {
       outputs: {
         subjectId,
@@ -145,9 +178,49 @@ class AuthorityCheckNode extends SyntaxisNode {
     return ['Identity Panel'];
   }
 
-  _checkAuthority(subjectId, requiredAuthority, scope) {
-    // In production, would check delegated authority in identity registry
-    return !!(subjectId && requiredAuthority && scope);
+  _checkAuthority(subjectId, requiredAuthority, scope, delegationChain) {
+    if (!isNonEmptyString(subjectId) || !isNonEmptyString(requiredAuthority) || !isNonEmptyString(scope)) {
+      return false;
+    }
+    if (!Array.isArray(delegationChain) || delegationChain.length === 0) {
+      return false;
+    }
+
+    let previousChainHash = null;
+    for (const link of delegationChain) {
+      if (!isObjectRecord(link)) {
+        return false;
+      }
+      if (
+        !isNonEmptyString(link.grantorId) ||
+        !isNonEmptyString(link.granteeId) ||
+        !isNonEmptyString(link.authority) ||
+        !isNonEmptyString(link.scope) ||
+        !isNonZeroHash(link.signatureHash) ||
+        !isNonZeroHash(link.chainHash)
+      ) {
+        return false;
+      }
+      const expectedChainHash = `0x${hashCanonical({
+        authority: link.authority,
+        granteeId: link.granteeId,
+        grantorId: link.grantorId,
+        previousChainHash,
+        scope: link.scope,
+        signatureHash: link.signatureHash
+      })}`;
+      if (link.chainHash !== expectedChainHash) {
+        return false;
+      }
+      previousChainHash = link.chainHash;
+    }
+
+    const terminalLink = delegationChain[delegationChain.length - 1];
+    return (
+      terminalLink.granteeId === subjectId &&
+      terminalLink.authority === requiredAuthority &&
+      terminalLink.scope === scope
+    );
   }
 }
 
