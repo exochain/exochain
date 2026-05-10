@@ -293,6 +293,8 @@ pub type TrustedAuthorityKeys = BTreeMap<Did, Vec<Vec<u8>>>;
 /// resolved key material for the claimed actor DID.
 pub type TrustedProvenanceKeys = BTreeMap<Did, Vec<Vec<u8>>>;
 
+const ED25519_SIGNATURE_LEN: usize = 64;
+
 // ---------------------------------------------------------------------------
 // Quorum evidence
 // ---------------------------------------------------------------------------
@@ -314,9 +316,8 @@ impl QuorumEvidence {
         self.distinct_approved_voter_count() >= threshold
     }
 
-    /// Returns `true` if the threshold is met counting only non-synthetic
-    /// approved votes. A vote with `provenance.voice_kind = Synthetic` is
-    /// excluded from the human count per CR-001 §8.3.
+    /// Returns `true` if the threshold is met counting only signed human
+    /// approvals with voter-bound provenance.
     pub fn is_met_authentic(&self) -> bool {
         let Some(threshold) = usize::try_from(self.threshold).ok() else {
             return false;
@@ -356,14 +357,12 @@ impl QuorumEvidence {
             .len()
     }
 
-    /// Count distinct approved voter DIDs that are not synthetic.
+    /// Count distinct approved voter DIDs with signed human provenance.
     #[must_use]
     pub fn distinct_authentic_approved_voter_count(&self) -> usize {
         self.votes
             .iter()
-            .filter(|vote| {
-                vote.approved && !vote.provenance.as_ref().is_some_and(|p| p.is_synthetic())
-            })
+            .filter(|vote| vote.is_authentic_human_approval())
             .map(|vote| vote.voter.clone())
             .collect::<BTreeSet<_>>()
             .len()
@@ -382,6 +381,30 @@ pub struct QuorumVote {
     /// distinct human approval in quorum (CR-001 §8.3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Provenance>,
+}
+
+impl QuorumVote {
+    /// Returns whether this vote is structurally eligible for authentic quorum.
+    ///
+    /// Cryptographic trust resolution happens in the invariant engine because
+    /// it needs runtime DID key material. This structural check still fails
+    /// closed for legacy votes, synthetic/system voices, actor mismatches, and
+    /// malformed signatures.
+    #[must_use]
+    pub fn is_authentic_human_approval(&self) -> bool {
+        self.approved
+            && self.signature.len() == ED25519_SIGNATURE_LEN
+            && self.provenance.as_ref().is_some_and(|provenance| {
+                provenance.actor == self.voter
+                    && provenance.is_human_voice()
+                    && provenance.signature.len() == ED25519_SIGNATURE_LEN
+                    && self.signature == provenance.signature
+                    && provenance
+                        .public_key
+                        .as_ref()
+                        .is_some_and(|key| key.len() == 32)
+            })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -560,13 +583,13 @@ mod tests {
         QuorumVote {
             voter: did(voter),
             approved,
-            signature: vec![sig],
+            signature: vec![sig; ED25519_SIGNATURE_LEN],
             provenance: voice.map(|vk| Provenance {
                 actor: did(voter),
                 timestamp: "t".into(),
                 action_hash: vec![1],
-                signature: vec![sig],
-                public_key: None,
+                signature: vec![sig; ED25519_SIGNATURE_LEN],
+                public_key: Some(vec![sig; 32]),
                 voice_kind: Some(vk),
                 independence: None,
                 review_order: None,
@@ -699,8 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn quorum_is_met_authentic_legacy_vote_counts() {
-        // Legacy votes (no provenance) are not excluded
+    fn quorum_is_met_authentic_rejects_legacy_votes_without_provenance() {
         let ev = QuorumEvidence {
             threshold: 2,
             votes: vec![
@@ -718,7 +740,38 @@ mod tests {
                 },
             ],
         };
-        assert!(ev.is_met_authentic());
+        assert!(
+            !ev.is_met_authentic(),
+            "votes without provenance must not count as authentic human quorum evidence"
+        );
+    }
+
+    #[test]
+    fn quorum_is_met_authentic_rejects_unsigned_human_votes() {
+        let mut vote = make_vote("did:exo:h1", true, 1, Some(VoiceKind::Human));
+        vote.signature.clear();
+        let ev = QuorumEvidence {
+            threshold: 1,
+            votes: vec![vote],
+        };
+        assert!(
+            !ev.is_met_authentic(),
+            "unsigned votes must not count as authentic human quorum evidence"
+        );
+    }
+
+    #[test]
+    fn quorum_is_met_authentic_rejects_mismatched_provenance_actor() {
+        let mut vote = make_vote("did:exo:h1", true, 1, Some(VoiceKind::Human));
+        vote.provenance.as_mut().expect("provenance").actor = did("did:exo:h2");
+        let ev = QuorumEvidence {
+            threshold: 1,
+            votes: vec![vote],
+        };
+        assert!(
+            !ev.is_met_authentic(),
+            "provenance for a different actor must not count for the voter"
+        );
     }
 
     // ── Provenance voice/independence helpers ────────────────────────────────
