@@ -2,9 +2,9 @@
 //!
 //! Implements read and attestation endpoints:
 //!
-//! - `GET /api/v1/0dentity/:did/score`         — current score (public)
+//! - `GET /api/v1/0dentity/:did/score`         — current score (owner only)
 //! - `GET /api/v1/0dentity/:did/claims`         — claim list (owner only)
-//! - `GET /api/v1/0dentity/:did/score/history`  — score history (public)
+//! - `GET /api/v1/0dentity/:did/score/history`  — score history (owner only)
 //! - `GET /api/v1/0dentity/:did/fingerprints`   — fingerprint timeline (owner only)
 //! - `POST /api/v1/0dentity/:did/attest`        — peer attestation
 //!
@@ -379,6 +379,30 @@ async fn verify_signed_write_blocking(
     .await
 }
 
+async fn verify_owner_session_blocking(
+    state: ApiState,
+    headers: &HeaderMap,
+    expected_did: Did,
+) -> ApiResult<()> {
+    let token = extract_session_token(headers)
+        .ok_or_else(|| json_error(StatusCode::UNAUTHORIZED, "Bearer session token required"))?;
+
+    let now_ms = now_ms_blocking(state.clone()).await?;
+    with_store_blocking(state, move |store| {
+        let session = store
+            .get_session(&token, now_ms)
+            .map_err(store_error)?
+            .ok_or_else(|| json_error(StatusCode::UNAUTHORIZED, "Invalid or expired session"))?;
+
+        if session.subject_did.as_str() != expected_did.as_str() {
+            return Err(json_error(StatusCode::FORBIDDEN, "Access denied"));
+        }
+
+        Ok(())
+    })
+    .await
+}
+
 fn hex_hash(h: &Hash256) -> String {
     hex::encode(h.as_bytes())
 }
@@ -552,8 +576,10 @@ pub async fn get_score(
     State(state): State<ApiState>,
     Path(did_str): Path<String>,
     Query(params): Query<ScoreQuery>,
+    headers: HeaderMap,
 ) -> Result<Json<ScoreResponse>, (StatusCode, Json<serde_json::Value>)> {
     let did = parse_did(&did_str)?;
+    verify_owner_session_blocking(state.clone(), &headers, did.clone()).await?;
 
     let response = with_store_blocking(state, move |store| {
         // Check if DID exists
@@ -677,9 +703,11 @@ pub async fn score_history(
     State(state): State<ApiState>,
     Path(did_str): Path<String>,
     Query(params): Query<HistoryQuery>,
+    headers: HeaderMap,
 ) -> Result<Json<HistoryResponse>, (StatusCode, Json<serde_json::Value>)> {
     let did = parse_did(&did_str)?;
     let page_bounds = parse_page_bounds(params.limit, params.offset)?;
+    verify_owner_session_blocking(state.clone(), &headers, did.clone()).await?;
 
     let response = with_store_blocking(state, move |store| {
         let snapshots = store
@@ -1045,14 +1073,19 @@ mod tests {
 
     #[tokio::test]
     async fn get_score_redacts_store_read_errors() {
-        let mut store = test_store();
-        store.inject_read_failure(ZerodentityReadFailure::Claims);
-        let app = zerodentity_api_router(test_api_state(store));
+        let state = make_state_with_session("tok-redaction", "did:exo:redaction");
+        state
+            .store
+            .lock()
+            .unwrap()
+            .inject_read_failure(ZerodentityReadFailure::Claims);
+        let app = zerodentity_api_router(state);
 
         let resp = app
             .oneshot(
                 Request::builder()
                     .uri("/api/v1/0dentity/did:exo:redaction/score")
+                    .header("authorization", "Bearer tok-redaction")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1119,6 +1152,34 @@ mod tests {
             .unwrap();
 
         assert!(!score_section.contains("now_ms()"));
+    }
+
+    #[test]
+    fn score_and_history_reads_require_owner_session_before_store_reads() {
+        let source = include_str!("api.rs");
+        let score_section = source
+            .split("// GET /api/v1/0dentity/:did/score\n// ---------------------------------------------------------------------------")
+            .nth(1)
+            .expect("score section present")
+            .split("// GET /api/v1/0dentity/:did/claims")
+            .next()
+            .expect("claims marker present");
+        let history_section = source
+            .split("// GET /api/v1/0dentity/:did/score/history\n// ---------------------------------------------------------------------------")
+            .nth(1)
+            .expect("history section present")
+            .split("// GET /api/v1/0dentity/:did/fingerprints")
+            .next()
+            .expect("fingerprints marker present");
+
+        for section in [score_section, history_section] {
+            assert!(section.contains("headers: HeaderMap"));
+            assert!(
+                section.find("verify_owner_session_blocking").unwrap()
+                    < section.find("with_store_blocking").unwrap(),
+                "0dentity score reads must verify owner sessions before reading store state"
+            );
+        }
     }
 
     #[test]
@@ -1272,6 +1333,15 @@ mod tests {
     fn make_state_with_score_history(did_str: &str, timestamps: &[u64]) -> ApiState {
         let mut store = test_store();
         let did = Did::new(did_str).unwrap();
+        let session = IdentitySession {
+            session_token: "tok-history".to_owned(),
+            subject_did: did.clone(),
+            public_key: vec![],
+            created_ms: API_TEST_ACTIVE_SESSION_CREATED_MS,
+            last_active_ms: API_TEST_ACTIVE_SESSION_CREATED_MS,
+            revoked: false,
+        };
+        store.insert_session(&session).unwrap();
         for timestamp in timestamps {
             store.put_score(ZerodentityScore::compute(&did, &[], &[], &[], *timestamp));
         }
@@ -1555,11 +1625,12 @@ mod tests {
 
     #[tokio::test]
     async fn score_history_returns_empty_for_unknown_did() {
-        let app = zerodentity_api_router(make_state());
+        let app = zerodentity_api_router(make_state_with_session("tok-nobody", "did:exo:nobody"));
         let resp = app
             .oneshot(
                 Request::builder()
                     .uri("/api/v1/0dentity/did%3Aexo%3Anobody/score/history")
+                    .header("authorization", "Bearer tok-nobody")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1579,6 +1650,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/v1/0dentity/did%3Aexo%3Ahistory/score/history?offset=1&limit=2")
+                    .header("authorization", "Bearer tok-history")
                     .body(Body::empty())
                     .unwrap(),
             )

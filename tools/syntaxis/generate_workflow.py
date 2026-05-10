@@ -34,11 +34,22 @@ Composition types:
 """
 
 import json
-import os
+import re
 import sys
 import textwrap
 from pathlib import Path
-from datetime import datetime, timezone
+
+
+WORKFLOW_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
+STEP_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*$")
+SAFE_TOKEN_RE = re.compile(r"^[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*$")
+COMPOSITIONS = frozenset(("sequence", "parallel", "choice", "guarded_sequence"))
+MAX_DESCRIPTION_CHARS = 2048
+MAX_STEPS = 128
+
+
+class WorkflowValidationError(ValueError):
+    """Raised when untrusted workflow JSON fails the codegen boundary."""
 
 
 def load_node_registry() -> dict:
@@ -59,6 +70,89 @@ def to_snake_case(name: str) -> str:
 def to_pascal_case(name: str) -> str:
     """Convert kebab-case to PascalCase."""
     return "".join(word.capitalize() for word in name.split("-"))
+
+
+def require_string(value: object, field: str) -> str:
+    """Return a string field or raise a validation error."""
+    if not isinstance(value, str):
+        raise WorkflowValidationError(f"{field} must be a string")
+    return value
+
+
+def validate_safe_token(value: str, field: str, pattern: re.Pattern[str]) -> None:
+    """Validate a token before it is used in Rust identifiers or file names."""
+    if not pattern.fullmatch(value):
+        raise WorkflowValidationError(
+            f"{field} contains characters outside the allowed lowercase ASCII token format"
+        )
+
+
+def validate_doc_text(value: str, field: str) -> None:
+    """Validate free text before rendering it as Rust doc comments."""
+    if len(value) > MAX_DESCRIPTION_CHARS:
+        raise WorkflowValidationError(
+            f"{field} must be at most {MAX_DESCRIPTION_CHARS} characters"
+        )
+    for char in value:
+        if ord(char) < 32 and char not in ("\n", "\t"):
+            raise WorkflowValidationError(f"{field} contains a forbidden control character")
+
+
+def rust_doc_comment(text: str) -> str:
+    """Render free text as line-based Rust doc comments."""
+    lines = text.split("\n")
+    return "\n".join(f"//! {line}" if line else "//!" for line in lines)
+
+
+def validate_workflow(workflow: object, registry: dict) -> None:
+    """Validate untrusted workflow JSON before any Rust or paths are generated."""
+    if not isinstance(workflow, dict):
+        raise WorkflowValidationError("workflow must be a JSON object")
+
+    name = require_string(workflow.get("name"), "workflow.name")
+    validate_safe_token(name, "workflow.name", WORKFLOW_NAME_RE)
+
+    description = workflow.get("description", f"Workflow: {name}")
+    validate_doc_text(require_string(description, "workflow.description"), "workflow.description")
+
+    composition = workflow.get("composition", "sequence")
+    composition = require_string(composition, "workflow.composition")
+    if composition not in COMPOSITIONS:
+        raise WorkflowValidationError(
+            f"workflow.composition must be one of: {', '.join(sorted(COMPOSITIONS))}"
+        )
+
+    error_strategy = workflow.get("error_strategy", "fail_fast")
+    error_strategy = require_string(error_strategy, "workflow.error_strategy")
+    validate_safe_token(error_strategy, "workflow.error_strategy", SAFE_TOKEN_RE)
+
+    steps = workflow.get("steps")
+    if not isinstance(steps, list):
+        raise WorkflowValidationError("workflow.steps must be a non-empty list")
+    if not steps:
+        raise WorkflowValidationError("workflow.steps must contain at least one step")
+    if len(steps) > MAX_STEPS:
+        raise WorkflowValidationError(f"workflow.steps may contain at most {MAX_STEPS} steps")
+
+    seen_step_ids: set[str] = set()
+    for index, step in enumerate(steps):
+        field = f"workflow.steps[{index}]"
+        if not isinstance(step, dict):
+            raise WorkflowValidationError(f"{field} must be an object")
+
+        node_type = require_string(step.get("node"), f"{field}.node")
+        if node_type not in registry["nodes"]:
+            raise WorkflowValidationError(f"{field}.node is not in registry: {node_type}")
+
+        step_id = require_string(step.get("id"), f"{field}.id")
+        validate_safe_token(step_id, f"{field}.id", STEP_ID_RE)
+        normalized_step_id = to_snake_case(step_id)
+        if normalized_step_id in seen_step_ids:
+            raise WorkflowValidationError(f"{field}.id duplicates another generated step id")
+        seen_step_ids.add(normalized_step_id)
+
+        if "config" in step and not isinstance(step["config"], dict):
+            raise WorkflowValidationError(f"{field}.config must be an object when provided")
 
 
 def collect_invariants(steps: list[dict], registry: dict) -> list[str]:
@@ -92,7 +186,7 @@ def generate_step_combinator(step: dict, registry: dict) -> str:
     config = step.get("config", {})
 
     if not node_def:
-        return f'// Unknown node type: {node_type}\nCombinator::Identity'
+        raise WorkflowValidationError(f"node type is not in registry: {node_type}")
 
     # Build predicate keys from node inputs
     required_keys = node_def.get("inputs", [])
@@ -143,6 +237,7 @@ def generate_workflow_module(workflow: dict, registry: dict) -> str:
 
     snake_name = to_snake_case(name)
     pascal_name = to_pascal_case(name)
+    description_doc = textwrap.indent(rust_doc_comment(description), "        ")
 
     invariants = collect_invariants(steps, registry)
     crate_imports = collect_crate_imports(steps, registry)
@@ -162,7 +257,7 @@ def generate_workflow_module(workflow: dict, registry: dict) -> str:
         "choice": "Choice",
         "guarded_sequence": "Sequence",
     }
-    combinator_type = composition_map.get(composition, "Sequence")
+    combinator_type = composition_map[composition]
 
     # Invariant variant list for the check function
     invariant_checks = "\n".join(
@@ -190,7 +285,7 @@ def generate_workflow_module(workflow: dict, registry: dict) -> str:
     return textwrap.dedent(f"""\
         //! Workflow: {name}
         //!
-        //! {description}
+{description_doc}
         //!
         //! Generated by Syntaxis workflow codegen.
         //! DO NOT EDIT MANUALLY --- regenerate from the workflow definition.
@@ -465,23 +560,14 @@ def main() -> None:
 
     registry = load_node_registry()
 
-    # Validate workflow
-    name = workflow.get("name")
-    if not name:
-        print("Error: workflow must have a 'name' field")
+    try:
+        validate_workflow(workflow, registry)
+    except WorkflowValidationError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    steps = workflow.get("steps", [])
-    if not steps:
-        print("Error: workflow must have at least one step")
-        sys.exit(1)
-
-    # Validate all node types exist in registry
-    for step in steps:
-        node_type = step.get("node")
-        if node_type not in registry["nodes"]:
-            print(f"Warning: node type '{node_type}' not found in registry")
-
+    name = workflow["name"]
+    steps = workflow["steps"]
     snake_name = to_snake_case(name)
 
     # Generate output directory
