@@ -15,9 +15,9 @@ loop:
   stop_conditions:
     - "$create_pr.output contains a pull request URL"
     - "$validate_constitution.output.governance_disposition == 'BLOCK'"
-    - "$remediate.output repeats the same validation failure"
+    - "$remediate.output reports the same validation failure fingerprint twice"
     - "max_iterations reached"
-  escalation_path: "escalate_blocked"
+  escalation_path: "escalate_blocked after a repeated validation failure fingerprint or max_iterations"
   fresh_context: true
 
 nodes:
