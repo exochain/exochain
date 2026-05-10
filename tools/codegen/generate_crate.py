@@ -190,7 +190,7 @@ def generate_module_rs(crate_name: str, module_name: str) -> str:
 
         use std::collections::BTreeMap;
 
-        use exo_core::{{DeterministicMap, Hash256, Timestamp}};
+        use exo_core::{{Hash256, Timestamp}};
         use serde::{{Deserialize, Serialize}};
 
         use crate::error::{crate_pascal}Error;
@@ -239,6 +239,16 @@ def generate_module_rs(crate_name: str, module_name: str) -> str:
                 }}
                 Ok(())
             }}
+
+            /// Compute the canonical CBOR digest for this instance.
+            pub fn canonical_digest(&self) -> Result<Hash256, {crate_pascal}Error> {{
+                self.validate()?;
+                exo_core::hash::hash_structured(self).map_err(|e| {{
+                    {crate_pascal}Error::Internal(format!(
+                        "{module_name} canonical digest failed: {{e}}"
+                    ))
+                }})
+            }}
         }}
 
         // ---------------------------------------------------------------------------
@@ -250,8 +260,8 @@ def generate_module_rs(crate_name: str, module_name: str) -> str:
             /// Process this item, producing a deterministic result.
             fn process(&self) -> Result<{mod_pascal}Result, {crate_pascal}Error>;
 
-            /// Verify integrity of this item.
-            fn verify(&self) -> Result<bool, {crate_pascal}Error>;
+            /// Verify this item against caller-supplied canonical digest evidence.
+            fn verify(&self, expected_digest: &Hash256) -> Result<bool, {crate_pascal}Error>;
         }}
 
         /// Result of a {module_name} processing operation.
@@ -275,9 +285,8 @@ def generate_module_rs(crate_name: str, module_name: str) -> str:
                 }})
             }}
 
-            fn verify(&self) -> Result<bool, {crate_pascal}Error> {{
-                self.validate()?;
-                Ok(true)
+            fn verify(&self, expected_digest: &Hash256) -> Result<bool, {crate_pascal}Error> {{
+                Ok(self.canonical_digest()? == *expected_digest)
             }}
         }}
 
@@ -290,11 +299,7 @@ def generate_module_rs(crate_name: str, module_name: str) -> str:
             use super::*;
 
             fn test_timestamp() -> Timestamp {{
-                Timestamp {{
-                    physical_ms: 1_700_000_000_000,
-                    logical: 0,
-                    node_id: 1,
-                }}
+                Timestamp::new(1_700_000_000_000, 0)
             }}
 
             #[test]
@@ -308,7 +313,7 @@ def generate_module_rs(crate_name: str, module_name: str) -> str:
             fn test_metadata() {{
                 let mut item = {mod_pascal}::new("test-002", test_timestamp());
                 item.set_metadata("key", "value");
-                assert_eq!(item.metadata.get("key").unwrap(), "value");
+                assert_eq!(item.metadata.get("key").map(String::as_str), Some("value"));
             }}
 
             #[test]
@@ -324,33 +329,43 @@ def generate_module_rs(crate_name: str, module_name: str) -> str:
             }}
 
             #[test]
-            fn test_process() {{
+            fn test_process() -> Result<(), Box<dyn std::error::Error>> {{
                 let item = {mod_pascal}::new("proc-001", test_timestamp());
-                let result = item.process().unwrap();
+                let result = item.process()?;
                 assert!(result.success);
+                Ok(())
             }}
 
             #[test]
-            fn test_verify() {{
-                let item = {mod_pascal}::new("verify-001", test_timestamp());
-                assert!(item.verify().unwrap());
+            fn test_verify() -> Result<(), Box<dyn std::error::Error>> {{
+                let mut item = {mod_pascal}::new("verify-001", test_timestamp());
+                item.set_metadata("scope", "canonical");
+                let digest = item.canonical_digest()?;
+                assert!(item.verify(&digest)?);
+
+                item.set_metadata("scope", "tampered");
+                assert!(!item.verify(&digest)?);
+                Ok(())
             }}
 
             #[test]
-            fn test_deterministic_serialization() {{
+            fn test_deterministic_serialization() -> Result<(), Box<dyn std::error::Error>> {{
                 let mut item = {mod_pascal}::new("ser-001", test_timestamp());
                 item.set_metadata("b_key", "second");
                 item.set_metadata("a_key", "first");
 
-                let json1 = serde_json::to_string(&item).unwrap();
-                let json2 = serde_json::to_string(&item).unwrap();
+                let json1 = serde_json::to_string(&item)?;
+                let json2 = serde_json::to_string(&item)?;
                 assert_eq!(json1, json2, "serialization must be deterministic");
 
-                // BTreeMap guarantees key ordering
-                assert!(
-                    json1.find("a_key").unwrap() < json1.find("b_key").unwrap(),
-                    "BTreeMap must serialize in sorted key order"
-                );
+                let Some(a_key_position) = json1.find("a_key") else {{
+                    panic!("serialized output must include a_key");
+                }};
+                let Some(b_key_position) = json1.find("b_key") else {{
+                    panic!("serialized output must include b_key");
+                }};
+                assert!(a_key_position < b_key_position, "BTreeMap must serialize in sorted key order");
+                Ok(())
             }}
         }}
     """)
@@ -369,43 +384,42 @@ def generate_integration_test(crate_name: str, module_name: str) -> str:
         use {crate_snake}::{module_name}::{mod_pascal}Ops;
 
         fn test_timestamp() -> Timestamp {{
-            Timestamp {{
-                physical_ms: 1_700_000_000_000,
-                logical: 0,
-                node_id: 1,
-            }}
+            Timestamp::new(1_700_000_000_000, 0)
         }}
 
         #[test]
-        fn integration_round_trip() {{
+        fn integration_round_trip() -> Result<(), Box<dyn std::error::Error>> {{
             let mut item = {mod_pascal}::new("int-001", test_timestamp());
             item.set_metadata("env", "integration");
 
             // Validate
-            item.validate().expect("should validate");
+            item.validate()?;
 
             // Process
-            let result = item.process().expect("should process");
+            let result = item.process()?;
             assert!(result.success);
 
             // Verify
-            assert!(item.verify().expect("should verify"));
+            let digest = item.canonical_digest()?;
+            assert!(item.verify(&digest)?);
 
             // Serialize round-trip
-            let json = serde_json::to_string(&item).expect("serialize");
-            let restored: {mod_pascal} = serde_json::from_str(&json).expect("deserialize");
+            let json = serde_json::to_string(&item)?;
+            let restored: {mod_pascal} = serde_json::from_str(&json)?;
             assert_eq!(item, restored, "round-trip must be lossless");
+            Ok(())
         }}
 
         #[test]
-        fn integration_determinism() {{
+        fn integration_determinism() -> Result<(), Box<dyn std::error::Error>> {{
             // Two identical items must produce identical outputs
             let a = {mod_pascal}::new("det-001", test_timestamp());
             let b = {mod_pascal}::new("det-001", test_timestamp());
 
-            let result_a = a.process().expect("a");
-            let result_b = b.process().expect("b");
+            let result_a = a.process()?;
+            let result_b = b.process()?;
             assert_eq!(result_a, result_b, "determinism: same input -> same output");
+            Ok(())
         }}
     """)
 
