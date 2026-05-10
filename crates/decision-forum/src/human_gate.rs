@@ -4,9 +4,11 @@
 //! distinguishes human vs AI signatures cryptographically, blocks AI
 //! from satisfying HUMAN_GATE_REQUIRED, and enforces AI delegation ceilings.
 
+use exo_core::{Did, PublicKey};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    constitution::PublicKeyResolver,
     decision_object::{ActorKind, DecisionClass, DecisionObject, Vote},
     error::{ForumError, Result},
 };
@@ -44,10 +46,22 @@ pub fn ai_within_ceiling(policy: &HumanGatePolicy, class: DecisionClass) -> bool
 /// Validate that a decision's votes satisfy the human gate policy.
 /// Returns Ok(()) if the gate is satisfied, or an error if not.
 pub fn enforce_human_gate(policy: &HumanGatePolicy, decision: &DecisionObject) -> Result<()> {
+    enforce_human_gate_with_key_resolver(policy, decision, &no_voter_public_key)
+}
+
+/// Validate that a decision's votes satisfy the human gate policy using
+/// trusted voter-key resolution.
+pub fn enforce_human_gate_with_key_resolver<R: PublicKeyResolver>(
+    policy: &HumanGatePolicy,
+    decision: &DecisionObject,
+    resolve_voter_public_key: &R,
+) -> Result<()> {
     // Check AI ceiling: if decision class exceeds AI ceiling, AI votes alone
     // are not sufficient.
     if decision.class > policy.ai_ceiling {
-        let has_human_vote = decision.votes.iter().any(is_human_vote);
+        let has_human_vote = decision.votes.iter().any(|vote| {
+            decision.is_verified_human_approval_with_key_resolver(vote, resolve_voter_public_key)
+        });
         if !has_human_vote && !decision.votes.is_empty() {
             return Err(ForumError::AiCeilingExceeded {
                 reason: format!(
@@ -62,7 +76,14 @@ pub fn enforce_human_gate(policy: &HumanGatePolicy, decision: &DecisionObject) -
     // Check human gate: classes requiring human approval must have at least
     // one human vote.
     if requires_human_approval(policy, decision.class) {
-        let human_count = decision.votes.iter().filter(|v| is_human_vote(v)).count();
+        let human_count = decision
+            .votes
+            .iter()
+            .filter(|vote| {
+                decision
+                    .is_verified_human_approval_with_key_resolver(vote, resolve_voter_public_key)
+            })
+            .count();
         if human_count == 0 {
             return Err(ForumError::HumanGateRequired);
         }
@@ -74,7 +95,7 @@ pub fn enforce_human_gate(policy: &HumanGatePolicy, decision: &DecisionObject) -
 /// Determine if a vote was cast by a human actor.
 #[must_use]
 pub fn is_human_vote(vote: &Vote) -> bool {
-    matches!(vote.actor_kind, ActorKind::Human)
+    matches!(vote.actor_kind, ActorKind::Human) && vote.has_human_provenance_evidence()
 }
 
 /// Determine if a vote was cast by an AI agent.
@@ -83,44 +104,105 @@ pub fn is_ai_vote(vote: &Vote) -> bool {
     matches!(vote.actor_kind, ActorKind::AiAgent { .. })
 }
 
+fn no_voter_public_key(_: &Did) -> Option<PublicKey> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::{
+        collections::BTreeMap,
+        sync::atomic::{AtomicU64, Ordering},
+    };
 
     use exo_core::{
         hlc::HybridClock,
-        types::{Did, Hash256},
+        types::{Hash256, PublicKey},
     };
+    use exo_gatekeeper::types::VoiceKind;
 
     use super::*;
-    use crate::decision_object::{DecisionObjectInput, VoteChoice};
+    use crate::decision_object::{
+        DecisionObjectInput, VoteChoice, VoteProvenance, vote_signature_message,
+    };
 
     fn test_clock() -> HybridClock {
         let counter = AtomicU64::new(1000);
         HybridClock::with_wall_clock(move || counter.fetch_add(1, Ordering::Relaxed))
     }
 
-    fn human_vote(clock: &mut HybridClock) -> Vote {
-        Vote {
-            voter_did: Did::new("did:exo:human-alice").expect("ok"),
+    fn signed_vote(
+        decision: &DecisionObject,
+        voter_did: Did,
+        actor_kind: ActorKind,
+        voice_kind: VoiceKind,
+        clock: &mut HybridClock,
+    ) -> Vote {
+        let (public_key, secret_key) = exo_core::crypto::generate_keypair();
+        let mut vote = Vote {
+            voter_did,
             choice: VoteChoice::Approve,
-            actor_kind: ActorKind::Human,
+            actor_kind,
             timestamp: clock.now().expect("HLC timestamp"),
-            signature_hash: Hash256::digest(b"human-sig"),
-        }
+            signature_hash: Hash256::ZERO,
+            provenance: None,
+        };
+        let message = vote_signature_message(decision, &vote).expect("vote signing payload");
+        let signature = exo_core::crypto::sign(&message, &secret_key);
+        vote.signature_hash = Hash256::digest(&signature.to_bytes());
+        vote.provenance = Some(VoteProvenance {
+            public_key,
+            signature,
+            voice_kind,
+        });
+        vote
     }
 
-    fn ai_vote(clock: &mut HybridClock) -> Vote {
-        Vote {
-            voter_did: Did::new("did:exo:ai-agent-1").expect("ok"),
-            choice: VoteChoice::Approve,
-            actor_kind: ActorKind::AiAgent {
+    fn human_vote(decision: &DecisionObject, clock: &mut HybridClock) -> Vote {
+        signed_vote(
+            decision,
+            Did::new("did:exo:human-alice").expect("ok"),
+            ActorKind::Human,
+            VoiceKind::Human,
+            clock,
+        )
+    }
+
+    fn ai_vote(decision: &DecisionObject, clock: &mut HybridClock) -> Vote {
+        signed_vote(
+            decision,
+            Did::new("did:exo:ai-agent-1").expect("ok"),
+            ActorKind::AiAgent {
                 delegation_id: "d1".into(),
                 ceiling_class: DecisionClass::Operational,
             },
-            timestamp: clock.now().expect("HLC timestamp"),
-            signature_hash: Hash256::digest(b"ai-sig"),
-        }
+            VoiceKind::Synthetic,
+            clock,
+        )
+    }
+
+    fn resolver_for_decision(decision: &DecisionObject) -> impl Fn(&Did) -> Option<PublicKey> {
+        let keys: BTreeMap<Did, PublicKey> = decision
+            .votes
+            .iter()
+            .filter_map(|vote| {
+                vote.provenance
+                    .as_ref()
+                    .map(|provenance| (vote.voter_did.clone(), provenance.public_key))
+            })
+            .collect();
+        move |did| keys.get(did).copied()
+    }
+
+    fn add_resolved_vote(decision: &mut DecisionObject, vote: Vote) -> Result<()> {
+        let voter_did = vote.voter_did.clone();
+        let public_key = vote
+            .provenance
+            .as_ref()
+            .map(|provenance| provenance.public_key);
+        decision.add_vote_with_key_resolver(vote, &move |did: &Did| {
+            if did == &voter_did { public_key } else { None }
+        })
     }
 
     fn make_decision(class: DecisionClass, clock: &mut HybridClock) -> DecisionObject {
@@ -139,7 +221,8 @@ mod tests {
         let mut clock = test_clock();
         let policy = HumanGatePolicy::default();
         let mut d = make_decision(DecisionClass::Routine, &mut clock);
-        d.add_vote(ai_vote(&mut clock)).expect("ok");
+        let vote = ai_vote(&d, &mut clock);
+        add_resolved_vote(&mut d, vote).expect("ok");
         assert!(enforce_human_gate(&policy, &d).is_ok());
     }
 
@@ -148,7 +231,8 @@ mod tests {
         let mut clock = test_clock();
         let policy = HumanGatePolicy::default();
         let mut d = make_decision(DecisionClass::Strategic, &mut clock);
-        d.add_vote(ai_vote(&mut clock)).expect("ok");
+        let vote = ai_vote(&d, &mut clock);
+        add_resolved_vote(&mut d, vote).expect("ok");
         let err = enforce_human_gate(&policy, &d).unwrap_err();
         assert_eq!(
             err.to_string(),
@@ -177,8 +261,10 @@ mod tests {
         let mut clock = test_clock();
         let policy = HumanGatePolicy::default();
         let mut d = make_decision(DecisionClass::Strategic, &mut clock);
-        d.add_vote(human_vote(&mut clock)).expect("ok");
-        assert!(enforce_human_gate(&policy, &d).is_ok());
+        let vote = human_vote(&d, &mut clock);
+        add_resolved_vote(&mut d, vote).expect("ok");
+        let resolver = resolver_for_decision(&d);
+        assert!(enforce_human_gate_with_key_resolver(&policy, &d, &resolver).is_ok());
     }
 
     #[test]
@@ -186,7 +272,8 @@ mod tests {
         let mut clock = test_clock();
         let policy = HumanGatePolicy::default();
         let mut d = make_decision(DecisionClass::Constitutional, &mut clock);
-        d.add_vote(ai_vote(&mut clock)).expect("ok");
+        let vote = ai_vote(&d, &mut clock);
+        add_resolved_vote(&mut d, vote).expect("ok");
         assert!(enforce_human_gate(&policy, &d).is_err());
     }
 
@@ -216,10 +303,38 @@ mod tests {
     #[test]
     fn is_human_vs_ai() {
         let mut clock = test_clock();
-        assert!(is_human_vote(&human_vote(&mut clock)));
-        assert!(!is_human_vote(&ai_vote(&mut clock)));
-        assert!(is_ai_vote(&ai_vote(&mut clock)));
-        assert!(!is_ai_vote(&human_vote(&mut clock)));
+        let d = make_decision(DecisionClass::Routine, &mut clock);
+        assert!(is_human_vote(&human_vote(&d, &mut clock)));
+        assert!(!is_human_vote(&ai_vote(&d, &mut clock)));
+        assert!(is_ai_vote(&ai_vote(&d, &mut clock)));
+        assert!(!is_ai_vote(&human_vote(&d, &mut clock)));
+    }
+
+    #[test]
+    fn caller_asserted_human_without_signature_evidence_does_not_satisfy_gate() {
+        let mut clock = test_clock();
+        let policy = HumanGatePolicy::default();
+        let mut d = make_decision(DecisionClass::Strategic, &mut clock);
+        d.votes.push(Vote {
+            voter_did: Did::new("did:exo:forged-human").expect("valid DID"),
+            choice: VoteChoice::Approve,
+            actor_kind: ActorKind::Human,
+            timestamp: clock.now().expect("HLC timestamp"),
+            signature_hash: Hash256::ZERO,
+            provenance: None,
+        });
+
+        let err = enforce_human_gate(&policy, &d)
+            .expect_err("self-asserted human votes must not satisfy human gate");
+
+        assert!(matches!(
+            err,
+            ForumError::HumanGateRequired | ForumError::AiCeilingExceeded { .. }
+        ));
+        assert!(
+            !is_human_vote(&d.votes[0]),
+            "human vote classification must require verified provenance evidence"
+        );
     }
 
     #[test]

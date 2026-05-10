@@ -15,14 +15,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use decision_forum::{
     decision_object::{
         ActorKind, DecisionClass, DecisionObject, DecisionObjectInput, Vote, VoteChoice,
-        bcts_transition_action_name, bcts_transition_permission,
+        VoteProvenance, bcts_transition_action_name, bcts_transition_permission,
+        vote_signature_message,
     },
-    quorum::{QuorumCheckResult, QuorumRegistry, check_quorum, verify_quorum_precondition},
+    quorum::{
+        QuorumCheckResult, QuorumRegistry, check_quorum_with_key_resolver,
+        verify_quorum_precondition,
+    },
 };
 use exo_core::{
     bcts::BctsState,
     hlc::HybridClock,
-    types::{Did, Hash256},
+    types::{Did, Hash256, PublicKey},
 };
 use exo_gatekeeper::{
     authority_link_signature_message,
@@ -31,7 +35,7 @@ use exo_gatekeeper::{
     provenance_signature_message,
     types::{
         AuthorityChain, AuthorityLink, BailmentState, ConsentRecord, GovernmentBranch, Permission,
-        PermissionSet, Provenance, Role, TrustedAuthorityKeys,
+        PermissionSet, Provenance, Role, TrustedAuthorityKeys, VoiceKind,
     },
 };
 
@@ -59,14 +63,65 @@ fn routine_decision(clock: &mut HybridClock) -> DecisionObject {
     .expect("valid decision")
 }
 
-fn human_approve(name: &str, clock: &mut HybridClock) -> Vote {
-    Vote {
+fn human_vote(
+    decision: &DecisionObject,
+    name: &str,
+    choice: VoteChoice,
+    clock: &mut HybridClock,
+) -> Vote {
+    let (public_key, secret_key) = exo_core::crypto::generate_keypair();
+    let mut vote = Vote {
         voter_did: did(&format!("did:exo:{name}")),
-        choice: VoteChoice::Approve,
+        choice,
         actor_kind: ActorKind::Human,
         timestamp: clock.now().expect("HLC timestamp"),
-        signature_hash: Hash256::digest(name.as_bytes()),
+        signature_hash: Hash256::ZERO,
+        provenance: None,
+    };
+    let message = vote_signature_message(decision, &vote).expect("vote signing payload");
+    let signature = exo_core::crypto::sign(&message, &secret_key);
+    vote.signature_hash = Hash256::digest(&signature.to_bytes());
+    vote.provenance = Some(VoteProvenance {
+        public_key,
+        signature,
+        voice_kind: VoiceKind::Human,
+    });
+    vote
+}
+
+fn human_approve(decision: &DecisionObject, name: &str, clock: &mut HybridClock) -> Vote {
+    human_vote(decision, name, VoteChoice::Approve, clock)
+}
+
+fn resolver_for_vote(vote: &Vote) -> impl Fn(&Did) -> Option<PublicKey> + use<> {
+    let voter_did = vote.voter_did.clone();
+    let public_key = vote
+        .provenance
+        .as_ref()
+        .map(|provenance| provenance.public_key);
+    move |did| {
+        if did == &voter_did { public_key } else { None }
     }
+}
+
+fn resolver_for_decision(decision: &DecisionObject) -> impl Fn(&Did) -> Option<PublicKey> + use<> {
+    let keys: std::collections::BTreeMap<Did, PublicKey> = decision
+        .votes
+        .iter()
+        .filter_map(|vote| {
+            vote.provenance
+                .as_ref()
+                .map(|provenance| (vote.voter_did.clone(), provenance.public_key))
+        })
+        .collect();
+    move |did| keys.get(did).copied()
+}
+
+fn add_resolved_vote(decision: &mut DecisionObject, vote: Vote) {
+    let resolver = resolver_for_vote(&vote);
+    decision
+        .add_vote_with_key_resolver(vote, &resolver)
+        .expect("vote should be accepted");
 }
 
 fn signed_authority_link(actor: &Did, permission: Permission) -> AuthorityLink {
@@ -190,12 +245,13 @@ fn vote_accepted_quorum_status_met() {
     );
 
     // Add the vote — must succeed.
-    decision
-        .add_vote(human_approve("alice", &mut clock))
-        .expect("vote should be accepted");
+    let vote = human_approve(&decision, "alice", &mut clock);
+    add_resolved_vote(&mut decision, vote);
 
     // Post-vote quorum check.
-    match check_quorum(&registry, &decision).expect("quorum check ok") {
+    let resolver = resolver_for_decision(&decision);
+    match check_quorum_with_key_resolver(&registry, &decision, &resolver).expect("quorum check ok")
+    {
         QuorumCheckResult::Met {
             total_votes,
             approve_count,
@@ -221,20 +277,12 @@ fn duplicate_voter_rejected() {
     let mut decision = routine_decision(&mut clock);
 
     // First vote from alice — must succeed.
-    decision
-        .add_vote(human_approve("alice", &mut clock))
-        .expect("first vote should be accepted");
+    let vote = human_approve(&decision, "alice", &mut clock);
+    add_resolved_vote(&mut decision, vote);
 
     // Second vote from the same DID — must fail.
-    let err = decision
-        .add_vote(Vote {
-            voter_did: did("did:exo:alice"),
-            choice: VoteChoice::Reject,
-            actor_kind: ActorKind::Human,
-            timestamp: clock.now().expect("HLC timestamp"),
-            signature_hash: Hash256::digest(b"alice-second"),
-        })
-        .unwrap_err();
+    let vote = human_vote(&decision, "alice", VoteChoice::Reject, &mut clock);
+    let err = decision.add_vote(vote).unwrap_err();
 
     assert!(
         err.to_string().contains("duplicate"),
@@ -275,9 +323,8 @@ fn terminal_decision_rejects_votes() {
     assert!(decision.is_terminal(), "decision must be in terminal state");
 
     // Attempting to vote on a closed decision must fail.
-    let err = decision
-        .add_vote(human_approve("bob", &mut clock))
-        .unwrap_err();
+    let vote = human_approve(&decision, "bob", &mut clock);
+    let err = decision.add_vote(vote).unwrap_err();
 
     assert!(
         err.to_string().contains("immutable") || err.to_string().contains("terminal"),

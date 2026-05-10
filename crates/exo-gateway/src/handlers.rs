@@ -5,7 +5,10 @@
 //!   2. Vote handler MUST call `Kernel::adjudicate` and gate on `Verdict::Permitted` (TNC-01)
 //!   3. `write_audit` MUST use `ciborium::into_writer` before blake3, not serde_json (TransparencyAccountability)
 
-use std::io::{self, Write};
+use std::{
+    collections::BTreeMap,
+    io::{self, Write},
+};
 
 use axum::{
     Json,
@@ -14,17 +17,18 @@ use axum::{
     response::IntoResponse,
 };
 use decision_forum::{
-    decision_object::{ActorKind, DecisionObject, Vote, VoteChoice},
-    quorum::{QuorumCheckResult, QuorumRegistry, check_quorum, verify_quorum_precondition},
+    decision_object::{ActorKind, DecisionObject, Vote, VoteChoice, VoteProvenance},
+    quorum::{QuorumCheckResult, QuorumRegistry, verify_quorum_precondition},
 };
-use exo_core::{Did, Signature, Timestamp, hash::hash_structured, types::Hash256};
+use exo_core::{Did, PublicKey, Signature, Timestamp, hash::hash_structured, types::Hash256};
 use exo_gatekeeper::{
     kernel::{ActionRequest as GatekeeperActionRequest, Verdict},
-    types::{Permission, PermissionSet, Provenance},
+    types::{Permission, PermissionSet, Provenance, VoiceKind},
 };
 use exo_governance::conflict::{
     ActionRequest as ConflictActionRequest, check_and_block, check_conflicts,
 };
+use exo_identity::did::DidDocument;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::Row;
@@ -34,8 +38,6 @@ use crate::server::{AppState, auth_boundary_error_response};
 // ── Violation 3 fix: CBOR canonical hashing ──────────────────────────────
 
 const MAX_CANONICAL_CBOR_HASH_BYTES: usize = 64 * 1024;
-const VOTE_SIGNATURE_HASH_DOMAIN: &str = "exo.gateway.vote_signature_hash.v1";
-const VOTE_SIGNATURE_HASH_SCHEMA_VERSION: u16 = 1;
 const VOTE_ACTION_PROVENANCE_HASH_DOMAIN: &str = "exo.gateway.vote_action_provenance.v1";
 const VOTE_ACTION_PROVENANCE_HASH_SCHEMA_VERSION: u16 = 1;
 
@@ -99,15 +101,6 @@ fn canonical_hash(payload: &Value) -> Result<blake3::Hash, String> {
 }
 
 #[derive(Serialize)]
-struct VoteSignatureHashInput<'a> {
-    domain: &'static str,
-    schema_version: u16,
-    voter_did: &'a Did,
-    decision_id: &'a str,
-    choice: &'static str,
-}
-
-#[derive(Serialize)]
 struct VoteActionHashInput<'a> {
     domain: &'static str,
     schema_version: u16,
@@ -129,23 +122,6 @@ fn vote_choice_label(choice: VoteChoice) -> &'static str {
         VoteChoice::Reject => "Reject",
         VoteChoice::Abstain => "Abstain",
     }
-}
-
-fn vote_signature_hash(
-    voter_did: &Did,
-    decision_id: &str,
-    choice: VoteChoice,
-) -> Result<Hash256, String> {
-    let payload = VoteSignatureHashInput {
-        domain: VOTE_SIGNATURE_HASH_DOMAIN,
-        schema_version: VOTE_SIGNATURE_HASH_SCHEMA_VERSION,
-        voter_did,
-        decision_id,
-        choice: vote_choice_label(choice),
-    };
-    Ok(Hash256::from_bytes(
-        *canonical_cbor_hash(&payload)?.as_bytes(),
-    ))
 }
 
 fn decode_fixed_hex<const N: usize>(encoded: &str, field: &str) -> Result<[u8; N], String> {
@@ -203,6 +179,82 @@ fn vote_action_provenance(
         independence: None,
         review_order: None,
     })
+}
+
+fn decode_multibase_ed25519_key(
+    encoded: &str,
+    field: &str,
+) -> std::result::Result<Option<[u8; 32]>, String> {
+    let Some(encoded) = encoded.strip_prefix('z') else {
+        return Ok(None);
+    };
+    let bytes = bs58::decode(encoded)
+        .into_vec()
+        .map_err(|e| format!("{field} is not valid base58btc: {e}"))?;
+    let key = bytes
+        .try_into()
+        .map_err(|bytes: Vec<u8>| format!("{field} must be 32 bytes, got {}", bytes.len()))?;
+    Ok(Some(key))
+}
+
+fn did_document_authorizes_vote_key(
+    doc: &DidDocument,
+    public_key: &PublicKey,
+) -> std::result::Result<bool, String> {
+    if doc.revoked {
+        return Ok(false);
+    }
+
+    if doc
+        .public_keys
+        .iter()
+        .any(|candidate| candidate == public_key)
+    {
+        return Ok(true);
+    }
+
+    for method in &doc.verification_methods {
+        if !method.active
+            || method.revoked_at.is_some()
+            || method.controller != doc.id
+            || method.key_type != "Ed25519VerificationKey2020"
+        {
+            continue;
+        }
+        let Some(key) =
+            decode_multibase_ed25519_key(&method.public_key_multibase, "verification method key")?
+        else {
+            continue;
+        };
+        if &key == public_key.as_bytes() {
+            return Ok(true);
+        }
+    }
+
+    for method in &doc.hybrid_verification_methods {
+        if !method.active
+            || method.revoked_at.is_some()
+            || method.controller != doc.id
+            || method.key_type != "HybridKeyEd25519MlDsa652020"
+        {
+            continue;
+        }
+        if method.classical_public_key == *public_key {
+            return Ok(true);
+        }
+        let Some(key) = decode_multibase_ed25519_key(
+            &method.classical_public_key_multibase,
+            "hybrid verification method classical key",
+        )?
+        else {
+            continue;
+        };
+        if &key == public_key.as_bytes() {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -361,6 +413,8 @@ pub struct VoteRequest {
     pub provenance_timestamp_logical: u32,
     pub provenance_public_key: String,
     pub provenance_signature: String,
+    pub vote_public_key: String,
+    pub vote_signature: String,
 }
 
 impl VoteRequest {
@@ -405,6 +459,27 @@ impl VoteRequest {
             &self.provenance_signature,
             "provenance_signature",
         )?))
+    }
+
+    fn vote_public_key(&self) -> Result<PublicKey, String> {
+        Ok(PublicKey::from_bytes(decode_fixed_hex(
+            &self.vote_public_key,
+            "vote_public_key",
+        )?))
+    }
+
+    fn vote_signature(&self) -> Result<Signature, String> {
+        Ok(Signature::from_bytes(decode_fixed_hex(
+            &self.vote_signature,
+            "vote_signature",
+        )?))
+    }
+
+    fn vote_voice_kind(&self) -> VoiceKind {
+        match self.actor_kind {
+            ActorKind::Human => VoiceKind::Human,
+            ActorKind::AiAgent { .. } => VoiceKind::Synthetic,
+        }
     }
 }
 
@@ -671,27 +746,126 @@ pub async fn vote_handler(
                 .into_response();
         }
     };
-    let signature_hash = match vote_signature_hash(&voter_did, &body.decision_id, body.choice) {
-        Ok(hash) => hash,
+    let vote_public_key = match body.vote_public_key() {
+        Ok(public_key) => public_key,
         Err(e) => {
-            tracing::error!(error = %e, "failed to hash vote signature payload");
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "vote signature hash failed"})),
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e})),
             )
                 .into_response();
         }
     };
+    let voter_document = match state.resolve_did_document_for_actor(&voter_did).await {
+        Ok(Some(doc)) => doc,
+        Ok(None) => {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(
+                    serde_json::json!({"error": "vote public key is not registered for voter DID"}),
+                ),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "failed to resolve voter DID document");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "identity registry unavailable"})),
+            )
+                .into_response();
+        }
+    };
+    match did_document_authorizes_vote_key(&voter_document, &vote_public_key) {
+        Ok(true) => {}
+        Ok(false) => {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(
+                    serde_json::json!({"error": "vote public key is not registered for voter DID"}),
+                ),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "voter DID document contains invalid vote key material");
+            return (
+                StatusCode::FORBIDDEN,
+                Json(
+                    serde_json::json!({"error": "vote public key is not registered for voter DID"}),
+                ),
+            )
+                .into_response();
+        }
+    }
+    let mut resolved_vote_keys = BTreeMap::new();
+    for existing_vote in &decision.votes {
+        let Some(provenance) = existing_vote.provenance.as_ref() else {
+            continue;
+        };
+        let existing_doc = match state
+            .resolve_did_document_for_actor(&existing_vote.voter_did)
+            .await
+        {
+            Ok(Some(doc)) => doc,
+            Ok(None) => continue,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    voter = %existing_vote.voter_did,
+                    "failed to resolve existing voter DID document"
+                );
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({"error": "identity registry unavailable"})),
+                )
+                    .into_response();
+            }
+        };
+        match did_document_authorizes_vote_key(&existing_doc, &provenance.public_key) {
+            Ok(true) => {
+                resolved_vote_keys.insert(existing_vote.voter_did.clone(), provenance.public_key);
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    voter = %existing_vote.voter_did,
+                    "existing voter DID document contains invalid vote key material"
+                );
+            }
+        }
+    }
+    resolved_vote_keys.insert(voter_did.clone(), vote_public_key);
+
+    let vote_signature = match body.vote_signature() {
+        Ok(signature) => signature,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e})),
+            )
+                .into_response();
+        }
+    };
+    let resolve_vote_public_key = |did: &Did| resolved_vote_keys.get(did).copied();
+    let vote_voice_kind = body.vote_voice_kind();
+    let vote_signature_hash = Hash256::digest(&vote_signature.to_bytes());
     let vote = Vote {
         voter_did: voter_did.clone(),
         choice: body.choice,
         actor_kind: body.actor_kind,
         timestamp,
-        signature_hash,
+        signature_hash: vote_signature_hash,
+        provenance: Some(VoteProvenance {
+            public_key: vote_public_key,
+            signature: vote_signature,
+            voice_kind: vote_voice_kind,
+        }),
     };
 
     // Add vote — rejects duplicates (TNC-07 voter independence).
-    if let Err(e) = decision.add_vote(vote) {
+    if let Err(e) = decision.add_vote_with_key_resolver(vote, &resolve_vote_public_key) {
         tracing::error!(error = %e, "decision rejected vote");
         return (
             StatusCode::CONFLICT,
@@ -701,7 +875,11 @@ pub async fn vote_handler(
     }
 
     // Check quorum post-vote to include status in response.
-    let quorum_result = match check_quorum(&registry, &decision) {
+    let quorum_result = match decision_forum::quorum::check_quorum_with_key_resolver(
+        &registry,
+        &decision,
+        &resolve_vote_public_key,
+    ) {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "quorum evaluation failed");
@@ -871,6 +1049,7 @@ mod tests {
             .map(|did| Did::new(did).expect("valid affected DID"))
             .collect::<Vec<_>>();
         let (public_key, secret_key) = exo_core::crypto::generate_keypair();
+        let (vote_public_key, vote_secret_key) = exo_core::crypto::generate_keypair();
         let provenance_timestamp = Timestamp::new(timestamp.physical_ms, timestamp.logical);
         let request = VoteRequest {
             decision_id: decision_id.to_owned(),
@@ -885,6 +1064,11 @@ mod tests {
             provenance_timestamp_logical: provenance_timestamp.logical,
             provenance_public_key: hex::encode(public_key.as_bytes()),
             provenance_signature: String::new(),
+            vote_public_key: hex::encode(vote_public_key.as_bytes()),
+            vote_signature: hex::encode(
+                exo_core::crypto::sign(b"unit-test-placeholder-vote-signature", &vote_secret_key)
+                    .to_bytes(),
+            ),
         };
         let action_hash =
             vote_action_hash(&request, &voter_did, &affected).expect("vote action hash");
@@ -916,6 +1100,8 @@ mod tests {
             "provenance_timestamp_logical": provenance_timestamp.logical,
             "provenance_public_key": hex::encode(public_key.as_bytes()),
             "provenance_signature": hex::encode(provenance.signature),
+            "vote_public_key": hex::encode(vote_public_key.as_bytes()),
+            "vote_signature": request.vote_signature,
         })
     }
 
@@ -959,26 +1145,6 @@ mod tests {
         assert!(
             err.contains("canonical CBOR payload exceeds"),
             "error should identify the canonical CBOR hash budget: {err}"
-        );
-    }
-
-    #[test]
-    fn vote_signature_hash_is_domain_separated_cbor() {
-        let voter = Did::new("did:exo:alice").expect("valid DID");
-
-        let first = vote_signature_hash(&voter, "decision-1", VoteChoice::Approve)
-            .expect("vote signature hash");
-        let second = vote_signature_hash(&voter, "decision-1", VoteChoice::Approve)
-            .expect("vote signature hash");
-        let changed_choice = vote_signature_hash(&voter, "decision-1", VoteChoice::Reject)
-            .expect("vote signature hash");
-        let legacy_debug_concat = Hash256::digest(b"did:exo:alice:decision-1:Approve");
-
-        assert_eq!(first, second);
-        assert_ne!(first, changed_choice);
-        assert_ne!(
-            first, legacy_debug_concat,
-            "vote signature_hash must not match the legacy raw concat/Debug preimage"
         );
     }
 
@@ -1308,6 +1474,26 @@ mod tests {
     }
 
     #[test]
+    fn vote_request_requires_decision_bound_vote_signature_material() {
+        let mut without_vote_signature = signed_vote_request_json(
+            "did:exo:alice",
+            "decision-1",
+            &["did:exo:tenant-a"],
+            VoteChoice::Approve,
+            ActorKind::Human,
+            exo_core::Timestamp::new(7000, 2),
+        );
+        let request_obj = without_vote_signature.as_object_mut().expect("object");
+        request_obj.remove("vote_public_key");
+        request_obj.remove("vote_signature");
+
+        assert!(
+            serde_json::from_value::<VoteRequest>(without_vote_signature).is_err(),
+            "vote requests must include decision-bound vote signature material"
+        );
+    }
+
+    #[test]
     fn vote_request_rejects_zero_timestamp() {
         let mut request_json = signed_vote_request_json(
             "did:exo:alice",
@@ -1509,7 +1695,7 @@ mod tests {
     }
 
     #[test]
-    fn vote_signature_hash_source_uses_canonical_cbor_not_debug_concat() {
+    fn vote_handler_uses_submitted_vote_signature_not_structural_hash() {
         let source = include_str!("handlers.rs");
         let production = source
             .split("#[cfg(test)]")
@@ -1524,8 +1710,12 @@ mod tests {
             .expect("vote handler source end");
 
         assert!(
-            vote_handler.contains("vote_signature_hash("),
-            "vote handler must route signature_hash construction through canonical helper"
+            vote_handler.contains("body.vote_signature()"),
+            "vote handler must require caller-submitted vote signatures"
+        );
+        assert!(
+            vote_handler.contains("Hash256::digest(&vote_signature.to_bytes())"),
+            "vote signature_hash must be the hash of the submitted signature"
         );
         assert!(
             !vote_handler.contains("format!(\"{}:{}:{:?}\""),

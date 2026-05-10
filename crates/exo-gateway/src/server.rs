@@ -405,6 +405,13 @@ impl AppState {
             .map_err(|e| GatewayError::Internal(e.to_string()))
     }
 
+    /// Resolve a DID document from the gateway's trusted identity registry.
+    pub async fn resolve_did_document_for_actor(&self, did: &Did) -> Result<Option<DidDocument>> {
+        resolve_did_document(self, did.clone())
+            .await
+            .map_err(|e| GatewayError::Internal(format!("DID registry lookup failed: {e}")))
+    }
+
     /// Load conflict declarations for an actor from the DB-backed standing
     /// conflict register.
     pub async fn load_conflict_declarations(
