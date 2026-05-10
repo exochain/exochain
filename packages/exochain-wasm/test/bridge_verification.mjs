@@ -1820,7 +1820,7 @@ test('wasm_add_evidence', () => {
   return wasm.wasm_add_evidence(decJson, JSON.stringify(ev));
 });
 
-test('wasm_add_vote', () => {
+test('wasm_add_vote rejects unresolved vote provenance', () => {
   // decision_forum::decision_object::Vote
   const vote = {
     voter_did: TEST_DID,
@@ -1829,7 +1829,11 @@ test('wasm_add_vote', () => {
     timestamp: NOW_TS,
     signature_hash: ZERO_32_BYTES
   };
-  return wasm.wasm_add_vote(decJson, JSON.stringify(vote));
+  return expectErrorContains(
+    'wasm_add_vote',
+    () => wasm.wasm_add_vote(decJson, JSON.stringify(vote), JSON.stringify([])),
+    'signature'
+  );
 });
 
 test('wasm_transition_decision rejects unadjudicated transition', () =>
@@ -1889,7 +1893,8 @@ test('wasm_check_quorum', () => {
   };
   return wasm.wasm_check_quorum(
     JSON.stringify(registry),
-    decJson
+    decJson,
+    JSON.stringify([])
   );
 });
 
@@ -1903,7 +1908,8 @@ test('wasm_enforce_human_gate', () => {
   };
   return wasm.wasm_enforce_human_gate(
     JSON.stringify(policy),
-    decJson
+    decJson,
+    JSON.stringify([])
   );
 });
 

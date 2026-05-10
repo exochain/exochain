@@ -295,7 +295,7 @@ fn quarantine_pauses_contested_actions_via_kernel() {
     let actor = did("did:exo:contested-actor");
     let action = ActionRequest {
         actor: actor.clone(),
-        action: "approve governance proposal".into(),
+        action: "data:governance:approve".into(),
         required_permissions: PermissionSet::new(vec![Permission::new("read")]),
         is_self_grant: false,
         modifies_kernel: false,

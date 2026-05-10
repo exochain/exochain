@@ -101,15 +101,24 @@ pub fn wasm_transition_decision_adjudicated(
     to_js_value(&decision)
 }
 
-/// Add a vote to a DecisionObject
+/// Add a vote to a DecisionObject.
+///
+/// `public_keys_json` is a JSON array of `[did_str, public_key_hex]` trusted
+/// voter key pairs resolved by the embedding host.
 #[wasm_bindgen]
-pub fn wasm_add_vote(decision_json: &str, vote_json: &str) -> Result<JsValue, JsValue> {
+pub fn wasm_add_vote(
+    decision_json: &str,
+    vote_json: &str,
+    public_keys_json: &str,
+) -> Result<JsValue, JsValue> {
     let mut decision: decision_forum::decision_object::DecisionObject =
         from_json_str(decision_json)?;
     let vote: decision_forum::decision_object::Vote = from_json_str(vote_json)?;
+    let public_keys = parse_public_key_pairs(public_keys_json)?;
+    let resolver = |did: &exo_core::Did| public_keys.get(did).copied();
 
     decision
-        .add_vote(vote)
+        .add_vote_with_key_resolver(vote, &resolver)
         .map_err(|e| JsValue::from_str(&format!("Vote error: {e}")))?;
     to_js_value(&decision)
 }
@@ -511,11 +520,22 @@ pub fn wasm_collect_tnc_violations(
 
 /// Enforce the human gate for a decision — Err if human approval is required
 /// but not present in the vote set.
+///
+/// `public_keys_json` is a JSON array of `[did_str, public_key_hex]` trusted
+/// voter key pairs resolved by the embedding host.
 #[wasm_bindgen]
-pub fn wasm_enforce_human_gate(policy_json: &str, decision_json: &str) -> Result<JsValue, JsValue> {
+pub fn wasm_enforce_human_gate(
+    policy_json: &str,
+    decision_json: &str,
+    public_keys_json: &str,
+) -> Result<JsValue, JsValue> {
     let policy: decision_forum::human_gate::HumanGatePolicy = from_json_str(policy_json)?;
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    match decision_forum::human_gate::enforce_human_gate(&policy, &decision) {
+    let public_keys = parse_public_key_pairs(public_keys_json)?;
+    let resolver = |did: &exo_core::Did| public_keys.get(did).copied();
+    match decision_forum::human_gate::enforce_human_gate_with_key_resolver(
+        &policy, &decision, &resolver,
+    ) {
         Ok(()) => to_js_value(&serde_json::json!({"ok": true})),
         Err(e) => to_js_value(&serde_json::json!({"ok": false, "error": e.to_string()})),
     }
@@ -562,13 +582,20 @@ pub fn wasm_is_ai_vote(vote_json: &str) -> Result<bool, JsValue> {
 /// Returns `{status, total_votes, approve_count, approve_pct}` on Met,
 /// or `{status, reason}` on NotMet / Degraded.
 #[wasm_bindgen]
-pub fn wasm_check_quorum(registry_json: &str, decision_json: &str) -> Result<JsValue, JsValue> {
+pub fn wasm_check_quorum(
+    registry_json: &str,
+    decision_json: &str,
+    public_keys_json: &str,
+) -> Result<JsValue, JsValue> {
     use decision_forum::quorum::QuorumCheckResult;
 
     let registry: decision_forum::quorum::QuorumRegistry = from_json_str(registry_json)?;
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    let result = decision_forum::quorum::check_quorum(&registry, &decision)
-        .map_err(|e| JsValue::from_str(&format!("Quorum error: {e}")))?;
+    let public_keys = parse_public_key_pairs(public_keys_json)?;
+    let resolver = |did: &exo_core::Did| public_keys.get(did).copied();
+    let result =
+        decision_forum::quorum::check_quorum_with_key_resolver(&registry, &decision, &resolver)
+            .map_err(|e| JsValue::from_str(&format!("Quorum error: {e}")))?;
 
     // QuorumCheckResult doesn't implement Serialize — flatten manually.
     let json = match result {

@@ -4,10 +4,11 @@
 //! graceful degradation on quorum failure, and independence-aware counting
 //! via exo_governance::quorum.
 
-use exo_core::types::DeterministicMap;
+use exo_core::types::{DeterministicMap, Did, PublicKey};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    constitution::PublicKeyResolver,
     decision_object::{DecisionClass, DecisionObject, VoteChoice},
     error::{ForumError, Result},
 };
@@ -97,21 +98,42 @@ pub fn check_quorum(
     registry: &QuorumRegistry,
     decision: &DecisionObject,
 ) -> Result<QuorumCheckResult> {
+    check_quorum_with_key_resolver(registry, decision, &no_voter_public_key)
+}
+
+/// Check if quorum is met using trusted voter-key resolution for vote
+/// authenticity.
+pub fn check_quorum_with_key_resolver<R: PublicKeyResolver>(
+    registry: &QuorumRegistry,
+    decision: &DecisionObject,
+    resolve_voter_public_key: &R,
+) -> Result<QuorumCheckResult> {
     let req = registry
         .requirement_for(decision.class)
         .ok_or(ForumError::QuorumPolicyMissing)?;
     validate_requirement(req)?;
 
-    let total_votes = decision.votes.len();
-    let approve_count = decision
+    let verified_votes: Vec<_> = decision
         .votes
+        .iter()
+        .filter(|vote| {
+            decision
+                .verify_vote_signature_with_key_resolver(vote, resolve_voter_public_key)
+                .is_ok()
+        })
+        .collect();
+
+    let total_votes = verified_votes.len();
+    let approve_count = verified_votes
         .iter()
         .filter(|v| v.choice == VoteChoice::Approve)
         .count();
     let human_count = decision
         .votes
         .iter()
-        .filter(|v| matches!(v.actor_kind, crate::decision_object::ActorKind::Human))
+        .filter(|vote| {
+            decision.is_verified_human_approval_with_key_resolver(vote, resolve_voter_public_key)
+        })
         .count();
 
     if total_votes < req.min_votes {
@@ -152,6 +174,10 @@ pub fn check_quorum(
     })
 }
 
+fn no_voter_public_key(_: &Did) -> Option<PublicKey> {
+    None
+}
+
 /// Verify quorum preconditions BEFORE a vote is initiated (TNC-07).
 /// Returns true if enough eligible voters and eligible human voters exist to
 /// potentially meet quorum.
@@ -182,12 +208,16 @@ fn validate_requirement(req: &QuorumRequirement) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::{
+        collections::BTreeMap,
+        sync::atomic::{AtomicU64, Ordering},
+    };
 
     use exo_core::{
         hlc::HybridClock,
         types::{Did, Hash256},
     };
+    use exo_gatekeeper::types::VoiceKind;
     use uuid::Uuid;
 
     use super::*;
@@ -198,37 +228,68 @@ mod tests {
         HybridClock::with_wall_clock(move || counter.fetch_add(1, Ordering::Relaxed))
     }
 
-    fn human_approve_vote(name: &str, clock: &mut HybridClock) -> Vote {
-        Vote {
+    fn signed_vote(
+        decision: &DecisionObject,
+        name: &str,
+        choice: VoteChoice,
+        actor_kind: ActorKind,
+        voice_kind: VoiceKind,
+        clock: &mut HybridClock,
+    ) -> Vote {
+        let (public_key, secret_key) = exo_core::crypto::generate_keypair();
+        let mut vote = Vote {
             voter_did: Did::new(&format!("did:exo:{name}")).expect("ok"),
-            choice: VoteChoice::Approve,
-            actor_kind: ActorKind::Human,
+            choice,
+            actor_kind,
             timestamp: clock.now().expect("HLC timestamp"),
-            signature_hash: Hash256::digest(name.as_bytes()),
-        }
+            signature_hash: Hash256::ZERO,
+            provenance: None,
+        };
+        let message = vote_signature_message(decision, &vote).expect("vote signing payload");
+        let signature = exo_core::crypto::sign(&message, &secret_key);
+        vote.signature_hash = Hash256::digest(&signature.to_bytes());
+        vote.provenance = Some(VoteProvenance {
+            public_key,
+            signature,
+            voice_kind,
+        });
+        vote
     }
 
-    fn ai_approve_vote(name: &str, clock: &mut HybridClock) -> Vote {
-        Vote {
-            voter_did: Did::new(&format!("did:exo:{name}")).expect("ok"),
-            choice: VoteChoice::Approve,
-            actor_kind: ActorKind::AiAgent {
+    fn human_approve_vote(decision: &DecisionObject, name: &str, clock: &mut HybridClock) -> Vote {
+        signed_vote(
+            decision,
+            name,
+            VoteChoice::Approve,
+            ActorKind::Human,
+            VoiceKind::Human,
+            clock,
+        )
+    }
+
+    fn ai_approve_vote(decision: &DecisionObject, name: &str, clock: &mut HybridClock) -> Vote {
+        signed_vote(
+            decision,
+            name,
+            VoteChoice::Approve,
+            ActorKind::AiAgent {
                 delegation_id: "d1".into(),
                 ceiling_class: DecisionClass::Operational,
             },
-            timestamp: clock.now().expect("HLC timestamp"),
-            signature_hash: Hash256::digest(name.as_bytes()),
-        }
+            VoiceKind::Synthetic,
+            clock,
+        )
     }
 
-    fn reject_vote(name: &str, clock: &mut HybridClock) -> Vote {
-        Vote {
-            voter_did: Did::new(&format!("did:exo:{name}")).expect("ok"),
-            choice: VoteChoice::Reject,
-            actor_kind: ActorKind::Human,
-            timestamp: clock.now().expect("HLC timestamp"),
-            signature_hash: Hash256::digest(name.as_bytes()),
-        }
+    fn reject_vote(decision: &DecisionObject, name: &str, clock: &mut HybridClock) -> Vote {
+        signed_vote(
+            decision,
+            name,
+            VoteChoice::Reject,
+            ActorKind::Human,
+            VoiceKind::Human,
+            clock,
+        )
     }
 
     fn make_decision(title: &str, class: DecisionClass, clock: &mut HybridClock) -> DecisionObject {
@@ -242,14 +303,39 @@ mod tests {
         .expect("valid decision")
     }
 
+    fn resolver_for_decision(decision: &DecisionObject) -> impl Fn(&Did) -> Option<PublicKey> {
+        let keys: BTreeMap<Did, PublicKey> = decision
+            .votes
+            .iter()
+            .filter_map(|vote| {
+                vote.provenance
+                    .as_ref()
+                    .map(|provenance| (vote.voter_did.clone(), provenance.public_key))
+            })
+            .collect();
+        move |did| keys.get(did).copied()
+    }
+
+    fn add_resolved_vote(decision: &mut DecisionObject, vote: Vote) -> Result<()> {
+        let voter_did = vote.voter_did.clone();
+        let public_key = vote
+            .provenance
+            .as_ref()
+            .map(|provenance| provenance.public_key);
+        decision.add_vote_with_key_resolver(vote, &move |did: &Did| {
+            if did == &voter_did { public_key } else { None }
+        })
+    }
+
     #[test]
     fn routine_quorum_met() {
         let mut clock = test_clock();
         let reg = QuorumRegistry::with_defaults();
         let mut d = make_decision("test", DecisionClass::Routine, &mut clock);
-        d.add_vote(human_approve_vote("alice", &mut clock))
-            .expect("ok");
-        match check_quorum(&reg, &d).expect("ok") {
+        let vote = human_approve_vote(&d, "alice", &mut clock);
+        add_resolved_vote(&mut d, vote).expect("ok");
+        let resolver = resolver_for_decision(&d);
+        match check_quorum_with_key_resolver(&reg, &d, &resolver).expect("ok") {
             QuorumCheckResult::Met { total_votes, .. } => assert_eq!(total_votes, 1),
             other => panic!("expected Met, got {other:?}"),
         }
@@ -260,9 +346,10 @@ mod tests {
         let mut clock = test_clock();
         let reg = QuorumRegistry::with_defaults();
         let mut d = make_decision("test", DecisionClass::Operational, &mut clock);
-        d.add_vote(human_approve_vote("alice", &mut clock))
-            .expect("ok");
-        match check_quorum(&reg, &d).expect("ok") {
+        let vote = human_approve_vote(&d, "alice", &mut clock);
+        add_resolved_vote(&mut d, vote).expect("ok");
+        let resolver = resolver_for_decision(&d);
+        match check_quorum_with_key_resolver(&reg, &d, &resolver).expect("ok") {
             QuorumCheckResult::Degraded {
                 available,
                 required,
@@ -280,11 +367,14 @@ mod tests {
         let mut clock = test_clock();
         let reg = QuorumRegistry::with_defaults();
         let mut d = make_decision("test", DecisionClass::Operational, &mut clock);
-        d.add_vote(human_approve_vote("alice", &mut clock))
-            .expect("ok");
-        d.add_vote(ai_approve_vote("bot1", &mut clock)).expect("ok");
-        d.add_vote(ai_approve_vote("bot2", &mut clock)).expect("ok");
-        match check_quorum(&reg, &d).expect("ok") {
+        let vote = human_approve_vote(&d, "alice", &mut clock);
+        add_resolved_vote(&mut d, vote).expect("ok");
+        let vote = ai_approve_vote(&d, "bot1", &mut clock);
+        add_resolved_vote(&mut d, vote).expect("ok");
+        let vote = ai_approve_vote(&d, "bot2", &mut clock);
+        add_resolved_vote(&mut d, vote).expect("ok");
+        let resolver = resolver_for_decision(&d);
+        match check_quorum_with_key_resolver(&reg, &d, &resolver).expect("ok") {
             QuorumCheckResult::Met {
                 total_votes,
                 approve_count,
@@ -302,11 +392,14 @@ mod tests {
         let mut clock = test_clock();
         let reg = QuorumRegistry::with_defaults();
         let mut d = make_decision("test", DecisionClass::Operational, &mut clock);
-        d.add_vote(human_approve_vote("alice", &mut clock))
-            .expect("ok");
-        d.add_vote(reject_vote("bob", &mut clock)).expect("ok");
-        d.add_vote(reject_vote("carol", &mut clock)).expect("ok");
-        match check_quorum(&reg, &d).expect("ok") {
+        let vote = human_approve_vote(&d, "alice", &mut clock);
+        add_resolved_vote(&mut d, vote).expect("ok");
+        let vote = reject_vote(&d, "bob", &mut clock);
+        add_resolved_vote(&mut d, vote).expect("ok");
+        let vote = reject_vote(&d, "carol", &mut clock);
+        add_resolved_vote(&mut d, vote).expect("ok");
+        let resolver = resolver_for_decision(&d);
+        match check_quorum_with_key_resolver(&reg, &d, &resolver).expect("ok") {
             QuorumCheckResult::NotMet { reason } => {
                 assert!(reason.contains("approval percentage"));
             }
@@ -320,14 +413,45 @@ mod tests {
         let reg = QuorumRegistry::with_defaults();
         let mut d = make_decision("test", DecisionClass::Strategic, &mut clock);
         for i in 0..5 {
-            d.add_vote(ai_approve_vote(&format!("bot{i}"), &mut clock))
-                .expect("ok");
+            let vote = ai_approve_vote(&d, &format!("bot{i}"), &mut clock);
+            add_resolved_vote(&mut d, vote).expect("ok");
         }
-        match check_quorum(&reg, &d).expect("ok") {
+        let resolver = resolver_for_decision(&d);
+        match check_quorum_with_key_resolver(&reg, &d, &resolver).expect("ok") {
             QuorumCheckResult::NotMet { reason } => {
                 assert!(reason.contains("human"));
             }
             other => panic!("expected NotMet, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn caller_asserted_human_votes_without_signature_evidence_do_not_satisfy_human_floor() {
+        let mut clock = test_clock();
+        let reg = QuorumRegistry::with_defaults();
+        let mut d = make_decision("test", DecisionClass::Strategic, &mut clock);
+
+        for i in 0..3 {
+            d.votes.push(Vote {
+                voter_did: Did::new(&format!("did:exo:forged-human-{i}")).expect("ok"),
+                choice: VoteChoice::Approve,
+                actor_kind: ActorKind::Human,
+                timestamp: clock.now().expect("HLC timestamp"),
+                signature_hash: Hash256::ZERO,
+                provenance: None,
+            });
+        }
+        for i in 0..5 {
+            let vote = ai_approve_vote(&d, &format!("bot{i}"), &mut clock);
+            add_resolved_vote(&mut d, vote).expect("ok");
+        }
+
+        let resolver = resolver_for_decision(&d);
+        match check_quorum_with_key_resolver(&reg, &d, &resolver).expect("ok") {
+            QuorumCheckResult::NotMet { reason } => {
+                assert_eq!(reason, "insufficient human votes: 0 < 3");
+            }
+            other => panic!("expected NotMet for unverified human votes, got {other:?}"),
         }
     }
 
@@ -380,9 +504,8 @@ mod tests {
             });
             let mut decision =
                 make_decision("invalid threshold", DecisionClass::Routine, &mut clock);
-            decision
-                .add_vote(human_approve_vote("alice", &mut clock))
-                .expect("vote accepted");
+            let vote = human_approve_vote(&decision, "alice", &mut clock);
+            add_resolved_vote(&mut decision, vote).expect("vote accepted");
 
             let err = check_quorum(&reg, &decision).expect_err("invalid threshold must fail");
             assert!(matches!(

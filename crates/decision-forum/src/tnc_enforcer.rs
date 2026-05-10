@@ -232,7 +232,7 @@ mod tests {
         provenance_signature_message,
         types::{
             AuthorityChain, AuthorityLink as GatekeeperAuthorityLink, BailmentState, ConsentRecord,
-            GovernmentBranch, PermissionSet, Provenance, Role, TrustedAuthorityKeys,
+            GovernmentBranch, PermissionSet, Provenance, Role, TrustedAuthorityKeys, VoiceKind,
         },
     };
     use uuid::Uuid;
@@ -283,6 +283,47 @@ mod tests {
         })
         .expect("ok");
         d
+    }
+
+    fn signed_ai_vote(
+        decision: &DecisionObject,
+        voter: &str,
+        delegation_id: &str,
+        ceiling_class: DecisionClass,
+        clock: &mut HybridClock,
+    ) -> Vote {
+        let (public_key, secret_key) = exo_core::crypto::generate_keypair();
+        let mut vote = Vote {
+            voter_did: Did::new(voter).expect("ok"),
+            choice: VoteChoice::Approve,
+            actor_kind: ActorKind::AiAgent {
+                delegation_id: delegation_id.into(),
+                ceiling_class,
+            },
+            timestamp: clock.now().expect("HLC timestamp"),
+            signature_hash: Hash256::ZERO,
+            provenance: None,
+        };
+        let message = vote_signature_message(decision, &vote).expect("vote signing payload");
+        let signature = exo_core::crypto::sign(&message, &secret_key);
+        vote.signature_hash = Hash256::digest(&signature.to_bytes());
+        vote.provenance = Some(VoteProvenance {
+            public_key,
+            signature,
+            voice_kind: VoiceKind::Synthetic,
+        });
+        vote
+    }
+
+    fn add_resolved_vote(decision: &mut DecisionObject, vote: Vote) -> Result<()> {
+        let voter_did = vote.voter_did.clone();
+        let public_key = vote
+            .provenance
+            .as_ref()
+            .map(|provenance| provenance.public_key);
+        decision.add_vote_with_key_resolver(vote, &move |did: &Did| {
+            if did == &voter_did { public_key } else { None }
+        })
     }
 
     fn signed_authority_link(
@@ -494,18 +535,14 @@ mod tests {
             timestamp: clock.now().expect("HLC timestamp"),
         })
         .expect("ok");
-        let ts = clock.now().expect("HLC timestamp");
-        d.add_vote(Vote {
-            voter_did: Did::new("did:exo:ai-bot").expect("ok"),
-            choice: VoteChoice::Approve,
-            actor_kind: ActorKind::AiAgent {
-                delegation_id: "d1".into(),
-                ceiling_class: DecisionClass::Operational,
-            },
-            timestamp: ts,
-            signature_hash: Hash256::ZERO,
-        })
-        .expect("ok");
+        let vote = signed_ai_vote(
+            &d,
+            "did:exo:ai-bot",
+            "d1",
+            DecisionClass::Operational,
+            &mut clock,
+        );
+        add_resolved_vote(&mut d, vote).expect("ok");
         let ctx = passing_ctx(&d);
         let err = enforce_tnc_09(&ctx).unwrap_err();
         assert!(matches!(err, ForumError::TncViolation { tnc_id: 9, .. }));
@@ -565,17 +602,14 @@ mod tests {
             timestamp: clock.now().expect("HLC timestamp"),
         })
         .expect("ok");
-        d.add_vote(Vote {
-            voter_did: Did::new("did:exo:ai-agent").expect("ok"),
-            choice: VoteChoice::Approve,
-            actor_kind: ActorKind::AiAgent {
-                delegation_id: "del-001".into(),
-                ceiling_class: DecisionClass::Operational, // self-declared
-            },
-            timestamp: clock.now().expect("HLC timestamp"),
-            signature_hash: Hash256::ZERO,
-        })
-        .expect("ok");
+        let vote = signed_ai_vote(
+            &d,
+            "did:exo:ai-agent",
+            "del-001",
+            DecisionClass::Operational,
+            &mut clock,
+        );
+        add_resolved_vote(&mut d, vote).expect("ok");
         let mut ctx = passing_ctx(&d);
         ctx.ai_ceilings_externally_verified = false; // not verified — fail-closed
         let err = enforce_tnc_09(&ctx).unwrap_err();
@@ -601,17 +635,14 @@ mod tests {
             timestamp: clock.now().expect("HLC timestamp"),
         })
         .expect("ok");
-        d.add_vote(Vote {
-            voter_did: Did::new("did:exo:ai-agent").expect("ok"),
-            choice: VoteChoice::Approve,
-            actor_kind: ActorKind::AiAgent {
-                delegation_id: "del-001".into(),
-                ceiling_class: DecisionClass::Routine,
-            },
-            timestamp: clock.now().expect("HLC timestamp"),
-            signature_hash: Hash256::ZERO,
-        })
-        .expect("ok");
+        let vote = signed_ai_vote(
+            &d,
+            "did:exo:ai-agent",
+            "del-001",
+            DecisionClass::Routine,
+            &mut clock,
+        );
+        add_resolved_vote(&mut d, vote).expect("ok");
         let mut ctx = passing_ctx(&d);
         ctx.ai_ceilings_externally_verified = false;
         assert!(enforce_tnc_09(&ctx).is_ok());
@@ -629,17 +660,14 @@ mod tests {
             timestamp: clock.now().expect("HLC timestamp"),
         })
         .expect("ok");
-        d.add_vote(Vote {
-            voter_did: Did::new("did:exo:ai-agent").expect("ok"),
-            choice: VoteChoice::Approve,
-            actor_kind: ActorKind::AiAgent {
-                delegation_id: "del-001".into(),
-                ceiling_class: DecisionClass::Operational,
-            },
-            timestamp: clock.now().expect("HLC timestamp"),
-            signature_hash: Hash256::ZERO,
-        })
-        .expect("ok");
+        let vote = signed_ai_vote(
+            &d,
+            "did:exo:ai-agent",
+            "del-001",
+            DecisionClass::Operational,
+            &mut clock,
+        );
+        add_resolved_vote(&mut d, vote).expect("ok");
         let mut ctx = passing_ctx(&d);
         ctx.ai_ceilings_externally_verified = true;
         assert!(enforce_tnc_09(&ctx).is_ok());
@@ -657,17 +685,14 @@ mod tests {
             timestamp: clock.now().expect("HLC timestamp"),
         })
         .expect("ok");
-        d.add_vote(Vote {
-            voter_did: Did::new("did:exo:ai-agent").expect("ok"),
-            choice: VoteChoice::Approve,
-            actor_kind: ActorKind::AiAgent {
-                delegation_id: "del-001".into(),
-                ceiling_class: DecisionClass::Operational, // registry says Operational
-            },
-            timestamp: clock.now().expect("HLC timestamp"),
-            signature_hash: Hash256::ZERO,
-        })
-        .expect("ok");
+        let vote = signed_ai_vote(
+            &d,
+            "did:exo:ai-agent",
+            "del-001",
+            DecisionClass::Operational,
+            &mut clock,
+        );
+        add_resolved_vote(&mut d, vote).expect("ok");
         let mut ctx = passing_ctx(&d);
         ctx.ai_ceilings_externally_verified = true;
         let err = enforce_tnc_09(&ctx).unwrap_err();

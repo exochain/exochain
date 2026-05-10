@@ -8,17 +8,21 @@
 
 use exo_core::{
     bcts::BctsState,
+    crypto,
     hash::hash_structured,
-    types::{DeterministicMap, Did, Hash256, Timestamp},
+    types::{DeterministicMap, Did, Hash256, PublicKey, Signature, Timestamp},
 };
 use exo_gatekeeper::{
     kernel::{ActionRequest, AdjudicationContext, Kernel, Verdict},
-    types::Permission,
+    types::{Permission, VoiceKind},
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::{ForumError, Result};
+use crate::{
+    constitution::PublicKeyResolver,
+    error::{ForumError, Result},
+};
 
 /// Classification of a decision, determining quorum, authority, and gate requirements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -60,6 +64,14 @@ pub enum ActorKind {
     },
 }
 
+/// Cryptographic evidence binding a vote to the voter and decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoteProvenance {
+    pub public_key: PublicKey,
+    pub signature: Signature,
+    pub voice_kind: VoiceKind,
+}
+
 /// A single vote cast on a decision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Vote {
@@ -68,6 +80,8 @@ pub struct Vote {
     pub actor_kind: ActorKind,
     pub timestamp: Timestamp,
     pub signature_hash: Hash256,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<VoteProvenance>,
 }
 
 /// Vote choice.
@@ -106,6 +120,21 @@ pub struct LifecycleReceipt {
 }
 
 const BCTS_TRANSITION_ACTION_PREFIX: &str = "bcts:transition";
+const DECISION_VOTE_SIGNATURE_DOMAIN: &str = "decision.forum.vote_signature.v1";
+const DECISION_VOTE_SIGNATURE_SCHEMA_VERSION: u16 = 1;
+
+#[derive(Debug, Serialize)]
+struct VoteSignaturePayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    decision_id: &'a Uuid,
+    decision_class: DecisionClass,
+    constitutional_hash: &'a Hash256,
+    voter_did: &'a Did,
+    choice: VoteChoice,
+    actor_kind: &'a ActorKind,
+    timestamp: &'a Timestamp,
+}
 
 /// Stable action name used when submitting a BCTS state transition to the
 /// constitutional kernel.
@@ -118,6 +147,71 @@ pub fn bcts_transition_action_name(from: BctsState, to: BctsState) -> String {
 #[must_use]
 pub fn bcts_transition_permission(from: BctsState, to: BctsState) -> Permission {
     Permission::new(bcts_transition_action_name(from, to))
+}
+
+/// Canonical domain-separated message bytes to sign for a decision vote.
+pub fn vote_signature_message(decision: &DecisionObject, vote: &Vote) -> Result<Vec<u8>> {
+    let digest = hash_structured(&VoteSignaturePayload {
+        domain: DECISION_VOTE_SIGNATURE_DOMAIN,
+        schema_version: DECISION_VOTE_SIGNATURE_SCHEMA_VERSION,
+        decision_id: &decision.id,
+        decision_class: decision.class,
+        constitutional_hash: &decision.constitutional_hash,
+        voter_did: &vote.voter_did,
+        choice: vote.choice,
+        actor_kind: &vote.actor_kind,
+        timestamp: &vote.timestamp,
+    })?;
+    Ok(digest.as_ref().to_vec())
+}
+
+impl Vote {
+    /// Returns true when the vote carries internally consistent human provenance
+    /// evidence. Decision-bound signature verification still requires the
+    /// surrounding [`DecisionObject`].
+    #[must_use]
+    pub fn has_human_provenance_evidence(&self) -> bool {
+        matches!(self.actor_kind, ActorKind::Human)
+            && self.choice == VoteChoice::Approve
+            && self.has_consistent_signature_evidence_for_voice(VoiceKind::Human)
+    }
+
+    fn has_consistent_signature_evidence_for_voice(&self, expected_voice: VoiceKind) -> bool {
+        self.timestamp != Timestamp::ZERO
+            && self.signature_hash != Hash256::ZERO
+            && self.provenance.as_ref().is_some_and(|provenance| {
+                provenance.voice_kind == expected_voice
+                    && !provenance.signature.is_empty()
+                    && !provenance.signature.ed25519_component_is_zero()
+                    && Hash256::digest(&provenance.signature.to_bytes()) == self.signature_hash
+            })
+    }
+
+    fn expected_voice_kind(&self) -> VoiceKind {
+        match self.actor_kind {
+            ActorKind::Human => VoiceKind::Human,
+            ActorKind::AiAgent { .. } => VoiceKind::Synthetic,
+        }
+    }
+}
+
+fn actor_kind_label(actor_kind: &ActorKind) -> &'static str {
+    match actor_kind {
+        ActorKind::Human => "Human",
+        ActorKind::AiAgent { .. } => "AiAgent",
+    }
+}
+
+fn voice_kind_label(voice_kind: VoiceKind) -> &'static str {
+    match voice_kind {
+        VoiceKind::Human => "Human",
+        VoiceKind::Synthetic => "Synthetic",
+        VoiceKind::System => "System",
+    }
+}
+
+fn no_voter_public_key(_: &Did) -> Option<PublicKey> {
+    None
 }
 
 /// The core Decision Object.
@@ -284,6 +378,17 @@ impl DecisionObject {
 
     /// Add a vote to this decision.
     pub fn add_vote(&mut self, vote: Vote) -> Result<()> {
+        self.add_vote_with_key_resolver(vote, &no_voter_public_key)
+    }
+
+    /// Add a vote after resolving the voter's public key from trusted identity
+    /// state. Use this at runtime boundaries; [`Self::add_vote`] intentionally
+    /// fails closed because a vote's embedded public key is not self-authenticating.
+    pub fn add_vote_with_key_resolver<R: PublicKeyResolver>(
+        &mut self,
+        vote: Vote,
+        resolve_voter_public_key: &R,
+    ) -> Result<()> {
         if self.is_terminal() {
             return Err(ForumError::DecisionImmutable);
         }
@@ -293,8 +398,119 @@ impl DecisionObject {
                 reason: format!("duplicate vote from {}", vote.voter_did),
             });
         }
+        self.verify_vote_signature_with_key_resolver(&vote, resolve_voter_public_key)?;
         self.votes.push(vote);
         Ok(())
+    }
+
+    /// Verify a vote's decision-bound signature and provenance metadata.
+    pub fn verify_vote_signature(&self, vote: &Vote) -> Result<()> {
+        self.verify_vote_signature_with_key_resolver(vote, &no_voter_public_key)
+    }
+
+    /// Verify a vote's decision-bound signature and ensure its signing key is
+    /// resolved from trusted voter identity state.
+    pub fn verify_vote_signature_with_key_resolver<R: PublicKeyResolver>(
+        &self,
+        vote: &Vote,
+        resolve_voter_public_key: &R,
+    ) -> Result<()> {
+        validate_timestamp(vote.timestamp, "vote timestamp")?;
+
+        if vote.signature_hash == Hash256::ZERO {
+            return Err(ForumError::InvalidProvenance {
+                reason: format!(
+                    "vote from {} must include non-zero signature hash",
+                    vote.voter_did
+                ),
+            });
+        }
+
+        let provenance = vote
+            .provenance
+            .as_ref()
+            .ok_or_else(|| ForumError::InvalidProvenance {
+                reason: format!(
+                    "vote from {} must include signature provenance",
+                    vote.voter_did
+                ),
+            })?;
+
+        let expected_voice = vote.expected_voice_kind();
+        if provenance.voice_kind != expected_voice {
+            return Err(ForumError::InvalidProvenance {
+                reason: format!(
+                    "vote from {} declares {} actor with {} voice provenance",
+                    vote.voter_did,
+                    actor_kind_label(&vote.actor_kind),
+                    voice_kind_label(provenance.voice_kind)
+                ),
+            });
+        }
+
+        let resolved_public_key = resolve_voter_public_key
+            .resolve(&vote.voter_did)
+            .ok_or_else(|| ForumError::InvalidProvenance {
+                reason: format!(
+                    "vote from {} voter public key is unresolved",
+                    vote.voter_did
+                ),
+            })?;
+        if resolved_public_key != provenance.public_key {
+            return Err(ForumError::InvalidProvenance {
+                reason: format!(
+                    "vote from {} provenance public key does not match resolved voter public key",
+                    vote.voter_did
+                ),
+            });
+        }
+
+        if provenance.signature.is_empty() || provenance.signature.ed25519_component_is_zero() {
+            return Err(ForumError::InvalidProvenance {
+                reason: format!(
+                    "vote from {} must include a non-empty signature",
+                    vote.voter_did
+                ),
+            });
+        }
+
+        let actual_signature_hash = Hash256::digest(&provenance.signature.to_bytes());
+        if vote.signature_hash != actual_signature_hash {
+            return Err(ForumError::InvalidProvenance {
+                reason: format!(
+                    "vote from {} signature hash does not match provenance signature",
+                    vote.voter_did
+                ),
+            });
+        }
+
+        let message = vote_signature_message(self, vote)?;
+        if !crypto::verify(&message, &provenance.signature, &provenance.public_key) {
+            return Err(ForumError::InvalidProvenance {
+                reason: format!("vote from {} signature failed verification", vote.voter_did),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Returns true if this vote is a verified human approval for this decision.
+    #[must_use]
+    pub fn is_verified_human_approval(&self, vote: &Vote) -> bool {
+        vote.has_human_provenance_evidence() && self.verify_vote_signature(vote).is_ok()
+    }
+
+    /// Returns true if this vote is a verified human approval with voter key
+    /// resolution against trusted identity state.
+    pub fn is_verified_human_approval_with_key_resolver<R: PublicKeyResolver>(
+        &self,
+        vote: &Vote,
+        resolve_voter_public_key: &R,
+    ) -> bool {
+        vote.has_human_provenance_evidence()
+            && self
+                .verify_vote_signature_with_key_resolver(vote, resolve_voter_public_key)
+                .is_ok()
     }
 
     /// Add evidence to this decision.
@@ -440,7 +656,7 @@ mod tests {
         provenance_signature_message,
         types::{
             AuthorityChain, AuthorityLink as GatekeeperAuthorityLink, BailmentState, ConsentRecord,
-            GovernmentBranch, PermissionSet, Provenance, Role, TrustedAuthorityKeys,
+            GovernmentBranch, PermissionSet, Provenance, Role, TrustedAuthorityKeys, VoiceKind,
         },
     };
 
@@ -571,6 +787,50 @@ mod tests {
             created_at: clock.now().expect("HLC timestamp"),
         })
         .expect("valid decision")
+    }
+
+    fn signed_vote_for(
+        decision: &DecisionObject,
+        voter_did: Did,
+        choice: VoteChoice,
+        actor_kind: ActorKind,
+        voice_kind: VoiceKind,
+        timestamp: Timestamp,
+    ) -> Vote {
+        let (public_key, secret_key) = exo_core::crypto::generate_keypair();
+        let mut vote = Vote {
+            voter_did,
+            choice,
+            actor_kind,
+            timestamp,
+            signature_hash: Hash256::ZERO,
+            provenance: None,
+        };
+        let message = vote_signature_message(decision, &vote).expect("vote signing payload");
+        let signature = exo_core::crypto::sign(&message, &secret_key);
+        vote.signature_hash = Hash256::digest(&signature.to_bytes());
+        vote.provenance = Some(VoteProvenance {
+            public_key,
+            signature,
+            voice_kind,
+        });
+        vote
+    }
+
+    fn resolver_for_vote(vote: &Vote) -> impl Fn(&Did) -> Option<PublicKey> + use<> {
+        let voter_did = vote.voter_did.clone();
+        let public_key = vote
+            .provenance
+            .as_ref()
+            .map(|provenance| provenance.public_key);
+        move |did| {
+            if did == &voter_did { public_key } else { None }
+        }
+    }
+
+    fn add_resolved_vote(decision: &mut DecisionObject, vote: Vote) -> Result<()> {
+        let resolver = resolver_for_vote(&vote);
+        decision.add_vote_with_key_resolver(vote, &resolver)
     }
 
     #[test]
@@ -801,6 +1061,7 @@ mod tests {
                 actor_kind: ActorKind::Human,
                 timestamp: clock.now().expect("HLC timestamp"),
                 signature_hash: Hash256::ZERO,
+                provenance: None,
             })
             .is_err()
         );
@@ -842,24 +1103,148 @@ mod tests {
         let actor = test_did();
         let mut d = make_decision(&mut clock);
         let ts = clock.now().expect("HLC timestamp");
-        d.add_vote(Vote {
-            voter_did: actor.clone(),
-            choice: VoteChoice::Approve,
-            actor_kind: ActorKind::Human,
-            timestamp: ts,
-            signature_hash: Hash256::ZERO,
-        })
-        .expect("ok");
+        let first_vote = signed_vote_for(
+            &d,
+            actor.clone(),
+            VoteChoice::Approve,
+            ActorKind::Human,
+            VoiceKind::Human,
+            ts,
+        );
+        add_resolved_vote(&mut d, first_vote).expect("ok");
+        let second_vote = signed_vote_for(
+            &d,
+            actor.clone(),
+            VoteChoice::Reject,
+            ActorKind::Human,
+            VoiceKind::Human,
+            ts,
+        );
+        let err = d.add_vote(second_vote).unwrap_err();
+        assert!(err.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    fn add_vote_rejects_missing_signature_evidence() {
+        let mut clock = test_clock();
+        let actor = test_did();
+        let mut d = make_decision(&mut clock);
+
         let err = d
             .add_vote(Vote {
-                voter_did: actor.clone(),
-                choice: VoteChoice::Reject,
+                voter_did: actor,
+                choice: VoteChoice::Approve,
                 actor_kind: ActorKind::Human,
-                timestamp: ts,
+                timestamp: clock.now().expect("HLC timestamp"),
                 signature_hash: Hash256::ZERO,
+                provenance: None,
             })
-            .unwrap_err();
-        assert!(err.to_string().contains("duplicate"));
+            .expect_err("votes without signature evidence must fail closed");
+
+        assert!(matches!(err, ForumError::InvalidProvenance { .. }));
+        assert!(d.votes.is_empty());
+    }
+
+    #[test]
+    fn add_vote_rejects_unresolved_voter_public_key() {
+        let mut clock = test_clock();
+        let mut d = make_decision(&mut clock);
+        let ts = clock.now().expect("HLC timestamp");
+        let vote = signed_vote_for(
+            &d,
+            test_did(),
+            VoteChoice::Approve,
+            ActorKind::Human,
+            VoiceKind::Human,
+            ts,
+        );
+
+        let err = d
+            .add_vote(vote)
+            .expect_err("votes with self-supplied but unresolved keys must fail closed");
+        assert!(err.to_string().contains("voter public key is unresolved"));
+        assert!(d.votes.is_empty());
+    }
+
+    #[test]
+    fn add_vote_rejects_missing_hlc_timestamp() {
+        let actor = test_did();
+        let mut clock = test_clock();
+        let mut d = make_decision(&mut clock);
+
+        let err = d
+            .add_vote(Vote {
+                voter_did: actor,
+                choice: VoteChoice::Approve,
+                actor_kind: ActorKind::Human,
+                timestamp: Timestamp::ZERO,
+                signature_hash: Hash256::digest(b"vote-signature"),
+                provenance: None,
+            })
+            .expect_err("votes without HLC provenance must fail closed");
+
+        assert!(matches!(err, ForumError::InvalidProvenance { .. }));
+        assert!(d.votes.is_empty());
+    }
+
+    #[test]
+    fn add_vote_rejects_signature_replayed_for_different_decision() {
+        let mut clock = test_clock();
+        let source = make_decision(&mut clock);
+        let mut target = DecisionObject::new(DecisionObjectInput {
+            id: Uuid::from_u128(2),
+            title: "Different Decision".into(),
+            class: DecisionClass::Operational,
+            constitutional_hash: Hash256::digest(b"const-v1"),
+            created_at: clock.now().expect("HLC timestamp"),
+        })
+        .expect("valid decision");
+
+        let vote = signed_vote_for(
+            &source,
+            test_did(),
+            VoteChoice::Approve,
+            ActorKind::Human,
+            VoiceKind::Human,
+            clock.now().expect("HLC timestamp"),
+        );
+        let resolver = resolver_for_vote(&vote);
+
+        let err = target
+            .add_vote_with_key_resolver(vote, &resolver)
+            .expect_err("vote signatures must be bound to one decision");
+
+        assert!(matches!(err, ForumError::InvalidProvenance { .. }));
+        assert!(
+            err.to_string().contains("signature failed verification"),
+            "error should identify signature verification failure, got: {err}"
+        );
+        assert!(target.votes.is_empty());
+    }
+
+    #[test]
+    fn add_vote_rejects_human_actor_with_synthetic_voice_provenance() {
+        let mut clock = test_clock();
+        let mut d = make_decision(&mut clock);
+        let vote = signed_vote_for(
+            &d,
+            test_did(),
+            VoteChoice::Approve,
+            ActorKind::Human,
+            VoiceKind::Synthetic,
+            clock.now().expect("HLC timestamp"),
+        );
+
+        let err = d
+            .add_vote(vote)
+            .expect_err("human actor votes must carry human voice provenance");
+
+        assert!(matches!(err, ForumError::InvalidProvenance { .. }));
+        assert!(
+            err.to_string().contains("Synthetic voice provenance"),
+            "error should identify voice-kind mismatch, got: {err}"
+        );
+        assert!(d.votes.is_empty());
     }
 
     #[test]
