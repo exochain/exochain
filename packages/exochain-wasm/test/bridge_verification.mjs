@@ -1719,8 +1719,35 @@ const tncFlags = {
   evidence_bundle_complete: true
 };
 
+const canonicalAllTrueTncFlags = {
+  constitutional_hash_valid: true,
+  consent_verified: true,
+  identity_verified: true,
+  evidence_complete: true,
+  quorum_met: true,
+  human_gate_satisfied: true,
+  authority_chain_verified: true,
+  ai_ceilings_externally_verified: true
+};
+
+const structurallyCompleteTncDecision = minDecision ? {
+  ...minDecision,
+  authority_chain: [{
+    actor_did: TEST_DID,
+    actor_kind: 'Human',
+    delegation_hash: EVIDENCE_32_BYTES,
+    timestamp: NOW_TS
+  }],
+  evidence_bundle: [{
+    hash: EVIDENCE_32_BYTES,
+    description: 'bridge TNC proof boundary evidence',
+    attached_at: NOW_TS
+  }]
+} : undefined;
+
 const tncDecJson = minDecision ? JSON.stringify(minDecision) : '{}';
 const tncFlagsJson = JSON.stringify(tncFlags);
+const canonicalAllTrueTncFlagsJson = JSON.stringify(canonicalAllTrueTncFlags);
 
 test('wasm_enforce_tnc_01', () =>
   wasm.wasm_enforce_tnc_01(tncDecJson, tncFlagsJson));
@@ -1754,6 +1781,20 @@ test('wasm_enforce_tnc_10', () =>
 
 test('wasm_enforce_all_tnc', () =>
   wasm.wasm_enforce_all_tnc(tncDecJson, tncFlagsJson));
+
+test('wasm_enforce_all_tnc rejects self-asserted proof flags', () => {
+  if (!structurallyCompleteTncDecision) {
+    throw new Error('skipped -- no decision from setup');
+  }
+  const result = wasm.wasm_enforce_all_tnc(
+    JSON.stringify(structurallyCompleteTncDecision),
+    canonicalAllTrueTncFlagsJson
+  );
+  if (!result || result.ok !== false || !String(result.error).includes('authority chain not verified')) {
+    throw new Error('self-asserted TNC proof flags must fail closed');
+  }
+  return result;
+});
 
 test('wasm_collect_tnc_violations', () =>
   wasm.wasm_collect_tnc_violations(tncDecJson, tncFlagsJson));
