@@ -197,8 +197,8 @@ pub fn wasm_validation_invariant_request() -> Result<JsValue, JsValue> {
     use exo_gatekeeper::{
         authority_link_signature_message, provenance_signature_message,
         types::{
-            AuthorityChain, AuthorityLink, BailmentState, ConsentRecord, PermissionSet, Provenance,
-            TrustedAuthorityKeys, TrustedProvenanceKeys,
+            AuthorityChain, AuthorityLink, BailmentState, ConsentRecord, Permission, PermissionSet,
+            Provenance, TrustedAuthorityKeys, TrustedProvenanceKeys,
         },
     };
 
@@ -215,7 +215,7 @@ pub fn wasm_validation_invariant_request() -> Result<JsValue, JsValue> {
         .map_err(|_| gatekeeper_boundary_error("validation invariant actor DID failed"))?;
     let grantor = exo_core::Did::new("did:exo:validation-root")
         .map_err(|_| gatekeeper_boundary_error("validation invariant grantor DID failed"))?;
-    let permissions = PermissionSet::default();
+    let permissions = PermissionSet::new(vec![Permission::new("bcts:transition:Draft->Submitted")]);
     let mut authority_link = AuthorityLink {
         grantor: grantor.clone(),
         grantee: actor.clone(),
@@ -264,13 +264,13 @@ pub fn wasm_validation_invariant_request() -> Result<JsValue, JsValue> {
             bailor: exo_core::Did::new("did:exo:validation-bailor")
                 .map_err(|_| gatekeeper_boundary_error("validation bailor DID failed"))?,
             bailee: actor.clone(),
-            scope: "validation-scope".to_string(),
+            scope: "bcts:transition".to_string(),
         },
         "consent_records": [ConsentRecord {
             subject: exo_core::Did::new("did:exo:validation-bailor")
                 .map_err(|_| gatekeeper_boundary_error("validation subject DID failed"))?,
             granted_to: actor.clone(),
-            scope: "validation-scope".to_string(),
+            scope: "bcts:transition".to_string(),
             active: true,
         }],
         "authority_chain": AuthorityChain {
@@ -281,8 +281,8 @@ pub fn wasm_validation_invariant_request() -> Result<JsValue, JsValue> {
         "kernel_modification_attempted": false,
         "quorum_evidence": null,
         "provenance": provenance,
-        "actor_permissions": permissions,
-        "requested_permissions": PermissionSet::default(),
+        "actor_permissions": permissions.clone(),
+        "requested_permissions": permissions,
         "trusted_authority_keys": trusted_authority_keys,
         "trusted_provenance_keys": trusted_provenance_keys,
     }))

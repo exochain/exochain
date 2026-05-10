@@ -19,7 +19,6 @@ struct WasmDecisionTransitionAdjudicatedRequest {
     actor_did: String,
     timestamp_ms: u64,
     timestamp_logical: u32,
-    invariant_set: exo_gatekeeper::invariants::InvariantSet,
     action: exo_gatekeeper::kernel::ActionRequest,
     context: exo_gatekeeper::kernel::AdjudicationContext,
 }
@@ -80,20 +79,31 @@ pub fn wasm_transition_decision_adjudicated(
     constitution: &[u8],
 ) -> Result<JsValue, JsValue> {
     ensure_constitution_bytes(constitution.len())?;
+    let request_value: serde_json::Value = from_json_str(request_json)?;
+    let request_object = request_value
+        .as_object()
+        .ok_or_else(|| JsValue::from_str("JSON parse error"))?;
+    if request_object.contains_key("invariant_set") {
+        return Err(JsValue::from_str(
+            "caller-supplied invariant_set is not allowed; the WASM boundary enforces the canonical invariant set",
+        ));
+    }
     let WasmDecisionTransitionAdjudicatedRequest {
         mut decision,
         to_state,
         actor_did,
         timestamp_ms,
         timestamp_logical,
-        invariant_set,
         action,
         context,
-    } = from_json_str(request_json)?;
+    } = serde_json::from_value(request_value).map_err(|_| JsValue::from_str("JSON parse error"))?;
     let actor = exo_core::Did::new(&actor_did)
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
     let ts = exo_core::types::Timestamp::new(timestamp_ms, timestamp_logical);
-    let kernel = exo_gatekeeper::kernel::Kernel::new(constitution, invariant_set);
+    let kernel = exo_gatekeeper::kernel::Kernel::new(
+        constitution,
+        exo_gatekeeper::invariants::InvariantSet::all(),
+    );
 
     decision
         .transition_adjudicated_at(to_state, &actor, ts, &kernel, &action, &context)

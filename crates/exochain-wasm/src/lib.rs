@@ -401,6 +401,38 @@ mod source_guard_tests {
     }
 
     #[test]
+    fn wasm_adjudicated_decision_transition_uses_canonical_invariant_set() {
+        let source = include_str!("decision_forum_bindings.rs");
+        let request = source
+            .split("struct WasmDecisionTransitionAdjudicatedRequest")
+            .nth(1)
+            .and_then(|section| section.split("/// Create a new DecisionObject").next())
+            .expect("adjudicated decision request source");
+        let transition = source
+            .split("pub fn wasm_transition_decision_adjudicated(")
+            .nth(1)
+            .and_then(|section| section.split("/// Add a vote").next())
+            .expect("adjudicated decision transition source");
+
+        assert!(
+            !request.contains("invariant_set"),
+            "WASM callers must not choose which constitutional invariants the kernel enforces"
+        );
+        assert!(
+            transition.contains("contains_key(\"invariant_set\")"),
+            "WASM adjudicated transition must reject caller-supplied invariant_set fields"
+        );
+        assert!(
+            transition.contains("InvariantSet::all()"),
+            "WASM adjudicated transition must construct the kernel with all constitutional invariants"
+        );
+        assert!(
+            !transition.contains("Kernel::new(constitution, invariant_set)"),
+            "WASM adjudicated transition must not pass caller-selected invariants to Kernel::new"
+        );
+    }
+
+    #[test]
     fn wasm_messaging_bridge_requires_caller_supplied_envelope_metadata() {
         let source = include_str!("messaging_bindings.rs");
         assert!(

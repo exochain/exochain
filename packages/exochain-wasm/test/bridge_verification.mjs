@@ -1888,32 +1888,32 @@ test('wasm_transition_decision rejects unadjudicated transition', () =>
 
 test('wasm_transition_decision_adjudicated', () => {
   if (!decision) throw new Error('skipped -- no decision from setup');
+  const invariantFixture = wasm.wasm_validation_invariant_request();
   const transitionPermission = 'bcts:transition:Draft->Submitted';
   const request = {
     decision,
     to_state: 'Submitted',
-    actor_did: TEST_DID,
+    actor_did: invariantFixture.actor,
     timestamp_ms: NOW_NUM + 1,
     timestamp_logical: 0,
-    invariant_set: { invariants: [] },
     action: {
-      actor: TEST_DID,
+      actor: invariantFixture.actor,
       action: transitionPermission,
       required_permissions: { permissions: [transitionPermission] },
       is_self_grant: false,
       modifies_kernel: false
     },
     context: {
-      actor_roles: [],
-      authority_chain: { links: [] },
-      consent_records: [],
-      bailment_state: 'None',
-      human_override_preserved: true,
-      actor_permissions: { permissions: [transitionPermission] },
-      trusted_authority_keys: {},
-      trusted_provenance_keys: {},
-      provenance: null,
-      quorum_evidence: null,
+      actor_roles: invariantFixture.actor_roles,
+      authority_chain: invariantFixture.authority_chain,
+      consent_records: invariantFixture.consent_records,
+      bailment_state: invariantFixture.bailment_state,
+      human_override_preserved: invariantFixture.human_override_preserved,
+      actor_permissions: invariantFixture.actor_permissions,
+      trusted_authority_keys: invariantFixture.trusted_authority_keys,
+      trusted_provenance_keys: invariantFixture.trusted_provenance_keys,
+      provenance: invariantFixture.provenance,
+      quorum_evidence: invariantFixture.quorum_evidence,
       active_challenge_reason: null
     }
   };
