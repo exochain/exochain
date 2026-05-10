@@ -52,6 +52,7 @@ for workflow in .archon/workflows/*.yaml; do
     require_pattern "$workflow" '^[[:space:]]*exit_condition:' "exit condition"
     require_pattern "$workflow" 'stop_conditions:' "stop_conditions list"
     require_pattern "$workflow" 'escalat' "escalation path"
+    require_pattern "$workflow" 'same .*failure fingerprint.*twice' "repeated validation/remediation failure stop condition"
     extract_positive_bound "$workflow"
   fi
 done
