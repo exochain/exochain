@@ -265,6 +265,7 @@ fn evaluate_action(
     enforce_data_class(&credential.authority_scope, action, reasons);
     enforce_counterparty(&credential.authority_scope, action, reasons);
     enforce_budget(&credential.constraints, action, reasons);
+    enforce_human_approval_constraint(&credential.constraints, reasons, human_approval_required);
     enforce_risk(
         &credential.constraints,
         action,
@@ -328,6 +329,24 @@ fn enforce_budget(
     }
 }
 
+fn require_human_approval(
+    reasons: &mut BTreeSet<AvcReasonCode>,
+    human_approval_required: &mut bool,
+) {
+    reasons.insert(AvcReasonCode::HumanApprovalMissing);
+    *human_approval_required = true;
+}
+
+fn enforce_human_approval_constraint(
+    constraints: &AvcConstraints,
+    reasons: &mut BTreeSet<AvcReasonCode>,
+    human_approval_required: &mut bool,
+) {
+    if constraints.human_approval_required {
+        require_human_approval(reasons, human_approval_required);
+    }
+}
+
 fn enforce_risk(
     constraints: &AvcConstraints,
     action: &AvcActionRequest,
@@ -343,9 +362,8 @@ fn enforce_risk(
         }
     }
     if let Some(threshold) = constraints.approval_threshold_bp {
-        if estimate >= threshold && !action.requires_human_approval {
-            reasons.insert(AvcReasonCode::HumanApprovalMissing);
-            *human_approval_required = true;
+        if estimate >= threshold {
+            require_human_approval(reasons, human_approval_required);
         }
     }
 }
@@ -804,7 +822,7 @@ mod tests {
     }
 
     #[test]
-    fn risk_above_threshold_with_explicit_approval_does_not_flag() {
+    fn risk_above_threshold_with_action_approval_flag_still_requires_verified_evidence() {
         let h = Harness::new();
         let mut draft = baseline_draft();
         draft.constraints.max_action_risk_bp = Some(10_000);
@@ -817,7 +835,71 @@ mod tests {
         let mut request = baseline_request(cred, ts(1_500_000));
         request.action = Some(action);
         let result = validate_avc(&request, &h.registry).unwrap();
-        assert_eq!(result.decision, AvcDecision::Allow);
+        assert_eq!(result.decision, AvcDecision::HumanApprovalRequired);
+        assert_eq!(
+            result.reason_codes,
+            vec![AvcReasonCode::HumanApprovalMissing]
+        );
+    }
+
+    #[test]
+    fn risk_threshold_cannot_be_satisfied_by_caller_boolean() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.max_action_risk_bp = Some(10_000);
+        draft.constraints.approval_threshold_bp = Some(5_000);
+        let cred = h.issue(draft);
+        let actor = cred.subject_did.clone();
+        let mut action = baseline_action(actor);
+        action.estimated_risk_bp = Some(7_500);
+        action.requires_human_approval = true;
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(action);
+
+        let result = validate_avc(&request, &h.registry).unwrap();
+
+        assert_eq!(result.decision, AvcDecision::HumanApprovalRequired);
+        assert_eq!(
+            result.reason_codes,
+            vec![AvcReasonCode::HumanApprovalMissing]
+        );
+    }
+
+    #[test]
+    fn signed_human_approval_constraint_requires_verified_approval_evidence() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.human_approval_required = true;
+        let cred = h.issue(draft);
+        let actor = cred.subject_did.clone();
+        let mut action = baseline_action(actor);
+        action.requires_human_approval = true;
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(action);
+
+        let result = validate_avc(&request, &h.registry).unwrap();
+
+        assert_eq!(result.decision, AvcDecision::HumanApprovalRequired);
+        assert_eq!(
+            result.reason_codes,
+            vec![AvcReasonCode::HumanApprovalMissing]
+        );
+    }
+
+    #[test]
+    fn action_human_approval_flag_is_not_approval_evidence_source_guard() {
+        let source = include_str!("validation.rs");
+        let risk_enforcer = source
+            .split("fn enforce_risk")
+            .nth(1)
+            .expect("risk enforcer present")
+            .split("fn enforce_forbidden_action")
+            .next()
+            .expect("forbidden action marker present");
+        assert!(
+            !risk_enforcer.contains("requires_human_approval"),
+            "action.requires_human_approval is an action flag, not verified approval evidence"
+        );
     }
 
     #[test]
