@@ -31,16 +31,42 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   # -----------------------------------------------------------------------
+  # Validate untrusted workflow-dispatch inputs before release jobs consume them
+  # -----------------------------------------------------------------------
+  validate-release-inputs:
+    name: "Validate Release Inputs"
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+      tag: ${{ steps.validate.outputs.tag }}
+    steps:
+      - name: Validate release version
+        id: validate
+        env:
+          RELEASE_VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="$RELEASE_VERSION_INPUT"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z-]*(\.[0-9A-Za-z][0-9A-Za-z-]*)*)?$ ]]; then
+            echo "Invalid release version: expected major.minor.patch with optional prerelease suffix." >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'tag=v%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+  # -----------------------------------------------------------------------
   # Manual approval gate
   # -----------------------------------------------------------------------
   approve:
     name: "Maintainer Approval"
     runs-on: ubuntu-latest
-    needs: ci
+    needs: [ci, validate-release-inputs]
     environment: release
     steps:
       - name: Approval confirmed
-        run: echo "Release ${{ inputs.version }} approved by maintainer."
+        env:
+          RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
+        run: printf 'Release %s approved by maintainer.\n' "$RELEASE_VERSION"
 
   # -----------------------------------------------------------------------
   # Signed tag gate for real releases
@@ -48,24 +74,26 @@ jobs:
   verify-signed-tag:
     name: "Verify Signed Release Tag"
     runs-on: ubuntu-latest
-    needs: approve
+    needs: [approve, validate-release-inputs]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
 
       - name: Require signed tag for non-dry-run release
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
         run: |
           set -euo pipefail
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
+          if [ "$DRY_RUN" = "true" ]; then
             echo "Dry run: signed tag requirement is skipped."
             exit 0
           fi
 
-          tag="v${{ inputs.version }}"
           git fetch --tags --force
-          git rev-parse "refs/tags/${tag}" >/dev/null
-          git tag -v "${tag}"
+          git rev-parse "refs/tags/${RELEASE_TAG}" >/dev/null
+          git tag -v "${RELEASE_TAG}"
 
   # -----------------------------------------------------------------------
   # Build release artifacts
@@ -73,7 +101,7 @@ jobs:
   release-build:
     name: "Build Release Artifacts"
     runs-on: ubuntu-latest
-    needs: [approve, verify-signed-tag]
+    needs: [approve, verify-signed-tag, validate-release-inputs]
     strategy:
       matrix:
         target:
@@ -82,12 +110,15 @@ jobs:
     steps:
       - name: Resolve release source ref
         id: release-ref
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
         run: |
           set -euo pipefail
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
+          if [ "$DRY_RUN" = "true" ]; then
             printf 'ref=%s\n' "${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           else
-            printf 'ref=refs/tags/v${{ inputs.version }}\n' >> "$GITHUB_OUTPUT"
+            printf 'ref=refs/tags/%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -110,17 +141,19 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Package artifacts
+        env:
+          RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/libexo_*.rlib dist/ 2>/dev/null || true
           cp target/${{ matrix.target }}/release/libexo_*.so dist/ 2>/dev/null || true
-          tar czf exochain-${{ inputs.version }}-${{ matrix.target }}.tar.gz -C dist .
+          tar czf "exochain-${RELEASE_VERSION}-${{ matrix.target }}.tar.gz" -C dist .
 
       - name: Upload artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: exochain-${{ inputs.version }}-${{ matrix.target }}
-          path: exochain-${{ inputs.version }}-${{ matrix.target }}.tar.gz
+          name: exochain-${{ needs.validate-release-inputs.outputs.version }}-${{ matrix.target }}
+          path: exochain-${{ needs.validate-release-inputs.outputs.version }}-${{ matrix.target }}.tar.gz
 
   # -----------------------------------------------------------------------
   # Generate SBOM and SLSA provenance attestation
@@ -138,7 +171,7 @@ jobs:
   sbom-and-attest:
     name: "SBOM + SLSA Attestation"
     runs-on: ubuntu-latest
-    needs: release-build
+    needs: [release-build, validate-release-inputs]
     if: ${{ !inputs.dry_run }}
     permissions:
       attestations: write  # write SLSA attestations to repo
@@ -147,12 +180,15 @@ jobs:
     steps:
       - name: Resolve release source ref
         id: release-ref
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
         run: |
           set -euo pipefail
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
+          if [ "$DRY_RUN" = "true" ]; then
             printf 'ref=%s\n' "${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           else
-            printf 'ref=refs/tags/v${{ inputs.version }}\n' >> "$GITHUB_OUTPUT"
+            printf 'ref=refs/tags/%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -178,20 +214,22 @@ jobs:
         run: cargo install cargo-cyclonedx --version 0.5.9 --locked
 
       - name: Generate CycloneDX SBOM
+        env:
+          RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
         run: |
           cargo cyclonedx -f json --workspace
           # Rename outputs to include version for unambiguous identification
           for f in *.cdx.json; do
-            mv "$f" "exochain-${{ inputs.version }}-${f}"
+            mv "$f" "exochain-${RELEASE_VERSION}-${f}"
           done
           echo "SBOM artifacts:"
-          ls -lh exochain-${{ inputs.version }}-*.cdx.json
+          ls -lh "exochain-${RELEASE_VERSION}"-*.cdx.json
 
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: sbom-${{ inputs.version }}
-          path: exochain-${{ inputs.version }}-*.cdx.json
+          name: sbom-${{ needs.validate-release-inputs.outputs.version }}
+          path: exochain-${{ needs.validate-release-inputs.outputs.version }}-*.cdx.json
           retention-days: 2555  # 7 years — governance software retention policy
 
       # ── SLSA provenance attestation ──────────────────────────────────────
@@ -206,17 +244,20 @@ jobs:
   publish:
     name: "Publish to crates.io"
     runs-on: ubuntu-latest
-    needs: [release-build, sbom-and-attest]
+    needs: [release-build, sbom-and-attest, validate-release-inputs]
     if: ${{ !inputs.dry_run }}
     steps:
       - name: Resolve release source ref
         id: release-ref
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
         run: |
           set -euo pipefail
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
+          if [ "$DRY_RUN" = "true" ]; then
             printf 'ref=%s\n' "${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           else
-            printf 'ref=refs/tags/v${{ inputs.version }}\n' >> "$GITHUB_OUTPUT"
+            printf 'ref=refs/tags/%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -259,7 +300,7 @@ jobs:
   github-release:
     name: "Create GitHub Release"
     runs-on: ubuntu-latest
-    needs: [release-build, sbom-and-attest, publish]
+    needs: [release-build, sbom-and-attest, publish, validate-release-inputs]
     if: ${{ !inputs.dry_run }}
     permissions:
       contents: write
@@ -274,10 +315,10 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
-          tag_name: v${{ inputs.version }}
-          name: "EXOCHAIN v${{ inputs.version }}"
+          tag_name: ${{ needs.validate-release-inputs.outputs.tag }}
+          name: "EXOCHAIN ${{ needs.validate-release-inputs.outputs.tag }}"
           body: |
-            ## EXOCHAIN v${{ inputs.version }}
+            ## EXOCHAIN ${{ needs.validate-release-inputs.outputs.tag }}
 
             Constitutional trust fabric release.
 
@@ -298,7 +339,7 @@ jobs:
             in the Sigstore Rekor transparency log. Verify any release archive:
 
             ```sh
-            gh attestation verify exochain-${{ inputs.version }}-<TARGET>.tar.gz \
+            gh attestation verify exochain-${{ needs.validate-release-inputs.outputs.version }}-<TARGET>.tar.gz \
               --owner exochain
             ```
 

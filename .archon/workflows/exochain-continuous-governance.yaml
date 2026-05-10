@@ -12,8 +12,9 @@ loop:
   exit_condition: "COMPLETE"
   stop_conditions:
     - "monitor output contains <promise>COMPLETE</promise>"
+    - "same validation or remediation failure fingerprint observed twice"
     - "max_iterations reached"
-  escalation_path: "file backlog items and stop when max_iterations is reached"
+  escalation_path: "file backlog items, file council escalation for repeated failure fingerprints, and stop when max_iterations is reached"
   fresh_context: true
 
 prompt: |
@@ -75,6 +76,10 @@ prompt: |
 
   If the system scores A or B with no Critical/High findings, output:
   <promise>COMPLETE</promise>
+
+  If the same validation or remediation failure fingerprint appears twice
+  without new repository evidence, file a council escalation backlog item and
+  stop instead of continuing the loop.
 
   Otherwise, file the findings as backlog items via the
   `exochain-self-improvement-cycle` workflow and continue scanning.

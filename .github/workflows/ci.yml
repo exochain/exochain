@@ -242,6 +242,8 @@ jobs:
         run: bash tools/test_ci_supply_chain_hardening.sh
       - name: Release workflow ref binding
         run: bash tools/test_release_workflow_ref_binding.sh
+      - name: Release version input boundary
+        run: bash tools/test_release_version_input_boundary.sh
       - name: Release dry-run publication boundary
         run: bash tools/test_release_dry_run_boundaries.sh
       - name: Release publish completion boundary
@@ -270,6 +272,8 @@ jobs:
         run: bash tools/test_agent_prompt_boundaries.sh
       - name: Agent workflow loop-bound contract
         run: bash tools/test_agent_workflow_bounds.sh
+      - name: Syntaxis workflow input boundary
+        run: bash tools/test_syntaxis_workflow_input_boundary.sh
       - name: Core fuzz target compile contract
         run: bash tools/test_core_fuzz_targets.sh
 
