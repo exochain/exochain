@@ -138,6 +138,8 @@ fn is_sensitive_read_path(path: &str) -> bool {
         || path.starts_with("/api/v1/receipts/")
         || path.starts_with("/api/v1/provenance/")
         || path.starts_with("/api/v1/avc/")
+        || path == "/exoforge"
+        || path.starts_with("/api/v1/forge/")
         || (path.starts_with("/api/v1/economy/") && path != "/api/v1/economy/policy/active")
         || (path.starts_with("/api/v1/agents/") && path.ends_with("/avcs"))
 }
@@ -171,8 +173,9 @@ fn is_zerodentity_local_signed_write(method: &axum::http::Method, path: &str) ->
 /// trust-object reads.
 ///
 /// Public `GET` and `HEAD` requests pass through without authentication unless
-/// they target receipts, provenance, AVCs, economy trust objects, or agent
-/// credential listings. The active economy policy remains public. All
+/// they target receipts, provenance, AVCs, economy trust objects, ExoForge
+/// build-orchestration state, or agent credential listings. The active economy
+/// policy remains public. All
 /// other methods (`POST`, `PUT`, `DELETE`, `PATCH`) require
 /// `Authorization: Bearer <token>` unless they are exact 0dentity signed-write
 /// routes whose handlers perform identity-session and request-signature checks.
@@ -258,6 +261,10 @@ mod tests {
                 "/api/v1/economy/policy/active",
                 get(|| async { "active policy" }),
             )
+            .route("/exoforge", get(|| async { "forge dashboard" }))
+            .route("/api/v1/forge/tasks", get(|| async { "forge tasks" }))
+            .route("/api/v1/forge/stats", get(|| async { "forge stats" }))
+            .route("/api/v1/forge/activity", get(|| async { "forge activity" }))
             .route(
                 "/api/v1/0dentity/:did/attest",
                 post(|| async { "signed-attest" }),
@@ -463,6 +470,95 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn exoforge_dashboard_get_without_token_rejected() {
+        let app = test_app();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/exoforge")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn exoforge_tasks_get_without_token_rejected() {
+        let app = test_app();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/forge/tasks")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn exoforge_stats_get_without_token_rejected() {
+        let app = test_app();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/forge/stats")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn exoforge_activity_get_without_token_rejected() {
+        let app = test_app();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/forge/activity")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn exoforge_read_get_with_correct_token_passes() {
+        let app = test_app();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/forge/tasks")
+                    .header("authorization", "Bearer test-token-abc123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn sensitive_read_paths_include_exoforge_surfaces() {
+        assert!(is_sensitive_read_path("/exoforge"));
+        assert!(is_sensitive_read_path("/api/v1/forge/tasks"));
+        assert!(is_sensitive_read_path("/api/v1/forge/stats"));
+        assert!(is_sensitive_read_path("/api/v1/forge/activity"));
     }
 
     #[tokio::test]
