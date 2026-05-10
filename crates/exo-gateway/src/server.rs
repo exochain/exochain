@@ -2217,6 +2217,7 @@ async fn handle_agent_get(
 async fn handle_identity_score(
     State(state): State<AppState>,
     Path(did_str): Path<String>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     let did = match Did::new(&did_str) {
         Ok(d) => d,
@@ -2228,6 +2229,41 @@ async fn handle_identity_score(
                 .into_response();
         }
     };
+    let actor = match state
+        .require_authenticated_session_user_from_header(&headers)
+        .await
+    {
+        Ok(actor) => actor,
+        Err(e) => return auth_boundary_error_response(e),
+    };
+    let db = match state.require_db() {
+        Ok(pool) => pool,
+        Err(e) => return auth_boundary_error_response(e),
+    };
+    let target_user = match db::find_user_by_did(db, did.as_str()).await {
+        Ok(row) => row,
+        Err(e) => return internal_error_response(e, "identity score", "identity score failed"),
+    };
+    let target_is_same_tenant_user = target_user
+        .as_ref()
+        .is_some_and(|user| user.tenant_id.as_str() == actor.tenant_id.as_str());
+    let target_is_same_tenant_agent = if target_is_same_tenant_user {
+        false
+    } else {
+        match db::find_agent_by_did(db, did.as_str(), actor.tenant_id.as_str()).await {
+            Ok(row) => row.is_some(),
+            Err(e) => {
+                return internal_error_response(e, "identity score", "identity score failed");
+            }
+        }
+    };
+    if !target_is_same_tenant_user && !target_is_same_tenant_agent {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "identity score not found" })),
+        )
+            .into_response();
+    }
     match resolve_did_document(&state, did).await {
         Ok(None) => (
             StatusCode::NOT_FOUND,
@@ -5247,8 +5283,7 @@ mod tests {
             "/api/v1/decisions/some-id",
             "/api/v1/auth/me",
             "/api/v1/agents",
-            // identity score for unregistered DID returns 404 by design;
-            // excluded here — tested separately in identity_score_* tests
+            "/api/v1/identity/did:exo:route-exists/score",
             "/api/v1/users",
             // audit returns 503 (no DB) not 404 — route exists
             "/api/v1/audit/decision-123",
@@ -5583,6 +5618,11 @@ mod tests {
             "async fn handle_agent_get",
             "/// GET /api/v1/identity/:did/score",
         );
+        let identity_score = source_between(
+            source,
+            "async fn handle_identity_score",
+            "/// DELETE /api/v1/identity/:did",
+        );
         let users_list = source_between(
             source,
             "async fn handle_users_list",
@@ -5607,6 +5647,7 @@ mod tests {
         for (name, handler, state_read) in [
             ("agents list", agents_list, "state.require_db"),
             ("agent get", agent_get, "resolve_did_document"),
+            ("identity score", identity_score, "resolve_did_document"),
             ("users list", users_list, "state.require_db"),
             ("decision create", decision_create, "state.require_db"),
             ("decision get", decision_get, "state.require_db"),
@@ -5964,6 +6005,38 @@ mod tests {
         assert!(
             identity_score.contains("resolve_did_document(&state, did).await"),
             "identity score must resolve persisted DID documents after a restart"
+        );
+        assert!(
+            identity_score.contains("require_authenticated_session_user_from_header"),
+            "identity score must authenticate a DB-backed tenant user before resolving DID state"
+        );
+        assert!(
+            identity_score.contains("db::find_user_by_did(db, did.as_str())"),
+            "identity score must check whether target users are in the authenticated tenant"
+        );
+        assert!(
+            identity_score
+                .contains("db::find_agent_by_did(db, did.as_str(), actor.tenant_id.as_str())"),
+            "identity score must check whether target agents are in the authenticated tenant"
+        );
+        let auth = identity_score
+            .find("require_authenticated_session_user_from_header")
+            .expect("identity score must authenticate a DB-backed tenant user");
+        let target_user = identity_score
+            .find("db::find_user_by_did(db, did.as_str())")
+            .expect("identity score must check target user tenant membership");
+        let target_agent = identity_score
+            .find("db::find_agent_by_did(db, did.as_str(), actor.tenant_id.as_str())")
+            .expect("identity score must check target agent tenant membership");
+        let resolve = identity_score
+            .find("resolve_did_document(&state, did).await")
+            .expect("identity score must resolve persisted DID documents after tenant check");
+        assert!(
+            auth < target_user
+                && auth < target_agent
+                && target_user < resolve
+                && target_agent < resolve,
+            "identity score must authenticate and prove tenant membership before DID resolution"
         );
 
         let users_list = source_between(
@@ -6801,7 +6874,7 @@ mod tests {
     // --- Identity score endpoint tests ---
 
     #[tokio::test]
-    async fn identity_score_unregistered_did_returns_404() {
+    async fn identity_score_unregistered_did_without_session_returns_401() {
         let app = build_router(state());
         let resp = app
             .oneshot(
@@ -6812,11 +6885,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
-    async fn identity_score_registered_did_returns_200() {
+    async fn identity_score_registered_did_without_session_returns_401() {
         let doc = minimal_doc("did:exo:scored");
         let registry = Arc::new(RwLock::new(LocalDidRegistry::new()));
         registry.write().unwrap().register(doc).unwrap();
@@ -6831,13 +6904,83 @@ mod tests {
             )
             .await
             .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn identity_score_same_tenant_registered_did_returns_200() {
+        let Some(pool) = gateway_test_pool().await else {
+            return;
+        };
+        let reader = "did:exo:identity-score-reader";
+        let target = "did:exo:identity-score-target";
+        let token = "identity-score-reader-token";
+        let tenant = "tenant-identity-score";
+        cleanup_identity_erasure_route_fixture(&pool, reader).await;
+        cleanup_identity_erasure_route_fixture(&pool, target).await;
+        insert_test_user(&pool, reader, tenant).await;
+        insert_test_session(&pool, token, reader).await;
+        insert_test_user(&pool, target, tenant).await;
+        insert_test_did_document(&pool, target).await;
+
+        let registry = Arc::new(RwLock::new(LocalDidRegistry::new()));
+        let app = build_router(AppState::new(Some(pool.clone()), registry));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/identity/{target}/score"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap();
         let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(val["did"], target);
         assert_eq!(val["registered"], true);
         assert!(val["score_bps"].as_u64().unwrap() > 0);
+
+        cleanup_identity_erasure_route_fixture(&pool, reader).await;
+        cleanup_identity_erasure_route_fixture(&pool, target).await;
+    }
+
+    #[tokio::test]
+    async fn identity_score_cross_tenant_registered_did_returns_404() {
+        let Some(pool) = gateway_test_pool().await else {
+            return;
+        };
+        let reader = "did:exo:identity-score-tenant-a-reader";
+        let target = "did:exo:identity-score-tenant-b-target";
+        let token = "identity-score-tenant-a-token";
+        cleanup_identity_erasure_route_fixture(&pool, reader).await;
+        cleanup_identity_erasure_route_fixture(&pool, target).await;
+        insert_test_user(&pool, reader, "tenant-identity-score-a").await;
+        insert_test_session(&pool, token, reader).await;
+        insert_test_user(&pool, target, "tenant-identity-score-b").await;
+        insert_test_did_document(&pool, target).await;
+
+        let registry = Arc::new(RwLock::new(LocalDidRegistry::new()));
+        let app = build_router(AppState::new(Some(pool.clone()), registry));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/identity/{target}/score"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        cleanup_identity_erasure_route_fixture(&pool, reader).await;
+        cleanup_identity_erasure_route_fixture(&pool, target).await;
     }
 
     #[tokio::test]
