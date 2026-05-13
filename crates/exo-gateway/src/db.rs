@@ -1718,9 +1718,8 @@ mod tests {
         hex::encode(Sha384::digest(bytes))
     }
 
-    #[test]
-    fn applied_gateway_migration_checksums_are_immutable() {
-        let applied_migrations = [
+    fn applied_migration_checksums() -> Vec<(&'static str, &'static [u8], &'static str)> {
+        vec![
             (
                 "20260316000001_initial_schema.sql",
                 include_bytes!("../migrations/20260316000001_initial_schema.sql").as_slice(),
@@ -1806,15 +1805,53 @@ mod tests {
                 .as_slice(),
                 "584d148c3df76bad4433760f433cf4de6e5414e5825979a1aff21cd15329389343711ea43833cc1a8ab73694dc96e9aa",
             ),
-        ];
+            (
+                "20260510000001_scope_decision_ids_by_tenant.sql",
+                include_bytes!("../migrations/20260510000001_scope_decision_ids_by_tenant.sql")
+                    .as_slice(),
+                "8de5b45554e6c821e34b575aac7479ff5b147b86254e8bee58596118b71c679f2e65db909193ce033613dc74e5efd024",
+            ),
+        ]
+    }
 
-        for (name, bytes, expected_checksum) in applied_migrations {
+    #[test]
+    fn applied_gateway_migration_checksums_are_immutable() {
+        for (name, bytes, expected_checksum) in applied_migration_checksums() {
             assert_eq!(
                 sha384_hex(bytes),
                 expected_checksum,
                 "applied migration {name} must remain byte-for-byte stable; add a new migration instead of editing history"
             );
         }
+    }
+
+    #[test]
+    fn applied_gateway_migration_checksums_cover_disk_migrations() {
+        let mut expected_names = applied_migration_checksums()
+            .into_iter()
+            .map(|(name, _, _)| name)
+            .collect::<Vec<_>>();
+        expected_names.sort();
+
+        let migration_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let mut disk_names = std::fs::read_dir(&migration_dir)
+            .expect("read migrations directory")
+            .map(|entry| {
+                entry
+                    .expect("migration dir entry")
+                    .path()
+                    .file_name()
+                    .expect("migration file")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
+        disk_names.sort();
+
+        assert_eq!(
+            expected_names, disk_names,
+            "every migration file on disk must have a checksum guard entry to prevent historical drift"
+        );
     }
 
     fn compact_sql(sql: &str) -> String {
