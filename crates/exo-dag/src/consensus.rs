@@ -73,7 +73,25 @@ impl ConsensusConfig {
         }
     }
 
-    /// The quorum size required for a commit: > 2/3 of validators.
+    /// The quorum size required for a commit: strictly greater than two thirds
+    /// of validators.
+    ///
+    /// For validator count `n > 0`, this uses:
+    ///
+    /// `quorum_size(n) = n - floor((n - 1) / 3)`
+    ///
+    /// That is equivalent to the strict threshold:
+    ///
+    /// `floor(2n / 3) + 1`
+    ///
+    /// Case proof by `n mod 3`:
+    ///
+    /// - `n = 3k`: `3k - floor((3k - 1) / 3) = 3k - (k - 1) = 2k + 1`;
+    ///   `floor(2n / 3) + 1 = floor(6k / 3) + 1 = 2k + 1`.
+    /// - `n = 3k + 1`: `3k + 1 - floor(3k / 3) = 2k + 1`;
+    ///   `floor((6k + 2) / 3) + 1 = 2k + 1`.
+    /// - `n = 3k + 2`: `3k + 2 - floor((3k + 1) / 3) = 2k + 2`;
+    ///   `floor((6k + 4) / 3) + 1 = 2k + 2`.
     #[must_use]
     pub fn quorum_size(&self) -> usize {
         let n = self.validators.len();
@@ -667,6 +685,22 @@ mod tests {
         let c0 = ConsensusConfig::new(BTreeSet::new(), 1000);
         assert_eq!(c0.quorum_size(), 0);
         assert_eq!(c0.fault_tolerance, 0);
+    }
+
+    #[test]
+    fn quorum_size_matches_strict_two_thirds_threshold_for_representative_validator_sets() {
+        for validator_count in 1..=128 {
+            let config = ConsensusConfig::new(make_validators(validator_count), 1000);
+            let strict_two_thirds = ((2 * validator_count) / 3) + 1;
+            assert_eq!(
+                config.quorum_size(),
+                strict_two_thirds,
+                "quorum mismatch for validator_count={validator_count}"
+            );
+        }
+
+        let empty = ConsensusConfig::new(BTreeSet::new(), 1000);
+        assert_eq!(empty.quorum_size(), 0);
     }
 
     #[test]
