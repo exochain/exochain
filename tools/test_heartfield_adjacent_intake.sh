@@ -22,6 +22,7 @@ cd "$(dirname "$0")/.."
 readme="docs/heartfield/README.md"
 intake="docs/heartfield/INTAKE.md"
 kinships="docs/heartfield/KINSHIPS.md"
+whitepaper="docs/heartfield/WHITEPAPER.md"
 index="docs/INDEX.md"
 
 fail() {
@@ -32,6 +33,7 @@ fail() {
 [ -f "$readme" ] || fail "HeartField README is required"
 [ -f "$intake" ] || fail "HeartField intake record is required"
 [ -f "$kinships" ] || fail "HeartField kinship map is required"
+[ -f "$whitepaper" ] || fail "HeartField whitepaper is required"
 
 grep -q "Adjacent surface" "$readme" || fail "README must classify HeartField as adjacent"
 grep -q "must not claim EXOCHAIN constitutional enforcement" "$readme" || {
@@ -71,6 +73,23 @@ grep -q "EXOCHAIN.AI" "$kinships" || fail "kinship map must include EXOCHAIN.AI"
 grep -q "Constitutional Computing" "$kinships" || {
   fail "kinship map must include Constitutional Computing"
 }
+
+grep -q "HeartField.ai Whitepaper" "$whitepaper" || {
+  fail "whitepaper must have a canonical title"
+}
+grep -q "Uplifting self-governance" "$whitepaper" || {
+  fail "whitepaper must preserve the HeartField thesis"
+}
+grep -q "not EXOCHAIN constitutional enforcement" "$whitepaper" || {
+  fail "whitepaper must deny unproven EXOCHAIN enforcement"
+}
+grep -q "No runtime adapter is introduced by this whitepaper" "$whitepaper" || {
+  fail "whitepaper must preserve the runtime trust boundary"
+}
+grep -q "truth, consent, repair, memory, dissent, restraint, and wise evolution" "$whitepaper" || {
+  fail "whitepaper must preserve the practice vocabulary"
+}
+
 grep -q "HeartField.ai" "$index" || fail "docs index must link HeartField"
 
 echo "HeartField adjacent intake test passed"

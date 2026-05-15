@@ -61,6 +61,8 @@ The initial scaffold is documentation only:
 - [Kinships](KINSHIPS.md) maps HeartField's relationship to EXOCHAIN,
   Constitutional Computing, canonical origin signals, and future adjacent
   surfaces.
+- [Whitepaper](WHITEPAPER.md) defines the HeartField thesis, practices,
+  kinship model, risks, adoption path, and runtime boundary.
 - `tools/test_heartfield_adjacent_intake.sh` prevents the scaffold from drifting
   into unproven EXOCHAIN trust claims.
 
