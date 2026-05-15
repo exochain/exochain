@@ -61,6 +61,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - [[ARCHITECTURE]] — System overview, dependency graph, data flow, design rationale.
 - [[THREAT-MODEL]] — 12-threat taxonomy with mitigations, detection, and test coverage.
+- [Constitutional Computing](constitutional-computing/README.md) — Movement doctrine: truth is adjudicated through constitutional synapses before it becomes trusted state.
 - [Fork Signal Immune Response](architecture/FORK-SIGNAL-IMMUNE-RESPONSE.md) — Defensive handling model for fork-adjacent security signals.
 
 ## Reference
