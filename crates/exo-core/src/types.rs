@@ -220,7 +220,12 @@ pub enum Signature {
     PostQuantum(Vec<u8>),
     /// Hybrid: classical Ed25519 + post-quantum signature.
     Hybrid { classical: [u8; 64], pq: Vec<u8> },
-    /// Empty placeholder — used before acceptance / during construction.
+    /// Empty placeholder.
+    ///
+    /// Signature::Empty is an unsigned construction sentinel.
+    /// It is permitted only while building a value that has not reached a trust
+    /// boundary. It must be rejected before persistence, verification,
+    /// authorization, consensus, or trust-record finalization.
     Empty,
 }
 
@@ -433,15 +438,26 @@ impl Signature {
     }
 
     /// The empty signature placeholder.
+    ///
+    /// This is the explicit unsigned construction sentinel. Do not persist it
+    /// or treat it as acceptable proof at a trust boundary.
     pub const EMPTY: Self = Self::Empty;
 
     /// Create an empty (placeholder) signature.
+    ///
+    /// Use this only for in-memory construction before a real signature is
+    /// attached. Verification paths reject it.
     #[must_use]
     pub const fn empty() -> Self {
         Self::Empty
     }
 
-    /// Check if this signature is the empty placeholder.
+    /// Check if this signature is the empty placeholder or an all-zero/null
+    /// sentinel for the represented algorithm.
+    ///
+    /// Do not use is_empty() as proof that a non-empty signature is valid. It is
+    /// a structural null-sentinel check only; callers that cross a trust
+    /// boundary must run algorithm-specific cryptographic verification.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         match self {
