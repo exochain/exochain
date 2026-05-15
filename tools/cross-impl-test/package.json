@@ -7,7 +7,7 @@
     "test": "node index.js"
   },
   "dependencies": {
-    "blake3": "^2.1.7",
-    "cbor": "^9.0.0"
+    "blake3": "2.1.7",
+    "cbor": "9.0.2"
   }
 }

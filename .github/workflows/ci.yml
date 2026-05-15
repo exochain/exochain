@@ -256,6 +256,8 @@ jobs:
         run: bash tools/test_github_issue_workflow_boundaries.sh
       - name: CI tool installer supply-chain hardening
         run: bash tools/test_ci_supply_chain_hardening.sh
+      - name: Core npm package supply-chain hardening
+        run: bash tools/test_npm_core_package_hygiene.sh
       - name: Release workflow ref binding
         run: bash tools/test_release_workflow_ref_binding.sh
       - name: Release version input boundary
