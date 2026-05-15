@@ -14,6 +14,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+//! Deterministic AI-panel deliberation for EXOCHAIN governance evidence.
+//!
+//! This crate coordinates model-panel rounds, structured claim commitments,
+//! convergence scoring, minority-report generation, devil's-advocate review,
+//! and final deliberation records. It is EXOCHAIN core source because these
+//! records can become governance evidence, but this module is not BFT finality:
+//! it does not append DAG nodes, elect leaders, sign validator votes, or decide
+//! constitutional authorization on its own.
+//!
+//! The Panel Confidence Index is computed in basis points with integer-only
+//! arithmetic. The current weighting is 50% model agreement, 30% convergence
+//! speed, and 20% devil's-advocate clearance. Minority reports reduce the
+//! agreement input by lowering the number of panelists treated as agreeing
+//! before the score is calculated.
+//!
+//! Determinism rules apply here: structured claims are canonicalized with
+//! sorted sets, hashes bind canonical serialized records, callers supply HLC
+//! timestamps, and scoring must use no floating-point arithmetic.
+
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
 pub mod advocate;
