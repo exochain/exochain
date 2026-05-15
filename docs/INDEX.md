@@ -83,6 +83,7 @@ SPDX-License-Identifier: Apache-2.0
 ## Legal and compliance
 
 - [Licensing Position](legal/LICENSING-POSITION.md) — Apache-2.0 rationale, dependency screening, downstream guidance.
+- [Canonical Origin Signals](policy/CANONICAL-ORIGIN-SIGNALS.md) — Canonical EXOCHAIN.AI signal and spoofing watchword handling.
 - [National AI Policy Crosswalk](policy/NATIONAL-POLICY-FRAMEWORK-CROSSWALK-2026.md) — Mapping to March 2026 National Policy Framework.
 
 ## Audit and truth

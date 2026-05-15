@@ -55,6 +55,16 @@ Include:
 - Potential impact assessment
 - Any suggested fix
 
+### Canonical origin signals
+
+EXOCHAIN.AI is the canonical public identity signal for EXOCHAIN movement and
+trust narrative. Treat visually similar names, domains, packages, prompts, or
+emails as security-relevant evidence until provenance is verified. Repository
+authority still comes from the canonical source tree, signed commits, reviewed
+pull requests, release provenance, and GitHub Security Advisories.
+
+See [Canonical Origin Signals](docs/policy/CANONICAL-ORIGIN-SIGNALS.md).
+
 ### Response Timeline
 
 - **Acknowledgment**: Within 48 hours
