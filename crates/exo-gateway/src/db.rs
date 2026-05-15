@@ -1718,11 +1718,7 @@ mod tests {
         hex::encode(Sha384::digest(bytes))
     }
 
-    fn applied_gateway_migrations() -> Vec<(
-        &'static str,
-        &'static [u8],
-        &'static str,
-    )> {
+    fn applied_gateway_migrations() -> Vec<(&'static str, &'static [u8], &'static str)> {
         vec![
             (
                 "20260316000001_initial_schema.sql",
@@ -1811,7 +1807,8 @@ mod tests {
             ),
             (
                 "20260510000001_scope_decision_ids_by_tenant.sql",
-                include_bytes!("../migrations/20260510000001_scope_decision_ids_by_tenant.sql").as_slice(),
+                include_bytes!("../migrations/20260510000001_scope_decision_ids_by_tenant.sql")
+                    .as_slice(),
                 "8de5b45554e6c821e34b575aac7479ff5b147b86254e8bee58596118b71c679f2e65db909193ce033613dc74e5efd024",
             ),
         ]
@@ -1851,8 +1848,7 @@ mod tests {
         disk_names.sort();
 
         assert_eq!(
-            source_names,
-            disk_names,
+            source_names, disk_names,
             "migration checksum list must mirror disk migration set exactly"
         );
     }
