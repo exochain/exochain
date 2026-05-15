@@ -2010,7 +2010,7 @@ mod tests {
                     id: "did:exo:alice#key-1".into(),
                     controller: Did::new("did:exo:alice").unwrap(),
                     key_type: "Ed25519VerificationKey2020".into(),
-                    public_key_multibase: "zABC".into(),
+                    public_key_multibase: "z4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi".into(),
                     version: 1,
                     active: true,
                     valid_from: 0,
