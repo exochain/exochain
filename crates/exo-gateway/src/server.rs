@@ -5428,6 +5428,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auth_register_rejects_non_self_certifying_did_claim() {
+        let (public_key, secret_key) = generate_keypair();
+        let mut doc = minimal_doc("did:exo:claimed-by-attacker-key");
+        doc.public_keys.push(public_key);
+        let body = registration_request_body(&doc, &public_key, &secret_key);
+        let app = build_router(state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn auth_register_rejects_registration_proof_from_unlisted_key() {
         let (document_public_key, _) = generate_keypair();
         let (attacker_public_key, attacker_secret_key) = generate_keypair();
