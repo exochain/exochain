@@ -20,10 +20,18 @@ import pg from 'pg';
 let pool = null;
 let wasmModule = null;
 
+function requiredDatabaseUrl() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl || !databaseUrl.trim()) {
+    throw new Error('DATABASE_URL must be configured for @exochain/shared');
+  }
+  return databaseUrl;
+}
+
 export function getPool() {
   if (!pool) {
     pool = new pg.Pool({
-      connectionString: process.env.DATABASE_URL || 'postgres://exochain:exochain_dev@localhost:5432/exochain',
+      connectionString: requiredDatabaseUrl(),
     });
   }
   return pool;
