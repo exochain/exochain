@@ -16,9 +16,9 @@
 
 //! GraphQL schema, resolvers, and axum HTTP handler for the ExoChain governance API.
 //!
-//! The schema is backed by an `AppState` held behind `Arc<tokio::sync::Mutex<>>` which is
-//! shared across all requests.  Production deployments replace the in-memory collections
-//! with a database pool injected via `GatewayConfig::database_pool_url`.
+//! The schema is backed by an `AppState` held behind a Tokio reader/writer lock.
+//! Production deployments replace the in-memory collections with a database pool
+//! injected via `GatewayConfig::database_pool_url`.
 //!
 //! ## Schema surface
 //!
@@ -35,8 +35,8 @@
 //! Subscriptions use `tokio::sync::broadcast` for real-time event delivery.
 
 use std::{
-    collections::BTreeMap,
-    sync::{Arc, RwLock},
+    collections::{BTreeMap, BTreeSet},
+    sync::{Arc, Mutex as StdMutex, RwLock},
 };
 
 use async_graphql::{
@@ -60,7 +60,7 @@ use exo_consent::policy::{
 use exo_core::{Did, Hash256, Timestamp, hash::hash_structured, hlc::HybridClock};
 use exo_identity::registry::{DidRegistry, LocalDidRegistry};
 use serde::Serialize;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{RwLock as AsyncRwLock, broadcast};
 
 // ---------------------------------------------------------------------------
 // GraphQL output types
@@ -321,11 +321,13 @@ fn graphql_hash_hex<T: Serialize>(payload: &T) -> GqlResult<String> {
 /// `PgPool` when `GatewayConfig::database_pool_url` is set.
 pub struct AppState {
     decisions: BTreeMap<String, DecisionRecord>,
+    decision_ids_by_tenant: BTreeMap<String, BTreeSet<String>>,
+    decision_ids_by_tenant_status: BTreeMap<(String, String), BTreeSet<String>>,
     delegations: BTreeMap<String, GqlDelegation>,
     emergency_actions: BTreeMap<String, GqlEmergencyAction>,
     constitution: GqlConstitution,
     next_audit_seq: i32,
-    clock: HybridClock,
+    clock: StdMutex<HybridClock>,
     event_tx: broadcast::Sender<GovEvent>,
     /// Shared DID registry — wired from `server::AppState` for identity resolution.
     registry: Arc<RwLock<LocalDidRegistry>>,
@@ -358,6 +360,8 @@ impl AppState {
         let (event_tx, _) = broadcast::channel(256);
         Self {
             decisions: BTreeMap::new(),
+            decision_ids_by_tenant: BTreeMap::new(),
+            decision_ids_by_tenant_status: BTreeMap::new(),
             delegations: BTreeMap::new(),
             emergency_actions: BTreeMap::new(),
             constitution: GqlConstitution {
@@ -366,30 +370,124 @@ impl AppState {
                 hash: Hash256::digest(b"constitution-v1").to_string(),
             },
             next_audit_seq: 1,
-            clock,
+            clock: StdMutex::new(clock),
             event_tx,
             registry,
             consent_engine: PolicyEngine::new(),
         }
     }
 
-    /// Create a new `AppState` wrapped in `Arc<Mutex<>>` for concurrent access.
-    pub fn new_arc() -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self::new()))
+    /// Create a new `AppState` wrapped in a reader/writer lock for concurrent access.
+    pub fn new_arc() -> SharedGraphqlState {
+        Arc::new(AsyncRwLock::new(Self::new()))
     }
 
-    /// Create a new `AppState` with a shared registry, wrapped in `Arc<Mutex<>>`.
-    pub fn new_arc_with_registry(registry: Arc<RwLock<LocalDidRegistry>>) -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self::with_registry(registry)))
+    /// Create a new `AppState` with a shared registry, wrapped in a reader/writer lock.
+    pub fn new_arc_with_registry(registry: Arc<RwLock<LocalDidRegistry>>) -> SharedGraphqlState {
+        Arc::new(AsyncRwLock::new(Self::with_registry(registry)))
     }
 
-    fn next_timestamp(&mut self) -> GqlResult<Timestamp> {
-        self.clock
+    fn remove_decision_index(
+        index: &mut BTreeMap<String, BTreeSet<String>>,
+        key: &str,
+        decision_id: &str,
+    ) {
+        let should_remove = if let Some(ids) = index.get_mut(key) {
+            ids.remove(decision_id);
+            ids.is_empty()
+        } else {
+            false
+        };
+        if should_remove {
+            index.remove(key);
+        }
+    }
+
+    fn remove_decision_status_index(
+        index: &mut BTreeMap<(String, String), BTreeSet<String>>,
+        key: &(String, String),
+        decision_id: &str,
+    ) {
+        let should_remove = if let Some(ids) = index.get_mut(key) {
+            ids.remove(decision_id);
+            ids.is_empty()
+        } else {
+            false
+        };
+        if should_remove {
+            index.remove(key);
+        }
+    }
+
+    fn index_decision_id(&mut self, decision_id: &str) {
+        if let Some(record) = self.decisions.get(decision_id) {
+            self.decision_ids_by_tenant
+                .entry(record.decision.tenant_id.clone())
+                .or_default()
+                .insert(decision_id.to_owned());
+            self.decision_ids_by_tenant_status
+                .entry((
+                    record.decision.tenant_id.clone(),
+                    record.decision.status.clone(),
+                ))
+                .or_default()
+                .insert(decision_id.to_owned());
+        }
+    }
+
+    fn remove_decision_from_indexes(&mut self, decision_id: &str, tenant_id: &str, status: &str) {
+        Self::remove_decision_index(&mut self.decision_ids_by_tenant, tenant_id, decision_id);
+        Self::remove_decision_status_index(
+            &mut self.decision_ids_by_tenant_status,
+            &(tenant_id.to_owned(), status.to_owned()),
+            decision_id,
+        );
+    }
+
+    fn insert_decision_record(&mut self, decision_id: String, record: DecisionRecord) {
+        if let Some(existing) = self.decisions.get(&decision_id) {
+            let old_tenant_id = existing.decision.tenant_id.clone();
+            let old_status = existing.decision.status.clone();
+            self.remove_decision_from_indexes(&decision_id, &old_tenant_id, &old_status);
+        }
+        self.decisions.insert(decision_id.clone(), record);
+        self.index_decision_id(&decision_id);
+    }
+
+    fn reindex_decision_after_state_change(
+        &mut self,
+        decision_id: &str,
+        previous_tenant_id: String,
+        previous_status: String,
+    ) {
+        self.remove_decision_from_indexes(decision_id, &previous_tenant_id, &previous_status);
+        self.index_decision_id(decision_id);
+    }
+
+    fn decision_ids_for_query(
+        &self,
+        tenant_id: &str,
+        status: Option<&str>,
+    ) -> Option<&BTreeSet<String>> {
+        if let Some(status) = status {
+            self.decision_ids_by_tenant_status
+                .get(&(tenant_id.to_owned(), status.to_owned()))
+        } else {
+            self.decision_ids_by_tenant.get(tenant_id)
+        }
+    }
+
+    fn next_timestamp(&self) -> GqlResult<Timestamp> {
+        let mut clock = self
+            .clock
+            .lock()
+            .map_err(|_| async_graphql::Error::new("GraphQL HLC mutex poisoned"))?;
+        clock
             .now()
             .map_err(|err| async_graphql::Error::new(format!("HLC clock exhausted: {err}")))
     }
 
-    fn now_str(&mut self) -> GqlResult<String> {
+    fn now_str(&self) -> GqlResult<String> {
         Ok(self.next_timestamp()?.to_string())
     }
 
@@ -480,8 +578,8 @@ fn guard_graphql_mutation_execution() -> GqlResult<()> {
     Err(graphql_mutation_execution_disabled_error())
 }
 
-fn app_state_from_context<'ctx>(ctx: &'ctx Context<'_>) -> GqlResult<&'ctx Arc<Mutex<AppState>>> {
-    ctx.data::<Arc<Mutex<AppState>>>()
+fn app_state_from_context<'ctx>(ctx: &'ctx Context<'_>) -> GqlResult<&'ctx SharedGraphqlState> {
+    ctx.data::<SharedGraphqlState>()
 }
 
 fn graphql_nonnegative_i32_to_usize(value: i32, field: &'static str) -> GqlResult<usize> {
@@ -509,6 +607,7 @@ pub const GRAPHQL_MAX_QUERY_DEPTH: usize = 12;
 pub const GRAPHQL_MAX_QUERY_COMPLEXITY: usize = 256;
 pub const GRAPHQL_MAX_DECISIONS_LIMIT: i32 = 200;
 pub const GRAPHQL_MAX_DECISIONS_OFFSET: i32 = 10_000;
+pub type SharedGraphqlState = Arc<AsyncRwLock<AppState>>;
 pub const GRAPHQL_CONSENT_FABRICATION_INITIATIVE: &str =
     "Initiatives/fix-spline-r2-graphql-consent-fabrication.md";
 pub const GRAPHQL_PROOF_STUB_INITIATIVE: &str = "Initiatives/fix-spline-r3-graphql-proof-stub.md";
@@ -526,7 +625,7 @@ impl QueryRoot {
     async fn decision(&self, ctx: &Context<'_>, id: ID) -> GqlResult<Option<GqlDecision>> {
         guard_graphql_execution()?;
         let state = app_state_from_context(ctx)?;
-        let guard = state.lock().await;
+        let guard = state.read().await;
         Ok(guard.decisions.get(id.as_str()).map(|r| r.decision.clone()))
     }
 
@@ -541,7 +640,7 @@ impl QueryRoot {
     ) -> GqlResult<Vec<GqlDecision>> {
         guard_graphql_execution()?;
         let state = app_state_from_context(ctx)?;
-        let guard = state.lock().await;
+        let guard = state.read().await;
         let offset = graphql_nonnegative_i32_to_usize(
             offset.unwrap_or(0).clamp(0, GRAPHQL_MAX_DECISIONS_OFFSET),
             "decisions.offset",
@@ -550,14 +649,14 @@ impl QueryRoot {
             limit.unwrap_or(50).clamp(1, GRAPHQL_MAX_DECISIONS_LIMIT),
             "decisions.limit",
         )?;
-        let results: Vec<GqlDecision> = guard
-            .decisions
-            .values()
-            .filter(|r| r.decision.tenant_id == tenant_id.as_str())
-            .filter(|r| status.as_ref().is_none_or(|s| *s == r.decision.status))
-            .map(|r| r.decision.clone())
+        let results = guard
+            .decision_ids_for_query(tenant_id.as_str(), status.as_deref())
+            .into_iter()
+            .flat_map(|ids| ids.iter())
             .skip(offset)
             .take(limit)
+            .filter_map(|id| guard.decisions.get(id))
+            .map(|record| record.decision.clone())
             .collect();
         Ok(results)
     }
@@ -570,7 +669,7 @@ impl QueryRoot {
     ) -> GqlResult<GqlAuthorityChain> {
         guard_graphql_execution()?;
         let state = app_state_from_context(ctx)?;
-        let guard = state.lock().await;
+        let guard = state.read().await;
         let chain_length = graphql_count_to_i32(
             guard
                 .delegations
@@ -595,7 +694,7 @@ impl QueryRoot {
     ) -> GqlResult<GqlConstitution> {
         guard_graphql_execution()?;
         let state = app_state_from_context(ctx)?;
-        let guard = state.lock().await;
+        let guard = state.read().await;
         let _ = version; // version pinning reserved for DB layer
         if guard.constitution.tenant_id == tenant_id.as_str() {
             Ok(guard.constitution.clone())
@@ -615,7 +714,7 @@ impl QueryRoot {
     ) -> GqlResult<Vec<GqlDelegation>> {
         guard_graphql_execution()?;
         let state = app_state_from_context(ctx)?;
-        let guard = state.lock().await;
+        let guard = state.read().await;
         let results = guard
             .delegations
             .values()
@@ -633,7 +732,7 @@ impl QueryRoot {
     ) -> GqlResult<Vec<GqlAuditEntry>> {
         guard_graphql_execution()?;
         let state = app_state_from_context(ctx)?;
-        let guard = state.lock().await;
+        let guard = state.read().await;
         let decision_id = decision_id.to_string();
         let record = guard.decisions.get(&decision_id).ok_or_else(|| {
             async_graphql::Error::new(format!("decision {decision_id} not found"))
@@ -667,7 +766,7 @@ impl QueryRoot {
         guard_graphql_execution()?;
         let state = app_state_from_context(ctx)?;
         let registry = {
-            let guard = state.lock().await;
+            let guard = state.read().await;
             Arc::clone(&guard.registry)
         };
         let did_str = did.to_string();
@@ -724,7 +823,7 @@ impl QueryRoot {
     ) -> GqlResult<GqlConsentResult> {
         guard_graphql_execution()?;
         let state = app_state_from_context(ctx)?;
-        let guard = state.lock().await;
+        let guard = state.read().await;
         let subject_str = subject.to_string();
         let actor_str = actor.to_string();
         Did::new(&subject_str)
@@ -798,7 +897,7 @@ impl MutationRoot {
     ) -> GqlResult<GqlDecision> {
         guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
-        let mut guard = state.lock().await;
+        let mut guard = state.write().await;
         let created = guard.next_timestamp()?;
         let created_at = created.to_string();
         let id = graphql_hash_hex(&GraphqlDecisionIdPayload {
@@ -832,7 +931,7 @@ impl MutationRoot {
         {
             tracing::warn!("Governance event channel closed — DecisionUpdated dropped");
         }
-        guard.decisions.insert(
+        guard.insert_decision_record(
             id.clone(),
             DecisionRecord {
                 decision: decision.clone(),
@@ -853,17 +952,20 @@ impl MutationRoot {
     ) -> GqlResult<GqlDecision> {
         guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
-        let mut guard = state.lock().await;
+        let mut guard = state.write().await;
         let id_str = id.to_string();
-        let decision = {
+        let (previous_tenant_id, previous_status, decision) = {
             let rec = guard
                 .decisions
                 .get_mut(&id_str)
                 .ok_or_else(|| async_graphql::Error::new(format!("decision {id_str} not found")))?;
+            let previous_tenant_id = rec.decision.tenant_id.clone();
+            let previous_status = rec.decision.status.clone();
             rec.decision.status = new_status.clone();
             rec.decision.content_hash = AppState::compute_decision_hash(&rec.decision)?;
-            rec.decision.clone()
+            (previous_tenant_id, previous_status, rec.decision.clone())
         };
+        guard.reindex_decision_after_state_change(&id_str, previous_tenant_id, previous_status);
         let actor = reason.as_deref().unwrap_or("system");
         guard.append_audit(&id_str, &format!("StatusAdvanced:{new_status}"), actor)?;
         if guard
@@ -892,7 +994,7 @@ impl MutationRoot {
             )));
         }
         let state = app_state_from_context(ctx)?;
-        let mut guard = state.lock().await;
+        let mut guard = state.write().await;
         let id_str = decision_id.to_string();
         let duplicate_vote = guard
             .decisions
@@ -945,7 +1047,7 @@ impl MutationRoot {
             return Err(async_graphql::Error::new("expires_in_hours must be > 0"));
         }
         let state = app_state_from_context(ctx)?;
-        let mut guard = state.lock().await;
+        let mut guard = state.write().await;
         let now = guard.next_timestamp()?;
         let id = graphql_hash_hex(&GraphqlDelegationIdPayload {
             domain: "exo.gateway.graphql.delegation_id.v1",
@@ -980,7 +1082,7 @@ impl MutationRoot {
     async fn revoke_delegation(&self, ctx: &Context<'_>, id: ID) -> GqlResult<GqlDelegation> {
         guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
-        let mut guard = state.lock().await;
+        let mut guard = state.write().await;
         let id_str = id.to_string();
         let delegation = guard
             .delegations
@@ -999,7 +1101,7 @@ impl MutationRoot {
     ) -> GqlResult<GqlChallenge> {
         guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
-        let mut guard = state.lock().await;
+        let mut guard = state.write().await;
         let id_str = decision_id.to_string();
         let challenge_created = guard.next_timestamp()?;
         let challenge_id = graphql_hash_hex(&GraphqlChallengeIdPayload {
@@ -1008,11 +1110,13 @@ impl MutationRoot {
             grounds: &grounds,
             created_at: &challenge_created,
         })?;
-        let (challenge, decision) = {
+        let (previous_tenant_id, previous_status, challenge, decision) = {
             let rec = guard
                 .decisions
                 .get_mut(&id_str)
                 .ok_or_else(|| async_graphql::Error::new(format!("decision {id_str} not found")))?;
+            let previous_tenant_id = rec.decision.tenant_id.clone();
+            let previous_status = rec.decision.status.clone();
             let challenge = GqlChallenge {
                 id: ID::from(challenge_id),
                 grounds: grounds.clone(),
@@ -1021,8 +1125,14 @@ impl MutationRoot {
             rec.decision.challenges.push(challenge.clone());
             rec.decision.status = "CONTESTED".into();
             rec.decision.content_hash = AppState::compute_decision_hash(&rec.decision)?;
-            (challenge, rec.decision.clone())
+            (
+                previous_tenant_id,
+                previous_status,
+                challenge,
+                rec.decision.clone(),
+            )
         };
+        guard.reindex_decision_after_state_change(&id_str, previous_tenant_id, previous_status);
         guard.append_audit(
             &id_str,
             &format!("ChallengeRaised:{grounds}"),
@@ -1050,7 +1160,7 @@ impl MutationRoot {
     ) -> GqlResult<GqlEmergencyAction> {
         guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
-        let mut guard = state.lock().await;
+        let mut guard = state.write().await;
         let id_str = decision_id.to_string();
         // Verify decision exists before creating emergency action.
         if !guard.decisions.contains_key(&id_str) {
@@ -1113,7 +1223,7 @@ impl MutationRoot {
     ) -> GqlResult<GqlConflictDisclosure> {
         guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
-        let mut guard = state.lock().await;
+        let mut guard = state.write().await;
         let id_str = decision_id.to_string();
         // Conflict records are append-only — no update path exists.
         let disclosure = GqlConflictDisclosure {
@@ -1143,7 +1253,7 @@ impl MutationRoot {
     ) -> GqlResult<GqlConstitution> {
         guard_graphql_mutation_execution()?;
         let state = app_state_from_context(ctx)?;
-        let mut guard = state.lock().await;
+        let mut guard = state.write().await;
         let new_hash = graphql_hash_hex(&GraphqlConstitutionHashPayload {
             domain: "exo.gateway.graphql.constitution_amendment_hash.v1",
             previous_hash: &guard.constitution.hash,
@@ -1201,7 +1311,7 @@ impl SubscriptionRoot {
             stream! {
                 match state {
                     Ok(state) => {
-                        let mut rx = state.lock().await.event_tx.subscribe();
+                        let mut rx = state.read().await.event_tx.subscribe();
                         loop {
                             match rx.recv().await {
                                 Ok(GovEvent::DecisionUpdated(d)) if d.id.to_string() == id_str => yield Ok(d),
@@ -1238,7 +1348,7 @@ impl SubscriptionRoot {
             stream! {
                 match state {
                     Ok(state) => {
-                        let mut rx = state.lock().await.event_tx.subscribe();
+                        let mut rx = state.read().await.event_tx.subscribe();
                         loop {
                             match rx.recv().await {
                                 Ok(GovEvent::DelegationExpiring(d)) if d.delegatee == did || d.delegator == did => {
@@ -1277,7 +1387,7 @@ impl SubscriptionRoot {
             stream! {
                 match state {
                     Ok(state) => {
-                        let mut rx = state.lock().await.event_tx.subscribe();
+                        let mut rx = state.read().await.event_tx.subscribe();
                         loop {
                             match rx.recv().await {
                                 Ok(GovEvent::EmergencyActionCreated(a)) if a.tenant_id == tid => yield Ok(a),
@@ -1298,7 +1408,7 @@ impl SubscriptionRoot {
 // ---------------------------------------------------------------------------
 
 /// Build the executable `GovSchema` with shared `AppState` data.
-pub fn build_schema(state: Arc<Mutex<AppState>>) -> GovSchema {
+pub fn build_schema(state: SharedGraphqlState) -> GovSchema {
     Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
         .disable_introspection()
         .limit_depth(GRAPHQL_MAX_QUERY_DEPTH)
@@ -1369,7 +1479,7 @@ mod tests {
     #[test]
     fn app_state_timestamps_advance_through_hybrid_clock() {
         let registry = Arc::new(RwLock::new(LocalDidRegistry::new()));
-        let mut state =
+        let state =
             AppState::with_registry_and_clock(registry, HybridClock::with_wall_clock(|| 42_000));
 
         assert_eq!(
@@ -1507,13 +1617,156 @@ mod tests {
             "GraphQL state lookup must be centralized"
         );
         assert!(
-            production.contains("ctx.data::<Arc<Mutex<AppState>>>()"),
+            production.contains("ctx.data::<SharedGraphqlState>()"),
             "GraphQL state lookup must return an error on missing AppState"
         );
         assert!(
-            !production.contains("data_unchecked::<Arc<Mutex<AppState>>>"),
+            !production.contains("data_unchecked::<SharedGraphqlState>"),
             "GraphQL resolvers must not panic if schema data is misconfigured"
         );
+    }
+
+    #[test]
+    fn graphql_app_state_uses_reader_writer_lock_not_single_mutex() {
+        let production = include_str!("graphql.rs")
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("production section");
+
+        assert!(
+            production.contains("type SharedGraphqlState = Arc<AsyncRwLock<AppState>>"),
+            "GraphQL AppState must use a reader/writer lock so independent queries do not serialize behind one mutex"
+        );
+        assert!(
+            !production.contains("Arc<Mutex<AppState>>"),
+            "GraphQL AppState must not expose a single shared Tokio mutex"
+        );
+        assert!(
+            !production.contains(".lock().await"),
+            "GraphQL resolvers must acquire read/write guards explicitly instead of serializing every operation through lock().await"
+        );
+    }
+
+    #[test]
+    fn graphql_decisions_query_uses_tenant_indexes_before_pagination() {
+        let production = include_str!("graphql.rs")
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("production section");
+        let app_state = production
+            .split("pub struct AppState")
+            .nth(1)
+            .expect("AppState section")
+            .split("impl Default for AppState")
+            .next()
+            .expect("AppState section end");
+        let decisions_resolver = production
+            .split("async fn decisions")
+            .nth(1)
+            .expect("decisions resolver")
+            .split("    /// Get the delegated authority chain")
+            .next()
+            .expect("decisions resolver end");
+
+        assert!(
+            app_state.contains("decision_ids_by_tenant: BTreeMap<String, BTreeSet<String>>"),
+            "GraphQL AppState must keep a tenant decision index"
+        );
+        assert!(
+            app_state.contains(
+                "decision_ids_by_tenant_status: BTreeMap<(String, String), BTreeSet<String>>"
+            ),
+            "GraphQL AppState must keep a tenant+status decision index"
+        );
+        assert!(
+            decisions_resolver.contains("decision_ids_for_query"),
+            "decisions resolver must fetch candidate IDs from indexes before pagination"
+        );
+        assert!(
+            !decisions_resolver.contains(".decisions\n            .values()"),
+            "decisions resolver must not scan all in-memory decision records per request"
+        );
+    }
+
+    fn test_decision_record(id: &str, tenant_id: &str, status: &str) -> DecisionRecord {
+        DecisionRecord {
+            decision: GqlDecision {
+                id: ID::from(id.to_owned()),
+                tenant_id: tenant_id.to_owned(),
+                status: status.to_owned(),
+                title: format!("Decision {id}"),
+                decision_class: "Routine".to_owned(),
+                author: "did:exo:author".to_owned(),
+                created_at: "1:0".to_owned(),
+                votes: Vec::new(),
+                challenges: Vec::new(),
+                content_hash: Hash256::digest(id.as_bytes()).to_string(),
+            },
+            audit_trail: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn decision_indexes_scope_queries_by_tenant_and_status() {
+        let mut state = AppState::new();
+        state.insert_decision_record(
+            "decision-001".to_owned(),
+            test_decision_record("decision-001", "tenant-a", "CREATED"),
+        );
+        state.insert_decision_record(
+            "decision-002".to_owned(),
+            test_decision_record("decision-002", "tenant-a", "APPROVED"),
+        );
+        state.insert_decision_record(
+            "decision-003".to_owned(),
+            test_decision_record("decision-003", "tenant-b", "CREATED"),
+        );
+
+        let tenant_a: Vec<_> = state
+            .decision_ids_for_query("tenant-a", None)
+            .expect("tenant-a index")
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(tenant_a, vec!["decision-001", "decision-002"]);
+
+        let tenant_a_created: Vec<_> = state
+            .decision_ids_for_query("tenant-a", Some("CREATED"))
+            .expect("tenant-a CREATED index")
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(tenant_a_created, vec!["decision-001"]);
+
+        let (previous_tenant_id, previous_status) = {
+            let record = state
+                .decisions
+                .get_mut("decision-001")
+                .expect("decision indexed");
+            let previous_tenant_id = record.decision.tenant_id.clone();
+            let previous_status = record.decision.status.clone();
+            record.decision.status = "APPROVED".to_owned();
+            (previous_tenant_id, previous_status)
+        };
+        state.reindex_decision_after_state_change(
+            "decision-001",
+            previous_tenant_id,
+            previous_status,
+        );
+
+        assert!(
+            state
+                .decision_ids_for_query("tenant-a", Some("CREATED"))
+                .is_none(),
+            "old tenant/status index must be cleared after status changes"
+        );
+        let tenant_a_approved: Vec<_> = state
+            .decision_ids_for_query("tenant-a", Some("APPROVED"))
+            .expect("tenant-a APPROVED index")
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(tenant_a_approved, vec!["decision-001", "decision-002"]);
     }
 
     #[test]
@@ -1659,7 +1912,7 @@ mod tests {
     fn append_audit_rejects_sequence_overflow_without_wrapping() {
         let mut state = AppState::new();
         let decision_id = "decision-overflow".to_owned();
-        state.decisions.insert(
+        state.insert_decision_record(
             decision_id.clone(),
             DecisionRecord {
                 decision: GqlDecision {
@@ -1718,7 +1971,7 @@ mod tests {
         let mut state = AppState::new();
         for index in 0..10_002 {
             let id = format!("decision-{index:05}");
-            state.decisions.insert(
+            state.insert_decision_record(
                 id.clone(),
                 DecisionRecord {
                     decision: GqlDecision {
@@ -1738,7 +1991,7 @@ mod tests {
                 },
             );
         }
-        let schema = build_schema(Arc::new(Mutex::new(state)));
+        let schema = build_schema(Arc::new(AsyncRwLock::new(state)));
 
         let res = schema
             .execute(r#"{ decisions(tenantId: "tenant-a", limit: 1, offset: 10001) { id title } }"#)
