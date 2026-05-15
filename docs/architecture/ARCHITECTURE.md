@@ -219,54 +219,57 @@ See [[exo-gatekeeper/src/kernel.rs]] and [[exo-gatekeeper/src/invariants.rs]].
 
 ## 5. The Combinator Algebra
 
-The combinator reduction engine in [[exo-gatekeeper/src/combinator.rs]] provides a second enforcement mechanism: constitutional invariants can be encoded as typed combinatory logic expressions and mechanically reduced to `true` or `false`.
+The combinator reduction engine in [[exo-gatekeeper/src/combinator.rs]]
+provides deterministic workflow composition for constitutional operations. The
+kernel adjudicates invariants around these reductions; the combinator engine
+itself is a pure transformation from `CombinatorInput` to `CombinatorOutput`.
 
 ### 5.1 Combinator Basis
 
-EXOCHAIN uses a typed combinatory logic with 5 primitive combinators and domain-specific extensions:
+EXOCHAIN's current implementation uses a bounded, governance-oriented algebra.
+The implemented terms are:
 
-**Primitive combinators (Turing-complete basis):**
-
-| Combinator | Semantics | Reduction Rule |
+| Combinator | Semantics | Reduction rule |
 |---|---|---|
-| **S** | Composition with sharing | `(S f g x) -> (f x (g x))` |
-| **K** | Constant projection | `(K x y) -> x` |
-| **I** | Identity | `(I x) -> x` |
-| **B** | Function composition | `(B f g x) -> f (g x)` |
-| **C** | Argument flip | `(C f x y) -> f y x` |
-
-**Governance-specific combinators:**
-
-| Combinator | Semantics |
-|---|---|
-| `NOT`, `AND`, `OR`, `IMPLIES` | Propositional logic connectives |
-| `FORALL`, `EXISTS` | Bounded quantification over finite domains |
-| `EQUALS`, `LESS_THAN`, `GTE` | Comparison operators |
-| `LOOKUP` | Context value lookup from `ReductionContext` bindings |
+| `Identity` | Pass input through unchanged | `output = input` |
+| `Sequence` | Execute terms in order | Each term receives the previous term's output as input; first failure aborts |
+| `Parallel` | Execute branches independently | All branches must succeed; outputs are merged deterministically |
+| `Choice` | Try alternatives in order | First successful alternative wins |
+| `Guard` | Predicate gate | Inner term runs only when the required input key is present and matches any expected value |
+| `Transform` | Add or replace an output field | Inner output receives `output_key = output_value` |
+| `Retry` | Retry an inner term on failure | Attempts are bounded by `RetryPolicy::max_retries` |
+| `Timeout` | Bound deterministic reduction work | Each active timeout consumes reduction units, not wall-clock time |
+| `Checkpoint` | Mark a resumable point | Inner output carries the checkpoint identifier |
 
 ### 5.2 Invariant Encoding
 
-Constitutional invariants are encoded as combinator terms. For example, INV-002 (no self-grant) becomes:
+Constitutional invariants remain first-class checks in the gatekeeper kernel.
+Combinators compose the deterministic operation that is adjudicated by those
+invariants. For example, a role-gated operation is expressed as a guarded
+sequence:
 
-```
-NOT(EQUALS(LOOKUP("author_did"), LOOKUP("target_did")))
-```
-
-INV-005 (alignment floor) becomes:
-
-```
-GTE(LOOKUP("alignment_score"), LOOKUP("min_alignment"))
+```rust
+Sequence([
+    Guard(Identity, Predicate { required_key: "authorized", expected_value: Some("true") }),
+    Transform(Identity, TransformFn { output_key: "processed", output_value: "true" }),
+])
 ```
 
-The `encode_invariant()` function translates invariant IDs to combinator terms that, when reduced with the appropriate `ReductionContext` bindings, produce `Reduced(Bool(true))` for satisfaction or `Reduced(Bool(false))` for violation.
+This reduction succeeds only when the input contains the required authorization
+field, then records the deterministic transformation. The kernel still checks
+authority, consent, quorum, provenance, and the other constitutional invariants
+before and after the operation.
 
 ### 5.3 Determinism Guarantee
 
 The combinator engine is deterministic by construction:
 
-- **No floating-point** in the reduction path. The `TypedValue` domain uses `u64` for naturals and `bool` for logic.
-- **Bounded reduction** via `max_reductions`. The Omega combinator `(S I I)(S I I)` --- a classic non-terminating term --- halts within the step limit.
-- **Complete trace** recorded in `ReductionTrace`. Every reduction step records the rule applied, the before/after term, and the step number. This trace constitutes the type-level proof.
+- **No floating-point** in the reduction path. Inputs and outputs are
+  deterministic string fields stored in `BTreeMap`.
+- **Bounded structure** via maximum nesting depth, branch width, total node
+  count, and retry budget.
+- **Deterministic timeout semantics** via reduction units, never system time.
+- **Deterministic merge order** for parallel outputs through `BTreeMap`.
 
 ---
 
