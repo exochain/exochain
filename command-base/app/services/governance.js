@@ -52,6 +52,70 @@ module.exports = function(db, broadcast, helpers) {
     return 'pass';
   }
 
+  function outputTokenSet(output) {
+    return new Set(
+      String(output || '')
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean)
+    );
+  }
+
+  function hasAllTokens(tokens, required) {
+    return required.every((token) => tokens.has(token));
+  }
+
+  function hasAnyToken(tokens, candidates) {
+    return candidates.some((token) => tokens.has(token));
+  }
+
+  function classifyHeuristicOutput(output) {
+    const text = String(output || '');
+    const lower = text.toLowerCase();
+    const tokens = outputTokenSet(text);
+    const mentionsGovernanceReceipts =
+      hasAllTokens(tokens, ['governance', 'receipts']) ||
+      hasAllTokens(tokens, ['governance', 'receipt']);
+    const mentionsReceiptHash = hasAllTokens(tokens, ['receipt', 'hash']);
+    const destructiveReceiptVerb = hasAnyToken(tokens, [
+      'delete',
+      'drop',
+      'erase',
+      'purge',
+      'remove',
+      'truncate',
+    ]);
+    const updateReceiptHashVerb = hasAnyToken(tokens, [
+      'modify',
+      'overwrite',
+      'replace',
+      'set',
+      'update',
+    ]);
+
+    return {
+      evalCall: /\beval\s*\(/.test(text),
+      innerHtmlUserInput: tokens.has('innerhtml') && tokens.has('user'),
+      plaintextPassword: tokens.has('password') && tokens.has('plain'),
+      hardcodedApiKey: tokens.has('api') && tokens.has('key') && hasAnyToken(tokens, ['hardcod', 'hardcoded']),
+      dropTable: hasAllTokens(tokens, ['drop', 'table']),
+      deleteWithoutWhere: hasAllTokens(tokens, ['delete', 'from']) && !tokens.has('where'),
+      governanceReceiptMutation:
+        mentionsGovernanceReceipts &&
+        (destructiveReceiptVerb || (mentionsReceiptHash && updateReceiptHashVerb)),
+      governanceInsertWithoutProvenance:
+        hasAllTokens(tokens, ['insert', 'into']) &&
+        tokens.has('governance') &&
+        !tokens.has('hash') &&
+        !tokens.has('provenance'),
+      orchestratorBypass:
+        tokens.has('gray') && tokens.has('bypass') && tokens.has('direct'),
+      unassignedInProgress:
+        hasAllTokens(tokens, ['assigned', 'to']) && tokens.has('null') && hasAllTokens(tokens, ['in', 'progress']),
+      permissiveCors: tokens.has('cors') && lower.includes("'*'"),
+    };
+  }
+
   // ── Governance helper: create an ExoChain-quality receipt ──
 
   function createReceipt(db, actionType, entityType, entityId, actor, description, payload, projectId, opts = {}) {
@@ -111,58 +175,58 @@ module.exports = function(db, broadcast, helpers) {
   function validateAgainstInvariants(taskId, output) {
     const invariants = db.prepare('SELECT * FROM constitutional_invariants').all();
     const violations = [];
+    const heuristic = classifyHeuristicOutput(output);
 
     for (const inv of invariants) {
-      const lowerOutput = (output || '').toLowerCase();
       const invName = (inv.name || '').toLowerCase();
       // FIX: Use enforcement_level from DB to determine severity.
       // 'block' = blocks task, 'warn' = logs but allows, 'audit' = logs only
       const enfLevel = inv.enforcement_level || inv.severity || 'block';
 
       if (invName.includes('security') || invName.includes('authorization')) {
-        if (/\beval\s*\(/.test(output) || (lowerOutput.includes('innerhtml') && lowerOutput.includes('user'))) {
+        if (heuristic.evalCall || heuristic.innerHtmlUserInput) {
           violations.push({ invariant_id: inv.id, name: inv.name, severity: enfLevel, detail: 'Potential XSS: eval() or unescaped innerHTML with user input detected' });
         }
-        if (lowerOutput.includes('password') && lowerOutput.includes('plain')) {
+        if (heuristic.plaintextPassword) {
           violations.push({ invariant_id: inv.id, name: inv.name, severity: enfLevel, detail: 'Plaintext password handling detected' });
         }
-        if (lowerOutput.includes('api_key') && lowerOutput.includes('hardcod')) {
+        if (heuristic.hardcodedApiKey) {
           violations.push({ invariant_id: inv.id, name: inv.name, severity: enfLevel, detail: 'Hardcoded API key detected' });
         }
       }
 
       if (invName.includes('data') || invName.includes('integrity') || invName.includes('silent')) {
-        if (lowerOutput.includes('drop table') || (lowerOutput.includes('delete from') && !lowerOutput.includes('where'))) {
+        if (heuristic.dropTable || heuristic.deleteWithoutWhere) {
           violations.push({ invariant_id: inv.id, name: inv.name, severity: enfLevel, detail: 'Destructive SQL without WHERE clause detected' });
         }
       }
 
       if (invName.includes('governance') || invName.includes('chain') || invName.includes('immutable') || invName.includes('history')) {
-        if (lowerOutput.includes('governance_receipts') && (lowerOutput.includes('delete') || lowerOutput.includes('update.*receipt_hash'))) {
-          violations.push({ invariant_id: inv.id, name: inv.name, severity: enfLevel, detail: 'Attempt to modify governance chain detected' });
+        if (heuristic.governanceReceiptMutation) {
+          violations.push({ invariant_id: inv.id, name: inv.name, severity: enfLevel, detail: 'Attempt to modify governance chain or receipt hash detected' });
         }
       }
 
       if (invName.includes('provenance')) {
-        if (lowerOutput.includes('insert into') && !lowerOutput.includes('hash') && !lowerOutput.includes('provenance') && lowerOutput.includes('governance')) {
+        if (heuristic.governanceInsertWithoutProvenance) {
           violations.push({ invariant_id: inv.id, name: inv.name, severity: enfLevel, detail: 'Governance insert without provenance tracking' });
         }
       }
 
       if (invName.includes('orchestrator') || invName.includes('single')) {
-        if (lowerOutput.includes('gray') && lowerOutput.includes('bypass') && lowerOutput.includes('direct')) {
+        if (heuristic.orchestratorBypass) {
           violations.push({ invariant_id: inv.id, name: inv.name, severity: enfLevel, detail: 'Potential orchestrator bypass detected' });
         }
       }
 
       if (invName.includes('assignment') || invName.includes('accountability')) {
-        if (lowerOutput.includes('assigned_to') && lowerOutput.includes('null') && lowerOutput.includes('in_progress')) {
+        if (heuristic.unassignedInProgress) {
           violations.push({ invariant_id: inv.id, name: inv.name, severity: enfLevel, detail: 'Task progressing without assignment detected' });
         }
       }
 
       if (invName.includes('security') || invName.includes('authorization')) {
-        if (lowerOutput.includes('cors') && lowerOutput.includes("'*'")) {
+        if (heuristic.permissiveCors) {
           violations.push({ invariant_id: inv.id, name: inv.name, severity: enfLevel, detail: 'Permissive CORS wildcard detected' });
         }
       }
@@ -187,24 +251,45 @@ module.exports = function(db, broadcast, helpers) {
 
     try {
       const invariantIds = violations.map(v => v.invariant_id).filter(Boolean);
-      createReceipt(db, 'invariant_check', 'task', taskId, 'System',
-        `Invariant validation: ${passed ? 'PASSED' : 'BLOCKED'} — ${violations.length} violations (${blockCount} blocking, ${warnCount} warnings)`,
-        { task_id: taskId, passed, violations_count: violations.length, block_count: blockCount, warn_count: warnCount, violations: violations.slice(0, 10) },
+      const invariantsChecked = JSON.stringify(invariants.map(i => i.code));
+      const auditSummary = {
+        task_id: taskId,
+        passed,
+        validation_source: 'commandbase_heuristic_output_scan',
+        receipt_created: false,
+        violations_count: violations.length,
+        block_count: blockCount,
+        warn_count: warnCount,
+        invariant_ids_violated: invariantIds,
+        enforcement_levels: [...new Set(violations.map(v => v.severity))],
+      };
+      // This path inspects untrusted agent text with CommandBase-local heuristics.
+      // It must not mint or extend a governance receipt hash chain.
+      db.prepare(`INSERT INTO governance_audit_trail (action_type, actor_name, target_type, target_id, branch, before_state, after_state, invariants_checked, receipt_id, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+        'heuristic_invariant_check',
+        'System',
+        'task',
+        taskId,
+        'judicial',
         null,
-        {
-          branch: 'judicial',
-          adjudication: passed ? 'pass' : 'fail',
-          // FIX: Link receipt to the first violated invariant for forensic traceability
-          invariant_id: invariantIds.length > 0 ? invariantIds[0] : null,
-          invariants_checked: JSON.stringify(invariants.map(i => i.code)),
-          metadata: { invariant_ids_violated: invariantIds, enforcement_levels: [...new Set(violations.map(v => v.severity))] }
-        }
+        JSON.stringify(auditSummary),
+        invariantsChecked,
+        null,
+        now
       );
     } catch (e) {
-      console.warn('[InvariantCheck] Receipt creation error:', e.message);
+      console.warn('[InvariantCheck] Heuristic audit error:', e.message);
     }
 
-    return { passed, violations, block_count: blockCount, warn_count: warnCount };
+    return {
+      passed,
+      violations,
+      block_count: blockCount,
+      warn_count: warnCount,
+      receipt_created: false,
+      validation_source: 'commandbase_heuristic_output_scan',
+    };
   }
 
   // ══════════════════════════════════════════════════════════════
