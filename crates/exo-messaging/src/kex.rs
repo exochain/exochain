@@ -104,8 +104,9 @@ pub struct X25519SecretKey([u8; 32]);
 
 impl X25519SecretKey {
     pub fn from_bytes(bytes: [u8; 32]) -> Result<Self, MessagingError> {
+        let bytes = zeroize::Zeroizing::new(bytes);
         validate_x25519_secret_key(&bytes)?;
-        Ok(Self(bytes))
+        Ok(Self(*bytes))
     }
 
     /// Create from hex string.
@@ -120,9 +121,9 @@ impl X25519SecretKey {
                 bytes.len()
             )));
         }
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&bytes);
-        Self::from_bytes(arr)
+        let mut arr = zeroize::Zeroizing::new([0u8; 32]);
+        arr.copy_from_slice(bytes.as_slice());
+        Self::from_bytes(*arr)
     }
 
     /// Derive the public key corresponding to this secret key.
@@ -407,6 +408,38 @@ mod tests {
         assert!(
             !source.contains(&["our_secret", ".0"].concat()),
             "internal key exchange must use the bounded secret-key accessor"
+        );
+    }
+
+    #[test]
+    fn x25519_secret_key_decoding_zeroizes_rust_owned_buffers() {
+        let source = include_str!("kex.rs");
+        let secret_impl = source
+            .split("impl X25519SecretKey {")
+            .nth(1)
+            .and_then(|rest| {
+                rest.split("impl core::fmt::Debug for X25519SecretKey")
+                    .next()
+            })
+            .expect("secret-key impl block must be present");
+        let from_bytes = secret_impl
+            .split("pub fn from_bytes(bytes: [u8; 32])")
+            .nth(1)
+            .and_then(|rest| rest.split("/// Create from hex string.").next())
+            .expect("X25519SecretKey::from_bytes must be present");
+        assert!(
+            from_bytes.contains("zeroize::Zeroizing::new(bytes)"),
+            "X25519SecretKey::from_bytes must zeroize its source stack buffer"
+        );
+
+        let from_hex = secret_impl
+            .split("pub fn from_hex(hex: &str)")
+            .nth(1)
+            .and_then(|rest| rest.split("/// Derive the public key corresponding").next())
+            .expect("X25519SecretKey::from_hex must be present");
+        assert!(
+            from_hex.matches("zeroize::Zeroizing::new").count() >= 2,
+            "X25519SecretKey::from_hex must zeroize both decoded Vec and stack array buffers"
         );
     }
 

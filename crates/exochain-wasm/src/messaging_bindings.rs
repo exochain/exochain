@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
+use zeroize::Zeroizing;
 
 use crate::serde_bridge::*;
 
@@ -164,14 +165,16 @@ fn parse_x25519_keypair_hex(
     label: &str,
     secret_hex: &str,
 ) -> Result<exo_messaging::X25519KeyPair, JsValue> {
-    let bytes = hex::decode(secret_hex)
-        .map_err(|e| JsValue::from_str(&format!("{label} must be hex: {e}")))?;
+    let bytes = Zeroizing::new(
+        hex::decode(secret_hex)
+            .map_err(|e| JsValue::from_str(&format!("{label} must be hex: {e}")))?,
+    );
     if bytes.len() != 32 {
         return Err(JsValue::from_str(&format!("{label} must be 32 bytes")));
     }
-    let mut secret = [0u8; 32];
-    secret.copy_from_slice(&bytes);
-    exo_messaging::X25519KeyPair::from_secret_bytes(secret)
+    let mut secret = Zeroizing::new([0u8; 32]);
+    secret.copy_from_slice(bytes.as_slice());
+    exo_messaging::X25519KeyPair::from_secret_bytes(*secret)
         .map_err(|e| JsValue::from_str(&format!("invalid {label}: {e}")))
 }
 

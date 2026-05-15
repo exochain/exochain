@@ -691,7 +691,13 @@ mod source_guard_tests {
 
     #[test]
     fn wasm_secret_key_decoding_zeroizes_rust_owned_buffers() {
-        let sources = [("identity_bindings.rs", include_str!("identity_bindings.rs"))];
+        let sources = [
+            ("identity_bindings.rs", include_str!("identity_bindings.rs")),
+            (
+                "messaging_bindings.rs",
+                include_str!("messaging_bindings.rs"),
+            ),
+        ];
 
         for (path, source) in sources {
             assert!(
@@ -699,6 +705,20 @@ mod source_guard_tests {
                 "{path} must wrap decoded secret-key buffers in zeroize::Zeroizing"
             );
         }
+
+        let messaging_source = include_str!("messaging_bindings.rs");
+        let x25519_helper = messaging_source
+            .split("fn parse_x25519_keypair_hex")
+            .nth(1)
+            .and_then(|rest| {
+                rest.split("/// Attach a caller-produced Ed25519 signature")
+                    .next()
+            })
+            .expect("messaging X25519 secret parser must be present");
+        assert!(
+            x25519_helper.contains("Zeroizing::new("),
+            "messaging X25519 secret parser must zeroize Rust-owned decoded buffers"
+        );
     }
 
     #[test]
