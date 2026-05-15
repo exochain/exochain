@@ -3428,7 +3428,28 @@ function getApiAuthKey() {
   console.log('[Auth] Generated new API key');
   return _apiAuthKey;
 }
+function isLoopbackAddress(address) {
+  if (!address) return false;
+  const normalized = String(address).trim().replace(/^::ffff:/, '');
+  return normalized === '::1' || normalized === 'localhost' || normalized.startsWith('127.');
+}
+function hasValidBootstrapToken(req) {
+  const expected = process.env.COMMAND_BASE_AUTH_BOOTSTRAP_TOKEN;
+  if (!expected) return false;
+  const provided = req.headers['x-command-base-bootstrap-token'];
+  if (typeof provided !== 'string') return false;
+  const expectedBytes = Buffer.from(expected, 'utf8');
+  const providedBytes = Buffer.from(provided, 'utf8');
+  return providedBytes.length === expectedBytes.length && crypto.timingSafeEqual(providedBytes, expectedBytes);
+}
+function canBootstrapApiAuth(req) {
+  return isLoopbackAddress(req.ip) || hasValidBootstrapToken(req);
+}
 app.get('/api/auth/status', (req, res) => {
+  if (!canBootstrapApiAuth(req)) {
+    res.status(403).json({ authenticated: false, error: 'Auth bootstrap denied outside loopback' });
+    return;
+  }
   const key = getApiAuthKey();
   const isSecureTransport = req.secure || req.get('x-forwarded-proto') === 'https';
   const secureFlag = isSecureTransport ? '; Secure' : '';

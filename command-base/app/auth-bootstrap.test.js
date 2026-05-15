@@ -50,7 +50,7 @@ async function waitForHttpReady(url) {
   throw new Error(`server failed to become ready at ${url}`);
 }
 
-function spawnCommandBaseServer(port, dbPath, tmpDir) {
+function spawnCommandBaseServer(port, dbPath, tmpDir, extraEnv) {
   const env = { ...process.env };
   const serverPath = join(__dirname, 'server.js');
   env.PORT = String(port);
@@ -59,6 +59,7 @@ function spawnCommandBaseServer(port, dbPath, tmpDir) {
   env.INBOX_PATH = join(tmpDir, 'inbox');
   env.OUTBOX_PATH = join(tmpDir, 'outbox');
   env.TRUST_PROXY = 'loopback';
+  Object.assign(env, extraEnv || {});
 
   mkdirSync(env.INBOX_PATH, { recursive: true });
   mkdirSync(env.OUTBOX_PATH, { recursive: true });
@@ -140,6 +141,82 @@ test('ui bootstrap auth endpoint no longer leaks key material', { timeout: 60_00
   assert.equal(/cb_auth=/.test(rawSetCookie), true, 'auth status should set cb_auth cookie');
   assert.equal(/HttpOnly/i.test(rawSetCookie), true, 'cb_auth cookie should be HttpOnly');
   assert.equal(/SameSite=Strict/i.test(rawSetCookie), true, 'cb_auth cookie should use SameSite=Strict');
+  if (exitCode !== undefined) {
+    assert.equal(exitCode, 0, `server exited unexpectedly; stderr: ${stderr.join('')}`);
+  }
+});
+
+test('ui bootstrap auth endpoint denies non-loopback bootstrap', { timeout: 60_000 }, async (t) => {
+  const tmpDir = mkdtempSync(join(os.tmpdir(), 'cb-auth-remote-'));
+  const dbPath = join(tmpDir, 'command-base.db');
+  const port = await pickFreePort();
+
+  const { proc, stderr } = spawnCommandBaseServer(port, dbPath, tmpDir);
+  t.after(() => {
+    return stopCommandBaseServer(proc).finally(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+  });
+
+  let exitCode;
+  proc.once('exit', (code) => {
+    exitCode = code;
+  });
+
+  const baseUrl = `http://127.0.0.1:${port}`;
+  await waitForHttpReady(`${baseUrl}/health`);
+
+  const statusRes = await fetch(`${baseUrl}/api/auth/status`, {
+    headers: { 'X-Forwarded-For': '203.0.113.42' },
+  });
+  assert.equal(statusRes.status, 403, 'remote clients must not receive auth bootstrap');
+
+  const payload = await statusRes.json();
+  assert.equal(payload.authenticated, false);
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, 'key'), false, 'remote denial must not return API key');
+  assert.equal(statusRes.headers.get('set-cookie'), null, 'remote denial must not set cb_auth cookie');
+
+  if (exitCode !== undefined) {
+    assert.equal(exitCode, 0, `server exited unexpectedly; stderr: ${stderr.join('')}`);
+  }
+});
+
+test('ui bootstrap auth endpoint accepts explicit operator bootstrap token', { timeout: 60_000 }, async (t) => {
+  const tmpDir = mkdtempSync(join(os.tmpdir(), 'cb-auth-token-'));
+  const dbPath = join(tmpDir, 'command-base.db');
+  const port = await pickFreePort();
+  const bootstrapToken = 'operator-bootstrap-token-for-test';
+
+  const { proc, stderr } = spawnCommandBaseServer(port, dbPath, tmpDir, {
+    COMMAND_BASE_AUTH_BOOTSTRAP_TOKEN: bootstrapToken,
+  });
+  t.after(() => {
+    return stopCommandBaseServer(proc).finally(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+  });
+
+  let exitCode;
+  proc.once('exit', (code) => {
+    exitCode = code;
+  });
+
+  const baseUrl = `http://127.0.0.1:${port}`;
+  await waitForHttpReady(`${baseUrl}/health`);
+
+  const statusRes = await fetch(`${baseUrl}/api/auth/status`, {
+    headers: {
+      'X-Forwarded-For': '203.0.113.42',
+      'X-Command-Base-Bootstrap-Token': bootstrapToken,
+    },
+  });
+  assert.equal(statusRes.status, 200, 'operator bootstrap token should allow remote bootstrap');
+
+  const payload = await statusRes.json();
+  assert.equal(payload.authenticated, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, 'key'), false, 'operator bootstrap must not return API key');
+  assert.match(statusRes.headers.get('set-cookie') || '', /cb_auth=/, 'operator bootstrap should set cb_auth cookie');
+
   if (exitCode !== undefined) {
     assert.equal(exitCode, 0, `server exited unexpectedly; stderr: ${stderr.join('')}`);
   }
