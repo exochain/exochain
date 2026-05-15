@@ -98,6 +98,15 @@ pub fn load_or_create(data_dir: &Path) -> anyhow::Result<NodeIdentity> {
 
         let did_str = std::fs::read_to_string(&did_path)?;
         let did = Did::new(did_str.trim())?;
+        let derived_did = did_from_public_key(keypair.public_key())?;
+        if did != derived_did {
+            anyhow::bail!(
+                "identity.did does not match identity.key public key at {}; stored {}, derived {}",
+                did_path.display(),
+                did,
+                derived_did
+            );
+        }
 
         tracing::info!(did = %did, "Loaded existing identity");
 
@@ -233,6 +242,27 @@ mod tests {
 
         assert_eq!(first.did, second.did);
         assert_eq!(first.public_key_bytes(), second.public_key_bytes());
+    }
+
+    #[test]
+    fn load_or_create_rejects_identity_did_not_bound_to_secret_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = load_or_create(dir.path()).unwrap();
+        std::fs::write(dir.path().join("identity.did"), b"did:exo:forged-validator").unwrap();
+
+        let err = match load_or_create(dir.path()) {
+            Ok(identity) => panic!(
+                "identity.did must not load when it does not derive from identity.key: loaded {} for original {}",
+                identity.did, first.did
+            ),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("identity.did does not match identity.key"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
