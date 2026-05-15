@@ -66,6 +66,7 @@ SPDX-License-Identifier: Apache-2.0
 ## Reference
 
 - [[CRATE-REFERENCE]] — API reference for the workspace crates (types, traits, functions, invariants).
+- [HeartField.ai](heartfield/README.md) — Adjacent movement surface for uplifting self-governance and its kinship map.
 - [HonorGood Compact](honorgood/HONOR_GOOD_COMPACT.md) — EXOCHAIN-native provenance and conditional participation primitives.
 - [Mission Economics](economy/MISSION_ECONOMICS.md) — Mission, receipt, ruleset, and settlement accounting model.
 
