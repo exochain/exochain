@@ -830,11 +830,29 @@ pub fn wasm_is_due_process_expired(action_json: &str, now_ms: u64) -> Result<boo
 
 // ── Forum Authority ──────────────────────────────────────────────
 
-/// Verify the integrity and authenticity of a ForumAuthority object.
+/// Legacy ForumAuthority verifier.
+///
+/// This export fails closed because authenticity requires a trusted root
+/// public key supplied from the caller's trust boundary. Use
+/// `wasm_verify_forum_authority_with_key` for cryptographic verification.
 #[wasm_bindgen]
 pub fn wasm_verify_forum_authority(authority_json: &str) -> Result<JsValue, JsValue> {
     let authority: decision_forum::authority::ForumAuthority = from_json_str(authority_json)?;
     match decision_forum::authority::verify_forum_authority(&authority) {
+        Ok(()) => to_js_value(&serde_json::json!({"ok": true})),
+        Err(e) => to_js_value(&serde_json::json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
+/// Verify the integrity and authenticity of a ForumAuthority object.
+#[wasm_bindgen]
+pub fn wasm_verify_forum_authority_with_key(
+    authority_json: &str,
+    root_public_key_hex: &str,
+) -> Result<JsValue, JsValue> {
+    let authority: decision_forum::authority::ForumAuthority = from_json_str(authority_json)?;
+    let root_public_key = parse_public_key_hex(root_public_key_hex)?;
+    match decision_forum::authority::verify_forum_authority_with_key(&authority, &root_public_key) {
         Ok(()) => to_js_value(&serde_json::json!({"ok": true})),
         Err(e) => to_js_value(&serde_json::json!({"ok": false, "error": e.to_string()})),
     }
@@ -852,6 +870,14 @@ fn parse_hash(value: &str, label: &str) -> Result<exo_core::Hash256, JsValue> {
         .try_into()
         .map_err(|_| JsValue::from_str(&format!("{label} must be 32 bytes")))?;
     Ok(exo_core::Hash256::from_bytes(arr))
+}
+
+fn parse_public_key_hex(public_key_hex: &str) -> Result<exo_core::PublicKey, JsValue> {
+    let bytes = hex::decode(public_key_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| JsValue::from_str("public key must be 32 bytes"))?;
+    Ok(exo_core::PublicKey::from_bytes(arr))
 }
 
 fn parse_signature_pairs(
@@ -888,12 +914,7 @@ fn parse_public_key_pairs(
     for (did_str, public_key_hex) in &key_pairs {
         let did = exo_core::Did::new(did_str)
             .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
-        let bytes =
-            hex::decode(public_key_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
-        let arr: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| JsValue::from_str("public key must be 32 bytes"))?;
-        public_keys.insert(did, exo_core::PublicKey::from_bytes(arr));
+        public_keys.insert(did, parse_public_key_hex(public_key_hex)?);
     }
     Ok(public_keys)
 }
@@ -968,6 +989,24 @@ mod tests {
         assert!(
             err.to_string().contains("authority chain not verified"),
             "unexpected TNC rejection: {err}"
+        );
+    }
+
+    #[test]
+    fn forum_authority_wasm_verifier_requires_trusted_public_key() {
+        let source = include_str!("decision_forum_bindings.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+
+        assert!(
+            production.contains("wasm_verify_forum_authority_with_key"),
+            "WASM authority verification must expose a trusted-public-key verification path"
+        );
+        assert!(
+            production.contains("verify_forum_authority_with_key"),
+            "WASM authority verification must call the cryptographic core verifier"
         );
     }
 }

@@ -1826,6 +1826,23 @@ test('wasm_verify_forum_authority', () => {
   return wasm.wasm_verify_forum_authority(JSON.stringify(authority));
 });
 
+test('wasm_verify_forum_authority_with_key rejects untrusted signature', () => {
+  const authority = {
+    root_did: TEST_DID,
+    constitution_hash: EVIDENCE_32_BYTES,
+    rules: [{ name: 'TestRule', hash: EVIDENCE_32_BYTES }],
+    signature: ephResult.signature
+  };
+  const result = wasm.wasm_verify_forum_authority_with_key(
+    JSON.stringify(authority),
+    ephResult.public_key
+  );
+  if (result.ok !== false) {
+    throw new Error('forged forum authority signature must fail closed');
+  }
+  return result;
+});
+
 // =========================================================================
 // Module 21 — Challenge Lifecycle
 // =========================================================================

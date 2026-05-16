@@ -17,12 +17,18 @@
 //! Forum authority management.
 //!
 //! Verifies forum-level authority bindings: root DID, constitution hash,
-//! rules, and signature validation.
+//! rules, and cryptographic signature validation.
 
-use exo_core::types::{Did, Hash256, Signature};
+use exo_core::{
+    crypto,
+    hash::hash_structured,
+    types::{Did, Hash256, PublicKey, Signature},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ForumError, Result};
+
+const FORUM_AUTHORITY_SIGNATURE_DOMAIN: &str = "decision.forum.authority_signature.v1";
 
 /// A named rule within the forum authority.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,8 +46,15 @@ pub struct ForumAuthority {
     pub signature: Signature,
 }
 
-/// Verify that a forum authority binding is structurally valid.
-pub fn verify_forum_authority(authority: &ForumAuthority) -> Result<()> {
+#[derive(Debug, Clone, Serialize)]
+struct ForumAuthoritySignaturePayload<'a> {
+    domain: &'static str,
+    root_did: &'a Did,
+    constitution_hash: &'a Hash256,
+    rules: &'a [ForumRule],
+}
+
+fn verify_forum_authority_structure(authority: &ForumAuthority) -> Result<()> {
     if authority.signature.is_empty() {
         return Err(ForumError::AuthorityInvalid {
             reason: "empty signature".into(),
@@ -58,6 +71,46 @@ pub fn verify_forum_authority(authority: &ForumAuthority) -> Result<()> {
         });
     }
     Ok(())
+}
+
+/// Canonical message bytes to sign for a forum authority binding.
+pub fn forum_authority_signature_message(authority: &ForumAuthority) -> Result<Vec<u8>> {
+    let digest = hash_structured(&ForumAuthoritySignaturePayload {
+        domain: FORUM_AUTHORITY_SIGNATURE_DOMAIN,
+        root_did: &authority.root_did,
+        constitution_hash: &authority.constitution_hash,
+        rules: &authority.rules,
+    })?;
+    Ok(digest.as_ref().to_vec())
+}
+
+/// Verify a forum authority binding against a trusted root public key.
+///
+/// The caller must resolve `root_public_key` from a trusted registry for
+/// `authority.root_did`; the key must not come from untrusted authority JSON.
+pub fn verify_forum_authority_with_key(
+    authority: &ForumAuthority,
+    root_public_key: &PublicKey,
+) -> Result<()> {
+    verify_forum_authority_structure(authority)?;
+    let message = forum_authority_signature_message(authority)?;
+    if !crypto::verify(&message, &authority.signature, root_public_key) {
+        return Err(ForumError::AuthorityInvalid {
+            reason: "signature is not valid for trusted root public key".into(),
+        });
+    }
+    Ok(())
+}
+
+/// Fail-closed legacy verifier.
+///
+/// Authenticity cannot be established from a `ForumAuthority` object alone
+/// because the trusted root public key belongs to the caller's trust boundary,
+/// not to the untrusted authority payload.
+pub fn verify_forum_authority(_authority: &ForumAuthority) -> Result<()> {
+    Err(ForumError::AuthorityInvalid {
+        reason: "trusted root public key required for forum authority verification".into(),
+    })
 }
 
 #[cfg(test)]
@@ -85,30 +138,70 @@ mod tests {
         }
     }
 
+    fn signed_auth() -> (ForumAuthority, PublicKey) {
+        let (public_key, secret_key) = exo_core::crypto::generate_keypair();
+        let mut authority = auth();
+        authority.signature = Signature::Empty;
+        let message =
+            forum_authority_signature_message(&authority).expect("canonical authority payload");
+        authority.signature = exo_core::crypto::sign(&message, &secret_key);
+        (authority, public_key)
+    }
+
     #[test]
     fn valid_authority() {
-        verify_forum_authority(&auth()).expect("ok");
+        let (authority, public_key) = signed_auth();
+        verify_forum_authority_with_key(&authority, &public_key).expect("ok");
+    }
+
+    #[test]
+    fn verify_forum_authority_rejects_unverified_non_empty_signature() {
+        let err = verify_forum_authority(&auth()).unwrap_err();
+        assert!(
+            err.to_string().contains("public key"),
+            "ForumAuthority authenticity must not be accepted from a non-empty signature alone"
+        );
+    }
+
+    #[test]
+    fn verify_forum_authority_with_key_rejects_forged_non_empty_signature() {
+        let (public_key, _secret_key) = exo_core::crypto::generate_keypair();
+        let err = verify_forum_authority_with_key(&auth(), &public_key).unwrap_err();
+        assert!(
+            err.to_string().contains("signature"),
+            "ForumAuthority must verify the signature against a trusted root public key"
+        );
+    }
+
+    #[test]
+    fn forum_authority_signature_binds_rules() {
+        let (mut authority, public_key) = signed_auth();
+        authority.rules.push(ForumRule {
+            name: "r2".into(),
+            hash: Hash256::digest(b"r2"),
+        });
+        assert!(verify_forum_authority_with_key(&authority, &public_key).is_err());
     }
 
     #[test]
     fn empty_sig() {
-        let mut a = auth();
+        let (mut a, public_key) = signed_auth();
         a.signature = Signature::from_bytes([0u8; 64]);
-        assert!(verify_forum_authority(&a).is_err());
+        assert!(verify_forum_authority_with_key(&a, &public_key).is_err());
     }
 
     #[test]
     fn zero_hash() {
-        let mut a = auth();
+        let (mut a, public_key) = signed_auth();
         a.constitution_hash = Hash256::ZERO;
-        assert!(verify_forum_authority(&a).is_err());
+        assert!(verify_forum_authority_with_key(&a, &public_key).is_err());
     }
 
     #[test]
     fn no_rules() {
-        let mut a = auth();
+        let (mut a, public_key) = signed_auth();
         a.rules.clear();
-        assert!(verify_forum_authority(&a).is_err());
+        assert!(verify_forum_authority_with_key(&a, &public_key).is_err());
     }
 
     #[test]
