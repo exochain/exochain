@@ -53,6 +53,7 @@ use super::{
     },
     device_behavioral_axes_enabled,
     session_auth::{public_key_from_session_bytes, request_signing_payload, signature_from_hex},
+    session_clock::{SessionClock, SessionClockError, TRUSTED_SESSION_CLOCK_UNAVAILABLE},
     store::ZerodentityStore,
     types::{
         AttestationType, BehavioralSample, DeviceFingerprint, IdentityClaim, ZerodentityScore,
@@ -66,35 +67,41 @@ use super::{
 #[derive(Clone)]
 pub struct ApiState {
     pub store: Arc<Mutex<ZerodentityStore>>,
-    clock: Arc<Mutex<HybridClock>>,
+    session_clock: SessionClock,
 }
 
 impl ApiState {
     #[must_use]
     pub fn new(store: Arc<Mutex<ZerodentityStore>>) -> Self {
-        Self::new_with_clock(store, HybridClock::new())
+        Self {
+            store,
+            session_clock: SessionClock::unavailable(),
+        }
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new_with_clock(store: Arc<Mutex<ZerodentityStore>>, clock: HybridClock) -> Self {
         Self {
             store,
-            clock: Arc::new(Mutex::new(clock)),
+            session_clock: SessionClock::trusted(clock),
         }
     }
 
     fn now_ms(&self) -> ApiResult<u64> {
-        let mut clock = self
-            .clock
-            .lock()
-            .map_err(|_| json_error(StatusCode::INTERNAL_SERVER_ERROR, "Clock lock error"))?;
-        clock
-            .now()
-            .map(|timestamp| timestamp.physical_ms)
-            .map_err(|err| {
+        self.session_clock.now_ms().map_err(|err| match err {
+            SessionClockError::Unavailable => json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                TRUSTED_SESSION_CLOCK_UNAVAILABLE,
+            ),
+            SessionClockError::LockPoisoned => {
+                json_error(StatusCode::INTERNAL_SERVER_ERROR, "Clock lock error")
+            }
+            SessionClockError::Exhausted(err) => {
                 tracing::error!(error = %err, "0dentity API HLC exhausted");
                 json_error(StatusCode::INTERNAL_SERVER_ERROR, "Clock exhausted")
-            })
+            }
+        })
     }
 }
 
@@ -1236,6 +1243,66 @@ mod tests {
         assert!(
             !handlers.contains("verify_signed_write("),
             "0dentity async handlers must use the blocking signed-write verifier"
+        );
+    }
+
+    #[test]
+    fn production_api_state_does_not_install_deterministic_session_clock() {
+        let source = include_str!("api.rs");
+        let constructor = source
+            .split("pub fn new(store: Arc<Mutex<ZerodentityStore>>) -> Self")
+            .nth(1)
+            .and_then(|section| section.split("pub fn new_with_clock").next())
+            .expect("ApiState::new constructor present");
+
+        assert!(!constructor.contains("HybridClock::new()"));
+        assert!(constructor.contains("SessionClock::unavailable()"));
+    }
+
+    #[tokio::test]
+    async fn production_api_state_fails_closed_without_trusted_session_clock() {
+        let mut store = test_store();
+        let did = Did::new("did:exo:prod-clock").unwrap();
+        let session = IdentitySession {
+            session_token: "tok-prod-clock".to_owned(),
+            subject_did: did.clone(),
+            public_key: vec![],
+            created_ms: 1_000_000,
+            last_active_ms: 1_000_000,
+            revoked: false,
+        };
+        store.insert_session(&session).unwrap();
+        let claim = IdentityClaim {
+            claim_hash: Hash256::digest(b"prod-clock-claim"),
+            subject_did: did,
+            claim_type: ClaimType::Email,
+            status: ClaimStatus::Verified,
+            created_ms: 1_000_000,
+            verified_ms: Some(1_000_000),
+            expires_ms: None,
+            signature: Signature::Empty,
+            dag_node_hash: Hash256::digest(b"prod-clock-dag-node"),
+        };
+        store.insert_claim("claim-prod-clock", &claim).unwrap();
+
+        let app = zerodentity_api_router(ApiState::new(Arc::new(Mutex::new(store))));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/0dentity/did:exo:prod-clock/claims")
+                    .header("authorization", "Bearer tok-prod-clock")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body_json["error"],
+            "Trusted 0dentity session clock unavailable"
         );
     }
 

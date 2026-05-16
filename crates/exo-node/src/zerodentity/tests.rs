@@ -298,7 +298,7 @@ mod tests {
     }
 
     fn onboarding_app(store: SharedZerodentityStore) -> Router {
-        onboarding_router(OnboardingState::new(store))
+        onboarding_app_with_fixed_clock(store, API_TEST_NOW_MS)
     }
 
     fn onboarding_app_with_fixed_clock(store: SharedZerodentityStore, now_ms: u64) -> Router {

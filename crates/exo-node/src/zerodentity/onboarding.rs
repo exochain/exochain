@@ -51,6 +51,7 @@ use super::{
         bootstrap_signing_payload, did_from_public_key, public_key_from_hex,
         session_token_from_bootstrap, signature_from_hex,
     },
+    session_clock::{SessionClock, SessionClockError, TRUSTED_SESSION_CLOCK_UNAVAILABLE},
     store::ZerodentityStore,
     types::{ClaimType, IdentitySession, OtpChallenge, OtpState, ZerodentityScore},
 };
@@ -69,35 +70,41 @@ type OnboardingResult<T> = Result<T, OnboardingError>;
 #[derive(Clone)]
 pub struct OnboardingState {
     pub store: Arc<Mutex<ZerodentityStore>>,
-    clock: Arc<Mutex<HybridClock>>,
+    session_clock: SessionClock,
 }
 
 impl OnboardingState {
     #[must_use]
     pub fn new(store: Arc<Mutex<ZerodentityStore>>) -> Self {
-        Self::new_with_clock(store, HybridClock::new())
+        Self {
+            store,
+            session_clock: SessionClock::unavailable(),
+        }
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new_with_clock(store: Arc<Mutex<ZerodentityStore>>, clock: HybridClock) -> Self {
         Self {
             store,
-            clock: Arc::new(Mutex::new(clock)),
+            session_clock: SessionClock::trusted(clock),
         }
     }
 
     fn now_ms(&self) -> Result<u64, (StatusCode, Json<serde_json::Value>)> {
-        let mut clock = self
-            .clock
-            .lock()
-            .map_err(|_| json_error(StatusCode::INTERNAL_SERVER_ERROR, "Clock lock error"))?;
-        clock
-            .now()
-            .map(|timestamp| timestamp.physical_ms)
-            .map_err(|err| {
+        self.session_clock.now_ms().map_err(|err| match err {
+            SessionClockError::Unavailable => json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                TRUSTED_SESSION_CLOCK_UNAVAILABLE,
+            ),
+            SessionClockError::LockPoisoned => {
+                json_error(StatusCode::INTERNAL_SERVER_ERROR, "Clock lock error")
+            }
+            SessionClockError::Exhausted(err) => {
                 tracing::error!(error = %err, "0dentity onboarding HLC exhausted");
                 json_error(StatusCode::INTERNAL_SERVER_ERROR, "Clock exhausted")
-            })
+            }
+        })
     }
 }
 
@@ -841,6 +848,30 @@ mod tests {
             !handlers.contains("state.store.lock()"),
             "0dentity onboarding async handlers must route store locks through blocking helpers"
         );
+    }
+
+    #[test]
+    fn production_onboarding_state_fails_closed_without_trusted_session_clock() {
+        let state = OnboardingState::new(Arc::new(Mutex::new(ZerodentityStore::new())));
+        let err = state
+            .now_ms()
+            .expect_err("production onboarding state must require a trusted session clock");
+
+        assert_eq!(err.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(err.1["error"], "Trusted 0dentity session clock unavailable");
+    }
+
+    #[test]
+    fn production_onboarding_state_does_not_install_deterministic_session_clock() {
+        let source = include_str!("onboarding.rs");
+        let constructor = source
+            .split("pub fn new(store: Arc<Mutex<ZerodentityStore>>) -> Self")
+            .nth(1)
+            .and_then(|section| section.split("pub fn new_with_clock").next())
+            .expect("OnboardingState::new constructor present");
+
+        assert!(!constructor.contains("HybridClock::new()"));
+        assert!(constructor.contains("SessionClock::unavailable()"));
     }
 
     #[test]

@@ -47,6 +47,7 @@
 pub mod otp;
 pub mod scoring;
 pub(crate) mod session_auth;
+pub(crate) mod session_clock;
 pub mod store;
 pub mod types;
 
