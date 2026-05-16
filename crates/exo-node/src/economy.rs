@@ -1077,6 +1077,30 @@ async fn handle_post_automated_settlement_event(
         "bailment wrapper",
     )
     .await?;
+    let acceptance: ContributionAcceptance = require_economy_object(
+        Arc::clone(&state),
+        EconomyObjectKind::ContributionAcceptance,
+        wrapper.acceptance_id,
+        |store, value| store.get_contribution_acceptance(value),
+        "contribution acceptance",
+    )
+    .await?;
+    if adoption.acceptance_id != acceptance.acceptance_id
+        || wrapper.acceptance_id != acceptance.acceptance_id
+    {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "automated settlement authority acceptance does not match adoption or wrapper".into(),
+        ));
+    }
+    acceptance.validate().map_err(map_economy_error)?;
+    if payload.automation_authority_ref != acceptance.authority_envelope {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "automated settlement authority must match stored contribution acceptance authority envelope"
+                .into(),
+        ));
+    }
     let object = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
         value_event: &value_event,
         use_event: &use_event,
@@ -1084,7 +1108,7 @@ async fn handle_post_automated_settlement_event(
         adoption: &adoption,
         ruleset: &ruleset,
         wrapper: &wrapper,
-        automation_authority_ref: payload.automation_authority_ref,
+        automation_authority_ref: acceptance.authority_envelope.clone(),
         preapproved_terms_hash: payload.preapproved_terms_hash,
         basis_amounts: &payload.basis_amounts,
         zero_fee_reason: payload.zero_fee_reason,
@@ -1575,6 +1599,90 @@ mod tests {
         }
         .anchor()
         .unwrap()
+    }
+
+    struct AutomatedSettlementPrereqs {
+        node: ValueContributionNode,
+        authority_ref: AuthorityEnvelopeRef,
+        value_event: ValueEvent,
+    }
+
+    async fn seed_automated_settlement_prereqs(app: &Router) -> AutomatedSettlementPrereqs {
+        let ruleset = apex_velocity_catalyst_client_services_ruleset().unwrap();
+        let _: EconomyObjectResponse<HonorGoodRuleset> =
+            post_object(app, "/api/v1/economy/rulesets", &ruleset).await;
+
+        let mission = apex_velocity_catalyst_client_services_mission(Some(1_000_000)).unwrap();
+        let _: EconomyObjectResponse<Mission> =
+            post_object(app, "/api/v1/economy/missions", &mission).await;
+
+        let node = value_contribution_node(&ruleset);
+        let _: EconomyObjectResponse<ValueContributionNode> =
+            post_object(app, "/api/v1/economy/contribution-nodes", &node).await;
+
+        let terms = bailment_terms(&node);
+        let _: EconomyObjectResponse<BailmentTerms> =
+            post_object(app, "/api/v1/economy/bailment-terms", &terms).await;
+
+        let offer = contribution_offer(&node, &terms, &ruleset);
+        let _: EconomyObjectResponse<ContributionOffer> =
+            post_object(app, "/api/v1/economy/contribution-offers", &offer).await;
+
+        let authority_ref = authority("principal");
+        let acceptance = contribution_acceptance(&offer, authority_ref.clone());
+        let _: EconomyObjectResponse<ContributionAcceptance> =
+            post_object(app, "/api/v1/economy/contribution-acceptances", &acceptance).await;
+
+        let wrapper = bailment_wrapper(&node, &offer, &acceptance, &terms, &ruleset);
+        let _: EconomyObjectResponse<BailmentWrapper> =
+            post_object(app, "/api/v1/economy/bailment-wrappers", &wrapper).await;
+
+        let adoption = adoption_event(&node, &offer, &acceptance, &wrapper, &mission);
+        let _: EconomyObjectResponse<AdoptionEvent> =
+            post_object(app, "/api/v1/economy/adoption-events", &adoption).await;
+
+        let use_event = use_event(&node, &adoption);
+        let _: EconomyObjectResponse<UseEvent> =
+            post_object(app, "/api/v1/economy/use-events", &use_event).await;
+
+        let value_event = value_event(&node, &use_event);
+        let _: EconomyObjectResponse<ValueEvent> =
+            post_object(app, "/api/v1/economy/value-events", &value_event).await;
+
+        AutomatedSettlementPrereqs {
+            node,
+            authority_ref,
+            value_event,
+        }
+    }
+
+    fn automated_settlement_request(
+        value_event_id: Hash256,
+        automation_authority_ref: AuthorityEnvelopeRef,
+        preapproved_terms_hash: Hash256,
+    ) -> AutomatedSettlementRequest {
+        let mut basis_amounts = BTreeMap::new();
+        basis_amounts.insert(SettlementBasis::NetRevenue, 0);
+        AutomatedSettlementRequest {
+            value_event_id,
+            automation_authority_ref,
+            preapproved_terms_hash,
+            basis_amounts,
+            zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
+            preconditions: AutomatedSettlementPreconditions {
+                accepted_offer_exists: true,
+                valid_acceptance_exists: true,
+                valid_bailment_wrapper_exists: true,
+                authority_valid: true,
+                ruleset_hash_matches: true,
+                value_event_valid: true,
+                dispute_active: false,
+                revocation_active: false,
+                materiality_disputed: false,
+                legal_effect: LegalEffect::AcceptedTerms,
+            },
+            created_at_hlc: Timestamp::new(30_800, 0),
+        }
     }
 
     #[tokio::test]
@@ -2135,6 +2243,31 @@ mod tests {
         )
         .await;
         assert_eq!(direct_anchor, latest_anchor);
+    }
+
+    #[tokio::test]
+    async fn automated_settlement_rejects_request_authority_not_bound_to_stored_acceptance() {
+        let state = fresh_state();
+        let app = economy_router(Arc::clone(&state));
+        let prereqs = seed_automated_settlement_prereqs(&app).await;
+        let mut forged_authority = prereqs.authority_ref.clone();
+        forged_authority.envelope_id = h(0xA9);
+        forged_authority.authority_proof_hash = h(0xAA);
+        forged_authority.principal_ref = participant("forged-principal");
+
+        let response = post_json(
+            &app,
+            "/api/v1/economy/automated-settlements",
+            &automated_settlement_request(
+                prereqs.value_event.value_event_id,
+                forged_authority,
+                prereqs.node.honor_good_terms_hash,
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = String::from_utf8(read_body(response).await).unwrap();
+        assert!(body.contains("authority"));
     }
 
     #[tokio::test]

@@ -425,6 +425,14 @@ pub struct AutomatedSettlementInputs<'a> {
 impl AutomatedSettlementEvent {
     pub fn from_inputs(input: AutomatedSettlementInputs<'_>) -> Result<Self, EconomyError> {
         input.preconditions.validate()?;
+        input.automation_authority_ref.validate()?;
+        if input.automation_authority_ref.authority_proof_hash
+            != input.adoption.authority_proof_hash
+        {
+            return Err(EconomyError::HashMismatch {
+                field: "automated_settlement.authority_proof_hash",
+            });
+        }
         input.use_event.validate_against_adoption(input.adoption)?;
         input
             .value_event
@@ -997,6 +1005,30 @@ mod tests {
         .unwrap();
         assert!(!event.human_approval_required);
         assert_ne!(event.automated_settlement_id, Hash256::ZERO);
+    }
+
+    #[test]
+    fn automated_settlement_rejects_authority_proof_not_bound_to_adoption() {
+        let (ruleset, node, adoption, use_event, wrapper, value_event) =
+            coherent_settlement_objects();
+        let mut forged_authority = authority("adopter-principal");
+        forged_authority.authority_proof_hash = h(0xA7);
+        let err = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
+            value_event: &value_event,
+            use_event: &use_event,
+            contribution_node: &node,
+            adoption: &adoption,
+            ruleset: &ruleset,
+            wrapper: &wrapper,
+            automation_authority_ref: forged_authority,
+            preapproved_terms_hash: node.honor_good_terms_hash,
+            basis_amounts: &basis_amounts(),
+            zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
+            preconditions: settlement_preconditions(),
+            created_at_hlc: ts(3_100),
+        })
+        .unwrap_err();
+        assert!(matches!(err, EconomyError::HashMismatch { .. }));
     }
 
     #[test]
