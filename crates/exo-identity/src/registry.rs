@@ -21,6 +21,7 @@ use serde::Serialize;
 
 use crate::{
     did::{DidDocument, DidRegistrationProof, RevocationProof, did_from_public_key},
+    did_verification::validate_verification_method_document_binding,
     error::IdentityError,
 };
 
@@ -484,6 +485,15 @@ fn validate_registered_did_document(doc: &DidDocument) -> Result<(), IdentityErr
             method.active,
             method.revoked_at,
         )?;
+        if method.active {
+            validate_verification_method_document_binding(doc, method).map_err(|e| {
+                IdentityError::InvalidDidDocumentField {
+                    did: did.to_owned(),
+                    field: "verification_methods".to_owned(),
+                    reason: e.to_string(),
+                }
+            })?;
+        }
     }
     for method in &doc.hybrid_verification_methods {
         ensure_byte_bound(
@@ -977,6 +987,28 @@ mod tests {
             err,
             IdentityError::InvalidRegistrationProof { .. }
         ));
+        assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn register_with_proof_rejects_active_method_not_bound_to_declared_key() {
+        let (document_pk, document_sk) = generate_keypair();
+        let (method_pk, _) = generate_keypair();
+        let did = did_from_public_key(&document_pk).expect("canonical DID");
+        let mut doc = make_doc(did, document_pk);
+        doc.verification_methods
+            .push(verification_method(&doc.id, method_pk, 1));
+        let proof = registration_proof(&doc, document_pk, &document_sk);
+
+        let mut reg = LocalDidRegistry::new();
+        let err = reg
+            .register_with_proof(doc, &proof)
+            .expect_err("active verification methods must be bound to declared document keys");
+
+        assert!(
+            err.to_string().contains("verification_methods"),
+            "error should identify verification method binding failure: {err}"
+        );
         assert_eq!(reg.len(), 0);
     }
 

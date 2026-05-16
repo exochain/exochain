@@ -28,6 +28,8 @@ use exo_core::{Did, PublicKey, crypto};
 
 use crate::did::{DidDocument, VerificationMethod};
 
+const ED25519_VERIFICATION_KEY_TYPE: &str = "Ed25519VerificationKey2020";
+
 /// Errors specific to DID verification operations.
 #[derive(Debug, thiserror::Error)]
 pub enum DidVerificationError {
@@ -39,6 +41,11 @@ pub enum DidVerificationError {
     #[error("verification method revoked: {0}")]
     MethodRevoked(String),
 
+    /// Verification method is not controlled by, rooted in, or key-bound to
+    /// the DID document that presents it.
+    #[error("verification method not bound to DID document: {0}")]
+    MethodNotDocumentBound(String),
+
     /// Cryptographic operation failed (e.g., invalid multibase encoding,
     /// wrong key length, unsupported multibase prefix).
     #[error("cryptographic error: {0}")]
@@ -47,6 +54,81 @@ pub enum DidVerificationError {
     /// Signature verification failed.
     #[error("invalid signature")]
     InvalidSignature,
+}
+
+fn decode_ed25519_multibase_public_key(encoded: &str) -> Result<PublicKey, DidVerificationError> {
+    let pub_key_bytes = if let Some(encoded_key) = encoded.strip_prefix('z') {
+        bs58::decode(encoded_key)
+            .into_vec()
+            .map_err(|e| DidVerificationError::CryptoError(format!("base58 decode: {e}")))?
+    } else {
+        return Err(DidVerificationError::CryptoError(
+            "unsupported multibase prefix (expected 'z' for base58btc)".to_string(),
+        ));
+    };
+
+    let pub_key_array: [u8; 32] = pub_key_bytes.try_into().map_err(|_| {
+        DidVerificationError::CryptoError("public key must be 32 bytes".to_string())
+    })?;
+
+    Ok(PublicKey::from_bytes(pub_key_array))
+}
+
+/// Validate that an active Ed25519 DID verification method is controlled by
+/// the document DID, rooted at the document fragment namespace, and backed by
+/// key material declared in the document's `public_keys`.
+///
+/// This prevents a registered DID document from proving possession of one
+/// public key while presenting a different active authentication key.
+pub fn validate_verification_method_document_binding(
+    doc: &DidDocument,
+    method: &VerificationMethod,
+) -> Result<PublicKey, DidVerificationError> {
+    if doc.revoked {
+        return Err(DidVerificationError::MethodRevoked(
+            doc.id.as_str().to_owned(),
+        ));
+    }
+
+    if !method.active || method.revoked_at.is_some() {
+        return Err(DidVerificationError::MethodRevoked(method.id.clone()));
+    }
+
+    if method.key_type != ED25519_VERIFICATION_KEY_TYPE {
+        return Err(DidVerificationError::MethodNotDocumentBound(format!(
+            "{} has unsupported key type {}",
+            method.id, method.key_type
+        )));
+    }
+
+    if method.controller != doc.id {
+        return Err(DidVerificationError::MethodNotDocumentBound(format!(
+            "{} controller {} does not match document DID {}",
+            method.id, method.controller, doc.id
+        )));
+    }
+
+    let document_fragment_prefix = format!("{}#", doc.id);
+    if !method.id.starts_with(&document_fragment_prefix) {
+        return Err(DidVerificationError::MethodNotDocumentBound(format!(
+            "{} is not rooted under document DID {}",
+            method.id, doc.id
+        )));
+    }
+
+    let public_key = decode_ed25519_multibase_public_key(&method.public_key_multibase)?;
+    if !doc
+        .public_keys
+        .iter()
+        .any(|declared| declared == &public_key)
+    {
+        return Err(DidVerificationError::MethodNotDocumentBound(format!(
+            "{} key is not declared in the DID document public_keys",
+            method.id
+        )));
+    }
+
+    Ok(public_key)
 }
 
 /// Abstract key vault interface for secure key storage.
@@ -91,26 +173,7 @@ pub fn verify_did_signature(
         .find(|m| m.id == key_id)
         .ok_or_else(|| DidVerificationError::MethodNotFound(key_id.to_string()))?;
 
-    if !method.active {
-        return Err(DidVerificationError::MethodRevoked(key_id.to_string()));
-    }
-
-    // Decode multibase base58btc public key (prefix 'z')
-    let pub_key_bytes = if let Some(encoded_key) = method.public_key_multibase.strip_prefix('z') {
-        bs58::decode(encoded_key)
-            .into_vec()
-            .map_err(|e| DidVerificationError::CryptoError(format!("base58 decode: {e}")))?
-    } else {
-        return Err(DidVerificationError::CryptoError(
-            "unsupported multibase prefix (expected 'z' for base58btc)".to_string(),
-        ));
-    };
-
-    let pub_key_array: [u8; 32] = pub_key_bytes.try_into().map_err(|_| {
-        DidVerificationError::CryptoError("public key must be 32 bytes".to_string())
-    })?;
-
-    let public_key = PublicKey::from_bytes(pub_key_array);
+    let public_key = validate_verification_method_document_binding(doc, method)?;
 
     if crypto::verify(message, signature, &public_key) {
         Ok(())
@@ -176,6 +239,8 @@ pub fn rotate_verification_key(
         revoked_at: None,
     };
 
+    doc.public_keys.clear();
+    doc.public_keys.push(PublicKey::from_bytes(*new_public_key));
     doc.verification_methods.push(new_method.clone());
     doc.updated = exo_core::Timestamp::new(current_time_ms, 0);
 
@@ -283,6 +348,26 @@ mod tests {
     }
 
     #[test]
+    fn verify_rejects_method_key_not_declared_by_document() {
+        let (declared_pk, _) = generate_keypair();
+        let (method_pk, method_sk) = generate_keypair();
+        let did = test_did();
+        let mut doc = make_doc_with_verification(did.clone(), declared_pk);
+        doc.verification_methods[0].public_key_multibase =
+            format!("z{}", bs58::encode(method_pk.as_bytes()).into_string());
+
+        let message = b"method key must be document-bound";
+        let signature = sign(message, &method_sk);
+        let key_id = format!("{}#key-1", did);
+
+        let err = verify_did_signature(&doc, &key_id, message, &signature).unwrap_err();
+        assert!(
+            err.to_string().contains("not declared"),
+            "verification should reject active methods whose keys are not declared by the DID document: {err}"
+        );
+    }
+
+    #[test]
     fn verify_bad_multibase_prefix_fails() {
         let (pk, sk) = generate_keypair();
         let did = test_did();
@@ -323,6 +408,7 @@ mod tests {
         // New key active
         assert_eq!(new_method.version, 2);
         assert!(new_method.active);
+        assert_eq!(doc.public_keys, vec![new_pk]);
         assert_eq!(doc.verification_methods.len(), 2);
         assert_eq!(doc.updated.physical_ms, 2000);
     }

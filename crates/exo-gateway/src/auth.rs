@@ -514,7 +514,7 @@ mod tests {
     use exo_core::crypto::{generate_keypair, sign};
     use exo_identity::{
         did::{DidDocument, VerificationMethod},
-        registry::LocalDidRegistry,
+        registry::{DidRegistry, LocalDidRegistry},
     };
 
     use super::*;
@@ -561,6 +561,46 @@ mod tests {
         let mut reg = LocalDidRegistry::new();
         reg.register(doc).unwrap();
         (reg, sk)
+    }
+
+    struct StaticDidRegistry {
+        did: Did,
+        doc: DidDocument,
+    }
+
+    impl DidRegistry for StaticDidRegistry {
+        fn register(
+            &mut self,
+            _doc: DidDocument,
+        ) -> std::result::Result<(), exo_identity::error::IdentityError> {
+            unreachable!("auth tests resolve only")
+        }
+
+        fn resolve(&self, did: &Did) -> Option<&DidDocument> {
+            if did == &self.did {
+                Some(&self.doc)
+            } else {
+                None
+            }
+        }
+
+        fn revoke(
+            &mut self,
+            _did: &Did,
+            _proof: &exo_identity::did::RevocationProof,
+        ) -> std::result::Result<(), exo_identity::error::IdentityError> {
+            unreachable!("auth tests resolve only")
+        }
+
+        fn rotate_key(
+            &mut self,
+            _did: &Did,
+            _new_key: &exo_core::PublicKey,
+            _proof: &Signature,
+            _updated: Timestamp,
+        ) -> std::result::Result<(), exo_identity::error::IdentityError> {
+            unreachable!("auth tests resolve only")
+        }
     }
 
     fn signed_request(mut request: Request, secret_key: &exo_core::SecretKey) -> Request {
@@ -725,6 +765,54 @@ mod tests {
         };
 
         assert!(authenticate(&request, &reg, auth_metadata()).is_err());
+    }
+
+    #[test]
+    fn auth_rejects_active_method_not_bound_to_document_key() {
+        let did = Did::new("did:exo:alice").unwrap();
+        let (declared_pk, _) = generate_keypair();
+        let (method_pk, method_sk) = generate_keypair();
+        let method_multibase = format!("z{}", bs58::encode(method_pk.as_bytes()).into_string());
+        let doc = DidDocument {
+            id: did.clone(),
+            public_keys: vec![declared_pk],
+            authentication: vec![],
+            verification_methods: vec![VerificationMethod {
+                id: "did:exo:alice#key-1".into(),
+                key_type: "Ed25519VerificationKey2020".into(),
+                controller: did.clone(),
+                public_key_multibase: method_multibase,
+                version: 1,
+                active: true,
+                valid_from: 0,
+                revoked_at: None,
+            }],
+            hybrid_verification_methods: vec![],
+            service_endpoints: vec![],
+            created: Timestamp::ZERO,
+            updated: Timestamp::ZERO,
+            revoked: false,
+        };
+        let reg = StaticDidRegistry {
+            did: did.clone(),
+            doc,
+        };
+        let request = signed_request(
+            Request {
+                actor_did: did.as_str().to_owned(),
+                action: "read".into(),
+                body_hash: Hash256::digest(b"body"),
+                signature: Signature::Empty,
+                timestamp: req_ts(),
+            },
+            &method_sk,
+        );
+
+        let err = authenticate(&request, &reg, auth_metadata()).unwrap_err();
+        assert!(
+            err.to_string().contains("not declared"),
+            "auth must fail closed when a custom registry returns an unbound active method: {err}"
+        );
     }
 
     #[test]

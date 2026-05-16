@@ -43,6 +43,8 @@ use exo_gatekeeper::{
     },
 };
 use exo_governance::conflict::ConflictDeclaration;
+#[cfg(feature = "production-db")]
+use exo_identity::did_verification::validate_verification_method_document_binding;
 use exo_identity::{
     did::{DidDocument, DidRegistrationProof},
     error::IdentityError,
@@ -1878,34 +1880,16 @@ fn effective_authority_permissions(
 fn active_did_document_ed25519_keys(doc: &DidDocument, key_context: &str) -> Result<Vec<Vec<u8>>> {
     let mut keys = Vec::new();
     for method in &doc.verification_methods {
-        if !method.active
-            || method.controller != doc.id
-            || method.key_type != "Ed25519VerificationKey2020"
-        {
+        if !method.active {
             continue;
         }
-        let encoded = method
-            .public_key_multibase
-            .strip_prefix('z')
-            .ok_or_else(|| {
-                GatewayError::Internal(format!(
-                    "{key_context} DID document key '{}' uses unsupported multibase prefix",
-                    method.id,
-                ))
-            })?;
-        let key = bs58::decode(encoded).into_vec().map_err(|e| {
+        let key = validate_verification_method_document_binding(doc, method).map_err(|e| {
             GatewayError::Internal(format!(
-                "{key_context} DID document key '{}' is not valid base58btc: {e}",
+                "{key_context} DID document key '{}' is not trusted: {e}",
                 method.id,
             ))
         })?;
-        if key.len() != 32 {
-            return Err(GatewayError::Internal(format!(
-                "{key_context} DID document key '{}' is {} bytes, expected 32",
-                method.id,
-                key.len()
-            )));
-        }
+        let key = key.as_bytes().to_vec();
         if !keys.contains(&key) {
             keys.push(key);
         }
@@ -4883,6 +4867,25 @@ mod tests {
             updated: Timestamp::ZERO,
             revoked: false,
         }
+    }
+
+    #[cfg(feature = "production-db")]
+    #[test]
+    fn active_did_document_ed25519_keys_rejects_unbound_active_method() {
+        let did = Did::new("did:exo:db-trust-actor").unwrap();
+        let (declared_pk, _) = generate_keypair();
+        let (method_pk, _) = generate_keypair();
+        let mut doc = did_document_with_ed25519_key(&did, &declared_pk);
+        doc.verification_methods[0].public_key_multibase =
+            format!("z{}", bs58::encode(method_pk.as_bytes()).into_string());
+
+        let err = active_did_document_ed25519_keys(&doc, "test trust key")
+            .expect_err("DB trust-key extraction must reject unbound active methods");
+
+        assert!(
+            err.to_string().contains("not declared"),
+            "error should identify the unbound active method: {err}"
+        );
     }
 
     fn signing_registry() -> (Arc<RwLock<LocalDidRegistry>>, exo_core::SecretKey) {
