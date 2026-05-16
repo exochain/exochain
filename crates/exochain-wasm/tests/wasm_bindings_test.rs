@@ -35,12 +35,22 @@ wasm_bindgen_test_configure!(run_in_node_experimental);
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn js_to_json(val: JsValue) -> serde_json::Value {
-    let s = val.as_string().expect("JsValue should be a JSON string");
+    let s = val.as_string().unwrap_or_else(|| {
+        js_sys::JSON::stringify(&val)
+            .expect("JsValue should stringify")
+            .as_string()
+            .expect("stringified JsValue should be a string")
+    });
     serde_json::from_str(&s).expect("JsValue string should be valid JSON")
 }
 
 fn js_str(val: JsValue) -> String {
-    val.as_string().expect("expected string JsValue")
+    val.as_string().unwrap_or_else(|| {
+        js_sys::JSON::stringify(&val)
+            .expect("JsValue should stringify")
+            .as_string()
+            .expect("stringified JsValue should be a string")
+    })
 }
 
 const TEST_TS_JSON: &str = r#"{"physical_ms":1700000000000,"logical":0}"#;
@@ -89,7 +99,8 @@ fn test_merkle_proof_and_verify() {
     let root = exochain_wasm::wasm_merkle_root(&leaves_json).expect("root");
 
     for index in 0..4usize {
-        let proof_json = exochain_wasm::wasm_merkle_proof(&leaves_json, index).expect("proof");
+        let proof_json =
+            js_str(exochain_wasm::wasm_merkle_proof(&leaves_json, index).expect("proof"));
 
         let valid =
             exochain_wasm::wasm_verify_merkle_proof(&root, &leaves[index], &proof_json, index)
@@ -154,10 +165,15 @@ fn test_verify_rejects_wrong_key() {
 // ── Core: Events ──────────────────────────────────────────────────────────────
 
 #[wasm_bindgen_test]
-fn test_compute_event_id_is_unique() {
-    let id1 = exochain_wasm::wasm_compute_event_id();
-    let id2 = exochain_wasm::wasm_compute_event_id();
-    assert_ne!(id1, id2, "correlation IDs must be unique");
+fn test_compute_event_id_is_deterministic_for_caller_seed() {
+    let id1 = exochain_wasm::wasm_compute_event_id(b"event-seed-1").expect("event id");
+    let id2 = exochain_wasm::wasm_compute_event_id(b"event-seed-1").expect("event id");
+    let id3 = exochain_wasm::wasm_compute_event_id(b"event-seed-2").expect("event id");
+    assert_eq!(id1, id2, "same caller seed must produce the same event ID");
+    assert_ne!(
+        id1, id3,
+        "different caller seeds must produce distinct event IDs"
+    );
     assert!(!id1.is_empty());
 }
 
@@ -344,7 +360,7 @@ fn test_begin_due_process_transitions_status() {
 // ── Decision Forum: TNC ───────────────────────────────────────────────────────
 
 #[wasm_bindgen_test]
-fn test_enforce_all_tnc_passes_when_all_flags_set() {
+fn test_enforce_all_tnc_rejects_self_asserted_flags() {
     let hash_hex = "2".repeat(64);
     let decision_json = js_str(
         exochain_wasm::wasm_create_decision(
@@ -369,7 +385,13 @@ fn test_enforce_all_tnc_passes_when_all_flags_set() {
     let result =
         exochain_wasm::wasm_enforce_all_tnc(&decision_json, flags).expect("enforce_all_tnc");
     let json = js_to_json(result);
-    assert!(json["ok"].as_bool().unwrap());
+    assert!(!json["ok"].as_bool().unwrap());
+    assert!(
+        json["error"]
+            .as_str()
+            .expect("error string")
+            .contains("authority chain not verified")
+    );
 }
 
 #[wasm_bindgen_test]
@@ -395,15 +417,42 @@ fn test_collect_tnc_violations_when_flags_clear() {
 // ── Gatekeeper: Introspection ─────────────────────────────────────────────────
 
 #[wasm_bindgen_test]
-fn test_list_invariants_returns_8() {
-    let result = exochain_wasm::wasm_list_invariants().expect("list_invariants");
+fn test_enforce_invariants_returns_structured_result() {
+    let request = r#"{
+        "actor": "did:exo:test-actor",
+        "actor_roles": [],
+        "bailment_state": {
+            "Active": {
+                "bailor": "did:exo:bailor",
+                "bailee": "did:exo:test-actor",
+                "scope": "data"
+            }
+        },
+        "consent_records": [{
+            "subject": "did:exo:subject",
+            "granted_to": "did:exo:test-actor",
+            "scope": "data",
+            "active": true
+        }],
+        "authority_chain": { "links": [] }
+    }"#;
+    let result = exochain_wasm::wasm_enforce_invariants(request).expect("enforce_invariants");
     let json = js_to_json(result);
-    assert_eq!(json.as_array().unwrap().len(), 8);
+    assert!(
+        json.get("passed")
+            .and_then(serde_json::Value::as_bool)
+            .is_some()
+    );
+    assert!(
+        json.get("violations")
+            .and_then(serde_json::Value::as_array)
+            .is_some()
+    );
 }
 
 #[wasm_bindgen_test]
 fn test_list_mcp_rules_nonempty() {
-    let result = exochain_wasm::wasm_list_mcp_rules().expect("list_mcp_rules");
+    let result = exochain_wasm::wasm_mcp_rules().expect("mcp_rules");
     let json = js_to_json(result);
     assert!(!json.as_array().unwrap().is_empty());
 }
@@ -414,11 +463,12 @@ fn test_list_mcp_rules_nonempty() {
 fn test_pace_escalate_then_deescalate() {
     let escalated = exochain_wasm::wasm_pace_escalate(r#""Normal""#).expect("escalate");
     let escalated_str = js_str(escalated);
-    assert_ne!(escalated_str.trim_matches('"'), "Normal");
+    assert_ne!(escalated_str, "Normal");
 
-    let deescalated = exochain_wasm::wasm_pace_deescalate(&escalated_str).expect("deescalate");
+    let escalated_json = serde_json::to_string(&escalated_str).expect("state json");
+    let deescalated = exochain_wasm::wasm_pace_deescalate(&escalated_json).expect("deescalate");
     let result = js_str(deescalated);
-    assert_eq!(result.trim_matches('"'), "Normal");
+    assert_eq!(result, "Normal");
 }
 
 // ── Consent: Bailment ────────────────────────────────────────────────────────

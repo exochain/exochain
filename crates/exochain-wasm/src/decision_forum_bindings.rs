@@ -344,10 +344,10 @@ pub fn wasm_dry_run_amendment(corpus_json: &str, proposed_json: &str) -> Result<
 // TncContext<'a> holds a borrowed &DecisionObject and cannot be deserialized
 // directly.  Each binding takes:
 //   - decision_json: &str — the DecisionObject (owned, deserialized locally)
-//   - flags_json: &str    — JSON object with the seven boolean precondition
-//                           fields: constitutional_hash_valid, consent_verified,
-//                           identity_verified, evidence_complete, quorum_met,
-//                           human_gate_satisfied, authority_chain_verified
+//   - flags_json: &str    — untrusted JSON object carrying caller-asserted
+//                           boolean precondition claims. The bridge parses this
+//                           object for shape compatibility only; caller claims
+//                           never satisfy TNC proof obligations.
 //
 // The TncContext is then constructed on the stack inside each function so the
 // borrow checker is satisfied without requiring an unsafe transmute.
@@ -372,20 +372,39 @@ struct TncFlags {
     ai_ceilings_externally_verified: bool,
 }
 
+impl TncFlags {
+    fn has_any_asserted_claim(&self) -> bool {
+        self.constitutional_hash_valid
+            || self.consent_verified
+            || self.identity_verified
+            || self.evidence_complete
+            || self.quorum_met
+            || self.human_gate_satisfied
+            || self.authority_chain_verified
+            || self.ai_ceilings_externally_verified
+    }
+}
+
+fn parse_untrusted_tnc_flags(flags_json: &str) -> Result<TncFlags, JsValue> {
+    let flags: TncFlags = from_json_str(flags_json)?;
+    let _caller_asserted_proofs = flags.has_any_asserted_claim();
+    Ok(flags)
+}
+
 fn build_tnc_ctx<'a>(
     decision: &'a decision_forum::decision_object::DecisionObject,
-    flags: &TncFlags,
+    _flags: &TncFlags,
 ) -> decision_forum::tnc_enforcer::TncContext<'a> {
     decision_forum::tnc_enforcer::TncContext {
         decision,
-        constitutional_hash_valid: flags.constitutional_hash_valid,
-        consent_verified: flags.consent_verified,
-        identity_verified: flags.identity_verified,
-        evidence_complete: flags.evidence_complete,
-        quorum_met: flags.quorum_met,
-        human_gate_satisfied: flags.human_gate_satisfied,
-        authority_chain_verified: flags.authority_chain_verified,
-        ai_ceilings_externally_verified: flags.ai_ceilings_externally_verified,
+        constitutional_hash_valid: false,
+        consent_verified: false,
+        identity_verified: false,
+        evidence_complete: false,
+        quorum_met: false,
+        human_gate_satisfied: false,
+        authority_chain_verified: false,
+        ai_ceilings_externally_verified: false,
     }
 }
 
@@ -400,7 +419,7 @@ fn tnc_result(r: decision_forum::error::Result<()>) -> Result<JsValue, JsValue> 
 #[wasm_bindgen]
 pub fn wasm_enforce_tnc_01(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    let flags: TncFlags = from_json_str(flags_json)?;
+    let flags = parse_untrusted_tnc_flags(flags_json)?;
     tnc_result(decision_forum::tnc_enforcer::enforce_tnc_01(
         &build_tnc_ctx(&decision, &flags),
     ))
@@ -410,7 +429,7 @@ pub fn wasm_enforce_tnc_01(decision_json: &str, flags_json: &str) -> Result<JsVa
 #[wasm_bindgen]
 pub fn wasm_enforce_tnc_02(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    let flags: TncFlags = from_json_str(flags_json)?;
+    let flags = parse_untrusted_tnc_flags(flags_json)?;
     tnc_result(decision_forum::tnc_enforcer::enforce_tnc_02(
         &build_tnc_ctx(&decision, &flags),
     ))
@@ -420,7 +439,7 @@ pub fn wasm_enforce_tnc_02(decision_json: &str, flags_json: &str) -> Result<JsVa
 #[wasm_bindgen]
 pub fn wasm_enforce_tnc_03(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    let flags: TncFlags = from_json_str(flags_json)?;
+    let flags = parse_untrusted_tnc_flags(flags_json)?;
     tnc_result(decision_forum::tnc_enforcer::enforce_tnc_03(
         &build_tnc_ctx(&decision, &flags),
     ))
@@ -430,7 +449,7 @@ pub fn wasm_enforce_tnc_03(decision_json: &str, flags_json: &str) -> Result<JsVa
 #[wasm_bindgen]
 pub fn wasm_enforce_tnc_04(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    let flags: TncFlags = from_json_str(flags_json)?;
+    let flags = parse_untrusted_tnc_flags(flags_json)?;
     tnc_result(decision_forum::tnc_enforcer::enforce_tnc_04(
         &build_tnc_ctx(&decision, &flags),
     ))
@@ -440,7 +459,7 @@ pub fn wasm_enforce_tnc_04(decision_json: &str, flags_json: &str) -> Result<JsVa
 #[wasm_bindgen]
 pub fn wasm_enforce_tnc_05(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    let flags: TncFlags = from_json_str(flags_json)?;
+    let flags = parse_untrusted_tnc_flags(flags_json)?;
     tnc_result(decision_forum::tnc_enforcer::enforce_tnc_05(
         &build_tnc_ctx(&decision, &flags),
     ))
@@ -450,7 +469,7 @@ pub fn wasm_enforce_tnc_05(decision_json: &str, flags_json: &str) -> Result<JsVa
 #[wasm_bindgen]
 pub fn wasm_enforce_tnc_06(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    let flags: TncFlags = from_json_str(flags_json)?;
+    let flags = parse_untrusted_tnc_flags(flags_json)?;
     tnc_result(decision_forum::tnc_enforcer::enforce_tnc_06(
         &build_tnc_ctx(&decision, &flags),
     ))
@@ -460,7 +479,7 @@ pub fn wasm_enforce_tnc_06(decision_json: &str, flags_json: &str) -> Result<JsVa
 #[wasm_bindgen]
 pub fn wasm_enforce_tnc_07(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    let flags: TncFlags = from_json_str(flags_json)?;
+    let flags = parse_untrusted_tnc_flags(flags_json)?;
     tnc_result(decision_forum::tnc_enforcer::enforce_tnc_07(
         &build_tnc_ctx(&decision, &flags),
     ))
@@ -470,7 +489,7 @@ pub fn wasm_enforce_tnc_07(decision_json: &str, flags_json: &str) -> Result<JsVa
 #[wasm_bindgen]
 pub fn wasm_enforce_tnc_08(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    let flags: TncFlags = from_json_str(flags_json)?;
+    let flags = parse_untrusted_tnc_flags(flags_json)?;
     tnc_result(decision_forum::tnc_enforcer::enforce_tnc_08(
         &build_tnc_ctx(&decision, &flags),
     ))
@@ -480,7 +499,7 @@ pub fn wasm_enforce_tnc_08(decision_json: &str, flags_json: &str) -> Result<JsVa
 #[wasm_bindgen]
 pub fn wasm_enforce_tnc_09(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    let flags: TncFlags = from_json_str(flags_json)?;
+    let flags = parse_untrusted_tnc_flags(flags_json)?;
     tnc_result(decision_forum::tnc_enforcer::enforce_tnc_09(
         &build_tnc_ctx(&decision, &flags),
     ))
@@ -490,7 +509,7 @@ pub fn wasm_enforce_tnc_09(decision_json: &str, flags_json: &str) -> Result<JsVa
 #[wasm_bindgen]
 pub fn wasm_enforce_tnc_10(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    let flags: TncFlags = from_json_str(flags_json)?;
+    let flags = parse_untrusted_tnc_flags(flags_json)?;
     tnc_result(decision_forum::tnc_enforcer::enforce_tnc_10(
         &build_tnc_ctx(&decision, &flags),
     ))
@@ -500,7 +519,7 @@ pub fn wasm_enforce_tnc_10(decision_json: &str, flags_json: &str) -> Result<JsVa
 #[wasm_bindgen]
 pub fn wasm_enforce_all_tnc(decision_json: &str, flags_json: &str) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    let flags: TncFlags = from_json_str(flags_json)?;
+    let flags = parse_untrusted_tnc_flags(flags_json)?;
     match decision_forum::tnc_enforcer::enforce_all(&build_tnc_ctx(&decision, &flags)) {
         Ok(()) => to_js_value(&serde_json::json!({"ok": true, "violations": []})),
         Err(e) => to_js_value(&serde_json::json!({"ok": false, "error": e.to_string()})),
@@ -516,7 +535,7 @@ pub fn wasm_collect_tnc_violations(
     flags_json: &str,
 ) -> Result<JsValue, JsValue> {
     let decision: decision_forum::decision_object::DecisionObject = from_json_str(decision_json)?;
-    let flags: TncFlags = from_json_str(flags_json)?;
+    let flags = parse_untrusted_tnc_flags(flags_json)?;
     let violations =
         decision_forum::tnc_enforcer::collect_violations(&build_tnc_ctx(&decision, &flags));
     let descriptions: Vec<String> = violations.iter().map(|e| e.to_string()).collect();
@@ -890,6 +909,11 @@ fn ensure_constitution_bytes(len: usize) -> Result<(), JsValue> {
 
 #[cfg(test)]
 mod tests {
+    use decision_forum::decision_object::{
+        ActorKind, AuthorityLink, DecisionClass, DecisionObject, DecisionObjectInput,
+    };
+    use exo_core::{Hash256, Timestamp, types::Did};
+
     #[test]
     fn decision_forum_bridge_does_not_synthesize_clock_metadata() {
         let source = include_str!("decision_forum_bindings.rs");
@@ -905,6 +929,45 @@ mod tests {
         assert!(
             !production.contains("Uuid::new_v4"),
             "decision-forum WASM exports must require caller-supplied UUID metadata"
+        );
+    }
+
+    #[test]
+    fn wasm_tnc_adapter_does_not_trust_caller_supplied_flags() {
+        let mut decision = DecisionObject::new(DecisionObjectInput {
+            id: uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000901").expect("valid UUID"),
+            title: "Caller-supplied TNC flags".into(),
+            class: DecisionClass::Routine,
+            constitutional_hash: Hash256::from_bytes([1_u8; 32]),
+            created_at: Timestamp::new(1_700_000_000_000, 0),
+        })
+        .expect("valid decision");
+        decision
+            .add_authority_link(AuthorityLink {
+                actor_did: Did::new("did:exo:authority-root").expect("valid DID"),
+                actor_kind: ActorKind::Human,
+                delegation_hash: Hash256::from_bytes([2_u8; 32]),
+                timestamp: Timestamp::new(1_700_000_000_001, 0),
+            })
+            .expect("valid authority link");
+
+        let caller_flags = super::TncFlags {
+            constitutional_hash_valid: true,
+            consent_verified: true,
+            identity_verified: true,
+            evidence_complete: true,
+            quorum_met: true,
+            human_gate_satisfied: true,
+            authority_chain_verified: true,
+            ai_ceilings_externally_verified: true,
+        };
+
+        let ctx = super::build_tnc_ctx(&decision, &caller_flags);
+        let err = decision_forum::tnc_enforcer::enforce_all(&ctx)
+            .expect_err("caller-provided WASM flags cannot satisfy TNC proof obligations");
+        assert!(
+            err.to_string().contains("authority chain not verified"),
+            "unexpected TNC rejection: {err}"
         );
     }
 }

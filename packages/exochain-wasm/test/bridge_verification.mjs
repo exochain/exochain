@@ -1737,6 +1737,42 @@ const tncFlags = {
 
 const tncDecJson = minDecision ? JSON.stringify(minDecision) : '{}';
 const tncFlagsJson = JSON.stringify(tncFlags);
+const canonicalAllTrueTncFlags = {
+  constitutional_hash_valid: true,
+  consent_verified: true,
+  identity_verified: true,
+  evidence_complete: true,
+  quorum_met: true,
+  human_gate_satisfied: true,
+  authority_chain_verified: true,
+  ai_ceilings_externally_verified: true
+};
+const structurallyCompleteTncDecision = minDecision ? {
+  ...minDecision,
+  authority_chain: [{
+    actor_did: TEST_DID,
+    actor_kind: 'Human',
+    delegation_hash: ZERO_32_BYTES,
+    timestamp: NOW_TS
+  }],
+  votes: [],
+  evidence_bundle: [],
+  receipt_chain: []
+} : {};
+
+test('wasm_enforce_all_tnc rejects self-asserted proof flags', () => {
+  const result = wasm.wasm_enforce_all_tnc(
+    JSON.stringify(structurallyCompleteTncDecision),
+    JSON.stringify(canonicalAllTrueTncFlags)
+  );
+  if (result.ok !== false) {
+    throw new Error('self-asserted TNC proof flags must fail closed');
+  }
+  if (!String(result.error).includes('authority chain not verified')) {
+    throw new Error(`unexpected TNC error: ${result.error}`);
+  }
+  return result;
+});
 
 test('wasm_enforce_tnc_01', () =>
   wasm.wasm_enforce_tnc_01(tncDecJson, tncFlagsJson));
