@@ -21,13 +21,40 @@
 //! sub-delegation control, and sunset/renewal tracking with 90/60/30/14/7-day
 //! expiry warnings.
 
-use exo_core::types::{DeterministicMap, Did, Hash256, Timestamp};
+use exo_core::{
+    crypto,
+    hash::{hash_structured, hash256_eq_constant_time},
+    types::{DeterministicMap, Did, Hash256, PublicKey, Signature, Timestamp},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     decision_object::DecisionClass,
     error::{ForumError, Result},
 };
+
+const DELEGATION_SIGNATURE_DOMAIN: &str = "decision.forum.authority_matrix.delegation.v1";
+const DELEGATION_SIGNATURE_HASH_DOMAIN: &str =
+    "decision.forum.authority_matrix.delegation_signature_hash.v1";
+
+#[derive(Debug, Clone, Serialize)]
+struct DelegationSignaturePayload<'a> {
+    domain: &'static str,
+    delegation_id: &'a str,
+    delegator: &'a Did,
+    delegate: &'a Did,
+    scope: &'a DelegationScope,
+    granted_at: &'a Timestamp,
+    expires_at: &'a Timestamp,
+    revoked: bool,
+    allows_sub_delegation: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DelegationSignatureHashPayload<'a> {
+    domain: &'static str,
+    signature: &'a Signature,
+}
 
 /// Scope of a delegation — what actions the delegate can perform.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +154,76 @@ impl DelegatedAuthority {
     }
 }
 
+/// Canonical message bytes that a delegator signs for an authority delegation.
+///
+/// The payload is domain-separated and CBOR-hashed before signing. The stored
+/// `signature_hash` is intentionally excluded to avoid a circular signature
+/// dependency; callers bind the supplied signature separately with
+/// [`delegation_signature_hash`].
+pub fn delegation_signature_message(delegation: &DelegatedAuthority) -> Result<Vec<u8>> {
+    let digest = hash_structured(&DelegationSignaturePayload {
+        domain: DELEGATION_SIGNATURE_DOMAIN,
+        delegation_id: &delegation.id,
+        delegator: &delegation.delegator,
+        delegate: &delegation.delegate,
+        scope: &delegation.scope,
+        granted_at: &delegation.granted_at,
+        expires_at: &delegation.expires_at,
+        revoked: delegation.revoked,
+        allows_sub_delegation: delegation.allows_sub_delegation,
+    })?;
+    Ok(digest.as_ref().to_vec())
+}
+
+/// Canonical hash of the supplied delegation signature.
+pub fn delegation_signature_hash(signature: &Signature) -> Result<Hash256> {
+    Ok(hash_structured(&DelegationSignatureHashPayload {
+        domain: DELEGATION_SIGNATURE_HASH_DOMAIN,
+        signature,
+    })?)
+}
+
+/// Verify that a delegation is authorized by its delegator's trusted key.
+///
+/// The caller is responsible for resolving `delegator_public_key` from a
+/// trusted identity registry for `delegation.delegator`. This function enforces
+/// the local signature and stored-hash boundary before the delegation may enter
+/// an authority matrix.
+pub fn verify_delegation_signature(
+    delegation: &DelegatedAuthority,
+    signature: &Signature,
+    delegator_public_key: &PublicKey,
+) -> Result<()> {
+    delegation.validate()?;
+    if signature.is_empty() || signature.ed25519_component_is_zero() {
+        return Err(ForumError::AuthorityInvalid {
+            reason: format!("delegation {} signature must not be empty", delegation.id),
+        });
+    }
+
+    let expected_hash = delegation_signature_hash(signature)?;
+    if !hash256_eq_constant_time(&expected_hash, &delegation.signature_hash) {
+        return Err(ForumError::AuthorityInvalid {
+            reason: format!(
+                "delegation {} signature hash does not match supplied signature",
+                delegation.id
+            ),
+        });
+    }
+
+    let message = delegation_signature_message(delegation)?;
+    if !crypto::verify(&message, signature, delegator_public_key) {
+        return Err(ForumError::AuthorityInvalid {
+            reason: format!(
+                "delegation {} signature verification failed for delegator {}",
+                delegation.id, delegation.delegator
+            ),
+        });
+    }
+
+    Ok(())
+}
+
 /// Warning thresholds for delegation expiry (days).
 pub const EXPIRY_WARNING_DAYS: &[u64] = &[90, 60, 30, 14, 7];
 
@@ -148,6 +245,26 @@ impl AuthorityMatrix {
     /// Grant a new delegation.
     pub fn grant(&mut self, delegation: DelegatedAuthority) -> Result<()> {
         delegation.validate()?;
+        Err(ForumError::AuthorityInvalid {
+            reason: format!(
+                "delegation {} requires grant_verified with a trusted delegator public key",
+                delegation.id
+            ),
+        })
+    }
+
+    /// Grant a new delegation after verifying the delegator's signature.
+    pub fn grant_verified(
+        &mut self,
+        delegation: DelegatedAuthority,
+        signature: &Signature,
+        delegator_public_key: &PublicKey,
+    ) -> Result<()> {
+        verify_delegation_signature(&delegation, signature, delegator_public_key)?;
+        self.insert_validated_delegation(delegation)
+    }
+
+    fn insert_validated_delegation(&mut self, delegation: DelegatedAuthority) -> Result<()> {
         if self.contains_delegation_id(&delegation.id) {
             return Err(ForumError::AuthorityInvalid {
                 reason: format!("delegation {} already exists", delegation.id),
@@ -259,12 +376,31 @@ impl AuthorityMatrix {
     /// Attempt sub-delegation: a delegate creating a new delegation.
     pub fn sub_delegate(
         &mut self,
+        _parent_delegate: &Did,
+        _parent_delegation_id: &str,
+        new_delegation: DelegatedAuthority,
+        _now: &Timestamp,
+    ) -> Result<()> {
+        new_delegation.validate()?;
+        Err(ForumError::AuthorityInvalid {
+            reason: format!(
+                "delegation {} requires sub_delegate_verified with a trusted delegator public key",
+                new_delegation.id
+            ),
+        })
+    }
+
+    /// Attempt sub-delegation after verifying the child delegation signature.
+    pub fn sub_delegate_verified(
+        &mut self,
         parent_delegate: &Did,
         parent_delegation_id: &str,
         new_delegation: DelegatedAuthority,
+        signature: &Signature,
+        delegator_public_key: &PublicKey,
         now: &Timestamp,
     ) -> Result<()> {
-        new_delegation.validate()?;
+        verify_delegation_signature(&new_delegation, signature, delegator_public_key)?;
 
         let key = parent_delegate.as_str().to_owned();
         let parent = self
@@ -306,7 +442,7 @@ impl AuthorityMatrix {
             });
         }
 
-        self.grant(new_delegation)
+        self.insert_validated_delegation(new_delegation)
     }
 }
 
@@ -356,11 +492,143 @@ mod tests {
         }
     }
 
+    fn keypair(seed: u8) -> crypto::KeyPair {
+        crypto::KeyPair::from_secret_bytes([seed; 32]).expect("deterministic test keypair")
+    }
+
+    fn sign_delegation_for_test(
+        delegation: &mut DelegatedAuthority,
+        signer: &crypto::KeyPair,
+    ) -> Signature {
+        let message =
+            delegation_signature_message(delegation).expect("canonical delegation message");
+        let signature = crypto::sign(&message, signer.secret_key());
+        delegation.signature_hash =
+            delegation_signature_hash(&signature).expect("canonical signature hash");
+        signature
+    }
+
+    fn grant_signed(
+        matrix: &mut AuthorityMatrix,
+        mut delegation: DelegatedAuthority,
+        signer: &crypto::KeyPair,
+    ) {
+        let signature = sign_delegation_for_test(&mut delegation, signer);
+        matrix
+            .grant_verified(delegation, &signature, signer.public_key())
+            .expect("verified grant");
+    }
+
+    fn signed_delegation(
+        mut delegation: DelegatedAuthority,
+        signer: &crypto::KeyPair,
+    ) -> (DelegatedAuthority, Signature) {
+        let signature = sign_delegation_for_test(&mut delegation, signer);
+        (delegation, signature)
+    }
+
+    #[test]
+    fn authority_matrix_rejects_unverified_signature_hash_grant() {
+        let mut m = AuthorityMatrix::new();
+        let err = m
+            .grant(make_delegation("forged", "root", "alice", false))
+            .unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
+    }
+
+    #[test]
+    fn authority_matrix_rejects_unverified_signature_hash_sub_delegation() {
+        let mut m = AuthorityMatrix::new();
+        let root = keypair(11);
+        grant_signed(
+            &mut m,
+            make_delegation("parent", "root", "alice", true),
+            &root,
+        );
+        let err = m
+            .sub_delegate(
+                &did("alice"),
+                "parent",
+                make_delegation("forged-child", "alice", "bob", false),
+                &now(),
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("bob"), DecisionClass::Routine, &now()));
+    }
+
+    #[test]
+    fn delegation_signature_message_binds_authority_fields() {
+        let base = make_delegation("d1", "root", "alice", true);
+        let base_message =
+            delegation_signature_message(&base).expect("base delegation signature message");
+
+        let mut changed_id = base.clone();
+        changed_id.id = "d2".into();
+        assert_ne!(
+            base_message,
+            delegation_signature_message(&changed_id).expect("changed id message")
+        );
+
+        let mut changed_delegator = base.clone();
+        changed_delegator.delegator = did("mallory");
+        assert_ne!(
+            base_message,
+            delegation_signature_message(&changed_delegator).expect("changed delegator message")
+        );
+
+        let mut changed_delegate = base.clone();
+        changed_delegate.delegate = did("bob");
+        assert_ne!(
+            base_message,
+            delegation_signature_message(&changed_delegate).expect("changed delegate message")
+        );
+
+        let mut changed_scope = base.clone();
+        changed_scope.scope.decision_classes = vec![DecisionClass::Routine];
+        assert_ne!(
+            base_message,
+            delegation_signature_message(&changed_scope).expect("changed scope message")
+        );
+
+        let mut changed_grant_time = base.clone();
+        changed_grant_time.granted_at = Timestamp::new(base.granted_at.physical_ms + 1, 0);
+        assert_ne!(
+            base_message,
+            delegation_signature_message(&changed_grant_time).expect("changed grant time message")
+        );
+
+        let mut changed_expiry = base.clone();
+        changed_expiry.expires_at = Timestamp::new(base.expires_at.physical_ms + 1, 0);
+        assert_ne!(
+            base_message,
+            delegation_signature_message(&changed_expiry).expect("changed expiry message")
+        );
+
+        let mut changed_revoked = base.clone();
+        changed_revoked.revoked = true;
+        assert_ne!(
+            base_message,
+            delegation_signature_message(&changed_revoked).expect("changed revoked message")
+        );
+
+        let mut changed_sub_delegation = base;
+        changed_sub_delegation.allows_sub_delegation = false;
+        assert_ne!(
+            base_message,
+            delegation_signature_message(&changed_sub_delegation)
+                .expect("changed sub-delegation message")
+        );
+    }
+
     #[test]
     fn grant_and_query() {
         let mut m = AuthorityMatrix::new();
-        m.grant(make_delegation("d1", "root", "alice", false))
-            .expect("ok");
+        let root = keypair(11);
+        grant_signed(&mut m, make_delegation("d1", "root", "alice", false), &root);
         assert!(m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
         assert!(!m.has_authority(&did("alice"), DecisionClass::Strategic, &now()));
         assert!(!m.has_authority(&did("bob"), DecisionClass::Routine, &now()));
@@ -369,8 +637,8 @@ mod tests {
     #[test]
     fn revoke() {
         let mut m = AuthorityMatrix::new();
-        m.grant(make_delegation("d1", "root", "alice", false))
-            .expect("ok");
+        let root = keypair(11);
+        grant_signed(&mut m, make_delegation("d1", "root", "alice", false), &root);
         m.revoke(&did("alice"), "d1").expect("ok");
         assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
     }
@@ -378,8 +646,8 @@ mod tests {
     #[test]
     fn revoke_not_found() {
         let mut m = AuthorityMatrix::new();
-        m.grant(make_delegation("d1", "root", "alice", false))
-            .expect("ok");
+        let root = keypair(11);
+        grant_signed(&mut m, make_delegation("d1", "root", "alice", false), &root);
         assert!(m.revoke(&did("alice"), "d99").is_err());
     }
 
@@ -393,12 +661,12 @@ mod tests {
     #[test]
     fn purge_expired() {
         let mut m = AuthorityMatrix::new();
+        let root = keypair(11);
         let mut d = make_delegation("d1", "root", "alice", false);
         d.granted_at = earlier_past();
         d.expires_at = past();
-        m.grant(d).expect("ok");
-        m.grant(make_delegation("d2", "root", "alice", false))
-            .expect("ok");
+        grant_signed(&mut m, d, &root);
+        grant_signed(&mut m, make_delegation("d2", "root", "alice", false), &root);
         let purged = m.purge_expired(&now());
         assert_eq!(purged, 1);
         assert_eq!(m.active_delegations(&did("alice"), &now()).len(), 1);
@@ -407,8 +675,9 @@ mod tests {
     #[test]
     fn sub_delegation_ok() {
         let mut m = AuthorityMatrix::new();
-        m.grant(make_delegation("d1", "root", "alice", true))
-            .expect("ok");
+        let root = keypair(11);
+        let alice = keypair(12);
+        grant_signed(&mut m, make_delegation("d1", "root", "alice", true), &root);
         let sub = DelegatedAuthority {
             id: "d2".into(),
             delegator: did("alice"),
@@ -423,19 +692,82 @@ mod tests {
             allows_sub_delegation: false,
             signature_hash: Hash256::digest(b"d2"),
         };
-        m.sub_delegate(&did("alice"), "d1", sub, &now())
-            .expect("ok");
+        let (sub, signature) = signed_delegation(sub, &alice);
+        m.sub_delegate_verified(
+            &did("alice"),
+            "d1",
+            sub,
+            &signature,
+            alice.public_key(),
+            &now(),
+        )
+        .expect("ok");
         assert!(m.has_authority(&did("bob"), DecisionClass::Routine, &now()));
+    }
+
+    #[test]
+    fn grant_verified_rejects_signature_hash_mismatch() {
+        let mut m = AuthorityMatrix::new();
+        let root = keypair(11);
+        let (mut d, signature) =
+            signed_delegation(make_delegation("d1", "root", "alice", false), &root);
+        d.signature_hash = Hash256::digest(b"not-the-supplied-signature");
+        let err = m
+            .grant_verified(d, &signature, root.public_key())
+            .unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
+    }
+
+    #[test]
+    fn grant_verified_rejects_payload_tampering_after_signature() {
+        let mut m = AuthorityMatrix::new();
+        let root = keypair(11);
+        let (mut d, signature) =
+            signed_delegation(make_delegation("d1", "root", "alice", false), &root);
+        d.delegate = did("mallory");
+        let err = m
+            .grant_verified(d, &signature, root.public_key())
+            .unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
+        assert!(!m.has_authority(&did("mallory"), DecisionClass::Routine, &now()));
+    }
+
+    #[test]
+    fn grant_verified_rejects_wrong_public_key() {
+        let mut m = AuthorityMatrix::new();
+        let root = keypair(11);
+        let wrong = keypair(99);
+        let (d, signature) =
+            signed_delegation(make_delegation("d1", "root", "alice", false), &root);
+        let err = m
+            .grant_verified(d, &signature, wrong.public_key())
+            .unwrap_err();
+
+        assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
+        assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
     }
 
     #[test]
     fn sub_delegation_not_permitted() {
         let mut m = AuthorityMatrix::new();
-        m.grant(make_delegation("d1", "root", "alice", false))
-            .expect("ok");
+        let root = keypair(11);
+        let alice = keypair(12);
+        grant_signed(&mut m, make_delegation("d1", "root", "alice", false), &root);
         let sub = make_delegation("d2", "alice", "bob", false);
+        let (sub, signature) = signed_delegation(sub, &alice);
         let err = m
-            .sub_delegate(&did("alice"), "d1", sub, &now())
+            .sub_delegate_verified(
+                &did("alice"),
+                "d1",
+                sub,
+                &signature,
+                alice.public_key(),
+                &now(),
+            )
             .unwrap_err();
         assert!(matches!(err, ForumError::SubDelegationNotPermitted));
     }
@@ -443,12 +775,21 @@ mod tests {
     #[test]
     fn sub_delegation_scope_exceeded() {
         let mut m = AuthorityMatrix::new();
-        m.grant(make_delegation("d1", "root", "alice", true))
-            .expect("ok");
+        let root = keypair(11);
+        let alice = keypair(12);
+        grant_signed(&mut m, make_delegation("d1", "root", "alice", true), &root);
         let mut sub = make_delegation("d2", "alice", "bob", false);
         sub.scope.decision_classes = vec![DecisionClass::Strategic];
+        let (sub, signature) = signed_delegation(sub, &alice);
         let err = m
-            .sub_delegate(&did("alice"), "d1", sub, &now())
+            .sub_delegate_verified(
+                &did("alice"),
+                "d1",
+                sub,
+                &signature,
+                alice.public_key(),
+                &now(),
+            )
             .unwrap_err();
         assert!(matches!(err, ForumError::DelegationScopeExceeded { .. }));
     }
@@ -480,10 +821,11 @@ mod tests {
     #[test]
     fn grant_rejects_duplicate_delegation_id_across_matrix() {
         let mut m = AuthorityMatrix::new();
-        m.grant(make_delegation("d1", "root", "alice", false))
-            .expect("ok");
+        let root = keypair(11);
+        grant_signed(&mut m, make_delegation("d1", "root", "alice", false), &root);
+        let (d, signature) = signed_delegation(make_delegation("d1", "root", "bob", false), &root);
         let err = m
-            .grant(make_delegation("d1", "root", "bob", false))
+            .grant_verified(d, &signature, root.public_key())
             .unwrap_err();
 
         assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
@@ -493,8 +835,10 @@ mod tests {
     #[test]
     fn grant_rejects_empty_delegation_id() {
         let mut m = AuthorityMatrix::new();
+        let root = keypair(11);
+        let (d, signature) = signed_delegation(make_delegation("", "root", "alice", false), &root);
         let err = m
-            .grant(make_delegation("", "root", "alice", false))
+            .grant_verified(d, &signature, root.public_key())
             .unwrap_err();
 
         assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
@@ -504,9 +848,13 @@ mod tests {
     #[test]
     fn grant_rejects_empty_scope_classes() {
         let mut m = AuthorityMatrix::new();
+        let root = keypair(11);
         let mut d = make_delegation("d1", "root", "alice", false);
         d.scope.decision_classes = Vec::new();
-        let err = m.grant(d).unwrap_err();
+        let (d, signature) = signed_delegation(d, &root);
+        let err = m
+            .grant_verified(d, &signature, root.public_key())
+            .unwrap_err();
 
         assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
         assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
@@ -515,9 +863,13 @@ mod tests {
     #[test]
     fn grant_rejects_empty_scope_description() {
         let mut m = AuthorityMatrix::new();
+        let root = keypair(11);
         let mut d = make_delegation("d1", "root", "alice", false);
         d.scope.description.clear();
-        let err = m.grant(d).unwrap_err();
+        let (d, signature) = signed_delegation(d, &root);
+        let err = m
+            .grant_verified(d, &signature, root.public_key())
+            .unwrap_err();
 
         assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
         assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
@@ -526,9 +878,13 @@ mod tests {
     #[test]
     fn grant_rejects_zero_signature_hash() {
         let mut m = AuthorityMatrix::new();
+        let root = keypair(11);
         let mut d = make_delegation("d1", "root", "alice", false);
+        let signature = sign_delegation_for_test(&mut d, &root);
         d.signature_hash = Hash256::ZERO;
-        let err = m.grant(d).unwrap_err();
+        let err = m
+            .grant_verified(d, &signature, root.public_key())
+            .unwrap_err();
 
         assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
         assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
@@ -537,9 +893,13 @@ mod tests {
     #[test]
     fn grant_rejects_non_forward_time_bounds() {
         let mut m = AuthorityMatrix::new();
+        let root = keypair(11);
         let mut d = make_delegation("d1", "root", "alice", false);
         d.expires_at = d.granted_at;
-        let err = m.grant(d).unwrap_err();
+        let (d, signature) = signed_delegation(d, &root);
+        let err = m
+            .grant_verified(d, &signature, root.public_key())
+            .unwrap_err();
 
         assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
         assert!(!m.has_authority(&did("alice"), DecisionClass::Routine, &now()));
@@ -548,11 +908,20 @@ mod tests {
     #[test]
     fn sub_delegation_rejects_child_delegator_mismatch() {
         let mut m = AuthorityMatrix::new();
-        m.grant(make_delegation("d1", "root", "alice", true))
-            .expect("ok");
+        let root = keypair(11);
+        let mallory = keypair(13);
+        grant_signed(&mut m, make_delegation("d1", "root", "alice", true), &root);
         let sub = make_delegation("d2", "mallory", "bob", false);
+        let (sub, signature) = signed_delegation(sub, &mallory);
         let err = m
-            .sub_delegate(&did("alice"), "d1", sub, &now())
+            .sub_delegate_verified(
+                &did("alice"),
+                "d1",
+                sub,
+                &signature,
+                mallory.public_key(),
+                &now(),
+            )
             .unwrap_err();
 
         assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
@@ -562,12 +931,21 @@ mod tests {
     #[test]
     fn sub_delegation_rejects_child_grant_before_parent_grant() {
         let mut m = AuthorityMatrix::new();
-        m.grant(make_delegation("d1", "root", "alice", true))
-            .expect("ok");
+        let root = keypair(11);
+        let alice = keypair(12);
+        grant_signed(&mut m, make_delegation("d1", "root", "alice", true), &root);
         let mut sub = make_delegation("d2", "alice", "bob", false);
         sub.granted_at = earlier_past();
+        let (sub, signature) = signed_delegation(sub, &alice);
         let err = m
-            .sub_delegate(&did("alice"), "d1", sub, &now())
+            .sub_delegate_verified(
+                &did("alice"),
+                "d1",
+                sub,
+                &signature,
+                alice.public_key(),
+                &now(),
+            )
             .unwrap_err();
 
         assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
@@ -577,12 +955,21 @@ mod tests {
     #[test]
     fn sub_delegation_rejects_child_expiry_after_parent_expiry() {
         let mut m = AuthorityMatrix::new();
-        m.grant(make_delegation("d1", "root", "alice", true))
-            .expect("ok");
+        let root = keypair(11);
+        let alice = keypair(12);
+        grant_signed(&mut m, make_delegation("d1", "root", "alice", true), &root);
         let mut sub = make_delegation("d2", "alice", "bob", false);
         sub.expires_at = further_future();
+        let (sub, signature) = signed_delegation(sub, &alice);
         let err = m
-            .sub_delegate(&did("alice"), "d1", sub, &now())
+            .sub_delegate_verified(
+                &did("alice"),
+                "d1",
+                sub,
+                &signature,
+                alice.public_key(),
+                &now(),
+            )
             .unwrap_err();
 
         assert!(matches!(err, ForumError::AuthorityInvalid { .. }));
@@ -600,11 +987,12 @@ mod tests {
     #[test]
     fn expiry_warnings() {
         let mut m = AuthorityMatrix::new();
+        let root = keypair(11);
         let mut d = make_delegation("d1", "root", "alice", false);
         // Expires in 5 days from now
         let five_days_ms = 5 * 24 * 60 * 60 * 1000;
         d.expires_at = Timestamp::new(now().physical_ms + five_days_ms, 0);
-        m.grant(d).expect("ok");
+        grant_signed(&mut m, d, &root);
         let warnings = m.expiry_warnings(&now());
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].1, 5);
