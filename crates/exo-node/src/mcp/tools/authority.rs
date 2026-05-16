@@ -22,9 +22,7 @@
 // mutually-exclusive `#[cfg(feature = "...")]` branch.
 #![allow(clippy::needless_return)]
 
-use exo_core::Did;
-#[cfg(test)]
-use exo_core::Hash256;
+use exo_core::{Did, Hash256, PublicKey, Signature, hash::hash_structured};
 #[cfg(test)]
 use exo_gatekeeper::{authority_link_signature_message, provenance_signature_message};
 use exo_gatekeeper::{
@@ -37,6 +35,7 @@ use exo_gatekeeper::{
         PermissionSet, Provenance, Role, TrustedAuthorityKeys, TrustedProvenanceKeys,
     },
 };
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::mcp::{
@@ -53,6 +52,38 @@ const MAX_PERMISSION_SET_ENTRIES: usize = 64;
 const MAX_PERMISSION_NAME_BYTES: usize = 256;
 const ED25519_SIGNATURE_HEX_CHARS: usize = 128;
 const ED25519_PUBLIC_KEY_HEX_CHARS: usize = 64;
+const ADJUDICATION_CONTEXT_EVIDENCE_DOMAIN: &str = "exo.node.mcp.adjudication_context_evidence.v1";
+const ADJUDICATION_CONTEXT_EVIDENCE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Serialize)]
+struct AdjudicationContextEvidencePayload<'a> {
+    domain: &'static str,
+    schema_version: u32,
+    actor: &'a Did,
+    actor_roles: &'a [Role],
+    authority_chain: &'a AuthorityChain,
+    consent_records: &'a [ConsentRecord],
+    bailment_state: &'a BailmentState,
+    human_override_preserved: bool,
+    actor_permissions: &'a PermissionSet,
+    provenance: &'a Provenance,
+}
+
+struct ParsedAdjudicationContext {
+    actor_roles: Vec<Role>,
+    authority_chain: AuthorityChain,
+    consent_records: Vec<ConsentRecord>,
+    bailment_state: BailmentState,
+    human_override_preserved: bool,
+    actor_permissions: PermissionSet,
+    provenance: Provenance,
+}
+
+struct AdjudicationContextEvidence {
+    signer: Did,
+    public_key: Vec<u8>,
+    signature: Vec<u8>,
+}
 
 fn authority_tool_refused(tool_name: &str) -> ToolResult {
     tracing::warn!(
@@ -360,6 +391,123 @@ fn parse_provenance(value: &Value) -> Result<Provenance, String> {
     })
 }
 
+fn parse_adjudication_context_parts(
+    context_value: &Value,
+) -> Result<ParsedAdjudicationContext, String> {
+    let actor_roles = parse_roles(context_value)?;
+    let consent_records = parse_consent_records(context_value)?;
+    let bailment_state = parse_bailment_state(context_value)?;
+    let human_override_preserved = context_value
+        .get("human_override_preserved")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "context.human_override_preserved must be boolean".to_owned())?;
+    let actor_permissions = parse_permission_set(context_value, "actor_permissions")?;
+    let provenance = parse_provenance(context_value)?;
+    let authority_chain_value = context_value
+        .get("authority_chain")
+        .ok_or_else(|| "context.authority_chain is required".to_owned())?;
+    let authority_chain =
+        parse_authority_chain(authority_chain_value).map_err(|issues| issues.join("; "))?;
+
+    Ok(ParsedAdjudicationContext {
+        actor_roles,
+        authority_chain,
+        consent_records,
+        bailment_state,
+        human_override_preserved,
+        actor_permissions,
+        provenance,
+    })
+}
+
+fn adjudication_context_evidence_message(
+    actor: &Did,
+    context: &ParsedAdjudicationContext,
+) -> exo_core::Result<Hash256> {
+    hash_structured(&AdjudicationContextEvidencePayload {
+        domain: ADJUDICATION_CONTEXT_EVIDENCE_DOMAIN,
+        schema_version: ADJUDICATION_CONTEXT_EVIDENCE_SCHEMA_VERSION,
+        actor,
+        actor_roles: &context.actor_roles,
+        authority_chain: &context.authority_chain,
+        consent_records: &context.consent_records,
+        bailment_state: &context.bailment_state,
+        human_override_preserved: context.human_override_preserved,
+        actor_permissions: &context.actor_permissions,
+        provenance: &context.provenance,
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn adjudication_context_evidence_message_from_json(
+    context_value: &Value,
+    actor: &Did,
+) -> Result<Hash256, String> {
+    let context = parse_adjudication_context_parts(context_value)?;
+    adjudication_context_evidence_message(actor, &context)
+        .map_err(|err| format!("context.context_evidence canonical payload failed: {err}"))
+}
+
+fn parse_adjudication_context_evidence(
+    context_value: &Value,
+) -> Result<AdjudicationContextEvidence, String> {
+    let evidence = context_value
+        .get("context_evidence")
+        .ok_or_else(|| "context.context_evidence is required".to_owned())?;
+    Ok(AdjudicationContextEvidence {
+        signer: parse_did_field(evidence, "signer")
+            .map_err(|err| format!("context.context_evidence: {err}"))?,
+        public_key: parse_hex_field(evidence, "public_key", 32)
+            .map_err(|err| format!("context.context_evidence: {err}"))?,
+        signature: parse_hex_field(evidence, "signature", 64)
+            .map_err(|err| format!("context.context_evidence: {err}"))?,
+    })
+}
+
+fn validate_adjudication_context_evidence(
+    context_value: &Value,
+    actor: &Did,
+    trusted_provenance_keys: &TrustedProvenanceKeys,
+    context: &ParsedAdjudicationContext,
+) -> Result<(), String> {
+    let evidence = parse_adjudication_context_evidence(context_value)?;
+    if evidence.signer != *actor {
+        return Err("context.context_evidence signer must match actor".to_owned());
+    }
+    let trusted_keys = trusted_provenance_keys
+        .get(&evidence.signer)
+        .ok_or_else(|| {
+            "context.context_evidence public_key is unresolved for signer DID".to_owned()
+        })?;
+    if !trusted_keys
+        .iter()
+        .any(|trusted_key| trusted_key.as_slice() == evidence.public_key.as_slice())
+    {
+        return Err("context.context_evidence public_key is not bound to signer DID".to_owned());
+    }
+
+    let public_key_bytes: [u8; 32] = evidence
+        .public_key
+        .as_slice()
+        .try_into()
+        .map_err(|_| "context.context_evidence public_key is not 32 bytes".to_owned())?;
+    let signature_bytes: [u8; 64] = evidence
+        .signature
+        .as_slice()
+        .try_into()
+        .map_err(|_| "context.context_evidence signature is not 64 bytes".to_owned())?;
+    let message = adjudication_context_evidence_message(actor, context)
+        .map_err(|err| format!("context.context_evidence canonical payload failed: {err}"))?;
+    let public_key = PublicKey::from_bytes(public_key_bytes);
+    let signature = Signature::from_bytes(signature_bytes);
+    if !exo_core::crypto::verify(message.as_bytes(), &signature, &public_key) {
+        return Err(
+            "context.context_evidence Ed25519 signature is cryptographically invalid".to_owned(),
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn parse_verified_adjudication_context(
     context_value: &Value,
     actor: &Did,
@@ -378,28 +526,30 @@ pub(crate) fn parse_verified_adjudication_context_with_trusted_keys(
     trusted_authority_keys: TrustedAuthorityKeys,
     trusted_provenance_keys: TrustedProvenanceKeys,
 ) -> Result<AdjudicationContext, String> {
-    let actor_roles = parse_roles(context_value)?;
-    let consent_records = parse_consent_records(context_value)?;
-    let bailment_state = parse_bailment_state(context_value)?;
-    let human_override_preserved = context_value
-        .get("human_override_preserved")
-        .and_then(Value::as_bool)
-        .ok_or_else(|| "context.human_override_preserved must be boolean".to_owned())?;
-    let actor_permissions = parse_permission_set(context_value, "actor_permissions")?;
-    let provenance = parse_provenance(context_value)?;
-
-    let authority_chain_value = context_value
-        .get("authority_chain")
-        .ok_or_else(|| "context.authority_chain is required".to_owned())?;
-    let authority_chain =
-        parse_authority_chain(authority_chain_value).map_err(|issues| issues.join("; "))?;
-    let issues = validate_authority_chain(&authority_chain, actor, &trusted_authority_keys);
+    let context = parse_adjudication_context_parts(context_value)?;
+    let issues = validate_authority_chain(&context.authority_chain, actor, &trusted_authority_keys);
     if !issues.is_empty() {
         return Err(format!(
             "context.authority_chain is invalid: {}",
             issues.join("; ")
         ));
     }
+    validate_adjudication_context_evidence(
+        context_value,
+        actor,
+        &trusted_provenance_keys,
+        &context,
+    )?;
+
+    let ParsedAdjudicationContext {
+        actor_roles,
+        authority_chain,
+        consent_records,
+        bailment_state,
+        human_override_preserved,
+        actor_permissions,
+        provenance,
+    } = context;
 
     Ok(AdjudicationContext {
         actor_roles,
@@ -737,7 +887,7 @@ pub fn adjudicate_action_definition() -> ToolDefinition {
                 },
                 "context": {
                     "type": "object",
-                    "description": "Caller-supplied verified adjudication context: roles, signed authority_chain, consent_records, bailment_state, actor_permissions, human_override_preserved, and signed provenance."
+                    "description": "Caller-supplied verified adjudication context: roles, signed authority_chain, consent_records, bailment_state, actor_permissions, human_override_preserved, signed provenance, and context_evidence signature."
                 }
             },
             "required": ["actor_did", "action", "required_permissions", "context"],
@@ -793,7 +943,7 @@ pub fn execute_adjudicate_action(params: &Value, _context: &NodeContext) -> Tool
         None => {
             return tool_error(
                 "mcp_verified_context_required",
-                "exochain_adjudicate_action requires caller-supplied context with authority_chain, consent_records, bailment_state, actor_permissions, human_override_preserved, and provenance",
+                "exochain_adjudicate_action requires caller-supplied context with authority_chain, consent_records, bailment_state, actor_permissions, human_override_preserved, provenance, and context_evidence",
             );
         }
     };

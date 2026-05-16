@@ -765,7 +765,10 @@ impl McpServer {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::{super::middleware::mcp_tool_action_hash, *};
-    use crate::mcp::protocol::{AI_OUTPUT_GENERATOR, AI_OUTPUT_MARKING};
+    use crate::mcp::{
+        protocol::{AI_OUTPUT_GENERATOR, AI_OUTPUT_MARKING},
+        tools::authority::adjudication_context_evidence_message_from_json,
+    };
 
     fn test_server() -> McpServer {
         let did = Did::new("did:exo:test-ai-agent").expect("valid DID");
@@ -832,7 +835,7 @@ mod tests {
             exo_core::crypto::sign(provenance_message.as_bytes(), &secret_key);
         provenance.signature = provenance_signature.to_bytes().to_vec();
 
-        serde_json::json!({
+        let mut context = serde_json::json!({
             "bcts_scope": action,
             "capabilities": ["mcp:tool_call"],
             "output_marking": AI_OUTPUT_MARKING,
@@ -875,7 +878,19 @@ mod tests {
                     "public_key": public_key_hex,
                 }
             }
-        })
+        });
+        let evidence_message = adjudication_context_evidence_message_from_json(
+            &context["adjudication_context"],
+            &actor,
+        )
+        .expect("canonical context evidence payload");
+        let evidence_signature = exo_core::crypto::sign(evidence_message.as_bytes(), &secret_key);
+        context["adjudication_context"]["context_evidence"] = serde_json::json!({
+            "signer": actor.as_str(),
+            "public_key": public_key_hex,
+            "signature": hex::encode(evidence_signature.to_bytes()),
+        });
+        context
     }
 
     fn tool_call_params(name: &str, arguments: Value) -> Value {

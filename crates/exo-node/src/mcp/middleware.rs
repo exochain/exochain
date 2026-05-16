@@ -28,9 +28,10 @@
 //! Tool-call params must include a top-level `constitutional_context` object.
 //! The middleware parses that object, verifies the signed authority chain and
 //! provenance through the same gatekeeper logic as `exochain_adjudicate_action`,
-//! derives MCP rule facts from the parsed context, and refuses the call when
-//! the context is absent or invalid. It does not fabricate consent, provenance,
-//! output marking, or human-override evidence.
+//! verifies a domain-separated evidence signature over the full adjudication
+//! context, derives MCP rule facts from the parsed context, and refuses the call
+//! when the context is absent or invalid. It does not fabricate consent,
+//! provenance, output marking, or human-override evidence.
 
 use std::sync::Arc;
 
@@ -46,6 +47,8 @@ use exo_gatekeeper::{
 use serde::Serialize;
 use serde_json::Value;
 
+#[cfg(test)]
+use super::tools::authority::adjudication_context_evidence_message_from_json;
 use super::{
     error::{McpError, Result},
     protocol::AI_OUTPUT_MARKING,
@@ -445,6 +448,24 @@ mod tests {
         signed_tool_call_params_with_arguments(action, serde_json::json!({}))
     }
 
+    fn refresh_context_evidence(params: &mut Value) {
+        let actor = test_did();
+        let keypair = exo_core::crypto::KeyPair::from_secret_bytes([0x4D; 32]).unwrap();
+        let public_key_hex = hex::encode(keypair.public_key().as_bytes());
+        let evidence_message = adjudication_context_evidence_message_from_json(
+            &params[CONSTITUTIONAL_CONTEXT_FIELD]["adjudication_context"],
+            &actor,
+        )
+        .expect("canonical context evidence payload");
+        let evidence_signature =
+            exo_core::crypto::sign(evidence_message.as_bytes(), keypair.secret_key());
+        params[CONSTITUTIONAL_CONTEXT_FIELD]["adjudication_context"]["context_evidence"] = serde_json::json!({
+            "signer": actor.as_str(),
+            "public_key": public_key_hex,
+            "signature": hex::encode(evidence_signature.to_bytes()),
+        });
+    }
+
     fn signed_tool_call_params_with_arguments(action: &str, arguments: Value) -> Value {
         let actor = test_did();
         let keypair = exo_core::crypto::KeyPair::from_secret_bytes([0x4D; 32]).unwrap();
@@ -489,7 +510,7 @@ mod tests {
             exo_core::crypto::sign(provenance_message.as_bytes(), &secret_key);
         provenance.signature = provenance_signature.to_bytes().to_vec();
 
-        serde_json::json!({
+        let mut params = serde_json::json!({
             "arguments": arguments,
             CONSTITUTIONAL_CONTEXT_FIELD: {
                 "bcts_scope": action,
@@ -535,7 +556,9 @@ mod tests {
                 }
                 }
             }
-        })
+        });
+        refresh_context_evidence(&mut params);
+        params
     }
 
     #[test]
@@ -582,6 +605,7 @@ mod tests {
         let mut params = signed_tool_call_params(action);
         params[CONSTITUTIONAL_CONTEXT_FIELD]["adjudication_context"]["actor_permissions"] =
             serde_json::json!(["unrelated:permission"]);
+        refresh_context_evidence(&mut params);
 
         let err = mw
             .enforce_tool_call(&did, action, &params)
@@ -611,6 +635,48 @@ mod tests {
         assert!(
             err.to_string().contains("action_hash"),
             "expected argument-bound action_hash refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn middleware_rejects_adjudication_context_tampering_after_signing() {
+        let mw = signed_middleware();
+        let did = test_did();
+        let action = "exochain_node_status";
+        let mut params = signed_tool_call_params(action);
+        params[CONSTITUTIONAL_CONTEXT_FIELD]["adjudication_context"]["consent_records"][0]["scope"] =
+            serde_json::json!("mcp:tool_call,attacker:extra");
+        params[CONSTITUTIONAL_CONTEXT_FIELD]["adjudication_context"]["bailment_state"]["scope"] =
+            serde_json::json!("mcp:tool_call,attacker:extra");
+
+        let err = mw
+            .enforce_tool_call(&did, action, &params)
+            .expect_err("MCP adjudication context evidence must reject caller tampering");
+
+        assert!(
+            err.to_string().contains("context_evidence"),
+            "expected context-evidence refusal, got {err}"
+        );
+    }
+
+    #[test]
+    fn middleware_rejects_context_without_context_evidence_signature() {
+        let mw = signed_middleware();
+        let did = test_did();
+        let action = "exochain_node_status";
+        let mut params = signed_tool_call_params(action);
+        params[CONSTITUTIONAL_CONTEXT_FIELD]["adjudication_context"]
+            .as_object_mut()
+            .expect("adjudication context object")
+            .remove("context_evidence");
+
+        let err = mw
+            .enforce_tool_call(&did, action, &params)
+            .expect_err("MCP adjudication context must carry signed context evidence");
+
+        assert!(
+            err.to_string().contains("context_evidence"),
+            "expected context-evidence refusal, got {err}"
         );
     }
 

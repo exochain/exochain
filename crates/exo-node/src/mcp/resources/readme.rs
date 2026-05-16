@@ -37,7 +37,8 @@ MCP rules and 8 kernel invariants on every action. Read this document first.
     `self_escalation`
   - `adjudication_context` containing actor roles, signed authority chain,
     active consent records, active bailment state, actor permissions, human
-    override evidence, and signed provenance
+    override evidence, signed provenance, and a `context_evidence` signature
+    binding those fields to the same tool action evidence
 - The middleware derives its MCP facts from that verified context. Missing or
   invalid context is refused before tool execution.
 - Every `ToolResult` returned by the server carries metadata:
