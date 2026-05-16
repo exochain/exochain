@@ -17,9 +17,12 @@
 //! Human oversight enforcement (GOV-007, TNC-02, TNC-09).
 //!
 //! Enforces that certain decision classes require human approval,
-//! distinguishes human vs AI signatures cryptographically, blocks AI
+//! distinguishes verified human voters from declared actor metadata, blocks AI
 //! from satisfying HUMAN_GATE_REQUIRED, and enforces AI delegation ceilings.
 
+use std::collections::BTreeSet;
+
+use exo_core::types::Did;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -60,11 +63,28 @@ pub fn ai_within_ceiling(policy: &HumanGatePolicy, class: DecisionClass) -> bool
 /// Validate that a decision's votes satisfy the human gate policy.
 /// Returns Ok(()) if the gate is satisfied, or an error if not.
 pub fn enforce_human_gate(policy: &HumanGatePolicy, decision: &DecisionObject) -> Result<()> {
+    enforce_human_gate_with_verified_humans(policy, decision, &BTreeSet::new())
+}
+
+/// Validate the human gate using a trusted set of externally verified human
+/// voter DIDs. The set must come from an identity registry, credential
+/// verifier, or runtime adapter that authenticated the DID as human; the
+/// self-declared `Vote.actor_kind` field is never sufficient by itself.
+pub fn enforce_human_gate_with_verified_humans(
+    policy: &HumanGatePolicy,
+    decision: &DecisionObject,
+    verified_human_voters: &BTreeSet<Did>,
+) -> Result<()> {
+    let has_verified_human_vote = decision
+        .votes
+        .iter()
+        .any(|vote| is_verified_human_vote(vote, verified_human_voters));
+
     // Check AI ceiling: if decision class exceeds AI ceiling, AI votes alone
     // are not sufficient.
     if decision.class > policy.ai_ceiling {
-        let has_human_vote = decision.votes.iter().any(is_human_vote);
-        if !has_human_vote && !decision.votes.is_empty() {
+        let has_ai_vote = decision.votes.iter().any(is_ai_vote);
+        if has_ai_vote && !has_verified_human_vote {
             return Err(ForumError::AiCeilingExceeded {
                 reason: format!(
                     "{} exceeds AI ceiling {}",
@@ -78,7 +98,11 @@ pub fn enforce_human_gate(policy: &HumanGatePolicy, decision: &DecisionObject) -
     // Check human gate: classes requiring human approval must have at least
     // one human vote.
     if requires_human_approval(policy, decision.class) {
-        let human_count = decision.votes.iter().filter(|v| is_human_vote(v)).count();
+        let human_count = decision
+            .votes
+            .iter()
+            .filter(|vote| is_verified_human_vote(vote, verified_human_voters))
+            .count();
         if human_count == 0 {
             return Err(ForumError::HumanGateRequired);
         }
@@ -87,10 +111,27 @@ pub fn enforce_human_gate(policy: &HumanGatePolicy, decision: &DecisionObject) -
     Ok(())
 }
 
-/// Determine if a vote was cast by a human actor.
+/// Determine if a vote was cast by a verified human actor.
+///
+/// This legacy helper has no trusted identity registry argument, so it fails
+/// closed. Use [`is_verified_human_vote`] when a verified DID set is available.
 #[must_use]
 pub fn is_human_vote(vote: &Vote) -> bool {
+    is_verified_human_vote(vote, &BTreeSet::new())
+}
+
+/// Determine if a vote declares a human actor kind without treating that
+/// declaration as verification.
+#[must_use]
+pub fn is_declared_human_vote(vote: &Vote) -> bool {
     matches!(vote.actor_kind, ActorKind::Human)
+}
+
+/// Determine if a vote is both declared human and backed by a trusted human
+/// identity record for the same voter DID.
+#[must_use]
+pub fn is_verified_human_vote(vote: &Vote, verified_human_voters: &BTreeSet<Did>) -> bool {
+    matches!(vote.actor_kind, ActorKind::Human) && verified_human_voters.contains(&vote.voter_did)
 }
 
 /// Determine if a vote was cast by an AI agent.
@@ -193,8 +234,27 @@ mod tests {
         let mut clock = test_clock();
         let policy = HumanGatePolicy::default();
         let mut d = make_decision(DecisionClass::Strategic, &mut clock);
-        d.add_vote(human_vote(&mut clock)).expect("ok");
-        assert!(enforce_human_gate(&policy, &d).is_ok());
+        let vote = human_vote(&mut clock);
+        let mut verified_human_voters = BTreeSet::new();
+        verified_human_voters.insert(vote.voter_did.clone());
+        d.add_vote(vote).expect("ok");
+        assert!(
+            enforce_human_gate_with_verified_humans(&policy, &d, &verified_human_voters).is_ok()
+        );
+    }
+
+    #[test]
+    fn human_gate_rejects_unverified_human_actor_kind() {
+        let mut clock = test_clock();
+        let policy = HumanGatePolicy::default();
+        let mut d = make_decision(DecisionClass::Strategic, &mut clock);
+        d.add_vote(human_vote(&mut clock))
+            .expect("declared human vote");
+
+        let err = enforce_human_gate(&policy, &d)
+            .expect_err("self-declared human actor_kind must not satisfy human gate");
+
+        assert!(matches!(err, ForumError::HumanGateRequired));
     }
 
     #[test]
@@ -232,10 +292,16 @@ mod tests {
     #[test]
     fn is_human_vs_ai() {
         let mut clock = test_clock();
-        assert!(is_human_vote(&human_vote(&mut clock)));
-        assert!(!is_human_vote(&ai_vote(&mut clock)));
+        let human = human_vote(&mut clock);
+        let mut verified_human_voters = BTreeSet::new();
+        verified_human_voters.insert(human.voter_did.clone());
+
+        assert!(is_declared_human_vote(&human));
+        assert!(!is_human_vote(&human));
+        assert!(is_verified_human_vote(&human, &verified_human_voters));
+        assert!(!is_declared_human_vote(&ai_vote(&mut clock)));
         assert!(is_ai_vote(&ai_vote(&mut clock)));
-        assert!(!is_ai_vote(&human_vote(&mut clock)));
+        assert!(!is_ai_vote(&human));
     }
 
     #[test]

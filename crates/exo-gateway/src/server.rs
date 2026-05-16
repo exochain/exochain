@@ -32,7 +32,9 @@ use axum::{
     routing::{get, post},
 };
 use axum_server::tls_rustls::RustlsConfig;
-use decision_forum::decision_object::{DecisionClass, DecisionObject, DecisionObjectInput};
+use decision_forum::decision_object::{
+    ActorKind, DecisionClass, DecisionObject, DecisionObjectInput, Vote,
+};
 use exo_core::{Did, Hash256, Signature, Timestamp, hash::hash_structured, hlc::HybridClock};
 use exo_gatekeeper::{
     invariants::InvariantSet,
@@ -512,6 +514,38 @@ impl AppState {
             .map_err(|e| {
                 GatewayError::Internal(format!("failed to count quorum eligible voters: {e}"))
             })
+    }
+
+    /// Derive the trusted human voter set for decision-forum votes from active
+    /// tenant user records. Caller-supplied `Vote.actor_kind` is only a selector
+    /// for candidate DIDs; it is not treated as proof.
+    pub async fn verified_human_voter_dids(
+        &self,
+        tenant_id: &str,
+        votes: &[Vote],
+    ) -> Result<BTreeSet<Did>> {
+        let pool = self.require_db()?;
+        let voter_dids = votes
+            .iter()
+            .filter(|vote| matches!(vote.actor_kind, ActorKind::Human))
+            .map(|vote| vote.voter_did.as_str().to_owned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let rows = db::active_human_user_dids_for_votes(pool, tenant_id, &voter_dids)
+            .await
+            .map_err(|e| {
+                GatewayError::Internal(format!("failed to derive verified human voters: {e}"))
+            })?;
+        rows.into_iter()
+            .map(|did| {
+                Did::new(&did).map_err(|e| {
+                    GatewayError::Internal(format!(
+                        "active human voter DID from database is invalid: {e}"
+                    ))
+                })
+            })
+            .collect()
     }
 
     /// Load conflict declarations for an actor from the DB-backed standing

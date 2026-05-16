@@ -20,12 +20,15 @@
 //! graceful degradation on quorum failure, and independence-aware counting
 //! via exo_governance::quorum.
 
-use exo_core::types::DeterministicMap;
+use std::collections::BTreeSet;
+
+use exo_core::types::{DeterministicMap, Did};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     decision_object::{DecisionClass, DecisionObject, VoteChoice},
     error::{ForumError, Result},
+    human_gate::is_verified_human_vote,
 };
 
 /// Quorum policy for a specific decision class.
@@ -113,6 +116,17 @@ pub fn check_quorum(
     registry: &QuorumRegistry,
     decision: &DecisionObject,
 ) -> Result<QuorumCheckResult> {
+    check_quorum_with_verified_humans(registry, decision, &BTreeSet::new())
+}
+
+/// Check if quorum is met using a trusted set of externally verified human
+/// voter DIDs. Human vote floors are satisfied only when the vote is declared
+/// human and the voter DID appears in this set.
+pub fn check_quorum_with_verified_humans(
+    registry: &QuorumRegistry,
+    decision: &DecisionObject,
+    verified_human_voters: &BTreeSet<Did>,
+) -> Result<QuorumCheckResult> {
     let req = registry
         .requirement_for(decision.class)
         .ok_or(ForumError::QuorumPolicyMissing)?;
@@ -127,7 +141,7 @@ pub fn check_quorum(
     let human_count = decision
         .votes
         .iter()
-        .filter(|v| matches!(v.actor_kind, crate::decision_object::ActorKind::Human))
+        .filter(|vote| is_verified_human_vote(vote, verified_human_voters))
         .count();
 
     if total_votes < req.min_votes {
@@ -258,6 +272,15 @@ mod tests {
         .expect("valid decision")
     }
 
+    fn verified_human_voters(decision: &DecisionObject) -> BTreeSet<Did> {
+        decision
+            .votes
+            .iter()
+            .filter(|vote| matches!(vote.actor_kind, ActorKind::Human))
+            .map(|vote| vote.voter_did.clone())
+            .collect()
+    }
+
     #[test]
     fn routine_quorum_met() {
         let mut clock = test_clock();
@@ -265,7 +288,7 @@ mod tests {
         let mut d = make_decision("test", DecisionClass::Routine, &mut clock);
         d.add_vote(human_approve_vote("alice", &mut clock))
             .expect("ok");
-        match check_quorum(&reg, &d).expect("ok") {
+        match check_quorum_with_verified_humans(&reg, &d, &verified_human_voters(&d)).expect("ok") {
             QuorumCheckResult::Met { total_votes, .. } => assert_eq!(total_votes, 1),
             other => panic!("expected Met, got {other:?}"),
         }
@@ -278,7 +301,7 @@ mod tests {
         let mut d = make_decision("test", DecisionClass::Operational, &mut clock);
         d.add_vote(human_approve_vote("alice", &mut clock))
             .expect("ok");
-        match check_quorum(&reg, &d).expect("ok") {
+        match check_quorum_with_verified_humans(&reg, &d, &verified_human_voters(&d)).expect("ok") {
             QuorumCheckResult::Degraded {
                 available,
                 required,
@@ -300,7 +323,7 @@ mod tests {
             .expect("ok");
         d.add_vote(ai_approve_vote("bot1", &mut clock)).expect("ok");
         d.add_vote(ai_approve_vote("bot2", &mut clock)).expect("ok");
-        match check_quorum(&reg, &d).expect("ok") {
+        match check_quorum_with_verified_humans(&reg, &d, &verified_human_voters(&d)).expect("ok") {
             QuorumCheckResult::Met {
                 total_votes,
                 approve_count,
@@ -322,7 +345,7 @@ mod tests {
             .expect("ok");
         d.add_vote(reject_vote("bob", &mut clock)).expect("ok");
         d.add_vote(reject_vote("carol", &mut clock)).expect("ok");
-        match check_quorum(&reg, &d).expect("ok") {
+        match check_quorum_with_verified_humans(&reg, &d, &verified_human_voters(&d)).expect("ok") {
             QuorumCheckResult::NotMet { reason } => {
                 assert!(reason.contains("approval percentage"));
             }
@@ -344,6 +367,31 @@ mod tests {
                 assert!(reason.contains("human"));
             }
             other => panic!("expected NotMet, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_quorum_rejects_unverified_human_actor_kind() {
+        let mut clock = test_clock();
+        let reg = QuorumRegistry::with_defaults();
+        let mut d = make_decision(
+            "declared humans are not verified humans",
+            DecisionClass::Strategic,
+            &mut clock,
+        );
+        for name in ["alice", "bob", "carol", "dave", "erin"] {
+            d.add_vote(human_approve_vote(name, &mut clock))
+                .expect("declared human vote accepted into decision object");
+        }
+
+        match check_quorum(&reg, &d).expect("quorum check ok") {
+            QuorumCheckResult::NotMet { reason } => {
+                assert!(
+                    reason.contains("human"),
+                    "unverified declared-human votes must not satisfy human quorum: {reason}"
+                );
+            }
+            other => panic!("expected NotMet for unverified human actor_kind, got {other:?}"),
         }
     }
 

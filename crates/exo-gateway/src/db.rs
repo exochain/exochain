@@ -509,6 +509,25 @@ pub async fn find_user_by_did(
     ).bind(did).fetch_optional(pool).await
 }
 
+/// Return active human user DIDs from the provided candidate vote set.
+pub async fn active_human_user_dids_for_votes(
+    pool: &PgPool,
+    tenant_id: &str,
+    voter_dids: &[String],
+) -> Result<Vec<String>, sqlx::Error> {
+    if voter_dids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    sqlx::query_scalar::<_, String>(
+        "SELECT did FROM users WHERE tenant_id = $1 AND status = 'Active' AND did = ANY($2) ORDER BY did",
+    )
+    .bind(tenant_id)
+    .bind(voter_dids)
+    .fetch_all(pool)
+    .await
+}
+
 /// List users for a tenant ordered by creation time.
 pub async fn list_users_db(
     pool: &PgPool,
@@ -2724,6 +2743,26 @@ mod tests {
         assert!(
             count.contains("eligible_human_voters: active_human_users"),
             "human quorum eligibility must not include agents or unrelated DIDs"
+        );
+    }
+
+    #[test]
+    fn active_human_user_vote_lookup_is_tenant_scoped_and_candidate_bounded() {
+        let source = production_source();
+        let lookup = function_source(source, "active_human_user_dids_for_votes");
+
+        assert!(
+            lookup.contains("tenant_id: &str"),
+            "verified human voter lookup must require an explicit tenant scope"
+        );
+        assert!(
+            compact_sql(lookup)
+                .contains("FROM users WHERE tenant_id = $1 AND status = 'Active' AND did = ANY($2) ORDER BY did"),
+            "verified human voter lookup must only return active users from the authenticated tenant and candidate vote set"
+        );
+        assert!(
+            contains_in_order(lookup, ".bind(tenant_id)", ".bind(voter_dids)"),
+            "verified human voter lookup must bind tenant scope before the candidate vote set"
         );
     }
 

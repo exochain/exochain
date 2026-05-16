@@ -31,7 +31,10 @@ use axum::{
 };
 use decision_forum::{
     decision_object::{ActorKind, DecisionObject, Vote, VoteChoice},
-    quorum::{QuorumCheckResult, QuorumRegistry, check_quorum, verify_quorum_precondition},
+    quorum::{
+        QuorumCheckResult, QuorumRegistry, check_quorum_with_verified_humans,
+        verify_quorum_precondition,
+    },
 };
 use exo_core::{Did, Signature, Timestamp, hash::hash_structured, types::Hash256};
 use exo_gatekeeper::{
@@ -741,17 +744,32 @@ pub async fn vote_handler(
     }
 
     // Check quorum post-vote to include status in response.
-    let quorum_result = match check_quorum(&registry, &decision) {
-        Ok(r) => r,
+    let verified_human_voter_dids = match state
+        .verified_human_voter_dids(&actor.tenant_id, &decision.votes)
+        .await
+    {
+        Ok(voters) => voters,
         Err(e) => {
-            tracing::error!(error = %e, "quorum evaluation failed");
+            tracing::error!(error = %e, "failed to derive verified human voters");
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "quorum evaluation failed"})),
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "human voter registry unavailable"})),
             )
                 .into_response();
         }
     };
+    let quorum_result =
+        match check_quorum_with_verified_humans(&registry, &decision, &verified_human_voter_dids) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(error = %e, "quorum evaluation failed");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "quorum evaluation failed"})),
+                )
+                    .into_response();
+            }
+        };
 
     // Serialize updated DecisionObject back to JSON for DB persistence.
     let updated_payload = match serde_json::to_value(&decision) {
@@ -1673,6 +1691,31 @@ mod tests {
         assert!(
             !vote_handler.contains("actor_kind: body.actor_kind"),
             "vote handler must not let clients self-attest human quorum status"
+        );
+    }
+
+    #[test]
+    fn vote_handler_checks_quorum_with_verified_human_voters() {
+        let source = include_str!("handlers.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker present");
+        let vote_handler = production
+            .split("pub async fn vote_handler")
+            .nth(1)
+            .expect("vote handler source present")
+            .split("// ── Health handler")
+            .next()
+            .expect("vote handler source end");
+
+        assert!(
+            vote_handler.contains("verified_human_voter_dids"),
+            "vote handler must derive verified human voters from the authenticated tenant profile, not request JSON"
+        );
+        assert!(
+            vote_handler.contains("check_quorum_with_verified_humans"),
+            "vote handler must evaluate post-vote human quorum with the verified human voter set"
         );
     }
 

@@ -379,6 +379,35 @@ mod source_guard_tests {
     }
 
     #[test]
+    fn wasm_decision_forum_human_vote_exports_fail_closed_without_verified_registry() {
+        let source = include_str!("decision_forum_bindings.rs");
+
+        assert!(
+            source.contains("decision_forum::human_gate::enforce_human_gate(&policy, &decision)"),
+            "legacy WASM human-gate export must use the fail-closed core helper when no trusted human registry is available"
+        );
+        assert!(
+            source.contains("decision_forum::human_gate::is_human_vote(&vote)"),
+            "legacy WASM human-vote export must use the fail-closed core helper, not declared actor metadata"
+        );
+        assert!(
+            source.contains("decision_forum::quorum::check_quorum(&registry, &decision)"),
+            "legacy WASM quorum export must use the fail-closed core helper when no trusted human registry is available"
+        );
+
+        for forbidden in [
+            "is_declared_human_vote",
+            "check_quorum_with_verified_humans",
+            "verified_human_voters",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "legacy WASM decision-forum exports must not accept or synthesize verified human status via {forbidden}"
+            );
+        }
+    }
+
+    #[test]
     fn wasm_decision_transition_requires_kernel_adjudication() {
         let source = include_str!("decision_forum_bindings.rs");
         let legacy_transition = source
