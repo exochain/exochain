@@ -21,7 +21,10 @@
 //!   2. Vote handler MUST call `Kernel::adjudicate` and gate on `Verdict::Permitted` (TNC-01)
 //!   3. `write_audit` MUST use `ciborium::into_writer` before blake3, not serde_json (TransparencyAccountability)
 
-use std::io::{self, Write};
+use std::{
+    collections::BTreeSet,
+    io::{self, Write},
+};
 
 use axum::{
     Json,
@@ -57,6 +60,7 @@ const VOTE_SIGNATURE_HASH_DOMAIN: &str = "exo.gateway.vote_signature_hash.v1";
 const VOTE_SIGNATURE_HASH_SCHEMA_VERSION: u16 = 1;
 const VOTE_ACTION_PROVENANCE_HASH_DOMAIN: &str = "exo.gateway.vote_action_provenance.v1";
 const VOTE_ACTION_PROVENANCE_HASH_SCHEMA_VERSION: u16 = 1;
+const VOTE_DECISION_AFFECTED_DIDS_METADATA_KEY: &str = "affected_dids";
 
 struct CanonicalHashWriter {
     hasher: blake3::Hasher,
@@ -372,6 +376,7 @@ async fn write_audit(
 pub struct VoteRequest {
     pub decision_id: String,
     pub voter_did: String,
+    #[serde(default)]
     pub affected_dids: Vec<String>,
     pub choice: VoteChoice,
     pub actor_kind: ActorKind,
@@ -391,17 +396,6 @@ impl VoteRequest {
             return Err("vote timestamp must be caller-supplied and non-zero".to_owned());
         }
         Ok(timestamp)
-    }
-
-    fn caller_supplied_affected_dids(&self) -> Result<Vec<Did>, String> {
-        if self.affected_dids.is_empty() {
-            return Err("affected_dids must contain at least one DID".to_owned());
-        }
-
-        self.affected_dids
-            .iter()
-            .map(|raw| Did::new(raw).map_err(|e| format!("invalid affected DID `{raw}`: {e}")))
-            .collect()
     }
 
     fn caller_supplied_provenance_timestamp(&self) -> Result<Timestamp, String> {
@@ -434,6 +428,41 @@ fn trusted_vote_actor_kind(actor: &AuthenticatedSessionUser) -> Result<ActorKind
         return Ok(ActorKind::Human);
     }
     Err("voter is not eligible".to_owned())
+}
+
+fn canonical_affected_dids(raw_dids: &[String]) -> Result<Vec<Did>, String> {
+    if raw_dids.is_empty() {
+        return Err("stored decision affected_dids metadata must not be empty".to_owned());
+    }
+
+    let mut affected = BTreeSet::new();
+    for raw in raw_dids {
+        let did = Did::new(raw).map_err(|e| {
+            format!("stored decision affected_dids metadata contains invalid DID: {e}")
+        })?;
+        affected.insert(did);
+    }
+
+    if affected.is_empty() {
+        return Err(
+            "stored decision affected_dids metadata must contain at least one DID".to_owned(),
+        );
+    }
+
+    Ok(affected.into_iter().collect())
+}
+
+fn trusted_decision_affected_dids(decision: &DecisionObject) -> Result<Vec<Did>, String> {
+    let metadata_key = VOTE_DECISION_AFFECTED_DIDS_METADATA_KEY.to_owned();
+    let raw = decision
+        .metadata
+        .get(&metadata_key)
+        .ok_or_else(|| "stored decision affected_dids metadata is missing".to_owned())?;
+    let raw_dids = serde_json::from_str::<Vec<String>>(raw).map_err(|e| {
+        format!("stored decision affected_dids metadata must be a JSON DID array: {e}")
+    })?;
+
+    canonical_affected_dids(&raw_dids)
 }
 
 /// Handle a vote submission with conflict-of-interest and authority chain checks.
@@ -482,89 +511,6 @@ pub async fn vote_handler(
                 .into_response();
         }
     };
-    let affected_dids = match body.caller_supplied_affected_dids() {
-        Ok(dids) => dids,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": e})),
-            )
-                .into_response();
-        }
-    };
-
-    // ── VIOLATION 1 FIX: ConflictAdjudication ───────────────────────────
-    // Check if voter has a declared conflict of interest on this decision.
-    let declarations = match state.load_conflict_declarations(&voter_did).await {
-        Ok(declarations) => declarations,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to load conflict declarations");
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({"error": "conflict register unavailable"})),
-            )
-                .into_response();
-        }
-    };
-    let conflict_action = ConflictActionRequest {
-        action_id: body.decision_id.clone(),
-        actor_did: voter_did.clone(),
-        affected_dids: affected_dids.clone(),
-        description: format!("Vote on {}", body.decision_id),
-    };
-    let conflicts = check_conflicts(&voter_did, &conflict_action, &declarations);
-    if let Err(err) = check_and_block(&voter_did, &conflicts) {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({
-                "error": "must recuse due to conflict of interest",
-                "reason": err.to_string()
-            })),
-        )
-            .into_response();
-    }
-
-    let provenance = match vote_action_provenance(&body, &voter_did, &affected_dids, &actor_kind) {
-        Ok(provenance) => provenance,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": e})),
-            )
-                .into_response();
-        }
-    };
-
-    // ── VIOLATION 2 FIX: TNC-01 Authority Chain / Governor Clearance ────
-    let gk_action = GatekeeperActionRequest {
-        actor: voter_did.clone(),
-        action: "Vote".into(),
-        required_permissions: PermissionSet::new(vec![Permission::new("vote")]),
-        is_self_grant: false,
-        modifies_kernel: false,
-    };
-    let mut ctx = state
-        .build_adjudication_context(&voter_did, &gk_action.required_permissions)
-        .await;
-    ctx.provenance = Some(provenance);
-    match state.kernel.adjudicate(&gk_action, &ctx) {
-        Verdict::Permitted => { /* proceed */ }
-        Verdict::Denied { violations } => {
-            let reasons: Vec<_> = violations.iter().map(|v| &v.description).collect();
-            return (
-                StatusCode::FORBIDDEN,
-                Json(serde_json::json!({"error": "clearance denied", "violations": reasons})),
-            )
-                .into_response();
-        }
-        Verdict::Escalated { reason } => {
-            return (
-                StatusCode::FORBIDDEN,
-                Json(serde_json::json!({"error": "escalated", "reason": reason})),
-            )
-                .into_response();
-        }
-    }
 
     // Require DB pool — return 503 if not configured.
     let db = match state.require_db() {
@@ -660,6 +606,91 @@ pub async fn vote_handler(
             Json(serde_json::json!({"error": "decision is in a terminal state and cannot accept further votes"})),
         )
             .into_response();
+    }
+
+    let affected_dids = match trusted_decision_affected_dids(&decision) {
+        Ok(dids) => dids,
+        Err(e) => {
+            tracing::error!(error = %e, "stored decision affected DID context unavailable");
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({"error": e})),
+            )
+                .into_response();
+        }
+    };
+
+    // ── VIOLATION 1 FIX: ConflictAdjudication ───────────────────────────
+    // Check if voter has a declared conflict of interest on this decision.
+    let declarations = match state.load_conflict_declarations(&voter_did).await {
+        Ok(declarations) => declarations,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to load conflict declarations");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "conflict register unavailable"})),
+            )
+                .into_response();
+        }
+    };
+    let conflict_action = ConflictActionRequest {
+        action_id: body.decision_id.clone(),
+        actor_did: voter_did.clone(),
+        affected_dids: affected_dids.clone(),
+        description: format!("Vote on {}", body.decision_id),
+    };
+    let conflicts = check_conflicts(&voter_did, &conflict_action, &declarations);
+    if let Err(err) = check_and_block(&voter_did, &conflicts) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "must recuse due to conflict of interest",
+                "reason": err.to_string()
+            })),
+        )
+            .into_response();
+    }
+
+    let provenance = match vote_action_provenance(&body, &voter_did, &affected_dids, &actor_kind) {
+        Ok(provenance) => provenance,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e})),
+            )
+                .into_response();
+        }
+    };
+
+    // ── VIOLATION 2 FIX: TNC-01 Authority Chain / Governor Clearance ────
+    let gk_action = GatekeeperActionRequest {
+        actor: voter_did.clone(),
+        action: "Vote".into(),
+        required_permissions: PermissionSet::new(vec![Permission::new("vote")]),
+        is_self_grant: false,
+        modifies_kernel: false,
+    };
+    let mut ctx = state
+        .build_adjudication_context(&voter_did, &gk_action.required_permissions)
+        .await;
+    ctx.provenance = Some(provenance);
+    match state.kernel.adjudicate(&gk_action, &ctx) {
+        Verdict::Permitted => { /* proceed */ }
+        Verdict::Denied { violations } => {
+            let reasons: Vec<_> = violations.iter().map(|v| &v.description).collect();
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "clearance denied", "violations": reasons})),
+            )
+                .into_response();
+        }
+        Verdict::Escalated { reason } => {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "escalated", "reason": reason})),
+            )
+                .into_response();
+        }
     }
 
     // Verify quorum precondition (TNC-07): enough tenant-scoped eligible
@@ -1440,7 +1471,7 @@ mod tests {
     }
 
     #[test]
-    fn vote_request_requires_affected_dids_for_conflict_adjudication() {
+    fn vote_request_does_not_require_caller_affected_dids_for_conflict_adjudication() {
         let mut without_affected_dids = signed_vote_request_json(
             "did:exo:alice",
             "decision-1",
@@ -1453,9 +1484,11 @@ mod tests {
             .as_object_mut()
             .expect("object")
             .remove("affected_dids");
+        let missing_affected_dids: VoteRequest =
+            serde_json::from_value(without_affected_dids).expect("request shape is valid");
         assert!(
-            serde_json::from_value::<VoteRequest>(without_affected_dids).is_err(),
-            "vote requests must provide affected DIDs so conflict checks are not vacuous"
+            missing_affected_dids.affected_dids.is_empty(),
+            "request affected DIDs are optional because conflict context is stored on the decision"
         );
 
         let empty_affected_dids: VoteRequest = serde_json::from_value(signed_vote_request_json(
@@ -1468,8 +1501,90 @@ mod tests {
         ))
         .expect("request shape is valid");
         assert!(
-            empty_affected_dids.caller_supplied_affected_dids().is_err(),
-            "affected_dids must not be an explicitly empty conflict context"
+            empty_affected_dids.affected_dids.is_empty(),
+            "empty request affected DIDs cannot make conflict adjudication vacuous"
+        );
+    }
+
+    fn decision_for_affected_did_metadata_tests() -> DecisionObject {
+        DecisionObject::new(decision_forum::decision_object::DecisionObjectInput {
+            id: uuid::Uuid::parse_str("018f7a96-8ad0-7c4f-8e0f-777777777777").expect("valid UUID"),
+            title: "Affected DID metadata test".to_owned(),
+            class: decision_forum::decision_object::DecisionClass::Routine,
+            constitutional_hash: Hash256::digest(b"affected-did-metadata-test"),
+            created_at: Timestamp::new(7_000, 2),
+        })
+        .expect("valid decision")
+    }
+
+    #[test]
+    fn trusted_decision_affected_dids_rejects_missing_metadata() {
+        let decision = decision_for_affected_did_metadata_tests();
+
+        let err = trusted_decision_affected_dids(&decision)
+            .expect_err("missing stored affected DID metadata must fail closed");
+
+        assert!(err.contains("affected_dids metadata is missing"));
+    }
+
+    #[test]
+    fn trusted_decision_affected_dids_are_deduplicated_and_sorted() {
+        let mut decision = decision_for_affected_did_metadata_tests();
+        decision.metadata.insert(
+            VOTE_DECISION_AFFECTED_DIDS_METADATA_KEY.to_owned(),
+            serde_json::json!(["did:exo:tenant-z", "did:exo:tenant-a", "did:exo:tenant-z"])
+                .to_string(),
+        );
+
+        let affected =
+            trusted_decision_affected_dids(&decision).expect("stored affected DID metadata");
+        let affected = affected.iter().map(Did::as_str).collect::<Vec<_>>();
+
+        assert_eq!(affected, vec!["did:exo:tenant-a", "did:exo:tenant-z"]);
+    }
+
+    #[test]
+    fn trusted_decision_affected_dids_block_conflict_even_when_request_context_is_unrelated() {
+        let voter = Did::new("did:exo:alice").expect("valid DID");
+        let mut decision = decision_for_affected_did_metadata_tests();
+        decision.metadata.insert(
+            VOTE_DECISION_AFFECTED_DIDS_METADATA_KEY.to_owned(),
+            serde_json::json!(["did:exo:tenant-a"]).to_string(),
+        );
+        let request: VoteRequest = serde_json::from_value(signed_vote_request_json(
+            voter.as_str(),
+            "decision-1",
+            &["did:exo:unrelated"],
+            VoteChoice::Approve,
+            ActorKind::Human,
+            Timestamp::new(7_000, 2),
+        ))
+        .expect("signed vote request");
+        assert_eq!(
+            request.affected_dids,
+            vec!["did:exo:unrelated".to_owned()],
+            "test fixture must carry the attacker-selected request context"
+        );
+
+        let conflict_action = ConflictActionRequest {
+            action_id: request.decision_id,
+            actor_did: voter.clone(),
+            affected_dids: trusted_decision_affected_dids(&decision)
+                .expect("trusted affected DID metadata"),
+            description: "Vote on decision-1".to_owned(),
+        };
+        let declarations = vec![exo_governance::conflict::ConflictDeclaration {
+            declarant_did: voter.clone(),
+            nature: "financial interest".to_owned(),
+            related_dids: vec![Did::new("did:exo:tenant-a").expect("valid DID")],
+            timestamp: Timestamp::new(6_000, 0),
+        }];
+
+        let conflicts = check_conflicts(&voter, &conflict_action, &declarations);
+
+        assert!(
+            check_and_block(&voter, &conflicts).is_err(),
+            "trusted decision affected DIDs must preserve recusal enforcement"
         );
     }
 
@@ -1493,6 +1608,42 @@ mod tests {
         assert!(
             production.contains("check_and_block(&voter_did, &conflicts)"),
             "vote handler must use the enforcing conflict gate, not advisory-only recusal checks"
+        );
+    }
+
+    #[test]
+    fn vote_handler_derives_conflict_context_from_locked_decision_state() {
+        let source = include_str!("handlers.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker present");
+        let vote_handler = production
+            .split("pub async fn vote_handler")
+            .nth(1)
+            .expect("vote handler source present")
+            .split("// Check quorum post-vote")
+            .next()
+            .expect("vote handler pre-quorum block present");
+
+        assert!(
+            !vote_handler.contains("body.caller_supplied_affected_dids()"),
+            "vote handler must not derive conflict affected DIDs from attacker-controlled request JSON"
+        );
+
+        let decision_load_index = vote_handler
+            .find("let mut decision: DecisionObject")
+            .expect("vote handler must load stored decision state");
+        let trusted_affected_index = vote_handler
+            .find("trusted_decision_affected_dids(&decision)")
+            .expect("vote handler must derive affected DIDs from stored decision state");
+        let conflict_index = vote_handler
+            .find("check_conflicts(&voter_did")
+            .expect("vote handler must run conflict checks");
+
+        assert!(
+            decision_load_index < trusted_affected_index && trusted_affected_index < conflict_index,
+            "conflict checks must use affected DIDs derived from locked decision state"
         );
     }
 
