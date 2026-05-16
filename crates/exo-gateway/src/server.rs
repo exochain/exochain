@@ -291,6 +291,12 @@ fn parse_tls_bind_address(bind_address: &str) -> Result<SocketAddr> {
 // Shared application state
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionTimeSource {
+    DatabaseWhenAvailable,
+    InjectedClock,
+}
+
 /// Shared state injected into every axum handler via `State<AppState>`.
 #[derive(Clone)]
 pub struct AppState {
@@ -305,6 +311,8 @@ pub struct AppState {
     start_time: Timestamp,
     /// HLC source used for default-on gateway runtime timestamps.
     clock: Arc<Mutex<HybridClock>>,
+    /// Trusted time boundary for DB-backed bearer-session expiry checks.
+    session_time_source: SessionTimeSource,
     /// Default-on per-client request-rate admission state.
     rate_limiter: Arc<Mutex<GatewayRateLimiter>>,
 }
@@ -400,14 +408,33 @@ impl DecisionCreateProvenanceMetadata {
 impl AppState {
     /// Create a new `AppState` with an optional database pool and a shared DID registry.
     pub fn new(pool: Option<sqlx::PgPool>, registry: Arc<RwLock<LocalDidRegistry>>) -> Self {
-        Self::new_with_clock(pool, registry, HybridClock::new())
+        Self::new_with_clock_and_session_time_source(
+            pool,
+            registry,
+            HybridClock::new(),
+            SessionTimeSource::DatabaseWhenAvailable,
+        )
     }
 
     /// Create a new `AppState` with an explicit HLC source.
     pub fn new_with_clock(
         pool: Option<sqlx::PgPool>,
         registry: Arc<RwLock<LocalDidRegistry>>,
+        clock: HybridClock,
+    ) -> Self {
+        Self::new_with_clock_and_session_time_source(
+            pool,
+            registry,
+            clock,
+            SessionTimeSource::InjectedClock,
+        )
+    }
+
+    fn new_with_clock_and_session_time_source(
+        pool: Option<sqlx::PgPool>,
+        registry: Arc<RwLock<LocalDidRegistry>>,
         mut clock: HybridClock,
+        session_time_source: SessionTimeSource,
     ) -> Self {
         // Bootstrap kernel with the all-invariants set.
         // constitution bytes are hashed for immutability verification.
@@ -425,6 +452,7 @@ impl AppState {
             kernel: Arc::new(kernel),
             start_time,
             clock: Arc::new(Mutex::new(clock)),
+            session_time_source,
             rate_limiter: Arc::new(Mutex::new(GatewayRateLimiter::default())),
         }
     }
@@ -848,6 +876,7 @@ async fn authenticate_session_login_with_state(
     proof: SessionLoginProof,
 ) -> std::result::Result<(), RegistryBlockingError> {
     let trusted_observed_at = trusted_session_login_observed_at(state)
+        .await
         .map_err(|e| RegistryBlockingError::Persistence(e.to_string()))?;
     if let Some(pool) = state.pool.as_ref() {
         let Some(doc) = db::find_did_document(pool, &did)
@@ -2986,7 +3015,7 @@ async fn handle_auth_login(
                 .into_response();
         }
     }
-    let issue_at_ms = match trusted_session_validation_time_ms(&state) {
+    let issue_at_ms = match trusted_session_validation_time_ms(&state).await {
         Ok(issue_at_ms) => issue_at_ms,
         Err(e) => return internal_error_response(e, "session login issue time", "login failed"),
     };
@@ -3066,7 +3095,7 @@ async fn handle_auth_refresh(
         Ok(metadata) => metadata,
         Err(e) => return metadata_error_response(e),
     };
-    let validation_at_ms = match trusted_session_validation_time_ms(&state) {
+    let validation_at_ms = match trusted_session_validation_time_ms(&state).await {
         Ok(validation_at_ms) => validation_at_ms,
         Err(e) => {
             return internal_error_response(
@@ -3396,7 +3425,29 @@ fn require_bearer_token(headers: &HeaderMap) -> Result<String> {
     })
 }
 
-fn trusted_session_validation_time_ms(state: &AppState) -> Result<i64> {
+async fn trusted_database_epoch_ms(db: &sqlx::PgPool) -> Result<i64> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT",
+    )
+    .fetch_one(db)
+    .await
+    .map_err(|e| GatewayError::Internal(format!("database session clock lookup failed: {e}")))
+}
+
+async fn trusted_session_validation_time_ms(state: &AppState) -> Result<i64> {
+    if matches!(
+        state.session_time_source,
+        SessionTimeSource::DatabaseWhenAvailable
+    ) {
+        if let Some(db) = state.pool.as_ref() {
+            return trusted_database_epoch_ms(db).await;
+        }
+    }
+
+    trusted_session_validation_time_ms_from_hlc(state)
+}
+
+fn trusted_session_validation_time_ms_from_hlc(state: &AppState) -> Result<i64> {
     let validation_at_ms = state
         .try_now_ms()
         .map_err(|message| GatewayError::Internal(message.to_owned()))?;
@@ -3412,15 +3463,15 @@ fn trusted_session_validation_time_ms(state: &AppState) -> Result<i64> {
     })
 }
 
-fn trusted_session_login_observed_at(state: &AppState) -> Result<Timestamp> {
-    let observed_at_ms = state
-        .try_now_ms()
-        .map_err(|message| GatewayError::Internal(message.to_owned()))?;
+async fn trusted_session_login_observed_at(state: &AppState) -> Result<Timestamp> {
+    let observed_at_ms = trusted_session_validation_time_ms(state).await?;
     if observed_at_ms == 0 {
         return Err(GatewayError::Internal(
-            "gateway session login HLC returned zero".to_owned(),
+            "gateway session login trusted time returned zero".to_owned(),
         ));
     }
+    let observed_at_ms = u64::try_from(observed_at_ms)
+        .map_err(|_| GatewayError::Internal("gateway session login time is negative".to_owned()))?;
     Ok(Timestamp::new(observed_at_ms, 0))
 }
 
@@ -3450,7 +3501,7 @@ async fn require_authenticated_session_actor_for_token(
     state: &AppState,
     token: &str,
 ) -> Result<Did> {
-    let validation_at_ms = trusted_session_validation_time_ms(state)?;
+    let validation_at_ms = trusted_session_validation_time_ms(state).await?;
     let db = state.require_db()?;
     let actor_did: Option<String> = sqlx::query_scalar(
         "SELECT actor_did FROM sessions \
@@ -4954,6 +5005,15 @@ mod tests {
         )
     }
 
+    async fn database_epoch_ms(pool: &sqlx::PgPool) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
     const TEST_ACTIVE_SESSION_EXPIRES_AT_MS: i64 = 4_102_444_800_000;
 
     async fn insert_test_session(pool: &sqlx::PgPool, token: &str, actor_did: &str) {
@@ -5726,6 +5786,64 @@ mod tests {
         assert!(
             matches!(err, GatewayError::AuthenticationFailed { .. }),
             "expected authentication failure for expired session, got {err}"
+        );
+
+        sqlx::query("DELETE FROM sessions WHERE token = $1")
+            .bind(token)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_session_auth_rejects_epoch_expired_token() {
+        let pool = match gateway_test_pool().await {
+            Some(pool) => pool,
+            None => return,
+        };
+        let token = "auth-production-epoch-expired-token";
+        let did = "did:exo:auth-production-expired";
+        sqlx::query("DELETE FROM sessions WHERE token = $1")
+            .bind(token)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let now_ms = database_epoch_ms(&pool).await;
+        let expires_at = now_ms
+            .checked_sub(60_000)
+            .expect("database epoch is after the Unix epoch");
+        let created_at = expires_at
+            .checked_sub(60_000)
+            .expect("expired session still has a valid creation time");
+        sqlx::query(
+            "INSERT INTO sessions (token, actor_did, created_at, expires_at, revoked) \
+             VALUES ($1, $2, $3, $4, false)",
+        )
+        .bind(token)
+        .bind(did)
+        .bind(created_at)
+        .bind(expires_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let state = AppState::new(
+            Some(pool.clone()),
+            Arc::new(RwLock::new(LocalDidRegistry::new())),
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+
+        let err = require_authenticated_session_actor_from_header(&state, &headers)
+            .await
+            .expect_err("epoch-expired production session token must fail closed");
+        assert!(
+            matches!(err, GatewayError::AuthenticationFailed { .. }),
+            "expected authentication failure for epoch-expired production session, got {err}"
         );
 
         sqlx::query("DELETE FROM sessions WHERE token = $1")
@@ -8428,6 +8546,29 @@ mod tests {
         assert!(
             refresh_handler.contains("validation_at_ms"),
             "session refresh TTL cap must be computed from gateway validation time"
+        );
+    }
+
+    #[test]
+    fn production_app_state_uses_database_time_for_db_backed_session_expiry() {
+        let source = include_str!("server.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .expect("tests marker present");
+        let constructor = source_between(
+            production,
+            "pub fn new(pool: Option<sqlx::PgPool>, registry: Arc<RwLock<LocalDidRegistry>>) -> Self",
+            "/// Create a new `AppState` with an explicit HLC source.",
+        );
+
+        assert!(
+            constructor.contains("SessionTimeSource::DatabaseWhenAvailable"),
+            "production AppState::new must mark DB-backed session expiry as database-time authoritative"
+        );
+        assert!(
+            production.contains("trusted_database_epoch_ms"),
+            "DB-backed session expiry must compare against a trusted database epoch source"
         );
     }
 
