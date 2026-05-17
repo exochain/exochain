@@ -57,7 +57,7 @@ Current baseline when this triage was created:
 | P2 | Governance attestations trust caller-supplied keys | Adjacent surface: `demo/services/audit-api/src/index.js`; core runtime adapter: `crates/exochain-wasm/src/gatekeeper_bindings.rs` | Queued behind core-owned runtime issues | Prove governance health attestation keys are pinned or registry-resolved before persistence |
 | P2 | Plaintext hashes leak encrypted message contents | EXOCHAIN core: `crates/exo-messaging/src/envelope.rs`, `crates/exo-messaging/src/compose.rs`, `crates/exo-messaging/src/open.rs` | Remediated by core nonce-derivation fix | `cargo test -p exo-messaging encrypted_envelope_nonce_is_not_public_plaintext_hash_oracle -- --nocapture`; `cargo test -p exo-messaging -- --nocapture` |
 | P2 | Identity erasure deletes third-party conflict records | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/src/handlers.rs` | Verified remediated on current main; no code change required | `DATABASE_URL=postgres://$(whoami)@localhost:55432/exochain_test cargo test -p exo-gateway erase_gateway_identity_records_tombstones_did_and_removes_durable_identity_rows -- --nocapture`; `cargo test -p exo-gateway identity_erasure -- --nocapture` |
-| P2 | Unbounded DB DID registration enables storage DoS | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/migrations/20260504000003_create_did_documents.sql`; EXOCHAIN core: `crates/exo-identity/src/registry.rs` | Queued | Prove tenant-scoped DID registration has durable quota or admission control |
+| P2 | Unbounded DB DID registration enables storage DoS | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/migrations/20260504000003_create_did_documents.sql`; EXOCHAIN core: `crates/exo-identity/src/registry.rs` | Verified remediated on current main; no code change required | `DATABASE_URL=postgres://$(whoami)@localhost:55433/exochain_test cargo test -p exo-gateway insert_did_document_enforces_durable_capacity_limit -- --nocapture`; `cargo test -p exo-gateway db_configured_identity_paths_do_not_depend_on_local_did_memory -- --nocapture` |
 | P2 | Gateway rate limit collapses clients behind proxies | Core runtime adapter: `crates/exo-gateway/src/server.rs` | Queued | Prove rate limiting uses a trusted deployment identity and avoids spoofed forwarded headers |
 | P2 | Conflict recusal checks are capped at 1000 declarations | Core runtime adapter: `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/handlers.rs`; EXOCHAIN core: `crates/exo-governance/src/conflict.rs` | Queued | Prove conflict checks are complete or fail closed when the declaration set exceeds bounded read limits |
 | P2 | P2P rate limiter slot cap can be permanently exhausted | EXOCHAIN core: `crates/exo-api/src/p2p.rs`; core runtime adapter: `crates/exo-node/src/network.rs` | Queued | Prove stale or abusive P2P limiter slots are evicted deterministically |
@@ -681,4 +681,50 @@ DATABASE_URL="postgres://$(whoami)@localhost:55432/exochain_test" cargo test -p 
 DATABASE_URL="postgres://$(whoami)@localhost:55432/exochain_test" cargo test -p exo-gateway identity_erasure_route_requires_authenticated_self_session_before_db_write -- --nocapture
 DATABASE_URL="postgres://$(whoami)@localhost:55432/exochain_test" cargo test -p exo-gateway identity_erasure_route_tombstones_did_and_invalidates_session -- --nocapture
 DATABASE_URL="postgres://$(whoami)@localhost:55432/exochain_test" cargo test -p exo-gateway identity_erasure -- --nocapture
+```
+
+### P2 - Unbounded DB DID Registration Enables Storage DoS
+
+Disposition on 2026-05-17: verified already remediated on current `main`.
+
+Path classification:
+
+- Core runtime adapter: `crates/exo-gateway/src/db.rs`,
+  `crates/exo-gateway/src/server.rs`, and
+  `crates/exo-gateway/migrations/20260504000003_create_did_documents.sql`.
+- EXOCHAIN core: `crates/exo-identity/src/registry.rs`.
+- Imported evidence tracking: this file.
+- No adjacent-surface, third-party, generated, or deployment path changed.
+
+Current enforcement evidence:
+
+- The durable DID table is not an unbounded sink: public persistence calls
+  `insert_did_document_with_capacity` with `MAX_DB_DID_DOCUMENTS`, which is
+  bound to `MAX_LOCAL_DID_REGISTRY_DOCUMENTS`.
+- The DB helper serializes the capacity check with `pg_advisory_xact_lock`,
+  checks the current durable `did_documents` row count before insert, and fails
+  closed with `DidDocumentPersistenceError::RegistryCapacityExceeded`.
+- The durable capacity regression uses a one-document test budget and proves
+  the second distinct DID document is rejected and not persisted.
+- DB-configured HTTP identity paths route `/api/v1/auth/register` and
+  `/api/v1/agents/enroll` through `register_did_document`, not direct
+  `LocalDidRegistry` writes; durable capacity exhaustion maps to
+  `IdentityError::RegistryCapacityExceeded` and returns the existing
+  fail-closed registry-capacity response.
+- DID document registration requests are additionally bounded by a 64 KiB
+  route-local body limit and proof-of-possession validation before persistence.
+- The remaining global-cap fairness question is a separate quota policy choice;
+  the reported unbounded durable storage sink is not reproducible on current
+  `main`.
+
+Validation commands:
+
+```bash
+cargo test -p exo-gateway did_documents_have_durable_schema_and_persistence_helpers -- --nocapture
+cargo test -p exo-gateway db_configured_identity_paths_do_not_depend_on_local_did_memory -- --nocapture
+cargo test -p exo-gateway did_document_routes_have_explicit_tight_body_limits -- --nocapture
+cargo test -p exo-gateway auth_register_returns_503_when_local_did_registry_capacity_is_exhausted -- --nocapture
+cargo test -p exo-identity register_rejects_documents_after_default_registry_capacity -- --nocapture
+DATABASE_URL="postgres://$(whoami)@localhost:55433/exochain_test" cargo test -p exo-gateway insert_did_document_enforces_durable_capacity_limit -- --nocapture
+git diff --check
 ```
