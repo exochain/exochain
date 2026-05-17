@@ -59,7 +59,7 @@ Current baseline when this triage was created:
 | P2 | Identity erasure deletes third-party conflict records | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/src/handlers.rs` | Verified remediated on current main; no code change required | `DATABASE_URL=postgres://$(whoami)@localhost:55432/exochain_test cargo test -p exo-gateway erase_gateway_identity_records_tombstones_did_and_removes_durable_identity_rows -- --nocapture`; `cargo test -p exo-gateway identity_erasure -- --nocapture` |
 | P2 | Unbounded DB DID registration enables storage DoS | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/migrations/20260504000003_create_did_documents.sql`; EXOCHAIN core: `crates/exo-identity/src/registry.rs` | Verified remediated on current main; no code change required | `DATABASE_URL=postgres://$(whoami)@localhost:55433/exochain_test cargo test -p exo-gateway insert_did_document_enforces_durable_capacity_limit -- --nocapture`; `cargo test -p exo-gateway db_configured_identity_paths_do_not_depend_on_local_did_memory -- --nocapture` |
 | P2 | Gateway rate limit collapses clients behind proxies | Core runtime adapter: `crates/exo-gateway/src/server.rs`; deployment/runtime entrypoint: `crates/exo-gateway/src/main.rs` | Verified remediated on current main; no code change required | `cargo test -p exo-gateway gateway_rate_limit -- --nocapture`; `cargo test -p exo-gateway gateway_main_parses_trusted_rate_limit_proxy_configuration -- --nocapture` |
-| P2 | Conflict recusal checks are capped at 1000 declarations | Core runtime adapter: `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/handlers.rs`; EXOCHAIN core: `crates/exo-governance/src/conflict.rs` | Queued | Prove conflict checks are complete or fail closed when the declaration set exceeds bounded read limits |
+| P2 | Conflict recusal checks are capped at 1000 declarations | Core runtime adapter: `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/handlers.rs`; EXOCHAIN core: `crates/exo-governance/src/conflict.rs` | Verified remediated on current main; no code change required | `DATABASE_URL=postgres://$(whoami)@localhost:55434/exochain_test cargo test -p exo-gateway conflict_recusal_lookup_finds_blocking_declaration_beyond_ui_list_cap -- --nocapture`; `cargo test -p exo-gateway conflict_recusal_enforcement_uses_scoped_blocking_lookup_not_ui_list_cap -- --nocapture` |
 | P2 | P2P rate limiter slot cap can be permanently exhausted | EXOCHAIN core: `crates/exo-api/src/p2p.rs`; core runtime adapter: `crates/exo-node/src/network.rs` | Queued | Prove stale or abusive P2P limiter slots are evicted deterministically |
 | P3 | Untrusted ExoForge issues can drive unapproved code changes | Adjacent workflow surface: `archon/workflows/*`, `archon/commands/*` | Queued after core/runtime issues | Prove issue/workflow prose is bounded as untrusted input before authorizing code, GitHub, or merge operations |
 
@@ -765,5 +765,54 @@ Validation commands:
 ```bash
 cargo test -p exo-gateway gateway_rate_limit -- --nocapture
 cargo test -p exo-gateway gateway_main_parses_trusted_rate_limit_proxy_configuration -- --nocapture
+git diff --check
+```
+
+### P2 - Conflict Recusal Checks Are Capped At 1000 Declarations
+
+Disposition on 2026-05-17: verified already remediated on current `main`.
+
+Path classification:
+
+- Core runtime adapter: `crates/exo-gateway/src/db.rs`,
+  `crates/exo-gateway/src/server.rs`, and
+  `crates/exo-gateway/src/handlers.rs`.
+- EXOCHAIN core: `crates/exo-governance/src/conflict.rs`.
+- Imported evidence tracking: this file.
+- No adjacent-surface, third-party, generated, or deployment contract path
+  changed.
+
+Current enforcement evidence:
+
+- The generic `load_conflict_declarations` path remains capped by
+  `MAX_DB_LIST_ROWS`, but it is documented and used as a list/display helper,
+  not as the vote recusal enforcement boundary.
+- Vote recusal enforcement calls
+  `load_blocking_conflict_declarations_for_vote`, which fails closed when the
+  trusted decision affected-DID context is empty or when the DB-backed conflict
+  register is unavailable.
+- The DB recusal helper scopes directly to the voter, trusted affected DIDs, and
+  blocking conflict natures with `related_dids ?| $2` and `nature LIKE ANY($3)`.
+  It uses `LIMIT 1` because one matching Material or Disqualifying declaration
+  is sufficient to block the vote; it does not reuse `MAX_DB_LIST_ROWS`.
+- The DB regression inserted `MAX_DB_LIST_ROWS` unrelated advisory declarations
+  first, then inserted a later blocking declaration for the affected DID. The
+  recusal lookup still found the blocking row and `check_and_block` rejected the
+  vote.
+- Handler source guards prove vote conflict checks derive affected DIDs from the
+  locked decision state, call the scoped blocking lookup, fail closed on lookup
+  errors, and invoke `check_and_block` before provenance and kernel adjudication.
+- Core governance conflict tests prove Material and Disqualifying conflicts
+  continue to block while Advisory and no-conflict cases pass.
+
+Validation commands:
+
+```bash
+cargo test -p exo-gateway conflict_recusal_enforcement_uses_scoped_blocking_lookup_not_ui_list_cap -- --nocapture
+cargo test -p exo-gateway conflict_declaration_loader -- --nocapture
+cargo test -p exo-gateway vote_handler_source_does_not_default_conflict_adjudication -- --nocapture
+cargo test -p exo-gateway vote_handler_derives_conflict_context_from_locked_decision_state -- --nocapture
+DATABASE_URL="postgres://$(whoami)@localhost:55434/exochain_test" cargo test -p exo-gateway conflict_recusal_lookup_finds_blocking_declaration_beyond_ui_list_cap -- --nocapture
+cargo test -p exo-governance check_and_block -- --nocapture
 git diff --check
 ```
