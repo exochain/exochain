@@ -54,7 +54,7 @@ Current baseline when this triage was created:
 | P2 | Bailment acceptance trusts caller-supplied bailee key | EXOCHAIN core: `crates/exo-consent/src/bailment.rs`, `crates/exo-consent/src/gatekeeper.rs`; core runtime adapter: `crates/exochain-wasm/src/consent_bindings.rs` | Verified remediated on current main; no code change required | `cargo test -p exo-consent accept_rejects_caller_substituted_bailee_key -- --nocapture`; `cargo test -p exochain-wasm wasm_accept_bailment_rejects_caller_supplied_bailee_key_material -- --nocapture` |
 | P2 | WASM authority verification skips chain topology validation | Core runtime adapter: `crates/exochain-wasm/src/authority_bindings.rs`; EXOCHAIN core: `crates/exo-authority/src/chain.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm wasm_authority_verification_source_guard_rejects_caller_key_resolver -- --nocapture`; `cargo test -p exo-authority verify_rejects_prebuilt_chain_with_broken_topology -- --nocapture` |
 | P2 | WASM decision transitions can disable all invariants | Core runtime adapter: `crates/exochain-wasm/src/decision_forum_bindings.rs`, `packages/exochain-wasm/test/bridge_verification.mjs`; EXOCHAIN core: `crates/exo-gatekeeper/src/invariants.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm wasm_decision_transition_requires_kernel_adjudication -- --nocapture`; `node packages/exochain-wasm/test/bridge_verification.mjs` |
-| P2 | Governance attestations trust caller-supplied keys | Adjacent surface: `demo/services/audit-api/src/index.js`; core runtime adapter: `crates/exochain-wasm/src/gatekeeper_bindings.rs` | Queued behind core-owned runtime issues | Prove governance health attestation keys are pinned or registry-resolved before persistence |
+| P2 | Governance attestations trust caller-supplied keys | Adjacent surface: `demo/services/audit-api/src/index.js`; core runtime adapter: `crates/exochain-wasm/src/gatekeeper_bindings.rs` | Remediated with adjacent-surface pinned attestor key boundary | `npx vitest run services/audit-api/src/index.test.js`; `node packages/exochain-wasm/test/bridge_verification.mjs` |
 | P2 | Plaintext hashes leak encrypted message contents | EXOCHAIN core: `crates/exo-messaging/src/envelope.rs`, `crates/exo-messaging/src/compose.rs`, `crates/exo-messaging/src/open.rs` | Remediated by core nonce-derivation fix | `cargo test -p exo-messaging encrypted_envelope_nonce_is_not_public_plaintext_hash_oracle -- --nocapture`; `cargo test -p exo-messaging -- --nocapture` |
 | P2 | Identity erasure deletes third-party conflict records | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/src/handlers.rs` | Verified remediated on current main; no code change required | `DATABASE_URL=postgres://$(whoami)@localhost:55432/exochain_test cargo test -p exo-gateway erase_gateway_identity_records_tombstones_did_and_removes_durable_identity_rows -- --nocapture`; `cargo test -p exo-gateway identity_erasure -- --nocapture` |
 | P2 | Unbounded DB DID registration enables storage DoS | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/migrations/20260504000003_create_did_documents.sql`; EXOCHAIN core: `crates/exo-identity/src/registry.rs` | Verified remediated on current main; no code change required | `DATABASE_URL=postgres://$(whoami)@localhost:55433/exochain_test cargo test -p exo-gateway insert_did_document_enforces_durable_capacity_limit -- --nocapture`; `cargo test -p exo-gateway db_configured_identity_paths_do_not_depend_on_local_did_memory -- --nocapture` |
@@ -595,6 +595,87 @@ Validation commands:
 ```bash
 cargo test -p exochain-wasm wasm_decision_transition_requires_kernel_adjudication -- --nocapture
 node packages/exochain-wasm/test/bridge_verification.mjs
+```
+
+### P2 - Governance Attestations Trust Caller-Supplied Keys
+
+Disposition on 2026-05-17: remediated in the adjacent audit API by pinning
+governance attestor keys in runtime configuration and rejecting caller-supplied
+key substitution before persistence.
+
+Path classification:
+
+- Adjacent surface: `demo/services/audit-api/src/index.js` and
+  `demo/services/audit-api/src/index.test.js`.
+- Core runtime adapter verification path:
+  `crates/exochain-wasm/src/gatekeeper_bindings.rs` and
+  `packages/exochain-wasm/test/bridge_verification.mjs`.
+- Imported evidence tracking: this file.
+- No EXOCHAIN core Rust source, third-party, generated, or deployment contract
+  path changed.
+
+Adjacent surface intake record:
+
+- Owner/accountable maintainer: Exochain Foundation audit-api maintainers.
+- Deployment status: adjacent internal/demo service, not the canonical
+  EXOCHAIN constitutional trust fabric.
+- Constitutional trust claims: not allowed to claim EXOCHAIN protection by
+  proximity; it may state only that submitted governance health snapshots pass
+  this local attestation gate before this adjacent service persists them.
+- Core state access: does not write canonical EXOCHAIN core state; it writes
+  adjacent `governance_health_snapshots`, `governance_findings`,
+  `governance_trigger_approvals`, and `audit_entries` rows in its configured
+  `DATABASE_URL`.
+- Trust boundary: `/governance/health` requires `GOVERNANCE_API_TOKEN`, resolves
+  `attestation_signer_did` to a pinned public key from
+  `GOVERNANCE_ATTESTATION_KEYS`, optionally rejects a conflicting caller
+  `attestation_public_key`, verifies the signature through
+  `wasm_verify_governance_attestation`, then performs DB writes.
+- Surface-specific test/CI gate:
+  `npx vitest run services/audit-api/src/index.test.js`.
+- Secrets/runtime configuration:
+  `DATABASE_URL`, `GOVERNANCE_API_TOKEN`, and `GOVERNANCE_ATTESTATION_KEYS`.
+  `GOVERNANCE_ATTESTATION_KEYS` is a JSON object mapping trusted signer DID to
+  32-byte Ed25519 public key hex.
+- Rollback/disablement path: remove or rotate `GOVERNANCE_API_TOKEN` to block
+  the route; remove the signer DID from `GOVERNANCE_ATTESTATION_KEYS` to make
+  that signer fail closed before any governance-health DB write.
+
+Reproduction evidence before the fix:
+
+- The POST `/governance/health` path required `attestation_public_key` in the
+  same request body that supplied the signature and signer DID.
+- The route passed that caller-supplied public key directly to
+  `wasm_verify_governance_attestation` before inserting health snapshots and
+  audit rows.
+- The failing regressions showed a rogue signer or mismatched caller key could
+  reach persistence when the WASM signature check was mocked as accepting the
+  supplied key.
+
+Current enforcement evidence:
+
+- The route no longer requires caller public-key material. It resolves the
+  attestor key from `GOVERNANCE_ATTESTATION_KEYS` using the submitted signer
+  DID.
+- Unknown signer DIDs fail closed before any database write and before calling
+  the WASM attestation verifier.
+- If a legacy caller still sends `attestation_public_key`, the route rejects it
+  unless it byte-for-byte matches the configured signer key.
+- Valid snapshots can omit caller public-key material and are verified with the
+  configured signer key before persistence.
+- `GOVERNANCE_ATTESTATION_KEYS` is parsed as a bounded JSON trust-anchor map and
+  rejects malformed signer DIDs or non-32-byte Ed25519 key hex at service
+  startup.
+- The WASM bridge still proves the core attestation verifier accepts valid
+  signatures and rejects invalid signatures once the adjacent API supplies the
+  trusted key.
+
+Validation commands:
+
+```bash
+npx vitest run services/audit-api/src/index.test.js
+node packages/exochain-wasm/test/bridge_verification.mjs
+git diff --check
 ```
 
 ### P2 - Plaintext Hashes Leak Encrypted Message Contents

@@ -25,7 +25,39 @@ const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const PORT = process.env.PORT || 3007;
 // Governance health endpoint requires a bearer token (Security panel condition — CR-001 amendment).
 // Set GOVERNANCE_API_TOKEN in the secrets manager; never in env files or Compose.
+// Set GOVERNANCE_ATTESTATION_KEYS as a JSON object mapping trusted signer DID to Ed25519 public key hex.
 const GOVERNANCE_API_TOKEN = process.env.GOVERNANCE_API_TOKEN || null;
+const GOVERNANCE_ATTESTATION_KEYS = parseGovernanceAttestationKeys(
+  process.env.GOVERNANCE_ATTESTATION_KEYS || null,
+);
+
+function parseGovernanceAttestationKeys(value) {
+  const trustedKeys = new Map();
+  if (!value) return trustedKeys;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch (e) {
+    throw new Error('GOVERNANCE_ATTESTATION_KEYS must be a JSON object mapping signer DID to Ed25519 public key hex');
+  }
+
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+    throw new Error('GOVERNANCE_ATTESTATION_KEYS must be a JSON object mapping signer DID to Ed25519 public key hex');
+  }
+
+  for (const [signerDid, publicKeyHex] of Object.entries(parsed)) {
+    if (typeof signerDid !== 'string' || !signerDid.startsWith('did:exo:')) {
+      throw new Error('GOVERNANCE_ATTESTATION_KEYS contains an invalid signer DID');
+    }
+    if (typeof publicKeyHex !== 'string' || !/^[0-9a-fA-F]{64}$/.test(publicKeyHex)) {
+      throw new Error(`GOVERNANCE_ATTESTATION_KEYS contains an invalid Ed25519 public key for ${signerDid}`);
+    }
+    trustedKeys.set(signerDid, publicKeyHex.toLowerCase());
+  }
+
+  return trustedKeys;
+}
 
 function json(res, status, data) {
   res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
@@ -146,8 +178,21 @@ export const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: 'run_id, commit_sha, system_health, and findings_digest are required' });
       }
 
-      if (!attestation_signature || !attestation_signer_did || !attestation_public_key) {
-        return json(res, 400, { error: 'attestation_signature, attestation_signer_did, and attestation_public_key are required' });
+      if (!attestation_signature || !attestation_signer_did) {
+        return json(res, 400, { error: 'attestation_signature and attestation_signer_did are required' });
+      }
+
+      const trustedAttestationPublicKey = GOVERNANCE_ATTESTATION_KEYS.get(attestation_signer_did);
+      if (!trustedAttestationPublicKey) {
+        return json(res, 400, { error: `attestation signer ${attestation_signer_did} is not configured` });
+      }
+
+      if (
+        attestation_public_key !== undefined
+        && attestation_public_key !== null
+        && String(attestation_public_key).toLowerCase() !== trustedAttestationPublicKey
+      ) {
+        return json(res, 400, { error: 'attestation_public_key does not match configured signer key' });
       }
 
       try {
@@ -160,7 +205,7 @@ export const server = http.createServer(async (req, res) => {
           attestation_signer_did,
           JSON.stringify(findings),
           JSON.stringify(attestation_signature),
-          attestation_public_key,
+          trustedAttestationPublicKey,
         );
       } catch (e) {
         return json(res, 400, { error: `invalid governance attestation: ${e.message || e}` });

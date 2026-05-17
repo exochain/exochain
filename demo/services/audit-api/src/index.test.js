@@ -19,6 +19,9 @@ import supertest from 'supertest';
 
 vi.hoisted(() => {
   process.env.GOVERNANCE_API_TOKEN = 'test-token';
+  process.env.GOVERNANCE_ATTESTATION_KEYS = JSON.stringify({
+    'did:exo:monitor': '11'.repeat(32),
+  });
 });
 
 const mockWasm = vi.hoisted(() => ({
@@ -183,6 +186,59 @@ describe('POST /governance/health attestation gate', () => {
     expect(mockPg.query).not.toHaveBeenCalled();
   });
 
+  it('rejects an unconfigured attestation signer before persistence', async () => {
+    mockPg.query.mockResolvedValue({ rows: [] });
+
+    const res = await request
+      .post('/governance/health')
+      .set('Authorization', 'Bearer test-token')
+      .send({ ...validSnapshot, attestation_signer_did: 'did:exo:rogue' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/not configured/);
+    expect(mockWasm.wasm_verify_governance_attestation).not.toHaveBeenCalled();
+    expect(mockPg.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects caller-supplied attestation keys that do not match configuration', async () => {
+    mockPg.query.mockResolvedValue({ rows: [] });
+
+    const res = await request
+      .post('/governance/health')
+      .set('Authorization', 'Bearer test-token')
+      .send({ ...validSnapshot, attestation_public_key: '22'.repeat(32) });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/does not match configured signer key/);
+    expect(mockWasm.wasm_verify_governance_attestation).not.toHaveBeenCalled();
+    expect(mockPg.query).not.toHaveBeenCalled();
+  });
+
+  it('uses the configured attestation key when the request omits public key material', async () => {
+    const { attestation_public_key, ...snapshotWithoutCallerKey } = validSnapshot;
+    mockPg.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ total: '1' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ seq: 0, prev: '0'.repeat(64) }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request
+      .post('/governance/health')
+      .set('Authorization', 'Bearer test-token')
+      .send(snapshotWithoutCallerKey);
+
+    expect(res.status).toBe(201);
+    expect(mockWasm.wasm_verify_governance_attestation).toHaveBeenCalledWith(
+      validSnapshot.attestation_signer_did,
+      JSON.stringify(validSnapshot.findings),
+      JSON.stringify(validSnapshot.attestation_signature),
+      '11'.repeat(32),
+    );
+    expect(mockPg.query).toHaveBeenCalled();
+  });
+
   it('persists valid signed health snapshots after attestation verification', async () => {
     mockPg.query
       .mockResolvedValueOnce({ rows: [] })
@@ -202,7 +258,7 @@ describe('POST /governance/health attestation gate', () => {
       validSnapshot.attestation_signer_did,
       JSON.stringify(validSnapshot.findings),
       JSON.stringify(validSnapshot.attestation_signature),
-      validSnapshot.attestation_public_key,
+      '11'.repeat(32),
     );
     expect(mockPg.query).toHaveBeenCalled();
   });
