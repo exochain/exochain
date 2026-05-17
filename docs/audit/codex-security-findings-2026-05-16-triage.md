@@ -52,7 +52,7 @@ Current baseline when this triage was created:
 | P2 | WASM receipt verifier trusts caller-supplied actor keys | Core runtime adapter: `crates/exochain-wasm/src/catapult_bindings.rs`; EXOCHAIN core: `crates/exo-catapult/src/receipt.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm receipt_chain_export_rejects_caller_supplied_actor_key_binding -- --nocapture`; `cargo test -p exo-catapult signed_chain_verification_rejects_missing_actor_key -- --nocapture` |
 | P2 | WASM governance trusts caller-supplied keys and roles | Core runtime adapter: `crates/exochain-wasm/src/decision_forum_bindings.rs`, `crates/exochain-wasm/src/governance_bindings.rs`; EXOCHAIN core: `crates/exo-governance/src/deliberation.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm wasm_governance_verified_paths_reject_caller_supplied_keys_and_roles -- --nocapture`; `cargo test -p exo-governance close_verified_rejects_forged_vote_signature -- --nocapture` |
 | P2 | Bailment acceptance trusts caller-supplied bailee key | EXOCHAIN core: `crates/exo-consent/src/bailment.rs`, `crates/exo-consent/src/gatekeeper.rs`; core runtime adapter: `crates/exochain-wasm/src/consent_bindings.rs` | Verified remediated on current main; no code change required | `cargo test -p exo-consent accept_rejects_caller_substituted_bailee_key -- --nocapture`; `cargo test -p exochain-wasm wasm_accept_bailment_rejects_caller_supplied_bailee_key_material -- --nocapture` |
-| P2 | WASM authority verification skips chain topology validation | Core runtime adapter: `crates/exochain-wasm/src/authority_bindings.rs`; EXOCHAIN core: `crates/exo-authority/src/chain.rs` | Queued | Prove WASM authority-chain verification rejects broken topology and caller-only key maps |
+| P2 | WASM authority verification skips chain topology validation | Core runtime adapter: `crates/exochain-wasm/src/authority_bindings.rs`; EXOCHAIN core: `crates/exo-authority/src/chain.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm wasm_authority_verification_source_guard_rejects_caller_key_resolver -- --nocapture`; `cargo test -p exo-authority verify_rejects_prebuilt_chain_with_broken_topology -- --nocapture` |
 | P2 | WASM decision transitions can disable all invariants | Core runtime adapter: `crates/exochain-wasm/src/decision_forum_bindings.rs`, `packages/exochain-wasm/test/bridge_verification.mjs`; EXOCHAIN core: `crates/exo-gatekeeper/src/invariants.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm wasm_decision_transition_requires_kernel_adjudication -- --nocapture`; `node packages/exochain-wasm/test/bridge_verification.mjs` |
 | P2 | Governance attestations trust caller-supplied keys | Adjacent surface: `demo/services/audit-api/src/index.js`; core runtime adapter: `crates/exochain-wasm/src/gatekeeper_bindings.rs` | Queued behind core-owned runtime issues | Prove governance health attestation keys are pinned or registry-resolved before persistence |
 | P2 | Plaintext hashes leak encrypted message contents | EXOCHAIN core: `crates/exo-messaging/src/envelope.rs`, `crates/exo-messaging/src/compose.rs`, `crates/exo-messaging/src/open.rs` | Queued | Prove encrypted-envelope metadata cannot be used as a plaintext equality oracle |
@@ -527,6 +527,44 @@ cargo test -p exo-consent accept_rejects_tampered_bailment -- --nocapture
 cargo test -p exo-consent is_active_rejects_status_forged_junk_signature -- --nocapture
 cargo test -p exo-consent check_denies_status_forged_active_bailment -- --nocapture
 cargo test -p exochain-wasm wasm_accept_bailment_rejects_caller_supplied_bailee_key_material -- --nocapture
+```
+
+### P2 - WASM Authority Verification Skips Chain Topology Validation
+
+Disposition on 2026-05-17: verified already remediated on current `main`.
+
+Path classification:
+
+- Core runtime adapter: `crates/exochain-wasm/src/authority_bindings.rs`.
+- EXOCHAIN core: `crates/exo-authority/src/chain.rs`.
+- Imported evidence tracking: this file.
+
+Current enforcement evidence:
+
+- Public WASM `wasm_verify_authority_chain` fails closed and requires a trusted
+  core runtime adapter instead of accepting caller-supplied delegator keys or
+  DID key bindings.
+- WASM source guards prove the verifier does not parse caller-supplied key
+  maps and does not call core verification with a caller-controlled resolver.
+- Public WASM chain construction still validates structural topology through
+  `build_chain` or `build_chain_with_depth`.
+- Core `verify_chain` revalidates non-empty chains, maximum depth, continuity,
+  and per-link depth values before signature, expiry, and scope checks, so
+  manually constructed `AuthorityChain` values cannot bypass topology rules.
+- Core verification rejects broken topology, forged depth, unknown delegators,
+  and scope widening.
+
+Validation commands:
+
+```bash
+cargo test -p exochain-wasm wasm_authority_verification_rejects_caller_supplied_did_key_bindings -- --nocapture
+cargo test -p exochain-wasm wasm_authority_verification_source_guard_rejects_caller_key_resolver -- --nocapture
+cargo test -p exo-authority build_rejects_gap -- --nocapture
+cargo test -p exo-authority build_rejects_wrong_depth -- --nocapture
+cargo test -p exo-authority verify_rejects_prebuilt_chain_with_broken_topology -- --nocapture
+cargo test -p exo-authority verify_rejects_prebuilt_chain_with_forged_depth -- --nocapture
+cargo test -p exo-authority verify_rejects_unknown_delegator -- --nocapture
+cargo test -p exo-authority verify_rejects_scope_widening -- --nocapture
 ```
 
 ### P2 - WASM Decision Transitions Can Disable All Invariants
