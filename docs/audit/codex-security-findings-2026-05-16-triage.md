@@ -51,7 +51,7 @@ Current baseline when this triage was created:
 | P1 | Passport API reports active standing without verification | Core runtime adapter: `crates/exo-node/src/passport.rs`, `crates/exo-node/src/main.rs` | Verified remediated on current main; no code change required | `cargo test -p exo-node passport_active_standing_requires_verified_claim_evidence -- --nocapture`; `cargo test -p exo-node passport_known_validator_without_verified_claims_is_not_active -- --nocapture` |
 | P2 | WASM receipt verifier trusts caller-supplied actor keys | Core runtime adapter: `crates/exochain-wasm/src/catapult_bindings.rs`; EXOCHAIN core: `crates/exo-catapult/src/receipt.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm receipt_chain_export_rejects_caller_supplied_actor_key_binding -- --nocapture`; `cargo test -p exo-catapult signed_chain_verification_rejects_missing_actor_key -- --nocapture` |
 | P2 | WASM governance trusts caller-supplied keys and roles | Core runtime adapter: `crates/exochain-wasm/src/decision_forum_bindings.rs`, `crates/exochain-wasm/src/governance_bindings.rs`; EXOCHAIN core: `crates/exo-governance/src/deliberation.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm wasm_governance_verified_paths_reject_caller_supplied_keys_and_roles -- --nocapture`; `cargo test -p exo-governance close_verified_rejects_forged_vote_signature -- --nocapture` |
-| P2 | Bailment acceptance trusts caller-supplied bailee key | EXOCHAIN core: `crates/exo-consent/src/bailment.rs`, `crates/exo-consent/src/gatekeeper.rs`; core runtime adapter: `crates/exochain-wasm/src/consent_bindings.rs` | Queued | Prove bailee key is resolved from trusted DID state before acceptance |
+| P2 | Bailment acceptance trusts caller-supplied bailee key | EXOCHAIN core: `crates/exo-consent/src/bailment.rs`, `crates/exo-consent/src/gatekeeper.rs`; core runtime adapter: `crates/exochain-wasm/src/consent_bindings.rs` | Verified remediated on current main; no code change required | `cargo test -p exo-consent accept_rejects_caller_substituted_bailee_key -- --nocapture`; `cargo test -p exochain-wasm wasm_accept_bailment_rejects_caller_supplied_bailee_key_material -- --nocapture` |
 | P2 | WASM authority verification skips chain topology validation | Core runtime adapter: `crates/exochain-wasm/src/authority_bindings.rs`; EXOCHAIN core: `crates/exo-authority/src/chain.rs` | Queued | Prove WASM authority-chain verification rejects broken topology and caller-only key maps |
 | P2 | WASM decision transitions can disable all invariants | Core runtime adapter: `crates/exochain-wasm/src/decision_forum_bindings.rs`, `packages/exochain-wasm/test/bridge_verification.mjs`; EXOCHAIN core: `crates/exo-gatekeeper/src/invariants.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm wasm_decision_transition_requires_kernel_adjudication -- --nocapture`; `node packages/exochain-wasm/test/bridge_verification.mjs` |
 | P2 | Governance attestations trust caller-supplied keys | Adjacent surface: `demo/services/audit-api/src/index.js`; core runtime adapter: `crates/exochain-wasm/src/gatekeeper_bindings.rs` | Queued behind core-owned runtime issues | Prove governance health attestation keys are pinned or registry-resolved before persistence |
@@ -485,6 +485,48 @@ cargo test -p exo-governance close_verified_rejects_vote_signature_replayed_to_o
 cargo test -p exo-governance close_verified_rejects_vote_signature_replayed_to_other_reasoning_hash -- --nocapture
 cargo test -p exo-governance compute_quorum_verified_requires_valid_approval_signature -- --nocapture
 cargo test -p exo-governance compute_quorum_verified_unresolved_did_not_counted -- --nocapture
+```
+
+### P2 - Bailment Acceptance Trusts Caller-Supplied Bailee Key
+
+Disposition on 2026-05-17: verified already remediated on current `main`.
+
+Path classification:
+
+- EXOCHAIN core: `crates/exo-consent/src/bailment.rs` and
+  `crates/exo-consent/src/gatekeeper.rs`.
+- Core runtime adapter: `crates/exochain-wasm/src/consent_bindings.rs`.
+- Imported evidence tracking: this file.
+
+Current enforcement evidence:
+
+- Core `bailment::accept` requires callers to supply a trusted resolver for
+  `bailment.bailee_did` and verifies the bailee signature against the resolved
+  key before the status transition.
+- Empty signatures, zero-byte signatures, invalid non-empty signatures,
+  wrong-key signatures, unresolved trusted bailee keys, tampered bailments, and
+  replayed signatures over different bailment payloads are rejected.
+- Successful acceptance stores the resolved bailee public key with the
+  signature, and active-bailment checks require the stored proof to continue
+  verifying over the canonical acceptance payload.
+- `ConsentGate` denies status-forged active bailments that lack a valid
+  acceptance proof.
+- Public WASM `wasm_accept_bailment` fails closed and instructs callers to use
+  `wasm_bailment_signing_payload` plus a trusted core runtime adapter instead
+  of trusting caller-supplied DID key material.
+
+Validation commands:
+
+```bash
+cargo test -p exo-consent accept_rejects_caller_substituted_bailee_key -- --nocapture
+cargo test -p exo-consent accept_rejects_unresolved_bailee_key -- --nocapture
+cargo test -p exo-consent accept_rejects_non_empty_but_invalid_signature -- --nocapture
+cargo test -p exo-consent accept_rejects_signature_by_wrong_key -- --nocapture
+cargo test -p exo-consent accept_rejects_signature_over_different_bailment -- --nocapture
+cargo test -p exo-consent accept_rejects_tampered_bailment -- --nocapture
+cargo test -p exo-consent is_active_rejects_status_forged_junk_signature -- --nocapture
+cargo test -p exo-consent check_denies_status_forged_active_bailment -- --nocapture
+cargo test -p exochain-wasm wasm_accept_bailment_rejects_caller_supplied_bailee_key_material -- --nocapture
 ```
 
 ### P2 - WASM Decision Transitions Can Disable All Invariants
