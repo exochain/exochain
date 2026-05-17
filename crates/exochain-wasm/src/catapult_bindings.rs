@@ -16,11 +16,13 @@
 
 //! Catapult bindings: franchise incubator, ODA team management, lifecycle
 
-use std::collections::BTreeMap;
-
 use wasm_bindgen::prelude::*;
 
 use crate::serde_bridge::*;
+
+const RECEIPT_CHAIN_TRUSTED_ADAPTER_REQUIRED: &str =
+    "requires a trusted core runtime adapter with registry-backed actor DID resolution";
+const RECEIPT_CHAIN_CALLER_KEYS_REJECTED: &str = "public WASM callers cannot supply actor keys";
 
 fn parse_uuid(value: &str, label: &str) -> Result<uuid::Uuid, JsValue> {
     let id: uuid::Uuid = value
@@ -49,45 +51,6 @@ fn parse_hash_hex(value: &str, label: &str) -> Result<exo_core::Hash256, JsValue
     Ok(hash)
 }
 
-fn parse_public_key_hex(value: &str, label: &str) -> Result<exo_core::PublicKey, JsValue> {
-    let public_key_bytes =
-        hex::decode(value).map_err(|e| JsValue::from_str(&format!("{label} hex: {e}")))?;
-    let public_key_arr: [u8; 32] = public_key_bytes
-        .try_into()
-        .map_err(|_| JsValue::from_str(&format!("{label} public key must be 32 bytes")))?;
-    let public_key = exo_core::PublicKey::from_bytes(public_key_arr);
-    if public_key.as_bytes().iter().all(|byte| *byte == 0) {
-        return Err(JsValue::from_str(&format!(
-            "{label} public key must be caller-supplied and nonzero"
-        )));
-    }
-    Ok(public_key)
-}
-
-#[derive(serde::Deserialize)]
-struct WasmActorPublicKey {
-    actor_did: String,
-    public_key_hex: String,
-}
-
-fn parse_actor_public_key_registry(
-    actor_public_keys_json: &str,
-) -> Result<BTreeMap<exo_core::Did, exo_core::PublicKey>, JsValue> {
-    let entries: Vec<WasmActorPublicKey> = from_json_str(actor_public_keys_json)?;
-    let mut registry = BTreeMap::new();
-    for entry in entries {
-        let actor_did = exo_core::Did::new(&entry.actor_did)
-            .map_err(|e| JsValue::from_str(&format!("actor DID error: {e}")))?;
-        let public_key = parse_public_key_hex(&entry.public_key_hex, "actor")?;
-        if registry.insert(actor_did.clone(), public_key).is_some() {
-            return Err(JsValue::from_str(&format!(
-                "duplicate actor public key for {actor_did}"
-            )));
-        }
-    }
-    Ok(registry)
-}
-
 fn parse_timestamp(
     physical_ms: u64,
     logical: u32,
@@ -102,6 +65,17 @@ fn parse_timestamp(
         physical_ms,
         logical,
     })
+}
+
+fn reject_public_receipt_chain_verification() -> Result<bool, &'static str> {
+    Err(RECEIPT_CHAIN_TRUSTED_ADAPTER_REQUIRED)
+}
+
+fn reject_public_receipt_chain_verification_with_keys(
+    _chain_json: &str,
+    _actor_public_keys_json: &str,
+) -> Result<bool, &'static str> {
+    Err(RECEIPT_CHAIN_CALLER_KEYS_REJECTED)
 }
 
 fn heartbeat_alert_severity_label(
@@ -500,10 +474,9 @@ pub fn wasm_generate_franchise_receipt(
 /// Verify a franchise receipt chain's integrity.
 #[wasm_bindgen]
 pub fn wasm_verify_franchise_receipt_chain(_chain_json: &str) -> Result<bool, JsValue> {
-    Err(JsValue::from_str(
-        "wasm_verify_franchise_receipt_chain requires actor public keys; \
-         use wasm_verify_franchise_receipt_chain_with_keys",
-    ))
+    reject_public_receipt_chain_verification().map_err(|message| {
+        JsValue::from_str(&format!("wasm_verify_franchise_receipt_chain {message}"))
+    })
 }
 
 /// Verify a franchise receipt chain's hash linkage and actor signatures.
@@ -512,15 +485,31 @@ pub fn wasm_verify_franchise_receipt_chain_with_keys(
     chain_json: &str,
     actor_public_keys_json: &str,
 ) -> Result<bool, JsValue> {
-    let chain: exo_catapult::receipt::ReceiptChain = from_json_str(chain_json)?;
-    let actor_public_keys = parse_actor_public_key_registry(actor_public_keys_json)?;
-    chain
-        .verify_signed_chain(|did| actor_public_keys.get(did).copied())
-        .map_err(|e| JsValue::from_str(&format!("Receipt chain verification error: {e}")))
+    reject_public_receipt_chain_verification_with_keys(chain_json, actor_public_keys_json).map_err(
+        |message| {
+            JsValue::from_str(&format!(
+                "wasm_verify_franchise_receipt_chain_with_keys \
+                 {RECEIPT_CHAIN_TRUSTED_ADAPTER_REQUIRED}; {message}"
+            ))
+        },
+    )
 }
 
 #[cfg(test)]
 mod tests {
+    fn deterministic_keypair(byte: u8) -> exo_core::crypto::KeyPair {
+        exo_core::crypto::KeyPair::from_secret_bytes([byte; 32])
+            .expect("deterministic test keypair")
+    }
+
+    fn test_uuid(value: u128) -> uuid::Uuid {
+        uuid::Uuid::from_u128(value)
+    }
+
+    fn test_hash(byte: u8) -> exo_core::Hash256 {
+        exo_core::Hash256::from_bytes([byte; 32])
+    }
+
     #[test]
     fn catapult_exports_do_not_fabricate_spawn_metadata() {
         let source = std::fs::read_to_string("src/catapult_bindings.rs").unwrap_or_else(|_| {
@@ -582,16 +571,59 @@ mod tests {
             .expect("production section");
 
         assert!(
-            production.contains("requires actor public keys"),
-            "legacy WASM receipt-chain verification must fail closed without actor keys"
-        );
-        assert!(
-            production.contains(".verify_signed_chain("),
-            "WASM receipt-chain verification must use signed-chain verification"
+            production.contains("trusted core runtime adapter"),
+            "WASM receipt-chain verification must fail closed without trusted registry-backed DID resolution"
         );
         assert!(
             !production.contains(".verify_chain()"),
             "WASM receipt-chain verification must not rely on hash-only verification"
+        );
+        assert!(
+            !production.contains("parse_actor_public_key_registry"),
+            "WASM receipt-chain verification must not authenticate caller-supplied actor key registries"
+        );
+    }
+
+    #[test]
+    fn receipt_chain_export_rejects_caller_supplied_actor_key_binding() {
+        let attacker = deterministic_keypair(0x42);
+        let privileged_actor =
+            exo_core::Did::new("did:exo:privileged-operator").expect("valid DID");
+        let receipt = exo_catapult::receipt::FranchiseReceipt::signed(
+            exo_catapult::receipt::FranchiseReceiptInput {
+                id: test_uuid(0x7100),
+                newco_id: test_uuid(0x7200),
+                operation: exo_catapult::receipt::FranchiseOperation::GoalCreated {
+                    goal_id: test_uuid(0x7300),
+                },
+                actor_did: privileged_actor.clone(),
+                timestamp: exo_core::Timestamp::new(1_000, 0),
+                state_hash: test_hash(0x55),
+                prev_receipt: test_hash(0x00),
+            },
+            attacker.secret_key(),
+        )
+        .expect("signed forged receipt");
+        let mut chain = exo_catapult::receipt::ReceiptChain::new();
+        chain
+            .append(receipt, attacker.public_key())
+            .expect("attacker-signed chain is internally self-consistent");
+
+        let chain_json = serde_json::to_string(&chain).expect("chain JSON");
+        let caller_supplied_registry = serde_json::json!([{
+            "actor_did": privileged_actor.to_string(),
+            "public_key_hex": hex::encode(attacker.public_key().as_bytes()),
+        }])
+        .to_string();
+
+        let result = super::reject_public_receipt_chain_verification_with_keys(
+            &chain_json,
+            &caller_supplied_registry,
+        );
+
+        assert!(
+            result.is_err(),
+            "public WASM receipt verification must not authenticate DID bindings from caller-supplied keys"
         );
     }
 

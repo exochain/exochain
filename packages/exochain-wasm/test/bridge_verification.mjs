@@ -1236,17 +1236,19 @@ test('wasm_verify_franchise_receipt_chain', () => {
   return expectErrorContains(
     'wasm_verify_franchise_receipt_chain',
     () => wasm.wasm_verify_franchise_receipt_chain(JSON.stringify({ receipts: [] })),
-    'requires actor public keys'
+    'trusted core runtime adapter'
   );
 });
 
 test('wasm_verify_franchise_receipt_chain_with_keys', () => {
-  const ok = wasm.wasm_verify_franchise_receipt_chain_with_keys(
-    JSON.stringify({ receipts: [] }),
-    JSON.stringify([])
+  return expectErrorContains(
+    'wasm_verify_franchise_receipt_chain_with_keys',
+    () => wasm.wasm_verify_franchise_receipt_chain_with_keys(
+      JSON.stringify({ receipts: [] }),
+      JSON.stringify([])
+    ),
+    'trusted core runtime adapter'
   );
-  if (!ok) throw new Error('empty franchise receipt chain should verify with explicit key registry');
-  return ok;
 });
 
 // =========================================================================
