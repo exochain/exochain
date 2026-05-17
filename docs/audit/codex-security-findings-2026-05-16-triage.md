@@ -55,7 +55,7 @@ Current baseline when this triage was created:
 | P2 | WASM authority verification skips chain topology validation | Core runtime adapter: `crates/exochain-wasm/src/authority_bindings.rs`; EXOCHAIN core: `crates/exo-authority/src/chain.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm wasm_authority_verification_source_guard_rejects_caller_key_resolver -- --nocapture`; `cargo test -p exo-authority verify_rejects_prebuilt_chain_with_broken_topology -- --nocapture` |
 | P2 | WASM decision transitions can disable all invariants | Core runtime adapter: `crates/exochain-wasm/src/decision_forum_bindings.rs`, `packages/exochain-wasm/test/bridge_verification.mjs`; EXOCHAIN core: `crates/exo-gatekeeper/src/invariants.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm wasm_decision_transition_requires_kernel_adjudication -- --nocapture`; `node packages/exochain-wasm/test/bridge_verification.mjs` |
 | P2 | Governance attestations trust caller-supplied keys | Adjacent surface: `demo/services/audit-api/src/index.js`; core runtime adapter: `crates/exochain-wasm/src/gatekeeper_bindings.rs` | Queued behind core-owned runtime issues | Prove governance health attestation keys are pinned or registry-resolved before persistence |
-| P2 | Plaintext hashes leak encrypted message contents | EXOCHAIN core: `crates/exo-messaging/src/envelope.rs`, `crates/exo-messaging/src/compose.rs`, `crates/exo-messaging/src/open.rs` | Queued | Prove encrypted-envelope metadata cannot be used as a plaintext equality oracle |
+| P2 | Plaintext hashes leak encrypted message contents | EXOCHAIN core: `crates/exo-messaging/src/envelope.rs`, `crates/exo-messaging/src/compose.rs`, `crates/exo-messaging/src/open.rs` | Remediated by core nonce-derivation fix | `cargo test -p exo-messaging encrypted_envelope_nonce_is_not_public_plaintext_hash_oracle -- --nocapture`; `cargo test -p exo-messaging -- --nocapture` |
 | P2 | Identity erasure deletes third-party conflict records | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/src/handlers.rs` | Queued | Prove identity erasure tombstones subject-owned data without deleting independent conflict records |
 | P2 | Unbounded DB DID registration enables storage DoS | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/migrations/20260504000003_create_did_documents.sql`; EXOCHAIN core: `crates/exo-identity/src/registry.rs` | Queued | Prove tenant-scoped DID registration has durable quota or admission control |
 | P2 | Gateway rate limit collapses clients behind proxies | Core runtime adapter: `crates/exo-gateway/src/server.rs` | Queued | Prove rate limiting uses a trusted deployment identity and avoids spoofed forwarded headers |
@@ -595,4 +595,52 @@ Validation commands:
 ```bash
 cargo test -p exochain-wasm wasm_decision_transition_requires_kernel_adjudication -- --nocapture
 node packages/exochain-wasm/test/bridge_verification.mjs
+```
+
+### P2 - Plaintext Hashes Leak Encrypted Message Contents
+
+Disposition on 2026-05-17: remediated in EXOCHAIN core by removing
+plaintext-derived material from visible vault nonce derivation.
+
+Path classification:
+
+- EXOCHAIN core: `crates/exo-messaging/src/compose.rs`.
+- EXOCHAIN core verification paths:
+  `crates/exo-messaging/src/envelope.rs` and
+  `crates/exo-messaging/src/open.rs`.
+- Imported evidence tracking: this file.
+- No adjacent-surface, third-party, generated, or deployment path changed.
+
+Reproduction evidence before the fix:
+
+- `encrypted_envelope_nonce_is_not_public_plaintext_hash_oracle` failed because
+  the visible 24-byte ciphertext prefix equaled the nonce derived from public
+  envelope metadata plus `Hash256::digest(plaintext)`.
+- `compose_path_does_not_feed_plaintext_hash_into_visible_nonce` failed because
+  the production compose path contained `Hash256::digest(plaintext)` and fed
+  `plaintext_nonce_input` into the nonce transcript.
+
+Current enforcement evidence:
+
+- `EncryptedEnvelope` still has no public `plaintext_hash` field and rejects
+  legacy wire input containing that field.
+- The compose path derives the visible XChaCha nonce through HKDF-SHA256 keyed
+  by the ECDH shared message key, with public envelope fields used only as HKDF
+  info.
+- The visible nonce transcript no longer includes plaintext, plaintext hashes,
+  or caller-visible plaintext-derived material.
+- The round-trip open path still decrypts messages with the recipient X25519
+  secret and verifies the canonical signed envelope.
+
+Validation commands:
+
+```bash
+cargo test -p exo-messaging encrypted_envelope_nonce_is_not_public_plaintext_hash_oracle -- --nocapture
+cargo test -p exo-messaging compose_path_does_not_feed_plaintext_hash_into_visible_nonce -- --nocapture
+cargo test -p exo-messaging -- --nocapture
+cargo test -p exo-messaging --release -- --nocapture
+cargo clippy -p exo-messaging --all-targets -- -D warnings
+cargo fmt --all -- --check
+RUSTDOCFLAGS="-D warnings" cargo doc -p exo-messaging --no-deps
+git diff --check
 ```

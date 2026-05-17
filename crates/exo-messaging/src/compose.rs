@@ -21,8 +21,10 @@
 //! plaintext with XChaCha20-Poly1305, and signs the envelope with the sender's
 //! Ed25519 key.
 
-use exo_core::{Did, Hash256, PublicKey, SecretKey, Signature, Timestamp};
+use exo_core::{Did, PublicKey, SecretKey, Signature, Timestamp};
 use exo_identity::vault::{VAULT_NONCE_SIZE, VaultEncryptor};
+use hkdf::Hkdf;
+use sha2::Sha256;
 use uuid::Uuid;
 
 use crate::{
@@ -193,14 +195,13 @@ pub fn prepare_envelope_for_signing_with_ephemeral(
         MESSAGE_KEX_CONTEXT,
     )?;
 
-    let plaintext_nonce_input = Hash256::digest(plaintext);
     let nonce = derive_vault_nonce(
+        &shared_key,
         &metadata,
         content_type,
         sender_did,
         recipient_did,
         ephemeral_x25519_keypair.public.as_bytes(),
-        &plaintext_nonce_input,
         release_on_death,
         release_delay_hours,
     )?;
@@ -237,17 +238,16 @@ fn caller_supplied_ephemeral_required() -> MessagingError {
 
 #[allow(clippy::too_many_arguments)]
 fn derive_vault_nonce(
+    shared_key: &[u8; 32],
     metadata: &ComposeMetadata,
     content_type: ContentType,
     sender_did: &Did,
     recipient_did: &Did,
     ephemeral_public_key: &[u8; 32],
-    plaintext_nonce_input: &Hash256,
     release_on_death: bool,
     release_delay_hours: u32,
 ) -> Result<[u8; VAULT_NONCE_SIZE], MessagingError> {
     let mut transcript = Vec::new();
-    transcript.extend_from_slice(MESSAGE_VAULT_NONCE_DOMAIN);
     append_len_prefixed(&mut transcript, "id", metadata.id.as_bytes())?;
     transcript.extend_from_slice(&metadata.created.physical_ms.to_le_bytes());
     transcript.extend_from_slice(&metadata.created.logical.to_le_bytes());
@@ -262,14 +262,14 @@ fn derive_vault_nonce(
         recipient_did.as_str().as_bytes(),
     )?;
     transcript.extend_from_slice(ephemeral_public_key);
-    transcript.extend_from_slice(plaintext_nonce_input.as_bytes());
     transcript.push(u8::from(content_type));
     transcript.push(u8::from(release_on_death));
     transcript.extend_from_slice(&release_delay_hours.to_le_bytes());
 
-    let digest = Hash256::digest(&transcript);
+    let hk = Hkdf::<Sha256>::new(Some(MESSAGE_VAULT_NONCE_DOMAIN), shared_key);
     let mut nonce = [0u8; VAULT_NONCE_SIZE];
-    nonce.copy_from_slice(&digest.as_bytes()[..VAULT_NONCE_SIZE]);
+    hk.expand(&transcript, &mut nonce)
+        .map_err(|e| MessagingError::EncryptionFailed(e.to_string()))?;
     Ok(nonce)
 }
 
@@ -322,7 +322,7 @@ pub fn attach_verified_signature(
 
 #[cfg(test)]
 mod tests {
-    use exo_core::{Timestamp, crypto::generate_keypair};
+    use exo_core::{Hash256, Timestamp, crypto::generate_keypair};
     use uuid::Uuid;
 
     use super::*;
@@ -338,6 +338,48 @@ mod tests {
     fn x25519_keypair(seed: u8) -> kex::X25519KeyPair {
         kex::X25519KeyPair::from_secret_bytes([seed; 32])
             .expect("valid deterministic X25519 keypair")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn legacy_public_plaintext_hash_nonce(
+        metadata: &ComposeMetadata,
+        content_type: ContentType,
+        sender_did: &Did,
+        recipient_did: &Did,
+        ephemeral_public_key: &[u8; 32],
+        plaintext: &[u8],
+        release_on_death: bool,
+        release_delay_hours: u32,
+    ) -> [u8; VAULT_NONCE_SIZE] {
+        let plaintext_nonce_input = Hash256::digest(plaintext);
+        let mut transcript = Vec::new();
+        transcript.extend_from_slice(MESSAGE_VAULT_NONCE_DOMAIN);
+        append_len_prefixed(&mut transcript, "id", metadata.id.as_bytes())
+            .expect("append id to legacy nonce transcript");
+        transcript.extend_from_slice(&metadata.created.physical_ms.to_le_bytes());
+        transcript.extend_from_slice(&metadata.created.logical.to_le_bytes());
+        append_len_prefixed(
+            &mut transcript,
+            "sender_did",
+            sender_did.as_str().as_bytes(),
+        )
+        .expect("append sender did to legacy nonce transcript");
+        append_len_prefixed(
+            &mut transcript,
+            "recipient_did",
+            recipient_did.as_str().as_bytes(),
+        )
+        .expect("append recipient did to legacy nonce transcript");
+        transcript.extend_from_slice(ephemeral_public_key);
+        transcript.extend_from_slice(plaintext_nonce_input.as_bytes());
+        transcript.push(u8::from(content_type));
+        transcript.push(u8::from(release_on_death));
+        transcript.extend_from_slice(&release_delay_hours.to_le_bytes());
+
+        let digest = Hash256::digest(&transcript);
+        let mut nonce = [0u8; VAULT_NONCE_SIZE];
+        nonce.copy_from_slice(&digest.as_bytes()[..VAULT_NONCE_SIZE]);
+        nonce
     }
 
     #[test]
@@ -555,6 +597,69 @@ mod tests {
             !production.contains(".encrypt("),
             "compose must not call the implicit vault encryption entrypoint"
         );
+    }
+
+    #[test]
+    fn encrypted_envelope_nonce_is_not_public_plaintext_hash_oracle() {
+        let sender_did = Did::new("did:exo:alice").unwrap();
+        let recipient_did = Did::new("did:exo:bob").unwrap();
+        let recipient_kp = x25519_keypair(0x27);
+        let ephemeral_kp = x25519_keypair(0x37);
+        let metadata = metadata();
+        let plaintext = b"known plaintext candidate";
+        let content_type = ContentType::Secret;
+        let release_on_death = true;
+        let release_delay_hours = 24;
+
+        let envelope = prepare_envelope_for_signing_with_ephemeral(
+            plaintext,
+            content_type,
+            &sender_did,
+            &recipient_did,
+            &recipient_kp.public,
+            &ephemeral_kp,
+            metadata,
+            release_on_death,
+            release_delay_hours,
+        )
+        .expect("prepare envelope");
+
+        let legacy_nonce = legacy_public_plaintext_hash_nonce(
+            &metadata,
+            content_type,
+            &sender_did,
+            &recipient_did,
+            ephemeral_kp.public.as_bytes(),
+            plaintext,
+            release_on_death,
+            release_delay_hours,
+        );
+
+        assert_ne!(
+            &envelope.ciphertext[..VAULT_NONCE_SIZE],
+            &legacy_nonce[..],
+            "visible ciphertext nonce must not be derived from public metadata plus guessed plaintext"
+        );
+    }
+
+    #[test]
+    fn compose_path_does_not_feed_plaintext_hash_into_visible_nonce() {
+        let source = include_str!("compose.rs");
+        let production = source
+            .split("// ===========================================================================")
+            .next()
+            .expect("production section");
+
+        for pattern in [
+            "Hash256::digest(plaintext)",
+            "plaintext_nonce_input",
+            "transcript.extend_from_slice(plaintext",
+        ] {
+            assert!(
+                !production.contains(pattern),
+                "compose production path must not expose plaintext-derived material through the visible vault nonce via {pattern}"
+            );
+        }
     }
 
     #[test]
