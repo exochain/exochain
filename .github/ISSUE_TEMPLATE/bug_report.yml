@@ -15,14 +15,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: Bug Report
-description: Report a bug in ExoChain. ExoForge will triage automatically.
+description: Report a bug in ExoChain. Maintainers can queue ExoForge triage after review.
 title: "[Bug]: "
-labels: ["bug", "exoforge:triage"]
+labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        **ExoForge Integration**: Issues labeled `exoforge:triage` are automatically picked up by the [ExoForge](https://github.com/exochain/exoforge) self-improvement cycle for investigation, council review, and governed implementation.
+        **ExoForge Integration**: Maintainers may apply `exoforge:triage` after initial review to queue this issue for the [ExoForge](https://github.com/exochain/exoforge) governed triage cycle.
   - type: dropdown
     id: component
     attributes:

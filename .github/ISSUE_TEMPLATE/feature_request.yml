@@ -15,14 +15,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: Feature Request
-description: Propose a new feature or enhancement. ExoForge will triage automatically.
+description: Propose a new feature or enhancement. Maintainers can queue ExoForge triage after review.
 title: "[Feature]: "
-labels: ["enhancement", "exoforge:triage"]
+labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        **ExoForge Integration**: Feature requests labeled `exoforge:triage` enter the [ExoForge](https://github.com/exochain/exoforge) self-improvement cycle: triage, AI-IRB council review (5 panels), Syntaxis workflow generation, governed implementation, constitutional validation, and PR creation.
+        **ExoForge Integration**: Maintainers may apply `exoforge:triage` after initial review to queue this request for the [ExoForge](https://github.com/exochain/exoforge) governed triage cycle.
   - type: dropdown
     id: component
     attributes:
