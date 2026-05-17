@@ -60,7 +60,7 @@ Current baseline when this triage was created:
 | P2 | Unbounded DB DID registration enables storage DoS | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/migrations/20260504000003_create_did_documents.sql`; EXOCHAIN core: `crates/exo-identity/src/registry.rs` | Verified remediated on current main; no code change required | `DATABASE_URL=postgres://$(whoami)@localhost:55433/exochain_test cargo test -p exo-gateway insert_did_document_enforces_durable_capacity_limit -- --nocapture`; `cargo test -p exo-gateway db_configured_identity_paths_do_not_depend_on_local_did_memory -- --nocapture` |
 | P2 | Gateway rate limit collapses clients behind proxies | Core runtime adapter: `crates/exo-gateway/src/server.rs`; deployment/runtime entrypoint: `crates/exo-gateway/src/main.rs` | Verified remediated on current main; no code change required | `cargo test -p exo-gateway gateway_rate_limit -- --nocapture`; `cargo test -p exo-gateway gateway_main_parses_trusted_rate_limit_proxy_configuration -- --nocapture` |
 | P2 | Conflict recusal checks are capped at 1000 declarations | Core runtime adapter: `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/handlers.rs`; EXOCHAIN core: `crates/exo-governance/src/conflict.rs` | Verified remediated on current main; no code change required | `DATABASE_URL=postgres://$(whoami)@localhost:55434/exochain_test cargo test -p exo-gateway conflict_recusal_lookup_finds_blocking_declaration_beyond_ui_list_cap -- --nocapture`; `cargo test -p exo-gateway conflict_recusal_enforcement_uses_scoped_blocking_lookup_not_ui_list_cap -- --nocapture` |
-| P2 | P2P rate limiter slot cap can be permanently exhausted | EXOCHAIN core: `crates/exo-api/src/p2p.rs`; core runtime adapter: `crates/exo-node/src/network.rs` | Queued | Prove stale or abusive P2P limiter slots are evicted deterministically |
+| P2 | P2P rate limiter slot cap can be permanently exhausted | EXOCHAIN core: `crates/exo-api/src/p2p.rs`; core runtime adapter: `crates/exo-node/src/network.rs` | Verified remediated on current main; no code change required | `cargo test -p exo-api rate_limiter -- --nocapture`; `cargo test -p exo-node production_network_loop_resets_rate_limiter_window -- --nocapture` |
 | P3 | Untrusted ExoForge issues can drive unapproved code changes | Adjacent workflow surface: `archon/workflows/*`, `archon/commands/*` | Queued after core/runtime issues | Prove issue/workflow prose is bounded as untrusted input before authorizing code, GitHub, or merge operations |
 
 ## Tracking Notes
@@ -814,5 +814,48 @@ cargo test -p exo-gateway vote_handler_source_does_not_default_conflict_adjudica
 cargo test -p exo-gateway vote_handler_derives_conflict_context_from_locked_decision_state -- --nocapture
 DATABASE_URL="postgres://$(whoami)@localhost:55434/exochain_test" cargo test -p exo-gateway conflict_recusal_lookup_finds_blocking_declaration_beyond_ui_list_cap -- --nocapture
 cargo test -p exo-governance check_and_block -- --nocapture
+git diff --check
+```
+
+### P2 - P2P Rate Limiter Slot Cap Can Be Permanently Exhausted
+
+Disposition on 2026-05-17: verified already remediated on current `main`.
+
+Path classification:
+
+- EXOCHAIN core: `crates/exo-api/src/p2p.rs`.
+- Core runtime adapter: `crates/exo-node/src/network.rs`.
+- Imported evidence tracking: this file.
+- No adjacent-surface, third-party, generated, or deployment contract path
+  changed.
+
+Current enforcement evidence:
+
+- `RateLimiter` stores per-peer counters in a deterministic `BTreeMap` with
+  `MAX_TRACKED_PEERS`; a stream of one-shot attacker-controlled peer IDs cannot
+  grow limiter state beyond the cap.
+- When the distinct-peer cap is reached, a new overflow peer is rejected without
+  inserting an additional map entry, and an already tracked peer can still
+  consume its remaining per-window allowance.
+- `RateLimiter::reset()` clears the full counter map. The focused regression
+  proves a rate-limited peer is accepted again after reset.
+- The only production instantiation of `RateLimiter` is in
+  `run_network_loop`; that loop creates a 60-second
+  `P2P_RATE_LIMIT_WINDOW_SECS` interval, consumes the immediate interval tick
+  before handling traffic, and calls `rate_limiter.reset()` on each later
+  window tick.
+- A production source guard proves the network loop retains the reset interval,
+  polls it inside `tokio::select!`, and initializes the limiter before the
+  reset arm can run.
+- The sibling ingress search found no other production `RateLimiter::new()` or
+  `check_and_increment` call path outside the guarded network loop.
+
+Validation commands:
+
+```bash
+cargo test -p exo-api rate_limiter -- --nocapture
+cargo test -p exo-node production_network_loop_resets_rate_limiter_window -- --nocapture
+cargo test -p exo-api p2p_error_peer_labels_do_not_depend_on_debug_formatting -- --nocapture
+rg -n "RateLimiter::new\\(|check_and_increment\\(|\\.reset\\(\\)" crates packages tools .github --glob '!target/**' --glob '!docs/**'
 git diff --check
 ```
