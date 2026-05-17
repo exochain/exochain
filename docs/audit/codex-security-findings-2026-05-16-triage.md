@@ -50,7 +50,7 @@ Current baseline when this triage was created:
 | P1 | Single validator can mint arbitrary audit receipts | Core runtime adapter: `crates/exo-node/src/reactor.rs` | Verified remediated on current main; no code change required | `cargo test -p exo-node inbound_governance_audit_event_cannot_mint_receipt_without_commit_certificate -- --nocapture`; `cargo test -p exo-node local_commit_persists_certificate_receipt_and_emits_event -- --nocapture` |
 | P1 | Passport API reports active standing without verification | Core runtime adapter: `crates/exo-node/src/passport.rs`, `crates/exo-node/src/main.rs` | Verified remediated on current main; no code change required | `cargo test -p exo-node passport_active_standing_requires_verified_claim_evidence -- --nocapture`; `cargo test -p exo-node passport_known_validator_without_verified_claims_is_not_active -- --nocapture` |
 | P2 | WASM receipt verifier trusts caller-supplied actor keys | Core runtime adapter: `crates/exochain-wasm/src/catapult_bindings.rs`; EXOCHAIN core: `crates/exo-catapult/src/receipt.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm receipt_chain_export_rejects_caller_supplied_actor_key_binding -- --nocapture`; `cargo test -p exo-catapult signed_chain_verification_rejects_missing_actor_key -- --nocapture` |
-| P2 | WASM governance trusts caller-supplied keys and roles | Core runtime adapter: `crates/exochain-wasm/src/decision_forum_bindings.rs`, `crates/exochain-wasm/src/governance_bindings.rs`; EXOCHAIN core: `crates/exo-governance/src/deliberation.rs` | Queued | Prove governance close/count paths use trusted key and role resolution |
+| P2 | WASM governance trusts caller-supplied keys and roles | Core runtime adapter: `crates/exochain-wasm/src/decision_forum_bindings.rs`, `crates/exochain-wasm/src/governance_bindings.rs`; EXOCHAIN core: `crates/exo-governance/src/deliberation.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm wasm_governance_verified_paths_reject_caller_supplied_keys_and_roles -- --nocapture`; `cargo test -p exo-governance close_verified_rejects_forged_vote_signature -- --nocapture` |
 | P2 | Bailment acceptance trusts caller-supplied bailee key | EXOCHAIN core: `crates/exo-consent/src/bailment.rs`, `crates/exo-consent/src/gatekeeper.rs`; core runtime adapter: `crates/exochain-wasm/src/consent_bindings.rs` | Queued | Prove bailee key is resolved from trusted DID state before acceptance |
 | P2 | WASM authority verification skips chain topology validation | Core runtime adapter: `crates/exochain-wasm/src/authority_bindings.rs`; EXOCHAIN core: `crates/exo-authority/src/chain.rs` | Queued | Prove WASM authority-chain verification rejects broken topology and caller-only key maps |
 | P2 | WASM decision transitions can disable all invariants | Core runtime adapter: `crates/exochain-wasm/src/decision_forum_bindings.rs`, `packages/exochain-wasm/test/bridge_verification.mjs`; EXOCHAIN core: `crates/exo-gatekeeper/src/invariants.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm wasm_decision_transition_requires_kernel_adjudication -- --nocapture`; `node packages/exochain-wasm/test/bridge_verification.mjs` |
@@ -442,6 +442,49 @@ cargo test -p exochain-wasm receipt_chain_export_rejects_caller_supplied_actor_k
 cargo test -p exo-catapult signed_chain_verification_rejects_signature_tamper_after_deserialize -- --nocapture
 cargo test -p exo-catapult signed_chain_verification_rejects_missing_actor_key -- --nocapture
 cargo test -p exo-catapult chain_append_requires_valid_signature_and_prev_hash -- --nocapture
+```
+
+### P2 - WASM Governance Trusts Caller-Supplied Keys And Roles
+
+Disposition on 2026-05-17: verified already remediated on current `main`.
+
+Path classification:
+
+- Core runtime adapter: `crates/exochain-wasm/src/decision_forum_bindings.rs`
+  and `crates/exochain-wasm/src/governance_bindings.rs`.
+- EXOCHAIN core: `crates/exo-governance/src/deliberation.rs` and
+  `crates/exo-governance/src/quorum.rs`.
+- Imported evidence tracking: this file.
+
+Current enforcement evidence:
+
+- Public WASM `wasm_compute_quorum` and `wasm_close_deliberation` fail closed
+  and refuse caller-supplied signer keys or voter roles.
+- Public WASM constitution ratification and amendment exports fail closed and
+  refuse caller-supplied signer keys or eligible signer sets.
+- WASM source guards prove public exports do not parse caller-supplied DID key
+  bindings and do not call verified quorum or close paths with a
+  caller-controlled resolver.
+- Core production deliberation closure uses `close_verified`; the structural
+  `close` helper is test-only.
+- `close_verified` scopes vote signatures to the deliberation id, proposal
+  hash, position, and reasoning hash before calling verified quorum logic.
+- `compute_quorum_verified` requires trusted `PublicKeyResolver` output;
+  unresolved DIDs, duplicate approvers, and invalid signatures do not count.
+
+Validation commands:
+
+```bash
+cargo test -p exochain-wasm wasm_governance_verified_paths_reject_caller_supplied_keys_and_roles -- --nocapture
+cargo test -p exochain-wasm wasm_constitution_exports_reject_caller_supplied_signer_keys -- --nocapture
+cargo test -p exo-governance production_deliberation_closure_uses_verified_quorum_only -- --nocapture
+cargo test -p exo-governance close_verified_rejects_forged_vote_signature -- --nocapture
+cargo test -p exo-governance close_without_resolver_fails_closed_for_unverified_quorum -- --nocapture
+cargo test -p exo-governance close_verified_rejects_vote_signature_replayed_to_other_deliberation -- --nocapture
+cargo test -p exo-governance close_verified_rejects_vote_signature_replayed_to_other_position -- --nocapture
+cargo test -p exo-governance close_verified_rejects_vote_signature_replayed_to_other_reasoning_hash -- --nocapture
+cargo test -p exo-governance compute_quorum_verified_requires_valid_approval_signature -- --nocapture
+cargo test -p exo-governance compute_quorum_verified_unresolved_did_not_counted -- --nocapture
 ```
 
 ### P2 - WASM Decision Transitions Can Disable All Invariants
