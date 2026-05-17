@@ -58,7 +58,7 @@ Current baseline when this triage was created:
 | P2 | Plaintext hashes leak encrypted message contents | EXOCHAIN core: `crates/exo-messaging/src/envelope.rs`, `crates/exo-messaging/src/compose.rs`, `crates/exo-messaging/src/open.rs` | Remediated by core nonce-derivation fix | `cargo test -p exo-messaging encrypted_envelope_nonce_is_not_public_plaintext_hash_oracle -- --nocapture`; `cargo test -p exo-messaging -- --nocapture` |
 | P2 | Identity erasure deletes third-party conflict records | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/src/handlers.rs` | Verified remediated on current main; no code change required | `DATABASE_URL=postgres://$(whoami)@localhost:55432/exochain_test cargo test -p exo-gateway erase_gateway_identity_records_tombstones_did_and_removes_durable_identity_rows -- --nocapture`; `cargo test -p exo-gateway identity_erasure -- --nocapture` |
 | P2 | Unbounded DB DID registration enables storage DoS | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/migrations/20260504000003_create_did_documents.sql`; EXOCHAIN core: `crates/exo-identity/src/registry.rs` | Verified remediated on current main; no code change required | `DATABASE_URL=postgres://$(whoami)@localhost:55433/exochain_test cargo test -p exo-gateway insert_did_document_enforces_durable_capacity_limit -- --nocapture`; `cargo test -p exo-gateway db_configured_identity_paths_do_not_depend_on_local_did_memory -- --nocapture` |
-| P2 | Gateway rate limit collapses clients behind proxies | Core runtime adapter: `crates/exo-gateway/src/server.rs` | Queued | Prove rate limiting uses a trusted deployment identity and avoids spoofed forwarded headers |
+| P2 | Gateway rate limit collapses clients behind proxies | Core runtime adapter: `crates/exo-gateway/src/server.rs`; deployment/runtime entrypoint: `crates/exo-gateway/src/main.rs` | Verified remediated on current main; no code change required | `cargo test -p exo-gateway gateway_rate_limit -- --nocapture`; `cargo test -p exo-gateway gateway_main_parses_trusted_rate_limit_proxy_configuration -- --nocapture` |
 | P2 | Conflict recusal checks are capped at 1000 declarations | Core runtime adapter: `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/handlers.rs`; EXOCHAIN core: `crates/exo-governance/src/conflict.rs` | Queued | Prove conflict checks are complete or fail closed when the declaration set exceeds bounded read limits |
 | P2 | P2P rate limiter slot cap can be permanently exhausted | EXOCHAIN core: `crates/exo-api/src/p2p.rs`; core runtime adapter: `crates/exo-node/src/network.rs` | Queued | Prove stale or abusive P2P limiter slots are evicted deterministically |
 | P3 | Untrusted ExoForge issues can drive unapproved code changes | Adjacent workflow surface: `archon/workflows/*`, `archon/commands/*` | Queued after core/runtime issues | Prove issue/workflow prose is bounded as untrusted input before authorizing code, GitHub, or merge operations |
@@ -726,5 +726,44 @@ cargo test -p exo-gateway did_document_routes_have_explicit_tight_body_limits --
 cargo test -p exo-gateway auth_register_returns_503_when_local_did_registry_capacity_is_exhausted -- --nocapture
 cargo test -p exo-identity register_rejects_documents_after_default_registry_capacity -- --nocapture
 DATABASE_URL="postgres://$(whoami)@localhost:55433/exochain_test" cargo test -p exo-gateway insert_did_document_enforces_durable_capacity_limit -- --nocapture
+git diff --check
+```
+
+### P2 - Gateway Rate Limit Collapses Clients Behind Proxies
+
+Disposition on 2026-05-17: verified already remediated on current `main`.
+
+Path classification:
+
+- Core runtime adapter: `crates/exo-gateway/src/server.rs`.
+- Deployment/runtime entrypoint: `crates/exo-gateway/src/main.rs`.
+- Imported evidence tracking: this file.
+- No EXOCHAIN core, adjacent-surface, third-party, generated, or deployment
+  contract path changed.
+
+Current enforcement evidence:
+
+- Gateway rate limiting keys requests by `ConnectInfo<SocketAddr>` socket IP by
+  default, so attacker-controlled `X-Forwarded-For` values do not split or merge
+  client buckets unless the immediate peer is explicitly trusted.
+- Forwarded client identity is enabled only when the immediate socket IP is
+  present in `trusted_rate_limit_proxy_ips`, which is populated from the
+  `TRUSTED_RATE_LIMIT_PROXY_IPS` deployment variable.
+- Invalid trusted-proxy configuration fails closed during gateway startup via
+  `std::process::exit(1)`.
+- Trusted-proxy parsing walks the forwarded chain from right to left and chooses
+  the first untrusted client IP, while malformed forwarded values fall back to
+  the trusted proxy socket IP rather than accepting spoofed caller text.
+- The limiter stores deterministic `BTreeMap` buckets and uses the gateway HLC
+  source for window accounting; no production `Instant::now()` source exists in
+  the rate-limit path.
+- Source guards and route tests prove the rate-limit middleware applies to the
+  main router and extra merged routes.
+
+Validation commands:
+
+```bash
+cargo test -p exo-gateway gateway_rate_limit -- --nocapture
+cargo test -p exo-gateway gateway_main_parses_trusted_rate_limit_proxy_configuration -- --nocapture
 git diff --check
 ```
