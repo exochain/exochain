@@ -56,7 +56,7 @@ Current baseline when this triage was created:
 | P2 | WASM decision transitions can disable all invariants | Core runtime adapter: `crates/exochain-wasm/src/decision_forum_bindings.rs`, `packages/exochain-wasm/test/bridge_verification.mjs`; EXOCHAIN core: `crates/exo-gatekeeper/src/invariants.rs` | Verified remediated on current main; no code change required | `cargo test -p exochain-wasm wasm_decision_transition_requires_kernel_adjudication -- --nocapture`; `node packages/exochain-wasm/test/bridge_verification.mjs` |
 | P2 | Governance attestations trust caller-supplied keys | Adjacent surface: `demo/services/audit-api/src/index.js`; core runtime adapter: `crates/exochain-wasm/src/gatekeeper_bindings.rs` | Queued behind core-owned runtime issues | Prove governance health attestation keys are pinned or registry-resolved before persistence |
 | P2 | Plaintext hashes leak encrypted message contents | EXOCHAIN core: `crates/exo-messaging/src/envelope.rs`, `crates/exo-messaging/src/compose.rs`, `crates/exo-messaging/src/open.rs` | Remediated by core nonce-derivation fix | `cargo test -p exo-messaging encrypted_envelope_nonce_is_not_public_plaintext_hash_oracle -- --nocapture`; `cargo test -p exo-messaging -- --nocapture` |
-| P2 | Identity erasure deletes third-party conflict records | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/src/handlers.rs` | Queued | Prove identity erasure tombstones subject-owned data without deleting independent conflict records |
+| P2 | Identity erasure deletes third-party conflict records | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/src/handlers.rs` | Verified remediated on current main; no code change required | `DATABASE_URL=postgres://$(whoami)@localhost:55432/exochain_test cargo test -p exo-gateway erase_gateway_identity_records_tombstones_did_and_removes_durable_identity_rows -- --nocapture`; `cargo test -p exo-gateway identity_erasure -- --nocapture` |
 | P2 | Unbounded DB DID registration enables storage DoS | Core runtime adapter: `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/migrations/20260504000003_create_did_documents.sql`; EXOCHAIN core: `crates/exo-identity/src/registry.rs` | Queued | Prove tenant-scoped DID registration has durable quota or admission control |
 | P2 | Gateway rate limit collapses clients behind proxies | Core runtime adapter: `crates/exo-gateway/src/server.rs` | Queued | Prove rate limiting uses a trusted deployment identity and avoids spoofed forwarded headers |
 | P2 | Conflict recusal checks are capped at 1000 declarations | Core runtime adapter: `crates/exo-gateway/src/db.rs`, `crates/exo-gateway/src/server.rs`, `crates/exo-gateway/src/handlers.rs`; EXOCHAIN core: `crates/exo-governance/src/conflict.rs` | Queued | Prove conflict checks are complete or fail closed when the declaration set exceeds bounded read limits |
@@ -643,4 +643,42 @@ cargo clippy -p exo-messaging --all-targets -- -D warnings
 cargo fmt --all -- --check
 RUSTDOCFLAGS="-D warnings" cargo doc -p exo-messaging --no-deps
 git diff --check
+```
+
+### P2 - Identity Erasure Deletes Third-Party Conflict Records
+
+Disposition on 2026-05-17: verified already remediated on current `main`.
+
+Path classification:
+
+- Core runtime adapter: `crates/exo-gateway/src/db.rs`,
+  `crates/exo-gateway/src/server.rs`, and
+  `crates/exo-gateway/src/handlers.rs`.
+- EXOCHAIN core support: `crates/exo-governance/src/conflict.rs`.
+- Imported evidence tracking: this file.
+- No adjacent-surface, third-party, generated, or deployment path changed.
+
+Current enforcement evidence:
+
+- `erase_gateway_identity_records` tombstones the erased DID document and
+  removes subject-owned gateway rows, but conflict declaration deletion is
+  scoped to `WHERE declarant_did = $1`.
+- The durable DB regression inserts both an erased-subject declaration and a
+  third-party declaration whose `related_dids` references the erased DID; after
+  erasure, only the erased-subject declaration is removed and the third-party
+  declaration remains.
+- The source guard rejects any erasure helper that deletes conflict declarations
+  through `related_dids @> jsonb_build_array($1::text)`.
+- The route guard authenticates a DB-backed bearer session, requires the
+  authenticated actor DID to equal the path DID, requires deterministic
+  caller-supplied `erasedAt` metadata, then calls the durable DB erasure helper.
+
+Validation commands:
+
+```bash
+cargo test -p exo-gateway gateway_identity_erasure_has_durable_tombstone_schema_and_helper -- --nocapture
+DATABASE_URL="postgres://$(whoami)@localhost:55432/exochain_test" cargo test -p exo-gateway erase_gateway_identity_records_tombstones_did_and_removes_durable_identity_rows -- --nocapture
+DATABASE_URL="postgres://$(whoami)@localhost:55432/exochain_test" cargo test -p exo-gateway identity_erasure_route_requires_authenticated_self_session_before_db_write -- --nocapture
+DATABASE_URL="postgres://$(whoami)@localhost:55432/exochain_test" cargo test -p exo-gateway identity_erasure_route_tombstones_did_and_invalidates_session -- --nocapture
+DATABASE_URL="postgres://$(whoami)@localhost:55432/exochain_test" cargo test -p exo-gateway identity_erasure -- --nocapture
 ```
