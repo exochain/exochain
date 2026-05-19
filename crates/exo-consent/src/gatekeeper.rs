@@ -31,6 +31,11 @@ use crate::{
     policy::{ActionRequest, ActiveConsent, ConsentDecision, ConsentPolicy, PolicyEngine},
 };
 
+/// Maximum retained consent access log entries in memory and snapshots.
+pub const MAX_ACCESS_LOG_ENTRIES: usize = 4_096;
+/// Maximum action type size accepted by the consent access log boundary.
+pub const MAX_ACCESS_LOG_ACTION_BYTES: usize = 256;
+
 /// Internal consent registration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ConsentReg {
@@ -110,7 +115,7 @@ impl ConsentGate {
             mut consents,
             revoked_bailment_ids,
             revocation_log,
-            access_log,
+            mut access_log,
             next_revocation_sequence,
             next_access_sequence,
         } = snapshot;
@@ -124,6 +129,7 @@ impl ConsentGate {
         let next_revocation_sequence =
             revocation_log_next_sequence(next_revocation_sequence, &revocation_log);
         let next_access_sequence = access_log_next_sequence(next_access_sequence, &access_log);
+        prune_access_log(&mut access_log);
 
         Self {
             engine: PolicyEngine::new(),
@@ -216,6 +222,7 @@ impl ConsentGate {
         action: &str,
         now: &Timestamp,
     ) -> Result<ConsentDecision, ConsentError> {
+        validate_access_log_action(action)?;
         let req = ActionRequest {
             actor: actor.clone(),
             action_type: action.into(),
@@ -288,7 +295,24 @@ impl ConsentGate {
             checked_at: *now,
             decision: decision.clone(),
         });
+        prune_access_log(&mut self.access_log);
         Ok(())
+    }
+}
+
+fn validate_access_log_action(action: &str) -> Result<(), ConsentError> {
+    if action.len() > MAX_ACCESS_LOG_ACTION_BYTES {
+        return Err(ConsentError::Denied(format!(
+            "action_type exceeds maximum consent access log length of {MAX_ACCESS_LOG_ACTION_BYTES} bytes"
+        )));
+    }
+    Ok(())
+}
+
+fn prune_access_log(access_log: &mut Vec<ConsentAccessLogEntry>) {
+    let overflow = access_log.len().saturating_sub(MAX_ACCESS_LOG_ENTRIES);
+    if overflow > 0 {
+        access_log.drain(0..overflow);
     }
 }
 
@@ -441,6 +465,104 @@ mod tests {
         assert_eq!(access_log[0].action_type, "read");
         assert_eq!(access_log[0].checked_at, now());
         assert_eq!(access_log[0].decision, decision);
+    }
+
+    #[test]
+    fn access_log_keeps_latest_bounded_entries() {
+        let mut g = ConsentGate::new(strict_policy());
+        for offset in 0..(MAX_ACCESS_LOG_ENTRIES + 2) {
+            let timestamp = ts(u64::try_from(offset + 1).expect("test offset fits u64"));
+            g.check(&charlie(), "read", &timestamp)
+                .expect("denied checks are logged within cap");
+        }
+
+        assert_eq!(g.access_log().len(), MAX_ACCESS_LOG_ENTRIES);
+        assert_eq!(g.access_log()[0].sequence, 2);
+        assert_eq!(
+            g.access_log()
+                .last()
+                .expect("bounded log has latest entry")
+                .sequence,
+            u64::try_from(MAX_ACCESS_LOG_ENTRIES + 1).expect("cap fits u64")
+        );
+        assert_eq!(g.snapshot().access_log.len(), MAX_ACCESS_LOG_ENTRIES);
+    }
+
+    #[test]
+    fn restored_snapshot_prunes_oversized_access_log_without_reusing_sequence() {
+        let mut snapshot = ConsentGate::new(strict_policy()).snapshot();
+        snapshot.access_log = (0..(MAX_ACCESS_LOG_ENTRIES + 2))
+            .map(|offset| ConsentAccessLogEntry {
+                sequence: u64::try_from(offset).expect("test offset fits u64"),
+                actor: charlie(),
+                action_type: "read".into(),
+                checked_at: ts(u64::try_from(offset + 1).expect("test offset fits u64")),
+                decision: ConsentDecision::Denied {
+                    reason: "test".into(),
+                },
+            })
+            .collect();
+        snapshot.next_access_sequence = 0;
+
+        let mut restored = ConsentGate::from_snapshot(snapshot);
+        assert_eq!(restored.access_log().len(), MAX_ACCESS_LOG_ENTRIES);
+        assert_eq!(restored.access_log()[0].sequence, 2);
+
+        restored
+            .check(&charlie(), "read", &ts(9_000))
+            .expect("post-restore check");
+        assert_eq!(restored.access_log().len(), MAX_ACCESS_LOG_ENTRIES);
+        assert_eq!(
+            restored
+                .access_log()
+                .last()
+                .expect("bounded log has latest entry")
+                .sequence,
+            u64::try_from(MAX_ACCESS_LOG_ENTRIES + 2).expect("cap fits u64")
+        );
+    }
+
+    #[test]
+    fn oversized_action_type_is_rejected_before_access_log_append() {
+        let mut g = ConsentGate::new(strict_policy());
+        let action = "x".repeat(MAX_ACCESS_LOG_ACTION_BYTES + 1);
+
+        let err = g
+            .check(&charlie(), &action, &now())
+            .expect_err("oversized action labels must be rejected");
+
+        assert!(matches!(err, ConsentError::Denied(_)));
+        assert!(g.access_log().is_empty());
+    }
+
+    #[test]
+    fn access_log_source_keeps_memory_and_snapshot_bounds() {
+        let source = include_str!("gatekeeper.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+        let check_source = production
+            .split("pub fn check(")
+            .nth(1)
+            .and_then(|section| section.split("    #[must_use]").next())
+            .expect("check source exists");
+        let append_source = production
+            .split("fn append_access_log(")
+            .nth(1)
+            .and_then(|section| section.split("fn validate_access_log_action").next())
+            .expect("append source exists");
+        let from_snapshot_source = production
+            .split("pub fn from_snapshot(")
+            .nth(1)
+            .and_then(|section| section.split("    #[must_use]").next())
+            .expect("from_snapshot source exists");
+
+        assert!(production.contains("pub const MAX_ACCESS_LOG_ENTRIES"));
+        assert!(production.contains("pub const MAX_ACCESS_LOG_ACTION_BYTES"));
+        assert!(check_source.contains("validate_access_log_action(action)?"));
+        assert!(append_source.contains("prune_access_log(&mut self.access_log)"));
+        assert!(from_snapshot_source.contains("prune_access_log(&mut access_log)"));
     }
 
     #[test]
