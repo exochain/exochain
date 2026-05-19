@@ -314,14 +314,18 @@ fn parse_authorized_trustees_json(
 /// Compute the canonical death-verification initial confirmation payload.
 ///
 /// Returns the CBOR bytes that `initiated_by_did` signs before calling
-/// [`wasm_death_verification_new`].
+/// [`wasm_death_verification_new`]. The HLC values must match the creation
+/// metadata supplied to `wasm_death_verification_new`.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
 pub fn wasm_death_verification_initial_signing_payload(
     subject_did: &str,
     initiated_by_did: &str,
     required_confirmations: u8,
     authorized_trustees_json: &str,
     claim_nonce_hex: &str,
+    created_physical_ms: u64,
+    created_logical: u32,
 ) -> Result<Vec<u8>, JsValue> {
     let subject = exo_core::Did::new(subject_did)
         .map_err(|e| JsValue::from_str(&format!("invalid subject DID: {e}")))?;
@@ -330,6 +334,10 @@ pub fn wasm_death_verification_initial_signing_payload(
     let authorized_trustees = parse_authorized_trustees_json(authorized_trustees_json)?;
     let claim_nonce = hex::decode(claim_nonce_hex)
         .map_err(|e| JsValue::from_str(&format!("invalid claim nonce hex: {e}")))?;
+    let metadata = exo_messaging::death_trigger::DeathVerificationCreationMetadata::new(
+        exo_core::Timestamp::new(created_physical_ms, created_logical),
+    )
+    .map_err(|e| JsValue::from_str(&format!("invalid death verification metadata: {e}")))?;
 
     exo_messaging::death_trigger::initial_confirmation_signing_payload(
         &subject,
@@ -337,6 +345,7 @@ pub fn wasm_death_verification_initial_signing_payload(
         required_confirmations,
         &authorized_trustees,
         &claim_nonce,
+        &metadata.created_at,
     )
     .map_err(|e| JsValue::from_str(&format!("death verification signing payload failed: {e}")))
 }
@@ -393,20 +402,28 @@ pub fn wasm_death_verification_new(
 /// Compute the canonical trustee confirmation payload for an existing claim.
 ///
 /// Returns the CBOR bytes that `trustee_did` signs before calling
-/// [`wasm_death_verification_confirm`].
+/// [`wasm_death_verification_confirm`]. The HLC values must match the
+/// confirmation metadata supplied to `wasm_death_verification_confirm`.
 #[wasm_bindgen]
 pub fn wasm_death_verification_confirmation_signing_payload(
     state_json: &str,
     trustee_did: &str,
+    confirmed_physical_ms: u64,
+    confirmed_logical: u32,
 ) -> Result<Vec<u8>, JsValue> {
     let dv: exo_messaging::death_trigger::DeathVerification = from_json_str(state_json)?;
     let trustee = exo_core::Did::new(trustee_did)
         .map_err(|e| JsValue::from_str(&format!("invalid trustee DID: {e}")))?;
-    dv.confirmation_signing_payload(&trustee).map_err(|e| {
-        JsValue::from_str(&format!(
-            "death verification confirmation payload failed: {e}"
-        ))
-    })
+    let metadata = exo_messaging::death_trigger::DeathConfirmationMetadata::new(
+        exo_core::Timestamp::new(confirmed_physical_ms, confirmed_logical),
+    )
+    .map_err(|e| JsValue::from_str(&format!("invalid death confirmation metadata: {e}")))?;
+    dv.confirmation_signing_payload(&trustee, &metadata)
+        .map_err(|e| {
+            JsValue::from_str(&format!(
+                "death verification confirmation payload failed: {e}"
+            ))
+        })
 }
 
 /// Add a trustee confirmation to a death verification.

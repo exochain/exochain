@@ -24,6 +24,8 @@ import pg from 'pg';
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const PORT = process.env.PORT || 3010;
+const DEATH_VERIFICATION_INGRESS_SKEW_MS = 300_000n;
+const MAX_HLC_LOGICAL = 4_294_967_295;
 
 function json(res, status, data) {
   res.writeHead(status, {
@@ -43,6 +45,51 @@ function parseBody(req) {
 }
 
 function nowMs() { return Date.now(); }
+
+function parseUnsignedPhysicalMs(value, field) {
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      return { error: `${field} must be a positive safe integer millisecond timestamp` };
+    }
+    return { value: BigInt(value) };
+  }
+  if (typeof value === 'string' && /^[1-9][0-9]*$/.test(value)) {
+    return { value: BigInt(value) };
+  }
+  return { error: `${field} must be a positive integer millisecond timestamp` };
+}
+
+function parseHlcLogical(value, field) {
+  if (!Number.isInteger(value) || value < 0 || value > MAX_HLC_LOGICAL) {
+    return { error: `${field} must be an unsigned 32-bit integer` };
+  }
+  return { value };
+}
+
+function parseTrustedDeathVerificationHlc(physicalMs, logical, physicalField, logicalField) {
+  const parsedPhysical = parseUnsignedPhysicalMs(physicalMs, physicalField);
+  if (parsedPhysical.error) return parsedPhysical;
+
+  const parsedLogical = parseHlcLogical(logical, logicalField);
+  if (parsedLogical.error) return parsedLogical;
+
+  const observedAtMs = nowMs();
+  const observedPhysical = BigInt(observedAtMs);
+  const delta = parsedPhysical.value > observedPhysical
+    ? parsedPhysical.value - observedPhysical
+    : observedPhysical - parsedPhysical.value;
+  if (delta > DEATH_VERIFICATION_INGRESS_SKEW_MS) {
+    return {
+      error: `${physicalField} must be within the trusted ingress clock window`,
+    };
+  }
+
+  return {
+    physicalMs: parsedPhysical.value,
+    logical: parsedLogical.value,
+    observedAtMs,
+  };
+}
 
 export const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
@@ -320,6 +367,15 @@ export const server = http.createServer(async (req, res) => {
           error: 'created_physical_ms and created_logical are required',
         });
       }
+      const creationHlc = parseTrustedDeathVerificationHlc(
+        created_physical_ms,
+        created_logical,
+        'created_physical_ms',
+        'created_logical',
+      );
+      if (creationHlc.error) {
+        return json(res, 400, { error: creationHlc.error });
+      }
 
       const state = wasm.wasm_death_verification_new(
         subject_did,
@@ -328,8 +384,8 @@ export const server = http.createServer(async (req, res) => {
         JSON.stringify(authorized_trustees),
         claim_nonce_hex,
         initiator_signature_hex,
-        BigInt(created_physical_ms),
-        created_logical
+        creationHlc.physicalMs,
+        creationHlc.logical
       );
       const initialStatus = state.status === 'Verified' ? 'verified' : 'pending';
 
@@ -340,7 +396,7 @@ export const server = http.createServer(async (req, res) => {
           trustee_confirmations, verification_state, status, created_at_ms)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [id, subject_did, initiated_by_did, required_confirmations || 3,
-         JSON.stringify(state.confirmations || []), JSON.stringify(state), initialStatus, created_physical_ms]
+         JSON.stringify(state.confirmations || []), JSON.stringify(state), initialStatus, creationHlc.observedAtMs]
       );
 
       return json(res, 201, { id, status: initialStatus, state });
@@ -367,6 +423,15 @@ export const server = http.createServer(async (req, res) => {
           error: 'confirmed_physical_ms and confirmed_logical are required',
         });
       }
+      const confirmationHlc = parseTrustedDeathVerificationHlc(
+        confirmed_physical_ms,
+        confirmed_logical,
+        'confirmed_physical_ms',
+        'confirmed_logical',
+      );
+      if (confirmationHlc.error) {
+        return json(res, 400, { error: confirmationHlc.error });
+      }
 
       const { rows } = await pool.query(
         'SELECT * FROM death_verification WHERE id = $1',
@@ -387,8 +452,8 @@ export const server = http.createServer(async (req, res) => {
         trustee_did,
         trustee_public_key_hex,
         signature_hex,
-        BigInt(confirmed_physical_ms),
-        confirmed_logical
+        confirmationHlc.physicalMs,
+        confirmationHlc.logical
       );
 
       const verified = result.verified;
@@ -403,7 +468,7 @@ export const server = http.createServer(async (req, res) => {
           JSON.stringify(result.state.confirmations || []),
           JSON.stringify(result.state),
           newStatus,
-          verified ? confirmed_physical_ms : null,
+          verified ? confirmationHlc.observedAtMs : null,
           verification_id,
         ]
       );
@@ -628,6 +693,8 @@ export const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`✅ VitalLock API running on port ${PORT}`);
-});
+if (!process.env.VITEST) {
+  server.listen(PORT, () => {
+    console.log(`✅ VitalLock API running on port ${PORT}`);
+  });
+}

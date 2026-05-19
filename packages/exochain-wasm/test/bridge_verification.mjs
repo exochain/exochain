@@ -447,7 +447,9 @@ test('wasm_death_verification_initial_signing_payload', () => {
     TEST_DID_2,
     2,
     deathTrusteesJson,
-    deathClaimNonceHex
+    deathClaimNonceHex,
+    NOW_MS,
+    0
   );
 });
 
@@ -457,7 +459,9 @@ const deathInitialPayload = setup(() =>
     TEST_DID_2,
     2,
     deathTrusteesJson,
-    deathClaimNonceHex
+    deathClaimNonceHex,
+    NOW_MS,
+    0
   ));
 const deathInitialSignatureHex = setup(() =>
   deathInitialPayload && signer2.signHex(deathInitialPayload));
@@ -477,12 +481,29 @@ test('wasm_death_verification_new', () => {
     0
   );
   if (state.created.physical_ms !== NOW_NUM || state.created.logical !== 0) {
-    throw new Error('death verification created timestamp must be caller-supplied HLC');
+    throw new Error('death verification created timestamp must be the signed creation HLC');
   }
   if (state.confirmations[0].confirmed_at.physical_ms !== NOW_NUM) {
-    throw new Error('initial confirmation timestamp must match caller-supplied creation HLC');
+    throw new Error('initial confirmation timestamp must match signed creation HLC');
   }
   return state;
+});
+
+test('wasm_death_verification_new rejects replayed created_at metadata', () => {
+  if (!deathTrusteesJson || !deathInitialSignatureHex) {
+    throw new Error('skipped -- no signed initial payload');
+  }
+  return expectErrorContains('wasm_death_verification_new replayed timestamp', () =>
+    wasm.wasm_death_verification_new(
+      TEST_DID,
+      TEST_DID_2,
+      2,
+      deathTrusteesJson,
+      deathClaimNonceHex,
+      deathInitialSignatureHex,
+      BigInt(NOW_NUM + 10_000),
+      0
+    ), 'signature');
 });
 
 const deathState = setup(() =>
@@ -501,14 +522,18 @@ test('wasm_death_verification_confirmation_signing_payload', () => {
   if (!deathState) throw new Error('skipped -- no death-verification state');
   return wasm.wasm_death_verification_confirmation_signing_payload(
     JSON.stringify(deathState),
-    TEST_DID_3
+    TEST_DID_3,
+    BigInt(NOW_NUM + 1),
+    0
   );
 });
 
 const deathConfirmationPayload = setup(() =>
   deathState && wasm.wasm_death_verification_confirmation_signing_payload(
     JSON.stringify(deathState),
-    TEST_DID_3
+    TEST_DID_3,
+    BigInt(NOW_NUM + 1),
+    0
   ));
 const deathConfirmationSignatureHex = setup(() =>
   deathConfirmationPayload && signer3.signHex(deathConfirmationPayload));
@@ -527,12 +552,27 @@ test('wasm_death_verification_confirm', () => {
   );
   const confirmation = result.state.confirmations[1];
   if (confirmation.confirmed_at.physical_ms !== NOW_NUM + 1 || confirmation.confirmed_at.logical !== 0) {
-    throw new Error('trustee confirmation timestamp must be caller-supplied HLC');
+    throw new Error('trustee confirmation timestamp must match signed confirmation HLC');
   }
   if (result.state.resolved_at.physical_ms !== NOW_NUM + 1) {
     throw new Error('verified death claim resolution timestamp must match confirmation HLC');
   }
   return result;
+});
+
+test('wasm_death_verification_confirm rejects replayed confirmed_at metadata', () => {
+  if (!deathState || !trusteePublicKey || !deathConfirmationSignatureHex) {
+    throw new Error('skipped -- no signed confirmation payload');
+  }
+  return expectErrorContains('wasm_death_verification_confirm replayed timestamp', () =>
+    wasm.wasm_death_verification_confirm(
+      JSON.stringify(deathState),
+      TEST_DID_3,
+      trusteePublicKey,
+      deathConfirmationSignatureHex,
+      BigInt(NOW_NUM + 10_000),
+      0
+    ), 'signature');
 });
 
 // =========================================================================
