@@ -65,7 +65,7 @@ pub use exo_economy::{
     ADOPTION_EVENT_HASH_DOMAIN, AUTOMATED_SETTLEMENT_EVENT_HASH_DOMAIN, ActorClass,
     ActorMultiplier, AdopterType, AdoptionEvent, ApprovalStatus, AssuranceClass,
     AssuranceMultiplier, AuthorityEnvelopeRef, AutomatedSettlementEvent, AutomatedSettlementInputs,
-    AutomatedSettlementPreconditions, BAILMENT_TERMS_HASH_DOMAIN, BAILMENT_WRAPPER_HASH_DOMAIN,
+    AutomatedSettlementRiskState, BAILMENT_TERMS_HASH_DOMAIN, BAILMENT_WRAPPER_HASH_DOMAIN,
     BailmentTerms, BailmentWrapper, BailmentWrapperStatus, BasisPoints, BeneficiaryRef,
     BeneficiaryType, CONTRIBUTION_ACCEPTANCE_HASH_DOMAIN, CONTRIBUTION_OFFER_HASH_DOMAIN,
     CONTRIBUTION_RECEIPT_HASH_DOMAIN, ContributionAcceptance, ContributionCategory,

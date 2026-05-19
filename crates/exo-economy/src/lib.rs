@@ -154,7 +154,7 @@ pub use ruleset::{
 };
 pub use settlement::{
     AUTOMATED_SETTLEMENT_EVENT_HASH_DOMAIN, AutomatedSettlementEvent, AutomatedSettlementInputs,
-    AutomatedSettlementPreconditions, MISSION_SETTLEMENT_HASH_DOMAIN, MissionSettlement,
+    AutomatedSettlementRiskState, MISSION_SETTLEMENT_HASH_DOMAIN, MissionSettlement,
     SettlementContext, SettlementLine, checked_basis_point_amount, settle,
     settlement_lines_from_ruleset,
 };

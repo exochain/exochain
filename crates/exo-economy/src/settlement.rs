@@ -28,9 +28,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     adoption::{AdoptionEvent, UseEvent, ValueBasis, ValueEvent},
-    bailment::{BailmentWrapper, BailmentWrapperStatus},
+    bailment::{BailmentTerms, BailmentWrapper, BailmentWrapperStatus},
+    contribution_acceptance::ContributionAcceptance,
+    contribution_offer::{ContributionOffer, ContributionOfferStatus},
     error::EconomyError,
-    legacy::LegalEffect,
     quote::SettlementQuote,
     receipt::{SettlementReceipt, canonical_content_hash},
     ruleset::{
@@ -328,46 +329,17 @@ impl MissionSettlement {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AutomatedSettlementPreconditions {
-    pub accepted_offer_exists: bool,
-    pub valid_acceptance_exists: bool,
-    pub valid_bailment_wrapper_exists: bool,
-    pub authority_valid: bool,
-    pub ruleset_hash_matches: bool,
-    pub value_event_valid: bool,
+pub struct AutomatedSettlementRiskState {
     pub dispute_active: bool,
     pub revocation_active: bool,
     pub materiality_disputed: bool,
-    pub legal_effect: LegalEffect,
 }
 
-impl AutomatedSettlementPreconditions {
+impl AutomatedSettlementRiskState {
     pub fn validate(&self) -> Result<(), EconomyError> {
-        for (valid, reason) in [
-            (self.accepted_offer_exists, "accepted offer is missing"),
-            (self.valid_acceptance_exists, "valid acceptance is missing"),
-            (
-                self.valid_bailment_wrapper_exists,
-                "valid bailment wrapper is missing",
-            ),
-            (self.authority_valid, "delegated authority is invalid"),
-            (self.ruleset_hash_matches, "ruleset hash does not match"),
-            (self.value_event_valid, "value event is invalid"),
-        ] {
-            if !valid {
-                return Err(EconomyError::AutomatedSettlementRejected {
-                    reason: reason.into(),
-                });
-            }
-        }
         if self.dispute_active || self.revocation_active || self.materiality_disputed {
             return Err(EconomyError::AutomatedSettlementRejected {
                 reason: "dispute, revocation, or materiality dispute is active".into(),
-            });
-        }
-        if !self.legal_effect.permits_settlement() {
-            return Err(EconomyError::AutomatedSettlementRejected {
-                reason: "legal effect is insufficient for automated settlement".into(),
             });
         }
         Ok(())
@@ -411,6 +383,9 @@ pub struct AutomatedSettlementInputs<'a> {
     pub value_event: &'a ValueEvent,
     pub use_event: &'a UseEvent,
     pub contribution_node: &'a ValueContributionNode,
+    pub offer: &'a ContributionOffer,
+    pub acceptance: &'a ContributionAcceptance,
+    pub bailment_terms: &'a BailmentTerms,
     pub adoption: &'a AdoptionEvent,
     pub ruleset: &'a HonorGoodRuleset,
     pub wrapper: &'a BailmentWrapper,
@@ -418,14 +393,39 @@ pub struct AutomatedSettlementInputs<'a> {
     pub preapproved_terms_hash: Hash256,
     pub basis_amounts: &'a BTreeMap<SettlementBasis, MicroExo>,
     pub zero_fee_reason: Option<ZeroFeeReason>,
-    pub preconditions: AutomatedSettlementPreconditions,
+    pub risk_state: AutomatedSettlementRiskState,
     pub created_at_hlc: Timestamp,
 }
 
 impl AutomatedSettlementEvent {
     pub fn from_inputs(input: AutomatedSettlementInputs<'_>) -> Result<Self, EconomyError> {
-        input.preconditions.validate()?;
+        input.risk_state.validate()?;
+        input.contribution_node.validate()?;
+        input.offer.validate()?;
+        if !matches!(input.offer.status, ContributionOfferStatus::Accepted) {
+            return Err(EconomyError::AutomatedSettlementRejected {
+                reason: "automated settlement requires an accepted offer".into(),
+            });
+        }
+        if !input.offer.legal_effect.permits_settlement() {
+            return Err(EconomyError::AutomatedSettlementRejected {
+                reason: "legal effect is insufficient for automated settlement".into(),
+            });
+        }
+        input.acceptance.validate_against_offer(input.offer)?;
+        input.bailment_terms.validate()?;
+        input
+            .wrapper
+            .validate_against(input.offer, input.acceptance, input.bailment_terms)?;
+        input
+            .adoption
+            .validate_against(input.offer, input.acceptance, input.wrapper)?;
         input.automation_authority_ref.validate()?;
+        if input.automation_authority_ref != input.acceptance.authority_envelope {
+            return Err(EconomyError::HashMismatch {
+                field: "automated_settlement.authority_envelope",
+            });
+        }
         if input.automation_authority_ref.authority_proof_hash
             != input.adoption.authority_proof_hash
         {
@@ -725,7 +725,9 @@ mod tests {
     use super::*;
     use crate::{
         adoption::test_support::{sample_adoption, sample_use_event, sample_value_event},
-        bailment::test_support::sample_wrapper,
+        bailment::test_support::{sample_terms, sample_wrapper},
+        contribution_acceptance::test_support::sample_acceptance,
+        contribution_offer::{ContributionOfferStatus, test_support::sample_offer},
         legacy::LegalEffect,
         policy::PricingPolicy,
         price::PricingInputs,
@@ -931,22 +933,70 @@ mod tests {
     fn coherent_settlement_objects() -> (
         HonorGoodRuleset,
         crate::value_contribution::ValueContributionNode,
+        ContributionOffer,
+        ContributionAcceptance,
+        BailmentTerms,
+        AdoptionEvent,
+        UseEvent,
+        BailmentWrapper,
+        ValueEvent,
+    ) {
+        coherent_settlement_objects_with_offer_status(
+            ContributionOfferStatus::Accepted,
+            LegalEffect::AcceptedTerms,
+        )
+    }
+
+    fn coherent_settlement_objects_with_offer_status(
+        status: ContributionOfferStatus,
+        legal_effect: LegalEffect,
+    ) -> (
+        HonorGoodRuleset,
+        crate::value_contribution::ValueContributionNode,
+        ContributionOffer,
+        ContributionAcceptance,
+        BailmentTerms,
         AdoptionEvent,
         UseEvent,
         BailmentWrapper,
         ValueEvent,
     ) {
         let (ruleset, node) = active_ruleset_and_node();
+        let mut terms = sample_terms();
+        terms.contribution_node_id = node.contribution_node_id;
+        let terms = terms.anchor().unwrap();
+        let mut offer = sample_offer();
+        offer.contribution_node_id = node.contribution_node_id;
+        offer.terms_hash = node.honor_good_terms_hash;
+        offer.bailment_terms_hash = terms.terms_id;
+        offer.settlement_ruleset_id = ruleset.ruleset_id;
+        offer.status = status;
+        offer.legal_effect = legal_effect;
+        let offer = offer.anchor().unwrap();
+        let mut acceptance = sample_acceptance();
+        acceptance.offer_id = offer.offer_id;
+        acceptance.contribution_node_id = node.contribution_node_id;
+        acceptance.accepted_terms_hash = offer.terms_hash;
+        acceptance.accepted_bailment_terms_hash = offer.bailment_terms_hash;
+        acceptance.authority_envelope = authority("adopter-principal");
+        acceptance.authority_proof_hash = acceptance.authority_envelope.authority_proof_hash;
+        let acceptance = acceptance.anchor().unwrap();
         let mut wrapper = sample_wrapper();
         wrapper.contribution_node_id = node.contribution_node_id;
+        wrapper.offer_id = offer.offer_id;
+        wrapper.acceptance_id = acceptance.acceptance_id;
+        wrapper.accepted_terms_hash = offer.terms_hash;
+        wrapper.accepted_bailment_terms_hash = terms.terms_id;
         wrapper.settlement_ruleset_id = ruleset.ruleset_id;
+        wrapper.signatures_or_authority_refs = vec![acceptance.signature_ref];
         let wrapper = wrapper.anchor().unwrap();
         let mut adoption = sample_adoption();
         adoption.contribution_node_id = node.contribution_node_id;
-        adoption.offer_id = wrapper.offer_id;
-        adoption.acceptance_id = wrapper.acceptance_id;
+        adoption.offer_id = offer.offer_id;
+        adoption.acceptance_id = acceptance.acceptance_id;
         adoption.accepted_terms_hash = wrapper.accepted_terms_hash;
         adoption.bailment_wrapper_id = wrapper.wrapper_id;
+        adoption.authority_proof_hash = acceptance.authority_proof_hash;
         let adoption = adoption.anchor().unwrap();
         let mut use_event = sample_use_event();
         use_event.adoption_id = adoption.adoption_id;
@@ -959,7 +1009,17 @@ mod tests {
         value_event.contribution_node_id = node.contribution_node_id;
         value_event.mission_id = adoption.mission_id;
         let value_event = value_event.anchor().unwrap();
-        (ruleset, node, adoption, use_event, wrapper, value_event)
+        (
+            ruleset,
+            node,
+            offer,
+            acceptance,
+            terms,
+            adoption,
+            use_event,
+            wrapper,
+            value_event,
+        )
     }
 
     fn basis_amounts() -> BTreeMap<SettlementBasis, MicroExo> {
@@ -969,29 +1029,25 @@ mod tests {
         amounts
     }
 
-    fn settlement_preconditions() -> AutomatedSettlementPreconditions {
-        AutomatedSettlementPreconditions {
-            accepted_offer_exists: true,
-            valid_acceptance_exists: true,
-            valid_bailment_wrapper_exists: true,
-            authority_valid: true,
-            ruleset_hash_matches: true,
-            value_event_valid: true,
+    fn settlement_risk_state() -> AutomatedSettlementRiskState {
+        AutomatedSettlementRiskState {
             dispute_active: false,
             revocation_active: false,
             materiality_disputed: false,
-            legal_effect: LegalEffect::AcceptedTerms,
         }
     }
 
     #[test]
     fn automated_settlement_succeeds_inside_preapproved_terms() {
-        let (ruleset, node, adoption, use_event, wrapper, value_event) =
+        let (ruleset, node, offer, acceptance, terms, adoption, use_event, wrapper, value_event) =
             coherent_settlement_objects();
         let event = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
             value_event: &value_event,
             use_event: &use_event,
             contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
             adoption: &adoption,
             ruleset: &ruleset,
             wrapper: &wrapper,
@@ -999,7 +1055,7 @@ mod tests {
             preapproved_terms_hash: node.honor_good_terms_hash,
             basis_amounts: &basis_amounts(),
             zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
-            preconditions: settlement_preconditions(),
+            risk_state: settlement_risk_state(),
             created_at_hlc: ts(3_100),
         })
         .unwrap();
@@ -1008,8 +1064,39 @@ mod tests {
     }
 
     #[test]
+    fn automated_settlement_rejects_unaccepted_offer_chain_even_when_flags_claim_validity() {
+        let (ruleset, node, offer, acceptance, terms, adoption, use_event, wrapper, value_event) =
+            coherent_settlement_objects_with_offer_status(
+                ContributionOfferStatus::Offered,
+                LegalEffect::OfferedTerms,
+            );
+        let err = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
+            value_event: &value_event,
+            use_event: &use_event,
+            contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
+            adoption: &adoption,
+            ruleset: &ruleset,
+            wrapper: &wrapper,
+            automation_authority_ref: authority("adopter-principal"),
+            preapproved_terms_hash: node.honor_good_terms_hash,
+            basis_amounts: &basis_amounts(),
+            zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
+            risk_state: settlement_risk_state(),
+            created_at_hlc: ts(3_100),
+        })
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            EconomyError::AutomatedSettlementRejected { .. }
+        ));
+    }
+
+    #[test]
     fn automated_settlement_rejects_authority_proof_not_bound_to_adoption() {
-        let (ruleset, node, adoption, use_event, wrapper, value_event) =
+        let (ruleset, node, offer, acceptance, terms, adoption, use_event, wrapper, value_event) =
             coherent_settlement_objects();
         let mut forged_authority = authority("adopter-principal");
         forged_authority.authority_proof_hash = h(0xA7);
@@ -1017,6 +1104,9 @@ mod tests {
             value_event: &value_event,
             use_event: &use_event,
             contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
             adoption: &adoption,
             ruleset: &ruleset,
             wrapper: &wrapper,
@@ -1024,7 +1114,7 @@ mod tests {
             preapproved_terms_hash: node.honor_good_terms_hash,
             basis_amounts: &basis_amounts(),
             zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
-            preconditions: settlement_preconditions(),
+            risk_state: settlement_risk_state(),
             created_at_hlc: ts(3_100),
         })
         .unwrap_err();
@@ -1033,13 +1123,25 @@ mod tests {
 
     #[test]
     fn automated_settlement_fails_when_human_approval_required() {
-        let (mut ruleset, node, adoption, use_event, wrapper, value_event) =
-            coherent_settlement_objects();
+        let (
+            mut ruleset,
+            node,
+            offer,
+            acceptance,
+            terms,
+            adoption,
+            use_event,
+            wrapper,
+            value_event,
+        ) = coherent_settlement_objects();
         ruleset.requires_human_approval = true;
         let err = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
             value_event: &value_event,
             use_event: &use_event,
             contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
             adoption: &adoption,
             ruleset: &ruleset,
             wrapper: &wrapper,
@@ -1047,7 +1149,7 @@ mod tests {
             preapproved_terms_hash: node.honor_good_terms_hash,
             basis_amounts: &basis_amounts(),
             zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
-            preconditions: settlement_preconditions(),
+            risk_state: settlement_risk_state(),
             created_at_hlc: ts(3_100),
         })
         .unwrap_err();
@@ -1059,13 +1161,25 @@ mod tests {
 
     #[test]
     fn automated_settlement_fails_for_revoked_node() {
-        let (ruleset, mut node, adoption, use_event, wrapper, value_event) =
-            coherent_settlement_objects();
+        let (
+            ruleset,
+            mut node,
+            offer,
+            acceptance,
+            terms,
+            adoption,
+            use_event,
+            wrapper,
+            value_event,
+        ) = coherent_settlement_objects();
         node.status = ValueContributionStatus::Revoked;
         let err = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
             value_event: &value_event,
             use_event: &use_event,
             contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
             adoption: &adoption,
             ruleset: &ruleset,
             wrapper: &wrapper,
@@ -1073,7 +1187,7 @@ mod tests {
             preapproved_terms_hash: node.honor_good_terms_hash,
             basis_amounts: &basis_amounts(),
             zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
-            preconditions: settlement_preconditions(),
+            risk_state: settlement_risk_state(),
             created_at_hlc: ts(3_100),
         })
         .unwrap_err();
@@ -1085,14 +1199,18 @@ mod tests {
 
     #[test]
     fn automated_settlement_fails_for_insufficient_legal_effect() {
-        let (ruleset, node, adoption, use_event, wrapper, value_event) =
-            coherent_settlement_objects();
-        let mut preconditions = settlement_preconditions();
-        preconditions.legal_effect = LegalEffect::VoluntaryRecognitionOnly;
+        let (ruleset, node, offer, acceptance, terms, adoption, use_event, wrapper, value_event) =
+            coherent_settlement_objects_with_offer_status(
+                ContributionOfferStatus::Accepted,
+                LegalEffect::VoluntaryRecognitionOnly,
+            );
         let err = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
             value_event: &value_event,
             use_event: &use_event,
             contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
             adoption: &adoption,
             ruleset: &ruleset,
             wrapper: &wrapper,
@@ -1100,7 +1218,7 @@ mod tests {
             preapproved_terms_hash: node.honor_good_terms_hash,
             basis_amounts: &basis_amounts(),
             zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
-            preconditions,
+            risk_state: settlement_risk_state(),
             created_at_hlc: ts(3_100),
         })
         .unwrap_err();
@@ -1227,15 +1345,8 @@ mod tests {
     }
 
     #[test]
-    fn automated_preconditions_fail_closed_for_missing_authority_and_active_dispute() {
-        let mut missing_authority = settlement_preconditions();
-        missing_authority.authority_valid = false;
-        assert!(matches!(
-            missing_authority.validate().unwrap_err(),
-            EconomyError::AutomatedSettlementRejected { .. }
-        ));
-
-        let mut disputed = settlement_preconditions();
+    fn automated_risk_state_fails_closed_for_active_dispute() {
+        let mut disputed = settlement_risk_state();
         disputed.materiality_disputed = true;
         assert!(matches!(
             disputed.validate().unwrap_err(),
@@ -1245,14 +1356,26 @@ mod tests {
 
     #[test]
     fn automated_settlement_fails_when_value_event_does_not_trigger() {
-        let (ruleset, node, adoption, use_event, wrapper, mut value_event) =
-            coherent_settlement_objects();
+        let (
+            ruleset,
+            node,
+            offer,
+            acceptance,
+            terms,
+            adoption,
+            use_event,
+            wrapper,
+            mut value_event,
+        ) = coherent_settlement_objects();
         value_event.settlement_triggered = false;
         let value_event = value_event.anchor().unwrap();
         let err = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
             value_event: &value_event,
             use_event: &use_event,
             contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
             adoption: &adoption,
             ruleset: &ruleset,
             wrapper: &wrapper,
@@ -1260,7 +1383,7 @@ mod tests {
             preapproved_terms_hash: node.honor_good_terms_hash,
             basis_amounts: &basis_amounts(),
             zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
-            preconditions: settlement_preconditions(),
+            risk_state: settlement_risk_state(),
             created_at_hlc: ts(3_100),
         })
         .unwrap_err();
@@ -1272,13 +1395,25 @@ mod tests {
 
     #[test]
     fn automated_settlement_fails_for_inactive_ruleset_or_wrapper() {
-        let (mut ruleset, node, adoption, use_event, wrapper, value_event) =
-            coherent_settlement_objects();
+        let (
+            mut ruleset,
+            node,
+            offer,
+            acceptance,
+            terms,
+            adoption,
+            use_event,
+            wrapper,
+            value_event,
+        ) = coherent_settlement_objects();
         ruleset.status = RulesetStatus::Suspended;
         let err = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
             value_event: &value_event,
             use_event: &use_event,
             contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
             adoption: &adoption,
             ruleset: &ruleset,
             wrapper: &wrapper,
@@ -1286,7 +1421,7 @@ mod tests {
             preapproved_terms_hash: node.honor_good_terms_hash,
             basis_amounts: &basis_amounts(),
             zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
-            preconditions: settlement_preconditions(),
+            risk_state: settlement_risk_state(),
             created_at_hlc: ts(3_100),
         })
         .unwrap_err();
@@ -1295,13 +1430,25 @@ mod tests {
             EconomyError::AutomatedSettlementRejected { .. }
         ));
 
-        let (ruleset, node, adoption, use_event, mut wrapper, value_event) =
-            coherent_settlement_objects();
+        let (
+            ruleset,
+            node,
+            offer,
+            acceptance,
+            terms,
+            adoption,
+            use_event,
+            mut wrapper,
+            value_event,
+        ) = coherent_settlement_objects();
         wrapper.status = BailmentWrapperStatus::Suspended;
         let err = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
             value_event: &value_event,
             use_event: &use_event,
             contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
             adoption: &adoption,
             ruleset: &ruleset,
             wrapper: &wrapper,
@@ -1309,7 +1456,7 @@ mod tests {
             preapproved_terms_hash: node.honor_good_terms_hash,
             basis_amounts: &basis_amounts(),
             zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
-            preconditions: settlement_preconditions(),
+            risk_state: settlement_risk_state(),
             created_at_hlc: ts(3_100),
         })
         .unwrap_err();
@@ -1321,13 +1468,25 @@ mod tests {
 
     #[test]
     fn automated_settlement_fails_for_hash_mismatches_and_unsupported_basis() {
-        let (ruleset, node, adoption, use_event, mut wrapper, value_event) =
-            coherent_settlement_objects();
+        let (
+            ruleset,
+            node,
+            offer,
+            acceptance,
+            terms,
+            adoption,
+            use_event,
+            mut wrapper,
+            value_event,
+        ) = coherent_settlement_objects();
         wrapper.settlement_ruleset_id = h(0x99);
         let err = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
             value_event: &value_event,
             use_event: &use_event,
             contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
             adoption: &adoption,
             ruleset: &ruleset,
             wrapper: &wrapper,
@@ -1335,19 +1494,31 @@ mod tests {
             preapproved_terms_hash: node.honor_good_terms_hash,
             basis_amounts: &basis_amounts(),
             zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
-            preconditions: settlement_preconditions(),
+            risk_state: settlement_risk_state(),
             created_at_hlc: ts(3_100),
         })
         .unwrap_err();
         assert!(matches!(err, EconomyError::HashMismatch { .. }));
 
-        let (ruleset, node, adoption, use_event, mut wrapper, value_event) =
-            coherent_settlement_objects();
+        let (
+            ruleset,
+            node,
+            offer,
+            acceptance,
+            terms,
+            adoption,
+            use_event,
+            mut wrapper,
+            value_event,
+        ) = coherent_settlement_objects();
         wrapper.wrapper_id = h(0x98);
         let err = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
             value_event: &value_event,
             use_event: &use_event,
             contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
             adoption: &adoption,
             ruleset: &ruleset,
             wrapper: &wrapper,
@@ -1355,18 +1526,21 @@ mod tests {
             preapproved_terms_hash: node.honor_good_terms_hash,
             basis_amounts: &basis_amounts(),
             zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
-            preconditions: settlement_preconditions(),
+            risk_state: settlement_risk_state(),
             created_at_hlc: ts(3_100),
         })
         .unwrap_err();
         assert!(matches!(err, EconomyError::HashMismatch { .. }));
 
-        let (ruleset, node, adoption, use_event, wrapper, value_event) =
+        let (ruleset, node, offer, acceptance, terms, adoption, use_event, wrapper, value_event) =
             coherent_settlement_objects();
         let err = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
             value_event: &value_event,
             use_event: &use_event,
             contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
             adoption: &adoption,
             ruleset: &ruleset,
             wrapper: &wrapper,
@@ -1374,19 +1548,31 @@ mod tests {
             preapproved_terms_hash: h(0x97),
             basis_amounts: &basis_amounts(),
             zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
-            preconditions: settlement_preconditions(),
+            risk_state: settlement_risk_state(),
             created_at_hlc: ts(3_100),
         })
         .unwrap_err();
         assert!(matches!(err, EconomyError::HashMismatch { .. }));
 
-        let (ruleset, node, adoption, use_event, wrapper, mut value_event) =
-            coherent_settlement_objects();
+        let (
+            ruleset,
+            node,
+            offer,
+            acceptance,
+            terms,
+            adoption,
+            use_event,
+            wrapper,
+            mut value_event,
+        ) = coherent_settlement_objects();
         value_event.value_basis = ValueBasis::Other("unsupported".into());
         let err = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
             value_event: &value_event,
             use_event: &use_event,
             contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
             adoption: &adoption,
             ruleset: &ruleset,
             wrapper: &wrapper,
@@ -1394,7 +1580,7 @@ mod tests {
             preapproved_terms_hash: node.honor_good_terms_hash,
             basis_amounts: &basis_amounts(),
             zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
-            preconditions: settlement_preconditions(),
+            risk_state: settlement_risk_state(),
             created_at_hlc: ts(3_100),
         })
         .unwrap_err();
@@ -1406,12 +1592,15 @@ mod tests {
 
     #[test]
     fn automated_settlement_validate_rejects_mutated_event_shape() {
-        let (ruleset, node, adoption, use_event, wrapper, value_event) =
+        let (ruleset, node, offer, acceptance, terms, adoption, use_event, wrapper, value_event) =
             coherent_settlement_objects();
         let event = AutomatedSettlementEvent::from_inputs(AutomatedSettlementInputs {
             value_event: &value_event,
             use_event: &use_event,
             contribution_node: &node,
+            offer: &offer,
+            acceptance: &acceptance,
+            bailment_terms: &terms,
             adoption: &adoption,
             ruleset: &ruleset,
             wrapper: &wrapper,
@@ -1419,7 +1608,7 @@ mod tests {
             preapproved_terms_hash: node.honor_good_terms_hash,
             basis_amounts: &basis_amounts(),
             zero_fee_reason: Some(ZeroFeeReason::PolicyConfiguredZero),
-            preconditions: settlement_preconditions(),
+            risk_state: settlement_risk_state(),
             created_at_hlc: ts(3_100),
         })
         .unwrap();
