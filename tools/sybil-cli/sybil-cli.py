@@ -280,7 +280,8 @@ def forum_attest(
         None, help="If provided, signs the record_hash (Ed25519 base64 secret key)"
     ),
     public_key_b64: Optional[str] = typer.Option(
-        None, help="Optional public key (base64) to store with the attestation"
+        None,
+        help="Optional public key (base64) stored as metadata; clearance verifies registry keys",
     ),
     path: str = typer.Option(".decision_forum", help="Store path"),
 ):
@@ -369,7 +370,10 @@ def forum_clear(
     actor: str = typer.Option("local", help="Actor id performing clearance"),
     role: str = typer.Option("steward", help="Role of clearing actor"),
     secret_key_b64: Optional[str] = typer.Option(None, help="Optional signing key (base64)"),
-    public_key_b64: Optional[str] = typer.Option(None, help="Optional public key (base64)"),
+    public_key_b64: Optional[str] = typer.Option(
+        None,
+        help="Optional public key (base64) stored as metadata; clearance verifies registry keys",
+    ),
     path: str = typer.Option(".decision_forum", help="Store path"),
 ):
     """Clear a record (if it meets policy), issue a certificate, and set status=accepted."""
