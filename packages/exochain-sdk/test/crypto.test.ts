@@ -83,6 +83,20 @@ test('hexToBytes rejects non-hex characters', () => {
   throws(() => hexToBytes('zz'), CryptoError);
 });
 
+test('hexToBytes rejects partially parsed and signed byte pairs', () => {
+  for (const candidate of ['f_', '_f', '-1', '+1', '1 ', ' 1', '0g', 'g0']) {
+    throws(
+      () => hexToBytes(candidate),
+      CryptoError,
+      `${candidate} must not be accepted as canonical hex`,
+    );
+  }
+});
+
+test('hexToBytes rejects uppercase non-canonical hex', () => {
+  throws(() => hexToBytes('0A'), CryptoError);
+});
+
 test('Different inputs produce different digests', async () => {
   const a = await sha256Hex(new TextEncoder().encode('a'));
   const b = await sha256Hex(new TextEncoder().encode('b'));

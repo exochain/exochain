@@ -1,3 +1,18 @@
+// Copyright 2026 Exochain Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import { strictEqual, ok, throws, deepStrictEqual } from 'node:assert/strict';
 import { blake3, blake3Hash, blake3Hex, sha256, sha256Hex, sha256Hash, bytesToHex, hexToBytes, } from '../src/crypto/hash.js';
@@ -41,6 +56,14 @@ test('hexToBytes rejects odd-length input', () => {
 });
 test('hexToBytes rejects non-hex characters', () => {
     throws(() => hexToBytes('zz'), CryptoError);
+});
+test('hexToBytes rejects partially parsed and signed byte pairs', () => {
+    for (const candidate of ['f_', '_f', '-1', '+1', '1 ', ' 1', '0g', 'g0']) {
+        throws(() => hexToBytes(candidate), CryptoError, `${candidate} must not be accepted as canonical hex`);
+    }
+});
+test('hexToBytes rejects uppercase non-canonical hex', () => {
+    throws(() => hexToBytes('0A'), CryptoError);
 });
 test('Different inputs produce different digests', async () => {
     const a = await sha256Hex(new TextEncoder().encode('a'));

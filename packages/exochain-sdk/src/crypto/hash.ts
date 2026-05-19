@@ -90,18 +90,30 @@ export function bytesToHex(bytes: Uint8Array): string {
   return out;
 }
 
-/** Decode a hex string (odd length not permitted) into bytes. */
+function lowercaseHexNibble(charCode: number): number {
+  if (charCode >= 48 && charCode <= 57) {
+    return charCode - 48;
+  }
+  if (charCode >= 97 && charCode <= 102) {
+    return charCode - 87;
+  }
+  return -1;
+}
+
+/** Decode a canonical lowercase hex string (odd length not permitted) into bytes. */
 export function hexToBytes(hex: string): Uint8Array {
   if (hex.length % 2 !== 0) {
     throw new CryptoError(`hex string has odd length: ${hex.length}`);
   }
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) {
-    const byte = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    if (Number.isNaN(byte)) {
+    const offset = i * 2;
+    const high = lowercaseHexNibble(hex.charCodeAt(offset));
+    const low = lowercaseHexNibble(hex.charCodeAt(offset + 1));
+    if (high < 0 || low < 0) {
       throw new CryptoError(`invalid hex at offset ${i * 2}`);
     }
-    out[i] = byte;
+    out[i] = (high << 4) | low;
   }
   return out;
 }
