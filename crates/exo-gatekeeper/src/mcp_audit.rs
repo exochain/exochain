@@ -119,13 +119,15 @@ fn hash_record(r: &McpAuditRecord) -> Result<[u8; 32], GatekeeperError> {
 // MCP audit log
 // ---------------------------------------------------------------------------
 
-/// Append-only, BLAKE3 hash-chained log of MCP enforcement events.
+/// Bounded, BLAKE3 hash-chained log of MCP enforcement events.
 ///
 /// Structurally mirrors `exo_governance::audit::AuditLog` but is
 /// self-contained within exo-gatekeeper to preserve branch separation.
 #[derive(Debug, Clone, Default)]
 pub struct McpAuditLog {
     pub records: Vec<McpAuditRecord>,
+    retained_chain_start_hash: [u8; 32],
+    dropped_record_count: u64,
 }
 
 impl McpAuditLog {
@@ -143,7 +145,7 @@ impl McpAuditLog {
     pub fn head_hash(&self) -> Result<[u8; 32], GatekeeperError> {
         match self.records.last() {
             Some(record) => hash_record(record),
-            None => Ok([0u8; 32]),
+            None => Ok(self.retained_chain_start_hash),
         }
     }
 
@@ -156,6 +158,41 @@ impl McpAuditLog {
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
+
+    #[must_use]
+    pub fn dropped_record_count(&self) -> u64 {
+        self.dropped_record_count
+    }
+
+    #[must_use]
+    pub fn retained_chain_start_hash(&self) -> [u8; 32] {
+        self.retained_chain_start_hash
+    }
+
+    #[must_use]
+    pub fn next_record_sequence(&self) -> Option<u128> {
+        let retained_record_count = u128::try_from(self.records.len()).ok()?;
+        u128::from(self.dropped_record_count)
+            .checked_add(retained_record_count)?
+            .checked_add(1)
+    }
+
+    fn prune_oldest_record_for_retention(&mut self) -> Result<(), GatekeeperError> {
+        if self.records.is_empty() {
+            return Err(GatekeeperError::McpAuditInvalidRecord {
+                reason: "cannot prune an empty MCP audit log".into(),
+            });
+        }
+
+        let dropped = self.records.remove(0);
+        self.retained_chain_start_hash = hash_record(&dropped)?;
+        self.dropped_record_count = self.dropped_record_count.checked_add(1).ok_or_else(|| {
+            GatekeeperError::McpAuditInvalidRecord {
+                reason: "MCP audit dropped record count overflow".into(),
+            }
+        })?;
+        Ok(())
+    }
 }
 
 /// Append a pre-built record to the log.
@@ -165,20 +202,16 @@ impl McpAuditLog {
 /// does not match the current log head — indicating either an ordering error
 /// or tampering.
 pub fn append(log: &mut McpAuditLog, record: McpAuditRecord) -> Result<(), GatekeeperError> {
-    if log.records.len() >= MAX_MCP_AUDIT_RECORDS {
-        return Err(GatekeeperError::McpAuditInvalidRecord {
-            reason: format!(
-                "MCP audit log capacity exceeded: {} >= {}",
-                log.records.len(),
-                MAX_MCP_AUDIT_RECORDS
-            ),
-        });
-    }
     if record.chain_hash != log.head_hash()? {
         return Err(GatekeeperError::McpAuditChainBroken {
             index: log.records.len(),
         });
     }
+
+    while log.records.len() >= MAX_MCP_AUDIT_RECORDS {
+        log.prune_oldest_record_for_retention()?;
+    }
+
     log.records.push(record);
     Ok(())
 }
@@ -188,7 +221,7 @@ pub fn append(log: &mut McpAuditLog, record: McpAuditRecord) -> Result<(), Gatek
 /// # Errors
 /// Returns [`GatekeeperError::McpAuditChainBroken`] at the first broken link.
 pub fn verify_chain(log: &McpAuditLog) -> Result<(), GatekeeperError> {
-    let mut prev = [0u8; 32];
+    let mut prev = log.retained_chain_start_hash;
     for (i, record) in log.records.iter().enumerate() {
         if record.chain_hash != prev {
             return Err(GatekeeperError::McpAuditChainBroken { index: i });
@@ -538,10 +571,19 @@ mod tests {
     }
 
     #[test]
-    fn append_rejects_log_at_capacity_without_growing_records() {
-        let mut log = McpAuditLog {
-            records: vec![sample_record(); MAX_MCP_AUDIT_RECORDS],
-        };
+    fn append_at_capacity_retains_bounded_suffix_and_keeps_chain_verifiable() {
+        let mut log = McpAuditLog::new();
+        for _ in 0..MAX_MCP_AUDIT_RECORDS {
+            append_ok(
+                &mut log,
+                McpRule::Mcp001BctsScope,
+                McpEnforcementOutcome::Allowed,
+            );
+        }
+        let first_original_id = log.records[0].id;
+        let first_original_hash =
+            hash_record(&log.records[0]).expect("first MCP audit record hash");
+        let expected_first_retained_id = log.records[1].id;
         let record = create_record(
             &log,
             record_id(0xF001),
@@ -552,13 +594,53 @@ mod tests {
             None,
         )
         .expect("capacity regression record has valid deterministic metadata");
+        let appended_id = record.id;
 
-        let err = append(&mut log, record).expect_err("full MCP audit log must reject append");
+        append(&mut log, record).expect("full MCP audit log must retain a bounded suffix");
 
         assert_eq!(log.len(), MAX_MCP_AUDIT_RECORDS);
-        assert!(
-            err.to_string().contains("capacity"),
-            "capacity rejection should be explicit: {err}"
+        assert_eq!(log.dropped_record_count(), 1);
+        assert_eq!(log.retained_chain_start_hash(), first_original_hash);
+        assert_ne!(log.records[0].id, first_original_id);
+        assert_eq!(log.records[0].id, expected_first_retained_id);
+        assert_eq!(
+            log.records
+                .last()
+                .expect("retained MCP audit log is non-empty")
+                .id,
+            appended_id
         );
+        verify_chain(&log).expect("retained MCP audit suffix must remain hash-chain verifiable");
+        let expected_next_sequence =
+            u128::try_from(MAX_MCP_AUDIT_RECORDS).expect("capacity fits u128") + 2;
+        assert_eq!(log.next_record_sequence(), Some(expected_next_sequence));
+    }
+
+    #[test]
+    fn retained_chain_anchor_tamper_is_detected() {
+        let mut log = McpAuditLog::new();
+        for _ in 0..MAX_MCP_AUDIT_RECORDS {
+            append_ok(
+                &mut log,
+                McpRule::Mcp001BctsScope,
+                McpEnforcementOutcome::Allowed,
+            );
+        }
+        let record = create_record(
+            &log,
+            record_id(0xF101),
+            ts(31_000),
+            McpRule::Mcp002NoSelfEscalation,
+            did("agent"),
+            McpEnforcementOutcome::Blocked,
+            None,
+        )
+        .expect("capacity regression record has valid deterministic metadata");
+        append(&mut log, record).expect("full MCP audit log must retain a bounded suffix");
+
+        let mut tampered = log.clone();
+        tampered.retained_chain_start_hash = [0x99u8; 32];
+
+        assert!(verify_chain(&tampered).is_err());
     }
 }

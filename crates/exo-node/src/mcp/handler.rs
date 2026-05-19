@@ -75,19 +75,15 @@ fn json_rpc_internal_error(id: Option<Value>, public_message: &'static str) -> J
 }
 
 fn next_mcp_audit_record_id(log: &McpAuditLog) -> std::result::Result<Uuid, McpError> {
-    let next_index = match log.len().checked_add(1) {
+    let next_index = match log.next_record_sequence() {
         Some(next_index) => next_index,
-        None => return Err(McpError::Internal("MCP audit log length overflow".into())),
-    };
-    let id_value = match u128::try_from(next_index) {
-        Ok(id_value) => id_value,
-        Err(error) => {
-            return Err(McpError::Internal(format!(
-                "MCP audit record id conversion failed: {error}"
-            )));
+        None => {
+            return Err(McpError::Internal(
+                "MCP audit record sequence overflow".into(),
+            ));
         }
     };
-    let record_id = Uuid::from_u128(id_value);
+    let record_id = Uuid::from_u128(next_index);
     if record_id.is_nil() {
         return Err(McpError::Internal(
             "MCP audit record id derivation produced nil UUID".into(),
@@ -791,6 +787,36 @@ mod tests {
             .clone()
     }
 
+    fn fill_mcp_audit_log_to_capacity(server: &McpServer) {
+        let actor = Did::new("did:exo:test-ai-agent").expect("valid DID");
+        let mut log = server
+            .mcp_audit_log
+            .lock()
+            .expect("MCP audit log mutex should not be poisoned in tests");
+
+        for i in 0..exo_gatekeeper::mcp_audit::MAX_MCP_AUDIT_RECORDS {
+            let sequence = u128::try_from(i)
+                .expect("MCP audit test index fits u128")
+                .checked_add(1)
+                .expect("MCP audit test sequence does not overflow");
+            let timestamp_ms = u64::try_from(i)
+                .expect("MCP audit test index fits u64")
+                .checked_add(50_000)
+                .expect("MCP audit test timestamp does not overflow");
+            let record = mcp_audit::create_record(
+                &log,
+                Uuid::from_u128(sequence),
+                Timestamp::new(timestamp_ms, 0),
+                McpRule::Mcp001BctsScope,
+                actor.clone(),
+                McpEnforcementOutcome::Allowed,
+                None,
+            )
+            .expect("deterministic MCP audit record");
+            mcp_audit::append(&mut log, record).expect("append deterministic MCP audit record");
+        }
+    }
+
     fn constitutional_context(actor_did: &str, action: &str, arguments: &Value) -> Value {
         let actor = Did::new(actor_did).expect("valid DID");
         let keypair = exo_core::crypto::KeyPair::from_secret_bytes([0x4D; 32]).unwrap();
@@ -1012,6 +1038,44 @@ mod tests {
             assert_eq!(record.actor.as_str(), "did:exo:test-ai-agent");
             assert_ne!(record.timestamp, Timestamp::ZERO);
             assert_eq!(record.outcome, McpEnforcementOutcome::Allowed);
+        }
+    }
+
+    #[test]
+    fn handler_tools_call_survives_full_mcp_audit_log_with_bounded_retention() {
+        let server = test_server();
+        fill_mcp_audit_log_to_capacity(&server);
+
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 304,
+            "method": "tools/call",
+            "params": tool_call_params("exochain_node_status", serde_json::json!({}))
+        })
+        .to_string();
+
+        let response = server.handle_message(&msg).unwrap();
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        assert!(
+            parsed.error.is_none(),
+            "full MCP audit log must not turn valid tool calls into internal errors: {:?}",
+            parsed.error
+        );
+
+        let audit = mcp_audit_snapshot(&server);
+        assert_eq!(
+            audit.len(),
+            exo_gatekeeper::mcp_audit::MAX_MCP_AUDIT_RECORDS
+        );
+        exo_gatekeeper::mcp_audit::verify_chain(&audit)
+            .expect("retained MCP audit chain must verify after capacity rollover");
+
+        let retained_tail = &audit.records[audit.len() - McpRule::all().len()..audit.len()];
+        let audited_rules: Vec<McpRule> = retained_tail.iter().map(|record| record.rule).collect();
+        assert_eq!(audited_rules, McpRule::all());
+        for record in retained_tail {
+            assert_eq!(record.outcome, McpEnforcementOutcome::Allowed);
+            assert_eq!(record.actor.as_str(), "did:exo:test-ai-agent");
         }
     }
 
