@@ -30,6 +30,9 @@ const GOVERNANCE_API_TOKEN = process.env.GOVERNANCE_API_TOKEN || null;
 const GOVERNANCE_ATTESTATION_KEYS = parseGovernanceAttestationKeys(
   process.env.GOVERNANCE_ATTESTATION_KEYS || null,
 );
+const GOVERNANCE_ATTESTATION_KEYS_JSON = JSON.stringify(
+  Object.fromEntries(GOVERNANCE_ATTESTATION_KEYS),
+);
 
 function parseGovernanceAttestationKeys(value) {
   const trustedKeys = new Map();
@@ -201,11 +204,11 @@ export const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: 'findings_digest does not match canonical findings payload' });
         }
 
-        wasm.wasm_verify_governance_attestation(
+        wasm.wasm_verify_governance_attestation_with_trusted_keys(
           attestation_signer_did,
           JSON.stringify(findings),
           JSON.stringify(attestation_signature),
-          trustedAttestationPublicKey,
+          GOVERNANCE_ATTESTATION_KEYS_JSON,
         );
       } catch (e) {
         return json(res, 400, { error: `invalid governance attestation: ${e.message || e}` });
