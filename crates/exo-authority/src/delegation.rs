@@ -515,10 +515,6 @@ impl DelegationRegistry {
     pub fn find_chain(&self, from: &Did, to: &Did) -> Option<AuthorityChain> {
         let mut path = Vec::new();
         if self.find_path_dfs(from, to, &mut path, 0, DEFAULT_MAX_DEPTH) {
-            // Re-number depths
-            for (i, link) in path.iter_mut().enumerate() {
-                link.depth = i;
-            }
             chain::build_chain(&path).ok()
         } else {
             None
@@ -981,6 +977,52 @@ mod tests {
         ]);
 
         assert!(chain::verify_chain(&chain, &now(), |did| keys.get(did.as_str()).copied()).is_ok());
+    }
+
+    #[test]
+    fn find_chain_subchain_preserves_signed_depth_and_verifies() {
+        let mut reg = DelegationRegistry::new();
+        let root_key = KeyPair::generate();
+        let alice_key = KeyPair::generate();
+        signed_delegate(
+            &mut reg,
+            "root",
+            "alice",
+            &[Permission::Read, Permission::Write],
+            &root_key,
+        )
+        .unwrap();
+        let alice_to_bob =
+            signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
+        assert_eq!(alice_to_bob.depth, 1);
+
+        let chain = reg
+            .find_chain(&did("alice"), &did("bob"))
+            .expect("subchain should resolve");
+        assert_eq!(chain.links[0].depth, 1);
+        let keys = std::collections::BTreeMap::from([(
+            did("alice").as_str().to_owned(),
+            public_key(&alice_key),
+        )]);
+
+        assert!(chain::verify_chain(&chain, &now(), |did| keys.get(did.as_str()).copied()).is_ok());
+    }
+
+    #[test]
+    fn find_chain_source_does_not_mutate_signed_link_depths() {
+        let source = include_str!("delegation.rs");
+        let find_chain_source = source
+            .split("pub fn find_chain")
+            .nth(1)
+            .expect("find_chain source present")
+            .split("/// Number of active delegations")
+            .next()
+            .expect("find_chain source end");
+
+        assert!(
+            !find_chain_source.contains(".depth ="),
+            "find_chain must not mutate signed depth values while assembling a chain"
+        );
     }
 
     #[test]

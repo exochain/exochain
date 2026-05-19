@@ -177,7 +177,7 @@ impl AuthorityChain {
 /// - Non-empty
 /// - Continuity: each link's delegate == next link's delegator
 /// - Depth limits
-/// - Depth values are correct (0, 1, 2, ...)
+/// - Depth values are contiguous and remain within `max_depth`
 ///
 /// # Errors
 /// Returns `AuthorityError` if validation fails.
@@ -212,12 +212,35 @@ fn validate_chain_topology(
         });
     }
 
-    // Validate continuity and depth values
+    let first_depth = links[0].depth;
+    let chain_end_depth =
+        first_depth
+            .checked_add(links.len())
+            .ok_or(AuthorityError::DepthExceeded {
+                depth: first_depth,
+                max_depth,
+            })?;
+    if chain_end_depth > max_depth {
+        return Err(AuthorityError::DepthExceeded {
+            depth: chain_end_depth,
+            max_depth,
+        });
+    }
+
+    // Validate continuity and signed depth values. Depth can start at a
+    // non-zero offset for verified subchains, but each stored link must keep
+    // its original signed depth.
     for (i, link) in links.iter().enumerate() {
-        if link.depth != i {
+        let expected_depth = first_depth
+            .checked_add(i)
+            .ok_or(AuthorityError::DepthExceeded {
+                depth: first_depth,
+                max_depth,
+            })?;
+        if link.depth != expected_depth {
             return Err(AuthorityError::ChainBroken {
                 index: i,
-                reason: format!("expected depth {i}, got {}", link.depth),
+                reason: format!("expected depth {expected_depth}, got {}", link.depth),
             });
         }
         if i > 0 {
@@ -468,6 +491,20 @@ mod tests {
         ];
         let chain = build_chain(&links).unwrap();
         assert_eq!(chain.depth(), 3);
+    }
+
+    #[test]
+    fn build_accepts_contiguous_depth_offset() {
+        let links = vec![
+            fake_link("alice", "bob", vec![Permission::Read], 1, None),
+            fake_link("bob", "charlie", vec![Permission::Read], 2, None),
+        ];
+
+        let chain = build_chain(&links).unwrap();
+
+        assert_eq!(chain.depth(), 2);
+        assert_eq!(chain.links[0].depth, 1);
+        assert_eq!(chain.links[1].depth, 2);
     }
 
     #[test]
@@ -751,7 +788,10 @@ mod tests {
 
         assert!(matches!(
             verify_chain(&chain, &now(), reg.resolver()),
-            Err(AuthorityError::ChainBroken { index: 0, .. })
+            Err(AuthorityError::DepthExceeded {
+                depth: 8,
+                max_depth: DEFAULT_MAX_DEPTH,
+            })
         ));
     }
 
