@@ -177,7 +177,7 @@ impl AuthorityChain {
 /// - Non-empty
 /// - Continuity: each link's delegate == next link's delegator
 /// - Depth limits
-/// - Depth values are correct (0, 1, 2, ...)
+/// - Depth values are consecutive and preserve their signed absolute offset
 ///
 /// # Errors
 /// Returns `AuthorityError` if validation fails.
@@ -212,12 +212,32 @@ fn validate_chain_topology(
         });
     }
 
-    // Validate continuity and depth values
+    let base_depth = links[0].depth;
+
+    // Validate continuity and signed absolute depth values.
     for (i, link) in links.iter().enumerate() {
-        if link.depth != i {
+        let expected_depth = base_depth
+            .checked_add(i)
+            .ok_or(AuthorityError::DepthExceeded {
+                depth: base_depth,
+                max_depth,
+            })?;
+        if link.depth != expected_depth {
             return Err(AuthorityError::ChainBroken {
                 index: i,
-                reason: format!("expected depth {i}, got {}", link.depth),
+                reason: format!("expected depth {expected_depth}, got {}", link.depth),
+            });
+        }
+        let chain_depth = expected_depth
+            .checked_add(1)
+            .ok_or(AuthorityError::DepthExceeded {
+                depth: expected_depth,
+                max_depth,
+            })?;
+        if chain_depth > max_depth {
+            return Err(AuthorityError::DepthExceeded {
+                depth: chain_depth,
+                max_depth,
             });
         }
         if i > 0 {
@@ -471,6 +491,20 @@ mod tests {
     }
 
     #[test]
+    fn build_accepts_subchain_with_signed_depth_offset() {
+        let links = vec![
+            fake_link("alice", "bob", vec![Permission::Read], 1, None),
+            fake_link("bob", "charlie", vec![Permission::Read], 2, None),
+        ];
+
+        let chain = build_chain(&links).unwrap();
+
+        assert_eq!(chain.depth(), 2);
+        assert_eq!(chain.root().unwrap(), &did("alice"));
+        assert_eq!(chain.leaf().unwrap(), &did("charlie"));
+    }
+
+    #[test]
     fn build_rejects_empty() {
         assert_eq!(build_chain(&[]), Err(AuthorityError::EmptyChain));
     }
@@ -553,6 +587,21 @@ mod tests {
             signed_link(&reg, "alice", "bob", vec![Permission::Read], 1, None),
         ];
         let chain = build_chain(&links).unwrap();
+        assert!(verify_chain(&chain, &now(), reg.resolver()).is_ok());
+    }
+
+    #[test]
+    fn verify_accepts_subchain_with_signed_depth_offset() {
+        let mut reg = KeyRegistry::new();
+        reg.register("alice");
+        reg.register("bob");
+        let links = vec![
+            signed_link(&reg, "alice", "bob", vec![Permission::Read], 1, None),
+            signed_link(&reg, "bob", "charlie", vec![Permission::Read], 2, None),
+        ];
+
+        let chain = build_chain(&links).unwrap();
+
         assert!(verify_chain(&chain, &now(), reg.resolver()).is_ok());
     }
 
@@ -734,7 +783,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_rejects_prebuilt_chain_with_forged_depth() {
+    fn verify_rejects_prebuilt_chain_with_over_max_depth() {
         let mut reg = KeyRegistry::new();
         reg.register("root");
         let chain = AuthorityChain {
@@ -751,7 +800,7 @@ mod tests {
 
         assert!(matches!(
             verify_chain(&chain, &now(), reg.resolver()),
-            Err(AuthorityError::ChainBroken { index: 0, .. })
+            Err(AuthorityError::DepthExceeded { .. })
         ));
     }
 

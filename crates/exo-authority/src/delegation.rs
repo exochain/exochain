@@ -515,10 +515,6 @@ impl DelegationRegistry {
     pub fn find_chain(&self, from: &Did, to: &Did) -> Option<AuthorityChain> {
         let mut path = Vec::new();
         if self.find_path_dfs(from, to, &mut path, 0, DEFAULT_MAX_DEPTH) {
-            // Re-number depths
-            for (i, link) in path.iter_mut().enumerate() {
-                link.depth = i;
-            }
             chain::build_chain(&path).ok()
         } else {
             None
@@ -980,6 +976,26 @@ mod tests {
             (did("bob").as_str().to_owned(), public_key(&bob_key)),
         ]);
 
+        assert!(chain::verify_chain(&chain, &now(), |did| keys.get(did.as_str()).copied()).is_ok());
+    }
+
+    #[test]
+    fn find_chain_preserves_signed_depth_for_subchain_verification() {
+        let mut reg = DelegationRegistry::new();
+        let root_key = KeyPair::generate();
+        let alice_key = KeyPair::generate();
+        signed_delegate(&mut reg, "root", "alice", &[Permission::Read], &root_key).unwrap();
+        signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
+
+        let chain = reg
+            .find_chain(&did("alice"), &did("bob"))
+            .expect("subchain should resolve");
+        let keys = std::collections::BTreeMap::from([(
+            did("alice").as_str().to_owned(),
+            public_key(&alice_key),
+        )]);
+
+        assert_eq!(chain.links[0].depth, 1);
         assert!(chain::verify_chain(&chain, &now(), |did| keys.get(did.as_str()).copied()).is_ok());
     }
 
