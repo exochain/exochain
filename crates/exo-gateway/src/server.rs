@@ -70,10 +70,7 @@ const MAX_DID_DOCUMENT_BODY_BYTES: usize = 64 * 1024;
 #[cfg(test)]
 use crate::auth::request_signing_payload;
 use crate::{
-    auth::{
-        AuthenticatedActor, AuthenticationMetadata, FRESHNESS_WINDOW_MS, Request as AuthRequest,
-        authenticate,
-    },
+    auth::{AuthenticatedActor, AuthenticationMetadata, Request as AuthRequest, authenticate},
     db,
     error::{GatewayError, Result},
     graphql,
@@ -1793,6 +1790,7 @@ fn session_login_auth_signing_payload(
     request_signing_payload(&request, auth_metadata)
 }
 
+#[cfg(test)]
 fn authenticate_session_login(
     did: &str,
     metadata: &SessionIssueMetadata,
@@ -1812,26 +1810,11 @@ fn authenticate_session_login_against_trusted_time(
     registry: &dyn DidRegistry,
     trusted_observed_at: Timestamp,
 ) -> Result<AuthenticatedActor> {
-    let actor = authenticate_session_login(did, metadata, proof, registry)?;
-    validate_session_login_freshness_against_trusted_time(proof, trusted_observed_at)?;
-    Ok(actor)
-}
-
-fn validate_session_login_freshness_against_trusted_time(
-    proof: &SessionLoginProof,
-    trusted_observed_at: Timestamp,
-) -> Result<()> {
-    let skew_ms = trusted_observed_at
-        .physical_ms
-        .abs_diff(proof.timestamp.physical_ms);
-    if skew_ms > FRESHNESS_WINDOW_MS {
-        return Err(GatewayError::AuthenticationFailed {
-            reason: format!(
-                "request timestamp outside freshness window: skew {skew_ms}ms (max {FRESHNESS_WINDOW_MS}ms)"
-            ),
-        });
-    }
-    Ok(())
+    let request =
+        session_login_auth_request(did, metadata, proof.timestamp, proof.signature.clone())?;
+    let auth_metadata =
+        AuthenticationMetadata::from_signed_and_trusted(proof.observed_at, trusted_observed_at)?;
+    authenticate(&request, registry, auth_metadata)
 }
 
 fn metadata_error(reason: impl Into<String>) -> GatewayError {

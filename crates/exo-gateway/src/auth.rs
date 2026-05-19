@@ -66,25 +66,48 @@ pub struct AuthenticatedActor {
     pub authenticated_at: Timestamp,
 }
 
-/// Caller-supplied metadata for an authentication attempt.
+/// Authentication metadata supplied by a trusted ingress adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AuthenticationMetadata {
+    /// Timestamp that is bound into signed DID authentication payloads.
     pub observed_at: Timestamp,
+    /// Trusted ingress timestamp used for freshness and expiration decisions.
+    pub trusted_observed_at: Timestamp,
 }
 
 impl AuthenticationMetadata {
-    /// Validate caller-supplied authentication metadata.
+    /// Validate trusted authentication metadata.
     ///
     /// # Errors
     ///
     /// Returns `GatewayError::BadRequest` if `observed_at` is `Timestamp::ZERO`.
     pub fn new(observed_at: Timestamp) -> Result<Self> {
+        Self::from_signed_and_trusted(observed_at, observed_at)
+    }
+
+    /// Validate authentication metadata with distinct signed and trusted clocks.
+    ///
+    /// `observed_at` remains part of the signed request envelope for wire
+    /// compatibility. `trusted_observed_at` is the ingress adapter's trusted
+    /// clock and is the only timestamp used for freshness and token expiry.
+    pub fn from_signed_and_trusted(
+        observed_at: Timestamp,
+        trusted_observed_at: Timestamp,
+    ) -> Result<Self> {
         if observed_at == Timestamp::ZERO {
             return Err(GatewayError::BadRequest(
-                "authentication observed_at must be caller-supplied and non-zero".into(),
+                "authentication observed_at must be non-zero".into(),
             ));
         }
-        Ok(Self { observed_at })
+        if trusted_observed_at == Timestamp::ZERO {
+            return Err(GatewayError::BadRequest(
+                "authentication trusted_observed_at must be non-zero".into(),
+            ));
+        }
+        Ok(Self {
+            observed_at,
+            trusted_observed_at,
+        })
     }
 }
 
@@ -363,7 +386,7 @@ pub fn authenticate(
     }
 
     // 3. Timestamp freshness — guard against replay attacks.
-    check_freshness(&request.timestamp, &metadata.observed_at)?;
+    check_freshness(&request.timestamp, &metadata.trusted_observed_at)?;
 
     // 4. Resolve DID document from the registry.
     let doc = registry
@@ -392,7 +415,7 @@ pub fn authenticate(
 
     Ok(AuthenticatedActor {
         did,
-        authenticated_at: metadata.observed_at,
+        authenticated_at: metadata.trusted_observed_at,
     })
 }
 
@@ -460,7 +483,7 @@ fn resolve_token(
     }
 
     if let Some(expires_at) = record.expires_at {
-        if metadata.observed_at > expires_at {
+        if metadata.trusted_observed_at > expires_at {
             return Err(GatewayError::AuthenticationFailed {
                 reason: format!("{kind} has expired"),
             });
@@ -469,7 +492,7 @@ fn resolve_token(
 
     Ok(AuthenticatedActor {
         did: record.did.clone(),
-        authenticated_at: metadata.observed_at,
+        authenticated_at: metadata.trusted_observed_at,
     })
 }
 
@@ -525,6 +548,14 @@ mod tests {
 
     fn auth_metadata() -> AuthenticationMetadata {
         AuthenticationMetadata::new(Timestamp::new(10_000, 0)).unwrap()
+    }
+
+    fn replayed_auth_metadata(trusted_observed_at: Timestamp) -> AuthenticationMetadata {
+        AuthenticationMetadata::from_signed_and_trusted(
+            Timestamp::new(10_000, 0),
+            trusted_observed_at,
+        )
+        .unwrap()
     }
 
     fn api_key_metadata() -> ApiKeyMetadata {
@@ -671,6 +702,34 @@ mod tests {
             AuthenticationMetadata::new(Timestamp::new(req_ts().physical_ms + 1, 0)).unwrap();
 
         assert!(authenticate(&request, &reg, tampered_metadata).is_err());
+    }
+
+    #[test]
+    fn auth_rejects_replayed_signed_observed_at_against_trusted_time() {
+        let (reg, sk) = registry_with_alice();
+        let body_hash = Hash256::digest(b"replayed request with old signed observed time");
+        let request = signed_request(
+            Request {
+                actor_did: "did:exo:alice".into(),
+                action: "read".into(),
+                body_hash,
+                signature: Signature::Empty,
+                timestamp: req_ts(),
+            },
+            &sk,
+        );
+
+        let err = authenticate(
+            &request,
+            &reg,
+            replayed_auth_metadata(Timestamp::new(400_000, 0)),
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("freshness window"),
+            "expected trusted freshness rejection, got {err}"
+        );
     }
 
     #[test]
@@ -973,6 +1032,18 @@ mod tests {
     }
 
     #[test]
+    fn authentication_metadata_rejects_zero_trusted_observed_at() {
+        let metadata = AuthenticationMetadata::from_signed_and_trusted(
+            Timestamp::new(10_000, 0),
+            Timestamp::ZERO,
+        );
+
+        assert!(
+            matches!(metadata, Err(GatewayError::BadRequest(reason)) if reason.contains("trusted_observed_at"))
+        );
+    }
+
+    #[test]
     fn authenticate_rejects_stale_against_supplied_metadata() {
         let (reg, sk) = registry_with_alice();
         let body_hash = Hash256::ZERO;
@@ -1006,7 +1077,7 @@ mod tests {
         let forbidden_timestamp = ["Timestamp", "::now_utc"].concat();
         assert!(
             !production.contains(&forbidden_timestamp),
-            "gateway auth must use caller-supplied authentication timestamps"
+            "gateway auth must receive authentication timestamps from the ingress adapter"
         );
         let forbidden_system_time = ["SystemTime", "::now"].concat();
         assert!(
@@ -1169,6 +1240,32 @@ mod tests {
     }
 
     #[test]
+    fn credential_api_key_expiration_uses_trusted_observed_at() {
+        let did_reg = LocalDidRegistry::new();
+        let mut api_reg = ApiKeyRegistry::new();
+        let did = Did::new("did:exo:alice").unwrap();
+        let (plaintext, record) = api_reg
+            .register(did, "test key".into(), api_key_metadata())
+            .expect("api key registration");
+        api_reg.keys.get_mut(&record.key_hash).unwrap().expires_at =
+            Some(Timestamp::new(15_000, 0));
+
+        let metadata = AuthenticationMetadata::from_signed_and_trusted(
+            Timestamp::new(10_000, 0),
+            Timestamp::new(20_000, 0),
+        )
+        .unwrap();
+        let cred = Credential::ApiKey(plaintext);
+        let err = resolve_credential(&cred, &did_reg, &api_reg, metadata).unwrap_err();
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains("expired"),
+            "expected trusted-time expiry in: {msg}"
+        );
+    }
+
+    #[test]
     fn credential_api_key_unknown() {
         let did_reg = LocalDidRegistry::new();
         let api_reg = ApiKeyRegistry::new();
@@ -1296,7 +1393,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_credential_uses_supplied_authentication_metadata() {
+    fn resolve_credential_uses_trusted_authentication_metadata() {
         let did_reg = LocalDidRegistry::new();
         let mut api_reg = ApiKeyRegistry::new();
         let did = Did::new("did:exo:alice").unwrap();

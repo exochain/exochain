@@ -53,16 +53,21 @@ pub struct RouteResult {
 pub struct RouteMetadata {
     pub correlation_id: Uuid,
     pub audit_timestamp: exo_core::Timestamp,
+    pub trusted_auth_observed_at: exo_core::Timestamp,
 }
 
 impl RouteMetadata {
-    /// Validate caller-supplied route metadata.
+    /// Validate route metadata and trusted authentication clock metadata.
     ///
     /// # Errors
     ///
     /// Returns `GatewayError::BadRequest` if the correlation ID is nil or the
     /// audit timestamp is `Timestamp::ZERO`.
-    pub fn new(correlation_id: Uuid, audit_timestamp: exo_core::Timestamp) -> Result<Self> {
+    pub fn new(
+        correlation_id: Uuid,
+        audit_timestamp: exo_core::Timestamp,
+        trusted_auth_observed_at: exo_core::Timestamp,
+    ) -> Result<Self> {
         if correlation_id.is_nil() {
             return Err(GatewayError::BadRequest(
                 "route correlation_id must be caller-supplied and non-nil".into(),
@@ -73,9 +78,15 @@ impl RouteMetadata {
                 "route audit timestamp must be caller-supplied and non-zero".into(),
             ));
         }
+        if trusted_auth_observed_at == exo_core::Timestamp::ZERO {
+            return Err(GatewayError::BadRequest(
+                "route trusted authentication timestamp must be non-zero".into(),
+            ));
+        }
         Ok(Self {
             correlation_id,
             audit_timestamp,
+            trusted_auth_observed_at,
         })
     }
 }
@@ -90,7 +101,10 @@ pub fn process_request(
     metadata: RouteMetadata,
     log: &mut AuditLog,
 ) -> Result<RouteResult> {
-    let auth_metadata = AuthenticationMetadata::new(metadata.audit_timestamp)?;
+    let auth_metadata = AuthenticationMetadata::from_signed_and_trusted(
+        metadata.audit_timestamp,
+        metadata.trusted_auth_observed_at,
+    )?;
     let actor = authenticate(request, registry, auth_metadata)?;
     consent_middleware(&actor.did, &request.action, consent)?;
     governance_middleware(&actor.did, &request.action, verdict)?;
@@ -177,6 +191,7 @@ mod tests {
         RouteMetadata::new(
             Uuid::parse_str("018f7a96-8ad0-7c4f-8e0f-333333333333").unwrap(),
             Timestamp::new(7_000, 1),
+            Timestamp::new(7_000, 1),
         )
         .expect("valid route metadata")
     }
@@ -206,7 +221,11 @@ mod tests {
 
     #[test]
     fn route_metadata_rejects_nil_correlation_id() {
-        let result = RouteMetadata::new(Uuid::nil(), Timestamp::new(7_000, 0));
+        let result = RouteMetadata::new(
+            Uuid::nil(),
+            Timestamp::new(7_000, 0),
+            Timestamp::new(7_000, 0),
+        );
 
         assert!(
             matches!(result, Err(GatewayError::BadRequest(reason)) if reason.contains("correlation"))
@@ -218,10 +237,52 @@ mod tests {
         let result = RouteMetadata::new(
             Uuid::parse_str("018f7a96-8ad0-7c4f-8e0f-444444444444").unwrap(),
             Timestamp::ZERO,
+            Timestamp::new(7_000, 0),
         );
 
         assert!(
             matches!(result, Err(GatewayError::BadRequest(reason)) if reason.contains("timestamp"))
+        );
+    }
+
+    #[test]
+    fn route_metadata_rejects_zero_trusted_auth_timestamp() {
+        let result = RouteMetadata::new(
+            Uuid::parse_str("018f7a96-8ad0-7c4f-8e0f-555555555555").unwrap(),
+            Timestamp::new(7_000, 0),
+            Timestamp::ZERO,
+        );
+
+        assert!(
+            matches!(result, Err(GatewayError::BadRequest(reason)) if reason.contains("trusted"))
+        );
+    }
+
+    #[test]
+    fn process_request_uses_trusted_auth_time_not_audit_timestamp() {
+        let (reg, req) = alice_registry_and_req();
+        let mut log = AuditLog::new();
+        let metadata = RouteMetadata::new(
+            Uuid::parse_str("018f7a96-8ad0-7c4f-8e0f-666666666666").unwrap(),
+            Timestamp::new(7_000, 1),
+            Timestamp::new(400_000, 0),
+        )
+        .expect("route metadata with replayed audit timestamp");
+
+        let err = process_request(
+            &req,
+            &reg,
+            Route::CreateTransaction,
+            true,
+            &Verdict::Allow,
+            metadata,
+            &mut log,
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("freshness window"),
+            "expected trusted auth timestamp to reject replayed route audit timestamp: {err}"
         );
     }
 
