@@ -313,8 +313,8 @@ Use these at session start to let the agent self-orient.
 
 | Tool | Purpose |
 |---|---|
-| `exochain_create_evidence` | Construct a verifier-compatible legal evidence envelope from UUID, content hash, creator DID, and creation HLC; this does not persist evidence. |
-| `exochain_verify_chain_of_custody` | Verify evidence UUID/DID/hash metadata, transfer continuity, transfer reasons, and monotonic HLC timestamps. |
+| `exochain_create_evidence` | Construct a verifier-compatible draft legal evidence envelope from caller-supplied UUID, content hash, creator DID, and creation HLC. The result is marked `not_attested`, is not persisted, does not bind trusted server HLC time, and does not check uniqueness. |
+| `exochain_verify_chain_of_custody` | Verify caller-supplied evidence UUID/DID/hash metadata, transfer continuity, transfer reasons, and monotonic HLC timestamps. The result is scoped to the supplied payload only and is not a legal-store attestation. |
 | `exochain_generate_merkle_proof` | Produce a verifier-compatible Merkle inclusion proof for a 32-byte event hash, returning `event_hash`, `root_hash`, and `proof_hashes`. |
 | `exochain_verify_cgr_proof` | Refuses CGR proof verification until proof bytes, public inputs, checkpoint roots, validator signatures, and a production verifier are wired. |
 

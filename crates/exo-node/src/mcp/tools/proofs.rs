@@ -37,6 +37,8 @@ const MAX_MERKLE_PROOF_LEAVES: usize = 1024;
 const CGR_PROOF_HASH_HEX_CHARS: usize = 64;
 const MAX_CGR_INVARIANTS_CHECKED: usize = 16;
 const MAX_CGR_INVARIANT_NAME_BYTES: usize = 128;
+const CALLER_SUPPLIED_TRUST_BOUNDARY: &str = "caller_supplied_untrusted_metadata";
+const NOT_ATTESTED_STATUS: &str = "not_attested";
 
 fn tool_error(message: impl Into<String>) -> ToolResult {
     let message = message.into();
@@ -213,7 +215,7 @@ fn final_custodian(evidence: &exo_legal::evidence::Evidence) -> &Did {
 pub fn create_evidence_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_create_evidence".to_owned(),
-        description: "Construct a legal evidence envelope from caller-supplied UUID, content hash, creator DID, and creation HLC. Returns a verifier-compatible creator-only custody payload; it does not persist evidence to a store.".to_owned(),
+        description: "Construct an unpersisted draft legal evidence envelope from caller-supplied UUID, content hash, creator DID, and creation HLC. Returns a verifier-compatible creator-only custody payload marked not_attested; it does not persist evidence, bind trusted HLC time, authenticate the creator, or check uniqueness.".to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -231,15 +233,15 @@ pub fn create_evidence_definition() -> ToolDefinition {
                 },
                 "evidence_id": {
                     "type": "string",
-                    "description": "Caller-supplied non-nil evidence UUID."
+                    "description": "Caller-supplied non-nil evidence UUID. This value is not uniqueness-checked by the MCP tool."
                 },
                 "created_at_ms": {
                     "type": "integer",
-                    "description": "Caller-supplied nonzero HLC physical milliseconds for creation."
+                    "description": "Caller-supplied nonzero HLC physical milliseconds for the draft envelope; not a server-observed or trusted HLC time."
                 },
                 "created_at_logical": {
                     "type": "integer",
-                    "description": "Caller-supplied HLC logical counter for creation."
+                    "description": "Caller-supplied HLC logical counter for the draft envelope; not a server-observed or trusted HLC time."
                 }
             },
             "required": [
@@ -320,10 +322,22 @@ pub fn execute_create_evidence(params: &Value, _context: &NodeContext) -> ToolRe
         "created_at_logical": created_at_logical,
         "chain": [],
         "final_custodian": final_custodian(&evidence).to_string(),
-        "admissibility_status": &evidence.admissibility_status,
+        "claimed_admissibility_status": &evidence.admissibility_status,
         "custody_digest": custody_digest.to_string(),
-        "status": "created",
+        "status": "draft_unattested",
+        "attestation_status": NOT_ATTESTED_STATUS,
+        "trust_boundary": CALLER_SUPPLIED_TRUST_BOUNDARY,
         "persistence": "not_persisted",
+        "trusted_hlc_bound": false,
+        "authenticated_actor_bound": false,
+        "uniqueness_checked": false,
+        "metadata_sources": {
+            "evidence_id": "caller_supplied",
+            "evidence_type": "caller_supplied",
+            "content_hash": "caller_supplied",
+            "creator_did": "caller_supplied",
+            "created_at": "caller_supplied",
+        },
     });
     ToolResult::success(response.to_string())
 }
@@ -337,7 +351,7 @@ pub fn execute_create_evidence(params: &Value, _context: &NodeContext) -> ToolRe
 pub fn verify_chain_of_custody_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_verify_chain_of_custody".to_owned(),
-        description: "Verify the integrity of an evidence chain of custody using EXOCHAIN legal evidence rules, checking UUID/DID/hash metadata, transfer continuity, reasons, and monotonic HLC timestamps.".to_owned(),
+        description: "Verify caller-supplied evidence chain-of-custody metadata using EXOCHAIN legal evidence rules, checking UUID/DID/hash metadata, transfer continuity, reasons, and monotonic HLC timestamps. The result is a deterministic validation of the supplied payload only; it is not persisted, not a legal-store attestation, and not bound to trusted server time.".to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -389,11 +403,11 @@ pub fn verify_chain_of_custody_definition() -> ToolDefinition {
                 },
                 "verified_at_ms": {
                     "type": "integer",
-                    "description": "Caller-supplied nonzero HLC physical milliseconds for verification."
+                    "description": "Caller-supplied nonzero HLC physical milliseconds for the local validation record; not a trusted server-observed verification time."
                 },
                 "verified_at_logical": {
                     "type": "integer",
-                    "description": "Caller-supplied HLC logical counter for verification."
+                    "description": "Caller-supplied HLC logical counter for the local validation record; not a trusted server-observed verification time."
                 }
             },
             "required": [
@@ -522,6 +536,12 @@ pub fn execute_verify_chain_of_custody(params: &Value, _context: &NodeContext) -
                     "valid": false,
                     "issues": [err.to_string()],
                     "verified_at": Timestamp::new(verified_at_ms, verified_at_logical).to_string(),
+                    "verified_at_source": "caller_supplied",
+                    "verification_scope": "caller_supplied_payload_only",
+                    "attestation_status": NOT_ATTESTED_STATUS,
+                    "trust_boundary": CALLER_SUPPLIED_TRUST_BOUNDARY,
+                    "persistence": "not_persisted",
+                    "trusted_hlc_bound": false,
                 })
                 .to_string(),
             );
@@ -536,6 +556,12 @@ pub fn execute_verify_chain_of_custody(params: &Value, _context: &NodeContext) -
                 "valid": false,
                 "issues": [err.to_string()],
                 "verified_at": Timestamp::new(verified_at_ms, verified_at_logical).to_string(),
+                "verified_at_source": "caller_supplied",
+                "verification_scope": "caller_supplied_payload_only",
+                "attestation_status": NOT_ATTESTED_STATUS,
+                "trust_boundary": CALLER_SUPPLIED_TRUST_BOUNDARY,
+                "persistence": "not_persisted",
+                "trusted_hlc_bound": false,
             })
             .to_string(),
         );
@@ -554,6 +580,12 @@ pub fn execute_verify_chain_of_custody(params: &Value, _context: &NodeContext) -
         "final_custodian": final_custodian(&evidence).to_string(),
         "custody_digest": custody_digest.to_string(),
         "verified_at": Timestamp::new(verified_at_ms, verified_at_logical).to_string(),
+        "verified_at_source": "caller_supplied",
+        "verification_scope": "caller_supplied_payload_only",
+        "attestation_status": NOT_ATTESTED_STATUS,
+        "trust_boundary": CALLER_SUPPLIED_TRUST_BOUNDARY,
+        "persistence": "not_persisted",
+        "trusted_hlc_bound": false,
     });
     ToolResult::success(response.to_string())
 }
@@ -713,7 +745,7 @@ pub fn verify_cgr_proof_definition() -> ToolDefinition {
                 },
                 "verified_at_ms": {
                     "type": "integer",
-                    "description": "Caller-supplied nonzero HLC physical milliseconds for the refusal record."
+                    "description": "Caller-supplied nonzero HLC physical milliseconds accepted only for backward-compatible request validation; it is not returned as a trusted refusal timestamp."
                 }
             },
             "required": ["proof_hash", "invariants_checked", "verified_at_ms"],
@@ -737,10 +769,9 @@ pub fn execute_verify_cgr_proof(params: &Value, _context: &NodeContext) -> ToolR
         Ok(count) => count,
         Err(result) => return result,
     };
-    let verified_at_ms = match required_nonzero_u64(params, "verified_at_ms") {
-        Ok(value) => value,
-        Err(result) => return result,
-    };
+    if let Err(result) = required_nonzero_u64(params, "verified_at_ms") {
+        return result;
+    }
 
     ToolResult::error(
         json!({
@@ -748,7 +779,7 @@ pub fn execute_verify_cgr_proof(params: &Value, _context: &NodeContext) -> ToolR
                 "CGR proof verification is unavailable: exochain_verify_cgr_proof has no proof bytes, public inputs, checkpoint root, validator signature set, or production CGR proof verifier wired; refusing hash-only verification claims. See {MCP_CGR_PROOF_INITIATIVE}."
             ),
             "invariant_count": invariant_count,
-            "refused_at": format!("{}:0", verified_at_ms),
+            "refusal_time_source": "not_recorded_without_trusted_hlc",
             "initiative": MCP_CGR_PROOF_INITIATIVE,
         })
         .to_string(),
@@ -802,8 +833,19 @@ mod tests {
         assert_eq!(v["created_at_logical"], 7_u64);
         assert_eq!(v["chain"], json!([]));
         assert_eq!(v["final_custodian"], "did:exo:alice");
-        assert_eq!(v["admissibility_status"], "Pending");
-        assert_eq!(v["status"], "created");
+        assert_eq!(v["claimed_admissibility_status"], "Pending");
+        assert!(v.get("admissibility_status").is_none());
+        assert_eq!(v["status"], "draft_unattested");
+        assert_eq!(v["attestation_status"], "not_attested");
+        assert_eq!(v["trust_boundary"], "caller_supplied_untrusted_metadata");
+        assert_eq!(v["persistence"], "not_persisted");
+        assert_eq!(v["trusted_hlc_bound"], false);
+        assert_eq!(v["authenticated_actor_bound"], false);
+        assert_eq!(v["uniqueness_checked"], false);
+        assert_eq!(v["metadata_sources"]["evidence_id"], "caller_supplied");
+        assert_eq!(v["metadata_sources"]["created_at"], "caller_supplied");
+        assert_eq!(v["metadata_sources"]["creator_did"], "caller_supplied");
+        assert_eq!(v["metadata_sources"]["content_hash"], "caller_supplied");
         assert_eq!(
             v["custody_digest"].as_str().expect("custody digest").len(),
             64
@@ -951,6 +993,11 @@ mod tests {
             v["custody_digest"].as_str().expect("custody digest").len(),
             64
         );
+        assert_eq!(v["verification_scope"], "caller_supplied_payload_only");
+        assert_eq!(v["attestation_status"], "not_attested");
+        assert_eq!(v["persistence"], "not_persisted");
+        assert_eq!(v["verified_at_source"], "caller_supplied");
+        assert_eq!(v["trusted_hlc_bound"], false);
     }
 
     #[test]
@@ -1194,6 +1241,8 @@ mod tests {
         assert!(error.contains("CGR proof verification is unavailable"));
         assert!(error.contains("fix-mcp-cgr-proof-verification-stub.md"));
         assert!(!result.content[0].text().contains("verification_status"));
+        assert!(v.get("refused_at").is_none());
+        assert_eq!(v["refusal_time_source"], "not_recorded_without_trusted_hlc");
     }
 
     #[test]
@@ -1276,5 +1325,25 @@ mod tests {
             &NodeContext::empty(),
         );
         assert!(result.is_error);
+    }
+
+    #[test]
+    fn proof_tools_do_not_emit_authoritative_statuses_from_caller_metadata() {
+        let source = include_str!("proofs.rs");
+        let production = source
+            .split("// ===========================================================================\n// Tests")
+            .next()
+            .expect("tests marker present");
+        for forbidden in [
+            "\"status\": \"created\"",
+            "\"verification_status\": \"verified\"",
+            "\"refused_at\"",
+            "\"admissibility_status\": &evidence.admissibility_status",
+        ] {
+            assert!(
+                !production.contains(forbidden),
+                "MCP proof tools must not emit authoritative status from caller-supplied metadata: {forbidden}"
+            );
+        }
     }
 }

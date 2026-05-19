@@ -988,6 +988,44 @@ mod tests {
     }
 
     #[test]
+    fn handler_tools_call_create_evidence_marks_caller_metadata_unattested() {
+        let server = test_server();
+        let arguments = serde_json::json!({
+            "evidence_type": "document",
+            "content_hash": "0202020202020202020202020202020202020202020202020202020202020202",
+            "creator_did": "did:exo:alice",
+            "evidence_id": "00000000-0000-0000-0000-000000000001",
+            "created_at_ms": 1700000000000_u64,
+            "created_at_logical": 7_u64,
+        });
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 3003,
+            "method": "tools/call",
+            "params": tool_call_params("exochain_create_evidence", arguments)
+        })
+        .to_string();
+
+        let response = server.handle_message(&msg).unwrap();
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        assert!(parsed.error.is_none());
+        let result = parsed.result.expect("tool result");
+        assert!(result.get("is_error").is_none() || result["is_error"] == false);
+        let text = result["content"][0]["text"].as_str().expect("text content");
+        let evidence: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(evidence["status"], "draft_unattested");
+        assert_eq!(evidence["attestation_status"], "not_attested");
+        assert_eq!(
+            evidence["trust_boundary"],
+            "caller_supplied_untrusted_metadata"
+        );
+        assert!(
+            !text.contains("\"status\":\"created\""),
+            "MCP message path must not mint a created evidence attestation from caller metadata"
+        );
+    }
+
+    #[test]
     fn handler_tools_call_node_status_appends_allowed_mcp_audit_chain() {
         let server = test_server();
         let msg = serde_json::json!({
