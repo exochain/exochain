@@ -27,6 +27,8 @@
 use exo_core::{Did, PqPublicKey, PublicKey, Signature, Timestamp, crypto};
 use serde::{Deserialize, Serialize};
 
+pub const HYBRID_VERIFICATION_METHOD_KEY_TYPE: &str = "HybridKeyEd25519MlDsa652020";
+
 /// Derive the self-certifying EXOCHAIN DID bound to an Ed25519 public key.
 ///
 /// The canonical node/participant DID format is
@@ -118,13 +120,34 @@ pub struct HybridVerificationMethod {
 }
 
 impl HybridVerificationMethod {
+    #[must_use]
+    pub(crate) fn key_material_matches_multibase(&self) -> bool {
+        multibase_matches_raw_key(
+            &self.classical_public_key_multibase,
+            self.classical_public_key.as_bytes(),
+        ) && multibase_matches_raw_key(&self.pq_public_key_multibase, self.pq_public_key.as_bytes())
+    }
+
+    #[must_use]
+    pub(crate) fn is_internally_consistent(&self) -> bool {
+        let controller_prefix = format!("{}#", self.controller.as_str());
+        self.key_type == HYBRID_VERIFICATION_METHOD_KEY_TYPE
+            && self.id.starts_with(&controller_prefix)
+            && self.id.len() > controller_prefix.len()
+            && matches!(
+                (self.active, self.revoked_at),
+                (true, None) | (false, Some(_))
+            )
+            && self.key_material_matches_multibase()
+    }
+
     /// Verify a `Signature::Hybrid` against this method's key bundle.
     ///
     /// Delegates to `crypto::verify_hybrid`, which requires **both** the
     /// Ed25519 and ML-DSA-65 components to pass with no short-circuit.
     #[must_use]
     pub fn verify(&self, message: &[u8], signature: &Signature) -> bool {
-        if !self.active {
+        if !self.active || !self.is_internally_consistent() {
             return false;
         }
         crypto::verify_hybrid(
@@ -133,6 +156,16 @@ impl HybridVerificationMethod {
             &self.classical_public_key,
             &self.pq_public_key,
         )
+    }
+}
+
+fn multibase_matches_raw_key(public_key_multibase: &str, raw_key: &[u8]) -> bool {
+    let Some(encoded) = public_key_multibase.strip_prefix('z') else {
+        return false;
+    };
+    match bs58::decode(encoded).into_vec() {
+        Ok(decoded) => decoded.as_slice() == raw_key,
+        Err(_) => false,
     }
 }
 
@@ -448,7 +481,7 @@ mod tests {
         let pq_mb = format!("z{}", bs58::encode(pq_pk.as_bytes()).into_string());
         HybridVerificationMethod {
             id: format!("{}#hybrid-key-1", did.as_str()),
-            key_type: "HybridKeyEd25519MlDsa652020".into(),
+            key_type: HYBRID_VERIFICATION_METHOD_KEY_TYPE.into(),
             controller: did.clone(),
             classical_public_key_multibase: classical_mb,
             pq_public_key_multibase: pq_mb,
@@ -475,6 +508,52 @@ mod tests {
         assert!(
             method.verify(message, &sig),
             "HybridVerificationMethod::verify must accept valid Hybrid signature"
+        );
+    }
+
+    #[test]
+    fn hybrid_method_verify_rejects_classical_raw_key_multibase_mismatch() {
+        use exo_core::crypto::{generate_pq_keypair, sign_hybrid};
+
+        let (advertised_classical_pk, _advertised_classical_sk) = generate_keypair();
+        let (raw_classical_pk, raw_classical_sk) = generate_keypair();
+        let (pq_pk, pq_sk) = generate_pq_keypair();
+        let did = make_did("hybrid-classical-mismatch");
+
+        let mut method = make_hybrid_method(&did, raw_classical_pk, pq_pk);
+        method.classical_public_key_multibase = format!(
+            "z{}",
+            bs58::encode(advertised_classical_pk.as_bytes()).into_string()
+        );
+        let message = b"hybrid DID verification must bind advertised classical key";
+        let sig = sign_hybrid(message, &raw_classical_sk, &pq_sk).expect("sign_hybrid");
+
+        assert!(
+            !method.verify(message, &sig),
+            "hybrid verification must reject raw Ed25519 key material that disagrees with multibase"
+        );
+    }
+
+    #[test]
+    fn hybrid_method_verify_rejects_pq_raw_key_multibase_mismatch() {
+        use exo_core::crypto::{generate_pq_keypair, sign_hybrid};
+
+        let (classical_pk, classical_sk) = generate_keypair();
+        let (advertised_pq_pk, _advertised_pq_sk) = generate_pq_keypair();
+        let (raw_pq_pk, raw_pq_sk) = generate_pq_keypair();
+        let did = make_did("hybrid-pq-mismatch");
+
+        let mut method = make_hybrid_method(&did, classical_pk, raw_pq_pk);
+        method.pq_public_key_multibase = format!(
+            "z{}",
+            bs58::encode(advertised_pq_pk.as_bytes()).into_string()
+        );
+        let message = b"hybrid DID verification must bind advertised PQ key";
+        let sig = sign_hybrid(message, &classical_sk, &raw_pq_sk).expect("sign_hybrid");
+
+        assert!(
+            !method.verify(message, &sig),
+            "hybrid verification must reject raw ML-DSA key material that disagrees with multibase"
         );
     }
 

@@ -20,7 +20,10 @@ use exo_core::{Did, PublicKey, Signature, Timestamp, crypto};
 use serde::Serialize;
 
 use crate::{
-    did::{DidDocument, DidRegistrationProof, RevocationProof, did_from_public_key},
+    did::{
+        DidDocument, DidRegistrationProof, HYBRID_VERIFICATION_METHOD_KEY_TYPE, RevocationProof,
+        did_from_public_key,
+    },
     did_verification::validate_verification_method_document_binding,
     error::IdentityError,
 };
@@ -495,7 +498,15 @@ fn validate_registered_did_document(doc: &DidDocument) -> Result<(), IdentityErr
             })?;
         }
     }
+    let mut hybrid_verification_method_ids = BTreeSet::new();
     for method in &doc.hybrid_verification_methods {
+        if !hybrid_verification_method_ids.insert(method.id.as_str()) {
+            return Err(invalid_did_document_field(
+                did,
+                "hybrid_verification_methods.id",
+                format!("duplicate hybrid verification method id '{}'", method.id),
+            ));
+        }
         ensure_byte_bound(
             did,
             "hybrid_verification_methods.id",
@@ -514,6 +525,38 @@ fn validate_registered_did_document(doc: &DidDocument) -> Result<(), IdentityErr
             method.controller.as_str(),
             MAX_DID_DOCUMENT_ID_BYTES,
         )?;
+        if !method.id.starts_with(&verification_method_id_prefix)
+            || method.id.len() <= verification_method_id_prefix.len()
+        {
+            return Err(invalid_did_document_field(
+                did,
+                "hybrid_verification_methods.id",
+                format!(
+                    "hybrid verification method id '{}' must be scoped to DID subject '{}'",
+                    method.id, did
+                ),
+            ));
+        }
+        if method.controller != doc.id {
+            return Err(invalid_did_document_field(
+                did,
+                "hybrid_verification_methods.controller",
+                format!(
+                    "hybrid verification method '{}' controller '{}' must equal DID subject '{}'",
+                    method.id, method.controller, did
+                ),
+            ));
+        }
+        if method.key_type != HYBRID_VERIFICATION_METHOD_KEY_TYPE {
+            return Err(invalid_did_document_field(
+                did,
+                "hybrid_verification_methods.key_type",
+                format!(
+                    "hybrid verification method '{}' key_type '{}' is unsupported; expected '{}'",
+                    method.id, method.key_type, HYBRID_VERIFICATION_METHOD_KEY_TYPE
+                ),
+            ));
+        }
         ensure_byte_bound(
             did,
             "hybrid_verification_methods.classical_public_key_multibase",
@@ -526,6 +569,23 @@ fn validate_registered_did_document(doc: &DidDocument) -> Result<(), IdentityErr
             &method.pq_public_key_multibase,
             MAX_DID_DOCUMENT_PQ_MULTIBASE_BYTES,
         )?;
+        ensure_verification_method_lifecycle(
+            did,
+            "hybrid_verification_methods.revoked_at",
+            &method.id,
+            method.active,
+            method.revoked_at,
+        )?;
+        if !method.key_material_matches_multibase() {
+            return Err(invalid_did_document_field(
+                did,
+                "hybrid_verification_methods.key_material",
+                format!(
+                    "hybrid verification method '{}' key material must match its multibase fields",
+                    method.id
+                ),
+            ));
+        }
     }
     for endpoint in &doc.service_endpoints {
         ensure_byte_bound(
@@ -636,11 +696,11 @@ impl DidRegistry for LocalDidRegistry {
 mod tests {
     use exo_core::{
         SecretKey,
-        crypto::{generate_keypair, sign},
+        crypto::{generate_keypair, generate_pq_keypair, sign},
     };
 
     use super::*;
-    use crate::did::{DidDocument, VerificationMethod};
+    use crate::did::{DidDocument, HybridVerificationMethod, VerificationMethod};
 
     fn make_did(label: &str) -> Did {
         Did::new(&format!("did:exo:{label}")).expect("valid did")
@@ -670,6 +730,30 @@ mod tests {
             key_type: "Ed25519VerificationKey2020".to_owned(),
             controller: did.clone(),
             public_key_multibase: format!("z{}", bs58::encode(pk.as_bytes()).into_string()),
+            version,
+            active: true,
+            valid_from: 1000,
+            revoked_at: None,
+        }
+    }
+
+    fn hybrid_verification_method(
+        did: &Did,
+        pk: PublicKey,
+        pq_pk: exo_core::PqPublicKey,
+        version: u64,
+    ) -> HybridVerificationMethod {
+        HybridVerificationMethod {
+            id: format!("{did}#hybrid-key-{version}"),
+            key_type: HYBRID_VERIFICATION_METHOD_KEY_TYPE.to_owned(),
+            controller: did.clone(),
+            classical_public_key_multibase: format!(
+                "z{}",
+                bs58::encode(pk.as_bytes()).into_string()
+            ),
+            pq_public_key_multibase: format!("z{}", bs58::encode(pq_pk.as_bytes()).into_string()),
+            pq_public_key: pq_pk,
+            classical_public_key: pk,
             version,
             active: true,
             valid_from: 1000,
@@ -933,6 +1017,33 @@ mod tests {
         assert!(
             err.to_string().contains("revoked_at"),
             "error should identify inactive revoked_at inconsistency: {err}"
+        );
+        assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn register_rejects_hybrid_method_with_mismatched_key_material() {
+        let (document_pk, _) = generate_keypair();
+        let (raw_classical_pk, _) = generate_keypair();
+        let (advertised_classical_pk, _) = generate_keypair();
+        let (pq_pk, _) = generate_pq_keypair();
+        let did = make_did("hybrid-registry-mismatch");
+        let mut doc = make_doc(did.clone(), document_pk);
+        let mut method = hybrid_verification_method(&did, raw_classical_pk, pq_pk, 1);
+        method.classical_public_key_multibase = format!(
+            "z{}",
+            bs58::encode(advertised_classical_pk.as_bytes()).into_string()
+        );
+        doc.hybrid_verification_methods = vec![method];
+
+        let mut reg = LocalDidRegistry::new();
+        let err = reg
+            .register(doc)
+            .expect_err("hybrid DID methods must bind raw key material to multibase fields");
+
+        assert!(
+            err.to_string().contains("key material"),
+            "error should identify hybrid key material inconsistency: {err}"
         );
         assert_eq!(reg.len(), 0);
     }
