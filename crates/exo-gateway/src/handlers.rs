@@ -261,6 +261,18 @@ fn compute_audit_entry_hash(input: &AuditEntryHashInput<'_>) -> Result<String, S
     Ok(canonical_cbor_hash(input)?.to_hex().to_string())
 }
 
+fn audit_timestamp_fields(timestamp: Timestamp) -> Result<(i64, i32), String> {
+    if timestamp == Timestamp::ZERO {
+        return Err("audit timestamp must be caller-supplied and non-zero".to_owned());
+    }
+
+    let timestamp_physical_ms = i64::try_from(timestamp.physical_ms)
+        .map_err(|_| "HLC physical timestamp exceeds i64 audit storage range".to_owned())?;
+    let timestamp_logical = i32::try_from(timestamp.logical)
+        .map_err(|_| "HLC logical timestamp exceeds i32 audit storage range".to_owned())?;
+    Ok((timestamp_physical_ms, timestamp_logical))
+}
+
 fn build_audit_entry(
     last: Option<&crate::db::AuditRow>,
     event_type: &str,
@@ -270,10 +282,6 @@ fn build_audit_entry(
     timestamp: Timestamp,
     payload: &Value,
 ) -> Result<AuditEntryRecord, String> {
-    if timestamp == Timestamp::ZERO {
-        return Err("audit timestamp must be caller-supplied and non-zero".to_owned());
-    }
-
     let sequence = match last {
         Some(row) => row
             .sequence
@@ -285,10 +293,7 @@ fn build_audit_entry(
         .map(|row| row.entry_hash.clone())
         .unwrap_or_else(|| Hash256::ZERO.to_string());
     let event_hash = canonical_hash(payload)?.to_hex().to_string();
-    let timestamp_physical_ms = i64::try_from(timestamp.physical_ms)
-        .map_err(|_| "HLC physical timestamp exceeds i64".to_owned())?;
-    let timestamp_logical = i32::try_from(timestamp.logical)
-        .map_err(|_| "HLC logical timestamp exceeds i32".to_owned())?;
+    let (timestamp_physical_ms, timestamp_logical) = audit_timestamp_fields(timestamp)?;
     let hash_input = AuditEntryHashInput {
         sequence,
         prev_hash: &prev_hash,
@@ -392,9 +397,7 @@ pub struct VoteRequest {
 impl VoteRequest {
     fn caller_supplied_timestamp(&self) -> Result<Timestamp, String> {
         let timestamp = Timestamp::new(self.timestamp_physical_ms, self.timestamp_logical);
-        if timestamp == Timestamp::ZERO {
-            return Err("vote timestamp must be caller-supplied and non-zero".to_owned());
-        }
+        audit_timestamp_fields(timestamp)?;
         Ok(timestamp)
     }
 
@@ -1470,6 +1473,93 @@ mod tests {
         assert!(
             request.caller_supplied_timestamp().is_err(),
             "zero vote timestamp must be rejected"
+        );
+    }
+
+    #[test]
+    fn vote_request_rejects_timestamp_outside_audit_storage_range() {
+        let mut physical_overflow_json = signed_vote_request_json(
+            "did:exo:alice",
+            "decision-1",
+            &["did:exo:tenant-a"],
+            VoteChoice::Approve,
+            ActorKind::Human,
+            exo_core::Timestamp::new(7000, 2),
+        );
+        let physical_overflow = physical_overflow_json.as_object_mut().expect("object");
+        physical_overflow.insert(
+            "timestamp_physical_ms".to_owned(),
+            serde_json::json!(u64::try_from(i64::MAX).expect("i64::MAX fits u64") + 1),
+        );
+        let request: VoteRequest =
+            serde_json::from_value(physical_overflow_json).expect("request shape is valid");
+        let err = request
+            .caller_supplied_timestamp()
+            .expect_err("oversized physical timestamp must be rejected before vote mutation");
+        assert!(
+            err.contains("i64"),
+            "error should identify physical timestamp storage range"
+        );
+
+        let mut logical_overflow_json = signed_vote_request_json(
+            "did:exo:alice",
+            "decision-1",
+            &["did:exo:tenant-a"],
+            VoteChoice::Approve,
+            ActorKind::Human,
+            exo_core::Timestamp::new(7000, 2),
+        );
+        let logical_overflow = logical_overflow_json.as_object_mut().expect("object");
+        logical_overflow.insert(
+            "timestamp_logical".to_owned(),
+            serde_json::json!(u32::try_from(i32::MAX).expect("i32::MAX fits u32") + 1),
+        );
+        let request: VoteRequest =
+            serde_json::from_value(logical_overflow_json).expect("request shape is valid");
+        let err = request
+            .caller_supplied_timestamp()
+            .expect_err("oversized logical timestamp must be rejected before vote mutation");
+        assert!(
+            err.contains("i32"),
+            "error should identify logical timestamp storage range"
+        );
+    }
+
+    #[test]
+    fn vote_handler_validates_audit_timestamp_range_before_mutating_decision() {
+        let source = include_str!("handlers.rs");
+        let vote_handler = source
+            .split("pub async fn vote_handler")
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("// Build quorum summary for response.")
+                    .next()
+            })
+            .expect("vote handler source");
+        let timestamp_validation = vote_handler
+            .find("body.caller_supplied_timestamp()")
+            .expect("vote handler must validate caller timestamp");
+        let vote_mutation = vote_handler
+            .find("decision.add_vote")
+            .expect("vote handler must add vote");
+        assert!(
+            timestamp_validation < vote_mutation,
+            "vote timestamps must be audit-storage-range validated before mutating the decision"
+        );
+
+        let caller_timestamp = source
+            .split("fn caller_supplied_timestamp")
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("fn caller_supplied_provenance_timestamp")
+                    .next()
+            })
+            .expect("caller timestamp validator source");
+        assert!(
+            caller_timestamp.contains("audit_timestamp_fields(timestamp)?"),
+            "vote request timestamp validation must share the audit storage range guard"
         );
     }
 
