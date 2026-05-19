@@ -41,6 +41,8 @@ pub struct DelegationRegistry {
     by_delegator: BTreeMap<String, Vec<Hash256>>,
     /// Reverse index: delegate DID -> list of link IDs.
     by_delegate: BTreeMap<String, Vec<Hash256>>,
+    /// Public key that verified each active link's original delegator signature.
+    link_delegator_public_keys: BTreeMap<Hash256, PublicKey>,
     /// Append-only audit events for registry mutations.
     audit_events: Vec<DelegationAuditEvent>,
 }
@@ -94,7 +96,6 @@ pub struct DelegationRevocationGrant<'a> {
     pub link_id: &'a Hash256,
     pub revoker: &'a Did,
     pub revoked_at: &'a Timestamp,
-    pub revoker_public_key: &'a PublicKey,
 }
 
 #[derive(serde::Serialize)]
@@ -443,6 +444,8 @@ impl DelegationRegistry {
             link.created,
         )?;
         self.links.insert(id, link.clone());
+        self.link_delegator_public_keys
+            .insert(id, *delegator_public_key);
         self.by_delegator
             .entry(from.as_str().to_owned())
             .or_default()
@@ -468,6 +471,7 @@ impl DelegationRegistry {
         if let Some(ids) = self.by_delegate.get_mut(link.delegate_did.as_str()) {
             ids.retain(|id| id != link_id);
         }
+        self.link_delegator_public_keys.remove(link_id);
 
         Ok(())
     }
@@ -488,7 +492,6 @@ impl DelegationRegistry {
             link_id,
             revoker,
             revoked_at,
-            revoker_public_key,
         } = grant;
 
         let link = self
@@ -496,9 +499,14 @@ impl DelegationRegistry {
             .get(link_id)
             .cloned()
             .ok_or_else(|| AuthorityError::NotFound(link_id.to_string()))?;
+        let revoker_public_key = self
+            .link_delegator_public_keys
+            .get(link_id)
+            .copied()
+            .ok_or(AuthorityError::InvalidSignature { index: link.depth })?;
 
         let revocation =
-            AuthorityRevocation::for_link(link, revoker, revoked_at, revoker_public_key, sign_fn)?;
+            AuthorityRevocation::for_link(link, revoker, revoked_at, &revoker_public_key, sign_fn)?;
         let audit_event = self.build_delegation_audit_event(
             DelegationAuditAction::Revoked,
             *link_id,
@@ -702,13 +710,11 @@ mod tests {
         signer: &KeyPair,
     ) -> Result<AuthorityRevocation, AuthorityError> {
         let revoker = did(revoker);
-        let public_key = public_key(signer);
         reg.revoke_delegation_signed(
             DelegationRevocationGrant {
                 link_id,
                 revoker: &revoker,
                 revoked_at: &ts(6_000),
-                revoker_public_key: &public_key,
             },
             |payload| signer.sign(payload),
         )
@@ -1130,7 +1136,6 @@ mod tests {
                     link_id: &id,
                     revoker: &alice,
                     revoked_at: &ts(6_000),
-                    revoker_public_key: &alice_public_key,
                 },
                 |payload| alice_key.sign(payload),
             )
@@ -1157,7 +1162,6 @@ mod tests {
         let mut reg = DelegationRegistry::new();
         let alice_key = KeyPair::generate();
         let alice = did("alice");
-        let alice_public_key = public_key(&alice_key);
         let link =
             signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
         let id = link.id().unwrap();
@@ -1168,7 +1172,6 @@ mod tests {
                 link_id: &id,
                 revoker: &alice,
                 revoked_at: &ts(6_000),
-                revoker_public_key: &alice_public_key,
             },
             |payload| alice_key.sign(payload),
         )
@@ -1194,7 +1197,6 @@ mod tests {
         let alice_key = KeyPair::generate();
         let wrong_key = KeyPair::generate();
         let alice = did("alice");
-        let alice_public_key = public_key(&alice_key);
         let link =
             signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
         let id = link.id().unwrap();
@@ -1204,7 +1206,6 @@ mod tests {
                 link_id: &id,
                 revoker: &alice,
                 revoked_at: &ts(6_000),
-                revoker_public_key: &alice_public_key,
             },
             |payload| wrong_key.sign(payload),
         );
@@ -1217,12 +1218,65 @@ mod tests {
     }
 
     #[test]
+    fn signed_revoke_delegation_rejects_attacker_supplied_revoker_key() {
+        let mut reg = DelegationRegistry::new();
+        let alice_key = KeyPair::generate();
+        let attacker_key = KeyPair::generate();
+        let alice = did("alice");
+        let link =
+            signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
+        let id = link.id().unwrap();
+
+        let result = reg.revoke_delegation_signed(
+            DelegationRevocationGrant {
+                link_id: &id,
+                revoker: &alice,
+                revoked_at: &ts(6_000),
+            },
+            |payload| attacker_key.sign(payload),
+        );
+
+        assert!(matches!(
+            result,
+            Err(AuthorityError::InvalidSignature { index: 0 })
+        ));
+        assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn signed_revocation_source_does_not_trust_caller_public_key() {
+        let source = include_str!("delegation.rs");
+        let grant_source = source
+            .split("pub struct DelegationRevocationGrant")
+            .nth(1)
+            .expect("revocation grant source present")
+            .split("}")
+            .next()
+            .expect("revocation grant body present");
+        let revoke_source = source
+            .split("pub fn revoke_delegation_signed")
+            .nth(1)
+            .expect("signed revocation source present")
+            .split("/// Find a delegation chain")
+            .next()
+            .expect("signed revocation source end");
+
+        assert!(
+            !grant_source.contains("revoker_public_key"),
+            "revocation callers must not supply the public key used to verify their own signature"
+        );
+        assert!(
+            revoke_source.contains("link_delegator_public_keys"),
+            "signed revocation must verify against the public key bound to the original link"
+        );
+    }
+
+    #[test]
     fn signed_revoke_delegation_rejects_non_delegator_revoker() {
         let mut reg = DelegationRegistry::new();
         let alice_key = KeyPair::generate();
         let bob_key = KeyPair::generate();
         let bob = did("bob");
-        let bob_public_key = public_key(&bob_key);
         let link =
             signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
         let id = link.id().unwrap();
@@ -1232,7 +1286,6 @@ mod tests {
                 link_id: &id,
                 revoker: &bob,
                 revoked_at: &ts(6_000),
-                revoker_public_key: &bob_public_key,
             },
             |payload| bob_key.sign(payload),
         );
@@ -1278,14 +1331,12 @@ mod tests {
         let fake = Hash256::digest(b"missing-signed-revocation");
         let alice = did("alice");
         let alice_key = KeyPair::generate();
-        let alice_public_key = public_key(&alice_key);
 
         let result = reg.revoke_delegation_signed(
             DelegationRevocationGrant {
                 link_id: &fake,
                 revoker: &alice,
                 revoked_at: &ts(6_000),
-                revoker_public_key: &alice_public_key,
             },
             |payload| alice_key.sign(payload),
         );
