@@ -656,7 +656,7 @@ impl AppState {
             .iter()
             .map(|did| did.as_str().to_owned())
             .collect::<Vec<String>>();
-        let payloads = db::list_blocking_conflict_declaration_payloads_for_recusal_db(
+        let candidates = db::list_blocking_conflict_declaration_recusal_candidates_db(
             pool,
             actor.as_str(),
             &affected_did_strings,
@@ -666,9 +666,11 @@ impl AppState {
             GatewayError::Internal(format!("failed to load conflict declarations: {e}"))
         })?;
 
-        payloads
+        candidates
             .into_iter()
-            .map(|payload| decode_conflict_declaration_payload(actor, payload))
+            .map(|candidate| {
+                decode_conflict_declaration_recusal_candidate(actor, affected_dids, candidate)
+            })
             .collect()
     }
 
@@ -1014,6 +1016,72 @@ fn decode_conflict_declaration_payload(
         GatewayError::Internal(format!("invalid stored conflict declaration payload: {e}"))
     })?;
     validate_conflict_declaration(actor, declaration)
+}
+
+fn decode_conflict_declaration_recusal_candidate(
+    actor: &Did,
+    affected_dids: &[Did],
+    candidate: db::ConflictDeclarationRecusalCandidate,
+) -> std::result::Result<ConflictDeclaration, GatewayError> {
+    if candidate.declarant_did != actor.as_str() {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration scalar declarant does not match requested actor".into(),
+        ));
+    }
+
+    let scalar_related_dids = parse_conflict_related_dids(&candidate.related_dids)?;
+    if !affected_dids
+        .iter()
+        .any(|affected| scalar_related_dids.contains(affected.as_str()))
+    {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration scalar related DIDs do not match affected DIDs".into(),
+        ));
+    }
+
+    let declaration = decode_conflict_declaration_payload(actor, candidate.payload)?;
+    if declaration.nature != candidate.nature {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration scalar nature does not match payload".into(),
+        ));
+    }
+
+    let payload_related_dids = declaration
+        .related_dids
+        .iter()
+        .map(|did| did.as_str().to_owned())
+        .collect::<BTreeSet<String>>();
+    if payload_related_dids != scalar_related_dids {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration scalar related DIDs do not match payload".into(),
+        ));
+    }
+    if !affected_dids
+        .iter()
+        .any(|affected| declaration.related_dids.contains(affected))
+    {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration payload does not match affected DIDs".into(),
+        ));
+    }
+
+    Ok(declaration)
+}
+
+fn parse_conflict_related_dids(
+    related_dids: &serde_json::Value,
+) -> std::result::Result<BTreeSet<String>, GatewayError> {
+    let values = serde_json::from_value::<Vec<String>>(related_dids.clone()).map_err(|e| {
+        GatewayError::Internal(format!(
+            "invalid stored conflict declaration scalar related DIDs: {e}"
+        ))
+    })?;
+    if values.is_empty() {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration scalar related DIDs are empty".into(),
+        ));
+    }
+    Ok(values.into_iter().collect())
 }
 
 fn validate_conflict_declaration(
@@ -4733,6 +4801,51 @@ mod tests {
             "timestamp": { "physical_ms": 0, "logical": 0 }
         });
         assert!(decode_conflict_declaration_payload(&actor, zero_timestamp).is_err());
+    }
+
+    #[test]
+    fn conflict_recusal_candidate_validation_rejects_scalar_payload_shadowing() {
+        let actor = Did::new("did:exo:alice").expect("valid DID");
+        let affected = Did::new("did:exo:tenant-a").expect("valid DID");
+        let unrelated = Did::new("did:exo:tenant-b").expect("valid DID");
+
+        let nature_shadow = db::ConflictDeclarationRecusalCandidate {
+            declarant_did: actor.as_str().to_owned(),
+            nature: "financial ownership".to_owned(),
+            related_dids: serde_json::json!([affected.as_str()]),
+            payload: serde_json::json!({
+                "declarant_did": actor.as_str(),
+                "nature": "advisory",
+                "related_dids": [affected.as_str()],
+                "timestamp": { "physical_ms": 7000, "logical": 0 }
+            }),
+        };
+        assert!(
+            decode_conflict_declaration_recusal_candidate(
+                &actor,
+                std::slice::from_ref(&affected),
+                nature_shadow
+            )
+            .is_err(),
+            "scalar-blocking rows must fail closed when the canonical payload is advisory"
+        );
+
+        let related_shadow = db::ConflictDeclarationRecusalCandidate {
+            declarant_did: actor.as_str().to_owned(),
+            nature: "financial ownership".to_owned(),
+            related_dids: serde_json::json!([affected.as_str()]),
+            payload: serde_json::json!({
+                "declarant_did": actor.as_str(),
+                "nature": "financial ownership",
+                "related_dids": [unrelated.as_str()],
+                "timestamp": { "physical_ms": 7000, "logical": 0 }
+            }),
+        };
+        assert!(
+            decode_conflict_declaration_recusal_candidate(&actor, &[affected], related_shadow)
+                .is_err(),
+            "scalar-blocking rows must fail closed when the canonical payload does not name the affected DID"
+        );
     }
 
     #[tokio::test]

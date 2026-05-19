@@ -952,8 +952,8 @@ pub async fn update_decision(
 ///
 /// This is a bounded list helper for administrative display and export
 /// surfaces. Vote recusal enforcement must use
-/// `list_blocking_conflict_declaration_payloads_for_recusal_db` so a generic
-/// UI row cap cannot hide a later blocking declaration.
+/// `list_blocking_conflict_declaration_recusal_candidates_db` so a generic UI
+/// row cap cannot hide a later blocking declaration.
 pub async fn list_conflict_declaration_payloads_db(
     pool: &PgPool,
     declarant_did: &str,
@@ -974,12 +974,26 @@ pub async fn list_conflict_declaration_payloads_db(
         .collect()
 }
 
-/// Load at most one blocking conflict declaration for vote recusal enforcement.
-pub async fn list_blocking_conflict_declaration_payloads_for_recusal_db(
+/// Scalar-indexed conflict declaration candidate for recusal enforcement.
+///
+/// The server must validate these scalar columns against `payload` before
+/// using the decoded declaration for vote recusal. A mismatch means the row is
+/// inconsistent and must fail closed.
+#[derive(Debug, Clone)]
+pub struct ConflictDeclarationRecusalCandidate {
+    pub declarant_did: String,
+    pub nature: String,
+    pub related_dids: JsonValue,
+    pub payload: JsonValue,
+}
+
+/// Load at most one scalar-blocking conflict declaration candidate for vote
+/// recusal enforcement.
+pub async fn list_blocking_conflict_declaration_recusal_candidates_db(
     pool: &PgPool,
     declarant_did: &str,
     affected_dids: &[String],
-) -> Result<Vec<JsonValue>, sqlx::Error> {
+) -> Result<Vec<ConflictDeclarationRecusalCandidate>, sqlx::Error> {
     if affected_dids.is_empty() {
         return Ok(Vec::new());
     }
@@ -989,7 +1003,7 @@ pub async fn list_blocking_conflict_declaration_payloads_for_recusal_db(
         .map(ToOwned::to_owned)
         .collect::<Vec<String>>();
     let row = sqlx::query(
-        "SELECT payload FROM conflict_declarations
+        "SELECT declarant_did, nature, related_dids, payload FROM conflict_declarations
          WHERE declarant_did = $1
            AND related_dids ?| $2
            AND nature LIKE ANY($3)
@@ -1003,7 +1017,12 @@ pub async fn list_blocking_conflict_declaration_payloads_for_recusal_db(
     .await?;
 
     match row {
-        Some(row) => Ok(vec![row.try_get::<JsonValue, _>("payload")?]),
+        Some(row) => Ok(vec![ConflictDeclarationRecusalCandidate {
+            declarant_did: row.try_get::<String, _>("declarant_did")?,
+            nature: row.try_get::<String, _>("nature")?,
+            related_dids: row.try_get::<JsonValue, _>("related_dids")?,
+            payload: row.try_get::<JsonValue, _>("payload")?,
+        }]),
         None => Ok(Vec::new()),
     }
 }
@@ -2166,9 +2185,13 @@ mod tests {
         let source = production_source();
         let recusal_lookup = function_source(
             source,
-            "list_blocking_conflict_declaration_payloads_for_recusal_db",
+            "list_blocking_conflict_declaration_recusal_candidates_db",
         );
 
+        assert!(
+            recusal_lookup.contains("SELECT declarant_did, nature, related_dids, payload"),
+            "recusal enforcement must return scalar fields with the payload so the server can verify canonical consistency"
+        );
         assert!(
             recusal_lookup.contains("related_dids ?|"),
             "recusal enforcement must scope the DB lookup to affected DIDs"
@@ -2252,15 +2275,16 @@ mod tests {
         .expect("insert blocking conflict declaration after capped rows");
 
         let affected_did_strings = vec![affected.as_str().to_owned()];
-        let payloads = list_blocking_conflict_declaration_payloads_for_recusal_db(
+        let candidates = list_blocking_conflict_declaration_recusal_candidates_db(
             &pool,
             actor.as_str(),
             &affected_did_strings,
         )
         .await
         .expect("load conflict declarations");
-        let declarations = payloads
+        let declarations = candidates
             .into_iter()
+            .map(|candidate| candidate.payload)
             .map(serde_json::from_value)
             .collect::<Result<Vec<_>, _>>()
             .expect("decode conflict declarations");
