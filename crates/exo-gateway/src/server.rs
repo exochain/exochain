@@ -1101,7 +1101,6 @@ fn validate_session_expires_at_within_gateway_ttl(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SessionLoginProof {
     timestamp: Timestamp,
-    observed_at: Timestamp,
     signature: Signature,
 }
 
@@ -1111,13 +1110,8 @@ impl SessionLoginProof {
             required_nonzero_u64(body, "authTimestampPhysicalMs")?,
             required_u32(body, "authTimestampLogical")?,
         );
-        let observed_at = Timestamp::new(
-            required_nonzero_u64(body, "observedAt")?,
-            required_u32(body, "observedAtLogical")?,
-        );
         Ok(Self {
             timestamp,
-            observed_at,
             signature: required_ed25519_signature_hex(body, "signature")?,
         })
     }
@@ -1786,11 +1780,9 @@ fn session_login_auth_signing_payload(
     did: &str,
     metadata: &SessionIssueMetadata,
     timestamp: Timestamp,
-    observed_at: Timestamp,
 ) -> Result<Vec<u8>> {
-    let auth_metadata = AuthenticationMetadata::new(observed_at)?;
     let request = session_login_auth_request(did, metadata, timestamp, Signature::Empty)?;
-    request_signing_payload(&request, auth_metadata)
+    request_signing_payload(&request)
 }
 
 fn authenticate_session_login(
@@ -1798,10 +1790,11 @@ fn authenticate_session_login(
     metadata: &SessionIssueMetadata,
     proof: &SessionLoginProof,
     registry: &dyn DidRegistry,
+    trusted_observed_at: Timestamp,
 ) -> Result<AuthenticatedActor> {
     let request =
         session_login_auth_request(did, metadata, proof.timestamp, proof.signature.clone())?;
-    let auth_metadata = AuthenticationMetadata::new(proof.observed_at)?;
+    let auth_metadata = AuthenticationMetadata::new(trusted_observed_at)?;
     authenticate(&request, registry, auth_metadata)
 }
 
@@ -1812,7 +1805,7 @@ fn authenticate_session_login_against_trusted_time(
     registry: &dyn DidRegistry,
     trusted_observed_at: Timestamp,
 ) -> Result<AuthenticatedActor> {
-    let actor = authenticate_session_login(did, metadata, proof, registry)?;
+    let actor = authenticate_session_login(did, metadata, proof, registry, trusted_observed_at)?;
     validate_session_login_freshness_against_trusted_time(proof, trusted_observed_at)?;
     Ok(actor)
 }
@@ -8206,9 +8199,9 @@ mod tests {
             expires_at: 20_000,
         };
         let timestamp = Timestamp::new(10_000, 0);
-        let observed_at = Timestamp::new(10_000, 0);
+        let trusted_gateway_time = Timestamp::new(10_000, 0);
         let signature = sign(
-            &session_login_auth_signing_payload(did, &metadata, timestamp, observed_at).unwrap(),
+            &session_login_auth_signing_payload(did, &metadata, timestamp).unwrap(),
             &sk,
         );
         let body = serde_json::json!({
@@ -8217,8 +8210,6 @@ mod tests {
             "expiresAt": metadata.expires_at,
             "authTimestampPhysicalMs": timestamp.physical_ms,
             "authTimestampLogical": timestamp.logical,
-            "observedAt": observed_at.physical_ms,
-            "observedAtLogical": observed_at.logical,
             "signature": hex::encode(signature.to_bytes())
         });
 
@@ -8226,7 +8217,7 @@ mod tests {
             State(db_state_at(
                 pool.clone(),
                 Arc::new(RwLock::new(LocalDidRegistry::new())),
-                observed_at.physical_ms,
+                trusted_gateway_time.physical_ms,
             )),
             Json(body),
         )
@@ -8298,7 +8289,7 @@ mod tests {
         };
         let timestamp = Timestamp::new(gateway_now_ms, 0);
         let signature = sign(
-            &session_login_auth_signing_payload(did, &metadata, timestamp, timestamp).unwrap(),
+            &session_login_auth_signing_payload(did, &metadata, timestamp).unwrap(),
             &sk,
         );
         let body = serde_json::json!({
@@ -8307,8 +8298,6 @@ mod tests {
             "expiresAt": metadata.expires_at,
             "authTimestampPhysicalMs": timestamp.physical_ms,
             "authTimestampLogical": timestamp.logical,
-            "observedAt": timestamp.physical_ms,
-            "observedAtLogical": timestamp.logical,
             "signature": hex::encode(signature.to_bytes())
         });
 
@@ -8343,9 +8332,7 @@ mod tests {
     fn session_login_proof_rejects_missing_signature() {
         let body = serde_json::json!({
             "authTimestampPhysicalMs": 10_000,
-            "authTimestampLogical": 0,
-            "observedAt": 10_000,
-            "observedAtLogical": 0
+            "authTimestampLogical": 0
         });
         let err = SessionLoginProof::from_body(&body).unwrap_err();
         assert!(
@@ -8359,8 +8346,6 @@ mod tests {
         let body = serde_json::json!({
             "authTimestampPhysicalMs": 10_000,
             "authTimestampLogical": 0,
-            "observedAt": 10_000,
-            "observedAtLogical": 0,
             "signature": ""
         });
         let err = SessionLoginProof::from_body(&body).unwrap_err();
@@ -8379,23 +8364,23 @@ mod tests {
         };
         let timestamp = Timestamp::new(10_000, 0);
         let signature = sign(
-            &session_login_auth_signing_payload(
-                "did:exo:login-alice",
-                &metadata,
-                timestamp,
-                timestamp,
-            )
-            .unwrap(),
+            &session_login_auth_signing_payload("did:exo:login-alice", &metadata, timestamp)
+                .unwrap(),
             &sk,
         );
         let proof = SessionLoginProof {
             timestamp,
-            observed_at: timestamp,
             signature,
         };
         let guard = registry.read().unwrap();
-        let actor =
-            authenticate_session_login("did:exo:login-alice", &metadata, &proof, &*guard).unwrap();
+        let actor = authenticate_session_login(
+            "did:exo:login-alice",
+            &metadata,
+            &proof,
+            &*guard,
+            timestamp,
+        )
+        .unwrap();
 
         assert_eq!(actor.did.as_str(), "did:exo:login-alice");
     }
@@ -8409,22 +8394,24 @@ mod tests {
             expires_at: 20_000,
         };
         let timestamp = Timestamp::new(10_000, 0);
-        let payload = session_login_auth_signing_payload(
-            "did:exo:login-alice",
-            &metadata,
-            timestamp,
-            timestamp,
-        )
-        .unwrap();
+        let payload =
+            session_login_auth_signing_payload("did:exo:login-alice", &metadata, timestamp)
+                .unwrap();
         let proof = SessionLoginProof {
             timestamp,
-            observed_at: timestamp,
             signature: sign(&payload, &wrong_sk),
         };
         let guard = registry.read().unwrap();
 
         assert!(
-            authenticate_session_login("did:exo:login-alice", &metadata, &proof, &*guard).is_err()
+            authenticate_session_login(
+                "did:exo:login-alice",
+                &metadata,
+                &proof,
+                &*guard,
+                timestamp
+            )
+            .is_err()
         );
     }
 
@@ -8440,23 +8427,24 @@ mod tests {
             expires_at: 30_000,
         };
         let timestamp = Timestamp::new(10_000, 0);
-        let payload = session_login_auth_signing_payload(
-            "did:exo:login-alice",
-            &signed_metadata,
-            timestamp,
-            timestamp,
-        )
-        .unwrap();
+        let payload =
+            session_login_auth_signing_payload("did:exo:login-alice", &signed_metadata, timestamp)
+                .unwrap();
         let proof = SessionLoginProof {
             timestamp,
-            observed_at: timestamp,
             signature: sign(&payload, &sk),
         };
         let guard = registry.read().unwrap();
 
         assert!(
-            authenticate_session_login("did:exo:login-alice", &tampered_metadata, &proof, &*guard)
-                .is_err()
+            authenticate_session_login(
+                "did:exo:login-alice",
+                &tampered_metadata,
+                &proof,
+                &*guard,
+                timestamp
+            )
+            .is_err()
         );
     }
 
@@ -8469,21 +8457,22 @@ mod tests {
         };
         let timestamp = Timestamp::new(1, 0);
         let observed_at = Timestamp::new(400_000, 0);
-        let payload = session_login_auth_signing_payload(
-            "did:exo:login-alice",
-            &metadata,
-            timestamp,
-            observed_at,
-        )
-        .unwrap();
+        let payload =
+            session_login_auth_signing_payload("did:exo:login-alice", &metadata, timestamp)
+                .unwrap();
         let proof = SessionLoginProof {
             timestamp,
-            observed_at,
             signature: sign(&payload, &sk),
         };
         let guard = registry.read().unwrap();
-        let err = authenticate_session_login("did:exo:login-alice", &metadata, &proof, &*guard)
-            .unwrap_err();
+        let err = authenticate_session_login(
+            "did:exo:login-alice",
+            &metadata,
+            &proof,
+            &*guard,
+            observed_at,
+        )
+        .unwrap_err();
 
         assert!(
             err.to_string().contains("freshness window"),
@@ -8499,17 +8488,11 @@ mod tests {
             expires_at: 500_000,
         };
         let timestamp = Timestamp::new(10_000, 0);
-        let caller_observed_at = Timestamp::new(10_000, 0);
-        let payload = session_login_auth_signing_payload(
-            "did:exo:login-alice",
-            &metadata,
-            timestamp,
-            caller_observed_at,
-        )
-        .unwrap();
+        let payload =
+            session_login_auth_signing_payload("did:exo:login-alice", &metadata, timestamp)
+                .unwrap();
         let proof = SessionLoginProof {
             timestamp,
-            observed_at: caller_observed_at,
             signature: sign(&payload, &sk),
         };
         let state =

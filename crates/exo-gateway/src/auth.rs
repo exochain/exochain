@@ -21,7 +21,7 @@
 //! `authenticate` validates:
 //!   1. DID format (`did:exo:<id>`)
 //!   2. Non-empty / non-zero signature bytes
-//!   3. Timestamp freshness (±`FRESHNESS_WINDOW_MS`)
+//!   3. Timestamp freshness against trusted gateway observation time (±`FRESHNESS_WINDOW_MS`)
 //!   4. Ed25519 signature via `exo_identity::did_verification::verify_did_signature`
 //!      over a domain-separated canonical CBOR authentication envelope
 //!      against the first active verification method in the resolved DID document
@@ -59,32 +59,37 @@ pub struct Request {
     pub timestamp: Timestamp,
 }
 
-/// A successfully authenticated actor with their resolved DID and auth timestamp.
+/// A successfully authenticated actor with their resolved DID and trusted auth timestamp.
 #[derive(Debug, Clone)]
 pub struct AuthenticatedActor {
     pub did: Did,
     pub authenticated_at: Timestamp,
 }
 
-/// Caller-supplied metadata for an authentication attempt.
+/// Trusted gateway metadata for an authentication attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AuthenticationMetadata {
-    pub observed_at: Timestamp,
+    observed_at: Timestamp,
 }
 
 impl AuthenticationMetadata {
-    /// Validate caller-supplied authentication metadata.
+    /// Validate trusted gateway authentication metadata.
     ///
     /// # Errors
     ///
     /// Returns `GatewayError::BadRequest` if `observed_at` is `Timestamp::ZERO`.
-    pub fn new(observed_at: Timestamp) -> Result<Self> {
+    pub(crate) fn new(observed_at: Timestamp) -> Result<Self> {
         if observed_at == Timestamp::ZERO {
             return Err(GatewayError::BadRequest(
-                "authentication observed_at must be caller-supplied and non-zero".into(),
+                "authentication observed_at must be trusted gateway metadata and non-zero".into(),
             ));
         }
         Ok(Self { observed_at })
+    }
+
+    #[must_use]
+    pub fn observed_at(&self) -> Timestamp {
+        self.observed_at
     }
 }
 
@@ -96,23 +101,20 @@ struct RequestSigningPayload<'a> {
     body_hash: Hash256,
     request_timestamp_physical_ms: u64,
     request_timestamp_logical: u32,
-    observed_at_physical_ms: u64,
-    observed_at_logical: u32,
 }
 
 /// Build the canonical bytes signed by DID-authenticated gateway requests.
 ///
 /// The signature binds both the signed body hash and security-sensitive request
 /// metadata consumed after authentication, so a signature for one action cannot
-/// be replayed as a different action with the same body.
+/// be replayed as a different action with the same body. Trusted gateway
+/// observation time is intentionally excluded because it is measured at ingress
+/// and must not be supplied or signed by the requester.
 ///
 /// # Errors
 ///
 /// Returns `GatewayError::Internal` if canonical CBOR serialization fails.
-pub fn request_signing_payload(
-    request: &Request,
-    metadata: AuthenticationMetadata,
-) -> Result<Vec<u8>> {
+pub fn request_signing_payload(request: &Request) -> Result<Vec<u8>> {
     let payload = RequestSigningPayload {
         domain: GATEWAY_AUTH_SIGNING_DOMAIN,
         actor_did: &request.actor_did,
@@ -120,8 +122,6 @@ pub fn request_signing_payload(
         body_hash: request.body_hash,
         request_timestamp_physical_ms: request.timestamp.physical_ms,
         request_timestamp_logical: request.timestamp.logical,
-        observed_at_physical_ms: metadata.observed_at.physical_ms,
-        observed_at_logical: metadata.observed_at.logical,
     };
     let mut encoded = Vec::new();
     ciborium::into_writer(&payload, &mut encoded)
@@ -383,7 +383,7 @@ pub fn authenticate(
 
     // 6. Cryptographically verify the Ed25519 signature over the full
     //    authentication envelope consumed by downstream authorization.
-    let signing_payload = request_signing_payload(request, metadata)?;
+    let signing_payload = request_signing_payload(request)?;
     verify_did_signature(doc, &method.id, &signing_payload, &request.signature).map_err(|e| {
         GatewayError::AuthenticationFailed {
             reason: format!("signature verification failed: {e}"),
@@ -604,10 +604,7 @@ mod tests {
     }
 
     fn signed_request(mut request: Request, secret_key: &exo_core::SecretKey) -> Request {
-        request.signature = sign(
-            &request_signing_payload(&request, auth_metadata()).unwrap(),
-            secret_key,
-        );
+        request.signature = sign(&request_signing_payload(&request).unwrap(), secret_key);
         request
     }
 
@@ -631,7 +628,7 @@ mod tests {
         );
         let a = authenticate(&r, &reg, auth_metadata()).unwrap();
         assert_eq!(a.did.as_str(), "did:exo:alice");
-        assert_eq!(a.authenticated_at, auth_metadata().observed_at);
+        assert_eq!(a.authenticated_at, auth_metadata().observed_at());
     }
 
     #[test]
@@ -654,9 +651,9 @@ mod tests {
     }
 
     #[test]
-    fn auth_rejects_observed_at_changed_after_signing() {
+    fn auth_accepts_same_signed_request_with_independent_trusted_observation_inside_freshness() {
         let (reg, sk) = registry_with_alice();
-        let body_hash = Hash256::digest(b"same body, different observed time");
+        let body_hash = Hash256::digest(b"same body, gateway observed one millisecond later");
         let request = signed_request(
             Request {
                 actor_did: "did:exo:alice".into(),
@@ -667,10 +664,42 @@ mod tests {
             },
             &sk,
         );
-        let tampered_metadata =
+        let later_trusted_metadata =
             AuthenticationMetadata::new(Timestamp::new(req_ts().physical_ms + 1, 0)).unwrap();
 
-        assert!(authenticate(&request, &reg, tampered_metadata).is_err());
+        let actor = authenticate(&request, &reg, later_trusted_metadata).unwrap();
+
+        assert_eq!(
+            actor.authenticated_at,
+            Timestamp::new(req_ts().physical_ms + 1, 0)
+        );
+    }
+
+    #[test]
+    fn auth_rejects_replayed_request_against_trusted_observation_time() {
+        let (reg, sk) = registry_with_alice();
+        let request = signed_request(
+            Request {
+                actor_did: "did:exo:alice".into(),
+                action: "read".into(),
+                body_hash: Hash256::digest(b"old signed request"),
+                signature: Signature::Empty,
+                timestamp: req_ts(),
+            },
+            &sk,
+        );
+        let trusted_later = AuthenticationMetadata::new(Timestamp::new(
+            req_ts().physical_ms + FRESHNESS_WINDOW_MS + 1,
+            0,
+        ))
+        .unwrap();
+
+        let error = authenticate(&request, &reg, trusted_later).unwrap_err();
+
+        assert!(
+            error.to_string().contains("freshness window"),
+            "replayed request must fail against trusted gateway observation time: {error}"
+        );
     }
 
     #[test]
@@ -720,8 +749,6 @@ mod tests {
             body_hash: Hash256,
             request_timestamp_physical_ms: u64,
             request_timestamp_logical: u32,
-            observed_at_physical_ms: u64,
-            observed_at_logical: u32,
         }
 
         let body_hash = Hash256::digest(b"canonical body hash");
@@ -732,7 +759,7 @@ mod tests {
             signature: Signature::Empty,
             timestamp: req_ts(),
         };
-        let payload = request_signing_payload(&request, auth_metadata()).unwrap();
+        let payload = request_signing_payload(&request).unwrap();
         let decoded: DecodedPayload = ciborium::from_reader(payload.as_slice()).unwrap();
 
         assert_eq!(decoded.domain, GATEWAY_AUTH_SIGNING_DOMAIN);
@@ -741,14 +768,6 @@ mod tests {
         assert_eq!(decoded.body_hash, body_hash);
         assert_eq!(decoded.request_timestamp_physical_ms, req_ts().physical_ms);
         assert_eq!(decoded.request_timestamp_logical, req_ts().logical);
-        assert_eq!(
-            decoded.observed_at_physical_ms,
-            auth_metadata().observed_at.physical_ms
-        );
-        assert_eq!(
-            decoded.observed_at_logical,
-            auth_metadata().observed_at.logical
-        );
     }
 
     #[test]
@@ -973,7 +992,7 @@ mod tests {
     }
 
     #[test]
-    fn authenticate_rejects_stale_against_supplied_metadata() {
+    fn authenticate_rejects_stale_against_trusted_metadata() {
         let (reg, sk) = registry_with_alice();
         let body_hash = Hash256::ZERO;
         let signature = sign(body_hash.as_bytes(), &sk);
@@ -1006,12 +1025,20 @@ mod tests {
         let forbidden_timestamp = ["Timestamp", "::now_utc"].concat();
         assert!(
             !production.contains(&forbidden_timestamp),
-            "gateway auth must use caller-supplied authentication timestamps"
+            "gateway auth must use trusted gateway authentication timestamps"
         );
         let forbidden_system_time = ["SystemTime", "::now"].concat();
         assert!(
             !production.contains(&forbidden_system_time),
             "gateway auth must not read wall-clock time"
+        );
+        assert!(
+            !production.contains("pub observed_at"),
+            "authentication observation time must not be a public caller-controlled field"
+        );
+        assert!(
+            !production.contains("observed_at_physical_ms"),
+            "DID request signatures must not bind caller-supplied observation time"
         );
     }
 
@@ -1028,7 +1055,7 @@ mod tests {
             "gateway auth must bind DID signatures to the canonical request envelope"
         );
         assert!(
-            production.contains("request_signing_payload(request, metadata)"),
+            production.contains("request_signing_payload(request)"),
             "gateway auth must route signature verification through the canonical payload helper"
         );
     }
@@ -1296,7 +1323,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_credential_uses_supplied_authentication_metadata() {
+    fn resolve_credential_uses_trusted_authentication_metadata() {
         let did_reg = LocalDidRegistry::new();
         let mut api_reg = ApiKeyRegistry::new();
         let did = Did::new("did:exo:alice").unwrap();
