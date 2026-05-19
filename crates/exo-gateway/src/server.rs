@@ -149,18 +149,25 @@ impl GatewayRateLimiter {
         }
     }
 
-    fn check(&mut self, client_key: &str, now_ms: u64) -> GatewayRateLimitOutcome {
+    fn check(
+        &mut self,
+        client_key: &str,
+        now_ms: u64,
+        allow_window_reset: bool,
+    ) -> GatewayRateLimitOutcome {
         if self.max_requests_per_window == 0 || self.window_ms == 0 {
             return GatewayRateLimitOutcome::Limited {
                 retry_after_ms: self.window_ms.max(1),
             };
         }
 
-        self.prune_stale(now_ms);
+        if allow_window_reset {
+            self.prune_stale(now_ms);
+        }
 
         if let Some(bucket) = self.clients.get_mut(client_key) {
             let elapsed_ms = now_ms.saturating_sub(bucket.window_start_ms);
-            if elapsed_ms >= self.window_ms {
+            if allow_window_reset && elapsed_ms >= self.window_ms {
                 *bucket = GatewayRateLimitBucket {
                     window_start_ms: now_ms,
                     request_count: 1,
@@ -316,6 +323,15 @@ enum SessionTimeSource {
     InjectedClock,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RateLimitWindowResetPolicy {
+    /// The rate-limit clock is deployment-injected and may reset elapsed windows.
+    TrustedPhysicalClock,
+    /// The default deterministic HLC advances as requests read it, so it must
+    /// not be allowed to reset rate-limit windows.
+    NoSyntheticClockReset,
+}
+
 /// Shared state injected into every axum handler via `State<AppState>`.
 #[derive(Clone)]
 pub struct AppState {
@@ -334,6 +350,8 @@ pub struct AppState {
     session_time_source: SessionTimeSource,
     /// Default-on per-client request-rate admission state.
     rate_limiter: Arc<Mutex<GatewayRateLimiter>>,
+    /// Whether rate-limit windows may reset from the configured clock source.
+    rate_limit_window_reset_policy: RateLimitWindowResetPolicy,
     /// Explicitly trusted immediate peer IPs whose forwarded client identity may
     /// be used for gateway rate limiting.
     trusted_rate_limit_proxy_ips: BTreeSet<IpAddr>,
@@ -485,6 +503,13 @@ impl AppState {
                 Timestamp::ZERO
             }
         };
+        let rate_limit_window_reset_policy = match session_time_source {
+            SessionTimeSource::DatabaseWhenAvailable => {
+                RateLimitWindowResetPolicy::NoSyntheticClockReset
+            }
+            SessionTimeSource::InjectedClock => RateLimitWindowResetPolicy::TrustedPhysicalClock,
+        };
+
         Self {
             pool,
             registry,
@@ -493,6 +518,7 @@ impl AppState {
             clock: Arc::new(Mutex::new(clock)),
             session_time_source,
             rate_limiter: Arc::new(Mutex::new(GatewayRateLimiter::default())),
+            rate_limit_window_reset_policy,
             trusted_rate_limit_proxy_ips,
         }
     }
@@ -4292,7 +4318,12 @@ async fn enforce_gateway_rate_limit(
     };
 
     let outcome = match state.rate_limiter.lock() {
-        Ok(mut limiter) => limiter.check(&client_key, now_ms),
+        Ok(mut limiter) => limiter.check(
+            &client_key,
+            now_ms,
+            state.rate_limit_window_reset_policy
+                == RateLimitWindowResetPolicy::TrustedPhysicalClock,
+        ),
         Err(_) => {
             tracing::error!("Gateway rate limiter mutex poisoned");
             return (
@@ -4889,6 +4920,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gateway_default_rate_limit_clock_cannot_be_advanced_by_requests_to_reset_window() {
+        let mut state = AppState::new(None, Arc::new(RwLock::new(LocalDidRegistry::new())));
+        state.rate_limiter = Arc::new(Mutex::new(GatewayRateLimiter::with_limits(1, 2, 8)));
+        let app = apply_gateway_layers(
+            Router::new().route("/probe", get(probe)),
+            state,
+            GLOBAL_CONCURRENCY_LIMIT,
+        );
+
+        let first = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let second = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let third = app
+            .oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            third.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "default deterministic HLC ticks must not let requests advance the rate-limit window"
+        );
+    }
+
+    #[tokio::test]
     async fn gateway_rate_limit_trusted_proxy_uses_verified_forwarded_client_ip() {
         let wall = Arc::new(AtomicU64::new(25_000));
         let trusted_proxy = "10.0.0.10".parse::<IpAddr>().unwrap();
@@ -5099,6 +5180,13 @@ mod tests {
         assert!(
             production.contains("HybridClock") && !production.contains("Instant::now()"),
             "gateway rate limiting must use the gateway HLC source, not system Instant"
+        );
+        assert!(
+            production.contains("RateLimitWindowResetPolicy")
+                && production.contains("NoSyntheticClockReset")
+                && production.contains("if allow_window_reset")
+                && production.contains("allow_window_reset && elapsed_ms >= self.window_ms"),
+            "default deterministic HLC ticks must not reset gateway rate-limit windows"
         );
         assert!(
             production.contains("ConnectInfo<SocketAddr>")
