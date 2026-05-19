@@ -23,7 +23,10 @@
 
 export const REVIEW_METHOD = 'heuristic_triage';
 export const REVIEW_BINDING = false;
-export const REVIEW_TIMESTAMP_ISO = '2023-11-14T22:13:20.000Z';
+
+export function reviewTimestampIso() {
+  return new Date().toISOString();
+}
 
 /**
  * The 5 standing council panels.
@@ -128,11 +131,11 @@ export function getPanel(name) {
  * @returns {Array} Array of panel assessments:
  *   { panel, vote, confidence, findings, criteria_met, criteria_failed }
  */
-export function conductReview(panels, proposal) {
+export function conductReview(panels, proposal, reviewedAt = reviewTimestampIso()) {
   const assessments = [];
 
   for (const panel of panels) {
-    const assessment = evaluatePanel(panel, proposal);
+    const assessment = evaluatePanel(panel, proposal, reviewedAt);
     assessments.push(assessment);
   }
 
@@ -149,7 +152,7 @@ export function conductReview(panels, proposal) {
  * @param {object} proposal - Proposal to evaluate
  * @returns {object} Panel assessment
  */
-function evaluatePanel(panel, proposal) {
+function evaluatePanel(panel, proposal, reviewedAt) {
   const desc = (proposal.description || '').toLowerCase();
   const title = (proposal.title || '').toLowerCase();
   const combined = `${title} ${desc}`;
@@ -292,7 +295,7 @@ function evaluatePanel(panel, proposal) {
     findings,
     criteria_met: criteriaMet,
     criteria_failed: criteriaFailed,
-    reviewed_at: REVIEW_TIMESTAMP_ISO
+    reviewed_at: reviewedAt
   };
 }
 
@@ -314,7 +317,7 @@ function evaluatePanel(panel, proposal) {
  * @param {Array} votes - Array of panel assessments (from conductReview)
  * @returns {object} { verdict, score, breakdown, vetoed_by, total_findings }
  */
-export function tallyVotes(votes) {
+export function tallyVotes(votes, reviewedAt = votes[0]?.reviewed_at || reviewTimestampIso()) {
   const voteValues = {
     approve: 1.0,
     approve_with_conditions: 0.5,
@@ -374,6 +377,6 @@ export function tallyVotes(votes) {
     vetoed_by: vetoedBy,
     total_findings: totalFindings,
     panels_reviewed: votes.length,
-    reviewed_at: REVIEW_TIMESTAMP_ISO
+    reviewed_at: reviewedAt
   };
 }

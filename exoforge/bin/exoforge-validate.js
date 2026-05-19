@@ -40,7 +40,7 @@ import {
   buildValidationDecision,
   buildValidationTncFlags,
   buildValidationInvariantRequest,
-  VALIDATION_TIMESTAMP_ISO
+  validationReportTimestampIso
 } from '../lib/constitutional.js';
 
 // ── Parse CLI arguments ─────────────────────────────────────────────────────
@@ -101,12 +101,12 @@ function buildInvariantContext() {
 /**
  * Run all validation checks and collect results.
  */
-function runValidation(args) {
+function runValidation(args, validatedAt = validationReportTimestampIso()) {
   const results = {
     kernel_loaded: false,
     checks: [],
     summary: { total: 0, passed: 0, failed: 0, skipped: 0 },
-    validated_at: VALIDATION_TIMESTAMP_ISO
+    validated_at: validatedAt
   };
 
   // Step 0: Load kernel

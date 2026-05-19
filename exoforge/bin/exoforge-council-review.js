@@ -34,6 +34,7 @@
 import {
   REVIEW_BINDING,
   REVIEW_METHOD,
+  reviewTimestampIso,
   getPanels,
   conductReview,
   tallyVotes
@@ -241,8 +242,9 @@ async function main() {
   }
 
   // Conduct review
-  const assessments = conductReview(panels, proposal);
-  const tally = tallyVotes(assessments);
+  const reviewedAt = reviewTimestampIso();
+  const assessments = conductReview(panels, proposal, reviewedAt);
+  const tally = tallyVotes(assessments, reviewedAt);
 
   if (args.json) {
     console.log(JSON.stringify({
