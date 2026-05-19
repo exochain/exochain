@@ -526,6 +526,16 @@ fn validate_registered_did_document(doc: &DidDocument) -> Result<(), IdentityErr
             &method.pq_public_key_multibase,
             MAX_DID_DOCUMENT_PQ_MULTIBASE_BYTES,
         )?;
+        if !method.key_material_matches_multibase() {
+            return Err(invalid_did_document_field(
+                did,
+                "hybrid_verification_methods",
+                format!(
+                    "hybrid verification method '{}' raw key material must match multibase encodings",
+                    method.id
+                ),
+            ));
+        }
     }
     for endpoint in &doc.service_endpoints {
         ensure_byte_bound(
@@ -635,12 +645,12 @@ impl DidRegistry for LocalDidRegistry {
 #[cfg(test)]
 mod tests {
     use exo_core::{
-        SecretKey,
-        crypto::{generate_keypair, sign},
+        PqPublicKey, SecretKey,
+        crypto::{generate_keypair, generate_pq_keypair, sign},
     };
 
     use super::*;
-    use crate::did::{DidDocument, VerificationMethod};
+    use crate::did::{DidDocument, HybridVerificationMethod, VerificationMethod};
 
     fn make_did(label: &str) -> Did {
         Did::new(&format!("did:exo:{label}")).expect("valid did")
@@ -670,6 +680,30 @@ mod tests {
             key_type: "Ed25519VerificationKey2020".to_owned(),
             controller: did.clone(),
             public_key_multibase: format!("z{}", bs58::encode(pk.as_bytes()).into_string()),
+            version,
+            active: true,
+            valid_from: 1000,
+            revoked_at: None,
+        }
+    }
+
+    fn hybrid_verification_method(
+        did: &Did,
+        classical_pk: PublicKey,
+        pq_pk: PqPublicKey,
+        version: u64,
+    ) -> HybridVerificationMethod {
+        HybridVerificationMethod {
+            id: format!("{did}#hybrid-key-{version}"),
+            key_type: "HybridKeyEd25519MlDsa652020".to_owned(),
+            controller: did.clone(),
+            classical_public_key_multibase: format!(
+                "z{}",
+                bs58::encode(classical_pk.as_bytes()).into_string()
+            ),
+            pq_public_key_multibase: format!("z{}", bs58::encode(pq_pk.as_bytes()).into_string()),
+            pq_public_key: pq_pk,
+            classical_public_key: classical_pk,
             version,
             active: true,
             valid_from: 1000,
@@ -933,6 +967,36 @@ mod tests {
         assert!(
             err.to_string().contains("revoked_at"),
             "error should identify inactive revoked_at inconsistency: {err}"
+        );
+        assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn register_rejects_hybrid_method_with_mismatched_multibase_key_material() {
+        let (document_pk, _) = generate_keypair();
+        let (classical_pk, _) = generate_keypair();
+        let (declared_classical_pk, _) = generate_keypair();
+        let (pq_pk, _) = generate_pq_keypair();
+        let (declared_pq_pk, _) = generate_pq_keypair();
+        let did = make_did("hybrid-mismatched-key-material");
+        let mut doc = make_doc(did.clone(), document_pk);
+        let mut method = hybrid_verification_method(&did, classical_pk, pq_pk, 1);
+        method.classical_public_key_multibase = format!(
+            "z{}",
+            bs58::encode(declared_classical_pk.as_bytes()).into_string()
+        );
+        method.pq_public_key_multibase =
+            format!("z{}", bs58::encode(declared_pq_pk.as_bytes()).into_string());
+        doc.hybrid_verification_methods = vec![method];
+
+        let mut reg = LocalDidRegistry::new();
+        let err = reg
+            .register(doc)
+            .expect_err("hybrid methods must bind raw keys to advertised multibase keys");
+
+        assert!(
+            err.to_string().contains("hybrid_verification_methods"),
+            "error should identify hybrid method key binding failure: {err}"
         );
         assert_eq!(reg.len(), 0);
     }
