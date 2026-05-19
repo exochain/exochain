@@ -390,7 +390,15 @@ impl Default for AsnPolicy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiversityResult {
     Sufficient,
-    Insufficient { unique_asns: usize, required: usize },
+    Insufficient {
+        unique_asns: usize,
+        required: usize,
+    },
+    OverrepresentedAsn {
+        asn: Asn,
+        peers: usize,
+        maximum: usize,
+    },
 }
 
 /// Sentinel ASN value used to group peers with no known ASN.
@@ -405,12 +413,26 @@ fn effective_asn(peer: &PeerMetadata) -> Asn {
 /// Check whether the peer set meets the ASN diversity threshold.
 #[must_use]
 pub fn check_asn_diversity(peers: &[PeerMetadata], policy: &AsnPolicy) -> DiversityResult {
-    let unique: BTreeSet<Asn> = peers.iter().map(effective_asn).collect();
-    if unique.len() >= policy.min_unique_asns {
+    let mut by_asn: BTreeMap<Asn, usize> = BTreeMap::new();
+    for peer in peers {
+        *by_asn.entry(effective_asn(peer)).or_default() += 1;
+    }
+
+    for (asn, peer_count) in &by_asn {
+        if *peer_count > policy.max_peers_per_asn {
+            return DiversityResult::OverrepresentedAsn {
+                asn: *asn,
+                peers: *peer_count,
+                maximum: policy.max_peers_per_asn,
+            };
+        }
+    }
+
+    if by_asn.len() >= policy.min_unique_asns {
         DiversityResult::Sufficient
     } else {
         DiversityResult::Insufficient {
-            unique_asns: unique.len(),
+            unique_asns: by_asn.len(),
             required: policy.min_unique_asns,
         }
     }
@@ -924,6 +946,25 @@ mod tests {
         assert_eq!(
             check_asn_diversity(&peers, &policy),
             DiversityResult::Sufficient
+        );
+    }
+
+    #[test]
+    fn reject_peer_set_exceeding_max_peers_per_asn_even_when_unique_asns_sufficient() {
+        let mut peers: Vec<PeerMetadata> = (0..6)
+            .map(|i| peer_meta(&format!("attacker-{i}"), Some(64512), 1000))
+            .collect();
+        peers.push(peer_meta("honest-a", Some(64513), 1000));
+        peers.push(peer_meta("honest-b", Some(64514), 1000));
+        let policy = AsnPolicy::default();
+
+        assert_eq!(
+            check_asn_diversity(&peers, &policy),
+            DiversityResult::OverrepresentedAsn {
+                asn: Asn(64512),
+                peers: 6,
+                maximum: 5
+            }
         );
     }
 
