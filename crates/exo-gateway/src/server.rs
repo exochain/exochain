@@ -2188,17 +2188,6 @@ async fn handle_ready(State(state): State<AppState>) -> (StatusCode, Json<Health
 }
 
 fn render_gateway_metrics(state: &AppState) -> std::result::Result<String, &'static str> {
-    let did_registry_documents = state
-        .registry
-        .read()
-        .map_err(|_| "gateway DID registry lock poisoned while rendering metrics")?
-        .len();
-    let rate_limit_tracked_clients = state
-        .rate_limiter
-        .lock()
-        .map_err(|_| "gateway rate limiter lock poisoned while rendering metrics")?
-        .clients
-        .len();
     let db_configured = usize::from(state.pool.is_some());
     let uptime_seconds = state.uptime_seconds();
 
@@ -2213,17 +2202,9 @@ fn render_gateway_metrics(state: &AppState) -> std::result::Result<String, &'sta
             "# HELP exo_gateway_db_configured Whether durable storage is configured.\n",
             "# TYPE exo_gateway_db_configured gauge\n",
             "exo_gateway_db_configured {db_configured}\n",
-            "# HELP exo_gateway_did_registry_documents Local DID documents cached in memory.\n",
-            "# TYPE exo_gateway_did_registry_documents gauge\n",
-            "exo_gateway_did_registry_documents {did_registry_documents}\n",
-            "# HELP exo_gateway_rate_limit_tracked_clients Clients currently tracked by the rate limiter.\n",
-            "# TYPE exo_gateway_rate_limit_tracked_clients gauge\n",
-            "exo_gateway_rate_limit_tracked_clients {rate_limit_tracked_clients}\n",
         ),
         uptime_seconds = uptime_seconds,
         db_configured = db_configured,
-        did_registry_documents = did_registry_documents,
-        rate_limit_tracked_clients = rate_limit_tracked_clients,
     ))
 }
 
@@ -5750,6 +5731,15 @@ mod tests {
         assert!(body.contains("exo_gateway_up 1"));
         assert!(body.contains("exo_gateway_db_configured 0"));
         assert!(body.contains("exo_gateway_uptime_seconds"));
+        for forbidden_metric in [
+            "exo_gateway_did_registry_documents",
+            "exo_gateway_rate_limit_tracked_clients",
+        ] {
+            assert!(
+                !body.contains(forbidden_metric),
+                "unauthenticated gateway metrics must not expose operational counts: {forbidden_metric}"
+            );
+        }
         for forbidden in ["DATABASE_URL", "POSTGRES", "password", "secret", "token"] {
             assert!(
                 !body
