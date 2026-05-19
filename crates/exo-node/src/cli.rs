@@ -27,7 +27,8 @@ certifier fails, abort and restart with a new signed roster.
 
 Certifier rules: keep private material offline, maintain an offline backup, \
 never submit plaintext shares, encrypt round-two payloads per recipient, and \
-run verify-bundle before trusting the result.";
+run verify-bundle before trusting the result. Secret-producing commands require \
+explicit unique --output files and refuse stdout.";
 
 pub const DEFAULT_ROUND_TIMEOUT_MS: u64 = 5_000;
 pub const MIN_ROUND_TIMEOUT_MS: u64 = 250;
@@ -383,6 +384,7 @@ mod tests {
             "abort and restart",
             "offline backup",
             "never submit plaintext shares",
+            "explicit unique --output files",
             "verify-bundle",
         ] {
             assert!(help.contains(required), "missing help text {required}");

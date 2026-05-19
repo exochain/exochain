@@ -183,7 +183,7 @@ fn run_round1(args: GenesisIoArgs) -> anyhow::Result<()> {
     input.config.validate()?;
     let mut rng = rand::rngs::OsRng;
     let output = dkg_round1(&input.config, input.frost_identifier, &mut rng)?;
-    write_output(&args, &output)
+    write_secret_output(&args, &output)
 }
 
 fn run_round2(args: GenesisIoArgs) -> anyhow::Result<()> {
@@ -194,7 +194,7 @@ fn run_round2(args: GenesisIoArgs) -> anyhow::Result<()> {
         decode_hex(&input.round1_secret_package_hex)?.as_slice(),
         decode_package_map(input.round1_packages_hex)?,
     )?;
-    write_output(&args, &output)
+    write_secret_output(&args, &output)
 }
 
 fn run_finalize_dkg(args: GenesisIoArgs) -> anyhow::Result<()> {
@@ -206,7 +206,7 @@ fn run_finalize_dkg(args: GenesisIoArgs) -> anyhow::Result<()> {
         decode_package_map(input.round1_packages_hex)?,
         decode_package_map(input.round2_packages_hex)?,
     )?;
-    write_output(&args, &output)
+    write_secret_output(&args, &output)
 }
 
 fn run_sign_root_artifact(args: GenesisIoArgs) -> anyhow::Result<()> {
@@ -252,7 +252,7 @@ fn run_seal_share(args: GenesisIoArgs) -> anyhow::Result<()> {
         &salt,
         &nonce,
     )?;
-    write_output(&args, &sealed)
+    write_secret_output(&args, &sealed)
 }
 
 fn run_unseal_share(args: GenesisIoArgs) -> anyhow::Result<()> {
@@ -262,7 +262,7 @@ fn run_unseal_share(args: GenesisIoArgs) -> anyhow::Result<()> {
         decode_hex(&input.passphrase_hex)?.as_slice(),
         decode_hex(&input.associated_data_hex)?.as_slice(),
     )?;
-    write_output(
+    write_secret_output(
         &args,
         &HexBytesOutput {
             bytes_hex: hex::encode(opened),
@@ -297,21 +297,25 @@ fn write_json_bytes(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> 
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
     let mut file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .write(true)
         .mode(0o600)
         .open(path)?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
     file.write_all(bytes)?;
     file.sync_all()?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
     Ok(())
 }
 
 #[cfg(not(unix))]
 fn write_json_bytes(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
-    fs::write(path, bytes)?;
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
     Ok(())
 }
 
@@ -329,6 +333,15 @@ fn write_output<T: Serialize>(args: &GenesisIoArgs, value: &T) -> anyhow::Result
             Ok(())
         }
     }
+}
+
+fn write_secret_output<T: Serialize>(args: &GenesisIoArgs, value: &T) -> anyhow::Result<()> {
+    if args.output.is_none() {
+        anyhow::bail!(
+            "--output is required for secret root genesis material; refusing to print to stdout"
+        );
+    }
+    write_output(args, value)
 }
 
 fn decode_hex(value: &str) -> anyhow::Result<Vec<u8>> {
@@ -459,6 +472,33 @@ mod tests {
     }
 
     #[test]
+    fn unseal_share_refuses_to_print_plaintext_share_to_stdout() {
+        let directory = tempdir().expect("temporary directory");
+        let unseal_input_path = directory.path().join("unseal-input.json");
+        let share = b"certifier-share-material";
+        let associated_data = b"root-genesis-share-v1";
+        let passphrase = b"long offline passphrase";
+        let sealed = seal_share(share, passphrase, associated_data, &[2u8; 16], &[3u8; 24])
+            .expect("seal share");
+        write_json(
+            &unseal_input_path,
+            &UnsealShareCommandInput {
+                sealed,
+                passphrase_hex: hex::encode(passphrase),
+                associated_data_hex: hex::encode(associated_data),
+            },
+        )
+        .expect("write unseal input");
+
+        let err = run_unseal_share(GenesisIoArgs {
+            input: Some(unseal_input_path),
+            output: None,
+        })
+        .expect_err("plaintext share output must require --output");
+        assert!(err.to_string().contains("--output is required"));
+    }
+
+    #[test]
     fn command_helpers_fail_closed_on_missing_input_and_bad_hex() {
         let missing_input = GenesisIoArgs {
             input: None,
@@ -495,7 +535,65 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn json_outputs_are_rewritten_owner_only_even_when_file_exists() {
+    fn json_outputs_are_create_new_owner_only_and_refuse_existing_paths() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempdir().expect("temporary directory");
+        let output_path = directory.path().join("private-material.json");
+        write_json(
+            &output_path,
+            &HexBytesOutput {
+                bytes_hex: hex::encode(b"secret"),
+            },
+        )
+        .expect("write output");
+
+        let mode = fs::metadata(&output_path)
+            .expect("output metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+        assert!(
+            write_json(
+                &output_path,
+                &HexBytesOutput {
+                    bytes_hex: hex::encode(b"replacement"),
+                },
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn json_outputs_refuse_existing_symlink_paths() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().expect("temporary directory");
+        let target_path = directory.path().join("target.json");
+        let output_path = directory.path().join("private-material.json");
+        fs::write(&target_path, b"do not overwrite").expect("seed symlink target");
+        symlink(&target_path, &output_path).expect("create output symlink");
+
+        assert!(
+            write_json(
+                &output_path,
+                &HexBytesOutput {
+                    bytes_hex: hex::encode(b"secret"),
+                },
+            )
+            .is_err()
+        );
+        assert_eq!(
+            fs::read(&target_path).expect("read symlink target"),
+            b"do not overwrite"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn json_outputs_refuse_existing_regular_files_without_rewriting() {
         use std::os::unix::fs::PermissionsExt;
 
         let directory = tempdir().expect("temporary directory");
@@ -504,19 +602,25 @@ mod tests {
         fs::set_permissions(&output_path, fs::Permissions::from_mode(0o644))
             .expect("make existing file too broad");
 
-        write_json(
-            &output_path,
-            &HexBytesOutput {
-                bytes_hex: hex::encode(b"secret"),
-            },
-        )
-        .expect("rewrite output");
+        assert!(
+            write_json(
+                &output_path,
+                &HexBytesOutput {
+                    bytes_hex: hex::encode(b"secret"),
+                },
+            )
+            .is_err()
+        );
 
+        assert_eq!(
+            fs::read(&output_path).expect("read existing output"),
+            b"previous material"
+        );
         let mode = fs::metadata(&output_path)
             .expect("output metadata")
             .permissions()
             .mode()
             & 0o777;
-        assert_eq!(mode, 0o600);
+        assert_eq!(mode, 0o644);
     }
 }

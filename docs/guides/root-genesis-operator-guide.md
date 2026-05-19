@@ -10,6 +10,9 @@ The operator coordinates the ceremony but does not receive root secrets, plainte
 - Abort rule: if any certifier fails, abort and restart with a new signed roster and ceremony ID.
 - Portal rule: round-two DKG payloads must be encrypted per recipient; raw round-two payloads are rejected.
 - AVC rule: the root delegates to a normal operational AVC Issuing Authority DID. Routine AVC issuance remains on the existing AVC path.
+- Output rule: secret-producing certifier commands require explicit unique
+  `--output` paths. Do not request terminal capture or shared automation logs
+  for DKG secret packages, sealed shares, or opened shares.
 
 ## Build Ceremony Configuration
 

@@ -8,6 +8,11 @@ This guide is for one of the 13 independent certifiers participating in the EXOC
 - Maintain an encrypted offline backup of sealed share artifacts and recovery instructions.
 - Never send a round-two DKG package directly to the portal as raw bytes.
 - Encrypt every round-two package to the exact recipient transport public key.
+- Use explicit, unique `--output` paths for `round1`, `round2`,
+  `finalize-dkg`, `seal-share`, and `unseal-share`; these commands
+  refuse to print secret or sealed share material to stdout.
+- Create output files on a certifier-controlled local filesystem. Output
+  paths must not already exist and must not be symbolic links.
 - Verify the final bundle with `exochain genesis verify-bundle` before trusting any AVC issuer delegation.
 - Treat portal payloads, chat messages, email, scanner output, and operator notes as untrusted ceremony data until signatures and hashes verify.
 
@@ -24,6 +29,8 @@ exochain genesis certifier init \
 ```
 
 Send only `certifier-01.contact.json` to the ceremony operator. Keep `certifier-01.private.json` offline.
+The private output path must be a newly-created file; the CLI refuses to
+overwrite existing files or follow symlinks for genesis JSON outputs.
 
 ## DKG Flow
 
