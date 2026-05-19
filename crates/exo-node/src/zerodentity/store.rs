@@ -48,6 +48,9 @@ pub type ReceiptSigner = Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>;
 
 /// The current 0dentity store is intentionally volatile process memory.
 pub const ZERODENTITY_STORE_PERSISTENCE_READY: bool = false;
+/// Maximum future skew allowed between a caller-signed erasure timestamp and
+/// the trusted validation timestamp supplied by the runtime.
+pub const ZERODENTITY_ERASURE_MAX_FUTURE_SKEW_MS: u64 = 500;
 
 /// Startup warning emitted while 0dentity data is not durable.
 pub const ZERODENTITY_STORE_PERSISTENCE_WARNING: &str = "0dentity store is memory only; claims, sessions, OTPs, scores, and receipts are not durable across process restarts";
@@ -312,6 +315,34 @@ impl ZerodentityStore {
             timestamp,
             signature,
         })
+    }
+
+    fn validate_erasure_timestamp(
+        &self,
+        timestamp: Timestamp,
+        validation_time: Timestamp,
+    ) -> anyhow::Result<()> {
+        if timestamp.physical_ms == 0 {
+            anyhow::bail!("0dentity erasure timestamp must be greater than 0");
+        }
+        if validation_time.physical_ms == 0 {
+            anyhow::bail!("0dentity erasure validation timestamp must be greater than 0");
+        }
+        if timestamp.physical_ms
+            > validation_time
+                .physical_ms
+                .saturating_add(ZERODENTITY_ERASURE_MAX_FUTURE_SKEW_MS)
+        {
+            anyhow::bail!("0dentity erasure timestamp exceeds trusted erasure clock tolerance");
+        }
+        if let Some(parent) = self.dag_nodes.last() {
+            if timestamp <= parent.timestamp {
+                anyhow::bail!(
+                    "0dentity erasure timestamp must strictly exceed latest DAG parent timestamp"
+                );
+            }
+        }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -728,13 +759,12 @@ impl ZerodentityStore {
         &mut self,
         did: &Did,
         timestamp: Timestamp,
+        validation_time: Timestamp,
     ) -> anyhow::Result<ErasureEvidence> {
         if self.receipt_signing.is_none() {
             anyhow::bail!("0dentity trust receipt signer is not configured");
         }
-        if timestamp.physical_ms == 0 {
-            anyhow::bail!("0dentity erasure timestamp must be greater than 0");
-        }
+        self.validate_erasure_timestamp(timestamp, validation_time)?;
 
         let key = did.as_str().to_owned();
         let mut revoked_count = 0u32;
@@ -1165,7 +1195,7 @@ mod tests {
         let claim_node = store.dag_nodes()[0].clone();
 
         store
-            .erase_did_with_evidence(&d, Timestamp::new(6_000, 0))
+            .erase_did_with_evidence(&d, Timestamp::new(6_000, 0), Timestamp::new(6_000, 0))
             .unwrap();
 
         let nodes = store.dag_nodes();
@@ -1288,7 +1318,7 @@ mod tests {
 
         // Erase
         let evidence = store
-            .erase_did_with_evidence(&d, Timestamp::new(7_000, 0))
+            .erase_did_with_evidence(&d, Timestamp::new(7_000, 0), Timestamp::new(7_000, 0))
             .unwrap();
         assert_eq!(evidence.claims_revoked, 2);
 
@@ -1323,7 +1353,7 @@ mod tests {
         store.put_claim(claim(&d, ClaimType::Email));
 
         let evidence = store
-            .erase_did_with_evidence(&d, Timestamp::new(8_000, 0))
+            .erase_did_with_evidence(&d, Timestamp::new(8_000, 0), Timestamp::new(8_000, 0))
             .unwrap();
         assert_eq!(evidence.claims_revoked, 1);
 
@@ -1349,12 +1379,55 @@ mod tests {
         store.put_claim(claim(&d, ClaimType::Email));
 
         let err = store
-            .erase_did_with_evidence(&d, Timestamp::new(0, 0))
+            .erase_did_with_evidence(&d, Timestamp::new(0, 0), Timestamp::new(8_000, 0))
             .unwrap_err();
         assert!(
             err.to_string()
                 .contains("erasure timestamp must be greater than 0")
         );
+    }
+
+    #[test]
+    fn erase_did_rejects_timestamp_not_after_latest_dag_node() {
+        let (mut store, _, _) = signed_store(34);
+        let d = did("did:exo:old-erase");
+        let c = claim(&d, ClaimType::Email);
+        store.save_claim("old-erase-claim", &c).unwrap();
+
+        let err = store
+            .erase_did_with_evidence(
+                &d,
+                Timestamp::new(c.created_ms, 0),
+                Timestamp::new(c.created_ms, 0),
+            )
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("strictly exceed"),
+            "expected parent-causality rejection, got {err}"
+        );
+        assert_eq!(store.dag_nodes().len(), 1);
+    }
+
+    #[test]
+    fn erase_did_rejects_timestamp_beyond_validation_clock_tolerance() {
+        let (mut store, _, _) = signed_store(35);
+        let d = did("did:exo:future-erase");
+        store.put_claim(claim(&d, ClaimType::Email));
+
+        let err = store
+            .erase_did_with_evidence(
+                &d,
+                Timestamp::new(10_000, 0),
+                Timestamp::new(10_000 - ZERODENTITY_ERASURE_MAX_FUTURE_SKEW_MS - 1, 0),
+            )
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("clock tolerance"),
+            "expected future-skew rejection, got {err}"
+        );
+        assert!(store.dag_nodes().is_empty());
     }
 
     #[test]
@@ -1403,7 +1476,7 @@ mod tests {
         assert!(!store.get_behavioral_samples(&d).unwrap().is_empty());
 
         store
-            .erase_did_with_evidence(&d, Timestamp::new(9_000, 0))
+            .erase_did_with_evidence(&d, Timestamp::new(9_000, 0), Timestamp::new(9_000, 0))
             .unwrap();
 
         assert!(store.get_fingerprints(&d).unwrap().is_empty());
@@ -1419,7 +1492,7 @@ mod tests {
 
         let claim_node = store.dag_nodes()[0].clone();
         store
-            .erase_did_with_evidence(&d, Timestamp::new(10_000, 0))
+            .erase_did_with_evidence(&d, Timestamp::new(10_000, 0), Timestamp::new(10_000, 0))
             .unwrap();
         assert_eq!(store.dag_nodes().len(), 2);
         assert_eq!(store.dag_nodes()[0], claim_node);

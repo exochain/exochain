@@ -54,7 +54,7 @@ use super::{
     device_behavioral_axes_enabled,
     session_auth::{public_key_from_session_bytes, request_signing_payload, signature_from_hex},
     session_clock::{SessionClock, SessionClockError, TRUSTED_SESSION_CLOCK_UNAVAILABLE},
-    store::ZerodentityStore,
+    store::{ZERODENTITY_ERASURE_MAX_FUTURE_SKEW_MS, ZerodentityStore},
     types::{
         AttestationType, BehavioralSample, DeviceFingerprint, IdentityClaim, ZerodentityScore,
     },
@@ -277,6 +277,14 @@ fn store_error(error: impl std::fmt::Display) -> (StatusCode, Json<serde_json::V
 fn store_operation_failed(operation: &'static str) -> (StatusCode, Json<serde_json::Value>) {
     tracing::error!(operation, "0dentity API store operation failed");
     json_error(StatusCode::INTERNAL_SERVER_ERROR, "Store operation failed")
+}
+
+fn erasure_store_error(error: impl std::fmt::Display) -> (StatusCode, Json<serde_json::Value>) {
+    let reason = error.to_string();
+    if reason.contains("erasure timestamp") {
+        return bad_request(&reason);
+    }
+    store_error(reason)
 }
 
 async fn with_store_blocking<T, F>(state: ApiState, operation: F) -> ApiResult<T>
@@ -1010,12 +1018,22 @@ pub async fn delete_identity(
     if erased_ms == 0 {
         return Err(bad_request("erased_ms must be greater than 0"));
     }
+    let validation_ms = state.now_ms()?;
+    if erased_ms > validation_ms.saturating_add(ZERODENTITY_ERASURE_MAX_FUTURE_SKEW_MS) {
+        return Err(bad_request(
+            "erased_ms exceeds trusted erasure clock tolerance",
+        ));
+    }
 
     let subject_did = did.to_string();
     let erasure_evidence = with_store_blocking(state, move |store| {
         store
-            .erase_did_with_evidence(&did, Timestamp::new(erased_ms, 0))
-            .map_err(store_error)
+            .erase_did_with_evidence(
+                &did,
+                Timestamp::new(erased_ms, 0),
+                Timestamp::new(validation_ms, 0),
+            )
+            .map_err(erasure_store_error)
     })
     .await?;
 
@@ -1307,7 +1325,7 @@ mod tests {
     }
 
     #[test]
-    fn erasure_write_path_does_not_fabricate_runtime_time() {
+    fn erasure_write_path_uses_trusted_session_clock_for_validation_time() {
         let source = include_str!("api.rs");
         let erasure_section = source
             .split("// DELETE /api/v1/0dentity/:did")
@@ -1315,7 +1333,10 @@ mod tests {
             .and_then(|section| section.split("// ---------------------------------------------------------------------------\n// Router").next())
             .unwrap();
 
-        assert!(!erasure_section.contains("now_ms()"));
+        assert!(erasure_section.contains("state.now_ms()?"));
+        assert!(erasure_section.contains("ZERODENTITY_ERASURE_MAX_FUTURE_SKEW_MS"));
+        assert!(!erasure_section.contains("SystemTime"));
+        assert!(!erasure_section.contains("Instant::now"));
     }
 
     fn test_keypair(seed: u8) -> KeyPair {
@@ -2198,6 +2219,30 @@ mod tests {
         assert_eq!(
             result["error"].as_str().unwrap(),
             "erased_ms must be greater than 0"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_identity_rejects_far_future_erasure_timestamp() {
+        let keypair = test_keypair(46);
+        let state =
+            make_state_with_signed_session_and_claim("tok-alice", "did:exo:alice", &keypair);
+        let app = zerodentity_api_router(state);
+        let resp = signed_delete(
+            app,
+            "/api/v1/0dentity/did%3Aexo%3Aalice",
+            "tok-alice",
+            "nonce-api-delete-future-time",
+            serde_json::json!({ "erased_ms": u64::MAX }),
+            &keypair,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            result["error"].as_str().unwrap(),
+            "erased_ms exceeds trusted erasure clock tolerance"
         );
     }
 
