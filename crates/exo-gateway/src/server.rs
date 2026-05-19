@@ -2227,7 +2227,11 @@ fn render_gateway_metrics(state: &AppState) -> std::result::Result<String, &'sta
     ))
 }
 
-async fn handle_metrics(State(state): State<AppState>) -> Response {
+async fn handle_metrics(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(err) = require_authenticated_session_actor_from_header(&state, &headers).await {
+        return auth_boundary_error_response(err);
+    }
+
     match render_gateway_metrics(&state) {
         Ok(body) => ([(header::CONTENT_TYPE, PROMETHEUS_TEXT_CONTENT_TYPE)], body).into_response(),
         Err(message) => {
@@ -5718,12 +5722,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gateway_metrics_endpoint_returns_prometheus_text_without_secrets() {
+    async fn gateway_metrics_endpoint_requires_authenticated_session() {
         let app = build_router(state());
         let resp = app
             .oneshot(
                 Request::builder()
                     .uri("/gateway/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn gateway_metrics_endpoint_returns_prometheus_text_without_secrets_for_session() {
+        let pool = match gateway_test_pool().await {
+            Some(pool) => pool,
+            None => return,
+        };
+        let token = "gateway-metrics-session-token";
+        let actor = "did:exo:gateway-metrics-operator";
+        sqlx::query("DELETE FROM sessions WHERE token = $1")
+            .bind(token)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO sessions (token, actor_did, created_at, expires_at, revoked) \
+             VALUES ($1, $2, $3, $4, false)",
+        )
+        .bind(token)
+        .bind(actor)
+        .bind(10_000_i64)
+        .bind(TEST_ACTIVE_SESSION_EXPIRES_AT_MS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = build_router(AppState::new(
+            Some(pool.clone()),
+            Arc::new(RwLock::new(LocalDidRegistry::new())),
+        ));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/gateway/metrics")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -5748,7 +5795,7 @@ mod tests {
 
         assert!(body.contains("# HELP exo_gateway_up"));
         assert!(body.contains("exo_gateway_up 1"));
-        assert!(body.contains("exo_gateway_db_configured 0"));
+        assert!(body.contains("exo_gateway_db_configured 1"));
         assert!(body.contains("exo_gateway_uptime_seconds"));
         for forbidden in ["DATABASE_URL", "POSTGRES", "password", "secret", "token"] {
             assert!(
@@ -5758,6 +5805,12 @@ mod tests {
                 "gateway metrics must not expose secret-bearing labels or values: {forbidden}"
             );
         }
+
+        sqlx::query("DELETE FROM sessions WHERE token = $1")
+            .bind(token)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
