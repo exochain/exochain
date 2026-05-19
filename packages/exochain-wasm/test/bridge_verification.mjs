@@ -1471,6 +1471,28 @@ test('wasm_verify_governance_attestation accepts valid signatures', () => {
   );
 });
 
+test('wasm_verify_governance_attestation rejects signatures replayed for substituted findings', () => {
+  const signedFindingsJson = JSON.stringify([
+    { id: 'F-001', severity: 'low', title: 'Benign finding' },
+  ]);
+  const substitutedFindingsJson = JSON.stringify([
+    { id: 'F-999', severity: 'critical', title: 'Substituted critical finding' },
+  ]);
+  const digestHex = wasm.wasm_governance_findings_digest(signedFindingsJson);
+  const signature = signatureJsonFromHex(signer1.signHex(Buffer.from(digestHex, 'hex')));
+
+  return expectErrorContains(
+    'wasm_verify_governance_attestation',
+    () => wasm.wasm_verify_governance_attestation(
+      'did:exo:monitor',
+      substitutedFindingsJson,
+      JSON.stringify(signature),
+      signer1.publicKeyHex,
+    ),
+    'governance attestation rejected',
+  );
+});
+
 test('wasm_verify_governance_attestation rejects invalid signatures', () =>
   expectErrorContains(
     'wasm_verify_governance_attestation',

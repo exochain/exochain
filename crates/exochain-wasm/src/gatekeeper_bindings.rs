@@ -172,7 +172,7 @@ fn caller_supplied_trusted_key_violations(
 #[wasm_bindgen]
 pub fn wasm_governance_findings_digest(findings_json: &str) -> Result<String, JsValue> {
     let findings: serde_json::Value = from_json_str(findings_json)?;
-    let digest = exo_core::hash::hash_structured(&findings)
+    let digest = exo_gatekeeper::governance_monitor::governance_findings_digest(&findings)
         .map_err(|_| gatekeeper_boundary_error("governance findings digest failed"))?;
     Ok(hex::encode(digest.as_bytes()))
 }
@@ -187,8 +187,9 @@ pub fn wasm_verify_governance_attestation(
 ) -> Result<bool, JsValue> {
     let signer_did = exo_core::Did::new(signer_did)
         .map_err(|_| gatekeeper_boundary_error("invalid governance attestation signer DID"))?;
-    let digest_hex = wasm_governance_findings_digest(findings_json)?;
-    let digest = exo_core::Hash256::from_bytes(decode_fixed_hex(&digest_hex, "findings digest")?);
+    let findings: serde_json::Value = from_json_str(findings_json)?;
+    let digest = exo_gatekeeper::governance_monitor::governance_findings_digest(&findings)
+        .map_err(|_| gatekeeper_boundary_error("governance findings digest failed"))?;
     let signature: exo_core::Signature = from_json_str(signature_json)?;
     let signer_public_key = exo_core::PublicKey::from_bytes(decode_fixed_hex(
         signer_public_key_hex,
@@ -200,9 +201,13 @@ pub fn wasm_verify_governance_attestation(
         signature,
     };
 
-    exo_gatekeeper::governance_monitor::verify_attestation(&attestation, &signer_public_key)
-        .map(|()| true)
-        .map_err(|_| gatekeeper_boundary_error("governance attestation rejected"))
+    exo_gatekeeper::governance_monitor::verify_attestation(
+        &attestation,
+        &signer_public_key,
+        &findings,
+    )
+    .map(|()| true)
+    .map_err(|_| gatekeeper_boundary_error("governance attestation rejected"))
 }
 
 /// Build a deterministic valid invariant request fixture for external
