@@ -41,25 +41,43 @@ const MESSAGE_VAULT_NONCE_DOMAIN: &[u8] = b"exo.messaging.vault-nonce.v1";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ComposeMetadata {
     /// Unique message ID assigned by the caller's deterministic boundary.
-    pub id: Uuid,
+    id: Uuid,
     /// Non-zero HLC timestamp assigned by the caller's deterministic boundary.
-    pub created: Timestamp,
+    created: Timestamp,
 }
 
 impl ComposeMetadata {
     /// Validate caller-supplied envelope metadata.
     pub fn new(id: Uuid, created: Timestamp) -> Result<Self, MessagingError> {
-        if id.is_nil() {
+        let metadata = Self { id, created };
+        metadata.validate()?;
+        Ok(metadata)
+    }
+
+    /// Return the validated message ID.
+    #[must_use]
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+
+    /// Return the validated message creation timestamp.
+    #[must_use]
+    pub fn created(&self) -> Timestamp {
+        self.created
+    }
+
+    fn validate(&self) -> Result<(), MessagingError> {
+        if self.id.is_nil() {
             return Err(MessagingError::InvalidEnvelope(
                 "message id must be caller-supplied and non-nil".into(),
             ));
         }
-        if created == Timestamp::ZERO {
+        if self.created == Timestamp::ZERO {
             return Err(MessagingError::InvalidEnvelope(
                 "message timestamp must be caller-supplied and non-zero".into(),
             ));
         }
-        Ok(Self { id, created })
+        Ok(())
     }
 }
 
@@ -188,6 +206,8 @@ pub fn prepare_envelope_for_signing_with_ephemeral(
     release_on_death: bool,
     release_delay_hours: u32,
 ) -> Result<EncryptedEnvelope, MessagingError> {
+    metadata.validate()?;
+
     // 1. ECDH: derive shared symmetric key using caller-supplied ephemeral key.
     let shared_key = kex::derive_shared_key(
         &ephemeral_x25519_keypair.secret,
@@ -560,6 +580,47 @@ mod tests {
         assert!(
             matches!(result, Err(MessagingError::InvalidEnvelope(reason)) if reason.contains("timestamp"))
         );
+    }
+
+    #[test]
+    fn prepare_envelope_rejects_directly_constructed_invalid_metadata() {
+        let sender_did = Did::new("did:exo:alice").unwrap();
+        let recipient_did = Did::new("did:exo:bob").unwrap();
+        let recipient_kp = x25519_keypair(0x28);
+        let ephemeral_kp = x25519_keypair(0x38);
+        let invalid_metadata = ComposeMetadata {
+            id: Uuid::nil(),
+            created: Timestamp::ZERO,
+        };
+
+        let result = prepare_envelope_for_signing_with_ephemeral(
+            b"constructor bypass",
+            ContentType::Secret,
+            &sender_did,
+            &recipient_did,
+            &recipient_kp.public,
+            &ephemeral_kp,
+            invalid_metadata,
+            false,
+            0,
+        );
+
+        assert!(
+            matches!(result, Err(MessagingError::InvalidEnvelope(reason)) if reason.contains("message id"))
+        );
+    }
+
+    #[test]
+    fn compose_metadata_fields_are_not_public_constructor_bypass() {
+        let source = include_str!("compose.rs");
+        let metadata_section = source
+            .split("pub struct ComposeMetadata")
+            .nth(1)
+            .and_then(|section| section.split("impl ComposeMetadata").next())
+            .expect("metadata struct section");
+
+        assert!(!metadata_section.contains("pub id:"));
+        assert!(!metadata_section.contains("pub created:"));
     }
 
     #[test]
