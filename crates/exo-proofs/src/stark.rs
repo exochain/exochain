@@ -189,7 +189,7 @@ pub fn prove_stark(
         }
     }
     for constraint in constraints {
-        validate_constraint_shape(constraint, num_cols)?;
+        validate_constraint_for_field(constraint, num_cols, config.field_size)?;
     }
 
     // Step 1: Verify constraints are satisfied
@@ -262,18 +262,22 @@ pub fn prove_stark(
 ///
 /// Public inputs are the first row of the trace.
 ///
+/// This entrypoint cannot verify a statement because it has no trusted public
+/// constraints input. It therefore fails closed. Use
+/// [`verify_stark_with_constraints`] when the verifier knows the statement
+/// constraints out of band.
+///
 /// **Unaudited** — gated behind the `unaudited-pedagogical-proofs` feature.
 /// Returns `Err(UnauditedImplementation)` when the feature is disabled.
-pub fn verify_stark(proof: &StarkProof, public_inputs: &[u64]) -> Result<bool> {
+pub fn verify_stark(_proof: &StarkProof, _public_inputs: &[u64]) -> Result<bool> {
     crate::guard_unaudited("stark::verify_stark")?;
-    verify_stark_with_constraints(proof, public_inputs, &proof.constraints)
+    Ok(false)
 }
 
 /// Verify a STARK proof for caller-supplied public constraints.
 ///
-/// Prefer this API when the verifier knows the statement constraints out of
-/// band. [`verify_stark`] remains available for serialized proof bundles that
-/// embed their public constraints.
+/// Use this API when the verifier knows the statement constraints out of band.
+/// Prover-embedded constraints are never sufficient authority for verification.
 pub fn verify_stark_with_constraints(
     proof: &StarkProof,
     public_inputs: &[u64],
@@ -471,11 +475,6 @@ fn evaluate_constraint(
     next: &[u64],
     field_size: u64,
 ) -> Result<u64> {
-    if field_size == 0 {
-        return Err(ProofError::ProofGenerationFailed(
-            "field_size must be non-zero".to_string(),
-        ));
-    }
     if current.len() != next.len() {
         return Err(ProofError::ConstraintError(format!(
             "constraint '{}' cannot evaluate rows with mismatched widths: current {} != next {}",
@@ -484,7 +483,7 @@ fn evaluate_constraint(
             next.len()
         )));
     }
-    validate_constraint_shape(constraint, current.len())?;
+    validate_constraint_for_field(constraint, current.len(), field_size)?;
 
     let modulus = u128::from(field_size);
     let mut sum: u128 = 0;
@@ -524,6 +523,32 @@ fn validate_constraint_shape(constraint: &StarkConstraint, trace_width: usize) -
             )));
         }
     }
+    Ok(())
+}
+
+fn validate_constraint_for_field(
+    constraint: &StarkConstraint,
+    trace_width: usize,
+    field_size: u64,
+) -> Result<()> {
+    if field_size == 0 {
+        return Err(ProofError::ProofGenerationFailed(
+            "field_size must be non-zero".to_string(),
+        ));
+    }
+    validate_constraint_shape(constraint, trace_width)?;
+
+    let has_non_zero_coefficient = constraint
+        .coefficients
+        .iter()
+        .any(|(current, next)| current % field_size != 0 || next % field_size != 0);
+    if !has_non_zero_coefficient {
+        return Err(ProofError::ConstraintError(format!(
+            "constraint '{}' must contain at least one non-zero coefficient modulo field size {field_size}",
+            constraint.name
+        )));
+    }
+
     Ok(())
 }
 
@@ -740,6 +765,26 @@ fn build_trace_query_proofs(
 // Tests
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
+mod source_guard_tests {
+    #[test]
+    fn verify_stark_does_not_trust_proof_embedded_constraints() {
+        let source = include_str!("stark.rs");
+        let verify_stark_source = source
+            .split("pub fn verify_stark(")
+            .nth(1)
+            .expect("verify_stark source exists")
+            .split("pub fn verify_stark_with_constraints(")
+            .next()
+            .expect("verify_stark source ends before constrained verifier");
+
+        assert!(
+            !verify_stark_source.contains("proof.constraints"),
+            "verify_stark must not use prover-embedded constraints as trusted public statement"
+        );
+    }
+}
+
 #[cfg(all(test, feature = "unaudited-pedagogical-proofs"))]
 mod tests {
     use super::*;
@@ -790,14 +835,21 @@ mod tests {
     }
 
     #[test]
-    fn verify_stark_uses_embedded_constraints() {
+    fn verify_stark_rejects_prover_embedded_constraints_without_public_statement() {
         let config = StarkConfig::default_config();
         let trace = make_fibonacci_trace(16, config.field_size);
         let constraints = vec![fib_constraint()];
 
         let proof = prove_stark(&trace, &constraints, &config).unwrap();
 
-        assert!(verify_stark(&proof, &trace[0]).unwrap());
+        assert!(
+            !verify_stark(&proof, &trace[0]).unwrap(),
+            "verify_stark must fail closed because it has no trusted public constraint input"
+        );
+        assert!(
+            verify_stark_with_constraints(&proof, &trace[0], &constraints).unwrap(),
+            "trusted verifier-supplied constraints remain the supported verification path"
+        );
     }
 
     #[test]
@@ -1114,6 +1166,48 @@ mod tests {
         assert!(
             err.to_string().contains("at least one constraint"),
             "empty STARK constraints must fail closed: {err}"
+        );
+    }
+
+    #[test]
+    fn prove_stark_rejects_vacuous_zero_constraints() {
+        let config = StarkConfig {
+            num_queries: 2,
+            ..StarkConfig::default_config()
+        };
+        let trace = vec![vec![1u64], vec![99u64], vec![123u64]];
+        let constraints = vec![StarkConstraint {
+            name: "vacuous-zero".to_string(),
+            column_indices: vec![0],
+            coefficients: vec![(0, 0)],
+        }];
+
+        let err = prove_stark(&trace, &constraints, &config).unwrap_err();
+
+        assert!(
+            err.to_string().contains("non-zero coefficient"),
+            "all-zero STARK constraints must fail closed instead of proving every trace: {err}"
+        );
+    }
+
+    #[test]
+    fn prove_stark_rejects_modular_zero_constraints() {
+        let config = StarkConfig {
+            num_queries: 2,
+            ..StarkConfig::default_config()
+        };
+        let trace = vec![vec![1u64], vec![99u64], vec![123u64]];
+        let constraints = vec![StarkConstraint {
+            name: "vacuous-mod-field".to_string(),
+            column_indices: vec![0],
+            coefficients: vec![(config.field_size, config.field_size)],
+        }];
+
+        let err = prove_stark(&trace, &constraints, &config).unwrap_err();
+
+        assert!(
+            err.to_string().contains("non-zero coefficient"),
+            "coefficients that are zero modulo the STARK field must fail closed: {err}"
         );
     }
 

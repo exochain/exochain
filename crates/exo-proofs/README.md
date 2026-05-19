@@ -80,7 +80,7 @@ the feature flag anywhere downstream.
   gated entry point errors out. Unit tests inside each module are
   `#[cfg(feature = "unaudited-pedagogical-proofs")]` and do not run.
 - **Pedagogical build (feature ON):** `cargo test -p exo-proofs --features
-  unaudited-pedagogical-proofs` runs the full 79-test suite exercising the
+  unaudited-pedagogical-proofs` runs the full 119-test suite exercising the
   skeleton's internal consistency.
 
 ## Status
