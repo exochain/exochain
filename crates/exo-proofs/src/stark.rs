@@ -258,15 +258,20 @@ pub fn prove_stark(
 // Verify
 // ---------------------------------------------------------------------------
 
-/// Verify a STARK proof given public inputs.
+/// Fail-closed compatibility verifier for a STARK proof.
 ///
-/// Public inputs are the first row of the trace.
+/// Public inputs are the first row of the trace. The statement constraints are
+/// not derivable from the proof because proof-embedded constraints are
+/// prover-controlled. Use [`verify_stark_with_constraints`] when the verifier
+/// has trusted public constraints out of band.
 ///
 /// **Unaudited** — gated behind the `unaudited-pedagogical-proofs` feature.
 /// Returns `Err(UnauditedImplementation)` when the feature is disabled.
-pub fn verify_stark(proof: &StarkProof, public_inputs: &[u64]) -> Result<bool> {
+pub fn verify_stark(_proof: &StarkProof, _public_inputs: &[u64]) -> Result<bool> {
     crate::guard_unaudited("stark::verify_stark")?;
-    verify_stark_with_constraints(proof, public_inputs, &proof.constraints)
+    Err(ProofError::InvalidProofFormat(
+        "trusted STARK constraints are required; use verify_stark_with_constraints".to_string(),
+    ))
 }
 
 /// Verify a STARK proof for caller-supplied public constraints.
@@ -778,6 +783,14 @@ mod tests {
         }
     }
 
+    fn vacuous_constraint() -> StarkConstraint {
+        StarkConstraint {
+            name: "vacuous".to_string(),
+            column_indices: vec![0],
+            coefficients: vec![(0, 0)],
+        }
+    }
+
     #[test]
     fn prove_and_verify_fibonacci() {
         let config = StarkConfig::default_config();
@@ -790,14 +803,58 @@ mod tests {
     }
 
     #[test]
-    fn verify_stark_uses_embedded_constraints() {
+    fn verify_stark_rejects_embedded_constraints_even_for_valid_proof() {
         let config = StarkConfig::default_config();
         let trace = make_fibonacci_trace(16, config.field_size);
         let constraints = vec![fib_constraint()];
 
         let proof = prove_stark(&trace, &constraints, &config).unwrap();
+        let err = verify_stark(&proof, &trace[0]).unwrap_err();
 
-        assert!(verify_stark(&proof, &trace[0]).unwrap());
+        assert!(matches!(
+            err,
+            ProofError::InvalidProofFormat(message)
+                if message.contains("trusted STARK constraints are required")
+        ));
+    }
+
+    #[test]
+    fn verify_stark_source_does_not_trust_proof_embedded_constraints() {
+        let source = include_str!("stark.rs");
+        let verify_body = source
+            .split("pub fn verify_stark(")
+            .nth(1)
+            .expect("verify_stark source exists")
+            .split("/// Verify a STARK proof for caller-supplied public constraints.")
+            .next()
+            .expect("verify_stark source ends before trusted verifier");
+
+        assert!(
+            !verify_body.contains("&proof.constraints"),
+            "direct STARK verification must not promote prover-embedded constraints to trusted verifier constraints"
+        );
+        assert!(
+            verify_body.contains("trusted STARK constraints are required"),
+            "direct STARK verification must fail closed toward the trusted-constraints API"
+        );
+    }
+
+    #[test]
+    fn verify_stark_rejects_vacuous_prover_embedded_constraints() {
+        let config = StarkConfig::default_config();
+        let trace: Vec<Vec<u64>> = (0..16usize)
+            .map(|row| vec![u64::try_from(row).expect("test row index fits u64"), 999])
+            .collect();
+        let attacker_constraints = vec![vacuous_constraint()];
+        let proof = prove_stark(&trace, &attacker_constraints, &config).unwrap();
+
+        let err = verify_stark(&proof, &trace[0]).unwrap_err();
+
+        assert!(matches!(
+            err,
+            ProofError::InvalidProofFormat(message)
+                if message.contains("trusted STARK constraints are required")
+        ));
     }
 
     #[test]
