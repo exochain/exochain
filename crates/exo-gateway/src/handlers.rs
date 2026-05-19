@@ -49,7 +49,7 @@ use exo_governance::conflict::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::Row;
+use sqlx::{Postgres, Row, Transaction};
 
 use crate::server::{AppState, AuthenticatedSessionUser, auth_boundary_error_response};
 
@@ -317,8 +317,8 @@ fn build_audit_entry(
 }
 
 /// Write an audit entry using CBOR-hashed event payload.
-async fn write_audit(
-    state: &AppState,
+async fn write_audit_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
     event_type: &str,
     actor: &str,
     tenant_id: &str,
@@ -326,17 +326,15 @@ async fn write_audit(
     timestamp: Timestamp,
     payload: &Value,
 ) -> Result<(), String> {
-    let db = state.require_db().map_err(|e| e.to_string())?;
-    let mut tx = db.begin().await.map_err(|e| e.to_string())?;
     sqlx::query("LOCK TABLE audit_entries IN EXCLUSIVE MODE")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(|e| e.to_string())?;
     let last = sqlx::query_as::<_, crate::db::AuditRow>(
         "SELECT sequence, prev_hash, event_hash, event_type, actor, tenant_id, decision_id, timestamp_physical_ms, timestamp_logical, entry_hash
          FROM audit_entries ORDER BY sequence DESC LIMIT 1",
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(|e| e.to_string())?;
     let entry = build_audit_entry(
@@ -362,9 +360,35 @@ async fn write_audit(
     .bind(entry.timestamp_physical_ms)
     .bind(entry.timestamp_logical)
     .bind(&entry.entry_hash)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Write an audit entry using CBOR-hashed event payload.
+#[cfg(all(test, feature = "production-db"))]
+async fn write_audit(
+    state: &AppState,
+    event_type: &str,
+    actor: &str,
+    tenant_id: &str,
+    decision_id: &str,
+    timestamp: Timestamp,
+    payload: &Value,
+) -> Result<(), String> {
+    let db = state.require_db().map_err(|e| e.to_string())?;
+    let mut tx = db.begin().await.map_err(|e| e.to_string())?;
+    write_audit_in_transaction(
+        &mut tx,
+        event_type,
+        actor,
+        tenant_id,
+        decision_id,
+        timestamp,
+        payload,
+    )
+    .await?;
     tx.commit().await.map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -818,6 +842,16 @@ pub async fn vote_handler(
         }
     };
 
+    let audit_payload = serde_json::json!({
+        "event": "VoteCast",
+        "decision_id": body.decision_id.as_str(),
+        "tenant_id": tenant_id.as_str(),
+        "voter": body.voter_did.as_str(),
+        "choice": body.choice,
+        "timestamp_physical_ms": timestamp.physical_ms,
+        "timestamp_logical": timestamp.logical,
+    });
+
     // Persist updated decision.
     if let Err(e) =
         sqlx::query("UPDATE decisions SET payload = $1 WHERE id_hash = $2 AND tenant_id = $3")
@@ -834,27 +868,10 @@ pub async fn vote_handler(
         )
             .into_response();
     }
-    if let Err(e) = tx.commit().await {
-        tracing::error!(error = %e, "failed to commit vote transaction");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": "decision persistence failed"})),
-        )
-            .into_response();
-    }
 
     // ── VIOLATION 3 FIX: CBOR canonical audit hash ──────────────────────
-    let audit_payload = serde_json::json!({
-        "event": "VoteCast",
-        "decision_id": body.decision_id.as_str(),
-        "tenant_id": tenant_id.as_str(),
-        "voter": body.voter_did.as_str(),
-        "choice": body.choice,
-        "timestamp_physical_ms": timestamp.physical_ms,
-        "timestamp_logical": timestamp.logical,
-    });
-    if let Err(e) = write_audit(
-        &state,
+    if let Err(e) = write_audit_in_transaction(
+        &mut tx,
         "VoteCast",
         &body.voter_did,
         &tenant_id,
@@ -868,6 +885,14 @@ pub async fn vote_handler(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "audit write failed"})),
+        )
+            .into_response();
+    }
+    if let Err(e) = tx.commit().await {
+        tracing::error!(error = %e, "failed to commit vote transaction");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "decision persistence failed"})),
         )
             .into_response();
     }
@@ -1739,6 +1764,46 @@ mod tests {
         assert!(
             !vote_handler.contains(".execute(db)"),
             "vote handler must not update the mutable decision outside the transaction"
+        );
+    }
+
+    #[test]
+    fn vote_handler_writes_audit_in_vote_transaction_before_commit() {
+        let source = include_str!("handlers.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker present");
+        let vote_handler = production
+            .split("pub async fn vote_handler")
+            .nth(1)
+            .expect("vote handler source present")
+            .split("// ── Health handler")
+            .next()
+            .expect("vote handler source end");
+
+        let update_index = vote_handler
+            .find("UPDATE decisions SET payload = $1 WHERE id_hash = $2 AND tenant_id = $3")
+            .expect("vote handler must persist the updated decision");
+        let audit_index = vote_handler
+            .find("write_audit_in_transaction(")
+            .expect("vote handler must write the audit entry inside the vote transaction");
+        let commit_index = vote_handler
+            .find("tx.commit().await")
+            .expect("vote handler must commit the vote transaction");
+        let audit_call = &vote_handler[audit_index..commit_index];
+
+        assert!(
+            update_index < audit_index && audit_index < commit_index,
+            "decision mutation and VoteCast audit entry must commit atomically"
+        );
+        assert!(
+            audit_call.contains("&mut tx"),
+            "VoteCast audit entry must be written through the existing vote transaction"
+        );
+        assert!(
+            !vote_handler.contains("write_audit(\n        &state"),
+            "vote handler must not commit the decision before a separate audit transaction"
         );
     }
 
