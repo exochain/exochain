@@ -141,6 +141,21 @@ impl AuthorityRevocation {
         };
 
         revocation.validate_structure()?;
+        if revocation.revoked_link.signature.is_empty() {
+            return Err(AuthorityError::InvalidSignature {
+                index: revocation.revoked_link.depth,
+            });
+        }
+        let revoked_link_payload = revocation.revoked_link.signing_payload()?;
+        if !crypto::verify(
+            &revoked_link_payload,
+            &revocation.revoked_link.signature,
+            revoker_public_key,
+        ) {
+            return Err(AuthorityError::InvalidSignature {
+                index: revocation.revoked_link.depth,
+            });
+        }
         let payload = revocation.signing_payload()?;
         let signature = sign_fn(&payload);
         if signature.is_empty() {
@@ -1186,6 +1201,34 @@ mod tests {
         assert_ne!(events[1].event_hash, Hash256::ZERO);
         reg.verify_audit_chain()
             .expect("signed revocation audit event must verify");
+    }
+
+    #[test]
+    fn signed_revoke_delegation_rejects_attacker_supplied_revoker_key() {
+        let mut reg = DelegationRegistry::new();
+        let alice_key = KeyPair::generate();
+        let attacker_key = KeyPair::generate();
+        let alice = did("alice");
+        let attacker_public_key = public_key(&attacker_key);
+        let link =
+            signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
+        let id = link.id().unwrap();
+
+        let result = reg.revoke_delegation_signed(
+            DelegationRevocationGrant {
+                link_id: &id,
+                revoker: &alice,
+                revoked_at: &ts(6_000),
+                revoker_public_key: &attacker_public_key,
+            },
+            |payload| attacker_key.sign(payload),
+        );
+
+        assert!(matches!(
+            result,
+            Err(AuthorityError::InvalidSignature { index: 0 })
+        ));
+        assert_eq!(reg.len(), 1);
     }
 
     #[test]
