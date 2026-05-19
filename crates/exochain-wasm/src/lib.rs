@@ -515,6 +515,30 @@ mod source_guard_tests {
                 && source.contains("DeathConfirmationMetadata::new"),
             "messaging WASM death verification must validate caller-supplied state metadata"
         );
+        let initial_payload = source
+            .split("pub fn wasm_death_verification_initial_signing_payload")
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("/// Create a new death verification request")
+                    .next()
+            })
+            .expect("initial death-verification signing payload section");
+        assert!(
+            initial_payload.contains("created_physical_ms")
+                && initial_payload.contains("&metadata.created_at"),
+            "initial death-verification signatures must bind the submitted creation timestamp"
+        );
+        let confirmation_payload = source
+            .split("pub fn wasm_death_verification_confirmation_signing_payload")
+            .nth(1)
+            .and_then(|section| section.split("/// Add a trustee confirmation").next())
+            .expect("confirmation death-verification signing payload section");
+        assert!(
+            confirmation_payload.contains("confirmed_physical_ms")
+                && confirmation_payload.contains("&metadata.confirmed_at"),
+            "death-verification confirmation signatures must bind the submitted confirmation timestamp"
+        );
 
         let forbidden = [
             format!("{}{}", "Timestamp::", "now_utc()"),

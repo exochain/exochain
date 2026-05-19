@@ -447,7 +447,9 @@ test('wasm_death_verification_initial_signing_payload', () => {
     TEST_DID_2,
     2,
     deathTrusteesJson,
-    deathClaimNonceHex
+    deathClaimNonceHex,
+    NOW_MS,
+    0
   );
 });
 
@@ -457,7 +459,9 @@ const deathInitialPayload = setup(() =>
     TEST_DID_2,
     2,
     deathTrusteesJson,
-    deathClaimNonceHex
+    deathClaimNonceHex,
+    NOW_MS,
+    0
   ));
 const deathInitialSignatureHex = setup(() =>
   deathInitialPayload && signer2.signHex(deathInitialPayload));
@@ -501,14 +505,18 @@ test('wasm_death_verification_confirmation_signing_payload', () => {
   if (!deathState) throw new Error('skipped -- no death-verification state');
   return wasm.wasm_death_verification_confirmation_signing_payload(
     JSON.stringify(deathState),
-    TEST_DID_3
+    TEST_DID_3,
+    BigInt(NOW_NUM + 1),
+    0
   );
 });
 
 const deathConfirmationPayload = setup(() =>
   deathState && wasm.wasm_death_verification_confirmation_signing_payload(
     JSON.stringify(deathState),
-    TEST_DID_3
+    TEST_DID_3,
+    BigInt(NOW_NUM + 1),
+    0
   ));
 const deathConfirmationSignatureHex = setup(() =>
   deathConfirmationPayload && signer3.signHex(deathConfirmationPayload));

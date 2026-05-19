@@ -185,6 +185,8 @@ export function deathVerificationInitialSigningPayload(
   initiatedByDid: string,
   authorizedTrustees: AuthorizedDeathVerificationTrustee[],
   claimNonceHex: string,
+  createdPhysicalMs: bigint,
+  createdLogical: number,
   requiredConfirmations: number = 3,
 ): Uint8Array {
   return wasm_death_verification_initial_signing_payload(
@@ -193,6 +195,8 @@ export function deathVerificationInitialSigningPayload(
     requiredConfirmations,
     JSON.stringify(authorizedTrustees),
     claimNonceHex,
+    createdPhysicalMs,
+    createdLogical,
   );
 }
 
@@ -223,8 +227,15 @@ export function createDeathVerification(
 export function deathVerificationConfirmationSigningPayload(
   stateJson: string,
   trusteeDid: string,
+  confirmedPhysicalMs: bigint,
+  confirmedLogical: number,
 ): Uint8Array {
-  return wasm_death_verification_confirmation_signing_payload(stateJson, trusteeDid);
+  return wasm_death_verification_confirmation_signing_payload(
+    stateJson,
+    trusteeDid,
+    confirmedPhysicalMs,
+    confirmedLogical,
+  );
 }
 
 /** Add a trustee confirmation to a death verification. */
