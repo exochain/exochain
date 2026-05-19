@@ -1069,6 +1069,7 @@ mod tests {
                 "proof_hashes": generated["proof_hashes"].clone(),
                 "root_hash": generated["root_hash"].clone(),
                 "target_index": generated["target_index"].clone(),
+                "leaf_count": generated["leaf_count"].clone(),
             }),
             &NodeContext::empty(),
         );
