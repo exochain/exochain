@@ -181,3 +181,22 @@ test('Identity.fromResolvedKeypair rejects mismatched public and private keys', 
     IdentityError,
   );
 });
+
+test('Identity.fromResolvedKeypair rejects non-canonical public key hex aliases', async () => {
+  const material = await keypairMaterial();
+  const nonCanonicalPublicKeyHex = material.publicKeyHex.replace(/[a-f]/, (ch) =>
+    ch.toUpperCase(),
+  );
+  ok(nonCanonicalPublicKeyHex !== material.publicKeyHex);
+
+  await rejects(
+    async () =>
+      Identity.fromResolvedKeypair({
+        label: 'fabric',
+        did: validateDid('did:exo:fabricNonCanonicalHex'),
+        publicKeyHex: nonCanonicalPublicKeyHex,
+        privateKeyPkcs8: material.privateKeyPkcs8,
+      }),
+    IdentityError,
+  );
+});
