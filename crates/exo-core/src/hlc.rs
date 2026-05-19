@@ -59,23 +59,11 @@ impl HybridClock {
     /// Create a new clock driven by EXOCHAIN's deterministic default source.
     #[must_use]
     pub fn new() -> Self {
-        let next_physical_ms = std::sync::atomic::AtomicU64::new(DEFAULT_DETERMINISTIC_PHYSICAL_MS);
         Self {
             physical: 0,
             logical: 0,
             max_drift_ms: MAX_DRIFT_MS,
-            physical_source: Box::new(move || {
-                next_physical_ms
-                    .fetch_update(
-                        std::sync::atomic::Ordering::Relaxed,
-                        std::sync::atomic::Ordering::Relaxed,
-                        |current| current.checked_add(1),
-                    )
-                    .map_err(|current| ExoError::ClockOverflow {
-                        physical_ms: current,
-                        logical: u32::MAX,
-                    })
-            }),
+            physical_source: Box::new(|| Ok(DEFAULT_DETERMINISTIC_PHYSICAL_MS)),
         }
     }
 
@@ -423,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn default_clock_advances_physical_time_deterministically() {
+    fn default_clock_advances_logical_time_at_fixed_physical_epoch() {
         let mut clock = HybridClock::default();
 
         let first = clock.now().expect("first HLC timestamp");
@@ -431,14 +419,8 @@ mod tests {
         let third = clock.now().expect("third HLC timestamp");
 
         assert_eq!(first, Timestamp::new(DEFAULT_DETERMINISTIC_PHYSICAL_MS, 0));
-        assert_eq!(
-            second,
-            Timestamp::new(DEFAULT_DETERMINISTIC_PHYSICAL_MS + 1, 0)
-        );
-        assert_eq!(
-            third,
-            Timestamp::new(DEFAULT_DETERMINISTIC_PHYSICAL_MS + 2, 0)
-        );
+        assert_eq!(second, Timestamp::new(DEFAULT_DETERMINISTIC_PHYSICAL_MS, 1));
+        assert_eq!(third, Timestamp::new(DEFAULT_DETERMINISTIC_PHYSICAL_MS, 2));
     }
 
     #[test]
@@ -465,6 +447,10 @@ mod tests {
         assert!(
             !production.contains("js_sys::Date"),
             "production HLC must not import browser wall-clock APIs"
+        );
+        assert!(
+            !production.contains("fetch_update"),
+            "default HLC must not fabricate elapsed physical milliseconds from call count"
         );
     }
 

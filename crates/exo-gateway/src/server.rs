@@ -4841,6 +4841,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gateway_default_hlc_rate_limit_window_does_not_reset_by_request_count() {
+        let mut state = state();
+        state.rate_limiter = Arc::new(Mutex::new(GatewayRateLimiter::with_limits(1, 2, 8)));
+        let app = apply_gateway_layers(
+            Router::new().route("/probe", get(probe)),
+            state,
+            GLOBAL_CONCURRENCY_LIMIT,
+        );
+
+        let first = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let second = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let third = app
+            .oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(third.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
     async fn gateway_rate_limit_resets_after_hlc_window() {
         let wall = Arc::new(AtomicU64::new(10_000));
         let state = rate_limited_state(1, 60_000, Arc::clone(&wall));
