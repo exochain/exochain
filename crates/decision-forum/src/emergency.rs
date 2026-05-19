@@ -129,10 +129,11 @@ pub struct EmergencyActionInput {
     pub created_at: Timestamp,
 }
 
-/// Create an emergency action, validating against the policy.
+/// Create an emergency action, validating against the policy and prior history.
 pub fn create_emergency_action(
     input: EmergencyActionInput,
     policy: &EmergencyPolicy,
+    prior_actions: &[EmergencyAction],
 ) -> Result<EmergencyAction> {
     validate_uuid(input.id, "emergency action id")?;
     validate_timestamp(input.created_at, "emergency created_at")?;
@@ -155,6 +156,7 @@ pub fn create_emergency_action(
             ),
         });
     }
+    check_per_actor_limit(prior_actions, &input.actor, policy)?;
 
     let deadline_ms = input
         .created_at
@@ -183,10 +185,9 @@ pub fn create_emergency_action(
 
 /// Enforce the per-actor emergency invocation limit (hard gate).
 ///
-/// Call this **before** [`create_emergency_action`] to enforce the constitutional
-/// limit (`policy.max_per_quarter_per_actor`).  Returns `Ok(())` if the actor
-/// is permitted to invoke another emergency action given the slice of existing
-/// actions in the current quarter.
+/// [`create_emergency_action`] calls this before returning a new emergency
+/// action.  Returns `Ok(())` if the actor is permitted to invoke another
+/// emergency action given the slice of existing actions in the current quarter.
 ///
 /// # Errors
 ///
@@ -318,8 +319,12 @@ mod tests {
     }
 
     fn make_action(action_type: EmergencyActionType) -> EmergencyAction {
-        create_emergency_action(emergency_input(Uuid::from_u128(31), action_type), &policy())
-            .expect("valid emergency")
+        create_emergency_action(
+            emergency_input(Uuid::from_u128(31), action_type),
+            &policy(),
+            &[],
+        )
+        .expect("valid emergency")
     }
 
     fn production_source() -> &'static str {
@@ -335,6 +340,7 @@ mod tests {
         let action = create_emergency_action(
             emergency_input(Uuid::from_u128(32), EmergencyActionType::SystemHalt),
             &policy(),
+            &[],
         )
         .expect("valid");
         assert_eq!(action.id, Uuid::from_u128(32));
@@ -343,6 +349,7 @@ mod tests {
         let nil = create_emergency_action(
             emergency_input(Uuid::nil(), EmergencyActionType::SystemHalt),
             &policy(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(nil, ForumError::InvalidProvenance { .. }));
@@ -353,6 +360,7 @@ mod tests {
                 ..emergency_input(Uuid::from_u128(33), EmergencyActionType::SystemHalt)
             },
             &policy(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(zero_time, ForumError::InvalidProvenance { .. }));
@@ -363,6 +371,7 @@ mod tests {
                 ..emergency_input(Uuid::from_u128(34), EmergencyActionType::SystemHalt)
             },
             &policy(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(
@@ -379,6 +388,7 @@ mod tests {
                 ..emergency_input(Uuid::from_u128(35), EmergencyActionType::SystemHalt)
             },
             &policy(),
+            &[],
         )
         .unwrap_err();
 
@@ -401,6 +411,7 @@ mod tests {
                 ..emergency_input(Uuid::from_u128(35), EmergencyActionType::SystemHalt)
             },
             &policy(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(err, ForumError::EmergencyCapExceeded { .. }));
@@ -415,6 +426,7 @@ mod tests {
         let err = create_emergency_action(
             emergency_input(Uuid::from_u128(36), EmergencyActionType::RoleEscalation),
             &p,
+            &[],
         )
         .unwrap_err();
         assert!(matches!(err, ForumError::EmergencyInvalid { .. }));
@@ -459,6 +471,7 @@ mod tests {
                         ..emergency_input(Uuid::from_u128(40 + i), EmergencyActionType::SystemHalt)
                     },
                     &p,
+                    &[],
                 )
                 .expect("ok")
             })
@@ -481,12 +494,61 @@ mod tests {
         let first = create_emergency_action(
             emergency_input(Uuid::from_u128(50), EmergencyActionType::SystemHalt),
             &p,
+            &[],
         )
         .expect("ok");
         let err = check_per_actor_limit(&[first], &did(), &p).unwrap_err();
         assert!(
             matches!(err, ForumError::EmergencyInvalid { .. }),
             "expected EmergencyInvalid, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn create_action_enforces_per_actor_limit_against_prior_history() {
+        let p = policy(); // max_per_quarter_per_actor = 1
+        let first = create_emergency_action(
+            emergency_input(Uuid::from_u128(53), EmergencyActionType::SystemHalt),
+            &p,
+            &[],
+        )
+        .expect("first emergency is allowed");
+
+        let err = create_emergency_action(
+            emergency_input(Uuid::from_u128(54), EmergencyActionType::SystemHalt),
+            &p,
+            std::slice::from_ref(&first),
+        )
+        .expect_err("second same-actor emergency must be denied by create path");
+
+        assert!(
+            matches!(err, ForumError::EmergencyInvalid { .. }),
+            "expected EmergencyInvalid, got {err:?}"
+        );
+        assert!(
+            err.to_string().contains("per-actor emergency limit"),
+            "unexpected denial reason: {err}"
+        );
+    }
+
+    #[test]
+    fn create_action_source_keeps_per_actor_limit_in_create_path() {
+        let production = production_source();
+        let body = production
+            .split("pub fn create_emergency_action")
+            .nth(1)
+            .expect("create_emergency_action must exist")
+            .split("/// Enforce the per-actor emergency invocation limit")
+            .next()
+            .expect("create_emergency_action body must be bounded");
+
+        assert!(
+            body.contains("prior_actions: &[EmergencyAction]"),
+            "emergency creation must require caller-supplied prior history"
+        );
+        assert!(
+            body.contains("check_per_actor_limit(prior_actions, &input.actor, policy)?"),
+            "emergency creation must enforce the per-actor cap before returning an action"
         );
     }
 
@@ -501,6 +563,7 @@ mod tests {
                 ..emergency_input(Uuid::from_u128(51), EmergencyActionType::SystemHalt)
             },
             &p,
+            &[],
         )
         .expect("ok");
         // actor_b is unaffected by actor_a's invocation
@@ -513,6 +576,7 @@ mod tests {
         let mut expired = create_emergency_action(
             emergency_input(Uuid::from_u128(52), EmergencyActionType::SystemHalt),
             &p,
+            &[],
         )
         .expect("ok");
         // Mark as expired (missed ratification window)
@@ -535,6 +599,7 @@ mod tests {
                 create_emergency_action(
                     emergency_input(Uuid::from_u128(60 + i), EmergencyActionType::SystemHalt),
                     &p,
+                    &[],
                 )
                 .expect("ok")
             })
@@ -570,6 +635,7 @@ mod tests {
         let disallowed = create_emergency_action(
             emergency_input(Uuid::from_u128(70), EmergencyActionType::RoleEscalation),
             &p,
+            &[],
         )
         .expect_err("role escalation is not allowed by policy");
         assert_eq!(

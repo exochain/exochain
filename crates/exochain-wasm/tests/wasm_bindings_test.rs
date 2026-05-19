@@ -531,6 +531,7 @@ fn test_create_emergency_action_round_trip() {
         50000,
         &evidence_hex,
         policy,
+        "[]",
         1_700_000_000_000,
         0,
     )
@@ -541,6 +542,50 @@ fn test_create_emergency_action_round_trip() {
         "Network anomaly detected"
     );
     assert_eq!(json["ratification_status"].as_str().unwrap(), "Required");
+}
+
+#[wasm_bindgen_test]
+fn test_create_emergency_action_rejects_actor_over_limit() {
+    let evidence_hex = "8".repeat(64);
+    let policy = r#"{
+        "max_monetary_cap_cents": 1000000,
+        "allowed_actions": ["DataFreeze", "SystemHalt"],
+        "ratification_window_ms": 3600000,
+        "max_per_quarter": 5,
+        "max_per_quarter_per_actor": 1
+    }"#;
+    let first = exochain_wasm::wasm_create_emergency_action(
+        "00000000-0000-0000-0000-000000000402",
+        r#""DataFreeze""#,
+        "did:exo:operator",
+        "Network anomaly detected",
+        50000,
+        &evidence_hex,
+        policy,
+        "[]",
+        1_700_000_000_000,
+        0,
+    )
+    .expect("first emergency action");
+    let prior_actions_json = format!("[{}]", js_str(first));
+
+    let second = exochain_wasm::wasm_create_emergency_action(
+        "00000000-0000-0000-0000-000000000403",
+        r#""SystemHalt""#,
+        "did:exo:operator",
+        "Same actor attempts another emergency",
+        50000,
+        &evidence_hex,
+        policy,
+        &prior_actions_json,
+        1_700_000_000_100,
+        0,
+    );
+
+    assert!(
+        second.is_err(),
+        "second same-actor emergency must fail closed at the WASM boundary"
+    );
 }
 
 // ── Legal: Records ────────────────────────────────────────────────────────────

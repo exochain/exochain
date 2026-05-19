@@ -346,7 +346,7 @@ pub fn wasm_dry_run_amendment(corpus_json: &str, proposed_json: &str) -> Result<
 //                           never satisfy TNC proof obligations.
 //
 // The TncContext is then constructed on the stack inside each function so the
-// borrow checker is satisfied without requiring an unsafe transmute.
+// borrow checker is satisfied without raw pointer tricks.
 
 #[derive(serde::Deserialize)]
 struct TncFlags {
@@ -665,6 +665,7 @@ pub fn wasm_create_emergency_action(
     monetary_cap_cents: u64,
     evidence_hash_hex: &str,
     policy_json: &str,
+    prior_actions_json: &str,
     timestamp_ms: u64,
     timestamp_logical: u32,
 ) -> Result<JsValue, JsValue> {
@@ -675,6 +676,11 @@ pub fn wasm_create_emergency_action(
         exo_core::Did::new(actor_did).map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
     let evidence_hash = parse_hash(evidence_hash_hex, "evidence hash")?;
     let policy: decision_forum::emergency::EmergencyPolicy = from_json_str(policy_json)?;
+    let prior_actions: Vec<decision_forum::emergency::EmergencyAction> = from_json_bounded_vec(
+        prior_actions_json,
+        "forum emergency prior actions",
+        MAX_WASM_FORUM_EMERGENCY_ACTIONS,
+    )?;
     let ts = exo_core::types::Timestamp::new(timestamp_ms, timestamp_logical);
 
     let action = decision_forum::emergency::create_emergency_action(
@@ -688,6 +694,7 @@ pub fn wasm_create_emergency_action(
             created_at: ts,
         },
         &policy,
+        &prior_actions,
     )
     .map_err(|e| JsValue::from_str(&format!("Emergency error: {e}")))?;
     to_js_value(&action)
@@ -964,6 +971,35 @@ mod tests {
         assert!(
             production.contains("verify_forum_authority_with_key"),
             "WASM authority verification must call the cryptographic core verifier"
+        );
+    }
+
+    #[test]
+    fn wasm_create_emergency_action_requires_prior_history() {
+        let source = include_str!("decision_forum_bindings.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+        let body = production
+            .split("pub fn wasm_create_emergency_action")
+            .nth(1)
+            .expect("emergency action export must exist")
+            .split("/// Ratify an emergency action")
+            .next()
+            .expect("emergency action export body must be bounded");
+
+        assert!(
+            body.contains("prior_actions_json"),
+            "WASM emergency creation must require caller-supplied prior emergency history"
+        );
+        assert!(
+            body.contains("from_json_bounded_vec"),
+            "WASM emergency creation must parse prior emergency history with a bounded vector"
+        );
+        assert!(
+            body.contains("&prior_actions"),
+            "WASM emergency creation must pass prior emergency history into core enforcement"
         );
     }
 
