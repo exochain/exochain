@@ -608,8 +608,8 @@ const ALERT_COMPOSITE_DROP_BP: u32 = 1_500;
 const ALERT_FINGERPRINT_LOW_BP: u32 = 2_000;
 /// OTP lockout window: 24 hours in ms.
 const ALERT_OTP_WINDOW_MS: u64 = 86_400_000;
-/// Maximum scored DIDs scanned for one `/0dentity-alerts` request.
-const MAX_ZERODENTITY_ALERT_SCAN_DIDS: usize = 1_000;
+/// Maximum scored DIDs loaded from the 0dentity store in one scan page.
+const MAX_ZERODENTITY_ALERT_SCAN_PAGE_DIDS: usize = 1_000;
 
 /// Build the `/0dentity-alerts` response.
 ///
@@ -632,95 +632,117 @@ pub fn build_zerodentity_alerts_message(
         }
     };
     let scored_did_count = zstore.scored_did_count();
-    let dids = zstore.sample_scored_dids(MAX_ZERODENTITY_ALERT_SCAN_DIDS);
     drop(zstore);
 
     let since_ms = now_ms().saturating_sub(ALERT_OTP_WINDOW_MS);
     let mut alerts: Vec<String> = Vec::new();
+    let mut scanned_did_count = 0usize;
+    let mut after_did: Option<Did> = None;
 
-    for did in &dids {
-        let (current_score, previous_score, fingerprints, has_recent_otp_lockout) = {
-            let zstore = match zerodentity.lock() {
-                Ok(s) => s,
-                Err(_) => {
-                    return (
-                        "\u{274c} 0dentity store temporarily unavailable".to_string(),
-                        vec![],
-                    );
-                }
-            };
-            let current_score = zstore.get_score(did).cloned();
-            let previous_score = zstore.get_previous_score(did).cloned();
-            let fingerprints = match zstore.get_fingerprints(did) {
-                Ok(fps) => fps,
-                Err(e) => {
-                    let did_html = escape_telegram_html(did.as_str());
-                    let error_html = escape_telegram_html(&e.to_string());
-                    return (
-                        format!(
-                            "\u{274c} <b>0dentity Alerts</b>\n\
-                             0dentity alert scan unavailable while reading fingerprints for <code>{}</code>: {}",
-                            did_html, error_html
-                        ),
-                        vec![],
-                    );
-                }
-            };
-            let has_recent_otp_lockout = zstore.has_otp_lockout_since(did, since_ms);
-
-            (
-                current_score,
-                previous_score,
-                fingerprints,
-                has_recent_otp_lockout,
-            )
-        };
-
-        // 1. Score regression.
-        if let (Some(curr), Some(prev)) = (current_score, previous_score) {
-            if prev.composite > curr.composite
-                && prev.composite - curr.composite > ALERT_COMPOSITE_DROP_BP
-            {
-                let did_html = escape_telegram_html(did.as_str());
-                alerts.push(format!(
-                    "\u{26a0}\u{fe0f} <code>{}</code> score dropped {} bp ({}\u{2192}{})",
-                    did_html,
-                    prev.composite - curr.composite,
-                    fmt_bp(prev.composite),
-                    fmt_bp(curr.composite),
-                ));
+    loop {
+        let zstore = match zerodentity.lock() {
+            Ok(s) => s,
+            Err(_) => {
+                return (
+                    "\u{274c} 0dentity store temporarily unavailable".to_string(),
+                    vec![],
+                );
             }
+        };
+        let dids =
+            zstore.scored_dids_page_after(after_did.as_ref(), MAX_ZERODENTITY_ALERT_SCAN_PAGE_DIDS);
+        drop(zstore);
+
+        if dids.is_empty() {
+            break;
         }
 
-        // 2. Fingerprint consistency.
-        if let Some(latest) = fingerprints.last() {
-            if let Some(consistency) = latest.consistency_score_bp {
-                if consistency < ALERT_FINGERPRINT_LOW_BP {
+        scanned_did_count = scanned_did_count.saturating_add(dids.len());
+        after_did = dids.last().cloned();
+
+        for did in dids {
+            let (current_score, previous_score, fingerprints, has_recent_otp_lockout) = {
+                let zstore = match zerodentity.lock() {
+                    Ok(s) => s,
+                    Err(_) => {
+                        return (
+                            "\u{274c} 0dentity store temporarily unavailable".to_string(),
+                            vec![],
+                        );
+                    }
+                };
+                let current_score = zstore.get_score(&did).cloned();
+                let previous_score = zstore.get_previous_score(&did).cloned();
+                let fingerprints = match zstore.get_fingerprints(&did) {
+                    Ok(fps) => fps,
+                    Err(e) => {
+                        let did_html = escape_telegram_html(did.as_str());
+                        let error_html = escape_telegram_html(&e.to_string());
+                        return (
+                            format!(
+                                "\u{274c} <b>0dentity Alerts</b>\n\
+                                 0dentity alert scan unavailable while reading fingerprints for <code>{}</code>: {}",
+                                did_html, error_html
+                            ),
+                            vec![],
+                        );
+                    }
+                };
+                let has_recent_otp_lockout = zstore.has_otp_lockout_since(&did, since_ms);
+
+                (
+                    current_score,
+                    previous_score,
+                    fingerprints,
+                    has_recent_otp_lockout,
+                )
+            };
+
+            // 1. Score regression.
+            if let (Some(curr), Some(prev)) = (current_score, previous_score) {
+                if prev.composite > curr.composite
+                    && prev.composite - curr.composite > ALERT_COMPOSITE_DROP_BP
+                {
                     let did_html = escape_telegram_html(did.as_str());
                     alerts.push(format!(
-                        "\u{26a0}\u{fe0f} <code>{}</code> fingerprint consistency low: {}",
+                        "\u{26a0}\u{fe0f} <code>{}</code> score dropped {} bp ({}\u{2192}{})",
                         did_html,
-                        fmt_bp(consistency),
+                        prev.composite - curr.composite,
+                        fmt_bp(prev.composite),
+                        fmt_bp(curr.composite),
                     ));
                 }
             }
-        }
 
-        // 3. OTP lockout in last 24h.
-        if has_recent_otp_lockout {
-            let did_html = escape_telegram_html(did.as_str());
-            alerts.push(format!(
-                "\u{1f512} <code>{}</code> OTP lockout in last 24h",
-                did_html,
-            ));
+            // 2. Fingerprint consistency.
+            if let Some(latest) = fingerprints.last() {
+                if let Some(consistency) = latest.consistency_score_bp {
+                    if consistency < ALERT_FINGERPRINT_LOW_BP {
+                        let did_html = escape_telegram_html(did.as_str());
+                        alerts.push(format!(
+                            "\u{26a0}\u{fe0f} <code>{}</code> fingerprint consistency low: {}",
+                            did_html,
+                            fmt_bp(consistency),
+                        ));
+                    }
+                }
+            }
+
+            // 3. OTP lockout in last 24h.
+            if has_recent_otp_lockout {
+                let did_html = escape_telegram_html(did.as_str());
+                alerts.push(format!(
+                    "\u{1f512} <code>{}</code> OTP lockout in last 24h",
+                    did_html,
+                ));
+            }
         }
     }
 
-    let scan_limit_note = if scored_did_count > dids.len() {
+    let scan_limit_note = if scored_did_count > scanned_did_count {
         format!(
-            "\nScan limited to first {} of {} scored DIDs.",
-            dids.len(),
-            scored_did_count
+            "\nScan completed {} of {} scored DIDs before concurrent score changes.",
+            scanned_did_count, scored_did_count
         )
     } else {
         String::new()
@@ -1348,8 +1370,10 @@ mod tests {
             .unwrap();
 
         assert!(
-            !alerts.contains("sample_scored_dids(usize::MAX)"),
-            "Telegram 0dentity alerts must never request an unbounded score sample"
+            alerts.contains("scored_dids_page_after")
+                && !alerts.contains("sample_scored_dids")
+                && !alerts.contains("usize::MAX"),
+            "Telegram 0dentity alerts must use bounded DID pages rather than an unbounded or prefix-only sample"
         );
     }
 
@@ -1366,11 +1390,11 @@ mod tests {
             .and_then(|section| section.split("/// Build the /status response.").next())
             .unwrap();
         let sample_index = alerts
-            .find("sample_scored_dids")
-            .expect("alert builder samples scored DIDs");
+            .find("scored_dids_page_after")
+            .expect("alert builder pages scored DIDs");
         let loop_index = alerts
-            .find("for did in &dids")
-            .expect("alert builder iterates sampled DIDs");
+            .find("for did in dids")
+            .expect("alert builder iterates paged DIDs");
 
         assert!(
             alerts[sample_index..loop_index].contains("drop(zstore)"),
@@ -1379,7 +1403,7 @@ mod tests {
     }
 
     #[test]
-    fn zerodentity_alerts_scan_only_bounded_prefix() {
+    fn zerodentity_alerts_scan_across_bounded_pages() {
         let zerodentity = crate::zerodentity::store::new_shared_store();
         let scan_limit = 1_000;
         {
@@ -1393,8 +1417,32 @@ mod tests {
 
         let (text, keyboard) = build_zerodentity_alerts_message(&zerodentity);
 
-        assert!(text.contains("1000 alert(s) found."));
-        assert!(!text.contains("did:exo:alert1000"));
+        assert!(text.contains("1001 alert(s) found."));
+        assert!(text.contains("did:exo:alert1000"));
+        assert!(!text.contains("Scan limited to first"));
+        assert!(!keyboard.is_empty());
+    }
+
+    #[test]
+    fn zerodentity_alerts_scans_beyond_first_bounded_page() {
+        let zerodentity = crate::zerodentity::store::new_shared_store();
+        {
+            let mut store = zerodentity.lock().unwrap();
+            for i in 0..MAX_ZERODENTITY_ALERT_SCAN_PAGE_DIDS {
+                let did = Did::new(&format!("did:exo:prefix{i:04}")).unwrap();
+                store.put_score(score_snapshot(&did, 9_000, 1000));
+            }
+
+            let hidden_did = Did::new("did:exo:z-after-prefix").unwrap();
+            store.put_score(score_snapshot(&hidden_did, 9_000, 1000));
+            store.put_score(score_snapshot(&hidden_did, 7_000, 2000));
+        }
+
+        let (text, keyboard) = build_zerodentity_alerts_message(&zerodentity);
+
+        assert!(text.contains("did:exo:z-after-prefix"));
+        assert!(text.contains("1 alert(s) found."));
+        assert!(!text.contains("No 0dentity alerts."));
         assert!(!keyboard.is_empty());
     }
 

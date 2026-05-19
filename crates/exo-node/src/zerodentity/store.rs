@@ -613,6 +613,32 @@ impl ZerodentityStore {
             .collect()
     }
 
+    /// Return a bounded page of scored DIDs after the optional cursor.
+    ///
+    /// Pages are sorted by DID and strictly greater than `after` when a cursor
+    /// is provided, so callers can scan the full deterministic keyspace without
+    /// holding the store lock for the entire scan.
+    #[must_use]
+    pub fn scored_dids_page_after(&self, after: Option<&Did>, n: usize) -> Vec<Did> {
+        if n == 0 {
+            return Vec::new();
+        }
+
+        let bounds = match after {
+            Some(did) => (
+                std::ops::Bound::Excluded(did.as_str().to_owned()),
+                std::ops::Bound::Unbounded,
+            ),
+            None => (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded),
+        };
+
+        self.scores
+            .range(bounds)
+            .take(n)
+            .filter_map(|(k, _)| Did::new(k).ok())
+            .collect()
+    }
+
     /// Return the count of distinct scored DIDs.
     #[must_use]
     pub fn scored_did_count(&self) -> usize {
@@ -1031,6 +1057,32 @@ mod tests {
         let sampled = store.sample_scored_dids(10);
         assert_eq!(sampled.len(), 3);
         assert_eq!(sampled[0].as_str(), "did:exo:a");
+    }
+
+    #[test]
+    fn scored_dids_page_after_returns_successive_bounded_pages() {
+        let mut store = ZerodentityStore::new();
+        for did_str in ["did:exo:a", "did:exo:b", "did:exo:c"] {
+            store.put_score(score_for(did(did_str), 1000));
+        }
+
+        let first_page = store.scored_dids_page_after(None, 2);
+        assert_eq!(
+            first_page
+                .iter()
+                .map(|did| did.as_str())
+                .collect::<Vec<_>>(),
+            vec!["did:exo:a", "did:exo:b"]
+        );
+
+        let second_page = store.scored_dids_page_after(first_page.last(), 2);
+        assert_eq!(
+            second_page
+                .iter()
+                .map(|did| did.as_str())
+                .collect::<Vec<_>>(),
+            vec!["did:exo:c"]
+        );
     }
 
     #[test]
