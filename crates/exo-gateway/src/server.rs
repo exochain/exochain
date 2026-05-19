@@ -92,7 +92,7 @@ const GATEWAY_RATE_LIMIT_MAX_CLIENTS: usize = 16_384;
 const STRICT_TRANSPORT_SECURITY_VALUE: &str = "max-age=63072000; includeSubDomains";
 const CONTENT_SECURITY_POLICY_VALUE: &str =
     "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
-const CONTENT_SECURITY_POLICY_DASHBOARD_VALUE: &str = "default-src 'none'; style-src 'self' 'sha256-yJRhW9tEgjF5ZLILQcXDB6QDKvp1zziUPN6LHRtguoY='; script-src 'self' 'sha256-alo6f0Wtj7BryL8VG8ykQizNQTJHPzVuk5uHRX6v0no='; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+const CONTENT_SECURITY_POLICY_DASHBOARD_VALUE: &str = "default-src 'none'; style-src 'self' 'sha256-ZDDfCKNMflVt9qZTlgUze2dLGpfks/qtzWrtNola/68='; script-src 'self' 'sha256-wqJx2WnF4s7cGuMU+qEdtcl5ls/KZFFMvWf6rcHbxtc='; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const PERMISSIONS_POLICY_VALUE: &str = "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()";
 const PROMETHEUS_TEXT_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 const LAYOUT_TEMPLATE_MAX_ID_BYTES: usize = 128;
@@ -4466,6 +4466,7 @@ mod tests {
         hlc::HybridClock,
     };
     use exo_identity::did::{DidDocument, VerificationMethod};
+    use sha2::{Digest, Sha256};
     use sqlx::Row;
     use tokio::sync::Notify;
     use tower::ServiceExt;
@@ -4478,6 +4479,62 @@ mod tests {
 
     async fn probe() -> StatusCode {
         StatusCode::OK
+    }
+
+    fn base64_standard(bytes: &[u8]) -> String {
+        const TABLE: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for chunk in bytes.chunks(3) {
+            let first = chunk[0];
+            let second = chunk.get(1).copied().unwrap_or(0);
+            let third = chunk.get(2).copied().unwrap_or(0);
+
+            encoded.push(char::from(TABLE[usize::from(first >> 2)]));
+            encoded.push(char::from(
+                TABLE[usize::from(((first & 0b0000_0011) << 4) | (second >> 4))],
+            ));
+
+            if chunk.len() > 1 {
+                encoded.push(char::from(
+                    TABLE[usize::from(((second & 0b0000_1111) << 2) | (third >> 6))],
+                ));
+            } else {
+                encoded.push('=');
+            }
+
+            if chunk.len() > 2 {
+                encoded.push(char::from(TABLE[usize::from(third & 0b0011_1111)]));
+            } else {
+                encoded.push('=');
+            }
+        }
+        encoded
+    }
+
+    fn inline_block(source: &str, open: &str, close: &str) -> String {
+        let (_, after_open) = source.split_once(open).expect("inline block open marker");
+        let (block, _) = after_open
+            .split_once(close)
+            .expect("inline block close marker");
+        block.to_string()
+    }
+
+    fn csp_sha256_hash(source: &str) -> String {
+        let digest = Sha256::digest(source.as_bytes());
+        format!("sha256-{}", base64_standard(digest.as_slice()))
+    }
+
+    fn dashboard_inline_asset_hashes() -> (String, String) {
+        let dashboard_source = include_str!("../../exo-node/src/dashboard.rs");
+        let dashboard_html = inline_block(
+            dashboard_source,
+            "const DASHBOARD_HTML: &str = r##\"",
+            "\"##;",
+        );
+        let style = inline_block(&dashboard_html, "<style>", "</style>");
+        let script = inline_block(&dashboard_html, "<script>", "</script>");
+        (csp_sha256_hash(&style), csp_sha256_hash(&script))
     }
 
     fn rate_limited_state(
@@ -5189,8 +5246,22 @@ mod tests {
                 .get("content-security-policy")
                 .and_then(|v| v.to_str().ok()),
             Some(
-                "default-src 'none'; style-src 'self' 'sha256-yJRhW9tEgjF5ZLILQcXDB6QDKvp1zziUPN6LHRtguoY='; script-src 'self' 'sha256-alo6f0Wtj7BryL8VG8ykQizNQTJHPzVuk5uHRX6v0no='; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+                "default-src 'none'; style-src 'self' 'sha256-ZDDfCKNMflVt9qZTlgUze2dLGpfks/qtzWrtNola/68='; script-src 'self' 'sha256-wqJx2WnF4s7cGuMU+qEdtcl5ls/KZFFMvWf6rcHbxtc='; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
             )
+        );
+    }
+
+    #[test]
+    fn dashboard_csp_hashes_match_inline_assets() {
+        let (style_hash, script_hash) = dashboard_inline_asset_hashes();
+
+        assert!(
+            CONTENT_SECURITY_POLICY_DASHBOARD_VALUE.contains(&format!("'{style_hash}'")),
+            "dashboard CSP must contain current style hash {style_hash}"
+        );
+        assert!(
+            CONTENT_SECURITY_POLICY_DASHBOARD_VALUE.contains(&format!("'{script_hash}'")),
+            "dashboard CSP must contain current script hash {script_hash}"
         );
     }
 
