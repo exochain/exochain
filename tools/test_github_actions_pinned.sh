@@ -48,4 +48,36 @@ if ((${#violations[@]} > 0)); then
   fail "external actions must be pinned to immutable commit SHAs"
 fi
 
+rust_toolchain_violations=()
+for workflow in .github/workflows/*.yml .github/workflows/*.yaml; do
+  while IFS= read -r match; do
+    line_no=${match%%:*}
+    step_block=$(
+      awk -v start="$line_no" '
+        NR < start { next }
+        NR == start {
+          step_indent = match($0, /[^ ]/) - 1
+          print
+          next
+        }
+        {
+          current_indent = match($0, /[^ ]/) - 1
+          if ($0 ~ /^[[:space:]]*-[[:space:]]+(name|uses|run):/ && current_indent <= step_indent) {
+            exit
+          }
+          print
+        }
+      ' "$workflow"
+    )
+    if ! grep -Eq '^[[:space:]]+toolchain:[[:space:]]+(stable|nightly)[[:space:]]*$' <<<"$step_block"; then
+      rust_toolchain_violations+=("${workflow}:${line_no}: dtolnay/rust-toolchain requires explicit with.toolchain when pinned")
+    fi
+  done < <(grep -nE 'uses:[[:space:]]+dtolnay/rust-toolchain@[0-9a-f]{40}' "$workflow" || true)
+done
+
+if ((${#rust_toolchain_violations[@]} > 0)); then
+  printf '%s\n' "${rust_toolchain_violations[@]}" >&2
+  fail "pinned dtolnay/rust-toolchain actions must set stable or nightly explicitly"
+fi
+
 printf 'github actions pinning test passed\n'
