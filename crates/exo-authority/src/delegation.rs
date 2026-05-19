@@ -596,7 +596,7 @@ impl DelegationRegistry {
     }
 
     fn compute_depth(&self, did: &Did) -> Result<usize, AuthorityError> {
-        let mut max_depth = 0usize;
+        let mut shallowest_depth = None;
         if let Some(ids) = self.by_delegate.get(did.as_str()) {
             for id in ids {
                 if let Some(link) = self.links.get(id) {
@@ -607,16 +607,13 @@ impl DelegationRegistry {
                                 depth: link.depth,
                                 max_depth: DEFAULT_MAX_DEPTH,
                             })?;
-                    if candidate > max_depth {
-                        max_depth = candidate;
-                    }
-                    if max_depth >= DEFAULT_MAX_DEPTH {
-                        return Ok(max_depth);
-                    }
+                    shallowest_depth = Some(
+                        shallowest_depth.map_or(candidate, |current: usize| current.min(candidate)),
+                    );
                 }
             }
         }
-        Ok(max_depth)
+        Ok(shallowest_depth.unwrap_or(0))
     }
 }
 
@@ -1056,7 +1053,7 @@ mod tests {
     }
 
     #[test]
-    fn delegate_uses_max_parent_depth_for_multi_parent_delegator() {
+    fn delegate_uses_shallowest_parent_depth_for_multi_parent_delegator() {
         let mut reg = DelegationRegistry::new();
         let key = KeyPair::generate();
 
@@ -1067,7 +1064,46 @@ mod tests {
 
         let link = signed_delegate(&mut reg, "shared", "leaf", &[Permission::Read], &key).unwrap();
 
-        assert_eq!(link.depth, 3);
+        assert_eq!(link.depth, 1);
+    }
+
+    #[test]
+    fn delegate_depth_squatting_does_not_block_shallow_parent_grant() {
+        let mut reg = DelegationRegistry::new();
+        let key = KeyPair::generate();
+
+        signed_delegate(
+            &mut reg,
+            "legitimate-root",
+            "victim",
+            &[Permission::Read],
+            &key,
+        )
+        .unwrap();
+        for i in 0..DEFAULT_MAX_DEPTH {
+            let from = format!("attacker-{i}");
+            let to = if i + 1 == DEFAULT_MAX_DEPTH {
+                "victim".to_owned()
+            } else {
+                format!("attacker-{}", i + 1)
+            };
+            signed_delegate(&mut reg, &from, &to, &[Permission::Read], &key).unwrap();
+        }
+
+        let link = signed_delegate(
+            &mut reg,
+            "victim",
+            "legitimate-delegate",
+            &[Permission::Read],
+            &key,
+        )
+        .expect("unaccepted deep incoming grants must not poison a valid shallow parent chain");
+
+        assert_eq!(link.depth, 1);
+        let chain = reg
+            .find_chain(&did("legitimate-root"), &did("legitimate-delegate"))
+            .expect("shallow legitimate chain should remain resolvable");
+        assert_eq!(chain.depth(), 2);
     }
 
     #[test]
