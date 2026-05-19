@@ -54,8 +54,8 @@ type PassportResult<T> = Result<T, PassportError>;
 const PASSPORT_CONCURRENCY_LIMIT: usize = 32;
 
 fn parse_passport_did(did: &str) -> PassportResult<exo_core::types::Did> {
-    exo_core::types::Did::new(did).map_err(|error| {
-        tracing::warn!(%error, "invalid passport DID path parameter");
+    exo_core::types::Did::new(did).map_err(|_| {
+        tracing::warn!("invalid passport DID path parameter");
         (StatusCode::BAD_REQUEST, "Invalid DID".to_string())
     })
 }
@@ -622,6 +622,29 @@ mod tests {
         assert!(
             !handlers.contains(".lock()"),
             "passport async handlers must not lock std::sync::Mutex values directly"
+        );
+    }
+
+    #[test]
+    fn passport_invalid_did_log_does_not_render_raw_parser_error() {
+        let source = include_str!("passport.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .unwrap();
+        let parse_helper = production
+            .split("fn parse_passport_did")
+            .nth(1)
+            .and_then(|section| section.split("// ---------------------------------------------------------------------------\n// Shared state").next())
+            .unwrap();
+
+        assert!(
+            !parse_helper.contains("%error") && !parse_helper.contains("error = %"),
+            "passport invalid-DID logging must not render ExoError::InvalidDid because it contains attacker-controlled DID text"
+        );
+        assert!(
+            parse_helper.contains("tracing::warn!(\"invalid passport DID path parameter\")"),
+            "passport invalid-DID logging must emit only a constant diagnostic"
         );
     }
 
