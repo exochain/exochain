@@ -26,7 +26,7 @@ use decision_forum::decision_object::DecisionClass;
 use exo_identity::{did::DidDocument, registry::MAX_LOCAL_DID_REGISTRY_DOCUMENTS};
 use serde_json::Value as JsonValue;
 use sqlx::{
-    Row,
+    Executor, Postgres, Row, Transaction,
     postgres::{PgPool, PgPoolOptions},
 };
 use thiserror::Error;
@@ -669,41 +669,51 @@ fn count_result_to_usize(label: &'static str, value: i64) -> Result<usize, sqlx:
 }
 
 /// Count quorum-eligible voters for a tenant and decision class.
-pub async fn count_quorum_eligible_voters(
-    pool: &PgPool,
+async fn count_quorum_eligible_voters_with_executor<'e, E>(
+    executor: E,
     tenant_id: &str,
     decision_class: DecisionClass,
-) -> Result<QuorumEligibilityCounts, sqlx::Error> {
+) -> Result<QuorumEligibilityCounts, sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let row = sqlx::query(
+        r#"
+        SELECT
+            (
+                SELECT COUNT(*)
+                FROM users
+                WHERE tenant_id = $1
+                  AND status = 'Active'
+            ) AS active_human_users,
+            (
+                SELECT COUNT(*)
+                FROM agents
+                WHERE tenant_id = $1
+                  AND status = 'Active'
+                  AND delegation_id IS NOT NULL
+                  AND CASE max_decision_class
+                      WHEN 'Routine' THEN 0
+                      WHEN 'Operational' THEN 1
+                      WHEN 'Strategic' THEN 2
+                      WHEN 'Constitutional' THEN 3
+                      ELSE -1
+                  END >= $2
+            ) AS active_delegated_agents
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(decision_class_rank(decision_class))
+    .fetch_one(executor)
+    .await?;
+
     let active_human_users = count_result_to_usize(
         "active_human_users",
-        sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM users WHERE tenant_id = $1 AND status = 'Active'",
-        )
-        .bind(tenant_id)
-        .fetch_one(pool)
-        .await?,
+        row.try_get::<i64, _>("active_human_users")?,
     )?;
     let active_delegated_agents = count_result_to_usize(
         "active_delegated_agents",
-        sqlx::query_scalar::<_, i64>(
-            r#"
-            SELECT COUNT(*) FROM agents
-            WHERE tenant_id = $1
-              AND status = 'Active'
-              AND delegation_id IS NOT NULL
-              AND CASE max_decision_class
-                  WHEN 'Routine' THEN 0
-                  WHEN 'Operational' THEN 1
-                  WHEN 'Strategic' THEN 2
-                  WHEN 'Constitutional' THEN 3
-                  ELSE -1
-              END >= $2
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(decision_class_rank(decision_class))
-        .fetch_one(pool)
-        .await?,
+        row.try_get::<i64, _>("active_delegated_agents")?,
     )?;
     let eligible_voters = active_human_users
         .checked_add(active_delegated_agents)
@@ -713,6 +723,24 @@ pub async fn count_quorum_eligible_voters(
         eligible_voters,
         eligible_human_voters: active_human_users,
     })
+}
+
+/// Count quorum-eligible voters for a tenant and decision class.
+pub async fn count_quorum_eligible_voters(
+    pool: &PgPool,
+    tenant_id: &str,
+    decision_class: DecisionClass,
+) -> Result<QuorumEligibilityCounts, sqlx::Error> {
+    count_quorum_eligible_voters_with_executor(pool, tenant_id, decision_class).await
+}
+
+/// Count quorum-eligible voters using the caller's open transaction.
+pub async fn count_quorum_eligible_voters_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: &str,
+    decision_class: DecisionClass,
+) -> Result<QuorumEligibilityCounts, sqlx::Error> {
+    count_quorum_eligible_voters_with_executor(&mut **tx, tenant_id, decision_class).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1979,9 +2007,11 @@ mod tests {
     }
 
     fn function_source<'a>(source: &'a str, name: &str) -> &'a str {
-        let signature = format!("pub async fn {name}");
+        let public_signature = format!("pub async fn {name}");
+        let private_signature = format!("async fn {name}");
         let start = source
-            .find(&signature)
+            .find(&public_signature)
+            .or_else(|| source.find(&private_signature))
             .unwrap_or_else(|| panic!("{name} source must be present"));
         let after_start = &source[start..];
         let end = after_start.find("\n/// ").unwrap_or(after_start.len());
@@ -3053,7 +3083,7 @@ mod tests {
     #[test]
     fn quorum_eligibility_counts_are_tenant_scoped_and_human_bounded() {
         let source = production_source();
-        let count = function_source(source, "count_quorum_eligible_voters");
+        let count = function_source(source, "count_quorum_eligible_voters_with_executor");
 
         assert!(
             count.contains("tenant_id: &str"),

@@ -723,9 +723,12 @@ pub async fn vote_handler(
     // Verify quorum precondition (TNC-07): enough tenant-scoped eligible
     // voters must exist before accepting the vote.
     let registry = QuorumRegistry::with_defaults();
-    let eligible = match state
-        .quorum_eligible_voter_counts(&actor.tenant_id, decision.class)
-        .await
+    let eligible = match crate::db::count_quorum_eligible_voters_in_transaction(
+        &mut tx,
+        &actor.tenant_id,
+        decision.class,
+    )
+    .await
     {
         Ok(counts) => counts,
         Err(e) => {
@@ -1857,9 +1860,12 @@ mod tests {
             .split("// Build the typed Vote")
             .next()
             .expect("vote handler quorum block present");
+        let compact_vote_handler = vote_handler.split_whitespace().collect::<String>();
 
         assert!(
-            vote_handler.contains("quorum_eligible_voter_counts(&actor.tenant_id, decision.class)"),
+            compact_vote_handler.contains(
+                "count_quorum_eligible_voters_in_transaction(&muttx,&actor.tenant_id,decision.class,)"
+            ),
             "vote handler must derive quorum eligibility from the authenticated tenant and decision class"
         );
         assert!(
@@ -1877,6 +1883,34 @@ mod tests {
         assert!(
             !vote_handler.contains("let eligible_human_voters = eligible_voters"),
             "vote handler must not assume every registered DID is a human eligible voter"
+        );
+    }
+
+    #[test]
+    fn vote_handler_quorum_precondition_reuses_vote_transaction_connection() {
+        let source = include_str!("handlers.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker present");
+        let vote_handler = production
+            .split("pub async fn vote_handler")
+            .nth(1)
+            .expect("vote handler source present")
+            .split("// Build the typed Vote")
+            .next()
+            .expect("vote handler quorum block present");
+        let compact_vote_handler = vote_handler.split_whitespace().collect::<String>();
+
+        assert!(
+            compact_vote_handler.contains(
+                "crate::db::count_quorum_eligible_voters_in_transaction(&muttx,&actor.tenant_id,decision.class,)"
+            ),
+            "vote handler must count quorum eligibility on the already-held vote transaction connection"
+        );
+        assert!(
+            !vote_handler.contains(".quorum_eligible_voter_counts("),
+            "vote handler must not acquire a second pooled connection while holding the vote transaction"
         );
     }
 
