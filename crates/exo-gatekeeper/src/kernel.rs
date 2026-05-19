@@ -89,8 +89,9 @@ pub struct AdjudicationContext {
     pub provenance: Option<Provenance>,
     pub quorum_evidence: Option<QuorumEvidence>,
     /// When set, the action is under an active Sybil challenge hold.
-    /// The kernel short-circuits to `Verdict::Escalated` before running
-    /// invariant checks — the action is paused (not denied) pending review.
+    /// The kernel can pause otherwise valid or reviewable authority/quorum
+    /// cases as `Verdict::Escalated`, but final constitutional denials still
+    /// win after invariant checks run.
     /// Populate from `ContestHold::escalation_reason()` in exo-escalation.
     pub active_challenge_reason: Option<String>,
 }
@@ -117,14 +118,6 @@ impl Kernel {
     }
 
     pub fn adjudicate(&self, action: &ActionRequest, context: &AdjudicationContext) -> Verdict {
-        // Short-circuit: an active Sybil challenge hold pauses the action
-        // (Escalated, not Denied) so it can be reviewed rather than blocked.
-        if let Some(ref reason) = context.active_challenge_reason {
-            return Verdict::Escalated {
-                reason: reason.clone(),
-            };
-        }
-
         let inv_ctx = InvariantContext {
             actor: action.actor.clone(),
             actor_roles: context.actor_roles.clone(),
@@ -143,19 +136,21 @@ impl Kernel {
         };
 
         match enforce_all(&self.invariant_engine, &inv_ctx) {
-            Ok(()) => Verdict::Permitted,
+            Ok(()) => match &context.active_challenge_reason {
+                Some(reason) => Verdict::Escalated {
+                    reason: reason.clone(),
+                },
+                None => Verdict::Permitted,
+            },
             Err(violations) => {
-                let needs_escalation = violations.iter().any(|v| {
-                    v.invariant == ConstitutionalInvariant::QuorumLegitimate
-                        || v.invariant == ConstitutionalInvariant::AuthorityChainValid
-                });
-                if needs_escalation && violations.len() == 1 {
-                    Verdict::Escalated {
-                        reason: violations[0].description.clone(),
+                if let Some(reason) = &context.active_challenge_reason {
+                    if violations.iter().all(is_challenge_pause_eligible) {
+                        return Verdict::Escalated {
+                            reason: reason.clone(),
+                        };
                     }
-                } else {
-                    Verdict::Denied { violations }
                 }
+                verdict_for_violations(violations)
             }
         }
     }
@@ -172,6 +167,24 @@ impl Kernel {
     #[must_use]
     pub fn invariant_engine(&self) -> &InvariantEngine {
         &self.invariant_engine
+    }
+}
+
+fn is_challenge_pause_eligible(violation: &InvariantViolation) -> bool {
+    matches!(
+        violation.invariant,
+        ConstitutionalInvariant::QuorumLegitimate | ConstitutionalInvariant::AuthorityChainValid
+    )
+}
+
+fn verdict_for_violations(violations: Vec<InvariantViolation>) -> Verdict {
+    let needs_escalation = violations.iter().any(is_challenge_pause_eligible);
+    if needs_escalation && violations.len() == 1 {
+        Verdict::Escalated {
+            reason: violations[0].description.clone(),
+        }
+    } else {
+        Verdict::Denied { violations }
     }
 }
 
@@ -688,14 +701,14 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // WO-005: Challenge paths — contested actions return Escalated, not Denied
-    // CR-001 §8.5 — any active Sybil challenge hold pauses the action.
+    // WO-005: Challenge paths — active Sybil holds pause reviewable actions
+    // without suppressing final constitutional denials.
     // -----------------------------------------------------------------------
     mod challenge_paths {
         use super::*;
 
-        /// WO-005: An action under an active Sybil challenge returns
-        /// Verdict::Escalated so it is paused (not denied) pending review.
+        /// WO-005: An otherwise valid action under an active Sybil challenge
+        /// returns Verdict::Escalated so it is paused pending review.
         #[test]
         fn active_challenge_escalates_not_denies() {
             let kernel = test_kernel();
@@ -731,21 +744,70 @@ mod tests {
             );
         }
 
-        /// WO-005: Challenge escalation takes priority over invariant checks —
-        /// even an otherwise-denied action is escalated (not denied) while
-        /// the challenge is pending.
+        /// WO-005: Challenge escalation can pause reviewable authority-chain
+        /// failures while the challenge is pending.
         #[test]
-        fn challenge_takes_priority_over_denial() {
+        fn challenge_can_pause_authority_chain_review() {
             let kernel = test_kernel();
             let actor = did("did:exo:actor1");
             let mut ctx = valid_context(&actor);
-            // Would normally be denied (ConsentRequired: BailmentState::None)
-            ctx.bailment_state = BailmentState::None;
+            ctx.authority_chain = AuthorityChain::default();
             ctx.active_challenge_reason =
                 Some("SybilChallenge/QuorumContamination: pause-eligible".into());
             match kernel.adjudicate(&valid_action(&actor), &ctx) {
                 Verdict::Escalated { .. } => {}
-                other => panic!("WO-005: challenge must pre-empt denial, got {:?}", other),
+                other => panic!(
+                    "WO-005: challenge must pause authority review, got {:?}",
+                    other
+                ),
+            }
+        }
+
+        /// Challenge holds must not suppress final constitutional denials.
+        #[test]
+        fn challenge_does_not_override_kernel_modification_denial() {
+            let kernel = test_kernel();
+            let actor = did("did:exo:actor1");
+            let mut action = valid_action(&actor);
+            action.modifies_kernel = true;
+            let mut ctx = valid_context(&actor);
+            ctx.active_challenge_reason =
+                Some("SybilChallenge/KernelPatch: action under review".into());
+            match kernel.adjudicate(&action, &ctx) {
+                Verdict::Denied { violations } => assert!(
+                    violations
+                        .iter()
+                        .any(|v| v.invariant == ConstitutionalInvariant::KernelImmutability),
+                    "kernel modification denial must be preserved: {violations:?}"
+                ),
+                other => panic!(
+                    "WO-005: challenge must not suppress KernelImmutability denial, got {:?}",
+                    other
+                ),
+            }
+        }
+
+        /// Human override suppression is a final denial even when another
+        /// challenge is active.
+        #[test]
+        fn challenge_does_not_override_human_override_denial() {
+            let kernel = test_kernel();
+            let actor = did("did:exo:actor1");
+            let mut ctx = valid_context(&actor);
+            ctx.human_override_preserved = false;
+            ctx.active_challenge_reason =
+                Some("SybilChallenge/HumanOverride: action under review".into());
+            match kernel.adjudicate(&valid_action(&actor), &ctx) {
+                Verdict::Denied { violations } => assert!(
+                    violations
+                        .iter()
+                        .any(|v| v.invariant == ConstitutionalInvariant::HumanOverride),
+                    "human override denial must be preserved: {violations:?}"
+                ),
+                other => panic!(
+                    "WO-005: challenge must not suppress HumanOverride denial, got {:?}",
+                    other
+                ),
             }
         }
     }
