@@ -17,6 +17,7 @@
 'use client';
 
 import { FormEvent, useState } from 'react';
+import { CONTACT_FIELD_LIMITS, CONTACT_HONEYPOT_FIELD } from '@/lib/contact-intake-policy';
 
 type SubmitStatus = { type: 'idle' | 'success' | 'error'; message: string };
 
@@ -42,6 +43,7 @@ export function ContactForm() {
           organization: formData.get('organization'),
           role: formData.get('role'),
           intendedUse: formData.get('intendedUse'),
+          [CONTACT_HONEYPOT_FIELD]: formData.get(CONTACT_HONEYPOT_FIELD),
         }),
       });
 
@@ -70,6 +72,7 @@ export function ContactForm() {
           <input
             name="name"
             className="mt-1 w-full border hairline rounded-sm px-3 py-2 bg-transparent"
+            maxLength={CONTACT_FIELD_LIMITS.name}
             required
           />
         </label>
@@ -79,6 +82,7 @@ export function ContactForm() {
             name="email"
             className="mt-1 w-full border hairline rounded-sm px-3 py-2 bg-transparent"
             type="email"
+            maxLength={CONTACT_FIELD_LIMITS.email}
             required
           />
         </label>
@@ -88,6 +92,7 @@ export function ContactForm() {
         <input
           name="organization"
           className="mt-1 w-full border hairline rounded-sm px-3 py-2 bg-transparent"
+          maxLength={CONTACT_FIELD_LIMITS.organization}
         />
       </label>
       <label className="block">
@@ -109,8 +114,18 @@ export function ContactForm() {
         <textarea
           name="intendedUse"
           className="mt-1 w-full border hairline rounded-sm px-3 py-2 bg-transparent min-h-[120px]"
+          maxLength={CONTACT_FIELD_LIMITS.intendedUse}
         />
       </label>
+      <input
+        aria-hidden="true"
+        autoComplete="off"
+        className="hidden"
+        maxLength={CONTACT_FIELD_LIMITS.organization}
+        name={CONTACT_HONEYPOT_FIELD}
+        tabIndex={-1}
+        type="text"
+      />
       <button
         type="submit"
         disabled={isSubmitting}

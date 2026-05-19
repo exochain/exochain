@@ -16,17 +16,17 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import {
+  CONTACT_BODY_MAX_BYTES,
+  getContactRateLimitBuckets,
+  normalizeClientAddress,
+  type ContactPayload,
+  validateContactPayload,
+} from '@/lib/contact-intake-policy';
+import {
+  assertContactSubmissionRateLimit,
   createContactSubmission,
   updateContactSubmissionNotification,
 } from '@/lib/contact-submissions';
-
-type ContactPayload = {
-  name: string;
-  email: string;
-  organization?: string;
-  role?: string;
-  intendedUse?: string;
-};
 
 type EmailConfig = {
   apiKey: string;
@@ -36,6 +36,7 @@ type EmailConfig = {
 
 const RESEND_API_KEY_PREFIX = 're_';
 const CONTACT_QUEUE_ERROR = 'Unable to queue inquiry right now.';
+const CONTACT_RATE_LIMIT_ERROR = 'Too many inquiries. Please try again later.';
 
 export const runtime = 'nodejs';
 
@@ -69,16 +70,6 @@ function getEmailConfig(): EmailConfig | null {
     apiKey,
     toEmail: clean(process.env.CONTACT_TO_EMAIL) || 'support@exochain.io',
     fromEmail: clean(process.env.CONTACT_FROM_EMAIL) || 'support@exochain.io',
-  };
-}
-
-function getPayload(data: Record<string, unknown>): ContactPayload {
-  return {
-    name: clean(data.name),
-    email: clean(data.email),
-    organization: clean(data.organization),
-    role: clean(data.role),
-    intendedUse: clean(data.intendedUse),
   };
 }
 
@@ -146,17 +137,48 @@ async function notifySupport(
 export async function POST(request: NextRequest): Promise<NextResponse> {
   let incoming: ContactPayload;
   try {
-    const body = await request.json();
-    if (typeof body !== 'object' || body === null) {
+    const contentLength = Number(request.headers.get('content-length') || '0');
+    if (Number.isFinite(contentLength) && contentLength > CONTACT_BODY_MAX_BYTES) {
+      return NextResponse.json({ error: 'Payload is too large.' }, { status: 413 });
+    }
+
+    const rawBody = await request.text();
+    if (Buffer.byteLength(rawBody, 'utf8') > CONTACT_BODY_MAX_BYTES) {
+      return NextResponse.json({ error: 'Payload is too large.' }, { status: 413 });
+    }
+
+    const body = JSON.parse(rawBody) as unknown;
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
       return NextResponse.json({ error: 'Invalid payload.' }, { status: 400 });
     }
-    incoming = getPayload(body as Record<string, unknown>);
+    const validation = validateContactPayload(body as Record<string, unknown>);
+    if (!validation.ok) {
+      return NextResponse.json({ error: validation.error }, { status: validation.status });
+    }
+    if (!validation.deliver) {
+      return NextResponse.json({ ok: true });
+    }
+    incoming = validation.payload;
   } catch {
     return NextResponse.json({ error: 'Invalid payload format.' }, { status: 400 });
   }
 
-  if (!incoming.name || !incoming.email) {
-    return NextResponse.json({ error: 'Name and email are required.' }, { status: 400 });
+  const clientAddress = normalizeClientAddress(
+    request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip'),
+  );
+  try {
+    const withinRateLimit = await assertContactSubmissionRateLimit(
+      getContactRateLimitBuckets({
+        email: incoming.email,
+        clientAddress,
+      }),
+    );
+    if (!withinRateLimit) {
+      return NextResponse.json({ error: CONTACT_RATE_LIMIT_ERROR }, { status: 429 });
+    }
+  } catch (error) {
+    console.error('Contact form rate-limit check failed.', { error });
+    return NextResponse.json({ error: CONTACT_QUEUE_ERROR }, { status: 503 });
   }
 
   let submissionId: string;
@@ -168,7 +190,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       role: incoming.role || '',
       intendedUse: incoming.intendedUse || '',
       userAgent: clean(request.headers.get('user-agent')),
-      forwardedFor: clean(request.headers.get('x-forwarded-for')),
+      forwardedFor: clientAddress,
     });
     submissionId = submission.id;
   } catch (error) {

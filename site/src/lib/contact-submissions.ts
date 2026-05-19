@@ -15,6 +15,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Pool, type PoolClient } from 'pg';
+import type { ContactRateLimitBucket } from './contact-intake-policy';
 
 export type ContactSubmissionInput = {
   name: string;
@@ -45,6 +46,10 @@ type ContactSubmissionRow = {
   forwarded_for: string;
   notification_status: string;
   notification_error: string;
+};
+
+type ContactRateLimitRow = {
+  request_count: number | string;
 };
 
 type ContactSubmissionPoolGlobal = typeof globalThis & {
@@ -142,6 +147,19 @@ async function ensureSchemaWithClient(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS site_contact_submissions_email_idx
       ON site_contact_submissions (email)
   `);
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS site_contact_rate_limits (
+      bucket TEXT PRIMARY KEY,
+      window_started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      request_count INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS site_contact_rate_limits_window_idx
+      ON site_contact_rate_limits (window_started_at)
+  `);
 }
 
 export async function ensureContactSubmissionSchema(): Promise<void> {
@@ -208,6 +226,58 @@ export async function createContactSubmission(
   }
 
   return fromRow(row);
+}
+
+async function incrementContactRateLimit(
+  bucket: ContactRateLimitBucket,
+): Promise<number> {
+  await ensureContactSubmissionSchema();
+
+  const result = await getPool().query<ContactRateLimitRow>(
+    `
+      INSERT INTO site_contact_rate_limits (
+        bucket,
+        window_started_at,
+        request_count
+      )
+      VALUES ($1, CURRENT_TIMESTAMP, 1)
+      ON CONFLICT (bucket) DO UPDATE
+      SET window_started_at = CASE
+            WHEN site_contact_rate_limits.window_started_at <=
+              CURRENT_TIMESTAMP - ($2::integer * INTERVAL '1 second')
+            THEN CURRENT_TIMESTAMP
+            ELSE site_contact_rate_limits.window_started_at
+          END,
+          request_count = CASE
+            WHEN site_contact_rate_limits.window_started_at <=
+              CURRENT_TIMESTAMP - ($2::integer * INTERVAL '1 second')
+            THEN 1
+            ELSE site_contact_rate_limits.request_count + 1
+          END
+      RETURNING request_count
+    `,
+    [bucket.bucket, bucket.windowSeconds],
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error('Contact rate-limit update did not return a row.');
+  }
+
+  return Number(row.request_count);
+}
+
+export async function assertContactSubmissionRateLimit(
+  buckets: ContactRateLimitBucket[],
+): Promise<boolean> {
+  for (const bucket of buckets) {
+    const requestCount = await incrementContactRateLimit(bucket);
+    if (requestCount > bucket.maxRequests) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 export async function updateContactSubmissionNotification(

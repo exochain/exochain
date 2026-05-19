@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "security:contact-intake": "node scripts/test-contact-intake-policy.mjs",
     "security:contact-disclosure": "node scripts/assert-no-contact-submission-disclosure.mjs"
   },
   "dependencies": {
