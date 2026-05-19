@@ -16,7 +16,7 @@
 
 //! PostgreSQL persistence layer for EXOCHAIN decision.forum.
 //!
-//! Replaces in-memory AppState Vecs/HashMaps with real database operations.
+//! Replaces in-memory AppState vectors and maps with real database operations.
 //! Complex governance objects (DecisionObject, Delegation) are stored as
 //! JSONB payloads with indexed scalar columns for efficient queries.
 
@@ -990,9 +990,13 @@ pub async fn list_blocking_conflict_declaration_payloads_for_recusal_db(
         .collect::<Vec<String>>();
     let row = sqlx::query(
         "SELECT payload FROM conflict_declarations
-         WHERE declarant_did = $1
-           AND related_dids ?| $2
-           AND nature LIKE ANY($3)
+         WHERE payload->>'declarant_did' = $1
+           AND EXISTS (
+               SELECT 1
+               FROM jsonb_array_elements_text(payload->'related_dids') AS related_did(value)
+               WHERE related_did.value = ANY($2)
+           )
+           AND payload->>'nature' LIKE ANY($3)
          ORDER BY timestamp_physical_ms, timestamp_logical, id_hash
          LIMIT 1",
     )
@@ -2170,12 +2174,12 @@ mod tests {
         );
 
         assert!(
-            recusal_lookup.contains("related_dids ?|"),
-            "recusal enforcement must scope the DB lookup to affected DIDs"
+            recusal_lookup.contains("jsonb_array_elements_text(payload->'related_dids')"),
+            "recusal enforcement must scope the DB lookup to affected DIDs in the canonical payload"
         );
         assert!(
-            recusal_lookup.contains("nature LIKE ANY"),
-            "recusal enforcement must query only blocking conflict natures"
+            recusal_lookup.contains("payload->>'nature' LIKE ANY"),
+            "recusal enforcement must query only blocking conflict natures in the canonical payload"
         );
         assert!(
             recusal_lookup.contains("LIMIT 1"),
@@ -2184,6 +2188,36 @@ mod tests {
         assert!(
             !recusal_lookup.contains("MAX_DB_LIST_ROWS"),
             "vote recusal enforcement must not reuse the UI/list cap"
+        );
+    }
+
+    #[test]
+    fn conflict_recusal_lookup_uses_canonical_payload_fields_not_shadowable_scalars() {
+        let source = production_source();
+        let recusal_lookup = function_source(
+            source,
+            "list_blocking_conflict_declaration_payloads_for_recusal_db",
+        );
+
+        assert!(
+            recusal_lookup.contains("payload->>'declarant_did' = $1"),
+            "recusal lookup must bind declarant matching to the canonical payload"
+        );
+        assert!(
+            recusal_lookup.contains("jsonb_array_elements_text(payload->'related_dids')"),
+            "recusal lookup must bind related DID matching to the canonical payload"
+        );
+        assert!(
+            recusal_lookup.contains("payload->>'nature' LIKE ANY($3)"),
+            "recusal lookup must bind blocking nature matching to the canonical payload"
+        );
+        assert!(
+            !recusal_lookup.contains("related_dids ?|"),
+            "shadowable scalar related_dids must not decide vote recusal"
+        );
+        assert!(
+            !recusal_lookup.contains("AND nature LIKE ANY"),
+            "shadowable scalar nature must not decide vote recusal"
         );
     }
 
@@ -2282,6 +2316,99 @@ mod tests {
             .execute(&pool)
             .await
             .expect("clean recusal cap fixture after test");
+    }
+
+    #[tokio::test]
+    async fn conflict_recusal_lookup_ignores_scalar_shadow_rows() {
+        let Some(pool) = gateway_test_pool().await else {
+            return;
+        };
+        let actor = Did::new("did:exo:recusal-shadow-voter").expect("valid DID");
+        let unrelated = Did::new("did:exo:recusal-shadow-unrelated").expect("valid DID");
+        let affected = Did::new("did:exo:recusal-shadow-affected").expect("valid DID");
+        sqlx::query("DELETE FROM conflict_declarations WHERE declarant_did = $1")
+            .bind(actor.as_str())
+            .execute(&pool)
+            .await
+            .expect("clean recusal shadow fixture before test");
+
+        sqlx::query(
+            "INSERT INTO conflict_declarations (id_hash, declarant_did, nature, related_dids, timestamp_physical_ms, timestamp_logical, payload) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind("recusal-shadow-scalar-blocking")
+        .bind(actor.as_str())
+        .bind("financial ownership")
+        .bind(serde_json::json!([affected.as_str()]))
+        .bind(30_000_i64)
+        .bind(0_i32)
+        .bind(serde_json::json!({
+            "declarant_did": actor.as_str(),
+            "nature": "advisory",
+            "related_dids": [unrelated.as_str()],
+            "timestamp": {
+                "physical_ms": 30_000,
+                "logical": 0
+            }
+        }))
+        .execute(&pool)
+        .await
+        .expect("insert scalar shadow conflict declaration");
+
+        sqlx::query(
+            "INSERT INTO conflict_declarations (id_hash, declarant_did, nature, related_dids, timestamp_physical_ms, timestamp_logical, payload) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind("recusal-shadow-canonical-blocking")
+        .bind(actor.as_str())
+        .bind("financial ownership")
+        .bind(serde_json::json!([affected.as_str()]))
+        .bind(30_001_i64)
+        .bind(0_i32)
+        .bind(serde_json::json!({
+            "declarant_did": actor.as_str(),
+            "nature": "financial ownership",
+            "related_dids": [affected.as_str()],
+            "timestamp": {
+                "physical_ms": 30_001,
+                "logical": 0
+            }
+        }))
+        .execute(&pool)
+        .await
+        .expect("insert canonical blocking conflict declaration");
+
+        let affected_did_strings = vec![affected.as_str().to_owned()];
+        let payloads = list_blocking_conflict_declaration_payloads_for_recusal_db(
+            &pool,
+            actor.as_str(),
+            &affected_did_strings,
+        )
+        .await
+        .expect("load conflict declarations");
+        let declarations = payloads
+            .into_iter()
+            .map(serde_json::from_value)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("decode conflict declarations");
+        let action = ActionRequest {
+            action_id: "recusal-shadow-decision".to_owned(),
+            actor_did: actor.clone(),
+            affected_dids: vec![affected],
+            description: "vote on affected decision".to_owned(),
+        };
+        let conflicts = check_conflicts(&actor, &action, &declarations);
+
+        assert!(
+            check_and_block(&actor, &conflicts).is_err(),
+            "recusal enforcement must ignore scalar shadow rows and see canonical blocking payloads"
+        );
+
+        sqlx::query("DELETE FROM conflict_declarations WHERE declarant_did = $1")
+            .bind(actor.as_str())
+            .execute(&pool)
+            .await
+            .expect("clean recusal shadow fixture after test");
     }
 
     #[test]
