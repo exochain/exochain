@@ -147,11 +147,12 @@ async fn read_bounded_response_body(
         .content_length()
         .map_or(0, |len| u64_to_usize_cap(len, max));
     let mut body = Vec::with_capacity(initial_capacity);
-    while let Some(chunk) = resp
-        .chunk()
-        .await
-        .map_err(|error| TelegramUpdateParseError::Body(error.to_string()))?
-    {
+    while let Some(chunk) = resp.chunk().await.map_err(|error| {
+        TelegramUpdateParseError::Body(describe_telegram_transport_error(
+            "update body read",
+            &error,
+        ))
+    })? {
         let next_len = usize_to_u64_saturating(body.len())
             .saturating_add(usize_to_u64_saturating(chunk.len()));
         if next_len > max_u64 {
@@ -190,6 +191,63 @@ fn parse_updates_response(bytes: &[u8]) -> Result<Vec<Update>, TelegramUpdatePar
     }
 
     parsed.result.ok_or(TelegramUpdateParseError::MissingResult)
+}
+
+fn redact_telegram_bot_token_urls(input: &str) -> String {
+    const TOKEN_URL_PREFIX: &str = "https://api.telegram.org/bot";
+
+    let mut output = String::with_capacity(input.len());
+    let mut remaining = input;
+    while let Some(prefix_index) = remaining.find(TOKEN_URL_PREFIX) {
+        output.push_str(&remaining[..prefix_index]);
+        output.push_str(TOKEN_URL_PREFIX);
+        output.push_str("<redacted>");
+
+        let after_prefix = &remaining[prefix_index + TOKEN_URL_PREFIX.len()..];
+        let Some(method_separator_index) = after_prefix.find('/') else {
+            remaining = "";
+            break;
+        };
+        remaining = &after_prefix[method_separator_index..];
+    }
+    output.push_str(remaining);
+    output
+}
+
+fn telegram_transport_error_kind(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect"
+    } else if error.is_body() {
+        "body"
+    } else if error.is_decode() {
+        "decode"
+    } else if error.is_request() {
+        "request"
+    } else if error.is_status() {
+        "status"
+    } else {
+        "transport"
+    }
+}
+
+fn describe_telegram_transport_error(operation: &'static str, error: &reqwest::Error) -> String {
+    let mut message = format!(
+        "telegram {operation} failed: {}",
+        telegram_transport_error_kind(error)
+    );
+    if let Some(status) = error.status() {
+        message.push_str("; status ");
+        message.push_str(status.as_str());
+    }
+
+    let detail = redact_telegram_bot_token_urls(&error.to_string());
+    if !detail.is_empty() {
+        message.push_str("; detail: ");
+        message.push_str(&detail);
+    }
+    message
 }
 
 #[derive(Debug, Deserialize)]
@@ -348,7 +406,7 @@ impl Adjutant {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("telegram send: {e}"))?;
+            .map_err(|e| describe_telegram_transport_error("send", &e))?;
 
         Ok(())
     }
@@ -376,7 +434,7 @@ impl Adjutant {
 
         let resp = match self.client.get(url.as_str()).send().await {
             Ok(r) => r,
-            Err(e) => return Err(format!("telegram poll failed: {e}")),
+            Err(e) => return Err(describe_telegram_transport_error("poll", &e)),
         };
 
         let bytes = match read_telegram_update_body(resp).await {
@@ -406,7 +464,8 @@ impl Adjutant {
             .send()
             .await
         {
-            tracing::debug!(err = %e, "Telegram callback acknowledgement failed");
+            let error = describe_telegram_transport_error("callback acknowledgement", &e);
+            tracing::debug!(err = %error, "Telegram callback acknowledgement failed");
         }
     }
 
@@ -1478,6 +1537,43 @@ mod tests {
         assert!(api_url_source.contains("-> Zeroizing<String>"));
         assert!(api_url_source.contains("Zeroizing::new(format!("));
         assert!(api_url_source.contains("self.config.bot_token.as_str()"));
+    }
+
+    #[test]
+    fn telegram_transport_errors_do_not_log_reqwest_display_with_token_url() {
+        let source = include_str!("telegram.rs");
+        let production = source
+            .split("// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .unwrap();
+
+        for forbidden in [
+            "format!(\"telegram send: {e}\")",
+            "format!(\"telegram poll failed: {e}\")",
+            "TelegramUpdateParseError::Body(error.to_string())",
+            "tracing::debug!(err = %e, \"Telegram callback acknowledgement failed\")",
+        ] {
+            assert!(
+                !production.contains(forbidden),
+                "Telegram transport logging must not format reqwest::Error directly because it can include the bot-token URL: {forbidden}"
+            );
+        }
+        assert!(
+            production.contains("describe_telegram_transport_error"),
+            "Telegram token-bearing request failures must go through a redacted transport-error helper"
+        );
+    }
+
+    #[test]
+    fn telegram_bot_token_url_redaction_removes_token_from_transport_details() {
+        let error = "request failed for https://api.telegram.org/bot123456:secret-token/sendMessage?x=1 and https://api.telegram.org/botabcdef/getUpdates";
+
+        let redacted = redact_telegram_bot_token_urls(error);
+
+        assert!(redacted.contains("https://api.telegram.org/bot<redacted>/sendMessage?x=1"));
+        assert!(redacted.contains("https://api.telegram.org/bot<redacted>/getUpdates"));
+        assert!(!redacted.contains("123456:secret-token"));
+        assert!(!redacted.contains("botabcdef/getUpdates"));
     }
 
     #[test]
