@@ -69,6 +69,110 @@ const STANDARD_BCTS_FLOW = [
   'CLOSED'
 ];
 
+const BCTS_REQUIRED_GATE_TRANSITIONS = [
+  {
+    currentState: 'IDENTITY_REQUIRED',
+    nextState: 'IDENTITY_VERIFIED',
+    nodeTypes: ['identity-verify']
+  },
+  {
+    currentState: 'AUTHORITY_CHECK',
+    nextState: 'AUTHORIZED',
+    nodeTypes: ['authority-check']
+  },
+  {
+    currentState: 'AUTHORIZED',
+    nextState: 'CONSENT_PHASE',
+    nodeTypes: ['consent-request']
+  },
+  {
+    currentState: 'CONSENT_PHASE',
+    nextState: 'CONSENT_VERIFIED',
+    nodeTypes: ['consent-verify']
+  },
+  {
+    currentState: 'CONSENT_VERIFIED',
+    nextState: 'GOVERNANCE_REVIEW',
+    nodeTypes: ['governance-propose']
+  },
+  {
+    currentState: 'GOVERNANCE_REVIEW',
+    nextState: 'GOVERNANCE_PASSED',
+    nodeTypes: ['governance-vote']
+  },
+  {
+    currentState: 'GOVERNANCE_PASSED',
+    nextState: 'EXECUTION_READY',
+    nodeTypes: ['governance-resolve']
+  }
+];
+
+const BCTS_NODE_TRANSITIONS = {
+  'identity-verify': [
+    { currentState: 'IDENTITY_REQUIRED', nextState: 'IDENTITY_VERIFIED' }
+  ],
+  'authority-check': [
+    { currentState: 'AUTHORITY_CHECK', nextState: 'AUTHORIZED' }
+  ],
+  'consent-request': [
+    { currentState: 'AUTHORIZED', nextState: 'CONSENT_PHASE' }
+  ],
+  'consent-verify': [
+    { currentState: 'CONSENT_PHASE', nextState: 'CONSENT_VERIFIED' }
+  ],
+  'governance-propose': [
+    { currentState: 'CONSENT_VERIFIED', nextState: 'GOVERNANCE_REVIEW' }
+  ],
+  'governance-vote': [
+    { currentState: 'GOVERNANCE_REVIEW', nextState: 'GOVERNANCE_PASSED' }
+  ],
+  'governance-resolve': [
+    { currentState: 'GOVERNANCE_PASSED', nextState: 'EXECUTION_READY' }
+  ],
+  'kernel-adjudicate': [
+    { currentState: 'EXECUTION_READY', nextState: 'EXECUTING' }
+  ],
+  'invariant-check': [
+    { currentState: 'EXECUTION_READY', nextState: 'EXECUTING' }
+  ],
+  'proof-generate': [
+    { currentState: 'EXECUTION_READY', nextState: 'EXECUTING' }
+  ],
+  'proof-verify': [
+    { currentState: 'EXECUTING', nextState: 'COMPLETED' }
+  ],
+  'dag-append': [
+    { currentState: 'COMPLETED', nextState: 'FINALIZED' }
+  ],
+  'escalation-trigger': [
+    { currentState: 'EXECUTION_READY', nextState: 'EXECUTING' }
+  ],
+  'human-override': [
+    { currentState: 'EXECUTING', nextState: 'COMPLETED' }
+  ],
+  'tenant-isolate': [
+    { currentState: 'EXECUTION_READY', nextState: 'EXECUTING' }
+  ],
+  'mcp-enforce': [
+    { currentState: 'EXECUTING', nextState: 'COMPLETED' }
+  ],
+  'combinator-sequence': [
+    { currentState: 'EXECUTION_READY', nextState: 'EXECUTING' }
+  ],
+  'combinator-parallel': [
+    { currentState: 'EXECUTION_READY', nextState: 'EXECUTING' }
+  ],
+  'combinator-choice': [
+    { currentState: 'EXECUTION_READY', nextState: 'EXECUTING' }
+  ],
+  'combinator-guard': [
+    { currentState: 'EXECUTION_READY', nextState: 'EXECUTING' }
+  ],
+  'combinator-transform': [
+    { currentState: 'EXECUTION_READY', nextState: 'EXECUTING' }
+  ]
+};
+
 function isObjectRecord(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -82,37 +186,114 @@ function isNonEmptyString(value) {
  */
 const PROPOSAL_TYPE_MAPPINGS = {
   'governance-amendment': {
-    nodes: ['governance-propose', 'consent-request', 'governance-vote', 'governance-resolve', 'kernel-adjudicate'],
+    nodes: [
+      'identity-verify',
+      'authority-check',
+      'consent-request',
+      'consent-verify',
+      'governance-propose',
+      'governance-vote',
+      'governance-resolve',
+      'kernel-adjudicate'
+    ],
     requiredPanels: ['Governance Panel', 'Consent Panel', 'Kernel Panel'],
     stateFlow: STANDARD_BCTS_FLOW
   },
   'feature-implementation': {
-    nodes: ['governance-propose', 'authority-delegate', 'proof-generate', 'tenant-isolate', 'combinator-sequence'],
+    nodes: [
+      'identity-verify',
+      'authority-check',
+      'consent-request',
+      'consent-verify',
+      'governance-propose',
+      'governance-vote',
+      'governance-resolve',
+      'authority-delegate',
+      'proof-generate',
+      'proof-verify',
+      'tenant-isolate',
+      'combinator-sequence'
+    ],
     requiredPanels: ['Governance Panel', 'Identity Panel', 'Kernel Panel', 'Infrastructure Panel'],
     stateFlow: STANDARD_BCTS_FLOW
   },
   'bug-fix': {
-    nodes: ['governance-propose', 'proof-generate', 'proof-verify', 'combinator-sequence', 'dag-append'],
+    nodes: [
+      'identity-verify',
+      'authority-check',
+      'consent-request',
+      'consent-verify',
+      'governance-propose',
+      'governance-vote',
+      'governance-resolve',
+      'proof-generate',
+      'proof-verify',
+      'combinator-sequence',
+      'dag-append'
+    ],
     requiredPanels: ['Governance Panel', 'Kernel Panel'],
     stateFlow: STANDARD_BCTS_FLOW
   },
   'security-patch': {
-    nodes: ['governance-propose', 'identity-verify', 'proof-generate', 'kernel-adjudicate', 'invariant-check'],
+    nodes: [
+      'identity-verify',
+      'authority-check',
+      'consent-request',
+      'consent-verify',
+      'governance-propose',
+      'governance-vote',
+      'governance-resolve',
+      'proof-generate',
+      'proof-verify',
+      'kernel-adjudicate',
+      'invariant-check'
+    ],
     requiredPanels: ['Governance Panel', 'Identity Panel', 'Kernel Panel'],
     stateFlow: STANDARD_BCTS_FLOW
   },
   'infrastructure-change': {
-    nodes: ['governance-propose', 'authority-check', 'tenant-isolate', 'combinator-parallel', 'mcp-enforce'],
+    nodes: [
+      'identity-verify',
+      'authority-check',
+      'consent-request',
+      'consent-verify',
+      'governance-propose',
+      'governance-vote',
+      'governance-resolve',
+      'tenant-isolate',
+      'combinator-parallel',
+      'mcp-enforce'
+    ],
     requiredPanels: ['Governance Panel', 'Identity Panel', 'Infrastructure Panel', 'AI Panel'],
     stateFlow: STANDARD_BCTS_FLOW
   },
   'escalation-resolution': {
-    nodes: ['escalation-trigger', 'kernel-adjudicate', 'human-override', 'consent-verify'],
+    nodes: [
+      'identity-verify',
+      'authority-check',
+      'consent-request',
+      'consent-verify',
+      'governance-propose',
+      'governance-vote',
+      'governance-resolve',
+      'escalation-trigger',
+      'kernel-adjudicate',
+      'human-override'
+    ],
     requiredPanels: ['Escalation Panel', 'Kernel Panel', 'Executive Panel', 'Consent Panel'],
     stateFlow: STANDARD_BCTS_FLOW
   },
   'access-control-update': {
-    nodes: ['identity-verify', 'authority-delegate', 'consent-request', 'authority-check', 'governance-vote'],
+    nodes: [
+      'identity-verify',
+      'authority-check',
+      'consent-request',
+      'consent-verify',
+      'governance-propose',
+      'governance-vote',
+      'governance-resolve',
+      'authority-delegate'
+    ],
     requiredPanels: ['Identity Panel', 'Governance Panel', 'Consent Panel'],
     stateFlow: STANDARD_BCTS_FLOW
   }
@@ -300,6 +481,9 @@ class SyntaxisCompiler {
           errors.push(`Invalid state transition: ${currentState} -> ${nextState}`);
         }
       }
+      this._validateBctsGateCoverage(workflow, errors);
+      this._validateBctsMappings(workflow, errors);
+      this._validateBctsMappingCoverage(workflow, errors);
     }
 
     return {
@@ -700,13 +884,125 @@ class SyntaxisCompiler {
 
   _mapNodesToBCTS(nodes, stateFlow) {
     const mapping = {};
-    for (let i = 0; i < nodes.length && i < stateFlow.length; i++) {
-      mapping[nodes[i].id] = {
-        currentState: stateFlow[i],
-        nextState: stateFlow[i + 1] || 'COMPLETED'
-      };
+    for (const node of nodes) {
+      const transitions = BCTS_NODE_TRANSITIONS[node.type] || [];
+      const transition = transitions.find(candidate => this._stateFlowIncludesTransition(
+        stateFlow,
+        candidate.currentState,
+        candidate.nextState
+      ));
+      if (transition) {
+        mapping[node.id] = {
+          currentState: transition.currentState,
+          nextState: transition.nextState
+        };
+      }
     }
     return mapping;
+  }
+
+  _validateBctsGateCoverage(workflow, errors) {
+    const nodeTypes = (workflow.nodes || []).map(node => node.type);
+    for (const requirement of BCTS_REQUIRED_GATE_TRANSITIONS) {
+      if (!this._stateFlowIncludesTransition(
+        workflow.stateFlow,
+        requirement.currentState,
+        requirement.nextState
+      )) {
+        continue;
+      }
+      const covered = requirement.nodeTypes.some(nodeType => nodeTypes.includes(nodeType));
+      if (!covered) {
+        errors.push(
+          `Missing BCTS gate node for ${requirement.currentState} -> ${requirement.nextState}: requires ${requirement.nodeTypes.join(' or ')}`
+        );
+      }
+    }
+  }
+
+  _validateBctsMappings(workflow, errors) {
+    const nodesById = Object.create(null);
+    for (const node of workflow.nodes || []) {
+      nodesById[node.id] = node;
+    }
+
+    for (const [nodeId, mapping] of Object.entries(workflow.bctsMappings || {})) {
+      const node = nodesById[nodeId];
+      if (!node) {
+        errors.push(`BCTS mapping references unknown node: ${nodeId}`);
+        continue;
+      }
+      if (!this._stateFlowIncludesTransition(
+        workflow.stateFlow,
+        mapping.currentState,
+        mapping.nextState
+      )) {
+        errors.push(
+          `BCTS mapping for node ${nodeId} references non-workflow transition: ${mapping.currentState} -> ${mapping.nextState}`
+        );
+        continue;
+      }
+      if (!this._nodeTypeCanClaimBctsTransition(
+        node.type,
+        mapping.currentState,
+        mapping.nextState
+      )) {
+        errors.push(
+          `BCTS mapping for node ${nodeId} (${node.type}) cannot claim ${mapping.currentState} -> ${mapping.nextState}`
+        );
+      }
+    }
+  }
+
+  _validateBctsMappingCoverage(workflow, errors) {
+    const nodesById = Object.create(null);
+    for (const node of workflow.nodes || []) {
+      nodesById[node.id] = node;
+    }
+
+    for (const requirement of BCTS_REQUIRED_GATE_TRANSITIONS) {
+      if (!this._stateFlowIncludesTransition(
+        workflow.stateFlow,
+        requirement.currentState,
+        requirement.nextState
+      )) {
+        continue;
+      }
+      const covered = Object.entries(workflow.bctsMappings || {}).some(([nodeId, mapping]) => {
+        const node = nodesById[nodeId];
+        return (
+          node &&
+          requirement.nodeTypes.includes(node.type) &&
+          mapping.currentState === requirement.currentState &&
+          mapping.nextState === requirement.nextState
+        );
+      });
+      if (!covered) {
+        errors.push(
+          `Missing BCTS mapping for ${requirement.currentState} -> ${requirement.nextState}: requires ${requirement.nodeTypes.join(' or ')}`
+        );
+      }
+    }
+  }
+
+  _stateFlowIncludesTransition(stateFlow, currentState, nextState) {
+    if (!Array.isArray(stateFlow)) {
+      return false;
+    }
+    for (let i = 0; i < stateFlow.length - 1; i++) {
+      if (stateFlow[i] === currentState && stateFlow[i + 1] === nextState) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  _nodeTypeCanClaimBctsTransition(nodeType, currentState, nextState) {
+    const transitions = BCTS_NODE_TRANSITIONS[nodeType] || [];
+    return transitions.some(transition => (
+      transition.currentState === currentState &&
+      transition.nextState === nextState
+    ));
   }
 
   _canParallelize(nodes) {

@@ -103,15 +103,49 @@ function delegationLink({ grantorId, granteeId, authority, scope, previousChainH
   };
 }
 
+function bctsReadyInputs(proposalOverrides = {}, verdictOverrides = {}) {
+  const readyProposal = { ...proposal(), ...proposalOverrides };
+  const readyVerdict = { ...verdict(), ...verdictOverrides };
+  const createdAtHlc = readyProposal.createdAtHlc || readyVerdict.createdAtHlc;
+  const nonce = deterministicId('nonce', {
+    createdAtHlc,
+    proposalId: readyProposal.id,
+    verdictId: readyVerdict.id
+  });
+  return {
+    verdict: {
+      ...readyVerdict,
+      identityProof: identityProof(readyProposal.proposer, 'cryptographic', nonce),
+      delegationChain: [
+        delegationLink({
+          grantorId: 'did:exo:root',
+          granteeId: readyProposal.proposer,
+          authority: 'GOVERNANCE_PROPOSER',
+          scope: readyProposal.type
+        })
+      ],
+      consentResponses: {
+        alice: { consent: true },
+        bob: { consent: true },
+        carol: { consent: true },
+        dave: { consent: true },
+        erin: { consent: false }
+      }
+    },
+    proposal: readyProposal
+  };
+}
+
 function run() {
   const compiler = new SyntaxisCompiler();
 
-  const first = compiler.compileSyntaxis(verdict(), proposal());
-  const second = compiler.compileSyntaxis(verdict(), proposal());
+  const governanceInputs = bctsReadyInputs();
+  const first = compiler.compileSyntaxis(governanceInputs.verdict, governanceInputs.proposal);
+  const second = compiler.compileSyntaxis(governanceInputs.verdict, governanceInputs.proposal);
   assert.deepStrictEqual(first, second, 'same Syntaxis inputs must produce identical workflow output');
   assert.deepStrictEqual(
     compiler.validateSyntaxisWorkflow(first),
-    { valid: true, errors: [], nodeCount: 5, dependencyCount: 4 },
+    { valid: true, errors: [], nodeCount: 8, dependencyCount: 7 },
     'compiled Syntaxis workflow must satisfy the BCTS transition validator'
   );
   const missingNodeHlc = JSON.parse(JSON.stringify(first));
@@ -337,16 +371,72 @@ function run() {
     'proof-verify validation must require the proof statement, not just proofId/proofHash'
   );
 
-  const bugFixWorkflow = compiler.compileSyntaxis(verdict(), {
-    ...proposal(),
+  const bugFixInputs = bctsReadyInputs({
     id: 'proposal-bugfix-001',
     type: 'bug-fix',
     proposer: 'ENGINEERING_PANEL'
   });
+  const bugFixWorkflow = compiler.compileSyntaxis(bugFixInputs.verdict, bugFixInputs.proposal);
+  assert.deepStrictEqual(
+    bugFixWorkflow.nodes.slice(0, 4).map(node => node.type),
+    ['identity-verify', 'authority-check', 'consent-request', 'consent-verify'],
+    'compiled bug-fix workflows must include identity, authority, request, and consent gates before execution nodes'
+  );
   assert.deepStrictEqual(
     compiler.validateSyntaxisWorkflow(bugFixWorkflow),
-    { valid: true, errors: [], nodeCount: 5, dependencyCount: 4 },
-    'compiled bug-fix workflows must satisfy proof node validation'
+    { valid: true, errors: [], nodeCount: 11, dependencyCount: 10 },
+    'compiled bug-fix workflows must satisfy proof and BCTS gate node validation'
+  );
+  const governanceProposalNode = bugFixWorkflow.nodes.find(node => node.type === 'governance-propose');
+  assert.notDeepStrictEqual(
+    bugFixWorkflow.bctsMappings[governanceProposalNode.id],
+    { currentState: 'INITIALIZED', nextState: 'IDENTITY_REQUIRED' },
+    'governance-propose must not be mapped as evidence for the identity BCTS gate'
+  );
+  assert.strictEqual(
+    bugFixWorkflow.bctsMappings[bugFixWorkflow.nodes.find(node => node.type === 'identity-verify').id].nextState,
+    'IDENTITY_VERIFIED',
+    'identity BCTS transition must be bound to the identity-verify node'
+  );
+  const missingGateWorkflow = {
+    ...bugFixWorkflow,
+    nodes: bugFixWorkflow.nodes.filter(node => ![
+      'identity-verify',
+      'authority-check',
+      'consent-request',
+      'consent-verify'
+    ].includes(node.type)),
+    dependencies: {},
+    initialNode: bugFixWorkflow.nodes.find(node => node.type === 'governance-propose').id,
+    bctsMappings: {
+      [governanceProposalNode.id]: {
+        currentState: 'INITIALIZED',
+        nextState: 'IDENTITY_REQUIRED'
+      }
+    }
+  };
+  const missingGateValidation = compiler.validateSyntaxisWorkflow(missingGateWorkflow);
+  assert.strictEqual(
+    missingGateValidation.valid,
+    false,
+    'validation must reject BCTS state flows that claim required gates without gate nodes'
+  );
+  assert.ok(
+    missingGateValidation.errors.some(error => error.includes('Missing BCTS gate node for IDENTITY_REQUIRED -> IDENTITY_VERIFIED')),
+    'validation error must identify the missing identity gate'
+  );
+  const missingMappingValidation = compiler.validateSyntaxisWorkflow({
+    ...bugFixWorkflow,
+    bctsMappings: {}
+  });
+  assert.strictEqual(
+    missingMappingValidation.valid,
+    false,
+    'validation must reject workflows that omit BCTS mappings for required gates'
+  );
+  assert.ok(
+    missingMappingValidation.errors.some(error => error.includes('Missing BCTS mapping for IDENTITY_REQUIRED -> IDENTITY_VERIFIED')),
+    'validation error must identify the missing identity BCTS mapping'
   );
   const proofGenerateNode = bugFixWorkflow.nodes.find(node => node.type === 'proof-generate');
   const proofVerifyNode = bugFixWorkflow.nodes.find(node => node.type === 'proof-verify');
@@ -364,6 +454,23 @@ function run() {
   assert.strictEqual(compiledProofVerification.outputs.verified, true);
 
   const builder = new SolutionsBuilder();
+  for (const templateSummary of builder.listTemplates()) {
+    const template = builder.getTemplate(templateSummary.type);
+    for (const requiredNodeType of [
+      'identity-verify',
+      'authority-check',
+      'consent-request',
+      'consent-verify',
+      'governance-propose',
+      'governance-vote',
+      'governance-resolve'
+    ]) {
+      assert.ok(
+        template.nodeSequence.includes(requiredNodeType),
+        `solution template ${templateSummary.type} must include ${requiredNodeType} before claiming STANDARD_BCTS_FLOW`
+      );
+    }
+  }
   const solutionA = builder.createSolution('security-patch', {
     name: 'Critical Security Patch',
     author: 'SECURITY_TEAM',
@@ -395,6 +502,11 @@ function run() {
     environment: 'PRODUCTION',
     deploymentHlc: DEPLOY_HLC
   });
+  assert.deepStrictEqual(
+    builder.compiler.validateSyntaxisWorkflow(deploymentA.workflow),
+    { valid: true, errors: [], nodeCount: 11, dependencyCount: 10 },
+    'solution deployments must generate workflows with validated BCTS gate evidence'
+  );
   const deploymentB = new SolutionsBuilder().deploySolution(solutionA, {
     path: '/exoforge/deployments',
     environment: 'PRODUCTION',

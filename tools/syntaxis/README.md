@@ -210,16 +210,68 @@ console.log(`Status: ${deployment.status}`);
 ### Compiling from Council Verdict
 
 ```javascript
+const { deterministicId, hashCanonical } = require('./determinism');
+
+const createdAtHlc = { physicalMs: 1700000000000, logical: 0 };
+const nonce = deterministicId('nonce', {
+  createdAtHlc,
+  proposalId: 'proposal_001',
+  verdictId: 'verdict_001'
+});
+const publicKey = 'ed25519-security-public-key';
+const signatureHash = `0x${hashCanonical({
+  authority: 'GOVERNANCE_PROPOSER',
+  granteeId: 'SECURITY_TEAM',
+  grantorId: 'did:exo:root',
+  scope: 'security-patch',
+  signature: 'ed25519-delegation-signature'
+})}`;
+
 // Create council verdict with panel assessments
 const verdict = {
   id: 'verdict_001',
   status: 'APPROVED',
-  affectedPanels: ['Governance Panel', 'Kernel Panel'],
+  affectedPanels: ['Identity Panel', 'Governance Panel', 'Consent Panel', 'Kernel Panel'],
   panelAssessments: {
+    'Identity Panel': 'FOR',
     'Governance Panel': 'FOR',
+    'Consent Panel': 'FOR',
     'Kernel Panel': 'FOR'
   },
-  consentResponses: {},
+  identityProof: {
+    subjectId: 'SECURITY_TEAM',
+    method: 'cryptographic',
+    nonce,
+    publicKey,
+    signature: 'ed25519-identity-signature',
+    proofHash: `0x${hashCanonical({
+      identityId: 'SECURITY_TEAM',
+      method: 'cryptographic',
+      nonce,
+      publicKey
+    })}`
+  },
+  delegationChain: [{
+    grantorId: 'did:exo:root',
+    granteeId: 'SECURITY_TEAM',
+    authority: 'GOVERNANCE_PROPOSER',
+    scope: 'security-patch',
+    signatureHash,
+    chainHash: `0x${hashCanonical({
+      authority: 'GOVERNANCE_PROPOSER',
+      granteeId: 'SECURITY_TEAM',
+      grantorId: 'did:exo:root',
+      previousChainHash: null,
+      scope: 'security-patch',
+      signatureHash
+    })}`
+  }],
+  consentResponses: {
+    'Identity Panel': { consent: true },
+    'Governance Panel': { consent: true },
+    'Consent Panel': { consent: true },
+    'Kernel Panel': { consent: true }
+  },
   systemState: {},
   precedingProposals: []
 };
@@ -234,7 +286,8 @@ const proposal = {
   requiresConsent: true,
   requiredConsentBasisPoints: 8000,
   faultTolerant: true,
-  createdAtHlc
+  createdAtHlc,
+  evidence: [{ hash: 'security-patch-evidence-hash' }]
 };
 
 // Compile to workflow

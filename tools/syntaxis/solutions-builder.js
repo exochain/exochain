@@ -27,10 +27,21 @@ const {
   advanceHlc,
   compareHlc,
   deterministicId,
+  hashCanonical,
   hlcToString,
   normalizeBasisPoints,
   normalizeHlc
 } = require('./determinism');
+
+const REQUIRED_STANDARD_BCTS_NODE_TYPES = [
+  'identity-verify',
+  'authority-check',
+  'consent-request',
+  'consent-verify',
+  'governance-propose',
+  'governance-vote',
+  'governance-resolve'
+];
 
 /**
  * Pre-built solution templates for common workflows
@@ -43,12 +54,13 @@ const SOLUTION_TEMPLATES = {
     category: 'GOVERNANCE',
     nodeSequence: [
       'identity-verify',
+      'authority-check',
       'consent-request',
+      'consent-verify',
       'governance-propose',
       'governance-vote',
       'governance-resolve',
-      'kernel-adjudicate',
-      'dag-append'
+      'kernel-adjudicate'
     ],
     requiredPanels: ['Identity Panel', 'Governance Panel', 'Consent Panel', 'Kernel Panel'],
     stateFlow: STANDARD_BCTS_FLOW,
@@ -74,11 +86,17 @@ const SOLUTION_TEMPLATES = {
     description: 'Template for implementing new features safely with isolation',
     category: 'INFRASTRUCTURE',
     nodeSequence: [
-      'governance-propose',
+      'identity-verify',
       'authority-check',
+      'consent-request',
+      'consent-verify',
+      'governance-propose',
+      'governance-vote',
+      'governance-resolve',
+      'proof-generate',
+      'proof-verify',
       'authority-delegate',
       'tenant-isolate',
-      'proof-generate',
       'combinator-parallel',
       'combinator-sequence',
       'dag-append'
@@ -107,7 +125,13 @@ const SOLUTION_TEMPLATES = {
     description: 'Template for deploying bug fixes with proof verification',
     category: 'MAINTENANCE',
     nodeSequence: [
+      'identity-verify',
+      'authority-check',
+      'consent-request',
+      'consent-verify',
       'governance-propose',
+      'governance-vote',
+      'governance-resolve',
       'proof-generate',
       'proof-verify',
       'invariant-check',
@@ -139,8 +163,13 @@ const SOLUTION_TEMPLATES = {
     category: 'SECURITY',
     nodeSequence: [
       'identity-verify',
-      'escalation-trigger',
+      'authority-check',
+      'consent-request',
+      'consent-verify',
       'governance-propose',
+      'governance-vote',
+      'governance-resolve',
+      'escalation-trigger',
       'kernel-adjudicate',
       'invariant-check',
       'proof-generate',
@@ -173,8 +202,13 @@ const SOLUTION_TEMPLATES = {
     description: 'Template for infrastructure modifications with multi-tenant isolation',
     category: 'INFRASTRUCTURE',
     nodeSequence: [
-      'governance-propose',
+      'identity-verify',
       'authority-check',
+      'consent-request',
+      'consent-verify',
+      'governance-propose',
+      'governance-vote',
+      'governance-resolve',
       'tenant-isolate',
       'mcp-enforce',
       'combinator-parallel',
@@ -209,11 +243,12 @@ const SOLUTION_TEMPLATES = {
     nodeSequence: [
       'identity-verify',
       'authority-check',
-      'authority-delegate',
       'consent-request',
       'consent-verify',
       'governance-propose',
       'governance-vote',
+      'governance-resolve',
+      'authority-delegate',
       'dag-append'
     ],
     requiredPanels: ['Identity Panel', 'Governance Panel', 'Consent Panel', 'Kernel Panel'],
@@ -240,11 +275,16 @@ const SOLUTION_TEMPLATES = {
     description: 'Template for resolving governance disputes through escalation',
     category: 'GOVERNANCE',
     nodeSequence: [
+      'identity-verify',
+      'authority-check',
+      'consent-request',
+      'consent-verify',
+      'governance-propose',
+      'governance-vote',
+      'governance-resolve',
       'escalation-trigger',
       'kernel-adjudicate',
-      'consent-verify',
       'human-override',
-      'governance-resolve',
       'dag-append'
     ],
     requiredPanels: ['Escalation Panel', 'Kernel Panel', 'Executive Panel', 'Consent Panel', 'Governance Panel'],
@@ -541,6 +581,16 @@ class SolutionsBuilder {
       }
     }
 
+    if (this._usesStandardBctsFlow(solution.stateFlow)) {
+      for (const requiredNodeType of REQUIRED_STANDARD_BCTS_NODE_TYPES) {
+        if (!(solution.nodeSequence || []).includes(requiredNodeType)) {
+          errors.push(
+            `STANDARD_BCTS_FLOW solution is missing required gate node: ${requiredNodeType}`
+          );
+        }
+      }
+    }
+
     if (!solution.config || typeof solution.config !== 'object') {
       errors.push('config is required');
     }
@@ -551,22 +601,16 @@ class SolutionsBuilder {
     };
   }
 
+  _usesStandardBctsFlow(stateFlow) {
+    return (
+      Array.isArray(stateFlow) &&
+      stateFlow.length === STANDARD_BCTS_FLOW.length &&
+      stateFlow.every((state, index) => state === STANDARD_BCTS_FLOW[index])
+    );
+  }
+
   _generateWorkflowFromSolution(solution) {
     // Create a minimal council verdict for workflow generation
-    const mockVerdict = {
-      id: `verdict_${solution.solutionId}`,
-      status: 'APPROVED',
-      affectedPanels: solution.requiredPanels,
-      panelAssessments: solution.requiredPanels.reduce((acc, panel) => {
-        acc[panel] = 'FOR';
-        return acc;
-      }, {}),
-      consentResponses: {},
-      systemState: {},
-      precedingProposals: []
-    };
-
-    // Create a proposal object from solution
     const proposal = {
       id: solution.solutionId,
       type: solution.solutionType,
@@ -578,15 +622,96 @@ class SolutionsBuilder {
       faultTolerant: solution.config.faultTolerant,
       rollbackOnFailure: solution.config.rollbackOnFailure,
       maxDuration: solution.config.maxDuration,
+      evidence: [{ hash: deterministicId('solution_evidence', { solutionId: solution.solutionId }) }],
       createdAtHlc: solution.createdAtHlc
     };
     if (Object.prototype.hasOwnProperty.call(solution.config, 'consentThresholdBasisPoints')) {
       proposal.requiredConsentBasisPoints = solution.config.consentThresholdBasisPoints;
     }
 
+    const verdictId = `verdict_${solution.solutionId}`;
+    const nonce = deterministicId('nonce', {
+      createdAtHlc: solution.createdAtHlc,
+      proposalId: proposal.id,
+      verdictId
+    });
+    const mockVerdict = {
+      id: verdictId,
+      status: 'APPROVED',
+      affectedPanels: solution.requiredPanels,
+      panelAssessments: solution.requiredPanels.reduce((acc, panel) => {
+        acc[panel] = 'FOR';
+        return acc;
+      }, {}),
+      identityProof: this._buildIdentityProof(solution.metadata.author, 'cryptographic', nonce),
+      delegationChain: [
+        this._buildDelegationLink({
+          grantorId: 'did:exo:root',
+          granteeId: solution.metadata.author,
+          authority: 'GOVERNANCE_PROPOSER',
+          scope: solution.solutionType
+        })
+      ],
+      consentResponses: this._buildConsentResponses(solution.requiredPanels),
+      systemState: {},
+      precedingProposals: [
+        deterministicId('solution_parent', { solutionId: solution.solutionId })
+      ]
+    };
+
     // Compile workflow
     const workflow = this.compiler.compileSyntaxis(mockVerdict, proposal);
     return workflow;
+  }
+
+  _buildIdentityProof(identityId, method, nonce) {
+    const publicKey = `ed25519-${identityId}-public-key`;
+    return {
+      subjectId: identityId,
+      method,
+      nonce,
+      publicKey,
+      signature: `ed25519-${identityId}-signature`,
+      proofHash: `0x${hashCanonical({
+        identityId,
+        method,
+        nonce,
+        publicKey
+      })}`
+    };
+  }
+
+  _buildDelegationLink({ grantorId, granteeId, authority, scope, previousChainHash = null }) {
+    const signatureHash = `0x${hashCanonical({
+      authority,
+      granteeId,
+      grantorId,
+      scope,
+      signature: 'ed25519-solution-delegation-signature'
+    })}`;
+    return {
+      grantorId,
+      granteeId,
+      authority,
+      scope,
+      signatureHash,
+      chainHash: `0x${hashCanonical({
+        authority,
+        granteeId,
+        grantorId,
+        previousChainHash,
+        scope,
+        signatureHash
+      })}`
+    };
+  }
+
+  _buildConsentResponses(requiredPanels) {
+    const responses = {};
+    for (const panel of requiredPanels) {
+      responses[panel] = { consent: true };
+    }
+    return responses;
   }
 
   _executeDeploymentStages(solution, workflow, deploymentHlc) {

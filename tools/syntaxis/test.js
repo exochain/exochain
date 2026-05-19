@@ -26,11 +26,53 @@ const {
   BCTS_TRANSITIONS,
   BCTS_STATES
 } = require('./index');
+const { deterministicId, hashCanonical } = require('./determinism');
 
 const CREATED_AT_HLC = { physicalMs: 1700000000000, logical: 0 };
 const SECURITY_HLC = { physicalMs: 1700000000000, logical: 1 };
 const INFRA_HLC = { physicalMs: 1700000000000, logical: 2 };
 const DEPLOYMENT_HLC = { physicalMs: 1700000000001, logical: 0 };
+
+function identityProof(identityId, method, nonce, publicKey = 'ed25519-demo-public-key') {
+  return {
+    subjectId: identityId,
+    method,
+    nonce,
+    publicKey,
+    signature: 'ed25519-demo-signature',
+    proofHash: `0x${hashCanonical({
+      identityId,
+      method,
+      nonce,
+      publicKey
+    })}`
+  };
+}
+
+function delegationLink({ grantorId, granteeId, authority, scope, previousChainHash = null }) {
+  const signatureHash = `0x${hashCanonical({
+    authority,
+    granteeId,
+    grantorId,
+    scope,
+    signature: 'ed25519-demo-delegation-signature'
+  })}`;
+  return {
+    grantorId,
+    granteeId,
+    authority,
+    scope,
+    signatureHash,
+    chainHash: `0x${hashCanonical({
+      authority,
+      granteeId,
+      grantorId,
+      previousChainHash,
+      scope,
+      signatureHash
+    })}`
+  };
+}
 
 /**
  * Run all tests
@@ -148,6 +190,29 @@ async function runTests() {
       maxDuration: 604800000,
       createdAtHlc: CREATED_AT_HLC
     };
+    const proofNonce = deterministicId('nonce', {
+      createdAtHlc: CREATED_AT_HLC,
+      proposalId: mockProposal.id,
+      verdictId: mockCouncilVerdict.id
+    });
+    mockCouncilVerdict.identityProof = identityProof(
+      mockProposal.proposer,
+      'cryptographic',
+      proofNonce
+    );
+    mockCouncilVerdict.delegationChain = [
+      delegationLink({
+        grantorId: 'did:exo:root',
+        granteeId: mockProposal.proposer,
+        authority: 'GOVERNANCE_PROPOSER',
+        scope: mockProposal.type
+      })
+    ];
+    mockCouncilVerdict.consentResponses = {
+      'Identity Panel': { consent: true },
+      'Governance Panel': { consent: true },
+      'Consent Panel': { consent: true }
+    };
 
     const workflow = engine.compileSyntaxis(mockCouncilVerdict, mockProposal);
     console.log(`Workflow ID: ${workflow.workflowId}`);
@@ -166,6 +231,7 @@ async function runTests() {
     console.log(`Dependencies: ${validation.dependencyCount}`);
     if (validation.errors.length > 0) {
       console.log('Errors:', validation.errors);
+      throw new Error('Compiled workflow validation failed');
     } else {
       console.log('No validation errors');
     }
