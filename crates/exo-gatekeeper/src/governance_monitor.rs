@@ -21,7 +21,8 @@
 //! monitoring output. Implements three sub-mitigations:
 //!
 //! 1. **Signed attestation verification** — rejects payloads without a valid
-//!    Ed25519 signature over the findings digest (sub-threat T-14a).
+//!    Ed25519 signature over the canonical findings payload digest
+//!    (sub-threat T-14a).
 //! 2. **Circuit breaker** — auto-pauses self-improvement when >3 Critical
 //!    findings are recorded within a 24-hour window (sub-threat T-14c).
 //! 3. **Human approval gate** — requires human-DID (`SignerType 0x01`)
@@ -32,7 +33,11 @@
 
 use std::collections::BTreeMap;
 
-use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto};
+use exo_core::{
+    Did, Hash256, PublicKey, Signature, Timestamp, crypto,
+    hash::{hash_structured, hash256_eq_constant_time},
+};
+use serde::Serialize;
 
 // ---------------------------------------------------------------------------
 // Signed attestation envelope (T-14a)
@@ -40,16 +45,16 @@ use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto};
 
 /// A signed governance health attestation.
 ///
-/// The signature covers the `findings_digest` — a BLAKE3 hash of the
-/// serialized findings array. The signer must be identifiable by their
-/// public key for verification.
+/// The signature covers the `findings_digest`, which must equal the BLAKE3
+/// hash of the canonical findings payload supplied to [`verify_attestation`].
+/// The signer must be identifiable by their public key for verification.
 #[derive(Debug, Clone)]
 pub struct GovernanceAttestation {
     /// DID of the entity that produced this attestation.
     pub signer_did: Did,
     /// BLAKE3 hash of the canonical findings payload.
     pub findings_digest: Hash256,
-    /// Ed25519 signature over `findings_digest.as_bytes()`.
+    /// Ed25519 signature over the canonical findings payload digest.
     pub signature: Signature,
 }
 
@@ -65,6 +70,20 @@ pub enum GovernanceMonitorError {
     InvalidAttestation {
         /// DID of the claimed signer.
         signer_did: Did,
+    },
+
+    /// Attestation digest does not match the supplied findings payload.
+    #[error("attestation findings digest does not match supplied payload for signer {signer_did}")]
+    FindingsDigestMismatch {
+        /// DID of the claimed signer.
+        signer_did: Did,
+    },
+
+    /// Canonical findings payload hashing failed.
+    #[error("governance findings payload hashing failed: {reason}")]
+    FindingsDigestHashFailed {
+        /// Hashing failure reason.
+        reason: String,
     },
 
     /// Circuit breaker has been tripped — too many Critical findings.
@@ -90,6 +109,22 @@ pub enum GovernanceMonitorError {
     ApproverNotHuman,
 }
 
+/// Compute the canonical digest for a governance findings payload.
+///
+/// # Errors
+///
+/// Returns [`GovernanceMonitorError::FindingsDigestHashFailed`] if canonical
+/// CBOR hashing fails.
+pub fn governance_findings_digest<T: Serialize>(
+    findings_payload: &T,
+) -> Result<Hash256, GovernanceMonitorError> {
+    hash_structured(findings_payload).map_err(|err| {
+        GovernanceMonitorError::FindingsDigestHashFailed {
+            reason: err.to_string(),
+        }
+    })
+}
+
 /// Verify the cryptographic attestation on a governance health payload.
 ///
 /// **Security: This MUST be called BEFORE any data is stored or circuit
@@ -100,13 +135,26 @@ pub enum GovernanceMonitorError {
 ///
 /// Returns [`GovernanceMonitorError::MissingAttestation`] if no attestation
 /// is provided, or [`GovernanceMonitorError::InvalidAttestation`] if the
-/// signature does not verify against the signer's public key.
-pub fn verify_attestation(
+/// signature does not verify against the signer's public key. Returns
+/// [`GovernanceMonitorError::FindingsDigestMismatch`] if the attestation was
+/// replayed against a different findings payload.
+pub fn verify_attestation<T: Serialize>(
     attestation: &GovernanceAttestation,
+    findings_payload: &T,
     signer_public_key: &PublicKey,
 ) -> Result<(), GovernanceMonitorError> {
-    let message = attestation.findings_digest.as_bytes();
-    if crypto::verify(message, &attestation.signature, signer_public_key) {
+    let computed_digest = governance_findings_digest(findings_payload)?;
+    if !hash256_eq_constant_time(&attestation.findings_digest, &computed_digest) {
+        return Err(GovernanceMonitorError::FindingsDigestMismatch {
+            signer_did: attestation.signer_did.clone(),
+        });
+    }
+
+    if crypto::verify(
+        computed_digest.as_bytes(),
+        &attestation.signature,
+        signer_public_key,
+    ) {
         Ok(())
     } else {
         Err(GovernanceMonitorError::InvalidAttestation {
@@ -351,25 +399,46 @@ mod tests {
         }
     }
 
+    fn make_attestation_for_findings<T: Serialize>(
+        findings_payload: &T,
+        signer_did: Did,
+        secret: &exo_core::SecretKey,
+    ) -> GovernanceAttestation {
+        let digest = governance_findings_digest(findings_payload).expect("hash findings");
+        make_attestation(digest, signer_did, secret)
+    }
+
     // ── Attestation verification tests ──────────────────────────────────
 
     #[test]
     fn valid_attestation_passes() {
         let (pk, sk) = generate_keypair();
-        let digest = Hash256::digest(b"findings-payload");
-        let attestation = make_attestation(digest, test_did("scanner"), &sk);
+        let findings = serde_json::json!([
+            {
+                "finding_id": "F-1",
+                "severity": "critical",
+                "title": "real finding"
+            }
+        ]);
+        let attestation = make_attestation_for_findings(&findings, test_did("scanner"), &sk);
 
-        assert!(verify_attestation(&attestation, &pk).is_ok());
+        assert!(verify_attestation(&attestation, &findings, &pk).is_ok());
     }
 
     #[test]
     fn wrong_key_attestation_fails() {
         let (_pk, sk) = generate_keypair();
         let (wrong_pk, _) = generate_keypair();
-        let digest = Hash256::digest(b"findings-payload");
-        let attestation = make_attestation(digest, test_did("scanner"), &sk);
+        let findings = serde_json::json!([
+            {
+                "finding_id": "F-1",
+                "severity": "critical",
+                "title": "real finding"
+            }
+        ]);
+        let attestation = make_attestation_for_findings(&findings, test_did("scanner"), &sk);
 
-        let err = verify_attestation(&attestation, &wrong_pk).unwrap_err();
+        let err = verify_attestation(&attestation, &findings, &wrong_pk).unwrap_err();
         assert!(matches!(
             err,
             GovernanceMonitorError::InvalidAttestation { .. }
@@ -379,16 +448,61 @@ mod tests {
     #[test]
     fn tampered_digest_fails() {
         let (pk, sk) = generate_keypair();
-        let digest = Hash256::digest(b"findings-payload");
-        let mut attestation = make_attestation(digest, test_did("scanner"), &sk);
+        let findings = serde_json::json!([
+            {
+                "finding_id": "F-1",
+                "severity": "critical",
+                "title": "real finding"
+            }
+        ]);
+        let mut attestation = make_attestation_for_findings(&findings, test_did("scanner"), &sk);
 
         // Tamper with the digest after signing
-        attestation.findings_digest = Hash256::digest(b"tampered");
+        attestation.findings_digest = governance_findings_digest(&serde_json::json!([
+            {
+                "finding_id": "F-2",
+                "severity": "low",
+                "title": "tampered"
+            }
+        ]))
+        .expect("hash tampered findings");
 
-        let err = verify_attestation(&attestation, &pk).unwrap_err();
+        let err = verify_attestation(&attestation, &findings, &pk).unwrap_err();
         assert!(matches!(
             err,
-            GovernanceMonitorError::InvalidAttestation { .. }
+            GovernanceMonitorError::FindingsDigestMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn replayed_attestation_for_different_findings_payload_fails() {
+        let (pk, sk) = generate_keypair();
+        let signed_findings = serde_json::json!([
+            {
+                "finding_id": "F-1",
+                "severity": "critical",
+                "title": "real finding"
+            }
+        ]);
+        let stored_findings = serde_json::json!([
+            {
+                "finding_id": "F-2",
+                "severity": "low",
+                "title": "replayed payload"
+            }
+        ]);
+        let signed_digest =
+            exo_core::hash::hash_structured(&signed_findings).expect("hash signed findings");
+        let stored_digest =
+            exo_core::hash::hash_structured(&stored_findings).expect("hash stored findings");
+        assert_ne!(signed_digest, stored_digest);
+
+        let attestation = make_attestation(signed_digest, test_did("scanner"), &sk);
+
+        let err = verify_attestation(&attestation, &stored_findings, &pk).unwrap_err();
+        assert!(matches!(
+            err,
+            GovernanceMonitorError::FindingsDigestMismatch { .. }
         ));
     }
 
