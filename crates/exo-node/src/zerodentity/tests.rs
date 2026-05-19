@@ -920,6 +920,48 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
+    async fn submit_claim_uses_node_hlc_for_otp_dispatch_time() {
+        let store = new_shared_store();
+        let app = onboarding_app_with_fixed_clock(store.clone(), API_TEST_NOW_MS);
+        let keypair = test_keypair(132);
+        let did = derived_did(&keypair);
+        let signed_created_ms = API_TEST_NOW_MS + OtpChannel::Email.ttl_ms() + 86_400_000;
+
+        let resp = post_json(
+            &app,
+            "/api/v1/0dentity/claims",
+            signed_claim_body(
+                &did,
+                "Email",
+                None,
+                Some("Email"),
+                signed_created_ms,
+                &keypair,
+                &keypair,
+            ),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        let challenge_id = body["challenge_id"]
+            .as_str()
+            .expect("challenge id is returned");
+        let store = store.lock().unwrap();
+        let challenge = store
+            .get_otp_challenge(challenge_id)
+            .unwrap()
+            .expect("challenge is stored");
+        assert_eq!(challenge.dispatched_ms, API_TEST_NOW_MS);
+        assert_ne!(challenge.dispatched_ms, signed_created_ms);
+
+        let claims = store.get_claims(&did).unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].1.created_ms, signed_created_ms);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "unaudited-zerodentity-first-touch-onboarding")]
     async fn submit_claim_stores_claim_in_store() {
         let store = new_shared_store();
         let app = onboarding_app(store.clone());
@@ -2703,9 +2745,8 @@ mod tests {
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
 
-        // ── 3. Email OTP — inject known challenge + verify via HTTP ───────
-        // Use a far-future dispatched_ms so the TTL won't expire on wall clock
-        let dispatched_ms = u64::MAX / 2;
+        // ── 3. Email OTP — inject known node-time challenge + verify via HTTP ───────
+        let dispatched_ms = API_TEST_NOW_MS;
         let mut rng1 = seeded_rng(0xABC1_0001);
         let (email_ch, email_code) =
             OtpChallenge::new(&did, OtpChannel::Email, dispatched_ms, &mut rng1).unwrap();
@@ -2739,7 +2780,12 @@ mod tests {
         }
 
         // ── 5. GET /score → communication = 3500 (email only) ────────────
-        let resp = get_req(&api, &format!("/api/v1/0dentity/{did_str}/score")).await;
+        let resp = get_with_auth(
+            &api,
+            &format!("/api/v1/0dentity/{did_str}/score"),
+            &session_token,
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let b = body_json(resp).await;
         assert_eq!(
@@ -2759,7 +2805,7 @@ mod tests {
 
         let mut rng2 = seeded_rng(0xABC1_0002);
         let (phone_ch, phone_code) =
-            OtpChallenge::new(&did, OtpChannel::Sms, dispatched_ms + 1, &mut rng2).unwrap();
+            OtpChallenge::new(&did, OtpChannel::Sms, dispatched_ms, &mut rng2).unwrap();
         let phone_cid = phone_ch.challenge_id.clone();
         store
             .lock()
@@ -2793,7 +2839,12 @@ mod tests {
         }
 
         // ── 7. GET /score → communication = 8700 (email+phone+bonus) ─────
-        let resp = get_req(&api, &format!("/api/v1/0dentity/{did_str}/score")).await;
+        let resp = get_with_auth(
+            &api,
+            &format!("/api/v1/0dentity/{did_str}/score"),
+            &session_token,
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let b = body_json(resp).await;
         assert_eq!(
@@ -2814,7 +2865,12 @@ mod tests {
             s.put_score(score);
         }
 
-        let resp = get_req(&api, &format!("/api/v1/0dentity/{did_str}/score/history")).await;
+        let resp = get_with_auth(
+            &api,
+            &format!("/api/v1/0dentity/{did_str}/score/history"),
+            &session_token,
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let b = body_json(resp).await;
         assert!(
