@@ -77,4 +77,11 @@ require_file ".github/workflows/ci.yml"
 require_pattern ".github/workflows/ci.yml" 'bash tools/test_agent_prompt_boundaries\.sh' "agent prompt boundary CI gate"
 require_pattern ".github/workflows/ci.yml" 'bash tools/test_agent_workflow_bounds\.sh' "agent workflow bound CI gate"
 
+fix_issue_workflow=".archon/workflows/exochain-fix-issue-dag.yaml"
+require_file "$fix_issue_workflow"
+require_pattern "$fix_issue_workflow" "when: \"\\\$council_review\\.output\\.aggregate_disposition == 'Approved'\"" "approved-only council gate before fix node"
+if grep -Fq "aggregate_disposition != 'Rejected'" "$fix_issue_workflow"; then
+  fail "$fix_issue_workflow must not route Deferred or Requires-Amendment council outputs to code-writing nodes"
+fi
+
 printf 'agent workflow bound test passed\n'
