@@ -26,7 +26,25 @@ import sys
 import tomllib
 
 with open("Cargo.toml", "rb") as manifest:
-    dependencies = tomllib.load(manifest)["workspace"]["dependencies"]
+    cargo = tomllib.load(manifest)
+
+with open("deny.toml", "rb") as deny_manifest:
+    deny = tomllib.load(deny_manifest)
+
+bans = deny["bans"]
+if bans.get("wildcards") != "deny":
+    print('cargo-deny must reject wildcard dependency requirements: set [bans].wildcards = "deny"', file=sys.stderr)
+    sys.exit(1)
+if bans.get("allow-wildcard-paths") is not True:
+    print("cargo-deny must allow only private path dependency wildcards: set [bans].allow-wildcard-paths = true", file=sys.stderr)
+    sys.exit(1)
+
+workspace_package = cargo["workspace"].get("package", {})
+if workspace_package.get("publish") is not False:
+    print("workspace packages must inherit publish = false so cargo-deny can allow private path dependency wildcards only", file=sys.stderr)
+    sys.exit(1)
+
+dependencies = cargo["workspace"]["dependencies"]
 
 unpinned = []
 for name, spec in sorted(dependencies.items()):

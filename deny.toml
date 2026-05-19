@@ -107,8 +107,10 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 # ---------------------------------------------------------------------------
 [bans]
 multiple-versions = "warn"
-# Workspace-internal crates use path dependencies (wildcard version)
-wildcards = "allow"
+# External wildcard dependency requirements weaken the supply-chain gate.
+# Private workspace path dependencies are the only allowed wildcard form.
+wildcards = "deny"
+allow-wildcard-paths = true
 highlight = "all"
 
 deny = [
