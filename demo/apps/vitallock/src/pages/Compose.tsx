@@ -62,7 +62,6 @@ export default function Compose() {
         contentType,
         auth!.did,
         recipientDid,
-        auth!.ed25519SecretHex,
         recipientX25519,
         messageId,
         createdPhysicalMs,

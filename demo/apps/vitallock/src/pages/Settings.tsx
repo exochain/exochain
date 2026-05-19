@@ -75,22 +75,9 @@ export default function Settings() {
               </button>
             </div>
           </div>
-          <div>
-            <label className="block text-[10px] text-zinc-500 mb-1">
-              Ed25519 Public Key (for signature verification)
-            </label>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 text-[10px] text-emerald-400 bg-zinc-800 rounded px-3 py-2 font-mono truncate">
-                {auth?.ed25519PublicHex}
-              </code>
-              <button onClick={() => copyToClipboard(auth?.ed25519PublicHex || '')} className="text-zinc-500 hover:text-white shrink-0">
-                <Copy size={14} />
-              </button>
-            </div>
-          </div>
         </div>
         <p className="text-[10px] text-zinc-600 mt-3">
-          Secret keys are derived from your passphrase and never leave this device.
+          Signing keys are not exported or displayed by this adjacent demo.
         </p>
       </div>
 

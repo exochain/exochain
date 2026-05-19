@@ -23,7 +23,6 @@
 
 import init, {
   wasm_generate_x25519_keypair,
-  wasm_ed25519_public_from_secret,
   wasm_encrypt_message,
   wasm_decrypt_message,
   wasm_verify_message_signature,
@@ -41,11 +40,6 @@ export async function initCrypto(): Promise<void> {
   if (initialized) return;
   await init();
   initialized = true;
-}
-
-/** Derive an Ed25519 public key hex string from a caller-held secret key. */
-export function ed25519PublicFromSecret(secretKeyHex: string): string {
-  return wasm_ed25519_public_from_secret(secretKeyHex);
 }
 
 /** Check if WASM is initialized. */
@@ -90,7 +84,6 @@ export function encryptMessage(
   contentType: string,
   senderDid: string,
   recipientDid: string,
-  senderSigningKeyHex: string,
   recipientX25519PublicHex: string,
   messageId: string,
   createdPhysicalMs: bigint,
@@ -103,7 +96,7 @@ export function encryptMessage(
     JSON.stringify(contentType),
     senderDid,
     recipientDid,
-    senderSigningKeyHex,
+    '',
     recipientX25519PublicHex,
     messageId,
     createdPhysicalMs,

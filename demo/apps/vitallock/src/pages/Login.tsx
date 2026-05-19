@@ -43,18 +43,10 @@ export default function Login() {
       // Ensure WASM is ready
       if (!isCryptoReady()) await initCrypto();
 
-      // Derive Ed25519 signing key deterministically from passphrase via WebCrypto
-      // (passphrase never leaves the device — zero-knowledge)
       const encoder = new TextEncoder();
       const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(passphrase));
       const hashArray = new Uint8Array(hashBuffer);
-      const ed25519SecretHex = Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('');
-
-      // The Ed25519 secret stays client-side for signing via wasm_sign.
-      // The "public" hex here is used as a display identifier only.
-      // In production, derive the real Ed25519 public via wasm_sign_with_ephemeral
-      // or a dedicated WASM binding.
-      const ed25519PublicHex = ed25519SecretHex;
+      const identityDigestHex = Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('');
 
       // Generate X25519 keypair via WASM (real Diffie-Hellman crypto)
       const x25519Kp = genX25519Wasm();
@@ -62,8 +54,8 @@ export default function Login() {
       const x25519Secret = x25519Kp.secret_key_hex;
 
       // Derive DID from passphrase hash (deterministic across sessions)
-      const did = `did:exo:${ed25519SecretHex.slice(0, 16)}`;
-      const name = displayName || `User-${ed25519SecretHex.slice(0, 8)}`;
+      const did = `did:exo:${identityDigestHex.slice(0, 16)}`;
+      const name = displayName || `User-${identityDigestHex.slice(0, 8)}`;
 
       setStatus('Initializing sharded keystore...');
 
@@ -85,8 +77,6 @@ export default function Login() {
       const authState: AuthState = {
         did,
         displayName: name,
-        ed25519PublicHex: ed25519PublicHex,
-        ed25519SecretHex: ed25519SecretHex,
         x25519PublicHex: x25519Public,
         x25519SecretHex: x25519Secret,
       };
