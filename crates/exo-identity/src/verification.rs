@@ -20,9 +20,11 @@ use exo_core::{Did, Hash256, PublicKey, SecretKey, Signature, Timestamp, hash::h
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::did::{DidDocument, did_from_public_key};
-use crate::registry::DidRegistry;
-use crate::risk::{RiskAttestation, RiskContext, RiskLevel, assess_risk};
+use crate::{
+    did::{DidDocument, did_from_public_key},
+    registry::DidRegistry,
+    risk::{RiskAttestation, RiskContext, RiskLevel, assess_risk},
+};
 
 #[derive(Debug, Error)]
 pub enum VerificationCeremonyError {
