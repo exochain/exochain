@@ -28,7 +28,7 @@ use sha2::Sha256;
 use uuid::Uuid;
 
 use crate::{
-    envelope::{ContentType, EncryptedEnvelope},
+    envelope::{ContentType, EncryptedEnvelope, KDF_VERSION_TRANSCRIPT_SALTED},
     error::MessagingError,
     kex::{self, X25519KeyPair, X25519PublicKey},
 };
@@ -219,6 +219,7 @@ pub fn prepare_envelope_for_signing_with_ephemeral(
         sender_did: sender_did.clone(),
         recipient_did: recipient_did.clone(),
         ephemeral_public_key: *ephemeral_x25519_keypair.public.as_bytes(),
+        kdf_version: Some(KDF_VERSION_TRANSCRIPT_SALTED),
         ciphertext,
         content_type,
         signature: exo_core::Signature::empty(),

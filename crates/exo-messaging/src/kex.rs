@@ -183,6 +183,41 @@ pub fn derive_shared_key(
     their_public: &X25519PublicKey,
     context: &[u8],
 ) -> Result<[u8; 32], MessagingError> {
+    let (shared_secret, our_public) = x25519_shared_secret(our_secret, their_public)?;
+    let salt = hkdf_salt(&our_public, their_public);
+
+    // HKDF-SHA256: extract from shared secret with a deterministic transcript
+    // salt, then expand with caller-supplied context.
+    let hk = Hkdf::<Sha256>::new(Some(&salt), &shared_secret);
+    let mut okm = [0u8; 32];
+    hk.expand(context, &mut okm)
+        .map_err(|e| MessagingError::KeyExchangeFailed(e.to_string()))?;
+    Ok(okm)
+}
+
+/// Derive the pre-versioned legacy symmetric key via unsalted HKDF-SHA256.
+///
+/// This is retained only so unversioned envelopes created before the transcript
+/// salt was introduced can still be opened. New envelopes must use
+/// [`derive_shared_key`], which binds the HKDF extract step to both X25519
+/// public keys.
+pub fn derive_shared_key_legacy_unsalted(
+    our_secret: &X25519SecretKey,
+    their_public: &X25519PublicKey,
+    context: &[u8],
+) -> Result<[u8; 32], MessagingError> {
+    let (shared_secret, _) = x25519_shared_secret(our_secret, their_public)?;
+    let hk = Hkdf::<Sha256>::new(None, &shared_secret);
+    let mut okm = [0u8; 32];
+    hk.expand(context, &mut okm)
+        .map_err(|e| MessagingError::KeyExchangeFailed(e.to_string()))?;
+    Ok(okm)
+}
+
+fn x25519_shared_secret(
+    our_secret: &X25519SecretKey,
+    their_public: &X25519PublicKey,
+) -> Result<([u8; 32], X25519PublicKey), MessagingError> {
     let secret = our_secret.static_secret();
     let public = PublicKey::from(*their_public.as_bytes());
     let shared_secret = secret.diffie_hellman(&public);
@@ -192,15 +227,7 @@ pub fn derive_shared_key(
         ));
     }
     let our_public = X25519PublicKey::from_trusted_bytes(PublicKey::from(&secret).to_bytes());
-    let salt = hkdf_salt(&our_public, their_public);
-
-    // HKDF-SHA256: extract from shared secret with a deterministic transcript
-    // salt, then expand with caller-supplied context.
-    let hk = Hkdf::<Sha256>::new(Some(&salt), shared_secret.as_bytes());
-    let mut okm = [0u8; 32];
-    hk.expand(context, &mut okm)
-        .map_err(|e| MessagingError::KeyExchangeFailed(e.to_string()))?;
-    Ok(okm)
+    Ok((*shared_secret.as_bytes(), our_public))
 }
 
 fn hkdf_salt(our_public: &X25519PublicKey, their_public: &X25519PublicKey) -> [u8; 32] {
@@ -446,9 +473,32 @@ mod tests {
     #[test]
     fn derive_shared_key_uses_protocol_bound_hkdf_salt() {
         let source = include_str!("kex.rs");
+        let derive_shared_key = source
+            .split("pub fn derive_shared_key(")
+            .nth(1)
+            .and_then(|section| section.split("/// Derive the pre-versioned legacy").next())
+            .expect("current derive_shared_key must be present");
+
         assert!(
-            !source.contains(&["Hkdf::<Sha256>::new", "(None"].concat()),
-            "X25519 shared-secret HKDF extraction must use a protocol-bound salt"
+            derive_shared_key.contains("hkdf_salt(&our_public, their_public)")
+                && derive_shared_key.contains("Hkdf::<Sha256>::new(Some(&salt), &shared_secret)")
+                && !derive_shared_key.contains("Hkdf::<Sha256>::new(None"),
+            "current X25519 shared-secret HKDF extraction must use a protocol-bound salt"
+        );
+    }
+
+    #[test]
+    fn legacy_unsalted_kdf_is_quarantined_for_unversioned_compatibility() {
+        let source = include_str!("kex.rs");
+        let legacy = source
+            .split("pub fn derive_shared_key_legacy_unsalted(")
+            .nth(1)
+            .and_then(|section| section.split("fn x25519_shared_secret").next())
+            .expect("legacy compatibility derive must be present");
+
+        assert!(
+            legacy.contains("Hkdf::<Sha256>::new(None, &shared_secret)"),
+            "legacy unsalted HKDF must be isolated to the explicitly named compatibility helper"
         );
     }
 }

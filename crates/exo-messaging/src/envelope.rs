@@ -32,17 +32,38 @@ use crate::error::MessagingError;
 
 /// Domain tag for encrypted-envelope signatures.
 pub const ENVELOPE_SIGNING_DOMAIN: &str = "exo.messaging.envelope.v1";
-const ENVELOPE_SIGNING_SCHEMA_VERSION: u16 = 1;
+const ENVELOPE_SIGNING_SCHEMA_VERSION_LEGACY: u16 = 1;
+const ENVELOPE_SIGNING_SCHEMA_VERSION_KDF_VERSIONED: u16 = 2;
+/// Pre-versioned unversioned KDF: X25519 ECDH expanded with unsalted HKDF.
+pub const KDF_VERSION_LEGACY_UNSALTED: u16 = 1;
+/// Current KDF: X25519 ECDH expanded with transcript-salted HKDF.
+pub const KDF_VERSION_TRANSCRIPT_SALTED: u16 = 2;
 pub const MAX_ENVELOPE_CIPHERTEXT_LEN: usize = 16 * 1024 * 1024;
 
 #[derive(Serialize)]
-struct EnvelopeSigningPayload<'a> {
+struct EnvelopeSigningPayloadV1<'a> {
     domain: &'static str,
     schema_version: u16,
     id: &'a str,
     sender_did: &'a Did,
     recipient_did: &'a Did,
     ephemeral_public_key: &'a [u8; 32],
+    ciphertext: &'a [u8],
+    content_type: u8,
+    release_on_death: bool,
+    release_delay_hours: u32,
+    created: &'a Timestamp,
+}
+
+#[derive(Serialize)]
+struct EnvelopeSigningPayloadV2<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    id: &'a str,
+    sender_did: &'a Did,
+    recipient_did: &'a Did,
+    ephemeral_public_key: &'a [u8; 32],
+    kdf_version: u16,
     ciphertext: &'a [u8],
     content_type: u8,
     release_on_death: bool,
@@ -102,6 +123,12 @@ pub struct EncryptedEnvelope {
     pub recipient_did: Did,
     /// Ephemeral X25519 public key used for this message's ECDH.
     pub ephemeral_public_key: [u8; 32],
+    /// KDF version used to derive the symmetric key.
+    ///
+    /// `None` means the envelope was created before KDF versioning existed.
+    /// New envelopes must set [`KDF_VERSION_TRANSCRIPT_SALTED`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kdf_version: Option<u16>,
     /// Encrypted payload: `[nonce][ciphertext][tag]`.
     #[serde(deserialize_with = "deserialize_bounded_ciphertext")]
     pub ciphertext: Vec<u8>,
@@ -124,6 +151,7 @@ impl fmt::Debug for EncryptedEnvelope {
             .field("sender_did", &self.sender_did)
             .field("recipient_did", &self.recipient_did)
             .field("ephemeral_public_key", &"<redacted>")
+            .field("kdf_version", &self.kdf_version)
             .field("ciphertext_len", &self.ciphertext.len())
             .field("content_type", &self.content_type)
             .field("release_on_death", &self.release_on_death)
@@ -212,23 +240,65 @@ impl EncryptedEnvelope {
     /// Returns [`MessagingError::EnvelopeSigningPayloadEncoding`] if the CBOR
     /// encoder rejects the payload.
     pub fn signing_payload(&self) -> Result<Vec<u8>, MessagingError> {
-        let payload = EnvelopeSigningPayload {
-            domain: ENVELOPE_SIGNING_DOMAIN,
-            schema_version: ENVELOPE_SIGNING_SCHEMA_VERSION,
-            id: &self.id,
-            sender_did: &self.sender_did,
-            recipient_did: &self.recipient_did,
-            ephemeral_public_key: &self.ephemeral_public_key,
-            ciphertext: &self.ciphertext,
-            content_type: u8::from(self.content_type),
-            release_on_death: self.release_on_death,
-            release_delay_hours: self.release_delay_hours,
-            created: &self.created,
-        };
         let mut buf = Vec::new();
-        ciborium::ser::into_writer(&payload, &mut buf)
-            .map_err(|e| MessagingError::EnvelopeSigningPayloadEncoding(e.to_string()))?;
+        match self.kdf_version {
+            Some(kdf_version) => {
+                validate_kdf_version(kdf_version)?;
+                let payload = EnvelopeSigningPayloadV2 {
+                    domain: ENVELOPE_SIGNING_DOMAIN,
+                    schema_version: ENVELOPE_SIGNING_SCHEMA_VERSION_KDF_VERSIONED,
+                    id: &self.id,
+                    sender_did: &self.sender_did,
+                    recipient_did: &self.recipient_did,
+                    ephemeral_public_key: &self.ephemeral_public_key,
+                    kdf_version,
+                    ciphertext: &self.ciphertext,
+                    content_type: u8::from(self.content_type),
+                    release_on_death: self.release_on_death,
+                    release_delay_hours: self.release_delay_hours,
+                    created: &self.created,
+                };
+                ciborium::ser::into_writer(&payload, &mut buf)
+                    .map_err(|e| MessagingError::EnvelopeSigningPayloadEncoding(e.to_string()))?;
+            }
+            None => {
+                let payload = EnvelopeSigningPayloadV1 {
+                    domain: ENVELOPE_SIGNING_DOMAIN,
+                    schema_version: ENVELOPE_SIGNING_SCHEMA_VERSION_LEGACY,
+                    id: &self.id,
+                    sender_did: &self.sender_did,
+                    recipient_did: &self.recipient_did,
+                    ephemeral_public_key: &self.ephemeral_public_key,
+                    ciphertext: &self.ciphertext,
+                    content_type: u8::from(self.content_type),
+                    release_on_death: self.release_on_death,
+                    release_delay_hours: self.release_delay_hours,
+                    created: &self.created,
+                };
+                ciborium::ser::into_writer(&payload, &mut buf)
+                    .map_err(|e| MessagingError::EnvelopeSigningPayloadEncoding(e.to_string()))?;
+            }
+        }
         Ok(buf)
+    }
+}
+
+pub fn validate_kdf_version(kdf_version: u16) -> Result<(), MessagingError> {
+    match kdf_version {
+        KDF_VERSION_LEGACY_UNSALTED | KDF_VERSION_TRANSCRIPT_SALTED => Ok(()),
+        other => Err(MessagingError::InvalidEnvelope(format!(
+            "unsupported envelope KDF version {other}"
+        ))),
+    }
+}
+
+pub fn explicit_kdf_version(envelope: &EncryptedEnvelope) -> Result<Option<u16>, MessagingError> {
+    match envelope.kdf_version {
+        Some(kdf_version) => {
+            validate_kdf_version(kdf_version)?;
+            Ok(Some(kdf_version))
+        }
+        None => Ok(None),
     }
 }
 
@@ -292,6 +362,8 @@ mod tests {
         sender_did: Did,
         recipient_did: Did,
         ephemeral_public_key: [u8; 32],
+        #[serde(default)]
+        kdf_version: Option<u16>,
         ciphertext: Vec<u8>,
         content_type: u8,
         release_on_death: bool,
@@ -305,6 +377,7 @@ mod tests {
             sender_did: Did::new("did:exo:alice").unwrap(),
             recipient_did: Did::new("did:exo:bob").unwrap(),
             ephemeral_public_key: [7; 32],
+            kdf_version: None,
             ciphertext: vec![1, 1, 2, 3, 5, 8],
             content_type: ContentType::Secret,
             signature: Signature::empty(),
@@ -329,11 +402,49 @@ mod tests {
         assert_eq!(decoded.sender_did, envelope.sender_did);
         assert_eq!(decoded.recipient_did, envelope.recipient_did);
         assert_eq!(decoded.ephemeral_public_key, envelope.ephemeral_public_key);
+        assert_eq!(decoded.kdf_version, None);
         assert_eq!(decoded.ciphertext, envelope.ciphertext);
         assert_eq!(decoded.content_type, u8::from(envelope.content_type));
         assert_eq!(decoded.release_on_death, envelope.release_on_death);
         assert_eq!(decoded.release_delay_hours, envelope.release_delay_hours);
         assert_eq!(decoded.created, envelope.created);
+    }
+
+    #[test]
+    fn versioned_envelope_signing_payload_binds_kdf_version() {
+        let mut envelope = sample_envelope();
+        envelope.kdf_version = Some(KDF_VERSION_TRANSCRIPT_SALTED);
+
+        let payload = envelope
+            .signing_payload()
+            .expect("versioned envelope signing payload");
+        let decoded: DecodedEnvelopeSigningPayload =
+            ciborium::from_reader(&payload[..]).expect("decode versioned payload");
+
+        assert_eq!(decoded.schema_version, 2);
+        assert_eq!(decoded.kdf_version, Some(KDF_VERSION_TRANSCRIPT_SALTED));
+
+        let mut tampered = envelope.clone();
+        tampered.kdf_version = Some(KDF_VERSION_LEGACY_UNSALTED);
+        let tampered_payload = tampered
+            .signing_payload()
+            .expect("tampered KDF version is still supported");
+
+        assert_ne!(payload, tampered_payload);
+    }
+
+    #[test]
+    fn envelope_signing_payload_rejects_unknown_kdf_version() {
+        let mut envelope = sample_envelope();
+        envelope.kdf_version = Some(99);
+
+        let err = envelope
+            .signing_payload()
+            .expect_err("unknown KDF version must fail closed");
+
+        assert!(
+            matches!(err, MessagingError::InvalidEnvelope(reason) if reason.contains("unsupported envelope KDF version 99"))
+        );
     }
 
     #[test]

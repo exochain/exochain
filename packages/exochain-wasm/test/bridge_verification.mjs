@@ -379,6 +379,9 @@ test('wasm_prepare_encrypted_message', () => {
   if (!preparedEnvelope.signing_payload_hex) {
     throw new Error('prepared envelope must expose signing payload');
   }
+  if (preparedEnvelope.envelope.kdf_version !== 2) {
+    throw new Error('prepared envelope must expose explicit transcript-salted KDF version');
+  }
   return preparedEnvelope;
 });
 
