@@ -32,6 +32,8 @@ use crate::mcp::{
     protocol::{ToolDefinition, ToolResult},
 };
 
+const MCP_EVIDENCE_RUNTIME_INITIATIVE: &str =
+    "Initiatives/fix-mcp-evidence-runtime-store-refusal.md";
 const MCP_CGR_PROOF_INITIATIVE: &str = "Initiatives/fix-mcp-cgr-proof-verification-stub.md";
 const MAX_MERKLE_PROOF_LEAVES: usize = 1024;
 const CGR_PROOF_HASH_HEX_CHARS: usize = 64;
@@ -41,6 +43,19 @@ const MAX_CGR_INVARIANT_NAME_BYTES: usize = 128;
 fn tool_error(message: impl Into<String>) -> ToolResult {
     let message = message.into();
     ToolResult::error(json!({"error": message}).to_string())
+}
+
+fn evidence_runtime_unavailable(tool_name: &str) -> ToolResult {
+    ToolResult::error(
+        json!({
+            "error": "mcp_evidence_runtime_unavailable",
+            "tool": tool_name,
+            "message": "This MCP evidence tool has no live evidence store, attester key, trusted HLC ingress, uniqueness guard, or authenticated persistence path attached, so it cannot create durable evidence records from tool arguments. The `unaudited-mcp-simulation-tools` feature does not enable synthetic evidence creation.",
+            "feature_flag": "unaudited-mcp-simulation-tools",
+            "initiative": MCP_EVIDENCE_RUNTIME_INITIATIVE,
+        })
+        .to_string(),
+    )
 }
 
 fn required_nonzero_u64(params: &Value, name: &str) -> std::result::Result<u64, ToolResult> {
@@ -213,7 +228,7 @@ fn final_custodian(evidence: &exo_legal::evidence::Evidence) -> &Did {
 pub fn create_evidence_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_create_evidence".to_owned(),
-        description: "Construct a legal evidence envelope from caller-supplied UUID, content hash, creator DID, and creation HLC. Returns a verifier-compatible creator-only custody payload; it does not persist evidence to a store.".to_owned(),
+        description: "Fail-closed legal evidence creation boundary for deployments without a live evidence store, trusted HLC ingress, attester key, and uniqueness guard.".to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -295,37 +310,17 @@ pub fn execute_create_evidence(params: &Value, _context: &NodeContext) -> ToolRe
         Err(result) => return result,
     };
     let created_at = Timestamp::new(created_at_ms, created_at_logical);
-    let evidence = match create_evidence_from_hash(
+    if let Err(err) = create_evidence_from_hash(
         evidence_id,
         content_hash,
         &creator_did,
         evidence_type,
         created_at,
     ) {
-        Ok(value) => value,
-        Err(err) => return tool_error(err.to_string()),
-    };
-    let custody_digest = match custody_chain_digest(&evidence) {
-        Ok(value) => value,
-        Err(err) => return tool_error(err.to_string()),
-    };
+        return tool_error(err.to_string());
+    }
 
-    let response = json!({
-        "evidence_id": evidence_id_str,
-        "evidence_type": evidence.type_tag.as_str(),
-        "content_hash": evidence.hash.to_string(),
-        "creator_did": evidence.creator.to_string(),
-        "created_at": evidence.timestamp.to_string(),
-        "created_at_ms": created_at_ms,
-        "created_at_logical": created_at_logical,
-        "chain": [],
-        "final_custodian": final_custodian(&evidence).to_string(),
-        "admissibility_status": &evidence.admissibility_status,
-        "custody_digest": custody_digest.to_string(),
-        "status": "created",
-        "persistence": "not_persisted",
-    });
-    ToolResult::success(response.to_string())
+    evidence_runtime_unavailable("exochain_create_evidence")
 }
 
 // ---------------------------------------------------------------------------
@@ -786,28 +781,38 @@ mod tests {
     }
 
     #[test]
-    fn execute_create_evidence_success_returns_verifier_compatible_envelope() {
+    fn execute_create_evidence_refuses_valid_claim_without_evidence_runtime() {
         let params = valid_create_evidence_params();
         let result = execute_create_evidence(&params, &NodeContext::empty());
-        assert!(!result.is_error, "{}", result.content[0].text());
+        assert!(result.is_error);
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
-        assert_eq!(v["evidence_id"], "00000000-0000-0000-0000-000000000001");
-        assert_eq!(v["evidence_type"], "document");
-        assert_eq!(
-            v["content_hash"],
-            "0202020202020202020202020202020202020202020202020202020202020202"
+        assert_eq!(v["error"], "mcp_evidence_runtime_unavailable");
+        assert_eq!(v["tool"], "exochain_create_evidence");
+        assert_eq!(v["feature_flag"], "unaudited-mcp-simulation-tools");
+        assert!(
+            v["message"]
+                .as_str()
+                .expect("message")
+                .contains("live evidence store")
         );
-        assert_eq!(v["creator_did"], "did:exo:alice");
-        assert_eq!(v["created_at_ms"], 1700000000000_u64);
-        assert_eq!(v["created_at_logical"], 7_u64);
-        assert_eq!(v["chain"], json!([]));
-        assert_eq!(v["final_custodian"], "did:exo:alice");
-        assert_eq!(v["admissibility_status"], "Pending");
-        assert_eq!(v["status"], "created");
-        assert_eq!(
-            v["custody_digest"].as_str().expect("custody digest").len(),
-            64
+        assert!(
+            v["initiative"]
+                .as_str()
+                .expect("initiative")
+                .contains("fix-mcp-evidence-runtime-store-refusal.md")
         );
+    }
+
+    #[test]
+    fn execute_create_evidence_refuses_without_evidence_runtime() {
+        let result =
+            execute_create_evidence(&valid_create_evidence_params(), &NodeContext::empty());
+
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(text.contains("mcp_evidence_runtime_unavailable"));
+        assert!(text.contains("exochain_create_evidence"));
+        assert!(!text.contains("\"status\":\"created\""));
     }
 
     #[test]
