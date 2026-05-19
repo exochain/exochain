@@ -89,8 +89,8 @@ pub struct AdjudicationContext {
     pub provenance: Option<Provenance>,
     pub quorum_evidence: Option<QuorumEvidence>,
     /// When set, the action is under an active Sybil challenge hold.
-    /// The kernel short-circuits to `Verdict::Escalated` before running
-    /// invariant checks — the action is paused (not denied) pending review.
+    /// The kernel returns `Verdict::Escalated` only after all invariants pass,
+    /// so final-denial invariants are never converted into review holds.
     /// Populate from `ContestHold::escalation_reason()` in exo-escalation.
     pub active_challenge_reason: Option<String>,
 }
@@ -117,14 +117,6 @@ impl Kernel {
     }
 
     pub fn adjudicate(&self, action: &ActionRequest, context: &AdjudicationContext) -> Verdict {
-        // Short-circuit: an active Sybil challenge hold pauses the action
-        // (Escalated, not Denied) so it can be reviewed rather than blocked.
-        if let Some(ref reason) = context.active_challenge_reason {
-            return Verdict::Escalated {
-                reason: reason.clone(),
-            };
-        }
-
         let inv_ctx = InvariantContext {
             actor: action.actor.clone(),
             actor_roles: context.actor_roles.clone(),
@@ -143,7 +135,15 @@ impl Kernel {
         };
 
         match enforce_all(&self.invariant_engine, &inv_ctx) {
-            Ok(()) => Verdict::Permitted,
+            Ok(()) => {
+                if let Some(ref reason) = context.active_challenge_reason {
+                    Verdict::Escalated {
+                        reason: reason.clone(),
+                    }
+                } else {
+                    Verdict::Permitted
+                }
+            }
             Err(violations) => {
                 let needs_escalation = violations.iter().any(|v| {
                     v.invariant == ConstitutionalInvariant::QuorumLegitimate
@@ -688,14 +688,15 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // WO-005: Challenge paths — contested actions return Escalated, not Denied
-    // CR-001 §8.5 — any active Sybil challenge hold pauses the action.
+    // WO-005: Challenge paths — otherwise-valid contested actions return
+    // Escalated, not Denied. Final-denial invariants still deny.
+    // CR-001 §8.5 — active Sybil challenge holds pause valid actions only.
     // -----------------------------------------------------------------------
     mod challenge_paths {
         use super::*;
 
-        /// WO-005: An action under an active Sybil challenge returns
-        /// Verdict::Escalated so it is paused (not denied) pending review.
+        /// WO-005: An otherwise-valid action under an active Sybil challenge
+        /// returns Verdict::Escalated so it is paused pending review.
         #[test]
         fn active_challenge_escalates_not_denies() {
             let kernel = test_kernel();
@@ -731,21 +732,63 @@ mod tests {
             );
         }
 
-        /// WO-005: Challenge escalation takes priority over invariant checks —
-        /// even an otherwise-denied action is escalated (not denied) while
-        /// the challenge is pending.
+        /// WO-005/F-048: Challenge escalation must not suppress final-denial
+        /// invariants. A hold can pause an otherwise-valid action, but it
+        /// cannot convert forbidden kernel mutations, self-grants, missing
+        /// consent, or suppressed human override into reviewable work.
         #[test]
-        fn challenge_takes_priority_over_denial() {
+        fn challenge_hold_does_not_suppress_final_denials() {
             let kernel = test_kernel();
             let actor = did("did:exo:actor1");
+
             let mut ctx = valid_context(&actor);
-            // Would normally be denied (ConsentRequired: BailmentState::None)
             ctx.bailment_state = BailmentState::None;
             ctx.active_challenge_reason =
-                Some("SybilChallenge/QuorumContamination: pause-eligible".into());
-            match kernel.adjudicate(&valid_action(&actor), &ctx) {
-                Verdict::Escalated { .. } => {}
-                other => panic!("WO-005: challenge must pre-empt denial, got {:?}", other),
+                Some("SybilChallenge/QuorumContamination: action under review".into());
+            assert_denied_by(
+                kernel.adjudicate(&valid_action(&actor), &ctx),
+                ConstitutionalInvariant::ConsentRequired,
+            );
+
+            let mut action = valid_action(&actor);
+            action.is_self_grant = true;
+            let mut ctx = valid_context(&actor);
+            ctx.active_challenge_reason =
+                Some("SybilChallenge/SelfGrant: action under review".into());
+            assert_denied_by(
+                kernel.adjudicate(&action, &ctx),
+                ConstitutionalInvariant::NoSelfGrant,
+            );
+
+            let mut ctx = valid_context(&actor);
+            ctx.human_override_preserved = false;
+            ctx.active_challenge_reason =
+                Some("SybilChallenge/HumanOverride: action under review".into());
+            assert_denied_by(
+                kernel.adjudicate(&valid_action(&actor), &ctx),
+                ConstitutionalInvariant::HumanOverride,
+            );
+
+            let mut action = valid_action(&actor);
+            action.modifies_kernel = true;
+            let mut ctx = valid_context(&actor);
+            ctx.active_challenge_reason =
+                Some("SybilChallenge/KernelMutation: action under review".into());
+            assert_denied_by(
+                kernel.adjudicate(&action, &ctx),
+                ConstitutionalInvariant::KernelImmutability,
+            );
+        }
+
+        fn assert_denied_by(verdict: Verdict, invariant: ConstitutionalInvariant) {
+            match verdict {
+                Verdict::Denied { violations } => assert!(
+                    violations
+                        .iter()
+                        .any(|violation| violation.invariant == invariant),
+                    "expected denial by {invariant:?}, got {violations:?}"
+                ),
+                other => panic!("expected Denied by {invariant:?}, got {other:?}"),
             }
         }
     }

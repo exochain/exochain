@@ -310,8 +310,9 @@ fn full_detection_to_reinstatement_flow() {
 // ---------------------------------------------------------------------------
 
 /// While a ContestHold is PauseEligible, the kernel returns Verdict::Escalated
-/// rather than Permitted or Denied, so the action is paused (not blocked).
-/// Once the hold is cleared the action may proceed normally.
+/// rather than Permitted for otherwise-valid actions, so the action is paused.
+/// Final-denial invariants still deny. Once the hold is cleared the action may
+/// proceed normally.
 #[test]
 fn quarantine_pauses_contested_actions_via_kernel() {
     let kernel = Kernel::new(b"We the people of EXOCHAIN...", InvariantSet::all());
@@ -336,7 +337,8 @@ fn quarantine_pauses_contested_actions_via_kernel() {
     let reason = hold.escalation_reason();
     assert!(reason.contains("SybilChallenge"));
 
-    // With active challenge → Verdict::Escalated (action is paused)
+    // With active challenge and valid invariant evidence → Verdict::Escalated
+    // (action is paused)
     let ctx_challenged = valid_kernel_context(&actor, Some(reason));
     match kernel.adjudicate(&action, &ctx_challenged) {
         Verdict::Escalated { reason } => {

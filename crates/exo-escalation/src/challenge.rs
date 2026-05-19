@@ -75,7 +75,8 @@ impl std::fmt::Display for SybilChallengeGround {
 pub enum ContestStatus {
     /// Challenge admitted; action is paused pending review.  Callers MUST
     /// propagate this into `AdjudicationContext::active_challenge_reason` so
-    /// the CGR Kernel returns `Verdict::Escalated`.
+    /// the CGR Kernel returns `Verdict::Escalated` for otherwise-valid actions.
+    /// Final-denial invariants still return `Verdict::Denied`.
     PauseEligible,
     /// Evidentiary review is in progress.
     UnderReview,
@@ -297,8 +298,8 @@ fn validate_challenge_admission_metadata(
 /// 1. Storing the `ContestHold` in a durable audit store.
 /// 2. Passing `hold.escalation_reason()` into the kernel's
 ///    `AdjudicationContext::active_challenge_reason` so the CGR Kernel
-///    returns `Verdict::Escalated` (not `Verdict::Denied`) while review is
-///    pending.
+///    returns `Verdict::Escalated` for otherwise-valid actions while review is
+///    pending. Final-denial invariants still return `Verdict::Denied`.
 ///
 /// The hold id and `admitted_at` are supplied by the caller to avoid internal
 /// randomness or clock calls.
