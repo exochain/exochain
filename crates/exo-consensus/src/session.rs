@@ -264,18 +264,26 @@ impl DeliberationSession {
         let claim_sets = position_claim_sets(&last_round.positions);
         let consensus_claims =
             consensus_claims_at_threshold(&claim_sets, panel.convergence_threshold_bps);
+        let no_consensus_claims = consensus_claims.is_empty();
 
         for pos in last_round.positions.values() {
-            if is_minority_report(pos, &consensus_claims, panel.convergence_threshold_bps) {
-                let missing_claims = missing_consensus_claims(pos, &consensus_claims);
+            if no_consensus_claims
+                || is_minority_report(pos, &consensus_claims, panel.convergence_threshold_bps)
+            {
+                let reasons = if no_consensus_claims {
+                    vec!["No structured consensus claims met threshold.".to_string()]
+                } else {
+                    let missing_claims = missing_consensus_claims(pos, &consensus_claims);
+                    vec![format!(
+                        "Missing structured consensus claims: {}",
+                        missing_claims.join(", ")
+                    )]
+                };
                 minority_reports.push(MinorityReport {
                     model_id: pos.model_id.clone(),
                     round: pos.round,
                     dissenting_position: pos.position_text.clone(),
-                    reasons: vec![format!(
-                        "Missing structured consensus claims: {}",
-                        missing_claims.join(", ")
-                    )],
+                    reasons,
                     divergence_score_bps: 10_000u64
                         .saturating_sub(last_round.convergence_score_bps),
                 });
@@ -300,10 +308,17 @@ impl DeliberationSession {
         let minority_reports_count =
             usize_to_u32("minority_reports_count", minority_reports.len())?;
         let rounds_to_convergence = usize_to_u32("rounds_to_convergence", rounds.len())?;
+        let converged = last_round.convergence_score_bps >= panel.convergence_threshold_bps;
+        let models_agreeing = if no_consensus_claims {
+            0
+        } else {
+            panelists_count.saturating_sub(minority_reports_count)
+        };
 
         let inputs = PanelConfidenceInputs {
-            models_agreeing: panelists_count.saturating_sub(minority_reports_count),
+            models_agreeing,
             total_models: panelists_count,
+            converged,
             rounds_to_convergence,
             max_rounds: panel.max_rounds,
             devil_found_serious_objection: serious_objection,
@@ -532,6 +547,38 @@ mod tests {
         // Zero overlap across three distinct claims => 0 bps, clearly below the 7500 threshold.
         assert_eq!(round.convergence_score_bps, 0);
         assert!(!session.is_converged());
+    }
+
+    #[test]
+    fn finalize_no_consensus_does_not_award_full_panel_confidence() {
+        let panel = Panel::default_panel(DecisionClass::Routine);
+        let responses = BTreeMap::from([
+            (
+                "claude-3-haiku".to_string(),
+                response("alpha position", &["alpha"]),
+            ),
+            (
+                "gpt-4o-mini".to_string(),
+                response("beta position", &["beta"]),
+            ),
+            (
+                "gemini-1.5-flash".to_string(),
+                response("gamma position", &["gamma"]),
+            ),
+        ]);
+        let provider = DeterministicResponseProvider::with_positions(responses);
+        let mut session = DeliberationSession::new("s".into(), panel, "Q?".into(), provider);
+
+        let round = session.execute_round(timing(1)).unwrap();
+        assert_eq!(round.convergence_score_bps, 0);
+        let result = session.finalize(finalization_timing()).unwrap();
+
+        assert_eq!(result.minority_reports.len(), 3);
+        assert!(
+            result.panel_confidence_index_bps <= 2_000,
+            "no-consensus deliberation must not receive high confidence, got {}",
+            result.panel_confidence_index_bps
+        );
     }
 
     // Covers is_converged false branch when no rounds have been executed yet.
