@@ -803,13 +803,13 @@ test('wasm_terminate_bailment_signed rejects caller-supplied DID key material', 
 
 console.log('\n--- Shamir ---');
 
-const SHAMIR_ENTROPY = new TextEncoder().encode('exo-wasm-shamir-entropy-v1-explicit');
+const SHAMIR_ENTROPY = new TextEncoder().encode('exo-wasm-shamir-entropy-v2-private-dealer');
 
-test('wasm_shamir_split rejects missing caller entropy', () =>
+test('wasm_shamir_split rejects missing private dealer entropy', () =>
   expectErrorContains(
     'wasm_shamir_split',
     () => wasm.wasm_shamir_split(TEXT_BYTES, 2, 3),
-    'caller-supplied entropy'
+    'private dealer entropy'
   ));
 
 test('wasm_shamir_split_with_entropy', () =>

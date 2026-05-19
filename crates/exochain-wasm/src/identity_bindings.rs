@@ -80,7 +80,7 @@ pub fn wasm_shamir_split(secret: &[u8], threshold: u8, shares: u8) -> Result<JsV
     to_js_value(&result)
 }
 
-/// Split a secret using Shamir's Secret Sharing with caller-supplied entropy.
+/// Split a secret using Shamir's Secret Sharing with private dealer entropy.
 #[wasm_bindgen]
 pub fn wasm_shamir_split_with_entropy(
     secret: &[u8],

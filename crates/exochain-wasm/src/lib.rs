@@ -638,7 +638,7 @@ mod source_guard_tests {
     }
 
     #[test]
-    fn wasm_shamir_split_exposes_caller_supplied_entropy_boundary() {
+    fn wasm_shamir_split_exposes_private_dealer_entropy_boundary() {
         let source = include_str!("identity_bindings.rs");
         let production = source
             .split("// ===========================================================================")
@@ -647,7 +647,7 @@ mod source_guard_tests {
 
         assert!(
             production.contains("wasm_shamir_split_with_entropy"),
-            "WASM Shamir splitting must expose a caller-supplied entropy entrypoint"
+            "WASM Shamir splitting must expose a private dealer entropy entrypoint"
         );
         assert!(
             production.contains("exo_identity::shamir::split_with_entropy"),
@@ -655,7 +655,7 @@ mod source_guard_tests {
         );
         assert!(
             production.contains("entropy"),
-            "WASM Shamir split boundary must keep entropy explicit in the public API"
+            "WASM Shamir split boundary must keep private dealer entropy explicit in the API"
         );
     }
 

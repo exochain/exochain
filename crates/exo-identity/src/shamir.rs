@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::IdentityError;
 
-/// Minimum caller-supplied entropy bytes required for threshold Shamir splitting.
+/// Minimum private dealer entropy bytes required for threshold Shamir splitting.
 pub const SHAMIR_ENTROPY_MIN_BYTES: usize = 32;
 
 #[inline]
@@ -84,6 +84,9 @@ impl ShamirConfig {
 }
 
 /// A single share produced by Shamir secret splitting, with a blake3 commitment to the original secret.
+///
+/// Shares intentionally do not contain the private dealer entropy used for
+/// coefficient derivation.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Share {
     pub index: u8,
@@ -110,14 +113,18 @@ pub fn split(secret: &[u8], config: &ShamirConfig) -> Result<Vec<Share>, Identit
         return Err(IdentityError::InvalidShamirEntropy {
             min_bytes: SHAMIR_ENTROPY_MIN_BYTES,
             got_bytes: 0,
-            reason: "threshold greater than one requires caller-supplied entropy".into(),
+            reason: "threshold greater than one requires private dealer entropy".into(),
         });
     }
 
     split_with_entropy(secret, config, &[])
 }
 
-/// Split a secret using caller-supplied entropy to derive deterministic Shamir coefficients.
+/// Split a secret using private dealer entropy to derive deterministic Shamir coefficients.
+///
+/// The entropy must remain unavailable to share holders. Coefficients are also
+/// bound to the secret so a holder who learns only the entropy, public
+/// commitment, and one share cannot recompute the polynomial below threshold.
 pub fn split_with_entropy(
     secret: &[u8],
     config: &ShamirConfig,
@@ -149,6 +156,7 @@ pub fn split_with_entropy(
         coeffs[0] = secret_byte;
         for (coeff_idx, coeff) in coeffs.iter_mut().enumerate().skip(1) {
             *coeff = derive_shamir_coefficient(
+                secret,
                 entropy,
                 &commitment,
                 config,
@@ -182,7 +190,8 @@ fn validate_shamir_entropy(config: &ShamirConfig, entropy: &[u8]) -> Result<(), 
         return Err(IdentityError::InvalidShamirEntropy {
             min_bytes: SHAMIR_ENTROPY_MIN_BYTES,
             got_bytes: entropy.len(),
-            reason: "threshold greater than one requires at least 32 entropy bytes".into(),
+            reason: "threshold greater than one requires at least 32 private dealer entropy bytes"
+                .into(),
         });
     }
 
@@ -190,7 +199,7 @@ fn validate_shamir_entropy(config: &ShamirConfig, entropy: &[u8]) -> Result<(), 
         return Err(IdentityError::InvalidShamirEntropy {
             min_bytes: SHAMIR_ENTROPY_MIN_BYTES,
             got_bytes: entropy.len(),
-            reason: "caller-supplied Shamir entropy must not be all-zero".into(),
+            reason: "private dealer Shamir entropy must not be all-zero".into(),
         });
     }
 
@@ -207,6 +216,7 @@ fn encode_usize_for_shamir(value: usize, field: &'static str) -> Result<[u8; 8],
 }
 
 fn derive_shamir_coefficient(
+    secret: &[u8],
     entropy: &[u8],
     commitment: &[u8; 32],
     config: &ShamirConfig,
@@ -220,12 +230,13 @@ fn derive_shamir_coefficient(
     let coeff_idx = encode_usize_for_shamir(coeff_idx, "coefficient_idx")?;
 
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"exo.identity.shamir.coefficient.v1");
+    hasher.update(b"exo.identity.shamir.coefficient.v2");
+    hasher.update(&secret_len);
+    hasher.update(secret);
     hasher.update(&entropy_len);
     hasher.update(entropy);
     hasher.update(commitment);
     hasher.update(&[config.threshold, config.shares]);
-    hasher.update(&secret_len);
     hasher.update(&byte_idx);
     hasher.update(&coeff_idx);
     let digest = hasher.finalize();
@@ -395,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn split_requires_caller_supplied_entropy_for_threshold_above_one() {
+    fn split_requires_private_dealer_entropy_for_threshold_above_one() {
         let config = ShamirConfig {
             threshold: 2,
             shares: 3,
@@ -403,7 +414,7 @@ mod tests {
 
         assert!(
             split(b"entropy must be explicit", &config).is_err(),
-            "threshold > 1 Shamir splitting must fail closed unless entropy is caller supplied"
+            "threshold > 1 Shamir splitting must fail closed unless private dealer entropy is supplied"
         );
     }
 
@@ -435,6 +446,83 @@ mod tests {
         assert_ne!(
             first.iter().map(|share| &share.data).collect::<Vec<_>>(),
             second.iter().map(|share| &share.data).collect::<Vec<_>>()
+        );
+    }
+
+    fn derive_public_entropy_coefficient_for_regression(
+        entropy: &[u8],
+        commitment: &[u8; 32],
+        config: &ShamirConfig,
+        secret_len: usize,
+        byte_idx: usize,
+        coeff_idx: usize,
+    ) -> Result<u8, IdentityError> {
+        let entropy_len = encode_usize_for_shamir(entropy.len(), "entropy_len")?;
+        let secret_len = encode_usize_for_shamir(secret_len, "secret_len")?;
+        let byte_idx = encode_usize_for_shamir(byte_idx, "byte_idx")?;
+        let coeff_idx = encode_usize_for_shamir(coeff_idx, "coefficient_idx")?;
+
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"exo.identity.shamir.coefficient.v1");
+        hasher.update(&entropy_len);
+        hasher.update(entropy);
+        hasher.update(commitment);
+        hasher.update(&[config.threshold, config.shares]);
+        hasher.update(&secret_len);
+        hasher.update(&byte_idx);
+        hasher.update(&coeff_idx);
+        let digest = hasher.finalize();
+        Ok(digest.as_bytes()[0])
+    }
+
+    fn recover_single_share_with_public_entropy_regression(
+        share: &Share,
+        config: &ShamirConfig,
+        entropy: &[u8],
+    ) -> Result<Vec<u8>, IdentityError> {
+        let k: usize = config.threshold.into();
+        let mut recovered = Vec::with_capacity(share.data.len());
+
+        for (byte_idx, &share_byte) in share.data.iter().enumerate() {
+            let mut public_terms: u8 = 0;
+            let mut x_pow = share.index;
+            for coeff_idx in 1..k {
+                let coeff = derive_public_entropy_coefficient_for_regression(
+                    entropy,
+                    &share.commitment,
+                    config,
+                    share.data.len(),
+                    byte_idx,
+                    coeff_idx,
+                )?;
+                public_terms ^= gf256_mul(coeff, x_pow);
+                x_pow = gf256_mul(x_pow, share.index);
+            }
+            recovered.push(share_byte ^ public_terms);
+        }
+
+        Ok(recovered)
+    }
+
+    #[test]
+    fn known_entropy_and_single_share_cannot_recover_secret_below_threshold() {
+        let secret = b"known entropy must not collapse threshold";
+        let config = ShamirConfig {
+            threshold: 3,
+            shares: 5,
+        };
+        let shares = split_with_entropy(secret, &config, TEST_SHAMIR_ENTROPY).unwrap();
+
+        let recovered = recover_single_share_with_public_entropy_regression(
+            &shares[0],
+            &config,
+            TEST_SHAMIR_ENTROPY,
+        )
+        .expect("public-entropy regression recovery should be deterministic");
+
+        assert_ne!(
+            recovered, secret,
+            "a single share plus known dealer entropy must not recover the secret"
         );
     }
 
@@ -792,6 +880,27 @@ mod tests {
         assert!(
             !split_source.contains("fill_bytes"),
             "Shamir coefficients must not use internal RNG byte filling"
+        );
+    }
+
+    #[test]
+    fn coefficient_derivation_binds_secret_not_public_entropy_alone() {
+        let source = include_str!("shamir.rs");
+        let derivation_source = source
+            .split("fn derive_shamir_coefficient(")
+            .nth(1)
+            .expect("coefficient derivation source exists")
+            .split("fn validate_shares")
+            .next()
+            .expect("coefficient derivation source ends before share validation");
+
+        assert!(
+            derivation_source.contains("exo.identity.shamir.coefficient.v2"),
+            "Shamir coefficient derivation must use the secret-bound v2 domain"
+        );
+        assert!(
+            derivation_source.contains("hasher.update(secret)"),
+            "known dealer entropy and a public share commitment must not be enough to derive coefficients"
         );
     }
 
