@@ -2472,16 +2472,19 @@ mod tests {
             .unwrap()
             .expect("attestation stored");
         assert_eq!(saved_attestation.attestation_id, attestation_id);
+        assert_eq!(saved_attestation.created_ms, signed_created_ms);
         assert_eq!(claim_id, &target_claim_id(&saved_attestation).unwrap());
         assert_eq!(target_claim.dag_node_hash, guard.dag_nodes()[0].hash);
-        assert_eq!(target_claim.created_ms, signed_created_ms);
-        assert_eq!(target_claim.verified_ms, Some(signed_created_ms));
+        assert_eq!(target_claim.created_ms, API_TEST_NOW_MS);
+        assert_eq!(target_claim.verified_ms, Some(API_TEST_NOW_MS));
+        assert_eq!(guard.dag_nodes()[0].timestamp.physical_ms, API_TEST_NOW_MS);
 
         let receipts = guard.trust_receipts();
         assert_eq!(receipts.len(), 1);
         let receipt = &receipts[0];
         assert_eq!(receipt.action_type, "zerodentity.claim_verified");
         assert_eq!(receipt.action_hash, target_claim.claim_hash);
+        assert_eq!(receipt.timestamp.physical_ms, API_TEST_NOW_MS);
         assert_eq!(
             body["receipt_hash"].as_str().unwrap(),
             hex::encode(receipt.receipt_hash.as_bytes())

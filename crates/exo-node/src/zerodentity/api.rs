@@ -872,6 +872,7 @@ pub async fn create_peer_attestation(
     let created_ms = req
         .created_ms
         .ok_or_else(|| bad_request("created_ms is required"))?;
+    let issued_ms = state.now_ms()?;
     let attester_public_key = parse_public_key(req.attester_public_key.as_deref())?;
     if attester_public_key.as_bytes() != authenticated_public_key.as_bytes() {
         return Err(bad_request(
@@ -906,7 +907,7 @@ pub async fn create_peer_attestation(
             )
         })?;
         let dag_node_hash = store
-            .next_claim_dag_node_hash(target_claim_hash, Timestamp::new(created_ms, 0))
+            .next_claim_dag_node_hash(target_claim_hash, Timestamp::new(issued_ms, 0))
             .map_err(store_error)?;
 
         let attestation = create_attestation(CreateAttestationInput {
@@ -926,7 +927,7 @@ pub async fn create_peer_attestation(
             )
         })?;
         let target_claim =
-            build_target_claim(&attestation, dag_node_hash, created_ms).map_err(|e| {
+            build_target_claim(&attestation, dag_node_hash, issued_ms).map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({"error": e.to_string()})),
@@ -1172,7 +1173,7 @@ mod tests {
     }
 
     #[test]
-    fn attestation_write_path_uses_caller_supplied_time() {
+    fn attestation_write_path_uses_trusted_node_time_for_issued_artifacts() {
         let source = include_str!("api.rs");
         let attestation_section = source
             .split("// POST /api/v1/0dentity/:did/attest\n// ---------------------------------------------------------------------------")
@@ -1180,7 +1181,13 @@ mod tests {
             .and_then(|section| section.split("// ---------------------------------------------------------------------------").next())
             .unwrap();
 
-        assert!(!attestation_section.contains("now_ms()"));
+        assert!(attestation_section.contains("let issued_ms = state.now_ms()?;"));
+        assert!(attestation_section.contains("Timestamp::new(issued_ms, 0)"));
+        assert!(
+            attestation_section
+                .contains("build_target_claim(&attestation, dag_node_hash, issued_ms)")
+        );
+        assert!(!attestation_section.contains("Timestamp::new(created_ms, 0)"));
     }
 
     #[test]
@@ -1893,6 +1900,66 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn create_peer_attestation_uses_node_hlc_for_target_claim_and_receipt_time() {
+        let session_keypair = test_keypair(47);
+        let state = make_state_with_signed_session_and_claim(
+            "tok-alice",
+            "did:exo:alice",
+            &session_keypair,
+        );
+        let store = state.store.clone();
+        let app = zerodentity_api_router(state);
+        let attester = Did::new("did:exo:alice").unwrap();
+        let target = Did::new("did:exo:attested-carol").unwrap();
+        let signed_created_ms = 1_234_000;
+        let uri = "/api/v1/0dentity/did%3Aexo%3Aalice/attest";
+        let body = signed_attest_body(
+            &attester,
+            &target,
+            AttestationType::Identity,
+            None,
+            signed_created_ms,
+            session_keypair.public_key(),
+            session_keypair.secret_key(),
+        );
+
+        let resp = signed_post(
+            app,
+            uri,
+            "tok-alice",
+            "nonce-api-attest-hlc-issued-time",
+            body,
+            &session_keypair,
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let guard = store.lock().unwrap();
+        let saved_attestation = guard
+            .get_attestation(&attester, &target)
+            .unwrap()
+            .expect("attestation stored");
+        assert_eq!(saved_attestation.created_ms, signed_created_ms);
+        let claim_id = target_claim_id(&saved_attestation).unwrap();
+        let claims = guard.get_claims(&target).unwrap();
+        let target_claim = claims
+            .iter()
+            .find(|(id, _)| id == &claim_id)
+            .map(|(_, claim)| claim)
+            .expect("target peer-attestation claim");
+        assert_eq!(target_claim.created_ms, API_TEST_NOW_MS);
+        assert_eq!(target_claim.verified_ms, Some(API_TEST_NOW_MS));
+        let dag_node = guard.dag_nodes().first().expect("attestation DAG node");
+        assert_eq!(dag_node.timestamp.physical_ms, API_TEST_NOW_MS);
+        let receipt = guard
+            .trust_receipts()
+            .iter()
+            .find(|receipt| receipt.action_hash == target_claim.claim_hash)
+            .expect("claim verification receipt");
+        assert_eq!(receipt.timestamp.physical_ms, API_TEST_NOW_MS);
     }
 
     #[tokio::test]
