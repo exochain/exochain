@@ -533,6 +533,7 @@ fn test_create_emergency_action_round_trip() {
         policy,
         1_700_000_000_000,
         0,
+        r#"[]"#,
     )
     .expect("create_emergency_action");
     let json = js_to_json(result);

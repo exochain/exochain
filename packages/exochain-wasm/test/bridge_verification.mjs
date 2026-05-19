@@ -2255,7 +2255,8 @@ test('wasm_create_emergency_action', () =>
     NONZERO_32_HEX,
     JSON.stringify(emergencyPolicy),
     NOW_MS,
-    0
+    0,
+    JSON.stringify([])
   ));
 
 const emergencyAction = setup(() =>
@@ -2268,8 +2269,45 @@ const emergencyAction = setup(() =>
     NONZERO_32_HEX,
     JSON.stringify(emergencyPolicy),
     NOW_MS,
-    0
+    0,
+    JSON.stringify([])
   ));
+
+test('wasm_create_emergency_action rejects repeated same-actor emergency history', () => {
+  const onePerActorPolicy = {
+    ...emergencyPolicy,
+    max_per_quarter_per_actor: 1
+  };
+  const first = wasm.wasm_create_emergency_action(
+    UUID_1,
+    JSON.stringify('SystemHalt'),
+    TEST_DID,
+    'Critical security breach',
+    BigInt(50000),
+    NONZERO_32_HEX,
+    JSON.stringify(onePerActorPolicy),
+    NOW_MS,
+    0,
+    JSON.stringify([])
+  );
+
+  return expectErrorContains(
+    'wasm_create_emergency_action',
+    () => wasm.wasm_create_emergency_action(
+      UUID_2,
+      JSON.stringify('RoleEscalation'),
+      TEST_DID,
+      'Second same-actor emergency',
+      BigInt(50000),
+      NONZERO_32_HEX,
+      JSON.stringify(onePerActorPolicy),
+      NOW_MS + 1n,
+      0,
+      JSON.stringify([first])
+    ),
+    'Emergency error',
+  );
+});
 
 test('wasm_check_expiry', () => {
   if (!emergencyAction) throw new Error('skipped -- no emergency action from setup');

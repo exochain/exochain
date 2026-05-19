@@ -656,7 +656,8 @@ pub fn wasm_verify_quorum_precondition(
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 // Mirrors the emergency action provenance contract across the JS/Rust
-// boundary without rebuilding IDs or HLC timestamps inside the bridge.
+// boundary without rebuilding IDs, HLC timestamps, or quarterly action history
+// inside the bridge.
 pub fn wasm_create_emergency_action(
     action_id: &str,
     action_type_json: &str,
@@ -667,6 +668,7 @@ pub fn wasm_create_emergency_action(
     policy_json: &str,
     timestamp_ms: u64,
     timestamp_logical: u32,
+    prior_actions_json: &str,
 ) -> Result<JsValue, JsValue> {
     let action_id = parse_uuid(action_id)?;
     let action_type: decision_forum::emergency::EmergencyActionType =
@@ -676,6 +678,11 @@ pub fn wasm_create_emergency_action(
     let evidence_hash = parse_hash(evidence_hash_hex, "evidence hash")?;
     let policy: decision_forum::emergency::EmergencyPolicy = from_json_str(policy_json)?;
     let ts = exo_core::types::Timestamp::new(timestamp_ms, timestamp_logical);
+    let prior_actions: Vec<decision_forum::emergency::EmergencyAction> = from_json_bounded_vec(
+        prior_actions_json,
+        "forum emergency actions",
+        MAX_WASM_FORUM_EMERGENCY_ACTIONS,
+    )?;
 
     let action = decision_forum::emergency::create_emergency_action(
         decision_forum::emergency::EmergencyActionInput {
@@ -688,6 +695,7 @@ pub fn wasm_create_emergency_action(
             created_at: ts,
         },
         &policy,
+        &prior_actions,
     )
     .map_err(|e| JsValue::from_str(&format!("Emergency error: {e}")))?;
     to_js_value(&action)
@@ -996,5 +1004,36 @@ mod tests {
                 "{export_name} must not derive eligible signers from caller-supplied keys"
             );
         }
+    }
+
+    #[test]
+    fn wasm_emergency_create_requires_bounded_prior_action_history() {
+        let source = include_str!("decision_forum_bindings.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+        let body = production
+            .split("pub fn wasm_create_emergency_action")
+            .nth(1)
+            .expect("emergency create export exists")
+            .split("/// Ratify an emergency action")
+            .next()
+            .expect("emergency create export body is bounded by ratify docs");
+
+        assert!(
+            body.contains("prior_actions_json: &str"),
+            "WASM emergency creation must require caller-supplied prior action history"
+        );
+        assert!(
+            body.contains("from_json_bounded_vec(")
+                && body.contains("prior_actions_json")
+                && body.contains("MAX_WASM_FORUM_EMERGENCY_ACTIONS"),
+            "WASM emergency creation must parse bounded prior action history"
+        );
+        assert!(
+            body.contains("&prior_actions"),
+            "WASM emergency creation must pass prior action history into the core constructor"
+        );
     }
 }
