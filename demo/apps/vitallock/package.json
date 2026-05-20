@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:security": "node tests/security-guards.mjs"
   },
   "dependencies": {
     "react": "^19.1.0",

@@ -27,7 +27,6 @@ const require = createRequire(import.meta.url);
 
 let wasm = null;
 
-export const VALIDATION_TIMESTAMP_ISO = '2023-11-14T22:13:20.000Z';
 const VALIDATION_TIMESTAMP_MS = 1_700_000_000_000;
 const VALIDATION_TIMESTAMP_MS_BIGINT = 1_700_000_000_000n;
 const VALIDATION_DECISION_ID = '00000000-0000-0000-0000-0000000005f0';
@@ -39,6 +38,14 @@ function repeatedByte(byte) {
 
 function validationTimestamp() {
   return { physical_ms: VALIDATION_TIMESTAMP_MS, logical: 0 };
+}
+
+function validationFixtureTimestampIso() {
+  return new Date(VALIDATION_TIMESTAMP_MS).toISOString();
+}
+
+export function validationReportTimestampIso() {
+  return new Date().toISOString();
 }
 
 /**
@@ -307,7 +314,7 @@ export function buildValidationInvariantRequest() {
     },
     provenance: {
       actor: 'did:exo:alice',
-      timestamp: VALIDATION_TIMESTAMP_ISO,
+      timestamp: validationFixtureTimestampIso(),
       action_hash: repeatedByte(4),
       signature: [1, 2, 3],
       voice_kind: 'Human',

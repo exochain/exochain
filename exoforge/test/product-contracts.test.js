@@ -15,16 +15,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { equal, ok } from 'node:assert/strict';
 
 const execFileAsync = promisify(execFile);
+const repoRoot = new URL('../..', import.meta.url);
 
 async function runJsonCli(script, args = []) {
   try {
     const { stdout } = await execFileAsync(process.execPath, [script, ...args], {
-      cwd: new URL('../..', import.meta.url),
+      cwd: repoRoot,
       maxBuffer: 1024 * 1024,
     });
     return JSON.parse(stdout);
@@ -60,4 +62,25 @@ test('exoforge-council-review labels heuristic output as non-binding triage', as
   equal(review.binding_review, false);
   equal(review.verdict.review_method, 'heuristic_triage');
   equal(review.verdict.binding_review, false);
+});
+
+test('exoforge report timestamps are not hard-coded', async () => {
+  const sourceFiles = [
+    '../lib/panels.js',
+    '../lib/constitutional.js',
+    '../bin/exoforge-implement.js',
+    '../bin/exoforge-council-review.js',
+    '../bin/exoforge-validate.js',
+    '../bin/exoforge-monitor.js',
+  ];
+
+  const sources = await Promise.all(
+    sourceFiles.map(async path => [path, await readFile(new URL(path, import.meta.url), 'utf8')])
+  );
+
+  for (const [path, source] of sources) {
+    ok(!source.includes('2023-11-14T22:13:20.000Z'), `${path} must not emit stale report timestamps`);
+    ok(!source.includes('REVIEW_TIMESTAMP_ISO'), `${path} must not depend on a fixed review timestamp`);
+    ok(!source.includes('VALIDATION_TIMESTAMP_ISO'), `${path} must not depend on a fixed validation timestamp`);
+  }
 });

@@ -560,7 +560,7 @@ impl SqliteDagStore {
     }
 
     /// Save a trust receipt to the database.
-    #[cfg(any(test, feature = "unaudited-crosschecked-receipt-anchor"))]
+    #[cfg(test)]
     pub fn save_receipt(&mut self, receipt: &TrustReceipt) -> DagResult<()> {
         validate_signature(&receipt.signature, "trust_receipts.signature")?;
         let timestamp_ms =

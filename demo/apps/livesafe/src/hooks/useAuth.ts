@@ -24,6 +24,7 @@ export interface AuthState {
   x25519PublicHex: string;
   x25519SecretHex: string;
   passphraseHash: string;
+  apiToken: string;
 }
 
 interface AuthContextType {

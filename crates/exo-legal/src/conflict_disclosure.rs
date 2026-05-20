@@ -16,6 +16,8 @@
 
 //! Conflict of interest disclosure requirements.
 
+use std::collections::BTreeMap;
+
 use exo_core::{Did, PublicKey, Signature, Timestamp, crypto};
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +43,9 @@ pub struct DisclosureVerification {
     pub verifier_public_key: PublicKey,
     pub signature: Signature,
 }
+
+/// Trusted disclosure reviewers and their authorized Ed25519 verification keys.
+pub type TrustedDisclosureVerifierKeys = BTreeMap<Did, PublicKey>;
 
 const REQUIRED_ACTIONS: &[&str] = &[
     "vote",
@@ -128,6 +133,7 @@ pub fn disclosure_verification_payload(
 pub fn verify_disclosure(
     disclosure: &mut Disclosure,
     verification: DisclosureVerification,
+    trusted_verifier_keys: &TrustedDisclosureVerifierKeys,
 ) -> Result<()> {
     if disclosure.verified || disclosure.verification.is_some() {
         return Err(LegalError::DisclosureVerificationInvalid {
@@ -149,17 +155,23 @@ pub fn verify_disclosure(
             reason: "verification signature must be non-empty Ed25519 evidence".into(),
         });
     }
+    let trusted_public_key = trusted_verifier_keys
+        .get(&verification.verifier)
+        .ok_or_else(|| LegalError::DisclosureVerificationInvalid {
+            reason: "verifier is not in the trusted disclosure verifier registry".into(),
+        })?;
+    if trusted_public_key != &verification.verifier_public_key {
+        return Err(LegalError::DisclosureVerificationInvalid {
+            reason: "verification public key does not match the trusted verifier registry".into(),
+        });
+    }
 
     let payload = disclosure_verification_payload(
         disclosure,
         &verification.verifier,
         &verification.verified_at,
     )?;
-    if !crypto::verify(
-        &payload,
-        &verification.signature,
-        &verification.verifier_public_key,
-    ) {
+    if !crypto::verify(&payload, &verification.signature, trusted_public_key) {
         return Err(LegalError::DisclosureVerificationInvalid {
             reason: "verification signature does not match the disclosure payload".into(),
         });
@@ -193,6 +205,12 @@ mod tests {
         let payload = disclosure_verification_payload(disclosure, verifier, &verified_at)
             .expect("canonical verification payload");
         crypto::sign(&payload, secret_key)
+    }
+
+    fn trusted_verifiers(verifier: &Did, public_key: PublicKey) -> TrustedDisclosureVerifierKeys {
+        let mut keys = TrustedDisclosureVerifierKeys::new();
+        keys.insert(verifier.clone(), public_key);
+        keys
     }
 
     #[test]
@@ -258,6 +276,7 @@ mod tests {
         let (pk, sk) = crypto::generate_keypair();
         let verified_at = ts(2000);
         let signature = signed_verification(&d, &verifier, verified_at, &sk);
+        let trusted = trusted_verifiers(&verifier, pk);
 
         verify_disclosure(
             &mut d,
@@ -267,6 +286,7 @@ mod tests {
                 verifier_public_key: pk,
                 signature,
             },
+            &trusted,
         )
         .expect("signed verification evidence");
 
@@ -281,10 +301,62 @@ mod tests {
     }
 
     #[test]
+    fn verify_disclosure_rejects_untrusted_caller_supplied_verifier_key() {
+        let mut d = file_disclosure(&did("a"), "x", &[], ts(1000)).unwrap();
+        let claimed_verifier = did("ethics");
+        let (attacker_pk, attacker_sk) = crypto::generate_keypair();
+        let verified_at = ts(2000);
+        let signature = signed_verification(&d, &claimed_verifier, verified_at, &attacker_sk);
+        let trusted = TrustedDisclosureVerifierKeys::new();
+
+        let err = verify_disclosure(
+            &mut d,
+            DisclosureVerification {
+                verifier: claimed_verifier,
+                verified_at,
+                verifier_public_key: attacker_pk,
+                signature,
+            },
+            &trusted,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("trusted"));
+        assert!(!d.verified);
+    }
+
+    #[test]
+    fn verify_disclosure_rejects_key_not_bound_to_trusted_verifier() {
+        let mut d = file_disclosure(&did("a"), "x", &[], ts(1000)).unwrap();
+        let verifier = did("ethics");
+        let (trusted_pk, _trusted_sk) = crypto::generate_keypair();
+        let (attacker_pk, attacker_sk) = crypto::generate_keypair();
+        let verified_at = ts(2000);
+        let signature = signed_verification(&d, &verifier, verified_at, &attacker_sk);
+        let trusted = trusted_verifiers(&verifier, trusted_pk);
+
+        let err = verify_disclosure(
+            &mut d,
+            DisclosureVerification {
+                verifier,
+                verified_at,
+                verifier_public_key: attacker_pk,
+                signature,
+            },
+            &trusted,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("trusted verifier registry"));
+        assert!(!d.verified);
+    }
+
+    #[test]
     fn verify_disclosure_rejects_empty_signature() {
         let mut d = file_disclosure(&did("a"), "x", &[], ts(1000)).unwrap();
         let verifier = did("ethics");
         let (pk, _sk) = crypto::generate_keypair();
+        let trusted = trusted_verifiers(&verifier, pk);
 
         let err = verify_disclosure(
             &mut d,
@@ -294,6 +366,7 @@ mod tests {
                 verifier_public_key: pk,
                 signature: Signature::Empty,
             },
+            &trusted,
         )
         .unwrap_err();
 
@@ -306,6 +379,7 @@ mod tests {
         let mut d = file_disclosure(&did("a"), "x", &[], ts(1000)).unwrap();
         let verifier = did("ethics");
         let (pk, _sk) = crypto::generate_keypair();
+        let trusted = trusted_verifiers(&verifier, pk);
 
         let err = verify_disclosure(
             &mut d,
@@ -315,6 +389,7 @@ mod tests {
                 verifier_public_key: pk,
                 signature: Signature::from_bytes([0u8; 64]),
             },
+            &trusted,
         )
         .unwrap_err();
 
@@ -330,6 +405,7 @@ mod tests {
         let (wrong_pk, _wrong_sk) = crypto::generate_keypair();
         let verified_at = ts(2000);
         let signature = signed_verification(&d, &verifier, verified_at, &signer_sk);
+        let trusted = trusted_verifiers(&verifier, wrong_pk);
 
         let err = verify_disclosure(
             &mut d,
@@ -339,6 +415,7 @@ mod tests {
                 verifier_public_key: wrong_pk,
                 signature,
             },
+            &trusted,
         )
         .unwrap_err();
 
@@ -353,6 +430,7 @@ mod tests {
         let (pk, sk) = crypto::generate_keypair();
         let verified_at = ts(2000);
         let signature = signed_verification(&d, &verifier, verified_at, &sk);
+        let trusted = trusted_verifiers(&verifier, pk);
         d.nature = "changed after signing".into();
 
         let err = verify_disclosure(
@@ -363,6 +441,7 @@ mod tests {
                 verifier_public_key: pk,
                 signature,
             },
+            &trusted,
         )
         .unwrap_err();
 
@@ -377,6 +456,7 @@ mod tests {
         let (pk, sk) = crypto::generate_keypair();
         let verified_at = ts(2000);
         let signature = signed_verification(&d, &verifier, verified_at, &sk);
+        let trusted = trusted_verifiers(&verifier, pk);
 
         let err = verify_disclosure(
             &mut d,
@@ -386,6 +466,7 @@ mod tests {
                 verifier_public_key: pk,
                 signature,
             },
+            &trusted,
         )
         .unwrap_err();
 
@@ -399,6 +480,7 @@ mod tests {
         let verifier = did("ethics");
         let (pk, sk) = crypto::generate_keypair();
         let signature = signed_verification(&d, &verifier, Timestamp::ZERO, &sk);
+        let trusted = trusted_verifiers(&verifier, pk);
 
         let err = verify_disclosure(
             &mut d,
@@ -408,6 +490,7 @@ mod tests {
                 verifier_public_key: pk,
                 signature,
             },
+            &trusted,
         )
         .unwrap_err();
 
@@ -422,6 +505,7 @@ mod tests {
         let (pk, sk) = crypto::generate_keypair();
         let verified_at = ts(2000);
         let signature = signed_verification(&d, &verifier, verified_at, &sk);
+        let trusted = trusted_verifiers(&verifier, pk);
         let verification = DisclosureVerification {
             verifier,
             verified_at,
@@ -429,8 +513,8 @@ mod tests {
             signature,
         };
 
-        verify_disclosure(&mut d, verification.clone()).expect("first verification");
-        let err = verify_disclosure(&mut d, verification).unwrap_err();
+        verify_disclosure(&mut d, verification.clone(), &trusted).expect("first verification");
+        let err = verify_disclosure(&mut d, verification, &trusted).unwrap_err();
 
         assert!(err.to_string().contains("already verified"));
     }

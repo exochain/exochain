@@ -44,7 +44,7 @@ import {
   buildValidationDecision,
   buildValidationTncFlags,
   buildValidationInvariantRequest,
-  VALIDATION_TIMESTAMP_ISO
+  validationReportTimestampIso
 } from '../lib/constitutional.js';
 
 // ── Parse CLI arguments ─────────────────────────────────────────────────────
@@ -262,7 +262,7 @@ function checkWorkflowStages() {
 /**
  * Run all health checks and produce an aggregate report.
  */
-function runHealthCheck(verbose) {
+function runHealthCheck(verbose, checkedAt = validationReportTimestampIso()) {
   const checks = [
     checkKernel(),
     checkTncEnforcement(),
@@ -295,7 +295,7 @@ function runHealthCheck(verbose) {
     })),
     exochain_version: '2.2',
     monitor_version: '0.1.0-beta',
-    checked_at: VALIDATION_TIMESTAMP_ISO
+    checked_at: checkedAt
   };
 
   return report;

@@ -141,6 +141,11 @@ python sybil-cli.py forum attest DR-... \
   --secret-key-b64 <BASE64_SECRET_KEY>
 ```
 
+When `require_valid_signatures` is enabled, clearance verifies signatures only
+against the trusted key registry populated by `forum keys register`.
+`public_key_b64` on a custody event is retained as metadata and is not
+authoritative for clearance.
+
 ---
 
 ## Clearance (gravity)

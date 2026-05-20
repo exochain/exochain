@@ -150,9 +150,9 @@ pub fn split_with_entropy(
         for (coeff_idx, coeff) in coeffs.iter_mut().enumerate().skip(1) {
             *coeff = derive_shamir_coefficient(
                 entropy,
+                secret,
                 &commitment,
                 config,
-                secret.len(),
                 byte_idx,
                 coeff_idx,
             )?;
@@ -208,24 +208,25 @@ fn encode_usize_for_shamir(value: usize, field: &'static str) -> Result<[u8; 8],
 
 fn derive_shamir_coefficient(
     entropy: &[u8],
+    secret: &[u8],
     commitment: &[u8; 32],
     config: &ShamirConfig,
-    secret_len: usize,
     byte_idx: usize,
     coeff_idx: usize,
 ) -> Result<u8, IdentityError> {
     let entropy_len = encode_usize_for_shamir(entropy.len(), "entropy_len")?;
-    let secret_len = encode_usize_for_shamir(secret_len, "secret_len")?;
+    let secret_len = encode_usize_for_shamir(secret.len(), "secret_len")?;
     let byte_idx = encode_usize_for_shamir(byte_idx, "byte_idx")?;
     let coeff_idx = encode_usize_for_shamir(coeff_idx, "coefficient_idx")?;
 
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"exo.identity.shamir.coefficient.v1");
+    hasher.update(b"exo.identity.shamir.coefficient.v2");
     hasher.update(&entropy_len);
     hasher.update(entropy);
+    hasher.update(&secret_len);
+    hasher.update(secret);
     hasher.update(commitment);
     hasher.update(&[config.threshold, config.shares]);
-    hasher.update(&secret_len);
     hasher.update(&byte_idx);
     hasher.update(&coeff_idx);
     let digest = hasher.finalize();
@@ -648,6 +649,89 @@ mod tests {
         }
     }
 
+    fn derive_public_coefficient_for_attack(
+        entropy: &[u8],
+        commitment: &[u8; 32],
+        config: &ShamirConfig,
+        secret_len: usize,
+        byte_idx: usize,
+        coeff_idx: usize,
+    ) -> u8 {
+        let entropy_len =
+            encode_usize_for_shamir(entropy.len(), "entropy_len").expect("entropy length");
+        let secret_len = encode_usize_for_shamir(secret_len, "secret_len").expect("secret length");
+        let byte_idx = encode_usize_for_shamir(byte_idx, "byte_idx").expect("byte index");
+        let coeff_idx =
+            encode_usize_for_shamir(coeff_idx, "coefficient_idx").expect("coefficient index");
+
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"exo.identity.shamir.coefficient.v1");
+        hasher.update(&entropy_len);
+        hasher.update(entropy);
+        hasher.update(commitment);
+        hasher.update(&[config.threshold, config.shares]);
+        hasher.update(&secret_len);
+        hasher.update(&byte_idx);
+        hasher.update(&coeff_idx);
+        let digest = hasher.finalize();
+        digest.as_bytes()[0]
+    }
+
+    fn recover_with_known_public_coefficients(
+        share: &Share,
+        config: &ShamirConfig,
+        entropy: &[u8],
+    ) -> Vec<u8> {
+        let mut recovered = Vec::with_capacity(share.data.len());
+        let k: usize = config.threshold.into();
+
+        for (byte_idx, share_byte) in share.data.iter().enumerate() {
+            let mut non_secret_terms = 0u8;
+            let mut x_pow = share.index;
+            for coeff_idx in 1..k {
+                let coefficient = derive_public_coefficient_for_attack(
+                    entropy,
+                    &share.commitment,
+                    config,
+                    share.data.len(),
+                    byte_idx,
+                    coeff_idx,
+                );
+                non_secret_terms ^= gf256_mul(coefficient, x_pow);
+                x_pow = gf256_mul(x_pow, share.index);
+            }
+            recovered.push(*share_byte ^ non_secret_terms);
+        }
+
+        recovered
+    }
+
+    #[test]
+    fn known_entropy_and_one_share_do_not_recover_threshold_secret() {
+        let secret = b"public entropy must not collapse Shamir threshold";
+
+        for config in [
+            ShamirConfig {
+                threshold: 2,
+                shares: 3,
+            },
+            ShamirConfig {
+                threshold: 3,
+                shares: 5,
+            },
+        ] {
+            let shares = split_with_entropy(secret, &config, TEST_SHAMIR_ENTROPY).unwrap();
+            let recovered =
+                recover_with_known_public_coefficients(&shares[0], &config, TEST_SHAMIR_ENTROPY);
+
+            assert_ne!(
+                recovered, secret,
+                "known public entropy plus one share must not recover the secret for threshold {}",
+                config.threshold
+            );
+        }
+    }
+
     #[test]
     fn reconstruct_rejects_share_index_above_config() {
         let config = ShamirConfig {
@@ -814,6 +898,31 @@ mod tests {
         assert!(
             !split_source.contains(&forbidden_cast),
             "Shamir share index conversion must not use an unchecked narrowing cast"
+        );
+    }
+
+    #[test]
+    fn coefficient_derivation_binds_secret_bytes_not_public_commitment_only() {
+        let source = include_str!("shamir.rs");
+        let derivation_source = source
+            .split("fn derive_shamir_coefficient")
+            .nth(1)
+            .expect("coefficient derivation source exists")
+            .split("fn validate_shares")
+            .next()
+            .expect("coefficient derivation source ends before share validation");
+
+        assert!(
+            derivation_source.contains("coefficient.v2"),
+            "Shamir coefficient derivation must use the secret-bound domain version"
+        );
+        assert!(
+            derivation_source.contains("secret: &[u8]"),
+            "Shamir coefficient derivation must take secret bytes as non-public input"
+        );
+        assert!(
+            derivation_source.contains("hasher.update(secret)"),
+            "Shamir coefficient derivation must bind secret bytes, not only the public commitment"
         );
     }
 

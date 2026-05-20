@@ -108,6 +108,10 @@ fn mcp_rule_for_error(error: &McpError) -> McpRule {
     McpRule::Mcp003ProvenanceRequired
 }
 
+fn mcp_audit_log_at_capacity(log: &McpAuditLog) -> bool {
+    log.len() >= mcp_audit::MAX_MCP_AUDIT_RECORDS
+}
+
 /// MCP server that processes JSON-RPC messages from AI clients.
 ///
 /// Each server instance is bound to a specific actor DID, ensuring that
@@ -477,10 +481,14 @@ impl McpServer {
     ) -> std::result::Result<usize, McpError> {
         let rules = failed_rule.map_or_else(McpRule::all, |rule| vec![rule]);
         let mut appended_records = 0usize;
+        let mut skipped_records = 0usize;
 
         for rule in rules {
-            self.append_mcp_audit_record(rule, outcome)?;
-            appended_records = appended_records.saturating_add(1);
+            if self.append_mcp_audit_record(rule, outcome)? {
+                appended_records = appended_records.saturating_add(1);
+            } else {
+                skipped_records = skipped_records.saturating_add(1);
+            }
         }
 
         tracing::info!(
@@ -488,6 +496,7 @@ impl McpServer {
             tool = %tool_name,
             outcome = ?outcome,
             audit_records = appended_records,
+            skipped_audit_records = skipped_records,
             "MCP tool call audit recorded"
         );
 
@@ -498,13 +507,42 @@ impl McpServer {
         &self,
         rule: McpRule,
         outcome: McpEnforcementOutcome,
-    ) -> std::result::Result<(), McpError> {
+    ) -> std::result::Result<bool, McpError> {
+        {
+            let log = match self.mcp_audit_log.lock() {
+                Ok(log) => log,
+                Err(_) => return Err(McpError::Internal("MCP audit log mutex poisoned".into())),
+            };
+            if mcp_audit_log_at_capacity(&log) {
+                tracing::warn!(
+                    actor = %self.actor_did,
+                    rule = %rule.id(),
+                    outcome = ?outcome,
+                    audit_records = log.len(),
+                    audit_capacity = mcp_audit::MAX_MCP_AUDIT_RECORDS,
+                    "MCP audit log capacity exhausted; skipping non-fatal audit append"
+                );
+                return Ok(false);
+            }
+        }
+
         let timestamp = self.next_mcp_audit_timestamp()?;
 
         let mut log = match self.mcp_audit_log.lock() {
             Ok(log) => log,
             Err(_) => return Err(McpError::Internal("MCP audit log mutex poisoned".into())),
         };
+        if mcp_audit_log_at_capacity(&log) {
+            tracing::warn!(
+                actor = %self.actor_did,
+                rule = %rule.id(),
+                outcome = ?outcome,
+                audit_records = log.len(),
+                audit_capacity = mcp_audit::MAX_MCP_AUDIT_RECORDS,
+                "MCP audit log capacity exhausted; skipping non-fatal audit append"
+            );
+            return Ok(false);
+        }
 
         let record_id = next_mcp_audit_record_id(&log)?;
 
@@ -545,7 +583,7 @@ impl McpServer {
             ));
         }
 
-        Ok(())
+        Ok(true)
     }
 
     fn next_mcp_audit_timestamp(&self) -> std::result::Result<Timestamp, McpError> {
@@ -791,6 +829,37 @@ mod tests {
             .clone()
     }
 
+    fn saturate_mcp_audit_log(server: &McpServer) {
+        let actor = Did::new("did:exo:test-ai-agent").expect("valid DID");
+        let mut log = server
+            .mcp_audit_log
+            .lock()
+            .expect("MCP audit log mutex should not be poisoned in tests");
+        log.records.clear();
+        log.records.reserve(mcp_audit::MAX_MCP_AUDIT_RECORDS);
+
+        for index in 0..mcp_audit::MAX_MCP_AUDIT_RECORDS {
+            let record_number = index
+                .checked_add(1)
+                .expect("bounded MCP audit fixture index");
+            let record_id = Uuid::from_u128(
+                u128::try_from(record_number).expect("MCP audit fixture index fits u128"),
+            );
+            let physical_ms = 1_777_000_000_000u64
+                .checked_add(u64::try_from(record_number).expect("fixture index fits u64"))
+                .expect("bounded MCP audit fixture timestamp");
+            log.records.push(mcp_audit::McpAuditRecord {
+                id: record_id,
+                timestamp: Timestamp::new(physical_ms, 0),
+                rule: McpRule::Mcp003ProvenanceRequired,
+                actor: actor.clone(),
+                outcome: McpEnforcementOutcome::Allowed,
+                data_residency_region: None,
+                chain_hash: [0x42u8; 32],
+            });
+        }
+    }
+
     fn constitutional_context(actor_did: &str, action: &str, arguments: &Value) -> Value {
         let actor = Did::new(actor_did).expect("valid DID");
         let keypair = exo_core::crypto::KeyPair::from_secret_bytes([0x4D; 32]).unwrap();
@@ -988,6 +1057,44 @@ mod tests {
     }
 
     #[test]
+    fn handler_tools_call_create_evidence_marks_caller_metadata_unattested() {
+        let server = test_server();
+        let arguments = serde_json::json!({
+            "evidence_type": "document",
+            "content_hash": "0202020202020202020202020202020202020202020202020202020202020202",
+            "creator_did": "did:exo:alice",
+            "evidence_id": "00000000-0000-0000-0000-000000000001",
+            "created_at_ms": 1700000000000_u64,
+            "created_at_logical": 7_u64,
+        });
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 3003,
+            "method": "tools/call",
+            "params": tool_call_params("exochain_create_evidence", arguments)
+        })
+        .to_string();
+
+        let response = server.handle_message(&msg).unwrap();
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        assert!(parsed.error.is_none());
+        let result = parsed.result.expect("tool result");
+        assert!(result.get("is_error").is_none() || result["is_error"] == false);
+        let text = result["content"][0]["text"].as_str().expect("text content");
+        let evidence: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(evidence["status"], "draft_unattested");
+        assert_eq!(evidence["attestation_status"], "not_attested");
+        assert_eq!(
+            evidence["trust_boundary"],
+            "caller_supplied_untrusted_metadata"
+        );
+        assert!(
+            !text.contains("\"status\":\"created\""),
+            "MCP message path must not mint a created evidence attestation from caller metadata"
+        );
+    }
+
+    #[test]
     fn handler_tools_call_node_status_appends_allowed_mcp_audit_chain() {
         let server = test_server();
         let msg = serde_json::json!({
@@ -1013,6 +1120,89 @@ mod tests {
             assert_ne!(record.timestamp, Timestamp::ZERO);
             assert_eq!(record.outcome, McpEnforcementOutcome::Allowed);
         }
+    }
+
+    #[test]
+    fn handler_audit_capacity_does_not_deny_allowed_tool_calls() {
+        let server = test_server();
+        saturate_mcp_audit_log(&server);
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 304,
+            "method": "tools/call",
+            "params": tool_call_params("exochain_node_status", serde_json::json!({}))
+        })
+        .to_string();
+
+        let response = server.handle_message(&msg).unwrap();
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        assert!(parsed.error.is_none(), "{response}");
+        let result = parsed.result.expect("tool result");
+        let content = result["content"].as_array().expect("tool content");
+        let text = content[0]["text"].as_str().expect("text content");
+        let status: Value = serde_json::from_str(text).expect("node status json");
+
+        assert_eq!(status["node"], "exochain");
+        assert_eq!(
+            mcp_audit_snapshot(&server).len(),
+            mcp_audit::MAX_MCP_AUDIT_RECORDS
+        );
+    }
+
+    #[test]
+    fn handler_audit_capacity_preserves_malformed_tool_call_errors() {
+        let server = test_server();
+        saturate_mcp_audit_log(&server);
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 305,
+            "method": "tools/call"
+        })
+        .to_string();
+
+        let response = server.handle_message(&msg).unwrap();
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        let error = parsed.error.expect("malformed tool call must fail");
+
+        assert_eq!(error.code, INVALID_PARAMS);
+        assert_eq!(error.message, "missing params for tools/call");
+        assert_eq!(
+            mcp_audit_snapshot(&server).len(),
+            mcp_audit::MAX_MCP_AUDIT_RECORDS
+        );
+    }
+
+    #[test]
+    fn handler_audit_capacity_preserves_constitutional_rejections() {
+        let server = test_server();
+        saturate_mcp_audit_log(&server);
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 306,
+            "method": "tools/call",
+            "params": {
+                "name": "exochain_node_status",
+                "arguments": {}
+            }
+        })
+        .to_string();
+
+        let response = server.handle_message(&msg).unwrap();
+        let parsed: JsonRpcResponse = serde_json::from_str(&response).unwrap();
+        assert!(parsed.error.is_none(), "{response}");
+        let result = parsed.result.expect("tool result");
+
+        assert_eq!(result["is_error"], true);
+        assert_eq!(
+            result["content"][0]["text"]
+                .as_str()
+                .expect("constitutional error text"),
+            "constitutional enforcement failed"
+        );
+        assert_eq!(
+            mcp_audit_snapshot(&server).len(),
+            mcp_audit::MAX_MCP_AUDIT_RECORDS
+        );
     }
 
     #[test]

@@ -54,7 +54,6 @@ export default function IceCard() {
   });
   const [newAllergy, setNewAllergy] = useState('');
   const [newMed, setNewMed] = useState('');
-  const [newCondition, setNewCondition] = useState('');
   const [newContact, setNewContact] = useState({ name: '', phone: '', relationship: '' });
   const [saved, setSaved] = useState(false);
 

@@ -23,6 +23,71 @@
  */
 'use strict';
 
+function existingColumns(db, tableName) {
+  return new Set(db.prepare(`PRAGMA table_info(${tableName})`).all().map((row) => row.name));
+}
+
+function ensureColumn(db, tableName, columnName, definition) {
+  const columns = existingColumns(db, tableName);
+
+  if (!columns.has(columnName)) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
+function ensureRouteSchemaCompatibility(db) {
+  const migrations = {
+    llm_providers: [
+      ['type', "TEXT NOT NULL DEFAULT 'custom'"],
+      ['base_url', 'TEXT'],
+      ['api_key', 'TEXT'],
+      ['default_model', 'TEXT'],
+      ['enabled', 'INTEGER NOT NULL DEFAULT 0'],
+      ['updated_at', 'TEXT'],
+    ],
+    model_sources: [
+      ['type', "TEXT NOT NULL DEFAULT 'ollama'"],
+      ['endpoint', "TEXT NOT NULL DEFAULT 'http://localhost:11434'"],
+      ['label', 'TEXT'],
+      ['device', 'TEXT'],
+      ['ssh_host', 'TEXT'],
+      ['ssh_tunnel_port', 'INTEGER'],
+      ['updated_at', 'TEXT'],
+    ],
+    credential_vault: [
+      ['name', "TEXT NOT NULL DEFAULT 'Unnamed Credential'"],
+      ['credential_type', "TEXT NOT NULL DEFAULT 'api_key'"],
+      ['metadata', "TEXT NOT NULL DEFAULT '{}'"],
+    ],
+    idea_board: [
+      ['reference_material', 'TEXT'],
+      ['structure', 'TEXT'],
+      ['market_notes', 'TEXT'],
+      ['related_project_id', 'INTEGER REFERENCES projects(id)'],
+    ],
+    research_sessions: [
+      ['research_brief', 'TEXT'],
+      ['assigned_to', 'TEXT'],
+      ['project_id', 'INTEGER REFERENCES projects(id)'],
+      ['started_at', 'TEXT'],
+      ['completed_at', 'TEXT'],
+      ['summary', 'TEXT'],
+      ['updated_at', 'TEXT'],
+    ],
+  };
+
+  for (const [tableName, columns] of Object.entries(migrations)) {
+    for (const [columnName, definition] of columns) {
+      ensureColumn(db, tableName, columnName, definition);
+    }
+  }
+
+  db.exec(`UPDATE llm_providers SET updated_at = COALESCE(updated_at, created_at, datetime('now','localtime'))`);
+  db.exec(`UPDATE model_sources SET updated_at = COALESCE(updated_at, created_at, datetime('now','localtime'))`);
+  db.exec(`UPDATE research_sessions SET updated_at = COALESCE(updated_at, created_at, datetime('now','localtime'))`);
+  db.exec(`UPDATE model_sources SET label = COALESCE(label, name)`);
+}
+
 module.exports = function bootstrapSchema(db) {
 
   db.exec(`CREATE TABLE IF NOT EXISTS system_settings (
@@ -34,10 +99,14 @@ module.exports = function bootstrapSchema(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS llm_providers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
-    provider_type TEXT NOT NULL DEFAULT 'api',
+    type TEXT NOT NULL DEFAULT 'custom',
+    base_url TEXT,
+    api_key TEXT,
+    default_model TEXT,
+    enabled INTEGER NOT NULL DEFAULT 0,
     config TEXT DEFAULT '{}',
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
   )`);
 
   db.exec(`CREATE TABLE IF NOT EXISTS team_members (
@@ -463,12 +532,19 @@ module.exports = function bootstrapSchema(db) {
     title TEXT NOT NULL,
     goal TEXT,
     success_criteria TEXT,
+    research_brief TEXT,
     max_cycles INTEGER DEFAULT 50,
     model TEXT DEFAULT 'sonnet',
+    assigned_to TEXT,
+    project_id INTEGER REFERENCES projects(id),
     current_cycle INTEGER DEFAULT 0,
     status TEXT DEFAULT 'pending',
     program_id INTEGER,
-    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    started_at TEXT,
+    completed_at TEXT,
+    summary TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
   )`);
 
   db.exec(`CREATE TABLE IF NOT EXISTS research_cycles (
@@ -516,16 +592,23 @@ module.exports = function bootstrapSchema(db) {
     tagline TEXT,
     description TEXT,
     category TEXT,
+    reference_material TEXT,
+    structure TEXT,
+    market_notes TEXT,
     status TEXT DEFAULT 'fresh',
     generated_by TEXT,
+    related_project_id INTEGER REFERENCES projects(id),
     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
   )`);
 
   db.exec(`CREATE TABLE IF NOT EXISTS credential_vault (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL DEFAULT 'Unnamed Credential',
     provider TEXT NOT NULL,
+    credential_type TEXT NOT NULL DEFAULT 'api_key',
     encrypted_value TEXT,
+    metadata TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
   )`);
@@ -549,10 +632,17 @@ module.exports = function bootstrapSchema(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS model_sources (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'ollama',
+    endpoint TEXT NOT NULL DEFAULT 'http://localhost:11434',
+    label TEXT,
+    device TEXT,
     is_active INTEGER DEFAULT 1,
     is_local INTEGER DEFAULT 0,
+    ssh_host TEXT,
+    ssh_tunnel_port INTEGER,
     max_concurrent INTEGER DEFAULT 3,
-    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
   )`);
 
   // ── Catapult: franchise incubator tables ─────────────────────────────────
@@ -586,4 +676,6 @@ module.exports = function bootstrapSchema(db) {
     hired_at TEXT,
     PRIMARY KEY (newco_id, slot)
   )`);
+
+  ensureRouteSchemaCompatibility(db);
 };

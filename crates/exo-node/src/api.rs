@@ -23,11 +23,8 @@
 
 #![allow(
     clippy::needless_borrows_for_generic_args,
-    // `needless_return` fires inside #[cfg(not(feature = "..."))]
-    // refusal blocks where the function body continues in the
-    // mutually-exclusive `#[cfg(feature = "...")]` branch. Clippy
-    // can't see the other branch, so the explicit `return` is
-    // load-bearing for the feature-on build.
+    // `needless_return` fires inside cfg-gated refusal blocks where the
+    // function body continues in the mutually-exclusive feature-on branch.
     clippy::needless_return,
     // `ValidatorChangeRequest` fields are only used inside
     // #[cfg(feature = "unaudited-admin-governance-shortcut")].
@@ -48,8 +45,6 @@ use chrono::{DateTime, Utc};
 #[cfg(feature = "unaudited-admin-governance-shortcut")]
 use exo_core::types::PublicKey;
 use exo_core::types::{Did, Hash256, Signature, TrustReceipt};
-#[cfg(feature = "unaudited-crosschecked-receipt-anchor")]
-use exo_core::types::{ReceiptOutcome, Timestamp};
 use serde::{Deserialize, Serialize};
 use tower::limit::ConcurrencyLimitLayer;
 
@@ -304,30 +299,6 @@ async fn load_receipts_by_actor(
     .map_err(|e| {
         tracing::error!(err = %e, "Receipt list blocking task failed");
         internal_error_response("Receipt list failed")
-    })?
-}
-
-#[cfg(feature = "unaudited-crosschecked-receipt-anchor")]
-async fn save_crosschecked_receipt(
-    store: Arc<Mutex<SqliteDagStore>>,
-    receipt: TrustReceipt,
-) -> Result<(), (StatusCode, String)> {
-    tokio::task::spawn_blocking(move || {
-        let mut st = store.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Store unavailable".to_string(),
-            )
-        })?;
-        st.save_receipt(&receipt).map_err(|e| {
-            tracing::error!(err = %e, "CrossChecked receipt anchor failed");
-            internal_error_response("CrossChecked receipt anchor failed")
-        })
-    })
-    .await
-    .map_err(|e| {
-        tracing::error!(err = %e, "CrossChecked receipt anchor blocking task failed");
-        internal_error_response("CrossChecked receipt anchor failed")
     })?
 }
 
@@ -636,104 +607,22 @@ async fn handle_crosschecked_receipt_anchor(
     State(api): State<Arc<NodeApiState>>,
     Json(req): Json<CrossCheckedReceiptAnchorRequest>,
 ) -> Result<Json<CrossCheckedReceiptAnchorResponse>, (StatusCode, String)> {
-    #[cfg(not(feature = "unaudited-crosschecked-receipt-anchor"))]
-    {
-        let _ = (api, req);
-        tracing::warn!(
-            "refusing POST /api/v1/receipts: CrossChecked receipt anchoring is \
-             disabled by default because this node cannot verify external proof \
-             URLs, CrossChecked signatures, tenant authorization, or authority chains"
-        );
-        return Err((
-            StatusCode::FORBIDDEN,
-            serde_json::json!({
-                "error": "crosschecked_receipt_anchor_disabled",
-                "message": "Node-signed CrossChecked receipt anchoring is disabled by default. A trusted runtime adapter must verify the external receipt proof, tenant/workspace authorization, and authority chain before EXOCHAIN mints a trust receipt.",
-                "feature_flag": "unaudited-crosschecked-receipt-anchor",
-                "refusal_source": "exo-node/api.rs::handle_crosschecked_receipt_anchor",
-            })
-            .to_string(),
-        ));
-    }
-
-    #[cfg(feature = "unaudited-crosschecked-receipt-anchor")]
-    {
-        if req.source != "crosschecked" {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "source must be crosschecked".to_string(),
-            ));
-        }
-        for (field, value) in [
-            ("idempotency_key", req.idempotency_key.as_str()),
-            ("external_event_id", req.external_event_id.as_str()),
-            ("tenant_id", req.tenant_id.as_str()),
-            ("workspace_id", req.workspace_id.as_str()),
-            ("event_type", req.event_type.as_str()),
-            ("public_proof_url", req.public_proof_url.as_str()),
-        ] {
-            if value.trim().is_empty() {
-                return Err((StatusCode::BAD_REQUEST, format!("{field} is required")));
-            }
-        }
-        let action_hash = parse_hash256_hex(&req.external_receipt_hash, "external_receipt_hash")?;
-        let _payload_hash = parse_hash256_hex(&req.payload_hash, "payload_hash")?;
-        let authority_chain_hash = Hash256::digest(
-            format!(
-                "source={};idempotency_key={};external_event_id={};external_receipt_hash={};payload_hash={};tenant_id={};workspace_id={};event_type={};emitted_at={};public_proof_url={}",
-                req.source,
-                req.idempotency_key,
-                req.external_event_id,
-                req.external_receipt_hash,
-                req.payload_hash,
-                req.tenant_id,
-                req.workspace_id,
-                req.event_type,
-                req.emitted_at.to_rfc3339(),
-                req.public_proof_url
-            )
-            .as_bytes(),
-        );
-        let physical_ms = req.emitted_at.timestamp_millis();
-        let physical_ms = u64::try_from(physical_ms).map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                "emitted_at must be at or after the Unix epoch".to_string(),
-            )
-        })?;
-        let receipt = TrustReceipt::new(
-            api.node_did.clone(),
-            authority_chain_hash,
-            None,
-            "crosschecked.receipt.anchor.v1".to_string(),
-            action_hash,
-            ReceiptOutcome::Executed,
-            Timestamp {
-                physical_ms,
-                logical: 0,
-            },
-            &*api.sign_fn,
-        )
-        .map_err(|e| {
-            tracing::error!(err = %e, "CrossChecked trust receipt creation failed");
-            internal_error_response("CrossChecked receipt anchor failed")
-        })?;
-        let receipt_hash = receipt.receipt_hash;
-        save_crosschecked_receipt(Arc::clone(&api.store), receipt).await?;
-        let loaded = load_receipt_by_hash(Arc::clone(&api.store), receipt_hash).await?;
-        if loaded.is_none() {
-            return Err(internal_error_response(
-                "CrossChecked receipt anchor read-after-write failed",
-            ));
-        }
-        let hash_hex = hex::encode(receipt_hash.0);
-        Ok(Json(CrossCheckedReceiptAnchorResponse {
-            status: "anchored".to_string(),
-            exochain_receipt_hash: hash_hex.clone(),
-            anchor_hash: hash_hex,
-            verified_at: req.emitted_at,
-        }))
-    }
+    let _ = (api, req);
+    tracing::warn!(
+        "refusing POST /api/v1/receipts: CrossChecked receipt anchoring is \
+         disabled because this node cannot verify external proof URLs, \
+         CrossChecked signatures, tenant authorization, or authority chains"
+    );
+    Err((
+        StatusCode::FORBIDDEN,
+        serde_json::json!({
+            "error": "crosschecked_receipt_anchor_disabled",
+            "message": "Node-signed CrossChecked receipt anchoring is disabled. A trusted runtime adapter must verify the external receipt proof, tenant/workspace authorization, and authority chain before EXOCHAIN mints a trust receipt.",
+            "feature_flag": "unaudited-crosschecked-receipt-anchor",
+            "refusal_source": "exo-node/api.rs::handle_crosschecked_receipt_anchor",
+        })
+        .to_string(),
+    ))
 }
 
 /// `GET /api/v1/receipts/:hash` — look up a trust receipt by content hash.
@@ -1429,12 +1318,10 @@ mod tests {
 
     #[cfg(feature = "unaudited-crosschecked-receipt-anchor")]
     #[tokio::test]
-    async fn crosschecked_receipt_anchor_writes_receipt_with_unaudited_feature_enabled() {
+    async fn crosschecked_receipt_anchor_refuses_unverified_metadata_even_when_feature_enabled() {
         let state = test_api_state();
         let app = governance_router(Arc::clone(&state));
         let body = crosschecked_receipt_anchor_body();
-        let external_hash = body["external_receipt_hash"].as_str().unwrap().to_owned();
-
         let resp = app
             .oneshot(
                 Request::builder()
@@ -1447,29 +1334,20 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
         let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
         let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(result["status"], "anchored");
-        let receipt_hash = result["exochain_receipt_hash"].as_str().unwrap();
-
-        let app = governance_router(Arc::clone(&state));
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri(&format!("/api/v1/receipts/{receipt_hash}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
+        assert_eq!(result["error"], "crosschecked_receipt_anchor_disabled");
+        let receipts = state
+            .store
+            .lock()
+            .unwrap()
+            .load_receipts_by_actor("did:exo:v0", 10)
             .unwrap();
-
-        assert_eq!(resp.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
-        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(result["action_type"], "crosschecked.receipt.anchor.v1");
-        assert_eq!(result["action_hash"], external_hash);
-        assert_ne!(result["authority_chain_hash"], "00".repeat(32));
+        assert!(
+            receipts.is_empty(),
+            "feature-enabled CrossChecked anchor must not persist a node-signed trust receipt"
+        );
     }
 
     #[tokio::test]

@@ -28,7 +28,7 @@ const mockWasm = vi.hoisted(() => ({
   wasm_audit_append: vi.fn(() => ({ entries: 1, head_hash: 'f'.repeat(64) })),
   wasm_hash_bytes: vi.fn(() => 'a'.repeat(64)),
   wasm_governance_findings_digest: vi.fn(() => 'b'.repeat(64)),
-  wasm_verify_governance_attestation: vi.fn(() => true),
+  wasm_verify_governance_attestation_with_trusted_keys: vi.fn(() => true),
 }));
 
 const mockPg = vi.hoisted(() => {
@@ -171,7 +171,7 @@ describe('POST /governance/health attestation gate', () => {
   });
 
   it('rejects invalid attestation before persistence', async () => {
-    mockWasm.wasm_verify_governance_attestation.mockImplementationOnce(() => {
+    mockWasm.wasm_verify_governance_attestation_with_trusted_keys.mockImplementationOnce(() => {
       throw new Error('governance attestation rejected');
     });
     mockPg.query.mockResolvedValue({ rows: [] });
@@ -196,7 +196,7 @@ describe('POST /governance/health attestation gate', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/not configured/);
-    expect(mockWasm.wasm_verify_governance_attestation).not.toHaveBeenCalled();
+    expect(mockWasm.wasm_verify_governance_attestation_with_trusted_keys).not.toHaveBeenCalled();
     expect(mockPg.query).not.toHaveBeenCalled();
   });
 
@@ -210,7 +210,7 @@ describe('POST /governance/health attestation gate', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/does not match configured signer key/);
-    expect(mockWasm.wasm_verify_governance_attestation).not.toHaveBeenCalled();
+    expect(mockWasm.wasm_verify_governance_attestation_with_trusted_keys).not.toHaveBeenCalled();
     expect(mockPg.query).not.toHaveBeenCalled();
   });
 
@@ -230,11 +230,11 @@ describe('POST /governance/health attestation gate', () => {
       .send(snapshotWithoutCallerKey);
 
     expect(res.status).toBe(201);
-    expect(mockWasm.wasm_verify_governance_attestation).toHaveBeenCalledWith(
+    expect(mockWasm.wasm_verify_governance_attestation_with_trusted_keys).toHaveBeenCalledWith(
       validSnapshot.attestation_signer_did,
       JSON.stringify(validSnapshot.findings),
       JSON.stringify(validSnapshot.attestation_signature),
-      '11'.repeat(32),
+      JSON.stringify({ 'did:exo:monitor': '11'.repeat(32) }),
     );
     expect(mockPg.query).toHaveBeenCalled();
   });
@@ -254,11 +254,11 @@ describe('POST /governance/health attestation gate', () => {
       .send(validSnapshot);
 
     expect(res.status).toBe(201);
-    expect(mockWasm.wasm_verify_governance_attestation).toHaveBeenCalledWith(
+    expect(mockWasm.wasm_verify_governance_attestation_with_trusted_keys).toHaveBeenCalledWith(
       validSnapshot.attestation_signer_did,
       JSON.stringify(validSnapshot.findings),
       JSON.stringify(validSnapshot.attestation_signature),
-      '11'.repeat(32),
+      JSON.stringify({ 'did:exo:monitor': '11'.repeat(32) }),
     );
     expect(mockPg.query).toHaveBeenCalled();
   });

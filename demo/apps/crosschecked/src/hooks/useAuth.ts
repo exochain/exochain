@@ -21,6 +21,7 @@ export interface AuthState {
   did: string;
   displayName: string;
   role: string;
+  apiToken: string;
 }
 
 interface AuthContextType {

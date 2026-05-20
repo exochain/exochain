@@ -31,7 +31,7 @@
 import { getIssue } from '../lib/github.js';
 import {
   REVIEW_BINDING,
-  REVIEW_TIMESTAMP_ISO,
+  reviewTimestampIso,
   getPanels,
   conductReview,
   tallyVotes
@@ -287,8 +287,9 @@ async function main() {
       affectedSystems: (issue.labels || []).map(l => l.name || l),
       author: issue.author ? (issue.author.login || issue.author) : 'unknown'
     };
-    const assessments = conductReview(panels, proposal);
-    const tally = tallyVotes(assessments);
+    const reviewedAt = reviewTimestampIso();
+    const assessments = conductReview(panels, proposal, reviewedAt);
+    const tally = tallyVotes(assessments, reviewedAt);
 
     // Analyze file impact
     const affectedFiles = analyzeFileImpact(issue);
@@ -322,7 +323,7 @@ async function main() {
         : tally.total_findings > 2 ? 'medium' : 'low',
       requires_wasm_rebuild: affectedFiles.some(f => f.includes('crates/') || f.includes('wasm')),
       requires_council_review: tally.verdict !== 'APPROVED',
-      generated_at: REVIEW_TIMESTAMP_ISO,
+      generated_at: reviewedAt,
       execution_mode: 'planning_only',
       binding_review: REVIEW_BINDING,
       planning_note: 'This command generates an implementation readiness plan; it does not modify files.'

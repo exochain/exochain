@@ -117,7 +117,30 @@ pub struct HybridVerificationMethod {
     pub revoked_at: Option<u64>,
 }
 
+fn decode_base58btc_multibase_key(public_key_multibase: &str) -> Option<Vec<u8>> {
+    let encoded = public_key_multibase.strip_prefix('z')?;
+    bs58::decode(encoded).into_vec().ok()
+}
+
 impl HybridVerificationMethod {
+    /// Return true only when both raw verification keys match the advertised
+    /// multibase key material.
+    #[must_use]
+    pub fn key_material_matches_multibase(&self) -> bool {
+        let Some(classical_public_key) =
+            decode_base58btc_multibase_key(&self.classical_public_key_multibase)
+        else {
+            return false;
+        };
+        let Some(pq_public_key) = decode_base58btc_multibase_key(&self.pq_public_key_multibase)
+        else {
+            return false;
+        };
+
+        classical_public_key.as_slice() == self.classical_public_key.as_bytes()
+            && pq_public_key.as_slice() == self.pq_public_key.as_bytes()
+    }
+
     /// Verify a `Signature::Hybrid` against this method's key bundle.
     ///
     /// Delegates to `crypto::verify_hybrid`, which requires **both** the
@@ -125,6 +148,9 @@ impl HybridVerificationMethod {
     #[must_use]
     pub fn verify(&self, message: &[u8], signature: &Signature) -> bool {
         if !self.active {
+            return false;
+        }
+        if !self.key_material_matches_multibase() {
             return false;
         }
         crypto::verify_hybrid(
@@ -475,6 +501,33 @@ mod tests {
         assert!(
             method.verify(message, &sig),
             "HybridVerificationMethod::verify must accept valid Hybrid signature"
+        );
+    }
+
+    #[test]
+    fn hybrid_method_verify_rejects_mismatched_multibase_key_material() {
+        use exo_core::crypto::{generate_pq_keypair, sign_hybrid};
+
+        let (classical_pk, classical_sk) = generate_keypair();
+        let (declared_classical_pk, _declared_classical_sk) = generate_keypair();
+        let (pq_pk, pq_sk) = generate_pq_keypair();
+        let (declared_pq_pk, _declared_pq_sk) = generate_pq_keypair();
+        let did = make_did("hybrid-key-alias");
+
+        let mut method = make_hybrid_method(&did, classical_pk, pq_pk);
+        method.classical_public_key_multibase = format!(
+            "z{}",
+            bs58::encode(declared_classical_pk.as_bytes()).into_string()
+        );
+        method.pq_public_key_multibase =
+            format!("z{}", bs58::encode(declared_pq_pk.as_bytes()).into_string());
+
+        let message = b"hybrid DID verification key alias";
+        let sig = sign_hybrid(message, &classical_sk, &pq_sk).expect("sign_hybrid");
+
+        assert!(
+            !method.verify(message, &sig),
+            "hybrid verification must reject raw keys that do not match the advertised multibase keys"
         );
     }
 

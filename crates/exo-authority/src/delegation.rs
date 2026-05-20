@@ -41,6 +41,8 @@ pub struct DelegationRegistry {
     by_delegator: BTreeMap<String, Vec<Hash256>>,
     /// Reverse index: delegate DID -> list of link IDs.
     by_delegate: BTreeMap<String, Vec<Hash256>>,
+    /// Public key that verified each active link's original delegator signature.
+    link_delegator_public_keys: BTreeMap<Hash256, PublicKey>,
     /// Append-only audit events for registry mutations.
     audit_events: Vec<DelegationAuditEvent>,
 }
@@ -85,6 +87,8 @@ pub struct DelegationGrant<'a> {
     pub scope: &'a [Permission],
     pub expires: Timestamp,
     pub now: &'a Timestamp,
+    /// Selected parent link for delegated authority, or `None` for a self-root grant.
+    pub parent_link_id: Option<&'a Hash256>,
     pub delegatee_kind: DelegateeKind,
     pub delegator_public_key: &'a PublicKey,
 }
@@ -94,7 +98,6 @@ pub struct DelegationRevocationGrant<'a> {
     pub link_id: &'a Hash256,
     pub revoker: &'a Did,
     pub revoked_at: &'a Timestamp,
-    pub revoker_public_key: &'a PublicKey,
 }
 
 #[derive(serde::Serialize)]
@@ -360,6 +363,7 @@ impl DelegationRegistry {
             scope,
             expires,
             now,
+            parent_link_id,
             delegatee_kind,
             delegator_public_key,
         } = grant;
@@ -399,17 +403,7 @@ impl DelegationRegistry {
         }
 
         let scope = canonical_scope(scope)?;
-        let depth = self.compute_depth(from)?;
-        let chain_depth = depth.checked_add(1).ok_or(AuthorityError::DepthExceeded {
-            depth,
-            max_depth: DEFAULT_MAX_DEPTH,
-        })?;
-        if chain_depth > DEFAULT_MAX_DEPTH {
-            return Err(AuthorityError::DepthExceeded {
-                depth: chain_depth,
-                max_depth: DEFAULT_MAX_DEPTH,
-            });
-        }
+        let depth = self.compute_depth(from, parent_link_id, &scope, now)?;
 
         let mut link = AuthorityLink {
             delegator_did: from.clone(),
@@ -443,6 +437,8 @@ impl DelegationRegistry {
             link.created,
         )?;
         self.links.insert(id, link.clone());
+        self.link_delegator_public_keys
+            .insert(id, *delegator_public_key);
         self.by_delegator
             .entry(from.as_str().to_owned())
             .or_default()
@@ -468,6 +464,7 @@ impl DelegationRegistry {
         if let Some(ids) = self.by_delegate.get_mut(link.delegate_did.as_str()) {
             ids.retain(|id| id != link_id);
         }
+        self.link_delegator_public_keys.remove(link_id);
 
         Ok(())
     }
@@ -488,7 +485,6 @@ impl DelegationRegistry {
             link_id,
             revoker,
             revoked_at,
-            revoker_public_key,
         } = grant;
 
         let link = self
@@ -496,9 +492,14 @@ impl DelegationRegistry {
             .get(link_id)
             .cloned()
             .ok_or_else(|| AuthorityError::NotFound(link_id.to_string()))?;
+        let revoker_public_key = self
+            .link_delegator_public_keys
+            .get(link_id)
+            .copied()
+            .ok_or(AuthorityError::InvalidSignature { index: link.depth })?;
 
         let revocation =
-            AuthorityRevocation::for_link(link, revoker, revoked_at, revoker_public_key, sign_fn)?;
+            AuthorityRevocation::for_link(link, revoker, revoked_at, &revoker_public_key, sign_fn)?;
         let audit_event = self.build_delegation_audit_event(
             DelegationAuditAction::Revoked,
             *link_id,
@@ -515,10 +516,6 @@ impl DelegationRegistry {
     pub fn find_chain(&self, from: &Did, to: &Did) -> Option<AuthorityChain> {
         let mut path = Vec::new();
         if self.find_path_dfs(from, to, &mut path, 0, DEFAULT_MAX_DEPTH) {
-            // Re-number depths
-            for (i, link) in path.iter_mut().enumerate() {
-                link.depth = i;
-            }
             chain::build_chain(&path).ok()
         } else {
             None
@@ -595,28 +592,63 @@ impl DelegationRegistry {
         false
     }
 
-    fn compute_depth(&self, did: &Did) -> Result<usize, AuthorityError> {
-        let mut max_depth = 0usize;
-        if let Some(ids) = self.by_delegate.get(did.as_str()) {
-            for id in ids {
-                if let Some(link) = self.links.get(id) {
-                    let candidate =
-                        link.depth
-                            .checked_add(1)
-                            .ok_or(AuthorityError::DepthExceeded {
-                                depth: link.depth,
-                                max_depth: DEFAULT_MAX_DEPTH,
-                            })?;
-                    if candidate > max_depth {
-                        max_depth = candidate;
-                    }
-                    if max_depth >= DEFAULT_MAX_DEPTH {
-                        return Ok(max_depth);
-                    }
-                }
+    fn compute_depth(
+        &self,
+        did: &Did,
+        parent_link_id: Option<&Hash256>,
+        scope: &[Permission],
+        now: &Timestamp,
+    ) -> Result<usize, AuthorityError> {
+        let Some(parent_link_id) = parent_link_id else {
+            return Ok(0);
+        };
+
+        let parent = self
+            .links
+            .get(parent_link_id)
+            .ok_or_else(|| AuthorityError::NotFound(parent_link_id.to_string()))?;
+        if parent.delegate_did != *did {
+            return Err(AuthorityError::PermissionDenied(format!(
+                "parent link {} delegates to {}, not {}",
+                parent_link_id,
+                parent.delegate_did.as_str(),
+                did.as_str()
+            )));
+        }
+        if let Some(expires) = &parent.expires {
+            if expires.is_expired(now) {
+                return Err(AuthorityError::ExpiredLink {
+                    index: parent.depth,
+                });
             }
         }
-        Ok(max_depth)
+
+        let parent_scope = parent.scope.iter().copied().collect::<BTreeSet<_>>();
+        let child_scope = scope.iter().copied().collect::<BTreeSet<_>>();
+        if !child_scope.is_subset(&parent_scope) {
+            return Err(AuthorityError::InvalidDelegation {
+                reason: "delegation scope must not exceed selected parent link scope".into(),
+            });
+        }
+
+        let depth = parent
+            .depth
+            .checked_add(1)
+            .ok_or(AuthorityError::DepthExceeded {
+                depth: parent.depth,
+                max_depth: DEFAULT_MAX_DEPTH,
+            })?;
+        let chain_depth = depth.checked_add(1).ok_or(AuthorityError::DepthExceeded {
+            depth,
+            max_depth: DEFAULT_MAX_DEPTH,
+        })?;
+        if chain_depth > DEFAULT_MAX_DEPTH {
+            return Err(AuthorityError::DepthExceeded {
+                depth: chain_depth,
+                max_depth: DEFAULT_MAX_DEPTH,
+            });
+        }
+        Ok(depth)
     }
 }
 
@@ -679,6 +711,16 @@ mod tests {
         scope: &[Permission],
         signer: &KeyPair,
     ) -> Result<AuthorityLink, AuthorityError> {
+        signed_delegate_with_parent(reg, from, to, scope, None, signer)
+    }
+    fn signed_delegate_with_parent(
+        reg: &mut DelegationRegistry,
+        from: &str,
+        to: &str,
+        scope: &[Permission],
+        parent_link_id: Option<&Hash256>,
+        signer: &KeyPair,
+    ) -> Result<AuthorityLink, AuthorityError> {
         let public_key = public_key(signer);
         let from = did(from);
         let to = did(to);
@@ -689,6 +731,7 @@ mod tests {
                 scope,
                 expires: ts(10000),
                 now: &now(),
+                parent_link_id,
                 delegatee_kind: DelegateeKind::Human,
                 delegator_public_key: &public_key,
             },
@@ -702,13 +745,11 @@ mod tests {
         signer: &KeyPair,
     ) -> Result<AuthorityRevocation, AuthorityError> {
         let revoker = did(revoker);
-        let public_key = public_key(signer);
         reg.revoke_delegation_signed(
             DelegationRevocationGrant {
                 link_id,
                 revoker: &revoker,
                 revoked_at: &ts(6_000),
-                revoker_public_key: &public_key,
             },
             |payload| signer.sign(payload),
         )
@@ -816,6 +857,7 @@ mod tests {
                 scope: &[Permission::Read],
                 expires: ts(10000),
                 now: &now(),
+                parent_link_id: None,
                 delegatee_kind: DelegateeKind::Human,
                 delegator_public_key: &wrong_public_key,
             },
@@ -843,6 +885,7 @@ mod tests {
                 scope: &[Permission::Read],
                 expires: ts(10000),
                 now: &now(),
+                parent_link_id: None,
                 delegatee_kind: DelegateeKind::Human,
                 delegator_public_key: &public_key,
             },
@@ -870,6 +913,7 @@ mod tests {
                 scope: &[Permission::Read],
                 expires: ts(10000),
                 now: &now(),
+                parent_link_id: None,
                 delegatee_kind: DelegateeKind::Unknown,
                 delegator_public_key: &public_key,
             },
@@ -899,6 +943,7 @@ mod tests {
                     scope: &[Permission::Read],
                     expires: ts(10000),
                     now: &now(),
+                    parent_link_id: None,
                     delegatee_kind: DelegateeKind::AiAgent {
                         model_id: "exo-agent-v1".to_owned(),
                     },
@@ -931,6 +976,7 @@ mod tests {
                 scope: &[Permission::Read],
                 expires: ts(10000),
                 now: &now(),
+                parent_link_id: None,
                 delegatee_kind: DelegateeKind::Human,
                 delegator_public_key: &public_key,
             },
@@ -962,7 +1008,7 @@ mod tests {
         let mut reg = DelegationRegistry::new();
         let alice_key = KeyPair::generate();
         let bob_key = KeyPair::generate();
-        signed_delegate(
+        let alice_to_bob = signed_delegate(
             &mut reg,
             "alice",
             "bob",
@@ -970,7 +1016,16 @@ mod tests {
             &alice_key,
         )
         .unwrap();
-        signed_delegate(&mut reg, "bob", "charlie", &[Permission::Read], &bob_key).unwrap();
+        let alice_to_bob_id = alice_to_bob.id().unwrap();
+        signed_delegate_with_parent(
+            &mut reg,
+            "bob",
+            "charlie",
+            &[Permission::Read],
+            Some(&alice_to_bob_id),
+            &bob_key,
+        )
+        .unwrap();
 
         let chain = reg
             .find_chain(&did("alice"), &did("charlie"))
@@ -981,6 +1036,60 @@ mod tests {
         ]);
 
         assert!(chain::verify_chain(&chain, &now(), |did| keys.get(did.as_str()).copied()).is_ok());
+    }
+
+    #[test]
+    fn find_chain_subchain_preserves_signed_depth_and_verifies() {
+        let mut reg = DelegationRegistry::new();
+        let root_key = KeyPair::generate();
+        let alice_key = KeyPair::generate();
+        let root_to_alice = signed_delegate(
+            &mut reg,
+            "root",
+            "alice",
+            &[Permission::Read, Permission::Write],
+            &root_key,
+        )
+        .unwrap();
+        let root_to_alice_id = root_to_alice.id().unwrap();
+        let alice_to_bob = signed_delegate_with_parent(
+            &mut reg,
+            "alice",
+            "bob",
+            &[Permission::Read],
+            Some(&root_to_alice_id),
+            &alice_key,
+        )
+        .unwrap();
+        assert_eq!(alice_to_bob.depth, 1);
+
+        let chain = reg
+            .find_chain(&did("alice"), &did("bob"))
+            .expect("subchain should resolve");
+        assert_eq!(chain.links[0].depth, 1);
+        let keys = std::collections::BTreeMap::from([(
+            did("alice").as_str().to_owned(),
+            public_key(&alice_key),
+        )]);
+
+        assert!(chain::verify_chain(&chain, &now(), |did| keys.get(did.as_str()).copied()).is_ok());
+    }
+
+    #[test]
+    fn find_chain_source_does_not_mutate_signed_link_depths() {
+        let source = include_str!("delegation.rs");
+        let find_chain_source = source
+            .split("pub fn find_chain")
+            .nth(1)
+            .expect("find_chain source present")
+            .split("/// Number of active delegations")
+            .next()
+            .expect("find_chain source end");
+
+        assert!(
+            !find_chain_source.contains(".depth ="),
+            "find_chain must not mutate signed depth values while assembling a chain"
+        );
     }
 
     #[test]
@@ -1056,18 +1165,152 @@ mod tests {
     }
 
     #[test]
-    fn delegate_uses_max_parent_depth_for_multi_parent_delegator() {
+    fn delegate_uses_selected_parent_depth_for_multi_parent_delegator() {
         let mut reg = DelegationRegistry::new();
         let key = KeyPair::generate();
 
-        signed_delegate(&mut reg, "root-a", "shared", &[Permission::Read], &key).unwrap();
-        signed_delegate(&mut reg, "root-b", "mid", &[Permission::Read], &key).unwrap();
-        signed_delegate(&mut reg, "mid", "deep", &[Permission::Read], &key).unwrap();
-        signed_delegate(&mut reg, "deep", "shared", &[Permission::Read], &key).unwrap();
+        let shallow_parent =
+            signed_delegate(&mut reg, "root-a", "shared", &[Permission::Read], &key).unwrap();
+        let shallow_parent_id = shallow_parent.id().unwrap();
+        let root_to_mid =
+            signed_delegate(&mut reg, "root-b", "mid", &[Permission::Read], &key).unwrap();
+        let root_to_mid_id = root_to_mid.id().unwrap();
+        let mid_to_deep = signed_delegate_with_parent(
+            &mut reg,
+            "mid",
+            "deep",
+            &[Permission::Read],
+            Some(&root_to_mid_id),
+            &key,
+        )
+        .unwrap();
+        let mid_to_deep_id = mid_to_deep.id().unwrap();
+        let deep_parent = signed_delegate_with_parent(
+            &mut reg,
+            "deep",
+            "shared",
+            &[Permission::Read],
+            Some(&mid_to_deep_id),
+            &key,
+        )
+        .unwrap();
+        let deep_parent_id = deep_parent.id().unwrap();
 
-        let link = signed_delegate(&mut reg, "shared", "leaf", &[Permission::Read], &key).unwrap();
+        let shallow_link = signed_delegate_with_parent(
+            &mut reg,
+            "shared",
+            "leaf-shallow",
+            &[Permission::Read],
+            Some(&shallow_parent_id),
+            &key,
+        )
+        .unwrap();
+        let deep_link = signed_delegate_with_parent(
+            &mut reg,
+            "shared",
+            "leaf-deep",
+            &[Permission::Read],
+            Some(&deep_parent_id),
+            &key,
+        )
+        .unwrap();
 
-        assert_eq!(link.depth, 3);
+        assert_eq!(shallow_link.depth, 1);
+        assert_eq!(deep_link.depth, 3);
+    }
+
+    #[test]
+    fn delegate_rejects_parent_link_that_does_not_delegate_to_grantor() {
+        let mut reg = DelegationRegistry::new();
+        let key = KeyPair::generate();
+        let parent = signed_delegate(&mut reg, "root", "alice", &[Permission::Read], &key)
+            .expect("parent delegation");
+        let parent_id = parent.id().unwrap();
+
+        let result = signed_delegate_with_parent(
+            &mut reg,
+            "bob",
+            "charlie",
+            &[Permission::Read],
+            Some(&parent_id),
+            &key,
+        );
+
+        assert!(matches!(result, Err(AuthorityError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn delegate_rejects_missing_parent_link() {
+        let mut reg = DelegationRegistry::new();
+        let key = KeyPair::generate();
+        let missing_parent_id = Hash256::digest(b"missing-parent-link");
+
+        let result = signed_delegate_with_parent(
+            &mut reg,
+            "bob",
+            "charlie",
+            &[Permission::Read],
+            Some(&missing_parent_id),
+            &key,
+        );
+
+        assert!(matches!(result, Err(AuthorityError::NotFound(_))));
+    }
+
+    #[test]
+    fn delegate_rejects_scope_widening_under_selected_parent() {
+        let mut reg = DelegationRegistry::new();
+        let key = KeyPair::generate();
+        let parent = signed_delegate(&mut reg, "root", "bob", &[Permission::Read], &key)
+            .expect("parent delegation");
+        let parent_id = parent.id().unwrap();
+
+        let result = signed_delegate_with_parent(
+            &mut reg,
+            "bob",
+            "charlie",
+            &[Permission::Write],
+            Some(&parent_id),
+            &key,
+        );
+
+        assert!(matches!(
+            result,
+            Err(AuthorityError::InvalidDelegation { reason }) if reason.contains("scope")
+        ));
+    }
+
+    #[test]
+    fn unilateral_incoming_depth_cannot_squat_self_root_delegation() {
+        let mut reg = DelegationRegistry::new();
+        let key = KeyPair::generate();
+
+        let mut parent_link_id = None;
+        for i in 0..DEFAULT_MAX_DEPTH {
+            let next = if i + 1 == DEFAULT_MAX_DEPTH {
+                "victim".to_owned()
+            } else {
+                format!("attacker-{}", i + 1)
+            };
+            let link = signed_delegate_with_parent(
+                &mut reg,
+                &format!("attacker-{i}"),
+                next.as_str(),
+                &[Permission::Read],
+                parent_link_id.as_ref(),
+                &key,
+            )
+            .unwrap();
+            parent_link_id = Some(link.id().unwrap());
+        }
+
+        let link = signed_delegate(&mut reg, "victim", "leaf", &[Permission::Read], &key)
+            .expect("unaccepted incoming delegations must not block self-root grants");
+
+        assert_eq!(
+            link.depth, 0,
+            "self-root grants must not inherit unilateral incoming depth"
+        );
     }
 
     #[test]
@@ -1075,22 +1318,26 @@ mod tests {
         let mut reg = DelegationRegistry::new();
         let key = KeyPair::generate();
 
+        let mut parent_link_id = None;
         for i in 0..DEFAULT_MAX_DEPTH {
-            signed_delegate(
+            let link = signed_delegate_with_parent(
                 &mut reg,
                 &format!("node-{i}"),
                 &format!("node-{}", i + 1),
                 &[Permission::Read],
+                parent_link_id.as_ref(),
                 &key,
             )
             .unwrap();
+            parent_link_id = Some(link.id().unwrap());
         }
 
-        let result = signed_delegate(
+        let result = signed_delegate_with_parent(
             &mut reg,
             &format!("node-{DEFAULT_MAX_DEPTH}"),
             "too-deep",
             &[Permission::Read],
+            parent_link_id.as_ref(),
             &key,
         );
 
@@ -1130,7 +1377,6 @@ mod tests {
                     link_id: &id,
                     revoker: &alice,
                     revoked_at: &ts(6_000),
-                    revoker_public_key: &alice_public_key,
                 },
                 |payload| alice_key.sign(payload),
             )
@@ -1157,7 +1403,6 @@ mod tests {
         let mut reg = DelegationRegistry::new();
         let alice_key = KeyPair::generate();
         let alice = did("alice");
-        let alice_public_key = public_key(&alice_key);
         let link =
             signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
         let id = link.id().unwrap();
@@ -1168,7 +1413,6 @@ mod tests {
                 link_id: &id,
                 revoker: &alice,
                 revoked_at: &ts(6_000),
-                revoker_public_key: &alice_public_key,
             },
             |payload| alice_key.sign(payload),
         )
@@ -1194,7 +1438,6 @@ mod tests {
         let alice_key = KeyPair::generate();
         let wrong_key = KeyPair::generate();
         let alice = did("alice");
-        let alice_public_key = public_key(&alice_key);
         let link =
             signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
         let id = link.id().unwrap();
@@ -1204,7 +1447,6 @@ mod tests {
                 link_id: &id,
                 revoker: &alice,
                 revoked_at: &ts(6_000),
-                revoker_public_key: &alice_public_key,
             },
             |payload| wrong_key.sign(payload),
         );
@@ -1217,12 +1459,65 @@ mod tests {
     }
 
     #[test]
+    fn signed_revoke_delegation_rejects_attacker_supplied_revoker_key() {
+        let mut reg = DelegationRegistry::new();
+        let alice_key = KeyPair::generate();
+        let attacker_key = KeyPair::generate();
+        let alice = did("alice");
+        let link =
+            signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
+        let id = link.id().unwrap();
+
+        let result = reg.revoke_delegation_signed(
+            DelegationRevocationGrant {
+                link_id: &id,
+                revoker: &alice,
+                revoked_at: &ts(6_000),
+            },
+            |payload| attacker_key.sign(payload),
+        );
+
+        assert!(matches!(
+            result,
+            Err(AuthorityError::InvalidSignature { index: 0 })
+        ));
+        assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn signed_revocation_source_does_not_trust_caller_public_key() {
+        let source = include_str!("delegation.rs");
+        let grant_source = source
+            .split("pub struct DelegationRevocationGrant")
+            .nth(1)
+            .expect("revocation grant source present")
+            .split("}")
+            .next()
+            .expect("revocation grant body present");
+        let revoke_source = source
+            .split("pub fn revoke_delegation_signed")
+            .nth(1)
+            .expect("signed revocation source present")
+            .split("/// Find a delegation chain")
+            .next()
+            .expect("signed revocation source end");
+
+        assert!(
+            !grant_source.contains("revoker_public_key"),
+            "revocation callers must not supply the public key used to verify their own signature"
+        );
+        assert!(
+            revoke_source.contains("link_delegator_public_keys"),
+            "signed revocation must verify against the public key bound to the original link"
+        );
+    }
+
+    #[test]
     fn signed_revoke_delegation_rejects_non_delegator_revoker() {
         let mut reg = DelegationRegistry::new();
         let alice_key = KeyPair::generate();
         let bob_key = KeyPair::generate();
         let bob = did("bob");
-        let bob_public_key = public_key(&bob_key);
         let link =
             signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
         let id = link.id().unwrap();
@@ -1232,7 +1527,6 @@ mod tests {
                 link_id: &id,
                 revoker: &bob,
                 revoked_at: &ts(6_000),
-                revoker_public_key: &bob_public_key,
             },
             |payload| bob_key.sign(payload),
         );
@@ -1278,14 +1572,12 @@ mod tests {
         let fake = Hash256::digest(b"missing-signed-revocation");
         let alice = did("alice");
         let alice_key = KeyPair::generate();
-        let alice_public_key = public_key(&alice_key);
 
         let result = reg.revoke_delegation_signed(
             DelegationRevocationGrant {
                 link_id: &fake,
                 revoker: &alice,
                 revoked_at: &ts(6_000),
-                revoker_public_key: &alice_public_key,
             },
             |payload| alice_key.sign(payload),
         );
@@ -1317,7 +1609,7 @@ mod tests {
         let mut reg = DelegationRegistry::new();
         let alice_key = KeyPair::generate();
         let bob_key = KeyPair::generate();
-        signed_delegate(
+        let alice_to_bob = signed_delegate(
             &mut reg,
             "alice",
             "bob",
@@ -1325,7 +1617,16 @@ mod tests {
             &alice_key,
         )
         .ok();
-        signed_delegate(&mut reg, "bob", "charlie", &[Permission::Read], &bob_key).ok();
+        let alice_to_bob_id = alice_to_bob.unwrap().id().unwrap();
+        signed_delegate_with_parent(
+            &mut reg,
+            "bob",
+            "charlie",
+            &[Permission::Read],
+            Some(&alice_to_bob_id),
+            &bob_key,
+        )
+        .ok();
         let chain = reg.find_chain(&did("alice"), &did("charlie"));
         assert!(chain.is_some());
         assert_eq!(chain.unwrap().depth(), 2);

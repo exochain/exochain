@@ -48,21 +48,31 @@ pub struct RouteResult {
     pub correlation_id: Uuid,
 }
 
-/// Caller-supplied route metadata bound into the gateway audit trail.
+/// Route metadata bound into the gateway audit trail and authentication boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RouteMetadata {
-    pub correlation_id: Uuid,
-    pub audit_timestamp: exo_core::Timestamp,
+    correlation_id: Uuid,
+    audit_timestamp: exo_core::Timestamp,
+    trusted_auth_observed_at: exo_core::Timestamp,
 }
 
 impl RouteMetadata {
-    /// Validate caller-supplied route metadata.
+    /// Validate route metadata.
+    ///
+    /// `audit_timestamp` may describe the audited action time. `trusted_auth_observed_at`
+    /// must come from the gateway ingress clock or another trusted runtime adapter, never
+    /// from request JSON, route metadata, or caller-controlled audit fields.
     ///
     /// # Errors
     ///
-    /// Returns `GatewayError::BadRequest` if the correlation ID is nil or the
-    /// audit timestamp is `Timestamp::ZERO`.
-    pub fn new(correlation_id: Uuid, audit_timestamp: exo_core::Timestamp) -> Result<Self> {
+    /// Returns `GatewayError::BadRequest` if the correlation ID is nil, the
+    /// audit timestamp is `Timestamp::ZERO`, or the trusted auth observation
+    /// timestamp is `Timestamp::ZERO`.
+    pub fn new(
+        correlation_id: Uuid,
+        audit_timestamp: exo_core::Timestamp,
+        trusted_auth_observed_at: exo_core::Timestamp,
+    ) -> Result<Self> {
         if correlation_id.is_nil() {
             return Err(GatewayError::BadRequest(
                 "route correlation_id must be caller-supplied and non-nil".into(),
@@ -73,9 +83,15 @@ impl RouteMetadata {
                 "route audit timestamp must be caller-supplied and non-zero".into(),
             ));
         }
+        if trusted_auth_observed_at == exo_core::Timestamp::ZERO {
+            return Err(GatewayError::BadRequest(
+                "route trusted auth observed_at must be gateway-supplied and non-zero".into(),
+            ));
+        }
         Ok(Self {
             correlation_id,
             audit_timestamp,
+            trusted_auth_observed_at,
         })
     }
 }
@@ -90,7 +106,7 @@ pub fn process_request(
     metadata: RouteMetadata,
     log: &mut AuditLog,
 ) -> Result<RouteResult> {
-    let auth_metadata = AuthenticationMetadata::new(metadata.audit_timestamp)?;
+    let auth_metadata = AuthenticationMetadata::new(metadata.trusted_auth_observed_at)?;
     let actor = authenticate(request, registry, auth_metadata)?;
     consent_middleware(&actor.did, &request.action, consent)?;
     governance_middleware(&actor.did, &request.action, verdict)?;
@@ -129,7 +145,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::auth::request_signing_payload;
+    use crate::auth::{FRESHNESS_WINDOW_MS, request_signing_payload};
 
     /// Create a registry with `did:exo:alice` and return the registry +
     /// a signed request using alice's key.
@@ -168,15 +184,22 @@ mod tests {
             signature: exo_core::Signature::Empty,
             timestamp: Timestamp::new(7_000, 1),
         };
-        let auth_metadata = AuthenticationMetadata::new(Timestamp::new(7_000, 1)).unwrap();
-        req.signature = sign(&request_signing_payload(&req, auth_metadata).unwrap(), &sk);
+        req.signature = sign(&request_signing_payload(&req).unwrap(), &sk);
         (reg, req)
     }
 
     fn route_metadata() -> RouteMetadata {
+        route_metadata_with(Timestamp::new(7_000, 1), Timestamp::new(7_000, 1))
+    }
+
+    fn route_metadata_with(
+        audit_timestamp: Timestamp,
+        trusted_auth_observed_at: Timestamp,
+    ) -> RouteMetadata {
         RouteMetadata::new(
             Uuid::parse_str("018f7a96-8ad0-7c4f-8e0f-333333333333").unwrap(),
-            Timestamp::new(7_000, 1),
+            audit_timestamp,
+            trusted_auth_observed_at,
         )
         .expect("valid route metadata")
     }
@@ -205,8 +228,38 @@ mod tests {
     }
 
     #[test]
+    fn process_request_rejects_replayed_request_when_audit_timestamp_matches_old_request() {
+        let (reg, req) = alice_registry_and_req();
+        let mut log = AuditLog::new();
+        let metadata = route_metadata_with(
+            Timestamp::new(7_000, 1),
+            Timestamp::new(7_000 + FRESHNESS_WINDOW_MS + 2, 1),
+        );
+
+        let result = process_request(
+            &req,
+            &reg,
+            Route::CreateTransaction,
+            true,
+            &Verdict::Allow,
+            metadata,
+            &mut log,
+        );
+
+        assert!(
+            matches!(result, Err(GatewayError::AuthenticationFailed { reason }) if reason.contains("freshness window")),
+            "route auth must not treat caller/audit metadata as the trusted freshness clock"
+        );
+        assert_eq!(log.len(), 0);
+    }
+
+    #[test]
     fn route_metadata_rejects_nil_correlation_id() {
-        let result = RouteMetadata::new(Uuid::nil(), Timestamp::new(7_000, 0));
+        let result = RouteMetadata::new(
+            Uuid::nil(),
+            Timestamp::new(7_000, 0),
+            Timestamp::new(7_000, 0),
+        );
 
         assert!(
             matches!(result, Err(GatewayError::BadRequest(reason)) if reason.contains("correlation"))
@@ -218,10 +271,24 @@ mod tests {
         let result = RouteMetadata::new(
             Uuid::parse_str("018f7a96-8ad0-7c4f-8e0f-444444444444").unwrap(),
             Timestamp::ZERO,
+            Timestamp::new(7_000, 0),
         );
 
         assert!(
             matches!(result, Err(GatewayError::BadRequest(reason)) if reason.contains("timestamp"))
+        );
+    }
+
+    #[test]
+    fn route_metadata_rejects_zero_trusted_auth_observed_at() {
+        let result = RouteMetadata::new(
+            Uuid::parse_str("018f7a96-8ad0-7c4f-8e0f-555555555555").unwrap(),
+            Timestamp::new(7_000, 0),
+            Timestamp::ZERO,
+        );
+
+        assert!(
+            matches!(result, Err(GatewayError::BadRequest(reason)) if reason.contains("observed_at"))
         );
     }
 
@@ -242,6 +309,14 @@ mod tests {
         assert!(
             !production.contains(&forbidden_time),
             "route processing must not fabricate audit timestamps"
+        );
+        assert!(
+            production.contains("AuthenticationMetadata::new(metadata.trusted_auth_observed_at)"),
+            "route authentication must use a trusted auth observation timestamp"
+        );
+        assert!(
+            !production.contains("AuthenticationMetadata::new(metadata.audit_timestamp)"),
+            "route authentication must not treat caller/audit timestamps as freshness time"
         );
     }
 

@@ -16,6 +16,7 @@
 
 import { test } from 'node:test';
 import { strictEqual, ok, throws, deepStrictEqual } from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   blake3,
   blake3Hash,
@@ -81,6 +82,25 @@ test('hexToBytes rejects odd-length input', () => {
 
 test('hexToBytes rejects non-hex characters', () => {
   throws(() => hexToBytes('zz'), CryptoError);
+});
+
+test('hexToBytes rejects partial-parse and signed byte aliases', () => {
+  for (const input of ['f_', '1g', '+1', '-1', ' 1', '0 ']) {
+    throws(() => hexToBytes(input), CryptoError, `${input} must be rejected`);
+  }
+});
+
+test('hexToBytes rejects non-canonical uppercase hex', () => {
+  throws(() => hexToBytes('AB'), CryptoError);
+});
+
+test('hexToBytes source does not use partial numeric parsing', () => {
+  const source = readFileSync(new URL('../../src/crypto/hash.ts', import.meta.url), 'utf8');
+  const forbiddenParser = ['parse', 'Int'].join('');
+  ok(
+    !source.includes(forbiddenParser),
+    'hex decoding must not use partial numeric parser semantics',
+  );
 });
 
 test('Different inputs produce different digests', async () => {

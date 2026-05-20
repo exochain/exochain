@@ -16,7 +16,16 @@
 
 'use strict';
 module.exports = function(app, db, helpers) {
-  const { broadcast, localNow, createNotification, authRateLimiter, apiRateLimiter, spawnMemberTerminal } = helpers;
+  const {
+    broadcast,
+    localNow,
+    createNotification,
+    authRateLimiter,
+    apiRateLimiter,
+    spawnMemberTerminal,
+    badRequest,
+    notFound,
+  } = helpers;
   const stmt = helpers.stmt || ((sql) => db.prepare(sql));
 
 // GET /api/research-sessions — alias endpoint for the Auto-Research page

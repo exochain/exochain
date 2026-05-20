@@ -15,7 +15,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from 'react';
-import { useAuth } from '@/hooks/useAuth';
 import { SCENARIO_TYPES } from '@/lib/utils';
 import {
   FileText, Plus, X, CloudLightning, Heart, AlertTriangle,
@@ -44,23 +43,19 @@ const EMPTY_PLAN: PlanDraft = {
 };
 
 export default function EmergencyPlans() {
-  const { auth } = useAuth();
   const [plans, setPlans] = useState<Array<PlanDraft & { id: string }>>([]);
   const [showCreate, setShowCreate] = useState(false);
-  const [selectedScenario, setSelectedScenario] = useState<string | null>(null);
   const [draft, setDraft] = useState<PlanDraft>(EMPTY_PLAN);
 
   const startPlan = (scenarioId: string) => {
     const scenario = SCENARIO_TYPES.find(s => s.id === scenarioId);
     setDraft({ ...EMPTY_PLAN, scenario_type: scenarioId, name: `${scenario?.label || ''} Response Plan` });
-    setSelectedScenario(scenarioId);
     setShowCreate(true);
   };
 
   const savePlan = () => {
     setPlans(prev => [...prev, { ...draft, id: crypto.randomUUID() }]);
     setShowCreate(false);
-    setSelectedScenario(null);
     setDraft(EMPTY_PLAN);
   };
 
@@ -146,7 +141,7 @@ export default function EmergencyPlans() {
         <div className="max-w-2xl">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-heading font-semibold text-white">{draft.name}</h3>
-            <button onClick={() => { setShowCreate(false); setSelectedScenario(null); }}>
+            <button onClick={() => setShowCreate(false)}>
               <X size={18} className="text-white/30" />
             </button>
           </div>

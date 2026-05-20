@@ -16,7 +16,18 @@
 
 'use strict';
 module.exports = function(app, db, helpers) {
-  const { broadcast, localNow, createNotification, authRateLimiter, apiRateLimiter, spawnMemberTerminal } = helpers;
+  const {
+    broadcast,
+    localNow,
+    createNotification,
+    authRateLimiter,
+    apiRateLimiter,
+    spawnMemberTerminal,
+    maskApiKey,
+    maskCredential,
+    badRequest,
+    notFound,
+  } = helpers;
   const stmt = helpers.stmt || ((sql) => db.prepare(sql));
 
 // GET /api/model-sources — list all configured model sources with live status

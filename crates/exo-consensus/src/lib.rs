@@ -176,6 +176,7 @@ mod tests {
         let inputs = PanelConfidenceInputs {
             models_agreeing: 3,
             total_models: 3,
+            converged: true,
             rounds_to_convergence: 1,
             max_rounds: 3,
             devil_found_serious_objection: false,
@@ -195,6 +196,7 @@ mod tests {
         let inputs = PanelConfidenceInputs {
             models_agreeing: 2,
             total_models: 3,
+            converged: true,
             rounds_to_convergence: 3,
             max_rounds: 3,
             devil_found_serious_objection: false,
@@ -214,6 +216,7 @@ mod tests {
         let inputs = PanelConfidenceInputs {
             models_agreeing: 3,
             total_models: 3,
+            converged: true,
             rounds_to_convergence: 1,
             max_rounds: 3,
             devil_found_serious_objection: true,

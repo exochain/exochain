@@ -443,12 +443,17 @@ module.exports = function(app, db, helpers) {
         checks.push({ check: 'kernel_availability', status: 'healthy', score: 1.0 });
 
         // Check 2: TNC enforcement
-        // Use wasm_create_decision to build a valid DecisionObject, then enforce all TNCs.
-        // A health-check decision won't pass all TNCs (e.g. empty authority chain), but the
-        // check validates that the TNC enforcement engine is functional — not that a synthetic
-        // decision passes all rules. We mark healthy if the engine responds without crashing.
+        // Failed TNC verdicts are constitutional health failures, not healthy adapter responses.
+        // Adapter crashes are tracked separately as degraded runtime availability.
         try {
-          const healthDecision = kernel.wasm_create_decision('Health Check', '"Routine"', '2'.repeat(64));
+          const healthDecision = kernel.wasm_create_decision(
+            '00000000-0000-0000-0000-0000000000ef',
+            'Health Check',
+            '"Routine"',
+            '2'.repeat(64),
+            1n,
+            0
+          );
           const decisionStr = typeof healthDecision === 'string' ? healthDecision : JSON.stringify(healthDecision);
           const tncResult = kernel.wasm_enforce_all_tnc(
             decisionStr,
@@ -463,9 +468,15 @@ module.exports = function(app, db, helpers) {
               ai_ceilings_externally_verified: true
             })
           );
-          // The engine responded (ok:true or ok:false with violation detail) — it's functional.
           const parsed = typeof tncResult === 'string' ? JSON.parse(tncResult) : tncResult;
-          checks.push({ check: 'tnc_enforcement', status: 'healthy', score: 1.0, engine_ok: true, tnc_result: parsed });
+          const tncPassed = parsed && parsed.ok === true;
+          checks.push({
+            check: 'tnc_enforcement',
+            status: tncPassed ? 'healthy' : 'critical',
+            score: tncPassed ? 1.0 : 0.0,
+            engine_ok: true,
+            tnc_result: parsed
+          });
         } catch (err) {
           checks.push({ check: 'tnc_enforcement', status: 'degraded', score: 0.5, error: err.message });
         }

@@ -83,6 +83,13 @@ nodes:
   - id: resolution-generation
     type: ledger_anchor
     description: "Draft formal resolution document and anchor the deliberation state to the DAG."
-    inputs: [constitutional_receipt, aggregate_result, *rationale]
+    inputs:
+      - constitutional_receipt
+      - aggregate_result
+      - gov_rationale
+      - legal_rationale
+      - arch_rationale
+      - sec_rationale
+      - ops_rationale
     outputs: [council_resolution, dag_receipt]
     bcts_transition: Governed

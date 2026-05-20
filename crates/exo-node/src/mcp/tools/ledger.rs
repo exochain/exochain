@@ -303,9 +303,14 @@ pub fn verify_inclusion_definition() -> ToolDefinition {
                 "target_index": {
                     "type": "integer",
                     "description": "Zero-based index of the event hash in the original Merkle tree."
+                },
+                "leaf_count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Total number of leaves in the original Merkle tree."
                 }
             },
-            "required": ["event_hash", "proof_hashes", "root_hash", "target_index"],
+            "required": ["event_hash", "proof_hashes", "root_hash", "target_index", "leaf_count"],
             "additionalProperties": false,
         }),
     }
@@ -324,6 +329,16 @@ fn decode_hash256_hex(field: &str, value: &str) -> Result<Hash256, String> {
     let mut hash_bytes = [0u8; 32];
     hash_bytes.copy_from_slice(&bytes);
     Ok(Hash256::from_bytes(hash_bytes))
+}
+
+fn expected_merkle_proof_depth(leaf_count: usize) -> usize {
+    let mut depth = 0;
+    let mut level_count = leaf_count;
+    while level_count > 1 {
+        depth += 1;
+        level_count = level_count.div_ceil(2);
+    }
+    depth
 }
 
 /// Execute the `exochain_verify_inclusion` tool.
@@ -379,6 +394,48 @@ pub fn execute_verify_inclusion(params: &Value, _context: &NodeContext) -> ToolR
             );
         }
     };
+    let leaf_count = match params.get("leaf_count").and_then(Value::as_u64) {
+        Some(n) => match usize::try_from(n) {
+            Ok(0) => {
+                return ToolResult::error(
+                    json!({"error": "invalid leaf_count: must be greater than zero"}).to_string(),
+                );
+            }
+            Ok(count) => count,
+            Err(_) => {
+                return ToolResult::error(
+                    json!({"error": "invalid leaf_count: value does not fit usize"}).to_string(),
+                );
+            }
+        },
+        None => {
+            return ToolResult::error(
+                json!({"error": "missing required parameter: leaf_count"}).to_string(),
+            );
+        }
+    };
+    if target_index >= leaf_count {
+        return ToolResult::error(
+            json!({
+                "error": format!(
+                    "target_index {target_index} out of range for leaf_count {leaf_count}"
+                )
+            })
+            .to_string(),
+        );
+    }
+    let expected_depth = expected_merkle_proof_depth(leaf_count);
+    if proof_hashes.len() != expected_depth {
+        return ToolResult::error(
+            json!({
+                "error": format!(
+                    "proof_hashes length {} does not match leaf_count {leaf_count}; expected {expected_depth}",
+                    proof_hashes.len()
+                )
+            })
+            .to_string(),
+        );
+    }
 
     let event_hash = match decode_hash256_hex("event_hash", event_hash_raw) {
         Ok(hash) => hash,
@@ -417,6 +474,7 @@ pub fn execute_verify_inclusion(params: &Value, _context: &NodeContext) -> ToolR
         "verified": verified,
         "proof_depth": proof.len(),
         "target_index": target_index,
+        "leaf_count": leaf_count,
     });
     ToolResult::success(response.to_string())
 }
@@ -834,11 +892,13 @@ mod tests {
             "proof_hashes": proof_hashes,
             "root_hash": expected_root.to_string(),
             "target_index": target_index,
+            "leaf_count": leaves.len(),
         });
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["verified"], true);
+        assert_eq!(v["leaf_count"], leaves.len());
     }
 
     #[test]
@@ -857,6 +917,7 @@ mod tests {
             "proof_hashes": proof_hashes,
             "root_hash": expected_root.to_string(),
             "target_index": target_index,
+            "leaf_count": leaves.len(),
         });
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
         assert!(!result.is_error);
@@ -882,6 +943,7 @@ mod tests {
             "proof_hashes": proof_hashes,
             "root_hash": root.to_string(),
             "target_index": target_index,
+            "leaf_count": leaves.len(),
         });
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
         assert!(!result.is_error);
@@ -928,11 +990,39 @@ mod tests {
             "proof_hashes": [sibling.to_string()],
             "root_hash": Hash256::digest(b"wrong-root").to_string(),
             "target_index": 0,
+            "leaf_count": 2,
         });
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
         assert!(!result.is_error);
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert_eq!(v["verified"], false);
+    }
+
+    #[test]
+    fn execute_verify_inclusion_rejects_target_index_outside_leaf_count() {
+        let leaves = [
+            Hash256::digest(b"event-left"),
+            Hash256::digest(b"event-right"),
+        ];
+        let expected_root = merkle_root(&leaves);
+        let proof = merkle_proof(&leaves, 0).expect("core proof");
+        let proof_hashes: Vec<String> = proof.iter().map(ToString::to_string).collect();
+
+        let params = json!({
+            "event_hash": leaves[0].to_string(),
+            "proof_hashes": proof_hashes,
+            "root_hash": expected_root.to_string(),
+            "target_index": 2,
+            "leaf_count": leaves.len(),
+        });
+        let result = execute_verify_inclusion(&params, &NodeContext::empty());
+
+        assert!(result.is_error);
+        assert!(
+            result.content[0]
+                .text()
+                .contains("target_index 2 out of range for leaf_count 2")
+        );
     }
 
     #[test]
@@ -942,6 +1032,7 @@ mod tests {
             "proof_hashes": [],
             "root_hash": "0000",
             "target_index": 0,
+            "leaf_count": 1,
         });
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
         assert!(result.is_error);
@@ -954,6 +1045,7 @@ mod tests {
             "proof_hashes": [],
             "root_hash": Hash256::digest(b"root").to_string(),
             "target_index": 0,
+            "leaf_count": 1,
         });
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
         assert!(result.is_error);
@@ -968,6 +1060,7 @@ mod tests {
             "proof_hashes": [],
             "root_hash": "0000",
             "target_index": 0,
+            "leaf_count": 1,
         });
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
         assert!(result.is_error);
@@ -982,6 +1075,7 @@ mod tests {
             "proof_hashes": ["1234"],
             "root_hash": Hash256::digest(b"root").to_string(),
             "target_index": 0,
+            "leaf_count": 2,
         });
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
         assert!(result.is_error);
@@ -999,6 +1093,7 @@ mod tests {
             "proof_hashes": proof_hashes,
             "root_hash": Hash256::digest(b"root").to_string(),
             "target_index": 0,
+            "leaf_count": 1,
         });
 
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
@@ -1020,15 +1115,54 @@ mod tests {
     }
 
     #[test]
+    fn verify_inclusion_definition_requires_leaf_count() {
+        let def = verify_inclusion_definition();
+        let required = def.input_schema["required"]
+            .as_array()
+            .expect("required fields array");
+
+        assert!(required.iter().any(|field| field == "leaf_count"));
+        assert_eq!(def.input_schema["properties"]["leaf_count"]["minimum"], 1);
+    }
+
+    #[test]
     fn execute_verify_inclusion_requires_target_index() {
         let params = json!({
             "event_hash": Hash256::digest(b"event").to_string(),
             "proof_hashes": [],
             "root_hash": Hash256::digest(b"root").to_string(),
+            "leaf_count": 1,
         });
         let result = execute_verify_inclusion(&params, &NodeContext::empty());
         assert!(result.is_error);
         assert!(result.content[0].text().contains("target_index"));
+    }
+
+    #[test]
+    fn execute_verify_inclusion_requires_leaf_count() {
+        let params = json!({
+            "event_hash": Hash256::digest(b"event").to_string(),
+            "proof_hashes": [],
+            "root_hash": Hash256::digest(b"root").to_string(),
+            "target_index": 0,
+        });
+        let result = execute_verify_inclusion(&params, &NodeContext::empty());
+        assert!(result.is_error);
+        assert!(result.content[0].text().contains("leaf_count"));
+    }
+
+    #[test]
+    fn execute_verify_inclusion_rejects_wrong_proof_depth_for_leaf_count() {
+        let params = json!({
+            "event_hash": Hash256::digest(b"event").to_string(),
+            "proof_hashes": [],
+            "root_hash": Hash256::digest(b"root").to_string(),
+            "target_index": 0,
+            "leaf_count": 2,
+        });
+        let result = execute_verify_inclusion(&params, &NodeContext::empty());
+        assert!(result.is_error);
+        assert!(result.content[0].text().contains("expected 1"));
     }
 
     // -- get_checkpoint -------------------------------------------------------

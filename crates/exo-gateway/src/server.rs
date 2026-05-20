@@ -92,7 +92,7 @@ const GATEWAY_RATE_LIMIT_MAX_CLIENTS: usize = 16_384;
 const STRICT_TRANSPORT_SECURITY_VALUE: &str = "max-age=63072000; includeSubDomains";
 const CONTENT_SECURITY_POLICY_VALUE: &str =
     "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
-const CONTENT_SECURITY_POLICY_DASHBOARD_VALUE: &str = "default-src 'none'; style-src 'self' 'sha256-yJRhW9tEgjF5ZLILQcXDB6QDKvp1zziUPN6LHRtguoY='; script-src 'self' 'sha256-alo6f0Wtj7BryL8VG8ykQizNQTJHPzVuk5uHRX6v0no='; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+const CONTENT_SECURITY_POLICY_DASHBOARD_VALUE: &str = "default-src 'none'; style-src 'self' 'sha256-ZDDfCKNMflVt9qZTlgUze2dLGpfks/qtzWrtNola/68='; script-src 'self' 'sha256-wqJx2WnF4s7cGuMU+qEdtcl5ls/KZFFMvWf6rcHbxtc='; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const PERMISSIONS_POLICY_VALUE: &str = "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()";
 const PROMETHEUS_TEXT_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 const LAYOUT_TEMPLATE_MAX_ID_BYTES: usize = 128;
@@ -656,7 +656,7 @@ impl AppState {
             .iter()
             .map(|did| did.as_str().to_owned())
             .collect::<Vec<String>>();
-        let payloads = db::list_blocking_conflict_declaration_payloads_for_recusal_db(
+        let candidates = db::list_blocking_conflict_declaration_recusal_candidates_db(
             pool,
             actor.as_str(),
             &affected_did_strings,
@@ -666,9 +666,11 @@ impl AppState {
             GatewayError::Internal(format!("failed to load conflict declarations: {e}"))
         })?;
 
-        payloads
+        candidates
             .into_iter()
-            .map(|payload| decode_conflict_declaration_payload(actor, payload))
+            .map(|candidate| {
+                decode_conflict_declaration_recusal_candidate(actor, affected_dids, candidate)
+            })
             .collect()
     }
 
@@ -1016,6 +1018,72 @@ fn decode_conflict_declaration_payload(
     validate_conflict_declaration(actor, declaration)
 }
 
+fn decode_conflict_declaration_recusal_candidate(
+    actor: &Did,
+    affected_dids: &[Did],
+    candidate: db::ConflictDeclarationRecusalCandidate,
+) -> std::result::Result<ConflictDeclaration, GatewayError> {
+    if candidate.declarant_did != actor.as_str() {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration scalar declarant does not match requested actor".into(),
+        ));
+    }
+
+    let scalar_related_dids = parse_conflict_related_dids(&candidate.related_dids)?;
+    if !affected_dids
+        .iter()
+        .any(|affected| scalar_related_dids.contains(affected.as_str()))
+    {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration scalar related DIDs do not match affected DIDs".into(),
+        ));
+    }
+
+    let declaration = decode_conflict_declaration_payload(actor, candidate.payload)?;
+    if declaration.nature != candidate.nature {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration scalar nature does not match payload".into(),
+        ));
+    }
+
+    let payload_related_dids = declaration
+        .related_dids
+        .iter()
+        .map(|did| did.as_str().to_owned())
+        .collect::<BTreeSet<String>>();
+    if payload_related_dids != scalar_related_dids {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration scalar related DIDs do not match payload".into(),
+        ));
+    }
+    if !affected_dids
+        .iter()
+        .any(|affected| declaration.related_dids.contains(affected))
+    {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration payload does not match affected DIDs".into(),
+        ));
+    }
+
+    Ok(declaration)
+}
+
+fn parse_conflict_related_dids(
+    related_dids: &serde_json::Value,
+) -> std::result::Result<BTreeSet<String>, GatewayError> {
+    let values = serde_json::from_value::<Vec<String>>(related_dids.clone()).map_err(|e| {
+        GatewayError::Internal(format!(
+            "invalid stored conflict declaration scalar related DIDs: {e}"
+        ))
+    })?;
+    if values.is_empty() {
+        return Err(GatewayError::Internal(
+            "stored conflict declaration scalar related DIDs are empty".into(),
+        ));
+    }
+    Ok(values.into_iter().collect())
+}
+
 fn validate_conflict_declaration(
     actor: &Did,
     declaration: ConflictDeclaration,
@@ -1101,7 +1169,6 @@ fn validate_session_expires_at_within_gateway_ttl(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SessionLoginProof {
     timestamp: Timestamp,
-    observed_at: Timestamp,
     signature: Signature,
 }
 
@@ -1111,13 +1178,8 @@ impl SessionLoginProof {
             required_nonzero_u64(body, "authTimestampPhysicalMs")?,
             required_u32(body, "authTimestampLogical")?,
         );
-        let observed_at = Timestamp::new(
-            required_nonzero_u64(body, "observedAt")?,
-            required_u32(body, "observedAtLogical")?,
-        );
         Ok(Self {
             timestamp,
-            observed_at,
             signature: required_ed25519_signature_hex(body, "signature")?,
         })
     }
@@ -1786,11 +1848,9 @@ fn session_login_auth_signing_payload(
     did: &str,
     metadata: &SessionIssueMetadata,
     timestamp: Timestamp,
-    observed_at: Timestamp,
 ) -> Result<Vec<u8>> {
-    let auth_metadata = AuthenticationMetadata::new(observed_at)?;
     let request = session_login_auth_request(did, metadata, timestamp, Signature::Empty)?;
-    request_signing_payload(&request, auth_metadata)
+    request_signing_payload(&request)
 }
 
 fn authenticate_session_login(
@@ -1798,10 +1858,11 @@ fn authenticate_session_login(
     metadata: &SessionIssueMetadata,
     proof: &SessionLoginProof,
     registry: &dyn DidRegistry,
+    trusted_observed_at: Timestamp,
 ) -> Result<AuthenticatedActor> {
     let request =
         session_login_auth_request(did, metadata, proof.timestamp, proof.signature.clone())?;
-    let auth_metadata = AuthenticationMetadata::new(proof.observed_at)?;
+    let auth_metadata = AuthenticationMetadata::new(trusted_observed_at)?;
     authenticate(&request, registry, auth_metadata)
 }
 
@@ -1812,7 +1873,7 @@ fn authenticate_session_login_against_trusted_time(
     registry: &dyn DidRegistry,
     trusted_observed_at: Timestamp,
 ) -> Result<AuthenticatedActor> {
-    let actor = authenticate_session_login(did, metadata, proof, registry)?;
+    let actor = authenticate_session_login(did, metadata, proof, registry, trusted_observed_at)?;
     validate_session_login_freshness_against_trusted_time(proof, trusted_observed_at)?;
     Ok(actor)
 }
@@ -2188,17 +2249,6 @@ async fn handle_ready(State(state): State<AppState>) -> (StatusCode, Json<Health
 }
 
 fn render_gateway_metrics(state: &AppState) -> std::result::Result<String, &'static str> {
-    let did_registry_documents = state
-        .registry
-        .read()
-        .map_err(|_| "gateway DID registry lock poisoned while rendering metrics")?
-        .len();
-    let rate_limit_tracked_clients = state
-        .rate_limiter
-        .lock()
-        .map_err(|_| "gateway rate limiter lock poisoned while rendering metrics")?
-        .clients
-        .len();
     let db_configured = usize::from(state.pool.is_some());
     let uptime_seconds = state.uptime_seconds();
 
@@ -2213,17 +2263,9 @@ fn render_gateway_metrics(state: &AppState) -> std::result::Result<String, &'sta
             "# HELP exo_gateway_db_configured Whether durable storage is configured.\n",
             "# TYPE exo_gateway_db_configured gauge\n",
             "exo_gateway_db_configured {db_configured}\n",
-            "# HELP exo_gateway_did_registry_documents Local DID documents cached in memory.\n",
-            "# TYPE exo_gateway_did_registry_documents gauge\n",
-            "exo_gateway_did_registry_documents {did_registry_documents}\n",
-            "# HELP exo_gateway_rate_limit_tracked_clients Clients currently tracked by the rate limiter.\n",
-            "# TYPE exo_gateway_rate_limit_tracked_clients gauge\n",
-            "exo_gateway_rate_limit_tracked_clients {rate_limit_tracked_clients}\n",
         ),
         uptime_seconds = uptime_seconds,
         db_configured = db_configured,
-        did_registry_documents = did_registry_documents,
-        rate_limit_tracked_clients = rate_limit_tracked_clients,
     ))
 }
 
@@ -4466,6 +4508,7 @@ mod tests {
         hlc::HybridClock,
     };
     use exo_identity::did::{DidDocument, VerificationMethod};
+    use sha2::{Digest, Sha256};
     use sqlx::Row;
     use tokio::sync::Notify;
     use tower::ServiceExt;
@@ -4478,6 +4521,62 @@ mod tests {
 
     async fn probe() -> StatusCode {
         StatusCode::OK
+    }
+
+    fn base64_standard(bytes: &[u8]) -> String {
+        const TABLE: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for chunk in bytes.chunks(3) {
+            let first = chunk[0];
+            let second = chunk.get(1).copied().unwrap_or(0);
+            let third = chunk.get(2).copied().unwrap_or(0);
+
+            encoded.push(char::from(TABLE[usize::from(first >> 2)]));
+            encoded.push(char::from(
+                TABLE[usize::from(((first & 0b0000_0011) << 4) | (second >> 4))],
+            ));
+
+            if chunk.len() > 1 {
+                encoded.push(char::from(
+                    TABLE[usize::from(((second & 0b0000_1111) << 2) | (third >> 6))],
+                ));
+            } else {
+                encoded.push('=');
+            }
+
+            if chunk.len() > 2 {
+                encoded.push(char::from(TABLE[usize::from(third & 0b0011_1111)]));
+            } else {
+                encoded.push('=');
+            }
+        }
+        encoded
+    }
+
+    fn inline_block(source: &str, open: &str, close: &str) -> String {
+        let (_, after_open) = source.split_once(open).expect("inline block open marker");
+        let (block, _) = after_open
+            .split_once(close)
+            .expect("inline block close marker");
+        block.to_string()
+    }
+
+    fn csp_sha256_hash(source: &str) -> String {
+        let digest = Sha256::digest(source.as_bytes());
+        format!("sha256-{}", base64_standard(digest.as_slice()))
+    }
+
+    fn dashboard_inline_asset_hashes() -> (String, String) {
+        let dashboard_source = include_str!("../../exo-node/src/dashboard.rs");
+        let dashboard_html = inline_block(
+            dashboard_source,
+            "const DASHBOARD_HTML: &str = r##\"",
+            "\"##;",
+        );
+        let style = inline_block(&dashboard_html, "<style>", "</style>");
+        let script = inline_block(&dashboard_html, "<script>", "</script>");
+        (csp_sha256_hash(&style), csp_sha256_hash(&script))
     }
 
     fn rate_limited_state(
@@ -4735,6 +4834,51 @@ mod tests {
         assert!(decode_conflict_declaration_payload(&actor, zero_timestamp).is_err());
     }
 
+    #[test]
+    fn conflict_recusal_candidate_validation_rejects_scalar_payload_shadowing() {
+        let actor = Did::new("did:exo:alice").expect("valid DID");
+        let affected = Did::new("did:exo:tenant-a").expect("valid DID");
+        let unrelated = Did::new("did:exo:tenant-b").expect("valid DID");
+
+        let nature_shadow = db::ConflictDeclarationRecusalCandidate {
+            declarant_did: actor.as_str().to_owned(),
+            nature: "financial ownership".to_owned(),
+            related_dids: serde_json::json!([affected.as_str()]),
+            payload: serde_json::json!({
+                "declarant_did": actor.as_str(),
+                "nature": "advisory",
+                "related_dids": [affected.as_str()],
+                "timestamp": { "physical_ms": 7000, "logical": 0 }
+            }),
+        };
+        assert!(
+            decode_conflict_declaration_recusal_candidate(
+                &actor,
+                std::slice::from_ref(&affected),
+                nature_shadow
+            )
+            .is_err(),
+            "scalar-blocking rows must fail closed when the canonical payload is advisory"
+        );
+
+        let related_shadow = db::ConflictDeclarationRecusalCandidate {
+            declarant_did: actor.as_str().to_owned(),
+            nature: "financial ownership".to_owned(),
+            related_dids: serde_json::json!([affected.as_str()]),
+            payload: serde_json::json!({
+                "declarant_did": actor.as_str(),
+                "nature": "financial ownership",
+                "related_dids": [unrelated.as_str()],
+                "timestamp": { "physical_ms": 7000, "logical": 0 }
+            }),
+        };
+        assert!(
+            decode_conflict_declaration_recusal_candidate(&actor, &[affected], related_shadow)
+                .is_err(),
+            "scalar-blocking rows must fail closed when the canonical payload does not name the affected DID"
+        );
+    }
+
     #[tokio::test]
     async fn gateway_global_concurrency_limit_queues_excess_requests() {
         #[derive(Clone)]
@@ -4838,6 +4982,52 @@ mod tests {
             response.headers().get(header::RETRY_AFTER),
             Some(&HeaderValue::from_static("60"))
         );
+    }
+
+    #[tokio::test]
+    async fn gateway_default_hlc_rate_limit_window_does_not_reset_by_request_count() {
+        let mut state = state();
+        state.rate_limiter = Arc::new(Mutex::new(GatewayRateLimiter::with_limits(1, 2, 8)));
+        let app = apply_gateway_layers(
+            Router::new().route("/probe", get(probe)),
+            state,
+            GLOBAL_CONCURRENCY_LIMIT,
+        );
+
+        let first = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let second = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let third = app
+            .oneshot(
+                Request::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(third.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
     #[tokio::test]
@@ -5189,8 +5379,22 @@ mod tests {
                 .get("content-security-policy")
                 .and_then(|v| v.to_str().ok()),
             Some(
-                "default-src 'none'; style-src 'self' 'sha256-yJRhW9tEgjF5ZLILQcXDB6QDKvp1zziUPN6LHRtguoY='; script-src 'self' 'sha256-alo6f0Wtj7BryL8VG8ykQizNQTJHPzVuk5uHRX6v0no='; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+                "default-src 'none'; style-src 'self' 'sha256-ZDDfCKNMflVt9qZTlgUze2dLGpfks/qtzWrtNola/68='; script-src 'self' 'sha256-wqJx2WnF4s7cGuMU+qEdtcl5ls/KZFFMvWf6rcHbxtc='; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
             )
+        );
+    }
+
+    #[test]
+    fn dashboard_csp_hashes_match_inline_assets() {
+        let (style_hash, script_hash) = dashboard_inline_asset_hashes();
+
+        assert!(
+            CONTENT_SECURITY_POLICY_DASHBOARD_VALUE.contains(&format!("'{style_hash}'")),
+            "dashboard CSP must contain current style hash {style_hash}"
+        );
+        assert!(
+            CONTENT_SECURITY_POLICY_DASHBOARD_VALUE.contains(&format!("'{script_hash}'")),
+            "dashboard CSP must contain current script hash {script_hash}"
         );
     }
 
@@ -5750,6 +5954,15 @@ mod tests {
         assert!(body.contains("exo_gateway_up 1"));
         assert!(body.contains("exo_gateway_db_configured 0"));
         assert!(body.contains("exo_gateway_uptime_seconds"));
+        for forbidden_metric in [
+            "exo_gateway_did_registry_documents",
+            "exo_gateway_rate_limit_tracked_clients",
+        ] {
+            assert!(
+                !body.contains(forbidden_metric),
+                "unauthenticated gateway metrics must not expose operational counts: {forbidden_metric}"
+            );
+        }
         for forbidden in ["DATABASE_URL", "POSTGRES", "password", "secret", "token"] {
             assert!(
                 !body
@@ -8206,9 +8419,9 @@ mod tests {
             expires_at: 20_000,
         };
         let timestamp = Timestamp::new(10_000, 0);
-        let observed_at = Timestamp::new(10_000, 0);
+        let trusted_gateway_time = Timestamp::new(10_000, 0);
         let signature = sign(
-            &session_login_auth_signing_payload(did, &metadata, timestamp, observed_at).unwrap(),
+            &session_login_auth_signing_payload(did, &metadata, timestamp).unwrap(),
             &sk,
         );
         let body = serde_json::json!({
@@ -8217,8 +8430,6 @@ mod tests {
             "expiresAt": metadata.expires_at,
             "authTimestampPhysicalMs": timestamp.physical_ms,
             "authTimestampLogical": timestamp.logical,
-            "observedAt": observed_at.physical_ms,
-            "observedAtLogical": observed_at.logical,
             "signature": hex::encode(signature.to_bytes())
         });
 
@@ -8226,7 +8437,7 @@ mod tests {
             State(db_state_at(
                 pool.clone(),
                 Arc::new(RwLock::new(LocalDidRegistry::new())),
-                observed_at.physical_ms,
+                trusted_gateway_time.physical_ms,
             )),
             Json(body),
         )
@@ -8298,7 +8509,7 @@ mod tests {
         };
         let timestamp = Timestamp::new(gateway_now_ms, 0);
         let signature = sign(
-            &session_login_auth_signing_payload(did, &metadata, timestamp, timestamp).unwrap(),
+            &session_login_auth_signing_payload(did, &metadata, timestamp).unwrap(),
             &sk,
         );
         let body = serde_json::json!({
@@ -8307,8 +8518,6 @@ mod tests {
             "expiresAt": metadata.expires_at,
             "authTimestampPhysicalMs": timestamp.physical_ms,
             "authTimestampLogical": timestamp.logical,
-            "observedAt": timestamp.physical_ms,
-            "observedAtLogical": timestamp.logical,
             "signature": hex::encode(signature.to_bytes())
         });
 
@@ -8343,9 +8552,7 @@ mod tests {
     fn session_login_proof_rejects_missing_signature() {
         let body = serde_json::json!({
             "authTimestampPhysicalMs": 10_000,
-            "authTimestampLogical": 0,
-            "observedAt": 10_000,
-            "observedAtLogical": 0
+            "authTimestampLogical": 0
         });
         let err = SessionLoginProof::from_body(&body).unwrap_err();
         assert!(
@@ -8359,8 +8566,6 @@ mod tests {
         let body = serde_json::json!({
             "authTimestampPhysicalMs": 10_000,
             "authTimestampLogical": 0,
-            "observedAt": 10_000,
-            "observedAtLogical": 0,
             "signature": ""
         });
         let err = SessionLoginProof::from_body(&body).unwrap_err();
@@ -8379,23 +8584,23 @@ mod tests {
         };
         let timestamp = Timestamp::new(10_000, 0);
         let signature = sign(
-            &session_login_auth_signing_payload(
-                "did:exo:login-alice",
-                &metadata,
-                timestamp,
-                timestamp,
-            )
-            .unwrap(),
+            &session_login_auth_signing_payload("did:exo:login-alice", &metadata, timestamp)
+                .unwrap(),
             &sk,
         );
         let proof = SessionLoginProof {
             timestamp,
-            observed_at: timestamp,
             signature,
         };
         let guard = registry.read().unwrap();
-        let actor =
-            authenticate_session_login("did:exo:login-alice", &metadata, &proof, &*guard).unwrap();
+        let actor = authenticate_session_login(
+            "did:exo:login-alice",
+            &metadata,
+            &proof,
+            &*guard,
+            timestamp,
+        )
+        .unwrap();
 
         assert_eq!(actor.did.as_str(), "did:exo:login-alice");
     }
@@ -8409,22 +8614,24 @@ mod tests {
             expires_at: 20_000,
         };
         let timestamp = Timestamp::new(10_000, 0);
-        let payload = session_login_auth_signing_payload(
-            "did:exo:login-alice",
-            &metadata,
-            timestamp,
-            timestamp,
-        )
-        .unwrap();
+        let payload =
+            session_login_auth_signing_payload("did:exo:login-alice", &metadata, timestamp)
+                .unwrap();
         let proof = SessionLoginProof {
             timestamp,
-            observed_at: timestamp,
             signature: sign(&payload, &wrong_sk),
         };
         let guard = registry.read().unwrap();
 
         assert!(
-            authenticate_session_login("did:exo:login-alice", &metadata, &proof, &*guard).is_err()
+            authenticate_session_login(
+                "did:exo:login-alice",
+                &metadata,
+                &proof,
+                &*guard,
+                timestamp
+            )
+            .is_err()
         );
     }
 
@@ -8440,23 +8647,24 @@ mod tests {
             expires_at: 30_000,
         };
         let timestamp = Timestamp::new(10_000, 0);
-        let payload = session_login_auth_signing_payload(
-            "did:exo:login-alice",
-            &signed_metadata,
-            timestamp,
-            timestamp,
-        )
-        .unwrap();
+        let payload =
+            session_login_auth_signing_payload("did:exo:login-alice", &signed_metadata, timestamp)
+                .unwrap();
         let proof = SessionLoginProof {
             timestamp,
-            observed_at: timestamp,
             signature: sign(&payload, &sk),
         };
         let guard = registry.read().unwrap();
 
         assert!(
-            authenticate_session_login("did:exo:login-alice", &tampered_metadata, &proof, &*guard)
-                .is_err()
+            authenticate_session_login(
+                "did:exo:login-alice",
+                &tampered_metadata,
+                &proof,
+                &*guard,
+                timestamp
+            )
+            .is_err()
         );
     }
 
@@ -8469,21 +8677,22 @@ mod tests {
         };
         let timestamp = Timestamp::new(1, 0);
         let observed_at = Timestamp::new(400_000, 0);
-        let payload = session_login_auth_signing_payload(
-            "did:exo:login-alice",
-            &metadata,
-            timestamp,
-            observed_at,
-        )
-        .unwrap();
+        let payload =
+            session_login_auth_signing_payload("did:exo:login-alice", &metadata, timestamp)
+                .unwrap();
         let proof = SessionLoginProof {
             timestamp,
-            observed_at,
             signature: sign(&payload, &sk),
         };
         let guard = registry.read().unwrap();
-        let err = authenticate_session_login("did:exo:login-alice", &metadata, &proof, &*guard)
-            .unwrap_err();
+        let err = authenticate_session_login(
+            "did:exo:login-alice",
+            &metadata,
+            &proof,
+            &*guard,
+            observed_at,
+        )
+        .unwrap_err();
 
         assert!(
             err.to_string().contains("freshness window"),
@@ -8499,17 +8708,11 @@ mod tests {
             expires_at: 500_000,
         };
         let timestamp = Timestamp::new(10_000, 0);
-        let caller_observed_at = Timestamp::new(10_000, 0);
-        let payload = session_login_auth_signing_payload(
-            "did:exo:login-alice",
-            &metadata,
-            timestamp,
-            caller_observed_at,
-        )
-        .unwrap();
+        let payload =
+            session_login_auth_signing_payload("did:exo:login-alice", &metadata, timestamp)
+                .unwrap();
         let proof = SessionLoginProof {
             timestamp,
-            observed_at: caller_observed_at,
             signature: sign(&payload, &sk),
         };
         let state =

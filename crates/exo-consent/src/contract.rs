@@ -341,6 +341,7 @@ struct ContractHashPayload<'a> {
     params: &'a ContractParams,
     rendered_clauses: &'a [RenderedClause],
     version: u32,
+    parent_contract_id: &'a Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +438,7 @@ pub fn compose(
 
     let version = 1u32;
     let template_id = template.id.clone();
+    let parent_contract_id = None;
 
     // Compute deterministic hash
     let payload = ContractHashPayload {
@@ -444,6 +446,7 @@ pub fn compose(
         params,
         rendered_clauses: &rendered_clauses,
         version,
+        parent_contract_id: &parent_contract_id,
     };
     let contract_hash =
         hash_structured(&payload).map_err(|e| ConsentError::Denied(format!("Hash error: {e}")))?;
@@ -456,7 +459,7 @@ pub fn compose(
         composed_at,
         contract_hash,
         version,
-        parent_contract_id: None,
+        parent_contract_id,
     })
 }
 
@@ -622,12 +625,14 @@ pub fn amend(
             original.id, original.version
         ))
     })?;
+    let parent_contract_id = Some(original.id.clone());
 
     let payload = ContractHashPayload {
         template_id: &original.template_id,
         params: new_params,
         rendered_clauses: &clauses,
         version: new_version,
+        parent_contract_id: &parent_contract_id,
     };
     let contract_hash =
         hash_structured(&payload).map_err(|e| ConsentError::Denied(format!("Hash error: {e}")))?;
@@ -640,7 +645,7 @@ pub fn amend(
         composed_at,
         contract_hash,
         version: new_version,
-        parent_contract_id: Some(original.id.clone()),
+        parent_contract_id,
     })
 }
 
@@ -655,6 +660,7 @@ pub fn verify_hash(contract: &ComposedContract) -> bool {
         params: &contract.params,
         rendered_clauses: &contract.rendered_clauses,
         version: contract.version,
+        parent_contract_id: &contract.parent_contract_id,
     };
     match hash_structured(&payload) {
         Ok(computed) => computed == contract.contract_hash,
@@ -1668,6 +1674,21 @@ mod tests {
     fn test_verify_hash_valid() {
         let contract = compose_custody();
         assert!(verify_hash(&contract));
+    }
+
+    #[test]
+    fn verify_hash_rejects_tampered_amendment_parent_contract_id() {
+        let original = compose_custody();
+        let mut amended = amend_test(&original, &test_params(), &[]);
+
+        assert!(verify_hash(&amended));
+
+        amended.parent_contract_id = Some("contract-forged-parent".to_string());
+        assert!(!verify_hash(&amended));
+
+        let mut orphaned = amend_test(&original, &test_params(), &[]);
+        orphaned.parent_contract_id = None;
+        assert!(!verify_hash(&orphaned));
     }
 
     // -- Test 15: verify hash tampered --

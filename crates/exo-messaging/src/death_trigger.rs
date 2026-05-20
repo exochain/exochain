@@ -140,20 +140,22 @@ struct ConfirmationSigningPayload<'a> {
     required_confirmations: u8,
     claim_nonce: &'a [u8],
     trustee_did: &'a str,
+    confirmed_at: &'a Timestamp,
     authorized_trustees: Vec<AuthorizedTrusteeSigningEntry<'a>>,
 }
 
 /// Canonical CBOR payload signed for the initiator's first confirmation.
 ///
 /// The payload binds the subject, initiator, threshold, authorized trustee set,
-/// caller-supplied claim nonce, and confirming trustee DID. The signature itself
-/// and HLC timestamps are excluded so callers can sign before the state exists.
+/// caller-supplied claim nonce, confirming trustee DID, and the HLC timestamp
+/// that will be stored for that confirmation. The signature itself is excluded.
 pub fn initial_confirmation_signing_payload(
     subject_did: &Did,
     initiated_by: &Did,
     required_confirmations: u8,
     authorized_trustees: &BTreeMap<Did, PublicKey>,
     claim_nonce: &[u8],
+    created_at: &Timestamp,
 ) -> Result<Vec<u8>, MessagingError> {
     confirmation_signing_payload_for(
         subject_did,
@@ -162,6 +164,7 @@ pub fn initial_confirmation_signing_payload(
         authorized_trustees,
         claim_nonce,
         initiated_by,
+        created_at,
     )
 }
 
@@ -172,6 +175,7 @@ fn confirmation_signing_payload_for(
     authorized_trustees: &BTreeMap<Did, PublicKey>,
     claim_nonce: &[u8],
     trustee_did: &Did,
+    confirmed_at: &Timestamp,
 ) -> Result<Vec<u8>, MessagingError> {
     let trustee_entries = authorized_trustees
         .iter()
@@ -187,6 +191,7 @@ fn confirmation_signing_payload_for(
         required_confirmations,
         claim_nonce,
         trustee_did: trustee_did.as_str(),
+        confirmed_at,
         authorized_trustees: trustee_entries,
     };
     let mut encoded = Vec::new();
@@ -221,6 +226,7 @@ impl DeathVerification {
             required_confirmations,
             &authorized_trustees,
             &claim_nonce,
+            &metadata.created_at,
         )?;
         if !exo_core::crypto::verify(
             &signing_payload,
@@ -252,6 +258,7 @@ impl DeathVerification {
     pub fn confirmation_signing_payload(
         &self,
         trustee_did: &Did,
+        confirmed_at: &Timestamp,
     ) -> Result<Vec<u8>, MessagingError> {
         confirmation_signing_payload_for(
             &self.subject_did,
@@ -260,6 +267,7 @@ impl DeathVerification {
             &self.authorized_trustees,
             &self.claim_nonce,
             trustee_did,
+            confirmed_at,
         )
     }
 
@@ -293,7 +301,8 @@ impl DeathVerification {
         if expected_public_key != trustee_public_key {
             return Err(MessagingError::SignatureVerificationFailed);
         }
-        let signing_payload = self.confirmation_signing_payload(&trustee_did)?;
+        let signing_payload =
+            self.confirmation_signing_payload(&trustee_did, &metadata.confirmed_at)?;
         if !exo_core::crypto::verify(&signing_payload, &signature, &expected_public_key) {
             return Err(MessagingError::SignatureVerificationFailed);
         }
@@ -426,12 +435,59 @@ mod tests {
             .collect()
     }
 
+    fn legacy_confirmation_payload_without_timestamp(
+        subject_did: &Did,
+        initiated_by: &Did,
+        required_confirmations: u8,
+        authorized_trustees: &BTreeMap<Did, PublicKey>,
+        claim_nonce: &[u8],
+        trustee_did: &Did,
+    ) -> Vec<u8> {
+        #[derive(serde::Serialize)]
+        struct LegacyAuthorizedTrusteeSigningEntry<'a> {
+            did: &'a str,
+            public_key: &'a [u8; 32],
+        }
+
+        #[derive(serde::Serialize)]
+        struct LegacyConfirmationSigningPayload<'a> {
+            domain: &'static str,
+            subject_did: &'a str,
+            initiated_by: &'a str,
+            required_confirmations: u8,
+            claim_nonce: &'a [u8],
+            trustee_did: &'a str,
+            authorized_trustees: Vec<LegacyAuthorizedTrusteeSigningEntry<'a>>,
+        }
+
+        let trustee_entries = authorized_trustees
+            .iter()
+            .map(|(did, public_key)| LegacyAuthorizedTrusteeSigningEntry {
+                did: did.as_str(),
+                public_key: public_key.as_bytes(),
+            })
+            .collect();
+        let payload = LegacyConfirmationSigningPayload {
+            domain: DEATH_CONFIRMATION_SIGNING_DOMAIN,
+            subject_did: subject_did.as_str(),
+            initiated_by: initiated_by.as_str(),
+            required_confirmations,
+            claim_nonce,
+            trustee_did: trustee_did.as_str(),
+            authorized_trustees: trustee_entries,
+        };
+        let mut encoded = Vec::new();
+        ciborium::into_writer(&payload, &mut encoded).unwrap();
+        encoded
+    }
+
     fn initial_signature(
         subject: &Did,
         initiated_by: &Did,
         required_confirmations: u8,
         authorized_trustees: &BTreeMap<Did, PublicKey>,
         claim_nonce: &[u8],
+        created_at: Timestamp,
         keypair: &KeyPair,
     ) -> Signature {
         let payload = initial_confirmation_signing_payload(
@@ -440,8 +496,28 @@ mod tests {
             required_confirmations,
             authorized_trustees,
             claim_nonce,
+            &created_at,
         )
         .unwrap();
+        sign(&payload, keypair.secret_key())
+    }
+
+    fn legacy_initial_signature_without_timestamp(
+        subject: &Did,
+        initiated_by: &Did,
+        required_confirmations: u8,
+        authorized_trustees: &BTreeMap<Did, PublicKey>,
+        claim_nonce: &[u8],
+        keypair: &KeyPair,
+    ) -> Signature {
+        let payload = legacy_confirmation_payload_without_timestamp(
+            subject,
+            initiated_by,
+            required_confirmations,
+            authorized_trustees,
+            claim_nonce,
+            initiated_by,
+        );
         sign(&payload, keypair.secret_key())
     }
 
@@ -459,6 +535,7 @@ mod tests {
             required_confirmations,
             &authorized_trustees,
             &claim_nonce,
+            timestamp(1_000),
             keypair,
         );
         DeathVerification::new(
@@ -476,11 +553,28 @@ mod tests {
     fn confirmation_signature(
         verification: &DeathVerification,
         trustee_did: &Did,
+        confirmed_at: Timestamp,
         keypair: &KeyPair,
     ) -> Signature {
         let payload = verification
-            .confirmation_signing_payload(trustee_did)
+            .confirmation_signing_payload(trustee_did, &confirmed_at)
             .unwrap();
+        sign(&payload, keypair.secret_key())
+    }
+
+    fn legacy_confirmation_signature_without_timestamp(
+        verification: &DeathVerification,
+        trustee_did: &Did,
+        keypair: &KeyPair,
+    ) -> Signature {
+        let payload = legacy_confirmation_payload_without_timestamp(
+            &verification.subject_did,
+            &verification.initiated_by,
+            verification.required_confirmations,
+            &verification.authorized_trustees,
+            &verification.claim_nonce,
+            trustee_did,
+        );
         sign(&payload, keypair.secret_key())
     }
 
@@ -508,7 +602,15 @@ mod tests {
             Err(MessagingError::SignatureVerificationFailed)
         ));
 
-        let signature = initial_signature(&subject, &bob, 2, &authorized, &nonce, &bob_key);
+        let signature = initial_signature(
+            &subject,
+            &bob,
+            2,
+            &authorized,
+            &nonce,
+            timestamp(1_002),
+            &bob_key,
+        );
         let dv = DeathVerification::new(
             subject,
             bob.clone(),
@@ -533,7 +635,15 @@ mod tests {
         let bob_key = keypair(1);
         let authorized = authorized_trustees(&[(&bob, &bob_key)]);
         let nonce = b"r6-claim-one-trustee".to_vec();
-        let signature = initial_signature(&subject, &bob, 1, &authorized, &nonce, &bob_key);
+        let signature = initial_signature(
+            &subject,
+            &bob,
+            1,
+            &authorized,
+            &nonce,
+            timestamp(1_003),
+            &bob_key,
+        );
 
         let result = DeathVerification::new(
             subject,
@@ -598,7 +708,7 @@ mod tests {
             b"r6-claim-3".to_vec(),
             &bob_key,
         );
-        let signature = confirmation_signature(&dv, &carol, &wrong_key);
+        let signature = confirmation_signature(&dv, &carol, timestamp(2_001), &wrong_key);
 
         let result = dv.confirm(
             carol,
@@ -636,7 +746,8 @@ mod tests {
             b"r6-claim-b".to_vec(),
             &bob_key,
         );
-        let replayed_signature = confirmation_signature(&dv_a, &carol, &carol_key);
+        let replayed_signature =
+            confirmation_signature(&dv_a, &carol, timestamp(2_002), &carol_key);
 
         let result = dv_b.confirm(
             carol,
@@ -666,7 +777,7 @@ mod tests {
             b"r6-claim-4".to_vec(),
             &bob_key,
         );
-        let signature = confirmation_signature(&dv, &carol, &carol_key);
+        let signature = confirmation_signature(&dv, &carol, timestamp(2_003), &carol_key);
         dv.subject_did = did("mallory");
 
         let result = dv.confirm(
@@ -701,7 +812,7 @@ mod tests {
             &bob_key,
         );
 
-        let carol_signature = confirmation_signature(&dv, &carol, &carol_key);
+        let carol_signature = confirmation_signature(&dv, &carol, timestamp(2_004), &carol_key);
         let met = dv
             .confirm(
                 carol.clone(),
@@ -713,7 +824,7 @@ mod tests {
         assert!(!met);
         assert_eq!(dv.confirmations_remaining(), 1);
 
-        let dave_signature = confirmation_signature(&dv, &dave, &dave_key);
+        let dave_signature = confirmation_signature(&dv, &dave, timestamp(2_005), &dave_key);
         let met = dv
             .confirm(
                 dave,
@@ -747,7 +858,7 @@ mod tests {
             b"r6-claim-6".to_vec(),
             &bob_key,
         );
-        let signature = confirmation_signature(&dv, &carol, &carol_key);
+        let signature = confirmation_signature(&dv, &carol, timestamp(2_006), &carol_key);
         dv.confirm(
             carol.clone(),
             *carol_key.public_key(),
@@ -787,7 +898,7 @@ mod tests {
             b"r6-claim-7".to_vec(),
             &bob_key,
         );
-        let carol_signature = confirmation_signature(&dv, &carol, &carol_key);
+        let carol_signature = confirmation_signature(&dv, &carol, timestamp(2_008), &carol_key);
         dv.confirm(
             carol,
             *carol_key.public_key(),
@@ -796,7 +907,7 @@ mod tests {
         )
         .unwrap();
 
-        let dave_signature = confirmation_signature(&dv, &dave, &dave_key);
+        let dave_signature = confirmation_signature(&dv, &dave, timestamp(2_009), &dave_key);
         let result = dv.confirm(
             dave,
             *dave_key.public_key(),
@@ -829,7 +940,7 @@ mod tests {
         assert_eq!(dv.status, DeathVerificationStatus::Rejected);
         assert!(!dv.should_release());
 
-        let carol_signature = confirmation_signature(&dv, &carol, &carol_key);
+        let carol_signature = confirmation_signature(&dv, &carol, timestamp(2_010), &carol_key);
         let result = dv.confirm(
             carol,
             *carol_key.public_key(),
@@ -869,7 +980,8 @@ mod tests {
         );
         assert_eq!(dv.confirmations_remaining(), 2);
 
-        let alternate_signature = confirmation_signature(&dv, &alternate, &alternate_key);
+        let alternate_signature =
+            confirmation_signature(&dv, &alternate, timestamp(2_011), &alternate_key);
         dv.confirm(
             alternate,
             *alternate_key.public_key(),
@@ -879,7 +991,8 @@ mod tests {
         .unwrap();
         assert_eq!(dv.confirmations_remaining(), 1);
 
-        let contingency_signature = confirmation_signature(&dv, &contingency, &contingency_key);
+        let contingency_signature =
+            confirmation_signature(&dv, &contingency, timestamp(2_012), &contingency_key);
         let verified = dv
             .confirm(
                 contingency,
@@ -911,7 +1024,15 @@ mod tests {
         let carol_key = keypair(2);
         let authorized = authorized_trustees(&[(&bob, &bob_key), (&carol, &carol_key)]);
         let nonce = b"r6-claim-created-at".to_vec();
-        let signature = initial_signature(&subject, &bob, 2, &authorized, &nonce, &bob_key);
+        let signature = initial_signature(
+            &subject,
+            &bob,
+            2,
+            &authorized,
+            &nonce,
+            timestamp(7_001),
+            &bob_key,
+        );
         let metadata = creation_metadata(7_001);
 
         let dv = DeathVerification::new(subject, bob, 2, authorized, nonce, signature, metadata)
@@ -921,6 +1042,40 @@ mod tests {
         assert_eq!(dv.confirmations[0].confirmed_at, timestamp(7_001));
         assert_eq!(dv.status, DeathVerificationStatus::Pending);
         assert_eq!(dv.resolved_at, None);
+    }
+
+    #[test]
+    fn creation_rejects_timestampless_signature_replayed_with_forged_created_at() {
+        let subject = did("alice");
+        let bob = did("bob");
+        let carol = did("carol");
+        let bob_key = keypair(1);
+        let carol_key = keypair(2);
+        let authorized = authorized_trustees(&[(&bob, &bob_key), (&carol, &carol_key)]);
+        let nonce = b"r6-claim-created-at-forgery".to_vec();
+        let signature = legacy_initial_signature_without_timestamp(
+            &subject,
+            &bob,
+            2,
+            &authorized,
+            &nonce,
+            &bob_key,
+        );
+
+        let result = DeathVerification::new(
+            subject,
+            bob,
+            2,
+            authorized,
+            nonce,
+            signature,
+            creation_metadata(99_999),
+        );
+
+        assert!(matches!(
+            result,
+            Err(MessagingError::SignatureVerificationFailed)
+        ));
     }
 
     #[test]
@@ -948,7 +1103,7 @@ mod tests {
             b"r6-claim-confirm-time".to_vec(),
             &bob_key,
         );
-        let signature = confirmation_signature(&dv, &carol, &carol_key);
+        let signature = confirmation_signature(&dv, &carol, timestamp(7_002), &carol_key);
 
         let verified = dv
             .confirm(
@@ -962,6 +1117,37 @@ mod tests {
         assert!(verified);
         assert_eq!(dv.confirmations[1].confirmed_at, timestamp(7_002));
         assert_eq!(dv.resolved_at, Some(timestamp(7_002)));
+    }
+
+    #[test]
+    fn confirm_rejects_timestampless_signature_replayed_with_forged_confirmed_at() {
+        let subject = did("alice");
+        let bob = did("bob");
+        let carol = did("carol");
+        let bob_key = keypair(1);
+        let carol_key = keypair(2);
+        let authorized = authorized_trustees(&[(&bob, &bob_key), (&carol, &carol_key)]);
+        let mut dv = signed_verification(
+            &subject,
+            &bob,
+            2,
+            authorized,
+            b"r6-claim-confirm-time-forgery".to_vec(),
+            &bob_key,
+        );
+        let signature = legacy_confirmation_signature_without_timestamp(&dv, &carol, &carol_key);
+
+        let result = dv.confirm(
+            carol,
+            *carol_key.public_key(),
+            signature,
+            confirmation_metadata(99_999),
+        );
+
+        assert!(matches!(
+            result,
+            Err(MessagingError::SignatureVerificationFailed)
+        ));
     }
 
     #[test]

@@ -379,6 +379,9 @@ test('wasm_prepare_encrypted_message', () => {
   if (!preparedEnvelope.signing_payload_hex) {
     throw new Error('prepared envelope must expose signing payload');
   }
+  if (preparedEnvelope.envelope.kdf_version !== 2) {
+    throw new Error('prepared envelope must expose explicit transcript-salted KDF version');
+  }
   return preparedEnvelope;
 });
 
@@ -447,7 +450,9 @@ test('wasm_death_verification_initial_signing_payload', () => {
     TEST_DID_2,
     2,
     deathTrusteesJson,
-    deathClaimNonceHex
+    deathClaimNonceHex,
+    NOW_MS,
+    0
   );
 });
 
@@ -457,7 +462,9 @@ const deathInitialPayload = setup(() =>
     TEST_DID_2,
     2,
     deathTrusteesJson,
-    deathClaimNonceHex
+    deathClaimNonceHex,
+    NOW_MS,
+    0
   ));
 const deathInitialSignatureHex = setup(() =>
   deathInitialPayload && signer2.signHex(deathInitialPayload));
@@ -501,14 +508,18 @@ test('wasm_death_verification_confirmation_signing_payload', () => {
   if (!deathState) throw new Error('skipped -- no death-verification state');
   return wasm.wasm_death_verification_confirmation_signing_payload(
     JSON.stringify(deathState),
-    TEST_DID_3
+    TEST_DID_3,
+    BigInt(NOW_NUM + 1),
+    0
   );
 });
 
 const deathConfirmationPayload = setup(() =>
   deathState && wasm.wasm_death_verification_confirmation_signing_payload(
     JSON.stringify(deathState),
-    TEST_DID_3
+    TEST_DID_3,
+    BigInt(NOW_NUM + 1),
+    0
   ));
 const deathConfirmationSignatureHex = setup(() =>
   deathConfirmationPayload && signer3.signHex(deathConfirmationPayload));
@@ -1460,28 +1471,65 @@ test('wasm_governance_findings_digest is deterministic', () => {
   return a;
 });
 
-test('wasm_verify_governance_attestation accepts valid signatures', () => {
+test('wasm_verify_governance_attestation_with_trusted_keys accepts valid signatures', () => {
   const digestHex = wasm.wasm_governance_findings_digest(governanceFindingsJson);
   const signature = signatureJsonFromHex(signer1.signHex(Buffer.from(digestHex, 'hex')));
-  return wasm.wasm_verify_governance_attestation(
+  return wasm.wasm_verify_governance_attestation_with_trusted_keys(
     'did:exo:monitor',
     governanceFindingsJson,
     JSON.stringify(signature),
-    signer1.publicKeyHex,
+    JSON.stringify({ 'did:exo:monitor': signer1.publicKeyHex }),
   );
 });
 
-test('wasm_verify_governance_attestation rejects invalid signatures', () =>
+test('wasm_verify_governance_attestation_with_trusted_keys rejects signatures replayed for substituted findings', () => {
+  const signedFindingsJson = JSON.stringify([
+    { id: 'F-001', severity: 'low', title: 'Benign finding' },
+  ]);
+  const substitutedFindingsJson = JSON.stringify([
+    { id: 'F-999', severity: 'critical', title: 'Substituted critical finding' },
+  ]);
+  const digestHex = wasm.wasm_governance_findings_digest(signedFindingsJson);
+  const signature = signatureJsonFromHex(signer1.signHex(Buffer.from(digestHex, 'hex')));
+
+  return expectErrorContains(
+    'wasm_verify_governance_attestation_with_trusted_keys',
+    () => wasm.wasm_verify_governance_attestation_with_trusted_keys(
+      'did:exo:monitor',
+      substitutedFindingsJson,
+      JSON.stringify(signature),
+      JSON.stringify({ 'did:exo:monitor': signer1.publicKeyHex }),
+    ),
+    'governance attestation rejected',
+  );
+});
+
+test('wasm_verify_governance_attestation_with_trusted_keys rejects invalid signatures', () =>
   expectErrorContains(
-    'wasm_verify_governance_attestation',
-    () => wasm.wasm_verify_governance_attestation(
+    'wasm_verify_governance_attestation_with_trusted_keys',
+    () => wasm.wasm_verify_governance_attestation_with_trusted_keys(
       'did:exo:monitor',
       governanceFindingsJson,
       JSON.stringify({ Ed25519: Array.from({ length: 64 }, () => 0) }),
-      signer1.publicKeyHex,
+      JSON.stringify({ 'did:exo:monitor': signer1.publicKeyHex }),
     ),
     'governance attestation rejected',
   ));
+
+test('wasm_verify_governance_attestation_with_trusted_keys rejects untrusted signers', () => {
+  const digestHex = wasm.wasm_governance_findings_digest(governanceFindingsJson);
+  const signature = signatureJsonFromHex(signer1.signHex(Buffer.from(digestHex, 'hex')));
+  return expectErrorContains(
+    'wasm_verify_governance_attestation_with_trusted_keys',
+    () => wasm.wasm_verify_governance_attestation_with_trusted_keys(
+      'did:exo:monitor',
+      governanceFindingsJson,
+      JSON.stringify(signature),
+      JSON.stringify({ 'did:exo:other-monitor': signer1.publicKeyHex }),
+    ),
+    'governance attestation signer is not trusted',
+  );
+});
 
 // Identity combinator is a unit variant — just a string, no fields
 test('wasm_reduce_combinator', () =>
@@ -2255,7 +2303,8 @@ test('wasm_create_emergency_action', () =>
     NONZERO_32_HEX,
     JSON.stringify(emergencyPolicy),
     NOW_MS,
-    0
+    0,
+    JSON.stringify([])
   ));
 
 const emergencyAction = setup(() =>
@@ -2268,8 +2317,45 @@ const emergencyAction = setup(() =>
     NONZERO_32_HEX,
     JSON.stringify(emergencyPolicy),
     NOW_MS,
-    0
+    0,
+    JSON.stringify([])
   ));
+
+test('wasm_create_emergency_action rejects repeated same-actor emergency history', () => {
+  const onePerActorPolicy = {
+    ...emergencyPolicy,
+    max_per_quarter_per_actor: 1
+  };
+  const first = wasm.wasm_create_emergency_action(
+    UUID_1,
+    JSON.stringify('SystemHalt'),
+    TEST_DID,
+    'Critical security breach',
+    BigInt(50000),
+    NONZERO_32_HEX,
+    JSON.stringify(onePerActorPolicy),
+    NOW_MS,
+    0,
+    JSON.stringify([])
+  );
+
+  return expectErrorContains(
+    'wasm_create_emergency_action',
+    () => wasm.wasm_create_emergency_action(
+      UUID_2,
+      JSON.stringify('RoleEscalation'),
+      TEST_DID,
+      'Second same-actor emergency',
+      BigInt(50000),
+      NONZERO_32_HEX,
+      JSON.stringify(onePerActorPolicy),
+      NOW_MS + 1n,
+      0,
+      JSON.stringify([first])
+    ),
+    'Emergency error',
+  );
+});
 
 test('wasm_check_expiry', () => {
   if (!emergencyAction) throw new Error('skipped -- no emergency action from setup');

@@ -26,7 +26,7 @@
 //! | Sentinel | Checks | Interval |
 //! |----------|--------|----------|
 //! | Liveness | Consensus round is advancing | 30s |
-//! | QuorumHealth | Validator count >= 4, or explicit Node 0 bootstrap | 30s |
+//! | QuorumHealth | Validator count >= 4 | 30s |
 //! | ReceiptIntegrity | Recent receipts pass `verify_hash()` | 60s |
 //! | StoreConsistency | Committed height matches certificate count | 60s |
 //! | ScoreIntegrity | 0dentity scores are deterministically reproducible | 60s |
@@ -212,18 +212,16 @@ fn check_liveness(reactor: &SharedReactorState, prev_round: &mut PreviousRound) 
 
 /// Check quorum health.
 ///
-/// A full BFT validator set requires at least 4 validators. The documented
-/// Railway Node 0 deployment is an explicit single-validator genesis bootstrap
-/// state; it is operationally healthy but not BFT fault tolerant until quorum
-/// expansion completes.
+/// A full BFT validator set requires at least 4 validators. Single-validator
+/// deployments remain operationally alerting until quorum expansion completes.
 fn check_quorum_health(reactor: &SharedReactorState) -> SentinelStatus {
-    let (validator_count, node_zero_bootstrap) = match reactor.lock() {
+    let (validator_count, single_validator_self_set) = match reactor.lock() {
         Ok(s) => {
             let validator_count = s.consensus.config.validators.len();
-            let node_zero_bootstrap = s.is_validator
+            let single_validator_self_set = s.is_validator
                 && validator_count == 1
                 && s.consensus.config.validators.contains(&s.node_did);
-            (validator_count, node_zero_bootstrap)
+            (validator_count, single_validator_self_set)
         }
         Err(_) => {
             tracing::error!("Reactor state mutex poisoned in quorum sentinel");
@@ -236,12 +234,12 @@ fn check_quorum_health(reactor: &SharedReactorState) -> SentinelStatus {
         }
     };
 
-    let healthy = validator_count >= BFT_MIN_VALIDATORS || node_zero_bootstrap;
+    let healthy = validator_count >= BFT_MIN_VALIDATORS;
     let message = if validator_count >= BFT_MIN_VALIDATORS {
         format!("{validator_count} validators - BFT quorum healthy")
-    } else if node_zero_bootstrap {
+    } else if single_validator_self_set {
         format!(
-            "Node 0 genesis bootstrap: {validator_count} validator - not BFT fault tolerant until at least {BFT_MIN_VALIDATORS} validators join"
+            "{validator_count} validator self-set - BELOW BFT MINIMUM (need >= {BFT_MIN_VALIDATORS}); quorum expansion required"
         )
     } else {
         format!("{validator_count} validators - BELOW BFT MINIMUM (need >= {BFT_MIN_VALIDATORS})")
@@ -1311,6 +1309,25 @@ mod tests {
     }
 
     #[test]
+    fn quorum_health_source_has_no_single_validator_health_exception() {
+        let source = include_str!("sentinels.rs");
+        let quorum_health = source
+            .split("fn check_quorum_health")
+            .nth(1)
+            .and_then(|section| section.split("const RECEIPT_INTEGRITY_SAMPLE_LIMIT").next())
+            .expect("quorum health sentinel source exists");
+
+        assert!(
+            quorum_health.contains("let healthy = validator_count >= BFT_MIN_VALIDATORS;"),
+            "quorum health must not mark a below-minimum validator set healthy"
+        );
+        assert!(
+            !quorum_health.contains("node_zero_bootstrap"),
+            "single-validator Node 0 bootstrap must not suppress quorum alerts without an explicit verified mode"
+        );
+    }
+
+    #[test]
     fn receipt_integrity_source_verifies_receipt_hashes() {
         let source = include_str!("sentinels.rs");
         let receipt_integrity = source
@@ -1384,7 +1401,7 @@ mod tests {
     }
 
     #[test]
-    fn quorum_health_accepts_documented_node_zero_bootstrap_without_bft_claim() {
+    fn quorum_health_flags_single_validator_even_when_self_validator() {
         let node_did = Did::new("did:exo:v0").unwrap();
         let validators: BTreeSet<Did> = [node_did.clone()].into_iter().collect();
         let config = ReactorConfig {
@@ -1398,10 +1415,9 @@ mod tests {
 
         let status = check_quorum_health(&reactor);
 
-        assert!(status.healthy);
+        assert!(!status.healthy);
         assert_eq!(status.check, SentinelCheck::QuorumHealth);
-        assert!(status.message.contains("Node 0 genesis bootstrap"));
-        assert!(status.message.contains("not BFT fault tolerant"));
+        assert!(status.message.contains("BELOW BFT MINIMUM"));
         assert!(!status.message.contains("quorum healthy"));
     }
 

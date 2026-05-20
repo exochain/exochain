@@ -14,7 +14,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, type AuthState } from '@/hooks/useAuth';
 import { Shield } from 'lucide-react';
@@ -30,20 +30,12 @@ export default function Login({ mode: initialMode = 'login' }: Props) {
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [passphrase, setPassphrase] = useState('');
+  const [apiToken, setApiToken] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState('');
-  const [wasmReady, setWasmReady] = useState(false);
-
-  useEffect(() => {
-    import('@/wasm/exochain_wasm').then(async (wasm) => {
-      await wasm.default();
-      setWasmReady(true);
-      setStatus('Secure kernel ready');
-    }).catch(() => setStatus(''));
-  }, []);
 
   const handleSubmit = async () => {
-    if (!passphrase) return;
+    if (!passphrase || !apiToken.trim()) return;
     setIsLoading(true);
     setStatus('Deriving secure identity...');
 
@@ -54,19 +46,14 @@ export default function Login({ mode: initialMode = 'login' }: Props) {
       const hashArray = new Uint8Array(hashBuffer);
       const passphraseHash = Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('');
 
-      // Generate X25519 keypair via WASM
-      let x25519Public = '', x25519Secret = '';
-      if (wasmReady) {
-        const wasm = await import('@/wasm/exochain_wasm');
-        const kp = wasm.wasm_generate_x25519_keypair();
-        x25519Public = kp.public_key_hex;
-        x25519Secret = kp.secret_key_hex;
-      } else {
-        const bytes = new Uint8Array(32);
-        crypto.getRandomValues(bytes);
-        x25519Public = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-        x25519Secret = x25519Public;
-      }
+      const keyResponse = await fetch('/api/keys/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiToken.trim()}` },
+      });
+      if (!keyResponse.ok) throw new Error('key generation failed');
+      const keypair = await keyResponse.json() as { public_key_hex: string; secret_key_hex: string };
+      const x25519Public = keypair.public_key_hex;
+      const x25519Secret = keypair.secret_key_hex;
 
       const did = `did:exo:${passphraseHash.slice(0, 16)}`;
       const name = displayName || `User-${passphraseHash.slice(0, 8)}`;
@@ -77,7 +64,7 @@ export default function Login({ mode: initialMode = 'login' }: Props) {
         setTimeout(() => ctrl.abort(), 1500);
         await fetch('/api/profile', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiToken.trim()}` },
           body: JSON.stringify({ did, display_name: name, email, x25519_public_key_hex: x25519Public }),
           signal: ctrl.signal,
         });
@@ -90,6 +77,7 @@ export default function Login({ mode: initialMode = 'login' }: Props) {
         x25519PublicHex: x25519Public,
         x25519SecretHex: x25519Secret,
         passphraseHash,
+        apiToken: apiToken.trim(),
       };
 
       login(authState);
@@ -163,9 +151,18 @@ export default function Login({ mode: initialMode = 'login' }: Props) {
           className="w-full bg-white/5 border border-white/10 rounded-xl px-5 py-4 mb-8 text-white placeholder-white/30 focus:outline-none focus:border-blue-400"
         />
 
+        <input
+          type="password"
+          placeholder="API token"
+          value={apiToken}
+          onChange={(e) => setApiToken(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+          className="w-full bg-white/5 border border-white/10 rounded-xl px-5 py-4 mb-8 text-white placeholder-white/30 focus:outline-none focus:border-blue-400"
+        />
+
         <button
           onClick={handleSubmit}
-          disabled={isLoading || !passphrase}
+          disabled={isLoading || !passphrase || !apiToken.trim()}
           className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-white/10 disabled:cursor-not-allowed text-white font-semibold py-4 rounded-xl text-lg transition-all"
         >
           {isLoading ? 'Securing...' : mode === 'register' ? 'CREATE SAFETY NET' : 'ENTER LIVESAFE'}

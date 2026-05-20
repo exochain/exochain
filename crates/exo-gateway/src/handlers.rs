@@ -49,7 +49,7 @@ use exo_governance::conflict::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::Row;
+use sqlx::{Postgres, Row, Transaction};
 
 use crate::server::{AppState, AuthenticatedSessionUser, auth_boundary_error_response};
 
@@ -261,6 +261,18 @@ fn compute_audit_entry_hash(input: &AuditEntryHashInput<'_>) -> Result<String, S
     Ok(canonical_cbor_hash(input)?.to_hex().to_string())
 }
 
+fn audit_timestamp_fields(timestamp: Timestamp) -> Result<(i64, i32), String> {
+    if timestamp == Timestamp::ZERO {
+        return Err("audit timestamp must be caller-supplied and non-zero".to_owned());
+    }
+
+    let timestamp_physical_ms = i64::try_from(timestamp.physical_ms)
+        .map_err(|_| "HLC physical timestamp exceeds i64 audit storage range".to_owned())?;
+    let timestamp_logical = i32::try_from(timestamp.logical)
+        .map_err(|_| "HLC logical timestamp exceeds i32 audit storage range".to_owned())?;
+    Ok((timestamp_physical_ms, timestamp_logical))
+}
+
 fn build_audit_entry(
     last: Option<&crate::db::AuditRow>,
     event_type: &str,
@@ -270,10 +282,6 @@ fn build_audit_entry(
     timestamp: Timestamp,
     payload: &Value,
 ) -> Result<AuditEntryRecord, String> {
-    if timestamp == Timestamp::ZERO {
-        return Err("audit timestamp must be caller-supplied and non-zero".to_owned());
-    }
-
     let sequence = match last {
         Some(row) => row
             .sequence
@@ -285,10 +293,7 @@ fn build_audit_entry(
         .map(|row| row.entry_hash.clone())
         .unwrap_or_else(|| Hash256::ZERO.to_string());
     let event_hash = canonical_hash(payload)?.to_hex().to_string();
-    let timestamp_physical_ms = i64::try_from(timestamp.physical_ms)
-        .map_err(|_| "HLC physical timestamp exceeds i64".to_owned())?;
-    let timestamp_logical = i32::try_from(timestamp.logical)
-        .map_err(|_| "HLC logical timestamp exceeds i32".to_owned())?;
+    let (timestamp_physical_ms, timestamp_logical) = audit_timestamp_fields(timestamp)?;
     let hash_input = AuditEntryHashInput {
         sequence,
         prev_hash: &prev_hash,
@@ -317,8 +322,8 @@ fn build_audit_entry(
 }
 
 /// Write an audit entry using CBOR-hashed event payload.
-async fn write_audit(
-    state: &AppState,
+async fn write_audit_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
     event_type: &str,
     actor: &str,
     tenant_id: &str,
@@ -326,17 +331,15 @@ async fn write_audit(
     timestamp: Timestamp,
     payload: &Value,
 ) -> Result<(), String> {
-    let db = state.require_db().map_err(|e| e.to_string())?;
-    let mut tx = db.begin().await.map_err(|e| e.to_string())?;
     sqlx::query("LOCK TABLE audit_entries IN EXCLUSIVE MODE")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(|e| e.to_string())?;
     let last = sqlx::query_as::<_, crate::db::AuditRow>(
         "SELECT sequence, prev_hash, event_hash, event_type, actor, tenant_id, decision_id, timestamp_physical_ms, timestamp_logical, entry_hash
          FROM audit_entries ORDER BY sequence DESC LIMIT 1",
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(|e| e.to_string())?;
     let entry = build_audit_entry(
@@ -362,9 +365,35 @@ async fn write_audit(
     .bind(entry.timestamp_physical_ms)
     .bind(entry.timestamp_logical)
     .bind(&entry.entry_hash)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Write an audit entry using CBOR-hashed event payload.
+#[cfg(all(test, feature = "production-db"))]
+async fn write_audit(
+    state: &AppState,
+    event_type: &str,
+    actor: &str,
+    tenant_id: &str,
+    decision_id: &str,
+    timestamp: Timestamp,
+    payload: &Value,
+) -> Result<(), String> {
+    let db = state.require_db().map_err(|e| e.to_string())?;
+    let mut tx = db.begin().await.map_err(|e| e.to_string())?;
+    write_audit_in_transaction(
+        &mut tx,
+        event_type,
+        actor,
+        tenant_id,
+        decision_id,
+        timestamp,
+        payload,
+    )
+    .await?;
     tx.commit().await.map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -392,9 +421,7 @@ pub struct VoteRequest {
 impl VoteRequest {
     fn caller_supplied_timestamp(&self) -> Result<Timestamp, String> {
         let timestamp = Timestamp::new(self.timestamp_physical_ms, self.timestamp_logical);
-        if timestamp == Timestamp::ZERO {
-            return Err("vote timestamp must be caller-supplied and non-zero".to_owned());
-        }
+        audit_timestamp_fields(timestamp)?;
         Ok(timestamp)
     }
 
@@ -699,9 +726,12 @@ pub async fn vote_handler(
     // Verify quorum precondition (TNC-07): enough tenant-scoped eligible
     // voters must exist before accepting the vote.
     let registry = QuorumRegistry::with_defaults();
-    let eligible = match state
-        .quorum_eligible_voter_counts(&actor.tenant_id, decision.class)
-        .await
+    let eligible = match crate::db::count_quorum_eligible_voters_in_transaction(
+        &mut tx,
+        &actor.tenant_id,
+        decision.class,
+    )
+    .await
     {
         Ok(counts) => counts,
         Err(e) => {
@@ -818,6 +848,16 @@ pub async fn vote_handler(
         }
     };
 
+    let audit_payload = serde_json::json!({
+        "event": "VoteCast",
+        "decision_id": body.decision_id.as_str(),
+        "tenant_id": tenant_id.as_str(),
+        "voter": body.voter_did.as_str(),
+        "choice": body.choice,
+        "timestamp_physical_ms": timestamp.physical_ms,
+        "timestamp_logical": timestamp.logical,
+    });
+
     // Persist updated decision.
     if let Err(e) =
         sqlx::query("UPDATE decisions SET payload = $1 WHERE id_hash = $2 AND tenant_id = $3")
@@ -834,27 +874,10 @@ pub async fn vote_handler(
         )
             .into_response();
     }
-    if let Err(e) = tx.commit().await {
-        tracing::error!(error = %e, "failed to commit vote transaction");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": "decision persistence failed"})),
-        )
-            .into_response();
-    }
 
     // ── VIOLATION 3 FIX: CBOR canonical audit hash ──────────────────────
-    let audit_payload = serde_json::json!({
-        "event": "VoteCast",
-        "decision_id": body.decision_id.as_str(),
-        "tenant_id": tenant_id.as_str(),
-        "voter": body.voter_did.as_str(),
-        "choice": body.choice,
-        "timestamp_physical_ms": timestamp.physical_ms,
-        "timestamp_logical": timestamp.logical,
-    });
-    if let Err(e) = write_audit(
-        &state,
+    if let Err(e) = write_audit_in_transaction(
+        &mut tx,
         "VoteCast",
         &body.voter_did,
         &tenant_id,
@@ -868,6 +891,14 @@ pub async fn vote_handler(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "audit write failed"})),
+        )
+            .into_response();
+    }
+    if let Err(e) = tx.commit().await {
+        tracing::error!(error = %e, "failed to commit vote transaction");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "decision persistence failed"})),
         )
             .into_response();
     }
@@ -1474,6 +1505,93 @@ mod tests {
     }
 
     #[test]
+    fn vote_request_rejects_timestamp_outside_audit_storage_range() {
+        let mut physical_overflow_json = signed_vote_request_json(
+            "did:exo:alice",
+            "decision-1",
+            &["did:exo:tenant-a"],
+            VoteChoice::Approve,
+            ActorKind::Human,
+            exo_core::Timestamp::new(7000, 2),
+        );
+        let physical_overflow = physical_overflow_json.as_object_mut().expect("object");
+        physical_overflow.insert(
+            "timestamp_physical_ms".to_owned(),
+            serde_json::json!(u64::try_from(i64::MAX).expect("i64::MAX fits u64") + 1),
+        );
+        let request: VoteRequest =
+            serde_json::from_value(physical_overflow_json).expect("request shape is valid");
+        let err = request
+            .caller_supplied_timestamp()
+            .expect_err("oversized physical timestamp must be rejected before vote mutation");
+        assert!(
+            err.contains("i64"),
+            "error should identify physical timestamp storage range"
+        );
+
+        let mut logical_overflow_json = signed_vote_request_json(
+            "did:exo:alice",
+            "decision-1",
+            &["did:exo:tenant-a"],
+            VoteChoice::Approve,
+            ActorKind::Human,
+            exo_core::Timestamp::new(7000, 2),
+        );
+        let logical_overflow = logical_overflow_json.as_object_mut().expect("object");
+        logical_overflow.insert(
+            "timestamp_logical".to_owned(),
+            serde_json::json!(u32::try_from(i32::MAX).expect("i32::MAX fits u32") + 1),
+        );
+        let request: VoteRequest =
+            serde_json::from_value(logical_overflow_json).expect("request shape is valid");
+        let err = request
+            .caller_supplied_timestamp()
+            .expect_err("oversized logical timestamp must be rejected before vote mutation");
+        assert!(
+            err.contains("i32"),
+            "error should identify logical timestamp storage range"
+        );
+    }
+
+    #[test]
+    fn vote_handler_validates_audit_timestamp_range_before_mutating_decision() {
+        let source = include_str!("handlers.rs");
+        let vote_handler = source
+            .split("pub async fn vote_handler")
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("// Build quorum summary for response.")
+                    .next()
+            })
+            .expect("vote handler source");
+        let timestamp_validation = vote_handler
+            .find("body.caller_supplied_timestamp()")
+            .expect("vote handler must validate caller timestamp");
+        let vote_mutation = vote_handler
+            .find("decision.add_vote")
+            .expect("vote handler must add vote");
+        assert!(
+            timestamp_validation < vote_mutation,
+            "vote timestamps must be audit-storage-range validated before mutating the decision"
+        );
+
+        let caller_timestamp = source
+            .split("fn caller_supplied_timestamp")
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("fn caller_supplied_provenance_timestamp")
+                    .next()
+            })
+            .expect("caller timestamp validator source");
+        assert!(
+            caller_timestamp.contains("audit_timestamp_fields(timestamp)?"),
+            "vote request timestamp validation must share the audit storage range guard"
+        );
+    }
+
+    #[test]
     fn vote_request_does_not_require_caller_affected_dids_for_conflict_adjudication() {
         let mut without_affected_dids = signed_vote_request_json(
             "did:exo:alice",
@@ -1743,6 +1861,46 @@ mod tests {
     }
 
     #[test]
+    fn vote_handler_writes_audit_in_vote_transaction_before_commit() {
+        let source = include_str!("handlers.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker present");
+        let vote_handler = production
+            .split("pub async fn vote_handler")
+            .nth(1)
+            .expect("vote handler source present")
+            .split("// ── Health handler")
+            .next()
+            .expect("vote handler source end");
+
+        let update_index = vote_handler
+            .find("UPDATE decisions SET payload = $1 WHERE id_hash = $2 AND tenant_id = $3")
+            .expect("vote handler must persist the updated decision");
+        let audit_index = vote_handler
+            .find("write_audit_in_transaction(")
+            .expect("vote handler must write the audit entry inside the vote transaction");
+        let commit_index = vote_handler
+            .find("tx.commit().await")
+            .expect("vote handler must commit the vote transaction");
+        let audit_call = &vote_handler[audit_index..commit_index];
+
+        assert!(
+            update_index < audit_index && audit_index < commit_index,
+            "decision mutation and VoteCast audit entry must commit atomically"
+        );
+        assert!(
+            audit_call.contains("&mut tx"),
+            "VoteCast audit entry must be written through the existing vote transaction"
+        );
+        assert!(
+            !vote_handler.contains("write_audit(\n        &state"),
+            "vote handler must not commit the decision before a separate audit transaction"
+        );
+    }
+
+    #[test]
     fn vote_handler_scopes_decision_mutation_to_authenticated_actor_tenant() {
         let source = include_str!("handlers.rs");
         let production = source
@@ -1792,9 +1950,12 @@ mod tests {
             .split("// Build the typed Vote")
             .next()
             .expect("vote handler quorum block present");
+        let compact_vote_handler = vote_handler.split_whitespace().collect::<String>();
 
         assert!(
-            vote_handler.contains("quorum_eligible_voter_counts(&actor.tenant_id, decision.class)"),
+            compact_vote_handler.contains(
+                "count_quorum_eligible_voters_in_transaction(&muttx,&actor.tenant_id,decision.class,)"
+            ),
             "vote handler must derive quorum eligibility from the authenticated tenant and decision class"
         );
         assert!(
@@ -1812,6 +1973,34 @@ mod tests {
         assert!(
             !vote_handler.contains("let eligible_human_voters = eligible_voters"),
             "vote handler must not assume every registered DID is a human eligible voter"
+        );
+    }
+
+    #[test]
+    fn vote_handler_quorum_precondition_reuses_vote_transaction_connection() {
+        let source = include_str!("handlers.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker present");
+        let vote_handler = production
+            .split("pub async fn vote_handler")
+            .nth(1)
+            .expect("vote handler source present")
+            .split("// Build the typed Vote")
+            .next()
+            .expect("vote handler quorum block present");
+        let compact_vote_handler = vote_handler.split_whitespace().collect::<String>();
+
+        assert!(
+            compact_vote_handler.contains(
+                "crate::db::count_quorum_eligible_voters_in_transaction(&muttx,&actor.tenant_id,decision.class,)"
+            ),
+            "vote handler must count quorum eligibility on the already-held vote transaction connection"
+        );
+        assert!(
+            !vote_handler.contains(".quorum_eligible_voter_counts("),
+            "vote handler must not acquire a second pooled connection while holding the vote transaction"
         );
     }
 

@@ -20,8 +20,6 @@ import React from 'react';
 export interface AuthState {
   did: string;
   displayName: string;
-  ed25519PublicHex: string;
-  ed25519SecretHex: string;
   x25519PublicHex: string;
   x25519SecretHex: string;
 }

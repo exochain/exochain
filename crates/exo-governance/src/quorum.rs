@@ -390,15 +390,20 @@ pub fn compute_quorum_with_challenges(
     compute_quorum(approvals, policy)
 }
 
-/// Resolve an attester DID to a public key for signature verification.
+/// Resolve governance identity facts for quorum verification.
 ///
 /// Governance call sites supply an implementation of this trait backed by
 /// the authority chain or identity registry. A resolver that returns
 /// `None` for a given DID causes `compute_quorum_verified` to treat any
-/// independence attestation from that DID as unverifiable (and therefore
-/// not countable toward `min_independent`).
+/// approval, required role, or independence attestation from that DID as
+/// unverifiable.
 pub trait PublicKeyResolver {
     fn resolve(&self, did: &Did) -> Option<PublicKey>;
+
+    fn resolve_trusted_role(&self, did: &Did) -> Option<Role> {
+        let _ = did;
+        None
+    }
 }
 
 impl<F> PublicKeyResolver for F
@@ -449,19 +454,22 @@ pub fn compute_quorum_verified<R: PublicKeyResolver>(
         };
     }
 
-    let verified_approvals: Vec<&Approval> = approvals
+    let verified_approvals: Vec<(&Approval, Role)> = approvals
         .iter()
-        .filter(|approval| {
-            resolver
-                .resolve(&approval.approver_did)
-                .is_some_and(|key| approval.verify_signature(&key))
+        .filter_map(|approval| {
+            let public_key = resolver.resolve(&approval.approver_did)?;
+            let trusted_role = resolver.resolve_trusted_role(&approval.approver_did)?;
+            if approval.role != trusted_role || !approval.verify_signature(&public_key) {
+                return None;
+            }
+            Some((approval, trusted_role))
         })
         .collect();
 
-    let quorum_eligible_approvals: Vec<&Approval> = verified_approvals
+    let quorum_eligible_approvals: Vec<(&Approval, Role)> = verified_approvals
         .iter()
-        .copied()
-        .filter(|approval| role_counts_toward_quorum(&approval.role))
+        .filter(|(_, role)| role_counts_toward_quorum(role))
+        .map(|(approval, role)| (*approval, role.clone()))
         .collect();
 
     let total_count = quorum_eligible_approvals.len();
@@ -469,15 +477,15 @@ pub fn compute_quorum_verified<R: PublicKeyResolver>(
     if total_count < policy.min_approvals {
         let has_verified_non_quorum_role = verified_approvals
             .iter()
-            .any(|approval| !role_counts_toward_quorum(&approval.role));
+            .any(|(_, role)| !role_counts_toward_quorum(role));
         let reason = if has_verified_non_quorum_role {
             format!(
-                "insufficient verified approvals: {total_count} quorum-eligible verified of {} required (Observer cannot satisfy quorum)",
+                "insufficient verified trusted role approvals: {total_count} quorum-eligible verified of {} required (Observer cannot satisfy quorum)",
                 policy.min_approvals
             )
         } else {
             format!(
-                "insufficient verified approvals: {total_count} verified of {} required",
+                "insufficient verified trusted role approvals: {total_count} verified of {} required",
                 policy.min_approvals
             )
         };
@@ -487,23 +495,29 @@ pub fn compute_quorum_verified<R: PublicKeyResolver>(
     for required_role in &policy.required_roles {
         if !quorum_eligible_approvals
             .iter()
-            .any(|a| &a.role == required_role)
+            .any(|(_, trusted_role)| trusted_role == required_role)
         {
             return QuorumResult::NotMet {
-                reason: format!("missing required role: {}", required_role.as_str()),
+                reason: format!(
+                    "missing required role: {} (trusted role unresolved or mismatched)",
+                    required_role.as_str()
+                ),
             };
         }
     }
 
     let independent_count = quorum_eligible_approvals
         .iter()
-        .filter(|a| {
-            a.independence_attestation.as_ref().is_some_and(|att| {
-                att.attester_did == a.approver_did
-                    && resolver
-                        .resolve(&att.attester_did)
-                        .is_some_and(|key| att.is_fully_valid(&key))
-            })
+        .filter(|(approval, _)| {
+            approval
+                .independence_attestation
+                .as_ref()
+                .is_some_and(|att| {
+                    att.attester_did == approval.approver_did
+                        && resolver
+                            .resolve(&att.attester_did)
+                            .is_some_and(|key| att.is_fully_valid(&key))
+                })
         })
         .count();
 
@@ -563,6 +577,8 @@ pub fn validate_approval(approval: &Approval) -> Result<(), GovernanceError> {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use exo_core::crypto;
 
     use super::*;
@@ -594,6 +610,33 @@ mod tests {
 
     fn did(name: &str) -> Did {
         Did::new(&format!("did:exo:{name}")).expect("valid test DID")
+    }
+
+    #[derive(Default)]
+    struct TestQuorumResolver {
+        keys: BTreeMap<Did, PublicKey>,
+        roles: BTreeMap<Did, Role>,
+    }
+
+    impl TestQuorumResolver {
+        fn from_entries(entries: Vec<(Did, PublicKey, Role)>) -> Self {
+            let mut resolver = Self::default();
+            for (did, public_key, role) in entries {
+                resolver.keys.insert(did.clone(), public_key);
+                resolver.roles.insert(did, role);
+            }
+            resolver
+        }
+    }
+
+    impl PublicKeyResolver for TestQuorumResolver {
+        fn resolve(&self, did: &Did) -> Option<PublicKey> {
+            self.keys.get(did).copied()
+        }
+
+        fn resolve_trusted_role(&self, did: &Did) -> Option<Role> {
+            self.roles.get(did).cloned()
+        }
     }
 
     fn make_approval(name: &str, role: Role, independent: bool) -> Approval {
@@ -1076,15 +1119,10 @@ mod tests {
         assert_verified_quorum_required(compute_quorum(&approvals, &policy));
 
         // Verified variant counts ONLY Alice.
-        let resolver = |did: &Did| -> Option<exo_core::types::PublicKey> {
-            if *did == d_alice {
-                Some(pk_alice)
-            } else if *did == d_bob {
-                Some(pk_bob)
-            } else {
-                None
-            }
-        };
+        let resolver = TestQuorumResolver::from_entries(vec![
+            (d_alice.clone(), pk_alice, Role::Steward),
+            (d_bob.clone(), pk_bob, Role::Governor),
+        ]);
         match compute_quorum_verified(&approvals, &policy, &resolver) {
             QuorumResult::NotMet { reason } => {
                 assert!(reason.contains("insufficient verified independence"));
@@ -1284,13 +1322,8 @@ mod tests {
             &sk_observer,
             None,
         );
-        let resolver = |d: &Did| -> Option<PublicKey> {
-            if *d == observer {
-                Some(pk_observer)
-            } else {
-                None
-            }
-        };
+        let resolver =
+            TestQuorumResolver::from_entries(vec![(observer.clone(), pk_observer, Role::Observer)]);
         let policy = QuorumPolicy {
             min_approvals: 1,
             min_independent: 0,
@@ -1328,15 +1361,10 @@ mod tests {
                 None,
             ),
         ];
-        let resolver = |d: &Did| -> Option<PublicKey> {
-            if *d == alice {
-                Some(pk_alice)
-            } else if *d == observer {
-                Some(pk_observer)
-            } else {
-                None
-            }
-        };
+        let resolver = TestQuorumResolver::from_entries(vec![
+            (alice.clone(), pk_alice, Role::Steward),
+            (observer.clone(), pk_observer, Role::Observer),
+        ]);
         let policy = QuorumPolicy {
             min_approvals: 1,
             min_independent: 0,
@@ -1367,7 +1395,7 @@ mod tests {
             scope: None,
         };
         let resolver =
-            |d: &Did| -> Option<PublicKey> { if *d == alice { Some(pk_alice) } else { None } };
+            TestQuorumResolver::from_entries(vec![(alice.clone(), pk_alice, Role::Steward)]);
         let policy = QuorumPolicy {
             min_approvals: 1,
             min_independent: 1,
@@ -1439,15 +1467,10 @@ mod tests {
         };
         let payload = approval_signing_payload_for_test(&bob_approval);
         bob_approval.signature = crypto::sign(&payload, &sk_bob);
-        let resolver = |d: &Did| -> Option<PublicKey> {
-            if *d == alice {
-                Some(pk_alice)
-            } else if *d == bob {
-                Some(pk_bob)
-            } else {
-                None
-            }
-        };
+        let resolver = TestQuorumResolver::from_entries(vec![
+            (alice.clone(), pk_alice, Role::Steward),
+            (bob.clone(), pk_bob, Role::Steward),
+        ]);
         let policy = QuorumPolicy {
             min_approvals: 1,
             min_independent: 1,
@@ -1572,17 +1595,11 @@ mod tests {
         let d_alice = did("alice");
         let d_bob = did("bob");
         let d_carol = did("carol");
-        let resolver = |d: &Did| -> Option<PublicKey> {
-            if *d == d_alice {
-                Some(pk_alice)
-            } else if *d == d_bob {
-                Some(pk_bob)
-            } else if *d == d_carol {
-                Some(pk_carol)
-            } else {
-                None
-            }
-        };
+        let resolver = TestQuorumResolver::from_entries(vec![
+            (d_alice.clone(), pk_alice, Role::Reviewer),
+            (d_bob.clone(), pk_bob, Role::Reviewer),
+            (d_carol.clone(), pk_carol, Role::Reviewer),
+        ]);
         let policy = QuorumPolicy {
             min_approvals: 1,
             min_independent: 0,
@@ -1615,9 +1632,43 @@ mod tests {
         ];
         match compute_quorum_verified(&approvals, &policy, &resolver) {
             QuorumResult::NotMet { reason } => {
-                assert_eq!(reason, "missing required role: Governor");
+                assert!(reason.contains("missing required role: Governor"));
+                assert!(reason.contains("trusted role"));
             }
             other => panic!("expected NotMet, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compute_quorum_verified_rejects_required_role_without_trusted_role_resolution() {
+        let (pk_alice, sk_alice) = crypto::generate_keypair();
+        let d_alice = did("alice");
+        let approval = signed_approval_with_attestation(
+            &d_alice,
+            Role::Steward,
+            Timestamp::new(1000, 0),
+            &sk_alice,
+            None,
+        );
+        let key_only_resolver =
+            |d: &Did| -> Option<PublicKey> { if *d == d_alice { Some(pk_alice) } else { None } };
+        let policy = QuorumPolicy {
+            min_approvals: 1,
+            min_independent: 0,
+            required_roles: vec![Role::Steward],
+            timeout: Timestamp::new(999_999, 0),
+        };
+
+        match compute_quorum_verified(&[approval], &policy, &key_only_resolver) {
+            QuorumResult::NotMet { reason } => {
+                assert!(
+                    reason.contains("trusted role"),
+                    "required roles must fail closed without trusted role resolution: {reason}"
+                );
+            }
+            other => {
+                panic!("self-asserted required role must not satisfy verified quorum: {other:?}")
+            }
         }
     }
 
@@ -1638,15 +1689,10 @@ mod tests {
             required_roles: vec![Role::Steward],
             timeout: Timestamp::new(999_999, 0),
         };
-        let resolver = |d: &Did| -> Option<PublicKey> {
-            if *d == d_alice {
-                Some(pk_alice)
-            } else if *d == d_bob {
-                Some(pk_bob)
-            } else {
-                None
-            }
-        };
+        let resolver = TestQuorumResolver::from_entries(vec![
+            (d_alice.clone(), pk_alice, Role::Steward),
+            (d_bob.clone(), pk_bob, Role::Reviewer),
+        ]);
         assert_eq!(
             compute_quorum_verified(&approvals, &policy, &resolver),
             QuorumResult::Met {
@@ -1678,7 +1724,7 @@ mod tests {
         let null_resolver = |_d: &Did| -> Option<PublicKey> { None };
         match compute_quorum_verified(&approvals, &policy, &null_resolver) {
             QuorumResult::NotMet { reason } => {
-                assert!(reason.contains("insufficient verified approvals"));
+                assert!(reason.contains("insufficient verified trusted role approvals"));
             }
             other => panic!("expected NotMet for unresolved approver, got {other:?}"),
         }
@@ -1701,9 +1747,8 @@ mod tests {
             required_roles: vec![],
             timeout: Timestamp::new(999_999, 0),
         };
-        let resolver = move |d: &Did| -> Option<PublicKey> {
-            if *d == d_alice { Some(pk_alice) } else { None }
-        };
+        let resolver =
+            TestQuorumResolver::from_entries(vec![(d_alice.clone(), pk_alice, Role::Steward)]);
         let ch = make_challenge(0x9011, ChallengeGround::SybilAllegation, b"evidence");
         match compute_quorum_with_challenges_verified(&approvals, &policy, &[&ch], &resolver) {
             QuorumResult::Contested { challenge } => {
@@ -1731,9 +1776,8 @@ mod tests {
             required_roles: vec![],
             timeout: Timestamp::new(999_999, 0),
         };
-        let resolver = move |d: &Did| -> Option<PublicKey> {
-            if *d == d_alice { Some(pk_alice) } else { None }
-        };
+        let resolver =
+            TestQuorumResolver::from_entries(vec![(d_alice.clone(), pk_alice, Role::Steward)]);
         let mut ch = make_challenge(0x9012, ChallengeGround::QuorumViolation, b"");
         ch.status = ChallengeStatus::UnderReview;
         assert!(matches!(
@@ -1759,9 +1803,8 @@ mod tests {
             required_roles: vec![],
             timeout: Timestamp::new(999_999, 0),
         };
-        let resolver = move |d: &Did| -> Option<PublicKey> {
-            if *d == d_alice { Some(pk_alice) } else { None }
-        };
+        let resolver =
+            TestQuorumResolver::from_entries(vec![(d_alice.clone(), pk_alice, Role::Steward)]);
         assert_eq!(
             compute_quorum_with_challenges_verified(&approvals, &policy, &[], &resolver),
             QuorumResult::Met {
@@ -1788,9 +1831,8 @@ mod tests {
             required_roles: vec![],
             timeout: Timestamp::new(999_999, 0),
         };
-        let resolver = move |d: &Did| -> Option<PublicKey> {
-            if *d == d_alice { Some(pk_alice) } else { None }
-        };
+        let resolver =
+            TestQuorumResolver::from_entries(vec![(d_alice.clone(), pk_alice, Role::Steward)]);
         let mut ch = make_challenge(0x9013, ChallengeGround::SybilAllegation, b"");
         ch.status = ChallengeStatus::Overruled;
         assert!(matches!(

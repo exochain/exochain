@@ -48,6 +48,9 @@ pub type ReceiptSigner = Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>;
 
 /// The current 0dentity store is intentionally volatile process memory.
 pub const ZERODENTITY_STORE_PERSISTENCE_READY: bool = false;
+/// Maximum future skew allowed between a caller-signed erasure timestamp and
+/// the trusted validation timestamp supplied by the runtime.
+pub const ZERODENTITY_ERASURE_MAX_FUTURE_SKEW_MS: u64 = 500;
 
 /// Startup warning emitted while 0dentity data is not durable.
 pub const ZERODENTITY_STORE_PERSISTENCE_WARNING: &str = "0dentity store is memory only; claims, sessions, OTPs, scores, and receipts are not durable across process restarts";
@@ -273,6 +276,22 @@ impl ZerodentityStore {
             .map_or_else(Vec::new, |parent| vec![parent.hash])
     }
 
+    fn validate_next_dag_timestamp(
+        &self,
+        timestamp: Timestamp,
+        label: &'static str,
+    ) -> anyhow::Result<()> {
+        if timestamp.physical_ms == 0 {
+            anyhow::bail!("{label} timestamp must be greater than 0");
+        }
+        if let Some(parent) = self.dag_nodes.last() {
+            if timestamp <= parent.timestamp {
+                anyhow::bail!("{label} timestamp must strictly exceed latest DAG parent timestamp");
+            }
+        }
+        Ok(())
+    }
+
     /// Compute the next claim DAG node hash without mutating the store.
     pub fn next_claim_dag_node_hash(
         &self,
@@ -282,6 +301,7 @@ impl ZerodentityStore {
         let Some(context) = &self.receipt_signing else {
             anyhow::bail!("0dentity DAG node signer is not configured");
         };
+        self.validate_next_dag_timestamp(timestamp, "0dentity claim DAG")?;
         Ok(compute_node_hash(
             &self.next_dag_parents(),
             &payload_hash,
@@ -298,6 +318,7 @@ impl ZerodentityStore {
         let Some(context) = &self.receipt_signing else {
             anyhow::bail!("0dentity DAG node signer is not configured");
         };
+        self.validate_next_dag_timestamp(timestamp, "0dentity DAG node")?;
         let parents = self.next_dag_parents();
         let hash = compute_node_hash(&parents, &payload_hash, &context.actor_did, &timestamp)?;
         let signature = (context.signer)(hash.as_bytes());
@@ -312,6 +333,34 @@ impl ZerodentityStore {
             timestamp,
             signature,
         })
+    }
+
+    fn validate_erasure_timestamp(
+        &self,
+        timestamp: Timestamp,
+        validation_time: Timestamp,
+    ) -> anyhow::Result<()> {
+        if timestamp.physical_ms == 0 {
+            anyhow::bail!("0dentity erasure timestamp must be greater than 0");
+        }
+        if validation_time.physical_ms == 0 {
+            anyhow::bail!("0dentity erasure validation timestamp must be greater than 0");
+        }
+        if timestamp.physical_ms
+            > validation_time
+                .physical_ms
+                .saturating_add(ZERODENTITY_ERASURE_MAX_FUTURE_SKEW_MS)
+        {
+            anyhow::bail!("0dentity erasure timestamp exceeds trusted erasure clock tolerance");
+        }
+        if let Some(parent) = self.dag_nodes.last() {
+            if timestamp <= parent.timestamp {
+                anyhow::bail!(
+                    "0dentity erasure timestamp must strictly exceed latest DAG parent timestamp"
+                );
+            }
+        }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -613,6 +662,32 @@ impl ZerodentityStore {
             .collect()
     }
 
+    /// Return a bounded page of scored DIDs after the optional cursor.
+    ///
+    /// Pages are sorted by DID and strictly greater than `after` when a cursor
+    /// is provided, so callers can scan the full deterministic keyspace without
+    /// holding the store lock for the entire scan.
+    #[must_use]
+    pub fn scored_dids_page_after(&self, after: Option<&Did>, n: usize) -> Vec<Did> {
+        if n == 0 {
+            return Vec::new();
+        }
+
+        let bounds = match after {
+            Some(did) => (
+                std::ops::Bound::Excluded(did.as_str().to_owned()),
+                std::ops::Bound::Unbounded,
+            ),
+            None => (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded),
+        };
+
+        self.scores
+            .range(bounds)
+            .take(n)
+            .filter_map(|(k, _)| Did::new(k).ok())
+            .collect()
+    }
+
     /// Return the count of distinct scored DIDs.
     #[must_use]
     pub fn scored_did_count(&self) -> usize {
@@ -661,8 +736,10 @@ impl ZerodentityStore {
             None
         };
 
-        self.insert_claim(claim_id, claim)?;
         let dag_node_hash = node.hash;
+        let mut stored_claim = claim.clone();
+        stored_claim.dag_node_hash = dag_node_hash;
+        self.insert_claim(claim_id, &stored_claim)?;
         self.dag_nodes.push(node);
 
         // Emit TrustReceipt for verified claims.
@@ -728,13 +805,12 @@ impl ZerodentityStore {
         &mut self,
         did: &Did,
         timestamp: Timestamp,
+        validation_time: Timestamp,
     ) -> anyhow::Result<ErasureEvidence> {
         if self.receipt_signing.is_none() {
             anyhow::bail!("0dentity trust receipt signer is not configured");
         }
-        if timestamp.physical_ms == 0 {
-            anyhow::bail!("0dentity erasure timestamp must be greater than 0");
-        }
+        self.validate_erasure_timestamp(timestamp, validation_time)?;
 
         let key = did.as_str().to_owned();
         let mut revoked_count = 0u32;
@@ -1034,6 +1110,32 @@ mod tests {
     }
 
     #[test]
+    fn scored_dids_page_after_returns_successive_bounded_pages() {
+        let mut store = ZerodentityStore::new();
+        for did_str in ["did:exo:a", "did:exo:b", "did:exo:c"] {
+            store.put_score(score_for(did(did_str), 1000));
+        }
+
+        let first_page = store.scored_dids_page_after(None, 2);
+        assert_eq!(
+            first_page
+                .iter()
+                .map(|did| did.as_str())
+                .collect::<Vec<_>>(),
+            vec!["did:exo:a", "did:exo:b"]
+        );
+
+        let second_page = store.scored_dids_page_after(first_page.last(), 2);
+        assert_eq!(
+            second_page
+                .iter()
+                .map(|did| did.as_str())
+                .collect::<Vec<_>>(),
+            vec!["did:exo:c"]
+        );
+    }
+
+    #[test]
     fn otp_lockout_detection() {
         let mut store = ZerodentityStore::new();
         let d = did("did:exo:dave");
@@ -1098,6 +1200,24 @@ mod tests {
     }
 
     #[test]
+    fn save_claim_binds_stored_claim_to_signed_dag_node_hash() {
+        let (mut store, _, _) = signed_store(34);
+        let d = did("did:exo:dag-bound-claim");
+        let mut c = claim(&d, ClaimType::Email);
+        c.dag_node_hash = Hash256::digest(b"caller-controlled-dag-pointer");
+
+        let evidence = store
+            .save_claim_with_evidence("apg-dag-bound-001", &c)
+            .unwrap();
+
+        let claims = store.get_claims(&d).unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].1.dag_node_hash, evidence.dag_node_hash);
+        assert_eq!(claims[0].1.dag_node_hash, store.dag_nodes()[0].hash);
+        assert_ne!(claims[0].1.dag_node_hash, c.dag_node_hash);
+    }
+
+    #[test]
     fn save_claim_dag_node_is_signed_by_node_identity() {
         let (mut store, node_did, node_public_key) = signed_store(31);
         let d = did("did:exo:dag-signed-claim");
@@ -1135,7 +1255,9 @@ mod tests {
         let (mut store, _, node_public_key) = signed_store(32);
         let d = did("did:exo:dag-chain");
         let first = claim(&d, ClaimType::Email);
-        let second = claim(&d, ClaimType::Phone);
+        let mut second = claim(&d, ClaimType::Phone);
+        second.created_ms = first.created_ms + 1;
+        second.verified_ms = Some(first.created_ms + 2);
 
         store.save_claim("apg-dag-chain-001", &first).unwrap();
         store.save_claim("apg-dag-chain-002", &second).unwrap();
@@ -1157,6 +1279,29 @@ mod tests {
     }
 
     #[test]
+    fn save_claim_rejects_timestamp_not_after_latest_dag_node() {
+        let (mut store, _, _) = signed_store(35);
+        let d = did("did:exo:dag-causality-claim");
+        let first = claim(&d, ClaimType::Email);
+        let mut second = claim(&d, ClaimType::Phone);
+        second.claim_hash = Hash256::digest(b"same-time-second-claim");
+        second.created_ms = first.created_ms;
+
+        store.save_claim("apg-dag-causal-001", &first).unwrap();
+        let err = store.save_claim("apg-dag-causal-002", &second).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("strictly exceed latest DAG parent"),
+            "expected claim DAG causality refusal, got {err}"
+        );
+        assert_eq!(store.dag_nodes().len(), 1);
+        let claims = store.get_claims(&d).unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].0, "apg-dag-causal-001");
+    }
+
+    #[test]
     fn erase_did_appends_signed_erasure_node_without_mutating_claim_node() {
         let (mut store, node_did, node_public_key) = signed_store(33);
         let d = did("did:exo:dag-erasure");
@@ -1165,7 +1310,7 @@ mod tests {
         let claim_node = store.dag_nodes()[0].clone();
 
         store
-            .erase_did_with_evidence(&d, Timestamp::new(6_000, 0))
+            .erase_did_with_evidence(&d, Timestamp::new(6_000, 0), Timestamp::new(6_000, 0))
             .unwrap();
 
         let nodes = store.dag_nodes();
@@ -1288,7 +1433,7 @@ mod tests {
 
         // Erase
         let evidence = store
-            .erase_did_with_evidence(&d, Timestamp::new(7_000, 0))
+            .erase_did_with_evidence(&d, Timestamp::new(7_000, 0), Timestamp::new(7_000, 0))
             .unwrap();
         assert_eq!(evidence.claims_revoked, 2);
 
@@ -1323,7 +1468,7 @@ mod tests {
         store.put_claim(claim(&d, ClaimType::Email));
 
         let evidence = store
-            .erase_did_with_evidence(&d, Timestamp::new(8_000, 0))
+            .erase_did_with_evidence(&d, Timestamp::new(8_000, 0), Timestamp::new(8_000, 0))
             .unwrap();
         assert_eq!(evidence.claims_revoked, 1);
 
@@ -1349,12 +1494,55 @@ mod tests {
         store.put_claim(claim(&d, ClaimType::Email));
 
         let err = store
-            .erase_did_with_evidence(&d, Timestamp::new(0, 0))
+            .erase_did_with_evidence(&d, Timestamp::new(0, 0), Timestamp::new(8_000, 0))
             .unwrap_err();
         assert!(
             err.to_string()
                 .contains("erasure timestamp must be greater than 0")
         );
+    }
+
+    #[test]
+    fn erase_did_rejects_timestamp_not_after_latest_dag_node() {
+        let (mut store, _, _) = signed_store(34);
+        let d = did("did:exo:old-erase");
+        let c = claim(&d, ClaimType::Email);
+        store.save_claim("old-erase-claim", &c).unwrap();
+
+        let err = store
+            .erase_did_with_evidence(
+                &d,
+                Timestamp::new(c.created_ms, 0),
+                Timestamp::new(c.created_ms, 0),
+            )
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("strictly exceed"),
+            "expected parent-causality rejection, got {err}"
+        );
+        assert_eq!(store.dag_nodes().len(), 1);
+    }
+
+    #[test]
+    fn erase_did_rejects_timestamp_beyond_validation_clock_tolerance() {
+        let (mut store, _, _) = signed_store(35);
+        let d = did("did:exo:future-erase");
+        store.put_claim(claim(&d, ClaimType::Email));
+
+        let err = store
+            .erase_did_with_evidence(
+                &d,
+                Timestamp::new(10_000, 0),
+                Timestamp::new(10_000 - ZERODENTITY_ERASURE_MAX_FUTURE_SKEW_MS - 1, 0),
+            )
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("clock tolerance"),
+            "expected future-skew rejection, got {err}"
+        );
+        assert!(store.dag_nodes().is_empty());
     }
 
     #[test]
@@ -1403,7 +1591,7 @@ mod tests {
         assert!(!store.get_behavioral_samples(&d).unwrap().is_empty());
 
         store
-            .erase_did_with_evidence(&d, Timestamp::new(9_000, 0))
+            .erase_did_with_evidence(&d, Timestamp::new(9_000, 0), Timestamp::new(9_000, 0))
             .unwrap();
 
         assert!(store.get_fingerprints(&d).unwrap().is_empty());
@@ -1419,7 +1607,7 @@ mod tests {
 
         let claim_node = store.dag_nodes()[0].clone();
         store
-            .erase_did_with_evidence(&d, Timestamp::new(10_000, 0))
+            .erase_did_with_evidence(&d, Timestamp::new(10_000, 0), Timestamp::new(10_000, 0))
             .unwrap();
         assert_eq!(store.dag_nodes().len(), 2);
         assert_eq!(store.dag_nodes()[0], claim_node);

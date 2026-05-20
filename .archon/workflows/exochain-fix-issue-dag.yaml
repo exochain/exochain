@@ -46,7 +46,7 @@ nodes:
   - id: fix
     command: exochain-fix-bug
     depends_on: [council_review]
-    when: "$council_review.output.aggregate_disposition != 'Rejected'"
+    when: "$council_review.output.aggregate_disposition == 'Approved'"
     description: Implement the fix
 
   - id: validate

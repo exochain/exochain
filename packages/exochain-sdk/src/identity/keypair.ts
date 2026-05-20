@@ -71,7 +71,12 @@ async function importIdentityKeypair(args: {
   publicKeyHex: string;
   privateKeyPkcs8: Uint8Array;
 }): Promise<ImportedIdentityKeypair> {
-  const rawPub = hexToBytes(args.publicKeyHex);
+  let rawPub: Uint8Array;
+  try {
+    rawPub = hexToBytes(args.publicKeyHex);
+  } catch (err) {
+    throw new IdentityError('invalid public key hex', { cause: err });
+  }
   if (rawPub.length !== 32) {
     throw new IdentityError(`public key must be 32 bytes, got ${rawPub.length}`);
   }

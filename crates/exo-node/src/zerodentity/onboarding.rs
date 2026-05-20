@@ -521,9 +521,10 @@ pub async fn submit_claim(
     let (challenge_id, challenge_ttl_ms) = if let Some(channel_str) = &req.verification_channel {
         let channel = parse_otp_channel(channel_str)?;
         let ttl = channel.ttl_ms();
+        let dispatched_ms = now_ms_blocking(state.clone()).await?;
 
         let mut rng = build_rng()?;
-        let (challenge, _code) = OtpChallenge::new(&subject_did, channel, created_ms, &mut rng)
+        let (challenge, _code) = OtpChallenge::new(&subject_did, channel, dispatched_ms, &mut rng)
             .map_err(|_| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,

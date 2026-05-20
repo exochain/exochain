@@ -124,6 +124,13 @@ def _attestation_kind(ev: CustodyEvent) -> Optional[str]:
     return None
 
 
+def _trusted_public_key_for_actor(actor_id: str, key_registry: KeyRegistry) -> Optional[str]:
+    public_key = key_registry.get(actor_id)
+    if not public_key or not public_key.strip():
+        return None
+    return public_key
+
+
 def evaluate_clearance(
     record: DecisionRecord,
     *,
@@ -165,7 +172,7 @@ def evaluate_clearance(
             if not ev.signature:
                 sig_valid = False
             else:
-                pub = ev.public_key_b64 or key_registry.get(ev.actor_id)
+                pub = _trusted_public_key_for_actor(ev.actor_id, key_registry)
                 if not pub:
                     sig_valid = False
                 else:

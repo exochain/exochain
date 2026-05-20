@@ -26,14 +26,14 @@ CREATE TABLE IF NOT EXISTS crosscheck_policy (
         CHECK (mode IN ('single', 'quorum')),
     quorum_count INTEGER NOT NULL DEFAULT 2,
     allowed_roles JSONB DEFAULT '["reviewer", "steward"]',
-    require_valid_signatures BOOLEAN DEFAULT FALSE,
+    require_valid_signatures BOOLEAN DEFAULT TRUE,
     reject_veto BOOLEAN DEFAULT TRUE,
     created_at_ms BIGINT NOT NULL
 );
 
 -- Default clearance policy (matching upk.yaml)
 INSERT INTO crosscheck_policy (id, name, mode, quorum_count, allowed_roles, require_valid_signatures, reject_veto, created_at_ms)
-VALUES ('default', 'Default Clearance Policy', 'quorum', 2, '["reviewer", "steward"]', false, true, 0)
+VALUES ('default', 'Default Clearance Policy', 'quorum', 2, '["reviewer", "steward"]', true, true, 0)
 ON CONFLICT (id) DO NOTHING;
 
 -- Public key registry for actors

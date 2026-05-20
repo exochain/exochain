@@ -20,6 +20,6 @@ export declare function blake3Hex(data: Uint8Array): string;
 export declare function blake3Hash(data: Uint8Array): Hash256;
 /** Encode a byte array as a lowercase hex string. */
 export declare function bytesToHex(bytes: Uint8Array): string;
-/** Decode a hex string (odd length not permitted) into bytes. */
+/** Decode a canonical lowercase hex string (odd length not permitted) into bytes. */
 export declare function hexToBytes(hex: string): Uint8Array;
 //# sourceMappingURL=hash.d.ts.map

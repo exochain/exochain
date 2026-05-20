@@ -21,8 +21,9 @@
 //! contested action in `ContestStatus::PauseEligible` and opens an audit
 //! trail.  The caller then signals the CGR Kernel that the action is under
 //! active challenge by setting `active_challenge_reason` on the
-//! `AdjudicationContext`, causing the kernel to return `Verdict::Escalated`
-//! rather than `Verdict::Denied`.
+//! `AdjudicationContext`. The kernel can return `Verdict::Escalated` for
+//! otherwise valid or reviewable authority/quorum cases, but final
+//! constitutional denials still take precedence.
 
 use exo_core::{Did, PublicKey, SecretKey, Signature, Timestamp, crypto};
 use exo_identity::did::did_from_public_key;
@@ -75,7 +76,8 @@ impl std::fmt::Display for SybilChallengeGround {
 pub enum ContestStatus {
     /// Challenge admitted; action is paused pending review.  Callers MUST
     /// propagate this into `AdjudicationContext::active_challenge_reason` so
-    /// the CGR Kernel returns `Verdict::Escalated`.
+    /// the CGR Kernel can return `Verdict::Escalated` when no final
+    /// constitutional denial is present.
     PauseEligible,
     /// Evidentiary review is in progress.
     UnderReview,
@@ -297,8 +299,9 @@ fn validate_challenge_admission_metadata(
 /// 1. Storing the `ContestHold` in a durable audit store.
 /// 2. Passing `hold.escalation_reason()` into the kernel's
 ///    `AdjudicationContext::active_challenge_reason` so the CGR Kernel
-///    returns `Verdict::Escalated` (not `Verdict::Denied`) while review is
-///    pending.
+///    can return `Verdict::Escalated` while review is pending. Final denials
+///    such as kernel mutation or human-override suppression still return
+///    `Verdict::Denied`.
 ///
 /// The hold id and `admitted_at` are supplied by the caller to avoid internal
 /// randomness or clock calls.

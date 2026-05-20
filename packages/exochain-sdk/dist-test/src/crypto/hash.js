@@ -1,3 +1,18 @@
+// Copyright 2026 Exochain Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Hashing primitives.
  *
@@ -63,18 +78,29 @@ export function bytesToHex(bytes) {
     }
     return out;
 }
-/** Decode a hex string (odd length not permitted) into bytes. */
+function lowercaseHexNibble(code) {
+    if (code >= 0x30 && code <= 0x39) {
+        return code - 0x30;
+    }
+    if (code >= 0x61 && code <= 0x66) {
+        return code - 0x57;
+    }
+    return -1;
+}
+/** Decode a canonical lowercase hex string (odd length not permitted) into bytes. */
 export function hexToBytes(hex) {
     if (hex.length % 2 !== 0) {
         throw new CryptoError(`hex string has odd length: ${hex.length}`);
     }
     const out = new Uint8Array(hex.length / 2);
     for (let i = 0; i < out.length; i++) {
-        const byte = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-        if (Number.isNaN(byte)) {
+        const offset = i * 2;
+        const high = lowercaseHexNibble(hex.charCodeAt(offset));
+        const low = lowercaseHexNibble(hex.charCodeAt(offset + 1));
+        if (high < 0 || low < 0) {
             throw new CryptoError(`invalid hex at offset ${i * 2}`);
         }
-        out[i] = byte;
+        out[i] = (high << 4) | low;
     }
     return out;
 }

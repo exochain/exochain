@@ -26,7 +26,7 @@ use decision_forum::decision_object::DecisionClass;
 use exo_identity::{did::DidDocument, registry::MAX_LOCAL_DID_REGISTRY_DOCUMENTS};
 use serde_json::Value as JsonValue;
 use sqlx::{
-    Row,
+    Executor, Postgres, Row, Transaction,
     postgres::{PgPool, PgPoolOptions},
 };
 use thiserror::Error;
@@ -669,41 +669,51 @@ fn count_result_to_usize(label: &'static str, value: i64) -> Result<usize, sqlx:
 }
 
 /// Count quorum-eligible voters for a tenant and decision class.
-pub async fn count_quorum_eligible_voters(
-    pool: &PgPool,
+async fn count_quorum_eligible_voters_with_executor<'e, E>(
+    executor: E,
     tenant_id: &str,
     decision_class: DecisionClass,
-) -> Result<QuorumEligibilityCounts, sqlx::Error> {
+) -> Result<QuorumEligibilityCounts, sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let row = sqlx::query(
+        r#"
+        SELECT
+            (
+                SELECT COUNT(*)
+                FROM users
+                WHERE tenant_id = $1
+                  AND status = 'Active'
+            ) AS active_human_users,
+            (
+                SELECT COUNT(*)
+                FROM agents
+                WHERE tenant_id = $1
+                  AND status = 'Active'
+                  AND delegation_id IS NOT NULL
+                  AND CASE max_decision_class
+                      WHEN 'Routine' THEN 0
+                      WHEN 'Operational' THEN 1
+                      WHEN 'Strategic' THEN 2
+                      WHEN 'Constitutional' THEN 3
+                      ELSE -1
+                  END >= $2
+            ) AS active_delegated_agents
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(decision_class_rank(decision_class))
+    .fetch_one(executor)
+    .await?;
+
     let active_human_users = count_result_to_usize(
         "active_human_users",
-        sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM users WHERE tenant_id = $1 AND status = 'Active'",
-        )
-        .bind(tenant_id)
-        .fetch_one(pool)
-        .await?,
+        row.try_get::<i64, _>("active_human_users")?,
     )?;
     let active_delegated_agents = count_result_to_usize(
         "active_delegated_agents",
-        sqlx::query_scalar::<_, i64>(
-            r#"
-            SELECT COUNT(*) FROM agents
-            WHERE tenant_id = $1
-              AND status = 'Active'
-              AND delegation_id IS NOT NULL
-              AND CASE max_decision_class
-                  WHEN 'Routine' THEN 0
-                  WHEN 'Operational' THEN 1
-                  WHEN 'Strategic' THEN 2
-                  WHEN 'Constitutional' THEN 3
-                  ELSE -1
-              END >= $2
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(decision_class_rank(decision_class))
-        .fetch_one(pool)
-        .await?,
+        row.try_get::<i64, _>("active_delegated_agents")?,
     )?;
     let eligible_voters = active_human_users
         .checked_add(active_delegated_agents)
@@ -713,6 +723,24 @@ pub async fn count_quorum_eligible_voters(
         eligible_voters,
         eligible_human_voters: active_human_users,
     })
+}
+
+/// Count quorum-eligible voters for a tenant and decision class.
+pub async fn count_quorum_eligible_voters(
+    pool: &PgPool,
+    tenant_id: &str,
+    decision_class: DecisionClass,
+) -> Result<QuorumEligibilityCounts, sqlx::Error> {
+    count_quorum_eligible_voters_with_executor(pool, tenant_id, decision_class).await
+}
+
+/// Count quorum-eligible voters using the caller's open transaction.
+pub async fn count_quorum_eligible_voters_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: &str,
+    decision_class: DecisionClass,
+) -> Result<QuorumEligibilityCounts, sqlx::Error> {
+    count_quorum_eligible_voters_with_executor(&mut **tx, tenant_id, decision_class).await
 }
 
 // ---------------------------------------------------------------------------
@@ -952,8 +980,8 @@ pub async fn update_decision(
 ///
 /// This is a bounded list helper for administrative display and export
 /// surfaces. Vote recusal enforcement must use
-/// `list_blocking_conflict_declaration_payloads_for_recusal_db` so a generic
-/// UI row cap cannot hide a later blocking declaration.
+/// `list_blocking_conflict_declaration_recusal_candidates_db` so a generic UI
+/// row cap cannot hide a later blocking declaration.
 pub async fn list_conflict_declaration_payloads_db(
     pool: &PgPool,
     declarant_did: &str,
@@ -974,12 +1002,26 @@ pub async fn list_conflict_declaration_payloads_db(
         .collect()
 }
 
-/// Load at most one blocking conflict declaration for vote recusal enforcement.
-pub async fn list_blocking_conflict_declaration_payloads_for_recusal_db(
+/// Scalar-indexed conflict declaration candidate for recusal enforcement.
+///
+/// The server must validate these scalar columns against `payload` before
+/// using the decoded declaration for vote recusal. A mismatch means the row is
+/// inconsistent and must fail closed.
+#[derive(Debug, Clone)]
+pub struct ConflictDeclarationRecusalCandidate {
+    pub declarant_did: String,
+    pub nature: String,
+    pub related_dids: JsonValue,
+    pub payload: JsonValue,
+}
+
+/// Load at most one scalar-blocking conflict declaration candidate for vote
+/// recusal enforcement.
+pub async fn list_blocking_conflict_declaration_recusal_candidates_db(
     pool: &PgPool,
     declarant_did: &str,
     affected_dids: &[String],
-) -> Result<Vec<JsonValue>, sqlx::Error> {
+) -> Result<Vec<ConflictDeclarationRecusalCandidate>, sqlx::Error> {
     if affected_dids.is_empty() {
         return Ok(Vec::new());
     }
@@ -989,7 +1031,7 @@ pub async fn list_blocking_conflict_declaration_payloads_for_recusal_db(
         .map(ToOwned::to_owned)
         .collect::<Vec<String>>();
     let row = sqlx::query(
-        "SELECT payload FROM conflict_declarations
+        "SELECT declarant_did, nature, related_dids, payload FROM conflict_declarations
          WHERE declarant_did = $1
            AND related_dids ?| $2
            AND nature LIKE ANY($3)
@@ -1003,7 +1045,12 @@ pub async fn list_blocking_conflict_declaration_payloads_for_recusal_db(
     .await?;
 
     match row {
-        Some(row) => Ok(vec![row.try_get::<JsonValue, _>("payload")?]),
+        Some(row) => Ok(vec![ConflictDeclarationRecusalCandidate {
+            declarant_did: row.try_get::<String, _>("declarant_did")?,
+            nature: row.try_get::<String, _>("nature")?,
+            related_dids: row.try_get::<JsonValue, _>("related_dids")?,
+            payload: row.try_get::<JsonValue, _>("payload")?,
+        }]),
         None => Ok(Vec::new()),
     }
 }
@@ -1979,9 +2026,11 @@ mod tests {
     }
 
     fn function_source<'a>(source: &'a str, name: &str) -> &'a str {
-        let signature = format!("pub async fn {name}");
+        let public_signature = format!("pub async fn {name}");
+        let private_signature = format!("async fn {name}");
         let start = source
-            .find(&signature)
+            .find(&public_signature)
+            .or_else(|| source.find(&private_signature))
             .unwrap_or_else(|| panic!("{name} source must be present"));
         let after_start = &source[start..];
         let end = after_start.find("\n/// ").unwrap_or(after_start.len());
@@ -2166,9 +2215,13 @@ mod tests {
         let source = production_source();
         let recusal_lookup = function_source(
             source,
-            "list_blocking_conflict_declaration_payloads_for_recusal_db",
+            "list_blocking_conflict_declaration_recusal_candidates_db",
         );
 
+        assert!(
+            recusal_lookup.contains("SELECT declarant_did, nature, related_dids, payload"),
+            "recusal enforcement must return scalar fields with the payload so the server can verify canonical consistency"
+        );
         assert!(
             recusal_lookup.contains("related_dids ?|"),
             "recusal enforcement must scope the DB lookup to affected DIDs"
@@ -2252,15 +2305,16 @@ mod tests {
         .expect("insert blocking conflict declaration after capped rows");
 
         let affected_did_strings = vec![affected.as_str().to_owned()];
-        let payloads = list_blocking_conflict_declaration_payloads_for_recusal_db(
+        let candidates = list_blocking_conflict_declaration_recusal_candidates_db(
             &pool,
             actor.as_str(),
             &affected_did_strings,
         )
         .await
         .expect("load conflict declarations");
-        let declarations = payloads
+        let declarations = candidates
             .into_iter()
+            .map(|candidate| candidate.payload)
             .map(serde_json::from_value)
             .collect::<Result<Vec<_>, _>>()
             .expect("decode conflict declarations");
@@ -3053,7 +3107,7 @@ mod tests {
     #[test]
     fn quorum_eligibility_counts_are_tenant_scoped_and_human_bounded() {
         let source = production_source();
-        let count = function_source(source, "count_quorum_eligible_voters");
+        let count = function_source(source, "count_quorum_eligible_voters_with_executor");
 
         assert!(
             count.contains("tenant_id: &str"),

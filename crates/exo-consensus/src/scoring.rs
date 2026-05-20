@@ -20,6 +20,7 @@ use std::collections::BTreeSet;
 pub struct PanelConfidenceInputs {
     pub models_agreeing: u32,
     pub total_models: u32,
+    pub converged: bool,
     pub rounds_to_convergence: u32,
     pub max_rounds: u32,
     pub devil_found_serious_objection: bool,
@@ -144,7 +145,7 @@ pub fn calculate_panel_confidence(inputs: &PanelConfidenceInputs) -> u64 {
     }
 
     // 2. Speed of Convergence (30%)
-    if inputs.max_rounds > 0 {
+    if inputs.converged && inputs.max_rounds > 0 {
         // Original formula: (max - r + 1) / max * 3000.
         // When r = 1 and max = N, this gives the full 3000 (fastest observed convergence).
         // Guard against r = 0 (or any r < 1) which would push numerator above max
@@ -212,6 +213,7 @@ mod proptests {
             let inputs = PanelConfidenceInputs {
                 models_agreeing,
                 total_models,
+                converged: true,
                 rounds_to_convergence,
                 max_rounds,
                 devil_found_serious_objection: devil,
@@ -252,5 +254,26 @@ mod proptests {
             vec!["C".to_string()],
         ]);
         assert_eq!(score, 0);
+    }
+
+    #[test]
+    fn panel_confidence_does_not_award_speed_without_convergence() {
+        let converged = PanelConfidenceInputs {
+            models_agreeing: 3,
+            total_models: 3,
+            converged: true,
+            rounds_to_convergence: 1,
+            max_rounds: 3,
+            devil_found_serious_objection: false,
+            minority_reports_count: 0,
+        };
+        let converged_score = calculate_panel_confidence(&converged);
+        let not_converged = PanelConfidenceInputs {
+            converged: false,
+            ..converged
+        };
+
+        assert_eq!(converged_score, 10_000);
+        assert_eq!(calculate_panel_confidence(&not_converged), 7_000);
     }
 }

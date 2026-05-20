@@ -1,3 +1,18 @@
+// Copyright 2026 Exochain Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Ed25519 Identity — a DID paired with a keypair.
  *
@@ -37,7 +52,13 @@ export async function deriveDid(publicKey) {
     return validateDid(`did:exo:${hex}`);
 }
 async function importIdentityKeypair(args) {
-    const rawPub = hexToBytes(args.publicKeyHex);
+    let rawPub;
+    try {
+        rawPub = hexToBytes(args.publicKeyHex);
+    }
+    catch (err) {
+        throw new IdentityError('invalid public key hex', { cause: err });
+    }
     if (rawPub.length !== 32) {
         throw new IdentityError(`public key must be 32 bytes, got ${rawPub.length}`);
     }
