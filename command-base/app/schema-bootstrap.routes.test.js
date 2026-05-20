@@ -17,12 +17,13 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { mkdtempSync, rmSync, mkdirSync } = require('node:fs');
+const { existsSync, mkdtempSync, rmSync, mkdirSync } = require('node:fs');
 const { join } = require('node:path');
 const { spawn } = require('node:child_process');
 const os = require('node:os');
 const net = require('node:net');
 const test = require('node:test');
+const Database = require('better-sqlite3');
 
 function pickFreePort() {
   return new Promise((resolve, reject) => {
@@ -112,6 +113,32 @@ async function postJson(baseUrl, cookie, path, body) {
   return JSON.parse(text);
 }
 
+async function postJsonRaw(baseUrl, cookie, path, body) {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: {
+      Cookie: cookie,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  return { status: res.status, body: text ? JSON.parse(text) : null };
+}
+
+async function putJsonRaw(baseUrl, cookie, path, body) {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'PUT',
+    headers: {
+      Cookie: cookie,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  return { status: res.status, body: text ? JSON.parse(text) : null };
+}
+
 test('clean CommandBase bootstrap supports affected authenticated create routes', { timeout: 60_000 }, async (t) => {
   const tmpDir = mkdtempSync(join(os.tmpdir(), 'cb-schema-routes-'));
   const dbPath = join(tmpDir, 'command-base.db');
@@ -185,4 +212,105 @@ test('clean CommandBase bootstrap supports affected authenticated create routes'
   if (exitCode !== undefined) {
     assert.equal(exitCode, 0, `server exited unexpectedly; stderr: ${stderr.join('')}`);
   }
+});
+
+test('model-source scan rejects unsafe ssh_host from existing rows before shell execution', { timeout: 60_000 }, async (t) => {
+  const tmpDir = mkdtempSync(join(os.tmpdir(), 'cb-ssh-host-'));
+  const dbPath = join(tmpDir, 'command-base.db');
+  const markerPath = join(tmpDir, 'shell-executed');
+  const port = await pickFreePort();
+
+  const { proc, stderr } = spawnCommandBaseServer(port, dbPath, tmpDir);
+  t.after(() => {
+    return stopCommandBaseServer(proc).finally(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+  });
+
+  const baseUrl = `http://127.0.0.1:${port}`;
+  await waitForHttpReady(`${baseUrl}/health`, stderr);
+
+  const authRes = await fetch(`${baseUrl}/api/auth/status`);
+  assert.equal(authRes.status, 200, 'loopback auth status should set the bootstrap cookie');
+  const cookie = cookieHeader(authRes.headers.get('set-cookie'));
+  assert.match(cookie, /^cb_auth=/, 'bootstrap response should include cb_auth cookie');
+
+  const db = new Database(dbPath);
+  try {
+    const now = '2026-05-20T01:32:00.000-04:00';
+    db.prepare(`
+      INSERT INTO model_sources (name, type, endpoint, label, device, is_local, ssh_host, ssh_tunnel_port, max_concurrent, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'Injected Remote',
+      'ollama',
+      'http://127.0.0.1:9',
+      'Injected',
+      'GPU',
+      0,
+      `127.0.0.1; touch ${markerPath}; true #`,
+      null,
+      1,
+      now,
+      now
+    );
+  } finally {
+    db.close();
+  }
+
+  const response = await postJsonRaw(baseUrl, cookie, '/api/model-sources/1/scan', {});
+
+  assert.equal(response.status, 400, 'unsafe ssh_host must be rejected before scan execution');
+  assert.match(response.body.error, /ssh_host/i);
+  assert.equal(existsSync(markerPath), false, 'scan must not execute shell metacharacters from ssh_host');
+});
+
+test('model-source create and update reject unsafe ssh_host tokens', { timeout: 60_000 }, async (t) => {
+  const tmpDir = mkdtempSync(join(os.tmpdir(), 'cb-ssh-host-write-'));
+  const dbPath = join(tmpDir, 'command-base.db');
+  const port = await pickFreePort();
+
+  const { proc, stderr } = spawnCommandBaseServer(port, dbPath, tmpDir);
+  t.after(() => {
+    return stopCommandBaseServer(proc).finally(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+  });
+
+  const baseUrl = `http://127.0.0.1:${port}`;
+  await waitForHttpReady(`${baseUrl}/health`, stderr);
+
+  const authRes = await fetch(`${baseUrl}/api/auth/status`);
+  assert.equal(authRes.status, 200, 'loopback auth status should set the bootstrap cookie');
+  const cookie = cookieHeader(authRes.headers.get('set-cookie'));
+
+  const createResponse = await postJsonRaw(baseUrl, cookie, '/api/model-sources', {
+    name: 'Injected Remote',
+    type: 'ollama',
+    endpoint: 'http://127.0.0.1:9',
+    label: 'Injected',
+    device: 'GPU',
+    is_local: false,
+    ssh_host: '127.0.0.1; touch /tmp/commandbase-pwned',
+    max_concurrent: 1,
+  });
+  assert.equal(createResponse.status, 400);
+  assert.match(createResponse.body.error, /ssh_host/i);
+
+  const validSource = await postJson(baseUrl, cookie, '/api/model-sources', {
+    name: 'Safe Remote',
+    type: 'ollama',
+    endpoint: 'http://127.0.0.1:9',
+    label: 'Safe',
+    device: 'GPU',
+    is_local: false,
+    ssh_host: 'operator@127.0.0.1',
+    max_concurrent: 1,
+  });
+
+  const updateResponse = await putJsonRaw(baseUrl, cookie, `/api/model-sources/${validSource.id}`, {
+    ssh_host: 'operator@127.0.0.1 && touch /tmp/commandbase-pwned',
+  });
+  assert.equal(updateResponse.status, 400);
+  assert.match(updateResponse.body.error, /ssh_host/i);
 });

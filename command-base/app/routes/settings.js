@@ -15,6 +15,42 @@
 // SPDX-License-Identifier: Apache-2.0
 
 'use strict';
+
+function normalizeSshHost(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string') {
+    throw new Error('ssh_host must be a string');
+  }
+
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  if (trimmed.length > 253) {
+    throw new Error('ssh_host is too long');
+  }
+  if (trimmed.startsWith('-')) {
+    throw new Error('ssh_host must be a host token, not an SSH option');
+  }
+
+  const hostToken = '(?:[A-Za-z0-9._%+-]+@)?[A-Za-z0-9._-]+';
+  if (!new RegExp(`^${hostToken}$`).test(trimmed)) {
+    throw new Error('ssh_host contains unsupported characters');
+  }
+
+  return trimmed;
+}
+
+function rejectInvalidSshHost(res, error) {
+  return res.status(400).json({ error: error.message });
+}
+
+function runRemoteHardwareProbe(sshHost, command) {
+  const { execFileSync } = require('child_process');
+  return execFileSync('ssh', ['-o', 'ConnectTimeout=5', sshHost, command], {
+    timeout: 10000,
+    encoding: 'utf8',
+  }).trim();
+}
+
 module.exports = function(app, db, helpers) {
   const {
     broadcast,
@@ -80,12 +116,14 @@ app.post('/api/model-sources', (req, res) => {
   try {
     const { name, type, endpoint, label, device, is_local, ssh_host, ssh_tunnel_port, max_concurrent } = req.body;
     if (!name || !endpoint) return res.status(400).json({ error: 'name and endpoint are required' });
+    const normalizedSshHost = normalizeSshHost(ssh_host);
     const now = localNow();
     const result = db.prepare(`INSERT INTO model_sources (name, type, endpoint, label, device, is_local, ssh_host, ssh_tunnel_port, max_concurrent, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(name, type || 'ollama', endpoint, label || name, device || null, is_local ? 1 : 0, ssh_host || null, ssh_tunnel_port || null, max_concurrent || 3, now, now);
+      .run(name, type || 'ollama', endpoint, label || name, device || null, is_local ? 1 : 0, normalizedSshHost, ssh_tunnel_port || null, max_concurrent || 3, now, now);
     res.json({ id: Number(result.lastInsertRowid), success: true });
   } catch (err) {
+    if (err.message && err.message.startsWith('ssh_host')) return rejectInvalidSshHost(res, err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -102,7 +140,7 @@ app.put('/api/model-sources/:id', (req, res) => {
     if (label !== undefined) { sets.push('label = ?'); vals.push(label); }
     if (device !== undefined) { sets.push('device = ?'); vals.push(device); }
     if (is_active !== undefined) { sets.push('is_active = ?'); vals.push(is_active ? 1 : 0); }
-    if (ssh_host !== undefined) { sets.push('ssh_host = ?'); vals.push(ssh_host); }
+    if (ssh_host !== undefined) { sets.push('ssh_host = ?'); vals.push(normalizeSshHost(ssh_host)); }
     if (ssh_tunnel_port !== undefined) { sets.push('ssh_tunnel_port = ?'); vals.push(ssh_tunnel_port); }
     if (max_concurrent !== undefined) { sets.push('max_concurrent = ?'); vals.push(max_concurrent); }
     sets.push('updated_at = ?'); vals.push(now);
@@ -110,6 +148,7 @@ app.put('/api/model-sources/:id', (req, res) => {
     db.prepare(`UPDATE model_sources SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
     res.json({ success: true });
   } catch (err) {
+    if (err.message && err.message.startsWith('ssh_host')) return rejectInvalidSshHost(res, err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -209,13 +248,15 @@ app.post('/api/model-sources/:id/scan', async (req, res) => {
     // 2. Get device hardware info via SSH (for remote) or local commands
     if (source.ssh_host) {
       try {
-        const { execSync } = require('child_process');
-        const sshCmd = `ssh -o ConnectTimeout=5 ${source.ssh_host}`;
-        const ramGB = parseInt(execSync(`${sshCmd} "free -g 2>/dev/null | awk '/Mem:/{print \\$7}'"`, { timeout: 10000 }).toString().trim()) || 0;
-        const cpus = parseInt(execSync(`${sshCmd} "nproc 2>/dev/null"`, { timeout: 10000 }).toString().trim()) || 0;
-        const gpuInfo = execSync(`${sshCmd} "nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo 'none'"`, { timeout: 10000 }).toString().trim();
+        const sshHost = normalizeSshHost(source.ssh_host);
+        const ramGB = parseInt(runRemoteHardwareProbe(sshHost, "free -g 2>/dev/null | awk '/Mem:/{print $7}'"), 10) || 0;
+        const cpus = parseInt(runRemoteHardwareProbe(sshHost, 'nproc 2>/dev/null'), 10) || 0;
+        const gpuInfo = runRemoteHardwareProbe(sshHost, "nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo 'none'");
         scan.capabilities = { ram_gb: ramGB, cpus, gpu: gpuInfo !== 'none' ? gpuInfo : null, is_remote: true };
-      } catch (e) { scan.capabilities = { error: e.message, is_remote: true }; }
+      } catch (e) {
+        if (e.message && e.message.startsWith('ssh_host')) return rejectInvalidSshHost(res, e);
+        scan.capabilities = { error: e.message, is_remote: true };
+      }
     } else {
       // Local device
       try {
