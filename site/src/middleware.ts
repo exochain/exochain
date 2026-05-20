@@ -16,33 +16,143 @@
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { isExtranetRole, isIntranetRole, type Role } from './lib/roles';
 
 // Hard surface separation: /app/* requires extranet session, /internal/*
 // requires intranet session. Login pages are served outside these protected
-// app shells so they do not run the layout redirect checks.
-//
-// In v0 the cookie payload is a JSON string. In v0.5+ this becomes a JWT
-// with audience claims and signature verification.
+// app shells and are only usable when local development login is enabled.
 
 const EXO_SESSION = 'exo-session';
+const SESSION_SECRET_ENV = 'EXO_SITE_SESSION_SECRET';
 
 interface SessionShape {
+  userId: string;
+  email: string;
   surface?: 'extranet' | 'intranet';
   role?: string;
+  org?: string;
 }
 
-function readSession(req: NextRequest): SessionShape | null {
-  const raw = req.cookies.get(EXO_SESSION)?.value;
+function getSessionSecret(): string | null {
+  const secret = process.env[SESSION_SECRET_ENV];
+  if (typeof secret !== 'string' || new TextEncoder().encode(secret).length < 32) {
+    return null;
+  }
+  return secret;
+}
+
+function base64UrlToBytes(value: string): Uint8Array {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function normalizeSession(input: unknown): SessionShape | null {
+  if (!input || typeof input !== 'object') return null;
+
+  const parsed = input as Record<string, unknown>;
+  if (
+    typeof parsed.userId !== 'string' ||
+    typeof parsed.email !== 'string' ||
+    typeof parsed.role !== 'string' ||
+    (parsed.surface !== 'extranet' && parsed.surface !== 'intranet')
+  ) {
+    return null;
+  }
+
+  const role = parsed.role as Role;
+  const surface = parsed.surface;
+  if (surface === 'extranet' && !isExtranetRole(role)) return null;
+  if (surface === 'intranet' && !isIntranetRole(role)) return null;
+
+  const session: SessionShape = {
+    userId: parsed.userId,
+    email: parsed.email,
+    role,
+    surface
+  };
+  if (typeof parsed.org === 'string' && parsed.org.length > 0) {
+    session.org = parsed.org;
+  }
+  return session;
+}
+
+function canonicalSessionPayload(session: SessionShape): string {
+  return JSON.stringify({
+    email: session.email,
+    org: session.org ?? null,
+    role: session.role,
+    surface: session.surface,
+    userId: session.userId
+  });
+}
+
+function constantTimeEqual(expected: string, actual: string): boolean {
+  if (expected.length !== actual.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i += 1) {
+    diff |= expected.charCodeAt(i) ^ actual.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+async function signPayload(payload: string, secret: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
+  return bytesToBase64Url(new Uint8Array(signature));
+}
+
+async function verifySessionCookieValue(raw: string | undefined): Promise<SessionShape | null> {
   if (!raw) return null;
+  const secret = getSessionSecret();
+  if (!secret) return null;
+
+  const parts = raw.split('.');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+
   try {
-    return JSON.parse(raw) as SessionShape;
+    const payload = new TextDecoder().decode(base64UrlToBytes(parts[0]));
+    const normalized = normalizeSession(JSON.parse(payload));
+    if (!normalized) return null;
+
+    const canonicalPayload = canonicalSessionPayload(normalized);
+    if (payload !== canonicalPayload) return null;
+
+    const expectedSignature = await signPayload(canonicalPayload, secret);
+    if (!constantTimeEqual(expectedSignature, parts[1])) return null;
+
+    return normalized;
   } catch {
     return null;
   }
 }
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+
+  if (pathname === '/login' || pathname === '/internal-login') {
+    return NextResponse.next();
+  }
 
   if (pathname.startsWith('/app')) {
     if (pathname === '/app/login') {
@@ -50,7 +160,7 @@ export function middleware(req: NextRequest) {
       loginUrl.pathname = '/login';
       return NextResponse.rewrite(loginUrl);
     }
-    const sess = readSession(req);
+    const sess = await verifySessionCookieValue(req.cookies.get(EXO_SESSION)?.value);
     if (!sess || sess.surface !== 'extranet') {
       const url = req.nextUrl.clone();
       url.pathname = '/app/login';
@@ -66,7 +176,7 @@ export function middleware(req: NextRequest) {
       loginUrl.pathname = '/internal-login';
       return NextResponse.rewrite(loginUrl);
     }
-    const sess = readSession(req);
+    const sess = await verifySessionCookieValue(req.cookies.get(EXO_SESSION)?.value);
     if (!sess || sess.surface !== 'intranet') {
       const url = req.nextUrl.clone();
       url.pathname = '/internal/login';
@@ -80,5 +190,5 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/app/:path*', '/internal/:path*']
+  matcher: ['/app/:path*', '/login', '/internal/:path*', '/internal-login']
 };
