@@ -251,16 +251,7 @@ jobs:
         # Fails if any `STUB` marker referencing a GAP-NNN identifier
         # remains in a code file. Prevents a GAP from being marked closed
         # in GAP-REGISTRY.md while a stub still lives in the tree.
-        run: |
-          MATCHES=$(grep -rEn "STUB[^\n]*GAP-0[0-9][0-9]" \
-            --include='*.rs' --include='*.ts' --include='*.py' \
-            crates/ packages/ web/src/ 2>/dev/null || true)
-          if [ -n "$MATCHES" ]; then
-            echo "::error::GAP stubs remain in code:"
-            echo "$MATCHES"
-            exit 1
-          fi
-          echo "✓ No GAP stubs remaining in code"
+        run: bash tools/test_gap_stub_ci_guard.sh
       - name: GitHub Actions pinned to immutable SHAs
         run: bash tools/test_github_actions_pinned.sh
       - name: GitHub issue workflow trust boundary
