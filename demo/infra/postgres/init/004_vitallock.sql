@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS pace_network (
     id BIGSERIAL PRIMARY KEY,
     owner_did TEXT NOT NULL REFERENCES users(did),
     trustee_did TEXT,
+    trustee_ed25519_public_key_hex TEXT CHECK (
+        trustee_ed25519_public_key_hex IS NULL
+        OR trustee_ed25519_public_key_hex ~ '^[0-9a-fA-F]{64}$'
+    ),
     trustee_email TEXT NOT NULL,
     trustee_name TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('Primary','Alternate','Contingency','Emergency')),
@@ -47,6 +51,8 @@ CREATE TABLE IF NOT EXISTS pace_network (
     accepted_at_ms BIGINT,
     UNIQUE(owner_did, trustee_email)
 );
+ALTER TABLE pace_network
+    ADD COLUMN IF NOT EXISTS trustee_ed25519_public_key_hex TEXT;
 CREATE INDEX IF NOT EXISTS idx_pace_owner ON pace_network(owner_did);
 CREATE INDEX IF NOT EXISTS idx_pace_trustee ON pace_network(trustee_did);
 CREATE INDEX IF NOT EXISTS idx_pace_token ON pace_network(invitation_token);

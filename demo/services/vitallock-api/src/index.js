@@ -44,6 +44,76 @@ function parseBody(req) {
 
 function nowMs() { return Date.now(); }
 
+const DEFAULT_DEATH_CONFIRMATIONS = 3;
+const ED25519_PUBLIC_KEY_HEX = /^[0-9a-fA-F]{64}$/;
+
+function normalizeDeathConfirmationThreshold(value) {
+  if (value === undefined || value === null) return DEFAULT_DEATH_CONFIRMATIONS;
+  if (!Number.isInteger(value) || value < 1 || value > 255) return null;
+  return value;
+}
+
+function normalizeEd25519PublicKeyHex(value) {
+  if (typeof value !== 'string' || !ED25519_PUBLIC_KEY_HEX.test(value)) return null;
+  return value.toLowerCase();
+}
+
+function publicKeyValueToHex(value) {
+  if (typeof value === 'string') return normalizeEd25519PublicKeyHex(value);
+  if (Array.isArray(value) && value.length === 32) {
+    return Buffer.from(value).toString('hex');
+  }
+  if (value && typeof value === 'object') {
+    return publicKeyValueToHex(value.public_key_hex)
+      || publicKeyValueToHex(value.public_key)
+      || publicKeyValueToHex(value.Ed25519);
+  }
+  return null;
+}
+
+function parseStoredJson(value) {
+  if (typeof value !== 'string') return value;
+  return JSON.parse(value);
+}
+
+function trustedTrusteesFromPaceRows(rows) {
+  return rows
+    .map(row => ({
+      did: row.trustee_did,
+      public_key_hex: normalizeEd25519PublicKeyHex(row.trustee_ed25519_public_key_hex),
+    }))
+    .filter(trustee => trustee.did && trustee.public_key_hex);
+}
+
+function trusteePublicKeyFromState(state, trusteeDid) {
+  const authorized = state?.authorized_trustees;
+  if (Array.isArray(authorized)) {
+    const entry = authorized.find(trustee => trustee.did === trusteeDid || trustee.trustee_did === trusteeDid);
+    return entry ? publicKeyValueToHex(entry.public_key_hex ?? entry.public_key) : null;
+  }
+  if (authorized && typeof authorized === 'object') {
+    return publicKeyValueToHex(authorized[trusteeDid]);
+  }
+  return null;
+}
+
+async function acceptedDeathVerificationTrustees(subjectDid) {
+  const { rows } = await pool.query(
+    `SELECT trustee_did, trustee_ed25519_public_key_hex
+     FROM pace_network
+     WHERE owner_did = $1
+       AND invitation_status = 'accepted'
+       AND trustee_did IS NOT NULL
+       AND trustee_ed25519_public_key_hex IS NOT NULL
+     ORDER BY CASE role
+       WHEN 'Primary' THEN 1 WHEN 'Alternate' THEN 2
+       WHEN 'Contingency' THEN 3 WHEN 'Emergency' THEN 4 ELSE 5
+     END, trustee_did`,
+    [subjectDid]
+  );
+  return trustedTrusteesFromPaceRows(rows);
+}
+
 export const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
@@ -247,13 +317,26 @@ export const server = http.createServer(async (req, res) => {
 
     // ── Accept invitation ──
     if (url.pathname === '/api/pace/accept' && req.method === 'POST') {
-      const { invitation_token, trustee_did } = await parseBody(req);
+      const {
+        invitation_token,
+        trustee_did,
+        trustee_ed25519_public_key_hex,
+      } = await parseBody(req);
+      const normalizedTrusteeKey = normalizeEd25519PublicKeyHex(trustee_ed25519_public_key_hex);
+      if (!normalizedTrusteeKey) {
+        return json(res, 400, {
+          error: 'trustee_ed25519_public_key_hex must be a 32-byte Ed25519 public key hex string',
+        });
+      }
       const result = await pool.query(
         `UPDATE pace_network
-         SET trustee_did = $1, invitation_status = 'accepted', accepted_at_ms = $2
-         WHERE invitation_token = $3 AND invitation_status = 'pending'
+         SET trustee_did = $1,
+             trustee_ed25519_public_key_hex = $2,
+             invitation_status = 'accepted',
+             accepted_at_ms = $3
+         WHERE invitation_token = $4 AND invitation_status = 'pending'
          RETURNING *`,
-        [trustee_did, nowMs(), invitation_token]
+        [trustee_did, normalizedTrusteeKey, nowMs(), invitation_token]
       );
       if (result.rows.length === 0) {
         return json(res, 404, { error: 'invitation not found or already accepted' });
@@ -265,7 +348,8 @@ export const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/pace/network/') && req.method === 'GET') {
       const did = url.pathname.split('/api/pace/network/')[1];
       const { rows } = await pool.query(
-        `SELECT id, trustee_did, trustee_email, trustee_name, role,
+        `SELECT id, trustee_did, trustee_ed25519_public_key_hex,
+                trustee_email, trustee_name, role,
                 relationship, invitation_status, created_at_ms, accepted_at_ms
          FROM pace_network WHERE owner_did = $1
          ORDER BY CASE role
@@ -300,16 +384,12 @@ export const server = http.createServer(async (req, res) => {
         subject_did,
         initiated_by_did,
         required_confirmations,
-        authorized_trustees,
         claim_nonce_hex,
         initiator_signature_hex,
         created_physical_ms,
         created_logical,
       } = await parseBody(req);
 
-      if (!Array.isArray(authorized_trustees)) {
-        return json(res, 400, { error: 'authorized_trustees must be an array' });
-      }
       if (!claim_nonce_hex || !initiator_signature_hex) {
         return json(res, 400, {
           error: 'claim_nonce_hex and initiator_signature_hex are required',
@@ -320,12 +400,30 @@ export const server = http.createServer(async (req, res) => {
           error: 'created_physical_ms and created_logical are required',
         });
       }
+      const confirmationThreshold = normalizeDeathConfirmationThreshold(required_confirmations);
+      if (confirmationThreshold === null) {
+        return json(res, 400, {
+          error: 'required_confirmations must be an integer from 1 to 255',
+        });
+      }
+
+      const authorizedTrustees = await acceptedDeathVerificationTrustees(subject_did);
+      if (authorizedTrustees.length < confirmationThreshold) {
+        return json(res, 400, {
+          error: `subject has ${authorizedTrustees.length} accepted PACE trustees with registered signing keys; ${confirmationThreshold} required`,
+        });
+      }
+      if (!authorizedTrustees.some(trustee => trustee.did === initiated_by_did)) {
+        return json(res, 403, {
+          error: 'initiated_by_did must be an accepted PACE trustee with a registered signing key',
+        });
+      }
 
       const state = wasm.wasm_death_verification_new(
         subject_did,
         initiated_by_did,
-        required_confirmations || 3,
-        JSON.stringify(authorized_trustees),
+        confirmationThreshold,
+        JSON.stringify(authorizedTrustees),
         claim_nonce_hex,
         initiator_signature_hex,
         BigInt(created_physical_ms),
@@ -339,7 +437,7 @@ export const server = http.createServer(async (req, res) => {
          (id, subject_did, initiated_by, required_confirmations,
           trustee_confirmations, verification_state, status, created_at_ms)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [id, subject_did, initiated_by_did, required_confirmations || 3,
+        [id, subject_did, initiated_by_did, confirmationThreshold,
          JSON.stringify(state.confirmations || []), JSON.stringify(state), initialStatus, created_physical_ms]
       );
 
@@ -351,15 +449,14 @@ export const server = http.createServer(async (req, res) => {
       const {
         verification_id,
         trustee_did,
-        trustee_public_key_hex,
         signature_hex,
         confirmed_physical_ms,
         confirmed_logical,
       } = await parseBody(req);
 
-      if (!trustee_public_key_hex || !signature_hex) {
+      if (!trustee_did || !signature_hex) {
         return json(res, 400, {
-          error: 'trustee_public_key_hex and signature_hex are required',
+          error: 'trustee_did and signature_hex are required',
         });
       }
       if (confirmed_physical_ms === undefined || confirmed_logical === undefined) {
@@ -378,14 +475,19 @@ export const server = http.createServer(async (req, res) => {
       if (dv.status !== 'pending') {
         return json(res, 400, { error: 'verification already resolved' });
       }
-      if (!dv.verification_state || !dv.verification_state.subject_did) {
+      const verificationState = parseStoredJson(dv.verification_state);
+      if (!verificationState || !verificationState.subject_did) {
         return json(res, 500, { error: 'stored verification_state is invalid' });
+      }
+      const trusteePublicKeyHex = trusteePublicKeyFromState(verificationState, trustee_did);
+      if (!trusteePublicKeyHex) {
+        return json(res, 403, { error: 'trustee is not authorized for this death verification' });
       }
 
       const result = wasm.wasm_death_verification_confirm(
-        JSON.stringify(dv.verification_state),
+        JSON.stringify(verificationState),
         trustee_did,
-        trustee_public_key_hex,
+        trusteePublicKeyHex,
         signature_hex,
         BigInt(confirmed_physical_ms),
         confirmed_logical
@@ -628,6 +730,8 @@ export const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`✅ VitalLock API running on port ${PORT}`);
-});
+if (process.env.NODE_ENV !== 'test') {
+  server.listen(PORT, () => {
+    console.log(`✅ VitalLock API running on port ${PORT}`);
+  });
+}

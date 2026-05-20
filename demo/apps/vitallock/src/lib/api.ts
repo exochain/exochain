@@ -87,6 +87,7 @@ export const inviteTrustee = (data: {
 export const acceptInvitation = (data: {
   invitation_token: string;
   trustee_did: string;
+  trustee_ed25519_public_key_hex: string;
 }) => request<{ accepted: boolean }>('/pace/accept', {
   method: 'POST',
   body: JSON.stringify(data),
@@ -94,7 +95,7 @@ export const acceptInvitation = (data: {
 
 export const getPaceNetwork = (did: string) =>
   request<Array<{
-    id: number; trustee_did: string | null; trustee_email: string;
+    id: number; trustee_did: string | null; trustee_ed25519_public_key_hex: string | null; trustee_email: string;
     trustee_name: string; role: string; relationship: string | null;
     invitation_status: string;
   }>>(`/pace/network/${did}`);
@@ -109,6 +110,10 @@ export const initiateDeath = (data: {
   subject_did: string;
   initiated_by_did: string;
   required_confirmations?: number;
+  claim_nonce_hex: string;
+  initiator_signature_hex: string;
+  created_physical_ms: number;
+  created_logical: number;
 }) => request<{ id: string; status: string }>('/death/initiate', {
   method: 'POST',
   body: JSON.stringify(data),
@@ -117,6 +122,9 @@ export const initiateDeath = (data: {
 export const confirmDeath = (data: {
   verification_id: string;
   trustee_did: string;
+  signature_hex: string;
+  confirmed_physical_ms: number;
+  confirmed_logical: number;
 }) => request<{ verified: boolean; confirmations: number }>('/death/confirm', {
   method: 'POST',
   body: JSON.stringify(data),
