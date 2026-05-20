@@ -22,7 +22,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use exo_core::{Did, Timestamp};
+use exo_core::{Did, Hash256, Timestamp, hash::hash_structured};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -55,6 +55,32 @@ pub struct ConsentAccessLogEntry {
     pub decision: ConsentDecision,
 }
 
+/// Tamper-evident rollover state for access log entries no longer retained in
+/// the bounded in-memory window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsentAccessLogRollover {
+    pub archived_entry_count: u64,
+    pub archived_through_sequence: Option<u64>,
+    pub archive_hash: Hash256,
+}
+
+impl Default for ConsentAccessLogRollover {
+    fn default() -> Self {
+        Self {
+            archived_entry_count: 0,
+            archived_through_sequence: None,
+            archive_hash: Hash256::ZERO,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ConsentAccessLogRolloverHashInput<'a> {
+    domain: &'static str,
+    previous_hash: Hash256,
+    entry: &'a ConsentAccessLogEntry,
+}
+
 /// Durable revocation record used to prevent stale consent replay after restart.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsentRevocationLogEntry {
@@ -72,6 +98,8 @@ pub struct ConsentGateSnapshot {
     consents: BTreeMap<String, Vec<ConsentReg>>,
     pub revoked_bailment_ids: BTreeSet<String>,
     pub revocation_log: Vec<ConsentRevocationLogEntry>,
+    #[serde(default)]
+    pub access_log_rollover: ConsentAccessLogRollover,
     pub access_log: Vec<ConsentAccessLogEntry>,
     next_revocation_sequence: u64,
     next_access_sequence: u64,
@@ -86,6 +114,7 @@ pub struct ConsentGate {
     consents: BTreeMap<String, Vec<ConsentReg>>,
     revoked_bailment_ids: BTreeSet<String>,
     revocation_log: Vec<ConsentRevocationLogEntry>,
+    access_log_rollover: ConsentAccessLogRollover,
     access_log: Vec<ConsentAccessLogEntry>,
     next_revocation_sequence: u64,
     next_access_sequence: u64,
@@ -101,20 +130,21 @@ impl ConsentGate {
             consents: BTreeMap::new(),
             revoked_bailment_ids: BTreeSet::new(),
             revocation_log: Vec::new(),
+            access_log_rollover: ConsentAccessLogRollover::default(),
             access_log: Vec::new(),
             next_revocation_sequence: 0,
             next_access_sequence: 0,
         }
     }
 
-    #[must_use]
-    pub fn from_snapshot(snapshot: ConsentGateSnapshot) -> Self {
+    pub fn from_snapshot(snapshot: ConsentGateSnapshot) -> Result<Self, ConsentError> {
         let ConsentGateSnapshot {
             policy,
             mut bailments,
             mut consents,
             revoked_bailment_ids,
             revocation_log,
+            mut access_log_rollover,
             mut access_log,
             next_revocation_sequence,
             next_access_sequence,
@@ -128,20 +158,22 @@ impl ConsentGate {
         }
         let next_revocation_sequence =
             revocation_log_next_sequence(next_revocation_sequence, &revocation_log);
-        let next_access_sequence = access_log_next_sequence(next_access_sequence, &access_log);
-        prune_access_log(&mut access_log);
+        roll_over_access_log(&mut access_log, &mut access_log_rollover)?;
+        let next_access_sequence =
+            access_log_next_sequence(next_access_sequence, &access_log, &access_log_rollover);
 
-        Self {
+        Ok(Self {
             engine: PolicyEngine::new(),
             policy,
             bailments,
             consents,
             revoked_bailment_ids,
             revocation_log,
+            access_log_rollover,
             access_log,
             next_revocation_sequence,
             next_access_sequence,
-        }
+        })
     }
 
     #[must_use]
@@ -152,6 +184,7 @@ impl ConsentGate {
             consents: self.consents.clone(),
             revoked_bailment_ids: self.revoked_bailment_ids.clone(),
             revocation_log: self.revocation_log.clone(),
+            access_log_rollover: self.access_log_rollover,
             access_log: self.access_log.clone(),
             next_revocation_sequence: self.next_revocation_sequence,
             next_access_sequence: self.next_access_sequence,
@@ -266,6 +299,11 @@ impl ConsentGate {
         &self.revocation_log
     }
 
+    #[must_use]
+    pub fn access_log_rollover(&self) -> &ConsentAccessLogRollover {
+        &self.access_log_rollover
+    }
+
     fn ensure_not_revoked(&self, bailment_id: &str) -> Result<(), ConsentError> {
         if self.revoked_bailment_ids.contains(bailment_id) {
             return Err(ConsentError::Revoked {
@@ -295,7 +333,7 @@ impl ConsentGate {
             checked_at: *now,
             decision: decision.clone(),
         });
-        prune_access_log(&mut self.access_log);
+        roll_over_access_log(&mut self.access_log, &mut self.access_log_rollover)?;
         Ok(())
     }
 }
@@ -309,11 +347,40 @@ fn validate_access_log_action(action: &str) -> Result<(), ConsentError> {
     Ok(())
 }
 
-fn prune_access_log(access_log: &mut Vec<ConsentAccessLogEntry>) {
+fn roll_over_access_log(
+    access_log: &mut Vec<ConsentAccessLogEntry>,
+    rollover: &mut ConsentAccessLogRollover,
+) -> Result<(), ConsentError> {
     let overflow = access_log.len().saturating_sub(MAX_ACCESS_LOG_ENTRIES);
     if overflow > 0 {
-        access_log.drain(0..overflow);
+        for entry in access_log.drain(0..overflow) {
+            rollover.archive_hash = access_log_rollover_entry_hash(&rollover.archive_hash, &entry)?;
+            rollover.archived_entry_count = rollover.archived_entry_count.saturating_add(1);
+            rollover.archived_through_sequence = Some(
+                rollover
+                    .archived_through_sequence
+                    .map_or(entry.sequence, |seen| seen.max(entry.sequence)),
+            );
+        }
     }
+    Ok(())
+}
+
+fn access_log_rollover_entry_hash(
+    previous_hash: &Hash256,
+    entry: &ConsentAccessLogEntry,
+) -> Result<Hash256, ConsentError> {
+    hash_structured(&ConsentAccessLogRolloverHashInput {
+        domain: "exo-consent-access-log-rollover-v1",
+        previous_hash: *previous_hash,
+        entry,
+    })
+    .map_err(|error| {
+        ConsentError::Serialization(format!(
+            "failed to hash consent access log rollover entry {}: {error}",
+            entry.sequence
+        ))
+    })
 }
 
 fn next_sequence(counter: &mut u64, counter_name: &str) -> Result<u64, ConsentError> {
@@ -332,8 +399,17 @@ fn revocation_log_next_sequence(current: u64, log: &[ConsentRevocationLogEntry])
     })
 }
 
-fn access_log_next_sequence(current: u64, log: &[ConsentAccessLogEntry]) -> u64 {
-    log.iter().fold(current, |next, entry| {
+fn access_log_next_sequence(
+    current: u64,
+    log: &[ConsentAccessLogEntry],
+    rollover: &ConsentAccessLogRollover,
+) -> u64 {
+    let next = rollover
+        .archived_through_sequence
+        .map_or(current, |sequence| {
+            next_after_seen_sequence(current, sequence)
+        });
+    log.iter().fold(next, |next, entry| {
         next_after_seen_sequence(next, entry.sequence)
     })
 }
@@ -486,10 +562,14 @@ mod tests {
             u64::try_from(MAX_ACCESS_LOG_ENTRIES + 1).expect("cap fits u64")
         );
         assert_eq!(g.snapshot().access_log.len(), MAX_ACCESS_LOG_ENTRIES);
+        assert_eq!(g.access_log_rollover().archived_entry_count, 2);
+        assert_eq!(g.access_log_rollover().archived_through_sequence, Some(1));
+        assert_ne!(g.access_log_rollover().archive_hash, Hash256::ZERO);
+        assert_eq!(g.snapshot().access_log_rollover, *g.access_log_rollover());
     }
 
     #[test]
-    fn restored_snapshot_prunes_oversized_access_log_without_reusing_sequence() {
+    fn restored_snapshot_rolls_over_oversized_access_log_without_reusing_sequence() {
         let mut snapshot = ConsentGate::new(strict_policy()).snapshot();
         snapshot.access_log = (0..(MAX_ACCESS_LOG_ENTRIES + 2))
             .map(|offset| ConsentAccessLogEntry {
@@ -504,14 +584,30 @@ mod tests {
             .collect();
         snapshot.next_access_sequence = 0;
 
-        let mut restored = ConsentGate::from_snapshot(snapshot);
+        let mut restored = ConsentGate::from_snapshot(snapshot).expect("snapshot restores");
         assert_eq!(restored.access_log().len(), MAX_ACCESS_LOG_ENTRIES);
         assert_eq!(restored.access_log()[0].sequence, 2);
+        assert_eq!(restored.access_log_rollover().archived_entry_count, 2);
+        assert_eq!(
+            restored.access_log_rollover().archived_through_sequence,
+            Some(1)
+        );
+        let rollover_after_restore = *restored.access_log_rollover();
+        assert_ne!(rollover_after_restore.archive_hash, Hash256::ZERO);
 
         restored
             .check(&charlie(), "read", &ts(9_000))
             .expect("post-restore check");
         assert_eq!(restored.access_log().len(), MAX_ACCESS_LOG_ENTRIES);
+        assert_eq!(restored.access_log_rollover().archived_entry_count, 3);
+        assert_eq!(
+            restored.access_log_rollover().archived_through_sequence,
+            Some(2)
+        );
+        assert_ne!(
+            restored.access_log_rollover().archive_hash,
+            rollover_after_restore.archive_hash
+        );
         assert_eq!(
             restored
                 .access_log()
@@ -560,9 +656,18 @@ mod tests {
 
         assert!(production.contains("pub const MAX_ACCESS_LOG_ENTRIES"));
         assert!(production.contains("pub const MAX_ACCESS_LOG_ACTION_BYTES"));
+        assert!(production.contains("ConsentAccessLogRollover"));
+        assert!(production.contains("hash_structured(&ConsentAccessLogRolloverHashInput"));
         assert!(check_source.contains("validate_access_log_action(action)?"));
-        assert!(append_source.contains("prune_access_log(&mut self.access_log)"));
-        assert!(from_snapshot_source.contains("prune_access_log(&mut access_log)"));
+        assert!(
+            append_source.contains(
+                "roll_over_access_log(&mut self.access_log, &mut self.access_log_rollover)"
+            )
+        );
+        assert!(
+            from_snapshot_source
+                .contains("roll_over_access_log(&mut access_log, &mut access_log_rollover)")
+        );
     }
 
     #[test]
@@ -606,7 +711,7 @@ mod tests {
         assert!(snapshot.revoked_bailment_ids.contains(&bid));
         assert_eq!(snapshot.revocation_log.len(), 1);
 
-        let mut restored = ConsentGate::from_snapshot(snapshot);
+        let mut restored = ConsentGate::from_snapshot(snapshot).expect("snapshot restores");
         assert!(matches!(
             restored
                 .check(&bob(), "read", &ts(7000))
@@ -643,7 +748,7 @@ mod tests {
         });
         snapshot.next_revocation_sequence = 1;
 
-        let restored = ConsentGate::from_snapshot(snapshot);
+        let restored = ConsentGate::from_snapshot(snapshot).expect("snapshot restores");
         let restored_snapshot = restored.snapshot();
 
         assert!(
@@ -673,7 +778,7 @@ mod tests {
         snapshot.next_access_sequence = 0;
         snapshot.next_revocation_sequence = 0;
 
-        let mut restored = ConsentGate::from_snapshot(snapshot);
+        let mut restored = ConsentGate::from_snapshot(snapshot).expect("snapshot restores");
         restored
             .check(&bob(), "read", &ts(7000))
             .expect("post-restore check");
