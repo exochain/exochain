@@ -30,7 +30,7 @@ function json(res, status, data) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   });
   res.end(JSON.stringify(data, null, 2));
 }
@@ -45,6 +45,134 @@ function parseBody(req) {
 
 function nowMs() { return Date.now(); }
 function genId(prefix = 'CR') { return `${prefix}-${crypto.randomUUID().replace(/-/g, '').slice(0, 10)}`; }
+
+const ALLOWED_ROLES = ['proposer', 'reviewer', 'steward', 'participant'];
+
+function parseApiTokens(raw) {
+  if (!raw) return new Map();
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map();
+    const tokens = new Map();
+    for (const [token, principal] of Object.entries(parsed)) {
+      if (!token || typeof token !== 'string') return new Map();
+      if (!principal || typeof principal !== 'object' || Array.isArray(principal)) return new Map();
+      const did = principal.actor_did;
+      const role = principal.role;
+      if (typeof did !== 'string' || did.length === 0) return new Map();
+      if (typeof role !== 'string' || !ALLOWED_ROLES.includes(role)) return new Map();
+      tokens.set(token, { did, role });
+    }
+    return tokens;
+  } catch {
+    return new Map();
+  }
+}
+
+const apiTokens = parseApiTokens(process.env.CROSSCHECKED_API_TOKENS);
+
+function authenticatedActor(req) {
+  const header = req.headers.authorization || '';
+  const match = /^Bearer\s+(.+)$/.exec(header);
+  if (!match) return null;
+  return apiTokens.get(match[1]) || null;
+}
+
+function requireAuthenticatedActor(req, res) {
+  const actor = authenticatedActor(req);
+  if (!actor) {
+    json(res, 401, { error: 'authentication required' });
+    return null;
+  }
+  return actor;
+}
+
+function requireRole(actor, roles, res) {
+  if (!roles.includes(actor.role)) {
+    json(res, 403, { error: 'insufficient role for action' });
+    return false;
+  }
+  return true;
+}
+
+function custodyMetadata(actor) {
+  return {
+    authenticated: true,
+    auth_actor_did: actor.did,
+    auth_role: actor.role,
+    auth_method: 'bearer-token-principal',
+  };
+}
+
+function metadataJson(actor) {
+  return JSON.stringify(custodyMetadata(actor));
+}
+
+function eventMetadata(event) {
+  const metadata = event.metadata;
+  if (!metadata) return {};
+  if (typeof metadata === 'string') {
+    try {
+      const parsed = JSON.parse(metadata);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+}
+
+function isAuthenticatedCustodyEvent(event) {
+  const metadata = eventMetadata(event);
+  return metadata.authenticated === true
+    && metadata.auth_actor_did === event.actor_did
+    && metadata.auth_role === event.role
+    && metadata.auth_method === 'bearer-token-principal';
+}
+
+function allowedRolesFromPolicy(policy) {
+  if (typeof policy.allowed_roles === 'string') return JSON.parse(policy.allowed_roles);
+  return policy.allowed_roles || [];
+}
+
+function clearanceSnapshot(policy, events) {
+  const latest = new Map();
+  for (const event of events) {
+    if (!isAuthenticatedCustodyEvent(event)) continue;
+    latest.set(`${event.actor_did}:${event.attestation}`, event);
+  }
+
+  const attestations = Array.from(latest.values());
+  const allowedRoles = allowedRolesFromPolicy(policy);
+  const filtered = attestations.filter(a => allowedRoles.includes(a.role));
+
+  const approvals = filtered.filter(a => a.attestation === 'approve');
+  const rejections = filtered.filter(a => a.attestation === 'reject');
+  const abstentions = filtered.filter(a => a.attestation === 'abstain');
+
+  let quorum_met = approvals.length >= policy.quorum_count;
+  if (policy.reject_veto && rejections.length > 0) quorum_met = false;
+
+  return { quorum_met, approvals, rejections, abstentions };
+}
+
+function governanceRole(role) {
+  if (role === 'steward') return 'Steward';
+  if (role === 'reviewer') return 'Reviewer';
+  return 'Contributor';
+}
+
+function votePosition(choice) {
+  const normalized = String(choice).toLowerCase();
+  if (normalized === 'approve' || normalized === 'for') return 'For';
+  if (normalized === 'reject' || normalized === 'against') return 'Against';
+  if (normalized === 'abstain') return 'Abstain';
+  return choice;
+}
+
+function reasoningHash(rationale) {
+  return Array.from(crypto.createHash('sha256').update(rationale || '').digest());
+}
 
 /** Compute canonical hash matching sybil-cli: sorted keys, excludes custody/anchors/timestamps/status */
 function canonicalHash(proposal) {
@@ -63,13 +191,15 @@ function canonicalHash(proposal) {
 
 export const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
+    res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': 'Content-Type, Authorization' });
     return res.end();
   }
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   try {
     if (url.pathname === '/health') return json(res, 200, { status: 'ok', service: 'crosschecked-api' });
+    const authActor = url.pathname.startsWith('/api/') ? requireAuthenticatedActor(req, res) : null;
+    if (url.pathname.startsWith('/api/') && !authActor) return;
 
     // ══════════════════════════════════════════════════════════════════
     // PROPOSAL LIFECYCLE
@@ -78,7 +208,7 @@ export const server = http.createServer(async (req, res) => {
     // ── Create proposal ──
     if (url.pathname === '/api/proposals' && req.method === 'POST') {
       const { author_did, title, context, decision, consequences, method, decision_class, full_5x5, assumptions, options_considered, tags } = await parseBody(req);
-      if (!author_did || !title || !context) return json(res, 400, { error: 'author_did, title, and context are required' });
+      if (!title || !context) return json(res, 400, { error: 'title and context are required' });
 
       const id = genId('CR');
       const now = nowMs();
@@ -87,7 +217,7 @@ export const server = http.createServer(async (req, res) => {
       await pool.query(
         `INSERT INTO crosscheck_proposals (id, author_did, title, context, decision, consequences, method, status, decision_class, full_5x5, assumptions, options_considered, tags, record_hash, created_at_ms, updated_at_ms)
          VALUES ($1,$2,$3,$4,$5,$6,$7,'draft',$8,$9,$10,$11,$12,$13,$14,$15)`,
-        [id, author_did, title, context, decision || null, consequences || null,
+        [id, authActor.did, title, context, decision || null, consequences || null,
          method || 'mosaic', decision_class || 'Operational', full_5x5 || false,
          JSON.stringify(assumptions || []), JSON.stringify(options_considered || []),
          JSON.stringify(tags || []), record_hash, now, now]
@@ -95,9 +225,9 @@ export const server = http.createServer(async (req, res) => {
 
       // Record custody event
       await pool.query(
-        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, record_hash, created_at_ms)
-         VALUES ($1, $2, 'proposer', 'create', $3, $4)`,
-        [id, author_did, record_hash, now]
+        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, record_hash, metadata, created_at_ms)
+         VALUES ($1, $2, $3, 'create', $4, $5, $6)`,
+        [id, authActor.did, authActor.role, record_hash, metadataJson(authActor), now]
       );
 
       return json(res, 201, { id, status: 'draft', record_hash });
@@ -145,8 +275,9 @@ export const server = http.createServer(async (req, res) => {
     // ── Transition status ──
     if (url.pathname.match(/^\/api\/proposals\/[^/]+\/status$/) && req.method === 'PUT') {
       const id = url.pathname.split('/')[3];
-      const { status: newStatus, actor_did } = await parseBody(req);
-      if (!newStatus || !actor_did) return json(res, 400, { error: 'status and actor_did required' });
+      if (!requireRole(authActor, ['steward'], res)) return;
+      const { status: newStatus } = await parseBody(req);
+      if (!newStatus) return json(res, 400, { error: 'status required' });
 
       const result = await pool.query(
         'UPDATE crosscheck_proposals SET status = $1, updated_at_ms = $2 WHERE id = $3 RETURNING *',
@@ -155,9 +286,9 @@ export const server = http.createServer(async (req, res) => {
       if (result.rows.length === 0) return json(res, 404, { error: 'proposal not found' });
 
       await pool.query(
-        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, created_at_ms)
-         VALUES ($1, $2, 'steward', $3, $4)`,
-        [id, actor_did, `status:${newStatus}`, nowMs()]
+        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, metadata, created_at_ms)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [id, authActor.did, authActor.role, `status:${newStatus}`, metadataJson(authActor), nowMs()]
       );
 
       return json(res, 200, result.rows[0]);
@@ -247,13 +378,14 @@ export const server = http.createServer(async (req, res) => {
     // ── Trigger crosscheck ──
     if (url.pathname.match(/^\/api\/proposals\/[^/]+\/crosscheck$/) && req.method === 'POST') {
       const proposalId = url.pathname.split('/')[3];
-      const { actor_did } = await parseBody(req);
+      if (!requireRole(authActor, ['steward'], res)) return;
+      await parseBody(req);
 
       await pool.query('UPDATE crosscheck_proposals SET status = $1, updated_at_ms = $2 WHERE id = $3', ['crosschecking', nowMs(), proposalId]);
       await pool.query(
-        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, created_at_ms)
-         VALUES ($1, $2, 'steward', 'crosscheck:start', $3)`,
-        [proposalId, actor_did || 'system', nowMs()]
+        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, metadata, created_at_ms)
+         VALUES ($1, $2, $3, 'crosscheck:start', $4, $5)`,
+        [proposalId, authActor.did, authActor.role, metadataJson(authActor), nowMs()]
       );
 
       return json(res, 200, { proposal_id: proposalId, status: 'crosschecking' });
@@ -273,9 +405,9 @@ export const server = http.createServer(async (req, res) => {
       );
 
       await pool.query(
-        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, created_at_ms)
-         VALUES ($1, $2, 'participant', 'add_crosscheck', $3)`,
-        [proposalId, agent_did, nowMs()]
+        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, metadata, created_at_ms)
+         VALUES ($1, $2, $3, 'add_crosscheck', $4, $5)`,
+        [proposalId, authActor.did, authActor.role, metadataJson(authActor), nowMs()]
       );
 
       return json(res, 201, { id, proposal_id: proposalId, stance });
@@ -284,7 +416,8 @@ export const server = http.createServer(async (req, res) => {
     // ── Synthesize report ──
     if (url.pathname.match(/^\/api\/proposals\/[^/]+\/synthesize$/) && req.method === 'POST') {
       const proposalId = url.pathname.split('/')[3];
-      const { actor_did, synthesis, dissent } = await parseBody(req);
+      if (!requireRole(authActor, ['steward'], res)) return;
+      const { synthesis, dissent } = await parseBody(req);
 
       // Fetch all opinions
       const { rows: opinions } = await pool.query('SELECT * FROM crosscheck_opinions WHERE proposal_id = $1', [proposalId]);
@@ -325,7 +458,7 @@ export const server = http.createServer(async (req, res) => {
       await pool.query(
         `INSERT INTO crosscheck_reports (id, proposal_id, schema_version, created_by, question, method, synthesis, dissent, dissenters, independence_result, coordination_signals, report_hash, created_at_ms)
          VALUES ($1,$2,'0.2',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [reportId, proposalId, actor_did || null, null, proposals[0]?.method || 'mosaic',
+        [reportId, proposalId, authActor.did, null, proposals[0]?.method || 'mosaic',
          synthesis || null, dissent || null, JSON.stringify(dissenters),
          JSON.stringify(independenceResult), JSON.stringify(coordinationSignals),
          reportHash, nowMs()]
@@ -334,9 +467,9 @@ export const server = http.createServer(async (req, res) => {
       await pool.query('UPDATE crosscheck_proposals SET status = $1, updated_at_ms = $2 WHERE id = $3', ['verified', nowMs(), proposalId]);
 
       await pool.query(
-        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, record_hash, created_at_ms)
-         VALUES ($1, $2, 'steward', 'synthesize', $3, $4)`,
-        [proposalId, actor_did || 'system', reportHash, nowMs()]
+        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, record_hash, metadata, created_at_ms)
+         VALUES ($1, $2, $3, 'synthesize', $4, $5, $6)`,
+        [proposalId, authActor.did, authActor.role, reportHash, metadataJson(authActor), nowMs()]
       );
 
       return json(res, 201, {
@@ -357,21 +490,22 @@ export const server = http.createServer(async (req, res) => {
     // ── Attest ──
     if (url.pathname.match(/^\/api\/proposals\/[^/]+\/attest$/) && req.method === 'POST') {
       const proposalId = url.pathname.split('/')[3];
-      const { actor_did, role, attestation, notes, signature, public_key_b64 } = await parseBody(req);
-      if (!actor_did || !attestation) return json(res, 400, { error: 'actor_did and attestation required' });
+      if (!requireRole(authActor, ['reviewer', 'steward'], res)) return;
+      const { attestation, notes } = await parseBody(req);
+      if (!attestation) return json(res, 400, { error: 'attestation required' });
 
       // Get current record hash
       const { rows } = await pool.query('SELECT record_hash FROM crosscheck_proposals WHERE id = $1', [proposalId]);
       if (rows.length === 0) return json(res, 404, { error: 'proposal not found' });
 
       await pool.query(
-        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, attestation, record_hash, signature, public_key_b64, notes, created_at_ms)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [proposalId, actor_did, role || 'reviewer', `attest:${attestation}`, attestation,
-         rows[0].record_hash, signature || null, public_key_b64 || null, notes || null, nowMs()]
+        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, attestation, record_hash, signature, public_key_b64, metadata, notes, created_at_ms)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [proposalId, authActor.did, authActor.role, `attest:${attestation}`, attestation,
+         rows[0].record_hash, null, null, metadataJson(authActor), notes || null, nowMs()]
       );
 
-      return json(res, 201, { proposal_id: proposalId, attestation, actor_did });
+      return json(res, 201, { proposal_id: proposalId, attestation, actor_did: authActor.did });
     }
 
     // ── Evaluate clearance ──
@@ -388,22 +522,7 @@ export const server = http.createServer(async (req, res) => {
         [proposalId]
       );
 
-      // De-duplicate by (actor_did, attestation kind) — latest wins
-      const latest = new Map();
-      for (const e of events) {
-        latest.set(`${e.actor_did}:${e.attestation}`, e);
-      }
-
-      const attestations = Array.from(latest.values());
-      const allowedRoles = typeof policy.allowed_roles === 'string' ? JSON.parse(policy.allowed_roles) : (policy.allowed_roles || []);
-      const filtered = attestations.filter(a => allowedRoles.includes(a.role));
-
-      const approvals = filtered.filter(a => a.attestation === 'approve');
-      const rejections = filtered.filter(a => a.attestation === 'reject');
-      const abstentions = filtered.filter(a => a.attestation === 'abstain');
-
-      let quorum_met = approvals.length >= policy.quorum_count;
-      if (policy.reject_veto && rejections.length > 0) quorum_met = false;
+      const { quorum_met, approvals, rejections, abstentions } = clearanceSnapshot(policy, events);
 
       return json(res, 200, {
         proposal_id: proposalId,
@@ -418,7 +537,8 @@ export const server = http.createServer(async (req, res) => {
     // ── Issue clearance certificate ──
     if (url.pathname.match(/^\/api\/proposals\/[^/]+\/clear$/) && req.method === 'POST') {
       const proposalId = url.pathname.split('/')[3];
-      const { actor_did } = await parseBody(req);
+      if (!requireRole(authActor, ['steward'], res)) return;
+      await parseBody(req);
 
       // Evaluate clearance first
       const { rows: policies } = await pool.query('SELECT * FROM crosscheck_policy WHERE id = $1', ['default']);
@@ -429,18 +549,7 @@ export const server = http.createServer(async (req, res) => {
         [proposalId]
       );
 
-      const latest = new Map();
-      for (const e of events) latest.set(`${e.actor_did}:${e.attestation}`, e);
-      const attestations = Array.from(latest.values());
-      const allowedRoles = typeof policy.allowed_roles === 'string' ? JSON.parse(policy.allowed_roles) : (policy.allowed_roles || []);
-      const filtered = attestations.filter(a => allowedRoles.includes(a.role));
-
-      const approvals = filtered.filter(a => a.attestation === 'approve');
-      const rejections = filtered.filter(a => a.attestation === 'reject');
-      const abstentions = filtered.filter(a => a.attestation === 'abstain');
-
-      let quorum_met = approvals.length >= policy.quorum_count;
-      if (policy.reject_veto && rejections.length > 0) quorum_met = false;
+      const { quorum_met, approvals, rejections, abstentions } = clearanceSnapshot(policy, events);
 
       if (!quorum_met) return json(res, 400, { error: 'clearance requirements not met' });
 
@@ -456,9 +565,9 @@ export const server = http.createServer(async (req, res) => {
       await pool.query('UPDATE crosscheck_proposals SET status = $1, updated_at_ms = $2 WHERE id = $3', ['verified', nowMs(), proposalId]);
 
       await pool.query(
-        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, created_at_ms)
-         VALUES ($1, $2, 'steward', 'clear', $3)`,
-        [proposalId, actor_did || 'system', nowMs()]
+        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, metadata, created_at_ms)
+         VALUES ($1, $2, $3, 'clear', $4, $5)`,
+        [proposalId, authActor.did, authActor.role, metadataJson(authActor), nowMs()]
       );
 
       return json(res, 201, { certificate_id: certId, quorum_met: true });
@@ -470,7 +579,8 @@ export const server = http.createServer(async (req, res) => {
 
     if (url.pathname.match(/^\/api\/proposals\/[^/]+\/anchor$/) && req.method === 'POST') {
       const proposalId = url.pathname.split('/')[3];
-      const { actor_did } = await parseBody(req);
+      if (!requireRole(authActor, ['steward'], res)) return;
+      await parseBody(req);
 
       // Get latest report
       const { rows: reports } = await pool.query(
@@ -483,7 +593,7 @@ export const server = http.createServer(async (req, res) => {
 
       // Anchor to EXOCHAIN audit chain
       const auditResult = wasm.wasm_audit_append(
-        actor_did || 'did:exo:crosschecked',
+        authActor.did,
         'crosscheck_anchor',
         'success',
         evidenceHash.padEnd(64, '0').slice(0, 64)
@@ -499,9 +609,9 @@ export const server = http.createServer(async (req, res) => {
       await pool.query('UPDATE crosscheck_proposals SET status = $1, updated_at_ms = $2 WHERE id = $3', ['anchored', nowMs(), proposalId]);
 
       await pool.query(
-        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, record_hash, created_at_ms)
-         VALUES ($1, $2, 'steward', 'anchor', $3, $4)`,
-        [proposalId, actor_did || 'system', evidenceHash, nowMs()]
+        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, record_hash, metadata, created_at_ms)
+         VALUES ($1, $2, $3, 'anchor', $4, $5, $6)`,
+        [proposalId, authActor.did, authActor.role, evidenceHash, metadataJson(authActor), nowMs()]
       );
 
       return json(res, 201, {
@@ -520,7 +630,8 @@ export const server = http.createServer(async (req, res) => {
     // ── Open deliberation ──
     if (url.pathname.match(/^\/api\/proposals\/[^/]+\/deliberate$/) && req.method === 'POST') {
       const proposalId = url.pathname.split('/')[3];
-      const { participants, quorum_policy, actor_did } = await parseBody(req);
+      if (!requireRole(authActor, ['steward'], res)) return;
+      const { participants, quorum_policy } = await parseBody(req);
       if (!participants || participants.length === 0) return json(res, 400, { error: 'participants required' });
 
       const { rows } = await pool.query('SELECT record_hash FROM crosscheck_proposals WHERE id = $1', [proposalId]);
@@ -541,9 +652,9 @@ export const server = http.createServer(async (req, res) => {
       await pool.query('UPDATE crosscheck_proposals SET status = $1, updated_at_ms = $2 WHERE id = $3', ['deliberating', nowMs(), proposalId]);
 
       await pool.query(
-        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, created_at_ms)
-         VALUES ($1, $2, 'steward', 'deliberate:open', $3)`,
-        [proposalId, actor_did || 'system', nowMs()]
+        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, metadata, created_at_ms)
+         VALUES ($1, $2, $3, 'deliberate:open', $4, $5)`,
+        [proposalId, authActor.did, authActor.role, metadataJson(authActor), nowMs()]
       );
 
       return json(res, 201, { deliberation_id: delibId, status: 'deliberating', participants });
@@ -552,14 +663,15 @@ export const server = http.createServer(async (req, res) => {
     // ── Cast vote ──
     if (url.pathname.match(/^\/api\/proposals\/[^/]+\/vote$/) && req.method === 'POST') {
       const proposalId = url.pathname.split('/')[3];
-      const { voter_did, choice, rationale } = await parseBody(req);
-      if (!voter_did || !choice) return json(res, 400, { error: 'voter_did and choice required' });
+      const { choice, rationale } = await parseBody(req);
+      if (!choice) return json(res, 400, { error: 'choice required' });
+      const voterDid = authActor.did;
 
       // Check for conflicts
       try {
         wasm.wasm_conflict_enforce(
-          voter_did,
-          JSON.stringify({ action_id: proposalId, actor_did: voter_did, description: 'Vote' }),
+          voterDid,
+          JSON.stringify({ action_id: proposalId, actor_did: voterDid, description: 'Vote' }),
           '[]'
         );
       } catch (e) {
@@ -574,7 +686,14 @@ export const server = http.createServer(async (req, res) => {
       if (delibs.length === 0) return json(res, 400, { error: 'no active deliberation' });
 
       const delib = delibs[0];
-      const vote = { voter: voter_did, choice, rationale: rationale || '', signature: { Ed25519: Array(64).fill(0) }, timestamp_ms: Date.now() };
+      const vote = {
+        voter_did: voterDid,
+        position: votePosition(choice),
+        role: governanceRole(authActor.role),
+        reasoning_hash: reasoningHash(rationale),
+        signature: 'Empty',
+        independence_attestation: null,
+      };
 
       const updated = wasm.wasm_cast_vote(JSON.stringify(delib.deliberation_json), JSON.stringify(vote));
 
@@ -584,18 +703,19 @@ export const server = http.createServer(async (req, res) => {
       );
 
       await pool.query(
-        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, attestation, created_at_ms)
-         VALUES ($1, $2, 'reviewer', 'vote', $3, $4)`,
-        [proposalId, voter_did, choice.toLowerCase(), nowMs()]
+        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, attestation, metadata, created_at_ms)
+         VALUES ($1, $2, $3, 'vote', $4, $5, $6)`,
+        [proposalId, voterDid, authActor.role, choice.toLowerCase(), metadataJson(authActor), nowMs()]
       );
 
-      return json(res, 200, { voted: true, voter_did, choice, deliberation_id: delib.id });
+      return json(res, 200, { voted: true, voter_did: voterDid, choice, deliberation_id: delib.id });
     }
 
     // ── Resolve deliberation ──
     if (url.pathname.match(/^\/api\/proposals\/[^/]+\/resolve$/) && req.method === 'POST') {
       const proposalId = url.pathname.split('/')[3];
-      const { actor_did } = await parseBody(req);
+      if (!requireRole(authActor, ['steward'], res)) return;
+      await parseBody(req);
 
       const { rows: delibs } = await pool.query(
         'SELECT * FROM crosscheck_deliberations WHERE proposal_id = $1 AND result IS NULL ORDER BY opened_at_ms DESC LIMIT 1',
@@ -620,9 +740,9 @@ export const server = http.createServer(async (req, res) => {
       await pool.query('UPDATE crosscheck_proposals SET status = $1, updated_at_ms = $2 WHERE id = $3', [newStatus, nowMs(), proposalId]);
 
       await pool.query(
-        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, created_at_ms)
-         VALUES ($1, $2, 'steward', $3, $4)`,
-        [proposalId, actor_did || 'system', `deliberate:${outcome.toLowerCase()}`, nowMs()]
+        `INSERT INTO crosscheck_custody_events (proposal_id, actor_did, role, action, metadata, created_at_ms)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [proposalId, authActor.did, authActor.role, `deliberate:${outcome.toLowerCase()}`, metadataJson(authActor), nowMs()]
       );
 
       return json(res, 200, { result: outcome, votes_for: result.votes_for, votes_against: result.votes_against, abstentions: result.abstentions, proposal_status: newStatus });
@@ -646,14 +766,14 @@ export const server = http.createServer(async (req, res) => {
     // ══════════════════════════════════════════════════════════════════
 
     if (url.pathname === '/api/keys' && req.method === 'POST') {
-      const { actor_did, public_key_b64 } = await parseBody(req);
-      if (!actor_did || !public_key_b64) return json(res, 400, { error: 'actor_did and public_key_b64 required' });
+      const { public_key_b64 } = await parseBody(req);
+      if (!public_key_b64) return json(res, 400, { error: 'public_key_b64 required' });
       await pool.query(
         `INSERT INTO crosscheck_keys (actor_did, public_key_b64, registered_at_ms)
          VALUES ($1, $2, $3) ON CONFLICT (actor_did) DO UPDATE SET public_key_b64 = $2`,
-        [actor_did, public_key_b64, nowMs()]
+        [authActor.did, public_key_b64, nowMs()]
       );
-      return json(res, 201, { actor_did, registered: true });
+      return json(res, 201, { actor_did: authActor.did, registered: true });
     }
 
     if (url.pathname.match(/^\/api\/keys\//) && req.method === 'GET') {

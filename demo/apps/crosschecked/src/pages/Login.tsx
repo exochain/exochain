@@ -37,6 +37,7 @@ export default function Login({ mode }: LoginProps) {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>(mode);
   const [displayName, setDisplayName] = useState('');
   const [passphrase, setPassphrase] = useState('');
+  const [apiToken, setApiToken] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { login } = useAuth();
@@ -48,9 +49,12 @@ export default function Login({ mode }: LoginProps) {
     setLoading(true);
 
     try {
+      if (apiToken.trim().length === 0) {
+        throw new Error('missing API token');
+      }
       const did = await deriveDidFromPassphrase(passphrase);
       const name = activeTab === 'register' ? displayName : `User ${did.slice(-6)}`;
-      login({ did, displayName: name, role: 'steward' });
+      login({ did, displayName: name, role: 'steward', apiToken: apiToken.trim() });
       navigate('/dashboard');
     } catch {
       setError('Authentication failed. Please try again.');
@@ -128,6 +132,21 @@ export default function Login({ mode }: LoginProps) {
                   onChange={(e) => setPassphrase(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-xc-navy border border-white/10 text-white text-sm placeholder:text-gray-500 focus:outline-none focus:border-xc-indigo-500 transition-colors"
                   placeholder="Enter your passphrase"
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-400 mb-1.5">API Token</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                <input
+                  type="password"
+                  value={apiToken}
+                  onChange={(e) => setApiToken(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-xc-navy border border-white/10 text-white text-sm placeholder:text-gray-500 focus:outline-none focus:border-xc-indigo-500 transition-colors"
+                  placeholder="Enter your API token"
                   required
                 />
               </div>

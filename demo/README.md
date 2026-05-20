@@ -196,5 +196,6 @@ See [docs/guides/ARCHON-INTEGRATION.md](../docs/guides/ARCHON-INTEGRATION.md) fo
 | `DATABASE_URL` | PostgreSQL connection string | `postgres://exochain:exochain@localhost:5432/exochain` |
 | `PORT` | Service listen port | Varies per service (see table above) |
 | `NODE_ENV` | Runtime environment | `development` |
+| `CROSSCHECKED_API_TOKENS` | CrossChecked API bearer principal map as JSON: `{"token":{"actor_did":"did:exo:...","role":"steward"}}`. Missing or malformed values make `/api` routes fail closed with `401`. | None |
 
 Each service reads its own `PORT` from the environment. In Docker Compose, these are pre-configured in the compose file.
