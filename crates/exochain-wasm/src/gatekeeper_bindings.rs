@@ -16,6 +16,8 @@
 
 //! Gatekeeper bindings: CGR combinator algebra, kernel adjudication, invariants
 
+use std::collections::BTreeMap;
+
 use wasm_bindgen::prelude::*;
 
 use crate::serde_bridge::*;
@@ -179,31 +181,70 @@ pub fn wasm_governance_findings_digest(findings_json: &str) -> Result<String, Js
 
 /// Verify a governance monitor attestation before persistence.
 #[wasm_bindgen]
-pub fn wasm_verify_governance_attestation(
+pub fn wasm_verify_governance_attestation_with_trusted_keys(
     signer_did: &str,
     findings_json: &str,
     signature_json: &str,
-    signer_public_key_hex: &str,
+    trusted_signer_keys_json: &str,
 ) -> Result<bool, JsValue> {
     let signer_did = exo_core::Did::new(signer_did)
         .map_err(|_| gatekeeper_boundary_error("invalid governance attestation signer DID"))?;
+    let trusted_signer_keys = parse_trusted_governance_attestation_keys(trusted_signer_keys_json)?;
+    let signer_public_key = trusted_signer_keys
+        .get(&signer_did)
+        .ok_or_else(|| gatekeeper_boundary_error("governance attestation signer is not trusted"))?;
+    verify_governance_attestation_with_key(
+        &signer_did,
+        findings_json,
+        signature_json,
+        signer_public_key,
+    )
+}
+
+fn parse_trusted_governance_attestation_keys(
+    trusted_signer_keys_json: &str,
+) -> Result<BTreeMap<exo_core::Did, exo_core::PublicKey>, JsValue> {
+    let raw_keys: BTreeMap<String, String> = from_json_str(trusted_signer_keys_json)?;
+    if raw_keys.is_empty() {
+        return Err(gatekeeper_boundary_error(
+            "governance attestation trusted signer registry is empty",
+        ));
+    }
+
+    let mut trusted_signer_keys = BTreeMap::new();
+    for (signer_did, public_key_hex) in raw_keys {
+        let signer_did = exo_core::Did::new(&signer_did).map_err(|_| {
+            gatekeeper_boundary_error("invalid governance attestation trusted signer DID")
+        })?;
+        let public_key = exo_core::PublicKey::from_bytes(decode_fixed_hex(
+            &public_key_hex,
+            "governance attestation trusted signer public key",
+        )?);
+        trusted_signer_keys.insert(signer_did, public_key);
+    }
+
+    Ok(trusted_signer_keys)
+}
+
+fn verify_governance_attestation_with_key(
+    signer_did: &exo_core::Did,
+    findings_json: &str,
+    signature_json: &str,
+    signer_public_key: &exo_core::PublicKey,
+) -> Result<bool, JsValue> {
     let findings: serde_json::Value = from_json_str(findings_json)?;
     let digest = exo_gatekeeper::governance_monitor::governance_findings_digest(&findings)
         .map_err(|_| gatekeeper_boundary_error("governance findings digest failed"))?;
     let signature: exo_core::Signature = from_json_str(signature_json)?;
-    let signer_public_key = exo_core::PublicKey::from_bytes(decode_fixed_hex(
-        signer_public_key_hex,
-        "governance attestation public key",
-    )?);
     let attestation = exo_gatekeeper::governance_monitor::GovernanceAttestation {
-        signer_did,
+        signer_did: signer_did.clone(),
         findings_digest: digest,
         signature,
     };
 
     exo_gatekeeper::governance_monitor::verify_attestation(
         &attestation,
-        &signer_public_key,
+        signer_public_key,
         &findings,
     )
     .map(|()| true)
@@ -696,6 +737,32 @@ mod tests {
 
         assert!(!production.contains("format!(\"{r:?}\")"));
         assert!(production.contains("\"rule\": r.id()"));
+    }
+
+    #[test]
+    fn governance_attestation_wasm_boundary_requires_trusted_signer_registry() {
+        let source = include_str!("gatekeeper_bindings.rs");
+        let production = source
+            .split("// ===========================================================================\n// Tests")
+            .next()
+            .expect("production section");
+
+        assert!(
+            production.contains("wasm_verify_governance_attestation_with_trusted_keys"),
+            "WASM governance attestation verification must expose a trusted-registry boundary"
+        );
+        assert!(
+            production.contains("trusted_signer_keys_json"),
+            "trusted signer keys must be passed as an explicit registry, not as a raw peer key"
+        );
+        assert!(
+            !production.contains("pub fn wasm_verify_governance_attestation("),
+            "WASM governance attestations must not expose a raw caller-supplied public-key verifier"
+        );
+        assert!(
+            !production.contains("signer_public_key_hex"),
+            "WASM governance attestation verification must not accept a raw signer_public_key_hex parameter"
+        );
     }
 
     #[test]

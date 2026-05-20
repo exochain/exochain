@@ -1471,18 +1471,18 @@ test('wasm_governance_findings_digest is deterministic', () => {
   return a;
 });
 
-test('wasm_verify_governance_attestation accepts valid signatures', () => {
+test('wasm_verify_governance_attestation_with_trusted_keys accepts valid signatures', () => {
   const digestHex = wasm.wasm_governance_findings_digest(governanceFindingsJson);
   const signature = signatureJsonFromHex(signer1.signHex(Buffer.from(digestHex, 'hex')));
-  return wasm.wasm_verify_governance_attestation(
+  return wasm.wasm_verify_governance_attestation_with_trusted_keys(
     'did:exo:monitor',
     governanceFindingsJson,
     JSON.stringify(signature),
-    signer1.publicKeyHex,
+    JSON.stringify({ 'did:exo:monitor': signer1.publicKeyHex }),
   );
 });
 
-test('wasm_verify_governance_attestation rejects signatures replayed for substituted findings', () => {
+test('wasm_verify_governance_attestation_with_trusted_keys rejects signatures replayed for substituted findings', () => {
   const signedFindingsJson = JSON.stringify([
     { id: 'F-001', severity: 'low', title: 'Benign finding' },
   ]);
@@ -1493,28 +1493,43 @@ test('wasm_verify_governance_attestation rejects signatures replayed for substit
   const signature = signatureJsonFromHex(signer1.signHex(Buffer.from(digestHex, 'hex')));
 
   return expectErrorContains(
-    'wasm_verify_governance_attestation',
-    () => wasm.wasm_verify_governance_attestation(
+    'wasm_verify_governance_attestation_with_trusted_keys',
+    () => wasm.wasm_verify_governance_attestation_with_trusted_keys(
       'did:exo:monitor',
       substitutedFindingsJson,
       JSON.stringify(signature),
-      signer1.publicKeyHex,
+      JSON.stringify({ 'did:exo:monitor': signer1.publicKeyHex }),
     ),
     'governance attestation rejected',
   );
 });
 
-test('wasm_verify_governance_attestation rejects invalid signatures', () =>
+test('wasm_verify_governance_attestation_with_trusted_keys rejects invalid signatures', () =>
   expectErrorContains(
-    'wasm_verify_governance_attestation',
-    () => wasm.wasm_verify_governance_attestation(
+    'wasm_verify_governance_attestation_with_trusted_keys',
+    () => wasm.wasm_verify_governance_attestation_with_trusted_keys(
       'did:exo:monitor',
       governanceFindingsJson,
       JSON.stringify({ Ed25519: Array.from({ length: 64 }, () => 0) }),
-      signer1.publicKeyHex,
+      JSON.stringify({ 'did:exo:monitor': signer1.publicKeyHex }),
     ),
     'governance attestation rejected',
   ));
+
+test('wasm_verify_governance_attestation_with_trusted_keys rejects untrusted signers', () => {
+  const digestHex = wasm.wasm_governance_findings_digest(governanceFindingsJson);
+  const signature = signatureJsonFromHex(signer1.signHex(Buffer.from(digestHex, 'hex')));
+  return expectErrorContains(
+    'wasm_verify_governance_attestation_with_trusted_keys',
+    () => wasm.wasm_verify_governance_attestation_with_trusted_keys(
+      'did:exo:monitor',
+      governanceFindingsJson,
+      JSON.stringify(signature),
+      JSON.stringify({ 'did:exo:other-monitor': signer1.publicKeyHex }),
+    ),
+    'governance attestation signer is not trusted',
+  );
+});
 
 // Identity combinator is a unit variant — just a string, no fields
 test('wasm_reduce_combinator', () =>
