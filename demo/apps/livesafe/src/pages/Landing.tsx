@@ -157,7 +157,7 @@ export default function Landing() {
         </p>
 
         <div className="grid grid-cols-4 gap-4 max-w-lg mx-auto">
-          {['P', 'A', 'C', 'E'].map((letter, i) => (
+          {['P', 'A', 'C', 'E'].map((letter) => (
             <div
               key={letter}
               className="aspect-square rounded-2xl border-2 border-dashed border-white/20 flex items-center justify-center text-2xl font-heading font-bold text-white/40 hover:border-blue-400/50 hover:text-blue-400 transition-all cursor-default"

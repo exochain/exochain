@@ -15,11 +15,36 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const API_BASE = '/api';
+const AUTH_STORAGE_KEY = 'livesafe_auth';
+
+function authToken() {
+  try {
+    const raw = sessionStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.apiToken === 'string' && parsed.apiToken.length > 0) {
+      return parsed.apiToken;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function apiHeaders(headersInit?: HeadersInit) {
+  const headers = new Headers(headersInit);
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  if (!headers.has('Authorization')) {
+    const token = authToken();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+  }
+  return headers;
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: apiHeaders(options?.headers),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));

@@ -25,11 +25,6 @@ const ICON_MAP: Record<string, React.ElementType> = {
   CloudLightning, Heart, AlertTriangle, Flame, ShieldAlert, Zap, Bug, Navigation,
 };
 
-interface GoldenHourProtocol {
-  scenarioId: string;
-  steps: Array<{ text: string; timeframe: string; critical: boolean }>;
-}
-
 const DEFAULT_PROTOCOLS: Record<string, Array<{ text: string; timeframe: string; critical: boolean }>> = {
   'natural-disaster': [
     { text: 'Drop, Cover, Hold On (earthquake) / Shelter in place (tornado)', timeframe: '0-2 min', critical: true },
