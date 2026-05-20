@@ -1043,7 +1043,7 @@ mod tests {
         let mut reg = DelegationRegistry::new();
         let root_key = KeyPair::generate();
         let alice_key = KeyPair::generate();
-        signed_delegate(
+        let root_to_alice = signed_delegate(
             &mut reg,
             "root",
             "alice",
@@ -1051,8 +1051,16 @@ mod tests {
             &root_key,
         )
         .unwrap();
-        let alice_to_bob =
-            signed_delegate(&mut reg, "alice", "bob", &[Permission::Read], &alice_key).unwrap();
+        let root_to_alice_id = root_to_alice.id().unwrap();
+        let alice_to_bob = signed_delegate_with_parent(
+            &mut reg,
+            "alice",
+            "bob",
+            &[Permission::Read],
+            Some(&root_to_alice_id),
+            &alice_key,
+        )
+        .unwrap();
         assert_eq!(alice_to_bob.depth, 1);
 
         let chain = reg
