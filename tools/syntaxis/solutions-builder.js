@@ -43,6 +43,30 @@ const REQUIRED_STANDARD_BCTS_NODE_TYPES = [
   'governance-resolve'
 ];
 
+const INVARIANT_EVIDENCE_REQUIREMENTS = {
+  GOVERNANCE_AUTHORITY: 'authority-check',
+  CONSENT_COVERAGE: 'consent-verify',
+  PROOF_VALIDITY: 'proof-verify',
+  KERNEL_INTEGRITY: 'kernel-adjudicate'
+};
+const UNVERIFIED_ROOT_AUTHORITY_DID = ['did', 'exo', 'root'].join(':');
+
+function isObjectRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isNonZeroHash(value) {
+  return (
+    typeof value === 'string' &&
+    /^0x[0-9a-f]{64}$/.test(value) &&
+    !/^0x0+$/.test(value)
+  );
+}
+
 /**
  * Pre-built solution templates for common workflows
  */
@@ -372,6 +396,17 @@ class SolutionsBuilder {
       throw new Error('Invalid solution object');
     }
     const targetConfig = typeof target === 'string' ? { path: target } : { ...(target || {}) };
+    const governanceEvidence = targetConfig.governanceEvidence;
+    delete targetConfig.governanceEvidence;
+    let governanceEvidenceHashError = null;
+    if (governanceEvidence !== undefined) {
+      try {
+        targetConfig.governanceEvidenceHash = `0x${hashCanonical(governanceEvidence)}`;
+      } catch (error) {
+        governanceEvidenceHashError = error;
+        targetConfig.governanceEvidenceHash = 'invalid_governance_evidence';
+      }
+    }
     const deploymentHlc = normalizeHlc(targetConfig.deploymentHlc, 'target.deploymentHlc');
     delete targetConfig.deploymentHlc;
 
@@ -405,7 +440,10 @@ class SolutionsBuilder {
 
     // Generate workflow from solution
     try {
-      const workflow = this._generateWorkflowFromSolution(solution);
+      if (governanceEvidenceHashError) {
+        throw new Error(`invalid trusted governance evidence: ${governanceEvidenceHashError.message}`);
+      }
+      const workflow = this._generateWorkflowFromSolution(solution, governanceEvidence);
       deployment.workflowId = workflow.workflowId;
       deployment.workflow = workflow;
 
@@ -609,8 +647,7 @@ class SolutionsBuilder {
     );
   }
 
-  _generateWorkflowFromSolution(solution) {
-    // Create a minimal council verdict for workflow generation
+  _generateWorkflowFromSolution(solution, governanceEvidence) {
     const proposal = {
       id: solution.solutionId,
       type: solution.solutionType,
@@ -629,89 +666,209 @@ class SolutionsBuilder {
       proposal.requiredConsentBasisPoints = solution.config.consentThresholdBasisPoints;
     }
 
-    const verdictId = `verdict_${solution.solutionId}`;
-    const nonce = deterministicId('nonce', {
-      createdAtHlc: solution.createdAtHlc,
-      proposalId: proposal.id,
-      verdictId
-    });
-    const mockVerdict = {
-      id: verdictId,
-      status: 'APPROVED',
-      affectedPanels: solution.requiredPanels,
-      panelAssessments: solution.requiredPanels.reduce((acc, panel) => {
-        acc[panel] = 'FOR';
-        return acc;
-      }, {}),
-      identityProof: this._buildIdentityProof(solution.metadata.author, 'cryptographic', nonce),
-      delegationChain: [
-        this._buildDelegationLink({
-          grantorId: 'did:exo:root',
-          granteeId: solution.metadata.author,
-          authority: 'GOVERNANCE_PROPOSER',
-          scope: solution.solutionType
-        })
-      ],
-      consentResponses: this._buildConsentResponses(solution.requiredPanels),
-      systemState: {},
-      precedingProposals: [
-        deterministicId('solution_parent', { solutionId: solution.solutionId })
-      ]
-    };
-
-    // Compile workflow
-    const workflow = this.compiler.compileSyntaxis(mockVerdict, proposal);
+    const councilVerdict = this._trustedCouncilVerdictFromEvidence(
+      solution,
+      proposal,
+      governanceEvidence
+    );
+    const workflow = this.compiler.compileSyntaxis(councilVerdict, proposal);
     return workflow;
   }
 
-  _buildIdentityProof(identityId, method, nonce) {
-    const publicKey = `ed25519-${identityId}-public-key`;
-    return {
-      subjectId: identityId,
-      method,
-      nonce,
-      publicKey,
-      signature: `ed25519-${identityId}-signature`,
-      proofHash: `0x${hashCanonical({
-        identityId,
-        method,
-        nonce,
-        publicKey
-      })}`
-    };
-  }
-
-  _buildDelegationLink({ grantorId, granteeId, authority, scope, previousChainHash = null }) {
-    const signatureHash = `0x${hashCanonical({
-      authority,
-      granteeId,
-      grantorId,
-      scope,
-      signature: 'ed25519-solution-delegation-signature'
-    })}`;
-    return {
-      grantorId,
-      granteeId,
-      authority,
-      scope,
-      signatureHash,
-      chainHash: `0x${hashCanonical({
-        authority,
-        granteeId,
-        grantorId,
-        previousChainHash,
-        scope,
-        signatureHash
-      })}`
-    };
-  }
-
-  _buildConsentResponses(requiredPanels) {
-    const responses = {};
-    for (const panel of requiredPanels) {
-      responses[panel] = { consent: true };
+  _trustedCouncilVerdictFromEvidence(solution, proposal, governanceEvidence) {
+    if (!isObjectRecord(governanceEvidence) || !isObjectRecord(governanceEvidence.councilVerdict)) {
+      throw new Error('trusted governance evidence is required for solution deployment');
     }
-    return responses;
+
+    const verdict = governanceEvidence.councilVerdict;
+    const errors = [];
+    this._validateTrustedVerdictShape(solution, proposal, verdict, errors);
+    this._validateTrustedIdentityProof(solution, proposal, verdict, errors);
+    this._validateTrustedDelegationChain(solution, verdict, errors);
+    this._validateTrustedConsentResponses(solution, proposal, verdict, errors);
+    this._validateTrustedInvariantEvidence(solution, verdict, errors);
+
+    if (errors.length > 0) {
+      throw new Error(`invalid trusted governance evidence: ${errors.join('; ')}`);
+    }
+    return JSON.parse(JSON.stringify(verdict));
+  }
+
+  _validateTrustedVerdictShape(solution, proposal, verdict, errors) {
+    if (!isNonEmptyString(verdict.id)) {
+      errors.push('council verdict id is required');
+    }
+    if (!['APPROVED', 'PASSED'].includes(verdict.status)) {
+      errors.push('council verdict status must be APPROVED or PASSED');
+    }
+    if (!this._arraysMatchAsSets(verdict.affectedPanels, solution.requiredPanels)) {
+      errors.push('council verdict affected panels must match solution required panels');
+    }
+    if (!isObjectRecord(verdict.panelAssessments)) {
+      errors.push('council verdict panel assessments are required');
+      return;
+    }
+    for (const panel of solution.requiredPanels) {
+      if (verdict.panelAssessments[panel] !== 'FOR') {
+        errors.push(`required panel assessment for ${panel} must be FOR`);
+      }
+    }
+    if (!Array.isArray(verdict.precedingProposals) || verdict.precedingProposals.length === 0) {
+      errors.push('council verdict must include at least one preceding proposal');
+    }
+    if (proposal.proposer !== solution.metadata.author) {
+      errors.push('proposal proposer must match solution author');
+    }
+  }
+
+  _validateTrustedIdentityProof(solution, proposal, verdict, errors) {
+    const proof = verdict.identityProof;
+    if (!isObjectRecord(proof)) {
+      errors.push('identity proof is required');
+      return;
+    }
+    const expectedNonce = deterministicId('nonce', {
+      createdAtHlc: solution.createdAtHlc,
+      proposalId: proposal.id,
+      verdictId: verdict.id
+    });
+    if (
+      proof.subjectId !== solution.metadata.author ||
+      proof.method !== 'cryptographic' ||
+      proof.nonce !== expectedNonce
+    ) {
+      errors.push('identity proof must bind the solution author, cryptographic method, and verdict nonce');
+    }
+    if (!isNonEmptyString(proof.publicKey) || !isNonEmptyString(proof.signature)) {
+      errors.push('identity proof must include public key and signature');
+      return;
+    }
+    const expectedProofHash = `0x${hashCanonical({
+      identityId: solution.metadata.author,
+      method: 'cryptographic',
+      nonce: expectedNonce,
+      publicKey: proof.publicKey
+    })}`;
+    if (proof.proofHash !== expectedProofHash) {
+      errors.push('identity proof hash must bind author, method, nonce, and public key');
+    }
+  }
+
+  _validateTrustedDelegationChain(solution, verdict, errors) {
+    if (!Array.isArray(verdict.delegationChain) || verdict.delegationChain.length === 0) {
+      errors.push('delegation chain is required');
+      return;
+    }
+
+    let previousChainHash = null;
+    for (const link of verdict.delegationChain) {
+      if (!isObjectRecord(link)) {
+        errors.push('delegation chain entries must be objects');
+        return;
+      }
+      if (
+        !isNonEmptyString(link.grantorId) ||
+        !isNonEmptyString(link.granteeId) ||
+        !isNonEmptyString(link.authority) ||
+        !isNonEmptyString(link.scope) ||
+        !isNonZeroHash(link.signatureHash) ||
+        !isNonZeroHash(link.chainHash)
+      ) {
+        errors.push('delegation chain entries must include grantor, grantee, authority, scope, signatureHash, and chainHash');
+        return;
+      }
+      if (link.grantorId === UNVERIFIED_ROOT_AUTHORITY_DID) {
+        errors.push('delegation chain must not use unverified direct root authority');
+      }
+      const expectedChainHash = `0x${hashCanonical({
+        authority: link.authority,
+        granteeId: link.granteeId,
+        grantorId: link.grantorId,
+        previousChainHash,
+        scope: link.scope,
+        signatureHash: link.signatureHash
+      })}`;
+      if (link.chainHash !== expectedChainHash) {
+        errors.push('delegation chain hash must bind each link to its predecessor');
+      }
+      previousChainHash = link.chainHash;
+    }
+
+    const terminalLink = verdict.delegationChain[verdict.delegationChain.length - 1];
+    if (
+      terminalLink.granteeId !== solution.metadata.author ||
+      terminalLink.authority !== 'GOVERNANCE_PROPOSER' ||
+      terminalLink.scope !== solution.solutionType
+    ) {
+      errors.push('delegation chain terminal link must grant GOVERNANCE_PROPOSER for the solution type to the solution author');
+    }
+  }
+
+  _validateTrustedConsentResponses(solution, proposal, verdict, errors) {
+    if (!isObjectRecord(verdict.consentResponses)) {
+      errors.push('consent responses are required');
+      return;
+    }
+    for (const panel of solution.requiredPanels) {
+      const response = verdict.consentResponses[panel];
+      if (!isObjectRecord(response) || response.consent !== true) {
+        errors.push(`consent response for ${panel} must explicitly consent`);
+        continue;
+      }
+      const expectedResponseHash = `0x${hashCanonical({
+        consent: true,
+        consentRequestId: `consent_req_${proposal.id}`,
+        panel,
+        proposalId: proposal.id,
+        verdictId: verdict.id
+      })}`;
+      if (response.responseHash !== expectedResponseHash) {
+        errors.push(`consent response hash for ${panel} must bind proposal, verdict, and panel`);
+      }
+      if (!isNonZeroHash(response.signatureHash)) {
+        errors.push(`consent response for ${panel} must include a non-zero signature hash`);
+      }
+    }
+  }
+
+  _validateTrustedInvariantEvidence(solution, verdict, errors) {
+    if (!isObjectRecord(verdict.invariantEvidence)) {
+      errors.push('invariant evidence is required');
+      return;
+    }
+    for (const [invariant, nodeType] of Object.entries(INVARIANT_EVIDENCE_REQUIREMENTS)) {
+      if (!solution.nodeSequence.includes(nodeType)) {
+        continue;
+      }
+      const record = verdict.invariantEvidence[invariant];
+      if (
+        !isObjectRecord(record) ||
+        record.nodeType !== nodeType ||
+        !isNonZeroHash(record.evidenceHash)
+      ) {
+        errors.push(`invariant evidence for ${invariant} must bind ${nodeType}`);
+      }
+    }
+  }
+
+  _arraysMatchAsSets(actual, expected) {
+    if (!Array.isArray(actual) || !Array.isArray(expected)) {
+      return false;
+    }
+    const normalizedActual = [...actual].sort();
+    const normalizedExpected = [...expected].sort();
+    if (normalizedActual.length !== normalizedExpected.length) {
+      return false;
+    }
+    for (let index = 0; index < normalizedActual.length; index++) {
+      if (normalizedActual[index] !== normalizedExpected[index]) {
+        return false;
+      }
+      if (index > 0 && normalizedActual[index] === normalizedActual[index - 1]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   _executeDeploymentStages(solution, workflow, deploymentHlc) {
