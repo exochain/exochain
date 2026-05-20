@@ -35,6 +35,7 @@ exo-identity = { path = "../exo-identity" }
 exo-consent = { path = "../exo-consent" }
 exo-gatekeeper = { path = "../exo-gatekeeper" }
 exo-governance = { path = "../exo-governance" }
+exo-legal = { path = "../exo-legal" }
 bs58 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

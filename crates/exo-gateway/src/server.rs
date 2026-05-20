@@ -52,6 +52,10 @@ use exo_identity::{
     error::IdentityError,
     registry::{DidRegistry, LocalDidRegistry},
 };
+use exo_legal::{
+    ediscovery::{self, DiscoveryRequest},
+    evidence::Evidence,
+};
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -103,6 +107,11 @@ const LAYOUT_TEMPLATE_GRID_COLS: u64 = 24;
 const LAYOUT_TEMPLATE_MAX_ROWS: u64 = 1024;
 const LAYOUT_TEMPLATE_MAX_HEIGHT: u64 = 128;
 const ADVANCED_PACE_STATUS: &str = "Advanced";
+const MAX_EDISCOVERY_SCOPE_BYTES: usize = 512;
+const MAX_EDISCOVERY_CUSTODIANS: usize = 128;
+const MAX_EDISCOVERY_SEARCH_TERMS: usize = 64;
+const MAX_EDISCOVERY_SEARCH_TERM_BYTES: usize = 256;
+const MAX_EDISCOVERY_CORPUS_DOCUMENTS: usize = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GatewayRateLimitOutcome {
@@ -3308,21 +3317,6 @@ async fn handle_auth_logout(
     }
 }
 
-/// POST /api/v1/auth/saml/callback — SAML 2.0 SP callback (not configured).
-///
-/// ExoChain uses DID-based authentication.  SAML integration is reserved for
-/// enterprise tenants and is not yet configured in this deployment.
-async fn handle_auth_saml_callback() -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({
-            "error": "saml_not_configured",
-            "message": "SAML 2.0 SP is not configured for this ExoChain deployment. \
-                        Use DID-based authentication via /api/v1/auth/login."
-        })),
-    )
-}
-
 // ---------------------------------------------------------------------------
 // Constitutional action handlers
 // ---------------------------------------------------------------------------
@@ -3522,19 +3516,116 @@ async fn handle_advance_pace(
 // Legal / eDiscovery handlers
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Deserialize)]
+struct EDiscoveryExportRequest {
+    requester: Did,
+    scope: String,
+    date_start: Timestamp,
+    date_end: Timestamp,
+    custodians: Vec<Did>,
+    search_terms: Vec<String>,
+    corpus: Vec<Evidence>,
+}
+
+impl EDiscoveryExportRequest {
+    fn into_search_inputs(self) -> Result<(DiscoveryRequest, Vec<Evidence>)> {
+        if self.scope.trim().is_empty() {
+            return Err(GatewayError::BadRequest(
+                "ediscovery scope must not be empty".into(),
+            ));
+        }
+        if self.scope.len() > MAX_EDISCOVERY_SCOPE_BYTES {
+            return Err(GatewayError::BadRequest(format!(
+                "ediscovery scope may contain at most {MAX_EDISCOVERY_SCOPE_BYTES} bytes"
+            )));
+        }
+        if self.date_start > self.date_end {
+            return Err(GatewayError::BadRequest(
+                "ediscovery date_start must be less than or equal to date_end".into(),
+            ));
+        }
+        if self.custodians.len() > MAX_EDISCOVERY_CUSTODIANS {
+            return Err(GatewayError::BadRequest(format!(
+                "ediscovery custodians may contain at most {MAX_EDISCOVERY_CUSTODIANS} entries"
+            )));
+        }
+        if self.search_terms.len() > MAX_EDISCOVERY_SEARCH_TERMS {
+            return Err(GatewayError::BadRequest(format!(
+                "ediscovery search_terms may contain at most {MAX_EDISCOVERY_SEARCH_TERMS} entries"
+            )));
+        }
+        for term in &self.search_terms {
+            if term.len() > MAX_EDISCOVERY_SEARCH_TERM_BYTES {
+                return Err(GatewayError::BadRequest(format!(
+                    "ediscovery search term may contain at most {MAX_EDISCOVERY_SEARCH_TERM_BYTES} bytes"
+                )));
+            }
+        }
+        if self.corpus.len() > MAX_EDISCOVERY_CORPUS_DOCUMENTS {
+            return Err(GatewayError::BadRequest(format!(
+                "ediscovery corpus may contain at most {MAX_EDISCOVERY_CORPUS_DOCUMENTS} documents"
+            )));
+        }
+        for evidence in &self.corpus {
+            if evidence.id.is_nil() {
+                return Err(GatewayError::BadRequest(
+                    "ediscovery evidence id must be non-nil".into(),
+                ));
+            }
+            if evidence.type_tag.trim().is_empty() {
+                return Err(GatewayError::BadRequest(
+                    "ediscovery evidence type_tag must not be empty".into(),
+                ));
+            }
+            if evidence.hash == Hash256::ZERO {
+                return Err(GatewayError::BadRequest(
+                    "ediscovery evidence hash must not be Hash256::ZERO".into(),
+                ));
+            }
+            if evidence.timestamp == Timestamp::ZERO {
+                return Err(GatewayError::BadRequest(
+                    "ediscovery evidence timestamp must not be Timestamp::ZERO".into(),
+                ));
+            }
+        }
+
+        Ok((
+            DiscoveryRequest {
+                requester: self.requester,
+                scope: self.scope,
+                date_range: (self.date_start, self.date_end),
+                custodians: self.custodians,
+                search_terms: self.search_terms,
+            },
+            self.corpus,
+        ))
+    }
+}
+
 /// POST /api/v1/ediscovery/export — legal hold / eDiscovery export request.
 ///
-/// Stub endpoint reserved for legal compliance tooling.  Returns 501 until a
-/// legal-hold workflow is configured for this deployment.
-async fn handle_ediscovery_export() -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({
-            "error": "ediscovery_not_configured",
-            "message": "eDiscovery export is not configured for this ExoChain deployment. \
-                        Contact the system administrator to enable legal hold features."
-        })),
-    )
+/// Runs a caller-supplied evidence corpus through `exo-legal` eDiscovery
+/// filtering and returns the deterministic production hash for the result set.
+async fn handle_ediscovery_export(Json(body): Json<EDiscoveryExportRequest>) -> Response {
+    let (request, corpus) = match body.into_search_inputs() {
+        Ok(inputs) => inputs,
+        Err(GatewayError::BadRequest(reason)) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "bad_request",
+                    "message": reason
+                })),
+            )
+                .into_response();
+        }
+        Err(error) => return internal_error_response(error, "ediscovery request", "export failed"),
+    };
+
+    match ediscovery::search(&request, &corpus) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => internal_error_response(error, "ediscovery export", "export failed"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4208,10 +4299,6 @@ fn build_unlayered_router(state: AppState) -> Router {
         .route("/api/v1/decisions", post(handle_decision_create))
         // Auth
         .route("/api/v1/auth/token", post(handle_auth_token))
-        .route(
-            "/api/v1/auth/saml/callback",
-            post(handle_auth_saml_callback),
-        )
         .route(
             "/api/v1/auth/register",
             post(handle_auth_register).layer(DefaultBodyLimit::max(MAX_DID_DOCUMENT_BODY_BYTES)),
@@ -8987,7 +9074,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_saml_callback_returns_501() {
+    async fn auth_saml_callback_is_not_registered_without_sso_adapter() {
         let app = build_router(state());
         let resp = app
             .oneshot(
@@ -8999,7 +9086,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[test]
@@ -10342,19 +10429,77 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ediscovery_export_returns_501() {
+    async fn ediscovery_export_uses_legal_engine_instead_of_501() {
         let app = build_router(state());
+        let body = serde_json::json!({
+            "requester": "did:exo:counsel",
+            "scope": "matter-42",
+            "date_start": { "physical_ms": 1, "logical": 0 },
+            "date_end": { "physical_ms": 500, "logical": 0 },
+            "custodians": ["did:exo:alice"],
+            "search_terms": ["contract"],
+            "corpus": [
+                {
+                    "id": "00000000-0000-0000-0000-000000000501",
+                    "type_tag": "contract",
+                    "hash": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                    "creator": "did:exo:alice",
+                    "timestamp": { "physical_ms": 100, "logical": 0 },
+                    "chain_of_custody": [],
+                    "admissibility_status": "Pending"
+                },
+                {
+                    "id": "00000000-0000-0000-0000-000000000502",
+                    "type_tag": "memo",
+                    "hash": [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+                    "creator": "did:exo:bob",
+                    "timestamp": { "physical_ms": 200, "logical": 0 },
+                    "chain_of_custody": [],
+                    "admissibility_status": "Pending"
+                }
+            ]
+        });
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/api/v1/ediscovery/export")
-                    .body(Body::empty())
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["documents"].as_array().unwrap().len(), 1);
+        assert_eq!(value["documents"][0]["type_tag"], "contract");
+        assert_eq!(value["privilege_log"].as_array().unwrap().len(), 0);
+        assert_eq!(value["production_hash"].as_array().unwrap().len(), 32);
+    }
+
+    #[test]
+    fn gateway_server_production_has_no_enterprise_501_stubs() {
+        let source = include_str!("server.rs");
+        let production = source
+            .split("\nmod tests {")
+            .next()
+            .expect("server production section must be present");
+
+        for forbidden in [
+            "StatusCode::NOT_IMPLEMENTED",
+            "Stub endpoint",
+            "saml_not_configured",
+            "ediscovery_not_configured",
+        ] {
+            assert!(
+                !production.contains(forbidden),
+                "gateway production must not expose enterprise stub marker: {forbidden}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -1549,6 +1549,7 @@ dependencies = [
  "exo-gatekeeper",
  "exo-governance",
  "exo-identity",
+ "exo-legal",
  "getrandom 0.2.16",
  "hex",
  "percent-encoding",
