@@ -34,8 +34,16 @@ test('exoforge-validate passes against the live WASM validation contract', async
 
   equal(report.kernel_loaded, true);
   equal(report.summary.failed, 0);
-  ok(report.checks.some(check => check.name === 'tnc_enforce_all' && check.status === 'pass'));
-  ok(report.checks.some(check => check.name === 'invariant_enforcement' && check.status === 'pass'));
+  ok(report.checks.some(check =>
+    check.name === 'tnc_enforce_all' &&
+    check.status === 'pass' &&
+    check.details.includes('rejected caller-supplied proof flags')
+  ));
+  ok(report.checks.some(check =>
+    check.name === 'invariant_enforcement' &&
+    check.status === 'pass' &&
+    check.details.includes('rejected caller-supplied trust roots')
+  ));
 });
 
 test('exoforge-monitor --once reports healthy against the live WASM validation contract', async () => {
@@ -43,6 +51,14 @@ test('exoforge-monitor --once reports healthy against the live WASM validation c
 
   equal(report.status, 'healthy');
   equal(report.checks_critical, 0);
-  ok(report.checks.some(check => check.check === 'tnc_enforcement' && check.status === 'healthy'));
-  ok(report.checks.some(check => check.check === 'invariant_enforcement' && check.status === 'healthy'));
+  ok(report.checks.some(check =>
+    check.check === 'tnc_enforcement' &&
+    check.status === 'healthy' &&
+    check.details.includes('rejected caller-supplied proof flags')
+  ));
+  ok(report.checks.some(check =>
+    check.check === 'invariant_enforcement' &&
+    check.status === 'healthy' &&
+    check.details.includes('rejected caller-supplied trust roots')
+  ));
 });

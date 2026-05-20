@@ -44,7 +44,10 @@ import {
   buildValidationDecision,
   buildValidationTncFlags,
   buildValidationInvariantRequest,
-  validationReportTimestampIso
+  validationReportTimestampIso,
+  isExpectedPublicWasmTncBoundaryRejection,
+  isExpectedPublicWasmTncViolationSet,
+  isExpectedPublicWasmInvariantBoundaryRejection
 } from '../lib/constitutional.js';
 
 // ── Parse CLI arguments ─────────────────────────────────────────────────────
@@ -140,9 +143,9 @@ function checkTncEnforcement() {
       ? violations.violations.length
       : Array.isArray(violations) ? violations.length : 0;
 
-    const score = allPass.ok && violationCount === 0 ? 1.0
-      : allPass.ok ? 0.8
-      : 0.0;
+    const boundaryRejected = isExpectedPublicWasmTncBoundaryRejection(allPass) &&
+      isExpectedPublicWasmTncViolationSet(violations);
+    const score = boundaryRejected ? 1.0 : 0.0;
 
     return {
       check: 'tnc_enforcement',
@@ -150,9 +153,11 @@ function checkTncEnforcement() {
       score,
       all_pass: allPass.ok,
       violation_count: violationCount,
-      details: allPass.ok
-        ? `All 10 TNCs enforcing correctly (${violationCount} violations in exhaustive scan)`
-        : `TNC enforcement failure: ${allPass.violation}`
+      details: boundaryRejected
+        ? `Public WASM TNC boundary rejected caller-supplied proof flags as expected (${violationCount} violations)`
+        : allPass.ok
+          ? 'Public WASM TNC boundary accepted caller-supplied proof flags unexpectedly'
+          : `Unexpected TNC enforcement failure: ${allPass.violation}`
     };
   } catch (err) {
     return {
@@ -174,8 +179,8 @@ function checkInvariants() {
   try {
     const result = verifyInvariants(ctx);
     const violationCount = result.violations ? result.violations.length : 0;
-    const score = result.ok && result.passed && violationCount === 0 ? 1.0
-      : 0.0;
+    const boundaryRejected = isExpectedPublicWasmInvariantBoundaryRejection(result);
+    const score = boundaryRejected ? 1.0 : 0.0;
 
     return {
       check: 'invariant_enforcement',
@@ -184,9 +189,11 @@ function checkInvariants() {
       passed: result.passed,
       violation_count: violationCount,
       violations: violationCount > 0 ? result.violations : undefined,
-      details: result.ok
-        ? `Invariant enforcement active (${violationCount} violations)`
-        : 'Invariant enforcement failed'
+      details: boundaryRejected
+        ? `Public WASM invariant boundary rejected caller-supplied trust roots as expected (${violationCount} violations)`
+        : result.ok && result.passed
+          ? 'Public WASM invariant boundary accepted caller-supplied trust roots unexpectedly'
+          : 'Unexpected invariant enforcement failure'
     };
   } catch (err) {
     return {

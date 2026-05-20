@@ -40,7 +40,10 @@ import {
   buildValidationDecision,
   buildValidationTncFlags,
   buildValidationInvariantRequest,
-  validationReportTimestampIso
+  validationReportTimestampIso,
+  isExpectedPublicWasmTncBoundaryRejection,
+  isExpectedPublicWasmTncViolationSet,
+  isExpectedPublicWasmInvariantBoundaryRejection
 } from '../lib/constitutional.js';
 
 // ── Parse CLI arguments ─────────────────────────────────────────────────────
@@ -164,16 +167,19 @@ function runValidation(args, validatedAt = validationReportTimestampIso()) {
 
     // Test enforceAllTnc (short-circuit mode)
     const tncResult = enforceAllTnc(ctx);
+    const tncBoundaryRejected = isExpectedPublicWasmTncBoundaryRejection(tncResult);
     results.checks.push({
       name: 'tnc_enforce_all',
       category: 'tnc',
-      status: tncResult.ok ? 'pass' : 'fail',
-      details: tncResult.ok
-        ? 'All 10 TNCs passed enforcement check'
-        : `TNC enforcement failed: ${tncResult.violation}`
+      status: tncBoundaryRejected ? 'pass' : 'fail',
+      details: tncBoundaryRejected
+        ? `Public WASM TNC boundary rejected caller-supplied proof flags as expected: ${tncResult.violation}`
+        : tncResult.ok
+          ? 'Public WASM TNC boundary accepted caller-supplied proof flags unexpectedly'
+          : `Unexpected TNC enforcement failure: ${tncResult.violation}`
     });
     results.summary.total++;
-    if (tncResult.ok) results.summary.passed++;
+    if (tncBoundaryRejected) results.summary.passed++;
     else results.summary.failed++;
 
     // Test collectTncViolations (exhaustive mode)
@@ -181,17 +187,18 @@ function runValidation(args, validatedAt = validationReportTimestampIso()) {
       const violations = collectTncViolations(ctx);
       const violationList = violations.violations || violations;
       const count = Array.isArray(violationList) ? violationList.length : 0;
+      const tncViolationBoundaryRejected = isExpectedPublicWasmTncViolationSet(violations);
       results.checks.push({
         name: 'tnc_collect_violations',
         category: 'tnc',
-        status: count === 0 ? 'pass' : 'fail',
-        details: count === 0
-          ? 'Zero TNC violations detected (exhaustive scan)'
-          : `${count} TNC violation(s) detected`,
+        status: tncViolationBoundaryRejected ? 'pass' : 'fail',
+        details: tncViolationBoundaryRejected
+          ? `${count} fail-closed TNC boundary violation(s) detected as expected`
+          : `${count} unexpected TNC violation(s) detected`,
         violations: count > 0 ? violationList : undefined
       });
       results.summary.total++;
-      if (count === 0) results.summary.passed++;
+      if (tncViolationBoundaryRejected) results.summary.passed++;
       else results.summary.failed++;
     } catch (err) {
       results.checks.push({
@@ -237,16 +244,19 @@ function runValidation(args, validatedAt = validationReportTimestampIso()) {
     const invCtx = buildInvariantContext();
     const invResult = verifyInvariants(invCtx);
     const violationCount = invResult.violations ? invResult.violations.length : 0;
+    const invariantBoundaryRejected = isExpectedPublicWasmInvariantBoundaryRejection(invResult);
     results.checks.push({
       name: 'invariant_enforcement',
       category: 'invariants',
-      status: invResult.ok && violationCount === 0 && invResult.passed ? 'pass' : 'fail',
-      details: invResult.ok
-        ? `Invariant enforcement passed (${violationCount} violations)`
-        : `Invariant enforcement failed: ${invResult.violations.join(', ')}`
+      status: invariantBoundaryRejected ? 'pass' : 'fail',
+      details: invariantBoundaryRejected
+        ? `Public WASM invariant boundary rejected caller-supplied trust roots as expected (${violationCount} violations)`
+        : invResult.ok && invResult.passed
+          ? 'Public WASM invariant boundary accepted caller-supplied trust roots unexpectedly'
+          : `Unexpected invariant enforcement failure: ${invResult.violations.join(', ')}`
     });
     results.summary.total++;
-    if (invResult.ok && violationCount === 0 && invResult.passed) results.summary.passed++;
+    if (invariantBoundaryRejected) results.summary.passed++;
     else results.summary.failed++;
   }
 
