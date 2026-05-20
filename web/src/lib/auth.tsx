@@ -43,6 +43,40 @@ const AuthContext = createContext<AuthContextType | null>(null)
 
 const TOKEN_KEY = 'df_token'
 const REFRESH_KEY = 'df_refresh_token'
+const DEV_PREVIEW_DISPLAY_NAME = 'Dev Preview'
+const DEV_PREVIEW_EMAIL = 'dev@exochain.io'
+
+function nonEmptyString(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim().length > 0 ? value : fallback
+}
+
+function readDevPreviewOnboarding(): { displayName: string; email: string } {
+  const fallback = {
+    displayName: DEV_PREVIEW_DISPLAY_NAME,
+    email: DEV_PREVIEW_EMAIL,
+  }
+  const stored = localStorage.getItem('ape_onboarding')
+
+  if (!stored) {
+    return fallback
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(stored)
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return fallback
+    }
+
+    const onboarding = parsed as Record<string, unknown>
+    return {
+      displayName: nonEmptyString(onboarding.displayName, fallback.displayName),
+      email: nonEmptyString(onboarding.email, fallback.email),
+    }
+  } catch {
+    return fallback
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -96,12 +130,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       import.meta.env.VITE_ALLOW_DEV_BYPASS === 'true' &&
       localStorage.getItem('df_dev_bypass') === '1'
     ) {
-      const onb = localStorage.getItem('ape_onboarding')
-      const parsed = onb ? JSON.parse(onb) : null
+      const preview = readDevPreviewOnboarding()
       setUser({
         did: 'did:exo:dev-preview',
-        displayName: parsed?.displayName || 'Dev Preview',
-        email: parsed?.email || 'dev@exochain.io',
+        displayName: preview.displayName,
+        email: preview.email,
         roles: ['admin'],
         paceStatus: 'verified' as PaceStatus,
         trustTier: 'Gold',
