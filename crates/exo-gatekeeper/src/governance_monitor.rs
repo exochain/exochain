@@ -21,8 +21,8 @@
 //! monitoring output. Implements three sub-mitigations:
 //!
 //! 1. **Signed attestation verification** — rejects payloads without a valid
-//!    Ed25519 signature over the canonical findings payload digest
-//!    (sub-threat T-14a).
+//!    Ed25519 signature over a domain-separated canonical message binding the
+//!    signer DID to the findings payload digest (sub-threat T-14a).
 //! 2. **Circuit breaker** — auto-pauses self-improvement when >3 Critical
 //!    findings are recorded within a 24-hour window (sub-threat T-14c).
 //! 3. **Human approval gate** — requires human-DID (`SignerType 0x01`)
@@ -42,17 +42,29 @@ use serde::Serialize;
 
 /// A signed governance health attestation.
 ///
-/// The signature covers `findings_digest`, which must match the canonical
-/// BLAKE3/CBOR digest of the findings payload passed to [`verify_attestation`].
-/// The signer must be identifiable by their public key for verification.
+/// The signature covers [`governance_attestation_signature_message_digest`],
+/// which binds the signer DID, a governance-monitor domain separator, and the
+/// `findings_digest`. The digest must match the canonical BLAKE3/CBOR digest of
+/// the findings payload passed to [`verify_attestation`].
 #[derive(Debug, Clone)]
 pub struct GovernanceAttestation {
     /// DID of the entity that produced this attestation.
     pub signer_did: Did,
     /// BLAKE3 hash of the canonical findings payload.
     pub findings_digest: Hash256,
-    /// Ed25519 signature over `findings_digest.as_bytes()`.
+    /// Ed25519 signature over the governance attestation message digest bytes.
     pub signature: Signature,
+}
+
+/// Domain separator for governance-monitor attestation signatures.
+pub const GOVERNANCE_ATTESTATION_SIGNATURE_DOMAIN: &str =
+    "exo.gatekeeper.governance-monitor.attestation.v1";
+
+#[derive(Serialize)]
+struct GovernanceAttestationSignaturePayload<'a> {
+    domain: &'static str,
+    signer_did: &'a Did,
+    findings_digest: &'a Hash256,
 }
 
 /// Errors from governance monitor validation.
@@ -72,6 +84,13 @@ pub enum GovernanceMonitorError {
     /// Findings payload could not be canonically encoded for digesting.
     #[error("findings payload digest encoding failed: {reason}")]
     FindingsDigestEncodingFailed {
+        /// Encoding failure reason.
+        reason: String,
+    },
+
+    /// Attestation signature message could not be canonically encoded.
+    #[error("attestation signature message encoding failed: {reason}")]
+    AttestationMessageEncodingFailed {
         /// Encoding failure reason.
         reason: String,
     },
@@ -124,6 +143,29 @@ pub fn governance_findings_digest<T: Serialize>(
     })
 }
 
+/// Compute the canonical domain-separated message digest that must be signed
+/// for a governance monitor attestation.
+///
+/// # Errors
+///
+/// Returns [`GovernanceMonitorError::AttestationMessageEncodingFailed`] if the
+/// message cannot be encoded with the canonical structured hash format.
+pub fn governance_attestation_signature_message_digest(
+    signer_did: &Did,
+    findings_digest: &Hash256,
+) -> Result<Hash256, GovernanceMonitorError> {
+    let payload = GovernanceAttestationSignaturePayload {
+        domain: GOVERNANCE_ATTESTATION_SIGNATURE_DOMAIN,
+        signer_did,
+        findings_digest,
+    };
+    hash_structured(&payload).map_err(|err| {
+        GovernanceMonitorError::AttestationMessageEncodingFailed {
+            reason: err.to_string(),
+        }
+    })
+}
+
 /// Verify the cryptographic attestation on a governance health payload.
 ///
 /// **Security: This MUST be called BEFORE any data is stored or circuit
@@ -132,9 +174,8 @@ pub fn governance_findings_digest<T: Serialize>(
 ///
 /// # Errors
 ///
-/// Returns [`GovernanceMonitorError::MissingAttestation`] if no attestation
-/// is provided, or [`GovernanceMonitorError::InvalidAttestation`] if the
-/// signature does not verify against the signer's public key.
+/// Returns [`GovernanceMonitorError::InvalidAttestation`] if the signature
+/// does not verify against the signer's public key.
 ///
 /// Returns [`GovernanceMonitorError::FindingsDigestMismatch`] if the digest
 /// in the attestation is not the canonical digest of `findings_payload`.
@@ -150,8 +191,15 @@ pub fn verify_attestation<T: Serialize>(
         });
     }
 
-    let message = attestation.findings_digest.as_bytes();
-    if crypto::verify(message, &attestation.signature, signer_public_key) {
+    let message = governance_attestation_signature_message_digest(
+        &attestation.signer_did,
+        &attestation.findings_digest,
+    )?;
+    if crypto::verify(
+        message.as_bytes(),
+        &attestation.signature,
+        signer_public_key,
+    ) {
         Ok(())
     } else {
         Err(GovernanceMonitorError::InvalidAttestation {
@@ -388,7 +436,10 @@ mod tests {
         signer_did: Did,
         secret: &exo_core::SecretKey,
     ) -> GovernanceAttestation {
-        let signature = sign(findings_digest.as_bytes(), secret);
+        let message =
+            governance_attestation_signature_message_digest(&signer_did, &findings_digest)
+                .expect("signature message digest");
+        let signature = sign(message.as_bytes(), secret);
         GovernanceAttestation {
             signer_did,
             findings_digest,
@@ -432,6 +483,69 @@ mod tests {
             err,
             GovernanceMonitorError::FindingsDigestMismatch { .. }
         ));
+    }
+
+    #[test]
+    fn attestation_rejects_signature_replayed_with_relabelled_signer_did() {
+        let (pk, sk) = generate_keypair();
+        let findings = findings_payload("F-001", "critical");
+        let digest = exo_core::hash::hash_structured(&findings).expect("findings digest");
+        let mut attestation = make_attestation(digest, test_did("scanner"), &sk);
+        attestation.signer_did = test_did("impersonated-scanner");
+
+        let err = verify_attestation(&attestation, &pk, &findings).unwrap_err();
+        assert!(matches!(
+            err,
+            GovernanceMonitorError::InvalidAttestation { .. }
+        ));
+    }
+
+    #[test]
+    fn attestation_rejects_digest_only_signature_without_domain_context() {
+        let (pk, sk) = generate_keypair();
+        let findings = findings_payload("F-001", "critical");
+        let digest = exo_core::hash::hash_structured(&findings).expect("findings digest");
+        let signature = sign(digest.as_bytes(), &sk);
+        let attestation = GovernanceAttestation {
+            signer_did: test_did("scanner"),
+            findings_digest: digest,
+            signature,
+        };
+
+        let err = verify_attestation(&attestation, &pk, &findings).unwrap_err();
+        assert!(matches!(
+            err,
+            GovernanceMonitorError::InvalidAttestation { .. }
+        ));
+    }
+
+    #[test]
+    fn attestation_signature_message_binds_domain_signer_and_findings_digest() {
+        let signer = test_did("scanner");
+        let findings = findings_payload("F-001", "critical");
+        let digest = exo_core::hash::hash_structured(&findings).expect("findings digest");
+        let signer_message =
+            governance_attestation_signature_message_digest(&signer, &digest).expect("message");
+        let relabelled_message =
+            governance_attestation_signature_message_digest(&test_did("other-scanner"), &digest)
+                .expect("message");
+        let other_digest = Hash256::digest(b"other findings");
+        let other_findings_message =
+            governance_attestation_signature_message_digest(&signer, &other_digest)
+                .expect("message");
+
+        assert_ne!(
+            signer_message, digest,
+            "signature message must not be the raw findings digest"
+        );
+        assert_ne!(
+            signer_message, relabelled_message,
+            "signature message must bind the signer DID"
+        );
+        assert_ne!(
+            signer_message, other_findings_message,
+            "signature message must bind the findings digest"
+        );
     }
 
     #[test]
