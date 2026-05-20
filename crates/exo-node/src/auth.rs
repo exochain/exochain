@@ -154,6 +154,8 @@ fn is_sensitive_read_path(path: &str) -> bool {
         || path.starts_with("/api/v1/receipts/")
         || path.starts_with("/api/v1/provenance/")
         || path.starts_with("/api/v1/avc/")
+        || path == "/api/v1/challenges"
+        || path.starts_with("/api/v1/challenges/")
         || (path.starts_with("/api/v1/economy/") && path != "/api/v1/economy/policy/active")
         || (path.starts_with("/api/v1/agents/") && path.ends_with("/avcs"))
 }
@@ -187,8 +189,8 @@ fn is_zerodentity_local_signed_write(method: &axum::http::Method, path: &str) ->
 /// trust-object reads.
 ///
 /// Public `GET` and `HEAD` requests pass through without authentication unless
-/// they target receipts, provenance, AVCs, economy trust objects, or agent
-/// credential listings. The active economy policy remains public. All
+/// they target receipts, provenance, AVCs, challenge holds, economy trust
+/// objects, or agent credential listings. The active economy policy remains public. All
 /// other methods (`POST`, `PUT`, `DELETE`, `PATCH`) require
 /// `Authorization: Bearer <token>` unless they are exact 0dentity signed-write
 /// routes whose handlers perform identity-session and request-signature checks.
@@ -266,6 +268,8 @@ mod tests {
             .route("/api/v1/provenance/:hash", get(|| async { "provenance" }))
             .route("/api/v1/avc/:id", get(|| async { "credential" }))
             .route("/api/v1/agents/:did/avcs", get(|| async { "credentials" }))
+            .route("/api/v1/challenges", get(|| async { "challenges" }))
+            .route("/api/v1/challenges/:id", get(|| async { "challenge" }))
             .route(
                 "/api/v1/economy/bailment-terms/:id",
                 get(|| async { "bailment terms" }),
@@ -424,6 +428,38 @@ mod tests {
                 Request::builder()
                     .method("GET")
                     .uri("/api/v1/agents/did:exo:alice/avcs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn challenge_list_get_without_token_rejected() {
+        let app = test_app();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/challenges")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn challenge_get_without_token_rejected() {
+        let app = test_app();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/challenges/00000000-0000-0000-0000-000000000000")
                     .body(Body::empty())
                     .unwrap(),
             )
