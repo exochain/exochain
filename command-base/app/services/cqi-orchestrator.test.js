@@ -35,6 +35,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 // Mock database implementation
 class MockDatabase {
@@ -156,21 +158,78 @@ class MockDatabase {
           self.lastInsertRowId++;
           self.tables.exoforge_queue.push({
             id: self.lastInsertRowId,
-            source: params[0],
-            source_id: params[1],
-            title: params[2],
-            priority: params[3],
-            total_impact: params[4],
-            impacts: params[5],
-            council_review_required: params[6],
-            status: params[7],
-            created_at: params[8],
-            updated_at: params[9]
+            cycle_id: params.length === 11 ? params[0] : null,
+            source: params.length === 11 ? params[1] : params[0],
+            source_id: params.length === 11 ? params[2] : params[1],
+            title: params.length === 11 ? params[3] : params[2],
+            priority: params.length === 11 ? params[4] : params[3],
+            total_impact: params.length === 11 ? params[5] : params[4],
+            impacts: params.length === 11 ? params[6] : params[5],
+            council_review_required: params.length === 11 ? params[7] : params[6],
+            status: params.length === 11 ? params[8] : params[7],
+            created_at: params.length === 11 ? params[9] : params[8],
+            updated_at: params.length === 11 ? params[10] : params[9]
           });
           return { lastInsertRowid: self.lastInsertRowId };
         }
+        if (sql.includes('UPDATE exoforge_queue') && sql.includes('WHERE id = ?')) {
+          const updatesCycleId = sql.includes('cycle_id = ?');
+          const parameterizedStatus = sql.includes('status = ?');
+          const status = updatesCycleId ? 'implementing' : parameterizedStatus ? params[0] : 'implementing';
+          const updatedAt = updatesCycleId ? params[1] : parameterizedStatus ? params[1] : params[0];
+          const id = updatesCycleId ? params[2] : parameterizedStatus ? params[2] : params[1];
+          let changes = 0;
+          for (const row of self.tables.exoforge_queue) {
+            if (row.id === id) {
+              if (updatesCycleId) {
+                row.cycle_id = params[0];
+              }
+              row.status = status;
+              row.updated_at = updatedAt;
+              changes += 1;
+            }
+          }
+          return { changes };
+        }
+        if (sql.includes('UPDATE exoforge_queue') && sql.includes('WHERE cycle_id = ?')) {
+          const updatedAt = params[0];
+          const cycleId = params[1];
+          let changes = 0;
+          for (const row of self.tables.exoforge_queue) {
+            if (row.cycle_id === cycleId) {
+              row.status = 'completed';
+              row.updated_at = updatedAt;
+              changes += 1;
+            }
+          }
+          return { changes };
+        }
+        if (sql.includes('UPDATE cqi_cycles') && sql.includes("status = 'completed'")) {
+          const completedAt = params[0];
+          const cycleId = params[1];
+          const row = self.tables.cqi_cycles.find(c => c.cycle_id === cycleId);
+          if (row) {
+            row.status = 'completed';
+            row.bcts_state = 'Closed';
+            row.completed_at = completedAt;
+            return { changes: 1 };
+          }
+          return { changes: 0 };
+        }
+        if (sql.includes('UPDATE cqi_cycles') && sql.includes("status = 'failed'")) {
+          const cycleId = params[params.length - 1];
+          const row = self.tables.cqi_cycles.find(c => c.cycle_id === cycleId);
+          if (row) {
+            row.status = 'failed';
+            if (sql.includes("bcts_state = 'Denied'")) {
+              row.bcts_state = 'Denied';
+              row.completed_at = params[0];
+            }
+            return { changes: 1 };
+          }
+          return { changes: 0 };
+        }
         if (sql.includes('UPDATE')) {
-          // Handle UPDATE statements
           return { changes: 1 };
         }
         return { lastInsertRowid: 0, changes: 0 };
@@ -613,21 +672,102 @@ test('deployAndRecord() - marks cycle as completed', (t) => {
   orchestrator.db.prepare(`INSERT INTO cqi_cycles (cycle_id, started_at, created_at, bcts_state)
     VALUES (?, ?, ?, ?)`).run(cycleId, '2026-04-10 12:00:00', '2026-04-10 12:00:00', 'Verified');
 
-  const receipt = {
-    id: 1,
-    hash: 'abc123def456',
-    depth: 10,
-    branch: 'executive',
-    adjudication: 'pass'
+  const verification = {
+    all_passed: true,
+    verified_receipt: {
+      id: 1,
+      hash: 'abc123def456',
+      depth: 10,
+      branch: 'executive',
+      adjudication: 'pass'
+    }
   };
 
-  const deployment = orchestrator.deployAndRecord(receipt, cycleId);
+  const deployment = orchestrator.deployAndRecord(verification, cycleId);
 
   assert.strictEqual(deployment.success, true);
   assert.strictEqual(deployment.cycle_status, 'completed');
   assert.strictEqual(deployment.bcts_state, 'Closed');
   assert.ok(deployment.receipt, 'should have receipt');
   assert.ok(deployment.deployment_time);
+});
+
+test('deployAndRecord() - refuses failed verification and does not complete queue rows', (t) => {
+  const { orchestrator, db } = createTestOrchestrator();
+  const cycleId = 'cycle-deploy-failed-verification';
+
+  orchestrator.db.prepare(`INSERT INTO cqi_cycles (cycle_id, started_at, created_at, bcts_state)
+    VALUES (?, ?, ?, ?)`).run(cycleId, '2026-04-10 12:00:00', '2026-04-10 12:00:00', 'Verified');
+  db.tables.exoforge_queue.push({
+    id: 42,
+    cycle_id: cycleId,
+    status: 'implementing',
+    created_at: '2026-04-10 11:59:00',
+    updated_at: null
+  });
+
+  const deployment = orchestrator.deployAndRecord({
+    all_passed: false,
+    verified_receipt: { hash: 'failed-verification-receipt' }
+  }, cycleId);
+
+  assert.strictEqual(deployment.success, false);
+  assert.strictEqual(deployment.cycle_status, 'failed');
+  assert.strictEqual(deployment.bcts_state, 'Denied');
+  assert.match(deployment.error, /verification/i);
+  assert.strictEqual(db.tables.exoforge_queue[0].status, 'implementing');
+  assert.strictEqual(db.tables.cqi_cycles[0].status, 'failed');
+});
+
+test('deployAndRecord() - only completes exoforge queue rows for the current cycle', (t) => {
+  const { orchestrator, db } = createTestOrchestrator();
+  const cycleId = 'cycle-deploy-scoped';
+  const otherCycleId = 'cycle-unrelated-recent';
+
+  orchestrator.db.prepare(`INSERT INTO cqi_cycles (cycle_id, started_at, created_at, bcts_state)
+    VALUES (?, ?, ?, ?)`).run(cycleId, '2026-04-10 12:00:00', '2026-04-10 12:00:00', 'Verified');
+  db.tables.exoforge_queue.push(
+    {
+      id: 100,
+      cycle_id: cycleId,
+      status: 'implementing',
+      created_at: '2026-04-10 11:59:00',
+      updated_at: null
+    },
+    {
+      id: 101,
+      cycle_id: otherCycleId,
+      status: 'implementing',
+      created_at: '2026-04-10 11:59:30',
+      updated_at: null
+    }
+  );
+
+  const deployment = orchestrator.deployAndRecord({
+    all_passed: true,
+    verified_receipt: { hash: 'passing-verification-receipt' }
+  }, cycleId);
+
+  assert.strictEqual(deployment.success, true);
+  assert.strictEqual(db.tables.exoforge_queue.find(row => row.id === 100).status, 'completed');
+  assert.strictEqual(
+    db.tables.exoforge_queue.find(row => row.id === 101).status,
+    'implementing',
+    'recent unrelated queue rows must not be completed by a different CQI cycle'
+  );
+});
+
+test('deployAndRecord() source does not complete queue rows by recent timestamp', (t) => {
+  const source = fs.readFileSync(path.join(__dirname, 'cqi-orchestrator.js'), 'utf8');
+  const deployBlock = source
+    .split('deployAndRecord(', 2)[1]
+    .split('    /**\n     * MAIN: Run complete CQI cycle.', 1)[0];
+
+  assert.doesNotMatch(
+    deployBlock,
+    /created_at\s*>\s*datetime/i,
+    'deploy completion must be scoped by cycle_id, never by a broad recent-created-at predicate'
+  );
 });
 
 test('createReceipt() - creates hash-chained governance receipt', (t) => {

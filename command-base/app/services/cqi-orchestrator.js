@@ -571,9 +571,10 @@ module.exports = function(db, helpers) {
      * the durable handoff point so progress can be tracked via GET /api/solutions/:id/workflow.
      *
      * @param {object} approvedPatch - Approved proposal object
+     * @param {string|null} cycleId - CQI cycle ID that owns this queue handoff
      * @returns {object} Dispatch result { queue_id, status, receipt, workflow_triggered }
      */
-    dispatchToExoForge(approvedPatch) {
+    dispatchToExoForge(approvedPatch, cycleId = null) {
       const now = localNow();
 
       // Create or update exoforge_queue entry
@@ -589,11 +590,19 @@ module.exports = function(db, helpers) {
         if (existing) {
           queueId = existing.id;
           // Update status to 'implementing'
-          this.db.prepare(`
-            UPDATE exoforge_queue
-            SET status = 'implementing', updated_at = ?
-            WHERE id = ?
-          `).run(now, queueId);
+          if (cycleId) {
+            this.db.prepare(`
+              UPDATE exoforge_queue
+              SET cycle_id = ?, status = 'implementing', updated_at = ?
+              WHERE id = ?
+            `).run(cycleId, now, queueId);
+          } else {
+            this.db.prepare(`
+              UPDATE exoforge_queue
+              SET status = 'implementing', updated_at = ?
+              WHERE id = ?
+            `).run(now, queueId);
+          }
         } else {
           // Create new queue entry
           const modules = approvedPatch.affected_modules || [];
@@ -601,10 +610,11 @@ module.exports = function(db, helpers) {
 
           const result = this.db.prepare(`
             INSERT INTO exoforge_queue (
-              source, source_id, title, priority, total_impact, impacts,
+              cycle_id, source, source_id, title, priority, total_impact, impacts,
               council_review_required, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
+            cycleId,
             'cqi',
             approvedPatch.proposal_id,
             approvedPatch.finding_summary,
@@ -631,7 +641,7 @@ module.exports = function(db, helpers) {
         String(queueId),
         'orchestrator',
         `CQI proposal ${approvedPatch.proposal_id} dispatched for implementation`,
-        { queueId, proposal_id: approvedPatch.proposal_id, modules: approvedPatch.affected_modules },
+        { queueId, cycle_id: cycleId, proposal_id: approvedPatch.proposal_id, modules: approvedPatch.affected_modules },
         null
       );
 
@@ -768,12 +778,32 @@ module.exports = function(db, helpers) {
      *
      * Marks CQI cycle as complete, anchors to governance chain, updates exoforge status.
      *
-     * @param {object} verificationReceipt - Receipt from verifyImprovement()
+     * @param {object} verificationResult - Result from verifyImprovement()
      * @param {string} cycleId - CQI cycle ID
      * @returns {object} Deployment result { success, cycle_status, receipt }
      */
-    deployAndRecord(verificationReceipt, cycleId) {
+    deployAndRecord(verificationResult, cycleId) {
       const now = localNow();
+
+      if (!verificationResult || verificationResult.all_passed !== true) {
+        try {
+          this.db.prepare(`
+            UPDATE cqi_cycles
+            SET status = 'failed', bcts_state = 'Denied', completed_at = ?
+            WHERE cycle_id = ?
+          `).run(now, cycleId);
+        } catch (_) { /* cqi_cycles may not exist */ }
+
+        return {
+          success: false,
+          error: 'CQI deployment refused: verification did not pass all required tests',
+          cycle_status: 'failed',
+          bcts_state: 'Denied',
+          deployment_time: now
+        };
+      }
+
+      const verificationReceipt = verificationResult.verified_receipt || null;
 
       try {
         // Update CQI cycle to completed
@@ -799,8 +829,8 @@ module.exports = function(db, helpers) {
           this.db.prepare(`
             UPDATE exoforge_queue
             SET status = 'completed', updated_at = ?
-            WHERE cycle_id = ? OR created_at > datetime(?, '-1 hour')
-          `).run(now, cycleId, now);
+            WHERE cycle_id = ?
+          `).run(now, cycleId);
         } catch (_) { /* exoforge_queue may not have cycle_id column */ }
 
         return {
@@ -884,7 +914,11 @@ module.exports = function(db, helpers) {
           result.phases.no_degradation = { message: 'System healthy, no improvements needed' };
           result.phases.deploy_and_record = { status: 'in_progress' };
 
-          const deployResult = this.deployAndRecord(null, cycleId);
+          const deployResult = this.deployAndRecord({
+            all_passed: true,
+            verified_receipt: null,
+            no_degradation: true
+          }, cycleId);
           result.phases.deploy_and_record = { status: 'completed', result: deployResult };
 
           result.success = true;
@@ -949,7 +983,7 @@ module.exports = function(db, helpers) {
 
         // ─── PHASE 5: Dispatch to ExoForge ────────────────────────────────
         result.phases.exoforge_dispatch = { status: 'in_progress' };
-        const dispatch = this.dispatchToExoForge(proposal);
+        const dispatch = this.dispatchToExoForge(proposal, cycleId);
         result.phases.exoforge_dispatch = { status: 'completed', dispatch };
 
         // Update cycle
@@ -974,6 +1008,18 @@ module.exports = function(db, helpers) {
         );
         result.phases.verify_improvement = { status: 'completed', verification };
 
+        if (!verification.all_passed) {
+          this.db.prepare(`
+            UPDATE cqi_cycles
+            SET phase = 'verify_improvement', bcts_state = 'Denied'
+            WHERE cycle_id = ?
+          `).run(cycleId);
+          const deployment = this.deployAndRecord(verification, cycleId);
+          result.phases.deploy_and_record = { status: 'blocked', deployment };
+          result.success = false;
+          return result;
+        }
+
         // Update cycle
         this.db.prepare(`
           UPDATE cqi_cycles
@@ -983,7 +1029,7 @@ module.exports = function(db, helpers) {
 
         // ─── PHASE 7: Deploy and Record ───────────────────────────────────
         result.phases.deploy_and_record = { status: 'in_progress' };
-        const deployment = this.deployAndRecord(verification.verified_receipt, cycleId);
+        const deployment = this.deployAndRecord(verification, cycleId);
         result.phases.deploy_and_record = { status: 'completed', deployment };
 
         result.success = deployment.success;
