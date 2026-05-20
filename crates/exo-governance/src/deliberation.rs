@@ -373,10 +373,40 @@ mod tests {
         crypto::KeyPair::from_secret_bytes([seed; 32]).expect("deterministic test key")
     }
 
-    fn resolver(
+    struct TestDeliberationResolver {
+        keys: BTreeMap<Did, exo_core::PublicKey>,
+        roles: BTreeMap<Did, Role>,
+    }
+
+    impl PublicKeyResolver for TestDeliberationResolver {
+        fn resolve(&self, did: &Did) -> Option<exo_core::PublicKey> {
+            self.keys.get(did).copied()
+        }
+
+        fn resolve_trusted_role(&self, did: &Did) -> Option<Role> {
+            self.roles.get(did).cloned()
+        }
+    }
+
+    fn resolver(keys: &BTreeMap<Did, exo_core::PublicKey>) -> TestDeliberationResolver {
+        let roles = keys
+            .keys()
+            .map(|did| (did.clone(), Role::Contributor))
+            .collect();
+        TestDeliberationResolver {
+            keys: keys.clone(),
+            roles,
+        }
+    }
+
+    fn resolver_with_roles(
         keys: &BTreeMap<Did, exo_core::PublicKey>,
-    ) -> impl Fn(&Did) -> Option<exo_core::PublicKey> + '_ {
-        |did| keys.get(did).copied()
+        roles: Vec<(Did, Role)>,
+    ) -> TestDeliberationResolver {
+        TestDeliberationResolver {
+            keys: keys.clone(),
+            roles: roles.into_iter().collect(),
+        }
     }
 
     fn signed_attestation(name: &str, keypair: &crypto::KeyPair) -> IndependenceAttestation {
@@ -642,7 +672,11 @@ mod tests {
         };
 
         assert!(matches!(
-            close_verified(&mut d, &quorum_policy, &resolver(&keys)),
+            close_verified(
+                &mut d,
+                &quorum_policy,
+                &resolver_with_roles(&keys, vec![(did("alice"), Role::Steward)])
+            ),
             DeliberationResult::Approved {
                 votes_for: 1,
                 votes_against: 0,
@@ -650,6 +684,40 @@ mod tests {
             }
         ));
     }
+
+    #[test]
+    fn close_verified_rejects_required_role_without_trusted_role_resolution() {
+        let alice_key = keypair(1);
+        let alice = did("alice");
+        let mut keys = BTreeMap::new();
+        keys.insert(alice, *alice_key.public_key());
+
+        let mut d = open(b"p", &[did("alice")]);
+        let vote_alice =
+            signed_vote_for_deliberation(&d, "alice", Position::For, Role::Steward, &alice_key);
+        cast_vote(&mut d, vote_alice).unwrap();
+
+        let quorum_policy = QuorumPolicy {
+            min_approvals: 1,
+            min_independent: 0,
+            required_roles: vec![Role::Steward],
+            timeout: Timestamp::new(999_999, 0),
+        };
+
+        let key_only_resolver = |did: &Did| keys.get(did).copied();
+        match close_verified(&mut d, &quorum_policy, &key_only_resolver) {
+            DeliberationResult::NoQuorum { reason } => {
+                assert!(
+                    reason.contains("trusted role"),
+                    "deliberation required roles must fail closed without trusted role resolution: {reason}"
+                );
+            }
+            other => panic!(
+                "self-asserted deliberation role must not satisfy verified quorum: {other:?}"
+            ),
+        }
+    }
+
     #[test]
     fn close_verified_rejects_forged_vote_signature() {
         let alice_key = keypair(1);
@@ -670,7 +738,11 @@ mod tests {
             timeout: Timestamp::new(999_999, 0),
         };
 
-        match close_verified(&mut d, &quorum_policy, &resolver(&keys)) {
+        match close_verified(
+            &mut d,
+            &quorum_policy,
+            &resolver_with_roles(&keys, vec![(did("alice"), Role::Steward)]),
+        ) {
             DeliberationResult::NoQuorum { reason } => {
                 assert!(reason.contains("verified"));
             }
@@ -722,7 +794,11 @@ mod tests {
         };
 
         assert!(matches!(
-            close_verified(&mut d, &quorum_policy, &resolver(&keys)),
+            close_verified(
+                &mut d,
+                &quorum_policy,
+                &resolver_with_roles(&keys, vec![(did("alice"), Role::Steward)])
+            ),
             DeliberationResult::Approved {
                 votes_for: 1,
                 votes_against: 0,
@@ -763,7 +839,11 @@ mod tests {
             timeout: Timestamp::new(999_999, 0),
         };
 
-        match close_verified(&mut replay_target, &quorum_policy, &resolver(&keys)) {
+        match close_verified(
+            &mut replay_target,
+            &quorum_policy,
+            &resolver_with_roles(&keys, vec![(did("alice"), Role::Steward)]),
+        ) {
             DeliberationResult::NoQuorum { reason } => {
                 assert!(
                     reason.contains("verified"),
@@ -794,7 +874,11 @@ mod tests {
             timeout: Timestamp::new(999_999, 0),
         };
 
-        match close_verified(&mut d, &quorum_policy, &resolver(&keys)) {
+        match close_verified(
+            &mut d,
+            &quorum_policy,
+            &resolver_with_roles(&keys, vec![(did("alice"), Role::Steward)]),
+        ) {
             DeliberationResult::NoQuorum { reason } => {
                 assert!(
                     reason.contains("verified"),
@@ -825,7 +909,11 @@ mod tests {
             timeout: Timestamp::new(999_999, 0),
         };
 
-        match close_verified(&mut d, &quorum_policy, &resolver(&keys)) {
+        match close_verified(
+            &mut d,
+            &quorum_policy,
+            &resolver_with_roles(&keys, vec![(did("alice"), Role::Steward)]),
+        ) {
             DeliberationResult::NoQuorum { reason } => {
                 assert!(
                     reason.contains("verified"),
