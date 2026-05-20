@@ -19,7 +19,11 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
     net::{IpAddr, SocketAddr},
-    sync::{Arc, Mutex, RwLock},
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
 };
 
 use axum::{
@@ -93,6 +97,7 @@ const GLOBAL_CONCURRENCY_LIMIT: usize = 1024;
 const GATEWAY_RATE_LIMIT_REQUESTS_PER_WINDOW: u32 = 120;
 const GATEWAY_RATE_LIMIT_WINDOW_MS: u64 = 60_000;
 const GATEWAY_RATE_LIMIT_MAX_CLIENTS: usize = 16_384;
+const GATEWAY_RATE_LIMIT_DB_CLOCK_REFRESH_MS: u64 = 1_000;
 const STRICT_TRANSPORT_SECURITY_VALUE: &str = "max-age=63072000; includeSubDomains";
 const CONTENT_SECURITY_POLICY_VALUE: &str =
     "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
@@ -203,6 +208,32 @@ impl GatewayRateLimiter {
             },
         );
         GatewayRateLimitOutcome::Allowed
+    }
+
+    fn preflight_limit(&self, client_key: &str, now_ms: u64) -> Option<GatewayRateLimitOutcome> {
+        if self.max_requests_per_window == 0 || self.window_ms == 0 {
+            return Some(GatewayRateLimitOutcome::Limited {
+                retry_after_ms: self.window_ms.max(1),
+            });
+        }
+
+        if let Some(bucket) = self.clients.get(client_key) {
+            let elapsed_ms = now_ms.saturating_sub(bucket.window_start_ms);
+            if elapsed_ms < self.window_ms && bucket.request_count >= self.max_requests_per_window {
+                return Some(GatewayRateLimitOutcome::Limited {
+                    retry_after_ms: self.window_ms.saturating_sub(elapsed_ms).max(1),
+                });
+            }
+            return None;
+        }
+
+        if self.clients.len() >= self.max_tracked_clients {
+            return Some(GatewayRateLimitOutcome::Limited {
+                retry_after_ms: self.window_ms,
+            });
+        }
+
+        None
     }
 
     fn prune_stale(&mut self, now_ms: u64) {
@@ -343,6 +374,8 @@ pub struct AppState {
     session_time_source: SessionTimeSource,
     /// Default-on per-client request-rate admission state.
     rate_limiter: Arc<Mutex<GatewayRateLimiter>>,
+    /// Last trusted database clock sample used by the gateway rate limiter.
+    trusted_rate_limit_epoch_ms: Arc<AtomicU64>,
     /// Explicitly trusted immediate peer IPs whose forwarded client identity may
     /// be used for gateway rate limiting.
     trusted_rate_limit_proxy_ips: BTreeSet<IpAddr>,
@@ -502,6 +535,7 @@ impl AppState {
             clock: Arc::new(Mutex::new(clock)),
             session_time_source,
             rate_limiter: Arc::new(Mutex::new(GatewayRateLimiter::default())),
+            trusted_rate_limit_epoch_ms: Arc::new(AtomicU64::new(0)),
             trusted_rate_limit_proxy_ips,
         }
     }
@@ -529,6 +563,20 @@ impl AppState {
 
     fn uptime_seconds(&self) -> u64 {
         self.now_ms().saturating_sub(self.start_time.physical_ms) / 1000
+    }
+
+    fn cached_trusted_rate_limit_time_ms(&self) -> Option<u64> {
+        match self.trusted_rate_limit_epoch_ms.load(Ordering::Relaxed) {
+            0 => None,
+            now_ms => Some(now_ms),
+        }
+    }
+
+    fn store_trusted_rate_limit_time_ms(&self, now_ms: u64) {
+        if now_ms != 0 {
+            self.trusted_rate_limit_epoch_ms
+                .store(now_ms, Ordering::Relaxed);
+        }
     }
 
     /// Return the DB pool or a 503 if none is configured.
@@ -3528,7 +3576,15 @@ struct EDiscoveryExportRequest {
 }
 
 impl EDiscoveryExportRequest {
-    fn into_search_inputs(self) -> Result<(DiscoveryRequest, Vec<Evidence>)> {
+    fn into_search_inputs(
+        self,
+        authenticated_requester: Did,
+    ) -> Result<(DiscoveryRequest, Vec<Evidence>)> {
+        if self.requester != authenticated_requester {
+            return Err(GatewayError::BadRequest(
+                "ediscovery requester must match authenticated session actor".into(),
+            ));
+        }
         if self.scope.trim().is_empty() {
             return Err(GatewayError::BadRequest(
                 "ediscovery scope must not be empty".into(),
@@ -3591,7 +3647,7 @@ impl EDiscoveryExportRequest {
 
         Ok((
             DiscoveryRequest {
-                requester: self.requester,
+                requester: authenticated_requester,
                 scope: self.scope,
                 date_range: (self.date_start, self.date_end),
                 custodians: self.custodians,
@@ -3604,10 +3660,20 @@ impl EDiscoveryExportRequest {
 
 /// POST /api/v1/ediscovery/export — legal hold / eDiscovery export request.
 ///
-/// Runs a caller-supplied evidence corpus through `exo-legal` eDiscovery
-/// filtering and returns the deterministic production hash for the result set.
-async fn handle_ediscovery_export(Json(body): Json<EDiscoveryExportRequest>) -> Response {
-    let (request, corpus) = match body.into_search_inputs() {
+/// Requires a DB-backed bearer session. Runs the caller-supplied evidence
+/// corpus through `exo-legal` eDiscovery filtering and returns the
+/// deterministic production hash for the result set.
+async fn handle_ediscovery_export(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<EDiscoveryExportRequest>,
+) -> Response {
+    let requester = match require_authenticated_session_actor_from_header(&state, &headers).await {
+        Ok(actor) => actor,
+        Err(error) => return auth_boundary_error_response(error),
+    };
+
+    let (request, corpus) = match body.into_search_inputs(requester) {
         Ok(inputs) => inputs,
         Err(GatewayError::BadRequest(reason)) => {
             return (
@@ -3670,14 +3736,50 @@ async fn trusted_session_validation_time_ms(state: &AppState) -> Result<i64> {
 }
 
 async fn trusted_gateway_rate_limit_time_ms(state: &AppState) -> Result<u64> {
+    if let Some(cached_now_ms) = state.cached_trusted_rate_limit_time_ms() {
+        return Ok(cached_now_ms);
+    }
+
     if let Some(db) = state.pool.as_ref() {
         let now_ms = trusted_database_epoch_ms(db).await?;
-        return u64::try_from(now_ms).map_err(|_| {
+        let now_ms = u64::try_from(now_ms).map_err(|_| {
             GatewayError::Internal("gateway rate-limit database time is negative".to_owned())
-        });
+        })?;
+        state.store_trusted_rate_limit_time_ms(now_ms);
+        return Ok(now_ms);
     }
 
     trusted_gateway_rate_limit_time_ms_from_hlc(state)
+}
+
+fn spawn_gateway_rate_limit_clock_refresh(
+    pool: sqlx::PgPool,
+    trusted_rate_limit_epoch_ms: Arc<AtomicU64>,
+) {
+    std::mem::drop(tokio::spawn(async move {
+        loop {
+            match trusted_database_epoch_ms(&pool).await {
+                Ok(now_ms) => match u64::try_from(now_ms) {
+                    Ok(now_ms) if now_ms != 0 => {
+                        trusted_rate_limit_epoch_ms.store(now_ms, Ordering::Relaxed);
+                    }
+                    Ok(_) => {
+                        tracing::error!("Gateway rate-limit database clock returned zero");
+                    }
+                    Err(_) => {
+                        tracing::error!("Gateway rate-limit database clock returned negative time");
+                    }
+                },
+                Err(error) => {
+                    tracing::error!(%error, "Gateway rate-limit database clock refresh failed");
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(
+                GATEWAY_RATE_LIMIT_DB_CLOCK_REFRESH_MS,
+            ))
+            .await;
+        }
+    }));
 }
 
 fn trusted_gateway_rate_limit_time_ms_from_hlc(state: &AppState) -> Result<u64> {
@@ -4431,6 +4533,42 @@ async fn enforce_gateway_rate_limit(
     next: Next,
 ) -> Response {
     let client_key = gateway_rate_limit_key(&request, &state.trusted_rate_limit_proxy_ips);
+    let preflight_now_ms = if let Some(cached_now_ms) = state.cached_trusted_rate_limit_time_ms() {
+        Some(cached_now_ms)
+    } else {
+        match state.try_now_ms() {
+            Ok(now_ms) => Some(now_ms),
+            Err(message) => {
+                tracing::error!(
+                    message,
+                    "Gateway rate limiter preflight timestamp unavailable"
+                );
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "gateway rate limiter unavailable",
+                )
+                    .into_response();
+            }
+        }
+    };
+
+    if let Some(preflight_now_ms) = preflight_now_ms {
+        let preflight_outcome = match state.rate_limiter.lock() {
+            Ok(limiter) => limiter.preflight_limit(&client_key, preflight_now_ms),
+            Err(_) => {
+                tracing::error!("Gateway rate limiter mutex poisoned");
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "gateway rate limiter unavailable",
+                )
+                    .into_response();
+            }
+        };
+        if let Some(GatewayRateLimitOutcome::Limited { retry_after_ms }) = preflight_outcome {
+            return gateway_rate_limit_response(retry_after_ms);
+        }
+    }
+
     let now_ms = match trusted_gateway_rate_limit_time_ms(&state).await {
         Ok(now_ms) => now_ms,
         Err(error) => {
@@ -4544,6 +4682,12 @@ pub async fn serve_with_extra_routes(
         registry,
         config.trusted_rate_limit_proxy_ips.clone(),
     );
+    if let Some(pool) = state.pool.clone() {
+        spawn_gateway_rate_limit_clock_refresh(
+            pool,
+            Arc::clone(&state.trusted_rate_limit_epoch_ms),
+        );
+    }
     let app = build_router_with_extra_routes(state, extra);
 
     if let Some(tls_config) = config.tls_config.as_ref() {
@@ -5094,6 +5238,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn gateway_rate_limit_preflight_blocks_known_over_budget_client() {
+        let mut limiter = GatewayRateLimiter::with_limits(1, 60_000, 8);
+        assert_eq!(
+            limiter.preflight_limit("client-a", 10_000),
+            None,
+            "new clients require the trusted time boundary before admission state is mutated"
+        );
+        assert_eq!(
+            limiter.check("client-a", 10_000),
+            GatewayRateLimitOutcome::Allowed
+        );
+
+        assert_eq!(
+            limiter.preflight_limit("client-a", 10_000),
+            Some(GatewayRateLimitOutcome::Limited {
+                retry_after_ms: 60_000
+            }),
+            "known over-budget clients must be rejected from memory before DB time is requested"
+        );
+    }
+
+    #[tokio::test]
+    async fn gateway_rate_limit_trusted_time_uses_cached_database_clock_sample() {
+        let state = state();
+        state.store_trusted_rate_limit_time_ms(88_000);
+
+        let now_ms = trusted_gateway_rate_limit_time_ms(&state)
+            .await
+            .expect("cached trusted rate-limit time should be available");
+        assert_eq!(now_ms, 88_000);
+    }
+
     #[tokio::test]
     async fn gateway_default_hlc_rate_limit_window_does_not_reset_by_request_count() {
         let mut state = state();
@@ -5405,13 +5582,23 @@ mod tests {
             "async fn enforce_gateway_rate_limit",
             "fn apply_gateway_layers",
         );
+        let preflight_index = rate_limit_middleware
+            .find("preflight_limit(&client_key, preflight_now_ms)")
+            .expect("production rate limiting must preflight known over-budget clients");
+        let trusted_time_index = rate_limit_middleware
+            .find("trusted_gateway_rate_limit_time_ms(&state).await")
+            .expect("production rate limiting must request trusted time for admitted clients");
+        assert!(
+            preflight_index < trusted_time_index,
+            "production rate limiting must reject known over-budget clients before DB-backed time lookup"
+        );
         assert!(
             rate_limit_middleware.contains("trusted_gateway_rate_limit_time_ms(&state).await"),
             "production rate limiting must use the trusted runtime time boundary"
         );
         assert!(
-            !rate_limit_middleware.contains("state.try_now_ms()"),
-            "production rate limiting must not read deterministic HLC physical milliseconds directly"
+            rate_limit_middleware.contains("state.try_now_ms()"),
+            "production rate limiting may use HLC time for non-admitting preflight checks"
         );
         let rate_limit_time_boundary = source_between(
             production,
@@ -5419,8 +5606,21 @@ mod tests {
             "fn trusted_gateway_rate_limit_time_ms_from_hlc",
         );
         assert!(
+            rate_limit_time_boundary.contains("cached_trusted_rate_limit_time_ms"),
+            "production rate limiting must use the cached DB clock sample before querying the database"
+        );
+        assert!(
             rate_limit_time_boundary.contains("trusted_database_epoch_ms(db).await"),
-            "production rate limiting must prefer the trusted database clock when a pool is configured"
+            "production rate limiting may query the trusted database clock only when no cached sample is available"
+        );
+        let serve_entrypoint = source_between(
+            production,
+            "pub async fn serve_with_extra_routes",
+            "if let Some(tls_config)",
+        );
+        assert!(
+            serve_entrypoint.contains("spawn_gateway_rate_limit_clock_refresh"),
+            "production serve entrypoint must refresh the trusted DB rate-limit clock out of band"
         );
         assert!(
             production.contains("ConnectInfo<SocketAddr>")
@@ -10429,8 +10629,83 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ediscovery_export_uses_legal_engine_instead_of_501() {
+    async fn ediscovery_export_requires_authenticated_session() {
         let app = build_router(state());
+        let body = serde_json::json!({
+            "requester": "did:exo:counsel",
+            "scope": "matter-42",
+            "date_start": { "physical_ms": 1, "logical": 0 },
+            "date_end": { "physical_ms": 500, "logical": 0 },
+            "custodians": ["did:exo:alice"],
+            "search_terms": ["contract"],
+            "corpus": [
+                {
+                    "id": "00000000-0000-0000-0000-000000000501",
+                    "type_tag": "contract",
+                    "hash": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                    "creator": "did:exo:alice",
+                    "timestamp": { "physical_ms": 100, "logical": 0 },
+                    "chain_of_custody": [],
+                    "admissibility_status": "Pending"
+                }
+            ]
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/ediscovery/export")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn ediscovery_export_requester_must_match_authenticated_session_actor() {
+        let body = EDiscoveryExportRequest {
+            requester: Did::new("did:exo:spoofed-counsel").unwrap(),
+            scope: "matter-42".to_owned(),
+            date_start: Timestamp::new(1, 0),
+            date_end: Timestamp::new(500, 0),
+            custodians: vec![Did::new("did:exo:alice").unwrap()],
+            search_terms: vec!["contract".to_owned()],
+            corpus: vec![Evidence {
+                id: uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000501").unwrap(),
+                type_tag: "contract".to_owned(),
+                hash: Hash256::from_bytes([1; 32]),
+                creator: Did::new("did:exo:alice").unwrap(),
+                timestamp: Timestamp::new(100, 0),
+                chain_of_custody: vec![],
+                admissibility_status: exo_legal::evidence::AdmissibilityStatus::Pending,
+            }],
+        };
+
+        let err = body
+            .into_search_inputs(Did::new("did:exo:authenticated-counsel").unwrap())
+            .expect_err("caller must not be able to spoof the eDiscovery requester DID");
+        assert!(
+            matches!(&err, GatewayError::BadRequest(reason) if reason.contains("authenticated session actor")),
+            "unexpected requester binding error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ediscovery_export_uses_legal_engine_instead_of_501() {
+        let pool = match gateway_test_pool().await {
+            Some(pool) => pool,
+            None => return,
+        };
+        let token = "ediscovery-route-token";
+        insert_test_session(&pool, token, "did:exo:counsel").await;
+        let app = build_router(AppState::new(
+            Some(pool.clone()),
+            Arc::new(RwLock::new(LocalDidRegistry::new())),
+        ));
         let body = serde_json::json!({
             "requester": "did:exo:counsel",
             "scope": "matter-42",
@@ -10465,6 +10740,7 @@ mod tests {
                     .method("POST")
                     .uri("/api/v1/ediscovery/export")
                     .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
                     .body(Body::from(body.to_string()))
                     .unwrap(),
             )
@@ -10479,6 +10755,35 @@ mod tests {
         assert_eq!(value["documents"][0]["type_tag"], "contract");
         assert_eq!(value["privilege_log"].as_array().unwrap().len(), 0);
         assert_eq!(value["production_hash"].as_array().unwrap().len(), 32);
+
+        sqlx::query("DELETE FROM sessions WHERE token = $1")
+            .bind(token)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn ediscovery_export_handler_authenticates_before_searching_corpus() {
+        let source = include_str!("server.rs");
+        let handler = source_between(
+            source,
+            "async fn handle_ediscovery_export",
+            "// ---------------------------------------------------------------------------\n// Helpers",
+        );
+        let auth_index = handler
+            .find("require_authenticated_session_actor_from_header")
+            .expect("eDiscovery export must authenticate the bearer session");
+        let parse_index = handler
+            .find("body.into_search_inputs")
+            .expect("eDiscovery export must validate the request after authentication");
+        let search_index = handler
+            .find("ediscovery::search")
+            .expect("eDiscovery export must call the legal search engine");
+        assert!(
+            auth_index < parse_index && parse_index < search_index,
+            "eDiscovery export must authenticate before parsing trusted request inputs and searching caller-supplied evidence"
+        );
     }
 
     #[test]
