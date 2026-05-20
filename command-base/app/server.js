@@ -22429,7 +22429,18 @@ app.get('/system-map', (req, res) => {
 require('./routes/governance.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
 require('./routes/honorgood-economy.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
 require('./routes/companies.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
-require('./routes/research.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
+require('./routes/research.js')(app, db, {
+  broadcast,
+  localNow,
+  createNotification,
+  stmt,
+  getCachedSetting,
+  authRateLimiter,
+  apiRateLimiter,
+  spawnMemberTerminal,
+  badRequest,
+  notFound,
+});
 require('./routes/projects.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
 require('./routes/members.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
 require('./routes/analytics.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
@@ -22438,7 +22449,20 @@ require('./routes/context.js')(app, db, { broadcast, localNow, createNotificatio
 require('./routes/refinement.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
 require('./routes/calendar.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
 require('./routes/notes.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
-require('./routes/settings.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
+require('./routes/settings.js')(app, db, {
+  broadcast,
+  localNow,
+  createNotification,
+  stmt,
+  getCachedSetting,
+  authRateLimiter,
+  apiRateLimiter,
+  spawnMemberTerminal,
+  maskApiKey,
+  maskCredential,
+  badRequest,
+  notFound,
+});
 require('./routes/goals.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
 require('./routes/system.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
 require('./routes/plugins.js')(app, db, { broadcast, localNow, createNotification, stmt, getCachedSetting, authRateLimiter, apiRateLimiter, spawnMemberTerminal });
