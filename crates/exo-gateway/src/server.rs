@@ -3578,6 +3578,29 @@ async fn trusted_session_validation_time_ms(state: &AppState) -> Result<i64> {
     trusted_session_validation_time_ms_from_hlc(state)
 }
 
+async fn trusted_gateway_rate_limit_time_ms(state: &AppState) -> Result<u64> {
+    if let Some(db) = state.pool.as_ref() {
+        let now_ms = trusted_database_epoch_ms(db).await?;
+        return u64::try_from(now_ms).map_err(|_| {
+            GatewayError::Internal("gateway rate-limit database time is negative".to_owned())
+        });
+    }
+
+    trusted_gateway_rate_limit_time_ms_from_hlc(state)
+}
+
+fn trusted_gateway_rate_limit_time_ms_from_hlc(state: &AppState) -> Result<u64> {
+    let now_ms = state
+        .try_now_ms()
+        .map_err(|message| GatewayError::Internal(message.to_owned()))?;
+    if now_ms == 0 {
+        return Err(GatewayError::Internal(
+            "gateway rate-limit HLC returned zero".to_owned(),
+        ));
+    }
+    Ok(now_ms)
+}
+
 fn trusted_session_validation_time_ms_from_hlc(state: &AppState) -> Result<i64> {
     let validation_at_ms = state
         .try_now_ms()
@@ -4321,10 +4344,10 @@ async fn enforce_gateway_rate_limit(
     next: Next,
 ) -> Response {
     let client_key = gateway_rate_limit_key(&request, &state.trusted_rate_limit_proxy_ips);
-    let now_ms = match state.try_now_ms() {
+    let now_ms = match trusted_gateway_rate_limit_time_ms(&state).await {
         Ok(now_ms) => now_ms,
-        Err(message) => {
-            tracing::error!(message, "Gateway rate limiter timestamp unavailable");
+        Err(error) => {
+            tracing::error!(%error, "Gateway rate limiter timestamp unavailable");
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "gateway rate limiter unavailable",
@@ -5288,7 +5311,29 @@ mod tests {
         );
         assert!(
             production.contains("HybridClock") && !production.contains("Instant::now()"),
-            "gateway rate limiting must use the gateway HLC source, not system Instant"
+            "gateway rate limiting must use trusted gateway time sources, not system Instant"
+        );
+        let rate_limit_middleware = source_between(
+            production,
+            "async fn enforce_gateway_rate_limit",
+            "fn apply_gateway_layers",
+        );
+        assert!(
+            rate_limit_middleware.contains("trusted_gateway_rate_limit_time_ms(&state).await"),
+            "production rate limiting must use the trusted runtime time boundary"
+        );
+        assert!(
+            !rate_limit_middleware.contains("state.try_now_ms()"),
+            "production rate limiting must not read deterministic HLC physical milliseconds directly"
+        );
+        let rate_limit_time_boundary = source_between(
+            production,
+            "async fn trusted_gateway_rate_limit_time_ms",
+            "fn trusted_gateway_rate_limit_time_ms_from_hlc",
+        );
+        assert!(
+            rate_limit_time_boundary.contains("trusted_database_epoch_ms(db).await"),
+            "production rate limiting must prefer the trusted database clock when a pool is configured"
         );
         assert!(
             production.contains("ConnectInfo<SocketAddr>")
