@@ -26,6 +26,7 @@ const PORT = process.env.PORT || 3007;
 // Governance health endpoint requires a bearer token (Security panel condition — CR-001 amendment).
 // Set GOVERNANCE_API_TOKEN in the secrets manager; never in env files or Compose.
 // Set GOVERNANCE_ATTESTATION_KEYS as a JSON object mapping trusted signer DID to Ed25519 public key hex.
+// Set GOVERNANCE_APPROVAL_KEYS separately for human approval signers.
 const GOVERNANCE_API_TOKEN = process.env.GOVERNANCE_API_TOKEN || null;
 const GOVERNANCE_ATTESTATION_KEYS = parseGovernanceAttestationKeys(
   process.env.GOVERNANCE_ATTESTATION_KEYS || null,
@@ -33,8 +34,15 @@ const GOVERNANCE_ATTESTATION_KEYS = parseGovernanceAttestationKeys(
 const GOVERNANCE_ATTESTATION_KEYS_JSON = JSON.stringify(
   Object.fromEntries(GOVERNANCE_ATTESTATION_KEYS),
 );
+const GOVERNANCE_APPROVAL_KEYS = parseGovernanceAttestationKeys(
+  process.env.GOVERNANCE_APPROVAL_KEYS || null,
+  'GOVERNANCE_APPROVAL_KEYS',
+);
+const GOVERNANCE_APPROVAL_KEYS_JSON = JSON.stringify(
+  Object.fromEntries(GOVERNANCE_APPROVAL_KEYS),
+);
 
-function parseGovernanceAttestationKeys(value) {
+function parseGovernanceAttestationKeys(value, envName = 'GOVERNANCE_ATTESTATION_KEYS') {
   const trustedKeys = new Map();
   if (!value) return trustedKeys;
 
@@ -42,19 +50,19 @@ function parseGovernanceAttestationKeys(value) {
   try {
     parsed = JSON.parse(value);
   } catch (e) {
-    throw new Error('GOVERNANCE_ATTESTATION_KEYS must be a JSON object mapping signer DID to Ed25519 public key hex');
+    throw new Error(`${envName} must be a JSON object mapping signer DID to Ed25519 public key hex`);
   }
 
   if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-    throw new Error('GOVERNANCE_ATTESTATION_KEYS must be a JSON object mapping signer DID to Ed25519 public key hex');
+    throw new Error(`${envName} must be a JSON object mapping signer DID to Ed25519 public key hex`);
   }
 
   for (const [signerDid, publicKeyHex] of Object.entries(parsed)) {
     if (typeof signerDid !== 'string' || !signerDid.startsWith('did:exo:')) {
-      throw new Error('GOVERNANCE_ATTESTATION_KEYS contains an invalid signer DID');
+      throw new Error(`${envName} contains an invalid signer DID`);
     }
     if (typeof publicKeyHex !== 'string' || !/^[0-9a-fA-F]{64}$/.test(publicKeyHex)) {
-      throw new Error(`GOVERNANCE_ATTESTATION_KEYS contains an invalid Ed25519 public key for ${signerDid}`);
+      throw new Error(`${envName} contains an invalid Ed25519 public key for ${signerDid}`);
     }
     trustedKeys.set(signerDid, publicKeyHex.toLowerCase());
   }
@@ -304,10 +312,51 @@ export const server = http.createServer(async (req, res) => {
       }
 
       const approvalId = url.pathname.replace('/governance/approve/', '');
-      const { approved_by_did, notes } = await parseBody(req);
+      const {
+        approved_by_did,
+        approval_signer_did,
+        approval_signature,
+        approval_public_key,
+        notes,
+      } = await parseBody(req);
 
       if (!approved_by_did) {
         return json(res, 400, { error: 'approved_by_did is required (must be a human DID)' });
+      }
+      if (!approval_signature || !approval_signer_did) {
+        return json(res, 400, { error: 'approval_signature and approval_signer_did are required' });
+      }
+      if (approval_signer_did !== approved_by_did) {
+        return json(res, 400, { error: 'approval_signer_did must match approved_by_did' });
+      }
+
+      const trustedApprovalPublicKey = GOVERNANCE_APPROVAL_KEYS.get(approval_signer_did);
+      if (!trustedApprovalPublicKey) {
+        return json(res, 400, { error: `approval signer ${approval_signer_did} is not configured` });
+      }
+      if (
+        approval_public_key !== undefined
+        && approval_public_key !== null
+        && String(approval_public_key).toLowerCase() !== trustedApprovalPublicKey
+      ) {
+        return json(res, 400, { error: 'approval_public_key does not match configured signer key' });
+      }
+
+      const approvalPayload = {
+        approval_id: approvalId,
+        approved_by_did,
+        decision: 'Approved',
+        notes: notes || null,
+      };
+      try {
+        wasm.wasm_verify_governance_attestation_with_trusted_keys(
+          approval_signer_did,
+          JSON.stringify(approvalPayload),
+          JSON.stringify(approval_signature),
+          GOVERNANCE_APPROVAL_KEYS_JSON,
+        );
+      } catch (e) {
+        return json(res, 400, { error: `invalid governance approval: ${e.message || e}` });
       }
 
       const { rowCount } = await pool.query(
@@ -321,7 +370,12 @@ export const server = http.createServer(async (req, res) => {
         return json(res, 404, { error: 'Approval gate not found or already resolved' });
       }
 
-      return json(res, 200, { approval_id: approvalId, status: 'Approved', approved_by_did });
+      return json(res, 200, {
+        approval_id: approvalId,
+        status: 'Approved',
+        approved_by_did,
+        approval_signer_did,
+      });
     }
 
     // ── Verify Chain Integrity ──

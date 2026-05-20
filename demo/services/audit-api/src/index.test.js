@@ -22,6 +22,9 @@ vi.hoisted(() => {
   process.env.GOVERNANCE_ATTESTATION_KEYS = JSON.stringify({
     'did:exo:monitor': '11'.repeat(32),
   });
+  process.env.GOVERNANCE_APPROVAL_KEYS = JSON.stringify({
+    'did:exo:human': '22'.repeat(32),
+  });
 });
 
 const mockWasm = vi.hoisted(() => ({
@@ -259,6 +262,96 @@ describe('POST /governance/health attestation gate', () => {
       JSON.stringify(validSnapshot.findings),
       JSON.stringify(validSnapshot.attestation_signature),
       JSON.stringify({ 'did:exo:monitor': '11'.repeat(32) }),
+    );
+    expect(mockPg.query).toHaveBeenCalled();
+  });
+});
+
+describe('POST /governance/approve/:approvalId human approval signature gate', () => {
+  const approvalId = 'approval-run-1';
+  const validApproval = {
+    approved_by_did: 'did:exo:human',
+    approval_signer_did: 'did:exo:human',
+    approval_signature: { Ed25519: Array.from({ length: 64 }, () => 2) },
+    notes: 'ship after human review',
+  };
+  const expectedApprovalPayload = JSON.stringify({
+    approval_id: approvalId,
+    approved_by_did: 'did:exo:human',
+    decision: 'Approved',
+    notes: 'ship after human review',
+  });
+
+  it('rejects missing human approval signature before any database write', async () => {
+    const res = await request
+      .post(`/governance/approve/${approvalId}`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ approved_by_did: 'did:exo:human' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/approval_signature/);
+    expect(mockPg.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects approval signer DID mismatch before verification', async () => {
+    const res = await request
+      .post(`/governance/approve/${approvalId}`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ ...validApproval, approval_signer_did: 'did:exo:other-human' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/match approved_by_did/);
+    expect(mockWasm.wasm_verify_governance_attestation_with_trusted_keys).not.toHaveBeenCalled();
+    expect(mockPg.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects unconfigured human approval signers before persistence', async () => {
+    const res = await request
+      .post(`/governance/approve/${approvalId}`)
+      .set('Authorization', 'Bearer test-token')
+      .send({
+        ...validApproval,
+        approved_by_did: 'did:exo:rogue-human',
+        approval_signer_did: 'did:exo:rogue-human',
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/not configured/);
+    expect(mockWasm.wasm_verify_governance_attestation_with_trusted_keys).not.toHaveBeenCalled();
+    expect(mockPg.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid human approval signatures before persistence', async () => {
+    mockWasm.wasm_verify_governance_attestation_with_trusted_keys.mockImplementationOnce(() => {
+      throw new Error('approval signature rejected');
+    });
+
+    const res = await request
+      .post(`/governance/approve/${approvalId}`)
+      .set('Authorization', 'Bearer test-token')
+      .send(validApproval);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid governance approval/);
+    expect(mockPg.query).not.toHaveBeenCalled();
+  });
+
+  it('persists approved gates only after trusted human signature verification', async () => {
+    mockPg.query.mockResolvedValueOnce({ rowCount: 1 });
+
+    const res = await request
+      .post(`/governance/approve/${approvalId}`)
+      .set('Authorization', 'Bearer test-token')
+      .send(validApproval);
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('Approved');
+    expect(res.body.approved_by_did).toBe('did:exo:human');
+    expect(mockWasm.wasm_verify_governance_attestation_with_trusted_keys).toHaveBeenCalledWith(
+      'did:exo:human',
+      expectedApprovalPayload,
+      JSON.stringify(validApproval.approval_signature),
+      JSON.stringify({ 'did:exo:human': '22'.repeat(32) }),
     );
     expect(mockPg.query).toHaveBeenCalled();
   });
