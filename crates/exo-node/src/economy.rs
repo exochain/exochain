@@ -448,13 +448,14 @@ async fn handle_settle(
     Json(payload): Json<SettleRequest>,
 ) -> ApiResult<Json<SettlementReceipt>> {
     let quote_hash = parse_hash(&payload.quote_hash_hex)?;
-    let context = payload.context;
+    let mut context = payload.context;
     let settlement_signer = Arc::clone(&state.settlement_signer);
     let receipt = with_store_blocking(state, move |store| {
         let stored = store
             .get_quote(&quote_hash)
             .map_err(map_economy_error)?
             .ok_or_else(|| map_economy_error(EconomyError::QuoteNotFound))?;
+        context.prev_settlement_receipt = store.latest_receipt_hash();
         let receipt = settle(&stored, &context, |payload| (settlement_signer)(payload))
             .map_err(map_economy_error)?;
         store
@@ -1873,6 +1874,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn settle_derives_previous_receipt_from_store_not_payload() {
+        let (state, _) = fresh_signed_state();
+        let app = economy_router(Arc::clone(&state));
+
+        let first_quote_request = QuoteRequest {
+            quote_id: "q-1".into(),
+            inputs: baseline_inputs(),
+        };
+        let first_quote_body = serde_json::to_vec(&first_quote_request).unwrap();
+        let first_quote_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/economy/quote")
+                    .header("content-type", "application/json")
+                    .body(Body::from(first_quote_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let first_quote: SettlementQuote =
+            serde_json::from_slice(&read_body(first_quote_response).await).unwrap();
+
+        let first_settle_request = SettleRequest {
+            quote_hash_hex: format!("{}", first_quote.quote_hash),
+            context: SettlementContext {
+                receipt_id: "rec-1".into(),
+                custody_transaction_hash: Hash256::from_bytes([0x33; 32]),
+                prev_settlement_receipt: Hash256::from_bytes([0xAA; 32]),
+                now: Timestamp::new(1_010_000, 0),
+            },
+        };
+        let first_settle_body = serde_json::to_vec(&first_settle_request).unwrap();
+        let first_settle_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/economy/settle")
+                    .header("content-type", "application/json")
+                    .body(Body::from(first_settle_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first_settle_response.status(), StatusCode::OK);
+        let first_receipt: SettlementReceipt =
+            serde_json::from_slice(&read_body(first_settle_response).await).unwrap();
+        assert_eq!(first_receipt.prev_settlement_receipt, Hash256::ZERO);
+
+        let mut second_inputs = baseline_inputs();
+        second_inputs.compute_units = 200;
+        let second_quote_request = QuoteRequest {
+            quote_id: "q-2".into(),
+            inputs: second_inputs,
+        };
+        let second_quote_body = serde_json::to_vec(&second_quote_request).unwrap();
+        let second_quote_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/economy/quote")
+                    .header("content-type", "application/json")
+                    .body(Body::from(second_quote_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let second_quote: SettlementQuote =
+            serde_json::from_slice(&read_body(second_quote_response).await).unwrap();
+
+        let second_settle_request = SettleRequest {
+            quote_hash_hex: format!("{}", second_quote.quote_hash),
+            context: SettlementContext {
+                receipt_id: "rec-2".into(),
+                custody_transaction_hash: Hash256::from_bytes([0x44; 32]),
+                prev_settlement_receipt: Hash256::from_bytes([0xBB; 32]),
+                now: Timestamp::new(1_020_000, 0),
+            },
+        };
+        let second_settle_body = serde_json::to_vec(&second_settle_request).unwrap();
+        let second_settle_response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/economy/settle")
+                    .header("content-type", "application/json")
+                    .body(Body::from(second_settle_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second_settle_response.status(), StatusCode::OK);
+        let second_receipt: SettlementReceipt =
+            serde_json::from_slice(&read_body(second_settle_response).await).unwrap();
+        assert_eq!(
+            second_receipt.prev_settlement_receipt,
+            first_receipt.content_hash
+        );
+    }
+
+    #[tokio::test]
     async fn settle_returns_404_for_unknown_quote() {
         let state = fresh_state();
         let app = economy_router(Arc::clone(&state));
@@ -2523,6 +2628,22 @@ mod tests {
         assert!(
             !production.contains("Signature::empty()"),
             "production economy settlement must not fabricate empty receipt signatures"
+        );
+    }
+
+    #[test]
+    fn settle_handler_derives_chain_head_from_store_before_signing_receipt() {
+        let source = include_str!("economy.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        let derivation_index = production
+            .find("context.prev_settlement_receipt = store.latest_receipt_hash()")
+            .expect("settlement handler must derive prev_settlement_receipt from the store");
+        let settle_index = production
+            .find("let receipt = settle(&stored, &context")
+            .expect("settlement handler must call settle with the derived context");
+        assert!(
+            derivation_index < settle_index,
+            "settlement handler must derive the chain head before signing the receipt"
         );
     }
 }
