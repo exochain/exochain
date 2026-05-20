@@ -210,12 +210,18 @@ impl GatewayRateLimiter {
         GatewayRateLimitOutcome::Allowed
     }
 
-    fn preflight_limit(&self, client_key: &str, now_ms: u64) -> Option<GatewayRateLimitOutcome> {
+    fn preflight_limit(
+        &mut self,
+        client_key: &str,
+        now_ms: u64,
+    ) -> Option<GatewayRateLimitOutcome> {
         if self.max_requests_per_window == 0 || self.window_ms == 0 {
             return Some(GatewayRateLimitOutcome::Limited {
                 retry_after_ms: self.window_ms.max(1),
             });
         }
+
+        self.prune_stale(now_ms);
 
         if let Some(bucket) = self.clients.get(client_key) {
             let elapsed_ms = now_ms.saturating_sub(bucket.window_start_ms);
@@ -549,6 +555,19 @@ impl AppState {
             .now()
             .map(|timestamp| timestamp.physical_ms)
             .map_err(|_| "Gateway AppState HLC exhausted while reading timestamp")
+    }
+
+    fn try_rate_limit_hlc_ms(&self) -> std::result::Result<u64, &'static str> {
+        let mut clock = self.clock.lock().map_err(
+            |_| "Gateway AppState HLC mutex poisoned while reading rate-limit timestamp",
+        )?;
+        let timestamp = clock
+            .now()
+            .map_err(|_| "Gateway AppState HLC exhausted while reading rate-limit timestamp")?;
+        timestamp
+            .physical_ms
+            .checked_add(u64::from(timestamp.logical))
+            .ok_or("Gateway AppState HLC rate-limit timestamp overflowed")
     }
 
     fn now_ms(&self) -> u64 {
@@ -3784,7 +3803,7 @@ fn spawn_gateway_rate_limit_clock_refresh(
 
 fn trusted_gateway_rate_limit_time_ms_from_hlc(state: &AppState) -> Result<u64> {
     let now_ms = state
-        .try_now_ms()
+        .try_rate_limit_hlc_ms()
         .map_err(|message| GatewayError::Internal(message.to_owned()))?;
     if now_ms == 0 {
         return Err(GatewayError::Internal(
@@ -4536,7 +4555,7 @@ async fn enforce_gateway_rate_limit(
     let preflight_now_ms = if let Some(cached_now_ms) = state.cached_trusted_rate_limit_time_ms() {
         Some(cached_now_ms)
     } else {
-        match state.try_now_ms() {
+        match state.try_rate_limit_hlc_ms() {
             Ok(now_ms) => Some(now_ms),
             Err(message) => {
                 tracing::error!(
@@ -4554,7 +4573,7 @@ async fn enforce_gateway_rate_limit(
 
     if let Some(preflight_now_ms) = preflight_now_ms {
         let preflight_outcome = match state.rate_limiter.lock() {
-            Ok(limiter) => limiter.preflight_limit(&client_key, preflight_now_ms),
+            Ok(mut limiter) => limiter.preflight_limit(&client_key, preflight_now_ms),
             Err(_) => {
                 tracing::error!("Gateway rate limiter mutex poisoned");
                 return (
@@ -5260,6 +5279,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn gateway_rate_limit_preflight_prunes_stale_clients_before_max_client_rejection() {
+        let mut limiter = GatewayRateLimiter::with_limits(10, 10, 2);
+        assert_eq!(
+            limiter.check("client-a", 10_000),
+            GatewayRateLimitOutcome::Allowed
+        );
+        assert_eq!(
+            limiter.check("client-b", 10_000),
+            GatewayRateLimitOutcome::Allowed
+        );
+
+        assert_eq!(
+            limiter.preflight_limit("client-c", 10_021),
+            None,
+            "preflight must prune stale tracked clients before rejecting a new client at the max-client boundary"
+        );
+    }
+
     #[tokio::test]
     async fn gateway_rate_limit_trusted_time_uses_cached_database_clock_sample() {
         let state = state();
@@ -5272,7 +5310,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gateway_default_hlc_rate_limit_window_does_not_reset_by_request_count() {
+    async fn gateway_default_hlc_rate_limit_window_resets_from_hlc_progress() {
         let mut state = state();
         state.rate_limiter = Arc::new(Mutex::new(GatewayRateLimiter::with_limits(1, 2, 8)));
         let app = apply_gateway_layers(
@@ -5314,7 +5352,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(third.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(third.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -5351,7 +5389,7 @@ mod tests {
             .unwrap();
         assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
 
-        wall.store(70_000, Ordering::Relaxed);
+        wall.store(70_005, Ordering::Relaxed);
 
         let third = app
             .oneshot(
@@ -5597,8 +5635,8 @@ mod tests {
             "production rate limiting must use the trusted runtime time boundary"
         );
         assert!(
-            rate_limit_middleware.contains("state.try_now_ms()"),
-            "production rate limiting may use HLC time for non-admitting preflight checks"
+            rate_limit_middleware.contains("state.try_rate_limit_hlc_ms()"),
+            "production rate limiting may use HLC logical progress for non-admitting preflight checks"
         );
         let rate_limit_time_boundary = source_between(
             production,
@@ -5612,6 +5650,10 @@ mod tests {
         assert!(
             rate_limit_time_boundary.contains("trusted_database_epoch_ms(db).await"),
             "production rate limiting may query the trusted database clock only when no cached sample is available"
+        );
+        assert!(
+            production.contains("checked_add(u64::from(timestamp.logical))"),
+            "no-DB gateway rate limiting must include HLC logical progress so buckets can reset deterministically"
         );
         let serve_entrypoint = source_between(
             production,
