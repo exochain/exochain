@@ -146,7 +146,8 @@ npm --prefix web test -- --run src/lib/auth.test.tsx
 
 ## Open PR Housekeeping
 
-GitHub still lists several older remediation PRs from May 2026 as open and
-conflicting. The current-main verification above does not depend on those PRs:
-their security effects are represented by later merged commits and PRs. They
-should be closed as superseded rather than merged into current main.
+Older remediation PRs `#565`, `#566`, `#567`, `#568`, `#569`, and `#574` through
+`#586` were still open and conflicting after later remediation commits landed.
+They were closed as superseded after current-main verification confirmed their
+security effects are represented by later merged PRs. They must not be merged
+into current main from their stale branch state.
