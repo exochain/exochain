@@ -130,28 +130,34 @@ export function validateContactPayload(data: Record<string, unknown>): ContactPa
 }
 
 export function normalizeClientAddress(value: string | null | undefined): string {
-  const firstAddress = (value || '').split(',')[0]?.trim() || '';
-  if (!firstAddress) {
+  const normalized = (value || '').trim();
+  if (!normalized || normalized.includes(',') || /\s/.test(normalized)) {
     return 'unknown';
   }
-  return firstAddress.slice(0, CONTACT_FIELD_LIMITS.clientAddress);
+  return normalized.slice(0, CONTACT_FIELD_LIMITS.clientAddress);
 }
 
 export function getContactRateLimitBuckets(input: {
   email: string;
   clientAddress: string;
 }): ContactRateLimitBucket[] {
-  return [
+  const buckets: ContactRateLimitBucket[] = [
     {
       bucket: 'contact:global:minute',
       maxRequests: 30,
       windowSeconds: 60,
     },
-    {
+  ];
+
+  if (input.clientAddress !== 'unknown') {
+    buckets.push({
       bucket: `contact:ip:${input.clientAddress}:hour`,
       maxRequests: 3,
       windowSeconds: 3600,
-    },
+    });
+  }
+
+  buckets.push(
     {
       bucket: `contact:email:${input.email}:day`,
       maxRequests: 5,
@@ -162,5 +168,7 @@ export function getContactRateLimitBuckets(input: {
       maxRequests: 200,
       windowSeconds: 86400,
     },
-  ];
+  );
+
+  return buckets;
 }
