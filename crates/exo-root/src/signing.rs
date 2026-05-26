@@ -249,7 +249,8 @@ pub fn sign_share(
 ) -> Result<RootSignatureShareOutput> {
     config.validate()?;
     ensure_rostered(config, key_package.frost_identifier, "signer")?;
-    let parsed_key: frost::keys::KeyPackage = deserialize_frost(key_package.key_package.as_slice())?;
+    let parsed_key: frost::keys::KeyPackage =
+        deserialize_frost(key_package.key_package.as_slice())?;
     let parsed_nonces: frost::round1::SigningNonces = deserialize_frost(nonces)?;
     let parsed_package: frost::SigningPackage = deserialize_frost(signing_package)?;
     let share =
@@ -448,8 +449,8 @@ mod tests {
         // Round two: each signer produces its share from its own nonces.
         let mut shares = BTreeMap::new();
         for (id, kp) in &signers {
-            let share = sign_share(&config, kp, &nonces[id], &package.signing_package)
-                .expect("share");
+            let share =
+                sign_share(&config, kp, &nonces[id], &package.signing_package).expect("share");
             shares.insert(*id, share.signature_share);
         }
 
@@ -484,6 +485,62 @@ mod tests {
         }
         let error = build_signing_package(&config, commitments, b"msg")
             .expect_err("sub-threshold commitments");
-        assert!(matches!(error, RootError::ThresholdNotMet { required: 7, supplied: 3 }));
+        assert!(matches!(
+            error,
+            RootError::ThresholdNotMet {
+                required: 7,
+                supplied: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn distributed_signing_rejects_unrostered_and_sub_threshold() {
+        let config = test_config();
+        let mut rng = StdRng::seed_from_u64(123);
+        let dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
+
+        // sign_commit rejects an unrostered key package.
+        let mut stranger = dkg.key_packages[&1].clone();
+        stranger.frost_identifier = 99;
+        assert!(matches!(
+            sign_commit(&config, &stranger, &mut rng).expect_err("unrostered commit"),
+            RootError::InvalidConfig { .. }
+        ));
+
+        // build_signing_package rejects a commitment from an unrostered signer.
+        let mut commitments = BTreeMap::new();
+        for (id, kp) in dkg.key_packages.iter().take(7) {
+            commitments.insert(*id, sign_commit(&config, kp, &mut rng).expect("commit").commitments);
+        }
+        let mut unrostered = commitments.clone();
+        let stolen = unrostered.remove(&1).expect("commitment one");
+        unrostered.insert(99, stolen);
+        assert!(matches!(
+            build_signing_package(&config, unrostered, b"msg").expect_err("unrostered commitment"),
+            RootError::InvalidConfig { .. }
+        ));
+
+        // sign_share rejects an unrostered key package.
+        let package = build_signing_package(&config, commitments, b"msg").expect("package");
+        let commit = sign_commit(&config, &dkg.key_packages[&1], &mut rng).expect("commit");
+        assert!(matches!(
+            sign_share(&config, &stranger, &commit.nonces, &package.signing_package)
+                .expect_err("unrostered share"),
+            RootError::InvalidConfig { .. }
+        ));
+
+        // aggregate_signature enforces the threshold and rosters every share.
+        assert!(matches!(
+            aggregate_signature(
+                &config,
+                &dkg.public_key_package,
+                &package.signing_package,
+                BTreeMap::new(),
+                b"msg",
+            )
+            .expect_err("sub-threshold aggregate"),
+            RootError::ThresholdNotMet { required: 7, .. }
+        ));
     }
 }

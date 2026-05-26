@@ -353,12 +353,140 @@ fn key_parts(key: &PortalEnvelopeKey) -> PortalEnvelopeKeyParts<'_> {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
+    use exo_core::{Timestamp, crypto::KeyPair};
+
     use super::*;
+    use crate::{CertifierContact, PairwiseEncryptedPayload};
+
+    fn certifier(index: u16) -> (CertifierContact, exo_core::SecretKey) {
+        let seed = [u8::try_from(index).expect("index fits"); 32];
+        let keypair = KeyPair::from_secret_bytes(seed).expect("keypair");
+        let transport_public =
+            x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(seed));
+        (
+            CertifierContact {
+                did: Did::new(&format!("did:exo:portal-query-{index:02}")).expect("did"),
+                frost_identifier: index,
+                signing_public_key: *keypair.public_key(),
+                transport_public_key: *transport_public.as_bytes(),
+            },
+            keypair.secret_key().clone(),
+        )
+    }
+
+    fn config_with_secrets() -> (GenesisCeremonyConfig, Vec<SecretKey>) {
+        let mut certifiers = Vec::new();
+        let mut secrets = Vec::new();
+        for index in 1..=crate::ROOT_GENESIS_SIGNERS {
+            let (contact, secret) = certifier(index);
+            certifiers.push(contact);
+            secrets.push(secret);
+        }
+        (
+            GenesisCeremonyConfig {
+                ceremony_id: "portal-query".into(),
+                network_id: "exochain-test".into(),
+                repo_commit: "d8927686a34bdc28ba36d53938f665685d2c4c04".into(),
+                constitution_hash: Hash256::digest(b"constitution"),
+                threshold: crate::ROOT_GENESIS_THRESHOLD,
+                max_signers: crate::ROOT_GENESIS_SIGNERS,
+                created_at: Timestamp::new(1, 0),
+                certifiers,
+            },
+            secrets,
+        )
+    }
+
+    fn encrypted_payload_bytes() -> Vec<u8> {
+        let payload = PairwiseEncryptedPayload {
+            nonce: [9u8; 24],
+            ciphertext: b"ciphertext".to_vec(),
+        };
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&payload, &mut bytes).expect("encode");
+        bytes
+    }
 
     #[test]
     fn canonical_error_conversion_is_diagnostic() {
         let error = canonical_encoding_error("portal encoding failed");
         assert!(error.to_string().contains("portal encoding failed"));
+    }
+
+    #[test]
+    fn query_filters_by_phase_kind_and_recipient() {
+        let (config, secrets) = config_with_secrets();
+        let mut store = PortalStore::new(config.clone());
+
+        // A round-one broadcast from certifier 1.
+        store
+            .submit(
+                CeremonyEnvelope::sign(
+                    CeremonyEnvelopeDraft {
+                        ceremony_id: config.ceremony_id.clone(),
+                        phase: CeremonyPhase::Round1,
+                        payload_kind: CeremonyPayloadKind::Round1Package,
+                        sender_did: config.certifiers[0].did.clone(),
+                        recipient_did: None,
+                        sequence: 0,
+                        payload_bytes: b"round1".to_vec(),
+                    },
+                    &secrets[0],
+                )
+                .expect("round1 envelope"),
+            )
+            .expect("submit round1");
+
+        // A round-two package from certifier 1 addressed to certifier 2.
+        store
+            .submit(
+                CeremonyEnvelope::sign(
+                    CeremonyEnvelopeDraft {
+                        ceremony_id: config.ceremony_id.clone(),
+                        phase: CeremonyPhase::Round2,
+                        payload_kind: CeremonyPayloadKind::Round2EncryptedPackage,
+                        sender_did: config.certifiers[0].did.clone(),
+                        recipient_did: Some(config.certifiers[1].did.clone()),
+                        sequence: 1,
+                        payload_bytes: encrypted_payload_bytes(),
+                    },
+                    &secrets[0],
+                )
+                .expect("round2 envelope"),
+            )
+            .expect("submit round2");
+
+        // No filters → both envelopes.
+        assert_eq!(store.query(None, None, None).len(), 2);
+        // Phase filter (match + non-match).
+        assert_eq!(store.query(Some(CeremonyPhase::Round1), None, None).len(), 1);
+        assert_eq!(
+            store
+                .query(Some(CeremonyPhase::Finalize), None, None)
+                .len(),
+            0
+        );
+        // Payload-kind filter.
+        assert_eq!(
+            store
+                .query(None, Some(CeremonyPayloadKind::Round2EncryptedPackage), None)
+                .len(),
+            1
+        );
+        // Recipient filter (match + non-match).
+        assert_eq!(
+            store
+                .query(Some(CeremonyPhase::Round2), None, Some(&config.certifiers[1].did))
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .query(None, None, Some(&config.certifiers[2].did))
+                .len(),
+            0
+        );
     }
 }

@@ -1233,6 +1233,127 @@ mod tests {
             .expect("portal accepts the attestation envelope");
     }
 
+    #[test]
+    fn distributed_signing_handlers_produce_a_verifiable_signature() {
+        let config = rostered_config();
+        let dkg = exo_root::run_complete_dkg(&config, &mut rand::rngs::OsRng).expect("dkg");
+        let message = b"distributed root artifact";
+        let artifact_hex = hex::encode(message);
+        let directory = tempdir().expect("temporary directory");
+        let signers: Vec<u16> = (1..=7).collect();
+
+        let mut commitments_hex = BTreeMap::new();
+        let mut nonces_hex = BTreeMap::new();
+        for id in &signers {
+            let in_path = directory.path().join(format!("commit-in-{id}.json"));
+            let out_path = directory.path().join(format!("commit-out-{id}.json"));
+            write_json(
+                &in_path,
+                &SignCommitCommandInput {
+                    config: config.clone(),
+                    key_package: dkg.key_packages[id].clone(),
+                },
+            )
+            .expect("write commit input");
+            run_sign_commit(io_args(in_path, out_path.clone())).expect("sign-commit");
+            let commit: exo_root::RootSigningCommitment =
+                read_json(&out_path).expect("read commitment");
+            commitments_hex.insert(*id, hex::encode(&commit.commitments));
+            nonces_hex.insert(*id, hex::encode(&commit.nonces));
+        }
+
+        let pkg_in = directory.path().join("pkg-in.json");
+        let pkg_out = directory.path().join("pkg-out.json");
+        write_json(
+            &pkg_in,
+            &BuildSigningPackageCommandInput {
+                config: config.clone(),
+                commitments_hex,
+                artifact_hex: artifact_hex.clone(),
+            },
+        )
+        .expect("write package input");
+        run_build_signing_package(io_args(pkg_in, pkg_out.clone())).expect("build-signing-package");
+        let package: exo_root::RootSigningPackage = read_json(&pkg_out).expect("read package");
+        let signing_package_hex = hex::encode(&package.signing_package);
+
+        let mut shares_hex = BTreeMap::new();
+        for id in &signers {
+            let in_path = directory.path().join(format!("share-in-{id}.json"));
+            let out_path = directory.path().join(format!("share-out-{id}.json"));
+            write_json(
+                &in_path,
+                &SignShareCommandInput {
+                    config: config.clone(),
+                    key_package: dkg.key_packages[id].clone(),
+                    nonces_hex: nonces_hex[id].clone(),
+                    signing_package_hex: signing_package_hex.clone(),
+                },
+            )
+            .expect("write share input");
+            run_sign_share(io_args(in_path, out_path.clone())).expect("sign-share");
+            let share: exo_root::RootSignatureShareOutput =
+                read_json(&out_path).expect("read share");
+            shares_hex.insert(*id, hex::encode(&share.signature_share));
+        }
+
+        let agg_in = directory.path().join("agg-in.json");
+        let agg_out = directory.path().join("agg-out.json");
+        write_json(
+            &agg_in,
+            &AggregateSignatureCommandInput {
+                config: config.clone(),
+                public_key_package: dkg.public_key_package.clone(),
+                signing_package_hex,
+                shares_hex,
+                artifact_hex,
+            },
+        )
+        .expect("write aggregate input");
+        run_aggregate_signature(io_args(agg_in, agg_out.clone())).expect("aggregate-signature");
+        let signature: exo_root::RootSignature = read_json(&agg_out).expect("read signature");
+        assert_eq!(signature.signer_ids.len(), 7);
+        exo_root::verify_root_signature(
+            &dkg.public_key_package.root_public_key,
+            message,
+            &signature.signature,
+        )
+        .expect("distributed signature verifies against the root key");
+    }
+
+    #[test]
+    fn encrypted_payload_codec_round_trips_through_the_cli() {
+        let payload = PairwiseEncryptedPayload {
+            nonce: [5u8; 24],
+            ciphertext: b"recipient-bound ciphertext".to_vec(),
+        };
+        let directory = tempdir().expect("temporary directory");
+        let enc_in = directory.path().join("encode-in.json");
+        let enc_out = directory.path().join("encode-out.json");
+        write_json(
+            &enc_in,
+            &EncodeEncryptedPayloadCommandInput {
+                encrypted: payload.clone(),
+            },
+        )
+        .expect("write encode input");
+        run_encode_encrypted_payload(io_args(enc_in, enc_out.clone())).expect("encode");
+        let encoded: PayloadBytesOutput = read_json(&enc_out).expect("read encoded");
+
+        let dec_in = directory.path().join("decode-in.json");
+        let dec_out = directory.path().join("decode-out.json");
+        write_json(
+            &dec_in,
+            &DecodeEncryptedPayloadCommandInput {
+                payload_bytes: encoded.payload_bytes,
+            },
+        )
+        .expect("write decode input");
+        run_decode_encrypted_payload(io_args(dec_in, dec_out.clone())).expect("decode");
+        let decoded: PairwiseEncryptedPayload = read_json(&dec_out).expect("read decoded");
+        assert_eq!(decoded, payload);
+    }
+
     #[tokio::test]
     async fn submit_envelope_posts_signed_envelope_to_running_portal() {
         let config = rostered_config();

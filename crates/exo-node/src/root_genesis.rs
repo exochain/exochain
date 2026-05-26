@@ -127,7 +127,10 @@ async fn handle_portal_envelopes_query(
         None => None,
     };
     let payload_kind = match &query.payload_kind {
-        Some(value) => Some(parse_query_enum::<CeremonyPayloadKind>(value, "payload_kind")?),
+        Some(value) => Some(parse_query_enum::<CeremonyPayloadKind>(
+            value,
+            "payload_kind",
+        )?),
         None => None,
     };
     let recipient = match &query.recipient_did {
