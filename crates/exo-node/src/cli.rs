@@ -242,6 +242,31 @@ pub enum GenesisCommand {
     /// Open a sealed certifier share artifact.
     #[command(name = "unseal-share")]
     UnsealShare(GenesisIoArgs),
+
+    /// Sign a ceremony portal envelope ready for submission.
+    #[command(name = "sign-envelope")]
+    SignEnvelope(GenesisSignEnvelopeArgs),
+
+    /// Encrypt a DKG round-two payload for exactly one recipient.
+    #[command(name = "encrypt-pairwise")]
+    EncryptPairwise(GenesisIoArgs),
+
+    /// Decrypt a recipient-bound DKG round-two payload.
+    #[command(name = "decrypt-pairwise")]
+    DecryptPairwise(GenesisIoArgs),
+
+    /// Emit the exact root-artifact bytes that `sign-root-artifact` must sign.
+    #[command(name = "emit-artifact-bytes")]
+    EmitArtifactBytes(GenesisIoArgs),
+
+    /// Build a PROVISIONAL round-one set attestation payload (shape pending
+    /// ratification — see command long help).
+    #[command(name = "build-round1-attestation")]
+    BuildRound1Attestation(GenesisIoArgs),
+
+    /// Submit a signed envelope to a running root genesis portal.
+    #[command(name = "submit-envelope")]
+    SubmitEnvelope(GenesisSubmitEnvelopeArgs),
 }
 
 #[derive(Subcommand)]
@@ -334,6 +359,42 @@ pub struct GenesisIoArgs {
     pub output: Option<PathBuf>,
 }
 
+#[derive(Args)]
+/// Sign a ceremony portal envelope.
+///
+/// The 32-byte Ed25519 signing secret is supplied as a hex flag rather than
+/// inside the envelope draft so the draft file never carries certifier key
+/// material. The secret is visible in the process table while the command
+/// runs; run certifier signing on an isolated, single-operator host.
+pub struct GenesisSignEnvelopeArgs {
+    /// Envelope draft JSON path (ceremony_id, phase, payload_kind, sender_did,
+    /// recipient_did, sequence, payload_bytes).
+    #[arg(long)]
+    pub input: Option<PathBuf>,
+
+    /// Signed envelope output path. Omit to print to stdout.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+
+    /// 32-byte Ed25519 signing secret as hex (from `certifier-NN.private.json`).
+    #[arg(long)]
+    pub signing_key_hex: String,
+}
+
+#[derive(Args)]
+/// Submit a signed envelope to a running portal.
+pub struct GenesisSubmitEnvelopeArgs {
+    /// Portal base URL (for example `http://127.0.0.1:3017`). The
+    /// `/api/v1/root-genesis/portal/envelopes` path is appended automatically
+    /// when it is not already present.
+    #[arg(long)]
+    pub portal_url: String,
+
+    /// Signed envelope JSON path to POST.
+    #[arg(long)]
+    pub input: Option<PathBuf>,
+}
+
 #[cfg(test)]
 mod tests {
     use clap::CommandFactory;
@@ -370,6 +431,12 @@ mod tests {
             "verify-bundle",
             "seal-share",
             "unseal-share",
+            "sign-envelope",
+            "encrypt-pairwise",
+            "decrypt-pairwise",
+            "emit-artifact-bytes",
+            "build-round1-attestation",
+            "submit-envelope",
         ] {
             assert!(help.contains(command), "missing genesis command {command}");
         }

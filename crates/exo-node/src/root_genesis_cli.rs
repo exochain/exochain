@@ -2,11 +2,13 @@
 
 use std::{collections::BTreeMap, fs, io::Write, net::SocketAddr};
 
-use exo_core::{Did, Hash256, Timestamp, crypto::KeyPair};
+use exo_core::{Did, Hash256, SecretKey, Timestamp, crypto::KeyPair};
 use exo_root::{
-    CertifierContact, GenesisCeremonyConfig, RootIssuerDelegation, RootKeyPackage,
-    RootPublicKeyPackage, RootTrustBundle, assemble_root_bundle, dkg_finalize_participant,
-    dkg_round1, dkg_round2, seal_share, threshold_sign, unseal_share, verify_root_bundle,
+    CeremonyEnvelope, CeremonyEnvelopeDraft, CeremonyPayloadKind, CeremonyPhase, CertifierContact,
+    GenesisCeremonyConfig, PairwiseEncryptedPayload, RootIssuerDelegation, RootKeyPackage,
+    RootPublicKeyPackage, RootTrustBundle, assemble_root_bundle, decrypt_pairwise_payload,
+    dkg_finalize_participant, dkg_round1, dkg_round2, encrypt_pairwise_payload, seal_share,
+    threshold_sign, unseal_share, verify_root_bundle,
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -16,9 +18,22 @@ use crate::{
     cli::{
         GenesisCeremonyCommand, GenesisCeremonyInitArgs, GenesisCertifierCommand,
         GenesisCertifierInitArgs, GenesisCommand, GenesisIoArgs, GenesisPortalArgs,
+        GenesisSignEnvelopeArgs, GenesisSubmitEnvelopeArgs,
     },
     root_genesis::{RootGenesisApiState, root_genesis_router},
 };
+
+/// Portal HTTP path that accepts signed ceremony envelopes.
+const PORTAL_ENVELOPES_PATH: &str = "/api/v1/root-genesis/portal/envelopes";
+
+/// Domain separator for the PROVISIONAL round-one set attestation statement.
+///
+/// The canonical shape of a `Round1SetAttestation` payload is not defined or
+/// validated anywhere in `exo-root` (the portal treats the bytes as opaque).
+/// This encoding is a deterministic best-effort proposal and is NOT ratified;
+/// the `V0_UNRATIFIED` suffix must change once the exo-root maintainer confirms
+/// the intended shape. See `run_build_round1_attestation`.
+const ROUND1_SET_ATTESTATION_DOMAIN: &str = "EXOCHAIN_ROOT_ROUND1_SET_ATTESTATION_V0_UNRATIFIED";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PrivateCertifierMaterial {
@@ -94,6 +109,86 @@ struct HexBytesOutput {
     bytes_hex: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SignEnvelopeCommandInput {
+    ceremony_id: String,
+    phase: CeremonyPhase,
+    payload_kind: CeremonyPayloadKind,
+    sender_did: Did,
+    #[serde(default)]
+    recipient_did: Option<Did>,
+    sequence: u64,
+    payload_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct EncryptPairwiseCommandInput {
+    plaintext: Vec<u8>,
+    sender_transport_secret_hex: String,
+    recipient_transport_pubkey_hex: String,
+    associated_data_hex: String,
+    nonce_hex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DecryptPairwiseCommandInput {
+    encrypted: PairwiseEncryptedPayload,
+    recipient_transport_secret_hex: String,
+    sender_transport_pubkey_hex: String,
+    associated_data_hex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct EmitArtifactBytesCommandInput {
+    config: GenesisCeremonyConfig,
+    public_key_package: RootPublicKeyPackage,
+    issuer_delegation: RootIssuerDelegation,
+    transcript_hash_hex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct BuildRound1AttestationCommandInput {
+    round1_envelopes: Vec<CeremonyEnvelope>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ArtifactBytesOutput {
+    artifact_hex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PlaintextOutput {
+    plaintext: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Round1AttestationOutput {
+    /// Bytes to place in the `payload_bytes` field of a `Round1SetAttestation`
+    /// envelope (then sign with `sign-envelope`). PROVISIONAL encoding.
+    payload_hex: String,
+    /// blake3 of `payload_hex` — a convenience digest of the attested set.
+    attestation_hash_hex: String,
+    /// Number of round-one packages bound by this attestation.
+    entry_count: usize,
+}
+
+/// One `(sender, round1-package-hash)` binding inside the provisional
+/// round-one set attestation statement, canonicalised in sorted order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct Round1SetAttestationEntry {
+    sender_did: Did,
+    round1_package_hash: Hash256,
+}
+
+/// Provisional canonical statement bound by a `Round1SetAttestation` envelope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct Round1SetAttestationStatement<'a> {
+    domain: &'static str,
+    ceremony_id: &'a str,
+    entry_count: usize,
+    entries: &'a [Round1SetAttestationEntry],
+}
+
 type BTreeMapStringBytes = BTreeMap<u16, String>;
 
 /// Execute a root genesis CLI command.
@@ -110,6 +205,12 @@ pub async fn run_genesis_command(command: GenesisCommand) -> anyhow::Result<()> 
         GenesisCommand::VerifyBundle(args) => run_verify_bundle(args),
         GenesisCommand::SealShare(args) => run_seal_share(args),
         GenesisCommand::UnsealShare(args) => run_unseal_share(args),
+        GenesisCommand::SignEnvelope(args) => run_sign_envelope(args),
+        GenesisCommand::EncryptPairwise(args) => run_encrypt_pairwise(args),
+        GenesisCommand::DecryptPairwise(args) => run_decrypt_pairwise(args),
+        GenesisCommand::EmitArtifactBytes(args) => run_emit_artifact_bytes(args),
+        GenesisCommand::BuildRound1Attestation(args) => run_build_round1_attestation(args),
+        GenesisCommand::SubmitEnvelope(args) => run_submit_envelope(args).await,
     }
 }
 
@@ -270,6 +371,168 @@ fn run_unseal_share(args: GenesisIoArgs) -> anyhow::Result<()> {
     )
 }
 
+fn run_sign_envelope(args: GenesisSignEnvelopeArgs) -> anyhow::Result<()> {
+    let io = GenesisIoArgs {
+        input: args.input.clone(),
+        output: args.output.clone(),
+    };
+    let input: SignEnvelopeCommandInput = read_json(&required_input(&io)?)?;
+    let signing_secret = SecretKey::from_bytes(decode_fixed_32(&args.signing_key_hex)?);
+    let draft = CeremonyEnvelopeDraft {
+        ceremony_id: input.ceremony_id,
+        phase: input.phase,
+        payload_kind: input.payload_kind,
+        sender_did: input.sender_did,
+        recipient_did: input.recipient_did,
+        sequence: input.sequence,
+        payload_bytes: input.payload_bytes,
+    };
+    let envelope = CeremonyEnvelope::sign(draft, &signing_secret)?;
+    write_output(&io, &envelope)
+}
+
+fn run_encrypt_pairwise(args: GenesisIoArgs) -> anyhow::Result<()> {
+    let input: EncryptPairwiseCommandInput = read_json(&required_input(&args)?)?;
+    let sender_secret = decode_fixed_32(&input.sender_transport_secret_hex)?;
+    let recipient_public = decode_fixed_32(&input.recipient_transport_pubkey_hex)?;
+    let nonce = decode_fixed_24(&input.nonce_hex)?;
+    let associated_data = decode_hex(&input.associated_data_hex)?;
+    let encrypted = encrypt_pairwise_payload(
+        &sender_secret,
+        &recipient_public,
+        input.plaintext.as_slice(),
+        associated_data.as_slice(),
+        &nonce,
+    )?;
+    write_output(&args, &encrypted)
+}
+
+fn run_decrypt_pairwise(args: GenesisIoArgs) -> anyhow::Result<()> {
+    let input: DecryptPairwiseCommandInput = read_json(&required_input(&args)?)?;
+    let recipient_secret = decode_fixed_32(&input.recipient_transport_secret_hex)?;
+    let sender_public = decode_fixed_32(&input.sender_transport_pubkey_hex)?;
+    let associated_data = decode_hex(&input.associated_data_hex)?;
+    let plaintext = decrypt_pairwise_payload(
+        &recipient_secret,
+        &sender_public,
+        &input.encrypted,
+        associated_data.as_slice(),
+    )?;
+    write_secret_output(&args, &PlaintextOutput { plaintext })
+}
+
+fn run_emit_artifact_bytes(args: GenesisIoArgs) -> anyhow::Result<()> {
+    let input: EmitArtifactBytesCommandInput = read_json(&required_input(&args)?)?;
+    let transcript_hash = parse_hash_hex(&input.transcript_hash_hex)?;
+    let artifact = input.issuer_delegation.root_artifact_payload(
+        &input.config,
+        &input.public_key_package,
+        transcript_hash,
+    )?;
+    write_output(
+        &args,
+        &ArtifactBytesOutput {
+            artifact_hex: hex::encode(artifact),
+        },
+    )
+}
+
+/// Build a PROVISIONAL round-one set attestation payload.
+///
+/// `exo-root` defines no canonical shape for `Round1SetAttestation` payloads —
+/// the portal accepts the bytes opaquely (see `portal.rs::validate_phase_policy`,
+/// which only checks phase/kind/recipient, never content). This command emits a
+/// deterministic statement binding the sorted set of
+/// `(sender_did, round1_package_hash)` pairs taken from the round-one
+/// broadcast envelopes, domain-separated by [`ROUND1_SET_ATTESTATION_DOMAIN`]
+/// and CBOR-encoded with the same canonical encoder the library uses for its
+/// own signing payloads.
+///
+/// This encoding is UNRATIFIED. Do not rely on it for the production ceremony
+/// until the exo-root maintainer confirms the intended shape; if they choose a
+/// different one (for example a bare digest, or keying on `frost_identifier`
+/// instead of `sender_did`), only this function and the domain tag change.
+fn run_build_round1_attestation(args: GenesisIoArgs) -> anyhow::Result<()> {
+    let input: BuildRound1AttestationCommandInput = read_json(&required_input(&args)?)?;
+    if input.round1_envelopes.is_empty() {
+        anyhow::bail!("round1 set must contain at least one envelope");
+    }
+    let ceremony_id = input.round1_envelopes[0].ceremony_id.clone();
+    let mut entries = Vec::with_capacity(input.round1_envelopes.len());
+    for envelope in &input.round1_envelopes {
+        if envelope.ceremony_id != ceremony_id {
+            anyhow::bail!("round1 set mixes ceremony identifiers");
+        }
+        if envelope.phase != CeremonyPhase::Round1
+            || envelope.payload_kind != CeremonyPayloadKind::Round1Package
+        {
+            anyhow::bail!("round1 set contains a non-Round1Package envelope");
+        }
+        entries.push(Round1SetAttestationEntry {
+            sender_did: envelope.sender_did.clone(),
+            round1_package_hash: envelope.payload_hash,
+        });
+    }
+    entries.sort_by(|left, right| left.sender_did.cmp(&right.sender_did));
+    for pair in entries.windows(2) {
+        if pair[0].sender_did == pair[1].sender_did {
+            anyhow::bail!(
+                "round1 set contains duplicate sender {}",
+                pair[0].sender_did
+            );
+        }
+    }
+    let statement = Round1SetAttestationStatement {
+        domain: ROUND1_SET_ATTESTATION_DOMAIN,
+        ceremony_id: &ceremony_id,
+        entry_count: entries.len(),
+        entries: entries.as_slice(),
+    };
+    let mut payload = Vec::new();
+    ciborium::into_writer(&statement, &mut payload)
+        .map_err(|error| anyhow::anyhow!("round1 attestation encoding failed: {error}"))?;
+    let attestation_hash = Hash256::digest(payload.as_slice());
+    write_output(
+        &args,
+        &Round1AttestationOutput {
+            payload_hex: hex::encode(payload.as_slice()),
+            attestation_hash_hex: hex::encode(attestation_hash.as_bytes()),
+            entry_count: entries.len(),
+        },
+    )
+}
+
+async fn run_submit_envelope(args: GenesisSubmitEnvelopeArgs) -> anyhow::Result<()> {
+    let io = GenesisIoArgs {
+        input: args.input.clone(),
+        output: None,
+    };
+    let envelope: CeremonyEnvelope = read_json(&required_input(&io)?)?;
+    let url = portal_envelopes_url(&args.portal_url);
+    let response = reqwest::Client::new()
+        .post(url)
+        .json(&envelope)
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    println!("{body}");
+    if !status.is_success() {
+        anyhow::bail!("portal rejected envelope: HTTP {status}");
+    }
+    Ok(())
+}
+
+/// Append the portal envelopes path to a base URL unless it is already present.
+fn portal_envelopes_url(base: &str) -> String {
+    let trimmed = base.trim_end_matches('/');
+    if trimmed.ends_with(PORTAL_ENVELOPES_PATH) {
+        trimmed.to_owned()
+    } else {
+        format!("{trimmed}{PORTAL_ENVELOPES_PATH}")
+    }
+}
+
 fn parse_hash_hex(value: &str) -> anyhow::Result<Hash256> {
     let bytes = hex::decode(value)?;
     if bytes.len() != 32 {
@@ -368,6 +631,16 @@ fn decode_fixed_24(value: &str) -> anyhow::Result<[u8; 24]> {
     Ok(result)
 }
 
+fn decode_fixed_32(value: &str) -> anyhow::Result<[u8; 32]> {
+    let bytes = decode_hex(value)?;
+    if bytes.len() != 32 {
+        anyhow::bail!("expected 32 bytes");
+    }
+    let mut result = [0u8; 32];
+    result.copy_from_slice(&bytes);
+    Ok(result)
+}
+
 fn decode_package_map(packages: BTreeMapStringBytes) -> anyhow::Result<BTreeMap<u16, Vec<u8>>> {
     let mut decoded = BTreeMap::new();
     for (identifier, package_hex) in packages {
@@ -380,7 +653,9 @@ fn decode_package_map(packages: BTreeMapStringBytes) -> anyhow::Result<BTreeMap<
 mod tests {
     use std::path::PathBuf;
 
+    use exo_authority::permission::Permission;
     use exo_core::PublicKey;
+    use exo_root::PortalStore;
     use tempfile::tempdir;
 
     use super::*;
@@ -400,6 +675,62 @@ mod tests {
             input: Some(input),
             output: Some(output),
         }
+    }
+
+    /// Build a fully valid 13-certifier config whose signing keys are derived
+    /// from `[index; 32]`, so envelopes signed with that secret verify against
+    /// the rostered public key (unlike the lighter `certifier` helper above).
+    fn rostered_config() -> GenesisCeremonyConfig {
+        let certifiers = (1..=13u16)
+            .map(|index| {
+                let seed = u8::try_from(index).expect("index fits u8");
+                let keypair = KeyPair::from_secret_bytes([seed; 32]).expect("valid keypair");
+                let transport_secret = [seed.wrapping_add(64); 32];
+                let transport_public = X25519PublicKey::from(&StaticSecret::from(transport_secret));
+                CertifierContact {
+                    did: Did::new(&format!("did:exo:root-cli-signed-{index:02}")).expect("did"),
+                    frost_identifier: index,
+                    signing_public_key: *keypair.public_key(),
+                    transport_public_key: *transport_public.as_bytes(),
+                }
+            })
+            .collect();
+        let config = GenesisCeremonyConfig {
+            ceremony_id: "root-cli-signed-ceremony".to_owned(),
+            network_id: "exo-mainnet".to_owned(),
+            repo_commit: "d8927686a34bdc28ba36d53938f665685d2c4c04".to_owned(),
+            constitution_hash: Hash256::digest(b"constitution"),
+            threshold: exo_root::ROOT_GENESIS_THRESHOLD,
+            max_signers: exo_root::ROOT_GENESIS_SIGNERS,
+            created_at: Timestamp::new(1_785_000_000_000, 0),
+            certifiers,
+        };
+        config.validate().expect("rostered config is valid");
+        config
+    }
+
+    fn round1_broadcast(
+        config: &GenesisCeremonyConfig,
+        certifier_index: usize,
+        sequence: u64,
+        payload_bytes: Vec<u8>,
+    ) -> CeremonyEnvelope {
+        let signer = &config.certifiers[certifier_index];
+        let seed = u8::try_from(certifier_index + 1).expect("index fits u8");
+        let secret = SecretKey::from_bytes([seed; 32]);
+        CeremonyEnvelope::sign(
+            CeremonyEnvelopeDraft {
+                ceremony_id: config.ceremony_id.clone(),
+                phase: CeremonyPhase::Round1,
+                payload_kind: CeremonyPayloadKind::Round1Package,
+                sender_did: signer.did.clone(),
+                recipient_did: None,
+                sequence,
+                payload_bytes,
+            },
+            &secret,
+        )
+        .expect("signed round1 envelope")
     }
 
     #[test]
@@ -531,6 +862,268 @@ mod tests {
         let mut packages = BTreeMap::new();
         packages.insert(7, "not-hex".to_owned());
         assert!(decode_package_map(packages).is_err());
+    }
+
+    #[test]
+    fn sign_envelope_output_is_accepted_by_the_portal() {
+        let config = rostered_config();
+        let signer = config.certifiers[0].clone();
+        let directory = tempdir().expect("temporary directory");
+        let input_path = directory.path().join("draft.json");
+        let output_path = directory.path().join("envelope.json");
+        write_json(
+            &input_path,
+            &SignEnvelopeCommandInput {
+                ceremony_id: config.ceremony_id.clone(),
+                phase: CeremonyPhase::Round1,
+                payload_kind: CeremonyPayloadKind::Round1Package,
+                sender_did: signer.did.clone(),
+                recipient_did: None,
+                sequence: 1,
+                payload_bytes: b"round1 package bytes".to_vec(),
+            },
+        )
+        .expect("write draft");
+
+        run_sign_envelope(GenesisSignEnvelopeArgs {
+            input: Some(input_path),
+            output: Some(output_path.clone()),
+            signing_key_hex: hex::encode([1u8; 32]),
+        })
+        .expect("sign envelope");
+
+        let envelope: CeremonyEnvelope = read_json(&output_path).expect("read envelope");
+        assert_eq!(envelope.sender_did, signer.did);
+        let mut store = PortalStore::new(config);
+        store
+            .submit(envelope)
+            .expect("portal accepts the signed envelope");
+    }
+
+    #[test]
+    fn encrypt_then_decrypt_pairwise_round_trips() {
+        let directory = tempdir().expect("temporary directory");
+        let sender_secret = [5u8; 32];
+        let recipient_secret = [6u8; 32];
+        let sender_public = *X25519PublicKey::from(&StaticSecret::from(sender_secret)).as_bytes();
+        let recipient_public =
+            *X25519PublicKey::from(&StaticSecret::from(recipient_secret)).as_bytes();
+        let associated_data = b"exo-root-round2";
+        let nonce = [7u8; 24];
+        let plaintext = b"round2 secret package".to_vec();
+
+        let encrypt_in = directory.path().join("encrypt-in.json");
+        let encrypt_out = directory.path().join("encrypt-out.json");
+        write_json(
+            &encrypt_in,
+            &EncryptPairwiseCommandInput {
+                plaintext: plaintext.clone(),
+                sender_transport_secret_hex: hex::encode(sender_secret),
+                recipient_transport_pubkey_hex: hex::encode(recipient_public),
+                associated_data_hex: hex::encode(associated_data),
+                nonce_hex: hex::encode(nonce),
+            },
+        )
+        .expect("write encrypt input");
+        run_encrypt_pairwise(io_args(encrypt_in, encrypt_out.clone())).expect("encrypt pairwise");
+        let encrypted: PairwiseEncryptedPayload =
+            read_json(&encrypt_out).expect("read encrypted payload");
+        assert_eq!(encrypted.nonce, nonce);
+
+        let decrypt_in = directory.path().join("decrypt-in.json");
+        let decrypt_out = directory.path().join("decrypt-out.json");
+        write_json(
+            &decrypt_in,
+            &DecryptPairwiseCommandInput {
+                encrypted,
+                recipient_transport_secret_hex: hex::encode(recipient_secret),
+                sender_transport_pubkey_hex: hex::encode(sender_public),
+                associated_data_hex: hex::encode(associated_data),
+            },
+        )
+        .expect("write decrypt input");
+        run_decrypt_pairwise(io_args(decrypt_in, decrypt_out.clone())).expect("decrypt pairwise");
+        let opened: PlaintextOutput = read_json(&decrypt_out).expect("read plaintext");
+        assert_eq!(opened.plaintext, plaintext);
+    }
+
+    #[test]
+    fn decrypt_pairwise_refuses_to_print_plaintext_to_stdout() {
+        let directory = tempdir().expect("temporary directory");
+        let sender_secret = [5u8; 32];
+        let recipient_secret = [6u8; 32];
+        let sender_public = *X25519PublicKey::from(&StaticSecret::from(sender_secret)).as_bytes();
+        let recipient_public =
+            *X25519PublicKey::from(&StaticSecret::from(recipient_secret)).as_bytes();
+        let encrypted = encrypt_pairwise_payload(
+            &sender_secret,
+            &recipient_public,
+            b"round2 secret package",
+            b"exo-root-round2",
+            &[7u8; 24],
+        )
+        .expect("encrypted");
+        let decrypt_in = directory.path().join("decrypt-in.json");
+        write_json(
+            &decrypt_in,
+            &DecryptPairwiseCommandInput {
+                encrypted,
+                recipient_transport_secret_hex: hex::encode(recipient_secret),
+                sender_transport_pubkey_hex: hex::encode(sender_public),
+                associated_data_hex: hex::encode(b"exo-root-round2"),
+            },
+        )
+        .expect("write decrypt input");
+
+        let error = run_decrypt_pairwise(GenesisIoArgs {
+            input: Some(decrypt_in),
+            output: None,
+        })
+        .expect_err("decrypted round-two material must require --output");
+        assert!(error.to_string().contains("--output is required"));
+    }
+
+    #[test]
+    fn emit_artifact_bytes_matches_the_library_signing_payload() {
+        let config = rostered_config();
+        let public_key_package = RootPublicKeyPackage {
+            public_key_package: b"public-key-package-bytes".to_vec(),
+            root_public_key: b"root-public-key".to_vec(),
+            verifying_shares: (1..=13u16)
+                .map(|id| (id, vec![u8::try_from(id).expect("id fits u8")]))
+                .collect(),
+        };
+        let delegation = RootIssuerDelegation {
+            issuer_did: Did::new("did:exo:avc-issuer").expect("valid did"),
+            issuer_public_key: PublicKey::from_bytes([0x44; 32]),
+            granted_permissions: vec![Permission::Govern, Permission::Delegate],
+            effective_at: Timestamp::new(1_785_000_010_000, 0),
+            expires_at: None,
+            purpose: "Delegate operational AVC issuing authority".to_owned(),
+        };
+        let transcript_hash = Hash256::digest(b"transcript");
+        let expected = delegation
+            .root_artifact_payload(&config, &public_key_package, transcript_hash)
+            .expect("library artifact payload");
+
+        let directory = tempdir().expect("temporary directory");
+        let input_path = directory.path().join("artifact-in.json");
+        let output_path = directory.path().join("artifact-out.json");
+        write_json(
+            &input_path,
+            &EmitArtifactBytesCommandInput {
+                config: config.clone(),
+                public_key_package: public_key_package.clone(),
+                issuer_delegation: delegation.clone(),
+                transcript_hash_hex: hex::encode(transcript_hash.as_bytes()),
+            },
+        )
+        .expect("write artifact input");
+        run_emit_artifact_bytes(io_args(input_path, output_path.clone()))
+            .expect("emit artifact bytes");
+        let output: ArtifactBytesOutput = read_json(&output_path).expect("read artifact output");
+        assert_eq!(output.artifact_hex, hex::encode(expected.as_slice()));
+    }
+
+    #[test]
+    fn build_round1_attestation_is_order_independent_and_portal_submittable() {
+        let config = rostered_config();
+        let envelopes = vec![
+            round1_broadcast(&config, 0, 1, b"round1-a".to_vec()),
+            round1_broadcast(&config, 1, 1, b"round1-b".to_vec()),
+            round1_broadcast(&config, 2, 1, b"round1-c".to_vec()),
+        ];
+
+        let directory = tempdir().expect("temporary directory");
+        let forward_in = directory.path().join("attest-forward-in.json");
+        let forward_out = directory.path().join("attest-forward-out.json");
+        write_json(
+            &forward_in,
+            &BuildRound1AttestationCommandInput {
+                round1_envelopes: envelopes.clone(),
+            },
+        )
+        .expect("write forward input");
+        run_build_round1_attestation(io_args(forward_in, forward_out.clone()))
+            .expect("build attestation (forward)");
+
+        let mut reversed = envelopes;
+        reversed.reverse();
+        let reversed_in = directory.path().join("attest-reversed-in.json");
+        let reversed_out = directory.path().join("attest-reversed-out.json");
+        write_json(
+            &reversed_in,
+            &BuildRound1AttestationCommandInput {
+                round1_envelopes: reversed,
+            },
+        )
+        .expect("write reversed input");
+        run_build_round1_attestation(io_args(reversed_in, reversed_out.clone()))
+            .expect("build attestation (reversed)");
+
+        let forward: Round1AttestationOutput =
+            read_json(&forward_out).expect("read forward output");
+        let reversed: Round1AttestationOutput =
+            read_json(&reversed_out).expect("read reversed output");
+        assert_eq!(
+            forward, reversed,
+            "attestation must be canonical regardless of input order"
+        );
+        assert_eq!(forward.entry_count, 3);
+
+        let payload_bytes = hex::decode(forward.payload_hex.as_str()).expect("hex payload");
+        let attestation_secret = SecretKey::from_bytes([1u8; 32]);
+        let attestation = CeremonyEnvelope::sign(
+            CeremonyEnvelopeDraft {
+                ceremony_id: config.ceremony_id.clone(),
+                phase: CeremonyPhase::Round1SetAttestation,
+                payload_kind: CeremonyPayloadKind::Round1SetAttestation,
+                sender_did: config.certifiers[0].did.clone(),
+                recipient_did: None,
+                sequence: 100,
+                payload_bytes,
+            },
+            &attestation_secret,
+        )
+        .expect("sign attestation envelope");
+        let mut store = PortalStore::new(config);
+        store
+            .submit(attestation)
+            .expect("portal accepts the attestation envelope");
+    }
+
+    #[tokio::test]
+    async fn submit_envelope_posts_signed_envelope_to_running_portal() {
+        let config = rostered_config();
+        let envelope = round1_broadcast(&config, 0, 1, b"round1 package bytes".to_vec());
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind portal listener");
+        let address = listener.local_addr().expect("portal address");
+        let router = root_genesis_router(RootGenesisApiState::new(config));
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.expect("serve portal");
+        });
+
+        let directory = tempdir().expect("temporary directory");
+        let input_path = directory.path().join("envelope.json");
+        write_json(&input_path, &envelope).expect("write envelope");
+
+        run_submit_envelope(GenesisSubmitEnvelopeArgs {
+            portal_url: format!("http://{address}"),
+            input: Some(input_path),
+        })
+        .await
+        .expect("portal accepts submitted envelope");
+    }
+
+    #[test]
+    fn portal_envelopes_url_appends_path_at_most_once() {
+        let expected = "http://127.0.0.1:3017/api/v1/root-genesis/portal/envelopes";
+        assert_eq!(portal_envelopes_url("http://127.0.0.1:3017"), expected);
+        assert_eq!(portal_envelopes_url("http://127.0.0.1:3017/"), expected);
+        assert_eq!(portal_envelopes_url(expected), expected);
     }
 
     #[cfg(unix)]
