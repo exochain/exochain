@@ -461,24 +461,33 @@ mod tests {
         // No filters → both envelopes.
         assert_eq!(store.query(None, None, None).len(), 2);
         // Phase filter (match + non-match).
-        assert_eq!(store.query(Some(CeremonyPhase::Round1), None, None).len(), 1);
         assert_eq!(
-            store
-                .query(Some(CeremonyPhase::Finalize), None, None)
-                .len(),
+            store.query(Some(CeremonyPhase::Round1), None, None).len(),
+            1
+        );
+        assert_eq!(
+            store.query(Some(CeremonyPhase::Finalize), None, None).len(),
             0
         );
         // Payload-kind filter.
         assert_eq!(
             store
-                .query(None, Some(CeremonyPayloadKind::Round2EncryptedPackage), None)
+                .query(
+                    None,
+                    Some(CeremonyPayloadKind::Round2EncryptedPackage),
+                    None
+                )
                 .len(),
             1
         );
         // Recipient filter (match + non-match).
         assert_eq!(
             store
-                .query(Some(CeremonyPhase::Round2), None, Some(&config.certifiers[1].did))
+                .query(
+                    Some(CeremonyPhase::Round2),
+                    None,
+                    Some(&config.certifiers[1].did)
+                )
                 .len(),
             1
         );

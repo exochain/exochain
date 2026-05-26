@@ -511,7 +511,12 @@ mod tests {
         // build_signing_package rejects a commitment from an unrostered signer.
         let mut commitments = BTreeMap::new();
         for (id, kp) in dkg.key_packages.iter().take(7) {
-            commitments.insert(*id, sign_commit(&config, kp, &mut rng).expect("commit").commitments);
+            commitments.insert(
+                *id,
+                sign_commit(&config, kp, &mut rng)
+                    .expect("commit")
+                    .commitments,
+            );
         }
         let mut unrostered = commitments.clone();
         let stolen = unrostered.remove(&1).expect("commitment one");

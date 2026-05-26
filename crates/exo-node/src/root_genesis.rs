@@ -312,6 +312,16 @@ mod tests {
             .expect("response")
     }
 
+    async fn count_envelopes(response: axum::response::Response) -> usize {
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .expect("body bytes");
+        let envelopes: Vec<CeremonyEnvelope> =
+            serde_json::from_slice(&body).expect("envelopes json");
+        envelopes.len()
+    }
+
     #[tokio::test]
     async fn portal_query_returns_only_matching_envelopes() {
         let (config, secret) = config();
@@ -323,26 +333,60 @@ mod tests {
         )
         .await;
         assert_eq!(accepted.status(), StatusCode::CREATED);
+        let recipient = config.certifiers[1].did.to_string();
+        let other = config.certifiers[2].did.to_string();
 
-        // The submitted envelope is a Round2 package; it matches a Round2 query.
-        let matched = get_envelopes(router.clone(), "phase=Round2").await;
-        assert_eq!(matched.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(matched.into_body(), 1 << 20)
-            .await
-            .expect("body bytes");
-        let envelopes: Vec<CeremonyEnvelope> =
-            serde_json::from_slice(&body).expect("envelopes json");
-        assert_eq!(envelopes.len(), 1);
-        assert_eq!(envelopes[0].phase, CeremonyPhase::Round2);
+        // The submitted envelope is a Round2 package addressed to certifier 2.
+        assert_eq!(
+            count_envelopes(get_envelopes(router.clone(), "phase=Round2").await).await,
+            1
+        );
+        assert_eq!(
+            count_envelopes(get_envelopes(router.clone(), "phase=Round1").await).await,
+            0
+        );
+        assert_eq!(
+            count_envelopes(
+                get_envelopes(router.clone(), "payload_kind=Round2EncryptedPackage").await
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            count_envelopes(
+                get_envelopes(router.clone(), &format!("recipient_did={recipient}")).await
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            count_envelopes(get_envelopes(router, &format!("recipient_did={other}")).await).await,
+            0
+        );
+    }
 
-        // A Round1 query matches nothing that was submitted.
-        let empty = get_envelopes(router, "phase=Round1").await;
-        let body = axum::body::to_bytes(empty.into_body(), 1 << 20)
-            .await
-            .expect("body bytes");
-        let envelopes: Vec<CeremonyEnvelope> =
-            serde_json::from_slice(&body).expect("envelopes json");
-        assert!(envelopes.is_empty());
+    #[tokio::test]
+    async fn portal_query_rejects_invalid_filters() {
+        let (config, _secret) = config();
+        let router = root_genesis_router(RootGenesisApiState::new(config));
+        // Unknown enum values -> 400 (parse_query_enum error branch).
+        assert_eq!(
+            get_envelopes(router.clone(), "phase=Bogus").await.status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            get_envelopes(router.clone(), "payload_kind=Nope")
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        // Malformed DID -> 400 (Did::new error branch).
+        assert_eq!(
+            get_envelopes(router, "recipient_did=not-a-did")
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
     }
 
     fn poison_portal_lock(state: &RootGenesisApiState) {
@@ -387,6 +431,10 @@ mod tests {
 
         let status = get_status(router.clone()).await;
         assert_eq!(status.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        // Valid filters parse, then the poisoned store lock fails closed.
+        let queried = get_envelopes(router.clone(), "phase=Round1").await;
+        assert_eq!(queried.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
         let submitted = post_envelope(router, &envelope(&config, &secret, 1, b"ct".to_vec())).await;
         assert_eq!(submitted.status(), StatusCode::INTERNAL_SERVER_ERROR);
