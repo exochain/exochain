@@ -1462,6 +1462,7 @@ test('wasm_enforce_invariants', () => {
 const governanceFindingsJson = JSON.stringify([
   { id: 'F-001', severity: 'critical', title: 'Unsigned injection' },
 ]);
+const governanceSignerDid = 'did:exo:monitor';
 
 test('wasm_governance_findings_digest is deterministic', () => {
   const a = wasm.wasm_governance_findings_digest(governanceFindingsJson);
@@ -1471,14 +1472,47 @@ test('wasm_governance_findings_digest is deterministic', () => {
   return a;
 });
 
+test('wasm_governance_attestation_signature_message_digest is deterministic signer-bound and domain-separated', () => {
+  const findingsDigest = wasm.wasm_governance_findings_digest(governanceFindingsJson);
+  const a = wasm.wasm_governance_attestation_signature_message_digest(
+    governanceSignerDid,
+    governanceFindingsJson,
+  );
+  const b = wasm.wasm_governance_attestation_signature_message_digest(
+    governanceSignerDid,
+    governanceFindingsJson,
+  );
+  const otherSigner = wasm.wasm_governance_attestation_signature_message_digest(
+    'did:exo:other-monitor',
+    governanceFindingsJson,
+  );
+  const otherFindings = wasm.wasm_governance_attestation_signature_message_digest(
+    governanceSignerDid,
+    JSON.stringify([{ id: 'F-002', severity: 'critical', title: 'Other finding' }]),
+  );
+  if (a !== b) throw new Error('attestation signing digest must be deterministic');
+  if (a === findingsDigest) throw new Error('attestation signing digest must not be raw findings digest');
+  if (a === otherSigner) throw new Error('attestation signing digest must bind signer DID');
+  if (a === otherFindings) throw new Error('attestation signing digest must bind findings digest');
+  assertHex(a, 32, 'attestation signing digest');
+  return a;
+});
+
+function governanceAttestationSignature(findingsJson, signerDid = governanceSignerDid) {
+  const messageDigestHex = wasm.wasm_governance_attestation_signature_message_digest(
+    signerDid,
+    findingsJson,
+  );
+  return signatureJsonFromHex(signer1.signHex(Buffer.from(messageDigestHex, 'hex')));
+}
+
 test('wasm_verify_governance_attestation_with_trusted_keys accepts valid signatures', () => {
-  const digestHex = wasm.wasm_governance_findings_digest(governanceFindingsJson);
-  const signature = signatureJsonFromHex(signer1.signHex(Buffer.from(digestHex, 'hex')));
+  const signature = governanceAttestationSignature(governanceFindingsJson);
   return wasm.wasm_verify_governance_attestation_with_trusted_keys(
-    'did:exo:monitor',
+    governanceSignerDid,
     governanceFindingsJson,
     JSON.stringify(signature),
-    JSON.stringify({ 'did:exo:monitor': signer1.publicKeyHex }),
+    JSON.stringify({ [governanceSignerDid]: signer1.publicKeyHex }),
   );
 });
 
@@ -1489,16 +1523,15 @@ test('wasm_verify_governance_attestation_with_trusted_keys rejects signatures re
   const substitutedFindingsJson = JSON.stringify([
     { id: 'F-999', severity: 'critical', title: 'Substituted critical finding' },
   ]);
-  const digestHex = wasm.wasm_governance_findings_digest(signedFindingsJson);
-  const signature = signatureJsonFromHex(signer1.signHex(Buffer.from(digestHex, 'hex')));
+  const signature = governanceAttestationSignature(signedFindingsJson);
 
   return expectErrorContains(
     'wasm_verify_governance_attestation_with_trusted_keys',
     () => wasm.wasm_verify_governance_attestation_with_trusted_keys(
-      'did:exo:monitor',
+      governanceSignerDid,
       substitutedFindingsJson,
       JSON.stringify(signature),
-      JSON.stringify({ 'did:exo:monitor': signer1.publicKeyHex }),
+      JSON.stringify({ [governanceSignerDid]: signer1.publicKeyHex }),
     ),
     'governance attestation rejected',
   );
@@ -1508,21 +1541,20 @@ test('wasm_verify_governance_attestation_with_trusted_keys rejects invalid signa
   expectErrorContains(
     'wasm_verify_governance_attestation_with_trusted_keys',
     () => wasm.wasm_verify_governance_attestation_with_trusted_keys(
-      'did:exo:monitor',
+      governanceSignerDid,
       governanceFindingsJson,
       JSON.stringify({ Ed25519: Array.from({ length: 64 }, () => 0) }),
-      JSON.stringify({ 'did:exo:monitor': signer1.publicKeyHex }),
+      JSON.stringify({ [governanceSignerDid]: signer1.publicKeyHex }),
     ),
     'governance attestation rejected',
   ));
 
 test('wasm_verify_governance_attestation_with_trusted_keys rejects untrusted signers', () => {
-  const digestHex = wasm.wasm_governance_findings_digest(governanceFindingsJson);
-  const signature = signatureJsonFromHex(signer1.signHex(Buffer.from(digestHex, 'hex')));
+  const signature = governanceAttestationSignature(governanceFindingsJson);
   return expectErrorContains(
     'wasm_verify_governance_attestation_with_trusted_keys',
     () => wasm.wasm_verify_governance_attestation_with_trusted_keys(
-      'did:exo:monitor',
+      governanceSignerDid,
       governanceFindingsJson,
       JSON.stringify(signature),
       JSON.stringify({ 'did:exo:other-monitor': signer1.publicKeyHex }),
