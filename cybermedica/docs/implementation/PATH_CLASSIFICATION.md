@@ -4,6 +4,9 @@ Every changed path in this implementation is classified before trust claims are 
 
 | Path | Classification | Reason |
 |---|---|---|
+| `/Users/bobstewart/dev/exochain/.github/workflows/ci.yml` | EXOCHAIN core | Workspace CI gate update for the verified WASM export count; this is not CyberMedica-owned adjacent code. |
+| `/Users/bobstewart/dev/exochain/README.md` | EXOCHAIN core | Root repository truth documentation updated for current Rust LOC, listed workspace-test count, and WASM bridge export count. |
+| `/Users/bobstewart/dev/exochain/packages/exochain-wasm/test/bridge_verification.mjs` | Core runtime adapter | WASM bridge regression coverage for signer-bound governance attestation signature-message digest verification. |
 | `/Users/bobstewart/dev/exochain/cybermedica/package.json` | Adjacent surface | CyberMedica-owned package gate for service contracts. |
 | `/Users/bobstewart/dev/exochain/cybermedica/package-lock.json` | Adjacent surface | Dependency lockfile for the CyberMedica package; no third-party runtime dependencies are present. |
 | `/Users/bobstewart/dev/exochain/cybermedica/.gitignore` | Adjacent surface documentation | CyberMedica-owned source-control hygiene for local Codex environment files; it does not modify Exochain core. |
@@ -276,4 +279,4 @@ Every changed path in this implementation is classified before trust claims are 
 | `/Users/bobstewart/dev/exochain/cybermedica/docs/context/CYBERMEDICA_ADJACENT_SURFACE_DECISIONS.md` | Adjacent surface documentation | Intake record updated with concrete package gates, secret inventory, and runtime configuration posture. |
 | `/Users/bobstewart/dev/exochain/cybermedica/docs/implementation/PATH_CLASSIFICATION.md` | Adjacent surface documentation | Classification record for this implementation. |
 
-No files under `/Users/bobstewart/dev/exochain/crates`, `/Users/bobstewart/dev/exochain/packages`, `/Users/bobstewart/dev/exochain/governance`, `/Users/bobstewart/dev/exochain/tools`, or Exochain deployment contracts were modified by this CyberMedica implementation.
+No files under `/Users/bobstewart/dev/exochain/crates`, `/Users/bobstewart/dev/exochain/governance`, `/Users/bobstewart/dev/exochain/tools`, or Exochain deployment contracts were modified by this CyberMedica implementation. Non-CyberMedica changes are limited to the root CI gate, root repository truth documentation, and the WASM bridge regression test classified above.
