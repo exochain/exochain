@@ -14,11 +14,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { redirect } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import Link from 'next/link';
-import { SESSION_COOKIE } from '@/lib/auth';
-import { EXTRANET_ROLES, ROLE_LABEL, type ExtranetRole } from '@/lib/roles';
+import { createSessionCookieValue, isDevLoginEnabled, SESSION_COOKIE } from '@/lib/auth';
+import { EXTRANET_ROLES, ROLE_LABEL, isExtranetRole, type ExtranetRole } from '@/lib/roles';
 import { Section, Eyebrow, H1, Lede } from '@/components/ui/Section';
 import { Pill } from '@/components/ui/Pill';
 
@@ -26,19 +26,27 @@ export const metadata = { title: 'Sign in · Extranet' };
 
 async function signIn(formData: FormData) {
   'use server';
-  const role = String(formData.get('role') ?? 'developer') as ExtranetRole;
+  if (!isDevLoginEnabled()) {
+    throw new Error('development login is disabled');
+  }
+  const roleValue = String(formData.get('role') ?? 'developer');
+  if (!isExtranetRole(roleValue)) {
+    throw new Error('invalid extranet role');
+  }
+  const role: ExtranetRole = roleValue;
   const next = String(formData.get('next') ?? '/app');
   const session = {
     userId: 'dev_user_001',
     email: 'dev@aperture.example',
     role,
-    surface: 'extranet',
+    surface: 'extranet' as const,
     org: 'Aperture Holdings'
   };
-  cookies().set(SESSION_COOKIE, JSON.stringify(session), {
+  cookies().set(SESSION_COOKIE, createSessionCookieValue(session), {
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
+    secure: process.env.NODE_ENV === 'production',
     maxAge: 60 * 60 * 8
   });
   redirect(next);
@@ -55,6 +63,10 @@ export default function Page({
 }: {
   searchParams: { next?: string };
 }) {
+  if (!isDevLoginEnabled()) {
+    notFound();
+  }
+
   const next = searchParams.next ?? '/app';
   return (
     <div className="min-h-dvh grid place-items-center px-6">
@@ -62,8 +74,8 @@ export default function Page({
         <Eyebrow>Extranet · alpha</Eyebrow>
         <H1 className="mt-3">Sign in to EXOCHAIN.</H1>
         <Lede className="mt-4">
-          v0 uses a dev login. Choose a role to preview the extranet under
-          that capability set. Real OIDC + WebAuthn arrives in v0.5.
+          Local development login is explicitly enabled for this environment.
+          Choose a role to preview the extranet under that capability set.
         </Lede>
         <div className="mt-3 flex gap-2">
           <Pill tone="signal">dev login</Pill>

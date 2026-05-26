@@ -136,6 +136,81 @@ function bctsReadyInputs(proposalOverrides = {}, verdictOverrides = {}) {
   };
 }
 
+function solutionGovernanceEvidence(solution, verdictOverrides = {}) {
+  const verdictId = `verdict-${solution.solutionId}-approved`;
+  const nonce = deterministicId('nonce', {
+    createdAtHlc: solution.createdAtHlc,
+    proposalId: solution.solutionId,
+    verdictId
+  });
+  const panelAssessments = {};
+  const consentResponses = {};
+  for (const panel of solution.requiredPanels) {
+    panelAssessments[panel] = 'FOR';
+    const responseHash = `0x${hashCanonical({
+      consent: true,
+      consentRequestId: `consent_req_${solution.solutionId}`,
+      panel,
+      proposalId: solution.solutionId,
+      verdictId
+    })}`;
+    consentResponses[panel] = {
+      consent: true,
+      responseHash,
+      signatureHash: `0x${hashCanonical({
+        panel,
+        responseHash,
+        signer: `${panel} certifier`,
+        verdictId
+      })}`
+    };
+  }
+  const invariantEvidence = {};
+  for (const [invariant, nodeType] of Object.entries({
+    GOVERNANCE_AUTHORITY: 'authority-check',
+    CONSENT_COVERAGE: 'consent-verify',
+    PROOF_VALIDITY: 'proof-verify',
+    KERNEL_INTEGRITY: 'kernel-adjudicate'
+  })) {
+    if (solution.nodeSequence.includes(nodeType)) {
+      invariantEvidence[invariant] = {
+        nodeType,
+        evidenceHash: `0x${hashCanonical({
+          invariant,
+          nodeType,
+          solutionId: solution.solutionId,
+          verdictId
+        })}`
+      };
+    }
+  }
+  const councilVerdict = {
+    id: verdictId,
+    status: 'APPROVED',
+    affectedPanels: [...solution.requiredPanels],
+    panelAssessments,
+    identityProof: identityProof(
+      solution.metadata.author,
+      'cryptographic',
+      nonce,
+      'ed25519-governance-certifier-public-key'
+    ),
+    delegationChain: [
+      delegationLink({
+        grantorId: 'did:exo:governance-council',
+        granteeId: solution.metadata.author,
+        authority: 'GOVERNANCE_PROPOSER',
+        scope: solution.solutionType
+      })
+    ],
+    consentResponses,
+    invariantEvidence,
+    systemState: { source: 'external-council-verdict' },
+    precedingProposals: ['root-authority-resolution']
+  };
+  return { councilVerdict: { ...councilVerdict, ...verdictOverrides } };
+}
+
 function run() {
   const compiler = new SyntaxisCompiler();
 
@@ -497,9 +572,54 @@ function run() {
     /createdAtHlc is required/
   );
 
+  const deniedDeployment = builder.deploySolution(solutionA, {
+    path: '/exoforge/deployments',
+    environment: 'PRODUCTION',
+    deploymentHlc: DEPLOY_HLC
+  });
+  assert.strictEqual(
+    deniedDeployment.status,
+    'DEPLOYMENT_FAILED',
+    'standard BCTS solution deployment must fail closed without caller-supplied governance evidence'
+  );
+  assert.match(deniedDeployment.error, /trusted governance evidence is required/);
+  assert.ok(!Object.prototype.hasOwnProperty.call(deniedDeployment, 'workflow'));
+
+  const tamperedEvidence = solutionGovernanceEvidence(solutionA, {
+    panelAssessments: {
+      ...solutionGovernanceEvidence(solutionA).councilVerdict.panelAssessments,
+      'Kernel Panel': 'AGAINST'
+    }
+  });
+  const tamperedDeployment = builder.deploySolution(solutionA, {
+    path: '/exoforge/deployments',
+    environment: 'PRODUCTION',
+    governanceEvidence: tamperedEvidence,
+    deploymentHlc: DEPLOY_HLC
+  });
+  assert.strictEqual(tamperedDeployment.status, 'DEPLOYMENT_FAILED');
+  assert.match(tamperedDeployment.error, /required panel assessment/);
+  assert.ok(!Object.prototype.hasOwnProperty.call(tamperedDeployment, 'workflow'));
+
+  const malformedDeployment = builder.deploySolution(solutionA, {
+    path: '/exoforge/deployments',
+    environment: 'PRODUCTION',
+    governanceEvidence: {
+      councilVerdict: {
+        id: 'malformed-verdict',
+        unsupported: () => true
+      }
+    },
+    deploymentHlc: DEPLOY_HLC
+  });
+  assert.strictEqual(malformedDeployment.status, 'DEPLOYMENT_FAILED');
+  assert.match(malformedDeployment.error, /invalid trusted governance evidence/);
+  assert.ok(!Object.prototype.hasOwnProperty.call(malformedDeployment, 'workflow'));
+
   const deploymentA = builder.deploySolution(solutionA, {
     path: '/exoforge/deployments',
     environment: 'PRODUCTION',
+    governanceEvidence: solutionGovernanceEvidence(solutionA),
     deploymentHlc: DEPLOY_HLC
   });
   assert.deepStrictEqual(
@@ -510,10 +630,13 @@ function run() {
   const deploymentB = new SolutionsBuilder().deploySolution(solutionA, {
     path: '/exoforge/deployments',
     environment: 'PRODUCTION',
+    governanceEvidence: solutionGovernanceEvidence(solutionA),
     deploymentHlc: DEPLOY_HLC
   });
   assert.deepStrictEqual(deploymentA, deploymentB, 'same deployment inputs must produce identical deployment output');
   assert.strictEqual(deploymentA.startTime, '1700000000001:0');
+  assert.ok(deploymentA.target.governanceEvidenceHash.startsWith('0x'));
+  assert.ok(!Object.prototype.hasOwnProperty.call(deploymentA.target, 'governanceEvidence'));
   assert.ok(deploymentA.stages.every(stage => stage.completedAt.includes(':')));
   assert.ok(deploymentA.stages.every(stage => !Object.prototype.hasOwnProperty.call(stage, 'executionTime')));
 
@@ -523,6 +646,15 @@ function run() {
     assert.ok(!source.includes('new Date('), `${file} must not use new Date`);
     assert.ok(!source.includes('Math.random('), `${file} must not use Math.random`);
     assert.ok(!source.includes('Math.'), `${file} must not use floating-point Math helpers`);
+  }
+  const builderSource = fs.readFileSync(path.join(__dirname, 'solutions-builder.js'), 'utf8');
+  for (const forbidden of [
+    'mockVerdict',
+    'did:exo:root',
+    'ed25519-solution-delegation-signature',
+    '_buildConsentResponses'
+  ]) {
+    assert.ok(!builderSource.includes(forbidden), `solutions-builder.js must not fabricate ${forbidden}`);
   }
 }
 

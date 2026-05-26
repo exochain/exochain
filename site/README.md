@@ -55,6 +55,7 @@ Useful scripts:
 npm run typecheck    # tsc --noEmit
 npm run lint         # next lint
 npm run build        # production build
+npm run security:auth-boundary
 npm start            # serve the production build
 ```
 
@@ -63,16 +64,18 @@ npm start            # serve the production build
 | Surface | Route prefix | Auth | Login |
 |---|---|---|---|
 | Internet | `/` (and named pages) | none | — |
-| Extranet | `/app/*` | mock cookie session | `/app/login` |
-| Intranet | `/internal/*` | mock cookie session | `/internal/login` |
+| Extranet | `/app/*` | signed cookie session | `/app/login` |
+| Intranet | `/internal/*` | signed cookie session | `/internal/login` |
 
-Hard surface separation is enforced by `middleware.ts`. Unauthenticated
-requests to `/app/*` and `/internal/*` are redirected to the corresponding
-login page.
+Hard surface separation is enforced by `middleware.ts`. Unauthenticated or
+unsigned-cookie requests to `/app/*` and `/internal/*` are redirected to the
+corresponding login page.
 
-The dev login pages let you pick any role from the role enum to preview
-that surface under that capability set. **No real credentials are involved
-in v0.** Real OIDC + WebAuthn arrives in v0.5.
+Development login is disabled by default and is not available in production.
+To use it locally, set `EXO_SITE_ENABLE_DEV_LOGIN=1`,
+`NODE_ENV=development`, and `EXO_SITE_SESSION_SECRET` to a 32-byte-or-longer
+secret. Session cookies are HMAC signed; raw JSON `exo-session` cookies are
+rejected by middleware and server-side session loading.
 
 ### Public sitemap (excerpt)
 
@@ -117,8 +120,9 @@ in v0.** Real OIDC + WebAuthn arrives in v0.5.
 
 - **No live network calls.** All data renders from typed mocks in
   `src/lib/mock-data.ts`. Numeric metrics are visibly labeled `mock`.
-- **No real auth.** The `exo-session` cookie is a JSON blob. Replace with
-  OIDC + signed JWT in v0.5 (see `src/lib/auth.ts`).
+- **Local-only development auth.** The `exo-session` cookie is signed with
+  `EXO_SITE_SESSION_SECRET`; development login fails closed unless explicitly
+  enabled outside production.
 - **No real settlement.** All settlement-related views show the
   `ZeroPriceBanner` and amount = `0 EXO`.
 - **No fake claims.** The Trust Center, Security page, and copy generally
@@ -148,13 +152,12 @@ Diagrams (SVG):
 
 ## Roadmap (excerpt)
 
-- **v0.5** — real OIDC + WebAuthn, MDX docs, OG images, status feed wired,
-  webhook signing, OpenAPI mounted at `/api`.
-- **v1.0** — production gating, live AVC issuance against `exo-node` /
-  `exo-gateway`, audit packets backed by the real settlement chain, public
-  bug bounty.
-- **v1.5+** — validator dashboard, holon registry, governance proposal
-  authoring, multi-region status, public sandbox.
+- Real OIDC + WebAuthn, MDX docs, OG images, status feed wiring, webhook
+  signing, and OpenAPI mounted at `/api`.
+- Production gating, live AVC issuance against `exo-node` / `exo-gateway`,
+  audit packets backed by the real settlement chain, and public bug bounty.
+- Validator dashboard, holon registry, governance proposal authoring,
+  multi-region status, and public sandbox.
 
 See `SPEC.md` §11 for the full breakdown and `SPEC.md` §13 for v0
 acceptance criteria.
@@ -202,7 +205,7 @@ site/
     └── lib/
         ├── types.ts               # frontend view types
         ├── roles.ts               # role + capability matrix
-        ├── auth.ts                # mock session
+        ├── auth.ts                # signed development session
         ├── mock-data.ts           # typed mocks
         └── format.ts              # date/number helpers
 ```

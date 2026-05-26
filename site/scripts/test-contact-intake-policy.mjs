@@ -90,9 +90,14 @@ assert.equal(honeypot.ok, true);
 assert.equal(honeypot.deliver, false, 'honeypot submissions must not queue or send mail');
 
 assert.equal(
-  policy.normalizeClientAddress(' 203.0.113.7, 10.0.0.1 '),
+  policy.normalizeClientAddress(' 203.0.113.7 '),
   '203.0.113.7',
-  'client key must use the first forwarded address',
+  'client key may use a single trusted runtime address',
+);
+assert.equal(
+  policy.normalizeClientAddress(' 203.0.113.7, 10.0.0.1 '),
+  'unknown',
+  'client key must not trust spoofable forwarded address chains',
 );
 assert.equal(
   policy.normalizeClientAddress(''),
@@ -117,12 +122,31 @@ assert.equal(
 assert.ok(buckets.every((bucket) => Number.isInteger(bucket.maxRequests)));
 assert.ok(buckets.every((bucket) => Number.isInteger(bucket.windowSeconds)));
 
+const unknownClientBuckets = policy.getContactRateLimitBuckets({
+  email: 'ada@example.com',
+  clientAddress: 'unknown',
+});
+assert.ok(
+  !unknownClientBuckets.some((bucket) => bucket.bucket === 'contact:ip:unknown:hour'),
+  'unknown client identity must not collapse all visitors into a three-request shared IP bucket',
+);
+
 const routeSource = readFileSync(routePath, 'utf8');
 assert.match(routeSource, /request\.text\(\)/, 'contact route must bound raw body before JSON parse');
 assert.doesNotMatch(routeSource, /request\.json\(\)/, 'contact route must not parse unbounded JSON directly');
 assert.match(routeSource, /CONTACT_BODY_MAX_BYTES/, 'contact route must enforce a byte limit');
 assert.match(routeSource, /assertContactSubmissionRateLimit/, 'contact route must enforce database-backed rate limits');
 assert.match(routeSource, /getContactRateLimitBuckets/, 'contact route must derive rate-limit buckets from normalized inputs');
+assert.doesNotMatch(
+  routeSource,
+  /x-forwarded-for|x-real-ip/i,
+  'contact route must not trust spoofable forwarded headers for client rate-limit identity',
+);
+assert.match(
+  routeSource,
+  /runtimeClientIp\(request\)/,
+  'contact route must derive client rate-limit identity from runtime peer metadata',
+);
 
 const storageSource = readFileSync(storagePath, 'utf8');
 assert.match(storageSource, /site_contact_rate_limits/, 'contact storage must include a rate-limit table');

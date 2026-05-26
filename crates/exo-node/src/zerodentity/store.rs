@@ -292,15 +292,36 @@ impl ZerodentityStore {
         Ok(())
     }
 
+    fn next_claim_dag_timestamp(&self, created_ms: u64) -> anyhow::Result<Timestamp> {
+        if created_ms == 0 {
+            anyhow::bail!("0dentity claim DAG timestamp must be greater than 0");
+        }
+        if let Some(parent) = self.dag_nodes.last() {
+            if created_ms < parent.timestamp.physical_ms {
+                anyhow::bail!(
+                    "0dentity claim DAG timestamp must not be older than latest DAG parent timestamp"
+                );
+            }
+            if created_ms == parent.timestamp.physical_ms {
+                let logical = parent.timestamp.logical.checked_add(1).ok_or_else(|| {
+                    anyhow::anyhow!("0dentity claim DAG logical timestamp overflow")
+                })?;
+                return Ok(Timestamp::new(created_ms, logical));
+            }
+        }
+        Ok(Timestamp::new(created_ms, 0))
+    }
+
     /// Compute the next claim DAG node hash without mutating the store.
     pub fn next_claim_dag_node_hash(
         &self,
         payload_hash: Hash256,
-        timestamp: Timestamp,
+        created_ms: u64,
     ) -> anyhow::Result<Hash256> {
         let Some(context) = &self.receipt_signing else {
             anyhow::bail!("0dentity DAG node signer is not configured");
         };
+        let timestamp = self.next_claim_dag_timestamp(created_ms)?;
         self.validate_next_dag_timestamp(timestamp, "0dentity claim DAG")?;
         Ok(compute_node_hash(
             &self.next_dag_parents(),
@@ -723,7 +744,8 @@ impl ZerodentityStore {
         claim_id: &str,
         claim: &IdentityClaim,
     ) -> anyhow::Result<ClaimSaveEvidence> {
-        let node = self.signed_dag_node(claim.claim_hash, Timestamp::new(claim.created_ms, 0))?;
+        let timestamp = self.next_claim_dag_timestamp(claim.created_ms)?;
+        let node = self.signed_dag_node(claim.claim_hash, timestamp)?;
         let receipt = if claim.status == ClaimStatus::Verified {
             let verified_ms = claim.verified_ms.unwrap_or(claim.created_ms);
             Some(self.trust_receipt(
@@ -1279,21 +1301,80 @@ mod tests {
     }
 
     #[test]
-    fn save_claim_rejects_timestamp_not_after_latest_dag_node() {
+    fn save_claim_advances_logical_time_for_same_millisecond_writes() {
+        let (mut store, _, node_public_key) = signed_store(37);
+        let d = did("did:exo:dag-same-ms");
+        let first = claim(&d, ClaimType::Email);
+        let mut second = claim(&d, ClaimType::Phone);
+        second.claim_hash = Hash256::digest(b"same-ms-second-claim");
+        second.created_ms = first.created_ms;
+        second.verified_ms = Some(first.created_ms);
+
+        store.save_claim("apg-dag-same-ms-001", &first).unwrap();
+        store.save_claim("apg-dag-same-ms-002", &second).unwrap();
+
+        let nodes = store.dag_nodes();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].timestamp.physical_ms, first.created_ms);
+        assert_eq!(nodes[0].timestamp.logical, 0);
+        assert_eq!(nodes[1].timestamp.physical_ms, first.created_ms);
+        assert_eq!(nodes[1].timestamp.logical, 1);
+        assert_eq!(nodes[1].parents, vec![nodes[0].hash]);
+        assert!(verify(
+            nodes[1].hash.as_bytes(),
+            &nodes[1].signature,
+            &node_public_key
+        ));
+
+        let claims = store.get_claims(&d).unwrap();
+        assert_eq!(claims.len(), 2);
+        let saved_second = claims
+            .iter()
+            .find(|(claim_id, _)| claim_id == "apg-dag-same-ms-002")
+            .unwrap();
+        assert_eq!(saved_second.1.dag_node_hash, nodes[1].hash);
+    }
+
+    #[test]
+    fn next_claim_hash_matches_saved_same_millisecond_dag_node() {
+        let (mut store, _, _) = signed_store(38);
+        let d = did("did:exo:dag-same-ms-precompute");
+        let first = claim(&d, ClaimType::Email);
+        let mut second = claim(&d, ClaimType::Phone);
+        second.claim_hash = Hash256::digest(b"same-ms-precomputed-second-claim");
+        second.created_ms = first.created_ms;
+        second.verified_ms = Some(first.created_ms);
+
+        store
+            .save_claim("apg-dag-same-ms-precompute-001", &first)
+            .unwrap();
+        let precomputed = store
+            .next_claim_dag_node_hash(second.claim_hash, second.created_ms)
+            .unwrap();
+        let evidence = store
+            .save_claim_with_evidence("apg-dag-same-ms-precompute-002", &second)
+            .unwrap();
+
+        assert_eq!(evidence.dag_node_hash, precomputed);
+        assert_eq!(store.dag_nodes()[1].timestamp.logical, 1);
+    }
+
+    #[test]
+    fn save_claim_rejects_backdated_timestamp_before_latest_dag_node() {
         let (mut store, _, _) = signed_store(35);
         let d = did("did:exo:dag-causality-claim");
         let first = claim(&d, ClaimType::Email);
         let mut second = claim(&d, ClaimType::Phone);
-        second.claim_hash = Hash256::digest(b"same-time-second-claim");
-        second.created_ms = first.created_ms;
+        second.claim_hash = Hash256::digest(b"backdated-second-claim");
+        second.created_ms = first.created_ms - 1;
+        second.verified_ms = Some(second.created_ms);
 
         store.save_claim("apg-dag-causal-001", &first).unwrap();
         let err = store.save_claim("apg-dag-causal-002", &second).unwrap_err();
 
         assert!(
-            err.to_string()
-                .contains("strictly exceed latest DAG parent"),
-            "expected claim DAG causality refusal, got {err}"
+            err.to_string().contains("must not be older"),
+            "expected claim DAG backdating refusal, got {err}"
         );
         assert_eq!(store.dag_nodes().len(), 1);
         let claims = store.get_claims(&d).unwrap();

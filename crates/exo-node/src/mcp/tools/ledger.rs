@@ -21,7 +21,7 @@ use std::fmt::Display;
 
 use exo_core::{
     Did, Hash256,
-    hash::{merkle_root_from_proof, verify_merkle_proof},
+    hash::{merkle_root_from_proof_with_leaf_count, verify_merkle_proof_with_leaf_count},
 };
 use serde_json::{Value, json};
 
@@ -281,8 +281,9 @@ pub fn execute_get_event(params: &Value, context: &NodeContext) -> ToolResult {
 pub fn verify_inclusion_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_verify_inclusion".to_owned(),
-        description: "Verify a Merkle inclusion proof for a given event hash against a root hash."
-            .to_owned(),
+        description:
+            "Verify a Merkle inclusion proof for a given event hash against a leaf-count-bound root hash."
+                .to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -298,7 +299,7 @@ pub fn verify_inclusion_definition() -> ToolDefinition {
                 },
                 "root_hash": {
                     "type": "string",
-                    "description": "Hex-encoded expected Merkle root hash."
+                    "description": "Hex-encoded expected leaf-count-bound Merkle root hash."
                 },
                 "target_index": {
                     "type": "integer",
@@ -464,8 +465,19 @@ pub fn execute_verify_inclusion(params: &Value, _context: &NodeContext) -> ToolR
         }
     }
 
-    let computed_root = merkle_root_from_proof(&event_hash, &proof, target_index);
-    let verified = verify_merkle_proof(&root_hash, &event_hash, &proof, target_index);
+    let computed_root =
+        match merkle_root_from_proof_with_leaf_count(&event_hash, &proof, target_index, leaf_count)
+        {
+            Ok(root) => root,
+            Err(_) => Hash256::ZERO,
+        };
+    let verified = verify_merkle_proof_with_leaf_count(
+        &root_hash,
+        &event_hash,
+        &proof,
+        target_index,
+        leaf_count,
+    );
 
     let response = json!({
         "event_hash": event_hash.to_string(),
@@ -573,7 +585,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use exo_core::{
-        hash::{merkle_proof, merkle_root},
+        hash::{merkle_proof, merkle_root_with_leaf_count},
         types::{Did, Signature},
     };
     use exo_dag::dag::{Dag, DeterministicDagClock, append};
@@ -883,7 +895,7 @@ mod tests {
             Hash256::digest(b"event-right"),
         ];
         let target_index = 0;
-        let expected_root = merkle_root(&leaves);
+        let expected_root = merkle_root_with_leaf_count(&leaves);
         let proof = merkle_proof(&leaves, target_index).expect("core proof");
         let proof_hashes: Vec<String> = proof.iter().map(ToString::to_string).collect();
 
@@ -908,7 +920,7 @@ mod tests {
             Hash256::digest(b"event-right"),
         ];
         let target_index = 1;
-        let expected_root = merkle_root(&leaves);
+        let expected_root = merkle_root_with_leaf_count(&leaves);
         let proof = merkle_proof(&leaves, target_index).expect("core proof");
         let proof_hashes: Vec<String> = proof.iter().map(ToString::to_string).collect();
 
@@ -934,7 +946,7 @@ mod tests {
             Hash256::digest(b"event-2"),
         ];
         let target_index = 2;
-        let root = merkle_root(&leaves);
+        let root = merkle_root_with_leaf_count(&leaves);
         let proof = merkle_proof(&leaves, target_index).expect("core proof");
         let proof_hashes: Vec<String> = proof.iter().map(ToString::to_string).collect();
 
@@ -968,8 +980,8 @@ mod tests {
             .expect("execute_verify_inclusion section");
 
         assert!(
-            verifier.contains("verify_merkle_proof("),
-            "MCP inclusion verification must delegate to exo_core's canonical Merkle verifier"
+            verifier.contains("verify_merkle_proof_with_leaf_count("),
+            "MCP inclusion verification must delegate to exo_core's leaf-count-bound Merkle verifier"
         );
         assert!(
             !production.contains("fn hash_merkle_pair"),
@@ -1004,7 +1016,7 @@ mod tests {
             Hash256::digest(b"event-left"),
             Hash256::digest(b"event-right"),
         ];
-        let expected_root = merkle_root(&leaves);
+        let expected_root = merkle_root_with_leaf_count(&leaves);
         let proof = merkle_proof(&leaves, 0).expect("core proof");
         let proof_hashes: Vec<String> = proof.iter().map(ToString::to_string).collect();
 
@@ -1022,6 +1034,66 @@ mod tests {
             result.content[0]
                 .text()
                 .contains("target_index 2 out of range for leaf_count 2")
+        );
+    }
+
+    #[test]
+    fn execute_verify_inclusion_rejects_false_leaf_count_with_matching_depth() {
+        let leaves = [
+            Hash256::digest(b"event-0"),
+            Hash256::digest(b"event-1"),
+            Hash256::digest(b"event-2"),
+            Hash256::digest(b"event-3"),
+        ];
+        let target_index = 2;
+        let expected_root = merkle_root_with_leaf_count(&leaves);
+        let proof = merkle_proof(&leaves, target_index).expect("core proof");
+        let proof_hashes: Vec<String> = proof.iter().map(ToString::to_string).collect();
+
+        let params = json!({
+            "event_hash": leaves[target_index].to_string(),
+            "proof_hashes": proof_hashes,
+            "root_hash": expected_root.to_string(),
+            "target_index": target_index,
+            "leaf_count": 3,
+        });
+        let result = execute_verify_inclusion(&params, &NodeContext::empty());
+
+        assert!(!result.is_error);
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+        assert_eq!(
+            v["verified"], false,
+            "proof verification must bind leaf_count, not just proof depth"
+        );
+    }
+
+    #[test]
+    fn execute_verify_inclusion_rejects_false_prefix_leaf_count_with_matching_depth() {
+        let leaves = [
+            Hash256::digest(b"event-0"),
+            Hash256::digest(b"event-1"),
+            Hash256::digest(b"event-2"),
+            Hash256::digest(b"event-3"),
+        ];
+        let target_index = 1;
+        let expected_root = merkle_root_with_leaf_count(&leaves);
+        let proof = merkle_proof(&leaves, target_index).expect("core proof");
+        let proof_hashes: Vec<String> = proof.iter().map(ToString::to_string).collect();
+
+        let params = json!({
+            "event_hash": leaves[target_index].to_string(),
+            "proof_hashes": proof_hashes,
+            "root_hash": expected_root.to_string(),
+            "target_index": target_index,
+            "leaf_count": 3,
+        });
+        let result = execute_verify_inclusion(&params, &NodeContext::empty());
+
+        assert!(!result.is_error);
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+        assert_eq!(
+            v["verified"], false,
+            "root_hash must bind leaf_count even when the target is in a prefix subtree"
         );
     }
 

@@ -113,6 +113,31 @@ export function enforceAllTnc(state) {
   }
 }
 
+export function isExpectedPublicWasmTncBoundaryRejection(tncResult) {
+  return !tncResult.ok &&
+    typeof tncResult.violation === 'string' &&
+    tncResult.violation.includes('authority chain not verified');
+}
+
+export function isExpectedPublicWasmTncViolationSet(violations) {
+  const violationList = violations.violations || violations;
+  if (!Array.isArray(violationList)) return false;
+
+  const requiredFragments = [
+    'authority chain not verified',
+    'human gate not satisfied',
+    'consent not verified',
+    'identity not verified',
+    'decision not bound to valid constitution',
+    'quorum not met',
+    'evidence bundle incomplete'
+  ];
+
+  return requiredFragments.every(fragment =>
+    violationList.some(violation => String(violation).includes(fragment))
+  );
+}
+
 /**
  * Collect all TNC violations without short-circuiting.
  *
@@ -149,6 +174,18 @@ export function verifyInvariants(state) {
   } catch (err) {
     return { ok: false, passed: false, violations: [err.message || String(err)] };
   }
+}
+
+export function isExpectedPublicWasmInvariantBoundaryRejection(invResult) {
+  if (!invResult.ok || invResult.passed) return false;
+  const violations = Array.isArray(invResult.violations) ? invResult.violations : [];
+
+  const descriptions = violations.map(violation =>
+    typeof violation === 'string' ? violation : violation.description || ''
+  );
+
+  return descriptions.some(description => description.includes('trusted_authority_keys')) &&
+    descriptions.some(description => description.includes('trusted_provenance_keys'));
 }
 
 /**

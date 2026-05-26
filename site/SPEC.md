@@ -588,7 +588,7 @@ All data fields shown to end users must be sourced from typed mocks in `/web/src
 - Design system primitives, five SVG diagrams, full nav and footer.
 - Zero-pricing language and banners wired throughout settlement views.
 - Status page with explicit `mock` labels until the live `exo-gateway` status feed is wired.
-- Mock auth (server-side cookie + role) with a clearly-labeled dev login at `/app/login` and `/internal/login`. Replace with real OIDC before any external user is invited.
+- Local-only development auth with HMAC-signed server-side cookies. Development login at `/app/login` and `/internal/login` is disabled unless `EXO_SITE_ENABLE_DEV_LOGIN=1`, `NODE_ENV=development`, and `EXO_SITE_SESSION_SECRET` is configured.
 
 ### 11.2 v0.5 — short follow-up
 
@@ -622,7 +622,7 @@ All data fields shown to end users must be sourced from typed mocks in `/web/src
 
 - **Stack:** Next.js 14 (App Router) + React 18 + TypeScript + Tailwind CSS. No external UI kit dependency in v0; primitives are hand-authored to keep the brand precise.
 - **Routing:** route groups `(internet)`, with `app/` and `internal/` as top-level segments. Middleware enforces auth and role on the `app` and `internal` trees.
-- **Auth (MVP):** server-set HTTP-only cookie `exo-session` with `{ userId, role, surface }`. Replaced by OIDC in v0.5.
+- **Auth (MVP):** server-set HTTP-only cookie `exo-session` containing a canonical session payload and HMAC signature. Raw JSON cookies and unsigned session payloads are rejected.
 - **State:** server components by default. Client components only where interactivity is required (forms, drawers, toggles).
 - **Styling:** dark and light themes. Restrained palette: ink, slate, vellum, signal-amber, custody-cyan, alert-red. No neon. No glow.
 - **Diagrams:** hand-authored SVG so they remain accessible, themeable, and copy-exact. No third-party diagram runtime in v0.

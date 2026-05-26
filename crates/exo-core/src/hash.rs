@@ -30,6 +30,8 @@ use crate::{
 
 const MERKLE_LEAF_DOMAIN: u8 = 0x00;
 const MERKLE_PARENT_DOMAIN: u8 = 0x01;
+const MERKLE_COUNTED_ROOT_DOMAIN: u8 = 0x02;
+const MERKLE_LEAF_COUNT_BYTES: usize = 16;
 
 /// Compute the blake3 hash of raw bytes.
 #[must_use]
@@ -79,6 +81,27 @@ pub fn merkle_root(leaves: &[Hash256]) -> Hash256 {
         current = next;
     }
     current[0]
+}
+
+/// Compute a Merkle root commitment that binds both the tree root and the
+/// number of leaves represented by that tree.
+#[must_use]
+pub fn merkle_root_with_leaf_count(leaves: &[Hash256]) -> Hash256 {
+    bind_merkle_root_to_leaf_count(&merkle_root(leaves), leaves.len())
+}
+
+/// Bind an existing Merkle tree root to a fixed-width leaf-count commitment.
+#[must_use]
+pub fn bind_merkle_root_to_leaf_count(root: &Hash256, leaf_count: usize) -> Hash256 {
+    let mut combined = [0u8; 1 + MERKLE_LEAF_COUNT_BYTES + 32];
+    let leaf_count_bytes = leaf_count.to_be_bytes();
+    let count_end = 1 + MERKLE_LEAF_COUNT_BYTES;
+    let count_start = count_end - leaf_count_bytes.len();
+
+    combined[0] = MERKLE_COUNTED_ROOT_DOMAIN;
+    combined[count_start..count_end].copy_from_slice(&leaf_count_bytes);
+    combined[count_end..].copy_from_slice(root.as_bytes());
+    canonical_hash(&combined)
 }
 
 /// Generate a Merkle proof for the leaf at `index`.
@@ -157,6 +180,95 @@ pub fn merkle_root_from_proof(leaf: &Hash256, proof: &[Hash256], index: usize) -
     }
 
     current
+}
+
+/// Verify a Merkle proof against a root commitment that binds the claimed leaf
+/// count.
+///
+/// The `root` parameter must be produced by [`merkle_root_with_leaf_count`] or
+/// [`bind_merkle_root_to_leaf_count`]. The compact proof path alone cannot
+/// prove the size of opaque sibling subtrees, so count binding is enforced at
+/// the root-commitment layer.
+#[must_use]
+pub fn verify_merkle_proof_with_leaf_count(
+    root: &Hash256,
+    leaf: &Hash256,
+    proof: &[Hash256],
+    index: usize,
+    leaf_count: usize,
+) -> bool {
+    let Ok((current, duplicate_siblings_match)) =
+        fold_merkle_proof_with_leaf_count(leaf, proof, index, leaf_count)
+    else {
+        return false;
+    };
+    let count_bound_root = bind_merkle_root_to_leaf_count(&current, leaf_count);
+    duplicate_siblings_match && hash256_eq_constant_time(&count_bound_root, root)
+}
+
+/// Reconstruct the leaf-count-bound Merkle root implied by a leaf, proof path,
+/// leaf index, and claimed leaf count.
+///
+/// # Errors
+///
+/// Returns `ExoError::InvalidMerkleProof` when `leaf_count` is zero, when
+/// `index` is outside the claimed tree, or when the proof path length is not
+/// the path length required by `leaf_count`, or when an odd duplicated sibling
+/// does not match the duplicated current node.
+pub fn merkle_root_from_proof_with_leaf_count(
+    leaf: &Hash256,
+    proof: &[Hash256],
+    index: usize,
+    leaf_count: usize,
+) -> Result<Hash256> {
+    let (root, duplicate_siblings_match) =
+        fold_merkle_proof_with_leaf_count(leaf, proof, index, leaf_count)?;
+    if duplicate_siblings_match {
+        Ok(bind_merkle_root_to_leaf_count(&root, leaf_count))
+    } else {
+        Err(ExoError::InvalidMerkleProof)
+    }
+}
+
+fn fold_merkle_proof_with_leaf_count(
+    leaf: &Hash256,
+    proof: &[Hash256],
+    index: usize,
+    leaf_count: usize,
+) -> Result<(Hash256, bool)> {
+    if leaf_count == 0 || index >= leaf_count {
+        return Err(ExoError::InvalidMerkleProof);
+    }
+
+    let mut current = hash_leaf(leaf);
+    let mut idx = index;
+    let mut level_count = leaf_count;
+    let mut duplicate_siblings_match = true;
+
+    for sibling in proof {
+        if level_count == 1 || idx >= level_count {
+            return Err(ExoError::InvalidMerkleProof);
+        }
+
+        let is_duplicated_odd_leaf = level_count % 2 != 0 && idx == level_count - 1;
+        if is_duplicated_odd_leaf {
+            duplicate_siblings_match &= hash256_eq_constant_time(&current, sibling);
+            current = hash_pair(&current, &current);
+        } else if idx % 2 == 0 {
+            current = hash_pair(&current, sibling);
+        } else {
+            current = hash_pair(sibling, &current);
+        }
+
+        idx /= 2;
+        level_count = level_count.div_ceil(2);
+    }
+
+    if level_count == 1 {
+        Ok((current, duplicate_siblings_match))
+    } else {
+        Err(ExoError::InvalidMerkleProof)
+    }
 }
 
 /// Compare two `Hash256` values without data-dependent early exit.
@@ -308,6 +420,32 @@ mod tests {
     }
 
     #[test]
+    fn merkle_root_with_leaf_count_binds_count_and_inner_root() {
+        let leaves = [
+            Hash256::digest(b"count-bound-a"),
+            Hash256::digest(b"count-bound-b"),
+            Hash256::digest(b"count-bound-c"),
+            Hash256::digest(b"count-bound-d"),
+        ];
+        let inner_root = merkle_root(&leaves);
+        let bound_root = merkle_root_with_leaf_count(&leaves);
+
+        assert_eq!(
+            bound_root,
+            bind_merkle_root_to_leaf_count(&inner_root, leaves.len())
+        );
+        assert_ne!(
+            bound_root,
+            bind_merkle_root_to_leaf_count(&inner_root, 3),
+            "same inner root must not verify under a different leaf count"
+        );
+        assert_ne!(
+            bound_root, inner_root,
+            "count-bound root must not be interchangeable with the raw Merkle root"
+        );
+    }
+
+    #[test]
     fn merkle_root_deterministic() {
         let leaves: Vec<Hash256> = (0..7u8).map(|i| Hash256::digest(&[i])).collect();
         let r1 = merkle_root(&leaves);
@@ -431,6 +569,96 @@ mod tests {
             let proof = merkle_proof(&leaves, index).expect("proof");
             assert_eq!(merkle_root_from_proof(leaf, &proof, index), root);
         }
+    }
+
+    #[test]
+    fn merkle_root_from_proof_with_leaf_count_matches_canonical_root() {
+        let leaves = vec![
+            Hash256::digest(b"count-proof-a"),
+            Hash256::digest(b"count-proof-b"),
+            Hash256::digest(b"count-proof-c"),
+            Hash256::digest(b"count-proof-d"),
+            Hash256::digest(b"count-proof-e"),
+        ];
+        let root = merkle_root_with_leaf_count(&leaves);
+
+        for (index, leaf) in leaves.iter().enumerate() {
+            let proof = merkle_proof(&leaves, index).expect("proof");
+            let computed =
+                merkle_root_from_proof_with_leaf_count(leaf, &proof, index, leaves.len())
+                    .expect("leaf-count-bound proof root");
+            assert_eq!(computed, root);
+            assert!(verify_merkle_proof_with_leaf_count(
+                &root,
+                leaf,
+                &proof,
+                index,
+                leaves.len()
+            ));
+        }
+    }
+
+    #[test]
+    fn verify_merkle_proof_with_leaf_count_rejects_false_leaf_count() {
+        let leaves = [
+            Hash256::digest(b"false-count-a"),
+            Hash256::digest(b"false-count-b"),
+            Hash256::digest(b"false-count-c"),
+            Hash256::digest(b"false-count-d"),
+        ];
+        let root = merkle_root_with_leaf_count(&leaves);
+        let target_index = 2;
+        let proof = merkle_proof(&leaves, target_index).expect("proof");
+
+        assert!(!verify_merkle_proof_with_leaf_count(
+            &root,
+            &leaves[target_index],
+            &proof,
+            target_index,
+            3
+        ));
+    }
+
+    #[test]
+    fn verify_merkle_proof_with_leaf_count_rejects_false_prefix_leaf_count() {
+        let leaves = [
+            Hash256::digest(b"false-prefix-count-a"),
+            Hash256::digest(b"false-prefix-count-b"),
+            Hash256::digest(b"false-prefix-count-c"),
+            Hash256::digest(b"false-prefix-count-d"),
+        ];
+        let root = merkle_root_with_leaf_count(&leaves);
+        let target_index = 1;
+        let proof = merkle_proof(&leaves, target_index).expect("proof");
+
+        assert!(!verify_merkle_proof_with_leaf_count(
+            &root,
+            &leaves[target_index],
+            &proof,
+            target_index,
+            3
+        ));
+    }
+
+    #[test]
+    fn verify_merkle_proof_with_leaf_count_rejects_bad_odd_duplicate_sibling() {
+        let leaves = [
+            Hash256::digest(b"odd-count-a"),
+            Hash256::digest(b"odd-count-b"),
+            Hash256::digest(b"odd-count-c"),
+        ];
+        let root = merkle_root_with_leaf_count(&leaves);
+        let target_index = 2;
+        let mut proof = merkle_proof(&leaves, target_index).expect("proof");
+        proof[0] = Hash256::digest(b"attacker-supplied-non-duplicate");
+
+        assert!(!verify_merkle_proof_with_leaf_count(
+            &root,
+            &leaves[target_index],
+            &proof,
+            target_index,
+            leaves.len()
+        ));
     }
 
     #[test]

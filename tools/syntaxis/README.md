@@ -175,7 +175,8 @@ A customized workflow template for common governance patterns. Solutions:
 - Start from pre-built templates
 - Can be customized with template-specific fields
 - Compile to complete Syntaxis workflows
-- Deploy through ExoForge pipeline
+- Deploy through ExoForge pipeline only when caller-supplied governance evidence
+  is present and bound to the solution
 - Track execution and results
 
 ## Usage
@@ -198,14 +199,25 @@ const solution = engine.createSolution('governance-amendment', {
   createdAtHlc
 });
 
-// Deploy the solution
+// Deploy the solution with a verified council verdict. The Solutions Builder
+// does not create approvals, identity proofs, delegation chains, or consent
+// responses on behalf of the caller.
 const deployment = engine.deploySolution(solution, {
   path: '/exoforge/deployments',
+  governanceEvidence: {
+    councilVerdict: verifiedCouncilVerdict
+  },
   deploymentHlc
 });
 console.log(`Deployment ID: ${deployment.deploymentId}`);
 console.log(`Status: ${deployment.status}`);
 ```
+
+`verifiedCouncilVerdict` must come from the governance process and include
+solution-bound `identityProof`, `delegationChain`, `panelAssessments`,
+`consentResponses`, `invariantEvidence`, `affectedPanels`, and
+`precedingProposals`. Deployment fails closed when this evidence is missing,
+wrong-phase, not bound to the solution author and verdict nonce, or tampered.
 
 ### Compiling from Council Verdict
 
@@ -347,7 +359,11 @@ console.log(`Categories: ${stats.totalCategories}`);
 
 - **`deploySolution(solution, target): Object`**
   - Deploys a solution through the ExoForge pipeline
-  - target: Configuration object including required `deploymentHlc`
+  - target: Configuration object including required `deploymentHlc` and
+    `governanceEvidence.councilVerdict`
+  - Does not fabricate governance approval, identity, authority, consent, or
+    invariant evidence; missing or tampered evidence returns
+    `DEPLOYMENT_FAILED`
   - Returns: Deployment result with status and stages
 
 - **`listSolutionTemplates(): Array`**

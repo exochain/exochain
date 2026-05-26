@@ -398,6 +398,14 @@ impl EconomyStore for InMemoryEconomyStore {
                 reason: format!("duplicate settlement receipt {}", receipt.id),
             });
         }
+        if receipt.prev_settlement_receipt != self.latest_receipt_hash {
+            return Err(EconomyError::InvalidInput {
+                reason: format!(
+                    "settlement receipt prev_settlement_receipt {} does not match latest receipt hash {}",
+                    receipt.prev_settlement_receipt, self.latest_receipt_hash
+                ),
+            });
+        }
         self.receipt_by_hash
             .insert(receipt.content_hash, receipt.id.clone());
         self.latest_receipt_hash = receipt.content_hash;
@@ -711,6 +719,41 @@ mod tests {
         let receipt = settle(&q, &ctx, |_| fixed_signature()).unwrap();
         store.put_receipt(receipt.clone()).unwrap();
         assert!(store.put_receipt(receipt).is_err());
+    }
+
+    #[test]
+    fn put_receipt_rejects_receipt_not_chained_to_latest_hash() {
+        let mut store = InMemoryEconomyStore::new();
+        let policy = PricingPolicy::zero_launch_default();
+        let q = quote(&policy, &baseline_inputs(), "q-1".into()).unwrap();
+        let first_context = SettlementContext {
+            receipt_id: "rec-1".into(),
+            custody_transaction_hash: Hash256::from_bytes([0x33; 32]),
+            prev_settlement_receipt: store.latest_receipt_hash(),
+            now: Timestamp::new(1_010_000, 0),
+        };
+        let first_receipt = settle(&q, &first_context, |_| fixed_signature()).unwrap();
+        store.put_receipt(first_receipt.clone()).unwrap();
+
+        let mut inputs2 = baseline_inputs();
+        inputs2.compute_units = 200;
+        let q2 = quote(&policy, &inputs2, "q-2".into()).unwrap();
+        let fork_context = SettlementContext {
+            receipt_id: "rec-2".into(),
+            custody_transaction_hash: Hash256::from_bytes([0x44; 32]),
+            prev_settlement_receipt: Hash256::from_bytes([0xFA; 32]),
+            now: Timestamp::new(1_020_000, 0),
+        };
+        let forked_receipt = settle(&q2, &fork_context, |_| fixed_signature()).unwrap();
+
+        let err = store.put_receipt(forked_receipt).unwrap_err();
+        assert!(matches!(
+            err,
+            EconomyError::InvalidInput { reason }
+                if reason.contains("prev_settlement_receipt")
+                    && reason.contains("latest receipt hash")
+        ));
+        assert_eq!(store.latest_receipt_hash(), first_receipt.content_hash);
     }
 
     #[test]
@@ -1038,5 +1081,21 @@ mod tests {
         assert_ne!(r1.content_hash, r2.content_hash);
         assert_eq!(r2.prev_settlement_receipt, r1.content_hash);
         assert_eq!(store.latest_receipt_hash(), r2.content_hash);
+    }
+
+    #[test]
+    fn receipt_store_checks_chain_head_before_advancing_latest_hash() {
+        let source = include_str!("store.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        let guard_index = production
+            .find("receipt.prev_settlement_receipt != self.latest_receipt_hash")
+            .expect("receipt store must compare receipt chain head to latest hash");
+        let update_index = production
+            .find("self.latest_receipt_hash = receipt.content_hash")
+            .expect("receipt store must advance latest receipt hash after validation");
+        assert!(
+            guard_index < update_index,
+            "receipt store must reject forked receipts before advancing the latest hash"
+        );
     }
 }

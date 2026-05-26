@@ -907,7 +907,7 @@ pub async fn create_peer_attestation(
             )
         })?;
         let dag_node_hash = store
-            .next_claim_dag_node_hash(target_claim_hash, Timestamp::new(issued_ms, 0))
+            .next_claim_dag_node_hash(target_claim_hash, issued_ms)
             .map_err(store_error)?;
 
         let attestation = create_attestation(CreateAttestationInput {
@@ -1182,7 +1182,9 @@ mod tests {
             .unwrap();
 
         assert!(attestation_section.contains("let issued_ms = state.now_ms()?;"));
-        assert!(attestation_section.contains("Timestamp::new(issued_ms, 0)"));
+        assert!(
+            attestation_section.contains("next_claim_dag_node_hash(target_claim_hash, issued_ms)")
+        );
         assert!(
             attestation_section
                 .contains("build_target_claim(&attestation, dag_node_hash, issued_ms)")

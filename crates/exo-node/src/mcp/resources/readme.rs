@@ -68,9 +68,9 @@ MCP rules and 8 kernel invariants on every action. Read this document first.
   fetch checkpoints.
 - **proofs (4)** — Construct non-attested draft legal evidence envelopes from
   caller-supplied metadata, verify caller-supplied custody-chain metadata and
-  continuity, generate verifier-compatible Merkle proofs from 32-byte event
-  hashes, and refuse CGR proof verification until a production verifier is
-  wired.
+  continuity, generate verifier-compatible leaf-count-bound Merkle proofs from
+  32-byte event hashes, and refuse CGR proof verification until a production
+  verifier is wired.
 - **legal (4)** — eDiscovery search, privilege assertion, safe-harbor
   initiation, fiduciary-duty checks. These tools refuse by default unless
   `unaudited-mcp-simulation-tools` is enabled, because they are not wired to

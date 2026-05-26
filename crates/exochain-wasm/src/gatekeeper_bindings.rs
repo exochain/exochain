@@ -179,6 +179,26 @@ pub fn wasm_governance_findings_digest(findings_json: &str) -> Result<String, Js
     Ok(hex::encode(digest.as_bytes()))
 }
 
+/// Compute the domain-separated governance attestation message digest.
+#[wasm_bindgen]
+pub fn wasm_governance_attestation_signature_message_digest(
+    signer_did: &str,
+    findings_json: &str,
+) -> Result<String, JsValue> {
+    let signer_did = exo_core::Did::new(signer_did)
+        .map_err(|_| gatekeeper_boundary_error("invalid governance attestation signer DID"))?;
+    let findings: serde_json::Value = from_json_str(findings_json)?;
+    let findings_digest = exo_gatekeeper::governance_monitor::governance_findings_digest(&findings)
+        .map_err(|_| gatekeeper_boundary_error("governance findings digest failed"))?;
+    let message_digest =
+        exo_gatekeeper::governance_monitor::governance_attestation_signature_message_digest(
+            &signer_did,
+            &findings_digest,
+        )
+        .map_err(|_| gatekeeper_boundary_error("governance attestation message digest failed"))?;
+    Ok(hex::encode(message_digest.as_bytes()))
+}
+
 /// Verify a governance monitor attestation before persistence.
 #[wasm_bindgen]
 pub fn wasm_verify_governance_attestation_with_trusted_keys(
@@ -756,12 +776,39 @@ mod tests {
             "trusted signer keys must be passed as an explicit registry, not as a raw peer key"
         );
         assert!(
+            production.contains("wasm_governance_attestation_signature_message_digest"),
+            "WASM callers must have an exported domain-separated attestation signing message"
+        );
+        assert!(
+            production.contains(
+                "governance_attestation_signature_message_digest(\n            &signer_did,"
+            ),
+            "WASM attestation signing message must bind the signer DID before signing"
+        );
+        assert!(
             !production.contains("pub fn wasm_verify_governance_attestation("),
             "WASM governance attestations must not expose a raw caller-supplied public-key verifier"
         );
         assert!(
             !production.contains("signer_public_key_hex"),
             "WASM governance attestation verification must not accept a raw signer_public_key_hex parameter"
+        );
+    }
+
+    #[test]
+    fn governance_attestation_wasm_signing_message_is_domain_separated() {
+        let findings_json = r#"[{"id":"F-001","severity":"critical"}]"#;
+        let findings_digest =
+            super::wasm_governance_findings_digest(findings_json).expect("findings digest");
+        let message_digest = super::wasm_governance_attestation_signature_message_digest(
+            "did:exo:governance-scanner",
+            findings_json,
+        )
+        .expect("attestation signing digest");
+
+        assert_ne!(
+            message_digest, findings_digest,
+            "WASM attestation signature message must not be raw findings digest"
         );
     }
 

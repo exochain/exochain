@@ -513,6 +513,20 @@ fn escape_telegram_html(input: &str) -> String {
     escaped
 }
 
+fn escape_telegram_alert_did(did: &Did) -> String {
+    let did_str = did.as_str();
+    if did_str.chars().count() <= MAX_ZERODENTITY_ALERT_DID_DISPLAY_CHARS {
+        return escape_telegram_html(did_str);
+    }
+
+    let mut display = did_str
+        .chars()
+        .take(MAX_ZERODENTITY_ALERT_DID_DISPLAY_CHARS)
+        .collect::<String>();
+    display.push_str("...");
+    escape_telegram_html(&display)
+}
+
 /// Format basis-point value as "XX.YY" (e.g. 5250 → "52.50").
 fn fmt_bp(bp: u32) -> String {
     format!("{}.{:02}", bp / 100, bp % 100)
@@ -610,6 +624,12 @@ const ALERT_FINGERPRINT_LOW_BP: u32 = 2_000;
 const ALERT_OTP_WINDOW_MS: u64 = 86_400_000;
 /// Maximum scored DIDs loaded from the 0dentity store in one scan page.
 const MAX_ZERODENTITY_ALERT_SCAN_PAGE_DIDS: usize = 1_000;
+/// Maximum 0dentity score pages evaluated by one Telegram alert request.
+const MAX_ZERODENTITY_ALERT_SCAN_PAGES: usize = 4;
+/// Maximum alert lines included in one Telegram response.
+const MAX_ZERODENTITY_ALERT_MESSAGE_ITEMS: usize = 64;
+/// Maximum DID characters rendered in a single 0dentity alert line.
+const MAX_ZERODENTITY_ALERT_DID_DISPLAY_CHARS: usize = 96;
 
 /// Build the `/0dentity-alerts` response.
 ///
@@ -636,10 +656,16 @@ pub fn build_zerodentity_alerts_message(
 
     let since_ms = now_ms().saturating_sub(ALERT_OTP_WINDOW_MS);
     let mut alerts: Vec<String> = Vec::new();
+    let mut total_alert_count = 0usize;
     let mut scanned_did_count = 0usize;
+    let mut pages_scanned = 0usize;
     let mut after_did: Option<Did> = None;
 
     loop {
+        if pages_scanned >= MAX_ZERODENTITY_ALERT_SCAN_PAGES {
+            break;
+        }
+
         let zstore = match zerodentity.lock() {
             Ok(s) => s,
             Err(_) => {
@@ -657,6 +683,7 @@ pub fn build_zerodentity_alerts_message(
             break;
         }
 
+        pages_scanned = pages_scanned.saturating_add(1);
         scanned_did_count = scanned_did_count.saturating_add(dids.len());
         after_did = dids.last().cloned();
 
@@ -676,7 +703,7 @@ pub fn build_zerodentity_alerts_message(
                 let fingerprints = match zstore.get_fingerprints(&did) {
                     Ok(fps) => fps,
                     Err(e) => {
-                        let did_html = escape_telegram_html(did.as_str());
+                        let did_html = escape_telegram_alert_did(&did);
                         let error_html = escape_telegram_html(&e.to_string());
                         return (
                             format!(
@@ -703,14 +730,17 @@ pub fn build_zerodentity_alerts_message(
                 if prev.composite > curr.composite
                     && prev.composite - curr.composite > ALERT_COMPOSITE_DROP_BP
                 {
-                    let did_html = escape_telegram_html(did.as_str());
-                    alerts.push(format!(
-                        "\u{26a0}\u{fe0f} <code>{}</code> score dropped {} bp ({}\u{2192}{})",
-                        did_html,
-                        prev.composite - curr.composite,
-                        fmt_bp(prev.composite),
-                        fmt_bp(curr.composite),
-                    ));
+                    let did_html = escape_telegram_alert_did(&did);
+                    total_alert_count = total_alert_count.saturating_add(1);
+                    if alerts.len() < MAX_ZERODENTITY_ALERT_MESSAGE_ITEMS {
+                        alerts.push(format!(
+                            "\u{26a0}\u{fe0f} <code>{}</code> score dropped {} bp ({}\u{2192}{})",
+                            did_html,
+                            prev.composite - curr.composite,
+                            fmt_bp(prev.composite),
+                            fmt_bp(curr.composite),
+                        ));
+                    }
                 }
             }
 
@@ -718,51 +748,72 @@ pub fn build_zerodentity_alerts_message(
             if let Some(latest) = fingerprints.last() {
                 if let Some(consistency) = latest.consistency_score_bp {
                     if consistency < ALERT_FINGERPRINT_LOW_BP {
-                        let did_html = escape_telegram_html(did.as_str());
-                        alerts.push(format!(
-                            "\u{26a0}\u{fe0f} <code>{}</code> fingerprint consistency low: {}",
-                            did_html,
-                            fmt_bp(consistency),
-                        ));
+                        let did_html = escape_telegram_alert_did(&did);
+                        total_alert_count = total_alert_count.saturating_add(1);
+                        if alerts.len() < MAX_ZERODENTITY_ALERT_MESSAGE_ITEMS {
+                            alerts.push(format!(
+                                "\u{26a0}\u{fe0f} <code>{}</code> fingerprint consistency low: {}",
+                                did_html,
+                                fmt_bp(consistency),
+                            ));
+                        }
                     }
                 }
             }
 
             // 3. OTP lockout in last 24h.
             if has_recent_otp_lockout {
-                let did_html = escape_telegram_html(did.as_str());
-                alerts.push(format!(
-                    "\u{1f512} <code>{}</code> OTP lockout in last 24h",
-                    did_html,
-                ));
+                let did_html = escape_telegram_alert_did(&did);
+                total_alert_count = total_alert_count.saturating_add(1);
+                if alerts.len() < MAX_ZERODENTITY_ALERT_MESSAGE_ITEMS {
+                    alerts.push(format!(
+                        "\u{1f512} <code>{}</code> OTP lockout in last 24h",
+                        did_html,
+                    ));
+                }
             }
         }
     }
 
-    let scan_limit_note = if scored_did_count > scanned_did_count {
+    let incomplete_scan_note = if scored_did_count > scanned_did_count {
         format!(
-            "\nScan completed {} of {} scored DIDs before concurrent score changes.",
+            "\nScan paused after {} of {} scored DIDs.\n\
+             Unscanned DIDs may still have active alerts.",
             scanned_did_count, scored_did_count
         )
     } else {
         String::new()
     };
 
-    let text = if alerts.is_empty() {
+    let output_cap_note = if total_alert_count > alerts.len() {
         format!(
-            "\u{2705} <b>0dentity Alerts</b>\n\
-             \u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n\
-             No 0dentity alerts.{scan_limit_note}",
+            "\nShowing first {} of {} alert(s) found in scanned DIDs.",
+            alerts.len(),
+            total_alert_count
         )
     } else {
-        let count = alerts.len();
+        String::new()
+    };
+
+    let text = if total_alert_count == 0 && !incomplete_scan_note.is_empty() {
+        format!(
+            "\u{26a0}\u{fe0f} <b>0dentity Alerts</b>\n\
+             \u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n\
+             No alerts found in scanned DIDs.{incomplete_scan_note}",
+        )
+    } else if total_alert_count == 0 {
+        "\u{2705} <b>0dentity Alerts</b>\n\
+             \u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n\
+             No 0dentity alerts."
+            .to_string()
+    } else {
         let body = alerts.join("\n");
         format!(
             "\u{1f6a8} <b>0dentity Alerts</b>\n\
              \u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n\
              {body}\n\
              \u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\u{2501}\n\
-             {count} alert(s) found.{scan_limit_note}"
+             {total_alert_count} alert(s) found.{output_cap_note}{incomplete_scan_note}"
         )
     };
 
@@ -1375,6 +1426,11 @@ mod tests {
                 && !alerts.contains("usize::MAX"),
             "Telegram 0dentity alerts must use bounded DID pages rather than an unbounded or prefix-only sample"
         );
+        assert!(
+            alerts.contains("MAX_ZERODENTITY_ALERT_SCAN_PAGES")
+                && alerts.contains("MAX_ZERODENTITY_ALERT_MESSAGE_ITEMS"),
+            "Telegram 0dentity alerts must bound both per-request scan work and message output"
+        );
     }
 
     #[test]
@@ -1417,9 +1473,11 @@ mod tests {
 
         let (text, keyboard) = build_zerodentity_alerts_message(&zerodentity);
 
-        assert!(text.contains("1001 alert(s) found."));
-        assert!(text.contains("did:exo:alert1000"));
-        assert!(!text.contains("Scan limited to first"));
+        assert!(text.contains("Showing first"));
+        assert!(text.contains("1001 alert(s) found in scanned DIDs."));
+        assert!(text.contains("did:exo:alert0000"));
+        assert!(!text.contains("did:exo:alert1000"));
+        assert!(!text.contains("No 0dentity alerts."));
         assert!(!keyboard.is_empty());
     }
 
@@ -1443,6 +1501,59 @@ mod tests {
         assert!(text.contains("did:exo:z-after-prefix"));
         assert!(text.contains("1 alert(s) found."));
         assert!(!text.contains("No 0dentity alerts."));
+        assert!(!keyboard.is_empty());
+    }
+
+    #[test]
+    fn zerodentity_alerts_pauses_after_bounded_pages_without_false_all_clear() {
+        let zerodentity = crate::zerodentity::store::new_shared_store();
+        let expected_scan_cap =
+            MAX_ZERODENTITY_ALERT_SCAN_PAGE_DIDS * MAX_ZERODENTITY_ALERT_SCAN_PAGES;
+        {
+            let mut store = zerodentity.lock().unwrap();
+            for i in 0..expected_scan_cap {
+                let did = Did::new(&format!("did:exo:prefix{i:04}")).unwrap();
+                store.put_score(score_snapshot(&did, 9_000, 1000));
+            }
+
+            let hidden_did = Did::new("did:exo:z-after-scan-cap").unwrap();
+            store.put_score(score_snapshot(&hidden_did, 9_000, 1000));
+            store.put_score(score_snapshot(&hidden_did, 7_000, 2000));
+        }
+
+        let (text, keyboard) = build_zerodentity_alerts_message(&zerodentity);
+
+        assert!(text.contains(&format!(
+            "Scan paused after {expected_scan_cap} of {} scored DIDs.",
+            expected_scan_cap + 1
+        )));
+        assert!(text.contains("Unscanned DIDs may still have active alerts."));
+        assert!(!text.contains("No 0dentity alerts."));
+        assert!(!text.contains("did:exo:z-after-scan-cap"));
+        assert!(!keyboard.is_empty());
+    }
+
+    #[test]
+    fn zerodentity_alerts_truncate_long_dids_before_message_rendering() {
+        let zerodentity = crate::zerodentity::store::new_shared_store();
+        let long_did_string = format!("did:exo:{}", "a".repeat(5_000));
+        let long_did = Did::new(&long_did_string).unwrap();
+        {
+            let mut store = zerodentity.lock().unwrap();
+            store.put_score(score_snapshot(&long_did, 9_000, 1000));
+            store.put_score(score_snapshot(&long_did, 7_000, 2000));
+        }
+
+        let (text, keyboard) = build_zerodentity_alerts_message(&zerodentity);
+
+        assert!(text.contains("did:exo:"));
+        assert!(text.contains("..."));
+        assert!(!text.contains(&long_did_string));
+        assert!(
+            text.chars().count() < 1_000,
+            "single-DID alert messages must remain bounded, got {} chars",
+            text.chars().count()
+        );
         assert!(!keyboard.is_empty());
     }
 

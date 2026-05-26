@@ -19,7 +19,7 @@
 
 use exo_core::{
     Did, Hash256, Timestamp,
-    hash::{merkle_proof, merkle_root},
+    hash::{merkle_proof, merkle_root, merkle_root_with_leaf_count},
 };
 use exo_legal::evidence::{
     create_evidence_from_hash, custody_chain_digest, transfer_custody, verify_chain_of_custody,
@@ -694,7 +694,8 @@ pub fn execute_generate_merkle_proof(params: &Value, _context: &NodeContext) -> 
         }
     }
 
-    let root_hash = merkle_root(&hashes);
+    let tree_root = merkle_root(&hashes);
+    let root_hash = merkle_root_with_leaf_count(&hashes);
     let proof_hashes = match merkle_proof(&hashes, target_index) {
         Ok(proof) => proof.iter().map(ToString::to_string).collect::<Vec<_>>(),
         Err(err) => return ToolResult::error(json!({"error": err.to_string()}).to_string()),
@@ -704,6 +705,8 @@ pub fn execute_generate_merkle_proof(params: &Value, _context: &NodeContext) -> 
     let response = json!({
         "root": root_hash.to_string(),
         "root_hash": root_hash.to_string(),
+        "tree_root": tree_root.to_string(),
+        "leaf_count_bound_root": root_hash.to_string(),
         "target_leaf": target_hash,
         "target_hash": target_hash,
         "event_hash": target_hash,
@@ -1080,6 +1083,8 @@ mod tests {
         let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
         assert!(v["root_hash"].as_str().is_some());
         assert_eq!(v["root"], v["root_hash"]);
+        assert_eq!(v["leaf_count_bound_root"], v["root_hash"]);
+        assert_ne!(v["tree_root"], v["root_hash"]);
         assert_eq!(v["event_hash"], leaves[1]);
         assert_eq!(v["target_hash"], leaves[1]);
         assert_eq!(v["target_index"], 1);

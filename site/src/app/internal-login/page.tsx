@@ -14,11 +14,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { redirect } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import Link from 'next/link';
-import { SESSION_COOKIE } from '@/lib/auth';
-import { INTRANET_ROLES, ROLE_LABEL, type IntranetRole } from '@/lib/roles';
+import { createSessionCookieValue, isDevLoginEnabled, SESSION_COOKIE } from '@/lib/auth';
+import { INTRANET_ROLES, ROLE_LABEL, isIntranetRole, type IntranetRole } from '@/lib/roles';
 import { Section, Eyebrow, H1, Lede } from '@/components/ui/Section';
 import { Pill } from '@/components/ui/Pill';
 import { Disclaimer } from '@/components/ui/Disclaimer';
@@ -27,18 +27,26 @@ export const metadata = { title: 'Sign in · Intranet' };
 
 async function signIn(formData: FormData) {
   'use server';
-  const role = String(formData.get('role') ?? 'super_admin') as IntranetRole;
+  if (!isDevLoginEnabled()) {
+    throw new Error('development login is disabled');
+  }
+  const roleValue = String(formData.get('role') ?? 'auditor_internal');
+  if (!isIntranetRole(roleValue)) {
+    throw new Error('invalid intranet role');
+  }
+  const role: IntranetRole = roleValue;
   const next = String(formData.get('next') ?? '/internal');
   const session = {
     userId: 'op_user_001',
     email: 'ops@exochain.io',
     role,
-    surface: 'intranet'
+    surface: 'intranet' as const
   };
-  cookies().set(SESSION_COOKIE, JSON.stringify(session), {
+  cookies().set(SESSION_COOKIE, createSessionCookieValue(session), {
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
+    secure: process.env.NODE_ENV === 'production',
     maxAge: 60 * 60 * 4
   });
   redirect(next);
@@ -55,6 +63,10 @@ export default function Page({
 }: {
   searchParams: { next?: string };
 }) {
+  if (!isDevLoginEnabled()) {
+    notFound();
+  }
+
   const next = searchParams.next ?? '/internal';
   return (
     <div className="min-h-dvh grid place-items-center px-6 bg-ink text-vellum-soft">
@@ -62,9 +74,8 @@ export default function Page({
         <Eyebrow>Intranet · internal use only</Eyebrow>
         <H1 className="mt-3 text-vellum-soft">EXOCHAIN operations</H1>
         <Lede className="mt-4 text-vellum-soft/80">
-          v0 uses a dev login. Real OIDC + WebAuthn + step-up MFA arrive in
-          v0.5. Choose a role to preview the intranet with that capability
-          set.
+          Local development login is explicitly enabled for this environment.
+          Choose a role to preview the intranet with that capability set.
         </Lede>
         <div className="mt-3 flex gap-2">
           <Pill tone="signal">dev login</Pill>
@@ -76,7 +87,7 @@ export default function Page({
             <div className="text-eyebrow text-vellum-soft/60">Role</div>
             <select
               name="role"
-              defaultValue="super_admin"
+              defaultValue="auditor_internal"
               className="mt-1 w-full border border-vellum-soft/20 rounded-sm px-3 py-2 bg-transparent"
             >
               {INTRANET_ROLES.map((r) => (

@@ -74,6 +74,82 @@ function delegationLink({ grantorId, granteeId, authority, scope, previousChainH
   };
 }
 
+function solutionGovernanceEvidence(solution) {
+  const verdictId = `verdict-${solution.solutionId}-approved`;
+  const nonce = deterministicId('nonce', {
+    createdAtHlc: solution.createdAtHlc,
+    proposalId: solution.solutionId,
+    verdictId
+  });
+  const panelAssessments = {};
+  const consentResponses = {};
+  for (const panel of solution.requiredPanels) {
+    panelAssessments[panel] = 'FOR';
+    const responseHash = `0x${hashCanonical({
+      consent: true,
+      consentRequestId: `consent_req_${solution.solutionId}`,
+      panel,
+      proposalId: solution.solutionId,
+      verdictId
+    })}`;
+    consentResponses[panel] = {
+      consent: true,
+      responseHash,
+      signatureHash: `0x${hashCanonical({
+        panel,
+        responseHash,
+        signer: `${panel} certifier`,
+        verdictId
+      })}`
+    };
+  }
+  const invariantEvidence = {};
+  for (const [invariant, nodeType] of Object.entries({
+    GOVERNANCE_AUTHORITY: 'authority-check',
+    CONSENT_COVERAGE: 'consent-verify',
+    PROOF_VALIDITY: 'proof-verify',
+    KERNEL_INTEGRITY: 'kernel-adjudicate'
+  })) {
+    if (solution.nodeSequence.includes(nodeType)) {
+      invariantEvidence[invariant] = {
+        nodeType,
+        evidenceHash: `0x${hashCanonical({
+          invariant,
+          nodeType,
+          solutionId: solution.solutionId,
+          verdictId
+        })}`
+      };
+    }
+  }
+  return {
+    councilVerdict: {
+      id: verdictId,
+      status: 'APPROVED',
+      affectedPanels: [...solution.requiredPanels],
+      panelAssessments,
+      identityProof: identityProof(
+        solution.metadata.author,
+        'cryptographic',
+        nonce,
+        'ed25519-governance-certifier-public-key'
+      ),
+      delegationChain: [
+        delegationLink({
+          grantorId: 'did:exo:governance-council',
+          granteeId: solution.metadata.author,
+          authority: 'GOVERNANCE_PROPOSER',
+          scope: solution.solutionType
+        })
+      ],
+      consentResponses,
+      invariantEvidence,
+      systemState: { source: 'external-council-verdict' },
+      precedingProposals: ['root-authority-resolution']
+    }
+  };
+}
+
 /**
  * Run all tests
  */
@@ -256,6 +332,7 @@ async function runTests() {
     const deployment = engine.deploySolution(amendmentSolution, {
       path: '/exoforge/deployments',
       environment: 'PRODUCTION',
+      governanceEvidence: solutionGovernanceEvidence(amendmentSolution),
       deploymentHlc: DEPLOYMENT_HLC
     });
     console.log(`Deployment ID: ${deployment.deploymentId}`);
@@ -266,6 +343,13 @@ async function runTests() {
     deployment.stages.forEach((stage, idx) => {
       console.log(`  ${idx + 1}. ${stage.name}: ${stage.description}`);
     });
+    if (deployment.status !== 'DEPLOYED') {
+      throw new Error(`Solution deployment failed: ${deployment.error || deployment.status}`);
+    }
+    const deploymentValidation = engine.validateSyntaxisWorkflow(deployment.workflow);
+    if (!deploymentValidation.valid) {
+      throw new Error(`Deployment workflow validation failed: ${deploymentValidation.errors.join(', ')}`);
+    }
     console.log('\n');
 
     // Test 10: List Solution Templates

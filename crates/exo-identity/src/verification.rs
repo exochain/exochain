@@ -20,7 +20,11 @@ use exo_core::{Did, Hash256, PublicKey, SecretKey, Signature, Timestamp, hash::h
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::risk::{RiskAttestation, RiskContext, RiskLevel, assess_risk};
+use crate::{
+    did::{DidDocument, did_from_public_key},
+    registry::DidRegistry,
+    risk::{RiskAttestation, RiskContext, RiskLevel, assess_risk},
+};
 
 #[derive(Debug, Error)]
 pub enum VerificationCeremonyError {
@@ -30,12 +34,28 @@ pub enum VerificationCeremonyError {
     AlreadyFinalized,
     #[error("Invalid signature proof")]
     InvalidSignature,
+    #[error("signature proof message is not the canonical ceremony challenge")]
+    SignatureChallengeMismatch,
+    #[error("signature proof key resolves to {derived_did}, not target ceremony DID {target_did}")]
+    SignatureKeyNotBoundToTargetDid { target_did: Did, derived_did: Did },
+    #[error("signature proof DID derivation failed: {reason}")]
+    SignatureDidDerivation { reason: String },
+    #[error("unverified proof kind cannot be submitted directly: {kind}")]
+    UnverifiedProofKind { kind: &'static str },
+    #[error("target DID is not active in the supplied registry: {target_did}")]
+    TargetDidNotActive { target_did: Did },
+    #[error("registry returned DID document {document_did} for target DID {target_did}")]
+    TargetDidDocumentMismatch { target_did: Did, document_did: Did },
+    #[error("signature proof key is not declared by active target DID document: {target_did}")]
+    SignatureKeyNotDeclaredByTarget { target_did: Did },
     #[error("Duplicate proof kind: {kind}")]
     DuplicateProofKind { kind: &'static str },
     #[error("Insufficient risk score to finalize: {score}")]
     InsufficientScore { score: u32 },
     #[error("Invalid attester DID: {0}")]
     InvalidAttesterDid(String),
+    #[error("signature ceremony challenge encoding failed: {reason}")]
+    SignatureChallengeEncoding { reason: String },
     #[error("verification ceremony evidence encoding failed: {reason}")]
     EvidenceEncoding { reason: String },
     #[error("risk attestation failed: {0}")]
@@ -50,6 +70,9 @@ const VERIFICATION_CEREMONY_EVIDENCE_SCHEMA_VERSION: u16 = 1;
 const VERIFICATION_CEREMONY_PROOF_MATERIAL_HASH_DOMAIN: &str =
     "exo.identity.verification_ceremony.proof_material.v1";
 const VERIFICATION_CEREMONY_PROOF_MATERIAL_HASH_SCHEMA_VERSION: u16 = 1;
+pub const VERIFICATION_CEREMONY_SIGNATURE_CHALLENGE_DOMAIN: &str =
+    "exo.identity.verification_ceremony.signature_challenge.v1";
+const VERIFICATION_CEREMONY_SIGNATURE_CHALLENGE_SCHEMA_VERSION: u16 = 1;
 pub const VERIFICATION_CEREMONY_EXPIRY_WINDOW_MS: u64 = 3_600_000;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -86,11 +109,20 @@ impl fmt::Debug for IdentityProof {
 
 #[derive(Debug, Clone)]
 pub struct VerificationCeremony {
-    pub target_did: Did,
-    pub session_id: String,
-    pub initiated_at: Timestamp,
-    pub proofs: Vec<IdentityProof>,
-    pub finalized: bool,
+    target_did: Did,
+    session_id: String,
+    initiated_at: Timestamp,
+    proofs: Vec<IdentityProof>,
+    finalized: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct VerificationCeremonySignatureChallengePayload<'a> {
+    domain: &'static str,
+    schema_version: u16,
+    target_did: &'a Did,
+    session_id: &'a str,
+    initiated_at: Timestamp,
 }
 
 #[derive(Debug, Serialize)]
@@ -155,9 +187,74 @@ impl VerificationCeremony {
         }
     }
 
+    #[must_use]
+    pub fn target_did(&self) -> &Did {
+        &self.target_did
+    }
+
+    #[must_use]
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    #[must_use]
+    pub const fn initiated_at(&self) -> Timestamp {
+        self.initiated_at
+    }
+
+    #[must_use]
+    pub fn proof_count(&self) -> usize {
+        self.proofs.len()
+    }
+
+    #[must_use]
+    pub const fn is_finalized(&self) -> bool {
+        self.finalized
+    }
+
+    pub fn signature_challenge(&self) -> Result<Vec<u8>, VerificationCeremonyError> {
+        let payload = VerificationCeremonySignatureChallengePayload {
+            domain: VERIFICATION_CEREMONY_SIGNATURE_CHALLENGE_DOMAIN,
+            schema_version: VERIFICATION_CEREMONY_SIGNATURE_CHALLENGE_SCHEMA_VERSION,
+            target_did: &self.target_did,
+            session_id: &self.session_id,
+            initiated_at: self.initiated_at,
+        };
+        let mut out = Vec::new();
+        ciborium::ser::into_writer(&payload, &mut out).map_err(|e| {
+            VerificationCeremonyError::SignatureChallengeEncoding {
+                reason: e.to_string(),
+            }
+        })?;
+        Ok(out)
+    }
+
     pub fn submit_proof(
         &mut self,
         proof: IdentityProof,
+        now: Timestamp,
+    ) -> Result<(), VerificationCeremonyError> {
+        let proof_kind = proof.kind();
+        self.ensure_can_accept_proof(proof_kind, now)?;
+
+        match &proof {
+            IdentityProof::Signature(signature, public_key, message) => {
+                self.validate_signature_proof(signature, public_key, message)?;
+            }
+            IdentityProof::Otp(_)
+            | IdentityProof::WebAuthnAssertion(_)
+            | IdentityProof::KycToken(_) => {
+                return Err(VerificationCeremonyError::UnverifiedProofKind { kind: proof_kind });
+            }
+        }
+
+        self.proofs.push(proof);
+        Ok(())
+    }
+
+    fn ensure_can_accept_proof(
+        &self,
+        proof_kind: &'static str,
         now: Timestamp,
     ) -> Result<(), VerificationCeremonyError> {
         if self.finalized {
@@ -167,7 +264,6 @@ impl VerificationCeremony {
             return Err(VerificationCeremonyError::Expired);
         }
 
-        let proof_kind = proof.kind();
         if self
             .proofs
             .iter()
@@ -176,13 +272,36 @@ impl VerificationCeremony {
             return Err(VerificationCeremonyError::DuplicateProofKind { kind: proof_kind });
         }
 
-        if let IdentityProof::Signature(ref sig, ref pk, ref msg) = proof {
-            if !exo_core::crypto::verify(msg, sig, pk) {
-                return Err(VerificationCeremonyError::InvalidSignature);
-            }
+        Ok(())
+    }
+
+    fn validate_signature_proof(
+        &self,
+        signature: &Signature,
+        public_key: &PublicKey,
+        message: &[u8],
+    ) -> Result<(), VerificationCeremonyError> {
+        let expected_challenge = self.signature_challenge()?;
+        if message != expected_challenge.as_slice() {
+            return Err(VerificationCeremonyError::SignatureChallengeMismatch);
         }
 
-        self.proofs.push(proof);
+        let derived_did = did_from_public_key(public_key).map_err(|e| {
+            VerificationCeremonyError::SignatureDidDerivation {
+                reason: e.to_string(),
+            }
+        })?;
+        if derived_did != self.target_did {
+            return Err(VerificationCeremonyError::SignatureKeyNotBoundToTargetDid {
+                target_did: self.target_did.clone(),
+                derived_did,
+            });
+        }
+
+        if !exo_core::crypto::verify(message, signature, public_key) {
+            return Err(VerificationCeremonyError::InvalidSignature);
+        }
+
         Ok(())
     }
 
@@ -226,8 +345,9 @@ impl VerificationCeremony {
     /// is computed are a domain-separated canonical CBOR summary of the
     /// submitted proofs in submission order. This binds the attestation to the
     /// exact proof set that produced the risk score.
-    pub fn finalize(
+    pub fn finalize<R: DidRegistry>(
         &mut self,
+        registry: &R,
         now: Timestamp,
         attester_did: &Did,
         attester_key: &SecretKey,
@@ -238,6 +358,13 @@ impl VerificationCeremony {
         if ceremony_is_expired(self.initiated_at, now) {
             return Err(VerificationCeremonyError::Expired);
         }
+
+        let target_document = registry.resolve(&self.target_did).ok_or_else(|| {
+            VerificationCeremonyError::TargetDidNotActive {
+                target_did: self.target_did.clone(),
+            }
+        })?;
+        self.validate_active_target_document(target_document)?;
 
         let score = self.calculate_risk_score();
         if score < 1000 {
@@ -299,6 +426,39 @@ impl VerificationCeremony {
         );
 
         Ok(attestation)
+    }
+
+    fn validate_active_target_document(
+        &self,
+        target_document: &DidDocument,
+    ) -> Result<(), VerificationCeremonyError> {
+        if target_document.id != self.target_did {
+            return Err(VerificationCeremonyError::TargetDidDocumentMismatch {
+                target_did: self.target_did.clone(),
+                document_did: target_document.id.clone(),
+            });
+        }
+        if target_document.revoked {
+            return Err(VerificationCeremonyError::TargetDidNotActive {
+                target_did: self.target_did.clone(),
+            });
+        }
+
+        for proof in &self.proofs {
+            if let IdentityProof::Signature(_, public_key, _) = proof {
+                let declared = target_document
+                    .public_keys
+                    .iter()
+                    .any(|declared_key| declared_key == public_key);
+                if !declared {
+                    return Err(VerificationCeremonyError::SignatureKeyNotDeclaredByTarget {
+                        target_did: self.target_did.clone(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Canonical CBOR serialization of this ceremony's proof set, used
@@ -409,30 +569,240 @@ mod tests {
     use exo_core::crypto::{generate_keypair, sign};
 
     use super::*;
+    use crate::did::did_from_public_key;
+
+    fn make_signature_ceremony(
+        session_id: &str,
+        initiated_at: Timestamp,
+    ) -> (VerificationCeremony, PublicKey, SecretKey) {
+        let (public_key, secret_key) = generate_keypair();
+        let did = did_from_public_key(&public_key).unwrap();
+        (
+            VerificationCeremony::new(did, session_id.to_string(), initiated_at),
+            public_key,
+            secret_key,
+        )
+    }
+
+    fn signature_proof_for(
+        ceremony: &VerificationCeremony,
+        public_key: PublicKey,
+        secret_key: &SecretKey,
+    ) -> IdentityProof {
+        let message = ceremony.signature_challenge().unwrap();
+        let signature = sign(&message, secret_key);
+        IdentityProof::Signature(signature, public_key, message)
+    }
+
+    fn submit_valid_signature(
+        ceremony: &mut VerificationCeremony,
+        public_key: PublicKey,
+        secret_key: &SecretKey,
+        now: Timestamp,
+    ) {
+        let proof = signature_proof_for(ceremony, public_key, secret_key);
+        ceremony.submit_proof(proof, now).unwrap();
+    }
+
+    fn active_registry_for_key(
+        ceremony: &VerificationCeremony,
+        public_key: PublicKey,
+    ) -> crate::registry::LocalDidRegistry {
+        let doc = crate::did::DidDocument {
+            id: ceremony.target_did().clone(),
+            public_keys: vec![public_key],
+            authentication: vec![],
+            verification_methods: vec![],
+            hybrid_verification_methods: vec![],
+            service_endpoints: vec![],
+            created: Timestamp::new(1000, 0),
+            updated: Timestamp::new(1000, 0),
+            revoked: false,
+        };
+        let mut registry = crate::registry::LocalDidRegistry::new();
+        crate::registry::DidRegistry::register(&mut registry, doc).unwrap();
+        registry
+    }
+
+    #[test]
+    fn submit_proof_rejects_signature_over_attacker_chosen_message() {
+        let (public_key, secret_key) = generate_keypair();
+        let did = did_from_public_key(&public_key).unwrap();
+        let mut ceremony = VerificationCeremony::new(
+            did,
+            "sess-forged-message".to_string(),
+            Timestamp::new(1000, 0),
+        );
+        let message = b"attacker-selected-message".to_vec();
+        let signature = sign(&message, &secret_key);
+
+        let result = ceremony.submit_proof(
+            IdentityProof::Signature(signature, public_key, message),
+            Timestamp::new(1010, 0),
+        );
+
+        assert!(
+            result.is_err(),
+            "signature proofs must be bound to the ceremony challenge, not caller-chosen bytes"
+        );
+        assert!(ceremony.proofs.is_empty());
+    }
+
+    #[test]
+    fn submit_proof_rejects_signature_key_unbound_to_target_did() {
+        let (target_public_key, _target_secret_key) = generate_keypair();
+        let target_did = did_from_public_key(&target_public_key).unwrap();
+        let mut ceremony = VerificationCeremony::new(
+            target_did,
+            "sess-wrong-key".to_string(),
+            Timestamp::new(1000, 0),
+        );
+        let (attacker_public_key, attacker_secret_key) = generate_keypair();
+        let message = ceremony.signature_challenge().unwrap();
+        let signature = sign(&message, &attacker_secret_key);
+
+        let result = ceremony.submit_proof(
+            IdentityProof::Signature(signature, attacker_public_key, message),
+            Timestamp::new(1010, 0),
+        );
+
+        assert!(
+            result.is_err(),
+            "signature proofs must prove control of a key bound to target_did"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            VerificationCeremonyError::SignatureKeyNotBoundToTargetDid { .. }
+        ));
+        assert!(ceremony.proofs.is_empty());
+    }
+
+    #[test]
+    fn submit_proof_rejects_unverified_external_proof_kinds() {
+        for proof in [
+            IdentityProof::Otp("123456".to_string()),
+            IdentityProof::WebAuthnAssertion(vec![1, 2, 3]),
+            IdentityProof::KycToken("kyc-token".to_string()),
+        ] {
+            let did = Did::new("did:exo:unverified-proof-kind").unwrap();
+            let mut ceremony = VerificationCeremony::new(
+                did,
+                format!("sess-{}", proof.kind()),
+                Timestamp::new(1000, 0),
+            );
+
+            let result = ceremony.submit_proof(proof, Timestamp::new(1010, 0));
+
+            assert!(
+                result.is_err(),
+                "unverified external proof material must fail closed"
+            );
+            assert!(ceremony.proofs.is_empty());
+        }
+    }
+
+    #[test]
+    fn verification_ceremony_proof_vector_is_not_publicly_mutable() {
+        let source = include_str!("verification.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+
+        for forbidden_public_field in [
+            "pub target_did:",
+            "pub session_id:",
+            "pub initiated_at:",
+            "pub proofs:",
+            "pub finalized:",
+        ] {
+            assert!(
+                !production.contains(forbidden_public_field),
+                "ceremony state must not be publicly mutable: {forbidden_public_field}"
+            );
+        }
+    }
+
+    #[test]
+    fn signature_challenge_binds_target_session_and_hlc() {
+        let (ceremony, _public_key, _secret_key) =
+            make_signature_ceremony("sess-bound", Timestamp::new(1000, 7));
+        let same = VerificationCeremony::new(
+            ceremony.target_did().clone(),
+            "sess-bound".to_string(),
+            Timestamp::new(1000, 7),
+        );
+        let different_session = VerificationCeremony::new(
+            ceremony.target_did().clone(),
+            "sess-other".to_string(),
+            Timestamp::new(1000, 7),
+        );
+        let different_hlc = VerificationCeremony::new(
+            ceremony.target_did().clone(),
+            "sess-bound".to_string(),
+            Timestamp::new(1000, 8),
+        );
+        let (other_ceremony, _other_public_key, _other_secret_key) =
+            make_signature_ceremony("sess-bound", Timestamp::new(1000, 7));
+
+        let challenge = ceremony.signature_challenge().unwrap();
+
+        assert_eq!(challenge, same.signature_challenge().unwrap());
+        assert_ne!(challenge, different_session.signature_challenge().unwrap());
+        assert_ne!(challenge, different_hlc.signature_challenge().unwrap());
+        assert_ne!(challenge, other_ceremony.signature_challenge().unwrap());
+    }
+
+    #[test]
+    fn finalize_rejects_signature_key_absent_from_active_registry_document() {
+        let (mut ceremony, public_key, secret_key) =
+            make_signature_ceremony("sess-undeclared-key", Timestamp::new(1000, 0));
+        submit_valid_signature(
+            &mut ceremony,
+            public_key,
+            &secret_key,
+            Timestamp::new(1010, 0),
+        );
+        let (wrong_registry_key, _wrong_secret_key) = generate_keypair();
+        let registry = active_registry_for_key(&ceremony, wrong_registry_key);
+
+        let (_attester_public_key, attester_secret_key) = generate_keypair();
+        let attester_did = Did::new("did:exo:att-undeclared-key").unwrap();
+        let err = ceremony
+            .finalize(
+                &registry,
+                Timestamp::new(1020, 0),
+                &attester_did,
+                &attester_secret_key,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            VerificationCeremonyError::SignatureKeyNotDeclaredByTarget { .. }
+        ));
+        assert!(!ceremony.is_finalized());
+    }
 
     #[test]
     fn test_ceremony_lifecycle() {
-        let did = Did::new("did:exo:alice").unwrap();
-        let mut ceremony =
-            VerificationCeremony::new(did, "sess1".to_string(), Timestamp::new(1000, 0));
-        let (pk, sk) = generate_keypair();
-        let msg = b"msg".to_vec();
-        let sig = sign(&msg, &sk);
-
-        ceremony
-            .submit_proof(
-                IdentityProof::Signature(sig, pk, msg),
-                Timestamp::new(1010, 0),
-            )
-            .unwrap();
+        let (mut ceremony, public_key, secret_key) =
+            make_signature_ceremony("sess1", Timestamp::new(1000, 0));
+        submit_valid_signature(
+            &mut ceremony,
+            public_key,
+            &secret_key,
+            Timestamp::new(1010, 0),
+        );
         let (att_pk, att_sk) = generate_keypair();
         let attester_did = Did::new("did:exo:attester-lifecycle").unwrap();
+        let registry = active_registry_for_key(&ceremony, public_key);
         let attestation = ceremony
-            .finalize(Timestamp::new(1020, 0), &attester_did, &att_sk)
+            .finalize(&registry, Timestamp::new(1020, 0), &attester_did, &att_sk)
             .unwrap();
 
         assert_eq!(attestation.level, RiskLevel::Minimal);
-        assert!(ceremony.finalized);
+        assert!(ceremony.is_finalized());
         // GAP-004: signature must verify, evidence_hash must be non-zero.
         assert!(crate::risk::verify_attestation(&attestation, &att_pk));
         assert_ne!(attestation.evidence_hash, [0u8; 32]);
@@ -443,14 +813,16 @@ mod tests {
 
     #[test]
     fn test_finalize_without_sufficient_proofs_fails() {
-        let did = Did::new("did:exo:bob").unwrap();
+        let (public_key, _secret_key) = generate_keypair();
+        let did = did_from_public_key(&public_key).unwrap();
         let mut ceremony =
             VerificationCeremony::new(did, "sess2".to_string(), Timestamp::new(1000, 0));
 
         let (_att_pk, att_sk) = generate_keypair();
         let attester_did = Did::new("did:exo:attester-bob").unwrap();
+        let registry = active_registry_for_key(&ceremony, public_key);
         let err = ceremony
-            .finalize(Timestamp::new(1020, 0), &attester_did, &att_sk)
+            .finalize(&registry, Timestamp::new(1020, 0), &attester_did, &att_sk)
             .unwrap_err();
         assert!(matches!(
             err,
@@ -460,28 +832,19 @@ mod tests {
 
     #[test]
     fn test_risk_score_calculation() {
-        let did = Did::new("did:exo:charlie").unwrap();
-        let mut ceremony =
-            VerificationCeremony::new(did, "sess3".to_string(), Timestamp::new(1000, 0));
-
-        let (pk, sk) = generate_keypair();
-        let msg = b"msg".to_vec();
-        let sig = sign(&msg, &sk);
-
-        ceremony
-            .submit_proof(
-                IdentityProof::Signature(sig, pk, msg),
-                Timestamp::new(1010, 0),
-            )
-            .unwrap();
+        let (mut ceremony, public_key, secret_key) =
+            make_signature_ceremony("sess3", Timestamp::new(1000, 0));
+        submit_valid_signature(
+            &mut ceremony,
+            public_key,
+            &secret_key,
+            Timestamp::new(1010, 0),
+        );
         assert_eq!(ceremony.calculate_risk_score(), 1000);
 
         ceremony
-            .submit_proof(
-                IdentityProof::Otp("123456".to_string()),
-                Timestamp::new(1020, 0),
-            )
-            .unwrap();
+            .proofs
+            .push(IdentityProof::Otp("123456".to_string()));
         assert_eq!(ceremony.calculate_risk_score(), 3000); // 1000 + 2000
     }
 
@@ -573,29 +936,25 @@ mod tests {
 
     #[test]
     fn submit_proof_rejects_duplicate_proof_kind() {
-        let did = Did::new("did:exo:duplicate-submit").unwrap();
-        let mut ceremony =
-            VerificationCeremony::new(did, "sess-dup-submit".to_string(), Timestamp::new(1000, 0));
-
-        ceremony
-            .submit_proof(
-                IdentityProof::Otp("111111".to_string()),
-                Timestamp::new(1001, 0),
-            )
-            .unwrap();
+        let (mut ceremony, public_key, secret_key) =
+            make_signature_ceremony("sess-dup-submit", Timestamp::new(1000, 0));
+        submit_valid_signature(
+            &mut ceremony,
+            public_key,
+            &secret_key,
+            Timestamp::new(1001, 0),
+        );
+        let duplicate = signature_proof_for(&ceremony, public_key, &secret_key);
         let err = ceremony
-            .submit_proof(
-                IdentityProof::Otp("222222".to_string()),
-                Timestamp::new(1002, 0),
-            )
+            .submit_proof(duplicate, Timestamp::new(1002, 0))
             .unwrap_err();
 
         assert!(matches!(
             err,
-            VerificationCeremonyError::DuplicateProofKind { kind: "Otp" }
+            VerificationCeremonyError::DuplicateProofKind { kind: "Signature" }
         ));
-        assert_eq!(ceremony.proofs.len(), 1);
-        assert_eq!(ceremony.calculate_risk_score(), 2000);
+        assert_eq!(ceremony.proof_count(), 1);
+        assert_eq!(ceremony.calculate_risk_score(), 1000);
     }
 
     #[test]
@@ -636,30 +995,33 @@ mod tests {
 
         let (_att_pk, att_sk) = generate_keypair();
         let attester_did = Did::new("did:exo:attester-expiry-overflow").unwrap();
+        let registry = LocalDidRegistry::new();
         let finalize_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            ceremony.finalize(Timestamp::new(u64::MAX, 0), &attester_did, &att_sk)
+            ceremony.finalize(
+                &registry,
+                Timestamp::new(u64::MAX, 0),
+                &attester_did,
+                &att_sk,
+            )
         }));
         assert!(
             matches!(finalize_result, Ok(Err(VerificationCeremonyError::Expired))),
             "expiry overflow during finalize must fail closed, got {finalize_result:?}"
         );
-        assert!(!ceremony.finalized);
+        assert!(!ceremony.is_finalized());
     }
 
     #[test]
     fn test_invalid_signature_proof_rejected() {
-        let did = Did::new("did:exo:eve").unwrap();
-        let mut ceremony =
-            VerificationCeremony::new(did, "sess5".to_string(), Timestamp::new(1000, 0));
-
-        let (pk, _) = generate_keypair();
+        let (mut ceremony, public_key, _secret_key) =
+            make_signature_ceremony("sess5", Timestamp::new(1000, 0));
         let (_, sk2) = generate_keypair();
-        let msg = b"msg".to_vec();
+        let msg = ceremony.signature_challenge().unwrap();
         let bad_sig = sign(&msg, &sk2);
 
         let err = ceremony
             .submit_proof(
-                IdentityProof::Signature(bad_sig, pk, msg),
+                IdentityProof::Signature(bad_sig, public_key, msg),
                 Timestamp::new(1010, 0),
             )
             .unwrap_err();
@@ -693,7 +1055,7 @@ mod tests {
     #[test]
     fn test_integration_full_verification_flow() {
         let (pk, sk) = generate_keypair();
-        let did = make_did("integration1");
+        let did = did_from_public_key(&pk).unwrap();
         let doc = make_doc(did.clone(), pk);
 
         let mut reg = LocalDidRegistry::new();
@@ -706,7 +1068,7 @@ mod tests {
         );
 
         // 1. Submit signature
-        let msg = b"integration_msg".to_vec();
+        let msg = ceremony.signature_challenge().unwrap();
         let sig = sign(&msg, &sk);
         ceremony
             .submit_proof(
@@ -715,21 +1077,13 @@ mod tests {
             )
             .unwrap();
 
-        // 2. Submit WebAuthn
-        ceremony
-            .submit_proof(
-                IdentityProof::WebAuthnAssertion(vec![1, 2, 3]),
-                Timestamp::new(1020, 0),
-            )
-            .unwrap();
-
-        // 3. Finalize
+        // 2. Finalize
         let (att_pk, att_sk) = generate_keypair();
         let attester_did = Did::new("did:exo:attester-int1").unwrap();
         let attestation = ceremony
-            .finalize(Timestamp::new(1030, 0), &attester_did, &att_sk)
+            .finalize(&reg, Timestamp::new(1030, 0), &attester_did, &att_sk)
             .unwrap();
-        assert_eq!(attestation.level, RiskLevel::Critical); // 1000 + 4000 = 5000 -> Critical
+        assert_eq!(attestation.level, RiskLevel::Minimal);
         assert!(crate::risk::verify_attestation(&attestation, &att_pk));
 
         // Check that the target DID matches what's in the registry
@@ -739,10 +1093,9 @@ mod tests {
 
     #[test]
     fn test_integration_revoked_did_verification_fails() {
-        // While the ceremony itself doesn't check the registry in this simple model,
-        // an integration flow would ensure we don't verify revoked DIDs.
+        // Finalization must resolve the target DID from an active registry.
         let (pk, sk) = generate_keypair();
-        let did = make_did("integration2");
+        let did = did_from_public_key(&pk).unwrap();
         let doc = make_doc(did.clone(), pk);
 
         let mut reg = LocalDidRegistry::new();
@@ -759,11 +1112,10 @@ mod tests {
         let resolved = reg.resolve(&did);
         assert!(resolved.is_none());
 
-        // Since DID is revoked, the outer system wouldn't even start a ceremony,
-        // but if it did, it should not be usable.
+        // Since DID is revoked, even a key-bound ceremony proof must not finalize.
         let mut ceremony =
             VerificationCeremony::new(did, "session_int_2".to_string(), Timestamp::new(1000, 0));
-        let msg = b"msg".to_vec();
+        let msg = ceremony.signature_challenge().unwrap();
         let sig = sign(&msg, &sk);
         ceremony
             .submit_proof(
@@ -772,13 +1124,15 @@ mod tests {
             )
             .unwrap();
 
-        // Finalize succeeds, but the attestation is useless because resolve() fails
         let (_att_pk, att_sk) = generate_keypair();
         let attester_did = Did::new("did:exo:attester-int2").unwrap();
-        let attestation = ceremony
-            .finalize(Timestamp::new(1020, 0), &attester_did, &att_sk)
-            .unwrap();
-        assert!(reg.resolve(&attestation.subject_did).is_none());
+        let err = ceremony
+            .finalize(&reg, Timestamp::new(1020, 0), &attester_did, &att_sk)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            VerificationCeremonyError::TargetDidNotActive { .. }
+        ));
     }
 
     #[test]
@@ -796,7 +1150,7 @@ mod tests {
         let (_att_pk, att_sk) = generate_keypair();
         let attester_did = Did::new("did:exo:attester-int3").unwrap();
         let err = ceremony
-            .finalize(Timestamp::new(1020, 0), &attester_did, &att_sk)
+            .finalize(&reg, Timestamp::new(1020, 0), &attester_did, &att_sk)
             .unwrap_err();
         assert!(matches!(
             err,
@@ -807,25 +1161,22 @@ mod tests {
     // Covers submit_proof() returning AlreadyFinalized (line 56) when ceremony has been finalized.
     #[test]
     fn test_submit_proof_after_finalize_returns_already_finalized() {
-        let did = Did::new("did:exo:finalized-then-submit").unwrap();
-        let mut ceremony = VerificationCeremony::new(
-            did,
-            "sess-finalized-submit".to_string(),
-            Timestamp::new(1000, 0),
+        let (mut ceremony, public_key, secret_key) =
+            make_signature_ceremony("sess-finalized-submit", Timestamp::new(1000, 0));
+        submit_valid_signature(
+            &mut ceremony,
+            public_key,
+            &secret_key,
+            Timestamp::new(1010, 0),
         );
-        ceremony
-            .submit_proof(
-                IdentityProof::KycToken("kyc-tok".to_string()),
-                Timestamp::new(1010, 0),
-            )
-            .unwrap();
 
         let (_pk, att_sk) = generate_keypair();
         let attester_did = Did::new("did:exo:att-finalized-submit").unwrap();
+        let registry = active_registry_for_key(&ceremony, public_key);
         let _ = ceremony
-            .finalize(Timestamp::new(1020, 0), &attester_did, &att_sk)
+            .finalize(&registry, Timestamp::new(1020, 0), &attester_did, &att_sk)
             .unwrap();
-        assert!(ceremony.finalized);
+        assert!(ceremony.is_finalized());
 
         let err = ceremony
             .submit_proof(
@@ -835,32 +1186,29 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, VerificationCeremonyError::AlreadyFinalized));
         // Proof must NOT have been appended.
-        assert_eq!(ceremony.proofs.len(), 1);
+        assert_eq!(ceremony.proof_count(), 1);
     }
 
     // Covers finalize() returning AlreadyFinalized (line 124) on a second finalize call.
     #[test]
     fn test_double_finalize_returns_already_finalized() {
-        let did = Did::new("did:exo:double-finalize").unwrap();
-        let mut ceremony = VerificationCeremony::new(
-            did,
-            "sess-double-final".to_string(),
-            Timestamp::new(1000, 0),
+        let (mut ceremony, public_key, secret_key) =
+            make_signature_ceremony("sess-double-final", Timestamp::new(1000, 0));
+        submit_valid_signature(
+            &mut ceremony,
+            public_key,
+            &secret_key,
+            Timestamp::new(1010, 0),
         );
-        ceremony
-            .submit_proof(
-                IdentityProof::KycToken("t".to_string()),
-                Timestamp::new(1010, 0),
-            )
-            .unwrap();
 
         let (_pk, att_sk) = generate_keypair();
         let attester_did = Did::new("did:exo:att-double-final").unwrap();
+        let registry = active_registry_for_key(&ceremony, public_key);
         let _first = ceremony
-            .finalize(Timestamp::new(1020, 0), &attester_did, &att_sk)
+            .finalize(&registry, Timestamp::new(1020, 0), &attester_did, &att_sk)
             .unwrap();
         let err = ceremony
-            .finalize(Timestamp::new(1030, 0), &attester_did, &att_sk)
+            .finalize(&registry, Timestamp::new(1030, 0), &attester_did, &att_sk)
             .unwrap_err();
         assert!(matches!(err, VerificationCeremonyError::AlreadyFinalized));
     }
@@ -868,44 +1216,46 @@ mod tests {
     // Covers finalize() returning Expired (line 127) when `now` is past the one-hour window.
     #[test]
     fn test_finalize_expired_returns_expired() {
-        let did = Did::new("did:exo:finalize-expired").unwrap();
-        let mut ceremony = VerificationCeremony::new(
-            did,
-            "sess-final-expired".to_string(),
-            Timestamp::new(1000, 0),
+        let (mut ceremony, public_key, secret_key) =
+            make_signature_ceremony("sess-final-expired", Timestamp::new(1000, 0));
+        submit_valid_signature(
+            &mut ceremony,
+            public_key,
+            &secret_key,
+            Timestamp::new(1010, 0),
         );
-        ceremony
-            .submit_proof(
-                IdentityProof::KycToken("t".to_string()),
-                Timestamp::new(1010, 0),
-            )
-            .unwrap();
 
         let (_pk, att_sk) = generate_keypair();
         let attester_did = Did::new("did:exo:att-fin-exp").unwrap();
+        let registry = active_registry_for_key(&ceremony, public_key);
         // now > initiated_at + 3_600_000 ms
         let err = ceremony
-            .finalize(Timestamp::new(5_000_000, 0), &attester_did, &att_sk)
+            .finalize(
+                &registry,
+                Timestamp::new(5_000_000, 0),
+                &attester_did,
+                &att_sk,
+            )
             .unwrap_err();
         assert!(matches!(err, VerificationCeremonyError::Expired));
         // Still not finalized.
-        assert!(!ceremony.finalized);
+        assert!(!ceremony.is_finalized());
     }
 
     // Covers the empty-attester-DID rejection path (lines 137-139) in finalize().
     #[test]
     fn test_finalize_empty_attester_did_rejected() {
-        let did = Did::new("did:exo:empty-attester").unwrap();
-        let mut ceremony =
-            VerificationCeremony::new(did, "sess-empty-att".to_string(), Timestamp::new(1000, 0));
-        ceremony
-            .submit_proof(
-                IdentityProof::KycToken("t".to_string()),
-                Timestamp::new(1010, 0),
-            )
-            .unwrap();
+        let (mut ceremony, public_key, secret_key) =
+            make_signature_ceremony("sess-empty-att", Timestamp::new(1000, 0));
+        submit_valid_signature(
+            &mut ceremony,
+            public_key,
+            &secret_key,
+            Timestamp::new(1010, 0),
+        );
 
         let (_pk, att_sk) = generate_keypair();
+        let registry = active_registry_for_key(&ceremony, public_key);
         // `Did::new("")` legitimately rejects — so the only way to reach the
         // empty-attester branch in `finalize()` is to deserialize a malformed
         // Did from serde. That mirrors the real attack surface (malformed
@@ -914,7 +1264,7 @@ mod tests {
             serde_json::from_str("\"\"").expect("serde_json accepts empty string for Did wrapper");
 
         let err = ceremony
-            .finalize(Timestamp::new(1020, 0), &empty_did, &att_sk)
+            .finalize(&registry, Timestamp::new(1020, 0), &empty_did, &att_sk)
             .unwrap_err();
         match err {
             VerificationCeremonyError::InvalidAttesterDid(msg) => {
@@ -923,7 +1273,7 @@ mod tests {
             other => panic!("expected InvalidAttesterDid, got {other:?}"),
         }
         // Ceremony must not have been flipped to finalized when validation failed.
-        assert!(!ceremony.finalized);
+        assert!(!ceremony.is_finalized());
     }
 
     // Covers calculate_risk_score() KycToken arm (line 90) in isolation with a known weight.
@@ -932,12 +1282,7 @@ mod tests {
         let did = Did::new("did:exo:score-kyc").unwrap();
         let mut ceremony =
             VerificationCeremony::new(did, "sess-kyc".to_string(), Timestamp::new(1000, 0));
-        ceremony
-            .submit_proof(
-                IdentityProof::KycToken("kyc".into()),
-                Timestamp::new(1001, 0),
-            )
-            .unwrap();
+        ceremony.proofs.push(IdentityProof::KycToken("kyc".into()));
         // KYC weight alone is 5000.
         assert_eq!(ceremony.calculate_risk_score(), 5000);
     }
@@ -948,15 +1293,15 @@ mod tests {
         let did = Did::new("did:exo:level-low").unwrap();
         let mut ceremony =
             VerificationCeremony::new(did, "sess-low".to_string(), Timestamp::new(1000, 0));
-        ceremony
-            .submit_proof(IdentityProof::Otp("otp".into()), Timestamp::new(1001, 0))
-            .unwrap();
+        ceremony.proofs.push(IdentityProof::Otp("otp".into()));
         assert_eq!(ceremony.calculate_risk_score(), 2000);
 
         let (att_pk, att_sk) = generate_keypair();
         let attester_did = Did::new("did:exo:att-low").unwrap();
+        let (registry_key, _registry_secret) = generate_keypair();
+        let registry = active_registry_for_key(&ceremony, registry_key);
         let attestation = ceremony
-            .finalize(Timestamp::new(1010, 0), &attester_did, &att_sk)
+            .finalize(&registry, Timestamp::new(1010, 0), &attester_did, &att_sk)
             .unwrap();
         assert_eq!(attestation.level, RiskLevel::Low);
         assert!(crate::risk::verify_attestation(&attestation, &att_pk));
@@ -965,28 +1310,23 @@ mod tests {
     // Covers RiskLevel::Medium branch (line 147): 3000 <= score < 4000.
     #[test]
     fn test_finalize_risk_level_medium() {
-        let did = Did::new("did:exo:level-medium").unwrap();
-        let mut ceremony =
-            VerificationCeremony::new(did, "sess-med".to_string(), Timestamp::new(1000, 0));
-        let (pk, sk) = generate_keypair();
-        let msg = b"m".to_vec();
-        let sig = sign(&msg, &sk);
-        ceremony
-            .submit_proof(
-                IdentityProof::Signature(sig, pk, msg),
-                Timestamp::new(1001, 0),
-            )
-            .unwrap();
-        ceremony
-            .submit_proof(IdentityProof::Otp("otp".into()), Timestamp::new(1002, 0))
-            .unwrap();
+        let (mut ceremony, public_key, secret_key) =
+            make_signature_ceremony("sess-med", Timestamp::new(1000, 0));
+        submit_valid_signature(
+            &mut ceremony,
+            public_key,
+            &secret_key,
+            Timestamp::new(1001, 0),
+        );
+        ceremony.proofs.push(IdentityProof::Otp("otp".into()));
         // 1000 (sig) + 2000 (otp) = 3000 -> Medium
         assert_eq!(ceremony.calculate_risk_score(), 3000);
 
         let (_att_pk, att_sk) = generate_keypair();
         let attester_did = Did::new("did:exo:att-med").unwrap();
+        let registry = active_registry_for_key(&ceremony, public_key);
         let attestation = ceremony
-            .finalize(Timestamp::new(1010, 0), &attester_did, &att_sk)
+            .finalize(&registry, Timestamp::new(1010, 0), &attester_did, &att_sk)
             .unwrap();
         assert_eq!(attestation.level, RiskLevel::Medium);
     }
@@ -998,18 +1338,17 @@ mod tests {
         let mut ceremony =
             VerificationCeremony::new(did, "sess-high".to_string(), Timestamp::new(1000, 0));
         ceremony
-            .submit_proof(
-                IdentityProof::WebAuthnAssertion(vec![9, 9, 9]),
-                Timestamp::new(1001, 0),
-            )
-            .unwrap();
+            .proofs
+            .push(IdentityProof::WebAuthnAssertion(vec![9, 9, 9]));
         // WebAuthn alone = 4000 -> High
         assert_eq!(ceremony.calculate_risk_score(), 4000);
 
         let (_att_pk, att_sk) = generate_keypair();
         let attester_did = Did::new("did:exo:att-high").unwrap();
+        let (registry_key, _registry_secret) = generate_keypair();
+        let registry = active_registry_for_key(&ceremony, registry_key);
         let attestation = ceremony
-            .finalize(Timestamp::new(1010, 0), &attester_did, &att_sk)
+            .finalize(&registry, Timestamp::new(1010, 0), &attester_did, &att_sk)
             .unwrap();
         assert_eq!(attestation.level, RiskLevel::High);
     }
@@ -1022,19 +1361,16 @@ mod tests {
             let did = Did::new("did:exo:canon-otp-kyc").unwrap();
             let mut ceremony =
                 VerificationCeremony::new(did, "sess-canon".to_string(), Timestamp::new(1000, 0));
+            ceremony.proofs.push(IdentityProof::Otp(otp.to_string()));
             ceremony
-                .submit_proof(IdentityProof::Otp(otp.to_string()), Timestamp::new(1001, 0))
-                .unwrap();
-            ceremony
-                .submit_proof(
-                    IdentityProof::KycToken(kyc.to_string()),
-                    Timestamp::new(1002, 0),
-                )
-                .unwrap();
+                .proofs
+                .push(IdentityProof::KycToken(kyc.to_string()));
             let (_pk, sk) = generate_keypair();
             let attester = Did::new("did:exo:att-canon").unwrap();
+            let (registry_key, _registry_secret) = generate_keypair();
+            let registry = active_registry_for_key(&ceremony, registry_key);
             let att = ceremony
-                .finalize(Timestamp::new(1010, 0), &attester, &sk)
+                .finalize(&registry, Timestamp::new(1010, 0), &attester, &sk)
                 .unwrap();
             att.evidence_hash
         }
@@ -1061,16 +1397,15 @@ mod tests {
             let mut ceremony =
                 VerificationCeremony::new(did, "sess-canon-hlc".to_string(), initiated_at);
             ceremony
-                .submit_proof(
-                    IdentityProof::KycToken("kyc-logical".to_string()),
-                    Timestamp::new(2000, 0),
-                )
-                .unwrap();
+                .proofs
+                .push(IdentityProof::KycToken("kyc-logical".to_string()));
 
             let (_pk, sk) = generate_keypair();
             let attester = Did::new("did:exo:att-canon-hlc").unwrap();
+            let (registry_key, _registry_secret) = generate_keypair();
+            let registry = active_registry_for_key(&ceremony, registry_key);
             ceremony
-                .finalize(Timestamp::new(2010, 0), &attester, &sk)
+                .finalize(&registry, Timestamp::new(2010, 0), &attester, &sk)
                 .unwrap()
                 .evidence_hash
         }
@@ -1090,11 +1425,8 @@ mod tests {
         let mut ceremony =
             VerificationCeremony::new(did, "sess-cbor".to_string(), Timestamp::new(1000, 2));
         ceremony
-            .submit_proof(
-                IdentityProof::Otp("otp-cbor".to_string()),
-                Timestamp::new(1001, 0),
-            )
-            .unwrap();
+            .proofs
+            .push(IdentityProof::Otp("otp-cbor".to_string()));
 
         let evidence = ceremony.canonical_evidence().unwrap();
 

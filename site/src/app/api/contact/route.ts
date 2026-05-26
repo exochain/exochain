@@ -34,6 +34,10 @@ type EmailConfig = {
   toEmail: string;
 };
 
+type RuntimePeerRequest = NextRequest & {
+  ip?: string;
+};
+
 const RESEND_API_KEY_PREFIX = 're_';
 const CONTACT_QUEUE_ERROR = 'Unable to queue inquiry right now.';
 const CONTACT_RATE_LIMIT_ERROR = 'Too many inquiries. Please try again later.';
@@ -45,6 +49,11 @@ function clean(value: unknown): string {
     return '';
   }
   return value.trim();
+}
+
+function runtimeClientIp(request: NextRequest): string | null {
+  const candidate = (request as RuntimePeerRequest).ip;
+  return typeof candidate === 'string' ? candidate : null;
 }
 
 function normalizeSecret(value: string | undefined): string {
@@ -163,9 +172,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Invalid payload format.' }, { status: 400 });
   }
 
-  const clientAddress = normalizeClientAddress(
-    request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip'),
-  );
+  const clientAddress = normalizeClientAddress(runtimeClientIp(request));
   try {
     const withinRateLimit = await assertContactSubmissionRateLimit(
       getContactRateLimitBuckets({
