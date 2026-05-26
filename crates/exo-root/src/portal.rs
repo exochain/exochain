@@ -189,6 +189,29 @@ impl PortalStore {
         self.envelopes.len()
     }
 
+    /// Return accepted envelopes matching all of the supplied filters; a `None`
+    /// filter matches any value. Envelopes are relay data — already signed and
+    /// (for round two) encrypted — so returning them to rostered participants is
+    /// the read half of the relay, used to collect round-one packages, pull
+    /// recipient-bound round-two packages, and gather signing commitments/shares.
+    #[must_use]
+    pub fn query(
+        &self,
+        phase: Option<CeremonyPhase>,
+        payload_kind: Option<CeremonyPayloadKind>,
+        recipient_did: Option<&Did>,
+    ) -> Vec<CeremonyEnvelope> {
+        self.envelopes
+            .values()
+            .filter(|envelope| phase.is_none_or(|value| envelope.phase == value))
+            .filter(|envelope| payload_kind.is_none_or(|value| envelope.payload_kind == value))
+            .filter(|envelope| {
+                recipient_did.is_none_or(|value| envelope.recipient_did.as_ref() == Some(value))
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Submit a signed envelope to the relay.
     pub fn submit(&mut self, envelope: CeremonyEnvelope) -> Result<Hash256> {
         self.validate_envelope(&envelope)?;

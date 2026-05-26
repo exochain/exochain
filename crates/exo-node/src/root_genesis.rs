@@ -4,13 +4,16 @@ use std::sync::{Arc, Mutex};
 
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     routing::{get, post},
 };
-use exo_core::Hash256;
-use exo_root::{CeremonyEnvelope, GenesisCeremonyConfig, PortalStore, RootError};
-use serde::Serialize;
+use exo_core::{Did, Hash256};
+use exo_root::{
+    CeremonyEnvelope, CeremonyPayloadKind, CeremonyPhase, GenesisCeremonyConfig, PortalStore,
+    RootError,
+};
+use serde::{Deserialize, Serialize};
 
 /// Shared root genesis portal state.
 #[derive(Clone)]
@@ -54,7 +57,7 @@ pub fn root_genesis_router(state: RootGenesisApiState) -> Router {
         .route("/api/v1/root-genesis/portal", get(handle_portal_status))
         .route(
             "/api/v1/root-genesis/portal/envelopes",
-            post(handle_portal_envelope),
+            post(handle_portal_envelope).get(handle_portal_envelopes_query),
         )
         .with_state(state)
 }
@@ -93,6 +96,54 @@ async fn handle_portal_envelope(
         )),
         Err(error) => Err(root_error_to_response(error)),
     }
+}
+
+/// Filters for reading relay envelopes back from the portal. Each absent field
+/// matches any value (e.g. `?phase=Round1` collects the round-one broadcast set;
+/// `?phase=Round2&recipient_did=did:exo:...` pulls one recipient's round-two set).
+/// Enum filters are taken as plain strings and parsed explicitly so query
+/// decoding does not depend on enum support in the urlencoded deserializer.
+#[derive(Debug, Default, Deserialize)]
+struct EnvelopeQuery {
+    phase: Option<String>,
+    payload_kind: Option<String>,
+    recipient_did: Option<String>,
+}
+
+fn parse_query_enum<T: serde::de::DeserializeOwned>(
+    value: &str,
+    field: &str,
+) -> Result<T, (StatusCode, Json<ErrorResponse>)> {
+    serde_json::from_value(serde_json::Value::String(value.to_owned()))
+        .map_err(|_| portal_error(StatusCode::BAD_REQUEST, &format!("invalid {field}")))
+}
+
+async fn handle_portal_envelopes_query(
+    State(state): State<RootGenesisApiState>,
+    Query(query): Query<EnvelopeQuery>,
+) -> Result<Json<Vec<CeremonyEnvelope>>, (StatusCode, Json<ErrorResponse>)> {
+    let phase = match &query.phase {
+        Some(value) => Some(parse_query_enum::<CeremonyPhase>(value, "phase")?),
+        None => None,
+    };
+    let payload_kind = match &query.payload_kind {
+        Some(value) => Some(parse_query_enum::<CeremonyPayloadKind>(value, "payload_kind")?),
+        None => None,
+    };
+    let recipient = match &query.recipient_did {
+        Some(value) => Some(
+            Did::new(value)
+                .map_err(|_| portal_error(StatusCode::BAD_REQUEST, "invalid recipient_did"))?,
+        ),
+        None => None,
+    };
+    let portal = state.portal.lock().map_err(|_| {
+        portal_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "portal store lock failed",
+        )
+    })?;
+    Ok(Json(portal.query(phase, payload_kind, recipient.as_ref())))
 }
 
 fn portal_error(status: StatusCode, message: &str) -> (StatusCode, Json<ErrorResponse>) {
@@ -243,6 +294,52 @@ mod tests {
             )
             .await
             .expect("response")
+    }
+
+    async fn get_envelopes(router: axum::Router, query: &str) -> axum::response::Response {
+        router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/api/v1/root-genesis/portal/envelopes?{query}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response")
+    }
+
+    #[tokio::test]
+    async fn portal_query_returns_only_matching_envelopes() {
+        let (config, secret) = config();
+        let state = RootGenesisApiState::new(config.clone());
+        let router = root_genesis_router(state);
+        let accepted = post_envelope(
+            router.clone(),
+            &envelope(&config, &secret, 1, b"ct".to_vec()),
+        )
+        .await;
+        assert_eq!(accepted.status(), StatusCode::CREATED);
+
+        // The submitted envelope is a Round2 package; it matches a Round2 query.
+        let matched = get_envelopes(router.clone(), "phase=Round2").await;
+        assert_eq!(matched.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(matched.into_body(), 1 << 20)
+            .await
+            .expect("body bytes");
+        let envelopes: Vec<CeremonyEnvelope> =
+            serde_json::from_slice(&body).expect("envelopes json");
+        assert_eq!(envelopes.len(), 1);
+        assert_eq!(envelopes[0].phase, CeremonyPhase::Round2);
+
+        // A Round1 query matches nothing that was submitted.
+        let empty = get_envelopes(router, "phase=Round1").await;
+        let body = axum::body::to_bytes(empty.into_body(), 1 << 20)
+            .await
+            .expect("body bytes");
+        let envelopes: Vec<CeremonyEnvelope> =
+            serde_json::from_slice(&body).expect("envelopes json");
+        assert!(envelopes.is_empty());
     }
 
     fn poison_portal_lock(state: &RootGenesisApiState) {

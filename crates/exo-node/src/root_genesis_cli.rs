@@ -6,9 +6,10 @@ use exo_core::{Did, Hash256, SecretKey, Timestamp, crypto::KeyPair};
 use exo_root::{
     CeremonyEnvelope, CeremonyEnvelopeDraft, CeremonyPayloadKind, CeremonyPhase, CertifierContact,
     GenesisCeremonyConfig, PairwiseEncryptedPayload, RootIssuerDelegation, RootKeyPackage,
-    RootPublicKeyPackage, RootTrustBundle, assemble_root_bundle, decrypt_pairwise_payload,
-    dkg_finalize_participant, dkg_round1, dkg_round2, encrypt_pairwise_payload, seal_share,
-    threshold_sign, unseal_share, verify_root_bundle,
+    RootPublicKeyPackage, RootTrustBundle, aggregate_signature, assemble_root_bundle,
+    build_signing_package, decrypt_pairwise_payload, dkg_finalize_participant, dkg_round1,
+    dkg_round2, encrypt_pairwise_payload, seal_share, sign_commit, sign_share, threshold_sign,
+    unseal_share, verify_root_bundle,
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -18,7 +19,7 @@ use crate::{
     cli::{
         GenesisCeremonyCommand, GenesisCeremonyInitArgs, GenesisCertifierCommand,
         GenesisCertifierInitArgs, GenesisCommand, GenesisIoArgs, GenesisPortalArgs,
-        GenesisSignEnvelopeArgs, GenesisSubmitEnvelopeArgs,
+        GenesisPullEnvelopesArgs, GenesisSignEnvelopeArgs, GenesisSubmitEnvelopeArgs,
     },
     root_genesis::{RootGenesisApiState, root_genesis_router},
 };
@@ -189,6 +190,51 @@ struct Round1SetAttestationStatement<'a> {
     entries: &'a [Round1SetAttestationEntry],
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct EncodeEncryptedPayloadCommandInput {
+    encrypted: PairwiseEncryptedPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DecodeEncryptedPayloadCommandInput {
+    payload_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PayloadBytesOutput {
+    payload_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SignCommitCommandInput {
+    config: GenesisCeremonyConfig,
+    key_package: RootKeyPackage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct BuildSigningPackageCommandInput {
+    config: GenesisCeremonyConfig,
+    commitments_hex: BTreeMapStringBytes,
+    artifact_hex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SignShareCommandInput {
+    config: GenesisCeremonyConfig,
+    key_package: RootKeyPackage,
+    nonces_hex: String,
+    signing_package_hex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct AggregateSignatureCommandInput {
+    config: GenesisCeremonyConfig,
+    public_key_package: RootPublicKeyPackage,
+    signing_package_hex: String,
+    shares_hex: BTreeMapStringBytes,
+    artifact_hex: String,
+}
+
 type BTreeMapStringBytes = BTreeMap<u16, String>;
 
 /// Execute a root genesis CLI command.
@@ -211,6 +257,13 @@ pub async fn run_genesis_command(command: GenesisCommand) -> anyhow::Result<()> 
         GenesisCommand::EmitArtifactBytes(args) => run_emit_artifact_bytes(args),
         GenesisCommand::BuildRound1Attestation(args) => run_build_round1_attestation(args),
         GenesisCommand::SubmitEnvelope(args) => run_submit_envelope(args).await,
+        GenesisCommand::PullEnvelopes(args) => run_pull_envelopes(args).await,
+        GenesisCommand::EncodeEncryptedPayload(args) => run_encode_encrypted_payload(args),
+        GenesisCommand::DecodeEncryptedPayload(args) => run_decode_encrypted_payload(args),
+        GenesisCommand::SignCommit(args) => run_sign_commit(args),
+        GenesisCommand::BuildSigningPackage(args) => run_build_signing_package(args),
+        GenesisCommand::SignShare(args) => run_sign_share(args),
+        GenesisCommand::AggregateSignature(args) => run_aggregate_signature(args),
     }
 }
 
@@ -521,6 +574,94 @@ async fn run_submit_envelope(args: GenesisSubmitEnvelopeArgs) -> anyhow::Result<
         anyhow::bail!("portal rejected envelope: HTTP {status}");
     }
     Ok(())
+}
+
+async fn run_pull_envelopes(args: GenesisPullEnvelopesArgs) -> anyhow::Result<()> {
+    let url = portal_envelopes_url(&args.portal_url);
+    let mut params: Vec<(&str, String)> = Vec::new();
+    if let Some(phase) = &args.phase {
+        params.push(("phase", phase.clone()));
+    }
+    if let Some(kind) = &args.payload_kind {
+        params.push(("payload_kind", kind.clone()));
+    }
+    if let Some(recipient) = &args.recipient_did {
+        params.push(("recipient_did", recipient.clone()));
+    }
+    let response = reqwest::Client::new()
+        .get(url)
+        .query(&params)
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("portal pull failed: HTTP {status}: {body}");
+    }
+    let envelopes: Vec<CeremonyEnvelope> = serde_json::from_str(&body)?;
+    let io = GenesisIoArgs {
+        input: None,
+        output: args.output.clone(),
+    };
+    write_output(&io, &envelopes)
+}
+
+fn run_encode_encrypted_payload(args: GenesisIoArgs) -> anyhow::Result<()> {
+    let input: EncodeEncryptedPayloadCommandInput = read_json(&required_input(&args)?)?;
+    let mut payload_bytes = Vec::new();
+    ciborium::into_writer(&input.encrypted, &mut payload_bytes)
+        .map_err(|error| anyhow::anyhow!("encrypted payload encoding failed: {error}"))?;
+    write_output(&args, &PayloadBytesOutput { payload_bytes })
+}
+
+fn run_decode_encrypted_payload(args: GenesisIoArgs) -> anyhow::Result<()> {
+    let input: DecodeEncryptedPayloadCommandInput = read_json(&required_input(&args)?)?;
+    let encrypted: PairwiseEncryptedPayload = ciborium::from_reader(input.payload_bytes.as_slice())
+        .map_err(|error| anyhow::anyhow!("encrypted payload decoding failed: {error}"))?;
+    write_output(&args, &encrypted)
+}
+
+fn run_sign_commit(args: GenesisIoArgs) -> anyhow::Result<()> {
+    let input: SignCommitCommandInput = read_json(&required_input(&args)?)?;
+    let mut rng = rand::rngs::OsRng;
+    let output = sign_commit(&input.config, &input.key_package, &mut rng)?;
+    // Contains secret signing nonces — never print to stdout.
+    write_secret_output(&args, &output)
+}
+
+fn run_build_signing_package(args: GenesisIoArgs) -> anyhow::Result<()> {
+    let input: BuildSigningPackageCommandInput = read_json(&required_input(&args)?)?;
+    let message = decode_hex(&input.artifact_hex)?;
+    let output = build_signing_package(
+        &input.config,
+        decode_package_map(input.commitments_hex)?,
+        message.as_slice(),
+    )?;
+    write_output(&args, &output)
+}
+
+fn run_sign_share(args: GenesisIoArgs) -> anyhow::Result<()> {
+    let input: SignShareCommandInput = read_json(&required_input(&args)?)?;
+    let output = sign_share(
+        &input.config,
+        &input.key_package,
+        decode_hex(&input.nonces_hex)?.as_slice(),
+        decode_hex(&input.signing_package_hex)?.as_slice(),
+    )?;
+    write_output(&args, &output)
+}
+
+fn run_aggregate_signature(args: GenesisIoArgs) -> anyhow::Result<()> {
+    let input: AggregateSignatureCommandInput = read_json(&required_input(&args)?)?;
+    let message = decode_hex(&input.artifact_hex)?;
+    let output = aggregate_signature(
+        &input.config,
+        &input.public_key_package,
+        decode_hex(&input.signing_package_hex)?.as_slice(),
+        decode_package_map(input.shares_hex)?,
+        message.as_slice(),
+    )?;
+    write_output(&args, &output)
 }
 
 /// Append the portal envelopes path to a base URL unless it is already present.

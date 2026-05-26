@@ -267,6 +267,34 @@ pub enum GenesisCommand {
     /// Submit a signed envelope to a running root genesis portal.
     #[command(name = "submit-envelope")]
     SubmitEnvelope(GenesisSubmitEnvelopeArgs),
+
+    /// Pull accepted envelopes back from a running portal (read half of the relay).
+    #[command(name = "pull-envelopes")]
+    PullEnvelopes(GenesisPullEnvelopesArgs),
+
+    /// CBOR-encode an encrypted round-two payload into envelope `payload_bytes`.
+    #[command(name = "encode-encrypted-payload")]
+    EncodeEncryptedPayload(GenesisIoArgs),
+
+    /// CBOR-decode envelope `payload_bytes` back into an encrypted round-two payload.
+    #[command(name = "decode-encrypted-payload")]
+    DecodeEncryptedPayload(GenesisIoArgs),
+
+    /// Distributed signing — produce one signer's commitment + secret nonces.
+    #[command(name = "sign-commit")]
+    SignCommit(GenesisIoArgs),
+
+    /// Distributed signing — coordinator builds the signing package from >=7 commitments.
+    #[command(name = "build-signing-package")]
+    BuildSigningPackage(GenesisIoArgs),
+
+    /// Distributed signing — produce one signer's signature share.
+    #[command(name = "sign-share")]
+    SignShare(GenesisIoArgs),
+
+    /// Distributed signing — coordinator aggregates >=7 shares into the root signature.
+    #[command(name = "aggregate-signature")]
+    AggregateSignature(GenesisIoArgs),
 }
 
 #[derive(Subcommand)]
@@ -379,6 +407,31 @@ pub struct GenesisSignEnvelopeArgs {
     /// 32-byte Ed25519 signing secret as hex (from `certifier-NN.private.json`).
     #[arg(long)]
     pub signing_key_hex: String,
+}
+
+#[derive(Args)]
+/// Pull accepted envelopes back from a running portal.
+pub struct GenesisPullEnvelopesArgs {
+    /// Portal base URL (for example `http://127.0.0.1:3017`). The
+    /// `/api/v1/root-genesis/portal/envelopes` path is appended automatically.
+    #[arg(long)]
+    pub portal_url: String,
+
+    /// Optional ceremony phase filter (Round1, Round2, Finalize, RootSigning, ...).
+    #[arg(long)]
+    pub phase: Option<String>,
+
+    /// Optional payload-kind filter (Round1Package, Round2EncryptedPackage, ...).
+    #[arg(long)]
+    pub payload_kind: Option<String>,
+
+    /// Optional recipient DID filter (for recipient-bound round-two packages).
+    #[arg(long)]
+    pub recipient_did: Option<String>,
+
+    /// Output path for the JSON array of matching envelopes.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Args)]

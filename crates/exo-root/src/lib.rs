@@ -27,4 +27,8 @@ pub use seal::{
     PairwiseEncryptedPayload, SealedShare, decrypt_pairwise_payload, encrypt_pairwise_payload,
     seal_share, unseal_share,
 };
-pub use signing::{RootSignature, threshold_sign, verify_root_signature};
+pub use signing::{
+    RootSignature, RootSignatureShareOutput, RootSigningCommitment, RootSigningPackage,
+    aggregate_signature, build_signing_package, sign_commit, sign_share, threshold_sign,
+    verify_root_signature,
+};

@@ -135,6 +135,168 @@ fn signature_rejected(error: frost::Error) -> RootError {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Distributed (online) threshold signing.
+//
+// `threshold_sign` above performs the whole protocol in one process and so
+// requires every key package in one place. The functions below run the same
+// FROST protocol as a two-round distributed exchange: each signer keeps its
+// own `RootKeyPackage` and only ever emits PUBLIC commitments and signature
+// shares. A coordinator (holding no secrets) assembles the signing package and
+// aggregates the shares. These map onto the portal's `RootSigningCommitment`
+// and `RootSignatureShare` payload kinds.
+// ---------------------------------------------------------------------------
+
+/// One signer's round-one signing material. `commitments` is public and is
+/// broadcast; `nonces` is SECRET and must be retained locally until `sign_share`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RootSigningCommitment {
+    /// Owner's FROST identifier.
+    pub frost_identifier: u16,
+    /// Serialized public signing commitments (broadcast to the coordinator).
+    pub commitments: Vec<u8>,
+    /// Serialized secret signing nonces (retained by the signer; never shared).
+    pub nonces: Vec<u8>,
+}
+
+/// Public signing package built by the coordinator from `>= threshold`
+/// commitments. Distributed to the participating signers for round two.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RootSigningPackage {
+    /// Serialized FROST signing package (binds the commitments and message).
+    pub signing_package: Vec<u8>,
+    /// Identifiers whose commitments are bound into this package.
+    pub signer_ids: Vec<u16>,
+}
+
+/// One signer's round-two signature share. Public; reveals nothing about the
+/// signer's secret key share.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RootSignatureShareOutput {
+    /// Owner's FROST identifier.
+    pub frost_identifier: u16,
+    /// Serialized FROST signature share.
+    pub signature_share: Vec<u8>,
+}
+
+fn ensure_rostered(config: &GenesisCeremonyConfig, identifier: u16, role: &str) -> Result<()> {
+    if config.certifier_by_identifier(identifier).is_none() {
+        return Err(RootError::InvalidConfig {
+            reason: format!("{role} {identifier} is not rostered"),
+        });
+    }
+    Ok(())
+}
+
+/// Distributed signing — round one. Produce one signer's public commitments and
+/// secret nonces. Run by each participating certifier against its own share.
+pub fn sign_commit<R>(
+    config: &GenesisCeremonyConfig,
+    key_package: &RootKeyPackage,
+    rng: &mut R,
+) -> Result<RootSigningCommitment>
+where
+    R: frost::rand_core::RngCore + frost::rand_core::CryptoRng,
+{
+    config.validate()?;
+    ensure_rostered(config, key_package.frost_identifier, "signer")?;
+    let parsed: frost::keys::KeyPackage = deserialize_frost(key_package.key_package.as_slice())?;
+    let (nonces, commitments) = frost::round1::commit(parsed.signing_share(), rng);
+    Ok(RootSigningCommitment {
+        frost_identifier: key_package.frost_identifier,
+        commitments: serialize_frost(&commitments)?,
+        nonces: serialize_frost(&nonces)?,
+    })
+}
+
+/// Distributed signing — coordinator assembles the signing package from at
+/// least `threshold` public commitments bound to `message` (the root artifact).
+pub fn build_signing_package(
+    config: &GenesisCeremonyConfig,
+    commitments: BTreeMap<u16, Vec<u8>>,
+    message: &[u8],
+) -> Result<RootSigningPackage> {
+    config.validate()?;
+    if commitments.len() < usize::from(config.threshold) {
+        return Err(RootError::ThresholdNotMet {
+            required: config.threshold,
+            supplied: u16::try_from(commitments.len()).unwrap_or(u16::MAX),
+        });
+    }
+    let mut parsed = BTreeMap::new();
+    let mut signer_ids = Vec::new();
+    for (identifier, bytes) in commitments {
+        ensure_rostered(config, identifier, "signer")?;
+        let frost_id = crate::dkg::frost_identifier(identifier)?;
+        let commitment: frost::round1::SigningCommitments = deserialize_frost(bytes.as_slice())?;
+        parsed.insert(frost_id, commitment);
+        signer_ids.push(identifier);
+    }
+    let signing_package = frost::SigningPackage::new(parsed, message);
+    Ok(RootSigningPackage {
+        signing_package: serialize_frost(&signing_package)?,
+        signer_ids,
+    })
+}
+
+/// Distributed signing — round two. One signer produces its signature share
+/// from its key package, its retained nonces, and the coordinator's package.
+pub fn sign_share(
+    config: &GenesisCeremonyConfig,
+    key_package: &RootKeyPackage,
+    nonces: &[u8],
+    signing_package: &[u8],
+) -> Result<RootSignatureShareOutput> {
+    config.validate()?;
+    ensure_rostered(config, key_package.frost_identifier, "signer")?;
+    let parsed_key: frost::keys::KeyPackage = deserialize_frost(key_package.key_package.as_slice())?;
+    let parsed_nonces: frost::round1::SigningNonces = deserialize_frost(nonces)?;
+    let parsed_package: frost::SigningPackage = deserialize_frost(signing_package)?;
+    let share =
+        frost::round2::sign(&parsed_package, &parsed_nonces, &parsed_key).map_err(frost_error)?;
+    Ok(RootSignatureShareOutput {
+        frost_identifier: key_package.frost_identifier,
+        signature_share: serialize_frost(&share)?,
+    })
+}
+
+/// Distributed signing — coordinator aggregates `>= threshold` signature shares
+/// into the final root signature and verifies it against the root public key.
+pub fn aggregate_signature(
+    config: &GenesisCeremonyConfig,
+    public_key_package: &RootPublicKeyPackage,
+    signing_package: &[u8],
+    shares: BTreeMap<u16, Vec<u8>>,
+    message: &[u8],
+) -> Result<RootSignature> {
+    config.validate()?;
+    if shares.len() < usize::from(config.threshold) {
+        return Err(RootError::ThresholdNotMet {
+            required: config.threshold,
+            supplied: u16::try_from(shares.len()).unwrap_or(u16::MAX),
+        });
+    }
+    let public = deserialize_frost(public_key_package.public_key_package.as_slice())?;
+    let parsed_package: frost::SigningPackage = deserialize_frost(signing_package)?;
+    let mut parsed_shares = BTreeMap::new();
+    let mut signer_ids = Vec::new();
+    for (identifier, bytes) in shares {
+        ensure_rostered(config, identifier, "signer")?;
+        let frost_id = crate::dkg::frost_identifier(identifier)?;
+        let share: frost::round2::SignatureShare = deserialize_frost(bytes.as_slice())?;
+        parsed_shares.insert(frost_id, share);
+        signer_ids.push(identifier);
+    }
+    let aggregated =
+        frost::aggregate(&parsed_package, &parsed_shares, &public).map_err(frost_error)?;
+    let signature = serialize_frost(&aggregated)?;
+    verify_root_signature(&public_key_package.root_public_key, message, &signature)?;
+    Ok(RootSignature {
+        signature,
+        signer_ids,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use exo_core::{Did, Hash256, PublicKey, Timestamp};
@@ -253,5 +415,75 @@ mod tests {
         )
         .expect_err("share identifier mismatch");
         assert!(error.to_string().contains("mismatches key 1"));
+    }
+
+    #[test]
+    fn distributed_signing_matches_one_shot_and_verifies() {
+        let config = test_config();
+        let mut rng = StdRng::seed_from_u64(99);
+        let dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
+        let message = b"distributed root signing artifact";
+
+        // Seven signers, each keeping its own key package.
+        let signers: Vec<(u16, _)> = dkg
+            .key_packages
+            .iter()
+            .take(7)
+            .map(|(id, kp)| (*id, kp.clone()))
+            .collect();
+
+        // Round one: each signer commits locally; only commitments are shared.
+        let mut commitments = BTreeMap::new();
+        let mut nonces = BTreeMap::new();
+        for (id, kp) in &signers {
+            let commitment = sign_commit(&config, kp, &mut rng).expect("commit");
+            nonces.insert(*id, commitment.nonces.clone());
+            commitments.insert(*id, commitment.commitments.clone());
+        }
+
+        // Coordinator builds the signing package from the commitments.
+        let package = build_signing_package(&config, commitments, message).expect("package");
+        assert_eq!(package.signer_ids.len(), 7);
+
+        // Round two: each signer produces its share from its own nonces.
+        let mut shares = BTreeMap::new();
+        for (id, kp) in &signers {
+            let share = sign_share(&config, kp, &nonces[id], &package.signing_package)
+                .expect("share");
+            shares.insert(*id, share.signature_share);
+        }
+
+        // Coordinator aggregates; result verifies against the root key and
+        // matches the threshold the one-shot path would accept.
+        let signature = aggregate_signature(
+            &config,
+            &dkg.public_key_package,
+            &package.signing_package,
+            shares,
+            message,
+        )
+        .expect("aggregate");
+        verify_root_signature(
+            &dkg.public_key_package.root_public_key,
+            message,
+            &signature.signature,
+        )
+        .expect("distributed signature verifies");
+        assert_eq!(signature.signer_ids.len(), 7);
+    }
+
+    #[test]
+    fn build_signing_package_rejects_sub_threshold_commitment_set() {
+        let config = test_config();
+        let mut rng = StdRng::seed_from_u64(100);
+        let dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
+        let mut commitments = BTreeMap::new();
+        for (id, kp) in dkg.key_packages.iter().take(3) {
+            let commitment = sign_commit(&config, kp, &mut rng).expect("commit");
+            commitments.insert(*id, commitment.commitments);
+        }
+        let error = build_signing_package(&config, commitments, b"msg")
+            .expect_err("sub-threshold commitments");
+        assert!(matches!(error, RootError::ThresholdNotMet { required: 7, supplied: 3 }));
     }
 }
