@@ -1,0 +1,16 @@
+{
+  "name": "@cybermedica/qms-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "CyberMedica adjacent-surface QMS service contracts, deterministic fixtures, and fail-closed Exochain trust-boundary adapters.",
+  "engines": {
+    "node": ">=25.9.0"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:coverage": "node --experimental-test-coverage --test tests/*.test.mjs",
+    "quality": "npm run test && npm run test:coverage"
+  }
+}
