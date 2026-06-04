@@ -20,6 +20,7 @@ export { ProtectedContentError };
 
 const HEX_64 = /^[0-9a-f]{64}$/u;
 const ZERO_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
+const CLINICAL_CONSENT_EQUIVALENCE_GATE_ID = 'PTAG-007';
 
 const REQUIRED_CONSENT_ELEMENTS = Object.freeze([
   'alternativeProcedures',
@@ -257,6 +258,8 @@ function evaluateConsentMaterial(input, reasons) {
   addReason(reasons, !hasText(material?.protocolRef), 'protocol_ref_absent');
   addReason(reasons, !hasText(material?.version), 'consent_material_version_absent');
   addReason(reasons, material?.status !== 'approved_for_site_use', 'consent_material_not_approved_for_site_use');
+  addReason(reasons, material?.genericBailmentOnly === true, 'ptag_007_generic_bailment_only_forbidden');
+  addReason(reasons, material?.clinicalConsentEquivalenceClaim === true, 'ptag_007_clinical_consent_equivalence_claim_forbidden');
   addReason(reasons, !isDigest(material?.formArtifactHash), 'consent_form_artifact_hash_invalid');
   addReason(reasons, !isDigest(material?.protocolLinkHash), 'protocol_link_hash_invalid');
   addReason(reasons, hlcTuple(material?.uploadedAtHlc) === null, 'consent_material_upload_time_invalid');
@@ -336,6 +339,9 @@ function buildMaterialRecord(input, coverage, status, receiptId = null) {
     receiptId,
     trustState: 'inactive',
     exochainProductionClaim: false,
+    activationGateIds: [CLINICAL_CONSENT_EQUIVALENCE_GATE_ID],
+    genericBailmentAloneAccepted: false,
+    clinicalConsentEquivalenceClaim: false,
     containsProtectedContent: false,
   };
 }
@@ -428,6 +434,12 @@ function evaluateActiveMaterialForProcess(input, reasons) {
   addReason(reasons, !hasText(material?.protocolRef), 'active_protocol_ref_absent');
   addReason(reasons, !hasText(material?.receiptId), 'active_consent_material_receipt_absent');
   addReason(reasons, hlcTuple(material?.versionEffectiveAtHlc) === null, 'active_consent_effective_time_invalid');
+  addReason(reasons, material?.genericBailmentAloneAccepted === true, 'ptag_007_generic_bailment_only_forbidden');
+  addReason(
+    reasons,
+    material?.clinicalConsentEquivalenceClaim === true,
+    'ptag_007_clinical_consent_equivalence_claim_forbidden',
+  );
 }
 
 function evaluateStaffReadiness(input, reasons) {
@@ -513,6 +525,9 @@ function buildConsentProcessRecord(input, status, receiptId = null) {
     receiptId,
     trustState: 'inactive',
     exochainProductionClaim: false,
+    activationGateIds: [CLINICAL_CONSENT_EQUIVALENCE_GATE_ID],
+    genericBailmentAloneAccepted: false,
+    clinicalConsentEquivalenceClaim: false,
     containsProtectedContent: false,
   };
 }

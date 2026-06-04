@@ -184,10 +184,26 @@ function backlogInput(overrides = {}) {
       },
       sourceAnalytics: {
         userAssistanceReceiptHash: DIGEST_C,
+        userAssistanceAnalyticsDigest: DIGEST_6,
         documentationRunbookReceiptHash: DIGEST_D,
         driftPolicyHash: DIGEST_E,
         currentManualSetHash: DIGEST_F,
         currentManualIndexHash: DIGEST_1,
+        manualNavigationReady: true,
+        contextualManualDrawerReceiptHash: DIGEST_7,
+        contextualManualDrawerHash: DIGEST_8,
+        controlledDocumentDistributionRecordId: 'cmdist-role-manual-navigation-v1',
+        controlledDocumentDistributionReceiptHash: DIGEST_9,
+        documentationPublicationReceiptHash: DIGEST_A,
+        manualExportReceiptHash: DIGEST_B,
+        roleManualCoverageReceiptHash: DIGEST_C,
+        acknowledgementRosterHash: DIGEST_D,
+        manualNavigationAcknowledgedRoleRefs: ['clinical_research_coordinator', 'quality_manager'],
+        manualNavigationRequiredAcknowledgementRoleRefs: ['clinical_research_coordinator', 'quality_manager'],
+        manualNavigationRoleRefs: ['clinical_research_coordinator', 'quality_manager'],
+        manualNavigationCurrentVersionOnly: true,
+        manualNavigationObsoleteVersionUseBlocked: true,
+        manualNavigationEffectiveUseAcknowledged: true,
         noRawInquiryContent: true,
         reviewedAtHlc: { physicalMs: 1800007080000, logical: 0 },
         metadataOnly: true,
@@ -260,8 +276,64 @@ test('inquiry to CQI backlog packages documentation friction into deterministic 
   assert.deepEqual(first.cqiBacklog.highRiskBacklogItemRefs, ['cqi-item-missing_documentation']);
   assert.equal(first.cqiBacklog.driftReady, true);
   assert.equal(first.cqiBacklog.aiAssistanceUsed, true);
+  assert.equal(first.cqiBacklog.userAssistanceReceiptHash, DIGEST_C);
+  assert.equal(first.cqiBacklog.userAssistanceAnalyticsDigest, DIGEST_6);
+  assert.equal(first.cqiBacklog.contextualManualDrawerReceiptHash, DIGEST_7);
+  assert.equal(first.cqiBacklog.controlledDocumentDistributionReceiptHash, DIGEST_9);
+  assert.equal(first.cqiBacklog.documentationPublicationReceiptHash, DIGEST_A);
+  assert.equal(first.cqiBacklog.manualExportReceiptHash, DIGEST_B);
+  assert.equal(first.cqiBacklog.roleManualCoverageReceiptHash, DIGEST_C);
+  assert.equal(first.cqiBacklog.manualNavigationEffectiveUseAcknowledged, true);
+  assert.deepEqual(first.cqiBacklog.manualNavigationAcknowledgedRoleRefs, [
+    'clinical_research_coordinator',
+    'quality_manager',
+  ]);
   assert.equal(first.receipt.anchorPayload.artifactType, 'inquiry_cqi_backlog');
   assert.equal(first.receipt.anchorPayload.classification, 'metadata_only_documentation_cqi');
+  assert.ok(first.receipt.anchorPayload.sensitivityTags.includes('manual_navigation_readiness'));
+});
+
+test('inquiry to CQI backlog requires user-assistance manual-navigation readiness lineage', async () => {
+  const { evaluateInquiryCqiBacklog } = await loadInquiryCqiBacklog();
+  const result = evaluateInquiryCqiBacklog(
+    backlogInput({
+      sourceAnalytics: {
+        userAssistanceAnalyticsDigest: '',
+        manualNavigationReady: false,
+        contextualManualDrawerReceiptHash: 'bad',
+        controlledDocumentDistributionReceiptHash: '',
+        documentationPublicationReceiptHash: '',
+        manualExportReceiptHash: '',
+        roleManualCoverageReceiptHash: '',
+        acknowledgementRosterHash: '',
+        manualNavigationAcknowledgedRoleRefs: ['quality_manager'],
+        manualNavigationRequiredAcknowledgementRoleRefs: ['clinical_research_coordinator', 'quality_manager'],
+        manualNavigationRoleRefs: ['clinical_research_coordinator', 'quality_manager'],
+        manualNavigationCurrentVersionOnly: false,
+        manualNavigationObsoleteVersionUseBlocked: false,
+        manualNavigationEffectiveUseAcknowledged: false,
+      },
+    }),
+  );
+
+  assert.equal(result.decision, 'denied');
+  assert.equal(result.receipt, null);
+  assert.match(result.reasons.join('\n'), /source_assistance_analytics_digest_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_ready_absent/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_drawer_receipt_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_distribution_receipt_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_publication_receipt_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_manual_export_receipt_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_role_manual_coverage_receipt_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_acknowledgement_roster_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_acknowledgement_incomplete/u);
+  assert.match(
+    result.reasons.join('\n'),
+    /source_manual_navigation_signal_role_acknowledgement_missing:clinical_research_coordinator/u,
+  );
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_current_version_boundary_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_obsolete_version_boundary_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_effective_use_absent/u);
 });
 
 test('inquiry to CQI backlog fails closed for missing source coverage and incomplete action packaging', async () => {

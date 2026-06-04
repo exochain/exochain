@@ -362,6 +362,8 @@ test('node receipt sync rejects raw payload protected content and secrets before
     syncInput({ validationEvidence: { validationLog: 'medical record: MRN-12345' } }),
     syncInput({ syncCycle: { privateKey: 'node-private-key-material' } }),
     syncInput({ queryEvidence: { apiKey: 'node-api-key-material' } }),
+    syncInput({ insertEvidence: { signatureMaterial: 'raw-ed25519-signature-material' } }),
+    syncInput({ provenanceEvidence: { rawSignature: 'raw-node-response-signature' } }),
   ]) {
     assert.throws(() => evaluateNodeReceiptSyncReadiness(unsafeInput), ProtectedContentError);
   }

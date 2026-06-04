@@ -32,6 +32,8 @@ const DIGEST_6 = '66666666666666666666666666666666666666666666666666666666666666
 const DIGEST_7 = '7777777777777777777777777777777777777777777777777777777777777777';
 const DIGEST_8 = '8888888888888888888888888888888888888888888888888888888888888888';
 const DIGEST_9 = '9999999999999999999999999999999999999999999999999999999999999999';
+const RESPONSE_PACKAGE_HASH = '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
+const REQUEST_HASH = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
 
 const REQUIRED_EXPORT_FAMILIES = ['audit_record', 'diligence_packet', 'evidence_index', 'site_data'];
 
@@ -195,6 +197,42 @@ function structuredExportInput(overrides = {}) {
       loggedAtHlc: { physicalMs: 1797000200000, logical: 2 },
       includesRawContent: false,
     },
+    responsePackage: {
+      packageRef: 'structured-diligence-response-package-alpha',
+      packageHash: RESPONSE_PACKAGE_HASH,
+      requestRef: 'sponsor-cro-request-alpha',
+      workItemRef: 'sponsor-cro-work-item-alpha',
+      recipientTenantId: 'tenant-sponsor-alpha',
+      packageRecordRefs: [
+        'audit-record-internal-alpha',
+        'diligence-packet-sponsor-alpha',
+        'evidence-index-consent-alpha',
+        'site-data-passport-alpha',
+      ],
+      generatedAtHlc: { physicalMs: 1797000200000, logical: 2 },
+      metadataOnly: true,
+      rawContentExcluded: true,
+      protectedContentExcluded: true,
+    },
+    sponsorCroRequestEvidence: {
+      requestRef: 'sponsor-cro-request-alpha',
+      requestHash: REQUEST_HASH,
+      requesterClass: 'sponsor',
+      workItemRef: 'sponsor-cro-work-item-alpha',
+      workItemStatus: 'approved_for_response',
+      disclosureEventRef: 'portable-export-disclosure-alpha',
+      disclosureLogHash: DIGEST_D,
+      decisionForumMatterRef: 'df-sponsor-cro-request-alpha',
+      humanReviewHash: DIGEST_E,
+      responsePackageHash: RESPONSE_PACKAGE_HASH,
+      linkedRecipientTenantId: 'tenant-sponsor-alpha',
+      linkedExportRef: 'nfr013-portable-export-alpha',
+      metadataOnly: true,
+      sourcePayloadExcluded: true,
+      protectedContentExcluded: true,
+      productionTrustClaim: false,
+      linkedAtHlc: { physicalMs: 1797000200000, logical: 2 },
+    },
     humanAuthorization: {
       reviewerDid: 'did:exo:quality-manager-alpha',
       status: 'approved',
@@ -243,6 +281,9 @@ test('structured data export creates deterministic NFR-013 portable package unde
   assert.equal(resultA.exportPackage.versionHistoryPreserved, true);
   assert.equal(resultA.exportPackage.suppressedRecordCount, 1);
   assert.equal(Object.hasOwn(resultA.exportPackage, 'suppressedRecordRefs'), false);
+  assert.equal(resultA.exportPackage.responsePackageHash, RESPONSE_PACKAGE_HASH);
+  assert.deepEqual(resultA.exportPackage.sponsorCroRequestRefs, ['sponsor-cro-request-alpha']);
+  assert.deepEqual(resultA.exportPackage.sponsorCroWorkItemRefs, ['sponsor-cro-work-item-alpha']);
   assert.deepEqual(resultA.exportPackage.exportFamilies, REQUIRED_EXPORT_FAMILIES);
   assert.deepEqual(
     resultA.exportPackage.records.map((record) => record.recordRef),
@@ -269,6 +310,89 @@ test('structured data export creates deterministic NFR-013 portable package unde
     'updatedAtHlc',
     'versionHistoryHash',
   ]);
+});
+
+test('structured data export requires controlled Sponsor/CRO request linkage for diligence packets', async () => {
+  const { evaluateStructuredDataExport } = await loadStructuredDataExports();
+
+  const absent = evaluateStructuredDataExport(
+    structuredExportInput({
+      sponsorCroRequestEvidence: null,
+    }),
+  );
+
+  assert.equal(absent.decision, 'denied');
+  assert.equal(absent.failClosed, true);
+  assert.equal(absent.receipt, null);
+  assert.ok(absent.reasons.includes('sponsor_cro_request_evidence_absent'));
+
+  const malformed = evaluateStructuredDataExport(
+    structuredExportInput({
+      sponsorCroRequestEvidence: {
+        requestRef: '',
+        requestHash: 'not-a-digest',
+        requesterClass: 'public_observer',
+        workItemRef: '',
+        workItemStatus: 'draft',
+        disclosureEventRef: '',
+        disclosureLogHash: 'bad',
+        decisionForumMatterRef: '',
+        humanReviewHash: 'bad',
+        responsePackageHash: 'bad',
+        linkedRecipientTenantId: 'tenant-other',
+        linkedExportRef: 'other-export',
+        metadataOnly: false,
+        sourcePayloadExcluded: false,
+        protectedContentExcluded: false,
+        productionTrustClaim: true,
+        linkedAtHlc: { physicalMs: 1797000200000, logical: -1 },
+      },
+      responsePackage: {
+        packageRef: '',
+        packageHash: 'not-a-digest',
+        requestRef: 'other-request',
+        workItemRef: 'other-work-item',
+        recipientTenantId: 'tenant-other',
+        packageRecordRefs: ['site-data-passport-alpha'],
+        generatedAtHlc: { physicalMs: 1797000200000, logical: 4 },
+        metadataOnly: false,
+        rawContentExcluded: false,
+        protectedContentExcluded: false,
+      },
+    }),
+  );
+
+  assert.equal(malformed.decision, 'denied');
+  assert.equal(malformed.receipt, null);
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_ref_absent'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_hash_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_requester_class_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_work_item_ref_absent'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_work_item_status_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_disclosure_event_ref_absent'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_disclosure_log_hash_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_disclosure_log_hash_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_decision_forum_matter_absent'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_human_review_hash_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_human_review_hash_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_hash_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_ref_absent'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_hash_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_request_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_work_item_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_recipient_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_record_scope_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_after_export_generation'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_metadata_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_raw_content_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_protected_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_recipient_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_linked_export_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_metadata_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_source_payload_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_protected_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('production_trust_claim_forbidden'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_link_time_invalid'));
 });
 
 test('structured data export fails closed for missing families unsafe policy and inactive grant', async () => {
@@ -414,6 +538,30 @@ test('structured data export rejects raw export source content and secret materi
               rawExport: 1,
             },
           ],
+        }),
+      ),
+    /raw structured export content/i,
+  );
+
+  assert.throws(
+    () =>
+      evaluateStructuredDataExport(
+        structuredExportInput({
+          sponsorCroRequestEvidence: {
+            rawRequestNarrative: 'Participant Alice Example request narrative.',
+          },
+        }),
+      ),
+    /raw structured export content/i,
+  );
+
+  assert.throws(
+    () =>
+      evaluateStructuredDataExport(
+        structuredExportInput({
+          responsePackage: {
+            rawResponsePackage: { participantListing: ['Participant Alice Example'] },
+          },
         }),
       ),
     /raw structured export content/i,

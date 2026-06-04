@@ -32,6 +32,7 @@ const DIGEST_6 = '66666666666666666666666666666666666666666666666666666666666666
 const DIGEST_7 = '7777777777777777777777777777777777777777777777777777777777777777';
 const DIGEST_8 = '8888888888888888888888888888888888888888888888888888888888888888';
 const DIGEST_9 = '9999999999999999999999999999999999999999999999999999999999999999';
+const RESPONSE_PACKAGE_HASH = DIGEST_9;
 
 const REQUIRED_READINESS_DOMAINS = [
   'consent_form_approvals',
@@ -211,6 +212,43 @@ function regulatorySupportInput(overrides = {}) {
         metadataOnly: true,
         protectedContentExcluded: true,
       },
+      exportControlEvidence: {
+        packageRef: 'fr041-export-control-alpha',
+        packageHash: DIGEST_8,
+        exportRef: 'fr041-export-control-alpha',
+        exportType: 'sponsor_diligence_packet',
+        purpose: 'sponsor_regulatory_support',
+        recipientTenantId: 'tenant-sponsor-alpha',
+        disclosureLogHash: DIGEST_1,
+        suppressionLogHash: DIGEST_2,
+        responsePackageRef: 'sponsor-cro-regulatory-response-alpha',
+        responsePackageHash: RESPONSE_PACKAGE_HASH,
+        generatedAtHlc: { physicalMs: 1816000027000, logical: 0 },
+        metadataOnly: true,
+        sourcePayloadExcluded: true,
+        rawContentExcluded: true,
+        protectedContentExcluded: true,
+        productionTrustClaim: false,
+        controlledRequestEvidence: {
+          requestRef: 'sponsor-cro-request-alpha',
+          requestHash: DIGEST_A,
+          requesterClass: 'sponsor',
+          workItemRef: 'sponsor-cro-work-item-alpha',
+          workItemStatus: 'approved_for_response',
+          disclosureEventRef: 'disclosure-event-sponsor-cro-alpha',
+          disclosureLogHash: DIGEST_1,
+          decisionForumMatterRef: 'df-sponsor-cro-request-alpha',
+          humanReviewHash: DIGEST_3,
+          responsePackageHash: RESPONSE_PACKAGE_HASH,
+          linkedRecipientTenantId: 'tenant-sponsor-alpha',
+          linkedExportRef: 'fr041-export-control-alpha',
+          linkedAtHlc: { physicalMs: 1816000026000, logical: 0 },
+          metadataOnly: true,
+          sourcePayloadExcluded: true,
+          protectedContentExcluded: true,
+          productionTrustClaim: false,
+        },
+      },
       humanAuthorization: {
         status: 'approved',
         reviewerDid: 'did:exo:quality-manager-alpha',
@@ -262,6 +300,11 @@ test('regulatory submission support creates deterministic metadata-only readines
   assert.equal(first.regulatorySubmissionSupport.statutoryAuthorityNotReplaced, true);
   assert.equal(first.regulatorySubmissionSupport.productionTrustClaim, false);
   assert.equal(first.regulatorySubmissionSupport.metadataOnly, true);
+  assert.equal(first.regulatorySubmissionSupport.exportControlPackageHash, DIGEST_8);
+  assert.equal(first.regulatorySubmissionSupport.responsePackageHash, RESPONSE_PACKAGE_HASH);
+  assert.deepEqual(first.regulatorySubmissionSupport.sponsorCroRequestRefs, ['sponsor-cro-request-alpha']);
+  assert.deepEqual(first.regulatorySubmissionSupport.sponsorCroWorkItemRefs, ['sponsor-cro-work-item-alpha']);
+  assert.equal(first.regulatorySubmissionSupport.controlledRequestEvidence.requestHash, DIGEST_A);
   assert.equal(first.receipt.trustState, 'inactive');
   assert.equal(first.receipt.exochainProductionClaim, false);
   assert.equal(first.receipt.anchorPayload.artifactType, 'regulatory_submission_support');
@@ -345,6 +388,87 @@ test('regulatory submission support enforces authority human review and HLC orde
   assert.ok(denied.reasons.includes('human_authorization_after_package_compile'));
 });
 
+test('regulatory submission support requires FR-041 export-control evidence before sponsor regulatory support', async () => {
+  const { evaluateRegulatorySubmissionSupport } = await loadRegulatorySubmissionSupport();
+  const missing = evaluateRegulatorySubmissionSupport(
+    regulatorySupportInput({
+      exportControlEvidence: null,
+    }),
+  );
+
+  assert.equal(missing.status, 'denied');
+  assert.equal(missing.failClosed, true);
+  assert.equal(missing.receipt, null);
+  assert.ok(missing.reasons.includes('export_control_evidence_absent'));
+  assert.ok(missing.reasons.includes('sponsor_cro_request_evidence_absent'));
+
+  const mismatch = evaluateRegulatorySubmissionSupport(
+    regulatorySupportInput({
+      exportControlEvidence: {
+        packageRef: 'fr041-export-control-alpha',
+        packageHash: 'not-a-digest',
+        exportRef: 'wrong-export',
+        exportType: 'unsupported_export_type',
+        purpose: 'audit_inspection',
+        recipientTenantId: 'tenant-sponsor-beta',
+        disclosureLogHash: DIGEST_2,
+        suppressionLogHash: DIGEST_3,
+        responsePackageHash: DIGEST_4,
+        generatedAtHlc: { physicalMs: 1816000031000, logical: 0 },
+        metadataOnly: false,
+        sourcePayloadExcluded: false,
+        rawContentExcluded: false,
+        protectedContentExcluded: false,
+        productionTrustClaim: true,
+        controlledRequestEvidence: {
+          requestRef: 'sponsor-cro-request-alpha',
+          requestHash: DIGEST_A,
+          requesterClass: 'participant',
+          workItemRef: 'sponsor-cro-work-item-alpha',
+          workItemStatus: 'draft',
+          disclosureEventRef: 'disclosure-event-sponsor-cro-alpha',
+          disclosureLogHash: DIGEST_2,
+          decisionForumMatterRef: 'df-sponsor-cro-request-alpha',
+          humanReviewHash: DIGEST_4,
+          responsePackageHash: DIGEST_5,
+          linkedRecipientTenantId: 'tenant-sponsor-beta',
+          linkedExportRef: 'wrong-export',
+          linkedAtHlc: { physicalMs: 1816000032000, logical: 0 },
+          metadataOnly: false,
+          sourcePayloadExcluded: false,
+          protectedContentExcluded: false,
+          productionTrustClaim: true,
+        },
+      },
+    }),
+  );
+
+  assert.equal(mismatch.status, 'denied');
+  assert.ok(mismatch.reasons.includes('export_control_package_hash_invalid'));
+  assert.ok(mismatch.reasons.includes('export_control_type_invalid'));
+  assert.ok(mismatch.reasons.includes('export_control_purpose_mismatch'));
+  assert.ok(mismatch.reasons.includes('export_control_recipient_mismatch'));
+  assert.ok(mismatch.reasons.includes('export_control_disclosure_log_hash_mismatch'));
+  assert.ok(mismatch.reasons.includes('export_control_suppression_log_hash_mismatch'));
+  assert.ok(mismatch.reasons.includes('export_control_after_package_compile'));
+  assert.ok(mismatch.reasons.includes('export_control_metadata_boundary_invalid'));
+  assert.ok(mismatch.reasons.includes('export_control_source_payload_boundary_invalid'));
+  assert.ok(mismatch.reasons.includes('export_control_raw_content_boundary_invalid'));
+  assert.ok(mismatch.reasons.includes('export_control_protected_boundary_invalid'));
+  assert.ok(mismatch.reasons.includes('production_trust_claim_forbidden'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_requester_class_invalid'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_work_item_status_invalid'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_disclosure_log_hash_mismatch'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_human_review_hash_mismatch'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_response_package_hash_mismatch'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_request_recipient_mismatch'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_linked_export_mismatch'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_request_link_after_export_control'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_request_metadata_boundary_invalid'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_request_source_payload_boundary_invalid'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_request_protected_boundary_invalid'));
+});
+
 test('regulatory submission support rejects raw documents protected content and secrets before receipts', async () => {
   const { ProtectedContentError, evaluateRegulatorySubmissionSupport } = await loadRegulatorySubmissionSupport();
 
@@ -358,6 +482,20 @@ test('regulatory submission support rejects raw documents protected content and 
               rawProtocolBody: 'Participant Alice Example medical record details.',
             },
           ],
+        }),
+      ),
+    ProtectedContentError,
+  );
+
+  assert.throws(
+    () =>
+      evaluateRegulatorySubmissionSupport(
+        regulatorySupportInput({
+          exportControlEvidence: {
+            controlledRequestEvidence: {
+              rawSponsorRequestBody: 'Participant Alice source document requested for export.',
+            },
+          },
         }),
       ),
     ProtectedContentError,

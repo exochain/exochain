@@ -41,6 +41,78 @@ const REQUIRED_DOCTRINE_LAYERS = [
   'drift',
   'ground_truth',
 ];
+const REQUIRED_FUNCTIONAL_REQUIREMENT_IDS = [
+  'FR-001',
+  'FR-002',
+  'FR-003',
+  'FR-004',
+  'FR-005',
+  'FR-006',
+  'FR-007',
+  'FR-008',
+  'FR-009',
+  'FR-010',
+  'FR-011',
+  'FR-012',
+  'FR-013',
+  'FR-014',
+  'FR-015',
+  'FR-016',
+  'FR-017',
+  'FR-018',
+  'FR-019',
+  'FR-020',
+  'FR-021',
+  'FR-022',
+  'FR-023',
+  'FR-024',
+  'FR-025',
+  'FR-026',
+  'FR-027',
+  'FR-028',
+  'FR-029',
+  'FR-030',
+  'FR-031',
+  'FR-032',
+  'FR-033',
+  'FR-034',
+  'FR-035',
+  'FR-036',
+  'FR-037',
+  'FR-038',
+  'FR-039',
+  'FR-040',
+  'FR-041',
+  'FR-042',
+  'FR-043',
+  'FR-044',
+  'FR-045',
+  'FR-046',
+  'FR-047',
+  'FR-048',
+  'FR-049',
+  'FR-050',
+];
+const REQUIRED_NONFUNCTIONAL_REQUIREMENT_IDS = [
+  'NFR-001',
+  'NFR-002',
+  'NFR-003',
+  'NFR-004',
+  'NFR-005',
+  'NFR-006',
+  'NFR-007',
+  'NFR-008',
+  'NFR-009',
+  'NFR-010',
+  'NFR-011',
+  'NFR-012',
+  'NFR-013',
+  'NFR-014',
+];
+const REQUIRED_MASTER_PRD_REQUIREMENT_IDS = [
+  ...REQUIRED_FUNCTIONAL_REQUIREMENT_IDS,
+  ...REQUIRED_NONFUNCTIONAL_REQUIREMENT_IDS,
+];
 const REQUIRED_CONTEXT_DOC_REFS = [
   'docs/context/CYBERMEDICA_PRODUCTION_TRUST_ACTIVATION_GATES.md',
   'docs/context/EXOCHAIN_CONTEXT_SEED_FOR_CYBERMEDICA.md',
@@ -122,36 +194,173 @@ function row(requirementId, family, doctrineLayer, index, overrides = {}) {
   };
 }
 
+const REQUIREMENT_TRACEABILITY_REFS = Object.freeze({
+  'FR-001': ['site-profile-management'],
+  'FR-002': ['site-profile-management'],
+  'FR-003': ['standards-control-library'],
+  'FR-004': ['standards-control-library'],
+  'FR-005': ['evidence-linking'],
+  'FR-006': ['evidence-scoring'],
+  'FR-007': ['evidence-scoring'],
+  'FR-008': ['ai-control-review'],
+  'FR-009': ['site-qms-passport'],
+  'FR-010': ['protocol-intake'],
+  'FR-011': ['protocol-feasibility'],
+  'FR-012': ['risk-assessments'],
+  'FR-013': ['readiness-gates'],
+  'FR-014': ['readiness-gates'],
+  'FR-015': ['consent-materials'],
+  'FR-016': ['consent-materials', 'participant-data-sharing-consent'],
+  'FR-017': ['participant-protection'],
+  'FR-018': ['participant-protection'],
+  'FR-019': ['safety-events'],
+  'FR-020': ['deviation-workflows'],
+  'FR-021': ['capa-workflows'],
+  'FR-022': ['training-delegation'],
+  'FR-023': ['staff-training-gap-management'],
+  'FR-024': ['training-delegation'],
+  'FR-025': ['delegation-audit-log'],
+  'FR-026': ['concern-reporting'],
+  'FR-027': ['conflict-disclosures'],
+  'FR-028': ['recusal-management'],
+  'FR-029': ['decision-forum-matters'],
+  'FR-030': ['emergency-actions'],
+  'FR-031': ['document-versions', 'controlled-document-distribution'],
+  'FR-032': ['information-management'],
+  'FR-033': ['electronic-system-validation'],
+  'FR-034': ['facility-product-readiness'],
+  'FR-035': ['equipment-calibration-readiness'],
+  'FR-036': ['clinical-trial-product-accountability'],
+  'FR-037': ['kpi-management'],
+  'FR-038': ['internal-audits'],
+  'FR-039': ['site-self-assessments'],
+  'FR-040': ['diligence-exports'],
+  'FR-041': ['export-controls'],
+  'FR-042': ['exochain-anchoring'],
+  'FR-043': ['audit-logs'],
+  'FR-044': ['evidence-custody'],
+  'FR-045': ['notifications-alerts'],
+  'FR-046': ['search-retrieval'],
+  'FR-047': ['role-dashboards'],
+  'FR-048': ['governed-integrations'],
+  'FR-049': ['governed-api-access'],
+  'FR-050': ['governed-reporting'],
+  'NFR-001': ['security-privacy-readiness'],
+  'NFR-002': ['security-privacy-readiness'],
+  'NFR-003': ['availability-recovery-readiness'],
+  'NFR-004': ['data-integrity-records'],
+  'NFR-005': ['auditability-trails'],
+  'NFR-006': ['tamper-evidence-ledger'],
+  'NFR-007': ['interoperability-readiness'],
+  'NFR-008': ['tenant-configurations'],
+  'NFR-009': ['scalability-capacity'],
+  'NFR-010': ['guided-workflow-usability'],
+  'NFR-011': ['assistant-explainability'],
+  'NFR-012': ['reliability-readiness'],
+  'NFR-013': ['structured-data-exports'],
+  'NFR-014': ['legal-defensibility'],
+});
+
+const REQUIREMENT_DOCTRINE_LAYERS = Object.freeze({
+  'FR-001': 'ground_truth',
+  'FR-002': 'ground_truth',
+  'FR-003': 'domain',
+  'FR-004': 'domain',
+  'FR-005': 'data',
+  'FR-006': 'data',
+  'FR-007': 'data',
+  'FR-008': 'doors',
+  'FR-009': 'domain',
+  'FR-010': 'domain',
+  'FR-011': 'domain',
+  'FR-012': 'domain',
+  'FR-013': 'doors',
+  'FR-014': 'doors',
+  'FR-015': 'domain',
+  'FR-016': 'domain',
+  'FR-017': 'data',
+  'FR-018': 'domain',
+  'FR-019': 'domain',
+  'FR-020': 'domain',
+  'FR-021': 'domain',
+  'FR-022': 'domain',
+  'FR-023': 'drift',
+  'FR-024': 'domain',
+  'FR-025': 'data',
+  'FR-026': 'drift',
+  'FR-027': 'doctrine',
+  'FR-028': 'doctrine',
+  'FR-029': 'doors',
+  'FR-030': 'domain',
+  'FR-031': 'data',
+  'FR-032': 'data',
+  'FR-033': 'deployment',
+  'FR-034': 'domain',
+  'FR-035': 'domain',
+  'FR-036': 'domain',
+  'FR-037': 'drift',
+  'FR-038': 'drift',
+  'FR-039': 'drift',
+  'FR-040': 'doors',
+  'FR-041': 'data',
+  'FR-042': 'deployment',
+  'FR-043': 'data',
+  'FR-044': 'data',
+  'FR-045': 'doors',
+  'FR-046': 'doors',
+  'FR-047': 'doors',
+  'FR-048': 'deployment',
+  'FR-049': 'deployment',
+  'FR-050': 'documentation',
+  'NFR-001': 'deployment',
+  'NFR-002': 'data',
+  'NFR-003': 'deployment',
+  'NFR-004': 'data',
+  'NFR-005': 'data',
+  'NFR-006': 'data',
+  'NFR-007': 'deployment',
+  'NFR-008': 'domain',
+  'NFR-009': 'deployment',
+  'NFR-010': 'doors',
+  'NFR-011': 'doctrine',
+  'NFR-012': 'deployment',
+  'NFR-013': 'data',
+  'NFR-014': 'documentation',
+});
+
+function requirementRow(requirementId, index) {
+  const modules = REQUIREMENT_TRACEABILITY_REFS[requirementId];
+  const specialRefs = {
+    'FR-016': {
+      adapterBoundaryRefs: ['src/consent-materials.mjs', 'src/participant-data-sharing-consent.mjs'],
+      exochainPrimitiveRefs: ['crates/exo-consent/src/bailment.rs', 'crates/exo-consent/src/policy.rs'],
+    },
+    'FR-017': {
+      adapterBoundaryRefs: ['src/participant-protection.mjs'],
+      exochainPrimitiveRefs: ['crates/exo-consent/src/bailment.rs', 'crates/exo-core/src/types.rs'],
+    },
+    'FR-018': {
+      adapterBoundaryRefs: ['src/participant-protection.mjs'],
+      exochainPrimitiveRefs: ['crates/exo-consent/src/gatekeeper.rs', 'crates/exo-core/src/types.rs'],
+    },
+  }[requirementId] ?? {};
+  return row(
+    requirementId,
+    requirementId.startsWith('NFR-') ? 'nonfunctional' : 'functional',
+    REQUIREMENT_DOCTRINE_LAYERS[requirementId],
+    index,
+    {
+      moduleRefs: modules.map((moduleRef) => `src/${moduleRef}.mjs`),
+      testRefs: modules.map((moduleRef) => `tests/${moduleRef}.test.mjs`),
+      sourceRef: `cyber_medica_qms_prd_master.md#${requirementId}`,
+      ...specialRefs,
+    },
+  );
+}
+
 function allRows() {
   return [
-    row('FR-031', 'functional', 'data', 0, {
-      moduleRefs: ['src/document-versions.mjs', 'src/controlled-document-distribution.mjs'],
-      testRefs: ['tests/document-versions.test.mjs', 'tests/controlled-document-distribution.test.mjs'],
-    }),
-    row('FR-040', 'functional', 'doors', 1, {
-      moduleRefs: ['src/search-retrieval.mjs'],
-      testRefs: ['tests/search-retrieval.test.mjs'],
-    }),
-    row('FR-047', 'functional', 'doors', 2, {
-      moduleRefs: ['src/role-dashboards.mjs'],
-      testRefs: ['tests/role-dashboards.test.mjs'],
-    }),
-    row('FR-050', 'functional', 'documentation', 3, {
-      moduleRefs: ['src/governed-reporting.mjs'],
-      testRefs: ['tests/governed-reporting.test.mjs'],
-    }),
-    row('NFR-003', 'nonfunctional', 'deployment', 4, {
-      moduleRefs: ['src/availability-recovery-readiness.mjs'],
-      testRefs: ['tests/availability-recovery-readiness.test.mjs'],
-    }),
-    row('NFR-011', 'nonfunctional', 'doctrine', 5, {
-      moduleRefs: ['src/assistant-explainability.mjs'],
-      testRefs: ['tests/assistant-explainability.test.mjs'],
-    }),
-    row('NFR-014', 'nonfunctional', 'documentation', 6, {
-      moduleRefs: ['src/legal-defensibility.mjs'],
-      testRefs: ['tests/legal-defensibility.test.mjs'],
-    }),
+    ...REQUIRED_MASTER_PRD_REQUIREMENT_IDS.map((requirementId, index) => requirementRow(requirementId, index)),
     row('CTX-010', 'context_obligation', 'ground_truth', 7, {
       sourceRef: 'docs/context/EXOCHAIN_CONTEXT_SEED_FOR_CYBERMEDICA.md#section-12',
       moduleRefs: ['src/release-readiness-matrix.mjs'],
@@ -286,12 +495,185 @@ test('requirement traceability matrix maps requirements to modules tests evidenc
   assert.equal(resultA.traceability.exochainProductionClaim, false);
   assert.deepEqual(resultA.traceability.requirementFamiliesCovered, REQUIRED_REQUIREMENT_FAMILIES);
   assert.deepEqual(resultA.traceability.doctrineLayersCovered, REQUIRED_DOCTRINE_LAYERS);
-  assert.equal(resultA.traceability.coverageSummary.totalRequirementCount, 13);
-  assert.equal(resultA.traceability.coverageSummary.implementedCount, 10);
+  assert.equal(resultA.traceability.coverageSummary.totalRequirementCount, 70);
+  assert.equal(resultA.traceability.coverageSummary.implementedCount, 67);
   assert.equal(resultA.traceability.coverageSummary.activationOnlyBlockerCount, 3);
   assert.deepEqual(resultA.traceability.activationOnlyBlockerIds, ['PTAG-001', 'PTAG-008', 'PTAG-015']);
+  assert.deepEqual(
+    resultA.traceability.requirementIds.filter((requirementId) => requirementId.startsWith('FR-')),
+    REQUIRED_FUNCTIONAL_REQUIREMENT_IDS,
+  );
+  assert.deepEqual(
+    resultA.traceability.requirementIds.filter((requirementId) => requirementId.startsWith('NFR-')),
+    REQUIRED_NONFUNCTIONAL_REQUIREMENT_IDS,
+  );
   assert.equal(resultA.receipt.trustState, 'inactive');
   assert.deepEqual(resultA, resultB);
+});
+
+test('requirement traceability matrix requires every master PRD FR and NFR row', async () => {
+  const { evaluateRequirementTraceability } = await loadRequirementTraceability();
+
+  const result = evaluateRequirementTraceability(
+    traceabilityInput({
+      requirementRows: allRows().filter(
+        (entry) => entry.requirementId !== 'FR-001' && entry.requirementId !== 'NFR-001',
+      ),
+    }),
+  );
+
+  assert.equal(result.decision, 'denied');
+  assert.ok(result.reasons.includes('requirement_id_missing:FR-001'));
+  assert.ok(result.reasons.includes('requirement_id_missing:NFR-001'));
+
+  const unsupported = evaluateRequirementTraceability(
+    traceabilityInput({
+      requirementRows: [
+        ...allRows(),
+        row('FR-099', 'functional', 'data', 99, {
+          moduleRefs: ['src/readiness-gates.mjs'],
+          testRefs: ['tests/readiness-gates.test.mjs'],
+        }),
+      ],
+    }),
+  );
+
+  assert.equal(unsupported.decision, 'denied');
+  assert.ok(unsupported.reasons.includes('requirement_id_unsupported:FR-099'));
+});
+
+test('requirement traceability matrix requires FR-016 consent process and data sharing consent mappings', async () => {
+  const { evaluateRequirementTraceability } = await loadRequirementTraceability();
+
+  const result = evaluateRequirementTraceability(traceabilityInput());
+  const fr016Row = result.traceability.requirementRows.find((entry) => entry.requirementId === 'FR-016');
+
+  assert.ok(fr016Row, 'FR-016 must be represented as a standalone requirement row');
+  assert.deepEqual(fr016Row.moduleRefs, [
+    'src/consent-materials.mjs',
+    'src/participant-data-sharing-consent.mjs',
+  ]);
+  assert.deepEqual(fr016Row.testRefs, [
+    'tests/consent-materials.test.mjs',
+    'tests/participant-data-sharing-consent.test.mjs',
+  ]);
+  assert.deepEqual(fr016Row.exochainPrimitiveRefs, [
+    'crates/exo-consent/src/bailment.rs',
+    'crates/exo-consent/src/policy.rs',
+  ]);
+  assert.deepEqual(fr016Row.adapterBoundaryRefs, [
+    'src/consent-materials.mjs',
+    'src/participant-data-sharing-consent.mjs',
+  ]);
+
+  const denied = evaluateRequirementTraceability(
+    traceabilityInput({
+      requirementRows: allRows().map((entry) =>
+        entry.requirementId === 'FR-016'
+          ? {
+              ...entry,
+              moduleRefs: ['src/consent-materials.mjs'],
+              testRefs: ['tests/consent-materials.test.mjs'],
+              exochainPrimitiveRefs: ['crates/exo-consent/src/bailment.rs'],
+              adapterBoundaryRefs: ['src/consent-materials.mjs'],
+            }
+          : entry,
+      ),
+    }),
+  );
+
+  assert.equal(denied.decision, 'denied');
+  assert.ok(
+    denied.reasons.includes(
+      'requirement_required_module_ref_missing:FR-016:src/participant-data-sharing-consent.mjs',
+    ),
+  );
+  assert.ok(
+    denied.reasons.includes(
+      'requirement_required_test_ref_missing:FR-016:tests/participant-data-sharing-consent.test.mjs',
+    ),
+  );
+  assert.ok(
+    denied.reasons.includes(
+      'requirement_required_exochain_primitive_ref_missing:FR-016:crates/exo-consent/src/policy.rs',
+    ),
+  );
+  assert.ok(
+    denied.reasons.includes(
+      'requirement_required_adapter_boundary_ref_missing:FR-016:src/participant-data-sharing-consent.mjs',
+    ),
+  );
+});
+
+test('requirement traceability matrix requires FR-017 and FR-018 participant protection mappings', async () => {
+  const { evaluateRequirementTraceability } = await loadRequirementTraceability();
+
+  const result = evaluateRequirementTraceability(traceabilityInput());
+  const fr017Row = result.traceability.requirementRows.find((entry) => entry.requirementId === 'FR-017');
+  const fr018Row = result.traceability.requirementRows.find((entry) => entry.requirementId === 'FR-018');
+
+  assert.ok(fr017Row, 'FR-017 must be represented as a participant-code requirement row');
+  assert.ok(fr018Row, 'FR-018 must be represented as a participant-disposition requirement row');
+  assert.deepEqual(fr017Row.moduleRefs, ['src/participant-protection.mjs']);
+  assert.deepEqual(fr017Row.testRefs, ['tests/participant-protection.test.mjs']);
+  assert.deepEqual(fr017Row.exochainPrimitiveRefs, ['crates/exo-consent/src/bailment.rs', 'crates/exo-core/src/types.rs']);
+  assert.deepEqual(fr017Row.adapterBoundaryRefs, ['src/participant-protection.mjs']);
+  assert.deepEqual(fr018Row.moduleRefs, ['src/participant-protection.mjs']);
+  assert.deepEqual(fr018Row.testRefs, ['tests/participant-protection.test.mjs']);
+  assert.deepEqual(fr018Row.exochainPrimitiveRefs, ['crates/exo-consent/src/gatekeeper.rs', 'crates/exo-core/src/types.rs']);
+  assert.deepEqual(fr018Row.adapterBoundaryRefs, ['src/participant-protection.mjs']);
+
+  const denied = evaluateRequirementTraceability(
+    traceabilityInput({
+      requirementRows: allRows().map((entry) => {
+        if (entry.requirementId === 'FR-017') {
+          return {
+            ...entry,
+            moduleRefs: ['src/consent-materials.mjs'],
+            testRefs: ['tests/consent-materials.test.mjs'],
+            exochainPrimitiveRefs: ['crates/exo-consent/src/policy.rs'],
+            adapterBoundaryRefs: ['src/consent-materials.mjs'],
+          };
+        }
+        if (entry.requirementId === 'FR-018') {
+          return {
+            ...entry,
+            moduleRefs: [],
+            testRefs: [],
+            exochainPrimitiveRefs: ['crates/exo-consent/src/bailment.rs'],
+            adapterBoundaryRefs: [],
+          };
+        }
+        return entry;
+      }),
+    }),
+  );
+
+  assert.equal(denied.decision, 'denied');
+  assert.ok(denied.reasons.includes('requirement_required_module_ref_missing:FR-017:src/participant-protection.mjs'));
+  assert.ok(
+    denied.reasons.includes('requirement_required_test_ref_missing:FR-017:tests/participant-protection.test.mjs'),
+  );
+  assert.ok(
+    denied.reasons.includes(
+      'requirement_required_exochain_primitive_ref_missing:FR-017:crates/exo-consent/src/bailment.rs',
+    ),
+  );
+  assert.ok(
+    denied.reasons.includes('requirement_required_adapter_boundary_ref_missing:FR-017:src/participant-protection.mjs'),
+  );
+  assert.ok(denied.reasons.includes('requirement_required_module_ref_missing:FR-018:src/participant-protection.mjs'));
+  assert.ok(
+    denied.reasons.includes('requirement_required_test_ref_missing:FR-018:tests/participant-protection.test.mjs'),
+  );
+  assert.ok(
+    denied.reasons.includes(
+      'requirement_required_exochain_primitive_ref_missing:FR-018:crates/exo-consent/src/gatekeeper.rs',
+    ),
+  );
+  assert.ok(
+    denied.reasons.includes('requirement_required_adapter_boundary_ref_missing:FR-018:src/participant-protection.mjs'),
+  );
 });
 
 test('requirement traceability matrix fails closed for incomplete PRD family and layer coverage', async () => {
@@ -306,7 +688,7 @@ test('requirement traceability matrix fails closed for incomplete PRD family and
   assert.equal(result.decision, 'denied');
   assert.equal(result.failClosed, true);
   assert.ok(result.reasons.includes('requirement_family_missing:nonfunctional'));
-  assert.ok(result.reasons.includes('doctrine_layer_missing:doctrine'));
+  assert.ok(result.reasons.includes('requirement_id_missing:NFR-001'));
 });
 
 test('requirement traceability matrix rejects unimplemented rows and non-activation blockers', async () => {
@@ -349,7 +731,7 @@ test('requirement traceability matrix requires concrete module test evidence and
           adapterBoundaryRefs: [],
           reviewedByHuman: false,
         }),
-        ...allRows().slice(1),
+        ...allRows().filter((entry) => entry.requirementId !== 'FR-031'),
       ],
       validationEvidence: {
         commandsPassed: false,
@@ -432,7 +814,7 @@ test('requirement traceability matrix rejects raw requirements protected content
       row('FR-031', 'functional', 'data', 0, {
         rawRequirementText: false,
       }),
-      ...allRows().slice(1),
+      ...allRows().filter((entry) => entry.requirementId !== 'FR-031'),
     ],
     humanReview: {
       secret: {},
@@ -449,7 +831,7 @@ test('requirement traceability matrix rejects raw requirements protected content
             row('FR-031', 'functional', 'data', 0, {
               rawRequirementText: 'source PRD text stays outside metadata receipts',
             }),
-            ...allRows().slice(1),
+            ...allRows().filter((entry) => entry.requirementId !== 'FR-031'),
           ],
         }),
       ),

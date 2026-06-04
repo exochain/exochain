@@ -71,6 +71,33 @@ const REQUIRED_INSPECTION_EVIDENCE = [
   'staff_training_records',
 ];
 
+const REQUIRED_DOCUMENTATION_ARTIFACTS = [
+  'cybermedica_user_manual',
+  'site_leader_manual',
+  'principal_investigator_manual',
+  'coordinator_site_staff_manual',
+  'quality_manager_manual',
+  'cro_portfolio_manual',
+  'sponsor_viewer_manual',
+  'auditor_monitor_inspector_manual',
+  'decision_forum_manual',
+  'ai_quality_review_manual',
+  'tenant_administrator_manual',
+  'system_administrator_manual',
+  'evidence_chain_of_custody_manual',
+  'protocol_readiness_launch_gate_manual',
+  'consent_participant_protection_manual',
+  'deviation_capa_manual',
+  'training_delegation_manual',
+  'clinical_trial_product_accountability_manual',
+  'exochain_receipts_privacy_anchoring_guide',
+  'support_access_break_glass_emergency_runbook',
+  'sponsor_cro_diligence_packet_guide',
+  'audit_inspection_packet_guide',
+  'ai_governance_model_use_policy',
+  'deployment_backup_recovery_incident_response_runbook',
+];
+
 async function loadDocumentationRunbooks() {
   try {
     return await import('../src/documentation-runbooks.mjs');
@@ -159,6 +186,30 @@ function inspectionEvidenceItems() {
   return REQUIRED_INSPECTION_EVIDENCE.map((kind, index) => inspectionEvidence(kind, index));
 }
 
+function documentationArtifact(artifact, index, overrides = {}) {
+  const hashes = [DIGEST_A, DIGEST_B, DIGEST_C, DIGEST_D, DIGEST_E, DIGEST_F, DIGEST_1, DIGEST_2, DIGEST_3, DIGEST_4];
+  return {
+    artifact,
+    artifactRef: `documentation-artifact-${artifact}`,
+    versionRef: `documentation-artifact-${artifact}-v1`,
+    artifactHash: hashes[index % hashes.length],
+    ownerRoleRef: index % 2 === 0 ? 'quality_manager' : 'documentation_owner',
+    targetAudienceRoleRefs: ['quality_manager', 'site_leader'],
+    crosslinkRefs: ['manual-crosslink-matrix-alpha', 'policy-procedure-rule-register-alpha'],
+    approvedForSandyReview: true,
+    reviewedByHuman: true,
+    reviewedAtHlc: { physicalMs: 1800005180000, logical: index },
+    metadataOnly: true,
+    protectedContentExcluded: true,
+    productionTrustClaim: false,
+    ...overrides,
+  };
+}
+
+function documentationArtifacts() {
+  return REQUIRED_DOCUMENTATION_ARTIFACTS.map((artifact, index) => documentationArtifact(artifact, index));
+}
+
 function runbookInput(overrides = {}) {
   const base = {
     tenantId: 'tenant-site-alpha',
@@ -182,6 +233,7 @@ function runbookInput(overrides = {}) {
       requiredDocumentationDomains: REQUIRED_DOCUMENTATION_DOMAINS,
       requiredRoleManuals: REQUIRED_ROLE_MANUALS,
       requiredInspectionEvidenceKinds: REQUIRED_INSPECTION_EVIDENCE,
+      requiredDocumentationArtifacts: REQUIRED_DOCUMENTATION_ARTIFACTS,
       manualVersionGovernanceRequired: true,
       aiOrientationAdvisoryOnly: true,
       inquiryCqiRoutingRequired: true,
@@ -201,6 +253,7 @@ function runbookInput(overrides = {}) {
     },
     documentationDomains: documentationDomains(),
     roleManuals: roleManuals(),
+    documentationArtifacts: documentationArtifacts(),
     crosslinkMatrix: {
       matrixRef: 'manual-crosslink-matrix-alpha',
       matrixHash: DIGEST_C,
@@ -298,9 +351,11 @@ test('documentation runbook readiness creates deterministic manual and inspectio
         requiredDocumentationDomains: [...REQUIRED_DOCUMENTATION_DOMAINS].reverse(),
         requiredRoleManuals: [...REQUIRED_ROLE_MANUALS].reverse(),
         requiredInspectionEvidenceKinds: [...REQUIRED_INSPECTION_EVIDENCE].reverse(),
+        requiredDocumentationArtifacts: [...REQUIRED_DOCUMENTATION_ARTIFACTS].reverse(),
       },
       documentationDomains: [...documentationDomains()].reverse(),
       roleManuals: [...roleManuals()].reverse(),
+      documentationArtifacts: [...documentationArtifacts()].reverse(),
       inspectionGuide: {
         evidenceKinds: [...inspectionEvidenceItems()].reverse(),
       },
@@ -313,9 +368,11 @@ test('documentation runbook readiness creates deterministic manual and inspectio
   assert.equal(resultA.documentationReadiness.trustState, 'inactive');
   assert.equal(resultA.documentationReadiness.exochainProductionClaim, false);
   assert.equal(resultA.documentationReadiness.roleManualCount, REQUIRED_ROLE_MANUALS.length);
+  assert.equal(resultA.documentationReadiness.documentationArtifactCount, REQUIRED_DOCUMENTATION_ARTIFACTS.length);
   assert.equal(resultA.documentationReadiness.inspectionEvidenceCount, REQUIRED_INSPECTION_EVIDENCE.length);
   assert.deepEqual(resultA.documentationReadiness.missingDocumentationDomains, []);
   assert.deepEqual(resultA.documentationReadiness.missingRoleManuals, []);
+  assert.deepEqual(resultA.documentationReadiness.missingDocumentationArtifacts, []);
   assert.equal(resultA.receipt.containsProtectedContent, false);
   assert.equal(resultA.receipt.trustState, 'inactive');
   assert.equal(resultA.receipt.receiptId, resultB.receipt.receiptId);
@@ -343,6 +400,32 @@ test('documentation runbook readiness fails closed for missing documentation dom
   assert.ok(result.reasons.includes('role_manual_missing:principal_investigator'));
   assert.ok(result.reasons.includes('crosslink_evidence_missing'));
   assert.ok(result.reasons.includes('manual_crosslink_matrix_has_broken_links'));
+});
+
+test('documentation runbook readiness requires the full Sandy review artifact catalog', async () => {
+  const { evaluateDocumentationRunbookReadiness } = await loadDocumentationRunbooks();
+
+  const result = evaluateDocumentationRunbookReadiness(
+    runbookInput({
+      documentationArtifacts: [
+        ...documentationArtifacts().filter((row) => row.artifact !== 'ai_quality_review_manual'),
+        documentationArtifact('tenant_administrator_manual', 10, {
+          approvedForSandyReview: false,
+          crosslinkRefs: [],
+        }),
+      ],
+    }),
+  );
+
+  assert.equal(result.decision, 'denied');
+  assert.equal(result.failClosed, true);
+  assert.equal(result.receipt, null);
+  assert.ok(result.reasons.includes('documentation_artifact_missing:ai_quality_review_manual'));
+  assert.ok(
+    result.reasons.includes('documentation_artifact_invalid:tenant_administrator_manual:not_approved_for_sandy_review'),
+  );
+  assert.ok(result.reasons.includes('documentation_artifact_invalid:tenant_administrator_manual:crosslink_refs_absent'));
+  assert.deepEqual(result.documentationReadiness.missingDocumentationArtifacts, ['ai_quality_review_manual']);
 });
 
 test('documentation runbook readiness requires complete audit and inspection evidence', async () => {

@@ -24,6 +24,12 @@ const REQUIRED_PERMISSION = 'export_control';
 const ACTOR_KINDS = new Set(['human', 'service_account']);
 const POLICY_STATUSES = new Set(['active']);
 const HUMAN_AUTHORIZATION_STATUSES = new Set(['approved']);
+const SPONSOR_CRO_REQUESTER_CLASSES = new Set(['cro', 'sponsor']);
+const SPONSOR_CRO_WORK_ITEM_STATUSES = new Set([
+  'queued_for_site_review',
+  'routed_to_decision_forum',
+  'approved_for_response',
+]);
 const REQUIRED_CONTROL_DOMAINS = new Set(['access', 'confidentiality', 'disclosure', 'privacy']);
 const SUPPRESSION_MODES = new Set(['suppress_without_identifiers']);
 const CLASSIFICATIONS = new Set([
@@ -49,8 +55,15 @@ const RAW_EXPORT_FIELDS = new Set([
   'rawexport',
   'rawexportpayload',
   'rawrecord',
+  'rawrequest',
+  'rawrequestbody',
+  'rawrequestcontent',
+  'rawrequestnarrative',
+  'rawresponsepackage',
   'rawsource',
   'rawsourcedata',
+  'rawsponsorrequest',
+  'rawsponsorrequestbody',
   'recordbody',
   'sourcedocumentbody',
   'sourcedocumenttext',
@@ -184,6 +197,13 @@ function includesAll(needles, haystack) {
 function textListsIntersect(left, right) {
   const rightSet = new Set(right);
   return left.some((item) => rightSet.has(item));
+}
+
+function sameTextSet(left, right) {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((item, index) => item === right[index]);
 }
 
 function uniqueReasons(reasons) {
@@ -437,7 +457,165 @@ function normalizeRecords(input, reasons) {
   return { permitted, suppressedRecordCount };
 }
 
-function buildPackage(input, records, suppressedRecordCount) {
+function requiresSponsorCroRequestLinkage(input) {
+  return (
+    input?.exportRequest?.purpose === 'sponsor_diligence' ||
+    input?.exportRequest?.exportType === 'sponsor_diligence_packet'
+  );
+}
+
+function evaluateResponsePackage(input, records, required, reasons) {
+  const responsePackage = input?.responsePackage;
+  if (!required && (responsePackage === null || responsePackage === undefined)) {
+    return null;
+  }
+
+  const packageRecordRefs = sortedTextList(responsePackage?.packageRecordRefs);
+  const exportedRecordRefs = sortedTextList(records.map((record) => record.recordRef));
+
+  addReason(reasons, responsePackage === null || responsePackage === undefined, 'sponsor_cro_response_package_absent');
+  addReason(reasons, !hasText(responsePackage?.packageRef), 'sponsor_cro_response_package_ref_absent');
+  addReason(reasons, !isDigest(responsePackage?.packageHash), 'sponsor_cro_response_package_hash_invalid');
+  addReason(
+    reasons,
+    responsePackage?.requestRef !== input?.sponsorCroRequestEvidence?.requestRef,
+    'sponsor_cro_response_package_request_mismatch',
+  );
+  addReason(
+    reasons,
+    responsePackage?.workItemRef !== input?.sponsorCroRequestEvidence?.workItemRef,
+    'sponsor_cro_response_package_work_item_mismatch',
+  );
+  addReason(
+    reasons,
+    responsePackage?.recipientTenantId !== input?.exportRequest?.recipientTenantId,
+    'sponsor_cro_response_package_recipient_mismatch',
+  );
+  addReason(
+    reasons,
+    !sameTextSet(packageRecordRefs, exportedRecordRefs),
+    'sponsor_cro_response_package_record_scope_mismatch',
+  );
+  addReason(reasons, hlcTuple(responsePackage?.generatedAtHlc) === null, 'sponsor_cro_response_package_time_invalid');
+  addReason(
+    reasons,
+    hlcAfter(responsePackage?.generatedAtHlc, input?.exportRequest?.generatedAtHlc),
+    'sponsor_cro_response_package_after_export_generation',
+  );
+  addReason(
+    reasons,
+    responsePackage?.metadataOnly !== true,
+    'sponsor_cro_response_package_metadata_boundary_invalid',
+  );
+  addReason(
+    reasons,
+    responsePackage?.rawContentExcluded !== true,
+    'sponsor_cro_response_package_raw_content_boundary_invalid',
+  );
+  addReason(
+    reasons,
+    responsePackage?.protectedContentExcluded !== true,
+    'sponsor_cro_response_package_protected_boundary_invalid',
+  );
+
+  return {
+    generatedAtHlc: responsePackage?.generatedAtHlc ?? null,
+    packageHash: hasText(responsePackage?.packageHash) ? responsePackage.packageHash : null,
+    packageRecordRefs,
+    packageRef: hasText(responsePackage?.packageRef) ? responsePackage.packageRef : null,
+    recipientTenantId: hasText(responsePackage?.recipientTenantId) ? responsePackage.recipientTenantId : null,
+    requestRef: hasText(responsePackage?.requestRef) ? responsePackage.requestRef : null,
+    workItemRef: hasText(responsePackage?.workItemRef) ? responsePackage.workItemRef : null,
+  };
+}
+
+function evaluateSponsorCroRequestEvidence(input, responsePackage, required, reasons) {
+  const evidence = input?.sponsorCroRequestEvidence;
+  if (!required && (evidence === null || evidence === undefined)) {
+    return null;
+  }
+
+  addReason(reasons, evidence === null || evidence === undefined, 'sponsor_cro_request_evidence_absent');
+  addReason(reasons, !hasText(evidence?.requestRef), 'sponsor_cro_request_ref_absent');
+  addReason(reasons, !isDigest(evidence?.requestHash), 'sponsor_cro_request_hash_invalid');
+  addReason(
+    reasons,
+    !SPONSOR_CRO_REQUESTER_CLASSES.has(evidence?.requesterClass),
+    'sponsor_cro_requester_class_invalid',
+  );
+  addReason(reasons, !hasText(evidence?.workItemRef), 'sponsor_cro_work_item_ref_absent');
+  addReason(
+    reasons,
+    !SPONSOR_CRO_WORK_ITEM_STATUSES.has(evidence?.workItemStatus),
+    'sponsor_cro_work_item_status_invalid',
+  );
+  addReason(reasons, !hasText(evidence?.disclosureEventRef), 'sponsor_cro_disclosure_event_ref_absent');
+  addReason(reasons, !isDigest(evidence?.disclosureLogHash), 'sponsor_cro_disclosure_log_hash_invalid');
+  addReason(
+    reasons,
+    hasText(evidence?.disclosureLogHash) && evidence.disclosureLogHash !== input?.disclosureLog?.disclosureLogHash,
+    'sponsor_cro_disclosure_log_hash_mismatch',
+  );
+  addReason(reasons, !hasText(evidence?.decisionForumMatterRef), 'sponsor_cro_decision_forum_matter_absent');
+  addReason(reasons, !isDigest(evidence?.humanReviewHash), 'sponsor_cro_human_review_hash_invalid');
+  addReason(
+    reasons,
+    hasText(evidence?.humanReviewHash) && evidence.humanReviewHash !== input?.humanAuthorization?.authorizationHash,
+    'sponsor_cro_human_review_hash_mismatch',
+  );
+  addReason(reasons, !isDigest(evidence?.responsePackageHash), 'sponsor_cro_response_package_hash_invalid');
+  addReason(
+    reasons,
+    hasText(evidence?.responsePackageHash) && evidence.responsePackageHash !== responsePackage?.packageHash,
+    'sponsor_cro_response_package_hash_mismatch',
+  );
+  addReason(
+    reasons,
+    evidence?.linkedRecipientTenantId !== input?.exportRequest?.recipientTenantId,
+    'sponsor_cro_request_recipient_mismatch',
+  );
+  addReason(reasons, evidence?.linkedExportRef !== input?.exportRequest?.exportRef, 'sponsor_cro_linked_export_mismatch');
+  addReason(reasons, evidence?.metadataOnly !== true, 'sponsor_cro_request_metadata_boundary_invalid');
+  addReason(
+    reasons,
+    evidence?.sourcePayloadExcluded !== true,
+    'sponsor_cro_request_source_payload_boundary_invalid',
+  );
+  addReason(
+    reasons,
+    evidence?.protectedContentExcluded !== true,
+    'sponsor_cro_request_protected_boundary_invalid',
+  );
+  addReason(reasons, evidence?.productionTrustClaim === true, 'production_trust_claim_forbidden');
+  addReason(reasons, hlcTuple(evidence?.linkedAtHlc) === null, 'sponsor_cro_request_link_time_invalid');
+  addReason(
+    reasons,
+    hlcAfter(evidence?.linkedAtHlc, input?.exportRequest?.generatedAtHlc),
+    'sponsor_cro_request_link_after_export_generation',
+  );
+
+  return {
+    decisionForumMatterRef: hasText(evidence?.decisionForumMatterRef) ? evidence.decisionForumMatterRef : null,
+    disclosureEventRef: hasText(evidence?.disclosureEventRef) ? evidence.disclosureEventRef : null,
+    disclosureLogHash: hasText(evidence?.disclosureLogHash) ? evidence.disclosureLogHash : null,
+    humanReviewHash: hasText(evidence?.humanReviewHash) ? evidence.humanReviewHash : null,
+    linkedAtHlc: evidence?.linkedAtHlc ?? null,
+    linkedExportRef: hasText(evidence?.linkedExportRef) ? evidence.linkedExportRef : null,
+    linkedRecipientTenantId: hasText(evidence?.linkedRecipientTenantId) ? evidence.linkedRecipientTenantId : null,
+    requestHash: hasText(evidence?.requestHash) ? evidence.requestHash : null,
+    requesterClass: hasText(evidence?.requesterClass) ? evidence.requesterClass : null,
+    requestRef: hasText(evidence?.requestRef) ? evidence.requestRef : null,
+    responsePackageHash: hasText(evidence?.responsePackageHash) ? evidence.responsePackageHash : null,
+    workItemRef: hasText(evidence?.workItemRef) ? evidence.workItemRef : null,
+    workItemStatus: hasText(evidence?.workItemStatus) ? evidence.workItemStatus : null,
+  };
+}
+
+function optionalTextList(value) {
+  return hasText(value) ? [value] : [];
+}
+
+function buildPackage(input, records, suppressedRecordCount, sponsorCroRequestEvidence, responsePackage) {
   const controlDomains = [...REQUIRED_CONTROL_DOMAINS].sort();
   const packageHash = sha256Hex({
     actorDid: input.actor.did,
@@ -448,7 +626,9 @@ function buildPackage(input, records, suppressedRecordCount) {
     records,
     recipientClass: input.exportRequest.recipientClass,
     recipientTenantId: input.exportRequest.recipientTenantId,
+    responsePackage,
     schema: EXPORT_CONTROL_SCHEMA,
+    sponsorCroRequestEvidence,
     suppressedRecordCount,
     tenantId: input.tenantId,
   });
@@ -468,6 +648,11 @@ function buildPackage(input, records, suppressedRecordCount) {
     confidentialityBoundarySatisfied: records.every((record) => hasText(record.confidentialityCategory)),
     accessBoundarySatisfied: records.every((record) => isDigest(record.accessLogHash)),
     disclosureLogged: isDigest(input.disclosureLog.disclosureLogHash),
+    responsePackageHash: responsePackage?.packageHash ?? null,
+    responsePackageRef: responsePackage?.packageRef ?? null,
+    sponsorCroRequestRefs: optionalTextList(sponsorCroRequestEvidence?.requestRef),
+    sponsorCroWorkItemRefs: optionalTextList(sponsorCroRequestEvidence?.workItemRef),
+    controlledRequestEvidence: sponsorCroRequestEvidence,
     trustState: 'inactive',
     exochainProductionClaim: false,
   };
@@ -501,7 +686,21 @@ export function evaluateExportControl(input) {
   addReason(reasons, !isDigest(input?.custodyDigest), 'custody_digest_invalid');
 
   const { permitted, suppressedRecordCount } = normalizeRecords(input, reasons);
-  const controlPackage = buildPackage(input, permitted, suppressedRecordCount);
+  const sponsorCroLinkageRequired = requiresSponsorCroRequestLinkage(input);
+  const responsePackage = evaluateResponsePackage(input, permitted, sponsorCroLinkageRequired, reasons);
+  const sponsorCroRequestEvidence = evaluateSponsorCroRequestEvidence(
+    input,
+    responsePackage,
+    sponsorCroLinkageRequired,
+    reasons,
+  );
+  const controlPackage = buildPackage(
+    input,
+    permitted,
+    suppressedRecordCount,
+    sponsorCroRequestEvidence,
+    responsePackage,
+  );
   const denied = reasons.length > 0;
 
   return {

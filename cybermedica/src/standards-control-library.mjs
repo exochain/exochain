@@ -17,6 +17,8 @@
 import { canonicalize, createEvidenceReceipt, ProtectedContentError, sha256Hex } from './qms-contracts.mjs';
 
 const HEX_64 = /^[0-9a-f]{64}$/u;
+const STANDARDS_CONTROL_SOURCE_REQUIREMENTS = Object.freeze(['FR-003']);
+const CONTROL_APPLICABILITY_SOURCE_REQUIREMENTS = Object.freeze(['FR-004']);
 const CONTROL_STATUSES = new Set(['active']);
 const CONTROL_RISK_CRITICALITIES = new Set(['critical', 'major', 'minor']);
 const CONTROL_RELEVANCE_KEYS = Object.freeze([
@@ -482,6 +484,7 @@ function controlFingerprintPayload(input, normalized) {
     reviewFrequencyDays: input.control.reviewFrequencyDays,
     reviewerRole: input.control.reviewerRole,
     riskCriticality: input.control.riskCriticality,
+    sourceRequirements: STANDARDS_CONTROL_SOURCE_REQUIREMENTS,
     sourceRefs: normalized.sourceRefs,
     status: input.control.status,
     title: input.control.title,
@@ -550,6 +553,7 @@ export function publishStandardsControlVersion(input) {
       title: input.control.title,
       status: input.control.status,
       materialChange: input.control.materialChange,
+      sourceRequirements: [...STANDARDS_CONTROL_SOURCE_REQUIREMENTS],
       sourceRefs: normalized.sourceRefs.map((sourceRef) => sourceRef.sourceRefId),
       sourceRightsAttested: normalized.sourceRefs.every((sourceRef) => sourceRef.rightsAttested === true),
       normativeStatementHash: input.control.normativeStatementHash,
@@ -664,6 +668,7 @@ function applicabilityArtifactHash(input, criteriaEvidenceRefs) {
     controlId: input.controlRef.controlId,
     criteriaEvidenceRefs,
     determination: input.determination,
+    sourceRequirements: CONTROL_APPLICABILITY_SOURCE_REQUIREMENTS,
     subject: input.subject,
     tenantId: input.tenantId,
     versionId: input.controlRef.versionId,
@@ -735,6 +740,7 @@ export function determineControlApplicability(input) {
       versionId: input.controlRef.versionId,
       controlVersionReceiptRef: input.controlRef.controlVersionReceiptRef,
       controlFingerprint: input.controlRef.controlFingerprint,
+      sourceRequirements: [...CONTROL_APPLICABILITY_SOURCE_REQUIREMENTS],
       state: input.determination.state,
       subject: input.subject,
       rationaleHash: input.determination.rationaleHash,

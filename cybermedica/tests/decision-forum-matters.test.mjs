@@ -181,6 +181,35 @@ function decisionForumMatterInput() {
   };
 }
 
+function contestedDecisionForumMatterInput() {
+  const input = decisionForumMatterInput();
+  input.disposition = {
+    outcome: 'contest',
+    rationaleHash: DIGEST_A,
+    minorityViewHashes: [],
+    dissentHashes: [DIGEST_B],
+    conditionHashes: [],
+    followUpActions: [],
+    sponsorNotificationRequired: false,
+    sponsorNotificationRationaleHash: DIGEST_C,
+    irbIecNotificationRequired: false,
+    irbIecNotificationRationaleHash: DIGEST_D,
+    regulatoryNotificationRequired: false,
+    regulatoryNotificationRationaleHash: DIGEST_E,
+  };
+  input.contestation = {
+    open: true,
+    status: 'filed',
+    contestRefs: ['CONTEST-DF-0001'],
+    filedByDid: 'did:exo:principal-investigator-alpha',
+    standingRole: 'affected_site_governance',
+    reasonHash: DIGEST_F,
+    filedAtHlc: { physicalMs: 1791600410000, logical: 0 },
+    independentReviewerDid: 'did:exo:independent-governance-reviewer-alpha',
+  };
+  return input;
+}
+
 test('Decision Forum matter lifecycle creates deterministic inactive closure receipt', async () => {
   const { evaluateDecisionForumMatter } = await loadDecisionForumMatters();
 
@@ -338,31 +367,7 @@ test('Decision Forum matter fails closed for missing review deliberation vote ra
 
 test('Decision Forum matter supports contestation receipts without claiming final closure', async () => {
   const { evaluateDecisionForumMatter } = await loadDecisionForumMatters();
-  const input = decisionForumMatterInput();
-  input.disposition = {
-    outcome: 'contest',
-    rationaleHash: DIGEST_A,
-    minorityViewHashes: [],
-    dissentHashes: [DIGEST_B],
-    conditionHashes: [],
-    followUpActions: [],
-    sponsorNotificationRequired: false,
-    sponsorNotificationRationaleHash: DIGEST_C,
-    irbIecNotificationRequired: false,
-    irbIecNotificationRationaleHash: DIGEST_D,
-    regulatoryNotificationRequired: false,
-    regulatoryNotificationRationaleHash: DIGEST_E,
-  };
-  input.contestation = {
-    open: true,
-    status: 'filed',
-    contestRefs: ['CONTEST-DF-0001'],
-    filedByDid: 'did:exo:principal-investigator-alpha',
-    standingRole: 'affected_site_governance',
-    reasonHash: DIGEST_F,
-    filedAtHlc: { physicalMs: 1791600410000, logical: 0 },
-    independentReviewerDid: 'did:exo:independent-governance-reviewer-alpha',
-  };
+  const input = contestedDecisionForumMatterInput();
 
   const contested = evaluateDecisionForumMatter(input);
 
@@ -380,6 +385,163 @@ test('Decision Forum matter supports contestation receipts without claiming fina
   ]);
   assert.equal(contested.receipt.anchorPayload.artifactVersion, 'DF-PROTOCOL-LAUNCH-CM-001@contested');
   assert.equal(contested.dashboardItem.openChallenge, true);
+});
+
+test('Decision Forum matter resolves sustained and overruled challenges with independent quorum review', async () => {
+  const { evaluateDecisionForumMatter } = await loadDecisionForumMatters();
+  const input = contestedDecisionForumMatterInput();
+  input.contestation = {
+    ...input.contestation,
+    open: false,
+    status: 'sustained',
+    resolution: {
+      outcome: 'sustained',
+      resolvedByDid: 'did:exo:independent-governance-reviewer-alpha',
+      reviewerRole: 'independent_governance',
+      resolvedAtHlc: { physicalMs: 1791600500000, logical: 0 },
+      decisionHash: DIGEST_A,
+      auditEntryHash: DIGEST_B,
+      quorum: {
+        verified: true,
+        status: 'met',
+        policyHash: DIGEST_C,
+        approvalsNeeded: 2,
+        requiredGovernanceRoleRefs: ['principal_investigator', 'quality_manager'],
+        approvalEvidenceHashes: [DIGEST_D, DIGEST_E],
+      },
+    },
+  };
+
+  const sustained = evaluateDecisionForumMatter(input);
+
+  assert.equal(sustained.decision, 'permitted');
+  assert.equal(sustained.matterRecord.status, 'challenge_sustained');
+  assert.equal(sustained.matterRecord.finalClosure, false);
+  assert.equal(sustained.matterRecord.openChallenge, false);
+  assert.equal(sustained.matterRecord.challengeResolution, 'sustained');
+  assert.equal(sustained.dashboardItem.challengeResolution, 'sustained');
+  assert.equal(sustained.receipt.anchorPayload.artifactVersion, 'DF-PROTOCOL-LAUNCH-CM-001@challenge_sustained');
+  assert.deepEqual(sustained.matterRecord.lifecycleSteps, [
+    'created',
+    'reviewed',
+    'deliberated',
+    'voted',
+    'contested',
+    'challenge_resolved',
+    'receipt_prepared',
+  ]);
+
+  const overruledInput = contestedDecisionForumMatterInput();
+  overruledInput.contestation = {
+    ...input.contestation,
+    status: 'overruled',
+    resolution: {
+      ...input.contestation.resolution,
+      outcome: 'overruled',
+      decisionHash: DIGEST_F,
+    },
+  };
+
+  const overruled = evaluateDecisionForumMatter(overruledInput);
+
+  assert.equal(overruled.decision, 'permitted');
+  assert.equal(overruled.matterRecord.status, 'challenge_overruled');
+  assert.equal(overruled.matterRecord.finalClosure, true);
+  assert.equal(overruled.matterRecord.openChallenge, false);
+  assert.equal(overruled.matterRecord.challengeResolution, 'overruled');
+
+  const denied = contestedDecisionForumMatterInput();
+  denied.contestation = {
+    ...denied.contestation,
+    open: false,
+    status: 'sustained',
+    independentReviewerDid: 'did:exo:independent-governance-reviewer-alpha',
+    resolution: {
+      outcome: 'sustained',
+      resolvedByDid: 'did:exo:sponsor-liaison-alpha',
+      reviewerRole: 'sponsor_liaison',
+      resolvedAtHlc: { physicalMs: 1791600400000, logical: 0 },
+      decisionHash: 'bad',
+      auditEntryHash: '',
+      quorum: {
+        verified: false,
+        status: 'not_met',
+        policyHash: '',
+        approvalsNeeded: 2,
+        requiredGovernanceRoleRefs: [],
+        approvalEvidenceHashes: [DIGEST_D],
+      },
+    },
+  };
+
+  const deniedResolution = evaluateDecisionForumMatter(denied);
+
+  assert.equal(deniedResolution.decision, 'denied');
+  assert.ok(deniedResolution.reasons.includes('challenge_resolution_reviewer_mismatch'));
+  assert.ok(deniedResolution.reasons.includes('challenge_resolution_independent_role_invalid'));
+  assert.ok(deniedResolution.reasons.includes('challenge_resolution_time_before_filing'));
+  assert.ok(deniedResolution.reasons.includes('challenge_resolution_decision_hash_invalid'));
+  assert.ok(deniedResolution.reasons.includes('challenge_resolution_audit_hash_invalid'));
+  assert.ok(deniedResolution.reasons.includes('challenge_resolution_quorum_unverified'));
+  assert.ok(deniedResolution.reasons.includes('challenge_resolution_quorum_not_met'));
+  assert.ok(deniedResolution.reasons.includes('challenge_resolution_quorum_policy_hash_invalid'));
+  assert.ok(deniedResolution.reasons.includes('challenge_resolution_required_roles_absent'));
+  assert.ok(deniedResolution.reasons.includes('challenge_resolution_approval_threshold_not_met'));
+});
+
+test('Decision Forum matter permits filer withdrawal before adjudication only without holds', async () => {
+  const { evaluateDecisionForumMatter } = await loadDecisionForumMatters();
+  const input = contestedDecisionForumMatterInput();
+  input.contestation = {
+    ...input.contestation,
+    open: false,
+    status: 'withdrawn',
+    withdrawal: {
+      withdrawnByDid: input.contestation.filedByDid,
+      withdrawnAtHlc: { physicalMs: 1791600450000, logical: 0 },
+      beforeAdjudication: true,
+      safetyHoldPresent: false,
+      legalHoldPresent: false,
+      withdrawalEvidenceHash: DIGEST_A,
+      auditEntryHash: DIGEST_B,
+    },
+  };
+
+  const withdrawn = evaluateDecisionForumMatter(input);
+
+  assert.equal(withdrawn.decision, 'permitted');
+  assert.equal(withdrawn.matterRecord.status, 'challenge_withdrawn');
+  assert.equal(withdrawn.matterRecord.finalClosure, true);
+  assert.equal(withdrawn.matterRecord.openChallenge, false);
+  assert.equal(withdrawn.matterRecord.challengeResolution, 'withdrawn');
+  assert.equal(withdrawn.receipt.anchorPayload.artifactVersion, 'DF-PROTOCOL-LAUNCH-CM-001@challenge_withdrawn');
+
+  const denied = contestedDecisionForumMatterInput();
+  denied.contestation = {
+    ...denied.contestation,
+    open: false,
+    status: 'withdrawn',
+    withdrawal: {
+      withdrawnByDid: 'did:exo:sponsor-liaison-alpha',
+      withdrawnAtHlc: { physicalMs: 1791600400000, logical: 0 },
+      beforeAdjudication: false,
+      safetyHoldPresent: true,
+      legalHoldPresent: true,
+      withdrawalEvidenceHash: '',
+      auditEntryHash: 'bad',
+    },
+  };
+
+  const deniedWithdrawal = evaluateDecisionForumMatter(denied);
+
+  assert.equal(deniedWithdrawal.decision, 'denied');
+  assert.ok(deniedWithdrawal.reasons.includes('challenge_withdrawal_filer_mismatch'));
+  assert.ok(deniedWithdrawal.reasons.includes('challenge_withdrawal_time_before_filing'));
+  assert.ok(deniedWithdrawal.reasons.includes('challenge_withdrawal_after_adjudication'));
+  assert.ok(deniedWithdrawal.reasons.includes('challenge_withdrawal_safety_hold_present'));
+  assert.ok(deniedWithdrawal.reasons.includes('challenge_withdrawal_legal_hold_present'));
+  assert.ok(deniedWithdrawal.reasons.includes('challenge_withdrawal_evidence_hash_invalid'));
+  assert.ok(deniedWithdrawal.reasons.includes('challenge_withdrawal_audit_hash_invalid'));
 });
 
 test('Decision Forum matter validates HLC ordering outcomes and required abstention rationale', async () => {

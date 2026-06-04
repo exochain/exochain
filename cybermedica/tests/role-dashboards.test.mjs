@@ -196,6 +196,7 @@ function roleDashboardInput(role = 'quality_manager', overrides = {}) {
       productionTrustClaim: false,
       widgetManifestHash: DIGEST_C,
     },
+    productionTrustActivation: inactiveProductionTrustActivation(),
     accessPolicy: {
       policyRef: `dashboard-policy-${role}`,
       policyHash: DIGEST_D,
@@ -217,6 +218,54 @@ function roleDashboardInput(role = 'quality_manager', overrides = {}) {
       includesRawContent: false,
     },
     widgets: dashboardWidgets(role),
+    ...overrides,
+  };
+}
+
+function inactiveProductionTrustActivation(overrides = {}) {
+  return {
+    schema: 'cybermedica.production_trust_activation.v1',
+    claimId: 'PTAG-001',
+    allowed: false,
+    state: 'inactive',
+    failClosed: true,
+    blockedBy: [
+      'root_bundle_absent',
+      'root_certifier_roster_absent',
+      'root_dkg_transcript_absent',
+      'root_threshold_signature_absent',
+      'root_verifier_absent',
+    ],
+    exochainProductionClaim: false,
+    publicClaimReviewReceiptHash: DIGEST_1,
+    publicClaimReviewPackageHash: DIGEST_2,
+    publicClaimReviewStatus: 'approved_for_public_use',
+    publicClaimReviewTrustState: 'inactive',
+    publicClaimReviewPublicUseAuthorized: true,
+    publicClaimReviewProductionClaimLiftReceiptHash: DIGEST_3,
+    publicClaimReviewProductionClaimLiftTrustState: 'inactive',
+    publicClaimReviewProductionClaimLiftCanLiftProductionClaim: false,
+    publicClaimReviewProductionClaimLiftRoleDashboardProviderReceiptHash: DIGEST_B,
+    publicClaimReviewProductionClaimLiftRoleDashboardProviderSummaryHash: DIGEST_C,
+    publicClaimReviewProductionClaimLiftRoleDashboardProviderTrustStateViewHash: DIGEST_D,
+    publicClaimReviewProductionClaimLiftRoleDashboardReadinessReceiptHash: DIGEST_E,
+    publicClaimReviewProductionClaimLiftRoleDashboardReadinessSummaryHash: DIGEST_F,
+    publicClaimReviewProductionClaimLiftRoleDashboardReadinessTrustStateViewHash: DIGEST_1,
+    publicClaimReviewProductionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_B,
+    publicClaimReviewProductionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_C,
+    publicClaimReviewProductionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: DIGEST_D,
+    publicClaimReviewProductionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_E,
+    publicClaimReviewProductionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_F,
+    publicClaimReviewProductionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: DIGEST_1,
+    publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_B,
+    publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_C,
+    publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardTrustStateViewHash: DIGEST_D,
+    publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_E,
+    publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_F,
+    publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardTrustStateViewHash: DIGEST_1,
+    publicClaimReviewProductionClaimLiftRoleDashboardRoles: Object.keys(REQUIRED_WIDGETS).sort(),
+    displayLabel: 'Trust fabric inactive',
+    claimLanguage: 'Exochain production trust is not active for this CyberMedica action.',
     ...overrides,
   };
 }
@@ -246,6 +295,65 @@ function widget(metricKey, index, role = 'quality_manager', overrides = {}) {
       rawContentExcluded: true,
       sourcePayloadAnchored: false,
     },
+    manualNavigation: {
+      drawerContextFamily: 'dashboard_card',
+      manualSectionRef: `manual-section-${role}-${metricKey}`,
+      manualSectionHash: DIGESTS[(index + 3) % DIGESTS.length],
+      manualDrawerPolicyHash: DIGESTS[(index + 4) % DIGESTS.length],
+      crosslinkMatrixHash: DIGESTS[(index + 5) % DIGESTS.length],
+      roleManualRef: `role-manual-${role}`,
+      instructionSlotRefs: [
+        'approval_required',
+        'audit_export_result',
+        'common_failure_modes',
+        'evidence_needed',
+        'step_by_step',
+        'what_this_is',
+        'when_to_use_it',
+        'who_owns_it',
+      ],
+      metadataOnly: true,
+      protectedContentExcluded: true,
+      productionTrustClaim: false,
+    },
+    documentationReadiness: {
+      controlledDocumentDistributionRecordId: `cmdist-${role}-${metricKey}`,
+      controlledDocumentDistributionReceiptHash: DIGEST_6,
+      documentationPublicationReceiptHash: DIGEST_7,
+      manualExportReceiptHash: DIGEST_8,
+      orientationAssistantReceiptHash: DIGEST_9,
+      acknowledgementRosterHash: DIGEST_5,
+      requiredAcknowledgementRoleRefs: ROLE_REFS[role],
+      acknowledgedRoleRefs: ROLE_REFS[role],
+      distributionPublishedAtHlc: { physicalMs: 1794999999900, logical: index + 1 },
+      effectiveUseAcknowledged: true,
+      currentVersionOnly: true,
+      obsoleteVersionUseBlocked: true,
+      metadataOnly: true,
+      protectedContentExcluded: true,
+      productionTrustClaim: false,
+    },
+    ...(metricKey === 'sponsor_cro_requests' ? { sponsorCroRequestEvidence: sponsorCroRequestEvidence() } : {}),
+    ...overrides,
+  };
+}
+
+function sponsorCroRequestEvidence(overrides = {}) {
+  return {
+    requestRef: 'sponsor-cro-request-alpha',
+    requestHash: DIGEST_A,
+    requesterClass: 'sponsor',
+    workItemRef: 'sponsor-cro-work-item-alpha',
+    workItemStatus: 'queued_for_site_review',
+    disclosureEventRef: 'disclosure-event-sponsor-cro-alpha',
+    disclosureLogHash: DIGEST_B,
+    decisionForumMatterRef: 'df-sponsor-cro-request-alpha',
+    humanReviewHash: DIGEST_C,
+    responseWorkflowRef: 'workflow-sponsor-cro-request-response',
+    linkedAtHlc: { physicalMs: 1795000000000, logical: 10 },
+    metadataOnly: true,
+    sourcePayloadExcluded: true,
+    protectedContentExcluded: true,
     ...overrides,
   };
 }
@@ -254,6 +362,7 @@ test('role dashboards render deterministic inactive metadata-only dashboards for
   const { evaluateRoleDashboard } = await loadRoleDashboards();
 
   for (const [role, requiredWidgets] of Object.entries(REQUIRED_WIDGETS)) {
+    const roleRefs = ROLE_REFS[role];
     const input = roleDashboardInput(role);
     const reversedInput = { ...input, widgets: [...input.widgets].reverse() };
     const resultA = evaluateRoleDashboard(input);
@@ -264,12 +373,154 @@ test('role dashboards render deterministic inactive metadata-only dashboards for
     assert.equal(resultA.trustState, 'inactive', role);
     assert.equal(resultA.exochainProductionClaim, false, role);
     assert.equal(resultA.canShowProductionTrustClaim, false, role);
+    assert.equal(resultA.trustStateView.status, 'inactive', role);
+    assert.equal(resultA.trustStateView.actionsDisabled, true, role);
+    assert.equal(resultA.trustStateView.activationLineageAccepted, true, role);
+    assert.equal(resultA.trustStateView.productionTrustActivationLineage.claimId, 'PTAG-001', role);
+    assert.equal(resultA.trustStateView.productionTrustActivationLineage.activationState, 'inactive', role);
+    assert.equal(resultA.trustStateView.productionTrustActivationLineage.exochainProductionClaim, false, role);
+    assert.equal(resultA.trustStateView.productionTrustActivationLineage.publicClaimReviewReceiptHash, DIGEST_1, role);
+    assert.equal(resultA.trustStateView.productionTrustActivationLineage.publicClaimReviewPackageHash, DIGEST_2, role);
+    assert.equal(resultA.trustStateView.productionTrustActivationLineage.publicClaimReviewStatus, 'approved_for_public_use', role);
+    assert.equal(resultA.trustStateView.productionTrustActivationLineage.publicClaimReviewTrustState, 'inactive', role);
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage.publicClaimReviewProductionClaimLiftReceiptHash,
+      DIGEST_3,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage.publicClaimReviewProductionClaimLiftCanLiftProductionClaim,
+      false,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage
+        .publicClaimReviewProductionClaimLiftRoleDashboardProviderReceiptHash,
+      DIGEST_B,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage
+        .publicClaimReviewProductionClaimLiftRoleDashboardProviderSummaryHash,
+      DIGEST_C,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage
+        .publicClaimReviewProductionClaimLiftRoleDashboardProviderTrustStateViewHash,
+      DIGEST_D,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage
+        .publicClaimReviewProductionClaimLiftRoleDashboardReadinessReceiptHash,
+      DIGEST_E,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage
+        .publicClaimReviewProductionClaimLiftRoleDashboardReadinessSummaryHash,
+      DIGEST_F,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage
+        .publicClaimReviewProductionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash,
+      DIGEST_D,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage
+        .publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardReceiptHash,
+      DIGEST_B,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage
+        .publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardSummaryHash,
+      DIGEST_C,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage
+        .publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardTrustStateViewHash,
+      DIGEST_D,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage
+        .publicClaimReviewProductionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash,
+      DIGEST_1,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage
+        .publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardReceiptHash,
+      DIGEST_E,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage
+        .publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardSummaryHash,
+      DIGEST_F,
+      role,
+    );
+    assert.equal(
+      resultA.trustStateView.productionTrustActivationLineage
+        .publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardTrustStateViewHash,
+      DIGEST_1,
+      role,
+    );
+    assert.deepEqual(
+      resultA.trustStateView.productionTrustActivationLineage.publicClaimReviewProductionClaimLiftRoleDashboardRoles,
+      Object.keys(REQUIRED_WIDGETS).sort(),
+      role,
+    );
+    assert.deepEqual(resultA.trustStateView.bobEscalations, [
+      'ESC-ROOT-ARTIFACT-STORE',
+      'ESC-ROOT-DEPLOYMENT',
+      'ESC-ROOT-ROSTER',
+    ]);
+    assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('production_trust_activation'), role);
+    assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('public_claim_review_lineage'), role);
+    assert.ok(
+      resultA.receipt.anchorPayload.sensitivityTags.includes('production_claim_lift_role_dashboard_lineage'),
+      role,
+    );
     assert.deepEqual(resultA.requiredWidgetKeys, requiredWidgets, role);
     assert.deepEqual(
       resultA.visibleWidgets.map((visibleWidget) => visibleWidget.metricKey),
       requiredWidgets,
       role,
     );
+    assert.deepEqual(
+      resultA.visibleWidgets.map((visibleWidget) => visibleWidget.manualNavigation.drawerContextFamily),
+      requiredWidgets.map(() => 'dashboard_card'),
+      role,
+    );
+    assert.deepEqual(
+      resultA.visibleWidgets[0].manualNavigation.instructionSlotRefs,
+      [
+        'approval_required',
+        'audit_export_result',
+        'common_failure_modes',
+        'evidence_needed',
+        'step_by_step',
+        'what_this_is',
+        'when_to_use_it',
+        'who_owns_it',
+      ],
+      role,
+    );
+    assert.equal(
+      resultA.visibleWidgets[0].documentationReadiness.controlledDocumentDistributionReceiptHash,
+      DIGEST_6,
+      role,
+    );
+    assert.equal(resultA.visibleWidgets[0].documentationReadiness.currentVersionOnly, true, role);
+    assert.equal(resultA.visibleWidgets[0].documentationReadiness.effectiveUseAcknowledged, true, role);
+    assert.deepEqual(resultA.visibleWidgets[0].documentationReadiness.requiredAcknowledgementRoleRefs, roleRefs, role);
+    assert.deepEqual(resultA.visibleWidgets[0].documentationReadiness.acknowledgedRoleRefs, roleRefs, role);
     assert.deepEqual(resultA.visibleWidgets, resultB.visibleWidgets, role);
     assert.equal(resultA.dashboardHash, resultB.dashboardHash, role);
     assert.equal(resultA.receipt.receiptId, resultB.receipt.receiptId, role);
@@ -277,7 +528,254 @@ test('role dashboards render deterministic inactive metadata-only dashboards for
     assert.equal(resultA.summary.visibleWidgetCount, requiredWidgets.length, role);
     assert.equal(resultA.summary.suppressedWidgetCount, 0, role);
     assert.ok(Number.isSafeInteger(resultA.summary.averageStatusBasisPoints), role);
+    assert.doesNotMatch(JSON.stringify(resultA), /AI-IRB approval|Participant Alice|MRN A-123/iu);
   }
+});
+
+test('role dashboard requires inactive trust-state activation and public-claim-review lineage', async () => {
+  const { evaluateRoleDashboard, ProtectedContentError } = await loadRoleDashboards();
+  const missingLineage = roleDashboardInput('quality_manager', {
+    productionTrustActivation: null,
+  });
+  const unsafeLineage = roleDashboardInput('quality_manager', {
+    productionTrustActivation: inactiveProductionTrustActivation({
+      state: 'verified',
+      allowed: true,
+      failClosed: false,
+      blockedBy: ['root_verifier_absent'],
+      exochainProductionClaim: true,
+      publicClaimReviewReceiptHash: 'not-a-digest',
+      publicClaimReviewStatus: 'approved_for_root_backed_language',
+      publicClaimReviewTrustState: 'verified',
+      publicClaimReviewProductionClaimLiftReceiptHash: 'bad-lift-receipt',
+      publicClaimReviewProductionClaimLiftTrustState: 'verified',
+      publicClaimReviewProductionClaimLiftCanLiftProductionClaim: true,
+      publicClaimReviewProductionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_D,
+      publicClaimReviewProductionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: DIGEST_2,
+      publicClaimReviewProductionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_2,
+      publicClaimReviewProductionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: DIGEST_3,
+      publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_4,
+      publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_5,
+      publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardTrustStateViewHash: DIGEST_6,
+      publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_7,
+      publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_8,
+      publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardTrustStateViewHash: DIGEST_9,
+      publicClaimReviewProductionClaimLiftRoleDashboardRoles: Object.keys(REQUIRED_WIDGETS)
+        .filter((role) => role !== 'sponsor_viewer')
+        .concat('marketing_admin')
+        .sort(),
+      claimLanguage: 'root-backed production authority attempted before activation gates verified',
+    }),
+  });
+  const activeClaimAttempt = roleDashboardInput('quality_manager', {
+    productionTrustActivation: inactiveProductionTrustActivation({
+      state: 'verified',
+      allowed: true,
+      failClosed: false,
+      blockedBy: [],
+      exochainProductionClaim: true,
+      claimLanguage: 'Exochain receipt path verified for this CyberMedica action.',
+    }),
+  });
+
+  const missingResult = evaluateRoleDashboard(missingLineage);
+  const unsafeResult = evaluateRoleDashboard(unsafeLineage);
+  const activeResult = evaluateRoleDashboard(activeClaimAttempt);
+
+  assert.equal(missingResult.status, 'denied');
+  assert.equal(missingResult.receipt, null);
+  assert.ok(missingResult.denialReasons.includes('trust_state_view_lineage_not_accepted'));
+  assert.ok(missingResult.denialReasons.includes('trust_state_view_block:production_trust_activation_lineage_absent'));
+  assert.ok(missingResult.denialReasons.includes('trust_state_view_block:public_claim_review_lineage_absent'));
+
+  assert.equal(unsafeResult.status, 'denied');
+  assert.equal(unsafeResult.receipt, null);
+  assert.ok(unsafeResult.denialReasons.includes('trust_state_view_status_not_inactive:denied'));
+  assert.ok(unsafeResult.denialReasons.includes('trust_state_view_lineage_not_accepted'));
+  assert.ok(unsafeResult.denialReasons.includes('trust_state_view_block:public_claim_review_receipt_hash_invalid'));
+  assert.ok(unsafeResult.denialReasons.includes('trust_state_view_block:public_claim_review_status_invalid'));
+  assert.ok(unsafeResult.denialReasons.includes('trust_state_view_block:public_claim_review_trust_state_invalid'));
+  assert.ok(
+    unsafeResult.denialReasons.includes('trust_state_view_block:public_claim_review_production_claim_lift_receipt_hash_invalid'),
+  );
+  assert.ok(unsafeResult.denialReasons.includes('trust_state_view_block:public_claim_review_production_claim_lift_state_invalid'));
+  assert.ok(
+    unsafeResult.denialReasons.includes('trust_state_view_block:public_claim_review_production_claim_lift_public_claim_forbidden'),
+  );
+  assert.ok(
+    unsafeResult.denialReasons.includes(
+      'trust_state_view_block:public_claim_review_production_claim_lift_role_dashboard_role_missing:sponsor_viewer',
+    ),
+  );
+  assert.ok(
+    unsafeResult.denialReasons.includes(
+      'trust_state_view_block:public_claim_review_production_claim_lift_role_dashboard_role_unsupported:marketing_admin',
+    ),
+  );
+  assert.ok(
+    unsafeResult.denialReasons.includes(
+      'trust_state_view_block:public_claim_review_production_claim_lift_runtime_source_provider_role_dashboard_receipt_mismatch',
+    ),
+  );
+  assert.ok(
+    unsafeResult.denialReasons.includes(
+      'trust_state_view_block:public_claim_review_production_claim_lift_runtime_source_provider_role_dashboard_trust_state_view_mismatch',
+    ),
+  );
+  assert.ok(
+    unsafeResult.denialReasons.includes(
+      'trust_state_view_block:public_claim_review_production_claim_lift_runtime_source_readiness_role_dashboard_trust_state_view_mismatch',
+    ),
+  );
+  assert.ok(
+    unsafeResult.denialReasons.includes(
+      'trust_state_view_block:public_claim_review_production_claim_lift_adapter_activation_runtime_source_provider_role_dashboard_receipt_mismatch',
+    ),
+  );
+  assert.ok(
+    unsafeResult.denialReasons.includes(
+      'trust_state_view_block:public_claim_review_production_claim_lift_adapter_activation_runtime_source_provider_role_dashboard_summary_mismatch',
+    ),
+  );
+  assert.ok(
+    unsafeResult.denialReasons.includes(
+      'trust_state_view_block:public_claim_review_production_claim_lift_adapter_activation_runtime_source_provider_role_dashboard_trust_state_view_mismatch',
+    ),
+  );
+  assert.ok(
+    unsafeResult.denialReasons.includes(
+      'trust_state_view_block:public_claim_review_production_claim_lift_adapter_activation_runtime_source_readiness_role_dashboard_receipt_mismatch',
+    ),
+  );
+  assert.ok(
+    unsafeResult.denialReasons.includes(
+      'trust_state_view_block:public_claim_review_production_claim_lift_adapter_activation_runtime_source_readiness_role_dashboard_summary_mismatch',
+    ),
+  );
+  assert.ok(
+    unsafeResult.denialReasons.includes(
+      'trust_state_view_block:public_claim_review_production_claim_lift_adapter_activation_runtime_source_readiness_role_dashboard_trust_state_view_mismatch',
+    ),
+  );
+  assert.doesNotMatch(JSON.stringify(unsafeResult), /Participant Alice|MRN: A-123|root-backed production authority/iu);
+
+  assert.equal(activeResult.status, 'denied');
+  assert.equal(activeResult.receipt, null);
+  assert.ok(activeResult.denialReasons.includes('trust_state_view_status_not_inactive:verified'));
+  assert.ok(activeResult.denialReasons.includes('trust_state_view_claim_display_forbidden'));
+
+  assert.throws(
+    () =>
+      evaluateRoleDashboard(
+        roleDashboardInput('quality_manager', {
+          productionTrustActivation: inactiveProductionTrustActivation({
+            blockedBy: ['Participant Alice Example MRN: A-123'],
+            claimLanguage: 'root-backed production authority for Participant Alice Example MRN: A-123',
+          }),
+        }),
+      ),
+    ProtectedContentError,
+  );
+});
+
+test('role dashboard fails closed when visible widgets lack contextual manual drawer linkage', async () => {
+  const { evaluateRoleDashboard } = await loadRoleDashboards();
+  const missingManualNavigation = roleDashboardInput('quality_manager', {
+    widgets: roleDashboardInput('quality_manager').widgets.map((dashboardWidget, index) =>
+      index === 0 ? Object.fromEntries(Object.entries(dashboardWidget).filter(([key]) => key !== 'manualNavigation')) : dashboardWidget,
+    ),
+  });
+  const wrongContext = roleDashboardInput('quality_manager', {
+    widgets: roleDashboardInput('quality_manager').widgets.map((dashboardWidget, index) =>
+      index === 1
+        ? {
+            ...dashboardWidget,
+            manualNavigation: {
+              ...dashboardWidget.manualNavigation,
+              drawerContextFamily: 'workflow',
+            },
+          }
+        : dashboardWidget,
+    ),
+  });
+
+  const missingResult = evaluateRoleDashboard(missingManualNavigation);
+  const wrongContextResult = evaluateRoleDashboard(wrongContext);
+
+  assert.equal(missingResult.status, 'denied');
+  assert.equal(missingResult.receipt, null);
+  assert.ok(missingResult.denialReasons.includes('widget_manual_section_ref_absent:control_status'));
+  assert.ok(missingResult.denialReasons.includes('widget_manual_section_hash_invalid:control_status'));
+  assert.ok(missingResult.denialReasons.includes('widget_manual_drawer_policy_hash_invalid:control_status'));
+  assert.ok(missingResult.denialReasons.includes('widget_manual_crosslink_matrix_hash_invalid:control_status'));
+  assert.ok(missingResult.denialReasons.includes('widget_manual_instruction_slots_missing:control_status'));
+  assert.equal(wrongContextResult.status, 'denied');
+  assert.ok(wrongContextResult.denialReasons.includes('widget_manual_context_invalid:evidence_completeness'));
+});
+
+test('role dashboard requires controlled document distribution readiness signals for visible widgets', async () => {
+  const { evaluateRoleDashboard } = await loadRoleDashboards();
+  const missingReadiness = roleDashboardInput('quality_manager', {
+    widgets: roleDashboardInput('quality_manager').widgets.map((dashboardWidget, index) =>
+      index === 0
+        ? Object.fromEntries(Object.entries(dashboardWidget).filter(([key]) => key !== 'documentationReadiness'))
+        : dashboardWidget,
+    ),
+  });
+  const unsafeReadiness = roleDashboardInput('quality_manager', {
+    widgets: roleDashboardInput('quality_manager').widgets.map((dashboardWidget, index) =>
+      index === 1
+        ? {
+            ...dashboardWidget,
+            documentationReadiness: {
+              ...dashboardWidget.documentationReadiness,
+              controlledDocumentDistributionReceiptHash: 'not-a-digest',
+              documentationPublicationReceiptHash: '',
+              manualExportReceiptHash: null,
+              orientationAssistantReceiptHash: 'bad',
+              effectiveUseAcknowledged: false,
+              currentVersionOnly: false,
+              obsoleteVersionUseBlocked: false,
+              metadataOnly: false,
+              protectedContentExcluded: false,
+              productionTrustClaim: true,
+              distributionPublishedAtHlc: { physicalMs: 1795000000000, logical: 31 },
+            },
+          }
+        : dashboardWidget,
+    ),
+  });
+
+  const missingResult = evaluateRoleDashboard(missingReadiness);
+  const unsafeResult = evaluateRoleDashboard(unsafeReadiness);
+
+  assert.equal(missingResult.status, 'denied');
+  assert.equal(missingResult.receipt, null);
+  assert.ok(
+    missingResult.denialReasons.includes('widget_document_distribution_receipt_hash_invalid:control_status'),
+  );
+  assert.ok(missingResult.denialReasons.includes('widget_document_publication_receipt_hash_invalid:control_status'));
+  assert.ok(missingResult.denialReasons.includes('widget_manual_export_receipt_hash_invalid:control_status'));
+  assert.ok(missingResult.denialReasons.includes('widget_orientation_assistant_receipt_hash_invalid:control_status'));
+  assert.ok(missingResult.denialReasons.includes('widget_document_acknowledgement_roles_missing:control_status'));
+
+  assert.equal(unsafeResult.status, 'denied');
+  assert.equal(unsafeResult.receipt, null);
+  assert.ok(
+    unsafeResult.denialReasons.includes('widget_document_distribution_receipt_hash_invalid:evidence_completeness'),
+  );
+  assert.ok(unsafeResult.denialReasons.includes('widget_document_publication_receipt_hash_invalid:evidence_completeness'));
+  assert.ok(unsafeResult.denialReasons.includes('widget_manual_export_receipt_hash_invalid:evidence_completeness'));
+  assert.ok(unsafeResult.denialReasons.includes('widget_orientation_assistant_receipt_hash_invalid:evidence_completeness'));
+  assert.ok(unsafeResult.denialReasons.includes('widget_effective_use_acknowledgement_absent:evidence_completeness'));
+  assert.ok(unsafeResult.denialReasons.includes('widget_current_document_version_boundary_invalid:evidence_completeness'));
+  assert.ok(unsafeResult.denialReasons.includes('widget_obsolete_document_boundary_invalid:evidence_completeness'));
+  assert.ok(unsafeResult.denialReasons.includes('widget_document_readiness_metadata_boundary_invalid:evidence_completeness'));
+  assert.ok(
+    unsafeResult.denialReasons.includes('widget_document_readiness_protected_content_boundary_invalid:evidence_completeness'),
+  );
+  assert.ok(unsafeResult.denialReasons.includes('widget_document_readiness_production_claim_forbidden:evidence_completeness'));
+  assert.ok(unsafeResult.denialReasons.includes('widget_document_distribution_after_dashboard:evidence_completeness'));
 });
 
 test('role dashboard fails closed for unsafe authority role widget and production trust defects', async () => {
@@ -360,6 +858,101 @@ test('role dashboard suppresses inaccessible extra widgets without leaking suppr
   assert.deepEqual(
     result.visibleWidgets.map((visibleWidget) => visibleWidget.metricKey),
     REQUIRED_WIDGETS.sponsor_viewer,
+  );
+});
+
+test('role dashboard requires controlled Sponsor/CRO request evidence before showing request widgets', async () => {
+  const { evaluateRoleDashboard, ProtectedContentError } = await loadRoleDashboards();
+  const withEvidence = roleDashboardInput('site_leader', {
+    widgets: roleDashboardInput('site_leader').widgets.map((dashboardWidget) =>
+      dashboardWidget.metricKey === 'sponsor_cro_requests'
+        ? { ...dashboardWidget, sponsorCroRequestEvidence: sponsorCroRequestEvidence() }
+        : dashboardWidget,
+    ),
+  });
+  const missingEvidence = roleDashboardInput('site_leader', {
+    widgets: roleDashboardInput('site_leader').widgets.map((dashboardWidget) =>
+      dashboardWidget.metricKey === 'sponsor_cro_requests'
+        ? Object.fromEntries(Object.entries(dashboardWidget).filter(([key]) => key !== 'sponsorCroRequestEvidence'))
+        : dashboardWidget,
+    ),
+  });
+  const unsafeEvidence = roleDashboardInput('site_leader', {
+    widgets: roleDashboardInput('site_leader').widgets.map((dashboardWidget) =>
+      dashboardWidget.metricKey === 'sponsor_cro_requests'
+        ? {
+            ...dashboardWidget,
+            sponsorCroRequestEvidence: sponsorCroRequestEvidence({
+              requestHash: '',
+              requesterClass: 'public_observer',
+              workItemStatus: 'draft',
+              disclosureLogHash: 'not-a-digest',
+              linkedAtHlc: { physicalMs: 1795000000000, logical: 31 },
+              metadataOnly: false,
+              sourcePayloadExcluded: false,
+              protectedContentExcluded: false,
+            }),
+          }
+        : dashboardWidget,
+    ),
+  });
+
+  const readyResult = evaluateRoleDashboard(withEvidence);
+  const missingResult = evaluateRoleDashboard(missingEvidence);
+  const unsafeResult = evaluateRoleDashboard(unsafeEvidence);
+
+  assert.equal(readyResult.status, 'ready');
+  assert.deepEqual(readyResult.denialReasons, []);
+  const requestWidget = readyResult.visibleWidgets.find((visibleWidget) => visibleWidget.metricKey === 'sponsor_cro_requests');
+  assert.deepEqual(requestWidget.sponsorCroRequestEvidence, {
+    decisionForumMatterRef: 'df-sponsor-cro-request-alpha',
+    disclosureEventRef: 'disclosure-event-sponsor-cro-alpha',
+    disclosureLogHash: DIGEST_B,
+    humanReviewHash: DIGEST_C,
+    linkedAtHlc: { physicalMs: 1795000000000, logical: 10 },
+    metadataOnly: true,
+    protectedContentExcluded: true,
+    requestHash: DIGEST_A,
+    requesterClass: 'sponsor',
+    requestRef: 'sponsor-cro-request-alpha',
+    responseWorkflowRef: 'workflow-sponsor-cro-request-response',
+    sourcePayloadExcluded: true,
+    workItemRef: 'sponsor-cro-work-item-alpha',
+    workItemStatus: 'queued_for_site_review',
+  });
+  assert.doesNotMatch(JSON.stringify(readyResult), /raw sponsor request|Participant Alice/iu);
+
+  assert.equal(missingResult.status, 'denied');
+  assert.equal(missingResult.receipt, null);
+  assert.ok(missingResult.denialReasons.includes('sponsor_cro_request_evidence_absent:sponsor_cro_requests'));
+
+  assert.equal(unsafeResult.status, 'denied');
+  assert.equal(unsafeResult.receipt, null);
+  assert.ok(unsafeResult.denialReasons.includes('sponsor_cro_request_hash_invalid:sponsor_cro_requests'));
+  assert.ok(unsafeResult.denialReasons.includes('sponsor_cro_requester_class_invalid:sponsor_cro_requests'));
+  assert.ok(unsafeResult.denialReasons.includes('sponsor_cro_work_item_status_invalid:sponsor_cro_requests'));
+  assert.ok(unsafeResult.denialReasons.includes('sponsor_cro_disclosure_log_hash_invalid:sponsor_cro_requests'));
+  assert.ok(unsafeResult.denialReasons.includes('sponsor_cro_request_link_after_dashboard:sponsor_cro_requests'));
+  assert.ok(unsafeResult.denialReasons.includes('sponsor_cro_request_metadata_boundary_invalid:sponsor_cro_requests'));
+  assert.ok(unsafeResult.denialReasons.includes('sponsor_cro_request_source_payload_boundary_invalid:sponsor_cro_requests'));
+  assert.ok(unsafeResult.denialReasons.includes('sponsor_cro_request_protected_boundary_invalid:sponsor_cro_requests'));
+
+  assert.throws(
+    () =>
+      evaluateRoleDashboard(
+        roleDashboardInput('site_leader', {
+          widgets: roleDashboardInput('site_leader').widgets.map((dashboardWidget) =>
+            dashboardWidget.metricKey === 'sponsor_cro_requests'
+              ? {
+                  ...dashboardWidget,
+                  sponsorCroRequestEvidence: sponsorCroRequestEvidence(),
+                  rawSponsorRequestBody: 'Participant Alice raw sponsor request text',
+                }
+              : dashboardWidget,
+          ),
+        }),
+      ),
+    ProtectedContentError,
   );
 });
 

@@ -401,12 +401,22 @@ function evaluateControls(input, reasons) {
   addReason(reasons, controls?.protectedContentExcluded !== true, 'controls_protected_content_boundary_absent');
 }
 
-function evaluateHumanReview(input, reasons) {
+function evaluateHumanReview(input, queryRecords, reasons) {
   const review = input?.humanReview;
   addReason(reasons, !hasText(review?.reviewerDid), 'human_review_reviewer_absent');
   addReason(reasons, !hasText(review?.dataManagerDid), 'human_review_data_manager_absent');
   addReason(reasons, !REVIEW_DECISIONS.has(review?.decision), 'human_review_decision_invalid');
   addReason(reasons, !hlcAfter(review?.reviewedAtHlc, input?.discrepancyPlan?.evaluatedAtHlc), 'human_review_time_invalid');
+  for (const record of queryRecords) {
+    const ref = hasText(record?.queryRef) ? record.queryRef : 'unknown';
+    if (hlcTuple(review?.reviewedAtHlc) !== null && hlcTuple(record?.reviewedAtHlc) !== null) {
+      addReason(
+        reasons,
+        !hlcAfter(review.reviewedAtHlc, record.reviewedAtHlc),
+        `human_review_before_query_review:${ref}`,
+      );
+    }
+  }
   addReason(reasons, !isDigest(review?.evidenceBundleHash), 'human_review_evidence_bundle_hash_invalid');
   addReason(reasons, review?.finalAuthority !== 'human', 'human_review_final_authority_invalid');
   addReason(reasons, review?.aiFinalAuthority === true, 'ai_final_authority_forbidden');
@@ -492,10 +502,10 @@ export function evaluateDataDiscrepancyManagement(input) {
   const domainState = evaluateDomainCoverage(input, reasons);
   const discrepancyRecords = evaluateDiscrepancyRecords(input, reasons);
   const knownDiscrepancyRefs = discrepancyRefs(discrepancyRecords);
-  evaluateQueryRecords(input, knownDiscrepancyRefs, reasons);
+  const queryRecords = evaluateQueryRecords(input, knownDiscrepancyRefs, reasons);
   evaluateCorrectionRecords(input, knownDiscrepancyRefs, reasons);
   evaluateControls(input, reasons);
-  evaluateHumanReview(input, reasons);
+  evaluateHumanReview(input, queryRecords, reasons);
 
   const denialReasons = uniqueReasons(reasons);
   const dataDiscrepancyManagement = buildDiscrepancySummary(input, domainState, denialReasons);

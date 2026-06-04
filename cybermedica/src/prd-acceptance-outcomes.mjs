@@ -25,14 +25,14 @@ const DECISION_SCHEMA = 'cybermedica.prd_acceptance_outcome_decision.v1';
 const REQUIRED_PERMISSION = 'prd_acceptance_review';
 
 const REQUIRED_DOCTRINE_LAYERS = Object.freeze([
-  'data',
-  'deployment',
-  'doctrine',
-  'documentation',
-  'domain',
-  'doors',
-  'drift',
   'ground_truth',
+  'doctrine',
+  'domain',
+  'data',
+  'doors',
+  'documentation',
+  'deployment',
+  'drift',
 ]);
 
 const REQUIRED_ACCEPTANCE_OUTCOME_IDS = Object.freeze([
@@ -78,6 +78,30 @@ const REQUIRED_CONTEXT_DOC_REFS = Object.freeze([
 const POLICY_STATUSES = new Set(['active']);
 const ACCEPTANCE_STATUSES = new Set(['supported_inactive_trust']);
 const HUMAN_REVIEW_DECISIONS = new Set(['prd_acceptance_accepted_inactive_trust', 'hold_for_acceptance_gap']);
+const REQUIRED_MODULE_REFS_BY_OUTCOME = Object.freeze({
+  audits_assessments_locked: Object.freeze([
+    'src/internal-audits.mjs',
+    'src/monitoring-visits.mjs',
+    'src/site-self-assessments.mjs',
+  ]),
+  trial_launch_gate_authorized: Object.freeze([
+    'src/clinical-trial-product-release-authorization.mjs',
+    'src/readiness-gates.mjs',
+    'src/risk-assessments.mjs',
+  ]),
+});
+const REQUIRED_TEST_REFS_BY_OUTCOME = Object.freeze({
+  audits_assessments_locked: Object.freeze([
+    'tests/internal-audits.test.mjs',
+    'tests/monitoring-visits.test.mjs',
+    'tests/site-self-assessments.test.mjs',
+  ]),
+  trial_launch_gate_authorized: Object.freeze([
+    'tests/clinical-trial-product-release-authorization.test.mjs',
+    'tests/readiness-gates.test.mjs',
+    'tests/risk-assessments.test.mjs',
+  ]),
+});
 
 const RAW_ACCEPTANCE_FIELDS = new Set([
   'acceptancebody',
@@ -341,6 +365,10 @@ function evidenceHashesFor(row) {
   return isDigest(row?.evidenceHashes) ? [row.evidenceHashes] : [];
 }
 
+function requiredRefsFor(outcomeId, refTable) {
+  return Array.isArray(refTable[outcomeId]) ? refTable[outcomeId] : [];
+}
+
 function evaluateOutcomeRows(rows, policySummary, cycle, reasons) {
   addReason(reasons, !Array.isArray(rows) || rows.length === 0, 'acceptance_outcome_rows_absent');
   if (!Array.isArray(rows)) {
@@ -398,7 +426,13 @@ function evaluateOutcomeRows(rows, policySummary, cycle, reasons) {
     addReason(reasons, !hasText(row?.capabilityRef), `acceptance_capability_ref_absent:${label}`);
     addReason(reasons, !ACCEPTANCE_STATUSES.has(row?.acceptanceStatus), `acceptance_status_invalid:${label}`);
     addReason(reasons, moduleRefs.length === 0, `acceptance_module_refs_absent:${label}`);
+    for (const requiredRef of requiredRefsFor(label, REQUIRED_MODULE_REFS_BY_OUTCOME)) {
+      addReason(reasons, !moduleRefs.includes(requiredRef), `acceptance_required_module_ref_missing:${label}:${requiredRef}`);
+    }
     addReason(reasons, testRefs.length === 0, `acceptance_test_refs_absent:${label}`);
+    for (const requiredRef of requiredRefsFor(label, REQUIRED_TEST_REFS_BY_OUTCOME)) {
+      addReason(reasons, !testRefs.includes(requiredRef), `acceptance_required_test_ref_missing:${label}:${requiredRef}`);
+    }
     addReason(reasons, evidenceHashes.length === 0, `acceptance_evidence_hashes_absent:${label}`);
     addReason(reasons, validationCommandRefs.length === 0, `acceptance_validation_commands_absent:${label}`);
     addReason(reasons, row?.reviewedByHuman !== true, `acceptance_human_review_absent:${label}`);

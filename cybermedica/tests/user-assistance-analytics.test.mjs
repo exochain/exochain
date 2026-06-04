@@ -100,7 +100,13 @@ function navigationState(stateFamily, index, overrides = {}) {
 }
 
 function navigationStates() {
-  return REQUIRED_NAVIGATION_STATES.map((stateFamily, index) => navigationState(stateFamily, index));
+  return REQUIRED_NAVIGATION_STATES.map((stateFamily, index) =>
+    navigationState(
+      stateFamily,
+      index,
+      stateFamily === 'contextual_manual_drawer' ? { targetArtifactHash: DIGEST_8 } : {},
+    ),
+  );
 }
 
 function frictionSignal(signalFamily, index, overrides = {}) {
@@ -178,6 +184,25 @@ function assistanceInput(overrides = {}) {
       metadataOnly: true,
       protectedContentExcluded: true,
       reviewedAtHlc: { physicalMs: 1800006080000, logical: 0 },
+    },
+    manualNavigationReadiness: {
+      contextualManualDrawerReceiptHash: DIGEST_7,
+      contextualManualDrawerHash: DIGEST_8,
+      controlledDocumentDistributionRecordId: 'cmdist-role-manual-navigation-v1',
+      controlledDocumentDistributionReceiptHash: DIGEST_9,
+      documentationPublicationReceiptHash: DIGEST_A,
+      manualExportReceiptHash: DIGEST_B,
+      roleManualCoverageReceiptHash: DIGEST_C,
+      acknowledgementRosterHash: DIGEST_D,
+      requiredAcknowledgementRoleRefs: ['clinical_research_coordinator', 'quality_manager'],
+      acknowledgedRoleRefs: ['clinical_research_coordinator', 'quality_manager'],
+      distributionPublishedAtHlc: { physicalMs: 1800006090000, logical: 0 },
+      effectiveUseAcknowledged: true,
+      currentVersionOnly: true,
+      obsoleteVersionUseBlocked: true,
+      metadataOnly: true,
+      protectedContentExcluded: true,
+      productionTrustClaim: false,
     },
     navigationStates: navigationStates(),
     frictionSignals: signals,
@@ -267,12 +292,87 @@ test('user assistance analytics creates deterministic inactive navigation and fr
     'friction-policy_crosslink_gap',
   ]);
   assert.equal(resultA.assistanceAnalytics.frictionRateBasisPoints, 1710);
+  assert.equal(resultA.assistanceAnalytics.manualNavigationReady, true);
+  assert.equal(resultA.assistanceAnalytics.contextualManualDrawerReceiptHash, DIGEST_7);
+  assert.equal(resultA.assistanceAnalytics.controlledDocumentDistributionReceiptHash, DIGEST_9);
+  assert.equal(resultA.assistanceAnalytics.roleManualCoverageReceiptHash, DIGEST_C);
+  assert.deepEqual(resultA.assistanceAnalytics.manualNavigationAcknowledgedRoleRefs, [
+    'clinical_research_coordinator',
+    'quality_manager',
+  ]);
   assert.equal(resultA.receipt.anchorPayload.artifactType, 'user_assistance_friction_analytics');
   assert.equal(resultA.receipt.trustState, 'inactive');
   assert.equal(resultA.receipt.exochainProductionClaim, false);
   assert.equal(resultA.receipt.containsProtectedContent, false);
   assert.deepEqual(resultA, resultB);
   assert.doesNotMatch(JSON.stringify(resultA), /manual body|help query|participant alice|raw text|secret/iu);
+});
+
+test('user assistance analytics requires contextual manual drawer and effective-use readiness', async () => {
+  const { evaluateUserAssistanceAnalytics } = await loadUserAssistanceAnalytics();
+
+  const missingReadiness = evaluateUserAssistanceAnalytics(
+    assistanceInput({
+      manualNavigationReadiness: null,
+    }),
+  );
+  const unsafeReadiness = evaluateUserAssistanceAnalytics(
+    assistanceInput({
+      manualNavigationReadiness: {
+        contextualManualDrawerReceiptHash: '',
+        contextualManualDrawerHash: 'not-a-digest',
+        controlledDocumentDistributionRecordId: '',
+        controlledDocumentDistributionReceiptHash: null,
+        documentationPublicationReceiptHash: 'bad',
+        manualExportReceiptHash: '',
+        roleManualCoverageReceiptHash: null,
+        acknowledgementRosterHash: '',
+        requiredAcknowledgementRoleRefs: ['quality_manager', 'principal_investigator'],
+        acknowledgedRoleRefs: ['quality_manager'],
+        distributionPublishedAtHlc: { physicalMs: 1800006110000, logical: 0 },
+        effectiveUseAcknowledged: false,
+        currentVersionOnly: false,
+        obsoleteVersionUseBlocked: false,
+        metadataOnly: false,
+        protectedContentExcluded: false,
+        productionTrustClaim: true,
+      },
+      navigationStates: navigationStates().map((state) =>
+        state.stateFamily === 'contextual_manual_drawer' ? { ...state, targetArtifactHash: DIGEST_1 } : state,
+      ),
+    }),
+  );
+
+  assert.equal(missingReadiness.decision, 'denied');
+  assert.equal(missingReadiness.receipt, null);
+  assert.ok(missingReadiness.reasons.includes('manual_navigation_drawer_receipt_hash_invalid'));
+  assert.ok(missingReadiness.reasons.includes('manual_navigation_drawer_hash_invalid'));
+  assert.ok(missingReadiness.reasons.includes('manual_navigation_distribution_receipt_hash_invalid'));
+  assert.ok(missingReadiness.reasons.includes('manual_navigation_effective_use_acknowledgement_absent'));
+
+  assert.equal(unsafeReadiness.decision, 'denied');
+  assert.equal(unsafeReadiness.receipt, null);
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_drawer_receipt_hash_invalid'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_drawer_hash_invalid'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_distribution_record_absent'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_publication_receipt_hash_invalid'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_manual_export_receipt_hash_invalid'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_role_manual_coverage_receipt_hash_invalid'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_acknowledgement_roster_hash_invalid'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_acknowledgement_roles_incomplete'));
+  assert.ok(
+    unsafeReadiness.reasons.includes(
+      'manual_navigation_role_effective_use_acknowledgement_missing:clinical_research_coordinator',
+    ),
+  );
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_effective_use_acknowledgement_absent'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_current_version_boundary_invalid'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_obsolete_version_boundary_invalid'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_metadata_boundary_invalid'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_protected_boundary_invalid'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_production_claim_forbidden'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_distribution_after_capture'));
+  assert.ok(unsafeReadiness.reasons.includes('manual_navigation_contextual_drawer_target_mismatch:nav-contextual_manual_drawer'));
 });
 
 test('user assistance analytics fails closed for missing navigation and friction coverage', async () => {

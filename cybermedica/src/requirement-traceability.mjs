@@ -42,6 +42,75 @@ const REQUIRED_DOCTRINE_LAYERS = Object.freeze([
   'ground_truth',
 ]);
 
+const REQUIRED_MASTER_PRD_REQUIREMENT_IDS = Object.freeze([
+  'FR-001',
+  'FR-002',
+  'FR-003',
+  'FR-004',
+  'FR-005',
+  'FR-006',
+  'FR-007',
+  'FR-008',
+  'FR-009',
+  'FR-010',
+  'FR-011',
+  'FR-012',
+  'FR-013',
+  'FR-014',
+  'FR-015',
+  'FR-016',
+  'FR-017',
+  'FR-018',
+  'FR-019',
+  'FR-020',
+  'FR-021',
+  'FR-022',
+  'FR-023',
+  'FR-024',
+  'FR-025',
+  'FR-026',
+  'FR-027',
+  'FR-028',
+  'FR-029',
+  'FR-030',
+  'FR-031',
+  'FR-032',
+  'FR-033',
+  'FR-034',
+  'FR-035',
+  'FR-036',
+  'FR-037',
+  'FR-038',
+  'FR-039',
+  'FR-040',
+  'FR-041',
+  'FR-042',
+  'FR-043',
+  'FR-044',
+  'FR-045',
+  'FR-046',
+  'FR-047',
+  'FR-048',
+  'FR-049',
+  'FR-050',
+  'NFR-001',
+  'NFR-002',
+  'NFR-003',
+  'NFR-004',
+  'NFR-005',
+  'NFR-006',
+  'NFR-007',
+  'NFR-008',
+  'NFR-009',
+  'NFR-010',
+  'NFR-011',
+  'NFR-012',
+  'NFR-013',
+  'NFR-014',
+]);
+
+const REQUIRED_MASTER_PRD_REQUIREMENT_ID_SET = new Set(REQUIRED_MASTER_PRD_REQUIREMENT_IDS);
+
 const REQUIRED_CONTEXT_DOC_REFS = Object.freeze([
   'docs/context/CYBERMEDICA_PRODUCTION_TRUST_ACTIVATION_GATES.md',
   'docs/context/EXOCHAIN_CONTEXT_SEED_FOR_CYBERMEDICA.md',
@@ -70,10 +139,32 @@ const DEFAULT_BOB_ESCALATION_IDS = Object.freeze([
   'ESC-RUNTIME',
 ]);
 
+const REQUIRED_MODULE_REFS_BY_REQUIREMENT = Object.freeze({
+  'FR-016': Object.freeze(['src/consent-materials.mjs', 'src/participant-data-sharing-consent.mjs']),
+  'FR-017': Object.freeze(['src/participant-protection.mjs']),
+  'FR-018': Object.freeze(['src/participant-protection.mjs']),
+});
+const REQUIRED_TEST_REFS_BY_REQUIREMENT = Object.freeze({
+  'FR-016': Object.freeze(['tests/consent-materials.test.mjs', 'tests/participant-data-sharing-consent.test.mjs']),
+  'FR-017': Object.freeze(['tests/participant-protection.test.mjs']),
+  'FR-018': Object.freeze(['tests/participant-protection.test.mjs']),
+});
+const REQUIRED_EXOCHAIN_PRIMITIVE_REFS_BY_REQUIREMENT = Object.freeze({
+  'FR-016': Object.freeze(['crates/exo-consent/src/bailment.rs', 'crates/exo-consent/src/policy.rs']),
+  'FR-017': Object.freeze(['crates/exo-consent/src/bailment.rs', 'crates/exo-core/src/types.rs']),
+  'FR-018': Object.freeze(['crates/exo-consent/src/gatekeeper.rs', 'crates/exo-core/src/types.rs']),
+});
+const REQUIRED_ADAPTER_BOUNDARY_REFS_BY_REQUIREMENT = Object.freeze({
+  'FR-016': Object.freeze(['src/consent-materials.mjs', 'src/participant-data-sharing-consent.mjs']),
+  'FR-017': Object.freeze(['src/participant-protection.mjs']),
+  'FR-018': Object.freeze(['src/participant-protection.mjs']),
+});
+
 const POLICY_STATUSES = new Set(['active']);
 const REQUIREMENT_FAMILIES = new Set(REQUIRED_REQUIREMENT_FAMILIES);
 const IMPLEMENTED_STATUSES = new Set(['implemented', 'activation_only_blocked']);
 const HUMAN_REVIEW_DECISIONS = new Set(['traceability_accepted_inactive_trust', 'hold_for_traceability_gap']);
+const MASTER_PRD_REQUIREMENT_ID_PREFIX = /^(?:FR|NFR)-/u;
 
 const RAW_TRACEABILITY_FIELDS = new Set([
   'acceptancecopy',
@@ -139,6 +230,10 @@ function addReason(reasons, condition, reason) {
 
 function uniqueSorted(values) {
   return [...new Set(values.filter(hasText))].sort();
+}
+
+function requiredRefsFor(requirementId, refTable) {
+  return Array.isArray(refTable[requirementId]) ? refTable[requirementId] : [];
 }
 
 function sortedTextList(value) {
@@ -385,6 +480,13 @@ function evaluateRequirementRows(rows, policySummary, cycle, reasons) {
       seenRequirementIds.add(row.requirementId);
       requirementIds.push(row.requirementId);
     }
+    addReason(
+      reasons,
+      hasText(row?.requirementId) &&
+        MASTER_PRD_REQUIREMENT_ID_PREFIX.test(row.requirementId) &&
+        !REQUIRED_MASTER_PRD_REQUIREMENT_ID_SET.has(row.requirementId),
+      `requirement_id_unsupported:${label}`,
+    );
     addReason(reasons, !REQUIREMENT_FAMILIES.has(row?.requirementFamily), `requirement_family_invalid:${label}`);
     addReason(
       reasons,
@@ -394,10 +496,30 @@ function evaluateRequirementRows(rows, policySummary, cycle, reasons) {
     addReason(reasons, !hasText(row?.sourceRef), `requirement_source_ref_absent:${label}`);
     addReason(reasons, !IMPLEMENTED_STATUSES.has(row?.implementationStatus), `requirement_row_not_implemented:${label}`);
     addReason(reasons, moduleRefs.length === 0, `requirement_module_refs_absent:${label}`);
+    for (const requiredRef of requiredRefsFor(label, REQUIRED_MODULE_REFS_BY_REQUIREMENT)) {
+      addReason(reasons, !moduleRefs.includes(requiredRef), `requirement_required_module_ref_missing:${label}:${requiredRef}`);
+    }
     addReason(reasons, testRefs.length === 0, `requirement_test_refs_absent:${label}`);
+    for (const requiredRef of requiredRefsFor(label, REQUIRED_TEST_REFS_BY_REQUIREMENT)) {
+      addReason(reasons, !testRefs.includes(requiredRef), `requirement_required_test_ref_missing:${label}:${requiredRef}`);
+    }
     addReason(reasons, evidenceHashes.length === 0, `requirement_evidence_hashes_absent:${label}`);
     addReason(reasons, exochainPrimitiveRefs.length === 0, `requirement_exochain_primitives_absent:${label}`);
+    for (const requiredRef of requiredRefsFor(label, REQUIRED_EXOCHAIN_PRIMITIVE_REFS_BY_REQUIREMENT)) {
+      addReason(
+        reasons,
+        !exochainPrimitiveRefs.includes(requiredRef),
+        `requirement_required_exochain_primitive_ref_missing:${label}:${requiredRef}`,
+      );
+    }
     addReason(reasons, adapterBoundaryRefs.length === 0, `requirement_adapter_boundary_absent:${label}`);
+    for (const requiredRef of requiredRefsFor(label, REQUIRED_ADAPTER_BOUNDARY_REFS_BY_REQUIREMENT)) {
+      addReason(
+        reasons,
+        !adapterBoundaryRefs.includes(requiredRef),
+        `requirement_required_adapter_boundary_ref_missing:${label}:${requiredRef}`,
+      );
+    }
     addReason(reasons, validationCommandRefs.length === 0, `requirement_validation_commands_absent:${label}`);
     addReason(reasons, row?.reviewedByHuman !== true, `requirement_human_review_absent:${label}`);
     addReason(reasons, row?.metadataOnly !== true, `requirement_metadata_boundary_invalid:${label}`);
@@ -439,6 +561,7 @@ function evaluateRequirementRows(rows, policySummary, cycle, reasons) {
     rowSummaries.push({
       activationGateIds: rowActivationGateIds,
       activationOnlyBlocker,
+      adapterBoundaryRefs,
       doctrineLayer: row?.doctrineLayer ?? null,
       evidenceHashes,
       exochainPrimitiveRefs,
@@ -449,6 +572,10 @@ function evaluateRequirementRows(rows, policySummary, cycle, reasons) {
       testRefs,
     });
   });
+
+  for (const requiredRequirementId of REQUIRED_MASTER_PRD_REQUIREMENT_IDS) {
+    addReason(reasons, !seenRequirementIds.has(requiredRequirementId), `requirement_id_missing:${requiredRequirementId}`);
+  }
 
   return {
     activationOnlyBlockerIds: uniqueSorted(activationOnlyBlockerIds),

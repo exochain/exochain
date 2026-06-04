@@ -339,6 +339,48 @@ test('adapters reject semantic protected and secret field variants inside payloa
   assert.ok(decisionForumRawPiiVariant.blockedBy.includes('decision_forum_payload_disclosure'));
 });
 
+test('adapters reject source document and clinical note field variants inside payloads', () => {
+  const receiptSourceDocumentText = evaluateReceiptCommitmentResponse(
+    {
+      receiptId: 'receipt-alpha',
+      actionHash: expectedActionHash,
+      signature: 'sig-root-adapter-alpha',
+      receiptSource: 'exochain_node_receipt_store',
+      anchorPayload: { artifactHash: expectedActionHash, artifactType: 'qms_control_evidence' },
+      receiptPayload: { sourceDocumentText: 'source excerpt without direct participant identifiers' },
+    },
+    { expectedActionHash },
+  );
+
+  assert.equal(receiptSourceDocumentText.allowed, false);
+  assert.equal(receiptSourceDocumentText.state, 'denied');
+  assert.ok(receiptSourceDocumentText.blockedBy.includes('receipt_payload_disclosure'));
+
+  const gatewaySourceDocumentContent = evaluateGatewayAdjudicationResponse(
+    {
+      ...gatewayResponse,
+      requestPayload: { sourceDocumentContent: 'monitoring source excerpt without direct identifiers' },
+    },
+    gatewayOptions,
+  );
+
+  assert.equal(gatewaySourceDocumentContent.allowed, false);
+  assert.equal(gatewaySourceDocumentContent.state, 'denied');
+  assert.ok(gatewaySourceDocumentContent.blockedBy.includes('gateway_payload_disclosure'));
+
+  const decisionForumClinicalNote = evaluateDecisionForumTransitionResponse(
+    {
+      ...decisionForumResponse,
+      evidencePayload: { clinicalNote: 'clinical observation text without direct identifiers' },
+    },
+    decisionForumOptions,
+  );
+
+  assert.equal(decisionForumClinicalNote.allowed, false);
+  assert.equal(decisionForumClinicalNote.state, 'denied');
+  assert.ok(decisionForumClinicalNote.blockedBy.includes('decision_forum_payload_disclosure'));
+});
+
 test('receipt adapter rejects protected receipt body and DAG payloads', () => {
   const protectedReceiptPayload = evaluateReceiptCommitmentResponse(
     {

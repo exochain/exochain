@@ -199,6 +199,30 @@ function migrationInput(overrides = {}) {
       protectedContentExcluded: true,
       reviewedAtHlc: { physicalMs: 1800005100000, logical: 12 },
     },
+    objectStorageReadinessEvidence: {
+      schema: 'cybermedica.object_storage_readiness.v1',
+      objectStorageReadinessReceiptHash: DIGEST_1,
+      objectStorageReadinessHash: DIGEST_2,
+      objectStorageBoundaryHash: DIGEST_1,
+      providerRef: 'encrypted-object-storage-provider-alpha',
+      status: 'object_storage_ready_inactive_trust',
+      trustState: 'inactive',
+      artifactClassesCovered: [
+        'controlled_documents',
+        'diligence_exports',
+        'evidence_payloads',
+        'generated_reports',
+        'sensitive_artifacts',
+      ],
+      externalReceiptStoreRequired: true,
+      rawPayloadsExcludedFromOperationalDb: true,
+      rawPayloadsExcludedFromReceipts: true,
+      directPublicAccessAllowed: false,
+      metadataOnly: true,
+      protectedContentExcluded: true,
+      productionTrustClaim: false,
+      reviewedAtHlc: { physicalMs: 1800005140000, logical: 0 },
+    },
     validationEvidence: {
       commandRefs: ['node --test tests/database-migrations.test.mjs', 'npm run quality'],
       commandsPassed: true,
@@ -272,6 +296,17 @@ test('permits deterministic inactive metadata-only database migration readiness'
   assert.equal(first.migrationReadiness.productionActivationReady, false);
   assert.equal(first.migrationReadiness.mutableOperationalStateSeparated, true);
   assert.equal(first.migrationReadiness.exochainReceiptStoreExternal, true);
+  assert.equal(first.migrationReadiness.objectStorageReadinessReceiptHash, DIGEST_1);
+  assert.equal(first.migrationReadiness.objectStorageReadinessHash, DIGEST_2);
+  assert.equal(first.migrationReadiness.objectStorageBoundaryHash, DIGEST_1);
+  assert.equal(first.migrationReadiness.objectStorageReadinessSummary.providerRef, 'encrypted-object-storage-provider-alpha');
+  assert.deepEqual(first.migrationReadiness.objectStorageReadinessSummary.artifactClassesCovered, [
+    'controlled_documents',
+    'diligence_exports',
+    'evidence_payloads',
+    'generated_reports',
+    'sensitive_artifacts',
+  ]);
   assert.deepEqual(first.migrationReadiness.migrationSequences, [1, 2]);
   assert.deepEqual(first.migrationReadiness.migrationDomainsCovered, REQUIRED_MIGRATION_DOMAINS);
   assert.match(first.migrationReadiness.migrationReadinessHash, /^[0-9a-f]{64}$/u);
@@ -279,6 +314,7 @@ test('permits deterministic inactive metadata-only database migration readiness'
   assert.equal(first.receipt.exochainProductionClaim, false);
   assert.equal(first.receipt.anchorPayload.artifactType, 'database_migration_readiness');
   assert.equal(first.receipt.anchorPayload.classification, 'restricted_metadata_only');
+  assert.ok(first.receipt.anchorPayload.sensitivityTags.includes('object_storage_readiness_lineage'));
 });
 
 test('denies incomplete or unsupported migration-domain coverage', async () => {
@@ -296,6 +332,21 @@ test('denies incomplete or unsupported migration-domain coverage', async () => {
   assert.equal(decision.failClosed, true);
   assert.match(decision.reasons.join('|'), /migration_domain_missing:tenant_isolation/);
   assert.match(decision.reasons.join('|'), /migration_domain_unsupported:unreviewed_manual_patch/);
+  assert.equal(decision.migrationReadiness, null);
+  assert.equal(decision.receipt, null);
+});
+
+test('requires object-storage readiness receipt lineage before permitting database migrations', async () => {
+  const { evaluateDatabaseMigrationReadiness } = await loadDatabaseMigrations();
+  const input = migrationInput({
+    objectStorageReadinessEvidence: null,
+  });
+
+  const decision = evaluateDatabaseMigrationReadiness(input);
+
+  assert.equal(decision.decision, 'denied');
+  assert.equal(decision.failClosed, true);
+  assert.ok(decision.reasons.includes('object_storage_readiness_evidence_absent'));
   assert.equal(decision.migrationReadiness, null);
   assert.equal(decision.receipt, null);
 });

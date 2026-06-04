@@ -30,9 +30,11 @@ const REQUIRED_SOURCE_FAMILIES = Object.freeze([
   'council_escalation_register',
   'council_review_defaults',
   'exochain_readonly_repo',
+  'glossary',
   'implementation_path_classification',
   'integration_map',
   'master_prd',
+  'open_question_register',
   'production_activation_gates',
 ]);
 
@@ -42,6 +44,8 @@ const REQUIRED_CONTEXT_DOC_REFS = Object.freeze([
   'docs/context/EXOCHAIN_CONTEXT_SEED_FOR_CYBERMEDICA.md',
   'docs/context/EXOCHAIN_COUNCIL_ESCALATIONS_FOR_BOB.md',
   'docs/context/EXOCHAIN_COUNCIL_REVIEW_FOR_CYBERMEDICA_OPEN_QUESTIONS.md',
+  'docs/context/EXOCHAIN_GLOSSARY_FOR_CYBERMEDICA.md',
+  'docs/context/EXOCHAIN_OPEN_QUESTIONS_FOR_BOB.md',
   'docs/context/EXOCHAIN_TO_CYBERMEDICA_INTEGRATION_MAP.md',
 ]);
 

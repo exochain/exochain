@@ -61,6 +61,18 @@ const VERSIONING_STATUSES = new Set(['controlled']);
 const EXPORT_GRANT_STATUSES = new Set(['active']);
 const HUMAN_AUTHORIZATION_STATUSES = new Set(['approved']);
 const ALLOWED_EXPORT_PURPOSES = new Set(['regulatory_document_readiness', 'sponsor_regulatory_support']);
+const EXPORT_CONTROL_TYPES = new Set([
+  'sponsor_diligence_packet',
+  'sponsor_regulatory_export_manifest',
+  'structured_data_export',
+]);
+const SPONSOR_CRO_REQUESTER_CLASSES = new Set(['cro', 'sponsor']);
+const SPONSOR_CRO_WORK_ITEM_STATUSES = new Set([
+  'approved_for_response',
+  'disclosure_logged',
+  'human_reviewed',
+  'response_packaged',
+]);
 
 const RAW_REGULATORY_SUPPORT_FIELDS = new Set([
   'approvalletterbody',
@@ -81,9 +93,14 @@ const RAW_REGULATORY_SUPPORT_FIELDS = new Set([
   'rawirbletter',
   'rawprotocol',
   'rawprotocolbody',
+  'rawrequest',
+  'rawresponsepackage',
   'rawregulatorycontent',
+  'rawsponsorrequest',
+  'rawsponsorrequestbody',
   'rawsubmission',
   'rawsubmissionpacket',
+  'responsepackagebody',
   'rawsourcedocument',
   'regulatorynarrative',
   'sourcebody',
@@ -179,6 +196,10 @@ function assertMetadataOnly(input) {
 
 function uniqueSorted(values) {
   return [...new Set(values.filter(hasText))].sort();
+}
+
+function optionalTextList(value) {
+  return hasText(value) ? [value] : [];
 }
 
 function sortedTextList(value) {
@@ -417,6 +438,13 @@ function evaluateExportPackage(input, allowedExportPurposes, reasons) {
   return presentFamilies;
 }
 
+function requiresExportControlEvidence(input, exportFamilies) {
+  return (
+    input?.exportPackage?.purpose === 'sponsor_regulatory_support' ||
+    exportFamilies.includes('sponsor_regulatory_export_manifest')
+  );
+}
+
 function evaluateHumanAuthorization(input, reasons) {
   const authorization = input?.humanAuthorization;
   addReason(reasons, !HUMAN_AUTHORIZATION_STATUSES.has(authorization?.status), 'human_authorization_invalid');
@@ -442,8 +470,161 @@ function evaluateAiAssistance(aiAssistance, reasons) {
   addReason(reasons, sortedTextList(aiAssistance?.limitationHashes).some((hash) => !isDigest(hash)), 'ai_limitation_hash_invalid');
 }
 
-function buildPackage(input, readinessDomains, documentFamilies, exportFamilies) {
+function evaluateSponsorCroRequestEvidence(input, exportControlEvidence, required, reasons) {
+  const evidence = exportControlEvidence?.controlledRequestEvidence;
+  if (!required && (evidence === null || evidence === undefined)) {
+    return null;
+  }
+
+  addReason(reasons, evidence === null || evidence === undefined, 'sponsor_cro_request_evidence_absent');
+  addReason(reasons, !hasText(evidence?.requestRef), 'sponsor_cro_request_ref_absent');
+  addReason(reasons, !isDigest(evidence?.requestHash), 'sponsor_cro_request_hash_invalid');
+  addReason(
+    reasons,
+    !SPONSOR_CRO_REQUESTER_CLASSES.has(evidence?.requesterClass),
+    'sponsor_cro_requester_class_invalid',
+  );
+  addReason(reasons, !hasText(evidence?.workItemRef), 'sponsor_cro_work_item_ref_absent');
+  addReason(
+    reasons,
+    !SPONSOR_CRO_WORK_ITEM_STATUSES.has(evidence?.workItemStatus),
+    'sponsor_cro_work_item_status_invalid',
+  );
+  addReason(reasons, !hasText(evidence?.disclosureEventRef), 'sponsor_cro_disclosure_event_ref_absent');
+  addReason(reasons, !isDigest(evidence?.disclosureLogHash), 'sponsor_cro_disclosure_log_hash_invalid');
+  addReason(
+    reasons,
+    hasText(evidence?.disclosureLogHash) && evidence.disclosureLogHash !== input?.exportPackage?.disclosureLogHash,
+    'sponsor_cro_disclosure_log_hash_mismatch',
+  );
+  addReason(reasons, !hasText(evidence?.decisionForumMatterRef), 'sponsor_cro_decision_forum_matter_absent');
+  addReason(reasons, !isDigest(evidence?.humanReviewHash), 'sponsor_cro_human_review_hash_invalid');
+  addReason(
+    reasons,
+    hasText(evidence?.humanReviewHash) && evidence.humanReviewHash !== input?.humanAuthorization?.reviewHash,
+    'sponsor_cro_human_review_hash_mismatch',
+  );
+  addReason(reasons, !isDigest(evidence?.responsePackageHash), 'sponsor_cro_response_package_hash_invalid');
+  addReason(
+    reasons,
+    hasText(evidence?.responsePackageHash) && evidence.responsePackageHash !== exportControlEvidence?.responsePackageHash,
+    'sponsor_cro_response_package_hash_mismatch',
+  );
+  addReason(
+    reasons,
+    evidence?.linkedRecipientTenantId !== input?.exportPackage?.recipientTenantId,
+    'sponsor_cro_request_recipient_mismatch',
+  );
+  addReason(
+    reasons,
+    evidence?.linkedExportRef !== exportControlEvidence?.packageRef,
+    'sponsor_cro_linked_export_mismatch',
+  );
+  addReason(reasons, evidence?.metadataOnly !== true, 'sponsor_cro_request_metadata_boundary_invalid');
+  addReason(
+    reasons,
+    evidence?.sourcePayloadExcluded !== true,
+    'sponsor_cro_request_source_payload_boundary_invalid',
+  );
+  addReason(
+    reasons,
+    evidence?.protectedContentExcluded !== true,
+    'sponsor_cro_request_protected_boundary_invalid',
+  );
+  addReason(reasons, evidence?.productionTrustClaim === true, 'production_trust_claim_forbidden');
+  addReason(reasons, hlcTuple(evidence?.linkedAtHlc) === null, 'sponsor_cro_request_link_time_invalid');
+  addReason(
+    reasons,
+    hlcAfter(evidence?.linkedAtHlc, exportControlEvidence?.generatedAtHlc),
+    'sponsor_cro_request_link_after_export_control',
+  );
+
+  return {
+    decisionForumMatterRef: hasText(evidence?.decisionForumMatterRef) ? evidence.decisionForumMatterRef : null,
+    disclosureEventRef: hasText(evidence?.disclosureEventRef) ? evidence.disclosureEventRef : null,
+    disclosureLogHash: hasText(evidence?.disclosureLogHash) ? evidence.disclosureLogHash : null,
+    humanReviewHash: hasText(evidence?.humanReviewHash) ? evidence.humanReviewHash : null,
+    linkedAtHlc: evidence?.linkedAtHlc ?? null,
+    linkedExportRef: hasText(evidence?.linkedExportRef) ? evidence.linkedExportRef : null,
+    linkedRecipientTenantId: hasText(evidence?.linkedRecipientTenantId) ? evidence.linkedRecipientTenantId : null,
+    requestHash: hasText(evidence?.requestHash) ? evidence.requestHash : null,
+    requesterClass: hasText(evidence?.requesterClass) ? evidence.requesterClass : null,
+    requestRef: hasText(evidence?.requestRef) ? evidence.requestRef : null,
+    responsePackageHash: hasText(evidence?.responsePackageHash) ? evidence.responsePackageHash : null,
+    workItemRef: hasText(evidence?.workItemRef) ? evidence.workItemRef : null,
+    workItemStatus: hasText(evidence?.workItemStatus) ? evidence.workItemStatus : null,
+  };
+}
+
+function evaluateExportControlEvidence(input, required, reasons) {
+  const evidence = input?.exportControlEvidence;
+  if (!required && (evidence === null || evidence === undefined)) {
+    return null;
+  }
+
+  addReason(reasons, evidence === null || evidence === undefined, 'export_control_evidence_absent');
+  addReason(reasons, !hasText(evidence?.packageRef), 'export_control_package_ref_absent');
+  addReason(reasons, !isDigest(evidence?.packageHash), 'export_control_package_hash_invalid');
+  addReason(reasons, !hasText(evidence?.exportRef), 'export_control_ref_absent');
+  addReason(reasons, evidence?.exportRef !== evidence?.packageRef, 'export_control_ref_mismatch');
+  addReason(reasons, !EXPORT_CONTROL_TYPES.has(evidence?.exportType), 'export_control_type_invalid');
+  addReason(reasons, evidence?.purpose !== input?.exportPackage?.purpose, 'export_control_purpose_mismatch');
+  addReason(
+    reasons,
+    evidence?.recipientTenantId !== input?.exportPackage?.recipientTenantId,
+    'export_control_recipient_mismatch',
+  );
+  addReason(reasons, !isDigest(evidence?.disclosureLogHash), 'export_control_disclosure_log_hash_invalid');
+  addReason(
+    reasons,
+    hasText(evidence?.disclosureLogHash) && evidence.disclosureLogHash !== input?.exportPackage?.disclosureLogHash,
+    'export_control_disclosure_log_hash_mismatch',
+  );
+  addReason(reasons, !isDigest(evidence?.suppressionLogHash), 'export_control_suppression_log_hash_invalid');
+  addReason(
+    reasons,
+    hasText(evidence?.suppressionLogHash) && evidence.suppressionLogHash !== input?.exportPackage?.suppressionLogHash,
+    'export_control_suppression_log_hash_mismatch',
+  );
+  addReason(reasons, !hasText(evidence?.responsePackageRef), 'sponsor_cro_response_package_ref_absent');
+  addReason(reasons, !isDigest(evidence?.responsePackageHash), 'sponsor_cro_response_package_hash_invalid');
+  addReason(reasons, hlcTuple(evidence?.generatedAtHlc) === null, 'export_control_time_invalid');
+  addReason(
+    reasons,
+    hlcAfter(evidence?.generatedAtHlc, input?.regulatoryCycle?.packageCompiledAtHlc),
+    'export_control_after_package_compile',
+  );
+  addReason(reasons, evidence?.metadataOnly !== true, 'export_control_metadata_boundary_invalid');
+  addReason(
+    reasons,
+    evidence?.sourcePayloadExcluded !== true,
+    'export_control_source_payload_boundary_invalid',
+  );
+  addReason(reasons, evidence?.rawContentExcluded !== true, 'export_control_raw_content_boundary_invalid');
+  addReason(reasons, evidence?.protectedContentExcluded !== true, 'export_control_protected_boundary_invalid');
+  addReason(reasons, evidence?.productionTrustClaim === true, 'production_trust_claim_forbidden');
+
+  const controlledRequestEvidence = evaluateSponsorCroRequestEvidence(input, evidence, required, reasons);
+
+  return {
+    controlledRequestEvidence,
+    disclosureLogHash: hasText(evidence?.disclosureLogHash) ? evidence.disclosureLogHash : null,
+    exportRef: hasText(evidence?.exportRef) ? evidence.exportRef : null,
+    exportType: hasText(evidence?.exportType) ? evidence.exportType : null,
+    generatedAtHlc: evidence?.generatedAtHlc ?? null,
+    packageHash: hasText(evidence?.packageHash) ? evidence.packageHash : null,
+    packageRef: hasText(evidence?.packageRef) ? evidence.packageRef : null,
+    purpose: hasText(evidence?.purpose) ? evidence.purpose : null,
+    recipientTenantId: hasText(evidence?.recipientTenantId) ? evidence.recipientTenantId : null,
+    responsePackageHash: hasText(evidence?.responsePackageHash) ? evidence.responsePackageHash : null,
+    responsePackageRef: hasText(evidence?.responsePackageRef) ? evidence.responsePackageRef : null,
+    suppressionLogHash: hasText(evidence?.suppressionLogHash) ? evidence.suppressionLogHash : null,
+  };
+}
+
+function buildPackage(input, readinessDomains, documentFamilies, exportFamilies, exportControlEvidence) {
   const cycle = input?.regulatoryCycle ?? {};
+  const controlledRequestEvidence = exportControlEvidence?.controlledRequestEvidence ?? null;
   return {
     schema: REGULATORY_SUPPORT_SCHEMA,
     cycleRef: cycle.cycleRef,
@@ -457,6 +638,14 @@ function buildPackage(input, readinessDomains, documentFamilies, exportFamilies)
     ethicsTrackingHash: input?.ethicsTracking?.trackingHash ?? null,
     versionLineageHash: input?.documentVersioning?.lineageHash ?? null,
     exportManifestHash: input?.exportPackage?.manifestHash ?? null,
+    exportControlPackageRef: exportControlEvidence?.packageRef ?? null,
+    exportControlPackageHash: exportControlEvidence?.packageHash ?? null,
+    exportControlRef: exportControlEvidence?.exportRef ?? null,
+    responsePackageRef: exportControlEvidence?.responsePackageRef ?? null,
+    responsePackageHash: exportControlEvidence?.responsePackageHash ?? null,
+    sponsorCroRequestRefs: optionalTextList(controlledRequestEvidence?.requestRef),
+    sponsorCroWorkItemRefs: optionalTextList(controlledRequestEvidence?.workItemRef),
+    controlledRequestEvidence,
     noRegulatoryStrategyClaim: cycle.noRegulatoryStrategyClaim === true && input?.exportPackage?.regulatoryStrategyClaim !== true,
     statutoryAuthorityNotReplaced: cycle.statutoryAuthorityNotReplaced === true && input?.exportPackage?.statutoryFilingClaim !== true,
     metadataOnly: true,
@@ -491,12 +680,17 @@ export function evaluateRegulatorySubmissionSupport(input) {
   evaluateEthicsTracking(input?.ethicsTracking, reasons);
   evaluateDocumentVersioning(input?.documentVersioning, reasons);
   const exportFamilies = evaluateExportPackage(input, allowedExportPurposes, reasons);
+  const exportControlEvidence = evaluateExportControlEvidence(
+    input,
+    requiresExportControlEvidence(input, exportFamilies),
+    reasons,
+  );
   evaluateHumanAuthorization(input, reasons);
   evaluateAiAssistance(input?.aiAssistance, reasons);
   addReason(reasons, !isDigest(input?.receiptEvidence?.custodyDigest), 'receipt_custody_digest_invalid');
   addReason(reasons, input?.receiptEvidence?.artifactHash !== undefined && !isDigest(input.receiptEvidence.artifactHash), 'receipt_artifact_hash_invalid');
 
-  const packageRecord = buildPackage(input, readinessDomains, documentFamilies, exportFamilies);
+  const packageRecord = buildPackage(input, readinessDomains, documentFamilies, exportFamilies, exportControlEvidence);
   const packageHash = sha256Hex(packageRecord);
   const denied = reasons.length > 0;
   const regulatorySubmissionSupport = {

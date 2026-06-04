@@ -32,6 +32,7 @@ const DIGEST_6 = '66666666666666666666666666666666666666666666666666666666666666
 const DIGEST_7 = '7777777777777777777777777777777777777777777777777777777777777777';
 const DIGEST_8 = '8888888888888888888888888888888888888888888888888888888888888888';
 const DIGEST_9 = '9999999999999999999999999999999999999999999999999999999999999999';
+const RESPONSE_PACKAGE_HASH = 'abababababababababababababababababababababababababababababababab';
 
 const REQUIRED_CONTROL_DOMAINS = ['access', 'confidentiality', 'disclosure', 'privacy'];
 
@@ -201,6 +202,41 @@ function exportControlInput(overrides = {}) {
       includesSuppressedRecordRefs: false,
       includesDirectIdentifiers: false,
     },
+    responsePackage: {
+      packageRef: 'fr041-response-package-alpha',
+      packageHash: RESPONSE_PACKAGE_HASH,
+      requestRef: 'sponsor-cro-request-alpha',
+      workItemRef: 'sponsor-cro-work-item-alpha',
+      recipientTenantId: 'tenant-sponsor-alpha',
+      packageRecordRefs: [
+        'readiness-passport-alpha',
+        'audit-index-alpha',
+        'participant-consent-readiness-alpha',
+      ],
+      generatedAtHlc: { physicalMs: 1799000000000, logical: 3 },
+      metadataOnly: true,
+      rawContentExcluded: true,
+      protectedContentExcluded: true,
+    },
+    sponsorCroRequestEvidence: {
+      requestRef: 'sponsor-cro-request-alpha',
+      requestHash: DIGEST_1,
+      requesterClass: 'sponsor',
+      workItemRef: 'sponsor-cro-work-item-alpha',
+      workItemStatus: 'approved_for_response',
+      disclosureEventRef: 'disclosure-event-sponsor-cro-alpha',
+      disclosureLogHash: DIGEST_C,
+      decisionForumMatterRef: 'df-sponsor-cro-request-alpha',
+      humanReviewHash: DIGEST_D,
+      responsePackageHash: RESPONSE_PACKAGE_HASH,
+      linkedRecipientTenantId: 'tenant-sponsor-alpha',
+      linkedExportRef: 'fr041-export-control-alpha',
+      linkedAtHlc: { physicalMs: 1799000000000, logical: 3 },
+      metadataOnly: true,
+      sourcePayloadExcluded: true,
+      protectedContentExcluded: true,
+      productionTrustClaim: false,
+    },
     humanAuthorization: {
       reviewerDid: 'did:exo:quality-manager-alpha',
       status: 'approved',
@@ -250,6 +286,10 @@ test('export controls permit deterministic FR-041 metadata exports with suppress
   assert.equal(resultA.controlPackage.confidentialityBoundarySatisfied, true);
   assert.equal(resultA.controlPackage.accessBoundarySatisfied, true);
   assert.equal(resultA.controlPackage.disclosureLogged, true);
+  assert.equal(resultA.controlPackage.responsePackageHash, RESPONSE_PACKAGE_HASH);
+  assert.deepEqual(resultA.controlPackage.sponsorCroRequestRefs, ['sponsor-cro-request-alpha']);
+  assert.deepEqual(resultA.controlPackage.sponsorCroWorkItemRefs, ['sponsor-cro-work-item-alpha']);
+  assert.equal(resultA.controlPackage.controlledRequestEvidence.requestHash, DIGEST_1);
   assert.equal(resultA.controlPackage.suppressedRecordCount, 1);
   assert.equal(Object.hasOwn(resultA.controlPackage, 'suppressedRecordRefs'), false);
   assert.equal(resultA.controlPackage.trustState, 'inactive');
@@ -391,6 +431,70 @@ test('export controls validate HLC ordering and policy expiry', async () => {
   assert.ok(malformed.reasons.includes('export_requested_time_invalid'));
 });
 
+test('export controls require controlled Sponsor/CRO request linkage before diligence export approval', async () => {
+  const { evaluateExportControl } = await loadExportControls();
+
+  const missing = evaluateExportControl(
+    exportControlInput({
+      responsePackage: null,
+      sponsorCroRequestEvidence: null,
+    }),
+  );
+
+  assert.equal(missing.decision, 'denied');
+  assert.equal(missing.failClosed, true);
+  assert.equal(missing.receipt, null);
+  assert.ok(missing.reasons.includes('sponsor_cro_response_package_absent'));
+  assert.ok(missing.reasons.includes('sponsor_cro_request_evidence_absent'));
+
+  const mismatch = evaluateExportControl(
+    exportControlInput({
+      responsePackage: {
+        packageHash: DIGEST_6,
+        requestRef: 'other-request',
+        workItemRef: 'other-work-item',
+        recipientTenantId: 'tenant-other',
+        packageRecordRefs: ['readiness-passport-alpha'],
+        generatedAtHlc: { physicalMs: 1799000000000, logical: 5 },
+        metadataOnly: false,
+        rawContentExcluded: false,
+        protectedContentExcluded: false,
+      },
+      sponsorCroRequestEvidence: {
+        requesterClass: 'public_observer',
+        workItemStatus: 'draft',
+        disclosureLogHash: DIGEST_A,
+        humanReviewHash: DIGEST_E,
+        responsePackageHash: 'not-a-digest',
+        linkedRecipientTenantId: 'tenant-other',
+        linkedExportRef: 'other-export',
+        linkedAtHlc: { physicalMs: 1799000000000, logical: 5 },
+        metadataOnly: false,
+        sourcePayloadExcluded: false,
+        protectedContentExcluded: false,
+        productionTrustClaim: true,
+      },
+    }),
+  );
+
+  assert.equal(mismatch.decision, 'denied');
+  assert.ok(mismatch.reasons.includes('sponsor_cro_response_package_request_mismatch'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_response_package_work_item_mismatch'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_response_package_recipient_mismatch'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_response_package_record_scope_mismatch'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_response_package_after_export_generation'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_response_package_metadata_boundary_invalid'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_requester_class_invalid'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_work_item_status_invalid'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_disclosure_log_hash_mismatch'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_human_review_hash_mismatch'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_response_package_hash_invalid'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_request_recipient_mismatch'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_linked_export_mismatch'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_request_link_after_export_generation'));
+  assert.ok(mismatch.reasons.includes('sponsor_cro_request_metadata_boundary_invalid'));
+});
+
 test('export controls reject raw export payloads protected content and secret material', async () => {
   const { evaluateExportControl } = await loadExportControls();
 
@@ -404,6 +508,30 @@ test('export controls reject raw export payloads protected content and secret ma
               rawExportPayload: [{ artifactHash: DIGEST_A }],
             },
           ],
+        }),
+      ),
+    /raw export content field/i,
+  );
+
+  assert.throws(
+    () =>
+      evaluateExportControl(
+        exportControlInput({
+          sponsorCroRequestEvidence: {
+            rawSponsorRequestBody: 'Sponsor asks for narrative source detail.',
+          },
+        }),
+      ),
+    /raw export content field/i,
+  );
+
+  assert.throws(
+    () =>
+      evaluateExportControl(
+        exportControlInput({
+          responsePackage: {
+            rawResponsePackage: [{ recordRef: 'readiness-passport-alpha', sourcePayload: 'raw packet' }],
+          },
         }),
       ),
     /raw export content field/i,

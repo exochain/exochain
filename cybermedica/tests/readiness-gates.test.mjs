@@ -44,6 +44,71 @@ const staleEvidence = Object.freeze({
   status: 'approved',
 });
 
+function launchGateInput(overrides = {}) {
+  return {
+    tenantId: 'tenant-site-alpha',
+    protocolId: 'protocol-cm-001',
+    actor: { did: 'did:exo:principal-investigator-alpha', kind: 'human' },
+    launchChecks: {
+      protocolApproved: true,
+      irbApproved: true,
+      clinicalTrialAgreementExecuted: true,
+      informationManagementPlanApproved: true,
+      feasibilityApproved: true,
+      startupRiskAssessmentApproved: true,
+      staffTrainingComplete: true,
+      delegationLogComplete: true,
+      consentVersionReady: true,
+      facilityReady: true,
+      equipmentReady: true,
+      productHandlingReady: true,
+      saeAeReportingReady: true,
+      monitoringArrangementsReady: true,
+      documentInventoryComplete: true,
+      sponsorCroApprovalsComplete: true,
+      aiReviewComplete: true,
+      qualityManagerSigned: true,
+      piSigned: true,
+      authorizedRepresentativeApproved: true,
+    },
+    unresolvedBlockers: [],
+    decisionForum: {
+      verified: true,
+      state: 'approved',
+      humanGate: { verified: true },
+      quorum: { status: 'met' },
+      openChallenge: false,
+    },
+    evidenceBundle: { complete: true, phiBoundaryAttested: true },
+    ...overrides,
+  };
+}
+
+function enrollmentGateInput(overrides = {}) {
+  return {
+    tenantId: 'tenant-site-alpha',
+    protocolId: 'protocol-cm-001',
+    actor: { did: 'did:exo:clinical-research-coordinator-alpha', kind: 'human' },
+    protocol: { status: 'active' },
+    launchGate: { status: 'approved', enrollmentAuthorizationActive: true },
+    consentForm: { status: 'active', version: 'ICF-v2' },
+    staffTraining: { complete: true, current: true },
+    delegation: { authorized: true, expired: false, revoked: false },
+    blockingRisks: [],
+    participantConsent: { required: true, status: 'active', revoked: false },
+    authority: { valid: true, revoked: false, expired: false, permissions: ['govern'] },
+    decisionForum: {
+      verified: true,
+      state: 'approved',
+      humanGate: { verified: true },
+      quorum: { status: 'met' },
+      openChallenge: false,
+    },
+    evidenceBundle: { complete: true, phiBoundaryAttested: true },
+    ...overrides,
+  };
+}
+
 test('control readiness is deterministic and stale evidence blocks active readiness unless formally waived', async () => {
   const { buildControlReadinessSnapshot } = await loadReadinessGates();
 
@@ -286,10 +351,7 @@ test('control readiness validates evidence hashes and records missing unapproved
 test('protocol launch gate denies unresolved blockers and requires human governed readiness approval', async () => {
   const { evaluateProtocolLaunchGate } = await loadReadinessGates();
 
-  const denied = evaluateProtocolLaunchGate({
-    tenantId: 'tenant-site-alpha',
-    protocolId: 'protocol-cm-001',
-    actor: { did: 'did:exo:principal-investigator-alpha', kind: 'human' },
+  const deniedInput = launchGateInput({
     launchChecks: {
       protocolApproved: true,
       irbApproved: true,
@@ -313,64 +375,44 @@ test('protocol launch gate denies unresolved blockers and requires human governe
       authorizedRepresentativeApproved: true,
     },
     unresolvedBlockers: [{ area: 'training', severity: 'critical', id: 'blocker-training-001' }],
-    decisionForum: {
-      verified: true,
-      state: 'approved',
-      humanGate: { verified: true },
-      quorum: { status: 'met' },
-      openChallenge: false,
-    },
-    evidenceBundle: { complete: true, phiBoundaryAttested: true },
   });
+  const denied = evaluateProtocolLaunchGate(deniedInput);
 
   assert.equal(denied.decision, 'denied');
   assert.equal(denied.failClosed, true);
   assert.ok(denied.reasons.includes('staff_training_incomplete'));
   assert.ok(denied.reasons.includes('unresolved_critical_blocker'));
   assert.equal(denied.enrollmentAuthorizationActive, false);
+  assert.equal(Object.hasOwn(denied, 'inputEcho'), false);
 
   const permitted = evaluateProtocolLaunchGate({
-    ...denied.inputEcho,
-    launchChecks: Object.fromEntries(Object.keys(denied.inputEcho.launchChecks).map((key) => [key, true])),
+    ...deniedInput,
+    launchChecks: Object.fromEntries(Object.keys(deniedInput.launchChecks).map((key) => [key, true])),
     unresolvedBlockers: [],
   });
 
   assert.equal(permitted.decision, 'permitted');
   assert.equal(permitted.enrollmentAuthorizationActive, true);
   assert.equal(permitted.exochainProductionClaim, false);
+  assert.equal(Object.hasOwn(permitted, 'inputEcho'), false);
 });
 
 test('enrollment gate denies inactive protocol launch and superseded consent versions', async () => {
   const { evaluateEnrollmentGate } = await loadReadinessGates();
 
-  const denied = evaluateEnrollmentGate({
-    tenantId: 'tenant-site-alpha',
-    protocolId: 'protocol-cm-001',
-    actor: { did: 'did:exo:clinical-research-coordinator-alpha', kind: 'human' },
-    protocol: { status: 'active' },
+  const deniedInput = enrollmentGateInput({
     launchGate: { status: 'pending', enrollmentAuthorizationActive: false },
     consentForm: { status: 'superseded', version: 'ICF-v1' },
-    staffTraining: { complete: true, current: true },
-    delegation: { authorized: true, expired: false, revoked: false },
-    blockingRisks: [],
-    participantConsent: { required: true, status: 'active', revoked: false },
-    authority: { valid: true, revoked: false, expired: false, permissions: ['govern'] },
-    decisionForum: {
-      verified: true,
-      state: 'approved',
-      humanGate: { verified: true },
-      quorum: { status: 'met' },
-      openChallenge: false,
-    },
-    evidenceBundle: { complete: true, phiBoundaryAttested: true },
   });
+  const denied = evaluateEnrollmentGate(deniedInput);
 
   assert.equal(denied.decision, 'denied');
   assert.ok(denied.reasons.includes('launch_gate_not_approved'));
   assert.ok(denied.reasons.includes('consent_form_superseded'));
+  assert.equal(Object.hasOwn(denied, 'inputEcho'), false);
 
   const permitted = evaluateEnrollmentGate({
-    ...denied.inputEcho,
+    ...deniedInput,
     launchGate: { status: 'approved', enrollmentAuthorizationActive: true },
     consentForm: { status: 'active', version: 'ICF-v2' },
   });
@@ -378,4 +420,46 @@ test('enrollment gate denies inactive protocol launch and superseded consent ver
   assert.equal(permitted.decision, 'permitted');
   assert.equal(permitted.participantMayEnroll, true);
   assert.equal(permitted.trustState, 'inactive');
+  assert.equal(Object.hasOwn(permitted, 'inputEcho'), false);
+});
+
+test('launch and enrollment gates reject protected content and secrets before decision output', async () => {
+  const { evaluateEnrollmentGate, evaluateProtocolLaunchGate } = await loadReadinessGates();
+
+  assert.throws(
+    () =>
+      evaluateProtocolLaunchGate(
+        launchGateInput({
+          sourceDocumentBody: 'Source document narrative for participant Alice.',
+        }),
+      ),
+    /protected content|source document/i,
+  );
+
+  assert.throws(
+    () =>
+      evaluateEnrollmentGate(
+        enrollmentGateInput({
+          participantConsent: {
+            required: true,
+            status: 'active',
+            revoked: false,
+            medicalRecordNumber: 'MRN: CM-001',
+          },
+        }),
+      ),
+    /protected content|medicalRecordNumber/i,
+  );
+
+  assert.throws(
+    () =>
+      evaluateEnrollmentGate(
+        enrollmentGateInput({
+          adapterEvidence: {
+            privateKey: 'root-signing-material',
+          },
+        }),
+      ),
+    /protected content|privateKey/i,
+  );
 });

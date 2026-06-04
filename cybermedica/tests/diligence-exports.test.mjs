@@ -25,6 +25,11 @@ async function loadDiligenceExports() {
   }
 }
 
+const RESPONSE_PACKAGE_HASH = '3333333333333333333333333333333333333333333333333333333333333333';
+const REQUEST_HASH = '4444444444444444444444444444444444444444444444444444444444444444';
+const DISCLOSURE_LOG_HASH = '5555555555555555555555555555555555555555555555555555555555555555';
+const HUMAN_REVIEW_HASH = '6666666666666666666666666666666666666666666666666666666666666666';
+
 const exportInput = Object.freeze({
   tenantId: 'tenant-site-alpha',
   targetTenantId: 'tenant-site-alpha',
@@ -44,6 +49,36 @@ const exportInput = Object.freeze({
   },
   manifestHlc: { physicalMs: 1790000000000, logical: 21 },
   custodyDigest: 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+  responsePackage: {
+    packageRef: 'diligence-response-package-alpha',
+    packageHash: RESPONSE_PACKAGE_HASH,
+    requestRef: 'sponsor-cro-request-alpha',
+    workItemRef: 'sponsor-cro-work-item-alpha',
+    recipientTenantId: 'tenant-sponsor-alpha',
+    artifactEvidenceIds: ['evidence-training-001', 'evidence-facility-001'],
+    generatedAtHlc: { physicalMs: 1790000000000, logical: 20 },
+    metadataOnly: true,
+    rawContentExcluded: true,
+    protectedContentExcluded: true,
+  },
+  sponsorCroRequestEvidence: {
+    requestRef: 'sponsor-cro-request-alpha',
+    requestHash: REQUEST_HASH,
+    requesterClass: 'sponsor',
+    workItemRef: 'sponsor-cro-work-item-alpha',
+    workItemStatus: 'approved_for_response',
+    disclosureEventRef: 'disclosure-event-sponsor-cro-alpha',
+    disclosureLogHash: DISCLOSURE_LOG_HASH,
+    decisionForumMatterRef: 'df-sponsor-cro-request-alpha',
+    humanReviewHash: HUMAN_REVIEW_HASH,
+    responsePackageHash: RESPONSE_PACKAGE_HASH,
+    linkedRecipientTenantId: 'tenant-sponsor-alpha',
+    metadataOnly: true,
+    sourcePayloadExcluded: true,
+    protectedContentExcluded: true,
+    productionTrustClaim: false,
+    linkedAtHlc: { physicalMs: 1790000000000, logical: 19 },
+  },
   artifacts: [
     {
       evidenceId: 'evidence-training-001',
@@ -80,6 +115,9 @@ test('diligence export manifests are deterministic hash-only and inactive until 
   assert.equal(manifestA.receipt.receiptId, manifestB.receipt.receiptId);
   assert.equal(manifestA.exochainProductionClaim, false);
   assert.equal(manifestA.trustState, 'inactive');
+  assert.deepEqual(manifestA.sponsorCroRequestRefs, ['sponsor-cro-request-alpha']);
+  assert.deepEqual(manifestA.sponsorCroWorkItemRefs, ['sponsor-cro-work-item-alpha']);
+  assert.equal(manifestA.responsePackageHash, RESPONSE_PACKAGE_HASH);
   assert.deepEqual(Object.keys(manifestA.manifestArtifacts[0]), [
     'artifactHash',
     'artifactType',
@@ -89,6 +127,7 @@ test('diligence export manifests are deterministic hash-only and inactive until 
     'evidenceId',
     'tenantScopedPseudonym',
   ]);
+  assert.doesNotMatch(JSON.stringify(manifestA), /raw request|source document|Participant Alice|access token/iu);
 });
 
 test('diligence export denies raw protected content before manifest or receipt creation', async () => {
@@ -106,6 +145,30 @@ test('diligence export denies raw protected content before manifest or receipt c
         ],
       }),
     /protected content/i,
+  );
+
+  assert.throws(
+    () =>
+      buildDiligenceExportManifest({
+        ...exportInput,
+        sponsorCroRequestEvidence: {
+          ...exportInput.sponsorCroRequestEvidence,
+          rawRequestNarrative: 'Participant Alice Example source request text.',
+        },
+      }),
+    /raw sponsor\/cro request content|protected content/i,
+  );
+
+  assert.throws(
+    () =>
+      buildDiligenceExportManifest({
+        ...exportInput,
+        responsePackage: {
+          ...exportInput.responsePackage,
+          accessToken: 'secret-token-value',
+        },
+      }),
+    /secret field|protected content/i,
   );
 });
 
@@ -138,4 +201,80 @@ test('diligence export fails closed for tenant mismatch revoked grant or missing
 
   assert.equal(noAuthority.decision, 'denied');
   assert.ok(noAuthority.reasons.includes('authority_permission_missing'));
+});
+
+test('diligence export fails closed without controlled Sponsor/CRO request and response-package linkage', async () => {
+  const { buildDiligenceExportManifest } = await loadDiligenceExports();
+
+  const absent = buildDiligenceExportManifest({
+    ...exportInput,
+    sponsorCroRequestEvidence: null,
+  });
+
+  assert.equal(absent.decision, 'denied');
+  assert.equal(absent.failClosed, true);
+  assert.equal(absent.receipt, null);
+  assert.ok(absent.reasons.includes('sponsor_cro_request_evidence_absent'));
+
+  const malformed = buildDiligenceExportManifest({
+    ...exportInput,
+    sponsorCroRequestEvidence: {
+      requestRef: '',
+      requestHash: 'not-a-digest',
+      requesterClass: 'public_observer',
+      workItemRef: '',
+      workItemStatus: 'draft',
+      disclosureEventRef: '',
+      disclosureLogHash: 'bad',
+      decisionForumMatterRef: '',
+      humanReviewHash: 'bad',
+      responsePackageHash: 'bad',
+      linkedRecipientTenantId: 'tenant-other',
+      metadataOnly: false,
+      sourcePayloadExcluded: false,
+      protectedContentExcluded: false,
+      productionTrustClaim: true,
+      linkedAtHlc: { physicalMs: 1790000000000, logical: -1 },
+    },
+    responsePackage: {
+      packageRef: '',
+      packageHash: 'not-a-digest',
+      requestRef: 'other-request',
+      workItemRef: 'other-work-item',
+      recipientTenantId: 'tenant-other',
+      artifactEvidenceIds: ['evidence-training-001'],
+      generatedAtHlc: { physicalMs: 1790000000, logical: 22 },
+      metadataOnly: false,
+      rawContentExcluded: false,
+      protectedContentExcluded: false,
+    },
+  });
+
+  assert.equal(malformed.decision, 'denied');
+  assert.equal(malformed.receipt, null);
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_ref_absent'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_hash_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_requester_class_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_work_item_ref_absent'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_work_item_status_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_disclosure_event_ref_absent'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_disclosure_log_hash_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_decision_forum_matter_absent'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_human_review_hash_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_hash_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_ref_absent'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_hash_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_request_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_work_item_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_recipient_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_artifact_scope_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_metadata_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_raw_content_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_protected_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_recipient_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_metadata_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_source_payload_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_protected_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('production_trust_claim_forbidden'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_link_time_invalid'));
 });

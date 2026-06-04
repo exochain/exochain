@@ -31,14 +31,14 @@ const DIGEST_5 = '55555555555555555555555555555555555555555555555555555555555555
 const DIGEST_6 = '6666666666666666666666666666666666666666666666666666666666666666';
 
 const REQUIRED_DOCTRINE_LAYERS = [
-  'data',
-  'deployment',
-  'doctrine',
-  'documentation',
-  'domain',
-  'doors',
-  'drift',
   'ground_truth',
+  'doctrine',
+  'domain',
+  'data',
+  'doors',
+  'documentation',
+  'deployment',
+  'drift',
 ];
 
 const REQUIRED_ACCEPTANCE_DOMAINS = [
@@ -68,6 +68,16 @@ const BOB_ESCALATION_IDS = [
 ];
 
 const ACTIVATION_GATE_IDS = Array.from({ length: 18 }, (_, index) => `PTAG-${String(index + 1).padStart(3, '0')}`);
+const ROLE_DASHBOARD_ROLES = [
+  'auditor',
+  'coordinator',
+  'cro_portfolio_manager',
+  'decision_forum',
+  'principal_investigator',
+  'quality_manager',
+  'site_leader',
+  'sponsor_viewer',
+];
 
 async function loadReleaseReadinessMatrix() {
   try {
@@ -138,6 +148,69 @@ function openQuestion(questionId, escalationId, index, overrides = {}) {
     productionActivationOnly: escalated,
     escalatedToBob: escalated,
     reviewedAtHlc: { physicalMs: 1800000300000, logical: index },
+    metadataOnly: true,
+    protectedContentExcluded: true,
+    ...overrides,
+  };
+}
+
+function driftStateUpdateEvidence(overrides = {}) {
+  return {
+    driftLoopId: 'cmdrift_release_readiness_alpha',
+    driftLoopHash: DIGEST_1,
+    driftLoopReceiptHash: DIGEST_2,
+    stateUpdateHash: DIGEST_3,
+    stateUpdateTargets: ['readiness', 'passport', 'quality_state'],
+    cqiCycleHash: DIGEST_4,
+    cqiCycleReceiptHash: DIGEST_5,
+    inquiryCqiBacklogReceiptHash: DIGEST_6,
+    manualNavigationReady: true,
+    manualNavigationEffectiveUseAcknowledged: true,
+    roleManualCoverageReceiptHash: DIGEST_F,
+    trustState: 'inactive',
+    exochainProductionClaim: false,
+    reviewedAtHlc: { physicalMs: 1800000450000, logical: 0 },
+    metadataOnly: true,
+    protectedContentExcluded: true,
+    ...overrides,
+  };
+}
+
+function roleDashboardTrustStateEvidence(overrides = {}) {
+  return {
+    schema: 'cybermedica.role_dashboard_trust_state_lineage.v1',
+    roleDashboardSummaryHash: DIGEST_A,
+    roleDashboardReceiptHash: DIGEST_B,
+    roleDashboardTrustStateViewHash: DIGEST_C,
+    dashboardRoles: ROLE_DASHBOARD_ROLES,
+    dashboardHashRefs: ROLE_DASHBOARD_ROLES.map((role, index) => ({
+      role,
+      dashboardHash: [DIGEST_1, DIGEST_2, DIGEST_3, DIGEST_4, DIGEST_5, DIGEST_6, DIGEST_E, DIGEST_F][index],
+      trustStateViewHash: [DIGEST_F, DIGEST_E, DIGEST_6, DIGEST_5, DIGEST_4, DIGEST_3, DIGEST_2, DIGEST_1][index],
+    })),
+    trustState: 'inactive',
+    exochainProductionClaim: false,
+    canShowProductionTrustClaim: false,
+    activationLineageAccepted: true,
+    publicClaimReviewReceiptHash: DIGEST_1,
+    publicClaimReviewPackageHash: DIGEST_2,
+    productionClaimLiftReceiptHash: DIGEST_3,
+    productionClaimLiftTrustState: 'inactive',
+    productionClaimLiftCanLiftProductionClaim: false,
+    productionClaimLiftRoleDashboardProviderReceiptHash: DIGEST_B,
+    productionClaimLiftRoleDashboardProviderSummaryHash: DIGEST_A,
+    productionClaimLiftRoleDashboardProviderTrustStateViewHash: DIGEST_C,
+    productionClaimLiftRoleDashboardReadinessReceiptHash: DIGEST_E,
+    productionClaimLiftRoleDashboardReadinessSummaryHash: DIGEST_F,
+    productionClaimLiftRoleDashboardReadinessTrustStateViewHash: DIGEST_D,
+    productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_B,
+    productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_A,
+    productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: DIGEST_C,
+    productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_E,
+    productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_F,
+    productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: DIGEST_D,
+    productionClaimLiftRoleDashboardRoles: ROLE_DASHBOARD_ROLES,
+    reviewedAtHlc: { physicalMs: 1800000460000, logical: 0 },
     metadataOnly: true,
     protectedContentExcluded: true,
     ...overrides,
@@ -224,6 +297,8 @@ function releaseInput(overrides = {}) {
       recordedAtHlc: { physicalMs: 1800000500000, logical: 0 },
       metadataOnly: true,
     },
+    driftStateUpdateEvidence: driftStateUpdateEvidence(),
+    roleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence(),
     releaseDecision: {
       decision: 'baseline_ready_inactive_trust',
       reviewerDid: 'did:exo:site-leader-alpha',
@@ -288,9 +363,241 @@ test('release readiness matrix creates deterministic inactive baseline release r
   assert.equal(resultA.releaseReadiness.activationGateSummary.totalGateCount, 18);
   assert.equal(resultA.releaseReadiness.activationGateSummary.verifiedGateCount, 2);
   assert.equal(resultA.releaseReadiness.activationGateSummary.unverifiedProductionGateCount, 16);
+  assert.deepEqual(resultA.releaseReadiness.driftStateUpdateEvidence, {
+    cqiCycleHash: DIGEST_4,
+    cqiCycleReceiptHash: DIGEST_5,
+    driftLoopHash: DIGEST_1,
+    driftLoopId: 'cmdrift_release_readiness_alpha',
+    driftLoopReceiptHash: DIGEST_2,
+    inquiryCqiBacklogReceiptHash: DIGEST_6,
+    manualNavigationEffectiveUseAcknowledged: true,
+    manualNavigationReady: true,
+    roleManualCoverageReceiptHash: DIGEST_F,
+    stateUpdateHash: DIGEST_3,
+    stateUpdateTargets: ['passport', 'quality_state', 'readiness'],
+  });
+  assert.deepEqual(resultA.releaseReadiness.roleDashboardTrustStateEvidence, {
+    activationLineageAccepted: true,
+    canShowProductionTrustClaim: false,
+    dashboardHashRefs: ROLE_DASHBOARD_ROLES.map((role, index) => ({
+      dashboardHash: [DIGEST_1, DIGEST_2, DIGEST_3, DIGEST_4, DIGEST_5, DIGEST_6, DIGEST_E, DIGEST_F][index],
+      role,
+      trustStateViewHash: [DIGEST_F, DIGEST_E, DIGEST_6, DIGEST_5, DIGEST_4, DIGEST_3, DIGEST_2, DIGEST_1][index],
+    })),
+    dashboardRoles: ROLE_DASHBOARD_ROLES,
+    productionClaimLiftCanLiftProductionClaim: false,
+    productionClaimLiftRoleDashboardProviderReceiptHash: DIGEST_B,
+    productionClaimLiftRoleDashboardProviderSummaryHash: DIGEST_A,
+    productionClaimLiftRoleDashboardProviderTrustStateViewHash: DIGEST_C,
+    productionClaimLiftRoleDashboardReadinessReceiptHash: DIGEST_E,
+    productionClaimLiftRoleDashboardReadinessSummaryHash: DIGEST_F,
+    productionClaimLiftRoleDashboardReadinessTrustStateViewHash: DIGEST_D,
+    productionClaimLiftRoleDashboardRoles: ROLE_DASHBOARD_ROLES,
+    productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_B,
+    productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_A,
+    productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: DIGEST_C,
+    productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_E,
+    productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_F,
+    productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: DIGEST_D,
+    productionClaimLiftReceiptHash: DIGEST_3,
+    productionClaimLiftTrustState: 'inactive',
+    publicClaimReviewPackageHash: DIGEST_2,
+    publicClaimReviewReceiptHash: DIGEST_1,
+    roleDashboardReceiptHash: DIGEST_B,
+    roleDashboardSummaryHash: DIGEST_A,
+    roleDashboardTrustStateViewHash: DIGEST_C,
+    trustState: 'inactive',
+  });
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('drift_state_update'));
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('role_dashboard_trust_state'));
   assert.equal(resultA.receipt.trustState, 'inactive');
   assert.equal(resultA.receipt.exochainProductionClaim, false);
   assert.deepEqual(resultA, resultB);
+});
+
+test('release readiness matrix fails closed without safe Drift state-update evidence', async () => {
+  const { evaluateReleaseReadinessMatrix } = await loadReleaseReadinessMatrix();
+
+  const missingResult = evaluateReleaseReadinessMatrix(
+    releaseInput({
+      driftStateUpdateEvidence: null,
+    }),
+  );
+  const unsafeResult = evaluateReleaseReadinessMatrix(
+    releaseInput({
+      driftStateUpdateEvidence: driftStateUpdateEvidence({
+        stateUpdateTargets: ['readiness'],
+        manualNavigationReady: false,
+        manualNavigationEffectiveUseAcknowledged: false,
+        trustState: 'verified',
+        exochainProductionClaim: true,
+        reviewedAtHlc: { physicalMs: 1800000650000, logical: 0 },
+      }),
+    }),
+  );
+
+  assert.equal(missingResult.decision, 'denied');
+  assert.equal(missingResult.failClosed, true);
+  assert.ok(missingResult.reasons.includes('drift_state_update_evidence_absent'));
+  assert.equal(unsafeResult.decision, 'denied');
+  assert.equal(unsafeResult.failClosed, true);
+  assert.ok(unsafeResult.reasons.includes('drift_state_update_target_missing:passport'));
+  assert.ok(unsafeResult.reasons.includes('drift_state_update_target_missing:quality_state'));
+  assert.ok(unsafeResult.reasons.includes('drift_manual_navigation_ready_absent'));
+  assert.ok(unsafeResult.reasons.includes('drift_manual_navigation_effective_use_absent'));
+  assert.ok(unsafeResult.reasons.includes('drift_state_update_trust_state_invalid'));
+  assert.ok(unsafeResult.reasons.includes('drift_state_update_production_claim_forbidden'));
+  assert.ok(unsafeResult.reasons.includes('drift_state_update_review_after_release_decision'));
+});
+
+test('release readiness matrix requires safe role-dashboard trust-state lineage', async () => {
+  const { evaluateReleaseReadinessMatrix } = await loadReleaseReadinessMatrix();
+
+  const missingResult = evaluateReleaseReadinessMatrix(
+    releaseInput({
+      roleDashboardTrustStateEvidence: null,
+    }),
+  );
+  const unsafeResult = evaluateReleaseReadinessMatrix(
+    releaseInput({
+      roleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence({
+        dashboardRoles: ROLE_DASHBOARD_ROLES.filter((role) => role !== 'sponsor_viewer'),
+        dashboardHashRefs: [
+          {
+            role: 'quality_manager',
+            dashboardHash: DIGEST_1,
+            trustStateViewHash: DIGEST_2,
+          },
+          {
+            role: 'unapproved_role',
+            dashboardHash: DIGEST_3,
+            trustStateViewHash: DIGEST_4,
+          },
+        ],
+        roleDashboardReceiptHash: 'not-a-digest',
+        trustState: 'verified',
+        exochainProductionClaim: true,
+        canShowProductionTrustClaim: true,
+        activationLineageAccepted: false,
+        publicClaimReviewReceiptHash: 'bad-public-claim-receipt',
+        productionClaimLiftReceiptHash: 'bad-lift-receipt',
+        productionClaimLiftTrustState: 'verified',
+        productionClaimLiftCanLiftProductionClaim: true,
+        productionClaimLiftRoleDashboardProviderReceiptHash: 'bad-provider-receipt',
+        productionClaimLiftRoleDashboardProviderSummaryHash: 'bad-provider-summary',
+        productionClaimLiftRoleDashboardProviderTrustStateViewHash: 'bad-provider-view',
+        productionClaimLiftRoleDashboardReadinessReceiptHash: 'bad-readiness-receipt',
+        productionClaimLiftRoleDashboardReadinessSummaryHash: 'bad-readiness-summary',
+        productionClaimLiftRoleDashboardReadinessTrustStateViewHash: 'bad-readiness-view',
+        productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_D,
+        productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_C,
+        productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: 'bad-runtime-provider-view',
+        productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_4,
+        productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_5,
+        productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: 'bad-runtime-readiness-view',
+        productionClaimLiftRoleDashboardRoles: ROLE_DASHBOARD_ROLES.filter((role) => role !== 'sponsor_viewer').concat(
+          'marketing_admin',
+        ),
+        reviewedAtHlc: { physicalMs: 1800000650000, logical: 0 },
+      }),
+    }),
+  );
+  const mismatchResult = evaluateReleaseReadinessMatrix(
+    releaseInput({
+      roleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence({
+        productionClaimLiftRoleDashboardProviderReceiptHash: DIGEST_4,
+        productionClaimLiftRoleDashboardProviderSummaryHash: DIGEST_5,
+        productionClaimLiftRoleDashboardProviderTrustStateViewHash: DIGEST_6,
+        productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_D,
+        productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_C,
+        productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: DIGEST_5,
+        productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_1,
+        productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_2,
+        productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: DIGEST_6,
+      }),
+    }),
+  );
+
+  assert.equal(missingResult.decision, 'denied');
+  assert.equal(missingResult.failClosed, true);
+  assert.ok(missingResult.reasons.includes('role_dashboard_trust_state_evidence_absent'));
+  assert.equal(unsafeResult.decision, 'denied');
+  assert.equal(unsafeResult.failClosed, true);
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_receipt_hash_invalid'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_role_missing:sponsor_viewer'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_hash_ref_role_unsupported:unapproved_role'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_hash_ref_missing:auditor'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_trust_state_invalid'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_production_claim_forbidden'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_activation_lineage_absent'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_public_claim_review_receipt_hash_invalid'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_production_claim_lift_receipt_hash_invalid'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_production_claim_lift_state_invalid'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_production_claim_lift_forbidden'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_production_claim_lift_provider_receipt_hash_invalid'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_production_claim_lift_provider_summary_hash_invalid'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_production_claim_lift_provider_trust_state_view_hash_invalid'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_production_claim_lift_readiness_receipt_hash_invalid'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_production_claim_lift_readiness_summary_hash_invalid'));
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_production_claim_lift_readiness_trust_state_view_hash_invalid'));
+  assert.ok(
+    unsafeResult.reasons.includes(
+      'role_dashboard_production_claim_lift_runtime_source_provider_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafeResult.reasons.includes(
+      'role_dashboard_production_claim_lift_runtime_source_readiness_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafeResult.reasons.includes('role_dashboard_production_claim_lift_role_missing:sponsor_viewer'),
+  );
+  assert.ok(
+    unsafeResult.reasons.includes('role_dashboard_production_claim_lift_role_unsupported:marketing_admin'),
+  );
+  assert.equal(mismatchResult.decision, 'denied');
+  assert.equal(mismatchResult.failClosed, true);
+  assert.ok(
+    mismatchResult.reasons.includes('role_dashboard_production_claim_lift_provider_receipt_mismatch'),
+  );
+  assert.ok(
+    mismatchResult.reasons.includes('role_dashboard_production_claim_lift_provider_summary_mismatch'),
+  );
+  assert.ok(
+    mismatchResult.reasons.includes('role_dashboard_production_claim_lift_provider_trust_state_view_mismatch'),
+  );
+  assert.ok(
+    mismatchResult.reasons.includes(
+      'role_dashboard_production_claim_lift_runtime_source_provider_receipt_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatchResult.reasons.includes(
+      'role_dashboard_production_claim_lift_runtime_source_provider_summary_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatchResult.reasons.includes(
+      'role_dashboard_production_claim_lift_runtime_source_provider_trust_state_view_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatchResult.reasons.includes(
+      'role_dashboard_production_claim_lift_runtime_source_readiness_receipt_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatchResult.reasons.includes(
+      'role_dashboard_production_claim_lift_runtime_source_readiness_summary_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatchResult.reasons.includes(
+      'role_dashboard_production_claim_lift_runtime_source_readiness_trust_state_view_mismatch',
+    ),
+  );
+  assert.ok(unsafeResult.reasons.includes('role_dashboard_review_after_release_decision'));
 });
 
 test('release readiness matrix fails closed for incomplete acceptance coverage and broad Bob escalation', async () => {

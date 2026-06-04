@@ -15,12 +15,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ProtectedContentError, canonicalize, createEvidenceReceipt, sha256Hex } from './qms-contracts.mjs';
+import { buildTrustStateView } from './trust-state-view.mjs';
 
 export { ProtectedContentError };
 
 const HEX_64 = /^[0-9a-f]{64}$/u;
 const REQUIRED_PERMISSION = 'dashboard_view';
 const DASHBOARD_SCHEMA = 'cybermedica.role_dashboard.v1';
+const REQUIRED_MANUAL_CONTEXT_FAMILY = 'dashboard_card';
+const REQUIRED_ROLE_DASHBOARD_TRUST_STATE = 'inactive';
+const SPONSOR_CRO_REQUEST_WIDGETS = new Set(['sponsor_cro_requests']);
+const SPONSOR_CRO_REQUESTER_CLASSES = new Set(['cro', 'sponsor']);
+const SPONSOR_CRO_WORK_ITEM_STATUSES = new Set(['queued_for_site_review', 'routed_to_decision_forum']);
+
+const REQUIRED_MANUAL_INSTRUCTION_SLOTS = Object.freeze([
+  'approval_required',
+  'audit_export_result',
+  'common_failure_modes',
+  'evidence_needed',
+  'step_by_step',
+  'what_this_is',
+  'when_to_use_it',
+  'who_owns_it',
+]);
 
 const REQUIRED_WIDGETS = Object.freeze({
   auditor: [
@@ -154,6 +171,14 @@ const RAW_DASHBOARD_FIELDS = new Set([
   'rawdashboardtext',
   'rawmetricdata',
   'rawpayload',
+  'rawcrorequest',
+  'rawcrorequestbody',
+  'rawrequest',
+  'rawrequestbody',
+  'rawrequestcontent',
+  'rawrequestnarrative',
+  'rawsponsorrequest',
+  'rawsponsorrequestbody',
   'rawwidget',
   'rawwidgettext',
   'sourcebody',
@@ -258,6 +283,230 @@ function includesAll(left, right) {
   return right.every((value) => leftSet.has(value));
 }
 
+function normalizeManualNavigation(widget, metricKey, reasons) {
+  const manualNavigation = widget?.manualNavigation;
+  const instructionSlotRefs = sortedTextList(manualNavigation?.instructionSlotRefs);
+
+  addReason(
+    reasons,
+    manualNavigation?.drawerContextFamily !== REQUIRED_MANUAL_CONTEXT_FAMILY,
+    `widget_manual_context_invalid:${metricKey}`,
+  );
+  addReason(reasons, !hasText(manualNavigation?.manualSectionRef), `widget_manual_section_ref_absent:${metricKey}`);
+  addReason(reasons, !isDigest(manualNavigation?.manualSectionHash), `widget_manual_section_hash_invalid:${metricKey}`);
+  addReason(
+    reasons,
+    !isDigest(manualNavigation?.manualDrawerPolicyHash),
+    `widget_manual_drawer_policy_hash_invalid:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    !isDigest(manualNavigation?.crosslinkMatrixHash),
+    `widget_manual_crosslink_matrix_hash_invalid:${metricKey}`,
+  );
+  addReason(reasons, !hasText(manualNavigation?.roleManualRef), `widget_role_manual_ref_absent:${metricKey}`);
+  addReason(reasons, manualNavigation?.metadataOnly !== true, `widget_manual_metadata_boundary_invalid:${metricKey}`);
+  addReason(
+    reasons,
+    manualNavigation?.protectedContentExcluded !== true,
+    `widget_manual_protected_content_boundary_invalid:${metricKey}`,
+  );
+  addReason(reasons, manualNavigation?.productionTrustClaim === true, `widget_manual_production_claim_forbidden:${metricKey}`);
+  addReason(
+    reasons,
+    !includesAll(instructionSlotRefs, REQUIRED_MANUAL_INSTRUCTION_SLOTS),
+    `widget_manual_instruction_slots_missing:${metricKey}`,
+  );
+
+  return {
+    crosslinkMatrixHash: manualNavigation?.crosslinkMatrixHash ?? null,
+    drawerContextFamily: manualNavigation?.drawerContextFamily ?? null,
+    instructionSlotRefs,
+    manualDrawerPolicyHash: manualNavigation?.manualDrawerPolicyHash ?? null,
+    manualSectionHash: manualNavigation?.manualSectionHash ?? null,
+    manualSectionRef: manualNavigation?.manualSectionRef ?? null,
+    roleManualRef: manualNavigation?.roleManualRef ?? null,
+  };
+}
+
+function normalizeDocumentationReadiness(input, widget, metricKey, reasons) {
+  const documentationReadiness = widget?.documentationReadiness;
+  const requiredAcknowledgementRoleRefs = sortedTextList(documentationReadiness?.requiredAcknowledgementRoleRefs);
+  const acknowledgedRoleRefs = sortedTextList(documentationReadiness?.acknowledgedRoleRefs);
+
+  addReason(
+    reasons,
+    !hasText(documentationReadiness?.controlledDocumentDistributionRecordId),
+    `widget_document_distribution_record_absent:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    !isDigest(documentationReadiness?.controlledDocumentDistributionReceiptHash),
+    `widget_document_distribution_receipt_hash_invalid:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    !isDigest(documentationReadiness?.documentationPublicationReceiptHash),
+    `widget_document_publication_receipt_hash_invalid:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    !isDigest(documentationReadiness?.manualExportReceiptHash),
+    `widget_manual_export_receipt_hash_invalid:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    !isDigest(documentationReadiness?.orientationAssistantReceiptHash),
+    `widget_orientation_assistant_receipt_hash_invalid:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    !isDigest(documentationReadiness?.acknowledgementRosterHash),
+    `widget_document_acknowledgement_roster_hash_invalid:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    documentationReadiness?.effectiveUseAcknowledged !== true,
+    `widget_effective_use_acknowledgement_absent:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    documentationReadiness?.currentVersionOnly !== true,
+    `widget_current_document_version_boundary_invalid:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    documentationReadiness?.obsoleteVersionUseBlocked !== true,
+    `widget_obsolete_document_boundary_invalid:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    documentationReadiness?.metadataOnly !== true,
+    `widget_document_readiness_metadata_boundary_invalid:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    documentationReadiness?.protectedContentExcluded !== true,
+    `widget_document_readiness_protected_content_boundary_invalid:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    documentationReadiness?.productionTrustClaim === true,
+    `widget_document_readiness_production_claim_forbidden:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    hlcTuple(documentationReadiness?.distributionPublishedAtHlc) === null,
+    `widget_document_distribution_time_invalid:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    hlcAfter(documentationReadiness?.distributionPublishedAtHlc, input?.dashboard?.generatedAtHlc),
+    `widget_document_distribution_after_dashboard:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    requiredAcknowledgementRoleRefs.length === 0 || acknowledgedRoleRefs.length === 0,
+    `widget_document_acknowledgement_roles_missing:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    requiredAcknowledgementRoleRefs.length > 0 &&
+      acknowledgedRoleRefs.length > 0 &&
+      !includesAll(acknowledgedRoleRefs, requiredAcknowledgementRoleRefs),
+    `widget_document_acknowledgement_roles_incomplete:${metricKey}`,
+  );
+
+  return {
+    acknowledgedRoleRefs,
+    acknowledgementRosterHash: documentationReadiness?.acknowledgementRosterHash ?? null,
+    controlledDocumentDistributionReceiptHash:
+      documentationReadiness?.controlledDocumentDistributionReceiptHash ?? null,
+    controlledDocumentDistributionRecordId: documentationReadiness?.controlledDocumentDistributionRecordId ?? null,
+    currentVersionOnly: documentationReadiness?.currentVersionOnly === true,
+    distributionPublishedAtHlc: documentationReadiness?.distributionPublishedAtHlc ?? null,
+    documentationPublicationReceiptHash: documentationReadiness?.documentationPublicationReceiptHash ?? null,
+    effectiveUseAcknowledged: documentationReadiness?.effectiveUseAcknowledged === true,
+    manualExportReceiptHash: documentationReadiness?.manualExportReceiptHash ?? null,
+    obsoleteVersionUseBlocked: documentationReadiness?.obsoleteVersionUseBlocked === true,
+    orientationAssistantReceiptHash: documentationReadiness?.orientationAssistantReceiptHash ?? null,
+    requiredAcknowledgementRoleRefs,
+  };
+}
+
+function normalizeSponsorCroRequestEvidence(input, widget, metricKey, reasons) {
+  if (!SPONSOR_CRO_REQUEST_WIDGETS.has(metricKey)) {
+    return null;
+  }
+
+  const evidence = widget?.sponsorCroRequestEvidence;
+  if (evidence === null || evidence === undefined) {
+    addReason(reasons, true, `sponsor_cro_request_evidence_absent:${metricKey}`);
+    return null;
+  }
+
+  addReason(reasons, !hasText(evidence?.requestRef), `sponsor_cro_request_ref_absent:${metricKey}`);
+  addReason(reasons, !isDigest(evidence?.requestHash), `sponsor_cro_request_hash_invalid:${metricKey}`);
+  addReason(
+    reasons,
+    !SPONSOR_CRO_REQUESTER_CLASSES.has(evidence?.requesterClass),
+    `sponsor_cro_requester_class_invalid:${metricKey}`,
+  );
+  addReason(reasons, !hasText(evidence?.workItemRef), `sponsor_cro_work_item_ref_absent:${metricKey}`);
+  addReason(
+    reasons,
+    !SPONSOR_CRO_WORK_ITEM_STATUSES.has(evidence?.workItemStatus),
+    `sponsor_cro_work_item_status_invalid:${metricKey}`,
+  );
+  addReason(reasons, !hasText(evidence?.disclosureEventRef), `sponsor_cro_disclosure_event_ref_absent:${metricKey}`);
+  addReason(
+    reasons,
+    !isDigest(evidence?.disclosureLogHash),
+    `sponsor_cro_disclosure_log_hash_invalid:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    !hasText(evidence?.decisionForumMatterRef),
+    `sponsor_cro_decision_forum_matter_absent:${metricKey}`,
+  );
+  addReason(reasons, !isDigest(evidence?.humanReviewHash), `sponsor_cro_human_review_hash_invalid:${metricKey}`);
+  addReason(reasons, !hasText(evidence?.responseWorkflowRef), `sponsor_cro_response_workflow_absent:${metricKey}`);
+  addReason(reasons, hlcTuple(evidence?.linkedAtHlc) === null, `sponsor_cro_request_link_time_invalid:${metricKey}`);
+  addReason(
+    reasons,
+    hlcAfter(evidence?.linkedAtHlc, input?.dashboard?.generatedAtHlc),
+    `sponsor_cro_request_link_after_dashboard:${metricKey}`,
+  );
+  addReason(reasons, evidence?.metadataOnly !== true, `sponsor_cro_request_metadata_boundary_invalid:${metricKey}`);
+  addReason(
+    reasons,
+    evidence?.sourcePayloadExcluded !== true,
+    `sponsor_cro_request_source_payload_boundary_invalid:${metricKey}`,
+  );
+  addReason(
+    reasons,
+    evidence?.protectedContentExcluded !== true,
+    `sponsor_cro_request_protected_boundary_invalid:${metricKey}`,
+  );
+
+  return {
+    decisionForumMatterRef: evidence?.decisionForumMatterRef ?? null,
+    disclosureEventRef: evidence?.disclosureEventRef ?? null,
+    disclosureLogHash: evidence?.disclosureLogHash ?? null,
+    humanReviewHash: evidence?.humanReviewHash ?? null,
+    linkedAtHlc: evidence?.linkedAtHlc ?? null,
+    metadataOnly: evidence?.metadataOnly === true,
+    protectedContentExcluded: evidence?.protectedContentExcluded === true,
+    requestHash: evidence?.requestHash ?? null,
+    requesterClass: evidence?.requesterClass ?? null,
+    requestRef: evidence?.requestRef ?? null,
+    responseWorkflowRef: evidence?.responseWorkflowRef ?? null,
+    sourcePayloadExcluded: evidence?.sourcePayloadExcluded === true,
+    workItemRef: evidence?.workItemRef ?? null,
+    workItemStatus: evidence?.workItemStatus ?? null,
+  };
+}
+
 function hasAuthorityPermission(authority, permission) {
   return Array.isArray(authority?.permissions) && authority.permissions.includes(permission);
 }
@@ -334,6 +583,104 @@ function evaluateDisclosureLog(input, reasons) {
   addReason(reasons, hlcAfter(log?.loggedAtHlc, input?.dashboard?.generatedAtHlc), 'disclosure_log_after_dashboard_generation');
 }
 
+function normalizeTrustStateView(input, reasons) {
+  const trustStateView = buildTrustStateView({
+    productionTrustActivation: input?.productionTrustActivation,
+    requireProductionTrustActivationLineage: true,
+    requirePublicClaimReviewLineage: true,
+  });
+  const lineage = trustStateView.productionTrustActivationLineage;
+
+  addReason(
+    reasons,
+    trustStateView.status !== REQUIRED_ROLE_DASHBOARD_TRUST_STATE,
+    `trust_state_view_status_not_inactive:${trustStateView.status}`,
+  );
+  addReason(reasons, trustStateView.activationLineageAccepted !== true, 'trust_state_view_lineage_not_accepted');
+  addReason(
+    reasons,
+    trustStateView.unsafeBlockedByCount > 0,
+    'trust_state_view_blocker_payload_disclosure',
+  );
+  addReason(reasons, trustStateView.actionsDisabled !== true, 'trust_state_view_actions_disabled_required');
+  addReason(reasons, trustStateView.canShowProductionTrustClaim === true, 'trust_state_view_claim_display_forbidden');
+
+  if (trustStateView.activationLineageAccepted !== true) {
+    for (const block of trustStateView.blockedBy) {
+      addReason(reasons, true, `trust_state_view_block:${block}`);
+    }
+  }
+
+  return {
+    activationLineageAccepted: trustStateView.activationLineageAccepted === true,
+    actionsDisabled: trustStateView.actionsDisabled === true,
+    blockedBy: sortedTextList(trustStateView.blockedBy),
+    bobEscalations: sortedTextList(trustStateView.bobEscalations),
+    canShowProductionTrustClaim: trustStateView.canShowProductionTrustClaim === true,
+    productionTrustActivationLineage:
+      lineage === null
+        ? null
+        : {
+            activationState: lineage.activationState,
+            claimId: lineage.claimId,
+            exochainProductionClaim: lineage.exochainProductionClaim === true,
+            publicClaimReviewPackageHash: lineage.publicClaimReviewPackageHash,
+            publicClaimReviewProductionClaimLiftCanLiftProductionClaim:
+              lineage.publicClaimReviewProductionClaimLiftCanLiftProductionClaim,
+            publicClaimReviewProductionClaimLiftReceiptHash:
+              lineage.publicClaimReviewProductionClaimLiftReceiptHash,
+            publicClaimReviewProductionClaimLiftRoleDashboardProviderReceiptHash:
+              lineage.publicClaimReviewProductionClaimLiftRoleDashboardProviderReceiptHash,
+            publicClaimReviewProductionClaimLiftRoleDashboardProviderSummaryHash:
+              lineage.publicClaimReviewProductionClaimLiftRoleDashboardProviderSummaryHash,
+            publicClaimReviewProductionClaimLiftRoleDashboardProviderTrustStateViewHash:
+              lineage.publicClaimReviewProductionClaimLiftRoleDashboardProviderTrustStateViewHash,
+            publicClaimReviewProductionClaimLiftRoleDashboardReadinessReceiptHash:
+              lineage.publicClaimReviewProductionClaimLiftRoleDashboardReadinessReceiptHash,
+            publicClaimReviewProductionClaimLiftRoleDashboardReadinessSummaryHash:
+              lineage.publicClaimReviewProductionClaimLiftRoleDashboardReadinessSummaryHash,
+            publicClaimReviewProductionClaimLiftRoleDashboardReadinessTrustStateViewHash:
+              lineage.publicClaimReviewProductionClaimLiftRoleDashboardReadinessTrustStateViewHash,
+            publicClaimReviewProductionClaimLiftRoleDashboardRoles:
+              sortedTextList(lineage.publicClaimReviewProductionClaimLiftRoleDashboardRoles),
+            publicClaimReviewProductionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash:
+              lineage.publicClaimReviewProductionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash,
+            publicClaimReviewProductionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash:
+              lineage.publicClaimReviewProductionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash,
+            publicClaimReviewProductionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash:
+              lineage.publicClaimReviewProductionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash,
+            publicClaimReviewProductionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash:
+              lineage.publicClaimReviewProductionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash,
+            publicClaimReviewProductionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash:
+              lineage.publicClaimReviewProductionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash,
+            publicClaimReviewProductionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash:
+              lineage.publicClaimReviewProductionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash,
+            publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardReceiptHash:
+              lineage.publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardReceiptHash,
+            publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardSummaryHash:
+              lineage.publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardSummaryHash,
+            publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardTrustStateViewHash:
+              lineage.publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceProviderRoleDashboardTrustStateViewHash,
+            publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardReceiptHash:
+              lineage.publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardReceiptHash,
+            publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardSummaryHash:
+              lineage.publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardSummaryHash,
+            publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardTrustStateViewHash:
+              lineage.publicClaimReviewProductionClaimLiftAdapterActivationRuntimeSourceReadinessRoleDashboardTrustStateViewHash,
+            publicClaimReviewProductionClaimLiftTrustState:
+              lineage.publicClaimReviewProductionClaimLiftTrustState,
+            publicClaimReviewReceiptHash: lineage.publicClaimReviewReceiptHash,
+            publicClaimReviewStatus: lineage.publicClaimReviewStatus,
+            publicClaimReviewTrustState: lineage.publicClaimReviewTrustState,
+          },
+    requestedStatus: trustStateView.requestedStatus,
+    schema: trustStateView.schema,
+    severity: trustStateView.severity,
+    status: trustStateView.status,
+    unsafeBlockedByCount: trustStateView.unsafeBlockedByCount,
+  };
+}
+
 function widgetAccessState(input, widget) {
   const actorRoles = sortedTextList(input?.actor?.roleRefs);
   const policyRoles = sortedTextList(input?.accessPolicy?.allowedRoleRefs);
@@ -361,6 +708,9 @@ function normalizeWidget(input, widget, requiredSet, reasons) {
   const sourceFamilies = sortedTextList(widget?.sourceFamilies);
   const sensitivityTags = sortedTextList(widget?.sensitivityTags);
   const siteRefs = sortedTextList(widget?.siteRefs);
+  const manualNavigation = normalizeManualNavigation(widget, metricKey, reasons);
+  const documentationReadiness = normalizeDocumentationReadiness(input, widget, metricKey, reasons);
+  const sponsorCroRequestEvidence = normalizeSponsorCroRequestEvidence(input, widget, metricKey, reasons);
 
   addReason(reasons, !hasText(widget?.widgetRef), `widget_ref_absent:${metricKey}`);
   addReason(reasons, !hasText(widget?.metricKey), 'widget_metric_key_absent');
@@ -399,7 +749,10 @@ function normalizeWidget(input, widget, requiredSet, reasons) {
     statusBasisPoints: widget?.statusBasisPoints ?? 0,
     recordCount: widget?.recordCount ?? 0,
     criticalCount: widget?.criticalCount ?? 0,
+    documentationReadiness,
+    manualNavigation,
     overdueCount: widget?.overdueCount ?? 0,
+    sponsorCroRequestEvidence,
   };
 }
 
@@ -469,12 +822,14 @@ function deniedDashboard(role, requiredWidgetKeys, suppressedWidgetCount, denial
     trustState: 'inactive',
     exochainProductionClaim: false,
     canShowProductionTrustClaim: false,
+    trustStateView: null,
+    trustStateViewHash: null,
     denialReasons: uniqueReasons(denialReasons),
     receipt: null,
   };
 }
 
-function buildReceipt(input, role, visibleWidgets, summary, dashboardHash) {
+function buildReceipt(input, role, visibleWidgets, summary, dashboardHash, trustStateViewHash) {
   return createEvidenceReceipt({
     actorDid: input.actor.did,
     artifactHash: dashboardHash,
@@ -484,11 +839,19 @@ function buildReceipt(input, role, visibleWidgets, summary, dashboardHash) {
     custodyDigest: sha256Hex({
       disclosureLogHash: input.disclosureLog.disclosureLogHash,
       sourceIndexHash: input.dashboard.sourceIndexHash,
+      trustStateViewHash,
       widgetManifestHash: input.dashboard.widgetManifestHash,
     }),
     hlcTimestamp: `${input.dashboard.generatedAtHlc.physicalMs}:${input.dashboard.generatedAtHlc.logical}`,
     schema: 'cybermedica.role_dashboard_receipt.v1',
-    sensitivityTags: ['metadata_only', 'qms_dashboard', role],
+    sensitivityTags: [
+      'metadata_only',
+      'production_claim_lift_role_dashboard_lineage',
+      'production_trust_activation',
+      'public_claim_review_lineage',
+      'qms_dashboard',
+      role,
+    ],
     sourceSystem: 'cybermedica.role_dashboards',
     tenantId: input.tenantId,
     visibleWidgetCount: summary.visibleWidgetCount,
@@ -503,6 +866,7 @@ export function evaluateRoleDashboard(input) {
   const role = evaluateDashboard(input, reasons);
   evaluateAccessPolicy(input, reasons);
   evaluateDisclosureLog(input, reasons);
+  const trustStateView = normalizeTrustStateView(input, reasons);
   const { requiredWidgetKeys, suppressedWidgetCount, visibleWidgets } = evaluateWidgets(input, role, reasons);
 
   if (reasons.length > 0) {
@@ -510,14 +874,16 @@ export function evaluateRoleDashboard(input) {
   }
 
   const summary = dashboardSummary(visibleWidgets, suppressedWidgetCount);
+  const trustStateViewHash = sha256Hex(trustStateView);
   const dashboardHash = sha256Hex({
     dashboardRef: input.dashboard.dashboardRef,
     disclosureLogHash: input.disclosureLog.disclosureLogHash,
     role,
     summary,
+    trustStateViewHash,
     visibleWidgets,
   });
-  const receipt = buildReceipt(input, role, visibleWidgets, summary, dashboardHash);
+  const receipt = buildReceipt(input, role, visibleWidgets, summary, dashboardHash, trustStateViewHash);
 
   return {
     schema: DASHBOARD_SCHEMA,
@@ -527,9 +893,11 @@ export function evaluateRoleDashboard(input) {
     visibleWidgets,
     summary,
     dashboardHash,
-    trustState: 'inactive',
-    exochainProductionClaim: false,
-    canShowProductionTrustClaim: false,
+    trustState: trustStateView.status,
+    exochainProductionClaim: trustStateView.canShowProductionTrustClaim,
+    canShowProductionTrustClaim: trustStateView.canShowProductionTrustClaim,
+    trustStateView,
+    trustStateViewHash,
     denialReasons: [],
     receipt,
   };

@@ -84,6 +84,9 @@ function outputFor(outputClass, index) {
     unresolvedAssumptionsReviewed: true,
     recommendedHumanReviewerRoles: reviewerRoles,
     requiresHumanReview: true,
+    aiGeneratedSummaryMarked: aiBacked,
+    humanEnteredEvidencePolicy: 'preserve_original_require_human_review',
+    humanEvidenceOverwriteAllowed: false,
     advisoryOnly: true,
     finalAuthority: false,
     canOpenCqiItem: outputClass === 'orientation_guidance',
@@ -368,6 +371,30 @@ test('assistant explainability validates same-tick HLC routing and low-confidenc
   assert.ok(unsafeOrdering.reasons.includes('review_route_due_not_after_queue'));
   assert.ok(unsafeOrdering.reasons.includes('output_generated_after_route:asst-output-workflow_guidance'));
   assert.ok(unsafeOrdering.reasons.includes('output_low_confidence_escalation_absent:asst-output-workflow_guidance'));
+});
+
+test('assistant explainability marks AI-generated summaries and blocks silent human evidence overwrite', async () => {
+  const { evaluateAssistantExplainability } = await loadAssistantExplainability();
+
+  const denied = evaluateAssistantExplainability(explainabilityInput({
+    outputs: REQUIRED_OUTPUT_CLASSES.map((outputClass, index) =>
+      outputClass === 'decision_support_summary'
+        ? {
+            ...outputFor(outputClass, index),
+            aiGeneratedSummaryMarked: false,
+            humanEnteredEvidencePolicy: 'silent_overwrite',
+            humanEvidenceOverwriteAllowed: true,
+          }
+        : outputFor(outputClass, index),
+    ),
+  }));
+
+  assert.equal(denied.decision, 'denied');
+  assert.ok(denied.reasons.includes('output_ai_generated_marker_absent:asst-output-decision_support_summary'));
+  assert.ok(denied.reasons.includes('output_human_evidence_policy_invalid:asst-output-decision_support_summary'));
+  assert.ok(denied.reasons.includes('output_human_evidence_overwrite_forbidden:asst-output-decision_support_summary'));
+  assert.equal(denied.explainabilityRecord, null);
+  assert.equal(denied.receipt, null);
 });
 
 test('assistant explainability rejects raw assistant output protected content and secrets before receipts', async () => {

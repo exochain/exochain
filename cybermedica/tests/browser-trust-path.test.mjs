@@ -98,9 +98,10 @@ test('browser trust path verifies server adjudication while keeping the client n
   assert.equal(resultA.exochainProductionClaim, false);
   assert.equal(resultA.productionTrustClaimAllowed, false);
   assert.equal(resultA.clientTrustAuthority, 'none');
+  assert.deepEqual(resultA.activationGateIds, ['PTAG-018']);
   assert.deepEqual(resultA.blockedBy, []);
   assert.equal(resultA.pathHash, resultB.pathHash);
-  assert.ok(resultA.sourceEvidence.includes('docs/context/CYBERMEDICA_PRODUCTION_TRUST_ACTIVATION_GATES.md#ptag-018'));
+  assert.ok(resultA.sourceEvidence.includes('docs/context/CYBERMEDICA_PRODUCTION_TRUST_ACTIVATION_GATES.md#PTAG-018'));
 });
 
 test('browser trust path denies missing server trust fabric and client enforcement attempts', async () => {

@@ -54,6 +54,8 @@ function aiControlReviewInput() {
       reviewId: 'AI-CTRL-REVIEW-SITE-ALPHA-0001',
       reviewClass: 'control_evidence_completeness',
       modelRefHash: DIGEST_B,
+      modelVersionHash: DIGEST_C,
+      modelConfigurationHash: DIGEST_D,
       promptHash: DIGEST_C,
       inputManifestHash: DIGEST_D,
       outputHash: DIGEST_E,
@@ -229,6 +231,10 @@ test('AI control review maps evidence to controls and creates deterministic inac
   assert.equal(resultA.aiControlReview.aiFinalAuthority, false);
   assert.equal(resultA.aiControlReview.exochainProductionClaim, false);
   assert.equal(resultA.aiControlReview.trustState, 'inactive');
+  assert.deepEqual(resultA.aiControlReview.sourceRequirements, ['FR-008']);
+  assert.equal(resultA.aiControlReview.modelRefHash, DIGEST_B);
+  assert.equal(resultA.aiControlReview.modelVersionHash, DIGEST_C);
+  assert.equal(resultA.aiControlReview.modelConfigurationHash, DIGEST_D);
   assert.equal(resultA.aiControlReview.evidenceCompletenessBasisPoints, 7500);
   assert.equal(resultA.aiControlReview.evidenceFreshnessBasisPoints, 7500);
   assert.deepEqual(resultA.aiControlReview.findingSummary, { critical: 1, major: 1, minor: 0, observation: 1 });
@@ -257,6 +263,17 @@ test('AI control review maps evidence to controls and creates deterministic inac
   assert.equal(resultA.aiControlReview.reviewId, resultB.aiControlReview.reviewId);
   assert.equal(resultA.receipt.receiptId, resultB.receipt.receiptId);
   assert.equal(resultA.receipt.actionHash, resultB.receipt.actionHash);
+
+  const changedModelVersion = runAiControlReview({
+    ...aiControlReviewInput(),
+    review: {
+      ...aiControlReviewInput().review,
+      modelVersionHash: DIGEST_F,
+    },
+  });
+  assert.notEqual(resultA.aiControlReview.reviewId, changedModelVersion.aiControlReview.reviewId);
+  assert.notEqual(resultA.receipt.actionHash, changedModelVersion.receipt.actionHash);
+
   assert.equal(resultA.receipt.anchorPayload.artifactType, 'ai_control_review_findings');
   assert.equal(resultA.receipt.trustState, 'inactive');
   assert.doesNotMatch(JSON.stringify(resultA), /source document body|raw ai output|participant alice|finding narrative/iu);
@@ -268,6 +285,8 @@ test('AI control review fails closed for final authority incomplete evidence and
   input.review = {
     ...input.review,
     modelRefHash: '',
+    modelVersionHash: 'not-a-digest',
+    modelConfigurationHash: '',
     promptHash: 'not-a-digest',
     outputHash: null,
     finalAuthority: true,
@@ -308,6 +327,8 @@ test('AI control review fails closed for final authority incomplete evidence and
   assert.ok(denied.reasons.includes('ai_review_not_logged'));
   assert.ok(denied.reasons.includes('ai_prompt_output_retention_absent'));
   assert.ok(denied.reasons.includes('ai_model_ref_hash_invalid'));
+  assert.ok(denied.reasons.includes('ai_model_version_hash_invalid'));
+  assert.ok(denied.reasons.includes('ai_model_configuration_hash_invalid'));
   assert.ok(denied.reasons.includes('ai_prompt_hash_invalid'));
   assert.ok(denied.reasons.includes('ai_output_hash_invalid'));
   assert.ok(denied.reasons.includes('ai_review_completed_before_start'));

@@ -44,6 +44,20 @@ const REQUIRED_CHANGE_TYPES = Object.freeze([
   'training_notice',
   'workflow_guide_update',
 ]);
+const REQUIRED_EXPORT_FORMATS = Object.freeze(['markdown', 'pdf', 'print', 'word']);
+const REQUIRED_EXPORT_PACKET_SCOPES = Object.freeze([
+  'audit_training_packet',
+  'role_manual_packet',
+  'workflow_manual_packet',
+]);
+const REQUIRED_ORIENTATION_CITATION_FAMILIES = Object.freeze(['control', 'manual_section', 'procedure']);
+const REQUIRED_ORIENTATION_SIGNAL_FAMILIES = Object.freeze([
+  'ai_orientation_question',
+  'manual_confusion',
+  'missing_documentation',
+  'product_gap',
+]);
+const REQUIRED_ORIENTATION_GUIDANCE_LABEL = 'guidance_not_policy_authority';
 
 const RAW_PUBLICATION_FIELDS = new Set([
   'assistantbody',
@@ -52,6 +66,9 @@ const RAW_PUBLICATION_FIELDS = new Set([
   'changenarrative',
   'content',
   'draftcontent',
+  'exportbody',
+  'exportcontent',
+  'exportpayload',
   'freetext',
   'freetextnote',
   'manualbody',
@@ -59,14 +76,19 @@ const RAW_PUBLICATION_FIELDS = new Set([
   'manualtext',
   'notes',
   'publicationcopy',
+  'packetbody',
+  'packetcontent',
   'rawassistantcontent',
   'rawchangecontent',
   'rawcontent',
+  'rawexportcontent',
   'rawmanualcontent',
+  'rawmanualpacket',
   'rawpublicationcontent',
   'rawquery',
   'releasecopy',
   'releasenotesbody',
+  'renderedcontent',
   'reviewnotes',
   'sourcebody',
   'sourcedocumentbody',
@@ -170,6 +192,10 @@ function uniqueReasons(reasons) {
 
 function missingValues(required, actual) {
   return required.filter((value) => !actual.includes(value));
+}
+
+function includesAll(actual, expected) {
+  return expected.every((value) => actual.includes(value));
 }
 
 function hlcTuple(hlc) {
@@ -300,17 +326,104 @@ function evaluateCycle(cycle, policy, reasons) {
 }
 
 function evaluateSourceBacklog(sourceBacklog, cycle, reasons) {
+  const acknowledgedRoleRefs = sortedTextList(sourceBacklog?.manualNavigationAcknowledgedRoleRefs);
+  const requiredAcknowledgementRoleRefs = sortedTextList(sourceBacklog?.manualNavigationRequiredAcknowledgementRoleRefs);
+
   addReason(reasons, !isDigest(sourceBacklog?.inquiryCqiBacklogReceiptHash), 'source_backlog_receipt_hash_invalid');
+  addReason(reasons, !isDigest(sourceBacklog?.inquiryCqiBacklogDigest), 'source_backlog_digest_invalid');
+  addReason(reasons, !isDigest(sourceBacklog?.userAssistanceReceiptHash), 'source_user_assistance_receipt_hash_invalid');
+  addReason(
+    reasons,
+    !isDigest(sourceBacklog?.userAssistanceAnalyticsDigest),
+    'source_user_assistance_analytics_digest_invalid',
+  );
   addReason(reasons, !isDigest(sourceBacklog?.documentationRunbookReceiptHash), 'source_runbook_receipt_hash_invalid');
   addReason(reasons, !isDigest(sourceBacklog?.currentManualSetHash), 'source_manual_set_hash_invalid');
   addReason(reasons, !isDigest(sourceBacklog?.currentManualIndexHash), 'source_manual_index_hash_invalid');
   addReason(reasons, !isDigest(sourceBacklog?.cqiActionPackageHash), 'source_cqi_action_package_hash_invalid');
   addReason(reasons, !hasText(sourceBacklog?.driftImprovementRef), 'source_drift_improvement_ref_absent');
+  addReason(
+    reasons,
+    !isDigest(sourceBacklog?.contextualManualDrawerReceiptHash),
+    'source_manual_navigation_drawer_receipt_hash_invalid',
+  );
+  addReason(reasons, !isDigest(sourceBacklog?.contextualManualDrawerHash), 'source_manual_navigation_drawer_hash_invalid');
+  addReason(
+    reasons,
+    !isDigest(sourceBacklog?.controlledDocumentDistributionReceiptHash),
+    'source_manual_navigation_distribution_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(sourceBacklog?.priorDocumentationPublicationReceiptHash),
+    'source_prior_publication_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(sourceBacklog?.manualExportReceiptHash),
+    'source_manual_navigation_manual_export_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(sourceBacklog?.roleManualCoverageReceiptHash),
+    'source_manual_navigation_role_manual_coverage_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(sourceBacklog?.acknowledgementRosterHash),
+    'source_manual_navigation_acknowledgement_roster_hash_invalid',
+  );
+  addReason(
+    reasons,
+    acknowledgedRoleRefs.length === 0 || requiredAcknowledgementRoleRefs.length === 0,
+    'source_manual_navigation_acknowledgement_roles_absent',
+  );
+  addReason(
+    reasons,
+    acknowledgedRoleRefs.length > 0 &&
+      requiredAcknowledgementRoleRefs.length > 0 &&
+      !includesAll(acknowledgedRoleRefs, requiredAcknowledgementRoleRefs),
+    'source_manual_navigation_acknowledgement_incomplete',
+  );
+  addReason(
+    reasons,
+    sourceBacklog?.manualNavigationCurrentVersionOnly !== true,
+    'source_manual_navigation_current_version_boundary_invalid',
+  );
+  addReason(
+    reasons,
+    sourceBacklog?.manualNavigationObsoleteVersionUseBlocked !== true,
+    'source_manual_navigation_obsolete_version_boundary_invalid',
+  );
+  addReason(
+    reasons,
+    sourceBacklog?.manualNavigationEffectiveUseAcknowledged !== true,
+    'source_manual_navigation_effective_use_absent',
+  );
   addReason(reasons, sourceBacklog?.noRawInquiryContent !== true, 'source_raw_inquiry_boundary_absent');
   addReason(reasons, hlcTuple(sourceBacklog?.reviewedAtHlc) === null, 'source_backlog_review_time_invalid');
   addReason(reasons, hlcBefore(sourceBacklog?.reviewedAtHlc, cycle?.openedAtHlc), 'source_backlog_review_before_cycle_open');
   addReason(reasons, sourceBacklog?.metadataOnly !== true, 'source_backlog_metadata_boundary_invalid');
   addReason(reasons, sourceBacklog?.protectedContentExcluded !== true, 'source_backlog_protected_boundary_invalid');
+
+  return {
+    acknowledgementRosterHash: sourceBacklog?.acknowledgementRosterHash ?? null,
+    acknowledgedRoleRefs,
+    contextualManualDrawerHash: sourceBacklog?.contextualManualDrawerHash ?? null,
+    contextualManualDrawerReceiptHash: sourceBacklog?.contextualManualDrawerReceiptHash ?? null,
+    controlledDocumentDistributionReceiptHash: sourceBacklog?.controlledDocumentDistributionReceiptHash ?? null,
+    currentVersionOnly: sourceBacklog?.manualNavigationCurrentVersionOnly === true,
+    inquiryCqiBacklogDigest: sourceBacklog?.inquiryCqiBacklogDigest ?? null,
+    inquiryCqiBacklogReceiptHash: sourceBacklog?.inquiryCqiBacklogReceiptHash ?? null,
+    manualExportReceiptHash: sourceBacklog?.manualExportReceiptHash ?? null,
+    manualNavigationEffectiveUseAcknowledged: sourceBacklog?.manualNavigationEffectiveUseAcknowledged === true,
+    obsoleteVersionUseBlocked: sourceBacklog?.manualNavigationObsoleteVersionUseBlocked === true,
+    priorDocumentationPublicationReceiptHash: sourceBacklog?.priorDocumentationPublicationReceiptHash ?? null,
+    requiredAcknowledgementRoleRefs,
+    roleManualCoverageReceiptHash: sourceBacklog?.roleManualCoverageReceiptHash ?? null,
+    userAssistanceAnalyticsDigest: sourceBacklog?.userAssistanceAnalyticsDigest ?? null,
+    userAssistanceReceiptHash: sourceBacklog?.userAssistanceReceiptHash ?? null,
+  };
 }
 
 function evaluatePublicationEvidence(evidence, reasons) {
@@ -529,6 +642,129 @@ function evaluateAiAssistant(aiAssistant, cycle, reasons) {
   return true;
 }
 
+function evaluateManualExportReadiness(readiness, versionGovernance, publicationPackage, aiAssistant, reasons) {
+  const exportFormats = sortedTextList(readiness?.exportFormats);
+  const packetScopes = sortedTextList(readiness?.packetScopes);
+  const orientationCitationFamilies = sortedTextList(readiness?.orientationCitationFamilies);
+  const orientationConfusionSignalFamilies = sortedTextList(readiness?.orientationConfusionSignalFamilies);
+  const roleRefs = sortedTextList(readiness?.roleRefs);
+  const workflowRefs = sortedTextList(readiness?.workflowRefs);
+
+  addReason(reasons, !hasText(readiness?.exportPacketRef), 'manual_export_packet_ref_absent');
+  addReason(reasons, !isDigest(readiness?.manualExportReceiptHash), 'manual_export_receipt_hash_invalid');
+  addReason(reasons, !isDigest(readiness?.manualExportPacketHash), 'manual_export_packet_hash_invalid');
+  addReason(reasons, !isDigest(readiness?.sourceManualSetHash), 'manual_export_source_manual_set_hash_invalid');
+  addReason(reasons, !isDigest(readiness?.sourceManualIndexHash), 'manual_export_source_manual_index_hash_invalid');
+  addReason(
+    reasons,
+    !isDigest(readiness?.roleManualCoverageReceiptHash),
+    'manual_export_role_manual_coverage_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    isDigest(readiness?.sourceManualSetHash) &&
+      isDigest(versionGovernance?.newManualSetHash) &&
+      readiness.sourceManualSetHash !== versionGovernance.newManualSetHash,
+    'manual_export_manual_set_mismatch',
+  );
+  addReason(
+    reasons,
+    isDigest(readiness?.sourceManualIndexHash) &&
+      isDigest(publicationPackage?.manualIndexHash) &&
+      readiness.sourceManualIndexHash !== publicationPackage.manualIndexHash,
+    'manual_export_manual_index_mismatch',
+  );
+  addReason(
+    reasons,
+    !isDigest(readiness?.orientationAssistantReceiptHash),
+    'manual_export_orientation_receipt_hash_invalid',
+  );
+  addReason(reasons, !isDigest(readiness?.orientationRecordHash), 'manual_export_orientation_record_hash_invalid');
+  addReason(
+    reasons,
+    aiAssistant?.used !== false &&
+      isDigest(readiness?.orientationAssistantReceiptHash) &&
+      hasText(aiAssistant?.orientationReceiptHash) &&
+      readiness.orientationAssistantReceiptHash !== aiAssistant.orientationReceiptHash,
+    'manual_export_orientation_receipt_mismatch',
+  );
+  addReason(
+    reasons,
+    readiness?.orientationGuidanceLabel !== REQUIRED_ORIENTATION_GUIDANCE_LABEL,
+    'manual_export_orientation_guidance_label_invalid',
+  );
+  evaluateRequiredSet(
+    orientationCitationFamilies,
+    REQUIRED_ORIENTATION_CITATION_FAMILIES,
+    'manual_export_orientation_citation_family_missing',
+    'manual_export_orientation_citation_family_unsupported',
+    reasons,
+  );
+  evaluateRequiredSet(
+    orientationConfusionSignalFamilies,
+    REQUIRED_ORIENTATION_SIGNAL_FAMILIES,
+    'manual_export_orientation_signal_family_missing',
+    'manual_export_orientation_signal_family_unsupported',
+    reasons,
+  );
+  evaluateRequiredSet(
+    exportFormats,
+    REQUIRED_EXPORT_FORMATS,
+    'manual_export_format_missing',
+    'manual_export_format_unsupported',
+    reasons,
+  );
+  evaluateRequiredSet(
+    packetScopes,
+    REQUIRED_EXPORT_PACKET_SCOPES,
+    'manual_export_packet_scope_missing',
+    'manual_export_packet_scope_unsupported',
+    reasons,
+  );
+  addReason(reasons, roleRefs.length === 0, 'manual_export_roles_absent');
+  addReason(reasons, workflowRefs.length === 0, 'manual_export_workflows_absent');
+  addReason(reasons, !isDigest(readiness?.exportPolicyHash), 'manual_export_policy_hash_invalid');
+  addReason(reasons, !isDigest(readiness?.boundaryAttestationHash), 'manual_export_boundary_hash_invalid');
+  addReason(reasons, readiness?.humanAuthorized !== true, 'manual_export_human_authorization_absent');
+  addReason(reasons, readiness?.noRawManualContent !== true, 'manual_export_raw_manual_boundary_absent');
+  addReason(reasons, readiness?.noUnapprovedClaims !== true, 'manual_export_claim_review_boundary_absent');
+  addReason(reasons, readiness?.metadataOnly !== true, 'manual_export_metadata_boundary_invalid');
+  addReason(reasons, readiness?.protectedContentExcluded !== true, 'manual_export_protected_boundary_invalid');
+  addReason(reasons, readiness?.noProductionTrustClaim !== true, 'manual_export_production_trust_claim_forbidden');
+  addReason(reasons, hlcTuple(readiness?.readyAtHlc) === null, 'manual_export_ready_time_invalid');
+  addReason(
+    reasons,
+    hlcBefore(readiness?.readyAtHlc, publicationPackage?.publishedAtHlc),
+    'manual_export_ready_before_publication',
+  );
+
+  return {
+    exportFormats,
+    packetScopes,
+    orientationCitationFamilies,
+    orientationConfusionSignalFamilies,
+    roleRefs,
+    workflowRefs,
+  };
+}
+
+function evaluateSourceBacklogManualNavigationLinkage(sourceSummary, manualExportReadiness, reasons) {
+  addReason(
+    reasons,
+    isDigest(sourceSummary.manualExportReceiptHash) &&
+      isDigest(manualExportReadiness?.manualExportReceiptHash) &&
+      sourceSummary.manualExportReceiptHash !== manualExportReadiness.manualExportReceiptHash,
+    'source_manual_export_receipt_mismatch',
+  );
+  addReason(
+    reasons,
+    isDigest(sourceSummary.roleManualCoverageReceiptHash) &&
+      isDigest(manualExportReadiness?.roleManualCoverageReceiptHash) &&
+      sourceSummary.roleManualCoverageReceiptHash !== manualExportReadiness.roleManualCoverageReceiptHash,
+    'source_role_manual_coverage_receipt_mismatch',
+  );
+}
+
 function evaluateHumanReview(review, cycle, reasons) {
   addReason(reasons, !hasText(review?.reviewerDid), 'human_review_reviewer_absent');
   addReason(
@@ -569,15 +805,36 @@ function createPublicationDigest(input, publicationDomains, changeTypes) {
     publicationDomains,
     changeTypes,
     sourceBacklogReceiptHash: input?.sourceBacklog?.inquiryCqiBacklogReceiptHash ?? null,
+    sourceBacklogDigest: input?.sourceBacklog?.inquiryCqiBacklogDigest ?? null,
+    userAssistanceReceiptHash: input?.sourceBacklog?.userAssistanceReceiptHash ?? null,
+    userAssistanceAnalyticsDigest: input?.sourceBacklog?.userAssistanceAnalyticsDigest ?? null,
+    contextualManualDrawerReceiptHash: input?.sourceBacklog?.contextualManualDrawerReceiptHash ?? null,
+    controlledDocumentDistributionReceiptHash:
+      input?.sourceBacklog?.controlledDocumentDistributionReceiptHash ?? null,
+    priorDocumentationPublicationReceiptHash: input?.sourceBacklog?.priorDocumentationPublicationReceiptHash ?? null,
     crosslinkMatrixHash: input?.crosslinkRefresh?.matrixHash ?? null,
     newManualSetHash: input?.versionGovernance?.newManualSetHash ?? null,
     publicationArtifactHash: input?.publicationPackage?.publicationArtifactHash ?? null,
     manualIndexHash: input?.publicationPackage?.manualIndexHash ?? null,
+    manualExportReceiptHash: input?.manualExportReadiness?.manualExportReceiptHash ?? null,
+    manualExportPacketHash: input?.manualExportReadiness?.manualExportPacketHash ?? null,
+    roleManualCoverageReceiptHash: input?.manualExportReadiness?.roleManualCoverageReceiptHash ?? null,
+    orientationAssistantReceiptHash: input?.manualExportReadiness?.orientationAssistantReceiptHash ?? null,
     driftSignalHash: input?.driftFeedback?.driftSignalHash ?? null,
   });
 }
 
-function createPublicationSummary(input, reasons, publicationDomains, changeTypes, highRiskChangeRefs, aiAssistanceUsed, digest) {
+function createPublicationSummary(
+  input,
+  reasons,
+  publicationDomains,
+  changeTypes,
+  highRiskChangeRefs,
+  aiAssistanceUsed,
+  sourceBacklogSummary,
+  manualExportReadiness,
+  digest,
+) {
   return {
     schema: DOCUMENTATION_PUBLICATION_SCHEMA,
     ready: reasons.length === 0,
@@ -596,6 +853,32 @@ function createPublicationSummary(input, reasons, publicationDomains, changeType
     distributionReady: reasons.length === 0 && input?.acknowledgementPlan?.blockedSupersededUse === true,
     driftFeedbackReady: reasons.length === 0 && input?.driftFeedback?.cqiBacklogUpdated === true,
     aiAssistanceUsed,
+    manualExportReady: reasons.length === 0,
+    inquiryCqiBacklogReceiptHash: sourceBacklogSummary.inquiryCqiBacklogReceiptHash,
+    inquiryCqiBacklogDigest: sourceBacklogSummary.inquiryCqiBacklogDigest,
+    userAssistanceReceiptHash: sourceBacklogSummary.userAssistanceReceiptHash,
+    userAssistanceAnalyticsDigest: sourceBacklogSummary.userAssistanceAnalyticsDigest,
+    contextualManualDrawerHash: sourceBacklogSummary.contextualManualDrawerHash,
+    contextualManualDrawerReceiptHash: sourceBacklogSummary.contextualManualDrawerReceiptHash,
+    controlledDocumentDistributionReceiptHash: sourceBacklogSummary.controlledDocumentDistributionReceiptHash,
+    priorDocumentationPublicationReceiptHash: sourceBacklogSummary.priorDocumentationPublicationReceiptHash,
+    sourceBacklogManualNavigationAcknowledgedRoleRefs: sourceBacklogSummary.acknowledgedRoleRefs,
+    sourceBacklogManualNavigationRequiredAcknowledgementRoleRefs:
+      sourceBacklogSummary.requiredAcknowledgementRoleRefs,
+    sourceBacklogManualNavigationCurrentVersionOnly: sourceBacklogSummary.currentVersionOnly,
+    sourceBacklogManualNavigationObsoleteVersionUseBlocked: sourceBacklogSummary.obsoleteVersionUseBlocked,
+    sourceBacklogManualNavigationEffectiveUseAcknowledged:
+      sourceBacklogSummary.manualNavigationEffectiveUseAcknowledged,
+    manualExportReceiptHash: input?.manualExportReadiness?.manualExportReceiptHash ?? null,
+    manualExportPacketHash: input?.manualExportReadiness?.manualExportPacketHash ?? null,
+    roleManualCoverageReceiptHash: input?.manualExportReadiness?.roleManualCoverageReceiptHash ?? null,
+    manualExportFormats: manualExportReadiness.exportFormats,
+    manualExportPacketScopes: manualExportReadiness.packetScopes,
+    manualExportRoleRefs: manualExportReadiness.roleRefs,
+    manualExportWorkflowRefs: manualExportReadiness.workflowRefs,
+    orientationAssistantReceiptHash: input?.manualExportReadiness?.orientationAssistantReceiptHash ?? null,
+    orientationCitationFamilies: manualExportReadiness.orientationCitationFamilies,
+    orientationConfusionSignalFamilies: manualExportReadiness.orientationConfusionSignalFamilies,
     manualSetHash: input?.versionGovernance?.newManualSetHash ?? null,
     publicationPackageRef: input?.publicationPackage?.packageRef ?? null,
     sourceEvidence: [
@@ -613,7 +896,7 @@ export function evaluateDocumentationChangePublication(input) {
   evaluateTenantActorAuthority(input, reasons);
   evaluatePolicy(input?.publicationPolicy, reasons);
   evaluateCycle(input?.publicationCycle, input?.publicationPolicy, reasons);
-  evaluateSourceBacklog(input?.sourceBacklog, input?.publicationCycle, reasons);
+  const sourceBacklogSummary = evaluateSourceBacklog(input?.sourceBacklog, input?.publicationCycle, reasons);
   const publicationDomains = evaluatePublicationEvidence(input?.publicationEvidence, reasons);
   const { actualChangeTypes, changeRefs, highRiskChangeRefs } = evaluateChangeRequests(
     input?.changeRequests,
@@ -632,6 +915,14 @@ export function evaluateDocumentationChangePublication(input) {
   evaluateAcknowledgementPlan(input?.acknowledgementPlan, input?.publicationCycle, reasons);
   evaluateDriftFeedback(input?.driftFeedback, input?.publicationCycle, reasons);
   const aiAssistanceUsed = evaluateAiAssistant(input?.aiAssistant, input?.publicationCycle, reasons);
+  const manualExportReadiness = evaluateManualExportReadiness(
+    input?.manualExportReadiness,
+    input?.versionGovernance,
+    input?.publicationPackage,
+    input?.aiAssistant,
+    reasons,
+  );
+  evaluateSourceBacklogManualNavigationLinkage(sourceBacklogSummary, input?.manualExportReadiness, reasons);
   evaluateHumanReview(input?.humanReview, input?.publicationCycle, reasons);
   evaluateValidationEvidence(input?.validationEvidence, input?.publicationCycle, reasons);
 
@@ -644,6 +935,8 @@ export function evaluateDocumentationChangePublication(input) {
     actualChangeTypes,
     highRiskChangeRefs,
     aiAssistanceUsed,
+    sourceBacklogSummary,
+    manualExportReadiness,
     publicationDigest,
   );
 
@@ -667,7 +960,15 @@ export function evaluateDocumentationChangePublication(input) {
     classification: 'metadata_only_documentation_publication',
     custodyDigest: input.custodyDigest,
     hlcTimestamp: input.publicationCycle.publishedAtHlc,
-    sensitivityTags: ['documentation_metadata', 'manual_publication_metadata', 'no_raw_content'],
+    sensitivityTags: [
+      'documentation_metadata',
+      'manual_export_packet_metadata',
+      'manual_navigation_readiness',
+      'manual_publication_metadata',
+      'no_raw_content',
+      'orientation_guidance_metadata',
+      'role_manual_coverage_metadata',
+    ],
     sourceSystem: 'cybermedica',
   });
 

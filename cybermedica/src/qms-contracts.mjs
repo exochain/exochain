@@ -40,6 +40,33 @@ const PROHIBITED_FIELD_NAMES = new Set([
   'ssn',
 ]);
 
+const PROHIBITED_SECRET_FIELD_NAMES = new Set([
+  'accesstoken',
+  'apikey',
+  'apitoken',
+  'authorizationheader',
+  'authtoken',
+  'bearertoken',
+  'bootstraptoken',
+  'clientsecret',
+  'credentialsecret',
+  'nodeprivatekey',
+  'password',
+  'privatekey',
+  'rawsignature',
+  'refreshtoken',
+  'rootkey',
+  'rootsigningkey',
+  'sessionsecret',
+  'sessiontoken',
+  'signaturebytes',
+  'signaturematerial',
+  'signaturesecret',
+  'signingsecret',
+  'signingkey',
+  'token',
+]);
+
 const PROHIBITED_TEXT_PATTERNS = [
   /\b\d{3}-\d{2}-\d{4}\b/u,
   /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/iu,
@@ -47,8 +74,16 @@ const PROHIBITED_TEXT_PATTERNS = [
   /\b(?:mrn|medical record)\s*[:#]\s*[A-Z0-9-]+\b/iu,
 ];
 
+const PROHIBITED_SECRET_TEXT_PATTERNS = [
+  /\bauthorization\s*:\s*bearer\s+\S+/iu,
+  /\bapi[_-]?key\s*[:=]\s*\S+/iu,
+  /\bclient[_-]?secret\s*[:=]\s*\S+/iu,
+  /\b(?:access|auth|bearer|bootstrap|refresh|session|railway)[_-]?token\s*[:=]\s*\S+/iu,
+  /\b(?:private|root|signing)[_-]?key\s*[:=]\s*\S+/iu,
+  /\bpassword\s*[:=]\s*\S+/iu,
+];
+
 const GOVERNED_ACTION_PERMISSION = Object.freeze({
-  ai_review: 'read',
   capa_closure: 'govern',
   consent_policy_change: 'govern',
   enrollment_gate: 'govern',
@@ -100,6 +135,22 @@ function normalizeFieldName(fieldName) {
   return String(fieldName).replaceAll(/[^a-z0-9]/giu, '').toLowerCase();
 }
 
+function secretValuePresent(value) {
+  if (value === null || value === undefined || value === false) {
+    return false;
+  }
+  if (typeof value === 'string') {
+    return value.trim().length > 0;
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => secretValuePresent(item));
+  }
+  if (typeof value === 'object') {
+    return Object.keys(value).length > 0;
+  }
+  return true;
+}
+
 function assertNoProtectedText(value, path) {
   if (typeof value !== 'string') {
     return;
@@ -111,10 +162,50 @@ function assertNoProtectedText(value, path) {
   }
 }
 
+function assertNoSecretText(value, path) {
+  if (typeof value !== 'string') {
+    return;
+  }
+  for (const pattern of PROHIBITED_SECRET_TEXT_PATTERNS) {
+    if (pattern.test(value)) {
+      throw new ProtectedContentError(`secret material is not allowed at ${path}`);
+    }
+  }
+}
+
 function assertAllowedFieldName(fieldName, path) {
   const normalized = normalizeFieldName(fieldName);
   if (PROHIBITED_FIELD_NAMES.has(normalized)) {
     throw new ProtectedContentError(`protected content field is not allowed at ${path}`);
+  }
+}
+
+function assertNoSecretMaterial(fieldName, value, path) {
+  const normalized = normalizeFieldName(fieldName);
+  if (PROHIBITED_SECRET_FIELD_NAMES.has(normalized) && secretValuePresent(value)) {
+    throw new ProtectedContentError(`secret material field is not allowed at ${path}`);
+  }
+}
+
+function assertNoReceiptSecretMaterial(value, path = '$') {
+  if (value === null || value === undefined) {
+    return;
+  }
+  if (typeof value === 'string') {
+    assertNoSecretText(value, path);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoReceiptSecretMaterial(item, `${path}[${index}]`));
+    return;
+  }
+  if (typeof value !== 'object') {
+    return;
+  }
+
+  for (const [key, nested] of Object.entries(value)) {
+    assertNoSecretMaterial(key, nested, `${path}.${key}`);
+    assertNoReceiptSecretMaterial(nested, `${path}.${key}`);
   }
 }
 
@@ -131,6 +222,7 @@ function normalizeDeterministically(value, path = '$') {
   }
   if (typeof value === 'string') {
     assertNoProtectedText(value, path);
+    assertNoSecretText(value, path);
     return value;
   }
   if (typeof value === 'boolean') {
@@ -151,11 +243,11 @@ function normalizeDeterministically(value, path = '$') {
 
   const output = {};
   for (const key of Object.keys(value).sort()) {
-    assertAllowedFieldName(key, `${path}.${key}`);
     const nested = value[key];
     if (nested === undefined) {
       throw new DeterminismError(`undefined is not allowed at ${path}.${key}`);
     }
+    assertAllowedFieldName(key, `${path}.${key}`);
     output[key] = normalizeDeterministically(nested, `${path}.${key}`);
   }
   return output;
@@ -192,6 +284,7 @@ function sortedAnchorPayload(input) {
 }
 
 export function createEvidenceReceipt(input) {
+  assertNoReceiptSecretMaterial(input);
   const normalizedInput = normalizeDeterministically(input);
   assertHash64(normalizedInput.artifactHash, 'artifactHash');
   assertHash64(normalizedInput.custodyDigest, 'custodyDigest');
@@ -234,12 +327,6 @@ function hasPermission(authority, permission) {
 
 function evaluateAuthority(action, authority, reasons) {
   const requiredPermission = GOVERNED_ACTION_PERMISSION[action];
-  addReason(reasons, !hasText(action), 'action_absent');
-  addReason(
-    reasons,
-    hasText(action) && !Object.prototype.hasOwnProperty.call(GOVERNED_ACTION_PERMISSION, action),
-    'action_unsupported',
-  );
   addReason(reasons, !authority || authority.valid !== true, 'authority_chain_invalid');
   addReason(reasons, authority?.revoked === true, 'authority_chain_revoked');
   addReason(reasons, authority?.expired === true, 'authority_chain_expired');

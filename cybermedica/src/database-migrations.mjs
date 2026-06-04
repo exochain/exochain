@@ -36,6 +36,14 @@ const REQUIRED_MIGRATION_DOMAINS = Object.freeze([
   'validation',
 ]);
 
+const REQUIRED_OBJECT_STORAGE_ARTIFACT_CLASSES = Object.freeze([
+  'controlled_documents',
+  'diligence_exports',
+  'evidence_payloads',
+  'generated_reports',
+  'sensitive_artifacts',
+]);
+
 const POLICY_STATUSES = new Set(['active']);
 const DOMAIN_STATUSES = new Set(['ready']);
 const HUMAN_REVIEW_DECISIONS = new Set(['hold_for_migration_gap', 'migration_ready_inactive_trust']);
@@ -481,6 +489,85 @@ function evaluateDataBoundary(boundary, cycle, reasons) {
   };
 }
 
+function evaluateObjectStorageReadinessEvidence(evidence, dataBoundary, cycle, reasons) {
+  addReason(reasons, evidence === null || evidence === undefined, 'object_storage_readiness_evidence_absent');
+  addReason(
+    reasons,
+    evidence?.schema !== 'cybermedica.object_storage_readiness.v1',
+    'object_storage_readiness_schema_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.objectStorageReadinessReceiptHash),
+    'object_storage_readiness_receipt_hash_invalid',
+  );
+  addReason(reasons, !isDigest(evidence?.objectStorageReadinessHash), 'object_storage_readiness_hash_invalid');
+  addReason(reasons, !isDigest(evidence?.objectStorageBoundaryHash), 'object_storage_boundary_lineage_hash_invalid');
+  addReason(
+    reasons,
+    isDigest(evidence?.objectStorageBoundaryHash) &&
+      isDigest(dataBoundary?.objectStorageBoundaryHash) &&
+      evidence.objectStorageBoundaryHash !== dataBoundary.objectStorageBoundaryHash,
+    'object_storage_boundary_lineage_mismatch',
+  );
+  addReason(reasons, !hasText(evidence?.providerRef), 'object_storage_provider_ref_absent');
+  addReason(
+    reasons,
+    evidence?.status !== 'object_storage_ready_inactive_trust',
+    'object_storage_readiness_status_invalid',
+  );
+  addReason(reasons, evidence?.trustState !== 'inactive', 'object_storage_trust_state_not_inactive');
+  addReason(reasons, evidence?.externalReceiptStoreRequired !== true, 'object_storage_external_receipt_store_absent');
+  addReason(
+    reasons,
+    evidence?.rawPayloadsExcludedFromOperationalDb !== true,
+    'object_storage_raw_payload_db_boundary_absent',
+  );
+  addReason(
+    reasons,
+    evidence?.rawPayloadsExcludedFromReceipts !== true,
+    'object_storage_raw_payload_receipt_boundary_absent',
+  );
+  addReason(reasons, evidence?.directPublicAccessAllowed === true, 'object_storage_direct_public_access_allowed');
+  addReason(reasons, evidence?.metadataOnly !== true, 'object_storage_readiness_metadata_boundary_invalid');
+  addReason(reasons, evidence?.protectedContentExcluded !== true, 'object_storage_readiness_protected_boundary_invalid');
+  addReason(reasons, evidence?.productionTrustClaim === true, 'object_storage_production_claim_forbidden');
+  addReason(reasons, hlcTuple(evidence?.reviewedAtHlc) === null, 'object_storage_readiness_review_time_invalid');
+  addReason(
+    reasons,
+    hlcBefore(evidence?.reviewedAtHlc, cycle?.planLockedAtHlc),
+    'object_storage_readiness_review_before_migration_plan',
+  );
+  addReason(
+    reasons,
+    hlcAfter(evidence?.reviewedAtHlc, cycle?.validationRecordedAtHlc),
+    'object_storage_readiness_review_after_migration_validation',
+  );
+
+  const artifactClassesCovered = sortedTextList(evidence?.artifactClassesCovered);
+  evaluateRequiredSet(
+    artifactClassesCovered,
+    REQUIRED_OBJECT_STORAGE_ARTIFACT_CLASSES,
+    'object_storage_artifact_class_missing',
+    'object_storage_artifact_class_unsupported',
+    reasons,
+  );
+
+  return {
+    artifactClassesCovered,
+    directPublicAccessAllowed: evidence?.directPublicAccessAllowed === true,
+    externalReceiptStoreRequired: evidence?.externalReceiptStoreRequired === true,
+    objectStorageBoundaryHash: evidence?.objectStorageBoundaryHash ?? null,
+    objectStorageReadinessHash: evidence?.objectStorageReadinessHash ?? null,
+    objectStorageReadinessReceiptHash: evidence?.objectStorageReadinessReceiptHash ?? null,
+    providerRef: evidence?.providerRef ?? null,
+    rawPayloadsExcludedFromOperationalDb: evidence?.rawPayloadsExcludedFromOperationalDb === true,
+    rawPayloadsExcludedFromReceipts: evidence?.rawPayloadsExcludedFromReceipts === true,
+    status: evidence?.status ?? null,
+    trustState: evidence?.trustState ?? null,
+  };
+}
+
 function evaluateValidationEvidence(validation, cycle, reasons) {
   addReason(reasons, validation === null || validation === undefined, 'validation_evidence_absent');
   addReason(reasons, sortedTextList(validation?.commandRefs).length === 0, 'validation_commands_absent');
@@ -546,7 +633,15 @@ function evaluateAiAssistance(aiAssistance, reasons) {
   addReason(reasons, aiAssistance?.metadataOnly !== true, 'ai_assistance_metadata_boundary_invalid');
 }
 
-function buildMigrationReadiness(input, policySummary, domainCoverage, migrationSummary, dataBoundarySummary, validationSummary) {
+function buildMigrationReadiness(
+  input,
+  policySummary,
+  domainCoverage,
+  migrationSummary,
+  dataBoundarySummary,
+  objectStorageSummary,
+  validationSummary,
+) {
   const migrationReadinessHash = sha256Hex({
     auditRecordHash: input.auditRecord.auditRecordHash,
     dataBoundaryHash: input.dataBoundary.operationalDatabaseHash,
@@ -554,6 +649,9 @@ function buildMigrationReadiness(input, policySummary, domainCoverage, migration
     humanDecisionHash: input.humanReview.decisionHash,
     migrationRef: input.migrationCycle.migrationRef,
     migrationSequences: migrationSummary.migrationSequences,
+    objectStorageBoundaryHash: objectStorageSummary.objectStorageBoundaryHash,
+    objectStorageReadinessHash: objectStorageSummary.objectStorageReadinessHash,
+    objectStorageReadinessReceiptHash: objectStorageSummary.objectStorageReadinessReceiptHash,
     policyHash: input.migrationPolicy.policyHash,
     releaseCandidateRef: input.migrationCycle.releaseCandidateRef,
     schemaVersionFrom: migrationSummary.schemaVersionFrom,
@@ -590,8 +688,12 @@ function buildMigrationReadiness(input, policySummary, domainCoverage, migration
     schemaVersionTo: migrationSummary.schemaVersionTo,
     schemaMigrations: migrationSummary.migrationSummaries,
     dataBoundarySummary,
+    objectStorageReadinessSummary: objectStorageSummary,
     validationSummary,
     migrationReadinessHash,
+    objectStorageBoundaryHash: objectStorageSummary.objectStorageBoundaryHash,
+    objectStorageReadinessHash: objectStorageSummary.objectStorageReadinessHash,
+    objectStorageReadinessReceiptHash: objectStorageSummary.objectStorageReadinessReceiptHash,
     auditRecordHash: input.auditRecord.auditRecordHash,
     auditRecordedAtHlc: input.auditRecord.receiptRecordedAtHlc,
   };
@@ -606,7 +708,12 @@ function buildReceipt(input, migrationReadiness) {
     classification: 'restricted_metadata_only',
     custodyDigest: input.custodyDigest,
     hlcTimestamp: input.auditRecord.receiptRecordedAtHlc,
-    sensitivityTags: ['database_migration', 'metadata_only', 'inactive_trust_state'],
+    sensitivityTags: [
+      'database_migration',
+      'inactive_trust_state',
+      'metadata_only',
+      'object_storage_readiness_lineage',
+    ],
     sourceSystem: 'cybermedica-qms',
     tenantId: input.tenantId,
   });
@@ -622,6 +729,12 @@ export function evaluateDatabaseMigrationReadiness(input) {
   const domainCoverage = evaluateMigrationDomains(input?.migrationDomains, policySummary, input?.migrationCycle, reasons);
   const migrationSummary = evaluateSchemaMigrations(input?.schemaMigrations, input?.migrationCycle, reasons);
   const dataBoundarySummary = evaluateDataBoundary(input?.dataBoundary, input?.migrationCycle, reasons);
+  const objectStorageSummary = evaluateObjectStorageReadinessEvidence(
+    input?.objectStorageReadinessEvidence,
+    input?.dataBoundary,
+    input?.migrationCycle,
+    reasons,
+  );
   const validationSummary = evaluateValidationEvidence(input?.validationEvidence, input?.migrationCycle, reasons);
   evaluateHumanReview(input?.humanReview, input?.migrationCycle, reasons);
   evaluateAuditRecord(input?.auditRecord, input?.migrationCycle, input?.humanReview, reasons);
@@ -648,6 +761,7 @@ export function evaluateDatabaseMigrationReadiness(input) {
     domainCoverage,
     migrationSummary,
     dataBoundarySummary,
+    objectStorageSummary,
     validationSummary,
   );
 

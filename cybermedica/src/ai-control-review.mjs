@@ -18,6 +18,7 @@ import { canonicalize, createEvidenceReceipt, ProtectedContentError, sha256Hex }
 
 const HEX_64 = /^[0-9a-f]{64}$/u;
 const REQUIRED_PERMISSION = 'ai_control_review';
+const AI_CONTROL_REVIEW_SOURCE_REQUIREMENTS = Object.freeze(['FR-008']);
 const REVIEW_CLASSES = new Set([
   'control_evidence_completeness',
   'evidence_freshness_review',
@@ -162,6 +163,8 @@ function evaluateReview(input, reasons) {
   addReason(reasons, !hasText(review?.reviewId), 'ai_review_id_absent');
   addReason(reasons, !REVIEW_CLASSES.has(review?.reviewClass), 'ai_review_class_invalid');
   addReason(reasons, !isDigest(review?.modelRefHash), 'ai_model_ref_hash_invalid');
+  addReason(reasons, !isDigest(review?.modelVersionHash), 'ai_model_version_hash_invalid');
+  addReason(reasons, !isDigest(review?.modelConfigurationHash), 'ai_model_configuration_hash_invalid');
   addReason(reasons, !isDigest(review?.promptHash), 'ai_prompt_hash_invalid');
   addReason(reasons, !isDigest(review?.inputManifestHash), 'ai_input_manifest_hash_invalid');
   addReason(reasons, !isDigest(review?.outputHash), 'ai_output_hash_invalid');
@@ -446,10 +449,13 @@ function buildArtifactHash(input, normalizedControls, normalizedEvidenceLinks, n
       reviewerRoles,
     },
     requiredEscalationRoles: escalationRoles,
+    sourceRequirements: AI_CONTROL_REVIEW_SOURCE_REQUIREMENTS,
     review: {
       completedAtHlc: input.review.completedAtHlc,
       inputManifestHash: input.review.inputManifestHash,
+      modelConfigurationHash: input.review.modelConfigurationHash,
       modelRefHash: input.review.modelRefHash,
+      modelVersionHash: input.review.modelVersionHash,
       outputHash: input.review.outputHash,
       promptHash: input.review.promptHash,
       reviewClass: input.review.reviewClass,
@@ -528,7 +534,11 @@ export function runAiControlReview(input) {
       tenantId: input.tenantId,
       sourceReviewId: input.review.reviewId,
       reviewClass: input.review.reviewClass,
+      sourceRequirements: [...AI_CONTROL_REVIEW_SOURCE_REQUIREMENTS],
       aiAgentDid: input.aiAgent.did,
+      modelRefHash: input.review.modelRefHash,
+      modelVersionHash: input.review.modelVersionHash,
+      modelConfigurationHash: input.review.modelConfigurationHash,
       controlIds: normalizedControls.map((control) => control.controlId),
       evidenceCompletenessBasisPoints: metrics.evidenceCompletenessBasisPoints,
       evidenceFreshnessBasisPoints: metrics.evidenceFreshnessBasisPoints,

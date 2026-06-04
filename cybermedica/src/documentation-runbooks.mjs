@@ -61,12 +61,42 @@ const REQUIRED_INSPECTION_EVIDENCE = Object.freeze([
   'staff_training_records',
 ]);
 
+const REQUIRED_DOCUMENTATION_ARTIFACTS = Object.freeze([
+  'cybermedica_user_manual',
+  'site_leader_manual',
+  'principal_investigator_manual',
+  'coordinator_site_staff_manual',
+  'quality_manager_manual',
+  'cro_portfolio_manual',
+  'sponsor_viewer_manual',
+  'auditor_monitor_inspector_manual',
+  'decision_forum_manual',
+  'ai_quality_review_manual',
+  'tenant_administrator_manual',
+  'system_administrator_manual',
+  'evidence_chain_of_custody_manual',
+  'protocol_readiness_launch_gate_manual',
+  'consent_participant_protection_manual',
+  'deviation_capa_manual',
+  'training_delegation_manual',
+  'clinical_trial_product_accountability_manual',
+  'exochain_receipts_privacy_anchoring_guide',
+  'support_access_break_glass_emergency_runbook',
+  'sponsor_cro_diligence_packet_guide',
+  'audit_inspection_packet_guide',
+  'ai_governance_model_use_policy',
+  'deployment_backup_recovery_incident_response_runbook',
+]);
+
 const ACTIVE_POLICY_STATUSES = new Set(['active']);
 const READY_DOMAIN_STATUSES = new Set(['ready']);
 const HUMAN_DECISIONS = new Set(['documentation_pack_ready', 'hold_for_documentation_gap']);
 
 const RAW_DOCUMENTATION_FIELDS = new Set([
   'assistantbody',
+  'artifactbody',
+  'artifactcontent',
+  'artifacttext',
   'body',
   'content',
   'freetext',
@@ -78,6 +108,9 @@ const RAW_DOCUMENTATION_FIELDS = new Set([
   'notes',
   'orientationcopy',
   'rawassistantcontent',
+  'rawartifact',
+  'rawartifactcontent',
+  'rawartifacttext',
   'rawcontent',
   'rawguidecontent',
   'rawinspectionguide',
@@ -257,6 +290,7 @@ function evaluateDocumentationPolicy(policy, reasons) {
   const requiredDocumentationDomains = sortedTextList(policy?.requiredDocumentationDomains);
   const requiredRoleManuals = sortedTextList(policy?.requiredRoleManuals);
   const requiredInspectionEvidenceKinds = sortedTextList(policy?.requiredInspectionEvidenceKinds);
+  const requiredDocumentationArtifacts = sortedTextList(policy?.requiredDocumentationArtifacts);
 
   addReason(reasons, !hasText(policy?.policyRef), 'documentation_policy_ref_absent');
   addReason(reasons, !isDigest(policy?.policyHash), 'documentation_policy_hash_invalid');
@@ -287,6 +321,13 @@ function evaluateDocumentationPolicy(policy, reasons) {
     REQUIRED_INSPECTION_EVIDENCE,
     'policy_inspection_evidence_missing',
     'policy_inspection_evidence_unsupported',
+    reasons,
+  );
+  evaluateRequiredSet(
+    requiredDocumentationArtifacts,
+    REQUIRED_DOCUMENTATION_ARTIFACTS,
+    'policy_documentation_artifact_missing',
+    'policy_documentation_artifact_unsupported',
     reasons,
   );
 }
@@ -370,6 +411,44 @@ function evaluateRoleManuals(manuals, reasons) {
   }
 
   return actualRoles;
+}
+
+function evaluateDocumentationArtifacts(artifacts, reasons) {
+  const rows = Array.isArray(artifacts) ? artifacts : [];
+  const actualArtifacts = uniqueSorted(rows.map((row) => row?.artifact));
+  evaluateRequiredSet(
+    actualArtifacts,
+    REQUIRED_DOCUMENTATION_ARTIFACTS,
+    'documentation_artifact_missing',
+    'documentation_artifact_unsupported',
+    reasons,
+  );
+
+  for (const row of rows) {
+    const prefix = `documentation_artifact_invalid:${row?.artifact ?? 'unknown'}`;
+    addReason(reasons, !hasText(row?.artifactRef), `${prefix}:artifact_ref_absent`);
+    addReason(reasons, !hasText(row?.versionRef), `${prefix}:version_ref_absent`);
+    addReason(reasons, !isDigest(row?.artifactHash), `${prefix}:artifact_hash_invalid`);
+    addReason(reasons, !hasText(row?.ownerRoleRef), `${prefix}:owner_role_absent`);
+    addReason(
+      reasons,
+      !Array.isArray(row?.targetAudienceRoleRefs) || row.targetAudienceRoleRefs.filter(hasText).length === 0,
+      `${prefix}:target_audience_roles_absent`,
+    );
+    addReason(
+      reasons,
+      !Array.isArray(row?.crosslinkRefs) || row.crosslinkRefs.filter(hasText).length === 0,
+      `${prefix}:crosslink_refs_absent`,
+    );
+    addReason(reasons, row?.approvedForSandyReview !== true, `${prefix}:not_approved_for_sandy_review`);
+    addReason(reasons, row?.reviewedByHuman !== true, `${prefix}:human_review_missing`);
+    addReason(reasons, hlcTuple(row?.reviewedAtHlc) === null, `${prefix}:review_time_invalid`);
+    addReason(reasons, row?.metadataOnly !== true, `${prefix}:metadata_boundary_invalid`);
+    addReason(reasons, row?.protectedContentExcluded !== true, `${prefix}:protected_boundary_invalid`);
+    addReason(reasons, row?.productionTrustClaim === true, `${prefix}:production_trust_claim_forbidden`);
+  }
+
+  return actualArtifacts;
 }
 
 function evaluateCrosslinkMatrix(matrix, reasons) {
@@ -510,7 +589,7 @@ function missingValues(required, actual) {
   return required.filter((value) => !actual.includes(value));
 }
 
-function createDocumentationDigest(input, actualDomains, actualRoles, actualInspectionKinds) {
+function createDocumentationDigest(input, actualDomains, actualRoles, actualInspectionKinds, actualDocumentationArtifacts) {
   return sha256Hex({
     schema: DOCUMENTATION_SCHEMA,
     tenantId: input?.tenantId ?? null,
@@ -518,6 +597,7 @@ function createDocumentationDigest(input, actualDomains, actualRoles, actualInsp
     documentationDomains: actualDomains,
     roleManuals: actualRoles,
     inspectionEvidenceKinds: actualInspectionKinds,
+    documentationArtifacts: actualDocumentationArtifacts,
     crosslinkMatrixHash: input?.crosslinkMatrix?.matrixHash ?? null,
     inspectionGuideHash: input?.inspectionGuide?.guideHash ?? null,
     aiOrientationScopeHash: input?.aiOrientation?.scopeHash ?? null,
@@ -526,7 +606,15 @@ function createDocumentationDigest(input, actualDomains, actualRoles, actualInsp
   });
 }
 
-function createReadinessSummary(input, reasons, actualDomains, actualRoles, actualInspectionKinds, documentationDigest) {
+function createReadinessSummary(
+  input,
+  reasons,
+  actualDomains,
+  actualRoles,
+  actualInspectionKinds,
+  actualDocumentationArtifacts,
+  documentationDigest,
+) {
   const ready = reasons.length === 0;
   return {
     schema: DOCUMENTATION_SCHEMA,
@@ -537,9 +625,11 @@ function createReadinessSummary(input, reasons, actualDomains, actualRoles, actu
     domainCount: actualDomains.length,
     roleManualCount: actualRoles.length,
     inspectionEvidenceCount: actualInspectionKinds.length,
+    documentationArtifactCount: actualDocumentationArtifacts.length,
     missingDocumentationDomains: missingValues(REQUIRED_DOCUMENTATION_DOMAINS, actualDomains),
     missingRoleManuals: missingValues(REQUIRED_ROLE_MANUALS, actualRoles),
     missingInspectionEvidenceKinds: missingValues(REQUIRED_INSPECTION_EVIDENCE, actualInspectionKinds),
+    missingDocumentationArtifacts: missingValues(REQUIRED_DOCUMENTATION_ARTIFACTS, actualDocumentationArtifacts),
     publishedAtHlc: input?.documentationCycle?.publishedAtHlc ?? null,
     reviewerDid: input?.humanReview?.reviewerDid ?? null,
     sourceEvidence: [
@@ -559,6 +649,7 @@ export function evaluateDocumentationRunbookReadiness(input) {
   evaluateDocumentationCycle(input?.documentationCycle, reasons);
   const actualDomains = evaluateDocumentationDomains(input?.documentationDomains, reasons);
   const actualRoles = evaluateRoleManuals(input?.roleManuals, reasons);
+  const actualDocumentationArtifacts = evaluateDocumentationArtifacts(input?.documentationArtifacts, reasons);
   evaluateCrosslinkMatrix(input?.crosslinkMatrix, reasons);
   const actualInspectionKinds = evaluateInspectionGuide(input?.inspectionGuide, reasons);
   evaluateAiOrientation(input?.aiOrientation, reasons);
@@ -573,6 +664,9 @@ export function evaluateDocumentationRunbookReadiness(input) {
       input?.inquiryCqiReporting?.reviewedAtHlc,
       ...(Array.isArray(input?.documentationDomains) ? input.documentationDomains.map((row) => row?.reviewedAtHlc) : []),
       ...(Array.isArray(input?.roleManuals) ? input.roleManuals.map((row) => row?.reviewedAtHlc) : []),
+      ...(Array.isArray(input?.documentationArtifacts)
+        ? input.documentationArtifacts.map((row) => row?.reviewedAtHlc)
+        : []),
     ],
     reasons,
   );
@@ -580,13 +674,20 @@ export function evaluateDocumentationRunbookReadiness(input) {
   evaluateHumanReview(input?.humanReview, input?.documentationCycle, reasons);
 
   const finalReasons = uniqueReasons(reasons);
-  const documentationDigest = createDocumentationDigest(input, actualDomains, actualRoles, actualInspectionKinds);
+  const documentationDigest = createDocumentationDigest(
+    input,
+    actualDomains,
+    actualRoles,
+    actualInspectionKinds,
+    actualDocumentationArtifacts,
+  );
   const documentationReadiness = createReadinessSummary(
     input,
     finalReasons,
     actualDomains,
     actualRoles,
     actualInspectionKinds,
+    actualDocumentationArtifacts,
     documentationDigest,
   );
 

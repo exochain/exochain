@@ -219,6 +219,7 @@ test('site QMS passport creates deterministic inactive metadata receipt', async 
   assert.equal(resultA.passport.readinessStatus, 'ready_with_conditions');
   assert.equal(resultA.passport.exochainProductionClaim, false);
   assert.equal(resultA.passport.trustState, 'inactive');
+  assert.deepEqual(resultA.passport.sourceRequirements, ['FR-009']);
   assert.equal(resultA.passport.aiFinalAuthority, false);
   assert.equal(resultA.passport.evidenceCompletenessBasisPoints, 10000);
   assert.equal(resultA.passport.evidenceFreshnessBasisPoints, 10000);

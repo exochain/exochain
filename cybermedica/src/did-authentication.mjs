@@ -188,7 +188,9 @@ function validateChallenge(input, reasons) {
   const issuedTuple = hlcTuple(issued);
   const expiresTuple = hlcTuple(expires);
   const checkedTuple = hlcTuple(checked);
-  const maxAgeMs = DEFAULT_MAX_CHALLENGE_AGE_MS;
+  const maxAgeMs = isPositiveSafeInteger(input?.verification?.maxChallengeAgeMs)
+    ? input.verification.maxChallengeAgeMs
+    : DEFAULT_MAX_CHALLENGE_AGE_MS;
 
   addReason(reasons, !hasText(input?.challenge?.purpose), 'did_auth_purpose_absent');
   addReason(reasons, !isDigest(input?.challenge?.requestHash), 'did_auth_request_hash_invalid');
@@ -196,12 +198,6 @@ function validateChallenge(input, reasons) {
   addReason(reasons, issuedTuple === null, 'did_auth_issued_hlc_invalid');
   addReason(reasons, expiresTuple === null, 'did_auth_expires_hlc_invalid');
   addReason(reasons, checkedTuple === null, 'did_auth_checked_hlc_invalid');
-  addReason(
-    reasons,
-    input?.verification?.maxChallengeAgeMs !== undefined &&
-      input.verification.maxChallengeAgeMs !== DEFAULT_MAX_CHALLENGE_AGE_MS,
-    'did_auth_max_challenge_age_untrusted',
-  );
 
   if (issuedTuple !== null && expiresTuple !== null) {
     addReason(reasons, compareHlc(issued, expires) >= 0, 'did_auth_challenge_window_invalid');

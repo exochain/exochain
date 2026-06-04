@@ -280,6 +280,8 @@ test('Exochain anchoring creates deterministic inactive FR-042 metadata package 
   assert.equal(resultA.anchorPackage.metadataOnly, true);
   assert.equal(resultA.anchorPackage.protectedContentAnchored, false);
   assert.equal(resultA.anchorPackage.externalAnchoringActive, false);
+  assert.equal(resultA.anchorPackage.crossCheckedBackedClaim, false);
+  assert.deepEqual(resultA.anchorPackage.activationGateIds, ['PTAG-003']);
   assert.deepEqual(resultA.anchorPackage.anchorFamilies, REQUIRED_ANCHOR_FAMILIES);
   assert.deepEqual(
     resultA.anchorPackage.anchors.map((anchor) => anchor.anchorRef),
@@ -362,6 +364,7 @@ test('Exochain anchoring fails closed for missing families unsafe policy and pro
   assert.equal(denied.failClosed, true);
   assert.equal(denied.anchorPackage, null);
   assert.equal(denied.receipt, null);
+  assert.deepEqual(denied.activationGateIds, ['PTAG-003']);
   assert.ok(denied.reasons.includes('tenant_boundary_violation'));
   assert.ok(denied.reasons.includes('ai_final_authority_forbidden'));
   assert.ok(denied.reasons.includes('authority_chain_revoked'));

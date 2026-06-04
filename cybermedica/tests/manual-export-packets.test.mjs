@@ -32,6 +32,7 @@ const DIGEST_6 = '66666666666666666666666666666666666666666666666666666666666666
 const DIGEST_7 = '7777777777777777777777777777777777777777777777777777777777777777';
 const DIGEST_8 = '8888888888888888888888888888888888888888888888888888888888888888';
 const DIGEST_9 = '9999999999999999999999999999999999999999999999999999999999999999';
+const DIGEST_R = 'abababababababababababababababababababababababababababababababab';
 
 const REQUIRED_FORMATS = ['markdown', 'pdf', 'print', 'word'];
 const REQUIRED_PACKET_SCOPES = ['audit_training_packet', 'role_manual_packet', 'workflow_manual_packet'];
@@ -42,6 +43,13 @@ const REQUIRED_BOUNDARY_CONTROLS = [
   'print_watermark',
   'role_access_filtering',
   'version_history_included',
+];
+const REQUIRED_ORIENTATION_CITATION_FAMILIES = ['control', 'manual_section', 'procedure'];
+const REQUIRED_ORIENTATION_SIGNAL_FAMILIES = [
+  'ai_orientation_question',
+  'manual_confusion',
+  'missing_documentation',
+  'product_gap',
 ];
 
 async function loadManualExportPackets() {
@@ -77,6 +85,7 @@ function manualArtifact(role, index, overrides = {}) {
     manualVersionHash: hashes[index + 1],
     crosslinkMatrixHash: DIGEST_7,
     publicationReceiptHash: DIGEST_8,
+    roleManualCoverageReceiptHash: DIGEST_R,
     approvedForExport: true,
     currentVersion: true,
     highRiskClaimsReviewed: true,
@@ -128,6 +137,7 @@ function exportInput(overrides = {}) {
         allowedFormats: REQUIRED_FORMATS,
         requiredPacketScopes: REQUIRED_PACKET_SCOPES,
         requiredBoundaryControls: REQUIRED_BOUNDARY_CONTROLS,
+        orientationAssistantSupportRequired: true,
         humanAuthorizationRequired: true,
         metadataOnly: true,
         protectedContentExcluded: true,
@@ -149,10 +159,12 @@ function exportInput(overrides = {}) {
       sourceManualSet: {
         runbookReceiptHash: DIGEST_C,
         publicationReceiptHash: DIGEST_D,
+        roleManualCoverageReceiptHash: DIGEST_R,
         manualSetHash: DIGEST_E,
         manualIndexHash: DIGEST_F,
         documentationVersionRef: 'manual-set-alpha-v3',
         rollbackVersionHash: DIGEST_1,
+        orientationAssistantReceiptHash: DIGEST_2,
         metadataOnly: true,
         protectedContentExcluded: true,
       },
@@ -173,6 +185,23 @@ function exportInput(overrides = {}) {
         noUnapprovedClaims: true,
         protectedContentExcluded: true,
         metadataOnly: true,
+      },
+      orientationAssistantSupport: {
+        supportRef: 'orientation-support-manual-export-alpha',
+        orientationRecordHash: DIGEST_5,
+        orientationReceiptHash: DIGEST_2,
+        guidanceLabel: 'guidance_not_policy_authority',
+        citationFamilies: REQUIRED_ORIENTATION_CITATION_FAMILIES,
+        confusionSignalFamilies: REQUIRED_ORIENTATION_SIGNAL_FAMILIES,
+        cqiRouteRef: 'inquiry-cqi-cycle-alpha',
+        cqiPolicyHash: DIGEST_6,
+        contextualDrawerReceiptHash: DIGEST_7,
+        advisoryOnly: true,
+        aiFinalAuthority: false,
+        noProductionTrustClaim: true,
+        reviewedAtHlc: { physicalMs: 1800010120000, logical: 0 },
+        metadataOnly: true,
+        protectedContentExcluded: true,
       },
       humanAuthorization: {
         status: 'approved',
@@ -218,10 +247,87 @@ test('manual export packets create deterministic DOC-008 inactive receipts', asy
   assert.equal(first.manualExportPacket.printReady, true);
   assert.equal(first.manualExportPacket.productionTrustClaim, false);
   assert.equal(first.manualExportPacket.metadataOnly, true);
+  assert.equal(first.manualExportPacket.orientationAssistantSupportReady, true);
+  assert.equal(first.manualExportPacket.orientationAssistantReceiptHash, DIGEST_2);
+  assert.equal(first.manualExportPacket.roleManualCoverageReceiptHash, DIGEST_R);
+  assert.deepEqual(first.manualExportPacket.orientationCitationFamilies, REQUIRED_ORIENTATION_CITATION_FAMILIES);
+  assert.deepEqual(first.manualExportPacket.orientationConfusionSignalFamilies, REQUIRED_ORIENTATION_SIGNAL_FAMILIES);
   assert.equal(first.receipt.trustState, 'inactive');
   assert.equal(first.receipt.exochainProductionClaim, false);
   assert.equal(first.receipt.anchorPayload.artifactType, 'manual_export_packet');
+  assert.ok(first.receipt.anchorPayload.sensitivityTags.includes('orientation_guidance_metadata'));
   assert.deepEqual(first, second);
+});
+
+test('manual export packets fail closed without orientation assistant citation and CQI support', async () => {
+  const { evaluateManualExportPacket } = await loadManualExportPackets();
+  const result = evaluateManualExportPacket(
+    exportInput({
+      sourceManualSet: {
+        orientationAssistantReceiptHash: 'bad',
+      },
+      orientationAssistantSupport: {
+        supportRef: '',
+        orientationRecordHash: 'bad',
+        orientationReceiptHash: DIGEST_3,
+        guidanceLabel: 'policy_authority',
+        citationFamilies: ['manual_section'],
+        confusionSignalFamilies: ['manual_confusion'],
+        cqiRouteRef: '',
+        cqiPolicyHash: '',
+        contextualDrawerReceiptHash: '',
+        advisoryOnly: false,
+        aiFinalAuthority: true,
+        noProductionTrustClaim: false,
+        reviewedAtHlc: { physicalMs: 1800010200000, logical: 0 },
+        metadataOnly: false,
+        protectedContentExcluded: false,
+      },
+    }),
+  );
+
+  assert.equal(result.status, 'denied');
+  assert.equal(result.receipt, null);
+  assert.ok(result.reasons.includes('source_manual_set_orientation_receipt_hash_invalid'));
+  assert.ok(result.reasons.includes('orientation_support_ref_absent'));
+  assert.ok(result.reasons.includes('orientation_record_hash_invalid'));
+  assert.ok(result.reasons.includes('orientation_receipt_hash_mismatch'));
+  assert.ok(result.reasons.includes('orientation_guidance_label_invalid'));
+  assert.ok(result.reasons.includes('orientation_citation_family_missing:control'));
+  assert.ok(result.reasons.includes('orientation_citation_family_missing:procedure'));
+  assert.ok(result.reasons.includes('orientation_confusion_signal_missing:ai_orientation_question'));
+  assert.ok(result.reasons.includes('orientation_confusion_signal_missing:missing_documentation'));
+  assert.ok(result.reasons.includes('orientation_confusion_signal_missing:product_gap'));
+  assert.ok(result.reasons.includes('orientation_cqi_route_absent'));
+  assert.ok(result.reasons.includes('orientation_cqi_policy_hash_invalid'));
+  assert.ok(result.reasons.includes('orientation_contextual_drawer_receipt_hash_invalid'));
+  assert.ok(result.reasons.includes('orientation_support_not_advisory'));
+  assert.ok(result.reasons.includes('orientation_support_ai_final_authority_forbidden'));
+  assert.ok(result.reasons.includes('orientation_support_production_trust_claim_forbidden'));
+  assert.ok(result.reasons.includes('orientation_support_review_not_before_export_generation'));
+  assert.ok(result.reasons.includes('orientation_support_metadata_boundary_invalid'));
+  assert.ok(result.reasons.includes('orientation_support_protected_boundary_invalid'));
+});
+
+test('manual export packets fail closed without role-manual coverage linkage', async () => {
+  const { evaluateManualExportPacket } = await loadManualExportPackets();
+  const result = evaluateManualExportPacket(
+    exportInput({
+      sourceManualSet: {
+        roleManualCoverageReceiptHash: 'bad',
+      },
+      manualArtifacts: [
+        manualArtifact('quality_manager', 0, { roleManualCoverageReceiptHash: DIGEST_R }),
+        manualArtifact('auditor_inspector', 2, { roleManualCoverageReceiptHash: DIGEST_9 }),
+      ],
+    }),
+  );
+
+  assert.equal(result.status, 'denied');
+  assert.equal(result.receipt, null);
+  assert.ok(result.reasons.includes('role_manual_coverage_receipt_hash_invalid'));
+  assert.ok(result.reasons.includes('manual_role_coverage_receipt_mismatch:manual-quality_manager'));
+  assert.ok(result.reasons.includes('manual_role_coverage_receipt_mismatch:manual-auditor_inspector'));
 });
 
 test('manual export packets fail closed for missing formats unsafe access and unreviewed claims', async () => {

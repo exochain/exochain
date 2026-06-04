@@ -196,6 +196,10 @@ function missingValues(expected, actual) {
   return expected.filter((value) => !actual.includes(value));
 }
 
+function includesAll(actual, expected) {
+  return expected.every((value) => actual.includes(value));
+}
+
 function hlcTuple(hlc) {
   if (!Number.isSafeInteger(hlc?.physicalMs) || !Number.isSafeInteger(hlc?.logical) || hlc.logical < 0) {
     return null;
@@ -398,6 +402,99 @@ function evaluateNavigationStates(states, cycle, reasons) {
   };
 }
 
+function evaluateManualNavigationReadiness(readiness, states, cycle, reasons) {
+  const rows = Array.isArray(states) ? states : [];
+  const contextualDrawerStates = rows.filter((state) => state?.stateFamily === 'contextual_manual_drawer');
+  const navigationRoleRefs = uniqueSorted(rows.map((state) => state?.roleRef));
+  const requiredAcknowledgementRoleRefs = sortedTextList(readiness?.requiredAcknowledgementRoleRefs);
+  const acknowledgedRoleRefs = sortedTextList(readiness?.acknowledgedRoleRefs);
+
+  addReason(reasons, !isDigest(readiness?.contextualManualDrawerReceiptHash), 'manual_navigation_drawer_receipt_hash_invalid');
+  addReason(reasons, !isDigest(readiness?.contextualManualDrawerHash), 'manual_navigation_drawer_hash_invalid');
+  addReason(reasons, !hasText(readiness?.controlledDocumentDistributionRecordId), 'manual_navigation_distribution_record_absent');
+  addReason(
+    reasons,
+    !isDigest(readiness?.controlledDocumentDistributionReceiptHash),
+    'manual_navigation_distribution_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(readiness?.documentationPublicationReceiptHash),
+    'manual_navigation_publication_receipt_hash_invalid',
+  );
+  addReason(reasons, !isDigest(readiness?.manualExportReceiptHash), 'manual_navigation_manual_export_receipt_hash_invalid');
+  addReason(
+    reasons,
+    !isDigest(readiness?.roleManualCoverageReceiptHash),
+    'manual_navigation_role_manual_coverage_receipt_hash_invalid',
+  );
+  addReason(reasons, !isDigest(readiness?.acknowledgementRosterHash), 'manual_navigation_acknowledgement_roster_hash_invalid');
+  addReason(
+    reasons,
+    requiredAcknowledgementRoleRefs.length === 0 || acknowledgedRoleRefs.length === 0,
+    'manual_navigation_acknowledgement_roles_missing',
+  );
+  addReason(
+    reasons,
+    requiredAcknowledgementRoleRefs.length > 0 &&
+      acknowledgedRoleRefs.length > 0 &&
+      !includesAll(acknowledgedRoleRefs, requiredAcknowledgementRoleRefs),
+    'manual_navigation_acknowledgement_roles_incomplete',
+  );
+
+  for (const roleRef of navigationRoleRefs) {
+    addReason(
+      reasons,
+      !acknowledgedRoleRefs.includes(roleRef),
+      `manual_navigation_role_effective_use_acknowledgement_missing:${roleRef}`,
+    );
+  }
+
+  addReason(reasons, readiness?.effectiveUseAcknowledged !== true, 'manual_navigation_effective_use_acknowledgement_absent');
+  addReason(reasons, readiness?.currentVersionOnly !== true, 'manual_navigation_current_version_boundary_invalid');
+  addReason(reasons, readiness?.obsoleteVersionUseBlocked !== true, 'manual_navigation_obsolete_version_boundary_invalid');
+  addReason(reasons, readiness?.metadataOnly !== true, 'manual_navigation_metadata_boundary_invalid');
+  addReason(reasons, readiness?.protectedContentExcluded !== true, 'manual_navigation_protected_boundary_invalid');
+  addReason(reasons, readiness?.productionTrustClaim === true, 'manual_navigation_production_claim_forbidden');
+  addReason(reasons, hlcTuple(readiness?.distributionPublishedAtHlc) === null, 'manual_navigation_distribution_time_invalid');
+  addReason(
+    reasons,
+    hlcAfter(readiness?.distributionPublishedAtHlc, cycle?.navigationCapturedAtHlc),
+    'manual_navigation_distribution_after_capture',
+  );
+  addReason(reasons, contextualDrawerStates.length === 0, 'manual_navigation_contextual_drawer_state_absent');
+
+  for (const state of contextualDrawerStates) {
+    const label = navigationLabel(state, 0);
+    addReason(
+      reasons,
+      hasText(readiness?.contextualManualDrawerHash) &&
+        hasText(state?.targetArtifactHash) &&
+        readiness.contextualManualDrawerHash !== state.targetArtifactHash,
+      `manual_navigation_contextual_drawer_target_mismatch:${label}`,
+    );
+  }
+
+  return {
+    acknowledgedRoleRefs,
+    acknowledgementRosterHash: readiness?.acknowledgementRosterHash ?? null,
+    contextualManualDrawerHash: readiness?.contextualManualDrawerHash ?? null,
+    contextualManualDrawerReceiptHash: readiness?.contextualManualDrawerReceiptHash ?? null,
+    controlledDocumentDistributionReceiptHash:
+      readiness?.controlledDocumentDistributionReceiptHash ?? null,
+    controlledDocumentDistributionRecordId: readiness?.controlledDocumentDistributionRecordId ?? null,
+    currentVersionOnly: readiness?.currentVersionOnly === true,
+    distributionPublishedAtHlc: readiness?.distributionPublishedAtHlc ?? null,
+    documentationPublicationReceiptHash: readiness?.documentationPublicationReceiptHash ?? null,
+    effectiveUseAcknowledged: readiness?.effectiveUseAcknowledged === true,
+    manualExportReceiptHash: readiness?.manualExportReceiptHash ?? null,
+    navigationRoleRefs,
+    obsoleteVersionUseBlocked: readiness?.obsoleteVersionUseBlocked === true,
+    requiredAcknowledgementRoleRefs,
+    roleManualCoverageReceiptHash: readiness?.roleManualCoverageReceiptHash ?? null,
+  };
+}
+
 function signalLabel(signal, index) {
   return hasText(signal?.signalRef) ? signal.signalRef : `friction_${index}`;
 }
@@ -544,21 +641,42 @@ function evaluateHumanReview(review, cycle, reasons) {
   addReason(reasons, hlcBefore(review?.reviewedAtHlc, cycle?.humanReviewedAtHlc), 'human_review_before_cycle_human_step');
 }
 
-function createAnalyticsDigest(input, navigationSummary, frictionSummary, routedSignalRefs, frictionRateBasisPoints) {
+function createAnalyticsDigest(
+  input,
+  navigationSummary,
+  frictionSummary,
+  routedSignalRefs,
+  frictionRateBasisPoints,
+  manualNavigationReadiness,
+) {
   return sha256Hex({
     accessibilityReviewHash: input?.accessibilityReview?.reviewHash ?? null,
+    acknowledgementRosterHash: manualNavigationReadiness.acknowledgementRosterHash,
+    contextualManualDrawerHash: manualNavigationReadiness.contextualManualDrawerHash,
+    contextualManualDrawerReceiptHash: manualNavigationReadiness.contextualManualDrawerReceiptHash,
+    controlledDocumentDistributionReceiptHash: manualNavigationReadiness.controlledDocumentDistributionReceiptHash,
     cqiActionPolicyHash: input?.cqiRouting?.cqiActionPolicyHash ?? null,
     cycleRef: input?.assistanceCycle?.cycleRef ?? null,
     frictionFamilies: frictionSummary.actualFamilies,
     frictionRateBasisPoints,
+    manualExportReceiptHash: manualNavigationReadiness.manualExportReceiptHash,
     manualIndexHash: input?.manualIndex?.currentManualSetHash ?? null,
     navigationFamilies: navigationSummary.actualFamilies,
     routedSignalRefs,
+    roleManualCoverageReceiptHash: manualNavigationReadiness.roleManualCoverageReceiptHash,
     tenantId: input?.tenantId ?? null,
   });
 }
 
-function createAssistanceAnalytics(input, finalReasons, navigationSummary, frictionSummary, routedSignalRefs, aiAssistanceUsed) {
+function createAssistanceAnalytics(
+  input,
+  finalReasons,
+  navigationSummary,
+  frictionSummary,
+  routedSignalRefs,
+  aiAssistanceUsed,
+  manualNavigationReadiness,
+) {
   const frictionRateBasisPoints = basisPoints(
     frictionSummary.totalFrictionEvents,
     navigationSummary.totalNavigationEvents,
@@ -569,6 +687,7 @@ function createAssistanceAnalytics(input, finalReasons, navigationSummary, frict
     frictionSummary,
     routedSignalRefs,
     frictionRateBasisPoints,
+    manualNavigationReadiness,
   );
 
   return {
@@ -594,6 +713,20 @@ function createAssistanceAnalytics(input, finalReasons, navigationSummary, frict
     cqiRoutedSignalRefs: routedSignalRefs,
     cqiRequired: cqiRequiredSignals(frictionSummary.summaries).length > 0,
     aiAssistanceUsed,
+    manualNavigationReady: finalReasons.length === 0,
+    contextualManualDrawerHash: manualNavigationReadiness.contextualManualDrawerHash,
+    contextualManualDrawerReceiptHash: manualNavigationReadiness.contextualManualDrawerReceiptHash,
+    controlledDocumentDistributionReceiptHash: manualNavigationReadiness.controlledDocumentDistributionReceiptHash,
+    controlledDocumentDistributionRecordId: manualNavigationReadiness.controlledDocumentDistributionRecordId,
+    documentationPublicationReceiptHash: manualNavigationReadiness.documentationPublicationReceiptHash,
+    manualExportReceiptHash: manualNavigationReadiness.manualExportReceiptHash,
+    roleManualCoverageReceiptHash: manualNavigationReadiness.roleManualCoverageReceiptHash,
+    manualNavigationAcknowledgedRoleRefs: manualNavigationReadiness.acknowledgedRoleRefs,
+    manualNavigationRequiredAcknowledgementRoleRefs: manualNavigationReadiness.requiredAcknowledgementRoleRefs,
+    manualNavigationRoleRefs: manualNavigationReadiness.navigationRoleRefs,
+    manualNavigationCurrentVersionOnly: manualNavigationReadiness.currentVersionOnly,
+    manualNavigationObsoleteVersionUseBlocked: manualNavigationReadiness.obsoleteVersionUseBlocked,
+    manualNavigationEffectiveUseAcknowledged: manualNavigationReadiness.effectiveUseAcknowledged,
     reviewerDid: input?.humanReview?.reviewerDid ?? null,
     receiptRecordedAtHlc: input?.assistanceCycle?.receiptRecordedAtHlc ?? null,
     sourceEvidence: [
@@ -613,7 +746,12 @@ function buildReceipt(input, assistanceAnalytics) {
     classification: 'metadata_only_user_assistance',
     custodyDigest: input.custodyDigest,
     hlcTimestamp: input.assistanceCycle.receiptRecordedAtHlc,
-    sensitivityTags: ['documentation_assistance_metadata', 'friction_analytics', 'no_raw_content'],
+    sensitivityTags: [
+      'documentation_assistance_metadata',
+      'friction_analytics',
+      'manual_navigation_readiness',
+      'no_raw_content',
+    ],
     sourceSystem: 'cybermedica',
     tenantId: input.tenantId,
   });
@@ -628,6 +766,12 @@ export function evaluateUserAssistanceAnalytics(input) {
   evaluateAssistanceCycle(input?.assistanceCycle, input?.assistancePolicy, input?.humanReview, reasons);
   evaluateManualIndex(input?.manualIndex, input?.assistanceCycle, reasons);
   const navigationSummary = evaluateNavigationStates(input?.navigationStates, input?.assistanceCycle, reasons);
+  const manualNavigationReadiness = evaluateManualNavigationReadiness(
+    input?.manualNavigationReadiness,
+    input?.navigationStates,
+    input?.assistanceCycle,
+    reasons,
+  );
   const frictionSummary = evaluateFrictionSignals(
     input?.frictionSignals,
     navigationSummary.navigationRefs,
@@ -653,6 +797,7 @@ export function evaluateUserAssistanceAnalytics(input) {
     frictionSummary,
     routedSignalRefs,
     aiAssistanceUsed,
+    manualNavigationReadiness,
   );
 
   if (finalReasons.length > 0) {

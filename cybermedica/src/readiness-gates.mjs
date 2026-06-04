@@ -14,7 +14,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { sha256Hex } from './qms-contracts.mjs';
+import { canonicalize, ProtectedContentError, sha256Hex } from './qms-contracts.mjs';
+
+export { ProtectedContentError };
 
 const HEX_64 = /^[0-9a-f]{64}$/u;
 
@@ -138,7 +140,12 @@ function basisPoints(numerator, denominator) {
   return Number((BigInt(numerator) * 10_000n) / BigInt(denominator));
 }
 
+function assertMetadataOnly(input) {
+  canonicalize(input ?? {});
+}
+
 export function buildControlReadinessSnapshot(input) {
+  assertMetadataOnly(input);
   const controls = Array.isArray(input?.controls) ? [...input.controls].sort(compareById) : [];
   const blockers = [];
   if (controls.length === 0) {
@@ -251,6 +258,7 @@ function evaluateHumanGovernance(input, reasons) {
 }
 
 export function evaluateProtocolLaunchGate(input) {
+  assertMetadataOnly(input);
   const reasons = [];
   const checks = input?.launchChecks ?? {};
 
@@ -275,11 +283,11 @@ export function evaluateProtocolLaunchGate(input) {
     enrollmentAuthorizationActive: !denied,
     trustState: 'inactive',
     exochainProductionClaim: false,
-    inputEcho: input,
   };
 }
 
 export function evaluateEnrollmentGate(input) {
+  assertMetadataOnly(input);
   const reasons = [];
   addReason(reasons, input?.protocol?.status !== 'active', 'protocol_not_active');
   addReason(
@@ -314,6 +322,5 @@ export function evaluateEnrollmentGate(input) {
     participantMayEnroll: !denied,
     trustState: 'inactive',
     exochainProductionClaim: false,
-    inputEcho: input,
   };
 }

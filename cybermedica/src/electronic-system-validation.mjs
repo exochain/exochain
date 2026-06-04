@@ -27,6 +27,7 @@ const SYSTEM_TYPES = new Set([
   'data_capture_device',
   'edc',
   'econsent',
+  'eisf',
   'etmf',
   'lab_interface',
   'qms',

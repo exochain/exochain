@@ -39,6 +39,7 @@ const REQUIRED_CONNECTOR_TYPES = Object.freeze([
   'document_system',
   'econsent',
   'edc',
+  'eisf',
   'etmf',
   'hris',
   'identity_provider',

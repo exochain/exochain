@@ -179,6 +179,43 @@ function evaluateDistribution(input, reasons, audienceRoleRefs, requiredAcknowle
   addReason(reasons, distribution?.payloadStoredOutsideReceipt !== true, 'payload_storage_boundary_invalid');
 }
 
+function evaluatePublicationReadiness(readiness, distribution, audienceRoleRefs, requiredAcknowledgementRoleRefs, manualExportRoleRefs, reasons) {
+  const readinessAt = hlcTuple(readiness?.publishedAtHlc);
+  const distributionAt = hlcTuple(distribution?.publishedAtHlc);
+  const requiredManualRoleRefs = uniqueSorted([...audienceRoleRefs, ...requiredAcknowledgementRoleRefs]);
+
+  addReason(reasons, !hasText(readiness?.publicationCycleRef), 'documentation_publication_cycle_ref_absent');
+  addReason(reasons, !hasText(readiness?.publicationPackageRef), 'documentation_publication_package_ref_absent');
+  addReason(
+    reasons,
+    !isDigest(readiness?.documentationPublicationReceiptHash),
+    'documentation_publication_receipt_hash_invalid',
+  );
+  addReason(reasons, !isDigest(readiness?.documentationPublicationDigest), 'documentation_publication_digest_invalid');
+  addReason(reasons, !isDigest(readiness?.manualSetHash), 'publication_manual_set_hash_invalid');
+  addReason(reasons, !isDigest(readiness?.manualExportReceiptHash), 'manual_export_receipt_hash_invalid');
+  addReason(reasons, !isDigest(readiness?.manualExportPacketHash), 'manual_export_packet_hash_invalid');
+  addReason(reasons, !isDigest(readiness?.roleManualCoverageReceiptHash), 'role_manual_coverage_receipt_hash_invalid');
+  addReason(reasons, !isDigest(readiness?.orientationAssistantReceiptHash), 'orientation_assistant_receipt_hash_invalid');
+  addReason(reasons, !isDigest(readiness?.distributionPlanHash), 'publication_distribution_plan_hash_invalid');
+  addReason(reasons, !isDigest(readiness?.acknowledgementPolicyHash), 'publication_acknowledgement_policy_hash_invalid');
+  addReason(reasons, manualExportRoleRefs.length === 0, 'manual_export_role_refs_absent');
+  for (const roleRef of requiredManualRoleRefs) {
+    addReason(reasons, !manualExportRoleRefs.includes(roleRef), `manual_export_role_coverage_missing:${roleRef}`);
+  }
+  addReason(reasons, readiness?.distributionReady !== true, 'publication_readiness_not_distribution_ready');
+  addReason(reasons, readiness?.manualExportReady !== true, 'publication_readiness_manual_export_not_ready');
+  addReason(reasons, readiness?.noProductionTrustClaim !== true, 'publication_readiness_production_trust_claim_forbidden');
+  addReason(reasons, readiness?.metadataOnly !== true, 'publication_readiness_metadata_boundary_invalid');
+  addReason(reasons, readiness?.protectedContentExcluded !== true, 'publication_readiness_protected_boundary_invalid');
+  addReason(reasons, readinessAt === null, 'publication_readiness_time_invalid');
+  addReason(
+    reasons,
+    distributionAt !== null && readinessAt !== null && compareHlc(distributionAt, readinessAt) < 0,
+    'distribution_time_before_publication_readiness',
+  );
+}
+
 function evaluateAccessControl(accessControl, reasons, permittedActionRefs) {
   addReason(reasons, accessControl?.leastPrivilege !== true, 'least_privilege_not_attested');
   addReason(reasons, accessControl?.revocable !== true, 'revocable_access_not_attested');
@@ -259,7 +296,15 @@ function buildDistributionReceipt(input, recordId, artifactHash) {
     classification: 'confidential_metadata_only',
     hlcTimestamp: input.distribution.publishedAtHlc,
     custodyDigest: input.custodyDigest,
-    sensitivityTags: ['controlled_document', 'effective_use', 'metadata_only'],
+    sensitivityTags: [
+      'controlled_document',
+      'documentation_publication_metadata',
+      'effective_use',
+      'manual_export_packet_metadata',
+      'metadata_only',
+      'orientation_guidance_metadata',
+      'role_manual_coverage_metadata',
+    ],
     sourceSystem: 'cybermedica-qms',
   });
 }
@@ -270,6 +315,7 @@ function buildDistributionRecord(
   controlRefs,
   audienceRoleRefs,
   requiredAcknowledgementRoleRefs,
+  manualExportRoleRefs,
   permittedActionRefs,
   normalizedAcknowledgements,
   receiptId,
@@ -297,6 +343,21 @@ function buildDistributionRecord(
     retentionPolicyRef: input.documentVersion.retentionPolicyRef,
     accessControlProfileRef: input.documentVersion.accessControlProfileRef,
     controlRefs,
+    publicationCycleRef: input.publicationReadiness.publicationCycleRef,
+    documentationPublicationReceiptHash: input.publicationReadiness.documentationPublicationReceiptHash,
+    documentationPublicationDigest: input.publicationReadiness.documentationPublicationDigest,
+    publicationPackageRef: input.publicationReadiness.publicationPackageRef,
+    manualSetHash: input.publicationReadiness.manualSetHash,
+    manualExportReceiptHash: input.publicationReadiness.manualExportReceiptHash,
+    manualExportPacketHash: input.publicationReadiness.manualExportPacketHash,
+    roleManualCoverageReceiptHash: input.publicationReadiness.roleManualCoverageReceiptHash,
+    manualExportRoleRefs,
+    manualExportRoleCoverageReady: true,
+    orientationAssistantReceiptHash: input.publicationReadiness.orientationAssistantReceiptHash,
+    publicationDistributionPlanHash: input.publicationReadiness.distributionPlanHash,
+    publicationAcknowledgementPolicyHash: input.publicationReadiness.acknowledgementPolicyHash,
+    publicationReadinessPublishedAtHlc: input.publicationReadiness.publishedAtHlc,
+    publicationReadinessReady: true,
     audienceRoleRefs,
     requiredAcknowledgementRoleRefs,
     acknowledgedRoleRefs,
@@ -319,11 +380,20 @@ export function recordControlledDocumentDistribution(input) {
   const controlRefs = sortedTextList(input?.documentVersion?.controlRefs);
   const audienceRoleRefs = sortedTextList(input?.distribution?.audienceRoleRefs);
   const requiredAcknowledgementRoleRefs = sortedTextList(input?.distribution?.requiredAcknowledgementRoleRefs);
+  const manualExportRoleRefs = sortedTextList(input?.publicationReadiness?.manualExportRoleRefs);
   const permittedActionRefs = sortedTextList(input?.accessControl?.permittedActionRefs);
 
   evaluateTenantActorAuthority(input, reasons, DISTRIBUTION_PERMISSION);
   evaluateDistributionDocument(input, reasons, controlRefs);
   evaluateDistribution(input, reasons, audienceRoleRefs, requiredAcknowledgementRoleRefs);
+  evaluatePublicationReadiness(
+    input?.publicationReadiness,
+    input?.distribution,
+    audienceRoleRefs,
+    requiredAcknowledgementRoleRefs,
+    manualExportRoleRefs,
+    reasons,
+  );
   evaluateAccessControl(input?.accessControl, reasons, permittedActionRefs);
   const normalizedAcknowledgements = normalizeAcknowledgements(input, reasons);
   evaluateAcknowledgementCoverage(requiredAcknowledgementRoleRefs, normalizedAcknowledgements, reasons);
@@ -354,6 +424,16 @@ export function recordControlledDocumentDistribution(input) {
     documentVersionId: input.documentVersion.documentVersionId,
     notificationEvidenceHash: input.distribution.notificationEvidenceHash,
     permittedActionRefs,
+    publicationCycleRef: input.publicationReadiness.publicationCycleRef,
+    documentationPublicationReceiptHash: input.publicationReadiness.documentationPublicationReceiptHash,
+    documentationPublicationDigest: input.publicationReadiness.documentationPublicationDigest,
+    manualExportReceiptHash: input.publicationReadiness.manualExportReceiptHash,
+    manualExportPacketHash: input.publicationReadiness.manualExportPacketHash,
+    roleManualCoverageReceiptHash: input.publicationReadiness.roleManualCoverageReceiptHash,
+    manualExportRoleRefs,
+    orientationAssistantReceiptHash: input.publicationReadiness.orientationAssistantReceiptHash,
+    publicationDistributionPlanHash: input.publicationReadiness.distributionPlanHash,
+    publicationAcknowledgementPolicyHash: input.publicationReadiness.acknowledgementPolicyHash,
     recordId,
     requiredAcknowledgementRoleRefs,
     staffCommunicationEvidenceHash: input.distribution.staffCommunicationEvidenceHash,
@@ -374,6 +454,7 @@ export function recordControlledDocumentDistribution(input) {
       controlRefs,
       audienceRoleRefs,
       requiredAcknowledgementRoleRefs,
+      manualExportRoleRefs,
       permittedActionRefs,
       normalizedAcknowledgements,
       receipt.receiptId,

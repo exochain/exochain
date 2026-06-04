@@ -211,6 +211,9 @@ test('consent material readiness creates deterministic inactive active-version r
   assert.equal(resultA.materialRecord.requiredElementCoverageBasisPoints, 10000);
   assert.equal(resultA.materialRecord.readabilityStatus, 'acceptable');
   assert.equal(resultA.materialRecord.reconsentReviewRequired, true);
+  assert.deepEqual(resultA.materialRecord.activationGateIds, ['PTAG-007']);
+  assert.equal(resultA.materialRecord.genericBailmentAloneAccepted, false);
+  assert.equal(resultA.materialRecord.clinicalConsentEquivalenceClaim, false);
   assert.equal(resultA.materialRecord.materialId, resultB.materialRecord.materialId);
   assert.equal(resultA.receipt.receiptId, resultB.receipt.receiptId);
   assert.equal(resultA.receipt.anchorPayload.artifactType, 'consent_material_readiness');
@@ -224,9 +227,11 @@ test('consent material readiness fails closed for missing reviews approvals noti
 
   const result = evaluateConsentMaterialReadiness({
     ...consentMaterialInput(),
-    material: {
-      ...consentMaterialInput().material,
-      iecIrbApproval: { status: 'pending', approvalRef: '', approvalEvidenceHash: DIGEST_C },
+      material: {
+        ...consentMaterialInput().material,
+        genericBailmentOnly: true,
+        clinicalConsentEquivalenceClaim: true,
+        iecIrbApproval: { status: 'pending', approvalRef: '', approvalEvidenceHash: DIGEST_C },
       requiredElementReview: {
         ...consentMaterialInput().material.requiredElementReview,
         elements: { ...consentMaterialInput().material.requiredElementReview.elements, unknownRisks: false },
@@ -256,6 +261,8 @@ test('consent material readiness fails closed for missing reviews approvals noti
   assert.equal(result.materialRecord.status, 'blocked');
   assert.equal(result.receipt, null);
   assert.match(result.reasons.join('|'), /iec_irb_approval_not_approved/);
+  assert.match(result.reasons.join('|'), /ptag_007_generic_bailment_only_forbidden/);
+  assert.match(result.reasons.join('|'), /ptag_007_clinical_consent_equivalence_claim_forbidden/);
   assert.match(result.reasons.join('|'), /required_consent_elements_incomplete/);
   assert.match(result.reasons.join('|'), /readability_review_not_acceptable/);
   assert.match(result.reasons.join('|'), /non_waiver_legal_rights_check_absent/);
@@ -277,6 +284,9 @@ test('participant consent process documentation requires active material trained
   assert.equal(record.consentProcessRecord.enrollmentConsentGate, 'passed');
   assert.equal(record.consentProcessRecord.participantCopyDelivered, true);
   assert.equal(record.consentProcessRecord.dataSharingConsentStatus, 'granted');
+  assert.deepEqual(record.consentProcessRecord.activationGateIds, ['PTAG-007']);
+  assert.equal(record.consentProcessRecord.genericBailmentAloneAccepted, false);
+  assert.equal(record.consentProcessRecord.clinicalConsentEquivalenceClaim, false);
   assert.equal(record.receipt.anchorPayload.artifactType, 'participant_consent_process');
   assert.equal(record.receipt.trustState, 'inactive');
   assert.equal(record.receipt.exochainProductionClaim, false);
@@ -288,7 +298,12 @@ test('participant consent process fails closed for superseded material untrained
   const material = evaluateConsentMaterialReadiness(consentMaterialInput()).materialRecord;
 
   const denied = documentParticipantConsentProcess({
-    ...consentProcessInput({ ...material, status: 'superseded' }),
+    ...consentProcessInput({
+      ...material,
+      status: 'superseded',
+      genericBailmentAloneAccepted: true,
+      clinicalConsentEquivalenceClaim: true,
+    }),
     staffReadiness: {
       ...consentProcessInput(material).staffReadiness,
       trained: false,
@@ -308,6 +323,8 @@ test('participant consent process fails closed for superseded material untrained
   assert.equal(denied.consentProcessRecord.status, 'blocked');
   assert.equal(denied.receipt, null);
   assert.match(denied.reasons.join('|'), /active_approved_consent_material_absent/);
+  assert.match(denied.reasons.join('|'), /ptag_007_generic_bailment_only_forbidden/);
+  assert.match(denied.reasons.join('|'), /ptag_007_clinical_consent_equivalence_claim_forbidden/);
   assert.match(denied.reasons.join('|'), /consent_staff_training_absent/);
   assert.match(denied.reasons.join('|'), /consent_staff_delegation_absent/);
   assert.match(denied.reasons.join('|'), /consent_signatures_incomplete/);

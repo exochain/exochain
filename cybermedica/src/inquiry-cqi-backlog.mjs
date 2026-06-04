@@ -202,6 +202,10 @@ function missingValues(expected, actual) {
   return expected.filter((value) => !actual.includes(value));
 }
 
+function includesAll(actual, expected) {
+  return expected.every((value) => actual.includes(value));
+}
+
 function hlcTuple(hlc) {
   if (!Number.isSafeInteger(hlc?.physicalMs) || !Number.isSafeInteger(hlc?.logical) || hlc.logical < 0) {
     return null;
@@ -327,11 +331,85 @@ function evaluateCycle(cycle, policy, reasons) {
 }
 
 function evaluateSourceAnalytics(sourceAnalytics, cycle, reasons) {
+  const acknowledgedRoleRefs = sortedTextList(sourceAnalytics?.manualNavigationAcknowledgedRoleRefs);
+  const requiredAcknowledgementRoleRefs = sortedTextList(sourceAnalytics?.manualNavigationRequiredAcknowledgementRoleRefs);
+  const manualNavigationRoleRefs = sortedTextList(sourceAnalytics?.manualNavigationRoleRefs);
+
   addReason(reasons, !isDigest(sourceAnalytics?.userAssistanceReceiptHash), 'source_assistance_receipt_hash_invalid');
+  addReason(reasons, !isDigest(sourceAnalytics?.userAssistanceAnalyticsDigest), 'source_assistance_analytics_digest_invalid');
   addReason(reasons, !isDigest(sourceAnalytics?.documentationRunbookReceiptHash), 'source_runbook_receipt_hash_invalid');
   addReason(reasons, !isDigest(sourceAnalytics?.driftPolicyHash), 'source_drift_policy_hash_invalid');
   addReason(reasons, !isDigest(sourceAnalytics?.currentManualSetHash), 'source_manual_set_hash_invalid');
   addReason(reasons, !isDigest(sourceAnalytics?.currentManualIndexHash), 'source_manual_index_hash_invalid');
+  addReason(reasons, sourceAnalytics?.manualNavigationReady !== true, 'source_manual_navigation_ready_absent');
+  addReason(
+    reasons,
+    !isDigest(sourceAnalytics?.contextualManualDrawerReceiptHash),
+    'source_manual_navigation_drawer_receipt_hash_invalid',
+  );
+  addReason(reasons, !isDigest(sourceAnalytics?.contextualManualDrawerHash), 'source_manual_navigation_drawer_hash_invalid');
+  addReason(
+    reasons,
+    !hasText(sourceAnalytics?.controlledDocumentDistributionRecordId),
+    'source_manual_navigation_distribution_record_absent',
+  );
+  addReason(
+    reasons,
+    !isDigest(sourceAnalytics?.controlledDocumentDistributionReceiptHash),
+    'source_manual_navigation_distribution_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(sourceAnalytics?.documentationPublicationReceiptHash),
+    'source_manual_navigation_publication_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(sourceAnalytics?.manualExportReceiptHash),
+    'source_manual_navigation_manual_export_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(sourceAnalytics?.roleManualCoverageReceiptHash),
+    'source_manual_navigation_role_manual_coverage_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(sourceAnalytics?.acknowledgementRosterHash),
+    'source_manual_navigation_acknowledgement_roster_hash_invalid',
+  );
+  addReason(
+    reasons,
+    acknowledgedRoleRefs.length === 0 || requiredAcknowledgementRoleRefs.length === 0,
+    'source_manual_navigation_acknowledgement_roles_absent',
+  );
+  addReason(
+    reasons,
+    acknowledgedRoleRefs.length > 0 &&
+      requiredAcknowledgementRoleRefs.length > 0 &&
+      !includesAll(acknowledgedRoleRefs, requiredAcknowledgementRoleRefs),
+    'source_manual_navigation_acknowledgement_incomplete',
+  );
+  addReason(
+    reasons,
+    manualNavigationRoleRefs.length > 0 && !includesAll(acknowledgedRoleRefs, manualNavigationRoleRefs),
+    'source_manual_navigation_role_acknowledgement_incomplete',
+  );
+  addReason(
+    reasons,
+    sourceAnalytics?.manualNavigationCurrentVersionOnly !== true,
+    'source_manual_navigation_current_version_boundary_invalid',
+  );
+  addReason(
+    reasons,
+    sourceAnalytics?.manualNavigationObsoleteVersionUseBlocked !== true,
+    'source_manual_navigation_obsolete_version_boundary_invalid',
+  );
+  addReason(
+    reasons,
+    sourceAnalytics?.manualNavigationEffectiveUseAcknowledged !== true,
+    'source_manual_navigation_effective_use_absent',
+  );
   addReason(reasons, sourceAnalytics?.noRawInquiryContent !== true, 'source_raw_inquiry_boundary_absent');
   addReason(reasons, sourceAnalytics?.metadataOnly !== true, 'source_analytics_metadata_boundary_invalid');
   addReason(reasons, sourceAnalytics?.protectedContentExcluded !== true, 'source_analytics_protected_boundary_invalid');
@@ -342,6 +420,26 @@ function evaluateSourceAnalytics(sourceAnalytics, cycle, reasons) {
     hlcAfter(sourceAnalytics?.reviewedAtHlc, cycle?.signalsCapturedAtHlc),
     'source_analytics_review_after_signal_capture',
   );
+
+  return {
+    acknowledgementRosterHash: sourceAnalytics?.acknowledgementRosterHash ?? null,
+    acknowledgedRoleRefs,
+    contextualManualDrawerHash: sourceAnalytics?.contextualManualDrawerHash ?? null,
+    contextualManualDrawerReceiptHash: sourceAnalytics?.contextualManualDrawerReceiptHash ?? null,
+    controlledDocumentDistributionReceiptHash: sourceAnalytics?.controlledDocumentDistributionReceiptHash ?? null,
+    controlledDocumentDistributionRecordId: sourceAnalytics?.controlledDocumentDistributionRecordId ?? null,
+    currentVersionOnly: sourceAnalytics?.manualNavigationCurrentVersionOnly === true,
+    documentationPublicationReceiptHash: sourceAnalytics?.documentationPublicationReceiptHash ?? null,
+    manualExportReceiptHash: sourceAnalytics?.manualExportReceiptHash ?? null,
+    manualNavigationEffectiveUseAcknowledged: sourceAnalytics?.manualNavigationEffectiveUseAcknowledged === true,
+    manualNavigationReady: sourceAnalytics?.manualNavigationReady === true,
+    manualNavigationRoleRefs,
+    requiredAcknowledgementRoleRefs,
+    roleManualCoverageReceiptHash: sourceAnalytics?.roleManualCoverageReceiptHash ?? null,
+    obsoleteVersionUseBlocked: sourceAnalytics?.manualNavigationObsoleteVersionUseBlocked === true,
+    userAssistanceAnalyticsDigest: sourceAnalytics?.userAssistanceAnalyticsDigest ?? null,
+    userAssistanceReceiptHash: sourceAnalytics?.userAssistanceReceiptHash ?? null,
+  };
 }
 
 function signalLabel(signal, index) {
@@ -351,7 +449,14 @@ function signalLabel(signal, index) {
 function evaluateInquirySignals(signals, requiredSourceFamilies, allowedImprovementCategories, cycle, reasons) {
   addReason(reasons, !Array.isArray(signals) || signals.length === 0, 'inquiry_signals_absent');
   if (!Array.isArray(signals)) {
-    return { cqiRequiredSignalRefs: [], highRiskSignalRefs: [], signalRefs: [], sourceFamilies: [], totalEvents: 0 };
+    return {
+      cqiRequiredSignalRefs: [],
+      highRiskSignalRefs: [],
+      signalRefs: [],
+      signalRoleRefs: [],
+      sourceFamilies: [],
+      totalEvents: 0,
+    };
   }
 
   const seenRefs = new Set();
@@ -359,6 +464,7 @@ function evaluateInquirySignals(signals, requiredSourceFamilies, allowedImprovem
   const signalRefs = sortedTextList(signals.map((signal) => signal?.signalRef));
   const cqiRequiredSignalRefs = [];
   const highRiskSignalRefs = [];
+  const signalRoleRefs = [];
 
   for (const family of requiredSourceFamilies) {
     addReason(reasons, !sourceFamilies.includes(family), `source_family_missing:${family}`);
@@ -367,6 +473,10 @@ function evaluateInquirySignals(signals, requiredSourceFamilies, allowedImprovem
   signals.forEach((signal, index) => {
     const label = signalLabel(signal, index);
     const affectedRoleRefs = sortedTextList(signal?.affectedRoleRefs);
+    if (hasText(signal?.roleRef)) {
+      signalRoleRefs.push(signal.roleRef);
+    }
+    signalRoleRefs.push(...affectedRoleRefs);
     addReason(reasons, !hasText(signal?.signalRef), `inquiry_signal_ref_absent:${label}`);
     addReason(reasons, seenRefs.has(signal?.signalRef), `inquiry_signal_ref_duplicate:${label}`);
     if (hasText(signal?.signalRef)) {
@@ -405,9 +515,20 @@ function evaluateInquirySignals(signals, requiredSourceFamilies, allowedImprovem
     cqiRequiredSignalRefs: uniqueSorted(cqiRequiredSignalRefs),
     highRiskSignalRefs: uniqueSorted(highRiskSignalRefs),
     signalRefs,
+    signalRoleRefs: uniqueSorted(signalRoleRefs),
     sourceFamilies,
     totalEvents: signals.reduce((total, signal) => total + (Number.isSafeInteger(signal?.eventCount) ? signal.eventCount : 0), 0),
   };
+}
+
+function evaluateSourceSignalRoleLineage(sourceSummary, signalSummary, reasons) {
+  for (const roleRef of signalSummary.signalRoleRefs) {
+    addReason(
+      reasons,
+      !sourceSummary.acknowledgedRoleRefs.includes(roleRef),
+      `source_manual_navigation_signal_role_acknowledgement_missing:${roleRef}`,
+    );
+  }
 }
 
 function itemLabel(item, index) {
@@ -586,20 +707,25 @@ function evaluateHumanReview(humanReview, cycle, reasons) {
   addReason(reasons, hlcBefore(humanReview?.reviewedAtHlc, cycle?.humanReviewedAtHlc), 'human_review_before_cycle_step');
 }
 
-function createBacklogDigest(input, signalSummary, itemSummary, actionSummary) {
+function createBacklogDigest(input, sourceSummary, signalSummary, itemSummary, actionSummary) {
   return sha256Hex({
     actionPackageRef: input?.actionPackage?.packageRef ?? null,
     backlogItemRefs: itemSummary.backlogItemRefs,
     cycleRef: input?.backlogCycle?.cycleRef ?? null,
     driftSignalRefs: actionSummary.driftSignalRefs,
+    contextualManualDrawerReceiptHash: sourceSummary.contextualManualDrawerReceiptHash,
+    controlledDocumentDistributionReceiptHash: sourceSummary.controlledDocumentDistributionReceiptHash,
+    manualExportReceiptHash: sourceSummary.manualExportReceiptHash,
+    roleManualCoverageReceiptHash: sourceSummary.roleManualCoverageReceiptHash,
     sourceFamilies: signalSummary.sourceFamilies,
-    sourceReceiptHash: input?.sourceAnalytics?.userAssistanceReceiptHash ?? null,
+    sourceAssistanceAnalyticsDigest: sourceSummary.userAssistanceAnalyticsDigest,
+    sourceReceiptHash: sourceSummary.userAssistanceReceiptHash,
     tenantId: input?.tenantId ?? null,
   });
 }
 
-function createCqiBacklog(input, finalReasons, signalSummary, itemSummary, actionSummary, aiAssistanceUsed) {
-  const backlogDigest = createBacklogDigest(input, signalSummary, itemSummary, actionSummary);
+function createCqiBacklog(input, finalReasons, sourceSummary, signalSummary, itemSummary, actionSummary, aiAssistanceUsed) {
+  const backlogDigest = createBacklogDigest(input, sourceSummary, signalSummary, itemSummary, actionSummary);
   return {
     schema: INQUIRY_CQI_SCHEMA,
     ready: finalReasons.length === 0,
@@ -622,6 +748,22 @@ function createCqiBacklog(input, finalReasons, signalSummary, itemSummary, actio
     linkedBacklogItemRefs: actionSummary.linkedBacklogItemRefs,
     driftSignalRefs: actionSummary.driftSignalRefs,
     driftReady: actionSummary.driftReady,
+    userAssistanceReceiptHash: sourceSummary.userAssistanceReceiptHash,
+    userAssistanceAnalyticsDigest: sourceSummary.userAssistanceAnalyticsDigest,
+    contextualManualDrawerHash: sourceSummary.contextualManualDrawerHash,
+    contextualManualDrawerReceiptHash: sourceSummary.contextualManualDrawerReceiptHash,
+    controlledDocumentDistributionReceiptHash: sourceSummary.controlledDocumentDistributionReceiptHash,
+    controlledDocumentDistributionRecordId: sourceSummary.controlledDocumentDistributionRecordId,
+    documentationPublicationReceiptHash: sourceSummary.documentationPublicationReceiptHash,
+    manualExportReceiptHash: sourceSummary.manualExportReceiptHash,
+    roleManualCoverageReceiptHash: sourceSummary.roleManualCoverageReceiptHash,
+    acknowledgementRosterHash: sourceSummary.acknowledgementRosterHash,
+    manualNavigationAcknowledgedRoleRefs: sourceSummary.acknowledgedRoleRefs,
+    manualNavigationRequiredAcknowledgementRoleRefs: sourceSummary.requiredAcknowledgementRoleRefs,
+    manualNavigationRoleRefs: sourceSummary.manualNavigationRoleRefs,
+    manualNavigationCurrentVersionOnly: sourceSummary.currentVersionOnly,
+    manualNavigationObsoleteVersionUseBlocked: sourceSummary.obsoleteVersionUseBlocked,
+    manualNavigationEffectiveUseAcknowledged: sourceSummary.manualNavigationEffectiveUseAcknowledged,
     aiAssistanceUsed,
     reviewerDid: input?.humanReview?.reviewerDid ?? null,
     auditRecordedAtHlc: input?.backlogCycle?.auditRecordedAtHlc ?? null,
@@ -642,7 +784,7 @@ function buildReceipt(input, cqiBacklog) {
     classification: 'metadata_only_documentation_cqi',
     custodyDigest: input.custodyDigest,
     hlcTimestamp: input.backlogCycle.auditRecordedAtHlc,
-    sensitivityTags: ['documentation_friction', 'cqi_backlog', 'metadata_only'],
+    sensitivityTags: ['documentation_friction', 'cqi_backlog', 'manual_navigation_readiness', 'metadata_only'],
     sourceSystem: 'cybermedica',
     tenantId: input.tenantId,
   });
@@ -655,7 +797,7 @@ export function evaluateInquiryCqiBacklog(input) {
   evaluateTenantActorAuthority(input, reasons);
   const policySummary = evaluatePolicy(input?.backlogPolicy, reasons);
   evaluateCycle(input?.backlogCycle, input?.backlogPolicy, reasons);
-  evaluateSourceAnalytics(input?.sourceAnalytics, input?.backlogCycle, reasons);
+  const sourceSummary = evaluateSourceAnalytics(input?.sourceAnalytics, input?.backlogCycle, reasons);
   const signals = Array.isArray(input?.inquirySignals) ? input.inquirySignals : [];
   const signalSummary = evaluateInquirySignals(
     input?.inquirySignals,
@@ -664,6 +806,7 @@ export function evaluateInquiryCqiBacklog(input) {
     input?.backlogCycle,
     reasons,
   );
+  evaluateSourceSignalRoleLineage(sourceSummary, signalSummary, reasons);
   const itemSummary = evaluateBacklogItems(
     input?.backlogItems,
     signals,
@@ -678,7 +821,15 @@ export function evaluateInquiryCqiBacklog(input) {
   addReason(reasons, !isDigest(input?.custodyDigest), 'custody_digest_invalid');
 
   const finalReasons = uniqueReasons(reasons);
-  const cqiBacklog = createCqiBacklog(input, finalReasons, signalSummary, itemSummary, actionSummary, aiAssistanceUsed);
+  const cqiBacklog = createCqiBacklog(
+    input,
+    finalReasons,
+    sourceSummary,
+    signalSummary,
+    itemSummary,
+    actionSummary,
+    aiAssistanceUsed,
+  );
 
   if (finalReasons.length > 0) {
     return {

@@ -58,6 +58,31 @@ const REQUIRED_SOURCE_REFS = [
   'package.json',
 ];
 
+const REQUIRED_BUILD_ARTIFACT_FILE_REFS = [
+  'CyberMedica_QMS_PRD_Master.docx',
+  'CyberMedica_QMS_PRD_Master.pdf',
+  'README.md',
+  'cyber_medica_qms_prd_master.md',
+  'cybermedica_2_0_sandy_seven_layer_master_prd.md',
+  'docs/context/CYBERMEDICA_ADJACENT_SURFACE_DECISIONS.md',
+  'docs/context/CYBERMEDICA_PRODUCTION_TRUST_ACTIVATION_GATES.md',
+  'docs/context/EXOCHAIN_CONTEXT_SEED_FOR_CYBERMEDICA.md',
+  'docs/context/EXOCHAIN_TO_CYBERMEDICA_INTEGRATION_MAP.md',
+  'docs/implementation/PATH_CLASSIFICATION.md',
+  'package.json',
+  'scripts/source-activation-gate-guard.mjs',
+  'scripts/source-council-escalation-guard.mjs',
+  'scripts/source-hazard-scan.mjs',
+  'scripts/source-secret-scan.mjs',
+  'src/ci-cd-quality-gates.mjs',
+  'src/qms-contracts.mjs',
+  'tests/ci-cd-quality-gates.test.mjs',
+  'tests/source-council-escalation-guard.test.mjs',
+  'tests/source-hazard-scan.test.mjs',
+  'tests/source-guards.test.mjs',
+  'tests/source-secret-scan.test.mjs',
+];
+
 const UNVERIFIED_ACTIVATION_GATES = ['PTAG-001', 'PTAG-016', 'PTAG-017'];
 
 async function loadCiCdQualityGates() {
@@ -143,6 +168,7 @@ function gateInput(overrides = {}) {
       minimumTrustBoundaryCoverageBasisPoints: 9900,
       blocksProductionTrustClaimsWithoutActivation: true,
       requiresNoExochainSourceModified: true,
+      requiresDeterministicSourceControls: true,
       requiresMetadataOnlyArtifacts: true,
       protectedContentExcluded: true,
       metadataOnly: true,
@@ -177,10 +203,26 @@ function gateInput(overrides = {}) {
       trustBoundaryCoverageBasisPoints: 10000,
       coverageReportHash: DIGEST_D,
       deterministicHazardsAbsent: true,
+      systemTimeSourceAbsent: true,
+      randomnessSourceAbsent: true,
+      floatingPointArithmeticAbsent: true,
+      dynamicCodeExecutionAbsent: true,
+      unboundedWorkflowLoopAbsent: true,
+      sourceHazardScanHash: DIGEST_5,
       placeholderLanguageAbsent: true,
       rawSensitiveFixtureAbsent: true,
       metadataOnly: true,
       recordedAtHlc: { physicalMs: 1800700310000, logical: 0 },
+    },
+    sourceHazardScanEvidence: {
+      status: 'passed',
+      commandRef: 'npm run scan:hazards',
+      scanReportHash: DIGEST_5,
+      scannedPathRefs: ['README.md', 'docs/context', 'docs/implementation', 'package.json', 'scripts', 'src', 'tests'],
+      exochainSourceExcluded: true,
+      deterministicHazardsAbsent: true,
+      metadataOnly: true,
+      recordedAtHlc: { physicalMs: 1800700315000, logical: 0 },
     },
     sourceGuardEvidence: {
       status: 'passed',
@@ -190,9 +232,89 @@ function gateInput(overrides = {}) {
       implementedContractsCovered: true,
       noImportedEvidenceCommitted: true,
       noExochainSourceModified: true,
+      noSystemTimeInSource: true,
+      noRandomnessInSource: true,
+      noFloatingPointArithmeticInSource: true,
+      noDynamicCodeExecutionInSource: true,
+      boundedWorkflowLoopsVerified: true,
       evidenceHash: DIGEST_E,
       metadataOnly: true,
       evaluatedAtHlc: { physicalMs: 1800700320000, logical: 0 },
+    },
+    dependencyAuditEvidence: {
+      status: 'passed',
+      commandRef: 'npm audit --package-lock-only --audit-level=moderate',
+      packageManager: 'npm',
+      packageManifestRef: 'package.json',
+      lockfileRef: 'package-lock.json',
+      lockfileHash: DIGEST_6,
+      advisoryDatabaseRef: 'npm-advisory-database',
+      auditReportHash: DIGEST_7,
+      productionDependenciesAudited: true,
+      developmentDependenciesAudited: true,
+      totalVulnerabilities: 0,
+      criticalVulnerabilities: 0,
+      highVulnerabilities: 0,
+      moderateVulnerabilities: 0,
+      metadataOnly: true,
+      recordedAtHlc: { physicalMs: 1800700340000, logical: 0 },
+    },
+    lintTypecheckEvidence: {
+      status: 'passed',
+      commandRef: 'npm run lint:typecheck',
+      reportHash: DIGEST_3,
+      checkedPathRefs: ['package.json', 'scripts', 'src', 'tests'],
+      moduleSyntaxChecked: true,
+      typeBoundaryReviewed: true,
+      metadataOnly: true,
+      recordedAtHlc: { physicalMs: 1800700345000, logical: 0 },
+    },
+    buildArtifactEvidence: {
+      status: 'passed',
+      commandRef: 'npm run build:artifact',
+      artifactManifestHash: DIGEST_4,
+      artifactFileManifestHash: DIGEST_6,
+      artifactFileRefs: REQUIRED_BUILD_ARTIFACT_FILE_REFS,
+      artifactFileCount: REQUIRED_BUILD_ARTIFACT_FILE_REFS.length,
+      packageManifestHash: DIGEST_B,
+      includedPathRefs: ['README.md', 'docs/context', 'docs/implementation', 'package.json', 'scripts', 'src', 'tests'],
+      dryRunOnly: true,
+      tarballWritten: false,
+      packagePrivate: true,
+      exochainSourceExcluded: true,
+      importedEvidenceExcluded: true,
+      generatedDependencyTreeExcluded: true,
+      parentOrAbsolutePathRefsExcluded: true,
+      protectedFixtureFilesExcluded: true,
+      secretFilesExcluded: true,
+      protectedContentExcluded: true,
+      metadataOnly: true,
+      recordedAtHlc: { physicalMs: 1800700346000, logical: 0 },
+    },
+    secretScanEvidence: {
+      status: 'passed',
+      commandRef: 'source secret scan',
+      scannerRef: 'cybermedica-source-secret-scan',
+      scannerVersionHash: DIGEST_8,
+      scanReportHash: DIGEST_2,
+      scannedPathRefs: [
+        'README.md',
+        'docs/context',
+        'docs/implementation',
+        'package.json',
+        'package-lock.json',
+        'scripts',
+        'src',
+        'tests',
+      ],
+      exochainSourceExcluded: true,
+      secretMaterialAbsent: true,
+      rootKeyMaterialAbsent: true,
+      bootstrapTokenAbsent: true,
+      findingsCount: 0,
+      highRiskFindingsCount: 0,
+      metadataOnly: true,
+      recordedAtHlc: { physicalMs: 1800700350000, logical: 0 },
     },
     activationGateReview: {
       trustState: 'inactive',
@@ -253,6 +375,51 @@ test('CI/CD quality gates deterministically permit adjacent release evidence whi
   assert.deepEqual(resultA.gateRecord.gateFamiliesCovered, REQUIRED_GATE_FAMILIES);
   assert.equal(resultA.gateRecord.lineCoverageBasisPoints, 9942);
   assert.equal(resultA.gateRecord.trustBoundaryCoverageBasisPoints, 10000);
+  assert.deepEqual(resultA.gateRecord.deterministicSourceControls, {
+    boundedWorkflowLoopsVerified: true,
+    dynamicCodeExecutionAbsent: true,
+    floatingPointArithmeticAbsent: true,
+    randomnessSourceAbsent: true,
+    sourceHazardScanHash: DIGEST_5,
+    sourceHazardScanCommandRef: 'npm run scan:hazards',
+    sourceHazardScanReportHash: DIGEST_5,
+    sourceHazardScanScopes: ['README.md', 'docs/context', 'docs/implementation', 'package.json', 'scripts', 'src', 'tests'],
+    systemTimeSourceAbsent: true,
+  });
+  assert.deepEqual(resultA.gateRecord.releaseSecurityEvidence, {
+    dependencyAuditCommandRef: 'npm audit --package-lock-only --audit-level=moderate',
+    dependencyAuditReportHash: DIGEST_7,
+    lockfileHash: DIGEST_6,
+    secretScanCommandRef: 'source secret scan',
+    secretScanReportHash: DIGEST_2,
+    secretScanScopes: [
+      'README.md',
+      'docs/context',
+      'docs/implementation',
+      'package-lock.json',
+      'package.json',
+      'scripts',
+      'src',
+      'tests',
+    ],
+  });
+  assert.deepEqual(resultA.gateRecord.releaseCommandEvidence, {
+    buildArtifactCommandRef: 'npm run build:artifact',
+    buildArtifactDryRunOnly: true,
+    buildArtifactFileCount: REQUIRED_BUILD_ARTIFACT_FILE_REFS.length,
+    buildArtifactFileManifestHash: DIGEST_6,
+    buildArtifactManifestHash: DIGEST_4,
+    buildArtifactRequiredFileRefs: REQUIRED_BUILD_ARTIFACT_FILE_REFS,
+    buildArtifactTarballWritten: false,
+    buildIncludedScopes: ['README.md', 'docs/context', 'docs/implementation', 'package.json', 'scripts', 'src', 'tests'],
+    lintTypecheckCommandRef: 'npm run lint:typecheck',
+    lintTypecheckReportHash: DIGEST_3,
+    lintTypecheckScopes: ['package.json', 'scripts', 'src', 'tests'],
+    moduleSyntaxChecked: true,
+    packageManifestHash: DIGEST_B,
+    packagePrivate: true,
+    typeBoundaryReviewed: true,
+  });
   assert.equal(resultA.gateRecord.releaseCandidateRef, 'cybermedica-adjacent-baseline-2026-05-26');
   assert.equal(resultA.gateRecord.activationGateState, 'inactive');
   assert.equal(resultA.gateRecord.productionTrustClaimsActive, false);
@@ -284,6 +451,224 @@ test('CI/CD quality gates fail closed for missing required gates failing command
   assert.ok(result.blockedBy.includes('gate_not_passed:dependency_audit'));
   assert.ok(result.blockedBy.includes('line_coverage_below_threshold'));
   assert.ok(result.blockedBy.includes('trust_boundary_coverage_below_threshold'));
+});
+
+test('CI/CD quality gates require command-backed source-hazard scan evidence', async () => {
+  const { evaluateCiCdQualityGates } = await loadCiCdQualityGates();
+
+  const result = evaluateCiCdQualityGates(
+    gateInput({
+      sourceHazardScanEvidence: {
+        status: 'failed',
+        commandRef: '',
+        scanReportHash: '',
+        scannedPathRefs: ['src'],
+        exochainSourceExcluded: false,
+        deterministicHazardsAbsent: false,
+        metadataOnly: false,
+        recordedAtHlc: { physicalMs: 1800700290000, logical: 0 },
+      },
+    }),
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.receipt, null);
+  assert.ok(result.blockedBy.includes('source_hazard_scan_not_passed'));
+  assert.ok(result.blockedBy.includes('source_hazard_scan_command_ref_absent'));
+  assert.ok(result.blockedBy.includes('source_hazard_scan_report_hash_invalid'));
+  assert.ok(result.blockedBy.includes('source_hazard_scan_scope_missing:tests'));
+  assert.ok(result.blockedBy.includes('source_hazard_scan_exochain_source_not_excluded'));
+  assert.ok(result.blockedBy.includes('source_hazard_scan_deterministic_hazards_present'));
+  assert.ok(result.blockedBy.includes('source_hazard_scan_metadata_boundary_invalid'));
+  assert.ok(result.blockedBy.includes('source_hazard_scan_before_gates_completed'));
+});
+
+test('CI/CD quality gates fail closed without JS deterministic source-control evidence', async () => {
+  const { evaluateCiCdQualityGates } = await loadCiCdQualityGates();
+
+  const result = evaluateCiCdQualityGates(
+    gateInput({
+      gatePolicy: {
+        requiresDeterministicSourceControls: false,
+      },
+      coverageEvidence: {
+        systemTimeSourceAbsent: false,
+        randomnessSourceAbsent: false,
+        floatingPointArithmeticAbsent: false,
+        dynamicCodeExecutionAbsent: false,
+        unboundedWorkflowLoopAbsent: false,
+        sourceHazardScanHash: '',
+      },
+      sourceGuardEvidence: {
+        noSystemTimeInSource: false,
+        noRandomnessInSource: false,
+        noFloatingPointArithmeticInSource: false,
+        noDynamicCodeExecutionInSource: false,
+        boundedWorkflowLoopsVerified: false,
+      },
+    }),
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.receipt, null);
+  assert.ok(result.blockedBy.includes('deterministic_source_control_policy_absent'));
+  assert.ok(result.blockedBy.includes('system_time_source_guard_failed'));
+  assert.ok(result.blockedBy.includes('randomness_source_guard_failed'));
+  assert.ok(result.blockedBy.includes('floating_point_arithmetic_guard_failed'));
+  assert.ok(result.blockedBy.includes('dynamic_code_execution_guard_failed'));
+  assert.ok(result.blockedBy.includes('unbounded_workflow_loop_guard_failed'));
+  assert.ok(result.blockedBy.includes('source_hazard_scan_hash_invalid'));
+  assert.ok(result.blockedBy.includes('source_guard_system_time_not_verified'));
+  assert.ok(result.blockedBy.includes('source_guard_randomness_not_verified'));
+  assert.ok(result.blockedBy.includes('source_guard_float_arithmetic_not_verified'));
+  assert.ok(result.blockedBy.includes('source_guard_dynamic_code_execution_not_verified'));
+  assert.ok(result.blockedBy.includes('source_guard_bounded_loops_not_verified'));
+});
+
+test('CI/CD quality gates require dependency-audit and secret-scan evidence shape', async () => {
+  const { evaluateCiCdQualityGates } = await loadCiCdQualityGates();
+
+  const result = evaluateCiCdQualityGates(
+    gateInput({
+      dependencyAuditEvidence: {
+        status: 'failed',
+        commandRef: '',
+        packageManager: 'yarn',
+        packageManifestRef: '',
+        lockfileRef: 'package.json',
+        lockfileHash: '',
+        advisoryDatabaseRef: '',
+        auditReportHash: '',
+        productionDependenciesAudited: false,
+        developmentDependenciesAudited: false,
+        totalVulnerabilities: 1,
+        criticalVulnerabilities: 1,
+        highVulnerabilities: 1,
+        moderateVulnerabilities: 1,
+        metadataOnly: false,
+        recordedAtHlc: { physicalMs: 1800700290000, logical: 0 },
+      },
+      secretScanEvidence: {
+        status: 'failed',
+        commandRef: '',
+        scannerRef: '',
+        scannerVersionHash: '',
+        scanReportHash: '',
+        scannedPathRefs: ['src'],
+        exochainSourceExcluded: false,
+        secretMaterialAbsent: false,
+        rootKeyMaterialAbsent: false,
+        bootstrapTokenAbsent: false,
+        findingsCount: 1,
+        highRiskFindingsCount: 1,
+        metadataOnly: false,
+        recordedAtHlc: { physicalMs: 1800700295000, logical: 0 },
+      },
+    }),
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.receipt, null);
+  assert.ok(result.blockedBy.includes('dependency_audit_not_passed'));
+  assert.ok(result.blockedBy.includes('dependency_audit_command_ref_absent'));
+  assert.ok(result.blockedBy.includes('dependency_audit_package_manager_invalid'));
+  assert.ok(result.blockedBy.includes('dependency_audit_lockfile_ref_invalid'));
+  assert.ok(result.blockedBy.includes('dependency_audit_lockfile_hash_invalid'));
+  assert.ok(result.blockedBy.includes('dependency_audit_report_hash_invalid'));
+  assert.ok(result.blockedBy.includes('dependency_audit_vulnerabilities_present'));
+  assert.ok(result.blockedBy.includes('dependency_audit_metadata_boundary_invalid'));
+  assert.ok(result.blockedBy.includes('dependency_audit_before_gates_completed'));
+  assert.ok(result.blockedBy.includes('secret_scan_not_passed'));
+  assert.ok(result.blockedBy.includes('secret_scan_command_ref_absent'));
+  assert.ok(result.blockedBy.includes('secret_scan_scope_missing:tests'));
+  assert.ok(result.blockedBy.includes('secret_scan_exochain_source_not_excluded'));
+  assert.ok(result.blockedBy.includes('secret_scan_secret_material_present'));
+  assert.ok(result.blockedBy.includes('secret_scan_root_key_material_present'));
+  assert.ok(result.blockedBy.includes('secret_scan_bootstrap_token_present'));
+  assert.ok(result.blockedBy.includes('secret_scan_findings_present'));
+  assert.ok(result.blockedBy.includes('secret_scan_metadata_boundary_invalid'));
+  assert.ok(result.blockedBy.includes('secret_scan_before_gates_completed'));
+});
+
+test('CI/CD quality gates require command-backed lint/typecheck and build artifact evidence', async () => {
+  const { evaluateCiCdQualityGates } = await loadCiCdQualityGates();
+
+  const result = evaluateCiCdQualityGates(
+    gateInput({
+      lintTypecheckEvidence: {
+        status: 'failed',
+        commandRef: '',
+        reportHash: '',
+        checkedPathRefs: ['src'],
+        moduleSyntaxChecked: false,
+        typeBoundaryReviewed: false,
+        metadataOnly: false,
+        recordedAtHlc: { physicalMs: 1800700296000, logical: 0 },
+      },
+      buildArtifactEvidence: {
+        status: 'failed',
+        commandRef: 'npm pack --dry-run --json',
+        artifactManifestHash: '',
+        artifactFileManifestHash: '',
+        artifactFileRefs: [
+          'src/ci-cd-quality-gates.mjs',
+          '../exochain/crates/exo-core/src/lib.rs',
+          'reports/auditor.html',
+          'node_modules/dependency/index.js',
+        ],
+        artifactFileCount: 5,
+        packageManifestHash: '',
+        includedPathRefs: ['src'],
+        dryRunOnly: false,
+        tarballWritten: true,
+        packagePrivate: false,
+        exochainSourceExcluded: false,
+        importedEvidenceExcluded: false,
+        generatedDependencyTreeExcluded: false,
+        parentOrAbsolutePathRefsExcluded: false,
+        protectedFixtureFilesExcluded: false,
+        secretFilesExcluded: false,
+        protectedContentExcluded: false,
+        metadataOnly: false,
+        recordedAtHlc: { physicalMs: 1800700297000, logical: 0 },
+      },
+    }),
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.receipt, null);
+  assert.ok(result.blockedBy.includes('lint_typecheck_not_passed'));
+  assert.ok(result.blockedBy.includes('lint_typecheck_command_ref_absent'));
+  assert.ok(result.blockedBy.includes('lint_typecheck_report_hash_invalid'));
+  assert.ok(result.blockedBy.includes('lint_typecheck_scope_missing:tests'));
+  assert.ok(result.blockedBy.includes('lint_typecheck_module_syntax_not_verified'));
+  assert.ok(result.blockedBy.includes('lint_typecheck_type_boundary_not_reviewed'));
+  assert.ok(result.blockedBy.includes('lint_typecheck_metadata_boundary_invalid'));
+  assert.ok(result.blockedBy.includes('lint_typecheck_before_gates_completed'));
+  assert.ok(result.blockedBy.includes('build_artifact_not_passed'));
+  assert.ok(result.blockedBy.includes('build_artifact_command_ref_invalid'));
+  assert.ok(result.blockedBy.includes('build_artifact_manifest_hash_invalid'));
+  assert.ok(result.blockedBy.includes('build_artifact_file_manifest_hash_invalid'));
+  assert.ok(result.blockedBy.includes('build_artifact_file_ref_missing:README.md'));
+  assert.ok(result.blockedBy.includes('build_artifact_file_ref_forbidden:../exochain/crates/exo-core/src/lib.rs'));
+  assert.ok(result.blockedBy.includes('build_artifact_parent_or_absolute_path_ref:../exochain/crates/exo-core/src/lib.rs'));
+  assert.ok(result.blockedBy.includes('build_artifact_file_ref_forbidden:reports/auditor.html'));
+  assert.ok(result.blockedBy.includes('build_artifact_file_ref_forbidden:node_modules/dependency/index.js'));
+  assert.ok(result.blockedBy.includes('build_artifact_file_count_mismatch'));
+  assert.ok(result.blockedBy.includes('build_artifact_package_manifest_hash_invalid'));
+  assert.ok(result.blockedBy.includes('build_artifact_scope_missing:README.md'));
+  assert.ok(result.blockedBy.includes('build_artifact_dry_run_only_absent'));
+  assert.ok(result.blockedBy.includes('build_artifact_tarball_written'));
+  assert.ok(result.blockedBy.includes('build_artifact_package_not_private'));
+  assert.ok(result.blockedBy.includes('build_artifact_exochain_source_not_excluded'));
+  assert.ok(result.blockedBy.includes('build_artifact_imported_evidence_not_excluded'));
+  assert.ok(result.blockedBy.includes('build_artifact_generated_dependency_tree_not_excluded'));
+  assert.ok(result.blockedBy.includes('build_artifact_parent_or_absolute_path_refs_not_excluded'));
+  assert.ok(result.blockedBy.includes('build_artifact_protected_fixture_files_not_excluded'));
+  assert.ok(result.blockedBy.includes('build_artifact_secret_files_not_excluded'));
+  assert.ok(result.blockedBy.includes('build_artifact_protected_boundary_invalid'));
+  assert.ok(result.blockedBy.includes('build_artifact_metadata_boundary_invalid'));
+  assert.ok(result.blockedBy.includes('build_artifact_before_gates_completed'));
 });
 
 test('CI/CD quality gates block unclassified paths Exochain source edits and premature trust claims', async () => {
@@ -324,6 +709,7 @@ test('CI/CD quality gates block unclassified paths Exochain source edits and pre
   assert.ok(result.blockedBy.includes('source_path_missing_classification:src/ci-cd-quality-gates.mjs'));
   assert.ok(result.blockedBy.includes('exochain_source_modified:/Users/bobstewart/dev/exochain/exochain/crates/exo-core/src/hash.rs'));
   assert.ok(result.blockedBy.includes('imported_evidence_committed:reports/auditor.html'));
+  assert.ok(result.blockedBy.includes('source_guard_exochain_source_modified'));
   assert.ok(result.blockedBy.includes('production_trust_claim_before_activation'));
   assert.ok(result.blockedBy.includes('exochain_backed_language_before_activation'));
   assert.ok(result.blockedBy.includes('root_backed_authority_claim_before_activation'));
@@ -395,14 +781,29 @@ test('CI/CD quality gates accept inert raw markers no AI assistance and same-tic
       coverageEvidence: {
         recordedAtHlc: { physicalMs: 1800700100000, logical: 20 },
       },
+      sourceHazardScanEvidence: {
+        recordedAtHlc: { physicalMs: 1800700100000, logical: 21 },
+      },
       sourceGuardEvidence: {
-        evaluatedAtHlc: { physicalMs: 1800700100000, logical: 21 },
+        evaluatedAtHlc: { physicalMs: 1800700100000, logical: 22 },
+      },
+      dependencyAuditEvidence: {
+        recordedAtHlc: { physicalMs: 1800700100000, logical: 23 },
+      },
+      lintTypecheckEvidence: {
+        recordedAtHlc: { physicalMs: 1800700100000, logical: 24 },
+      },
+      buildArtifactEvidence: {
+        recordedAtHlc: { physicalMs: 1800700100000, logical: 25 },
+      },
+      secretScanEvidence: {
+        recordedAtHlc: { physicalMs: 1800700100000, logical: 26 },
       },
       activationGateReview: {
-        reviewedAtHlc: { physicalMs: 1800700100000, logical: 22 },
+        reviewedAtHlc: { physicalMs: 1800700100000, logical: 27 },
       },
       humanReview: {
-        reviewedAtHlc: { physicalMs: 1800700100000, logical: 23 },
+        reviewedAtHlc: { physicalMs: 1800700100000, logical: 28 },
       },
       aiAssistance: null,
     }),

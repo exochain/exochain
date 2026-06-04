@@ -127,6 +127,29 @@ function validRegistryInput(overrides = {}) {
   };
 }
 
+function validOperationsRunbookInput(overrides = {}) {
+  return {
+    runbookId: 'root-operations-runbook-alpha',
+    runbookVersion: '2026-05-23-root-ops-v1',
+    hlcTimestamp: { physicalMs: 1790001000000, logical: 6 },
+    ceremonyOwnerDid: 'did:exo:root-ceremony-owner-alpha',
+    backupOwnerDid: 'did:exo:root-ceremony-backup-alpha',
+    incidentResponsePathRef: 'cm-root-runbooks/root-incident-response-alpha',
+    incidentResponsePathHash: digestA,
+    escalationPathRef: 'cm-root-runbooks/root-escalation-alpha',
+    escalationPathHash: digestB,
+    rollbackDisablementRef: 'cm-root-runbooks/root-rollback-disablement-alpha',
+    rollbackDisablementHash: digestC,
+    ownerAttestationHash: digestD,
+    backupOwnerAttestationHash: digestE,
+    reviewedBy: ['did:exo:quality-governance-alpha', 'did:exo:security-operations-alpha'],
+    metadataOnly: true,
+    protectedContentExcluded: true,
+    bobEscalationId: 'ESC-ROOT-OWNER',
+    ...overrides,
+  };
+}
+
 test('root certifier roster requires 13 unique independent active certifiers and deterministic evidence', async () => {
   const { evaluateRootCertifierRoster } = await loadRootTrustRegistry();
 
@@ -217,10 +240,72 @@ test('root artifact registry requires every activation artifact and rejects prot
   );
 });
 
+test('root operations runbook requires owner backup incident and rollback authority evidence', async () => {
+  const { evaluateRootOperationsRunbook } = await loadRootTrustRegistry();
+
+  const runbookA = evaluateRootOperationsRunbook(validOperationsRunbookInput());
+  const runbookB = evaluateRootOperationsRunbook(
+    validOperationsRunbookInput({
+      reviewedBy: [...validOperationsRunbookInput().reviewedBy].reverse(),
+    }),
+  );
+
+  assert.equal(runbookA.valid, true);
+  assert.equal(runbookA.state, 'verified');
+  assert.equal(runbookA.failClosed, false);
+  assert.equal(runbookA.exochainProductionClaim, false);
+  assert.equal(runbookA.bobEscalationId, 'ESC-ROOT-OWNER');
+  assert.equal(runbookA.ceremonyOwnerDid, 'did:exo:root-ceremony-owner-alpha');
+  assert.equal(runbookA.backupOwnerDid, 'did:exo:root-ceremony-backup-alpha');
+  assert.equal(runbookA.incidentResponsePathRef, 'cm-root-runbooks/root-incident-response-alpha');
+  assert.equal(runbookA.rollbackDisablementRef, 'cm-root-runbooks/root-rollback-disablement-alpha');
+  assert.equal(runbookA.runbookHash, runbookB.runbookHash);
+  assert.deepEqual(runbookA.reviewedBy, [
+    'did:exo:quality-governance-alpha',
+    'did:exo:security-operations-alpha',
+  ]);
+
+  const missingOwner = evaluateRootOperationsRunbook(
+    validOperationsRunbookInput({
+      ceremonyOwnerDid: '',
+      backupOwnerDid: 'did:exo:root-ceremony-owner-alpha',
+      metadataOnly: false,
+      rollbackDisablementHash: 'not-a-digest',
+    }),
+  );
+
+  assert.equal(missingOwner.valid, false);
+  assert.equal(missingOwner.state, 'denied');
+  assert.equal(missingOwner.failClosed, true);
+  assert.ok(missingOwner.blockedBy.includes('root_ceremony_owner_absent'));
+  assert.ok(missingOwner.blockedBy.includes('root_runbook_metadata_boundary_invalid'));
+  assert.ok(missingOwner.blockedBy.includes('root_rollback_disablement_hash_invalid'));
+
+  const sameOwner = evaluateRootOperationsRunbook(
+    validOperationsRunbookInput({
+      backupOwnerDid: 'did:exo:root-ceremony-owner-alpha',
+    }),
+  );
+
+  assert.equal(sameOwner.valid, false);
+  assert.ok(sameOwner.blockedBy.includes('root_backup_owner_not_independent'));
+
+  assert.throws(
+    () =>
+      evaluateRootOperationsRunbook(
+        validOperationsRunbookInput({
+          rawContent: 'Participant Alice Example root incident note must not be stored.',
+        }),
+      ),
+    /protected content/i,
+  );
+});
+
 test('root trust bundle provider stays inactive until roster registry config and verifier evidence are verified', async () => {
   const {
     evaluateRootArtifactRegistry,
     evaluateRootCertifierRoster,
+    evaluateRootOperationsRunbook,
     evaluateRootTrustBundleProvider,
   } = await loadRootTrustRegistry();
   const { evaluateProductionTrustActivation } = await loadTrustAdapter();
@@ -233,10 +318,35 @@ test('root trust bundle provider stays inactive until roster registry config and
   assert.ok(inactive.blockedBy.includes('root_bundle_provider_endpoint_absent'));
   assert.ok(inactive.blockedBy.includes('root_certifier_roster_unverified'));
   assert.ok(inactive.blockedBy.includes('root_artifact_registry_unverified'));
+  assert.ok(inactive.blockedBy.includes('root_operations_runbook_unverified'));
   assert.equal(inactive.rootBundle, null);
 
   const roster = evaluateRootCertifierRoster(validRosterInput());
   const registry = evaluateRootArtifactRegistry(validRegistryInput());
+  const operationsRunbook = evaluateRootOperationsRunbook(validOperationsRunbookInput());
+
+  const missingRunbook = evaluateRootTrustBundleProvider({
+    providerConfig: {
+      endpointRef: 'cybermedica-root-provider-prod-ref',
+      credentialScope: 'cybermedica-root-provider-only',
+      health: 'ready',
+    },
+    roster,
+    artifactRegistry: registry,
+    verifierResult: {
+      status: 'verified',
+      verified: true,
+      verifierReceiptId: 'root-verifier-receipt-alpha',
+      thresholdSignature: '7-of-13',
+      dkgParticipantCount: 13,
+      rootTrustBundleHash: digest9,
+    },
+  });
+
+  assert.equal(missingRunbook.allowed, false);
+  assert.equal(missingRunbook.state, 'denied');
+  assert.ok(missingRunbook.blockedBy.includes('root_operations_runbook_unverified'));
+
   const pending = evaluateRootTrustBundleProvider({
     providerConfig: {
       endpointRef: 'cybermedica-root-provider-prod-ref',
@@ -245,6 +355,7 @@ test('root trust bundle provider stays inactive until roster registry config and
     },
     roster,
     artifactRegistry: registry,
+    operationsRunbook,
     verifierResult: {
       status: 'pending',
       verified: false,
@@ -260,6 +371,7 @@ test('root trust bundle provider stays inactive until roster registry config and
   assert.deepEqual(pending.blockedBy, ['root_verifier_pending']);
   assert.equal(pending.rootBundle.status, 'pending');
   assert.equal(pending.rootBundle.certifierCount, 13);
+  assert.equal(pending.rootBundle.ceremonyOwnerDid, 'did:exo:root-ceremony-owner-alpha');
 
   const secretBearing = evaluateRootTrustBundleProvider({
     providerConfig: {
@@ -269,6 +381,7 @@ test('root trust bundle provider stays inactive until roster registry config and
     },
     roster,
     artifactRegistry: registry,
+    operationsRunbook,
     verifierResult: {
       status: 'verified',
       verified: true,
@@ -283,6 +396,29 @@ test('root trust bundle provider stays inactive until roster registry config and
   assert.equal(secretBearing.failClosed, true);
   assert.ok(secretBearing.blockedBy.includes('root_bundle_provider_secret_material_prohibited'));
 
+  const sharedExochainScope = evaluateRootTrustBundleProvider({
+    providerConfig: {
+      endpointRef: 'cybermedica-root-provider-prod-ref',
+      credentialScope: 'exochain-root-bootstrap-signing',
+      health: 'ready',
+    },
+    roster,
+    artifactRegistry: registry,
+    operationsRunbook,
+    verifierResult: {
+      status: 'verified',
+      verified: true,
+      verifierReceiptId: 'root-verifier-receipt-alpha',
+      thresholdSignature: '7-of-13',
+      dkgParticipantCount: 13,
+      rootTrustBundleHash: digest9,
+    },
+  });
+
+  assert.equal(sharedExochainScope.allowed, false);
+  assert.equal(sharedExochainScope.failClosed, true);
+  assert.ok(sharedExochainScope.blockedBy.includes('root_bundle_provider_credential_scope_not_cybermedica_only'));
+
   const verified = evaluateRootTrustBundleProvider({
     providerConfig: {
       endpointRef: 'cybermedica-root-provider-prod-ref',
@@ -291,6 +427,7 @@ test('root trust bundle provider stays inactive until roster registry config and
     },
     roster,
     artifactRegistry: registry,
+    operationsRunbook,
     verifierResult: {
       status: 'verified',
       verified: true,
@@ -305,6 +442,7 @@ test('root trust bundle provider stays inactive until roster registry config and
   assert.equal(verified.state, 'verified');
   assert.equal(verified.exochainProductionClaim, false);
   assert.equal(verified.rootBundle.verified, true);
+  assert.equal(verified.rootBundle.operationsRunbookHash, operationsRunbook.runbookHash);
 
   const activation = evaluateProductionTrustActivation({
     claimId: 'PTAG-001',

@@ -31,14 +31,14 @@ const DIGEST_5 = '55555555555555555555555555555555555555555555555555555555555555
 const DIGEST_6 = '6666666666666666666666666666666666666666666666666666666666666666';
 
 const REQUIRED_DOCTRINE_LAYERS = [
-  'data',
-  'deployment',
-  'doctrine',
-  'documentation',
-  'domain',
-  'doors',
-  'drift',
   'ground_truth',
+  'doctrine',
+  'domain',
+  'data',
+  'doors',
+  'documentation',
+  'deployment',
+  'drift',
 ];
 
 const REQUIRED_ACCEPTANCE_OUTCOME_IDS = [
@@ -109,7 +109,11 @@ function outcomeRow(outcomeId, index, overrides = {}) {
     ai_control_findings_reviewed: ['src/ai-control-review.mjs'],
     all_material_actions_auditable: ['src/auditability-trails.mjs', 'src/decision-forum-matters.mjs'],
     audit_logs_hash_chained: ['src/audit-logs.mjs', 'src/tamper-evidence-ledger.mjs'],
-    audits_assessments_locked: ['src/internal-audits.mjs', 'src/site-self-assessments.mjs'],
+    audits_assessments_locked: [
+      'src/internal-audits.mjs',
+      'src/monitoring-visits.mjs',
+      'src/site-self-assessments.mjs',
+    ],
     capa_effectiveness_managed: ['src/capa-workflows.mjs'],
     consent_authority_receipts_generated: ['src/exochain-anchoring.mjs', 'src/training-delegation.mjs'],
     consent_process_documented: ['src/consent-materials.mjs'],
@@ -135,7 +139,11 @@ function outcomeRow(outcomeId, index, overrides = {}) {
     self_assessment_completed: ['src/site-self-assessments.mjs'],
     startup_risk_approved: ['src/risk-assessments.mjs'],
     training_blocks_delegation: ['src/training-delegation.mjs', 'src/workforce-profile-readiness.mjs'],
-    trial_launch_gate_authorized: ['src/readiness-gates.mjs', 'src/risk-assessments.mjs'],
+    trial_launch_gate_authorized: [
+      'src/clinical-trial-product-release-authorization.mjs',
+      'src/readiness-gates.mjs',
+      'src/risk-assessments.mjs',
+    ],
   };
   const moduleRefs = moduleByOutcome[outcomeId] ?? ['src/release-readiness-matrix.mjs'];
   return {
@@ -268,10 +276,71 @@ test('PRD acceptance outcomes create deterministic inactive-trust coverage for a
   assert.equal(resultA.prdAcceptanceOutcomes.exochainProductionClaim, false);
   assert.equal(resultA.prdAcceptanceOutcomes.acceptanceSummary.totalOutcomeCount, 30);
   assert.equal(resultA.prdAcceptanceOutcomes.acceptanceSummary.supportedOutcomeCount, 30);
+  assert.deepEqual(resultA.prdAcceptanceOutcomes.doctrineLayersCovered, REQUIRED_DOCTRINE_LAYERS);
   assert.deepEqual(resultA.prdAcceptanceOutcomes.outcomeIdsCovered, REQUIRED_ACCEPTANCE_OUTCOME_IDS);
   assert.deepEqual(resultA.prdAcceptanceOutcomes.baselineBlockedOutcomeIds, []);
   assert.equal(resultA.receipt.anchorPayload.artifactType, 'prd_acceptance_outcome_matrix');
   assert.deepEqual(resultA, resultB);
+});
+
+test('PRD acceptance outcomes require monitoring visit coverage for locked audits and assessments', async () => {
+  const { evaluatePrdAcceptanceOutcomes } = await loadPrdAcceptanceOutcomes();
+
+  const denied = evaluatePrdAcceptanceOutcomes(
+    acceptanceInput({
+      outcomeRows: outcomeRows().map((row) =>
+        row.outcomeId === 'audits_assessments_locked'
+          ? {
+              ...row,
+              moduleRefs: ['src/internal-audits.mjs', 'src/site-self-assessments.mjs'],
+              testRefs: ['tests/internal-audits.test.mjs', 'tests/site-self-assessments.test.mjs'],
+            }
+          : row,
+      ),
+    }),
+  );
+
+  assert.equal(denied.decision, 'denied');
+  assert.ok(
+    denied.reasons.includes(
+      'acceptance_required_module_ref_missing:audits_assessments_locked:src/monitoring-visits.mjs',
+    ),
+  );
+  assert.ok(
+    denied.reasons.includes(
+      'acceptance_required_test_ref_missing:audits_assessments_locked:tests/monitoring-visits.test.mjs',
+    ),
+  );
+});
+
+test('PRD acceptance outcomes require product release authorization evidence for trial launch gates', async () => {
+  const { evaluatePrdAcceptanceOutcomes } = await loadPrdAcceptanceOutcomes();
+
+  const denied = evaluatePrdAcceptanceOutcomes(
+    acceptanceInput({
+      outcomeRows: outcomeRows().map((row) =>
+        row.outcomeId === 'trial_launch_gate_authorized'
+          ? {
+              ...row,
+              moduleRefs: ['src/readiness-gates.mjs', 'src/risk-assessments.mjs'],
+              testRefs: ['tests/readiness-gates.test.mjs', 'tests/risk-assessments.test.mjs'],
+            }
+          : row,
+      ),
+    }),
+  );
+
+  assert.equal(denied.decision, 'denied');
+  assert.ok(
+    denied.reasons.includes(
+      'acceptance_required_module_ref_missing:trial_launch_gate_authorized:src/clinical-trial-product-release-authorization.mjs',
+    ),
+  );
+  assert.ok(
+    denied.reasons.includes(
+      'acceptance_required_test_ref_missing:trial_launch_gate_authorized:tests/clinical-trial-product-release-authorization.test.mjs',
+    ),
+  );
 });
 
 test('PRD acceptance outcomes fail closed for missing unsupported or incomplete outcome rows', async () => {

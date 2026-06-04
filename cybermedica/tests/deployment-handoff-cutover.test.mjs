@@ -56,6 +56,25 @@ const ALLOWED_CUTOVER_BLOCKERS = [
   'PTAG-017',
 ];
 
+const REQUIRED_DRIFT_STATE_TARGETS = ['passport', 'quality_state', 'readiness'];
+const REQUIRED_OBJECT_STORAGE_ARTIFACT_CLASSES = [
+  'controlled_documents',
+  'diligence_exports',
+  'evidence_payloads',
+  'generated_reports',
+  'sensitive_artifacts',
+];
+const DASHBOARD_ROLES = [
+  'auditor',
+  'coordinator',
+  'cro_portfolio_manager',
+  'decision_forum',
+  'principal_investigator',
+  'quality_manager',
+  'site_leader',
+  'sponsor_viewer',
+];
+
 async function loadDeploymentHandoffCutover() {
   try {
     return await import('../src/deployment-handoff-cutover.mjs');
@@ -103,6 +122,101 @@ function handoffDomain(domain, index, overrides = {}) {
 
 function handoffDomains() {
   return REQUIRED_HANDOFF_DOMAINS.map((domain, index) => handoffDomain(domain, index));
+}
+
+function deploymentReadinessDriftStateUpdateEvidence(overrides = {}) {
+  return mergeDeep(
+    {
+      driftLoopId: 'cmdrift_deployment_readiness_alpha',
+      driftLoopHash: DIGEST_4,
+      driftLoopReceiptHash: DIGEST_5,
+      stateUpdateHash: DIGEST_6,
+      stateUpdateTargets: REQUIRED_DRIFT_STATE_TARGETS,
+      cqiCycleHash: DIGEST_7,
+      cqiCycleReceiptHash: DIGEST_8,
+      inquiryCqiBacklogReceiptHash: DIGEST_9,
+      manualNavigationReady: true,
+      manualNavigationEffectiveUseAcknowledged: true,
+      roleManualCoverageReceiptHash: DIGEST_F,
+      trustState: 'inactive',
+      exochainProductionClaim: false,
+      metadataOnly: true,
+      protectedContentExcluded: true,
+      reviewedAtHlc: { physicalMs: 1800004050000, logical: 0 },
+    },
+    overrides,
+  );
+}
+
+function roleDashboardTrustStateEvidence(overrides = {}) {
+  return mergeDeep(
+    {
+      schema: 'cybermedica.role_dashboard_trust_state_lineage.v1',
+      roleDashboardSummaryHash: DIGEST_A,
+      roleDashboardReceiptHash: DIGEST_B,
+      roleDashboardTrustStateViewHash: DIGEST_C,
+      dashboardRoles: DASHBOARD_ROLES,
+      dashboardHashRefs: DASHBOARD_ROLES.map((role, index) => ({
+        role,
+        dashboardHash: [DIGEST_1, DIGEST_2, DIGEST_3, DIGEST_4, DIGEST_5, DIGEST_6, DIGEST_7, DIGEST_8][index],
+        trustStateViewHash: [DIGEST_8, DIGEST_7, DIGEST_6, DIGEST_5, DIGEST_4, DIGEST_3, DIGEST_2, DIGEST_1][index],
+      })),
+      trustState: 'inactive',
+      exochainProductionClaim: false,
+      canShowProductionTrustClaim: false,
+      activationLineageAccepted: true,
+      publicClaimReviewReceiptHash: DIGEST_1,
+      publicClaimReviewPackageHash: DIGEST_2,
+      productionClaimLiftReceiptHash: DIGEST_3,
+      productionClaimLiftTrustState: 'inactive',
+      productionClaimLiftCanLiftProductionClaim: false,
+      productionClaimLiftRoleDashboardProviderReceiptHash: DIGEST_B,
+      productionClaimLiftRoleDashboardProviderSummaryHash: DIGEST_A,
+      productionClaimLiftRoleDashboardProviderTrustStateViewHash: DIGEST_C,
+      productionClaimLiftRoleDashboardReadinessReceiptHash: DIGEST_E,
+      productionClaimLiftRoleDashboardReadinessSummaryHash: DIGEST_F,
+      productionClaimLiftRoleDashboardReadinessTrustStateViewHash: DIGEST_D,
+      productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_B,
+      productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_A,
+      productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: DIGEST_C,
+      productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_E,
+      productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_F,
+      productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: DIGEST_D,
+      productionClaimLiftRoleDashboardRoles: DASHBOARD_ROLES,
+      metadataOnly: true,
+      protectedContentExcluded: true,
+      reviewedAtHlc: { physicalMs: 1800004050000, logical: 1 },
+    },
+    overrides,
+  );
+}
+
+function databaseMigrationReadinessEvidence(overrides = {}) {
+  return mergeDeep(
+    {
+      schema: 'cybermedica.database_migration_readiness.v1',
+      migrationReadinessHash: DIGEST_9,
+      migrationReadinessReceiptHash: DIGEST_6,
+      receiptArtifactType: 'database_migration_readiness',
+      releaseCandidateRef: 'cybermedica-baseline-2026-05',
+      trustState: 'inactive',
+      baselineMigrationReady: true,
+      productionActivationReady: false,
+      exochainProductionClaim: false,
+      mutableOperationalStateSeparated: true,
+      exochainReceiptStoreExternal: true,
+      evidencePayloadStoredOutsideDb: true,
+      objectStorageReadinessReceiptHash: DIGEST_1,
+      objectStorageReadinessHash: DIGEST_2,
+      objectStorageBoundaryHash: DIGEST_1,
+      objectStorageProviderRef: 'encrypted-object-storage-provider-alpha',
+      objectStorageArtifactClassesCovered: REQUIRED_OBJECT_STORAGE_ARTIFACT_CLASSES,
+      metadataOnly: true,
+      protectedContentExcluded: true,
+      reviewedAtHlc: { physicalMs: 1800004100000, logical: 9 },
+    },
+    overrides,
+  );
 }
 
 function handoffInput(overrides = {}) {
@@ -163,11 +277,52 @@ function handoffInput(overrides = {}) {
       protectedContentExcluded: true,
       reviewedAtHlc: { physicalMs: 1800004100000, logical: 8 },
     },
+    runtimeConfigurationSource: {
+      runtimeConfigurationSourceId: 'runtime-configuration-source-alpha',
+      runtimeConfigurationHash: DIGEST_E,
+      receiptHash: DIGEST_F,
+      receiptArtifactType: 'runtime_configuration_source',
+      releaseCandidateRef: 'cybermedica-baseline-2026-05',
+      trustState: 'inactive',
+      baselineConfigurationReady: true,
+      productionConfigurationReady: false,
+      productionTrustClaim: false,
+      configurationHash: DIGEST_C,
+      secretScopeHash: DIGEST_E,
+      trustFeatureFlagHash: DIGEST_F,
+      deploymentReadinessManifestReceiptHash: DIGEST_2,
+      deploymentOperationsReadinessHash: DIGEST_3,
+      deploymentProviderBindingReceiptHash: DIGEST_3,
+      activationBlockerIds: ['ESC-OPS-SECRETS', 'ESC-ROOT-DEPLOYMENT'],
+      metadataOnly: true,
+      protectedContentExcluded: true,
+      reviewedAtHlc: { physicalMs: 1800004100000, logical: 9 },
+    },
+    databaseMigrationReadinessEvidence: databaseMigrationReadinessEvidence(),
     handoffArtifacts: {
       deploymentReadinessManifestHash: DIGEST_1,
+      deploymentReadinessManifestReceiptHash: DIGEST_2,
+      deploymentReadinessManifestReceiptArtifactType: 'deployment_readiness_manifest',
+      deploymentReadinessManifestStatus: 'deployment_readiness_manifest_accepted_inactive_trust',
+      deploymentReadinessManifestReleaseCandidateRef: 'cybermedica-baseline-2026-05',
+      deploymentReadinessManifestTrustState: 'inactive',
+      deploymentReadinessManifestBaselineReady: true,
+      deploymentReadinessManifestProductionClaim: false,
+      deploymentReadinessDriftStateUpdateEvidence: deploymentReadinessDriftStateUpdateEvidence(),
+      deploymentReadinessRoleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence(),
       deploymentProviderBindingHash: DIGEST_2,
+      deploymentProviderBindingReceiptHash: DIGEST_3,
+      deploymentProviderBindingReceiptArtifactType: 'deployment_provider_binding',
+      deploymentProviderBindingStatus: 'deployment_provider_binding_accepted_inactive_trust',
+      deploymentProviderBindingReleaseCandidateRef: 'cybermedica-baseline-2026-05',
+      deploymentProviderBindingTrustState: 'inactive',
+      deploymentProviderBindingBaselineReady: true,
+      deploymentProviderBindingProductionClaim: false,
+      deploymentProviderBindingRoleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence(),
       deploymentOperationsReadinessHash: DIGEST_3,
       releaseReadinessMatrixHash: DIGEST_4,
+      releaseIncidentLinkageHash: DIGEST_8,
+      releaseIncidentLinkageReceiptHash: DIGEST_9,
       requirementTraceabilityHash: DIGEST_5,
       pathClassificationHash: DIGEST_6,
       activationGateRegisterHash: DIGEST_7,
@@ -269,10 +424,592 @@ test('deployment handoff cutover records inactive production handoff with explic
   ]);
   assert.equal(resultA.handoff.runtimeConfiguration.trustClaimsDisabled, true);
   assert.equal(resultA.handoff.runtimeConfiguration.rootBundleProviderConfigured, false);
+  assert.equal(resultA.handoff.runtimeConfigurationSource.receiptHash, DIGEST_F);
+  assert.equal(resultA.handoff.runtimeConfigurationSource.runtimeConfigurationHash, DIGEST_E);
+  assert.equal(resultA.handoff.runtimeConfigurationSource.configurationHash, DIGEST_C);
+  assert.deepEqual(resultA.handoff.runtimeConfigurationSource.activationBlockerIds, [
+    'ESC-OPS-SECRETS',
+    'ESC-ROOT-DEPLOYMENT',
+  ]);
+  assert.equal(resultA.handoff.databaseMigrationReadiness.migrationReadinessHash, DIGEST_9);
+  assert.equal(resultA.handoff.databaseMigrationReadiness.migrationReadinessReceiptHash, DIGEST_6);
+  assert.equal(resultA.handoff.databaseMigrationReadiness.objectStorageReadinessReceiptHash, DIGEST_1);
+  assert.equal(resultA.handoff.databaseMigrationReadiness.objectStorageReadinessHash, DIGEST_2);
+  assert.equal(resultA.handoff.databaseMigrationReadiness.objectStorageBoundaryHash, DIGEST_1);
+  assert.equal(
+    resultA.handoff.databaseMigrationReadiness.objectStorageProviderRef,
+    'encrypted-object-storage-provider-alpha',
+  );
+  assert.deepEqual(
+    resultA.handoff.databaseMigrationReadiness.objectStorageArtifactClassesCovered,
+    REQUIRED_OBJECT_STORAGE_ARTIFACT_CLASSES,
+  );
+  assert.equal(resultA.handoff.handoffArtifacts.deploymentReadinessManifestReceiptHash, DIGEST_2);
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentReadinessManifestStatus,
+    'deployment_readiness_manifest_accepted_inactive_trust',
+  );
+  assert.equal(resultA.handoff.handoffArtifacts.deploymentReadinessManifestTrustState, 'inactive');
+  assert.equal(resultA.handoff.handoffArtifacts.deploymentReadinessManifestBaselineReady, true);
+  assert.equal(resultA.handoff.handoffArtifacts.deploymentReadinessManifestProductionClaim, false);
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentReadinessDriftStateUpdateEvidence.driftLoopReceiptHash,
+    DIGEST_5,
+  );
+  assert.equal(resultA.handoff.handoffArtifacts.deploymentReadinessDriftStateUpdateEvidence.stateUpdateHash, DIGEST_6);
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentReadinessDriftStateUpdateEvidence.cqiCycleReceiptHash,
+    DIGEST_8,
+  );
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentReadinessDriftStateUpdateEvidence.inquiryCqiBacklogReceiptHash,
+    DIGEST_9,
+  );
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentReadinessDriftStateUpdateEvidence.roleManualCoverageReceiptHash,
+    DIGEST_F,
+  );
+  assert.deepEqual(
+    resultA.handoff.handoffArtifacts.deploymentReadinessDriftStateUpdateEvidence.stateUpdateTargets,
+    REQUIRED_DRIFT_STATE_TARGETS,
+  );
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentReadinessRoleDashboardTrustStateEvidence.roleDashboardReceiptHash,
+    DIGEST_B,
+  );
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentReadinessRoleDashboardTrustStateEvidence
+      .productionClaimLiftRoleDashboardProviderTrustStateViewHash,
+    DIGEST_C,
+  );
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentReadinessRoleDashboardTrustStateEvidence
+      .productionClaimLiftRoleDashboardReadinessTrustStateViewHash,
+    DIGEST_D,
+  );
+  assert.deepEqual(
+    resultA.handoff.handoffArtifacts.deploymentReadinessRoleDashboardTrustStateEvidence
+      .productionClaimLiftRoleDashboardRoles,
+    DASHBOARD_ROLES,
+  );
+  assert.deepEqual(
+    resultA.handoff.handoffArtifacts.deploymentProviderBindingRoleDashboardTrustStateEvidence.dashboardRoles,
+    DASHBOARD_ROLES,
+  );
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentProviderBindingRoleDashboardTrustStateEvidence.publicClaimReviewReceiptHash,
+    DIGEST_1,
+  );
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentProviderBindingRoleDashboardTrustStateEvidence.productionClaimLiftTrustState,
+    'inactive',
+  );
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentProviderBindingRoleDashboardTrustStateEvidence
+      .productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash,
+    DIGEST_B,
+  );
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentProviderBindingRoleDashboardTrustStateEvidence
+      .productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash,
+    DIGEST_C,
+  );
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentProviderBindingRoleDashboardTrustStateEvidence
+      .productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash,
+    DIGEST_F,
+  );
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentProviderBindingRoleDashboardTrustStateEvidence
+      .productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash,
+    DIGEST_D,
+  );
+  assert.equal(resultA.handoff.handoffArtifacts.deploymentProviderBindingReceiptHash, DIGEST_3);
+  assert.equal(
+    resultA.handoff.handoffArtifacts.deploymentProviderBindingStatus,
+    'deployment_provider_binding_accepted_inactive_trust',
+  );
+  assert.equal(resultA.handoff.handoffArtifacts.deploymentProviderBindingTrustState, 'inactive');
+  assert.equal(resultA.handoff.handoffArtifacts.deploymentProviderBindingBaselineReady, true);
+  assert.equal(resultA.handoff.handoffArtifacts.deploymentProviderBindingProductionClaim, false);
+  assert.equal(resultA.handoff.handoffArtifacts.releaseIncidentLinkageHash, DIGEST_8);
+  assert.equal(resultA.handoff.handoffArtifacts.releaseIncidentLinkageReceiptHash, DIGEST_9);
   assert.equal(resultA.handoff.cutoverPlan.cutoverWindowApproved, false);
   assert.equal(resultA.receipt.trustState, 'inactive');
   assert.equal(resultA.receipt.anchorPayload.artifactType, 'deployment_handoff_cutover');
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('runtime_configuration_source'));
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('deployment_readiness_manifest'));
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('drift_state_update'));
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('continuous_quality_improvement'));
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('manual_navigation_readiness'));
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('role_dashboard_trust_state'));
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('database_migration_readiness'));
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('object_storage_readiness_lineage'));
   assert.deepEqual(resultA, resultB);
+});
+
+test('deployment handoff cutover requires database migration readiness object-storage lineage before packaging', async () => {
+  const { evaluateDeploymentHandoffCutover } = await loadDeploymentHandoffCutover();
+
+  const missing = evaluateDeploymentHandoffCutover(
+    handoffInput({
+      databaseMigrationReadinessEvidence: null,
+    }),
+  );
+  const unsafe = evaluateDeploymentHandoffCutover(
+    handoffInput({
+      databaseMigrationReadinessEvidence: databaseMigrationReadinessEvidence({
+        schema: 'cybermedica.database_migration_summary.v1',
+        migrationReadinessHash: DIGEST_8,
+        migrationReadinessReceiptHash: 'not-a-digest',
+        receiptArtifactType: 'database_migration_summary',
+        releaseCandidateRef: 'different-release',
+        trustState: 'verified',
+        baselineMigrationReady: false,
+        productionActivationReady: true,
+        exochainProductionClaim: true,
+        mutableOperationalStateSeparated: false,
+        exochainReceiptStoreExternal: false,
+        evidencePayloadStoredOutsideDb: false,
+        objectStorageReadinessReceiptHash: null,
+        objectStorageReadinessHash: 'bad-readiness-hash',
+        objectStorageBoundaryHash: 'bad-boundary-hash',
+        objectStorageProviderRef: '',
+        objectStorageArtifactClassesCovered: ['evidence_payloads', 'unsupported_artifact_class'],
+        metadataOnly: false,
+        protectedContentExcluded: false,
+        reviewedAtHlc: { physicalMs: 1800004250000, logical: 0 },
+      }),
+    }),
+  );
+
+  assert.equal(missing.decision, 'denied');
+  assert.equal(missing.failClosed, true);
+  assert.equal(missing.handoff, null);
+  assert.ok(missing.reasons.includes('database_migration_readiness_evidence_absent'));
+  assert.ok(missing.reasons.includes('database_migration_readiness_hash_invalid'));
+  assert.ok(missing.reasons.includes('database_migration_readiness_receipt_hash_invalid'));
+  assert.ok(missing.reasons.includes('database_migration_object_storage_readiness_receipt_hash_invalid'));
+
+  assert.equal(unsafe.decision, 'denied');
+  assert.equal(unsafe.failClosed, true);
+  assert.equal(unsafe.handoff, null);
+  assert.ok(unsafe.reasons.includes('database_migration_readiness_schema_invalid'));
+  assert.ok(unsafe.reasons.includes('database_migration_readiness_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('database_migration_readiness_receipt_type_invalid'));
+  assert.ok(unsafe.reasons.includes('database_migration_readiness_release_candidate_mismatch'));
+  assert.ok(unsafe.reasons.includes('database_migration_readiness_trust_state_invalid'));
+  assert.ok(unsafe.reasons.includes('database_migration_readiness_baseline_not_ready'));
+  assert.ok(unsafe.reasons.includes('database_migration_production_activation_forbidden'));
+  assert.ok(unsafe.reasons.includes('database_migration_production_claim_forbidden'));
+  assert.ok(unsafe.reasons.includes('database_migration_mutable_state_separation_absent'));
+  assert.ok(unsafe.reasons.includes('database_migration_exochain_receipt_store_external_absent'));
+  assert.ok(unsafe.reasons.includes('database_migration_evidence_payload_outside_db_absent'));
+  assert.ok(unsafe.reasons.includes('database_migration_plan_hash_mismatch'));
+  assert.ok(unsafe.reasons.includes('database_migration_object_storage_readiness_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('database_migration_object_storage_readiness_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('database_migration_object_storage_boundary_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('database_migration_object_storage_provider_ref_absent'));
+  assert.ok(unsafe.reasons.includes('database_migration_object_storage_artifact_class_missing:controlled_documents'));
+  assert.ok(unsafe.reasons.includes('database_migration_object_storage_artifact_class_unsupported:unsupported_artifact_class'));
+  assert.ok(unsafe.reasons.includes('database_migration_readiness_metadata_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('database_migration_readiness_protected_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('database_migration_readiness_after_handoff_validation'));
+});
+
+test('deployment handoff cutover requires accepted runtime configuration source lineage', async () => {
+  const { evaluateDeploymentHandoffCutover } = await loadDeploymentHandoffCutover();
+
+  const missing = evaluateDeploymentHandoffCutover(
+    handoffInput({
+      runtimeConfigurationSource: null,
+    }),
+  );
+  const unsafe = evaluateDeploymentHandoffCutover(
+    handoffInput({
+      runtimeConfigurationSource: {
+        runtimeConfigurationHash: null,
+        receiptHash: 'not-a-digest',
+        receiptArtifactType: 'configuration_summary',
+        releaseCandidateRef: 'different-release',
+        trustState: 'active',
+        baselineConfigurationReady: false,
+        productionTrustClaim: true,
+        configurationHash: DIGEST_D,
+        secretScopeHash: DIGEST_D,
+        trustFeatureFlagHash: DIGEST_D,
+        deploymentReadinessManifestReceiptHash: DIGEST_A,
+        deploymentOperationsReadinessHash: DIGEST_A,
+        deploymentProviderBindingReceiptHash: DIGEST_A,
+        activationBlockerIds: ['ESC-UNBOUNDED-RUNTIME'],
+        metadataOnly: false,
+        protectedContentExcluded: false,
+        reviewedAtHlc: { physicalMs: 1800004250000, logical: 0 },
+      },
+    }),
+  );
+
+  assert.equal(missing.decision, 'denied');
+  assert.equal(missing.failClosed, true);
+  assert.equal(missing.handoff, null);
+  assert.ok(missing.reasons.includes('runtime_configuration_source_lineage_absent'));
+  assert.ok(missing.reasons.includes('runtime_configuration_source_hash_invalid'));
+  assert.ok(missing.reasons.includes('runtime_configuration_source_receipt_hash_invalid'));
+
+  assert.equal(unsafe.decision, 'denied');
+  assert.equal(unsafe.failClosed, true);
+  assert.equal(unsafe.handoff, null);
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_receipt_type_invalid'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_release_candidate_mismatch'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_trust_state_invalid'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_baseline_not_ready'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_production_claim_forbidden'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_configuration_hash_mismatch'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_secret_scope_hash_mismatch'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_trust_feature_flag_hash_mismatch'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_manifest_receipt_mismatch'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_operations_hash_mismatch'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_provider_receipt_mismatch'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_blocker_not_allowed:ESC-UNBOUNDED-RUNTIME'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_metadata_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_protected_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('runtime_configuration_source_after_validation'));
+});
+
+test('deployment handoff cutover requires deployment readiness manifest Drift lineage before cutover packaging', async () => {
+  const { evaluateDeploymentHandoffCutover } = await loadDeploymentHandoffCutover();
+
+  const missing = evaluateDeploymentHandoffCutover(
+    handoffInput({
+      handoffArtifacts: {
+        deploymentReadinessManifestReceiptHash: null,
+        deploymentReadinessManifestReceiptArtifactType: 'manifest_summary',
+        deploymentReadinessManifestStatus: 'deployment_readiness_manifest_pending',
+        deploymentReadinessManifestReleaseCandidateRef: 'different-release',
+        deploymentReadinessManifestTrustState: 'verified',
+        deploymentReadinessManifestBaselineReady: false,
+        deploymentReadinessManifestProductionClaim: true,
+        deploymentReadinessDriftStateUpdateEvidence: null,
+      },
+    }),
+  );
+  const unsafe = evaluateDeploymentHandoffCutover(
+    handoffInput({
+      handoffArtifacts: {
+        deploymentReadinessDriftStateUpdateEvidence: deploymentReadinessDriftStateUpdateEvidence({
+          driftLoopReceiptHash: 'not-a-digest',
+          stateUpdateHash: null,
+          stateUpdateTargets: ['readiness', 'unsupported_target'],
+          cqiCycleReceiptHash: 'bad',
+          inquiryCqiBacklogReceiptHash: null,
+          manualNavigationReady: false,
+          manualNavigationEffectiveUseAcknowledged: false,
+          roleManualCoverageReceiptHash: 'bad',
+          trustState: 'verified',
+          exochainProductionClaim: true,
+          metadataOnly: false,
+          protectedContentExcluded: false,
+          reviewedAtHlc: { physicalMs: 1800004150000, logical: 0 },
+        }),
+      },
+    }),
+  );
+
+  assert.equal(missing.decision, 'denied');
+  assert.equal(missing.failClosed, true);
+  assert.equal(missing.handoff, null);
+  assert.ok(missing.reasons.includes('deployment_readiness_manifest_receipt_hash_invalid'));
+  assert.ok(missing.reasons.includes('deployment_readiness_manifest_receipt_type_invalid'));
+  assert.ok(missing.reasons.includes('deployment_readiness_manifest_status_invalid'));
+  assert.ok(missing.reasons.includes('deployment_readiness_manifest_release_candidate_mismatch'));
+  assert.ok(missing.reasons.includes('deployment_readiness_manifest_trust_state_invalid'));
+  assert.ok(missing.reasons.includes('deployment_readiness_manifest_baseline_not_ready'));
+  assert.ok(missing.reasons.includes('deployment_readiness_manifest_production_claim_forbidden'));
+  assert.ok(missing.reasons.includes('deployment_readiness_drift_state_update_absent'));
+  assert.ok(missing.reasons.includes('deployment_readiness_drift_loop_receipt_hash_invalid'));
+  assert.ok(missing.reasons.includes('deployment_readiness_drift_state_update_hash_invalid'));
+
+  assert.equal(unsafe.decision, 'denied');
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_loop_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_state_update_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_cqi_cycle_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_inquiry_cqi_backlog_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_manual_navigation_ready_absent'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_manual_navigation_effective_use_absent'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_role_manual_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_state_update_target_missing:passport'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_state_update_target_missing:quality_state'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_state_update_target_unsupported:unsupported_target'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_state_update_trust_state_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_state_update_production_claim_forbidden'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_state_update_metadata_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_state_update_protected_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_state_update_after_manifest_linkage'));
+});
+
+test('deployment handoff cutover requires deployment readiness and provider binding role-dashboard trust-state lineage', async () => {
+  const { evaluateDeploymentHandoffCutover } = await loadDeploymentHandoffCutover();
+
+  const missing = evaluateDeploymentHandoffCutover(
+    handoffInput({
+      handoffArtifacts: {
+        deploymentReadinessRoleDashboardTrustStateEvidence: null,
+        deploymentProviderBindingRoleDashboardTrustStateEvidence: null,
+      },
+    }),
+  );
+  const unsafe = evaluateDeploymentHandoffCutover(
+    handoffInput({
+      handoffArtifacts: {
+        deploymentReadinessRoleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence({
+          dashboardRoles: DASHBOARD_ROLES.filter((role) => role !== 'sponsor_viewer'),
+          dashboardHashRefs: [
+            {
+              role: 'unapproved_role',
+              dashboardHash: 'not-a-digest',
+              trustStateViewHash: null,
+            },
+          ],
+          roleDashboardReceiptHash: 'not-a-digest',
+          roleDashboardTrustStateViewHash: null,
+          trustState: 'active',
+          exochainProductionClaim: true,
+          canShowProductionTrustClaim: true,
+          activationLineageAccepted: false,
+          publicClaimReviewReceiptHash: null,
+          publicClaimReviewPackageHash: 'bad',
+          productionClaimLiftReceiptHash: null,
+          productionClaimLiftTrustState: 'verified',
+          productionClaimLiftCanLiftProductionClaim: true,
+          productionClaimLiftRoleDashboardProviderReceiptHash: 'bad-provider-receipt',
+          productionClaimLiftRoleDashboardProviderSummaryHash: 'bad-provider-summary',
+          productionClaimLiftRoleDashboardProviderTrustStateViewHash: 'bad-provider-view',
+          productionClaimLiftRoleDashboardReadinessReceiptHash: 'bad-readiness-receipt',
+          productionClaimLiftRoleDashboardReadinessSummaryHash: 'bad-readiness-summary',
+          productionClaimLiftRoleDashboardReadinessTrustStateViewHash: 'bad-readiness-view',
+          productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: 'bad-runtime-provider-receipt',
+          productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: 'bad-runtime-provider-summary',
+          productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: 'bad-runtime-source-provider-view',
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: 'bad-runtime-readiness-receipt',
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: 'bad-runtime-readiness-summary',
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: 'bad-runtime-source-readiness-view',
+          productionClaimLiftRoleDashboardRoles: DASHBOARD_ROLES.filter((role) => role !== 'sponsor_viewer').concat(
+            'unsupported_role',
+          ),
+          metadataOnly: false,
+          protectedContentExcluded: false,
+          reviewedAtHlc: { physicalMs: 1800004150000, logical: 0 },
+        }),
+        deploymentProviderBindingRoleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence({
+          schema: 'unsafe.provider.role_dashboard.v1',
+          roleDashboardSummaryHash: null,
+          reviewedAtHlc: { physicalMs: 1800004250000, logical: 0 },
+        }),
+      },
+    }),
+  );
+  const mismatch = evaluateDeploymentHandoffCutover(
+    handoffInput({
+      handoffArtifacts: {
+        deploymentProviderBindingRoleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence({
+          productionClaimLiftRoleDashboardProviderReceiptHash: DIGEST_4,
+          productionClaimLiftRoleDashboardProviderSummaryHash: DIGEST_5,
+          productionClaimLiftRoleDashboardProviderTrustStateViewHash: DIGEST_6,
+          productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_D,
+          productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_C,
+          productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: DIGEST_7,
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_1,
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_2,
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: DIGEST_8,
+        }),
+      },
+    }),
+  );
+
+  assert.equal(missing.decision, 'denied');
+  assert.equal(missing.failClosed, true);
+  assert.equal(missing.handoff, null);
+  assert.ok(missing.reasons.includes('deployment_readiness_role_dashboard_trust_state_evidence_absent'));
+  assert.ok(missing.reasons.includes('deployment_readiness_role_dashboard_summary_hash_invalid'));
+  assert.ok(missing.reasons.includes('deployment_provider_binding_role_dashboard_trust_state_evidence_absent'));
+  assert.ok(missing.reasons.includes('deployment_provider_binding_role_dashboard_summary_hash_invalid'));
+
+  assert.equal(unsafe.decision, 'denied');
+  assert.equal(unsafe.failClosed, true);
+  assert.equal(unsafe.handoff, null);
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_trust_state_view_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_role_missing:sponsor_viewer'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_hash_ref_role_unsupported:unapproved_role'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_hash_ref_missing:auditor'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_trust_state_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_forbidden'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_display_forbidden'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_activation_lineage_absent'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_public_claim_review_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_public_claim_review_package_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_state_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_forbidden'));
+  assert.ok(
+    unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_provider_receipt_hash_invalid'),
+  );
+  assert.ok(
+    unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_provider_summary_hash_invalid'),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_provider_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_readiness_receipt_hash_invalid'),
+  );
+  assert.ok(
+    unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_readiness_summary_hash_invalid'),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_readiness_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_provider_receipt_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_provider_summary_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_provider_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_readiness_receipt_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_readiness_summary_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_readiness_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_role_missing:sponsor_viewer'),
+  );
+  assert.ok(
+    unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_role_unsupported:unsupported_role'),
+  );
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_metadata_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_protected_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_after_artifact_linkage'));
+  assert.ok(unsafe.reasons.includes('deployment_provider_binding_role_dashboard_schema_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_provider_binding_role_dashboard_summary_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_provider_binding_role_dashboard_after_artifact_linkage'));
+
+  assert.equal(mismatch.decision, 'denied');
+  assert.equal(mismatch.failClosed, true);
+  assert.equal(mismatch.handoff, null);
+  assert.ok(
+    mismatch.reasons.includes('deployment_provider_binding_role_dashboard_production_claim_lift_provider_receipt_mismatch'),
+  );
+  assert.ok(
+    mismatch.reasons.includes('deployment_provider_binding_role_dashboard_production_claim_lift_provider_summary_mismatch'),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_provider_binding_role_dashboard_production_claim_lift_provider_trust_state_view_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_provider_binding_role_dashboard_production_claim_lift_runtime_source_provider_receipt_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_provider_binding_role_dashboard_production_claim_lift_runtime_source_provider_summary_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_provider_binding_role_dashboard_production_claim_lift_runtime_source_provider_trust_state_view_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_provider_binding_role_dashboard_production_claim_lift_runtime_source_readiness_receipt_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_provider_binding_role_dashboard_production_claim_lift_runtime_source_readiness_summary_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_provider_binding_role_dashboard_production_claim_lift_runtime_source_readiness_trust_state_view_mismatch',
+    ),
+  );
+});
+
+test('deployment handoff cutover requires release incident linkage evidence before cutover packaging', async () => {
+  const { evaluateDeploymentHandoffCutover } = await loadDeploymentHandoffCutover();
+
+  const result = evaluateDeploymentHandoffCutover(
+    handoffInput({
+      handoffArtifacts: {
+        releaseIncidentLinkageHash: null,
+        releaseIncidentLinkageReceiptHash: 'not-a-digest',
+      },
+    }),
+  );
+
+  assert.equal(result.decision, 'denied');
+  assert.equal(result.failClosed, true);
+  assert.equal(result.handoff, null);
+  assert.ok(result.reasons.includes('release_incident_linkage_hash_invalid'));
+  assert.ok(result.reasons.includes('release_incident_linkage_receipt_hash_invalid'));
+});
+
+test('deployment handoff cutover requires accepted provider binding receipt before cutover packaging', async () => {
+  const { evaluateDeploymentHandoffCutover } = await loadDeploymentHandoffCutover();
+
+  const result = evaluateDeploymentHandoffCutover(
+    handoffInput({
+      handoffArtifacts: {
+        deploymentProviderBindingReceiptHash: 'not-a-digest',
+        deploymentProviderBindingReceiptArtifactType: 'provider_summary',
+        deploymentProviderBindingStatus: 'deployment_provider_binding_pending',
+        deploymentProviderBindingReleaseCandidateRef: 'different-release',
+        deploymentProviderBindingTrustState: 'active',
+        deploymentProviderBindingBaselineReady: false,
+        deploymentProviderBindingProductionClaim: true,
+      },
+    }),
+  );
+
+  assert.equal(result.decision, 'denied');
+  assert.equal(result.failClosed, true);
+  assert.equal(result.handoff, null);
+  assert.ok(result.reasons.includes('deployment_provider_binding_receipt_hash_invalid'));
+  assert.ok(result.reasons.includes('deployment_provider_binding_receipt_type_invalid'));
+  assert.ok(result.reasons.includes('deployment_provider_binding_status_invalid'));
+  assert.ok(result.reasons.includes('deployment_provider_binding_release_candidate_mismatch'));
+  assert.ok(result.reasons.includes('deployment_provider_binding_trust_state_invalid'));
+  assert.ok(result.reasons.includes('deployment_provider_binding_baseline_not_ready'));
+  assert.ok(result.reasons.includes('deployment_provider_binding_production_claim_forbidden'));
 });
 
 test('deployment handoff cutover can mark cutover ready only when runtime and blockers verify', async () => {
@@ -291,6 +1028,10 @@ test('deployment handoff cutover can mark cutover ready only when runtime and bl
         trustClaimsDisabled: false,
         rootBundleProviderConfigured: true,
         adapterEndpointConfigured: true,
+      },
+      runtimeConfigurationSource: {
+        activationBlockerIds: [],
+        productionConfigurationReady: true,
       },
       cutoverPlan: {
         cutoverWindowApproved: true,

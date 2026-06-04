@@ -51,6 +51,13 @@ const RAW_REPORTING_FIELDS = new Set([
   'rawreport',
   'rawreportbody',
   'rawreporttext',
+  'rawcrorequest',
+  'rawrequest',
+  'rawrequestbody',
+  'rawrequestcontent',
+  'rawrequestnarrative',
+  'rawsponsorrequest',
+  'rawsponsorrequestbody',
   'rawsource',
   'rawsourcedata',
   'reportbody',
@@ -77,6 +84,13 @@ const SECRET_REPORTING_FIELDS = new Set([
   'signaturesecret',
   'signingkey',
   'token',
+]);
+
+const SPONSOR_CRO_REQUESTER_CLASSES = new Set(['cro', 'sponsor']);
+const SPONSOR_CRO_WORK_ITEM_STATUSES = new Set([
+  'queued_for_site_review',
+  'routed_to_decision_forum',
+  'approved_for_response',
 ]);
 
 function hasText(value) {
@@ -179,6 +193,10 @@ function sortedTextList(value) {
 
 function uniqueSorted(values) {
   return [...new Set(values)].sort();
+}
+
+function optionalTextList(value) {
+  return hasText(value) ? [value] : [];
 }
 
 function hasAuthorityPermission(authority, permission) {
@@ -416,6 +434,81 @@ function evaluateSponsorExportGrant(grant, reasons) {
   addReason(reasons, grant?.scope !== 'sponsor_diligence_report', 'sponsor_export_grant_scope_invalid');
 }
 
+function evaluateSponsorCroRequestEvidence(input, requestedDomains, reasons) {
+  if (!requestedDomains.includes('sponsor_diligence')) {
+    return null;
+  }
+
+  const evidence = input?.sponsorCroRequestEvidence;
+  addReason(reasons, evidence === null || evidence === undefined, 'sponsor_cro_request_evidence_absent');
+  addReason(reasons, !hasText(evidence?.requestRef), 'sponsor_cro_request_ref_absent');
+  addReason(reasons, !isDigest(evidence?.requestHash), 'sponsor_cro_request_hash_invalid');
+  addReason(
+    reasons,
+    !SPONSOR_CRO_REQUESTER_CLASSES.has(evidence?.requesterClass),
+    'sponsor_cro_requester_class_invalid',
+  );
+  addReason(reasons, !hasText(evidence?.workItemRef), 'sponsor_cro_work_item_ref_absent');
+  addReason(
+    reasons,
+    !SPONSOR_CRO_WORK_ITEM_STATUSES.has(evidence?.workItemStatus),
+    'sponsor_cro_work_item_status_invalid',
+  );
+  addReason(reasons, !hasText(evidence?.disclosureEventRef), 'sponsor_cro_disclosure_event_ref_absent');
+  addReason(reasons, !isDigest(evidence?.disclosureLogHash), 'sponsor_cro_disclosure_log_hash_invalid');
+  addReason(
+    reasons,
+    hasText(evidence?.disclosureLogHash) && evidence.disclosureLogHash !== input?.disclosureLog?.disclosureLogHash,
+    'sponsor_cro_disclosure_log_hash_mismatch',
+  );
+  addReason(reasons, !hasText(evidence?.decisionForumMatterRef), 'sponsor_cro_decision_forum_matter_absent');
+  addReason(reasons, !isDigest(evidence?.humanReviewHash), 'sponsor_cro_human_review_hash_invalid');
+  addReason(
+    reasons,
+    hasText(evidence?.humanReviewHash) && evidence.humanReviewHash !== input?.humanReview?.reviewEvidenceHash,
+    'sponsor_cro_human_review_hash_mismatch',
+  );
+  addReason(reasons, !isDigest(evidence?.responsePackageHash), 'sponsor_cro_response_package_hash_invalid');
+  addReason(
+    reasons,
+    hasText(evidence?.responsePackageHash) && evidence.responsePackageHash !== input?.exportPlan?.artifactHash,
+    'sponsor_cro_response_package_hash_mismatch',
+  );
+  addReason(reasons, evidence?.linkedReportRef !== input?.reportRequest?.reportRef, 'sponsor_cro_linked_report_mismatch');
+  addReason(reasons, evidence?.metadataOnly !== true, 'sponsor_cro_request_metadata_boundary_invalid');
+  addReason(
+    reasons,
+    evidence?.sourcePayloadExcluded !== true,
+    'sponsor_cro_request_source_payload_boundary_invalid',
+  );
+  addReason(
+    reasons,
+    evidence?.protectedContentExcluded !== true,
+    'sponsor_cro_request_protected_boundary_invalid',
+  );
+  addReason(reasons, evidence?.productionTrustClaim === true, 'production_trust_claim_forbidden');
+  addReason(reasons, hlcTuple(evidence?.linkedAtHlc) === null, 'sponsor_cro_request_link_time_invalid');
+  addReason(
+    reasons,
+    hlcAfter(evidence?.linkedAtHlc, input?.reportRequest?.generatedAtHlc),
+    'sponsor_cro_request_link_after_report_generation',
+  );
+
+  return {
+    decisionForumMatterRef: hasText(evidence?.decisionForumMatterRef) ? evidence.decisionForumMatterRef : null,
+    disclosureEventRef: hasText(evidence?.disclosureEventRef) ? evidence.disclosureEventRef : null,
+    disclosureLogHash: hasText(evidence?.disclosureLogHash) ? evidence.disclosureLogHash : null,
+    humanReviewHash: hasText(evidence?.humanReviewHash) ? evidence.humanReviewHash : null,
+    linkedAtHlc: evidence?.linkedAtHlc ?? null,
+    requestHash: hasText(evidence?.requestHash) ? evidence.requestHash : null,
+    requestRef: hasText(evidence?.requestRef) ? evidence.requestRef : null,
+    requesterClass: hasText(evidence?.requesterClass) ? evidence.requesterClass : null,
+    responsePackageHash: hasText(evidence?.responsePackageHash) ? evidence.responsePackageHash : null,
+    workItemRef: hasText(evidence?.workItemRef) ? evidence.workItemRef : null,
+    workItemStatus: hasText(evidence?.workItemStatus) ? evidence.workItemStatus : null,
+  };
+}
+
 function evaluateAiAssistance(aiAssistance, reasons) {
   if (aiAssistance === null || aiAssistance === undefined || aiAssistance?.used !== true) {
     return;
@@ -449,7 +542,7 @@ function evaluateHumanReview(input, reasons) {
   addReason(reasons, hlcBeforeOrEqual(review?.reviewedAtHlc, input?.reportRequest?.generatedAtHlc), 'human_review_before_report_generation');
 }
 
-function buildReport(input, requestedDomains, domainRows, reasons) {
+function buildReport(input, requestedDomains, domainRows, sponsorCroRequestEvidence, reasons) {
   const audienceRefs = sortedTextList(input?.reportRequest?.audienceRefs);
   const aiEvidenceRefs = sortedTextList(input?.aiAssistance?.evidenceRefs);
   const aiRecommendedHumanReviewerDids = sortedTextList(input?.aiAssistance?.recommendedHumanReviewerDids);
@@ -469,6 +562,7 @@ function buildReport(input, requestedDomains, domainRows, reasons) {
     reportRef: hasText(input?.reportRequest?.reportRef) ? input.reportRequest.reportRef : null,
     requestedDomains,
     requestRef: hasText(input?.reportRequest?.requestRef) ? input.reportRequest.requestRef : null,
+    sponsorCroRequestEvidence,
     templateHash: hasText(input?.reportTemplate?.templateHash) ? input.reportTemplate.templateHash : null,
     templateRef: hasText(input?.reportTemplate?.templateRef) ? input.reportTemplate.templateRef : null,
     templateVersion: hasText(input?.reportTemplate?.templateVersion) ? input.reportTemplate.templateVersion : null,
@@ -496,15 +590,20 @@ function buildReport(input, requestedDomains, domainRows, reasons) {
     exportRef: hasText(input?.exportPlan?.exportRef) ? input.exportPlan.exportRef : null,
     exportArtifactHash: material.exportArtifactHash,
     apiAccessId: hasText(input?.apiAccess?.accessId) ? input.apiAccess.accessId : null,
+    sponsorCroRequestRefs: optionalTextList(sponsorCroRequestEvidence?.requestRef),
+    sponsorCroWorkItemRefs: optionalTextList(sponsorCroRequestEvidence?.workItemRef),
+    sponsorCroResponsePackageHashes: optionalTextList(sponsorCroRequestEvidence?.responsePackageHash),
     metadataOnly:
       input?.reportRequest?.metadataOnly === true &&
       input?.dataManifest?.metadataOnly === true &&
       input?.privacyBoundary?.metadataOnly === true &&
-      input?.exportPlan?.metadataOnly === true,
+      input?.exportPlan?.metadataOnly === true &&
+      (sponsorCroRequestEvidence === null || input?.sponsorCroRequestEvidence?.metadataOnly === true),
     sourcePayloadsStayExternal:
       input?.apiAccess?.sourcePayloadsStayExternal === true &&
       input?.privacyBoundary?.sourcePayloadsStayExternal === true &&
-      input?.dataManifest?.sourcePayloadsExcluded === true,
+      input?.dataManifest?.sourcePayloadsExcluded === true &&
+      (sponsorCroRequestEvidence === null || input?.sponsorCroRequestEvidence?.sourcePayloadExcluded === true),
     aiAssisted: input?.aiAssistance?.used === true,
     aiEvidenceRefs,
     aiConfidenceBasisPoints: input?.aiAssistance?.used === true ? input.aiAssistance.confidenceBasisPoints : null,
@@ -551,12 +650,13 @@ export function evaluateGovernedReport(input) {
   evaluatePrivacyBoundary(input?.privacyBoundary, reasons);
   evaluateDisclosureLog(input, reasons);
   evaluateExportPlan(input, requestedDomains, reasons);
+  const sponsorCroRequestEvidence = evaluateSponsorCroRequestEvidence(input, requestedDomains, reasons);
   evaluateAiAssistance(input?.aiAssistance, reasons);
   evaluateHumanReview(input, reasons);
   addReason(reasons, !isDigest(input?.custodyDigest), 'receipt_custody_digest_invalid');
 
   const uniqueReasons = uniqueSorted(reasons);
-  const report = buildReport(input, requestedDomains, domainRows, uniqueReasons);
+  const report = buildReport(input, requestedDomains, domainRows, sponsorCroRequestEvidence, uniqueReasons);
 
   if (uniqueReasons.length > 0) {
     return {

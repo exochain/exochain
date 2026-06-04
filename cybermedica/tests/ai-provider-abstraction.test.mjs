@@ -50,6 +50,9 @@ function providerInput(overrides = {}) {
       providerKind: 'external_llm',
       bindingStatus: 'verified',
       endpointMode: 'server_side',
+      modelRefHash: DIGEST_G,
+      modelVersionHash: DIGEST_A,
+      modelConfigurationHash: DIGEST_B,
       configuredByHuman: true,
       noBrowserRuntime: true,
       noRootSecrets: true,
@@ -140,6 +143,9 @@ test('AI provider abstraction creates deterministic metadata-only provider reque
   assert.equal(resultA.aiProviderRequest.providerRef, 'ai-provider-cm-controlled-alpha');
   assert.equal(resultA.aiProviderRequest.providerKind, 'external_llm');
   assert.equal(resultA.aiProviderRequest.endpointMode, 'server_side');
+  assert.equal(resultA.aiProviderRequest.modelRefHash, DIGEST_G);
+  assert.equal(resultA.aiProviderRequest.modelVersionHash, DIGEST_A);
+  assert.equal(resultA.aiProviderRequest.modelConfigurationHash, DIGEST_B);
   assert.equal(resultA.aiProviderRequest.assistanceOnly, true);
   assert.equal(resultA.aiProviderRequest.aiFinalAuthority, false);
   assert.equal(resultA.aiProviderRequest.metadataOnlyInputs, true);
@@ -158,6 +164,16 @@ test('AI provider abstraction creates deterministic metadata-only provider reque
   assert.equal(resultA.receipt.exochainProductionClaim, false);
   assert.equal(resultA.receipt.receiptId, resultB.receipt.receiptId);
   assert.equal(resultA.receipt.actionHash, resultB.receipt.actionHash);
+
+  const changedModelVersion = evaluateAiProviderAbstraction(providerInput({
+    providerConfig: {
+      ...providerInput().providerConfig,
+      modelVersionHash: DIGEST_C,
+    },
+  }));
+
+  assert.notEqual(resultA.aiProviderRequest.requestHash, changedModelVersion.aiProviderRequest.requestHash);
+  assert.notEqual(resultA.receipt.actionHash, changedModelVersion.receipt.actionHash);
 });
 
 test('AI provider abstraction fails closed for unsafe provider runtime policy and missing human gate', async () => {
@@ -169,6 +185,9 @@ test('AI provider abstraction fails closed for unsafe provider runtime policy an
       ...providerInput().providerConfig,
       bindingStatus: 'login_required',
       endpointMode: 'browser_client',
+      modelRefHash: '',
+      modelVersionHash: 'not-a-digest',
+      modelConfigurationHash: '',
       configuredByHuman: false,
       noBrowserRuntime: false,
       noRootSecrets: false,
@@ -202,6 +221,9 @@ test('AI provider abstraction fails closed for unsafe provider runtime policy an
   assert.ok(denied.reasons.includes('ai_final_authority_forbidden'));
   assert.ok(denied.reasons.includes('provider_binding_unverified'));
   assert.ok(denied.reasons.includes('browser_authoritative_ai_path_forbidden'));
+  assert.ok(denied.reasons.includes('model_ref_hash_invalid'));
+  assert.ok(denied.reasons.includes('model_version_hash_invalid'));
+  assert.ok(denied.reasons.includes('model_configuration_hash_invalid'));
   assert.ok(denied.reasons.includes('provider_human_configuration_absent'));
   assert.ok(denied.reasons.includes('root_secret_scope_not_separated'));
   assert.ok(denied.reasons.includes('shared_exochain_credentials_forbidden'));

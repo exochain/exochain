@@ -19,6 +19,7 @@ import { sha256Hex } from './qms-contracts.mjs';
 const VERIFIED = 'verified';
 const DENIED = 'denied';
 const HEX_64 = /^[0-9a-f]{64}$/u;
+const BROWSER_TRUST_PATH_ACTIVATION_GATE_ID = 'PTAG-018';
 
 const SERVER_PATHS = Object.freeze([
   ['gateway', 'gateway_server_path_unverified'],
@@ -302,13 +303,14 @@ export function evaluateBrowserTrustPath(input) {
     clientTrustAuthority: 'none',
     productionTrustClaimAllowed: false,
     exochainProductionClaim: false,
+    activationGateIds: [BROWSER_TRUST_PATH_ACTIVATION_GATE_ID],
     blockedBy,
     safeClientManifest: manifest,
     claimLanguage: allowed
       ? 'Server-side CyberMedica trust adapter evidence is verified; the browser remains a non-authoritative request surface.'
       : 'Browser trust path denied until verified server-side evidence and metadata-only boundaries are present.',
     sourceEvidence: [
-      'docs/context/CYBERMEDICA_PRODUCTION_TRUST_ACTIVATION_GATES.md#ptag-018',
+      'docs/context/CYBERMEDICA_PRODUCTION_TRUST_ACTIVATION_GATES.md#PTAG-018',
       'docs/context/EXOCHAIN_TO_CYBERMEDICA_INTEGRATION_MAP.md',
     ],
   };

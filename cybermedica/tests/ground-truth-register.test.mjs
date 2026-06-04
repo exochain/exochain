@@ -35,9 +35,11 @@ const REQUIRED_SOURCE_FAMILIES = [
   'council_escalation_register',
   'council_review_defaults',
   'exochain_readonly_repo',
+  'glossary',
   'implementation_path_classification',
   'integration_map',
   'master_prd',
+  'open_question_register',
   'production_activation_gates',
 ];
 
@@ -47,6 +49,8 @@ const REQUIRED_CONTEXT_DOC_REFS = [
   'docs/context/EXOCHAIN_CONTEXT_SEED_FOR_CYBERMEDICA.md',
   'docs/context/EXOCHAIN_COUNCIL_ESCALATIONS_FOR_BOB.md',
   'docs/context/EXOCHAIN_COUNCIL_REVIEW_FOR_CYBERMEDICA_OPEN_QUESTIONS.md',
+  'docs/context/EXOCHAIN_GLOSSARY_FOR_CYBERMEDICA.md',
+  'docs/context/EXOCHAIN_OPEN_QUESTIONS_FOR_BOB.md',
   'docs/context/EXOCHAIN_TO_CYBERMEDICA_INTEGRATION_MAP.md',
 ];
 
@@ -92,9 +96,11 @@ function sourceRecord(sourceFamily, index, overrides = {}) {
     council_escalation_register: 'docs/context/EXOCHAIN_COUNCIL_ESCALATIONS_FOR_BOB.md',
     council_review_defaults: 'docs/context/EXOCHAIN_COUNCIL_REVIEW_FOR_CYBERMEDICA_OPEN_QUESTIONS.md',
     exochain_readonly_repo: '/Users/bobstewart/dev/exochain/exochain',
+    glossary: 'docs/context/EXOCHAIN_GLOSSARY_FOR_CYBERMEDICA.md',
     implementation_path_classification: 'docs/implementation/PATH_CLASSIFICATION.md',
     integration_map: 'docs/context/EXOCHAIN_TO_CYBERMEDICA_INTEGRATION_MAP.md',
     master_prd: 'cybermedica_2_0_sandy_seven_layer_master_prd.md',
+    open_question_register: 'docs/context/EXOCHAIN_OPEN_QUESTIONS_FOR_BOB.md',
     production_activation_gates: 'docs/context/CYBERMEDICA_PRODUCTION_TRUST_ACTIVATION_GATES.md',
   };
 
@@ -103,7 +109,19 @@ function sourceRecord(sourceFamily, index, overrides = {}) {
     sourceRef: sourceRefByFamily[sourceFamily],
     classification: sourceFamily === 'exochain_readonly_repo' ? 'EXOCHAIN core' : 'Adjacent surface',
     evidenceKind: sourceFamily === 'exochain_readonly_repo' ? 'read_only_source' : 'controlling_context',
-    evidenceHash: [DIGEST_A, DIGEST_B, DIGEST_C, DIGEST_D, DIGEST_E, DIGEST_F, DIGEST_1, DIGEST_2, DIGEST_3][index],
+    evidenceHash: [
+      DIGEST_A,
+      DIGEST_B,
+      DIGEST_C,
+      DIGEST_D,
+      DIGEST_E,
+      DIGEST_F,
+      DIGEST_1,
+      DIGEST_2,
+      DIGEST_3,
+      DIGEST_4,
+      DIGEST_5,
+    ][index],
     status: 'verified',
     ownerDid: `did:exo:${sourceFamily.replaceAll('_', '-')}-owner`,
     verifiedAtHlc: { physicalMs: 1800000100000, logical: index },

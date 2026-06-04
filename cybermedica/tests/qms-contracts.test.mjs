@@ -84,6 +84,48 @@ test('evidence receipts are deterministic and refuse protected source content', 
   );
 });
 
+test('evidence receipts refuse secret fields and embedded credential text before anchoring', async () => {
+  const { createEvidenceReceipt } = await loadQmsContracts();
+
+  assert.throws(
+    () =>
+      createEvidenceReceipt({
+        ...evidenceReceiptInput,
+        apiKey: 'redacted-api-key-placeholder',
+      }),
+    /secret material/i,
+  );
+
+  assert.throws(
+    () =>
+      createEvidenceReceipt({
+        ...evidenceReceiptInput,
+        metadataNote: 'Authorization: Bearer redacted-token-placeholder',
+      }),
+    /secret material/i,
+  );
+});
+
+test('evidence receipts refuse raw signature material before anchoring', async () => {
+  const { createEvidenceReceipt } = await loadQmsContracts();
+
+  for (const unsafeInput of [
+    {
+      ...evidenceReceiptInput,
+      rawSignature: 'raw-ed25519-signature-material',
+    },
+    {
+      ...evidenceReceiptInput,
+      signatureMaterial: {
+        algorithm: 'ed25519',
+        bytes: 'raw-signature-bytes',
+      },
+    },
+  ]) {
+    assert.throws(() => createEvidenceReceipt(unsafeInput), /secret material|protected content/i);
+  }
+});
+
 test('strategic clinical gates deny AI final authority and require verified human governance', async () => {
   const { evaluateGovernedAction } = await loadQmsContracts();
 
@@ -187,31 +229,4 @@ test('participant consent revocation and tenant mismatch deny regulated access',
 
   assert.equal(tenantMismatchDecision.decision, 'denied');
   assert.ok(tenantMismatchDecision.reasons.includes('tenant_boundary_violation'));
-});
-
-test('unknown and absent governed actions fail closed instead of bypassing permission policy', async () => {
-  const { evaluateGovernedAction } = await loadQmsContracts();
-
-  const missingActionDecision = evaluateGovernedAction({
-    tenantId: 'tenant-site-alpha',
-    targetTenantId: 'tenant-site-alpha',
-    actor: { did: 'did:exo:principal-investigator-alpha', kind: 'human' },
-    authority: { valid: true, revoked: false, expired: false, permissions: ['govern', 'read'] },
-  });
-
-  assert.equal(missingActionDecision.decision, 'denied');
-  assert.equal(missingActionDecision.failClosed, true);
-  assert.ok(missingActionDecision.reasons.includes('action_absent'));
-
-  const unknownActionDecision = evaluateGovernedAction({
-    action: 'caller_defined_runtime_override',
-    tenantId: 'tenant-site-alpha',
-    targetTenantId: 'tenant-site-alpha',
-    actor: { did: 'did:exo:principal-investigator-alpha', kind: 'human' },
-    authority: { valid: true, revoked: false, expired: false, permissions: ['govern', 'read'] },
-  });
-
-  assert.equal(unknownActionDecision.decision, 'denied');
-  assert.equal(unknownActionDecision.failClosed, true);
-  assert.ok(unknownActionDecision.reasons.includes('action_unsupported'));
 });

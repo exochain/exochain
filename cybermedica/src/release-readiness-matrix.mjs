@@ -25,14 +25,14 @@ const REQUIRED_PERMISSION = 'release_readiness_review';
 const ZERO_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
 
 const REQUIRED_DOCTRINE_LAYERS = Object.freeze([
-  'data',
-  'deployment',
-  'doctrine',
-  'documentation',
-  'domain',
-  'doors',
-  'drift',
   'ground_truth',
+  'doctrine',
+  'domain',
+  'data',
+  'doors',
+  'documentation',
+  'deployment',
+  'drift',
 ]);
 
 const REQUIRED_ACCEPTANCE_DOMAINS = Object.freeze([
@@ -47,6 +47,8 @@ const REQUIRED_ACCEPTANCE_DOMAINS = Object.freeze([
   'service_contracts',
   'test_validation',
 ]);
+
+const REQUIRED_DRIFT_STATE_TARGETS = Object.freeze(['passport', 'quality_state', 'readiness']);
 
 const REQUIRED_CONTEXT_DOC_REFS = Object.freeze([
   'docs/context/CYBERMEDICA_PRODUCTION_TRUST_ACTIVATION_GATES.md',
@@ -70,6 +72,16 @@ const ALLOWED_BOB_ESCALATION_IDS = Object.freeze([
 ]);
 
 const ACTIVATION_GATE_IDS = Object.freeze(Array.from({ length: 18 }, (_, index) => `PTAG-${String(index + 1).padStart(3, '0')}`));
+const REQUIRED_ROLE_DASHBOARD_ROLES = Object.freeze([
+  'auditor',
+  'coordinator',
+  'cro_portfolio_manager',
+  'decision_forum',
+  'principal_investigator',
+  'quality_manager',
+  'site_leader',
+  'sponsor_viewer',
+]);
 const POLICY_STATUSES = new Set(['active']);
 const RELEASE_CLASSES = new Set(['baseline_contract_build', 'internal_release_candidate', 'customer_zero_release_candidate']);
 const ACCEPTANCE_STATUSES = new Set(['passed']);
@@ -556,6 +568,359 @@ function evaluateValidationEvidence(validation, cycle, reasons) {
   addReason(reasons, hlcBefore(validation?.recordedAtHlc, cycle?.validationRecordedAtHlc), 'validation_before_cycle_validation_step');
 }
 
+function evaluateDriftStateUpdateEvidence(evidence, cycle, reasons) {
+  addReason(reasons, evidence === null || evidence === undefined, 'drift_state_update_evidence_absent');
+  const stateUpdateTargets = sortedTextList(evidence?.stateUpdateTargets);
+
+  addReason(reasons, !hasText(evidence?.driftLoopId), 'drift_loop_id_absent');
+  addReason(reasons, !isDigest(evidence?.driftLoopHash), 'drift_loop_hash_invalid');
+  addReason(reasons, !isDigest(evidence?.driftLoopReceiptHash), 'drift_loop_receipt_hash_invalid');
+  addReason(reasons, !isDigest(evidence?.stateUpdateHash), 'drift_state_update_hash_invalid');
+  addReason(reasons, !isDigest(evidence?.cqiCycleHash), 'drift_cqi_cycle_hash_invalid');
+  addReason(reasons, !isDigest(evidence?.cqiCycleReceiptHash), 'drift_cqi_cycle_receipt_hash_invalid');
+  addReason(
+    reasons,
+    !isDigest(evidence?.inquiryCqiBacklogReceiptHash),
+    'drift_inquiry_cqi_backlog_receipt_hash_invalid',
+  );
+  addReason(reasons, !isDigest(evidence?.roleManualCoverageReceiptHash), 'drift_role_manual_receipt_hash_invalid');
+  addReason(reasons, evidence?.manualNavigationReady !== true, 'drift_manual_navigation_ready_absent');
+  addReason(
+    reasons,
+    evidence?.manualNavigationEffectiveUseAcknowledged !== true,
+    'drift_manual_navigation_effective_use_absent',
+  );
+  addReason(reasons, evidence?.trustState !== 'inactive', 'drift_state_update_trust_state_invalid');
+  addReason(reasons, evidence?.exochainProductionClaim !== false, 'drift_state_update_production_claim_forbidden');
+  addReason(reasons, evidence?.metadataOnly !== true, 'drift_state_update_metadata_boundary_invalid');
+  addReason(
+    reasons,
+    evidence?.protectedContentExcluded !== true,
+    'drift_state_update_protected_boundary_invalid',
+  );
+  addReason(reasons, hlcTuple(evidence?.reviewedAtHlc) === null, 'drift_state_update_review_time_invalid');
+  addReason(reasons, hlcBefore(evidence?.reviewedAtHlc, cycle?.matrixCompiledAtHlc), 'drift_state_update_review_before_matrix');
+  addReason(
+    reasons,
+    hlcAfter(evidence?.reviewedAtHlc, cycle?.releaseDecisionAtHlc),
+    'drift_state_update_review_after_release_decision',
+  );
+
+  for (const target of REQUIRED_DRIFT_STATE_TARGETS) {
+    addReason(reasons, !stateUpdateTargets.includes(target), `drift_state_update_target_missing:${target}`);
+  }
+  for (const target of stateUpdateTargets) {
+    addReason(
+      reasons,
+      !REQUIRED_DRIFT_STATE_TARGETS.includes(target),
+      `drift_state_update_target_unsupported:${target}`,
+    );
+  }
+
+  return {
+    cqiCycleHash: evidence?.cqiCycleHash ?? null,
+    cqiCycleReceiptHash: evidence?.cqiCycleReceiptHash ?? null,
+    driftLoopHash: evidence?.driftLoopHash ?? null,
+    driftLoopId: evidence?.driftLoopId ?? null,
+    driftLoopReceiptHash: evidence?.driftLoopReceiptHash ?? null,
+    inquiryCqiBacklogReceiptHash: evidence?.inquiryCqiBacklogReceiptHash ?? null,
+    manualNavigationEffectiveUseAcknowledged: evidence?.manualNavigationEffectiveUseAcknowledged === true,
+    manualNavigationReady: evidence?.manualNavigationReady === true,
+    roleManualCoverageReceiptHash: evidence?.roleManualCoverageReceiptHash ?? null,
+    stateUpdateHash: evidence?.stateUpdateHash ?? null,
+    stateUpdateTargets,
+  };
+}
+
+function evaluateRoleDashboardTrustStateEvidence(evidence, cycle, reasons) {
+  addReason(
+    reasons,
+    evidence === null || evidence === undefined,
+    'role_dashboard_trust_state_evidence_absent',
+  );
+
+  const dashboardRoles = sortedTextList(evidence?.dashboardRoles);
+  const dashboardHashRefs = Array.isArray(evidence?.dashboardHashRefs) ? evidence.dashboardHashRefs : [];
+  const hashRefRoles = sortedTextList(dashboardHashRefs.map((hashRef) => hashRef?.role));
+  const productionClaimLiftRoleDashboardRoles = sortedTextList(evidence?.productionClaimLiftRoleDashboardRoles);
+  const seenHashRefRoles = new Set();
+  const hashRefSummaries = [];
+
+  addReason(reasons, evidence?.schema !== 'cybermedica.role_dashboard_trust_state_lineage.v1', 'role_dashboard_schema_invalid');
+  addReason(reasons, !isDigest(evidence?.roleDashboardSummaryHash), 'role_dashboard_summary_hash_invalid');
+  addReason(reasons, !isDigest(evidence?.roleDashboardReceiptHash), 'role_dashboard_receipt_hash_invalid');
+  addReason(
+    reasons,
+    !isDigest(evidence?.roleDashboardTrustStateViewHash),
+    'role_dashboard_trust_state_view_hash_invalid',
+  );
+  addReason(reasons, !Array.isArray(evidence?.dashboardRoles) || evidence.dashboardRoles.length === 0, 'role_dashboard_roles_absent');
+  addReason(reasons, !Array.isArray(evidence?.dashboardHashRefs) || evidence.dashboardHashRefs.length === 0, 'role_dashboard_hash_refs_absent');
+
+  for (const role of REQUIRED_ROLE_DASHBOARD_ROLES) {
+    addReason(reasons, !dashboardRoles.includes(role), `role_dashboard_role_missing:${role}`);
+    addReason(reasons, !hashRefRoles.includes(role), `role_dashboard_hash_ref_missing:${role}`);
+  }
+  for (const role of dashboardRoles) {
+    addReason(reasons, !REQUIRED_ROLE_DASHBOARD_ROLES.includes(role), `role_dashboard_role_unsupported:${role}`);
+  }
+
+  dashboardHashRefs.forEach((hashRef, index) => {
+    const label = hasText(hashRef?.role) ? hashRef.role : `index_${index}`;
+    addReason(reasons, !hasText(hashRef?.role), `role_dashboard_hash_ref_role_absent:${label}`);
+    addReason(
+      reasons,
+      !REQUIRED_ROLE_DASHBOARD_ROLES.includes(hashRef?.role),
+      `role_dashboard_hash_ref_role_unsupported:${label}`,
+    );
+    addReason(reasons, seenHashRefRoles.has(hashRef?.role), `role_dashboard_hash_ref_duplicate:${label}`);
+    if (hasText(hashRef?.role)) {
+      seenHashRefRoles.add(hashRef.role);
+    }
+    addReason(reasons, !isDigest(hashRef?.dashboardHash), `role_dashboard_hash_invalid:${label}`);
+    addReason(
+      reasons,
+      !isDigest(hashRef?.trustStateViewHash),
+      `role_dashboard_hash_ref_trust_state_view_hash_invalid:${label}`,
+    );
+    hashRefSummaries.push({
+      dashboardHash: hashRef?.dashboardHash ?? null,
+      role: hashRef?.role ?? label,
+      trustStateViewHash: hashRef?.trustStateViewHash ?? null,
+    });
+  });
+
+  addReason(reasons, evidence?.trustState !== 'inactive', 'role_dashboard_trust_state_invalid');
+  addReason(reasons, evidence?.exochainProductionClaim !== false, 'role_dashboard_production_claim_forbidden');
+  addReason(
+    reasons,
+    evidence?.canShowProductionTrustClaim !== false,
+    'role_dashboard_production_claim_display_forbidden',
+  );
+  addReason(reasons, evidence?.activationLineageAccepted !== true, 'role_dashboard_activation_lineage_absent');
+  addReason(
+    reasons,
+    !isDigest(evidence?.publicClaimReviewReceiptHash),
+    'role_dashboard_public_claim_review_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.publicClaimReviewPackageHash),
+    'role_dashboard_public_claim_review_package_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.productionClaimLiftReceiptHash),
+    'role_dashboard_production_claim_lift_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    evidence?.productionClaimLiftTrustState !== 'inactive',
+    'role_dashboard_production_claim_lift_state_invalid',
+  );
+  addReason(
+    reasons,
+    evidence?.productionClaimLiftCanLiftProductionClaim !== false,
+    'role_dashboard_production_claim_lift_forbidden',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.productionClaimLiftRoleDashboardProviderReceiptHash),
+    'role_dashboard_production_claim_lift_provider_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.productionClaimLiftRoleDashboardProviderSummaryHash),
+    'role_dashboard_production_claim_lift_provider_summary_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.productionClaimLiftRoleDashboardProviderTrustStateViewHash),
+    'role_dashboard_production_claim_lift_provider_trust_state_view_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.productionClaimLiftRoleDashboardReadinessReceiptHash),
+    'role_dashboard_production_claim_lift_readiness_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.productionClaimLiftRoleDashboardReadinessSummaryHash),
+    'role_dashboard_production_claim_lift_readiness_summary_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.productionClaimLiftRoleDashboardReadinessTrustStateViewHash),
+    'role_dashboard_production_claim_lift_readiness_trust_state_view_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash),
+    'role_dashboard_production_claim_lift_runtime_source_provider_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash),
+    'role_dashboard_production_claim_lift_runtime_source_provider_summary_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash),
+    'role_dashboard_production_claim_lift_runtime_source_provider_trust_state_view_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash),
+    'role_dashboard_production_claim_lift_runtime_source_readiness_receipt_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash),
+    'role_dashboard_production_claim_lift_runtime_source_readiness_summary_hash_invalid',
+  );
+  addReason(
+    reasons,
+    !isDigest(evidence?.productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash),
+    'role_dashboard_production_claim_lift_runtime_source_readiness_trust_state_view_hash_invalid',
+  );
+
+  for (const role of REQUIRED_ROLE_DASHBOARD_ROLES) {
+    addReason(
+      reasons,
+      !productionClaimLiftRoleDashboardRoles.includes(role),
+      `role_dashboard_production_claim_lift_role_missing:${role}`,
+    );
+  }
+  for (const role of productionClaimLiftRoleDashboardRoles) {
+    addReason(
+      reasons,
+      !REQUIRED_ROLE_DASHBOARD_ROLES.includes(role),
+      `role_dashboard_production_claim_lift_role_unsupported:${role}`,
+    );
+  }
+
+  if (
+    isDigest(evidence?.roleDashboardReceiptHash) &&
+    isDigest(evidence?.productionClaimLiftRoleDashboardProviderReceiptHash) &&
+    evidence.roleDashboardReceiptHash !== evidence.productionClaimLiftRoleDashboardProviderReceiptHash
+  ) {
+    reasons.push('role_dashboard_production_claim_lift_provider_receipt_mismatch');
+  }
+  if (
+    isDigest(evidence?.roleDashboardSummaryHash) &&
+    isDigest(evidence?.productionClaimLiftRoleDashboardProviderSummaryHash) &&
+    evidence.roleDashboardSummaryHash !== evidence.productionClaimLiftRoleDashboardProviderSummaryHash
+  ) {
+    reasons.push('role_dashboard_production_claim_lift_provider_summary_mismatch');
+  }
+  if (
+    isDigest(evidence?.roleDashboardTrustStateViewHash) &&
+    isDigest(evidence?.productionClaimLiftRoleDashboardProviderTrustStateViewHash) &&
+    evidence.roleDashboardTrustStateViewHash !== evidence.productionClaimLiftRoleDashboardProviderTrustStateViewHash
+  ) {
+    reasons.push('role_dashboard_production_claim_lift_provider_trust_state_view_mismatch');
+  }
+  if (
+    isDigest(evidence?.productionClaimLiftRoleDashboardProviderReceiptHash) &&
+    isDigest(evidence?.productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash) &&
+    evidence.productionClaimLiftRoleDashboardProviderReceiptHash !==
+      evidence.productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash
+  ) {
+    reasons.push('role_dashboard_production_claim_lift_runtime_source_provider_receipt_mismatch');
+  }
+  if (
+    isDigest(evidence?.productionClaimLiftRoleDashboardProviderSummaryHash) &&
+    isDigest(evidence?.productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash) &&
+    evidence.productionClaimLiftRoleDashboardProviderSummaryHash !==
+      evidence.productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash
+  ) {
+    reasons.push('role_dashboard_production_claim_lift_runtime_source_provider_summary_mismatch');
+  }
+  if (
+    isDigest(evidence?.productionClaimLiftRoleDashboardProviderTrustStateViewHash) &&
+    isDigest(evidence?.productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash) &&
+    evidence.productionClaimLiftRoleDashboardProviderTrustStateViewHash !==
+      evidence.productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash
+  ) {
+    reasons.push('role_dashboard_production_claim_lift_runtime_source_provider_trust_state_view_mismatch');
+  }
+  if (
+    isDigest(evidence?.productionClaimLiftRoleDashboardReadinessReceiptHash) &&
+    isDigest(evidence?.productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash) &&
+    evidence.productionClaimLiftRoleDashboardReadinessReceiptHash !==
+      evidence.productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash
+  ) {
+    reasons.push('role_dashboard_production_claim_lift_runtime_source_readiness_receipt_mismatch');
+  }
+  if (
+    isDigest(evidence?.productionClaimLiftRoleDashboardReadinessSummaryHash) &&
+    isDigest(evidence?.productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash) &&
+    evidence.productionClaimLiftRoleDashboardReadinessSummaryHash !==
+      evidence.productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash
+  ) {
+    reasons.push('role_dashboard_production_claim_lift_runtime_source_readiness_summary_mismatch');
+  }
+  if (
+    isDigest(evidence?.productionClaimLiftRoleDashboardReadinessTrustStateViewHash) &&
+    isDigest(evidence?.productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash) &&
+    evidence.productionClaimLiftRoleDashboardReadinessTrustStateViewHash !==
+      evidence.productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash
+  ) {
+    reasons.push('role_dashboard_production_claim_lift_runtime_source_readiness_trust_state_view_mismatch');
+  }
+  addReason(reasons, evidence?.metadataOnly !== true, 'role_dashboard_metadata_boundary_invalid');
+  addReason(reasons, evidence?.protectedContentExcluded !== true, 'role_dashboard_protected_boundary_invalid');
+  addReason(reasons, hlcTuple(evidence?.reviewedAtHlc) === null, 'role_dashboard_review_time_invalid');
+  addReason(reasons, hlcBefore(evidence?.reviewedAtHlc, cycle?.matrixCompiledAtHlc), 'role_dashboard_review_before_matrix');
+  addReason(
+    reasons,
+    hlcAfter(evidence?.reviewedAtHlc, cycle?.releaseDecisionAtHlc),
+    'role_dashboard_review_after_release_decision',
+  );
+
+  return {
+    activationLineageAccepted: evidence?.activationLineageAccepted === true,
+    canShowProductionTrustClaim: evidence?.canShowProductionTrustClaim === true,
+    dashboardHashRefs: hashRefSummaries.sort((left, right) => left.role.localeCompare(right.role)),
+    dashboardRoles,
+    productionClaimLiftCanLiftProductionClaim:
+      evidence?.productionClaimLiftCanLiftProductionClaim === true,
+    productionClaimLiftRoleDashboardProviderReceiptHash:
+      evidence?.productionClaimLiftRoleDashboardProviderReceiptHash ?? null,
+    productionClaimLiftRoleDashboardProviderSummaryHash:
+      evidence?.productionClaimLiftRoleDashboardProviderSummaryHash ?? null,
+    productionClaimLiftRoleDashboardProviderTrustStateViewHash:
+      evidence?.productionClaimLiftRoleDashboardProviderTrustStateViewHash ?? null,
+    productionClaimLiftRoleDashboardReadinessReceiptHash:
+      evidence?.productionClaimLiftRoleDashboardReadinessReceiptHash ?? null,
+    productionClaimLiftRoleDashboardReadinessSummaryHash:
+      evidence?.productionClaimLiftRoleDashboardReadinessSummaryHash ?? null,
+    productionClaimLiftRoleDashboardReadinessTrustStateViewHash:
+      evidence?.productionClaimLiftRoleDashboardReadinessTrustStateViewHash ?? null,
+    productionClaimLiftRoleDashboardRoles,
+    productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash:
+      evidence?.productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash ?? null,
+    productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash:
+      evidence?.productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash ?? null,
+    productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash:
+      evidence?.productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash ?? null,
+    productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash:
+      evidence?.productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash ?? null,
+    productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash:
+      evidence?.productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash ?? null,
+    productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash:
+      evidence?.productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash ?? null,
+    productionClaimLiftReceiptHash: evidence?.productionClaimLiftReceiptHash ?? null,
+    productionClaimLiftTrustState: evidence?.productionClaimLiftTrustState ?? null,
+    publicClaimReviewPackageHash: evidence?.publicClaimReviewPackageHash ?? null,
+    publicClaimReviewReceiptHash: evidence?.publicClaimReviewReceiptHash ?? null,
+    roleDashboardReceiptHash: evidence?.roleDashboardReceiptHash ?? null,
+    roleDashboardSummaryHash: evidence?.roleDashboardSummaryHash ?? null,
+    roleDashboardTrustStateViewHash: evidence?.roleDashboardTrustStateViewHash ?? null,
+    trustState: evidence?.trustState ?? null,
+  };
+}
+
 function evaluateReleaseDecision(decision, cycle, reasons) {
   addReason(reasons, decision === null || decision === undefined, 'release_decision_absent');
   addReason(reasons, !RELEASE_DECISIONS.has(decision?.decision), 'release_decision_invalid');
@@ -593,7 +958,15 @@ function evaluateAiAssistance(aiAssistance, reasons) {
   addReason(reasons, sortedTextList(aiAssistance.limitationHashes).filter(isDigest).length === 0, 'ai_limitation_hashes_absent');
 }
 
-function buildReleaseReadiness(input, policySummary, acceptanceSummary, openQuestionSummary, activationSummary) {
+function buildReleaseReadiness(
+  input,
+  policySummary,
+  acceptanceSummary,
+  openQuestionSummary,
+  activationSummary,
+  driftStateUpdateSummary,
+  roleDashboardTrustStateSummary,
+) {
   const validationSummary = {
     commandRef: input.validationEvidence.commandRef,
     coverageLineBasisPoints: input.validationEvidence.coverageLineBasisPoints,
@@ -607,6 +980,8 @@ function buildReleaseReadiness(input, policySummary, acceptanceSummary, openQues
     auditRecordHash: input.auditRecord.auditRecordHash,
     bobEscalationIds: openQuestionSummary.bobEscalationIds,
     cycleRef: input.releaseCycle.cycleRef,
+    driftStateUpdateEvidence: driftStateUpdateSummary,
+    roleDashboardTrustStateEvidence: roleDashboardTrustStateSummary,
     releaseDecisionHash: input.releaseDecision.decisionHash,
     tenantId: input.tenantId,
     validationEvidenceHash: input.validationEvidence.evidenceHash,
@@ -645,6 +1020,8 @@ function buildReleaseReadiness(input, policySummary, acceptanceSummary, openQues
       unverifiedProductionGateCount: activationSummary.unverifiedProductionGateCount,
       verifiedGateCount: activationSummary.verifiedGateCount,
     },
+    driftStateUpdateEvidence: driftStateUpdateSummary,
+    roleDashboardTrustStateEvidence: roleDashboardTrustStateSummary,
     validationSummary,
     matrixHash,
     auditRecordHash: input.auditRecord.auditRecordHash,
@@ -661,7 +1038,13 @@ function buildReceipt(input, releaseReadiness) {
     classification: 'restricted_metadata_only',
     custodyDigest: input.custodyDigest,
     hlcTimestamp: input.auditRecord.receiptRecordedAtHlc,
-    sensitivityTags: ['release_readiness', 'metadata_only', 'inactive_trust_state'],
+    sensitivityTags: [
+      'release_readiness',
+      'metadata_only',
+      'inactive_trust_state',
+      'drift_state_update',
+      'role_dashboard_trust_state',
+    ],
     sourceSystem: 'cybermedica-qms',
     tenantId: input.tenantId,
   });
@@ -693,6 +1076,16 @@ export function evaluateReleaseReadinessMatrix(input) {
     input?.releaseDecision,
     reasons,
   );
+  const driftStateUpdateSummary = evaluateDriftStateUpdateEvidence(
+    input?.driftStateUpdateEvidence,
+    input?.releaseCycle,
+    reasons,
+  );
+  const roleDashboardTrustStateSummary = evaluateRoleDashboardTrustStateEvidence(
+    input?.roleDashboardTrustStateEvidence,
+    input?.releaseCycle,
+    reasons,
+  );
   evaluateValidationEvidence(input?.validationEvidence, input?.releaseCycle, reasons);
   evaluateReleaseDecision(input?.releaseDecision, input?.releaseCycle, reasons);
   evaluateAuditRecord(input?.auditRecord, input?.releaseCycle, input?.releaseDecision, reasons);
@@ -719,6 +1112,8 @@ export function evaluateReleaseReadinessMatrix(input) {
     acceptanceSummary,
     openQuestionSummary,
     activationSummary,
+    driftStateUpdateSummary,
+    roleDashboardTrustStateSummary,
   );
 
   return {

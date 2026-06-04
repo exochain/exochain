@@ -334,6 +334,27 @@ test('source data traceability fails closed for CRF gaps discrepancies and unsaf
   assert.ok(result.reasons.includes('custody_digest_invalid'));
 });
 
+test('source data traceability rejects CRF mapping review before source record is recorded', async () => {
+  const { evaluateSourceDataTraceability } = await loadSourceDataTraceability();
+  const input = sourceTraceabilityInput();
+  input.crfMappings = input.crfMappings.map((mapping) =>
+    mapping.sourceFamily === 'lab_result'
+      ? {
+          ...mapping,
+          reviewedAtHlc: { physicalMs: 1800999999000, logical: 0 },
+        }
+      : mapping,
+  );
+
+  const denied = evaluateSourceDataTraceability(input);
+
+  assert.equal(denied.decision, 'denied');
+  assert.equal(denied.failClosed, true);
+  assert.equal(denied.sourceDataTraceability.traceabilityStatus, 'blocked');
+  assert.ok(denied.reasons.includes('crf_mapping_review_before_source_recorded:lab_result'));
+  assert.equal(denied.receipt, null);
+});
+
 test('source data traceability rejects raw source data CRF payloads and secrets before receipts', async () => {
   const { ProtectedContentError, evaluateSourceDataTraceability } = await loadSourceDataTraceability();
 

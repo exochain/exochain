@@ -17,6 +17,7 @@
 import { canonicalize, createEvidenceReceipt, evaluateGovernedAction, sha256Hex } from './qms-contracts.mjs';
 
 const HEX_64 = /^[0-9a-f]{64}$/u;
+const RAW_ADMIN_GOVERNANCE_GATE_ID = 'PTAG-004';
 const CONTROL_LIFECYCLE_ACTIONS = new Set(['approve', 'revise', 'retire']);
 const CONTROL_RISK_CRITICALITIES = new Set(['critical', 'major', 'minor']);
 
@@ -99,6 +100,11 @@ function evaluateControlShape(input, affectedWorkflowRefs, policyRefs, reasons) 
 function evaluateDecisionForumEvidence(decisionForum, reasons) {
   addReason(reasons, !hasText(decisionForum?.decisionId), 'decision_forum_decision_id_absent');
   addReason(reasons, !hasText(decisionForum?.workflowReceiptId), 'decision_forum_workflow_receipt_absent');
+  addReason(
+    reasons,
+    decisionForum?.rawAdminGovernanceEndpointUsed === true,
+    'ptag_004_raw_admin_governance_endpoint_forbidden',
+  );
 }
 
 function lifecycleStatus(lifecycleAction) {
@@ -211,6 +217,8 @@ export function evaluateQmsControlApproval(input) {
       approvedAtHlc: input.approvedAtHlc,
       effectiveForUse: status === 'approved',
       humanGovernanceRequired: true,
+      rawAdminGovernanceEndpointUsed: false,
+      activationGateIds: [RAW_ADMIN_GOVERNANCE_GATE_ID],
       operationalStateMutable: true,
       immutableApprovalReceipt: true,
       receiptId: receipt.receiptId,

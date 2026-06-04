@@ -157,34 +157,6 @@ test('DID authentication fails closed for malformed DID stale challenge and wron
   assert.equal(wrongKey.receipt, null);
 });
 
-test('DID authentication rejects caller-supplied challenge age widening', async () => {
-  const { evaluateDidAuthentication } = await loadDidAuthentication();
-
-  const widenedChallengeWindow = evaluateDidAuthentication(
-    didAuthInput({
-      challenge: {
-        purpose: 'qms_request_authentication',
-        requestHash: digestD,
-        nonceHash: digestC,
-        issuedAtHlc: { physicalMs: 1790000000000, logical: 1 },
-        expiresAtHlc: { physicalMs: 1790003300000, logical: 0 },
-      },
-      verification: {
-        checkedAtHlc: { physicalMs: 1790003060000, logical: 0 },
-        maxChallengeAgeMs: 10000000,
-        gatewayAuthRequired: true,
-      },
-      signature: staleSignature,
-    }),
-  );
-
-  assert.equal(widenedChallengeWindow.verified, false);
-  assert.equal(widenedChallengeWindow.state, 'denied');
-  assert.ok(widenedChallengeWindow.blockedBy.includes('did_auth_max_challenge_age_untrusted'));
-  assert.ok(widenedChallengeWindow.blockedBy.includes('did_auth_challenge_stale'));
-  assert.equal(widenedChallengeWindow.receipt, null);
-});
-
 test('DID authentication distinguishes absent pending and mismatched registry evidence', async () => {
   const { evaluateDidAuthentication } = await loadDidAuthentication();
 

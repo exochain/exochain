@@ -27,6 +27,7 @@ const DIGEST_1 = '11111111111111111111111111111111111111111111111111111111111111
 const DIGEST_2 = '2222222222222222222222222222222222222222222222222222222222222222';
 const DIGEST_3 = '3333333333333333333333333333333333333333333333333333333333333333';
 const DIGEST_4 = '4444444444444444444444444444444444444444444444444444444444444444';
+const DIGEST_R = 'abababababababababababababababababababababababababababababababab';
 
 async function loadControlledDocumentDistribution() {
   try {
@@ -75,6 +76,26 @@ function distributionInput() {
       notificationEvidenceHash: DIGEST_1,
       staffCommunicationEvidenceHash: DIGEST_2,
       payloadStoredOutsideReceipt: true,
+    },
+    publicationReadiness: {
+      publicationCycleRef: 'documentation-publication-cycle-alpha',
+      documentationPublicationReceiptHash: DIGEST_A,
+      documentationPublicationDigest: DIGEST_B,
+      publicationPackageRef: 'documentation-publication-package-alpha',
+      manualSetHash: DIGEST_C,
+      manualExportReceiptHash: DIGEST_D,
+      manualExportPacketHash: DIGEST_E,
+      roleManualCoverageReceiptHash: DIGEST_R,
+      manualExportRoleRefs: ['quality_manager', 'study_coordinator', 'principal_investigator'],
+      orientationAssistantReceiptHash: DIGEST_F,
+      distributionPlanHash: DIGEST_1,
+      acknowledgementPolicyHash: DIGEST_2,
+      publishedAtHlc: { physicalMs: 1796999999900, logical: 0 },
+      distributionReady: true,
+      manualExportReady: true,
+      noProductionTrustClaim: true,
+      metadataOnly: true,
+      protectedContentExcluded: true,
     },
     accessControl: {
       leastPrivilege: true,
@@ -181,6 +202,18 @@ test('controlled document distribution records access controlled effective use a
   assert.equal(resultA.distributionRecord.effectiveForUse, true);
   assert.equal(resultA.distributionRecord.accessControlled, true);
   assert.equal(resultA.distributionRecord.obsoleteVersionUseBlocked, true);
+  assert.equal(resultA.distributionRecord.documentationPublicationReceiptHash, DIGEST_A);
+  assert.equal(resultA.distributionRecord.manualExportReceiptHash, DIGEST_D);
+  assert.equal(resultA.distributionRecord.manualExportPacketHash, DIGEST_E);
+  assert.equal(resultA.distributionRecord.roleManualCoverageReceiptHash, DIGEST_R);
+  assert.deepEqual(resultA.distributionRecord.manualExportRoleRefs, [
+    'principal_investigator',
+    'quality_manager',
+    'study_coordinator',
+  ]);
+  assert.equal(resultA.distributionRecord.manualExportRoleCoverageReady, true);
+  assert.equal(resultA.distributionRecord.orientationAssistantReceiptHash, DIGEST_F);
+  assert.equal(resultA.distributionRecord.publicationReadinessReady, true);
   assert.deepEqual(resultA.distributionRecord.acknowledgedRoleRefs, ['quality_manager', 'study_coordinator']);
   assert.equal(resultA.distributionRecord.distributionRecordId, resultB.distributionRecord.distributionRecordId);
   assert.equal(resultA.receipt.receiptId, resultB.receipt.receiptId);
@@ -258,6 +291,73 @@ test('controlled document distribution fails closed for unapproved access and ac
   assert.ok(denied.reasons.includes('effective_use_not_attested'));
   assert.equal(denied.distributionRecord, null);
   assert.equal(denied.receipt, null);
+});
+
+test('controlled document distribution fails closed when manual-export roles do not cover distributed audience', async () => {
+  const { recordControlledDocumentDistribution } = await loadControlledDocumentDistribution();
+
+  const denied = recordControlledDocumentDistribution({
+    ...distributionInput(),
+    publicationReadiness: {
+      ...distributionInput().publicationReadiness,
+      roleManualCoverageReceiptHash: null,
+      manualExportRoleRefs: ['quality_manager'],
+    },
+  });
+
+  assert.equal(denied.decision, 'denied');
+  assert.equal(denied.failClosed, true);
+  assert.equal(denied.distributionRecord, null);
+  assert.equal(denied.receipt, null);
+  assert.ok(denied.reasons.includes('role_manual_coverage_receipt_hash_invalid'));
+  assert.ok(denied.reasons.includes('manual_export_role_coverage_missing:principal_investigator'));
+  assert.ok(denied.reasons.includes('manual_export_role_coverage_missing:study_coordinator'));
+});
+
+test('controlled document distribution fails closed without publication export readiness linkage', async () => {
+  const { recordControlledDocumentDistribution } = await loadControlledDocumentDistribution();
+
+  const denied = recordControlledDocumentDistribution({
+    ...distributionInput(),
+    publicationReadiness: {
+      ...distributionInput().publicationReadiness,
+      documentationPublicationReceiptHash: 'not-a-digest',
+      documentationPublicationDigest: '',
+      manualExportReceiptHash: null,
+      manualExportPacketHash: 'bad',
+      roleManualCoverageReceiptHash: 'bad',
+      manualExportRoleRefs: [],
+      orientationAssistantReceiptHash: 'bad',
+      distributionPlanHash: null,
+      acknowledgementPolicyHash: 'bad',
+      publishedAtHlc: { physicalMs: 1797000000000, logical: 2 },
+      distributionReady: false,
+      manualExportReady: false,
+      noProductionTrustClaim: false,
+      metadataOnly: false,
+      protectedContentExcluded: false,
+    },
+  });
+
+  assert.equal(denied.decision, 'denied');
+  assert.equal(denied.failClosed, true);
+  assert.equal(denied.distributionRecord, null);
+  assert.equal(denied.receipt, null);
+  assert.ok(denied.reasons.includes('documentation_publication_receipt_hash_invalid'));
+  assert.ok(denied.reasons.includes('documentation_publication_digest_invalid'));
+  assert.ok(denied.reasons.includes('manual_export_receipt_hash_invalid'));
+  assert.ok(denied.reasons.includes('manual_export_packet_hash_invalid'));
+  assert.ok(denied.reasons.includes('role_manual_coverage_receipt_hash_invalid'));
+  assert.ok(denied.reasons.includes('manual_export_role_refs_absent'));
+  assert.ok(denied.reasons.includes('orientation_assistant_receipt_hash_invalid'));
+  assert.ok(denied.reasons.includes('publication_distribution_plan_hash_invalid'));
+  assert.ok(denied.reasons.includes('publication_acknowledgement_policy_hash_invalid'));
+  assert.ok(denied.reasons.includes('publication_readiness_not_distribution_ready'));
+  assert.ok(denied.reasons.includes('publication_readiness_manual_export_not_ready'));
+  assert.ok(denied.reasons.includes('publication_readiness_production_trust_claim_forbidden'));
+  assert.ok(denied.reasons.includes('publication_readiness_metadata_boundary_invalid'));
+  assert.ok(denied.reasons.includes('publication_readiness_protected_boundary_invalid'));
+  assert.ok(denied.reasons.includes('distribution_time_before_publication_readiness'));
 });
 
 test('obsolete controlled document withdrawal blocks effective use while preserving retention metadata', async () => {

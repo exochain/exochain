@@ -266,6 +266,7 @@ function normalizeOutputs(input, policy, reasons) {
 
   return outputs.map((output) => {
     const outputRef = hasText(output?.outputRef) ? output.outputRef : 'assistant-output-unknown';
+    const aiBacked = ['ai_agent', 'ai_assistant', 'ai_model'].includes(output?.assistantKind);
     const evidenceRefs = sortedTextList(output?.evidenceRefs);
     const limitationHashes = sortedTextList(output?.limitationHashes);
     const unresolvedAssumptionHashes = Array.isArray(output?.unresolvedAssumptionHashes)
@@ -278,13 +279,24 @@ function normalizeOutputs(input, policy, reasons) {
     addReason(reasons, !ASSISTANT_KINDS.has(output?.assistantKind), `output_assistant_kind_invalid:${outputRef}`);
     addReason(
       reasons,
-      ['ai_agent', 'ai_assistant', 'ai_model'].includes(output?.assistantKind) && !isDigest(output?.modelRefHash),
+      aiBacked && !isDigest(output?.modelRefHash),
       `output_model_ref_hash_invalid:${outputRef}`,
     );
     addReason(
       reasons,
       ['retrieval_assistant', 'rules_assistant'].includes(output?.assistantKind) && !isDigest(output?.generatorPolicyHash),
       `output_generator_policy_hash_invalid:${outputRef}`,
+    );
+    addReason(reasons, aiBacked && output?.aiGeneratedSummaryMarked !== true, `output_ai_generated_marker_absent:${outputRef}`);
+    addReason(
+      reasons,
+      output?.humanEnteredEvidencePolicy !== 'preserve_original_require_human_review',
+      `output_human_evidence_policy_invalid:${outputRef}`,
+    );
+    addReason(
+      reasons,
+      output?.humanEvidenceOverwriteAllowed === true,
+      `output_human_evidence_overwrite_forbidden:${outputRef}`,
     );
     addReason(reasons, !isDigest(output?.promptHash), `output_prompt_hash_invalid:${outputRef}`);
     addReason(reasons, !isDigest(output?.inputManifestHash), `output_input_manifest_hash_invalid:${outputRef}`);
@@ -320,12 +332,15 @@ function normalizeOutputs(input, policy, reasons) {
 
     return {
       advisoryOnly: output?.advisoryOnly === true && output?.finalAuthority !== true,
+      aiGeneratedSummaryMarked: aiBacked ? output?.aiGeneratedSummaryMarked === true : false,
       assistantKind: output?.assistantKind ?? null,
       canOpenCqiItem: output?.canOpenCqiItem === true,
       confidenceBasisPoints: isBasisPoints(output?.confidenceBasisPoints) ? output.confidenceBasisPoints : null,
       evidenceManifestHash: output?.evidenceManifestHash ?? null,
       evidenceRefs,
       generatedAtHlc: output?.generatedAtHlc ?? null,
+      humanEnteredEvidencePolicy: output?.humanEnteredEvidencePolicy ?? null,
+      humanEvidenceOverwriteAllowed: output?.humanEvidenceOverwriteAllowed === true,
       inputManifestHash: output?.inputManifestHash ?? null,
       limitationHashes,
       lowConfidence: isBasisPoints(output?.confidenceBasisPoints) && output.confidenceBasisPoints < policy.minimumConfidenceForDisplayBasisPoints,

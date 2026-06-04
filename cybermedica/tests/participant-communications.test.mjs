@@ -260,6 +260,30 @@ test('non material participant updates can document human no reconsent determina
   assert.equal(result.reconsentRecord.materialNewInformation, false);
 });
 
+test('material new information cannot be closed as no reconsent required', async () => {
+  const { determineReconsentNeed } = await loadParticipantCommunications();
+
+  const result = determineReconsentNeed({
+    ...reconsentDeterminationInput(),
+    determination: {
+      ...reconsentDeterminationInput().determination,
+      status: 'not_required',
+      consentMaterialId: null,
+      consentMaterialVersion: null,
+      consentMaterialReceiptId: null,
+      reconsentPlanHash: null,
+      dueAtHlc: null,
+      participantContinuationGate: 'continue_with_documented_update',
+    },
+  });
+
+  assert.equal(result.decision, 'denied');
+  assert.equal(result.failClosed, true);
+  assert.equal(result.reconsentRecord.status, 'blocked');
+  assert.equal(result.receipt, null);
+  assert.match(result.reasons.join('|'), /material_new_information_requires_reconsent_or_hold/);
+});
+
 test('participant communication and reconsent controls fail closed for unsafe evidence and raw content', async () => {
   const { ProtectedContentError, determineReconsentNeed, recordParticipantCommunication } = await loadParticipantCommunications();
 

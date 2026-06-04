@@ -98,6 +98,8 @@ test('QMS control approvals require human governance and create deterministic in
   assert.equal(approvalA.failClosed, false);
   assert.equal(approvalA.controlApproval.status, 'approved');
   assert.equal(approvalA.controlApproval.humanGovernanceRequired, true);
+  assert.equal(approvalA.controlApproval.rawAdminGovernanceEndpointUsed, false);
+  assert.deepEqual(approvalA.controlApproval.activationGateIds, ['PTAG-004']);
   assert.equal(approvalA.controlApproval.operationalStateMutable, true);
   assert.equal(approvalA.controlApproval.immutableApprovalReceipt, true);
   assert.equal(approvalA.controlApproval.effectiveForUse, true);
@@ -138,6 +140,7 @@ test('QMS control approval fails closed for tenant authority governance and evid
       humanGate: { verified: true },
       quorum: { status: 'met' },
       openChallenge: true,
+      rawAdminGovernanceEndpointUsed: true,
     },
     evidenceBundle: { complete: false, phiBoundaryAttested: false },
   });
@@ -148,6 +151,7 @@ test('QMS control approval fails closed for tenant authority governance and evid
   assert.ok(denied.reasons.includes('authority_permission_missing'));
   assert.ok(denied.reasons.includes('ai_final_authority_forbidden'));
   assert.ok(denied.reasons.includes('challenge_open'));
+  assert.ok(denied.reasons.includes('ptag_004_raw_admin_governance_endpoint_forbidden'));
   assert.ok(denied.reasons.includes('evidence_bundle_incomplete'));
   assert.ok(denied.reasons.includes('phi_boundary_unattested'));
   assert.ok(denied.reasons.includes('control_evidence_id_absent'));

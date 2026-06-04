@@ -48,6 +48,24 @@ const REQUIRED_SIGNAL_FAMILIES = [
   'stakeholder_feedback',
   'training_gap',
 ];
+const REQUIRED_INQUIRY_BACKLOG_SOURCE_FAMILIES = [
+  'accessibility_barrier',
+  'ai_orientation_question',
+  'manual_confusion',
+  'missing_documentation',
+  'product_gap',
+  'repeated_inquiry',
+  'search_zero_result',
+  'workflow_exit',
+];
+const REQUIRED_INQUIRY_BACKLOG_IMPROVEMENT_CATEGORIES = [
+  'cqi_review',
+  'documentation_update',
+  'manual_crosslink_refresh',
+  'system_change',
+  'training_update',
+  'workflow_change',
+];
 
 async function loadDriftImprovement() {
   try {
@@ -245,6 +263,28 @@ function driftInput(overrides = {}) {
       updateReceiptHash: DIGEST_D,
       updatedAtHlc: { physicalMs: 1799100600000, logical: 6 },
       metadataOnly: true,
+      cqiLineage: {
+        cqiCycleId: 'cmcqi_documentation_friction_alpha',
+        cqiCycleHash: DIGEST_6,
+        cqiReceiptHash: DIGEST_7,
+        cqiStatus: 'closed_effective',
+        trustState: 'inactive',
+        exochainProductionClaim: false,
+        metadataOnly: true,
+        protectedContentExcluded: true,
+        inquiryCqiBacklogReceiptHash: DIGEST_8,
+        inquiryCqiBacklogDigest: DIGEST_9,
+        inquiryCqiBacklogSourceFamilies: REQUIRED_INQUIRY_BACKLOG_SOURCE_FAMILIES,
+        inquiryCqiBacklogImprovementCategories: REQUIRED_INQUIRY_BACKLOG_IMPROVEMENT_CATEGORIES,
+        inquiryCqiBacklogLinkedItemRefs: ['cqi-item-manual_confusion', 'cqi-item-search_zero_result'],
+        driftSignalRefs: ['signal-concern', 'signal-stakeholder_feedback'],
+        manualNavigationReady: true,
+        manualNavigationEffectiveUseAcknowledged: true,
+        manualNavigationCurrentVersionOnly: true,
+        manualNavigationObsoleteVersionUseBlocked: true,
+        roleManualCoverageReceiptHash: DIGEST_F,
+        reviewedAtHlc: { physicalMs: 1799100550000, logical: 0 },
+      },
     },
     auditRecord: {
       auditRecordRef: 'drift-audit-record-alpha',
@@ -274,6 +314,14 @@ test('drift improvement loop turns stale quality signals into deterministic owne
       improvementActions: [...driftInput().improvementActions].reverse(),
       driftPolicy: {
         requiredSignalFamilies: [...REQUIRED_SIGNAL_FAMILIES].reverse(),
+      },
+      stateUpdate: {
+        cqiLineage: {
+          inquiryCqiBacklogImprovementCategories: [...REQUIRED_INQUIRY_BACKLOG_IMPROVEMENT_CATEGORIES].reverse(),
+          inquiryCqiBacklogLinkedItemRefs: ['cqi-item-search_zero_result', 'cqi-item-manual_confusion'],
+          inquiryCqiBacklogSourceFamilies: [...REQUIRED_INQUIRY_BACKLOG_SOURCE_FAMILIES].reverse(),
+          driftSignalRefs: ['signal-stakeholder_feedback', 'signal-concern'],
+        },
       },
     }),
   );
@@ -307,9 +355,31 @@ test('drift improvement loop turns stale quality signals into deterministic owne
   assert.equal(resultA.driftLoop.decisionForumRequired, true);
   assert.equal(resultA.driftLoop.decisionForumInvoked, true);
   assert.equal(resultA.driftLoop.effectivenessChecked, true);
+  assert.deepEqual(resultA.driftLoop.stateUpdateEvidence, {
+    cqiBacklogDriftSignalRefs: ['signal-concern', 'signal-stakeholder_feedback'],
+    cqiCycleHash: DIGEST_6,
+    cqiCycleId: 'cmcqi_documentation_friction_alpha',
+    cqiCycleReceiptHash: DIGEST_7,
+    inquiryCqiBacklogDigest: DIGEST_9,
+    inquiryCqiBacklogImprovementCategories: REQUIRED_INQUIRY_BACKLOG_IMPROVEMENT_CATEGORIES,
+    inquiryCqiBacklogReceiptHash: DIGEST_8,
+    inquiryCqiBacklogSourceFamilies: REQUIRED_INQUIRY_BACKLOG_SOURCE_FAMILIES,
+    manualNavigationEffectiveUseAcknowledged: true,
+    manualNavigationReady: true,
+    roleManualCoverageReceiptHash: DIGEST_F,
+    stateUpdateHash: DIGEST_D,
+    stateUpdateTargets: ['passport', 'quality_state', 'readiness'],
+  });
   assert.equal(resultA.receipt.trustState, 'inactive');
   assert.equal(resultA.receipt.exochainProductionClaim, false);
   assert.equal(resultA.receipt.anchorPayload.artifactType, 'drift_improvement_loop');
+  assert.deepEqual(resultA.receipt.anchorPayload.sensitivityTags, [
+    'continuous_quality_improvement',
+    'drift_management',
+    'inquiry_cqi_backlog',
+    'manual_navigation_readiness',
+    'metadata_only',
+  ]);
 });
 
 test('drift improvement loop fails closed for missing signal coverage ownership and state updates', async () => {
@@ -335,6 +405,62 @@ test('drift improvement loop fails closed for missing signal coverage ownership 
     'state_update_readiness_absent',
     'state_update_receipt_hash_invalid',
   ]);
+  assert.equal(result.driftLoop, undefined);
+  assert.equal(result.receipt, undefined);
+});
+
+test('drift improvement loop requires CQI backlog and manual-navigation lineage before state update', async () => {
+  const { evaluateDriftImprovementLoop } = await loadDriftImprovement();
+
+  const result = evaluateDriftImprovementLoop(
+    driftInput({
+      stateUpdate: {
+        cqiLineage: {
+          cqiCycleHash: 'bad',
+          cqiReceiptHash: '',
+          cqiStatus: 'open',
+          trustState: 'verified',
+          exochainProductionClaim: true,
+          metadataOnly: false,
+          protectedContentExcluded: false,
+          inquiryCqiBacklogReceiptHash: 'bad',
+          inquiryCqiBacklogDigest: '',
+          inquiryCqiBacklogSourceFamilies: ['manual_confusion'],
+          inquiryCqiBacklogImprovementCategories: ['cqi_review'],
+          inquiryCqiBacklogLinkedItemRefs: [],
+          driftSignalRefs: ['missing-drift-signal'],
+          manualNavigationReady: false,
+          manualNavigationEffectiveUseAcknowledged: false,
+          manualNavigationCurrentVersionOnly: false,
+          manualNavigationObsoleteVersionUseBlocked: false,
+          roleManualCoverageReceiptHash: 'bad',
+          reviewedAtHlc: { physicalMs: 1799100700000, logical: 0 },
+        },
+      },
+    }),
+  );
+
+  assert.equal(result.decision, 'denied');
+  assert.equal(result.failClosed, true);
+  assert.ok(result.reasons.includes('cqi_cycle_hash_invalid'));
+  assert.ok(result.reasons.includes('cqi_cycle_receipt_hash_invalid'));
+  assert.ok(result.reasons.includes('cqi_cycle_status_invalid'));
+  assert.ok(result.reasons.includes('cqi_cycle_trust_state_invalid'));
+  assert.ok(result.reasons.includes('cqi_cycle_production_claim_forbidden'));
+  assert.ok(result.reasons.includes('cqi_cycle_metadata_boundary_invalid'));
+  assert.ok(result.reasons.includes('cqi_cycle_protected_boundary_invalid'));
+  assert.ok(result.reasons.includes('cqi_inquiry_backlog_receipt_hash_invalid'));
+  assert.ok(result.reasons.includes('cqi_inquiry_backlog_digest_invalid'));
+  assert.ok(result.reasons.includes('cqi_inquiry_backlog_source_family_missing:accessibility_barrier'));
+  assert.ok(result.reasons.includes('cqi_inquiry_backlog_improvement_category_missing:documentation_update'));
+  assert.ok(result.reasons.includes('cqi_inquiry_backlog_item_refs_absent'));
+  assert.ok(result.reasons.includes('cqi_lineage_drift_signal_missing:missing-drift-signal'));
+  assert.ok(result.reasons.includes('cqi_manual_navigation_ready_absent'));
+  assert.ok(result.reasons.includes('cqi_manual_navigation_effective_use_absent'));
+  assert.ok(result.reasons.includes('cqi_manual_navigation_current_version_boundary_invalid'));
+  assert.ok(result.reasons.includes('cqi_manual_navigation_obsolete_version_boundary_invalid'));
+  assert.ok(result.reasons.includes('cqi_role_manual_coverage_receipt_hash_invalid'));
+  assert.ok(result.reasons.includes('cqi_lineage_review_after_state_update'));
   assert.equal(result.driftLoop, undefined);
   assert.equal(result.receipt, undefined);
 });
@@ -387,6 +513,9 @@ test('drift improvement loop enforces HLC ordering including same-tick logical c
       },
       stateUpdate: {
         updatedAtHlc: { physicalMs: 1799100000000, logical: 6 },
+        cqiLineage: {
+          reviewedAtHlc: { physicalMs: 1799100000000, logical: 5 },
+        },
       },
       auditRecord: {
         receiptRecordedAtHlc: { physicalMs: 1799100000000, logical: 7 },

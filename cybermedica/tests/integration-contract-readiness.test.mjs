@@ -39,6 +39,7 @@ const REQUIRED_INTEGRATION_FAMILIES = [
   'document_system',
   'econsent',
   'edc',
+  'eisf',
   'etmf',
   'hris',
   'identity_provider',

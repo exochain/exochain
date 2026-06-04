@@ -237,6 +237,7 @@ test('standards control versions require PRD fields and create deterministic ina
   assert.equal(resultA.controlVersion.status, 'active');
   assert.equal(resultA.controlVersion.materialChange, true);
   assert.equal(resultA.controlVersion.decisionForumDecisionId, 'df-control-library-product-001');
+  assert.deepEqual(resultA.controlVersion.sourceRequirements, ['FR-003']);
   assert.equal(resultA.controlVersion.allPrdFieldsRepresented, true);
   assert.equal(resultA.controlVersion.metadataOnly, true);
   assert.equal(resultA.controlVersion.exochainProductionClaim, false);
@@ -353,6 +354,7 @@ test('control applicability determinations cover all FR-004 states with rational
     assert.equal(result.decision, 'permitted', states[index]);
     assert.equal(result.failClosed, false, states[index]);
     assert.equal(result.applicability.state, states[index]);
+    assert.deepEqual(result.applicability.sourceRequirements, ['FR-004']);
     assert.equal(result.applicability.approvalRequired, true);
     assert.equal(result.applicability.rationaleRequired, true);
     assert.equal(result.applicability.metadataOnly, true);

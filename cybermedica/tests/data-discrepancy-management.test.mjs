@@ -306,6 +306,22 @@ test('data discrepancy management fails closed for unresolved query and source t
   assert.equal(result.receipt.trustState, 'inactive');
 });
 
+test('data discrepancy management rejects closure review before query response review', async () => {
+  const { evaluateDataDiscrepancyManagement } = await loadDataDiscrepancyManagement();
+
+  const result = evaluateDataDiscrepancyManagement(
+    dataDiscrepancyInput({
+      humanReview: {
+        reviewedAtHlc: { physicalMs: 1803000230000, logical: 0 },
+      },
+    }),
+  );
+
+  assert.equal(result.decision, 'denied');
+  assert.equal(result.failClosed, true);
+  assert.ok(result.reasons.includes('human_review_before_query_review:query-src-crf-alpha-001'));
+});
+
 test('data discrepancy management denies tenant authority human-review and HLC defects', async () => {
   const { evaluateDataDiscrepancyManagement } = await loadDataDiscrepancyManagement();
 

@@ -20,6 +20,7 @@ import { TrustState } from './trust-adapter.mjs';
 const REQUIRED_ROOT_CERTIFIERS = 13;
 const REQUIRED_DKG_PARTICIPANTS = 13;
 const REQUIRED_THRESHOLD_SIGNATURE = '7-of-13';
+const ROOT_BACKED_PRODUCTION_AUTHORITY_GATE_ID = 'PTAG-001';
 const HEX_64 = /^[0-9a-f]{64}$/u;
 
 const REQUIRED_ARTIFACT_KINDS = Object.freeze([
@@ -50,6 +51,15 @@ const PROHIBITED_PROVIDER_CONFIG_FIELDS = new Set([
   'secret',
   'signingkey',
   'token',
+]);
+
+const PROHIBITED_PROVIDER_CREDENTIAL_SCOPE_TERMS = Object.freeze([
+  'bootstrap',
+  'exochain',
+  'private',
+  'shared',
+  'signing',
+  'signingkey',
 ]);
 
 function hasText(value) {
@@ -94,6 +104,17 @@ function containsProviderSecretMaterial(value) {
   });
 }
 
+function hasCyberMedicaOnlyCredentialScope(value) {
+  if (!hasText(value)) {
+    return false;
+  }
+  const normalized = normalizeFieldName(value);
+  return (
+    normalized.startsWith('cybermedica') &&
+    !PROHIBITED_PROVIDER_CREDENTIAL_SCOPE_TERMS.some((term) => normalized.includes(term))
+  );
+}
+
 function sortedCertifiers(certifiers) {
   return [...certifiers].sort((left, right) => {
     const leftDid = hasText(left?.certifierDid) ? left.certifierDid : '';
@@ -112,6 +133,14 @@ function sortedArtifacts(artifacts) {
 
 function countUnique(values) {
   return new Set(values.filter((value) => hasText(value))).size;
+}
+
+function hlcPresent(hlc) {
+  return Number.isSafeInteger(hlc?.physicalMs) && Number.isSafeInteger(hlc?.logical);
+}
+
+function sortedTextList(value) {
+  return Array.isArray(value) ? value.filter(hasText).sort() : [];
 }
 
 export function evaluateRootCertifierRoster(input) {
@@ -164,6 +193,7 @@ export function evaluateRootCertifierRoster(input) {
     dkgParticipantCount: valid ? REQUIRED_DKG_PARTICIPANTS : certifiers.filter((certifier) => certifier?.active === true).length,
     thresholdSignature: REQUIRED_THRESHOLD_SIGNATURE,
     certifierDids: sortedCertifiers(certifiers).map((certifier) => certifier.certifierDid).filter(hasText),
+    activationGateIds: [ROOT_BACKED_PRODUCTION_AUTHORITY_GATE_ID],
     exochainProductionClaim: false,
     immutableEvidence: true,
   };
@@ -217,6 +247,92 @@ export function evaluateRootArtifactRegistry(input) {
     artifactCount: artifacts.length,
     artifactKinds: sortedArtifacts(artifacts).map((artifact) => artifact.artifactKind).filter(hasText),
     requiredArtifactKinds: [...REQUIRED_ARTIFACT_KINDS],
+    activationGateIds: [ROOT_BACKED_PRODUCTION_AUTHORITY_GATE_ID],
+    exochainProductionClaim: false,
+    immutableEvidence: true,
+  };
+}
+
+function runbookBlocks(runbook, reviewedBy) {
+  if (!isObject(runbook)) {
+    return ['root_operations_runbook_absent'];
+  }
+
+  const blocks = [];
+  addBlock(blocks, !hasText(runbook.runbookId), 'root_operations_runbook_id_absent');
+  addBlock(blocks, !hasText(runbook.runbookVersion), 'root_operations_runbook_version_absent');
+  addBlock(blocks, !hlcPresent(runbook.hlcTimestamp), 'root_operations_runbook_hlc_invalid');
+  addBlock(blocks, !hasText(runbook.ceremonyOwnerDid), 'root_ceremony_owner_absent');
+  addBlock(blocks, !hasText(runbook.backupOwnerDid), 'root_backup_owner_absent');
+  addBlock(
+    blocks,
+    hasText(runbook.ceremonyOwnerDid) &&
+      hasText(runbook.backupOwnerDid) &&
+      runbook.ceremonyOwnerDid === runbook.backupOwnerDid,
+    'root_backup_owner_not_independent',
+  );
+  addBlock(blocks, !hasText(runbook.incidentResponsePathRef), 'root_incident_response_path_absent');
+  addBlock(blocks, !validHash(runbook.incidentResponsePathHash), 'root_incident_response_path_hash_invalid');
+  addBlock(blocks, !hasText(runbook.escalationPathRef), 'root_escalation_path_absent');
+  addBlock(blocks, !validHash(runbook.escalationPathHash), 'root_escalation_path_hash_invalid');
+  addBlock(blocks, !hasText(runbook.rollbackDisablementRef), 'root_rollback_disablement_ref_absent');
+  addBlock(blocks, !validHash(runbook.rollbackDisablementHash), 'root_rollback_disablement_hash_invalid');
+  addBlock(blocks, !validHash(runbook.ownerAttestationHash), 'root_owner_attestation_hash_invalid');
+  addBlock(blocks, !validHash(runbook.backupOwnerAttestationHash), 'root_backup_owner_attestation_hash_invalid');
+  addBlock(blocks, reviewedBy.length === 0, 'root_operations_runbook_review_absent');
+  addBlock(blocks, runbook.metadataOnly !== true, 'root_runbook_metadata_boundary_invalid');
+  addBlock(blocks, runbook.protectedContentExcluded !== true, 'root_runbook_protected_boundary_invalid');
+  addBlock(blocks, runbook.bobEscalationId !== 'ESC-ROOT-OWNER', 'root_owner_escalation_id_invalid');
+  addBlock(
+    blocks,
+    containsProviderSecretMaterial(runbook),
+    'root_operations_runbook_secret_material_prohibited',
+  );
+  return blocks;
+}
+
+export function evaluateRootOperationsRunbook(input) {
+  const normalized = normalizeInput(input);
+  const reviewedBy = sortedTextList(normalized.reviewedBy);
+  const blocks = runbookBlocks(normalized, reviewedBy);
+  const valid = blocks.length === 0;
+  const canonicalRunbook = {
+    schema: 'cybermedica.root_operations_runbook_evidence.v1',
+    runbookId: hasText(normalized.runbookId) ? normalized.runbookId : 'unclassified',
+    runbookVersion: hasText(normalized.runbookVersion) ? normalized.runbookVersion : 'unversioned',
+    hlcTimestamp: normalized.hlcTimestamp ?? null,
+    ceremonyOwnerDid: normalized.ceremonyOwnerDid ?? null,
+    backupOwnerDid: normalized.backupOwnerDid ?? null,
+    incidentResponsePathRef: normalized.incidentResponsePathRef ?? null,
+    incidentResponsePathHash: normalized.incidentResponsePathHash ?? null,
+    escalationPathRef: normalized.escalationPathRef ?? null,
+    escalationPathHash: normalized.escalationPathHash ?? null,
+    rollbackDisablementRef: normalized.rollbackDisablementRef ?? null,
+    rollbackDisablementHash: normalized.rollbackDisablementHash ?? null,
+    ownerAttestationHash: normalized.ownerAttestationHash ?? null,
+    backupOwnerAttestationHash: normalized.backupOwnerAttestationHash ?? null,
+    reviewedBy,
+    metadataOnly: normalized.metadataOnly === true,
+    protectedContentExcluded: normalized.protectedContentExcluded === true,
+    bobEscalationId: normalized.bobEscalationId ?? null,
+  };
+
+  return {
+    schema: 'cybermedica.root_operations_runbook_contract.v1',
+    valid,
+    state: valid ? TrustState.VERIFIED : TrustState.DENIED,
+    failClosed: !valid,
+    blockedBy: blocks,
+    runbookHash: sha256Hex(canonicalRunbook),
+    runbookId: canonicalRunbook.runbookId,
+    runbookVersion: canonicalRunbook.runbookVersion,
+    ceremonyOwnerDid: hasText(normalized.ceremonyOwnerDid) ? normalized.ceremonyOwnerDid : null,
+    backupOwnerDid: hasText(normalized.backupOwnerDid) ? normalized.backupOwnerDid : null,
+    incidentResponsePathRef: hasText(normalized.incidentResponsePathRef) ? normalized.incidentResponsePathRef : null,
+    rollbackDisablementRef: hasText(normalized.rollbackDisablementRef) ? normalized.rollbackDisablementRef : null,
+    bobEscalationId: canonicalRunbook.bobEscalationId,
+    reviewedBy,
+    activationGateIds: [ROOT_BACKED_PRODUCTION_AUTHORITY_GATE_ID],
     exochainProductionClaim: false,
     immutableEvidence: true,
   };
@@ -226,6 +342,11 @@ function providerConfigBlocks(providerConfig) {
   const blocks = [];
   addBlock(blocks, !hasText(providerConfig?.endpointRef), 'root_bundle_provider_endpoint_absent');
   addBlock(blocks, !hasText(providerConfig?.credentialScope), 'root_bundle_provider_credential_scope_absent');
+  addBlock(
+    blocks,
+    hasText(providerConfig?.credentialScope) && !hasCyberMedicaOnlyCredentialScope(providerConfig.credentialScope),
+    'root_bundle_provider_credential_scope_not_cybermedica_only',
+  );
   addBlock(blocks, providerConfig?.health !== 'ready', 'root_bundle_provider_unready');
   addBlock(
     blocks,
@@ -275,6 +396,7 @@ export function evaluateRootTrustBundleProvider(input) {
   const normalized = normalizeInput(input);
   const roster = normalized.roster;
   const artifactRegistry = normalized.artifactRegistry;
+  const operationsRunbook = normalized.operationsRunbook;
   const verifierResult = normalized.verifierResult;
   const blocks = [
     ...providerConfigBlocks(normalized.providerConfig),
@@ -282,6 +404,7 @@ export function evaluateRootTrustBundleProvider(input) {
 
   addBlock(blocks, roster?.valid !== true, 'root_certifier_roster_unverified');
   addBlock(blocks, artifactRegistry?.valid !== true, 'root_artifact_registry_unverified');
+  addBlock(blocks, operationsRunbook?.valid !== true, 'root_operations_runbook_unverified');
   for (const block of verifierBlocks(verifierResult)) {
     addBlock(blocks, true, block);
   }
@@ -298,7 +421,11 @@ export function evaluateRootTrustBundleProvider(input) {
         verifierReceiptId: verifierResult.verifierReceiptId,
         rosterHash: roster.rosterHash,
         artifactRegistryHash: artifactRegistry.registryHash,
+        operationsRunbookHash: operationsRunbook.runbookHash,
+        ceremonyOwnerDid: operationsRunbook.ceremonyOwnerDid,
+        backupOwnerDid: operationsRunbook.backupOwnerDid,
         rootTrustBundleHash: verifierResult.rootTrustBundleHash,
+        activationGateIds: [ROOT_BACKED_PRODUCTION_AUTHORITY_GATE_ID],
       }
     : null;
 
@@ -311,6 +438,7 @@ export function evaluateRootTrustBundleProvider(input) {
     rootBundle,
     providerEndpointRef: hasText(normalized.providerConfig?.endpointRef) ? normalized.providerConfig.endpointRef : null,
     credentialScope: hasText(normalized.providerConfig?.credentialScope) ? normalized.providerConfig.credentialScope : null,
+    activationGateIds: [ROOT_BACKED_PRODUCTION_AUTHORITY_GATE_ID],
     exochainProductionClaim: false,
   };
 }

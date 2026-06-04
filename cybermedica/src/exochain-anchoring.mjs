@@ -21,6 +21,7 @@ export { ProtectedContentError };
 const HEX_64 = /^[0-9a-f]{64}$/u;
 const EXOCHAIN_ANCHORING_SCHEMA = 'cybermedica.exochain_anchoring.v1';
 const REQUIRED_PERMISSION = 'exochain_anchor';
+const CROSSCHECKED_ANCHORING_GATE_ID = 'PTAG-003';
 const ACTOR_KINDS = new Set(['human', 'service_account']);
 const POLICY_STATUSES = new Set(['active']);
 const HUMAN_AUTHORIZATION_STATUSES = new Set(['approved']);
@@ -452,8 +453,10 @@ function buildAnchorPackage(input, anchors) {
     metadataOnly: true,
     protectedContentAnchored: false,
     externalAnchoringActive: false,
+    crossCheckedBackedClaim: false,
     trustState: 'inactive',
     exochainProductionClaim: false,
+    activationGateIds: [CROSSCHECKED_ANCHORING_GATE_ID],
     adapterBoundary: {
       decisionForumVerified: input.adapterBoundary?.decisionForumVerified === true,
       gatewayVerified: input.adapterBoundary?.gatewayVerified === true,
@@ -512,6 +515,7 @@ export function evaluateExochainAnchoring(input) {
       reasons: unique,
       anchorPackage: null,
       receipt: null,
+      activationGateIds: [CROSSCHECKED_ANCHORING_GATE_ID],
     };
   }
 

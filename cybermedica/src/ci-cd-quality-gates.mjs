@@ -49,10 +49,82 @@ const REQUIRED_SOURCE_REFS = Object.freeze([
   'package.json',
 ]);
 
+const REQUIRED_SECRET_SCAN_SCOPES = Object.freeze([
+  'README.md',
+  'docs/context',
+  'docs/implementation',
+  'package.json',
+  'package-lock.json',
+  'scripts',
+  'src',
+  'tests',
+]);
+
+const LINT_TYPECHECK_COMMAND_REF = 'npm run lint:typecheck';
+const BUILD_ARTIFACT_COMMAND_REF = 'npm run build:artifact';
+const SOURCE_HAZARD_SCAN_COMMAND_REF = 'npm run scan:hazards';
+
+const REQUIRED_LINT_TYPECHECK_SCOPES = Object.freeze(['package.json', 'scripts', 'src', 'tests']);
+
+const REQUIRED_BUILD_ARTIFACT_SCOPES = Object.freeze([
+  'README.md',
+  'docs/context',
+  'docs/implementation',
+  'package.json',
+  'scripts',
+  'src',
+  'tests',
+]);
+
+const REQUIRED_BUILD_ARTIFACT_FILE_REFS = Object.freeze([
+  'CyberMedica_QMS_PRD_Master.docx',
+  'CyberMedica_QMS_PRD_Master.pdf',
+  'README.md',
+  'cyber_medica_qms_prd_master.md',
+  'cybermedica_2_0_sandy_seven_layer_master_prd.md',
+  'docs/context/CYBERMEDICA_ADJACENT_SURFACE_DECISIONS.md',
+  'docs/context/CYBERMEDICA_PRODUCTION_TRUST_ACTIVATION_GATES.md',
+  'docs/context/EXOCHAIN_CONTEXT_SEED_FOR_CYBERMEDICA.md',
+  'docs/context/EXOCHAIN_TO_CYBERMEDICA_INTEGRATION_MAP.md',
+  'docs/implementation/PATH_CLASSIFICATION.md',
+  'package.json',
+  'scripts/source-activation-gate-guard.mjs',
+  'scripts/source-council-escalation-guard.mjs',
+  'scripts/source-hazard-scan.mjs',
+  'scripts/source-secret-scan.mjs',
+  'src/ci-cd-quality-gates.mjs',
+  'src/qms-contracts.mjs',
+  'tests/ci-cd-quality-gates.test.mjs',
+  'tests/source-council-escalation-guard.test.mjs',
+  'tests/source-hazard-scan.test.mjs',
+  'tests/source-guards.test.mjs',
+  'tests/source-secret-scan.test.mjs',
+]);
+
+const BUILD_ARTIFACT_ROOT_FILE_REFS = new Set([
+  'CyberMedica_QMS_PRD_Master.docx',
+  'CyberMedica_QMS_PRD_Master.pdf',
+  'README.md',
+  'cyber_medica_qms_prd_master.md',
+  'cybermedica_2_0_sandy_seven_layer_master_prd.md',
+  'package.json',
+]);
+
+const REQUIRED_SOURCE_HAZARD_SCAN_SCOPES = Object.freeze([
+  'README.md',
+  'docs/context',
+  'docs/implementation',
+  'package.json',
+  'scripts',
+  'src',
+  'tests',
+]);
+
 const POLICY_STATUSES = new Set(['active']);
 const GATE_STATUSES = new Set(['passed']);
 const HUMAN_REVIEW_DECISIONS = new Set(['release_gate_accepted_inactive_trust', 'hold_for_release_gate_gap']);
 const TRUST_STATES = new Set(['inactive', 'verified']);
+const DEPENDENCY_AUDIT_PACKAGE_MANAGERS = new Set(['npm']);
 const PATH_CLASSIFICATIONS = new Set([
   'Adjacent surface',
   'Adjacent surface documentation',
@@ -77,9 +149,15 @@ const RAW_CI_FIELDS = new Set([
   'rawpipeline',
   'rawpipelinelog',
   'rawreleaseevidence',
+  'rawsecretfinding',
+  'rawsecretmatch',
   'rawsecretoutput',
   'rawtestoutput',
   'reviewnotes',
+  'secretfindingsnippet',
+  'secretfindingvalue',
+  'secretmatch',
+  'secretpayload',
   'sourcebody',
   'sourcedocumentbody',
   'testlog',
@@ -118,6 +196,14 @@ function isDigest(value) {
 
 function isBasisPoints(value) {
   return Number.isSafeInteger(value) && value >= 0 && value <= 10_000;
+}
+
+function isNonNegativeSafeInteger(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function isPositiveSafeInteger(value) {
+  return Number.isSafeInteger(value) && value > 0;
 }
 
 function addReason(reasons, condition, reason) {
@@ -182,6 +268,47 @@ function uniqueSorted(values) {
 
 function uniqueReasons(reasons) {
   return [...new Set(reasons)].sort();
+}
+
+function hasParentOrAbsolutePathRef(pathRef) {
+  return (
+    !hasText(pathRef) ||
+    pathRef.startsWith('/') ||
+    pathRef.startsWith('..') ||
+    pathRef.includes('/../') ||
+    pathRef.includes('\\')
+  );
+}
+
+function isGeneratedDependencyTreePath(pathRef) {
+  return pathRef === 'node_modules' || pathRef.startsWith('node_modules/') || pathRef.includes('/node_modules/');
+}
+
+function isAllowedBuildArtifactFileRef(pathRef) {
+  if (hasParentOrAbsolutePathRef(pathRef) || isGeneratedDependencyTreePath(pathRef)) {
+    return false;
+  }
+  if (BUILD_ARTIFACT_ROOT_FILE_REFS.has(pathRef)) {
+    return true;
+  }
+  if (pathRef.startsWith('docs/context/') && pathRef.endsWith('.md')) {
+    return true;
+  }
+  if (pathRef.startsWith('docs/implementation/') && pathRef.endsWith('.md')) {
+    return true;
+  }
+  if (pathRef.startsWith('scripts/') && pathRef.endsWith('.mjs')) {
+    return true;
+  }
+  if (pathRef.startsWith('src/') && pathRef.endsWith('.mjs')) {
+    return true;
+  }
+  return pathRef.startsWith('tests/') && pathRef.endsWith('.test.mjs');
+}
+
+function coveredRequiredBuildArtifactFileRefs(artifactFileRefs) {
+  const fileRefSet = new Set(artifactFileRefs);
+  return REQUIRED_BUILD_ARTIFACT_FILE_REFS.filter((pathRef) => fileRefSet.has(pathRef));
 }
 
 function hlcTuple(hlc) {
@@ -276,6 +403,11 @@ function evaluateGatePolicy(policy, reasons) {
     'production_trust_claim_blocker_absent',
   );
   addReason(reasons, policy?.requiresNoExochainSourceModified !== true, 'exochain_source_firewall_absent');
+  addReason(
+    reasons,
+    policy?.requiresDeterministicSourceControls !== true,
+    'deterministic_source_control_policy_absent',
+  );
   addReason(reasons, policy?.requiresMetadataOnlyArtifacts !== true, 'metadata_only_gate_absent');
   addReason(reasons, policy?.protectedContentExcluded !== true, 'gate_policy_protected_boundary_invalid');
   addReason(reasons, policy?.metadataOnly !== true, 'gate_policy_metadata_boundary_invalid');
@@ -432,6 +564,12 @@ function evaluateCoverage(coverage, policy, reasons) {
   );
   addReason(reasons, !isDigest(coverage?.coverageReportHash), 'coverage_report_hash_invalid');
   addReason(reasons, coverage?.deterministicHazardsAbsent !== true, 'deterministic_hazard_guard_failed');
+  addReason(reasons, coverage?.systemTimeSourceAbsent !== true, 'system_time_source_guard_failed');
+  addReason(reasons, coverage?.randomnessSourceAbsent !== true, 'randomness_source_guard_failed');
+  addReason(reasons, coverage?.floatingPointArithmeticAbsent !== true, 'floating_point_arithmetic_guard_failed');
+  addReason(reasons, coverage?.dynamicCodeExecutionAbsent !== true, 'dynamic_code_execution_guard_failed');
+  addReason(reasons, coverage?.unboundedWorkflowLoopAbsent !== true, 'unbounded_workflow_loop_guard_failed');
+  addReason(reasons, !isDigest(coverage?.sourceHazardScanHash), 'source_hazard_scan_hash_invalid');
   addReason(reasons, coverage?.placeholderLanguageAbsent !== true, 'placeholder_language_guard_failed');
   addReason(reasons, coverage?.rawSensitiveFixtureAbsent !== true, 'raw_sensitive_fixture_guard_failed');
   addReason(reasons, coverage?.metadataOnly !== true, 'coverage_metadata_boundary_invalid');
@@ -446,9 +584,256 @@ function evaluateSourceGuard(sourceGuard, reasons) {
   addReason(reasons, sourceGuard?.implementedContractsCovered !== true, 'source_guard_contract_inventory_incomplete');
   addReason(reasons, sourceGuard?.noImportedEvidenceCommitted !== true, 'source_guard_imported_evidence_committed');
   addReason(reasons, sourceGuard?.noExochainSourceModified !== true, 'source_guard_exochain_source_modified');
+  addReason(reasons, sourceGuard?.noSystemTimeInSource !== true, 'source_guard_system_time_not_verified');
+  addReason(reasons, sourceGuard?.noRandomnessInSource !== true, 'source_guard_randomness_not_verified');
+  addReason(
+    reasons,
+    sourceGuard?.noFloatingPointArithmeticInSource !== true,
+    'source_guard_float_arithmetic_not_verified',
+  );
+  addReason(
+    reasons,
+    sourceGuard?.noDynamicCodeExecutionInSource !== true,
+    'source_guard_dynamic_code_execution_not_verified',
+  );
+  addReason(reasons, sourceGuard?.boundedWorkflowLoopsVerified !== true, 'source_guard_bounded_loops_not_verified');
   addReason(reasons, !isDigest(sourceGuard?.evidenceHash), 'source_guard_evidence_hash_invalid');
   addReason(reasons, sourceGuard?.metadataOnly !== true, 'source_guard_metadata_boundary_invalid');
   addReason(reasons, hlcTuple(sourceGuard?.evaluatedAtHlc) === null, 'source_guard_time_invalid');
+}
+
+function evaluateSourceHazardScanEvidence(sourceHazardScan, coverage, releaseCandidate, reasons) {
+  const scannedPathRefs = sortedTextList(sourceHazardScan?.scannedPathRefs);
+
+  addReason(reasons, !GATE_STATUSES.has(sourceHazardScan?.status), 'source_hazard_scan_not_passed');
+  addReason(reasons, !hasText(sourceHazardScan?.commandRef), 'source_hazard_scan_command_ref_absent');
+  addReason(
+    reasons,
+    hasText(sourceHazardScan?.commandRef) && sourceHazardScan.commandRef !== SOURCE_HAZARD_SCAN_COMMAND_REF,
+    'source_hazard_scan_command_ref_invalid',
+  );
+  addReason(reasons, !isDigest(sourceHazardScan?.scanReportHash), 'source_hazard_scan_report_hash_invalid');
+  addReason(
+    reasons,
+    isDigest(sourceHazardScan?.scanReportHash) &&
+      isDigest(coverage?.sourceHazardScanHash) &&
+      sourceHazardScan.scanReportHash !== coverage.sourceHazardScanHash,
+    'source_hazard_scan_hash_mismatch',
+  );
+  evaluateRequiredSet(
+    scannedPathRefs,
+    REQUIRED_SOURCE_HAZARD_SCAN_SCOPES,
+    'source_hazard_scan_scope_missing',
+    'source_hazard_scan_scope_unsupported',
+    reasons,
+  );
+  addReason(reasons, sourceHazardScan?.exochainSourceExcluded !== true, 'source_hazard_scan_exochain_source_not_excluded');
+  addReason(
+    reasons,
+    sourceHazardScan?.deterministicHazardsAbsent !== true,
+    'source_hazard_scan_deterministic_hazards_present',
+  );
+  addReason(reasons, sourceHazardScan?.metadataOnly !== true, 'source_hazard_scan_metadata_boundary_invalid');
+  addReason(reasons, hlcTuple(sourceHazardScan?.recordedAtHlc) === null, 'source_hazard_scan_time_invalid');
+  addReason(
+    reasons,
+    !hlcAfter(sourceHazardScan?.recordedAtHlc, releaseCandidate?.gatesCompletedAtHlc),
+    'source_hazard_scan_before_gates_completed',
+  );
+}
+
+function evaluateDependencyAuditEvidence(dependencyAudit, releaseCandidate, reasons) {
+  const vulnerabilityCounts = [
+    dependencyAudit?.totalVulnerabilities,
+    dependencyAudit?.criticalVulnerabilities,
+    dependencyAudit?.highVulnerabilities,
+    dependencyAudit?.moderateVulnerabilities,
+  ];
+
+  addReason(reasons, !GATE_STATUSES.has(dependencyAudit?.status), 'dependency_audit_not_passed');
+  addReason(reasons, !hasText(dependencyAudit?.commandRef), 'dependency_audit_command_ref_absent');
+  addReason(
+    reasons,
+    !DEPENDENCY_AUDIT_PACKAGE_MANAGERS.has(dependencyAudit?.packageManager),
+    'dependency_audit_package_manager_invalid',
+  );
+  addReason(reasons, dependencyAudit?.packageManifestRef !== 'package.json', 'dependency_audit_manifest_ref_invalid');
+  addReason(reasons, dependencyAudit?.lockfileRef !== 'package-lock.json', 'dependency_audit_lockfile_ref_invalid');
+  addReason(reasons, !isDigest(dependencyAudit?.lockfileHash), 'dependency_audit_lockfile_hash_invalid');
+  addReason(reasons, !hasText(dependencyAudit?.advisoryDatabaseRef), 'dependency_audit_database_ref_absent');
+  addReason(reasons, !isDigest(dependencyAudit?.auditReportHash), 'dependency_audit_report_hash_invalid');
+  addReason(
+    reasons,
+    dependencyAudit?.productionDependenciesAudited !== true,
+    'dependency_audit_production_scope_absent',
+  );
+  addReason(
+    reasons,
+    dependencyAudit?.developmentDependenciesAudited !== true,
+    'dependency_audit_development_scope_absent',
+  );
+  addReason(
+    reasons,
+    vulnerabilityCounts.some((count) => !isNonNegativeSafeInteger(count)),
+    'dependency_audit_vulnerability_count_invalid',
+  );
+  addReason(
+    reasons,
+    vulnerabilityCounts.some((count) => isNonNegativeSafeInteger(count) && count > 0),
+    'dependency_audit_vulnerabilities_present',
+  );
+  addReason(reasons, dependencyAudit?.metadataOnly !== true, 'dependency_audit_metadata_boundary_invalid');
+  addReason(reasons, hlcTuple(dependencyAudit?.recordedAtHlc) === null, 'dependency_audit_time_invalid');
+  addReason(
+    reasons,
+    !hlcAfter(dependencyAudit?.recordedAtHlc, releaseCandidate?.gatesCompletedAtHlc),
+    'dependency_audit_before_gates_completed',
+  );
+}
+
+function evaluateLintTypecheckEvidence(lintTypecheck, releaseCandidate, reasons) {
+  const checkedPathRefs = sortedTextList(lintTypecheck?.checkedPathRefs);
+
+  addReason(reasons, !GATE_STATUSES.has(lintTypecheck?.status), 'lint_typecheck_not_passed');
+  addReason(reasons, !hasText(lintTypecheck?.commandRef), 'lint_typecheck_command_ref_absent');
+  addReason(
+    reasons,
+    hasText(lintTypecheck?.commandRef) && lintTypecheck.commandRef !== LINT_TYPECHECK_COMMAND_REF,
+    'lint_typecheck_command_ref_invalid',
+  );
+  addReason(reasons, !isDigest(lintTypecheck?.reportHash), 'lint_typecheck_report_hash_invalid');
+  evaluateRequiredSet(
+    checkedPathRefs,
+    REQUIRED_LINT_TYPECHECK_SCOPES,
+    'lint_typecheck_scope_missing',
+    'lint_typecheck_scope_unsupported',
+    reasons,
+  );
+  addReason(reasons, lintTypecheck?.moduleSyntaxChecked !== true, 'lint_typecheck_module_syntax_not_verified');
+  addReason(reasons, lintTypecheck?.typeBoundaryReviewed !== true, 'lint_typecheck_type_boundary_not_reviewed');
+  addReason(reasons, lintTypecheck?.metadataOnly !== true, 'lint_typecheck_metadata_boundary_invalid');
+  addReason(reasons, hlcTuple(lintTypecheck?.recordedAtHlc) === null, 'lint_typecheck_time_invalid');
+  addReason(
+    reasons,
+    !hlcAfter(lintTypecheck?.recordedAtHlc, releaseCandidate?.gatesCompletedAtHlc),
+    'lint_typecheck_before_gates_completed',
+  );
+}
+
+function evaluateBuildArtifactEvidence(buildArtifact, releaseCandidate, reasons) {
+  const includedPathRefs = sortedTextList(buildArtifact?.includedPathRefs);
+  const artifactFileRefs = sortedTextList(buildArtifact?.artifactFileRefs);
+
+  addReason(reasons, !GATE_STATUSES.has(buildArtifact?.status), 'build_artifact_not_passed');
+  addReason(reasons, !hasText(buildArtifact?.commandRef), 'build_artifact_command_ref_absent');
+  addReason(
+    reasons,
+    hasText(buildArtifact?.commandRef) && buildArtifact.commandRef !== BUILD_ARTIFACT_COMMAND_REF,
+    'build_artifact_command_ref_invalid',
+  );
+  addReason(reasons, !isDigest(buildArtifact?.artifactManifestHash), 'build_artifact_manifest_hash_invalid');
+  addReason(reasons, !isDigest(buildArtifact?.artifactFileManifestHash), 'build_artifact_file_manifest_hash_invalid');
+  addReason(reasons, artifactFileRefs.length === 0, 'build_artifact_file_refs_absent');
+  for (const pathRef of REQUIRED_BUILD_ARTIFACT_FILE_REFS) {
+    addReason(reasons, !artifactFileRefs.includes(pathRef), `build_artifact_file_ref_missing:${pathRef}`);
+  }
+  for (const pathRef of artifactFileRefs) {
+    addReason(reasons, !isAllowedBuildArtifactFileRef(pathRef), `build_artifact_file_ref_forbidden:${pathRef}`);
+    addReason(
+      reasons,
+      hasParentOrAbsolutePathRef(pathRef),
+      `build_artifact_parent_or_absolute_path_ref:${pathRef}`,
+    );
+  }
+  addReason(reasons, !isPositiveSafeInteger(buildArtifact?.artifactFileCount), 'build_artifact_file_count_invalid');
+  addReason(
+    reasons,
+    isPositiveSafeInteger(buildArtifact?.artifactFileCount) &&
+      artifactFileRefs.length > 0 &&
+      buildArtifact.artifactFileCount !== artifactFileRefs.length,
+    'build_artifact_file_count_mismatch',
+  );
+  addReason(reasons, !isDigest(buildArtifact?.packageManifestHash), 'build_artifact_package_manifest_hash_invalid');
+  evaluateRequiredSet(
+    includedPathRefs,
+    REQUIRED_BUILD_ARTIFACT_SCOPES,
+    'build_artifact_scope_missing',
+    'build_artifact_scope_unsupported',
+    reasons,
+  );
+  addReason(reasons, buildArtifact?.dryRunOnly !== true, 'build_artifact_dry_run_only_absent');
+  addReason(reasons, buildArtifact?.tarballWritten !== false, 'build_artifact_tarball_written');
+  addReason(reasons, buildArtifact?.packagePrivate !== true, 'build_artifact_package_not_private');
+  addReason(reasons, buildArtifact?.exochainSourceExcluded !== true, 'build_artifact_exochain_source_not_excluded');
+  addReason(reasons, buildArtifact?.importedEvidenceExcluded !== true, 'build_artifact_imported_evidence_not_excluded');
+  addReason(
+    reasons,
+    buildArtifact?.generatedDependencyTreeExcluded !== true,
+    'build_artifact_generated_dependency_tree_not_excluded',
+  );
+  addReason(
+    reasons,
+    buildArtifact?.parentOrAbsolutePathRefsExcluded !== true,
+    'build_artifact_parent_or_absolute_path_refs_not_excluded',
+  );
+  addReason(
+    reasons,
+    buildArtifact?.protectedFixtureFilesExcluded !== true,
+    'build_artifact_protected_fixture_files_not_excluded',
+  );
+  addReason(reasons, buildArtifact?.secretFilesExcluded !== true, 'build_artifact_secret_files_not_excluded');
+  addReason(reasons, buildArtifact?.protectedContentExcluded !== true, 'build_artifact_protected_boundary_invalid');
+  addReason(reasons, buildArtifact?.metadataOnly !== true, 'build_artifact_metadata_boundary_invalid');
+  addReason(reasons, hlcTuple(buildArtifact?.recordedAtHlc) === null, 'build_artifact_time_invalid');
+  addReason(
+    reasons,
+    !hlcAfter(buildArtifact?.recordedAtHlc, releaseCandidate?.gatesCompletedAtHlc),
+    'build_artifact_before_gates_completed',
+  );
+}
+
+function evaluateSecretScanEvidence(secretScan, releaseCandidate, reasons) {
+  const scannedPathRefs = sortedTextList(secretScan?.scannedPathRefs);
+
+  addReason(reasons, !GATE_STATUSES.has(secretScan?.status), 'secret_scan_not_passed');
+  addReason(reasons, !hasText(secretScan?.commandRef), 'secret_scan_command_ref_absent');
+  addReason(reasons, !hasText(secretScan?.scannerRef), 'secret_scan_scanner_ref_absent');
+  addReason(reasons, !isDigest(secretScan?.scannerVersionHash), 'secret_scan_scanner_version_hash_invalid');
+  addReason(reasons, !isDigest(secretScan?.scanReportHash), 'secret_scan_report_hash_invalid');
+  evaluateRequiredSet(
+    scannedPathRefs,
+    REQUIRED_SECRET_SCAN_SCOPES,
+    'secret_scan_scope_missing',
+    'secret_scan_scope_unsupported',
+    reasons,
+  );
+  addReason(reasons, secretScan?.exochainSourceExcluded !== true, 'secret_scan_exochain_source_not_excluded');
+  addReason(reasons, secretScan?.secretMaterialAbsent !== true, 'secret_scan_secret_material_present');
+  addReason(reasons, secretScan?.rootKeyMaterialAbsent !== true, 'secret_scan_root_key_material_present');
+  addReason(reasons, secretScan?.bootstrapTokenAbsent !== true, 'secret_scan_bootstrap_token_present');
+  addReason(reasons, !isNonNegativeSafeInteger(secretScan?.findingsCount), 'secret_scan_findings_count_invalid');
+  addReason(
+    reasons,
+    !isNonNegativeSafeInteger(secretScan?.highRiskFindingsCount),
+    'secret_scan_high_risk_findings_count_invalid',
+  );
+  addReason(
+    reasons,
+    isNonNegativeSafeInteger(secretScan?.findingsCount) && secretScan.findingsCount > 0,
+    'secret_scan_findings_present',
+  );
+  addReason(
+    reasons,
+    isNonNegativeSafeInteger(secretScan?.highRiskFindingsCount) && secretScan.highRiskFindingsCount > 0,
+    'secret_scan_high_risk_findings_present',
+  );
+  addReason(reasons, secretScan?.metadataOnly !== true, 'secret_scan_metadata_boundary_invalid');
+  addReason(reasons, hlcTuple(secretScan?.recordedAtHlc) === null, 'secret_scan_time_invalid');
+  addReason(
+    reasons,
+    !hlcAfter(secretScan?.recordedAtHlc, releaseCandidate?.gatesCompletedAtHlc),
+    'secret_scan_before_gates_completed',
+  );
 }
 
 function evaluateActivationGates(activationGateReview, reasons) {
@@ -520,7 +905,12 @@ function evaluateHlcOrdering(input, reasons) {
   const gateEvidenceHlc = latestHlc([
     input?.releaseCandidate?.gatesCompletedAtHlc,
     input?.coverageEvidence?.recordedAtHlc,
+    input?.sourceHazardScanEvidence?.recordedAtHlc,
     input?.sourceGuardEvidence?.evaluatedAtHlc,
+    input?.dependencyAuditEvidence?.recordedAtHlc,
+    input?.lintTypecheckEvidence?.recordedAtHlc,
+    input?.buildArtifactEvidence?.recordedAtHlc,
+    input?.secretScanEvidence?.recordedAtHlc,
     input?.activationGateReview?.reviewedAtHlc,
   ]);
   addReason(
@@ -543,6 +933,50 @@ function buildGateRecord(input, coveredFamilies, changedPathRows, blockedBy) {
     branchCoverageBasisPoints: input.coverageEvidence.branchCoverageBasisPoints,
     functionCoverageBasisPoints: input.coverageEvidence.functionCoverageBasisPoints,
     trustBoundaryCoverageBasisPoints: input.coverageEvidence.trustBoundaryCoverageBasisPoints,
+    deterministicSourceControls: {
+      boundedWorkflowLoopsVerified: input.sourceGuardEvidence.boundedWorkflowLoopsVerified === true,
+      dynamicCodeExecutionAbsent:
+        input.coverageEvidence.dynamicCodeExecutionAbsent === true &&
+        input.sourceGuardEvidence.noDynamicCodeExecutionInSource === true,
+      floatingPointArithmeticAbsent:
+        input.coverageEvidence.floatingPointArithmeticAbsent === true &&
+        input.sourceGuardEvidence.noFloatingPointArithmeticInSource === true,
+      randomnessSourceAbsent:
+        input.coverageEvidence.randomnessSourceAbsent === true && input.sourceGuardEvidence.noRandomnessInSource === true,
+      sourceHazardScanCommandRef: input.sourceHazardScanEvidence.commandRef,
+      sourceHazardScanHash: input.coverageEvidence.sourceHazardScanHash,
+      sourceHazardScanReportHash: input.sourceHazardScanEvidence.scanReportHash,
+      sourceHazardScanScopes: sortedTextList(input.sourceHazardScanEvidence.scannedPathRefs),
+      systemTimeSourceAbsent:
+        input.coverageEvidence.systemTimeSourceAbsent === true && input.sourceGuardEvidence.noSystemTimeInSource === true,
+    },
+    releaseSecurityEvidence: {
+      dependencyAuditCommandRef: input.dependencyAuditEvidence.commandRef,
+      dependencyAuditReportHash: input.dependencyAuditEvidence.auditReportHash,
+      lockfileHash: input.dependencyAuditEvidence.lockfileHash,
+      secretScanCommandRef: input.secretScanEvidence.commandRef,
+      secretScanReportHash: input.secretScanEvidence.scanReportHash,
+      secretScanScopes: sortedTextList(input.secretScanEvidence.scannedPathRefs),
+    },
+    releaseCommandEvidence: {
+      buildArtifactCommandRef: input.buildArtifactEvidence.commandRef,
+      buildArtifactDryRunOnly: input.buildArtifactEvidence.dryRunOnly === true,
+      buildArtifactFileCount: input.buildArtifactEvidence.artifactFileCount,
+      buildArtifactFileManifestHash: input.buildArtifactEvidence.artifactFileManifestHash,
+      buildArtifactManifestHash: input.buildArtifactEvidence.artifactManifestHash,
+      buildArtifactRequiredFileRefs: coveredRequiredBuildArtifactFileRefs(
+        sortedTextList(input.buildArtifactEvidence.artifactFileRefs),
+      ),
+      buildArtifactTarballWritten: input.buildArtifactEvidence.tarballWritten === true,
+      buildIncludedScopes: sortedTextList(input.buildArtifactEvidence.includedPathRefs),
+      lintTypecheckCommandRef: input.lintTypecheckEvidence.commandRef,
+      lintTypecheckReportHash: input.lintTypecheckEvidence.reportHash,
+      lintTypecheckScopes: sortedTextList(input.lintTypecheckEvidence.checkedPathRefs),
+      moduleSyntaxChecked: input.lintTypecheckEvidence.moduleSyntaxChecked === true,
+      packageManifestHash: input.buildArtifactEvidence.packageManifestHash,
+      packagePrivate: input.buildArtifactEvidence.packagePrivate === true,
+      typeBoundaryReviewed: input.lintTypecheckEvidence.typeBoundaryReviewed === true,
+    },
     sourceGuardCommandRef: input.sourceGuardEvidence.commandRef,
     activationGateState: input.activationGateReview.trustState,
     unverifiedActivationGateIds: sortedTextList(input.activationGateReview.unverifiedActivationGateIds),
@@ -568,7 +1002,12 @@ export function evaluateCiCdQualityGates(input = {}) {
   const changedPathRows = evaluateChangedPaths(input?.changedPaths, reasons);
   const coveredFamilies = evaluateGateResults(input?.gateResults, policy.requiredGateFamilies, reasons);
   evaluateCoverage(input?.coverageEvidence, input?.gatePolicy, reasons);
+  evaluateSourceHazardScanEvidence(input?.sourceHazardScanEvidence, input?.coverageEvidence, input?.releaseCandidate, reasons);
   evaluateSourceGuard(input?.sourceGuardEvidence, reasons);
+  evaluateDependencyAuditEvidence(input?.dependencyAuditEvidence, input?.releaseCandidate, reasons);
+  evaluateLintTypecheckEvidence(input?.lintTypecheckEvidence, input?.releaseCandidate, reasons);
+  evaluateBuildArtifactEvidence(input?.buildArtifactEvidence, input?.releaseCandidate, reasons);
+  evaluateSecretScanEvidence(input?.secretScanEvidence, input?.releaseCandidate, reasons);
   evaluateActivationGates(input?.activationGateReview, reasons);
   evaluateHumanReview(input?.humanReview, reasons);
   evaluateAiAssistance(input?.aiAssistance, reasons);

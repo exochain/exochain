@@ -393,6 +393,11 @@ function evaluateDecisionForumIfRequired(determination, reasons) {
 function evaluateReconsentDetermination(input, reasons) {
   const determination = input?.determination;
   addReason(reasons, !RECONSENT_STATUSES.has(determination?.status), 'reconsent_status_invalid');
+  addReason(
+    reasons,
+    input?.updatedInformation?.materialNewInformation === true && determination?.status === 'not_required',
+    'material_new_information_requires_reconsent_or_hold',
+  );
   addReason(reasons, hlcTuple(determination?.determinedAtHlc) === null, 'reconsent_determination_time_invalid');
   addReason(
     reasons,

@@ -27,6 +27,7 @@ const ACTOR_KINDS = new Set(['human', 'service_account']);
 const RISK_LEVELS = new Set(['critical', 'major', 'minor', 'standard']);
 const URGENCY_LEVELS = new Set(['deferred', 'standard', 'urgent']);
 const EFFECTIVENESS_STATUSES = new Set(['effective', 'follow_up_scheduled', 'ineffective']);
+const CQI_CYCLE_STATUSES = new Set(['closed_effective', 'closed_follow_up']);
 const STATE_UPDATE_TARGETS = ['passport', 'quality_state', 'readiness'];
 const REQUIRED_SIGNAL_FAMILIES = [
   'ai_finding',
@@ -42,6 +43,24 @@ const REQUIRED_SIGNAL_FAMILIES = [
   'staff_change',
   'stakeholder_feedback',
   'training_gap',
+];
+const REQUIRED_CQI_BACKLOG_SOURCE_FAMILIES = [
+  'accessibility_barrier',
+  'ai_orientation_question',
+  'manual_confusion',
+  'missing_documentation',
+  'product_gap',
+  'repeated_inquiry',
+  'search_zero_result',
+  'workflow_exit',
+];
+const REQUIRED_CQI_BACKLOG_IMPROVEMENT_CATEGORIES = [
+  'cqi_review',
+  'documentation_update',
+  'manual_crosslink_refresh',
+  'system_change',
+  'training_update',
+  'workflow_change',
 ];
 const SUPPORTED_SIGNAL_FAMILIES = new Set([
   ...REQUIRED_SIGNAL_FAMILIES,
@@ -521,7 +540,76 @@ function evaluateImprovementActions(actions, signals, requiredFamilies, allowedA
   };
 }
 
-function evaluateStateUpdate(stateUpdate, cycle, reasons) {
+function evaluateCqiLineage(lineage, signalRefs, stateUpdate, reasons) {
+  const sourceFamilies = sortedTextList(lineage?.inquiryCqiBacklogSourceFamilies);
+  const improvementCategories = sortedTextList(lineage?.inquiryCqiBacklogImprovementCategories);
+  const linkedBacklogItemRefs = sortedTextList(lineage?.inquiryCqiBacklogLinkedItemRefs);
+  const driftSignalRefs = sortedTextList(lineage?.driftSignalRefs);
+
+  addReason(reasons, !hasText(lineage?.cqiCycleId), 'cqi_cycle_ref_absent');
+  addReason(reasons, !isDigest(lineage?.cqiCycleHash), 'cqi_cycle_hash_invalid');
+  addReason(reasons, !isDigest(lineage?.cqiReceiptHash), 'cqi_cycle_receipt_hash_invalid');
+  addReason(reasons, !CQI_CYCLE_STATUSES.has(lineage?.cqiStatus), 'cqi_cycle_status_invalid');
+  addReason(reasons, lineage?.trustState !== 'inactive', 'cqi_cycle_trust_state_invalid');
+  addReason(reasons, lineage?.exochainProductionClaim !== false, 'cqi_cycle_production_claim_forbidden');
+  addReason(reasons, lineage?.metadataOnly !== true, 'cqi_cycle_metadata_boundary_invalid');
+  addReason(reasons, lineage?.protectedContentExcluded !== true, 'cqi_cycle_protected_boundary_invalid');
+  addReason(reasons, !isDigest(lineage?.inquiryCqiBacklogReceiptHash), 'cqi_inquiry_backlog_receipt_hash_invalid');
+  addReason(reasons, !isDigest(lineage?.inquiryCqiBacklogDigest), 'cqi_inquiry_backlog_digest_invalid');
+
+  for (const family of REQUIRED_CQI_BACKLOG_SOURCE_FAMILIES) {
+    addReason(reasons, !sourceFamilies.includes(family), `cqi_inquiry_backlog_source_family_missing:${family}`);
+  }
+  for (const category of REQUIRED_CQI_BACKLOG_IMPROVEMENT_CATEGORIES) {
+    addReason(
+      reasons,
+      !improvementCategories.includes(category),
+      `cqi_inquiry_backlog_improvement_category_missing:${category}`,
+    );
+  }
+
+  addReason(reasons, linkedBacklogItemRefs.length === 0, 'cqi_inquiry_backlog_item_refs_absent');
+  addReason(reasons, driftSignalRefs.length === 0, 'cqi_lineage_drift_signal_refs_absent');
+  for (const signalRef of driftSignalRefs) {
+    addReason(reasons, !signalRefs.includes(signalRef), `cqi_lineage_drift_signal_missing:${signalRef}`);
+  }
+  addReason(reasons, lineage?.manualNavigationReady !== true, 'cqi_manual_navigation_ready_absent');
+  addReason(
+    reasons,
+    lineage?.manualNavigationEffectiveUseAcknowledged !== true,
+    'cqi_manual_navigation_effective_use_absent',
+  );
+  addReason(
+    reasons,
+    lineage?.manualNavigationCurrentVersionOnly !== true,
+    'cqi_manual_navigation_current_version_boundary_invalid',
+  );
+  addReason(
+    reasons,
+    lineage?.manualNavigationObsoleteVersionUseBlocked !== true,
+    'cqi_manual_navigation_obsolete_version_boundary_invalid',
+  );
+  addReason(reasons, !isDigest(lineage?.roleManualCoverageReceiptHash), 'cqi_role_manual_coverage_receipt_hash_invalid');
+  addReason(reasons, hlcTuple(lineage?.reviewedAtHlc) === null, 'cqi_lineage_review_time_invalid');
+  addReason(reasons, hlcAfter(lineage?.reviewedAtHlc, stateUpdate?.updatedAtHlc), 'cqi_lineage_review_after_state_update');
+
+  return {
+    cqiCycleHash: lineage?.cqiCycleHash ?? null,
+    cqiCycleId: lineage?.cqiCycleId ?? null,
+    cqiCycleReceiptHash: lineage?.cqiReceiptHash ?? null,
+    driftSignalRefs,
+    inquiryCqiBacklogDigest: lineage?.inquiryCqiBacklogDigest ?? null,
+    inquiryCqiBacklogImprovementCategories: improvementCategories,
+    inquiryCqiBacklogLinkedItemRefs: linkedBacklogItemRefs,
+    inquiryCqiBacklogReceiptHash: lineage?.inquiryCqiBacklogReceiptHash ?? null,
+    inquiryCqiBacklogSourceFamilies: sourceFamilies,
+    manualNavigationEffectiveUseAcknowledged: lineage?.manualNavigationEffectiveUseAcknowledged === true,
+    manualNavigationReady: lineage?.manualNavigationReady === true,
+    roleManualCoverageReceiptHash: lineage?.roleManualCoverageReceiptHash ?? null,
+  };
+}
+
+function evaluateStateUpdate(stateUpdate, cycle, signalRefs, reasons) {
   addReason(reasons, !hasText(stateUpdate?.updateRef), 'state_update_ref_absent');
   addReason(reasons, !isDigest(stateUpdate?.updateReceiptHash), 'state_update_receipt_hash_invalid');
   addReason(reasons, stateUpdate?.passportUpdated !== true, 'state_update_passport_absent');
@@ -530,6 +618,12 @@ function evaluateStateUpdate(stateUpdate, cycle, reasons) {
   addReason(reasons, stateUpdate?.metadataOnly !== true, 'state_update_metadata_boundary_invalid');
   addReason(reasons, hlcTuple(stateUpdate?.updatedAtHlc) === null, 'state_update_time_invalid');
   addReason(reasons, hlcBefore(stateUpdate?.updatedAtHlc, cycle?.stateUpdatedAtHlc), 'state_update_before_cycle_state_step');
+
+  return {
+    cqiLineage: evaluateCqiLineage(stateUpdate?.cqiLineage, signalRefs, stateUpdate, reasons),
+    stateUpdateHash: stateUpdate?.updateReceiptHash ?? null,
+    stateUpdateTargets: buildStateTargets(stateUpdate),
+  };
 }
 
 function evaluateAuditRecord(auditRecord, cycle, stateUpdate, reasons) {
@@ -567,8 +661,26 @@ function buildStateTargets(stateUpdate) {
   return targets.sort();
 }
 
-function buildDriftLoop(input, signalFamilies, materialSignalRefs, ownerCoverage, reviewSummary, actionSummary) {
-  const stateUpdateTargets = buildStateTargets(input.stateUpdate);
+function buildStateUpdateEvidence(stateUpdateSummary) {
+  return {
+    cqiBacklogDriftSignalRefs: stateUpdateSummary.cqiLineage.driftSignalRefs,
+    cqiCycleHash: stateUpdateSummary.cqiLineage.cqiCycleHash,
+    cqiCycleId: stateUpdateSummary.cqiLineage.cqiCycleId,
+    cqiCycleReceiptHash: stateUpdateSummary.cqiLineage.cqiCycleReceiptHash,
+    inquiryCqiBacklogDigest: stateUpdateSummary.cqiLineage.inquiryCqiBacklogDigest,
+    inquiryCqiBacklogImprovementCategories: stateUpdateSummary.cqiLineage.inquiryCqiBacklogImprovementCategories,
+    inquiryCqiBacklogReceiptHash: stateUpdateSummary.cqiLineage.inquiryCqiBacklogReceiptHash,
+    inquiryCqiBacklogSourceFamilies: stateUpdateSummary.cqiLineage.inquiryCqiBacklogSourceFamilies,
+    manualNavigationEffectiveUseAcknowledged: stateUpdateSummary.cqiLineage.manualNavigationEffectiveUseAcknowledged,
+    manualNavigationReady: stateUpdateSummary.cqiLineage.manualNavigationReady,
+    roleManualCoverageReceiptHash: stateUpdateSummary.cqiLineage.roleManualCoverageReceiptHash,
+    stateUpdateHash: stateUpdateSummary.stateUpdateHash,
+    stateUpdateTargets: stateUpdateSummary.stateUpdateTargets,
+  };
+}
+
+function buildDriftLoop(input, signalFamilies, materialSignalRefs, ownerCoverage, reviewSummary, actionSummary, stateUpdateSummary) {
+  const stateUpdateEvidence = buildStateUpdateEvidence(stateUpdateSummary);
   const loopBasis = {
     actionSummaries: actionSummary.actionSummaries,
     auditRecordHash: input.auditRecord.auditRecordHash,
@@ -576,7 +688,7 @@ function buildDriftLoop(input, signalFamilies, materialSignalRefs, ownerCoverage
     materialSignalRefs,
     reviewPathHash: input.reviewPath.pathHash,
     signalFamilies,
-    stateUpdateHash: input.stateUpdate.updateReceiptHash,
+    stateUpdateEvidence,
     tenantId: input.tenantId,
   };
 
@@ -594,7 +706,7 @@ function buildDriftLoop(input, signalFamilies, materialSignalRefs, ownerCoverage
     signalFamilies,
     materialSignalRefs,
     improvementActionTypes: actionSummary.actionTypes,
-    stateUpdateTargets,
+    stateUpdateTargets: stateUpdateSummary.stateUpdateTargets,
     ownerCoverage: {
       allSignalsOwned: ownerCoverage.allSignalsOwned,
       signalCount: signalFamilies.length,
@@ -604,7 +716,8 @@ function buildDriftLoop(input, signalFamilies, materialSignalRefs, ownerCoverage
     effectivenessChecked: actionSummary.actionSummaries.every((action) => EFFECTIVENESS_STATUSES.has(action.effectivenessStatus)),
     actionSummaries: actionSummary.actionSummaries,
     reviewPathHash: input.reviewPath.pathHash,
-    stateUpdateHash: input.stateUpdate.updateReceiptHash,
+    stateUpdateEvidence,
+    stateUpdateHash: stateUpdateSummary.stateUpdateHash,
     auditRecordHash: input.auditRecord.auditRecordHash,
     auditRecordedAtHlc: input.auditRecord.receiptRecordedAtHlc,
   };
@@ -620,11 +733,23 @@ function buildReceipt(input, driftLoop) {
     custodyDigest: sha256Hex({
       actionStateUpdateHashes: driftLoop.actionSummaries.map((action) => action.actionRef),
       auditRecordHash: input.auditRecord.auditRecordHash,
+      cqiBacklogDriftSignalRefs: driftLoop.stateUpdateEvidence.cqiBacklogDriftSignalRefs,
+      cqiCycleHash: driftLoop.stateUpdateEvidence.cqiCycleHash,
+      cqiCycleReceiptHash: driftLoop.stateUpdateEvidence.cqiCycleReceiptHash,
+      inquiryCqiBacklogDigest: driftLoop.stateUpdateEvidence.inquiryCqiBacklogDigest,
+      inquiryCqiBacklogReceiptHash: driftLoop.stateUpdateEvidence.inquiryCqiBacklogReceiptHash,
       ownerSignalRefs: input.ownerAssignments.map((assignment) => assignment.signalRef).sort(),
+      roleManualCoverageReceiptHash: driftLoop.stateUpdateEvidence.roleManualCoverageReceiptHash,
       stateUpdateHash: input.stateUpdate.updateReceiptHash,
     }),
     hlcTimestamp: input.auditRecord.receiptRecordedAtHlc,
-    sensitivityTags: ['drift_management', 'metadata_only'],
+    sensitivityTags: [
+      'drift_management',
+      'metadata_only',
+      'continuous_quality_improvement',
+      'inquiry_cqi_backlog',
+      'manual_navigation_readiness',
+    ],
     sourceSystem: 'cybermedica',
     tenantId: input.tenantId,
   });
@@ -656,7 +781,7 @@ export function evaluateDriftImprovementLoop(input) {
     input?.driftCycle,
     reasons,
   );
-  evaluateStateUpdate(input?.stateUpdate, input?.driftCycle, reasons);
+  const stateUpdateSummary = evaluateStateUpdate(input?.stateUpdate, input?.driftCycle, signalSummary.signalRefs, reasons);
   evaluateAuditRecord(input?.auditRecord, input?.driftCycle, input?.stateUpdate, reasons);
   evaluateAiAssistance(input?.aiAssistance, reasons);
 
@@ -676,6 +801,7 @@ export function evaluateDriftImprovementLoop(input) {
     ownerCoverage,
     reviewSummary,
     actionSummary,
+    stateUpdateSummary,
   );
 
   return {

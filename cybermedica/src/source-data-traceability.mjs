@@ -344,6 +344,11 @@ function normalizeCrfMappings(input, sourceRecords, reasons) {
         (row.sourceRecordRef !== sourceRecord.sourceRecordRef || row.sourceRecordHash !== sourceRecord.sourceRecordHash),
       `crf_mapping_source_hash_mismatch:${family}`,
     );
+    addReason(
+      reasons,
+      sourceRecord !== undefined && hlcBefore(row?.reviewedAtHlc, sourceRecord.recordedAtHlc),
+      `crf_mapping_review_before_source_recorded:${family}`,
+    );
 
     if (REQUIRED_SOURCE_FAMILIES.includes(family) && !byFamily.has(family)) {
       byFamily.set(family, {

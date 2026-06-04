@@ -207,6 +207,9 @@ function evaluateProviderConfig(config, reasons) {
   addReason(reasons, !VERIFIED_STATUSES.has(config?.bindingStatus), 'provider_binding_unverified');
   addReason(reasons, !ENDPOINT_MODES.has(config?.endpointMode), 'provider_endpoint_mode_invalid');
   addReason(reasons, config?.endpointMode !== 'server_side' || config?.noBrowserRuntime !== true, 'browser_authoritative_ai_path_forbidden');
+  addReason(reasons, !isDigest(config?.modelRefHash), 'model_ref_hash_invalid');
+  addReason(reasons, !isDigest(config?.modelVersionHash), 'model_version_hash_invalid');
+  addReason(reasons, !isDigest(config?.modelConfigurationHash), 'model_configuration_hash_invalid');
   addReason(reasons, config?.configuredByHuman !== true, 'provider_human_configuration_absent');
   addReason(reasons, config?.noRootSecrets !== true, 'root_secret_scope_not_separated');
   addReason(reasons, config?.noSharedExochainCredentials !== true, 'shared_exochain_credentials_forbidden');
@@ -312,6 +315,9 @@ function buildProviderRequest(input, policySummary, requestSummary, humanReviewS
     contextRefs: requestSummary.contextRefs,
     evidenceRefs: requestSummary.evidenceRefs,
     inputManifestHash: input.request.inputManifestHash,
+    modelConfigurationHash: input.providerConfig.modelConfigurationHash,
+    modelRefHash: input.providerConfig.modelRefHash,
+    modelVersionHash: input.providerConfig.modelVersionHash,
     outputSchemaHash: input.request.outputSchemaHash,
     promptManifestHash: input.request.promptManifestHash,
     providerRef: input.providerConfig.providerRef,
@@ -329,6 +335,9 @@ function buildProviderRequest(input, policySummary, requestSummary, humanReviewS
     providerKind: input.providerConfig.providerKind,
     providerBindingStatus: input.providerConfig.bindingStatus,
     endpointMode: input.providerConfig.endpointMode,
+    modelRefHash: input.providerConfig.modelRefHash,
+    modelVersionHash: input.providerConfig.modelVersionHash,
+    modelConfigurationHash: input.providerConfig.modelConfigurationHash,
     useCase: input.request.useCase,
     policyRef: input.requestPolicy.policyRef,
     tenantPolicyRef: input.providerConfig.tenantPolicyRef,

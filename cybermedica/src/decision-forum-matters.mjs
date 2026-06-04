@@ -42,7 +42,9 @@ const OUTCOMES = new Set([
   'reject',
   'revoke',
 ]);
-const CONTEST_STATUSES = new Set(['filed', 'under_review']);
+const CONTEST_STATUSES = new Set(['filed', 'overruled', 'sustained', 'under_review', 'withdrawn']);
+const OPEN_CONTEST_STATUSES = new Set(['filed', 'under_review']);
+const RESOLVED_CONTEST_STATUSES = new Set(['overruled', 'sustained']);
 const CONTEST_STANDING_ROLES = new Set([
   'affected_participant',
   'affected_site_governance',
@@ -51,6 +53,8 @@ const CONTEST_STANDING_ROLES = new Set([
   'qa',
   'sponsor_cro_oversight',
 ]);
+const CHALLENGE_RESOLUTION_OUTCOMES = new Set(['overruled', 'sustained']);
+const CHALLENGE_REVIEWER_ROLES = new Set(['independent_governance']);
 const APPROVAL_VOTES = new Set(['approve', 'approve_with_conditions', 'emergency_authorize']);
 const RAW_DECISION_FORUM_FIELDS = new Set([
   'conditiontext',
@@ -419,6 +423,86 @@ function evaluateNotificationRequirement(reasons, required, evidenceHash, ration
   addReason(reasons, required === false && !isDigest(rationaleHash), `${prefix}_notification_rationale_missing`);
 }
 
+function evaluateChallengeResolution(contest, reasons) {
+  const resolution = contest?.resolution;
+  const quorum = resolution?.quorum;
+  const approvalEvidenceHashes = sortedTextList(quorum?.approvalEvidenceHashes);
+  const approvalsNeeded = quorum?.approvalsNeeded;
+
+  addReason(reasons, !CHALLENGE_RESOLUTION_OUTCOMES.has(resolution?.outcome), 'challenge_resolution_outcome_invalid');
+  addReason(reasons, resolution?.outcome !== contest?.status, 'challenge_resolution_outcome_mismatch');
+  addReason(reasons, !hasText(resolution?.resolvedByDid), 'challenge_resolution_reviewer_absent');
+  addReason(
+    reasons,
+    hasText(resolution?.resolvedByDid) &&
+      hasText(contest?.independentReviewerDid) &&
+      resolution.resolvedByDid !== contest.independentReviewerDid,
+    'challenge_resolution_reviewer_mismatch',
+  );
+  addReason(
+    reasons,
+    !CHALLENGE_REVIEWER_ROLES.has(resolution?.reviewerRole),
+    'challenge_resolution_independent_role_invalid',
+  );
+  addReason(reasons, hlcTuple(resolution?.resolvedAtHlc) === null, 'challenge_resolution_time_invalid');
+  addReason(
+    reasons,
+    hlcTuple(resolution?.resolvedAtHlc) !== null &&
+      hlcTuple(contest?.filedAtHlc) !== null &&
+      !hlcAfter(resolution.resolvedAtHlc, contest.filedAtHlc),
+    'challenge_resolution_time_before_filing',
+  );
+  addReason(reasons, !isDigest(resolution?.decisionHash), 'challenge_resolution_decision_hash_invalid');
+  addReason(reasons, !isDigest(resolution?.auditEntryHash), 'challenge_resolution_audit_hash_invalid');
+  addReason(reasons, quorum?.verified !== true, 'challenge_resolution_quorum_unverified');
+  addReason(reasons, quorum?.status !== 'met', 'challenge_resolution_quorum_not_met');
+  addReason(reasons, !isDigest(quorum?.policyHash), 'challenge_resolution_quorum_policy_hash_invalid');
+  addReason(
+    reasons,
+    sortedTextList(quorum?.requiredGovernanceRoleRefs).length === 0,
+    'challenge_resolution_required_roles_absent',
+  );
+  addReason(
+    reasons,
+    !Number.isSafeInteger(approvalsNeeded) || approvalsNeeded < 1,
+    'challenge_resolution_approval_threshold_invalid',
+  );
+  for (const hash of approvalEvidenceHashes) {
+    addReason(reasons, !isDigest(hash), 'challenge_resolution_approval_hash_invalid');
+  }
+  addReason(
+    reasons,
+    Number.isSafeInteger(approvalsNeeded) && approvalEvidenceHashes.length < approvalsNeeded,
+    'challenge_resolution_approval_threshold_not_met',
+  );
+}
+
+function evaluateChallengeWithdrawal(contest, reasons) {
+  const withdrawal = contest?.withdrawal;
+
+  addReason(reasons, !hasText(withdrawal?.withdrawnByDid), 'challenge_withdrawal_actor_absent');
+  addReason(
+    reasons,
+    hasText(withdrawal?.withdrawnByDid) &&
+      hasText(contest?.filedByDid) &&
+      withdrawal.withdrawnByDid !== contest.filedByDid,
+    'challenge_withdrawal_filer_mismatch',
+  );
+  addReason(reasons, hlcTuple(withdrawal?.withdrawnAtHlc) === null, 'challenge_withdrawal_time_invalid');
+  addReason(
+    reasons,
+    hlcTuple(withdrawal?.withdrawnAtHlc) !== null &&
+      hlcTuple(contest?.filedAtHlc) !== null &&
+      !hlcAfter(withdrawal.withdrawnAtHlc, contest.filedAtHlc),
+    'challenge_withdrawal_time_before_filing',
+  );
+  addReason(reasons, withdrawal?.beforeAdjudication !== true, 'challenge_withdrawal_after_adjudication');
+  addReason(reasons, withdrawal?.safetyHoldPresent !== false, 'challenge_withdrawal_safety_hold_present');
+  addReason(reasons, withdrawal?.legalHoldPresent !== false, 'challenge_withdrawal_legal_hold_present');
+  addReason(reasons, !isDigest(withdrawal?.withdrawalEvidenceHash), 'challenge_withdrawal_evidence_hash_invalid');
+  addReason(reasons, !isDigest(withdrawal?.auditEntryHash), 'challenge_withdrawal_audit_hash_invalid');
+}
+
 function evaluateContestation(input, reasons) {
   const contest = input?.contestation;
   const outcome = input?.disposition?.outcome;
@@ -427,7 +511,6 @@ function evaluateContestation(input, reasons) {
     return;
   }
 
-  addReason(reasons, contest?.open !== true, 'contestation_not_open');
   addReason(reasons, !CONTEST_STATUSES.has(contest?.status), 'contestation_status_invalid');
   addReason(reasons, sortedTextList(contest?.contestRefs).length === 0, 'contestation_ref_absent');
   addReason(reasons, !hasText(contest?.filedByDid), 'contestation_filer_absent');
@@ -436,6 +519,20 @@ function evaluateContestation(input, reasons) {
   addReason(reasons, hlcTuple(contest?.filedAtHlc) === null, 'contestation_time_invalid');
   addReason(reasons, hlcBefore(contest?.filedAtHlc, input?.matter?.closedAtHlc), 'contestation_before_decision_closure');
   addReason(reasons, !hasText(contest?.independentReviewerDid), 'contestation_independent_reviewer_absent');
+
+  if (OPEN_CONTEST_STATUSES.has(contest?.status)) {
+    addReason(reasons, contest?.open !== true, 'contestation_not_open');
+    return;
+  }
+  if (RESOLVED_CONTEST_STATUSES.has(contest?.status)) {
+    addReason(reasons, contest?.open !== false, 'challenge_resolution_contestation_still_open');
+    evaluateChallengeResolution(contest, reasons);
+    return;
+  }
+  if (contest?.status === 'withdrawn') {
+    addReason(reasons, contest?.open !== false, 'challenge_withdrawal_contestation_still_open');
+    evaluateChallengeWithdrawal(contest, reasons);
+  }
 }
 
 function evaluateReceipts(input, reasons) {
@@ -475,7 +572,19 @@ function matterStatus(input, reasons) {
   if (reasons.length > 0) {
     return 'blocked';
   }
-  if (input?.disposition?.outcome === 'contest' || input?.contestation?.open === true) {
+  if (input?.disposition?.outcome === 'contest') {
+    if (input?.contestation?.status === 'sustained') {
+      return 'challenge_sustained';
+    }
+    if (input?.contestation?.status === 'overruled') {
+      return 'challenge_overruled';
+    }
+    if (input?.contestation?.status === 'withdrawn') {
+      return 'challenge_withdrawn';
+    }
+    return 'contested';
+  }
+  if (input?.contestation?.open === true) {
     return 'contested';
   }
   return 'closed';
@@ -488,16 +597,43 @@ function lifecycleStepsFor(status) {
   if (status === 'contested') {
     return ['created', 'reviewed', 'deliberated', 'voted', 'contested', 'receipt_prepared'];
   }
+  if (status === 'challenge_sustained' || status === 'challenge_overruled') {
+    return ['created', 'reviewed', 'deliberated', 'voted', 'contested', 'challenge_resolved', 'receipt_prepared'];
+  }
+  if (status === 'challenge_withdrawn') {
+    return ['created', 'reviewed', 'deliberated', 'voted', 'contested', 'challenge_withdrawn', 'receipt_prepared'];
+  }
   return ['created', 'reviewed', 'deliberated', 'voted', 'closed', 'receipt_prepared'];
+}
+
+function challengeResolutionForStatus(status) {
+  if (status === 'challenge_sustained') {
+    return 'sustained';
+  }
+  if (status === 'challenge_overruled') {
+    return 'overruled';
+  }
+  if (status === 'challenge_withdrawn') {
+    return 'withdrawn';
+  }
+  return null;
+}
+
+function finalClosureForStatus(status) {
+  return status === 'closed' || status === 'challenge_overruled' || status === 'challenge_withdrawn';
 }
 
 function buildMatterRecord(input, participants, votes, reasons, receiptId = null) {
   const status = matterStatus(input, reasons);
-  const finalClosure = status === 'closed';
+  const finalClosure = finalClosureForStatus(status);
+  const challengeResolution = challengeResolutionForStatus(status);
   const conditionHashes = sortedTextList(input?.disposition?.conditionHashes);
   const matterMaterial = {
     actorDid: input?.actor?.did ?? null,
     aiOutputHash: input?.aiAnalysis?.outputHash ?? null,
+    challengeIndependentReviewerDid: input?.contestation?.independentReviewerDid ?? null,
+    challengeResolution,
+    challengeResolvedAtHlc: input?.contestation?.resolution?.resolvedAtHlc ?? input?.contestation?.withdrawal?.withdrawnAtHlc ?? null,
     conditionHashes,
     contestRefs: sortedTextList(input?.contestation?.contestRefs),
     controlRefs: sortedTextList(input?.evidenceBundle?.controlRefs),
@@ -545,6 +681,7 @@ function buildMatterRecord(input, participants, votes, reasons, receiptId = null
     voteSummary: matterMaterial.voteSummary,
     outcome: input?.disposition?.outcome ?? null,
     conditions: conditionHashes,
+    challengeResolution,
     followUpActionCount: Array.isArray(input?.disposition?.followUpActions) ? input.disposition.followUpActions.length : 0,
     notificationRequirementCount: notificationRequirementCount(input?.disposition),
     openChallenge: status === 'contested',
@@ -569,6 +706,7 @@ function buildDashboardItem(input, matterRecord) {
     conditions: matterRecord.conditions,
     dissentHashes: sortedTextList(input?.disposition?.dissentHashes),
     decisionOutcome: matterRecord.outcome,
+    challengeResolution: matterRecord.challengeResolution,
     followUpActionCount: matterRecord.followUpActionCount,
     openChallenge: matterRecord.openChallenge,
     trustState: matterRecord.trustState,
@@ -580,6 +718,11 @@ function buildReceipt(input, matterRecord) {
   const timestamp =
     matterRecord.status === 'contested' && hlcTuple(input?.contestation?.filedAtHlc) !== null
       ? input.contestation.filedAtHlc
+      : (matterRecord.status === 'challenge_sustained' || matterRecord.status === 'challenge_overruled') &&
+          hlcTuple(input?.contestation?.resolution?.resolvedAtHlc) !== null
+        ? input.contestation.resolution.resolvedAtHlc
+        : matterRecord.status === 'challenge_withdrawn' && hlcTuple(input?.contestation?.withdrawal?.withdrawnAtHlc) !== null
+          ? input.contestation.withdrawal.withdrawnAtHlc
       : input.matter.closedAtHlc;
 
   return createEvidenceReceipt({

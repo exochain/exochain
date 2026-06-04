@@ -199,6 +199,24 @@ function reportingInput(overrides = {}) {
       status: 'active',
       scope: 'sponsor_diligence_report',
     },
+    sponsorCroRequestEvidence: {
+      requestRef: 'sponsor-cro-request-alpha',
+      requestHash: DIGEST_E,
+      requesterClass: 'sponsor',
+      workItemRef: 'sponsor-cro-work-item-alpha',
+      workItemStatus: 'queued_for_site_review',
+      disclosureEventRef: 'disclosure-event-sponsor-cro-alpha',
+      disclosureLogHash: DIGEST_4,
+      decisionForumMatterRef: 'df-sponsor-cro-request-alpha',
+      humanReviewHash: DIGEST_2,
+      responsePackageHash: DIGEST_5,
+      linkedReportRef: 'qms-status-readiness-alpha',
+      metadataOnly: true,
+      sourcePayloadExcluded: true,
+      protectedContentExcluded: true,
+      productionTrustClaim: false,
+      linkedAtHlc: { physicalMs: 1796000600000, logical: 2 },
+    },
     aiAssistance: {
       used: true,
       finalAuthority: false,
@@ -245,6 +263,9 @@ test('governed reporting generates deterministic standard report receipts across
   assert.deepEqual(resultA.report.includedDomains, REQUIRED_REPORT_DOMAINS);
   assert.equal(resultA.report.metadataOnly, true);
   assert.equal(resultA.report.exochainProductionClaim, false);
+  assert.deepEqual(resultA.report.sponsorCroRequestRefs, ['sponsor-cro-request-alpha']);
+  assert.deepEqual(resultA.report.sponsorCroWorkItemRefs, ['sponsor-cro-work-item-alpha']);
+  assert.deepEqual(resultA.report.sponsorCroResponsePackageHashes, [DIGEST_5]);
   assert.equal(resultA.report.reportHash, resultB.report.reportHash);
   assert.equal(resultA.receipt.receiptId, resultB.receipt.receiptId);
   assert.equal(resultA.receipt.trustState, 'inactive');
@@ -286,6 +307,7 @@ test('governed reporting supports approved custom reports with explainable advis
         format: 'pdf',
       },
       sponsorExportGrant: null,
+      sponsorCroRequestEvidence: null,
     }),
   );
 
@@ -365,6 +387,73 @@ test('governed reporting fails closed for unsafe API access template access poli
   assert.ok(denied.reasons.includes('domain_metadata_boundary_invalid:sponsor_diligence'));
   assert.ok(denied.reasons.includes('export_metadata_boundary_invalid'));
   assert.ok(denied.reasons.includes('export_access_policy_boundary_invalid'));
+});
+
+test('governed reporting fails closed when sponsor diligence reports are not linked to controlled Sponsor/CRO requests', async () => {
+  const { evaluateGovernedReport } = await loadGovernedReporting();
+
+  const absent = evaluateGovernedReport(
+    reportingInput({
+      sponsorCroRequestEvidence: null,
+    }),
+  );
+
+  assert.equal(absent.decision, 'denied');
+  assert.equal(absent.failClosed, true);
+  assert.equal(absent.receipt, null);
+  assert.ok(absent.reasons.includes('sponsor_cro_request_evidence_absent'));
+
+  const malformed = evaluateGovernedReport(
+    reportingInput({
+      sponsorCroRequestEvidence: {
+        requestRef: '',
+        requestHash: 'not-a-digest',
+        requesterClass: 'public_observer',
+        workItemRef: '',
+        workItemStatus: 'draft',
+        disclosureLogHash: '',
+        responsePackageHash: 'not-a-digest',
+        linkedReportRef: 'other-report',
+        metadataOnly: false,
+        sourcePayloadExcluded: false,
+        protectedContentExcluded: false,
+        productionTrustClaim: true,
+        linkedAtHlc: { physicalMs: 1796000600000, logical: -1 },
+      },
+    }),
+  );
+
+  assert.equal(malformed.decision, 'denied');
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_ref_absent'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_hash_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_requester_class_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_work_item_ref_absent'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_work_item_status_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_disclosure_log_hash_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_response_package_hash_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_linked_report_mismatch'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_metadata_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_source_payload_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_protected_boundary_invalid'));
+  assert.ok(malformed.reasons.includes('production_trust_claim_forbidden'));
+  assert.ok(malformed.reasons.includes('sponsor_cro_request_link_time_invalid'));
+
+  const mismatched = evaluateGovernedReport(
+    reportingInput({
+      sponsorCroRequestEvidence: {
+        disclosureLogHash: DIGEST_6,
+        humanReviewHash: DIGEST_6,
+        responsePackageHash: DIGEST_6,
+        linkedAtHlc: { physicalMs: 1796000600000, logical: 7 },
+      },
+    }),
+  );
+
+  assert.equal(mismatched.decision, 'denied');
+  assert.ok(mismatched.reasons.includes('sponsor_cro_disclosure_log_hash_mismatch'));
+  assert.ok(mismatched.reasons.includes('sponsor_cro_human_review_hash_mismatch'));
+  assert.ok(mismatched.reasons.includes('sponsor_cro_response_package_hash_mismatch'));
+  assert.ok(mismatched.reasons.includes('sponsor_cro_request_link_after_report_generation'));
 });
 
 test('governed reporting requires human review and rejects AI final authority', async () => {

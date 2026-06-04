@@ -5,12 +5,38 @@
   "type": "module",
   "license": "Apache-2.0",
   "description": "CyberMedica adjacent-surface QMS service contracts, deterministic fixtures, and fail-closed Exochain trust-boundary adapters.",
+  "files": [
+    "CyberMedica_QMS_PRD_Master.docx",
+    "CyberMedica_QMS_PRD_Master.pdf",
+    "README.md",
+    "cyber_medica_qms_prd_master.md",
+    "cybermedica_2_0_sandy_seven_layer_master_prd.md",
+    "docs/context",
+    "docs/implementation",
+    "scripts",
+    "src",
+    "tests"
+  ],
   "engines": {
     "node": ">=25.9.0"
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "test:coverage": "node --experimental-test-coverage --test tests/*.test.mjs",
-    "quality": "npm run test && npm run test:coverage"
+    "test:coverage": "node --experimental-test-coverage --test-coverage-lines=90 --test tests/*.test.mjs",
+    "lint:typecheck": "node --test tests/source-guards.test.mjs",
+    "audit:deps": "npm audit --package-lock-only --audit-level=moderate",
+    "scan:hazards": "node scripts/source-hazard-scan.mjs",
+    "scan:secrets": "node scripts/source-secret-scan.mjs",
+    "guard:activation-gates": "node scripts/source-activation-gate-guard.mjs",
+    "guard:council-escalations": "node scripts/source-council-escalation-guard.mjs",
+    "guard:lineage": "node scripts/source-lineage-guard.mjs",
+    "guard:adapter-contracts": "node scripts/source-adapter-contract-guard.mjs",
+    "guard:adjacent-decisions": "node scripts/source-adjacent-surface-decision-guard.mjs",
+    "guard:open-questions": "node scripts/source-open-question-guard.mjs",
+    "guard:context-seed": "node scripts/source-context-seed-guard.mjs",
+    "guard:glossary": "node scripts/source-glossary-guard.mjs",
+    "guard:integration-map": "node scripts/source-integration-map-guard.mjs",
+    "build:artifact": "npm pack --dry-run --json",
+    "quality": "npm run lint:typecheck && npm run audit:deps && npm run scan:hazards && npm run scan:secrets && npm run guard:activation-gates && npm run guard:council-escalations && npm run guard:lineage && npm run guard:adapter-contracts && npm run guard:adjacent-decisions && npm run guard:open-questions && npm run guard:context-seed && npm run guard:glossary && npm run guard:integration-map && npm run build:artifact && npm run test && npm run test:coverage"
   }
 }

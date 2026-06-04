@@ -17,6 +17,7 @@
 import { canonicalize, createEvidenceReceipt, ProtectedContentError, sha256Hex } from './qms-contracts.mjs';
 
 const HEX_64 = /^[0-9a-f]{64}$/u;
+const SITE_QMS_PASSPORT_SOURCE_REQUIREMENTS = Object.freeze(['FR-009']);
 const REQUIRED_SECTIONS = Object.freeze([
   'calibration_records',
   'clinical_trial_product_handling_readiness',
@@ -590,6 +591,7 @@ function buildPassport(input, normalizedSections, coveredSections, evidenceByRef
     findings: normalizedFindings,
     passportRef: input?.siteProfile?.passportRef ?? null,
     siteRef: input?.siteProfile?.siteRef ?? null,
+    sourceRequirements: SITE_QMS_PASSPORT_SOURCE_REQUIREMENTS,
     status,
     tenantId: input?.tenantId ?? null,
     version: input?.siteProfile?.version ?? null,
@@ -613,6 +615,7 @@ function buildPassport(input, normalizedSections, coveredSections, evidenceByRef
     aiFinalAuthority: false,
     exochainProductionClaim: false,
     trustState: 'inactive',
+    sourceRequirements: [...SITE_QMS_PASSPORT_SOURCE_REQUIREMENTS],
     coveredSections,
     missingSections: REQUIRED_SECTIONS.filter((section) => !coveredSections.includes(section)),
     evidenceCompletenessBasisPoints: basisPoints(completeCount, REQUIRED_SECTIONS.length),
@@ -642,6 +645,7 @@ function buildReceipt(input, passport) {
     passportStatus: passport.passportStatus,
     readinessStatus: passport.readinessStatus,
     siteRef: passport.siteRef,
+    sourceRequirements: passport.sourceRequirements,
     version: passport.version,
   });
 

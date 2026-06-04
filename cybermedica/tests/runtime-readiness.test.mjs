@@ -32,6 +32,10 @@ const verifiedRootBundle = Object.freeze({
   dkgParticipantCount: 13,
   thresholdSignature: '7-of-13',
   verifierReceiptId: 'root-verifier-receipt-alpha',
+  artifactRegistryHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  operationsRunbookHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  rootTrustBundleHash: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+  rosterHash: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
 });
 
 const verifiedDependency = Object.freeze({ verified: true });

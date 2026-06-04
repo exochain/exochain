@@ -48,6 +48,19 @@ const REQUIRED_BINDING_DOMAINS = [
   'service_binding',
 ];
 
+const REQUIRED_DRIFT_STATE_TARGETS = ['passport', 'quality_state', 'readiness'];
+
+const DASHBOARD_ROLES = [
+  'auditor',
+  'coordinator',
+  'cro_portfolio_manager',
+  'decision_forum',
+  'principal_investigator',
+  'quality_manager',
+  'site_leader',
+  'sponsor_viewer',
+];
+
 const ALLOWED_ACTIVATION_BLOCKERS = [
   'ESC-OPS-SECRETS',
   'ESC-ROOT-DEPLOYMENT',
@@ -101,6 +114,73 @@ function bindingDomain(domain, index, overrides = {}) {
 
 function bindingDomains() {
   return REQUIRED_BINDING_DOMAINS.map((domain, index) => bindingDomain(domain, index));
+}
+
+function deploymentReadinessDriftStateUpdateEvidence(overrides = {}) {
+  return mergeDeep(
+    {
+      driftLoopId: 'cmdrift_deployment_readiness_alpha',
+      driftLoopHash: DIGEST_4,
+      driftLoopReceiptHash: DIGEST_5,
+      stateUpdateHash: DIGEST_6,
+      stateUpdateTargets: REQUIRED_DRIFT_STATE_TARGETS,
+      cqiCycleHash: DIGEST_7,
+      cqiCycleReceiptHash: DIGEST_8,
+      inquiryCqiBacklogReceiptHash: DIGEST_9,
+      manualNavigationReady: true,
+      manualNavigationEffectiveUseAcknowledged: true,
+      roleManualCoverageReceiptHash: DIGEST_F,
+      trustState: 'inactive',
+      exochainProductionClaim: false,
+      metadataOnly: true,
+      protectedContentExcluded: true,
+      reviewedAtHlc: { physicalMs: 1800003200000, logical: 9 },
+    },
+    overrides,
+  );
+}
+
+function roleDashboardTrustStateEvidence(overrides = {}) {
+  return mergeDeep(
+    {
+      schema: 'cybermedica.role_dashboard_trust_state_lineage.v1',
+      roleDashboardSummaryHash: DIGEST_A,
+      roleDashboardReceiptHash: DIGEST_B,
+      roleDashboardTrustStateViewHash: DIGEST_C,
+      dashboardRoles: DASHBOARD_ROLES,
+      dashboardHashRefs: DASHBOARD_ROLES.map((role, index) => ({
+        role,
+        dashboardHash: [DIGEST_1, DIGEST_2, DIGEST_3, DIGEST_4, DIGEST_5, DIGEST_6, DIGEST_7, DIGEST_8][index],
+        trustStateViewHash: [DIGEST_8, DIGEST_7, DIGEST_6, DIGEST_5, DIGEST_4, DIGEST_3, DIGEST_2, DIGEST_1][index],
+      })),
+      trustState: 'inactive',
+      exochainProductionClaim: false,
+      canShowProductionTrustClaim: false,
+      activationLineageAccepted: true,
+      publicClaimReviewReceiptHash: DIGEST_1,
+      publicClaimReviewPackageHash: DIGEST_2,
+      productionClaimLiftReceiptHash: DIGEST_3,
+      productionClaimLiftTrustState: 'inactive',
+      productionClaimLiftCanLiftProductionClaim: false,
+      productionClaimLiftRoleDashboardProviderReceiptHash: DIGEST_B,
+      productionClaimLiftRoleDashboardProviderSummaryHash: DIGEST_A,
+      productionClaimLiftRoleDashboardProviderTrustStateViewHash: DIGEST_C,
+      productionClaimLiftRoleDashboardReadinessReceiptHash: DIGEST_E,
+      productionClaimLiftRoleDashboardReadinessSummaryHash: DIGEST_F,
+      productionClaimLiftRoleDashboardReadinessTrustStateViewHash: DIGEST_D,
+      productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_B,
+      productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_A,
+      productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: DIGEST_C,
+      productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_E,
+      productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_F,
+      productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: DIGEST_D,
+      productionClaimLiftRoleDashboardRoles: DASHBOARD_ROLES,
+      metadataOnly: true,
+      protectedContentExcluded: true,
+      reviewedAtHlc: { physicalMs: 1800003200000, logical: 10 },
+    },
+    overrides,
+  );
 }
 
 function providerBindingInput(overrides = {}) {
@@ -184,11 +264,34 @@ function providerBindingInput(overrides = {}) {
     operationsReadiness: {
       operationsReadinessRef: 'deployment-operations-readiness-alpha',
       operationsReadinessHash: DIGEST_2,
+      receiptHash: DIGEST_9,
+      receiptArtifactType: 'deployment_operations_readiness',
+      status: 'deployment_operations_readiness_accepted_inactive_trust',
+      releaseCandidateRef: 'cybermedica-baseline-2026-05',
+      releaseIncidentLinkageReceiptHash: DIGEST_7,
       baselineOperationsPackReady: true,
       productionOperationsReady: false,
       railwayLoginStatus: 'login_required',
       activationBlockerIds: ['ESC-OPS-SECRETS', 'ESC-ROOT-DEPLOYMENT', 'ESC-ROOT-OWNER', 'ESC-RUNTIME'],
       metadataOnly: true,
+      protectedContentExcluded: true,
+      productionTrustClaim: false,
+      roleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence(),
+      reviewedAtHlc: { physicalMs: 1800003200000, logical: 10 },
+    },
+    deploymentReadinessManifest: {
+      manifestHash: DIGEST_1,
+      receiptHash: DIGEST_2,
+      receiptArtifactType: 'deployment_readiness_manifest',
+      status: 'deployment_readiness_manifest_accepted_inactive_trust',
+      releaseCandidateRef: 'cybermedica-baseline-2026-05',
+      trustState: 'inactive',
+      baselineReady: true,
+      productionClaim: false,
+      driftStateUpdateEvidence: deploymentReadinessDriftStateUpdateEvidence(),
+      roleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence(),
+      metadataOnly: true,
+      protectedContentExcluded: true,
       reviewedAtHlc: { physicalMs: 1800003200000, logical: 10 },
     },
     validationEvidence: {
@@ -262,9 +365,550 @@ test('deployment provider binding records Railway login-required state without p
   assert.equal(resultA.providerBinding.provider.bindingStatus, 'login_required');
   assert.equal(resultA.providerBinding.provider.endpointSelected, false);
   assert.equal(resultA.providerBinding.runtime.rootBundleProviderVerified, false);
+  assert.equal(resultA.providerBinding.operationsReadiness.receiptHash, DIGEST_9);
+  assert.equal(resultA.providerBinding.operationsReadiness.receiptArtifactType, 'deployment_operations_readiness');
+  assert.equal(resultA.providerBinding.operationsReadiness.status, 'deployment_operations_readiness_accepted_inactive_trust');
+  assert.equal(resultA.providerBinding.operationsReadiness.releaseIncidentLinkageReceiptHash, DIGEST_7);
+  assert.deepEqual(resultA.providerBinding.operationsReadiness.roleDashboardTrustStateEvidence, {
+    activationLineageAccepted: true,
+    canShowProductionTrustClaim: false,
+    dashboardHashRefs: DASHBOARD_ROLES.map((role, index) => ({
+      dashboardHash: [DIGEST_1, DIGEST_2, DIGEST_3, DIGEST_4, DIGEST_5, DIGEST_6, DIGEST_7, DIGEST_8][index],
+      role,
+      trustStateViewHash: [DIGEST_8, DIGEST_7, DIGEST_6, DIGEST_5, DIGEST_4, DIGEST_3, DIGEST_2, DIGEST_1][index],
+    })),
+    dashboardRoles: DASHBOARD_ROLES,
+    productionClaimLiftCanLiftProductionClaim: false,
+    productionClaimLiftReceiptHash: DIGEST_3,
+    productionClaimLiftRoleDashboardProviderReceiptHash: DIGEST_B,
+    productionClaimLiftRoleDashboardProviderSummaryHash: DIGEST_A,
+    productionClaimLiftRoleDashboardProviderTrustStateViewHash: DIGEST_C,
+    productionClaimLiftRoleDashboardReadinessReceiptHash: DIGEST_E,
+    productionClaimLiftRoleDashboardReadinessSummaryHash: DIGEST_F,
+    productionClaimLiftRoleDashboardReadinessTrustStateViewHash: DIGEST_D,
+    productionClaimLiftRoleDashboardRoles: DASHBOARD_ROLES,
+    productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_B,
+    productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_A,
+    productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: DIGEST_C,
+    productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_E,
+    productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_F,
+    productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: DIGEST_D,
+    productionClaimLiftTrustState: 'inactive',
+    publicClaimReviewPackageHash: DIGEST_2,
+    publicClaimReviewReceiptHash: DIGEST_1,
+    roleDashboardReceiptHash: DIGEST_B,
+    roleDashboardSummaryHash: DIGEST_A,
+    roleDashboardTrustStateViewHash: DIGEST_C,
+    trustState: 'inactive',
+  });
+  assert.equal(resultA.providerBinding.deploymentReadinessManifest.receiptHash, DIGEST_2);
+  assert.equal(
+    resultA.providerBinding.deploymentReadinessManifest.status,
+    'deployment_readiness_manifest_accepted_inactive_trust',
+  );
+  assert.equal(resultA.providerBinding.deploymentReadinessManifest.trustState, 'inactive');
+  assert.equal(resultA.providerBinding.deploymentReadinessManifest.baselineReady, true);
+  assert.equal(resultA.providerBinding.deploymentReadinessManifest.productionClaim, false);
+  assert.equal(resultA.providerBinding.deploymentReadinessManifest.driftStateUpdateEvidence.driftLoopReceiptHash, DIGEST_5);
+  assert.equal(resultA.providerBinding.deploymentReadinessManifest.driftStateUpdateEvidence.stateUpdateHash, DIGEST_6);
+  assert.equal(resultA.providerBinding.deploymentReadinessManifest.driftStateUpdateEvidence.cqiCycleReceiptHash, DIGEST_8);
+  assert.equal(
+    resultA.providerBinding.deploymentReadinessManifest.driftStateUpdateEvidence.inquiryCqiBacklogReceiptHash,
+    DIGEST_9,
+  );
+  assert.equal(
+    resultA.providerBinding.deploymentReadinessManifest.driftStateUpdateEvidence.roleManualCoverageReceiptHash,
+    DIGEST_F,
+  );
+  assert.deepEqual(
+    resultA.providerBinding.deploymentReadinessManifest.driftStateUpdateEvidence.stateUpdateTargets,
+    REQUIRED_DRIFT_STATE_TARGETS,
+  );
+  assert.equal(
+    resultA.providerBinding.deploymentReadinessManifest.roleDashboardTrustStateEvidence.roleDashboardReceiptHash,
+    DIGEST_B,
+  );
+  assert.equal(
+    resultA.providerBinding.deploymentReadinessManifest.roleDashboardTrustStateEvidence
+      .productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash,
+    DIGEST_C,
+  );
+  assert.equal(
+    resultA.providerBinding.deploymentReadinessManifest.roleDashboardTrustStateEvidence
+      .productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash,
+    DIGEST_D,
+  );
   assert.equal(resultA.receipt.trustState, 'inactive');
   assert.equal(resultA.receipt.anchorPayload.artifactType, 'deployment_provider_binding');
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('deployment_readiness_manifest'));
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('drift_state_update'));
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('continuous_quality_improvement'));
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('manual_navigation_readiness'));
+  assert.ok(resultA.receipt.anchorPayload.sensitivityTags.includes('role_dashboard_trust_state'));
   assert.deepEqual(resultA, resultB);
+});
+
+test('deployment provider binding requires accepted operations readiness receipt and role-dashboard trust-state evidence', async () => {
+  const { evaluateDeploymentProviderBinding } = await loadDeploymentProviderBinding();
+
+  const missing = evaluateDeploymentProviderBinding(
+    providerBindingInput({
+      operationsReadiness: null,
+    }),
+  );
+  const unsafe = evaluateDeploymentProviderBinding(
+    providerBindingInput({
+      operationsReadiness: {
+        receiptHash: 'not-a-digest',
+        receiptArtifactType: 'operations_summary',
+        status: 'operations_pending',
+        releaseCandidateRef: 'different-release',
+        releaseIncidentLinkageReceiptHash: 'also-not-a-digest',
+        protectedContentExcluded: false,
+        productionTrustClaim: true,
+        roleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence({
+          dashboardRoles: DASHBOARD_ROLES.filter((role) => role !== 'sponsor_viewer'),
+          dashboardHashRefs: [
+            {
+              role: 'quality_manager',
+              dashboardHash: DIGEST_1,
+              trustStateViewHash: DIGEST_2,
+            },
+            {
+              role: 'unapproved_role',
+              dashboardHash: DIGEST_3,
+              trustStateViewHash: DIGEST_4,
+            },
+          ],
+          roleDashboardReceiptHash: 'not-a-digest',
+          roleDashboardTrustStateViewHash: null,
+          trustState: 'verified',
+          exochainProductionClaim: true,
+          canShowProductionTrustClaim: true,
+          activationLineageAccepted: false,
+          publicClaimReviewReceiptHash: 'bad-public-claim-receipt',
+          publicClaimReviewPackageHash: 'bad-public-claim-package',
+          productionClaimLiftReceiptHash: 'bad-lift-receipt',
+          productionClaimLiftTrustState: 'verified',
+          productionClaimLiftCanLiftProductionClaim: true,
+          productionClaimLiftRoleDashboardProviderReceiptHash: 'bad-provider-receipt',
+          productionClaimLiftRoleDashboardProviderSummaryHash: 'bad-provider-summary',
+          productionClaimLiftRoleDashboardProviderTrustStateViewHash: 'bad-provider-view',
+          productionClaimLiftRoleDashboardReadinessReceiptHash: 'bad-readiness-receipt',
+          productionClaimLiftRoleDashboardReadinessSummaryHash: 'bad-readiness-summary',
+          productionClaimLiftRoleDashboardReadinessTrustStateViewHash: 'bad-readiness-view',
+          productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_D,
+          productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_C,
+          productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: 'bad-runtime-source-provider-view',
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_4,
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_5,
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: 'bad-runtime-source-readiness-view',
+          productionClaimLiftRoleDashboardRoles: DASHBOARD_ROLES.filter((role) => role !== 'sponsor_viewer').concat(
+            'unsupported_role',
+          ),
+          metadataOnly: false,
+          protectedContentExcluded: false,
+          reviewedAtHlc: { physicalMs: 1800003300000, logical: 2 },
+        }),
+        reviewedAtHlc: { physicalMs: 1800003300000, logical: 1 },
+      },
+    }),
+  );
+  const mismatch = evaluateDeploymentProviderBinding(
+    providerBindingInput({
+      operationsReadiness: {
+        roleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence({
+          productionClaimLiftRoleDashboardProviderReceiptHash: DIGEST_4,
+          productionClaimLiftRoleDashboardProviderSummaryHash: DIGEST_5,
+          productionClaimLiftRoleDashboardProviderTrustStateViewHash: DIGEST_6,
+          productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_D,
+          productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_C,
+          productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: DIGEST_7,
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_1,
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_2,
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: DIGEST_8,
+        }),
+      },
+    }),
+  );
+
+  assert.equal(missing.decision, 'denied');
+  assert.equal(missing.providerBinding, null);
+  assert.ok(missing.reasons.includes('operations_readiness_absent'));
+  assert.ok(missing.reasons.includes('operations_readiness_receipt_hash_invalid'));
+  assert.ok(missing.reasons.includes('operations_readiness_receipt_type_invalid'));
+  assert.ok(missing.reasons.includes('operations_readiness_role_dashboard_trust_state_evidence_absent'));
+  assert.ok(missing.reasons.includes('operations_readiness_role_dashboard_summary_hash_invalid'));
+
+  assert.equal(unsafe.decision, 'denied');
+  assert.equal(unsafe.providerBinding, null);
+  assert.ok(unsafe.reasons.includes('operations_readiness_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_receipt_type_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_status_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_release_candidate_mismatch'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_release_incident_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_protected_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_production_claim_forbidden'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_after_validation'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_trust_state_view_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_role_missing:sponsor_viewer'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_hash_ref_role_unsupported:unapproved_role'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_hash_ref_missing:auditor'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_trust_state_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_production_claim_forbidden'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_activation_lineage_absent'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_public_claim_review_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_public_claim_review_package_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_production_claim_lift_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_production_claim_lift_state_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_production_claim_lift_forbidden'));
+  assert.ok(
+    unsafe.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_provider_receipt_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_provider_summary_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_provider_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_readiness_receipt_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_readiness_summary_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_readiness_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_runtime_source_provider_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_runtime_source_readiness_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_role_missing:sponsor_viewer',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_role_unsupported:unsupported_role',
+    ),
+  );
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_metadata_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_protected_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('operations_readiness_role_dashboard_after_operations_review'));
+
+  assert.equal(mismatch.decision, 'denied');
+  assert.equal(mismatch.providerBinding, null);
+  assert.ok(
+    mismatch.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_provider_receipt_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_provider_summary_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_provider_trust_state_view_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_runtime_source_provider_receipt_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_runtime_source_provider_summary_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_runtime_source_provider_trust_state_view_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_runtime_source_readiness_receipt_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_runtime_source_readiness_summary_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'operations_readiness_role_dashboard_production_claim_lift_runtime_source_readiness_trust_state_view_mismatch',
+    ),
+  );
+});
+
+test('deployment provider binding requires deployment readiness manifest drift and role-dashboard trust-state lineage', async () => {
+  const { evaluateDeploymentProviderBinding } = await loadDeploymentProviderBinding();
+
+  const missing = evaluateDeploymentProviderBinding(
+    providerBindingInput({
+      deploymentReadinessManifest: null,
+    }),
+  );
+  const unsafe = evaluateDeploymentProviderBinding(
+    providerBindingInput({
+      deploymentReadinessManifest: {
+        manifestHash: 'not-a-digest',
+        receiptHash: 'also-not-a-digest',
+        receiptArtifactType: 'deployment_summary',
+        status: 'manifest_pending',
+        releaseCandidateRef: 'different-release',
+        trustState: 'active',
+        baselineReady: false,
+        productionClaim: true,
+        driftStateUpdateEvidence: deploymentReadinessDriftStateUpdateEvidence({
+          driftLoopReceiptHash: 'bad-receipt',
+          stateUpdateHash: 'bad-state',
+          stateUpdateTargets: ['passport'],
+          cqiCycleReceiptHash: null,
+          inquiryCqiBacklogReceiptHash: null,
+          manualNavigationReady: false,
+          manualNavigationEffectiveUseAcknowledged: false,
+          roleManualCoverageReceiptHash: null,
+          trustState: 'active',
+          exochainProductionClaim: true,
+          protectedContentExcluded: false,
+          reviewedAtHlc: { physicalMs: 1800003300000, logical: 2 },
+        }),
+        roleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence({
+          dashboardRoles: DASHBOARD_ROLES.filter((role) => role !== 'sponsor_viewer'),
+          dashboardHashRefs: [
+            {
+              role: 'quality_manager',
+              dashboardHash: DIGEST_1,
+              trustStateViewHash: DIGEST_2,
+            },
+            {
+              role: 'unapproved_role',
+              dashboardHash: DIGEST_3,
+              trustStateViewHash: DIGEST_4,
+            },
+          ],
+          roleDashboardReceiptHash: 'not-a-digest',
+          roleDashboardTrustStateViewHash: null,
+          trustState: 'verified',
+          exochainProductionClaim: true,
+          canShowProductionTrustClaim: true,
+          activationLineageAccepted: false,
+          publicClaimReviewReceiptHash: 'bad-public-claim-receipt',
+          publicClaimReviewPackageHash: 'bad-public-claim-package',
+          productionClaimLiftReceiptHash: 'bad-lift-receipt',
+          productionClaimLiftTrustState: 'verified',
+          productionClaimLiftCanLiftProductionClaim: true,
+          productionClaimLiftRoleDashboardProviderReceiptHash: 'bad-provider-receipt',
+          productionClaimLiftRoleDashboardProviderSummaryHash: 'bad-provider-summary',
+          productionClaimLiftRoleDashboardProviderTrustStateViewHash: 'bad-provider-view',
+          productionClaimLiftRoleDashboardReadinessReceiptHash: 'bad-readiness-receipt',
+          productionClaimLiftRoleDashboardReadinessSummaryHash: 'bad-readiness-summary',
+          productionClaimLiftRoleDashboardReadinessTrustStateViewHash: 'bad-readiness-view',
+          productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_D,
+          productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_C,
+          productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: 'bad-runtime-source-provider-view',
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_4,
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_5,
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: 'bad-runtime-source-readiness-view',
+          productionClaimLiftRoleDashboardRoles: DASHBOARD_ROLES.filter((role) => role !== 'sponsor_viewer').concat(
+            'unsupported_role',
+          ),
+          metadataOnly: false,
+          protectedContentExcluded: false,
+          reviewedAtHlc: { physicalMs: 1800003300000, logical: 3 },
+        }),
+        metadataOnly: false,
+        protectedContentExcluded: false,
+        reviewedAtHlc: { physicalMs: 1800003300000, logical: 1 },
+      },
+    }),
+  );
+  const mismatch = evaluateDeploymentProviderBinding(
+    providerBindingInput({
+      deploymentReadinessManifest: {
+        roleDashboardTrustStateEvidence: roleDashboardTrustStateEvidence({
+          productionClaimLiftRoleDashboardProviderReceiptHash: DIGEST_4,
+          productionClaimLiftRoleDashboardProviderSummaryHash: DIGEST_5,
+          productionClaimLiftRoleDashboardProviderTrustStateViewHash: DIGEST_6,
+          productionClaimLiftRuntimeSourceProviderRoleDashboardReceiptHash: DIGEST_D,
+          productionClaimLiftRuntimeSourceProviderRoleDashboardSummaryHash: DIGEST_C,
+          productionClaimLiftRuntimeSourceProviderRoleDashboardTrustStateViewHash: DIGEST_7,
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardReceiptHash: DIGEST_1,
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardSummaryHash: DIGEST_2,
+          productionClaimLiftRuntimeSourceReadinessRoleDashboardTrustStateViewHash: DIGEST_8,
+        }),
+      },
+    }),
+  );
+
+  assert.equal(missing.decision, 'denied');
+  assert.equal(missing.providerBinding, null);
+  assert.ok(missing.reasons.includes('deployment_readiness_manifest_absent'));
+  assert.ok(missing.reasons.includes('deployment_readiness_manifest_hash_invalid'));
+  assert.ok(missing.reasons.includes('deployment_readiness_manifest_receipt_hash_invalid'));
+  assert.ok(missing.reasons.includes('deployment_readiness_role_dashboard_trust_state_evidence_absent'));
+  assert.ok(missing.reasons.includes('deployment_readiness_role_dashboard_summary_hash_invalid'));
+
+  assert.equal(unsafe.decision, 'denied');
+  assert.equal(unsafe.providerBinding, null);
+  assert.ok(unsafe.reasons.includes('deployment_readiness_manifest_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_manifest_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_manifest_receipt_type_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_manifest_status_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_manifest_release_candidate_mismatch'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_manifest_trust_state_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_manifest_baseline_not_ready'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_manifest_production_claim_forbidden'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_manifest_metadata_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_manifest_protected_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_manifest_after_validation'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_loop_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_state_update_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_state_update_target_missing:quality_state'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_state_update_target_missing:readiness'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_cqi_cycle_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_inquiry_cqi_backlog_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_manual_navigation_not_ready'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_manual_navigation_effective_use_absent'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_manual_coverage_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_trust_state_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_production_claim_forbidden'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_protected_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_drift_after_manifest_review'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_trust_state_view_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_role_missing:sponsor_viewer'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_hash_ref_role_unsupported:unapproved_role'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_hash_ref_missing:auditor'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_trust_state_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_forbidden'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_activation_lineage_absent'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_public_claim_review_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_public_claim_review_package_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_receipt_hash_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_state_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_forbidden'));
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_provider_receipt_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_provider_summary_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_provider_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_readiness_receipt_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_readiness_summary_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_readiness_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_provider_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_readiness_trust_state_view_hash_invalid',
+    ),
+  );
+  assert.ok(
+    unsafe.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_role_missing:sponsor_viewer'),
+  );
+  assert.ok(
+    unsafe.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_role_unsupported:unsupported_role',
+    ),
+  );
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_metadata_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_protected_boundary_invalid'));
+  assert.ok(unsafe.reasons.includes('deployment_readiness_role_dashboard_after_manifest_review'));
+
+  assert.equal(mismatch.decision, 'denied');
+  assert.equal(mismatch.providerBinding, null);
+  assert.ok(
+    mismatch.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_provider_receipt_mismatch'),
+  );
+  assert.ok(
+    mismatch.reasons.includes('deployment_readiness_role_dashboard_production_claim_lift_provider_summary_mismatch'),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_provider_trust_state_view_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_provider_receipt_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_provider_summary_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_provider_trust_state_view_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_readiness_receipt_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_readiness_summary_mismatch',
+    ),
+  );
+  assert.ok(
+    mismatch.reasons.includes(
+      'deployment_readiness_role_dashboard_production_claim_lift_runtime_source_readiness_trust_state_view_mismatch',
+    ),
+  );
 });
 
 test('deployment provider binding can verify provider resources while keeping trust activation separate', async () => {

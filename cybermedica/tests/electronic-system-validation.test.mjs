@@ -345,6 +345,24 @@ test('electronic system validation supports non-integrated source capture withou
   assert.equal(result.validationRecord.aiAssisted, false);
 });
 
+test('electronic system validation accepts eISF systems as governed site-file evidence systems', async () => {
+  const { evaluateElectronicSystemValidation } = await loadElectronicSystemValidation();
+  const input = electronicSystemInput();
+  input.system.systemRef = 'EISF-SYS-ALPHA';
+  input.system.systemType = 'eisf';
+  input.integrationReadiness.readinessRef = 'cmgi_ready_eisf_alpha';
+
+  const result = evaluateElectronicSystemValidation(input);
+
+  assert.equal(result.decision, 'permitted');
+  assert.equal(result.validationRecord.systemType, 'eisf');
+  assert.equal(result.validationRecord.systemValidated, true);
+  assert.equal(result.validationRecord.integrationReady, true);
+  assert.equal(result.validationRecord.sourcePayloadsStayExternal, true);
+  assert.equal(result.receipt.anchorPayload.artifactType, 'electronic_system_validation');
+  assert.doesNotMatch(JSON.stringify(result), /Participant Alice|raw trial data|source document|api key/iu);
+});
+
 test('electronic system validation rejects raw trial data validation content and secrets', async () => {
   const { evaluateElectronicSystemValidation, ProtectedContentError } = await loadElectronicSystemValidation();
   const inertMarkers = electronicSystemInput();

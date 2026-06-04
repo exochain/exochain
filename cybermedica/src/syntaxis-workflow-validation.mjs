@@ -23,6 +23,7 @@ const ZERO_HASH = '0000000000000000000000000000000000000000000000000000000000000
 const VALIDATION_SCHEMA = 'cybermedica.syntaxis_workflow_validation.v1';
 const DECISION_SCHEMA = 'cybermedica.syntaxis_workflow_validation_decision.v1';
 const REQUIRED_PERMISSION = 'syntaxis_registry_review';
+const SYNTAXIS_WORKFLOW_ACTIVATION_GATE_ID = 'PTAG-011';
 
 const REQUIRED_NODE_TYPES = Object.freeze([
   'authority-check',
@@ -540,6 +541,7 @@ function buildSyntaxisValidation(input, policySummary, registrySummary, generate
     trustState: 'inactive',
     exochainProductionClaim: false,
     syntaxisBackedRuntimeClaim: false,
+    activationGateIds: [SYNTAXIS_WORKFLOW_ACTIVATION_GATE_ID],
     metadataOnly: true,
     containsProtectedContent: false,
     requiredNodeTypes: policySummary.requiredNodeTypes,

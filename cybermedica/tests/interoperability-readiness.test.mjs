@@ -37,6 +37,7 @@ const REQUIRED_CONNECTOR_TYPES = [
   'document_system',
   'econsent',
   'edc',
+  'eisf',
   'etmf',
   'hris',
   'identity_provider',

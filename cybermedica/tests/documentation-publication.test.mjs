@@ -32,6 +32,7 @@ const DIGEST_6 = '66666666666666666666666666666666666666666666666666666666666666
 const DIGEST_7 = '7777777777777777777777777777777777777777777777777777777777777777';
 const DIGEST_8 = '8888888888888888888888888888888888888888888888888888888888888888';
 const DIGEST_9 = '9999999999999999999999999999999999999999999999999999999999999999';
+const DIGEST_R = 'abababababababababababababababababababababababababababababababab';
 
 const REQUIRED_PUBLICATION_DOMAINS = [
   'audit_trail',
@@ -51,6 +52,16 @@ const REQUIRED_CHANGE_TYPES = [
   'runbook_update',
   'training_notice',
   'workflow_guide_update',
+];
+
+const REQUIRED_EXPORT_FORMATS = ['markdown', 'pdf', 'print', 'word'];
+const REQUIRED_EXPORT_PACKET_SCOPES = ['audit_training_packet', 'role_manual_packet', 'workflow_manual_packet'];
+const REQUIRED_ORIENTATION_CITATION_FAMILIES = ['control', 'manual_section', 'procedure'];
+const REQUIRED_ORIENTATION_SIGNAL_FAMILIES = [
+  'ai_orientation_question',
+  'manual_confusion',
+  'missing_documentation',
+  'product_gap',
 ];
 
 async function loadDocumentationPublication() {
@@ -121,6 +132,36 @@ function changeRequests() {
   return REQUIRED_CHANGE_TYPES.map((changeType, index) => changeRequest(changeType, index));
 }
 
+function manualExportReadiness(overrides = {}) {
+  return {
+    exportPacketRef: 'manual-export-packet-alpha-v2',
+    manualExportReceiptHash: DIGEST_4,
+    manualExportPacketHash: DIGEST_5,
+    sourceManualSetHash: DIGEST_4,
+    sourceManualIndexHash: DIGEST_8,
+    roleManualCoverageReceiptHash: DIGEST_R,
+    orientationAssistantReceiptHash: DIGEST_2,
+    orientationRecordHash: DIGEST_5,
+    orientationGuidanceLabel: 'guidance_not_policy_authority',
+    orientationCitationFamilies: REQUIRED_ORIENTATION_CITATION_FAMILIES,
+    orientationConfusionSignalFamilies: REQUIRED_ORIENTATION_SIGNAL_FAMILIES,
+    exportFormats: REQUIRED_EXPORT_FORMATS,
+    packetScopes: REQUIRED_EXPORT_PACKET_SCOPES,
+    roleRefs: ['auditor_inspector', 'quality_manager'],
+    workflowRefs: ['workflow-evidence-intake', 'workflow-trial-startup'],
+    exportPolicyHash: DIGEST_6,
+    boundaryAttestationHash: DIGEST_7,
+    humanAuthorized: true,
+    noRawManualContent: true,
+    noUnapprovedClaims: true,
+    metadataOnly: true,
+    protectedContentExcluded: true,
+    noProductionTrustClaim: true,
+    readyAtHlc: { physicalMs: 1800009250000, logical: 0 },
+    ...overrides,
+  };
+}
+
 function publicationInput(overrides = {}) {
   const changes = changeRequests();
   return mergeDeep(
@@ -170,11 +211,26 @@ function publicationInput(overrides = {}) {
       },
       sourceBacklog: {
         inquiryCqiBacklogReceiptHash: DIGEST_C,
+        inquiryCqiBacklogDigest: DIGEST_9,
+        userAssistanceReceiptHash: DIGEST_D,
+        userAssistanceAnalyticsDigest: DIGEST_6,
         documentationRunbookReceiptHash: DIGEST_D,
         currentManualSetHash: DIGEST_E,
         currentManualIndexHash: DIGEST_F,
         cqiActionPackageHash: DIGEST_1,
         driftImprovementRef: 'drift-documentation-friction-alpha',
+        contextualManualDrawerReceiptHash: DIGEST_7,
+        contextualManualDrawerHash: DIGEST_8,
+        controlledDocumentDistributionReceiptHash: DIGEST_9,
+        priorDocumentationPublicationReceiptHash: DIGEST_A,
+        manualExportReceiptHash: DIGEST_4,
+        roleManualCoverageReceiptHash: DIGEST_R,
+        acknowledgementRosterHash: DIGEST_C,
+        manualNavigationAcknowledgedRoleRefs: ['clinical_research_coordinator', 'quality_manager'],
+        manualNavigationRequiredAcknowledgementRoleRefs: ['clinical_research_coordinator', 'quality_manager'],
+        manualNavigationCurrentVersionOnly: true,
+        manualNavigationObsoleteVersionUseBlocked: true,
+        manualNavigationEffectiveUseAcknowledged: true,
         noRawInquiryContent: true,
         reviewedAtHlc: { physicalMs: 1800008860000, logical: 0 },
         metadataOnly: true,
@@ -257,6 +313,7 @@ function publicationInput(overrides = {}) {
         used: true,
         assistantRef: 'documentation-publication-ai-alpha',
         recommendationHash: DIGEST_F,
+        orientationReceiptHash: DIGEST_2,
         limitationHashes: [DIGEST_1],
         advisoryOnly: true,
         finalAuthority: false,
@@ -265,6 +322,7 @@ function publicationInput(overrides = {}) {
         metadataOnly: true,
         protectedContentExcluded: true,
       },
+      manualExportReadiness: manualExportReadiness(),
       humanReview: {
         reviewerDid: 'did:exo:quality-owner-alpha',
         reviewerRoleRefs: ['quality_manager'],
@@ -313,8 +371,26 @@ test('documentation change publication produces deterministic inactive publicati
   assert.equal(first.documentationPublication.distributionReady, true);
   assert.equal(first.documentationPublication.driftFeedbackReady, true);
   assert.equal(first.documentationPublication.aiAssistanceUsed, true);
+  assert.equal(first.documentationPublication.manualExportReady, true);
+  assert.equal(first.documentationPublication.inquiryCqiBacklogReceiptHash, DIGEST_C);
+  assert.equal(first.documentationPublication.inquiryCqiBacklogDigest, DIGEST_9);
+  assert.equal(first.documentationPublication.userAssistanceReceiptHash, DIGEST_D);
+  assert.equal(first.documentationPublication.userAssistanceAnalyticsDigest, DIGEST_6);
+  assert.equal(first.documentationPublication.contextualManualDrawerReceiptHash, DIGEST_7);
+  assert.equal(first.documentationPublication.controlledDocumentDistributionReceiptHash, DIGEST_9);
+  assert.equal(first.documentationPublication.priorDocumentationPublicationReceiptHash, DIGEST_A);
+  assert.equal(first.documentationPublication.sourceBacklogManualNavigationEffectiveUseAcknowledged, true);
+  assert.equal(first.documentationPublication.manualExportReceiptHash, DIGEST_4);
+  assert.equal(first.documentationPublication.manualExportPacketHash, DIGEST_5);
+  assert.equal(first.documentationPublication.roleManualCoverageReceiptHash, DIGEST_R);
+  assert.deepEqual(first.documentationPublication.manualExportFormats, REQUIRED_EXPORT_FORMATS);
+  assert.deepEqual(first.documentationPublication.manualExportPacketScopes, REQUIRED_EXPORT_PACKET_SCOPES);
+  assert.deepEqual(first.documentationPublication.orientationCitationFamilies, REQUIRED_ORIENTATION_CITATION_FAMILIES);
+  assert.deepEqual(first.documentationPublication.orientationConfusionSignalFamilies, REQUIRED_ORIENTATION_SIGNAL_FAMILIES);
   assert.equal(first.receipt.anchorPayload.artifactType, 'documentation_change_publication');
   assert.equal(first.receipt.anchorPayload.classification, 'metadata_only_documentation_publication');
+  assert.ok(first.receipt.anchorPayload.sensitivityTags.includes('manual_export_packet_metadata'));
+  assert.ok(first.receipt.anchorPayload.sensitivityTags.includes('manual_navigation_readiness'));
 });
 
 test('documentation publication fails closed for missing domain coverage and incomplete package links', async () => {
@@ -365,6 +441,106 @@ test('documentation publication requires high-risk review and advisory-only AI a
   assert.match(result.reasons.join('\n'), /ai_assistant_not_advisory_only/u);
   assert.match(result.reasons.join('\n'), /ai_final_authority_forbidden/u);
   assert.match(result.reasons.join('\n'), /human_final_authority_missing/u);
+});
+
+test('documentation publication fails closed for unsafe manual export readiness linkage', async () => {
+  const { evaluateDocumentationChangePublication } = await loadDocumentationPublication();
+  const result = evaluateDocumentationChangePublication(
+    publicationInput({
+      manualExportReadiness: manualExportReadiness({
+        manualExportReceiptHash: 'bad',
+        manualExportPacketHash: '',
+        sourceManualSetHash: DIGEST_3,
+        sourceManualIndexHash: DIGEST_9,
+        roleManualCoverageReceiptHash: 'bad',
+        orientationAssistantReceiptHash: DIGEST_3,
+        orientationGuidanceLabel: 'policy_authority',
+        orientationCitationFamilies: ['manual_section'],
+        orientationConfusionSignalFamilies: ['manual_confusion'],
+        exportFormats: ['markdown'],
+        packetScopes: ['role_manual_packet'],
+        roleRefs: [],
+        workflowRefs: [],
+        exportPolicyHash: '',
+        boundaryAttestationHash: '',
+        humanAuthorized: false,
+        noRawManualContent: false,
+        noUnapprovedClaims: false,
+        metadataOnly: false,
+        protectedContentExcluded: false,
+        noProductionTrustClaim: false,
+        readyAtHlc: { physicalMs: 1800009199999, logical: 0 },
+      }),
+    }),
+  );
+
+  assert.equal(result.decision, 'denied');
+  assert.equal(result.receipt, null);
+  assert.match(result.reasons.join('\n'), /manual_export_receipt_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /manual_export_packet_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /manual_export_role_manual_coverage_receipt_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /manual_export_manual_set_mismatch/u);
+  assert.match(result.reasons.join('\n'), /manual_export_manual_index_mismatch/u);
+  assert.match(result.reasons.join('\n'), /manual_export_orientation_receipt_mismatch/u);
+  assert.match(result.reasons.join('\n'), /manual_export_orientation_guidance_label_invalid/u);
+  assert.match(result.reasons.join('\n'), /manual_export_orientation_citation_family_missing:control/u);
+  assert.match(result.reasons.join('\n'), /manual_export_orientation_citation_family_missing:procedure/u);
+  assert.match(result.reasons.join('\n'), /manual_export_orientation_signal_family_missing:ai_orientation_question/u);
+  assert.match(result.reasons.join('\n'), /manual_export_orientation_signal_family_missing:missing_documentation/u);
+  assert.match(result.reasons.join('\n'), /manual_export_orientation_signal_family_missing:product_gap/u);
+  assert.match(result.reasons.join('\n'), /manual_export_format_missing:pdf/u);
+  assert.match(result.reasons.join('\n'), /manual_export_packet_scope_missing:audit_training_packet/u);
+  assert.match(result.reasons.join('\n'), /manual_export_roles_absent/u);
+  assert.match(result.reasons.join('\n'), /manual_export_workflows_absent/u);
+  assert.match(result.reasons.join('\n'), /manual_export_policy_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /manual_export_boundary_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /manual_export_human_authorization_absent/u);
+  assert.match(result.reasons.join('\n'), /manual_export_raw_manual_boundary_absent/u);
+  assert.match(result.reasons.join('\n'), /manual_export_claim_review_boundary_absent/u);
+  assert.match(result.reasons.join('\n'), /manual_export_metadata_boundary_invalid/u);
+  assert.match(result.reasons.join('\n'), /manual_export_protected_boundary_invalid/u);
+  assert.match(result.reasons.join('\n'), /manual_export_production_trust_claim_forbidden/u);
+  assert.match(result.reasons.join('\n'), /manual_export_ready_before_publication/u);
+});
+
+test('documentation publication requires source backlog manual-navigation analytics lineage', async () => {
+  const { evaluateDocumentationChangePublication } = await loadDocumentationPublication();
+  const result = evaluateDocumentationChangePublication(
+    publicationInput({
+      sourceBacklog: {
+        inquiryCqiBacklogDigest: '',
+        userAssistanceReceiptHash: '',
+        userAssistanceAnalyticsDigest: '',
+        contextualManualDrawerReceiptHash: '',
+        controlledDocumentDistributionReceiptHash: '',
+        priorDocumentationPublicationReceiptHash: '',
+        manualExportReceiptHash: DIGEST_5,
+        roleManualCoverageReceiptHash: DIGEST_6,
+        acknowledgementRosterHash: '',
+        manualNavigationAcknowledgedRoleRefs: ['quality_manager'],
+        manualNavigationRequiredAcknowledgementRoleRefs: ['clinical_research_coordinator', 'quality_manager'],
+        manualNavigationCurrentVersionOnly: false,
+        manualNavigationObsoleteVersionUseBlocked: false,
+        manualNavigationEffectiveUseAcknowledged: false,
+      },
+    }),
+  );
+
+  assert.equal(result.decision, 'denied');
+  assert.equal(result.receipt, null);
+  assert.match(result.reasons.join('\n'), /source_backlog_digest_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_user_assistance_receipt_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_user_assistance_analytics_digest_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_drawer_receipt_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_distribution_receipt_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_prior_publication_receipt_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_acknowledgement_roster_hash_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_acknowledgement_incomplete/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_current_version_boundary_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_obsolete_version_boundary_invalid/u);
+  assert.match(result.reasons.join('\n'), /source_manual_navigation_effective_use_absent/u);
+  assert.match(result.reasons.join('\n'), /source_manual_export_receipt_mismatch/u);
+  assert.match(result.reasons.join('\n'), /source_role_manual_coverage_receipt_mismatch/u);
 });
 
 test('documentation publication validates HLC ordering and supports no AI operation', async () => {

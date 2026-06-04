@@ -40,6 +40,14 @@ const REQUIRED_BOUNDARY_CONTROLS = Object.freeze([
   'role_access_filtering',
   'version_history_included',
 ]);
+const REQUIRED_ORIENTATION_CITATION_FAMILIES = Object.freeze(['control', 'manual_section', 'procedure']);
+const REQUIRED_ORIENTATION_SIGNAL_FAMILIES = Object.freeze([
+  'ai_orientation_question',
+  'manual_confusion',
+  'missing_documentation',
+  'product_gap',
+]);
+const REQUIRED_ORIENTATION_GUIDANCE_LABEL = 'guidance_not_policy_authority';
 
 const RAW_MANUAL_EXPORT_FIELDS = new Set([
   'body',
@@ -51,14 +59,29 @@ const RAW_MANUAL_EXPORT_FIELDS = new Set([
   'manualbody',
   'manualcontent',
   'manualtext',
+  'orientationanswer',
+  'orientationbody',
+  'orientationcontent',
+  'orientationcopy',
+  'orientationquestion',
+  'orientationtext',
   'packetbody',
   'packetcontent',
+  'questionbody',
+  'questioncontent',
+  'questiontext',
+  'rawanswer',
   'rawcontent',
   'rawexportcontent',
+  'rawguidance',
   'rawmanualcontent',
   'rawmanualpacket',
   'rawmanualtext',
+  'raworientationanswer',
+  'raworientationcontent',
+  'raworientationquestion',
   'rawpacketcontent',
+  'rawquestion',
   'rawsource',
   'rawsourcedocument',
   'renderedcontent',
@@ -159,6 +182,15 @@ function uniqueReasons(reasons) {
   return [...new Set(reasons)].sort();
 }
 
+function evaluateRequiredSet(actual, expected, missingPrefix, unsupportedPrefix, reasons) {
+  for (const value of expected) {
+    addReason(reasons, !actual.includes(value), `${missingPrefix}:${value}`);
+  }
+  for (const value of actual) {
+    addReason(reasons, !expected.includes(value), `${unsupportedPrefix}:${value}`);
+  }
+}
+
 function hlcTuple(hlc) {
   if (!Number.isSafeInteger(hlc?.physicalMs) || !Number.isSafeInteger(hlc?.logical) || hlc.logical < 0) {
     return null;
@@ -222,6 +254,7 @@ function evaluatePolicy(policy, reasons) {
   addReason(reasons, !isDigest(policy?.policyHash), 'manual_export_policy_hash_invalid');
   addReason(reasons, !ACTIVE_POLICY_STATUSES.has(policy?.status), 'manual_export_policy_inactive');
   addReason(reasons, policy?.humanAuthorizationRequired !== true, 'human_authorization_policy_absent');
+  addReason(reasons, policy?.orientationAssistantSupportRequired !== true, 'orientation_support_policy_absent');
   addReason(reasons, policy?.metadataOnly !== true, 'policy_metadata_only_absent');
   addReason(reasons, policy?.protectedContentExcluded !== true, 'policy_protected_content_boundary_absent');
   addReason(reasons, hlcTuple(policy?.evaluatedAtHlc) === null, 'policy_evaluated_hlc_invalid');
@@ -269,10 +302,20 @@ function evaluateExportRequest(request, policy, reasons) {
 function evaluateSourceManualSet(sourceManualSet, reasons) {
   addReason(reasons, !isDigest(sourceManualSet?.runbookReceiptHash), 'runbook_receipt_hash_invalid');
   addReason(reasons, !isDigest(sourceManualSet?.publicationReceiptHash), 'publication_receipt_hash_invalid');
+  addReason(
+    reasons,
+    !isDigest(sourceManualSet?.roleManualCoverageReceiptHash),
+    'role_manual_coverage_receipt_hash_invalid',
+  );
   addReason(reasons, !isDigest(sourceManualSet?.manualSetHash), 'manual_set_hash_invalid');
   addReason(reasons, !isDigest(sourceManualSet?.manualIndexHash), 'manual_index_hash_invalid');
   addReason(reasons, !hasText(sourceManualSet?.documentationVersionRef), 'documentation_version_ref_absent');
   addReason(reasons, !isDigest(sourceManualSet?.rollbackVersionHash), 'rollback_version_hash_invalid');
+  addReason(
+    reasons,
+    !isDigest(sourceManualSet?.orientationAssistantReceiptHash),
+    'source_manual_set_orientation_receipt_hash_invalid',
+  );
   addReason(reasons, sourceManualSet?.metadataOnly !== true, 'source_manual_set_metadata_only_absent');
   addReason(
     reasons,
@@ -302,6 +345,18 @@ function evaluateManualArtifacts(input, reasons) {
     addReason(reasons, !isDigest(artifact?.manualVersionHash), `manual_version_hash_invalid:${manualRef}`);
     addReason(reasons, !isDigest(artifact?.crosslinkMatrixHash), `manual_crosslink_hash_invalid:${manualRef}`);
     addReason(reasons, !isDigest(artifact?.publicationReceiptHash), `manual_publication_receipt_hash_invalid:${manualRef}`);
+    addReason(
+      reasons,
+      !isDigest(artifact?.roleManualCoverageReceiptHash),
+      `manual_role_coverage_receipt_hash_invalid:${manualRef}`,
+    );
+    addReason(
+      reasons,
+      hasText(input?.sourceManualSet?.roleManualCoverageReceiptHash) &&
+        hasText(artifact?.roleManualCoverageReceiptHash) &&
+        input.sourceManualSet.roleManualCoverageReceiptHash !== artifact.roleManualCoverageReceiptHash,
+      `manual_role_coverage_receipt_mismatch:${manualRef}`,
+    );
     addReason(reasons, artifact?.approvedForExport !== true, `manual_not_approved_for_export:${manualRef}`);
     addReason(reasons, artifact?.currentVersion !== true, `manual_not_current_version:${manualRef}`);
     addReason(reasons, artifact?.highRiskClaimsReviewed !== true, `manual_high_risk_claim_review_missing:${manualRef}`);
@@ -359,6 +414,70 @@ function evaluateBoundaryAttestation(attestation, reasons) {
   }
 }
 
+function evaluateOrientationAssistantSupport(input, reasons) {
+  const support = input?.orientationAssistantSupport;
+  const citationFamilies = sortedTextList(support?.citationFamilies);
+  const confusionSignalFamilies = sortedTextList(support?.confusionSignalFamilies);
+
+  addReason(reasons, !hasText(support?.supportRef), 'orientation_support_ref_absent');
+  addReason(reasons, !isDigest(support?.orientationRecordHash), 'orientation_record_hash_invalid');
+  addReason(reasons, !isDigest(support?.orientationReceiptHash), 'orientation_receipt_hash_invalid');
+  addReason(
+    reasons,
+    hasText(input?.sourceManualSet?.orientationAssistantReceiptHash) &&
+      hasText(support?.orientationReceiptHash) &&
+      input.sourceManualSet.orientationAssistantReceiptHash !== support.orientationReceiptHash,
+    'orientation_receipt_hash_mismatch',
+  );
+  addReason(reasons, support?.guidanceLabel !== REQUIRED_ORIENTATION_GUIDANCE_LABEL, 'orientation_guidance_label_invalid');
+  evaluateRequiredSet(
+    citationFamilies,
+    REQUIRED_ORIENTATION_CITATION_FAMILIES,
+    'orientation_citation_family_missing',
+    'orientation_citation_family_unsupported',
+    reasons,
+  );
+  evaluateRequiredSet(
+    confusionSignalFamilies,
+    REQUIRED_ORIENTATION_SIGNAL_FAMILIES,
+    'orientation_confusion_signal_missing',
+    'orientation_confusion_signal_unsupported',
+    reasons,
+  );
+  addReason(reasons, !hasText(support?.cqiRouteRef), 'orientation_cqi_route_absent');
+  addReason(reasons, !isDigest(support?.cqiPolicyHash), 'orientation_cqi_policy_hash_invalid');
+  addReason(
+    reasons,
+    !isDigest(support?.contextualDrawerReceiptHash),
+    'orientation_contextual_drawer_receipt_hash_invalid',
+  );
+  addReason(reasons, support?.advisoryOnly !== true, 'orientation_support_not_advisory');
+  addReason(reasons, support?.aiFinalAuthority === true, 'orientation_support_ai_final_authority_forbidden');
+  addReason(
+    reasons,
+    support?.noProductionTrustClaim !== true,
+    'orientation_support_production_trust_claim_forbidden',
+  );
+  addReason(reasons, support?.metadataOnly !== true, 'orientation_support_metadata_boundary_invalid');
+  addReason(reasons, support?.protectedContentExcluded !== true, 'orientation_support_protected_boundary_invalid');
+  addReason(reasons, hlcTuple(support?.reviewedAtHlc) === null, 'orientation_support_review_hlc_invalid');
+  addReason(
+    reasons,
+    !hlcAfter(support?.reviewedAtHlc, input?.exportPolicy?.evaluatedAtHlc),
+    'orientation_support_review_before_policy',
+  );
+  addReason(
+    reasons,
+    !hlcAfter(input?.exportRequest?.generatedAtHlc, support?.reviewedAtHlc),
+    'orientation_support_review_not_before_export_generation',
+  );
+
+  return {
+    citationFamilies,
+    confusionSignalFamilies,
+  };
+}
+
 function evaluateHumanAuthorization(authorization, reasons) {
   addReason(
     reasons,
@@ -399,6 +518,8 @@ function createManualExportPacket(input) {
   const latestManualReviewHlc = latestHlc(
     (Array.isArray(input?.manualArtifacts) ? input.manualArtifacts : []).map((artifact) => artifact?.lastReviewedAtHlc),
   );
+  const orientationCitationFamilies = sortedTextList(input?.orientationAssistantSupport?.citationFamilies);
+  const orientationConfusionSignalFamilies = sortedTextList(input?.orientationAssistantSupport?.confusionSignalFamilies);
 
   return {
     schema: MANUAL_EXPORT_SCHEMA,
@@ -418,6 +539,14 @@ function createManualExportPacket(input) {
     metadataOnly: true,
     protectedContentExcluded: true,
     productionTrustClaim: false,
+    roleManualCoverageReceiptHash: input.sourceManualSet.roleManualCoverageReceiptHash,
+    orientationAssistantSupportReady: true,
+    orientationAssistantReceiptHash: input.orientationAssistantSupport.orientationReceiptHash,
+    orientationAssistantRecordHash: input.orientationAssistantSupport.orientationRecordHash,
+    orientationCitationFamilies,
+    orientationConfusionSignalFamilies,
+    orientationCqiRouteRef: input.orientationAssistantSupport.cqiRouteRef,
+    orientationGuidanceLabel: input.orientationAssistantSupport.guidanceLabel,
     latestManualReviewHlc,
     generatedAtHlc: input.exportRequest.generatedAtHlc,
     packetHash: sha256Hex({
@@ -429,6 +558,10 @@ function createManualExportPacket(input) {
       roleRefs: requestedRoles,
       schema: MANUAL_EXPORT_SCHEMA,
       tenantId: input.tenantId,
+      orientationCitationFamilies,
+      orientationConfusionSignalFamilies,
+      roleManualCoverageReceiptHash: input.sourceManualSet.roleManualCoverageReceiptHash,
+      orientationReceiptHash: input.orientationAssistantSupport.orientationReceiptHash,
       workflowRefs: requestedWorkflows,
     }),
   };
@@ -449,6 +582,8 @@ function createManualExportReceipt(input, manualExportPacket) {
       'manual_export_metadata',
       'metadata_only',
       'no_raw_manual_content',
+      'orientation_guidance_metadata',
+      'role_manual_coverage_metadata',
     ],
     sourceSystem: 'cybermedica.documentation_layer',
     tenantId: input.tenantId,
@@ -467,6 +602,7 @@ export function evaluateManualExportPacket(input) {
   evaluateManualArtifacts(input, reasons);
   evaluateExportManifest(input, reasons);
   evaluateBoundaryAttestation(input?.boundaryAttestation, reasons);
+  evaluateOrientationAssistantSupport(input, reasons);
   evaluateHumanAuthorization(input?.humanAuthorization, reasons);
   evaluateReceiptEvidence(input?.receiptEvidence, reasons);
 

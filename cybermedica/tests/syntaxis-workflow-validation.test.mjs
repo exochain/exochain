@@ -248,6 +248,7 @@ test('Syntaxis workflow validation permits deterministic design-time readiness o
   assert.equal(first.syntaxisValidation.runtimeEnforcementReady, false);
   assert.equal(first.syntaxisValidation.trustState, 'inactive');
   assert.equal(first.syntaxisValidation.exochainProductionClaim, false);
+  assert.deepEqual(first.syntaxisValidation.activationGateIds, ['PTAG-011']);
   assert.deepEqual(first.syntaxisValidation.nodeTypesCovered, REQUIRED_NODE_TYPES);
   assert.deepEqual(first.syntaxisValidation.crateRefsCovered, [
     'exo-authority',
