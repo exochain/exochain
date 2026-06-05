@@ -144,6 +144,27 @@ impl AvcApiState {
         receipt_signer: AvcReceiptSigner,
         database_pool: Option<PgPool>,
     ) -> anyhow::Result<Self> {
+        // Production stamps receipts with real wall-clock time (the receipt's
+        // `now` must fall inside the credential's validity window). Tests inject
+        // a fixed source via `with_durable_registry_and_timestamp_source` so their
+        // fixtures stay deterministic.
+        Self::with_durable_registry_and_timestamp_source(
+            data_dir,
+            validator_did,
+            receipt_signer,
+            database_pool,
+            receipt_timestamp_source_from_clock(HybridClock::with_wall_clock(wall_clock_ms)),
+        )
+        .await
+    }
+
+    async fn with_durable_registry_and_timestamp_source(
+        data_dir: &FsPath,
+        validator_did: Did,
+        receipt_signer: AvcReceiptSigner,
+        database_pool: Option<PgPool>,
+        receipt_timestamp_source: AvcReceiptTimestampSource,
+    ) -> anyhow::Result<Self> {
         let durable_state_path = data_dir.join(AVC_REGISTRY_DURABLE_STATE_FILE);
         let (registry, durability) = match database_pool {
             Some(pool) => {
@@ -161,10 +182,27 @@ impl AvcApiState {
             registry: Arc::new(Mutex::new(registry)),
             validator_did,
             receipt_signer,
-            receipt_timestamp_source: receipt_timestamp_source_from_clock(HybridClock::new()),
+            receipt_timestamp_source,
             durability,
         })
     }
+}
+
+/// Real wall-clock millisecond source for receipt timestamps.
+///
+/// The HLC physical component MUST track real time so a minted receipt's `now`
+/// falls inside the credential's validity window. The deterministic
+/// `HybridClock::new()` stub (physical = `DEFAULT_DETERMINISTIC_PHYSICAL_MS`
+/// = 1_000_000 ms ≈ 1970-01-01) made every receipt emit fail `[NotYetValid]`,
+/// because `credential.created_at` (~1.78e12) is always greater than 1_000_000.
+fn wall_clock_ms() -> u64 {
+    // No expect/unwrap and no `as` cast (the crate denies clippy::expect_used /
+    // unwrap_used and warns on as_conversions). The error arm is unreachable
+    // unless the system clock predates 1970.
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 fn receipt_timestamp_source_from_clock(clock: HybridClock) -> AvcReceiptTimestampSource {
@@ -1240,9 +1278,15 @@ mod tests {
 
     async fn fresh_durable_state(data_dir: &FsPath) -> Arc<AvcApiState> {
         let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
-        let state = AvcApiState::with_durable_registry(data_dir, validator_did(), signer, None)
-            .await
-            .expect("durable AVC state");
+        let state = AvcApiState::with_durable_registry_and_timestamp_source(
+            data_dir,
+            validator_did(),
+            signer,
+            None,
+            fixed_receipt_timestamp_source(Timestamp::new(1_000_000, 0)),
+        )
+        .await
+        .expect("durable AVC state");
         seed_avc_trust_keys(&state);
         Arc::new(state)
     }
@@ -1507,6 +1551,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn with_durable_registry_stamps_receipts_with_wall_clock_not_stub() {
+        // Regression: the prod (`with_durable_registry`) constructor wired the
+        // receipt timestamp to the deterministic `HybridClock::new()` stub
+        // (physical = 1_000_000 ms ≈ 1970), so `created_at > trusted_now` was
+        // always true and EVERY receipt emit failed `[NotYetValid]`. The source
+        // must return a real current-epoch timestamp.
+        let dir = tempfile::tempdir().unwrap();
+        let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
+        let state = AvcApiState::with_durable_registry(dir.path(), validator_did(), signer, None)
+            .await
+            .expect("durable AVC state");
+        let ts = (state.receipt_timestamp_source)().expect("receipt timestamp source");
+        assert!(
+            ts.physical_ms >= 1_700_000_000_000,
+            "receipt timestamp must track the wall clock (>= 2023-11), got physical_ms={} \
+             (the 1_000_000 stub is the NotYetValid bug)",
+            ts.physical_ms
+        );
+    }
+
+    #[tokio::test]
     async fn durable_registry_restores_issued_credentials_for_receipt_emit_after_restart() {
         let dir = tempfile::tempdir().unwrap();
         let state = fresh_durable_state(dir.path()).await;
@@ -1693,11 +1758,12 @@ mod tests {
         };
         let dir = tempfile::tempdir().unwrap();
         let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
-        let state = AvcApiState::with_durable_registry(
+        let state = AvcApiState::with_durable_registry_and_timestamp_source(
             dir.path(),
             validator_did(),
             Arc::clone(&signer),
             Some(pool.clone()),
+            fixed_receipt_timestamp_source(Timestamp::new(1_000_000, 0)),
         )
         .await
         .expect("Postgres AVC state");
