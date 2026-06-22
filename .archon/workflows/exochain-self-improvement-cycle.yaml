@@ -117,14 +117,14 @@ nodes:
   - id: create_pr
     command: archon-finalize-pr
     depends_on: [validate_constitution]
-    when: "$validate_constitution.output.passed == 'true'"
+    when: "$validate_constitution.output.passed == 'true' and $validate_constitution.output.governance_disposition == 'APPROVE'"
     description: Create governance-approved PR with full audit trail
     trigger_rule: all_success
 
   - id: remediate
     command: exochain-fix-bug
     depends_on: [validate_constitution]
-    when: "$validate_constitution.output.passed == 'false'"
+    when: "$validate_constitution.output.passed == 'false' or $validate_constitution.output.governance_disposition != 'APPROVE'"
     description: Fix constitutional violations and re-validate
 
   # ── Escalation: auto-report blocking issues to council ──

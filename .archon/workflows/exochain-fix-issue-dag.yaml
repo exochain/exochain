@@ -46,7 +46,7 @@ nodes:
   - id: fix
     command: exochain-fix-bug
     depends_on: [council_review]
-    when: "$council_review.output.aggregate_disposition != 'Rejected'"
+    when: "$council_review.output.aggregate_disposition == 'Approved'"
     description: Implement the fix
 
   - id: validate
@@ -67,7 +67,7 @@ nodes:
   - id: create_pr
     command: archon-finalize-pr
     depends_on: [validate]
-    when: "$validate.output.passed == 'true'"
+    when: "$validate.output.passed == 'true' and $validate.output.governance_disposition == 'APPROVE'"
     trigger_rule: all_success
     description: Create governance-approved PR
 
