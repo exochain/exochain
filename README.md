@@ -94,6 +94,13 @@ pricing or settlement state, and the economy layer never gates trust on
 payment availability. Future governance amendments can switch nonzero
 pricing on by policy without modifying AVC validation.
 
+Production `exo-node` receipt emission requires a trusted HLC physical
+source. Set `EXO_AVC_RECEIPT_HLC_PHYSICAL_MS_FILE` to a file maintained
+by the deployment's trusted clock boundary; the file must contain a
+nonzero integer physical millisecond value. Receipt validation fails
+closed instead of falling back to the deterministic default HLC when this
+operator source is absent or malformed.
+
 HonorGood and Apex Velocity Catalyst Mission Economics now live in
 `exo-economy` as core provenance and settlement primitives: Missions,
 Contribution Receipts, Legacy Receipts, Value Contribution Nodes,

@@ -61,7 +61,7 @@ use exo_avc::{
     AvcValidationResult, InMemoryAvcRegistry, avc_action_signature_payload, create_trust_receipt,
     validate_avc,
 };
-use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto, hlc::HybridClock};
+use exo_core::{Did, ExoError, Hash256, PublicKey, Signature, Timestamp, crypto, hlc::HybridClock};
 use exo_root::{RootTrustBundle, verify_root_bundle};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Postgres, Row, Transaction};
@@ -76,6 +76,7 @@ pub const AVC_ROOT_TRUST_BUNDLE_ID_HEX: &str =
 pub const AVC_ROOT_TRUST_ISSUER_DID: &str = "did:exo:8EVGmqLo15JEnrbcrLo9r84qX1mtrVeBdPjHLUtb1sXX";
 pub const AVC_ROOT_TRUST_ISSUER_PUBLIC_KEY_HEX: &str =
     "6b765381964de7f74e77e4f9d265105f415e58722d19ff71603f62c31d5aff32";
+pub const AVC_RECEIPT_HLC_PHYSICAL_MS_FILE_ENV: &str = "EXO_AVC_RECEIPT_HLC_PHYSICAL_MS_FILE";
 const AVC_REGISTRY_DURABLE_STATE_FILE: &str = "avc-registry.cbor";
 const AVC_REGISTRY_POSTGRES_TABLE: &str = "avc_registry_state";
 const AVC_REGISTRY_POSTGRES_KEY: &str = "default";
@@ -154,14 +155,91 @@ impl AvcApiState {
                 AvcRegistryDurability::File(Arc::new(durable_state_path)),
             ),
         };
+        Self::with_durable_registry_and_receipt_timestamp_source(
+            registry,
+            durability,
+            validator_did,
+            receipt_signer,
+            configured_receipt_timestamp_source()?,
+        )
+    }
+
+    fn with_durable_registry_and_receipt_timestamp_source(
+        registry: InMemoryAvcRegistry,
+        durability: AvcRegistryDurability,
+        validator_did: Did,
+        receipt_signer: AvcReceiptSigner,
+        receipt_timestamp_source: AvcReceiptTimestampSource,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             registry: Arc::new(Mutex::new(registry)),
             validator_did,
             receipt_signer,
-            receipt_timestamp_source: receipt_timestamp_source_from_clock(HybridClock::new()),
+            receipt_timestamp_source,
             durability,
         })
     }
+}
+
+fn configured_receipt_timestamp_source() -> anyhow::Result<AvcReceiptTimestampSource> {
+    match std::env::var(AVC_RECEIPT_HLC_PHYSICAL_MS_FILE_ENV) {
+        Ok(raw_path) => {
+            let trimmed_path = raw_path.trim();
+            if trimmed_path.is_empty() {
+                anyhow::bail!(
+                    "{AVC_RECEIPT_HLC_PHYSICAL_MS_FILE_ENV} must name a trusted HLC physical-ms file"
+                );
+            }
+            Ok(receipt_timestamp_source_from_physical_ms_file(
+                PathBuf::from(trimmed_path),
+            ))
+        }
+        Err(std::env::VarError::NotPresent) => {
+            #[cfg(test)]
+            {
+                Ok(receipt_timestamp_source_from_clock(HybridClock::new()))
+            }
+            #[cfg(not(test))]
+            {
+                anyhow::bail!(
+                    "trusted AVC receipt HLC source unavailable; set \
+                    {AVC_RECEIPT_HLC_PHYSICAL_MS_FILE_ENV} to a file containing current trusted HLC physical milliseconds"
+                );
+            }
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("{AVC_RECEIPT_HLC_PHYSICAL_MS_FILE_ENV} is not valid Unicode");
+        }
+    }
+}
+
+fn receipt_timestamp_source_from_physical_ms_file(path: PathBuf) -> AvcReceiptTimestampSource {
+    receipt_timestamp_source_from_clock(HybridClock::with_fallible_wall_clock(move || {
+        let raw = fs::read_to_string(&path).map_err(|error| ExoError::ClockUnavailable {
+            reason: format!(
+                "failed to read AVC receipt HLC physical-ms file at {}: {error}",
+                path.display()
+            ),
+        })?;
+        let physical_ms =
+            raw.trim()
+                .parse::<u64>()
+                .map_err(|error| ExoError::ClockUnavailable {
+                    reason: format!(
+                        "failed to parse AVC receipt HLC physical milliseconds from {}: {error}",
+                        path.display()
+                    ),
+                })?;
+        if physical_ms == 0 {
+            return Err(ExoError::ClockUnavailable {
+                reason: format!(
+                    "AVC receipt HLC physical-ms file at {} must contain a nonzero value",
+                    path.display()
+                ),
+            });
+        }
+        Ok(physical_ms)
+    }))
 }
 
 fn receipt_timestamp_source_from_clock(clock: HybridClock) -> AvcReceiptTimestampSource {
@@ -1111,6 +1189,23 @@ mod tests {
         let state = AvcApiState::with_durable_registry(data_dir, validator_did(), signer, None)
             .await
             .expect("durable AVC state");
+        seed_avc_trust_keys(&state);
+        Arc::new(state)
+    }
+
+    fn fresh_durable_state_with_receipt_timestamp_source(
+        data_dir: &FsPath,
+        receipt_timestamp_source: AvcReceiptTimestampSource,
+    ) -> Arc<AvcApiState> {
+        let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
+        let state = AvcApiState::with_durable_registry_and_receipt_timestamp_source(
+            InMemoryAvcRegistry::new(),
+            AvcRegistryDurability::File(Arc::new(data_dir.join(AVC_REGISTRY_DURABLE_STATE_FILE))),
+            validator_did(),
+            signer,
+            receipt_timestamp_source,
+        )
+        .expect("durable AVC state with trusted receipt timestamp source");
         seed_avc_trust_keys(&state);
         Arc::new(state)
     }
@@ -2098,6 +2193,68 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
         assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn durable_receipt_emit_rejects_backdated_request_with_configured_hlc_file_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let clock_path = dir.path().join("trusted-avc-receipt-hlc-ms");
+        std::fs::write(&clock_path, "1600000\n").unwrap();
+        let state = fresh_durable_state_with_receipt_timestamp_source(
+            dir.path(),
+            receipt_timestamp_source_from_physical_ms_file(clock_path),
+        );
+        let credential = credential_expiring_at(Timestamp::new(1_550_000, 0));
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let backdated_now = Timestamp::new(1_500_000, 0);
+        let request = AvcValidationRequest {
+            credential,
+            action: Some(baseline_action(Did::new("did:exo:agent").unwrap())),
+            now: backdated_now,
+        };
+        let body = serde_json::to_vec(&EmitReceiptRequest {
+            validation: request.clone(),
+            subject_signature: sign_action(&request, &subject_keypair()),
+            subject_public_key: None,
+        })
+        .unwrap();
+
+        let app = avc_router(Arc::clone(&state));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/avc/receipts/emit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[test]
+    fn receipt_timestamp_source_reads_operator_hlc_physical_ms_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let clock_path = dir.path().join("trusted-avc-receipt-hlc-ms");
+        std::fs::write(&clock_path, "1600000\n").unwrap();
+        let source = receipt_timestamp_source_from_physical_ms_file(clock_path.clone());
+
+        assert_eq!(source().unwrap(), Timestamp::new(1_600_000, 0));
+        std::fs::write(&clock_path, "1700000\n").unwrap();
+        assert_eq!(source().unwrap(), Timestamp::new(1_700_000, 0));
+        std::fs::write(&clock_path, "0\n").unwrap();
+        let error = source().unwrap_err().to_string();
+        assert!(error.contains("AVC receipt HLC unavailable"));
+        assert!(error.contains("must contain a nonzero value"));
     }
 
     #[tokio::test]
@@ -3130,6 +3287,20 @@ mod tests {
         assert!(
             production.contains("AvcRegistryDurability::File"),
             "AVC durable registry must keep a no-DATABASE_URL file fallback for local nodes"
+        );
+        assert!(
+            production.contains("configured_receipt_timestamp_source()"),
+            "AVC durable registry must use an explicit trusted receipt HLC source"
+        );
+        assert!(
+            production.contains("AVC_RECEIPT_HLC_PHYSICAL_MS_FILE_ENV"),
+            "AVC durable registry must expose operator configuration for trusted receipt HLC physical time"
+        );
+        assert!(
+            !production.contains(
+                "receipt_timestamp_source: receipt_timestamp_source_from_clock(HybridClock::new())"
+            ),
+            "AVC durable registry must not use the deterministic default HLC as trusted receipt time"
         );
     }
 }
