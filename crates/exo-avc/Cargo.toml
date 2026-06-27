@@ -33,4 +33,5 @@ exo-core = { path = "../exo-core" }
 exo-authority = { path = "../exo-authority" }
 serde = { workspace = true }
 ciborium = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }

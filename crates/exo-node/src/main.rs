@@ -39,6 +39,7 @@
 mod api;
 mod auth;
 mod avc;
+mod avc_rfc3161;
 mod challenges;
 mod cli;
 mod config;

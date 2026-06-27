@@ -46,10 +46,12 @@
 //! workers are not held under the registry lock.
 
 use std::{
+    collections::BTreeSet,
     fs::{self, File},
     io::Write,
     path::{Path as FsPath, PathBuf},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use axum::{
@@ -63,11 +65,12 @@ use exo_avc::{
     AVC_MAX_SUPPORTED_PROTOCOL_VERSION, AVC_MIN_SUPPORTED_PROTOCOL_VERSION,
     AVC_PROTOCOL_DEPRECATION_WINDOW_DAYS, AVC_PROTOCOL_VERSION, AVC_SCHEMA_VERSION,
     AutonomousVolitionCredential, AvcActionDescriptor, AvcActionRequest, AvcDecision,
-    AvcReceiptEvidenceSubject, AvcReceiptExternalTimestampProof, AvcReceiptTimestampProvenance,
-    AvcRegistryDurableState, AvcRegistryRead, AvcRegistryWrite, AvcRevocation, AvcTrustReceipt,
-    AvcTrustReceiptEvidence, AvcValidationRequest, AvcValidationResult, InMemoryAvcRegistry,
-    avc_action_commitment_hash, avc_action_descriptor_hash, avc_action_signature_payload,
-    create_trust_receipt_with_evidence, require_supported_avc_protocol_version, validate_avc,
+    AvcReceiptEvidenceSubject, AvcReceiptExternalTimestampProof, AvcReceiptRfc3161TimestampProof,
+    AvcReceiptTimestampProvenance, AvcRegistryDurableState, AvcRegistryRead, AvcRegistryWrite,
+    AvcRevocation, AvcTrustReceipt, AvcTrustReceiptEvidence, AvcValidationRequest,
+    AvcValidationResult, InMemoryAvcRegistry, avc_action_commitment_hash,
+    avc_action_descriptor_hash, avc_action_signature_payload, create_trust_receipt_with_evidence,
+    require_supported_avc_protocol_version, validate_avc,
 };
 use exo_core::{
     Did, Hash256, PublicKey, Signature, Timestamp, crypto,
@@ -83,6 +86,7 @@ use tower::limit::ConcurrencyLimitLayer;
 
 const MAX_AVC_API_BODY_BYTES: usize = 64 * 1024;
 const MAX_AVC_API_CONCURRENT_REQUESTS: usize = 64;
+const AVC_EXTERNAL_TIMESTAMP_AUTHORITY_TIMEOUT: Duration = Duration::from_secs(10);
 pub const AVC_ROOT_TRUST_BUNDLE_ENV: &str = "EXO_AVC_ROOT_TRUST_BUNDLE";
 pub const AVC_REQUIRE_POSTGRES_DURABILITY_ENV: &str = "EXO_AVC_REQUIRE_POSTGRES_DURABILITY";
 pub const AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV: &str =
@@ -95,10 +99,15 @@ pub const AVC_ROOT_TRUST_ISSUER_PUBLIC_KEY_HEX: &str =
     "6b765381964de7f74e77e4f9d265105f415e58722d19ff71603f62c31d5aff32";
 pub const AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV: &str =
     "EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL";
+pub const AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_ENV: &str =
+    "EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND";
+pub const AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_JSON_ED25519: &str = "json-ed25519";
+pub const AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_RFC3161: &str = "rfc3161";
 pub const AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV: &str =
     "EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID";
 pub const AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV: &str =
     "EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX";
+pub const AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV: &str = "EXO_AVC_RFC3161_TIMESTAMP_POLICY_OID";
 const AVC_REGISTRY_DURABLE_STATE_FILE: &str = "avc-registry.cbor";
 const AVC_REGISTRY_POSTGRES_TABLE: &str = "avc_registry_state";
 const AVC_REGISTRY_POSTGRES_KEY: &str = "default";
@@ -117,10 +126,17 @@ pub type AvcReceiptSigner = Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>;
 #[derive(Clone)]
 enum AvcReceiptExternalTimestampSource {
     Unconfigured,
-    Http {
+    HttpJson {
         endpoint: Arc<String>,
         authority_did: Did,
         authority_public_key: PublicKey,
+        client: reqwest::Client,
+    },
+    Rfc3161 {
+        endpoint: Arc<String>,
+        authority_did: Did,
+        authority_public_key_spki_der_hexes: Arc<Vec<String>>,
+        policy_oid: Arc<String>,
         client: reqwest::Client,
     },
     #[cfg(test)]
@@ -130,6 +146,67 @@ enum AvcReceiptExternalTimestampSource {
         issued_at: Timestamp,
         signer: AvcReceiptSigner,
     },
+    #[cfg(test)]
+    FixedRfc3161 {
+        authority_did: Did,
+        issued_at: Timestamp,
+        token_der_base64: String,
+        policy_oid: String,
+        serial_number_hex: String,
+        nonce_hex: String,
+        tsa_subject: String,
+        tsa_public_key_spki_der_hex: String,
+    },
+}
+
+impl core::fmt::Debug for AvcReceiptExternalTimestampSource {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Unconfigured => f.write_str("AvcReceiptExternalTimestampSource::Unconfigured"),
+            Self::HttpJson {
+                endpoint,
+                authority_did,
+                ..
+            } => f
+                .debug_struct("AvcReceiptExternalTimestampSource::HttpJson")
+                .field("endpoint", endpoint)
+                .field("authority_did", authority_did)
+                .finish_non_exhaustive(),
+            Self::Rfc3161 {
+                endpoint,
+                authority_did,
+                policy_oid,
+                ..
+            } => f
+                .debug_struct("AvcReceiptExternalTimestampSource::Rfc3161")
+                .field("endpoint", endpoint)
+                .field("authority_did", authority_did)
+                .field("policy_oid", policy_oid)
+                .finish_non_exhaustive(),
+            #[cfg(test)]
+            Self::Fixed {
+                authority_did,
+                issued_at,
+                ..
+            } => f
+                .debug_struct("AvcReceiptExternalTimestampSource::Fixed")
+                .field("authority_did", authority_did)
+                .field("issued_at", issued_at)
+                .finish_non_exhaustive(),
+            #[cfg(test)]
+            Self::FixedRfc3161 {
+                authority_did,
+                issued_at,
+                policy_oid,
+                ..
+            } => f
+                .debug_struct("AvcReceiptExternalTimestampSource::FixedRfc3161")
+                .field("authority_did", authority_did)
+                .field("issued_at", issued_at)
+                .field("policy_oid", policy_oid)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -184,11 +261,14 @@ fn external_timestamp_error_class(err: &anyhow::Error) -> &'static str {
 impl AvcReceiptExternalTimestampSource {
     async fn issue_proof(
         &self,
-        subject_hash: Hash256,
+        evidence_subject: &AvcReceiptEvidenceSubject,
     ) -> anyhow::Result<AvcReceiptExternalTimestampProof> {
+        let subject_hash = evidence_subject.hash().map_err(|error| {
+            anyhow::anyhow!("AVC timestamp evidence subject hash failed: {error}")
+        })?;
         match self {
             Self::Unconfigured => Err(AvcExternalTimestampFailure::Unconfigured.into()),
-            Self::Http {
+            Self::HttpJson {
                 endpoint,
                 authority_did,
                 authority_public_key,
@@ -236,6 +316,68 @@ impl AvcReceiptExternalTimestampSource {
                 })?;
                 Ok(proof)
             }
+            Self::Rfc3161 {
+                endpoint,
+                authority_did,
+                authority_public_key_spki_der_hexes,
+                policy_oid,
+                client,
+            } => {
+                let request = crate::avc_rfc3161::build_timestamp_request(
+                    evidence_subject,
+                    policy_oid.as_str(),
+                )
+                .map_err(|error| AvcExternalTimestampFailure::InvalidProof {
+                    reason: error.to_string(),
+                })?;
+                let response = client
+                    .post(endpoint.as_str())
+                    .header("Content-Type", "application/timestamp-query")
+                    .header("Accept", "application/timestamp-reply")
+                    .body(request.der)
+                    .send()
+                    .await
+                    .map_err(|error| AvcExternalTimestampFailure::Unreachable {
+                        reason: error.to_string(),
+                    })?;
+                let status = response.status();
+                if !status.is_success() {
+                    return Err(AvcExternalTimestampFailure::Rejected {
+                        status: status.to_string(),
+                    }
+                    .into());
+                }
+                let response_der = response.bytes().await.map_err(|error| {
+                    AvcExternalTimestampFailure::InvalidResponse {
+                        reason: error.to_string(),
+                    }
+                })?;
+                let verified = crate::avc_rfc3161::verify_timestamp_response_with_spki_pins(
+                    &response_der,
+                    subject_hash,
+                    request.message_imprint_sha256,
+                    &request.nonce_hex,
+                    policy_oid.as_str(),
+                    authority_public_key_spki_der_hexes.as_slice(),
+                )
+                .map_err(|error| AvcExternalTimestampFailure::InvalidProof {
+                    reason: error.to_string(),
+                })?;
+                Ok(AvcReceiptExternalTimestampProof::rfc3161(
+                    authority_did.clone(),
+                    verified.subject_hash,
+                    verified.issued_at,
+                    AvcReceiptRfc3161TimestampProof {
+                        message_imprint_sha256_hex: verified.message_imprint_sha256_hex,
+                        token_der_base64: verified.token_der_base64,
+                        policy_oid: verified.policy_oid,
+                        serial_number_hex: verified.serial_number_hex,
+                        nonce_hex: verified.nonce_hex,
+                        tsa_subject: verified.tsa_subject,
+                        tsa_public_key_spki_der_hex: verified.tsa_public_key_spki_der_hex,
+                    },
+                ))
+            }
             #[cfg(test)]
             Self::Fixed {
                 authority_did,
@@ -263,6 +405,36 @@ impl AvcReceiptExternalTimestampSource {
                 })?;
                 Ok(proof)
             }
+            #[cfg(test)]
+            Self::FixedRfc3161 {
+                authority_did,
+                issued_at,
+                token_der_base64,
+                policy_oid,
+                serial_number_hex,
+                nonce_hex,
+                tsa_subject,
+                tsa_public_key_spki_der_hex,
+            } => Ok(AvcReceiptExternalTimestampProof::rfc3161(
+                authority_did.clone(),
+                subject_hash,
+                *issued_at,
+                AvcReceiptRfc3161TimestampProof {
+                    message_imprint_sha256_hex: hex::encode(
+                        evidence_subject
+                            .rfc3161_sha256_message_imprint()
+                            .map_err(|error| AvcExternalTimestampFailure::InvalidProof {
+                                reason: error.to_string(),
+                            })?,
+                    ),
+                    token_der_base64: token_der_base64.clone(),
+                    policy_oid: policy_oid.clone(),
+                    serial_number_hex: serial_number_hex.clone(),
+                    nonce_hex: nonce_hex.clone(),
+                    tsa_subject: tsa_subject.clone(),
+                    tsa_public_key_spki_der_hex: tsa_public_key_spki_der_hex.clone(),
+                },
+            )),
         }
     }
 }
@@ -275,12 +447,13 @@ fn external_timestamp_proof_from_wire(
     })?;
     let subject_hash = parse_hash_anyhow(&wire.subject_hash, "AVC timestamp subject hash")?;
     let signature = parse_signature_hex(&wire.signature_hex, "AVC timestamp signature")?;
-    Ok(AvcReceiptExternalTimestampProof {
+    let mut proof = AvcReceiptExternalTimestampProof::unsigned(
         authority_did,
         subject_hash,
-        issued_at: Timestamp::new(wire.issued_at_physical_ms, wire.issued_at_logical),
-        signature,
-    })
+        Timestamp::new(wire.issued_at_physical_ms, wire.issued_at_logical),
+    );
+    proof.signature = signature;
+    Ok(proof)
 }
 
 fn validate_external_timestamp_proof(
@@ -562,44 +735,184 @@ impl AvcApiState {
 
 fn configured_external_timestamp_source_from_env()
 -> anyhow::Result<AvcReceiptExternalTimestampSource> {
-    let endpoint = std::env::var(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV).ok();
-    let authority_did = std::env::var(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV).ok();
-    let authority_public_key =
-        std::env::var(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV).ok();
+    configured_external_timestamp_source_from_reader(|name| match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} must be valid UTF-8"),
+    })
+}
 
-    match (endpoint, authority_did, authority_public_key) {
-        (Some(endpoint), Some(authority_did), Some(authority_public_key)) => {
-            if endpoint.trim().is_empty() {
-                anyhow::bail!("{AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV} must not be empty");
+fn clean_optional_env_value(
+    value: Option<String>,
+    name: &'static str,
+) -> anyhow::Result<Option<String>> {
+    match value {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                anyhow::bail!("{name} must not be empty");
             }
-            let authority_did = Did::new(&authority_did).map_err(|error| {
+            Ok(Some(trimmed.to_owned()))
+        }
+        None => Ok(None),
+    }
+}
+
+fn require_optional_env_value(value: Option<String>, name: &'static str) -> anyhow::Result<String> {
+    clean_optional_env_value(value, name)?
+        .ok_or_else(|| anyhow::anyhow!("{name} is required for RFC 3161 AVC timestamp authority"))
+}
+
+fn parse_non_empty_hex_string(raw: &str, label: &str) -> anyhow::Result<String> {
+    let bytes = hex::decode(raw)
+        .map_err(|error| anyhow::anyhow!("invalid {label} hex constant: {error}"))?;
+    if bytes.is_empty() {
+        anyhow::bail!("invalid {label} hex constant: expected non-empty DER bytes");
+    }
+    Ok(hex::encode(bytes))
+}
+
+fn parse_non_empty_hex_string_set(raw: &str, label: &str) -> anyhow::Result<Vec<String>> {
+    let mut pins = Vec::new();
+    let mut seen = BTreeSet::new();
+    for (index, part) in raw.split(',').enumerate() {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            anyhow::bail!(
+                "invalid {label} hex constant list: member {} is empty",
+                index + 1
+            );
+        }
+        let pin = parse_non_empty_hex_string(trimmed, label)?;
+        if !seen.insert(pin.clone()) {
+            anyhow::bail!(
+                "invalid {label} hex constant list: duplicate member {}",
+                index + 1
+            );
+        }
+        pins.push(pin);
+    }
+    if pins.is_empty() {
+        anyhow::bail!("invalid {label} hex constant list: expected at least one member");
+    }
+    Ok(pins)
+}
+
+fn external_timestamp_http_client() -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_TIMEOUT)
+        .build()
+        .map_err(|error| anyhow::anyhow!("AVC external timestamp HTTP client failed: {error}"))
+}
+
+fn configured_external_timestamp_source_from_reader<F>(
+    read: F,
+) -> anyhow::Result<AvcReceiptExternalTimestampSource>
+where
+    F: Fn(&'static str) -> anyhow::Result<Option<String>>,
+{
+    let kind = clean_optional_env_value(
+        read(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_ENV)?,
+        AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_ENV,
+    )?;
+    let endpoint = clean_optional_env_value(
+        read(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV)?,
+        AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV,
+    )?;
+    let authority_did = clean_optional_env_value(
+        read(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV)?,
+        AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV,
+    )?;
+    let authority_public_key = clean_optional_env_value(
+        read(AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV)?,
+        AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV,
+    )?;
+    let policy_oid = clean_optional_env_value(
+        read(AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV)?,
+        AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV,
+    )?;
+
+    if kind.is_none()
+        && endpoint.is_none()
+        && authority_did.is_none()
+        && authority_public_key.is_none()
+        && policy_oid.is_none()
+    {
+        tracing::warn!(
+            kind_env = AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_ENV,
+            url_env = AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV,
+            did_env = AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV,
+            key_env = AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV,
+            policy_env = AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV,
+            require_env = AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV,
+            "AVC external timestamp authority is not configured; receipt emission will use local EXOCHAIN HLC finality unless external timestamp proof is explicitly required"
+        );
+        return Ok(AvcReceiptExternalTimestampSource::Unconfigured);
+    }
+
+    let kind =
+        kind.unwrap_or_else(|| AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_JSON_ED25519.to_owned());
+    match kind.as_str() {
+        AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_JSON_ED25519 => {
+            if endpoint.is_none() || authority_did.is_none() || authority_public_key.is_none() {
+                anyhow::bail!(
+                    "AVC external timestamp authority configuration is incomplete for {AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_JSON_ED25519}; set {AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV}, {AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV}, and {AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV} together"
+                );
+            }
+            if policy_oid.is_some() {
+                anyhow::bail!(
+                    "{AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV} is only valid with {AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_ENV}={AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_RFC3161}"
+                );
+            }
+            let endpoint = endpoint.unwrap_or_default();
+            let authority_did_raw = authority_did.unwrap_or_default();
+            let authority_did = Did::new(&authority_did_raw).map_err(|error| {
                 anyhow::anyhow!(
                     "{AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV} is not a valid DID: {error}"
                 )
             })?;
             let authority_public_key = parse_expected_public_key(
-                &authority_public_key,
+                &authority_public_key.unwrap_or_default(),
                 AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV,
             )?;
-            Ok(AvcReceiptExternalTimestampSource::Http {
+            Ok(AvcReceiptExternalTimestampSource::HttpJson {
                 endpoint: Arc::new(endpoint),
                 authority_did,
                 authority_public_key,
-                client: reqwest::Client::new(),
+                client: external_timestamp_http_client()?,
             })
         }
-        (None, None, None) => {
-            tracing::warn!(
-                url_env = AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV,
-                did_env = AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV,
-                key_env = AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV,
-                require_env = AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY_ENV,
-                "AVC external timestamp authority is not configured; receipt emission will use local EXOCHAIN HLC finality unless external timestamp proof is explicitly required"
-            );
-            Ok(AvcReceiptExternalTimestampSource::Unconfigured)
+        AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_RFC3161 => {
+            let endpoint =
+                require_optional_env_value(endpoint, AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV)?;
+            let authority_did_raw = require_optional_env_value(
+                authority_did,
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV,
+            )?;
+            let authority_public_key_spki_der_hexes = parse_non_empty_hex_string_set(
+                &require_optional_env_value(
+                    authority_public_key,
+                    AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV,
+                )?,
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV,
+            )?;
+            let policy_oid =
+                require_optional_env_value(policy_oid, AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV)?;
+            let authority_did = Did::new(&authority_did_raw).map_err(|error| {
+                anyhow::anyhow!(
+                    "{AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV} is not a valid DID: {error}"
+                )
+            })?;
+            Ok(AvcReceiptExternalTimestampSource::Rfc3161 {
+                endpoint: Arc::new(endpoint),
+                authority_did,
+                authority_public_key_spki_der_hexes: Arc::new(authority_public_key_spki_der_hexes),
+                policy_oid: Arc::new(policy_oid),
+                client: external_timestamp_http_client()?,
+            })
         }
         _ => anyhow::bail!(
-            "AVC external timestamp authority configuration is incomplete; set {AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV}, {AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV}, and {AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV} together"
+            "{AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_ENV} must be {AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_JSON_ED25519} or {AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_RFC3161}"
         ),
     }
 }
@@ -1437,18 +1750,18 @@ fn trusted_local_hlc_timestamp(state: &AvcApiState) -> anyhow::Result<Timestamp>
 
 async fn trusted_external_timestamp_proof(
     state: &AvcApiState,
-    subject_hash: Hash256,
+    evidence_subject: &AvcReceiptEvidenceSubject,
 ) -> ApiResult<AvcReceiptExternalTimestampProof> {
     state
         .external_timestamp_source
-        .issue_proof(subject_hash)
+        .issue_proof(evidence_subject)
         .await
         .map_err(external_timestamp_error)
 }
 
 async fn trusted_receipt_timestamp_evidence(
     state: &AvcApiState,
-    subject_hash: Hash256,
+    evidence_subject: &AvcReceiptEvidenceSubject,
 ) -> ApiResult<AvcReceiptTimestampEvidence> {
     if matches!(
         state.external_timestamp_source,
@@ -1463,7 +1776,8 @@ async fn trusted_receipt_timestamp_evidence(
         });
     }
 
-    let external_timestamp_proof = trusted_external_timestamp_proof(state, subject_hash).await?;
+    let external_timestamp_proof =
+        trusted_external_timestamp_proof(state, evidence_subject).await?;
     Ok(AvcReceiptTimestampEvidence {
         trusted_now: external_timestamp_proof.issued_at,
         provenance: AvcReceiptTimestampProvenance::ExternalTimestampAuthority,
@@ -1854,9 +2168,7 @@ async fn handle_emit_receipt(
         action_descriptor_hash,
         previous_receipt_hash,
     };
-    let timestamp_evidence =
-        trusted_receipt_timestamp_evidence(&state, evidence_subject.hash().map_err(map_avc_error)?)
-            .await?;
+    let timestamp_evidence = trusted_receipt_timestamp_evidence(&state, &evidence_subject).await?;
     let trusted_now = timestamp_evidence.trusted_now;
     let state_for_registry = Arc::clone(&state);
     let mut response = with_registry_blocking(state_for_registry, true, move |registry| {
@@ -2082,8 +2394,8 @@ mod tests {
     use exo_avc::{
         AVC_SCHEMA_VERSION, AuthorityScope, AutonomyLevel, AvcActionDescriptor, AvcActionRequest,
         AvcConstraints, AvcDecision, AvcDraft, AvcReasonCode, AvcReceiptEvidenceSubject,
-        AvcRevocationReason, AvcSubjectKind, DelegatedIntent, avc_action_descriptor_hash,
-        create_trust_receipt, issue_avc, revoke_avc,
+        AvcReceiptExternalTimestampProofKind, AvcRevocationReason, AvcSubjectKind, DelegatedIntent,
+        avc_action_descriptor_hash, create_trust_receipt, issue_avc, revoke_avc,
     };
     use exo_core::{Hash256, Signature, Timestamp, crypto, crypto::KeyPair};
     use tower::ServiceExt;
@@ -2094,6 +2406,10 @@ mod tests {
     const SUBJECT_SEED: [u8; 32] = [0x22; 32];
     const VALIDATOR_SEED: [u8; 32] = [0x33; 32];
     const TIMESTAMP_AUTHORITY_SEED: [u8; 32] = [0x44; 32];
+    const MICROSOFT_PUBLIC_RSA_TSA_DID: &str = "did:exo:microsoft-public-rsa-tsa";
+    const MICROSOFT_FIXTURE_SIGNER_SPKI_HEX: &str = "30820222300d06092a864886f70d01010105000382020f003082020a0282020100b4a59f9bfba5d36eff77c4656fc327fe0d1052fbcba98d95b32ded23c536b454aca53668999383dc11d3f0b911f91ae130981bd558c0285372b1a2bd70b49789f3c648806b3c282cf4fe32db896b2449ab57a439cf8066a8c8483eb66112f6675a9092e073bb8d849e8bf9f1982effd44afe9792e0dcf992c5bf1dd8855c011c52c350789b107a5c8d2791e97dc1ad5d61bdb07c6a687eb6859b164ec53f5e361b782c7d1105256e79b6ba64da634bfd20b5f9bbaa2222c8fea9e8f4734d36cc9d5aac1e757f77fad6d331f1f90f90359e7052a2a64d9241f6153ce77fb6a57e6b0df2b7dae358f7f5813809b36ea82911d4246e231abd43325034a19b2708be01dd4274b6d3bb138fc33e9092f7b4e75a84fb8fa8cc2c6820a075fc30431d0ef5329eec54af6c0118b3502795d0a5fca1c6642395bd436a8f22f5d092ded3ff860fdff29ea5c6585a573a36ae9ef67f70a44e8633783397bac71d1bda68aa70f8a2e3f8a2d9985e29a9652444fb08a96915286cdf0ca0e85fdfa2343142f3e76d60f8372c7a9618d68f09a82dcc7ac351520ad6af2c2972df704b452953538a8a53169af1ded837b12aa67f573b4498d2e98ebca157ad61fbaf197ef626a2722b5d9d34e4b009d18ef7a474a4f7960ee544c7e67d953cbd73623745182734fd123aa3466d2e37f874a17c4f84d7cf62a7856f23d7186c73698533eb3c77a9370203010001";
+    const MICROSOFT_LIVE_SIGNER_SPKI_HEX_20260627: &str = "30820222300d06092a864886f70d01010105000382020f003082020a02820201009d7834a47690ecf5409659fe1d966b24570ba0a6de9215b5c8bf9034152014552c8d920a6aaa8de28209b09337a6cd2b24d48eee7742351b990d7d9682eaf7024efb797ae5a015ea6663ba6555de0cd4422e5756e00d3f35f8f327b5d791d1218ebf358215c4a51ef30bec1b68d37eb0f4b1ccb01905e89b0c53fb5f0b39c17d19b48b0dd5adbe5eae5bbd6a77911332b70b244e3ba746078b64bfed069db7ec955d44f14043d8d844aa42a94068fefd718c12d1095dcf6a52a39c67dbdcc37853b8d5caa89f1474a17275b9084451a019946bab32803cc54abf1ede0f774cf34b1548af504d0698b7db5f971e0f51add45719eb1fc92d5013ce4e7e0561db331c092159153d3a9248c8d0e8a4ca75c9eade91f4738005269fe096f729ab453d7f36488c9186bdda62b2195197bed142d5214a3c47bc29f72c2ff1a904303874900ec1a1e8d5f60f445fb12c84b53001c8069efb6c351c1c930d372695334b12e40b7828f580d05d2168f458e6320ed8e343ff224d663a7b2d6f6fda87963223e478089dd4f93fd318936560d9eee129464d04d6c0fe1b2006cba867e217f3d5af8c437d69b17dd52e0e255ba29e62ac2cefcc2db9e5ee292e0f474dea803461ec320d09dcb35dac33d1ceb6eef6400fd366579fbd6f2bf71b4c5c06284257068ec93c5b851cedc7ea56a6c83e376873c6710732dc5dc5723f8a797322f0be430203010001";
+    const MICROSOFT_FIXTURE_TSA_SUBJECT: &str = "C=US, ST=Washington, L=Redmond, O=Microsoft Corporation, OU=Microsoft America Operations, OU=nShield TSS ESN:A500-05E0-D947, CN=Microsoft Public RSA Time Stamping Authority";
 
     #[derive(Clone, Copy)]
     enum TestTimestampAuthorityMode {
@@ -2150,11 +2466,39 @@ mod tests {
     }
 
     fn http_external_timestamp_source(endpoint: String) -> AvcReceiptExternalTimestampSource {
-        AvcReceiptExternalTimestampSource::Http {
+        AvcReceiptExternalTimestampSource::HttpJson {
             endpoint: Arc::new(endpoint),
             authority_did: timestamp_authority_did(),
             authority_public_key: timestamp_authority_keypair().public,
             client: reqwest::Client::new(),
+        }
+    }
+
+    fn rfc3161_external_timestamp_source(endpoint: String) -> AvcReceiptExternalTimestampSource {
+        AvcReceiptExternalTimestampSource::Rfc3161 {
+            endpoint: Arc::new(endpoint),
+            authority_did: Did::new(MICROSOFT_PUBLIC_RSA_TSA_DID).unwrap(),
+            authority_public_key_spki_der_hexes: Arc::new(vec![
+                MICROSOFT_FIXTURE_SIGNER_SPKI_HEX.to_owned(),
+            ]),
+            policy_oid: Arc::new(
+                crate::avc_rfc3161::MICROSOFT_ARTIFACT_SIGNING_POLICY_OID.to_owned(),
+            ),
+            client: reqwest::Client::new(),
+        }
+    }
+
+    fn fixed_rfc3161_external_timestamp_source() -> AvcReceiptExternalTimestampSource {
+        AvcReceiptExternalTimestampSource::FixedRfc3161 {
+            authority_did: Did::new(MICROSOFT_PUBLIC_RSA_TSA_DID).unwrap(),
+            issued_at: Timestamp::new(1_782_571_620_539, 0),
+            token_der_base64: crate::avc_rfc3161::microsoft_fixture_timestamp_token_der_base64()
+                .unwrap(),
+            policy_oid: crate::avc_rfc3161::MICROSOFT_ARTIFACT_SIGNING_POLICY_OID.to_owned(),
+            serial_number_hex: "6a1c57054080".to_owned(),
+            nonce_hex: "a173ce171bc853e8".to_owned(),
+            tsa_subject: MICROSOFT_FIXTURE_TSA_SUBJECT.to_owned(),
+            tsa_public_key_spki_der_hex: MICROSOFT_FIXTURE_SIGNER_SPKI_HEX.to_owned(),
         }
     }
 
@@ -2381,15 +2725,58 @@ mod tests {
         (format!("http://{address}"), handle)
     }
 
+    async fn serve_test_rfc3161_timestamp_authority(
+        status: StatusCode,
+        response_der: Vec<u8>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        async fn issue_timestamp(
+            State((status, response_der)): State<(StatusCode, Vec<u8>)>,
+            headers: axum::http::HeaderMap,
+            body: axum::body::Bytes,
+        ) -> axum::response::Response {
+            assert_eq!(
+                headers
+                    .get("content-type")
+                    .and_then(|value| value.to_str().ok()),
+                Some("application/timestamp-query")
+            );
+            assert!(!body.is_empty(), "RFC 3161 request body must be DER");
+            (
+                status,
+                [("content-type", "application/timestamp-reply")],
+                response_der,
+            )
+                .into_response()
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new()
+            .route("/", post(issue_timestamp))
+            .with_state((status, response_der));
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{address}"), handle)
+    }
+
     async fn emit_baseline_receipt_with_source(
         external_timestamp_source: AvcReceiptExternalTimestampSource,
     ) -> (StatusCode, Arc<AvcApiState>, Vec<u8>) {
+        emit_baseline_receipt_with_source_and_strict(external_timestamp_source, false).await
+    }
+
+    async fn emit_baseline_receipt_with_source_and_strict(
+        external_timestamp_source: AvcReceiptExternalTimestampSource,
+        require_external_timestamp: bool,
+    ) -> (StatusCode, Arc<AvcApiState>, Vec<u8>) {
         let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
-        let state = AvcApiState::new_with_external_timestamp_source(
+        let mut state = AvcApiState::new_with_external_timestamp_source(
             validator_did(),
             signer,
             external_timestamp_source,
         );
+        state.require_external_timestamp = require_external_timestamp;
         seed_avc_trust_keys(&state);
         let state = Arc::new(state);
         let credential = baseline_credential();
@@ -3418,6 +3805,137 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn receipt_emit_strict_rfc3161_attaches_microsoft_proof_action_meaning_and_finality() {
+        let dir = tempfile::tempdir().unwrap();
+        let finality_store = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(dir.path()).unwrap(),
+        ));
+        let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
+        let mut state = AvcApiState::new_with_external_timestamp_source_and_finality_store(
+            validator_did(),
+            signer,
+            fixed_rfc3161_external_timestamp_source(),
+            Some(Arc::clone(&finality_store)),
+        );
+        state.require_external_timestamp = true;
+        seed_avc_trust_keys(&state);
+        let state = Arc::new(state);
+        let credential = credential_expiring_at(Timestamp::new(1_900_000_000_000, 0));
+        let credential_id = credential.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let request = AvcValidationRequest {
+            credential,
+            action: Some(baseline_action(Did::new("did:exo:agent").unwrap())),
+            now: Timestamp::new(1_500_000, 0),
+        };
+        let action = request.action.as_ref().unwrap();
+        let action_id = action.action_id;
+        let action_commitment_hash =
+            avc_action_commitment_hash(&request.credential, action, &request.now).unwrap();
+        let action_descriptor = AvcActionDescriptor::from_action(action);
+        let action_descriptor_hash = avc_action_descriptor_hash(&action_descriptor).unwrap();
+        let body = serde_json::to_vec(&EmitReceiptRequest {
+            validation: request.clone(),
+            subject_signature: sign_action(&request, &subject_keypair()),
+            subject_public_key: None,
+        })
+        .unwrap();
+
+        let response = avc_router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/avc/receipts/emit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let parsed: EmitReceiptResponse =
+            serde_json::from_slice(&read_body(response).await).unwrap();
+        assert_eq!(
+            parsed.receipt.timestamp_provenance,
+            Some(AvcReceiptTimestampProvenance::ExternalTimestampAuthority)
+        );
+        assert_eq!(parsed.receipt.action_descriptor, Some(action_descriptor));
+        assert_eq!(
+            parsed.receipt.action_descriptor_hash,
+            Some(action_descriptor_hash)
+        );
+        assert_eq!(
+            parsed.receipt.action_commitment_hash,
+            Some(action_commitment_hash)
+        );
+        assert_eq!(parsed.receipt.previous_receipt_hash, None);
+        let evidence_subject = AvcReceiptEvidenceSubject {
+            credential_id,
+            action_id,
+            action_commitment_hash,
+            action_descriptor_hash,
+            previous_receipt_hash: None,
+        };
+        let evidence_subject_hash = evidence_subject.hash().unwrap();
+        let external_timestamp_proof = parsed.receipt.external_timestamp_proof.as_ref().unwrap();
+        assert_eq!(
+            external_timestamp_proof.authority_did,
+            Did::new(MICROSOFT_PUBLIC_RSA_TSA_DID).unwrap()
+        );
+        assert_eq!(external_timestamp_proof.subject_hash, evidence_subject_hash);
+        assert_eq!(
+            external_timestamp_proof.proof_kind,
+            AvcReceiptExternalTimestampProofKind::Rfc3161
+        );
+        let rfc3161 = external_timestamp_proof.rfc3161.as_ref().unwrap();
+        assert_eq!(
+            rfc3161.message_imprint_sha256_hex,
+            hex::encode(evidence_subject.rfc3161_sha256_message_imprint().unwrap())
+        );
+        assert_eq!(
+            rfc3161.token_der_base64,
+            crate::avc_rfc3161::microsoft_fixture_timestamp_token_der_base64().unwrap()
+        );
+        assert_eq!(
+            rfc3161.policy_oid,
+            crate::avc_rfc3161::MICROSOFT_ARTIFACT_SIGNING_POLICY_OID
+        );
+        assert_eq!(rfc3161.serial_number_hex, "6a1c57054080");
+        assert_eq!(rfc3161.nonce_hex, "a173ce171bc853e8");
+        assert_eq!(rfc3161.tsa_subject, MICROSOFT_FIXTURE_TSA_SUBJECT);
+        assert_eq!(
+            rfc3161.tsa_public_key_spki_der_hex,
+            MICROSOFT_FIXTURE_SIGNER_SPKI_HEX
+        );
+        assert_eq!(
+            parsed.receipt.created_at,
+            external_timestamp_proof.issued_at
+        );
+        assert!(parsed.exochain_finality_hash.is_some());
+        assert_eq!(parsed.exochain_finality_height, Some(1));
+        assert!(parsed.exochain_finality_receipt_hash.is_some());
+        let finality_hash = parse_hash_anyhow(
+            parsed.exochain_finality_hash.as_deref().unwrap(),
+            "strict RFC 3161 finality hash",
+        )
+        .unwrap();
+        assert!(
+            finality_store
+                .lock()
+                .unwrap()
+                .contains_sync(&finality_hash)
+                .unwrap()
+        );
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    #[tokio::test]
     async fn receipt_emit_uses_local_hlc_finality_when_external_timestamp_not_configured() {
         let dir = tempfile::tempdir().unwrap();
         let finality_store = Arc::new(Mutex::new(
@@ -4049,6 +4567,22 @@ mod tests {
 
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn receipt_emit_fails_closed_for_strict_rfc3161_malformed_der_before_storage() {
+        let (endpoint, timestamp_authority) =
+            serve_test_rfc3161_timestamp_authority(StatusCode::OK, vec![0x30, 0x03, 0x02]).await;
+
+        let (status, state, _) = emit_baseline_receipt_with_source_and_strict(
+            rfc3161_external_timestamp_source(endpoint),
+            true,
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+        timestamp_authority.abort();
     }
 
     #[test]
@@ -5317,6 +5851,177 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(key_error.contains("expected 32 bytes"));
+    }
+
+    fn external_timestamp_source_from_pairs(
+        pairs: Vec<(&'static str, &str)>,
+    ) -> anyhow::Result<AvcReceiptExternalTimestampSource> {
+        let values = pairs
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        configured_external_timestamp_source_from_reader(|name| {
+            Ok(values.get(name).map(|value| (*value).to_owned()))
+        })
+    }
+
+    #[test]
+    fn rfc3161_env_config_requires_kind_triplet_policy_and_pinned_spki() {
+        let err = external_timestamp_source_from_pairs(vec![
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_ENV,
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_RFC3161,
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV,
+                "http://timestamp.acs.microsoft.com",
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV,
+                "did:exo:microsoft-public-rsa-tsa",
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV,
+                "30820122300d06092a864886f70d01010105000382010f",
+            ),
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains(AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV));
+
+        let microsoft_tsa_pin_set = format!(
+            "{MICROSOFT_FIXTURE_SIGNER_SPKI_HEX},{MICROSOFT_LIVE_SIGNER_SPKI_HEX_20260627}"
+        );
+        let source = external_timestamp_source_from_pairs(vec![
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_ENV,
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_RFC3161,
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV,
+                "http://timestamp.acs.microsoft.com",
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV,
+                "did:exo:microsoft-public-rsa-tsa",
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV,
+                microsoft_tsa_pin_set.as_str(),
+            ),
+            (
+                AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV,
+                crate::avc_rfc3161::MICROSOFT_ARTIFACT_SIGNING_POLICY_OID,
+            ),
+        ])
+        .unwrap();
+
+        match source {
+            AvcReceiptExternalTimestampSource::Rfc3161 {
+                endpoint,
+                authority_did,
+                authority_public_key_spki_der_hexes,
+                policy_oid,
+                ..
+            } => {
+                assert_eq!(endpoint.as_str(), "http://timestamp.acs.microsoft.com");
+                assert_eq!(
+                    authority_did.to_string(),
+                    "did:exo:microsoft-public-rsa-tsa"
+                );
+                assert_eq!(
+                    authority_public_key_spki_der_hexes.as_slice(),
+                    &[
+                        MICROSOFT_FIXTURE_SIGNER_SPKI_HEX.to_owned(),
+                        MICROSOFT_LIVE_SIGNER_SPKI_HEX_20260627.to_owned(),
+                    ]
+                );
+                assert_eq!(
+                    policy_oid.as_str(),
+                    crate::avc_rfc3161::MICROSOFT_ARTIFACT_SIGNING_POLICY_OID
+                );
+            }
+            _ => panic!("rfc3161 kind must construct the RFC 3161 timestamp source"),
+        }
+
+        let duplicate_pin_set =
+            format!("{MICROSOFT_FIXTURE_SIGNER_SPKI_HEX},{MICROSOFT_FIXTURE_SIGNER_SPKI_HEX}");
+        let duplicate_pin_err = external_timestamp_source_from_pairs(vec![
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_ENV,
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_RFC3161,
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV,
+                "http://timestamp.acs.microsoft.com",
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV,
+                "did:exo:microsoft-public-rsa-tsa",
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV,
+                duplicate_pin_set.as_str(),
+            ),
+            (
+                AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV,
+                crate::avc_rfc3161::MICROSOFT_ARTIFACT_SIGNING_POLICY_OID,
+            ),
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(duplicate_pin_err.contains("duplicate member"));
+
+        let empty_pin_set = format!("{MICROSOFT_FIXTURE_SIGNER_SPKI_HEX},");
+        let empty_pin_err = external_timestamp_source_from_pairs(vec![
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_ENV,
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND_RFC3161,
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV,
+                "http://timestamp.acs.microsoft.com",
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV,
+                "did:exo:microsoft-public-rsa-tsa",
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV,
+                empty_pin_set.as_str(),
+            ),
+            (
+                AVC_RFC3161_TIMESTAMP_POLICY_OID_ENV,
+                crate::avc_rfc3161::MICROSOFT_ARTIFACT_SIGNING_POLICY_OID,
+            ),
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(empty_pin_err.contains("member 2 is empty"));
+    }
+
+    #[test]
+    fn json_ed25519_env_config_remains_backward_compatible_without_kind() {
+        let source = external_timestamp_source_from_pairs(vec![
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL_ENV,
+                "http://127.0.0.1:3000",
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID_ENV,
+                "did:exo:timestamp-authority",
+            ),
+            (
+                AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX_ENV,
+                &timestamp_authority_keypair().public.to_string(),
+            ),
+        ])
+        .unwrap();
+
+        match source {
+            AvcReceiptExternalTimestampSource::HttpJson { .. } => {}
+            _ => panic!("missing kind must preserve the legacy JSON Ed25519 adapter"),
+        }
     }
 
     #[test]

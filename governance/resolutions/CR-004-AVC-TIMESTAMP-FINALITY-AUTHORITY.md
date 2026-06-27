@@ -164,9 +164,48 @@ Production implementations must not:
 - downgrade failed external timestamp verification into success;
 - disclose authority private keys, bootstrap tokens, database URLs, or raw secrets through health, status, debug, telemetry, or receipt responses.
 
-Production activation must record the concrete authority configuration. If the implementation uses `EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL`, `EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID`, and `EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX`, all three must be present, non-empty, and verified before civilizational-class proof mode is active. Deployments that set `EXO_AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY=true` must fail closed when the external timestamp authority is absent or unverifiable; deployments that leave that strict mode disabled may emit only internal or EXOCHAIN-finality receipt evidence and must not label it court-grade or public-reliance external time.
+Production activation must record the concrete authority configuration. If the implementation uses `EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL`, `EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID`, and `EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX`, all three must be present, non-empty, and verified before civilizational-class proof mode is active. The public-key variable may contain a comma-separated set of approved TSA signer SPKI DER hex pins when a provider uses multiple live signing keys behind one RFC 3161 endpoint. Deployments that set `EXO_AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY=true` must fail closed when the external timestamp authority is absent or unverifiable; deployments that leave that strict mode disabled may emit only internal or EXOCHAIN-finality receipt evidence and must not label it court-grade or public-reliance external time.
 
 Provider selection does not require a new constitutional resolution when the provider satisfies this Resolution, the authority material is recorded, the test plan passes, and no member veto is recorded. A provider that changes the trust model, custody model, legal jurisdiction, or finality semantics requires renewed Council review.
+
+### 6.1 Microsoft RFC 3161 Activation Record
+
+The approved initial external timestamp authority for production strict AVC receipt emission is Microsoft Azure Artifact Signing's RFC 3161 timestamp service.
+
+| Field | Value |
+|-------|-------|
+| Authority name | Microsoft Azure Artifact Signing RFC 3161 Timestamp Authority |
+| Service type | RFC 3161 Time-Stamp Protocol over HTTP with CMS/X.509 TimeStampToken response |
+| Endpoint | `http://timestamp.acs.microsoft.com` |
+| Authority DID | `did:exo:microsoft-public-rsa-tsa` |
+| Timestamp policy OID | `1.3.6.1.4.1.601.10.3.1` |
+| Digest bound into RFC 3161 request | SHA-256 message imprint of canonical AVC evidence-subject bytes |
+| EXOCHAIN commitment retained in receipt | Existing BLAKE3 `Hash256` evidence-subject hash |
+| Production mode | `EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND=rfc3161` and `EXO_AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY=true` |
+| HTTP timeout | 10 seconds per authority request |
+| Retry behavior | No automatic retry inside receipt emission; callers or operators may retry the same AVC emission request, and receipt idempotency prevents duplicate divergent receipts. |
+| Rotation behavior | Fail closed when the signer SPKI is absent from the pinned set until Council/operator authority material is updated and preflight passes. |
+| Rollback path | Disable civilizational-class claims and unset strict external authority requirement, or redeploy with a newly approved authority record; do not silently relabel output as court-grade. |
+| Entitlement context | Microsoft AI Partner / Azure benefits may cover account entitlement and cost controls; EXOCHAIN trust relies on cryptographic RFC 3161 verification, not partner status. |
+
+Production strict configuration must set:
+
+```text
+EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_KIND=rfc3161
+EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_URL=http://timestamp.acs.microsoft.com
+EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_DID=did:exo:microsoft-public-rsa-tsa
+EXO_AVC_EXTERNAL_TIMESTAMP_AUTHORITY_PUBLIC_KEY_HEX=<comma-separated Microsoft TSA signer SPKI DER hex pin set from the preflight-verified production deployment guide>
+EXO_AVC_RFC3161_TIMESTAMP_POLICY_OID=1.3.6.1.4.1.601.10.3.1
+EXO_AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY=true
+```
+
+The preflight command is:
+
+```bash
+EXO_AVC_RFC3161_LIVE_PREFLIGHT=1 ./tools/avc_rfc3161_microsoft_preflight.sh
+```
+
+The June 27, 2026 preflights verified live Microsoft TimeStampTokens from the same endpoint with signer subjects `CN=Microsoft Public RSA Time Stamping Authority,OU=nShield TSS ESN:A500-05E0-D947,OU=Microsoft America Operations,O=Microsoft Corporation,L=Redmond,ST=Washington,C=US` and `CN=Microsoft Public RSA Time Stamping Authority,OU=nShield TSS ESN:7A00-05E0-D947,OU=Microsoft America Operations,O=Microsoft Corporation,L=Redmond,ST=Washington,C=US`. Production strict mode must pin the comma-separated set recorded in `docs/guides/production-deployment.md`; a signer outside that set fails closed.
 
 ---
 

@@ -85,6 +85,12 @@ sha2 = { workspace = true }
 hmac = { workspace = true }
 zeroize = { workspace = true }
 x25519-dalek = { workspace = true }
+base64 = "=0.22.1"
+cms = { version = "=0.3.0-pre.2", default-features = false, features = ["std"] }
+const-oid = "=0.10.2"
+der = { version = "=0.8.0", features = ["std"] }
+ring = "=0.17.14"
+x509-cert = { version = "=0.3.0-rc.4", default-features = false, features = ["std"] }
 
 # Data directory
 directories = "6"

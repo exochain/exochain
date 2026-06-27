@@ -23,6 +23,7 @@
 
 use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto, hash::hash_structured};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use crate::{
     credential::AVC_SCHEMA_VERSION,
@@ -111,14 +112,14 @@ struct AvcReceiptEvidenceSubjectPayload<'a> {
 }
 
 impl AvcReceiptEvidenceSubject {
-    /// Hash the exact receipt evidence subject that an external timestamp
-    /// authority signs. This subject intentionally excludes the node signature
-    /// and final receipt hash to avoid circular evidence.
+    /// Return the exact canonical byte payload committed by the EXOCHAIN
+    /// subject hash and sent to RFC 3161 timestamp authorities as the
+    /// SHA-256 message-imprint preimage.
     ///
     /// # Errors
     /// Returns [`AvcError::Serialization`] when CBOR encoding fails.
-    pub fn hash(&self) -> Result<Hash256, AvcError> {
-        hash_structured(&AvcReceiptEvidenceSubjectPayload {
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, AvcError> {
+        let payload = AvcReceiptEvidenceSubjectPayload {
             domain: AVC_RECEIPT_EVIDENCE_SUBJECT_DOMAIN,
             schema_version: AVC_SCHEMA_VERSION,
             credential_id: &self.credential_id,
@@ -126,9 +127,57 @@ impl AvcReceiptEvidenceSubject {
             action_commitment_hash: &self.action_commitment_hash,
             action_descriptor_hash: &self.action_descriptor_hash,
             previous_receipt_hash: self.previous_receipt_hash.as_ref(),
-        })
-        .map_err(AvcError::from)
+        };
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(&payload, &mut bytes)?;
+        Ok(bytes)
     }
+
+    /// Hash the exact receipt evidence subject that an external timestamp
+    /// authority signs. This subject intentionally excludes the node signature
+    /// and final receipt hash to avoid circular evidence.
+    ///
+    /// # Errors
+    /// Returns [`AvcError::Serialization`] when CBOR encoding fails.
+    pub fn hash(&self) -> Result<Hash256, AvcError> {
+        Ok(Hash256::digest(&self.canonical_bytes()?))
+    }
+
+    /// Compute the RFC 3161 SHA-256 `MessageImprint.hashedMessage` for the
+    /// same canonical evidence-subject bytes committed by [`Self::hash`].
+    ///
+    /// # Errors
+    /// Returns [`AvcError::Serialization`] when CBOR encoding fails.
+    pub fn rfc3161_sha256_message_imprint(&self) -> Result<[u8; 32], AvcError> {
+        let digest = Sha256::digest(self.canonical_bytes()?);
+        let mut imprint = [0u8; 32];
+        imprint.copy_from_slice(&digest);
+        Ok(imprint)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AvcReceiptExternalTimestampProofKind {
+    #[default]
+    JsonEd25519,
+    Rfc3161,
+}
+
+impl AvcReceiptExternalTimestampProofKind {
+    const fn is_json_ed25519(&self) -> bool {
+        matches!(self, Self::JsonEd25519)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AvcReceiptRfc3161TimestampProof {
+    pub message_imprint_sha256_hex: String,
+    pub token_der_base64: String,
+    pub policy_oid: String,
+    pub serial_number_hex: String,
+    pub nonce_hex: String,
+    pub tsa_subject: String,
+    pub tsa_public_key_spki_der_hex: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,6 +186,13 @@ pub struct AvcReceiptExternalTimestampProof {
     pub subject_hash: Hash256,
     pub issued_at: Timestamp,
     pub signature: Signature,
+    #[serde(
+        default,
+        skip_serializing_if = "AvcReceiptExternalTimestampProofKind::is_json_ed25519"
+    )]
+    pub proof_kind: AvcReceiptExternalTimestampProofKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rfc3161: Option<AvcReceiptRfc3161TimestampProof>,
 }
 
 #[derive(Serialize)]
@@ -156,6 +212,25 @@ impl AvcReceiptExternalTimestampProof {
             subject_hash,
             issued_at,
             signature: Signature::empty(),
+            proof_kind: AvcReceiptExternalTimestampProofKind::JsonEd25519,
+            rfc3161: None,
+        }
+    }
+
+    #[must_use]
+    pub fn rfc3161(
+        authority_did: Did,
+        subject_hash: Hash256,
+        issued_at: Timestamp,
+        rfc3161: AvcReceiptRfc3161TimestampProof,
+    ) -> Self {
+        Self {
+            authority_did,
+            subject_hash,
+            issued_at,
+            signature: Signature::empty(),
+            proof_kind: AvcReceiptExternalTimestampProofKind::Rfc3161,
+            rfc3161: Some(rfc3161),
         }
     }
 
@@ -201,6 +276,9 @@ impl AvcReceiptExternalTimestampProof {
     /// # Errors
     /// Returns [`AvcError::Serialization`] when CBOR encoding fails.
     pub fn verify_signature(&self, public_key: &PublicKey) -> Result<bool, AvcError> {
+        if self.proof_kind != AvcReceiptExternalTimestampProofKind::JsonEd25519 {
+            return Ok(false);
+        }
         if self.signature.is_empty() {
             return Ok(false);
         }
@@ -465,6 +543,94 @@ mod tests {
             |bytes| authority.sign(bytes),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn evidence_subject_canonical_bytes_drive_stable_exochain_and_rfc3161_imprints() {
+        let subject = AvcReceiptEvidenceSubject {
+            credential_id: Hash256::from_bytes([0x01; 32]),
+            action_id: Hash256::from_bytes([0x02; 32]),
+            action_commitment_hash: Hash256::from_bytes([0x03; 32]),
+            action_descriptor_hash: Hash256::from_bytes([0x04; 32]),
+            previous_receipt_hash: Some(Hash256::from_bytes([0x05; 32])),
+        };
+        let same_subject = subject;
+        let mut changed_subject = subject;
+        changed_subject.previous_receipt_hash = Some(Hash256::from_bytes([0x06; 32]));
+
+        let canonical = subject.canonical_bytes().unwrap();
+        assert_eq!(canonical, same_subject.canonical_bytes().unwrap());
+        assert_eq!(subject.hash().unwrap(), Hash256::digest(&canonical));
+        assert_eq!(
+            subject.rfc3161_sha256_message_imprint().unwrap(),
+            same_subject.rfc3161_sha256_message_imprint().unwrap()
+        );
+        assert_ne!(
+            subject.rfc3161_sha256_message_imprint().unwrap(),
+            changed_subject.rfc3161_sha256_message_imprint().unwrap()
+        );
+        assert_ne!(
+            subject.hash().unwrap(),
+            changed_subject.hash().unwrap(),
+            "EXOCHAIN BLAKE3 subject commitment must also stay bound to the canonical evidence subject"
+        );
+    }
+
+    #[test]
+    fn legacy_ed25519_and_rfc3161_timestamp_proofs_round_trip_without_shape_loss() {
+        let subject_hash = Hash256::from_bytes([0xA7; 32]);
+        let legacy = external_timestamp_proof(subject_hash);
+        let mut legacy_bytes = Vec::new();
+        ciborium::ser::into_writer(&legacy, &mut legacy_bytes).unwrap();
+        let decoded_legacy: AvcReceiptExternalTimestampProof =
+            ciborium::de::from_reader(legacy_bytes.as_slice()).unwrap();
+
+        assert_eq!(
+            decoded_legacy.proof_kind,
+            AvcReceiptExternalTimestampProofKind::JsonEd25519
+        );
+        assert_eq!(decoded_legacy.rfc3161, None);
+        assert!(
+            decoded_legacy
+                .verify_signature(&fresh_issuer().public)
+                .unwrap()
+        );
+
+        let rfc3161 = AvcReceiptExternalTimestampProof::rfc3161(
+            did("microsoft-public-rsa-tsa"),
+            subject_hash,
+            ts(4_200),
+            AvcReceiptRfc3161TimestampProof {
+                message_imprint_sha256_hex: "3f786850e387550fdab836ed7e6dc881de23001b".to_owned()
+                    + "4b96a0c7bb5f37c2fdc7c7ab",
+                token_der_base64: "MIIBywYJKoZIhvcNAQcCoIIBvDCCAbgCAQMxDzANBglghkgBZQMEAgEFADCB"
+                    .to_owned(),
+                policy_oid: "1.3.6.1.4.1.601.10.3.1".to_owned(),
+                serial_number_hex: "01".to_owned(),
+                nonce_hex: "0102030405060708090a0b0c0d0e0f10".to_owned(),
+                tsa_subject:
+                    "CN=Microsoft Public RSA Time Stamping Authority,O=Microsoft Corporation,C=US"
+                        .to_owned(),
+                tsa_public_key_spki_der_hex: "30820122300d06092a864886f70d01010105000382010f"
+                    .to_owned(),
+            },
+        );
+        let mut rfc3161_bytes = Vec::new();
+        ciborium::ser::into_writer(&rfc3161, &mut rfc3161_bytes).unwrap();
+        let decoded_rfc3161: AvcReceiptExternalTimestampProof =
+            ciborium::de::from_reader(rfc3161_bytes.as_slice()).unwrap();
+
+        assert_eq!(
+            decoded_rfc3161.proof_kind,
+            AvcReceiptExternalTimestampProofKind::Rfc3161
+        );
+        assert!(decoded_rfc3161.signature.is_empty());
+        assert_eq!(decoded_rfc3161.rfc3161, rfc3161.rfc3161);
+        assert!(
+            !decoded_rfc3161
+                .verify_signature(&fresh_issuer().public)
+                .unwrap()
+        );
     }
 
     #[test]
