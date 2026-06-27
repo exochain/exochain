@@ -2230,9 +2230,10 @@ mod tests {
         // from the wall clock.
         let dir = tempfile::tempdir().unwrap();
         let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
-        let state = AvcApiState::with_durable_registry(dir.path(), validator_did(), signer, None, None)
-            .await
-            .expect("durable AVC state");
+        let state =
+            AvcApiState::with_durable_registry(dir.path(), validator_did(), signer, None, None)
+                .await
+                .expect("durable AVC state");
         let ts = trusted_local_hlc_timestamp(&state).expect("local HLC timestamp");
         assert!(
             ts.physical_ms >= 1_700_000_000_000,
