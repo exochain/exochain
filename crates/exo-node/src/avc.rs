@@ -532,7 +532,11 @@ impl AvcApiState {
             validator_did,
             receipt_signer,
             external_timestamp_source: configured_external_timestamp_source_from_env()?,
-            receipt_clock: Arc::new(Mutex::new(HybridClock::new())),
+            // Seed the receipt HLC from the real wall clock. `HybridClock::new()` is the
+            // deterministic 1_000_000 ms (≈1970) stub; on the local-HLC path it makes the
+            // validation `now` predate every credential's `created_at` → every emit
+            // `[NotYetValid]` (regression after the external-timestamp split).
+            receipt_clock: Arc::new(Mutex::new(HybridClock::with_wall_clock(wall_clock_ms))),
             require_external_timestamp: configured_require_external_timestamp_from_env()?,
             finality_store,
             durability,
@@ -558,6 +562,24 @@ impl AvcApiState {
         *registry = candidate;
         Ok(())
     }
+}
+
+/// Real wall-clock millisecond source for the receipt HLC.
+///
+/// `HybridClock::new()` uses the deterministic stub (`DEFAULT_DETERMINISTIC_PHYSICAL_MS`
+/// = 1_000_000 ms ≈ 1970). On the local-HLC timestamp path (no external TSA configured
+/// and `EXO_AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY` not required), the validation
+/// `now` is read from the receipt HLC, so a stubbed clock makes
+/// `credential.created_at > trusted_now` always true and EVERY receipt emit fails
+/// `[NotYetValid]`. Production must seed the receipt clock from the real wall clock.
+fn wall_clock_ms() -> u64 {
+    // No expect/unwrap and no `as` cast (the crate denies clippy::expect_used /
+    // unwrap_used and warns on as_conversions). The error arm is unreachable
+    // unless the system clock predates 1970.
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 fn configured_external_timestamp_source_from_env()
@@ -2194,6 +2216,30 @@ mod tests {
             fixed_external_timestamp_source(Timestamp::new(1_600_000, 0));
         seed_avc_trust_keys(&state);
         Arc::new(state)
+    }
+
+    #[tokio::test]
+    async fn with_durable_registry_seeds_receipt_clock_with_wall_clock_not_stub() {
+        // Regression for the local-HLC `[NotYetValid]` bug: with no external TSA and
+        // `EXO_AVC_REQUIRE_EXTERNAL_TIMESTAMP_AUTHORITY` not required, receipt emission
+        // resolves the validation `now` from `receipt_clock` via
+        // `trusted_local_hlc_timestamp`. If that clock is the deterministic
+        // `HybridClock::new()` stub (physical = 1_000_000 ms ≈ 1970), then
+        // `credential.created_at > trusted_now` is always true and EVERY emit fails
+        // `[NotYetValid]`. The production `with_durable_registry` constructor must seed it
+        // from the wall clock.
+        let dir = tempfile::tempdir().unwrap();
+        let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
+        let state = AvcApiState::with_durable_registry(dir.path(), validator_did(), signer, None, None)
+            .await
+            .expect("durable AVC state");
+        let ts = trusted_local_hlc_timestamp(&state).expect("local HLC timestamp");
+        assert!(
+            ts.physical_ms >= 1_700_000_000_000,
+            "receipt HLC must track the wall clock (>= 2023-11), got physical_ms={} \
+             (the 1_000_000 stub is the NotYetValid bug)",
+            ts.physical_ms
+        );
     }
 
     async fn clear_postgres_avc_registry_state(pool: &PgPool) -> Result<(), sqlx::Error> {
