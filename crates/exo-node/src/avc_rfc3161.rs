@@ -28,7 +28,10 @@ use exo_avc::AvcReceiptEvidenceSubject;
 use exo_core::{Hash256, Timestamp};
 use ring::signature;
 use sha2::{Digest as _, Sha256};
-use x509_cert::{Certificate, ext::pkix::SubjectKeyIdentifier};
+use x509_cert::{
+    Certificate,
+    ext::pkix::{ExtendedKeyUsage, SubjectKeyIdentifier},
+};
 
 #[cfg(test)]
 pub(crate) const MICROSOFT_ARTIFACT_SIGNING_POLICY_OID: &str = "1.3.6.1.4.1.601.10.3.1";
@@ -719,6 +722,98 @@ fn verify_cms_signature(
     Ok(spki_der_hex)
 }
 
+/// `id-kp-timeStamping` (RFC 5280) — required EKU for an RFC 3161 TSA signer.
+const ID_KP_TIME_STAMPING_OID: &str = "1.3.6.1.5.5.7.3.8";
+
+/// Fail unless the certificate asserts the `id-kp-timeStamping` extended key
+/// usage. Required so that pinning the issuing CA cannot be abused by some other
+/// leaf the CA issued for a different purpose.
+fn signer_asserts_timestamping_eku(cert: &Certificate) -> anyhow::Result<()> {
+    let eku = cert
+        .tbs_certificate()
+        .get_extension::<ExtendedKeyUsage>()
+        .map_err(|error| anyhow::anyhow!("TSA signer EKU extension parse failed: {error}"))?
+        .ok_or_else(|| {
+            anyhow::anyhow!("TSA signer certificate has no Extended Key Usage extension")
+        })?;
+    if eku.1.0.iter().any(|oid| oid.to_string() == ID_KP_TIME_STAMPING_OID) {
+        Ok(())
+    } else {
+        anyhow::bail!("TSA signer certificate EKU does not assert id-kp-timeStamping")
+    }
+}
+
+/// Verify `cert`'s outer signature (over its tbsCertificate) against an issuer
+/// RSA public key. Reuses the same RSA-PKCS1-SHA256 primitive as CMS signature
+/// verification — no hand-rolled crypto.
+fn verify_certificate_signed_by(
+    cert: &Certificate,
+    issuer_modulus: &[u8],
+    issuer_exponent: &[u8],
+) -> anyhow::Result<()> {
+    let sig_alg = cert.signature_algorithm.oid.to_string();
+    if sig_alg != SHA256_WITH_RSA_ENCRYPTION_OID {
+        anyhow::bail!("TSA signer certificate signature algorithm {sig_alg} is not RSA SHA-256");
+    }
+    let tbs_der = cert.tbs_certificate().to_der().map_err(|error| {
+        anyhow::anyhow!("TSA signer tbsCertificate DER encoding failed: {error}")
+    })?;
+    let signature_bytes = cert.signature.as_bytes().ok_or_else(|| {
+        anyhow::anyhow!("TSA signer certificate signature has unused BIT STRING bits")
+    })?;
+    signature::RsaPublicKeyComponents {
+        n: issuer_modulus,
+        e: issuer_exponent,
+    }
+    .verify(
+        &signature::RSA_PKCS1_2048_8192_SHA256,
+        &tbs_der,
+        signature_bytes,
+    )
+    .map_err(|_| {
+        anyhow::anyhow!("TSA signer certificate signature did not verify against the pinned CA")
+    })?;
+    Ok(())
+}
+
+/// Accept the signer iff it chains to a PINNED issuing CA: the signer asserts the
+/// timeStamping EKU, an issuer cert present in the token has a pinned SPKI and a
+/// subject equal to the signer's issuer, AND that CA actually signed the signer's
+/// tbsCertificate. This is rotation-proof against Microsoft's public TSA, which
+/// rotates a fleet of signer leaves under one CA (issue #716). Returns the pinned
+/// CA SPKI hex on success.
+fn signer_chains_to_pinned_ca(
+    signer_cert: &Certificate,
+    certificates: &[&Certificate],
+    expected_spki_der_hexes: &[String],
+) -> anyhow::Result<String> {
+    signer_asserts_timestamping_eku(signer_cert)?;
+    let signer_issuer = signer_cert.tbs_certificate().issuer();
+    for candidate in certificates {
+        if candidate.tbs_certificate().subject() != signer_issuer {
+            continue;
+        }
+        let (ca_spki_hex, ca_modulus, ca_exponent) =
+            match rsa_public_key_components_from_certificate(candidate) {
+                Ok(components) => components,
+                Err(_) => continue,
+            };
+        let mut ca_pinned = false;
+        for expected in expected_spki_der_hexes {
+            if ca_spki_hex == canonical_hex(expected, "expected TSA SPKI DER")? {
+                ca_pinned = true;
+                break;
+            }
+        }
+        if !ca_pinned {
+            continue;
+        }
+        verify_certificate_signed_by(signer_cert, &ca_modulus, &ca_exponent)?;
+        return Ok(ca_spki_hex);
+    }
+    anyhow::bail!("RFC 3161 TSA signer certificate did not chain to any pinned CA SPKI")
+}
+
 fn verify_timestamp_response_with_optional_spki_pin(
     response_der: &[u8],
     expected_subject_hash: Hash256,
@@ -811,7 +906,21 @@ fn verify_timestamp_response_with_optional_spki_pin(
             }
         }
         if !signer_matched_pin {
-            anyhow::bail!("RFC 3161 TSA signer public key did not match any pinned SPKI DER");
+            // Leaf SPKI not directly pinned: accept iff the signer chains to a
+            // PINNED issuing CA in the same pin set (Microsoft rotates a fleet of
+            // signer leaves under one CA — issue #716). This enforces the
+            // timeStamping EKU, issuer==CA-subject, and an RSA signature of the
+            // signer's tbsCertificate by the pinned CA.
+            signer_chains_to_pinned_ca(
+                signer_cert,
+                &certificate_refs,
+                expected_tsa_spki_der_hexes,
+            )
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "RFC 3161 TSA signer public key did not match any pinned SPKI DER, and {error}"
+                )
+            })?;
         }
     }
     Ok(Rfc3161VerifiedTimestamp {
@@ -957,6 +1066,10 @@ mod tests {
     const MICROSOFT_FIXTURE_NONCE_HEX: &str = "a173ce171bc853e8";
     const MICROSOFT_FIXTURE_SIGNER_SPKI_HEX: &str = "30820222300d06092a864886f70d01010105000382020f003082020a0282020100b4a59f9bfba5d36eff77c4656fc327fe0d1052fbcba98d95b32ded23c536b454aca53668999383dc11d3f0b911f91ae130981bd558c0285372b1a2bd70b49789f3c648806b3c282cf4fe32db896b2449ab57a439cf8066a8c8483eb66112f6675a9092e073bb8d849e8bf9f1982effd44afe9792e0dcf992c5bf1dd8855c011c52c350789b107a5c8d2791e97dc1ad5d61bdb07c6a687eb6859b164ec53f5e361b782c7d1105256e79b6ba64da634bfd20b5f9bbaa2222c8fea9e8f4734d36cc9d5aac1e757f77fad6d331f1f90f90359e7052a2a64d9241f6153ce77fb6a57e6b0df2b7dae358f7f5813809b36ea82911d4246e231abd43325034a19b2708be01dd4274b6d3bb138fc33e9092f7b4e75a84fb8fa8cc2c6820a075fc30431d0ef5329eec54af6c0118b3502795d0a5fca1c6642395bd436a8f22f5d092ded3ff860fdff29ea5c6585a573a36ae9ef67f70a44e8633783397bac71d1bda68aa70f8a2e3f8a2d9985e29a9652444fb08a96915286cdf0ca0e85fdfa2343142f3e76d60f8372c7a9618d68f09a82dcc7ac351520ad6af2c2972df704b452953538a8a53169af1ded837b12aa67f573b4498d2e98ebca157ad61fbaf197ef626a2722b5d9d34e4b009d18ef7a474a4f7960ee544c7e67d953cbd73623745182734fd123aa3466d2e37f874a17c4f84d7cf62a7856f23d7186c73698533eb3c77a9370203010001";
 
+    // SPKI of the issuing CA "Microsoft Public RSA Timestamping CA 2020", which
+    // signs the rotating fleet of TSA signer leaves (issue #716).
+    const MICROSOFT_FIXTURE_CA_SPKI_HEX: &str = "30820222300d06092a864886f70d01010105000382020f003082020a02820201009e7ce75263fde0c59f057d63b50622a31c1ed7e79733d11305bd6546477791c15d706f7fb2ab43970c4aa1521c6aa0dbfa89858a8e431c2e1105c6f24078d70b0324fe5dd3398b60a018f19c6fde5624b8b0ec7ccb8812abc660e3d44401fe61b9784891044a7b7431b3c4a0a74d8a1c0ce711afd2b1a87c9d6a39849335c739e446c14fbbaadf0c7799786d566b5c084af964a4e428a1350b166f34f59d1962543c2e9ee2e45f58722165c802b09faca337f911e1f92ab9459f1a6328a4dabf07c53fa5da199196506f1365a893a20468025a9c7af6e2aa2a14cf562de0544ae773faa2f9d47c036322033d243749e1ed2a883466e6c39388442d04b19df5585dd4c69dc6819c1eb442b12e6b3bdca1bf67e3247ae6950d042179a9e0384306278a50647e799e02344ddcb56e2ebd20d055e4a9f61d5268f57c51611fc93c601a33ac46979ec48bde47530f4d57fb82df2163ae1734f3ba8b2506b0482df1cd8fc45f3b13e08eec0dbc4e98cdab978b8a2ba784a6ead176e390da14e4986d614ae59806e9c518dbf6d4ab78376d002a66deb929c69ec04277672344a1bbf7e4d7fac4de85ac0ea317de38efe347bc28de58b09067733c9607827279e14c5b72417dd7802a1ce88457bc539c3d5aebdc3f513c708c4ba0a483cc20813aed2159d8f328dbbc6394b007596de5d421001632cd1dddc443bf4f52bf055177ad5ebd0203010001";
+
     fn evidence_subject() -> AvcReceiptEvidenceSubject {
         AvcReceiptEvidenceSubject {
             credential_id: Hash256::from_bytes([0x11; 32]),
@@ -997,6 +1110,48 @@ mod tests {
             MICROSOFT_ARTIFACT_SIGNING_POLICY_OID,
             MICROSOFT_FIXTURE_SIGNER_SPKI_HEX,
         )
+    }
+
+    #[test]
+    fn fixture_signer_verifies_via_pinned_issuing_ca() {
+        // The signer LEAF SPKI is not pinned — only the issuing CA SPKI is. The
+        // signer must still verify by chaining to the pinned CA (timeStamping EKU
+        // + issuer==CA-subject + CA-signed tbsCertificate). This is the #716 fix:
+        // Microsoft rotates a fleet of signer leaves under one stable CA.
+        let verified = verify_timestamp_response_with_spki_pins(
+            &microsoft_fixture_response_der(),
+            microsoft_fixture_subject_hash(),
+            microsoft_fixture_message_imprint(),
+            MICROSOFT_FIXTURE_NONCE_HEX,
+            MICROSOFT_ARTIFACT_SIGNING_POLICY_OID,
+            &[MICROSOFT_FIXTURE_CA_SPKI_HEX.to_owned()],
+        )
+        .expect("signer must verify by chaining to the pinned issuing CA");
+        // The recorded SPKI is still the signer leaf's, not the CA's.
+        assert_eq!(
+            verified.tsa_public_key_spki_der_hex,
+            MICROSOFT_FIXTURE_SIGNER_SPKI_HEX
+        );
+    }
+
+    #[test]
+    fn unrelated_pin_neither_matches_leaf_nor_chains_to_ca() {
+        // A pin that is neither the signer leaf nor the issuing CA must fail
+        // closed — the CA-chain path must never blanket-accept a signer.
+        let err = verify_timestamp_response_with_spki_pins(
+            &microsoft_fixture_response_der(),
+            microsoft_fixture_subject_hash(),
+            microsoft_fixture_message_imprint(),
+            MICROSOFT_FIXTURE_NONCE_HEX,
+            MICROSOFT_ARTIFACT_SIGNING_POLICY_OID,
+            &["abcdef0123456789".to_owned()],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("did not match any pinned SPKI DER"),
+            "unrelated pin must be rejected, got: {err}"
+        );
     }
 
     fn read_tlv_error(bytes: &[u8]) -> String {
