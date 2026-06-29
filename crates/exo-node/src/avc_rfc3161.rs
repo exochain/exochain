@@ -736,7 +736,12 @@ fn signer_asserts_timestamping_eku(cert: &Certificate) -> anyhow::Result<()> {
         .ok_or_else(|| {
             anyhow::anyhow!("TSA signer certificate has no Extended Key Usage extension")
         })?;
-    if eku.1.0.iter().any(|oid| oid.to_string() == ID_KP_TIME_STAMPING_OID) {
+    if eku
+        .1
+        .0
+        .iter()
+        .any(|oid| oid.to_string() == ID_KP_TIME_STAMPING_OID)
+    {
         Ok(())
     } else {
         anyhow::bail!("TSA signer certificate EKU does not assert id-kp-timeStamping")
@@ -751,14 +756,14 @@ fn verify_certificate_signed_by(
     issuer_modulus: &[u8],
     issuer_exponent: &[u8],
 ) -> anyhow::Result<()> {
-    let sig_alg = cert.signature_algorithm.oid.to_string();
+    let sig_alg = cert.signature_algorithm().oid.to_string();
     if sig_alg != SHA256_WITH_RSA_ENCRYPTION_OID {
         anyhow::bail!("TSA signer certificate signature algorithm {sig_alg} is not RSA SHA-256");
     }
     let tbs_der = cert.tbs_certificate().to_der().map_err(|error| {
         anyhow::anyhow!("TSA signer tbsCertificate DER encoding failed: {error}")
     })?;
-    let signature_bytes = cert.signature.as_bytes().ok_or_else(|| {
+    let signature_bytes = cert.signature().as_bytes().ok_or_else(|| {
         anyhow::anyhow!("TSA signer certificate signature has unused BIT STRING bits")
     })?;
     signature::RsaPublicKeyComponents {
