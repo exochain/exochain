@@ -45,6 +45,8 @@ const CMS_MESSAGE_DIGEST_ATTRIBUTE_OID: &str = "1.2.840.113549.1.9.4";
 const CMS_CONTENT_TYPE_ATTRIBUTE_OID: &str = "1.2.840.113549.1.9.3";
 const RSA_ENCRYPTION_OID: &str = "1.2.840.113549.1.1.1";
 const SHA256_WITH_RSA_ENCRYPTION_OID: &str = "1.2.840.113549.1.1.11";
+const SHA384_WITH_RSA_ENCRYPTION_OID: &str = "1.2.840.113549.1.1.12";
+const SHA512_WITH_RSA_ENCRYPTION_OID: &str = "1.2.840.113549.1.1.13";
 const RFC3161_NONCE_DOMAIN: &[u8] = b"exo.avc.rfc3161.nonce.v1";
 const DER_BOOLEAN: u8 = 0x01;
 const DER_INTEGER: u8 = 0x02;
@@ -757,9 +759,21 @@ fn verify_certificate_signed_by(
     issuer_exponent: &[u8],
 ) -> anyhow::Result<()> {
     let sig_alg = cert.signature_algorithm().oid.to_string();
-    if sig_alg != SHA256_WITH_RSA_ENCRYPTION_OID {
-        anyhow::bail!("TSA signer certificate signature algorithm {sig_alg} is not RSA SHA-256");
-    }
+    // Microsoft's TSA CA signs leaves with sha384WithRSAEncryption; accept the
+    // RSA-PKCS1 SHA-256/384/512 family.
+    let verification_params: &signature::RsaParameters = if sig_alg
+        == SHA256_WITH_RSA_ENCRYPTION_OID
+    {
+        &signature::RSA_PKCS1_2048_8192_SHA256
+    } else if sig_alg == SHA384_WITH_RSA_ENCRYPTION_OID {
+        &signature::RSA_PKCS1_2048_8192_SHA384
+    } else if sig_alg == SHA512_WITH_RSA_ENCRYPTION_OID {
+        &signature::RSA_PKCS1_2048_8192_SHA512
+    } else {
+        anyhow::bail!(
+            "TSA signer certificate signature algorithm {sig_alg} is not RSA-PKCS1 SHA-256/384/512"
+        );
+    };
     let tbs_der = cert.tbs_certificate().to_der().map_err(|error| {
         anyhow::anyhow!("TSA signer tbsCertificate DER encoding failed: {error}")
     })?;
@@ -770,11 +784,7 @@ fn verify_certificate_signed_by(
         n: issuer_modulus,
         e: issuer_exponent,
     }
-    .verify(
-        &signature::RSA_PKCS1_2048_8192_SHA256,
-        &tbs_der,
-        signature_bytes,
-    )
+    .verify(verification_params, &tbs_der, signature_bytes)
     .map_err(|_| {
         anyhow::anyhow!("TSA signer certificate signature did not verify against the pinned CA")
     })?;
