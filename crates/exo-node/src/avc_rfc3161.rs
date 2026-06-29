@@ -1183,7 +1183,10 @@ mod tests {
         let rejected = rsa_verification_params_for_oid("1.2.840.113549.1.1.5")
             .unwrap_err()
             .to_string();
-        assert!(rejected.contains("not RSA-PKCS1 SHA-256/384/512"), "got: {rejected}");
+        assert!(
+            rejected.contains("not RSA-PKCS1 SHA-256/384/512"),
+            "got: {rejected}"
+        );
     }
 
     fn read_tlv_error(bytes: &[u8]) -> String {
