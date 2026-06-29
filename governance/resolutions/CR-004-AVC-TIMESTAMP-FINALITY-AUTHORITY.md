@@ -262,3 +262,25 @@ When the external timestamp authority path is production-configured, the validat
 Upon adoption, CR-004 is the canonical Council interpretation of AVC timestamp and finality authority. It binds EXOCHAIN core, core runtime adapters, PR review, deployment status reports, issue closure criteria, adjacent-surface trust claims, and public receipt-evidence language.
 
 This Resolution does not claim billing savings, thesis acceptance, public-route uptime, or production operational verification. Those claims require separate evidence matching the relevant runtime boundary.
+
+---
+
+## Appendix A. Production Evidence Record
+
+This appendix records dated production-verification evidence appended after ratification. It is an evidence log, not an amendment to the binding decision in Sections 3-10.
+
+### A.1 External Timestamp Authority — Production Verified (2026-06-29)
+
+Layer 2 of the Section 3 model (external timestamp or anchor evidence) is now materially satisfied in production. This record discharges the Section 10 caveat on "production operational verification" for the external-timestamp path specifically; it makes no finality, uptime, billing, or thesis claim.
+
+**Implementation.** AVC trust receipts are timestamped by Microsoft's public RSA RFC 3161 authority (`http://timestamp.acs.microsoft.com`, policy OID `1.3.6.1.4.1.601.10.3.1`, `did:exo:microsoft-public-rsa-tsa`) and verified node-side by issuing-CA trust-anchor pinning with a timeStamping-EKU assertion and an RSA SHA-256/384/512 signature check over the signer leaf's `tbsCertificate` (PR #718, closing #716). This replaces the prior signer-leaf-only SPKI pin, which was not sustainable against Microsoft's rotation of a fleet of signer leaves under one issuing CA ("Microsoft Public RSA Timestamping CA 2020").
+
+**Verification — against `exochain-production`, not merged code alone (per Section 1, error 3).** After the 2026-06-29 deploy, with the production node configured for both signer-leaf pins and the issuing-CA pin (`EXO_AVC_RFC3161_TIMESTAMP_CA_SPKI_HEX`):
+
+- 9/9 ad-hoc credential-bearing emits succeeded; receipt fetch-back `GET /api/v1/avc/receipts/<hash>` returned 200.
+- The full runner smoke matrix emitted and fetched back 18/18 cases (nine workflows x {success, blocked}), each `decision=Allow`, each durably stored.
+- Trust-anchor sampling across eight emits recorded both anchor kinds: `signer_spki` for directly-pinned leaves and `issuing_ca_spki` for live rotated leaves that verified by chaining to the pinned CA — confirming the rotation-robust path is load-bearing, not theoretical.
+
+**Related audit findings retired.** exochain/exochain issues #696 (storage-path signature verification), #697 (receipt chaining), #698 (operator-clock timestamps), #699 (action content), and #700 (registry durability) are closed. The one residual item, #713 (retry/backoff for transient TSA unreachability), is reliability hardening rather than a correctness or finality gap, and did not surface in any 2026-06-29 production run.
+
+**Scope of this record.** This appendix attests external-timestamp-authority production verification only. EXOCHAIN finality evidence (Section 3.2) and public-route operational claims remain governed by their own evidence boundaries and are not asserted here.
