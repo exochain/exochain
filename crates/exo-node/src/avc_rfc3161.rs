@@ -750,30 +750,35 @@ fn signer_asserts_timestamping_eku(cert: &Certificate) -> anyhow::Result<()> {
     }
 }
 
+/// Map an RSA-with-SHA signature algorithm OID to the matching ring verification
+/// parameters. Microsoft's TSA CA signs leaves with sha384WithRSAEncryption, so
+/// the SHA-256/384/512 family is accepted; anything else is rejected.
+fn rsa_verification_params_for_oid(
+    sig_alg_oid: &str,
+) -> anyhow::Result<&'static signature::RsaParameters> {
+    if sig_alg_oid == SHA256_WITH_RSA_ENCRYPTION_OID {
+        Ok(&signature::RSA_PKCS1_2048_8192_SHA256)
+    } else if sig_alg_oid == SHA384_WITH_RSA_ENCRYPTION_OID {
+        Ok(&signature::RSA_PKCS1_2048_8192_SHA384)
+    } else if sig_alg_oid == SHA512_WITH_RSA_ENCRYPTION_OID {
+        Ok(&signature::RSA_PKCS1_2048_8192_SHA512)
+    } else {
+        anyhow::bail!(
+            "TSA certificate signature algorithm {sig_alg_oid} is not RSA-PKCS1 SHA-256/384/512"
+        )
+    }
+}
+
 /// Verify `cert`'s outer signature (over its tbsCertificate) against an issuer
-/// RSA public key. Reuses the same RSA-PKCS1-SHA256 primitive as CMS signature
+/// RSA public key. Reuses the same RSA-PKCS1 primitive as CMS signature
 /// verification — no hand-rolled crypto.
 fn verify_certificate_signed_by(
     cert: &Certificate,
     issuer_modulus: &[u8],
     issuer_exponent: &[u8],
 ) -> anyhow::Result<()> {
-    let sig_alg = cert.signature_algorithm().oid.to_string();
-    // Microsoft's TSA CA signs leaves with sha384WithRSAEncryption; accept the
-    // RSA-PKCS1 SHA-256/384/512 family.
-    let verification_params: &signature::RsaParameters = if sig_alg
-        == SHA256_WITH_RSA_ENCRYPTION_OID
-    {
-        &signature::RSA_PKCS1_2048_8192_SHA256
-    } else if sig_alg == SHA384_WITH_RSA_ENCRYPTION_OID {
-        &signature::RSA_PKCS1_2048_8192_SHA384
-    } else if sig_alg == SHA512_WITH_RSA_ENCRYPTION_OID {
-        &signature::RSA_PKCS1_2048_8192_SHA512
-    } else {
-        anyhow::bail!(
-            "TSA signer certificate signature algorithm {sig_alg} is not RSA-PKCS1 SHA-256/384/512"
-        );
-    };
+    let verification_params =
+        rsa_verification_params_for_oid(&cert.signature_algorithm().oid.to_string())?;
     let tbs_der = cert.tbs_certificate().to_der().map_err(|error| {
         anyhow::anyhow!("TSA signer tbsCertificate DER encoding failed: {error}")
     })?;
@@ -1167,6 +1172,18 @@ mod tests {
             err.contains("did not match any pinned SPKI DER"),
             "unrelated pin must be rejected, got: {err}"
         );
+    }
+
+    #[test]
+    fn rsa_verification_params_cover_supported_hashes_and_reject_others() {
+        assert!(rsa_verification_params_for_oid(SHA256_WITH_RSA_ENCRYPTION_OID).is_ok());
+        assert!(rsa_verification_params_for_oid(SHA384_WITH_RSA_ENCRYPTION_OID).is_ok());
+        assert!(rsa_verification_params_for_oid(SHA512_WITH_RSA_ENCRYPTION_OID).is_ok());
+        // sha1WithRSAEncryption must be rejected.
+        let rejected = rsa_verification_params_for_oid("1.2.840.113549.1.1.5")
+            .unwrap_err()
+            .to_string();
+        assert!(rejected.contains("not RSA-PKCS1 SHA-256/384/512"), "got: {rejected}");
     }
 
     fn read_tlv_error(bytes: &[u8]) -> String {
