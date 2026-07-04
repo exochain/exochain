@@ -19,10 +19,29 @@
 //!
 //! # Fail-closed governance runtime boundary
 //!
-//! These MCP tools are not wired to a live governance store or reactor. They
-//! validate request shape where useful, then fail closed for all builds. The
-//! `unaudited-mcp-simulation-tools` feature does not enable fabricated
-//! governance writes or reads.
+//! These MCP tools are not wired to a live governance store or reactor by
+//! default. They validate request shape where useful, then fail closed for
+//! the standalone `exochain mcp` process. The `unaudited-mcp-simulation-tools`
+//! feature does not enable fabricated governance writes or reads.
+//!
+//! # Interim node-attached mutation path (VCG-004b)
+//!
+//! Ratified D2 (`GAP-REGISTRY.md`, 2026-07-02) commits the MCP runtime to a
+//! standalone process behind an authenticated, read-scoped RPC bridge as the
+//! end state, so the adjudicator (BFT consensus) and the adjudicated (a
+//! submitted governance proposal) never share a process boundary. That
+//! bridge does not exist yet. Until it lands, when a [`NodeContext`] is
+//! explicitly node-attached under a named
+//! [`crate::mcp::context::McpCapabilityProfile::NodeAttachedInterim`]
+//! profile (see [`NodeContext::is_node_attached`]), `exochain_create_decision`
+//! routes its mutation through [`crate::reactor::submit_proposal`] instead of
+//! refusing. `submit_proposal` appends a DAG node and casts the node's own
+//! self-vote, then broadcasts the proposal for independent BFT adjudication —
+//! the MCP caller never commits or adjudicates its own proposal. Every other
+//! governance tool, and this same tool outside the node-attached interim
+//! profile, keeps refusing via [`governance_runtime_unavailable`].
+
+use std::sync::Arc;
 
 use exo_core::Did;
 use serde_json::{Value, json};
@@ -65,6 +84,210 @@ fn invalid_parameter_error(field: &str, message: &str) -> ToolResult {
         })
         .to_string(),
     )
+}
+
+// ---------------------------------------------------------------------------
+// Interim node-attached mutation routing (VCG-004b)
+// ---------------------------------------------------------------------------
+
+/// Error shape returned when a node-attached mutation attempt fails at the
+/// `reactor::submit_proposal` layer itself (as opposed to the tool never
+/// being node-attached at all, which stays on the
+/// `governance_runtime_unavailable` refusal path).
+fn mutation_submission_failed(tool_name: &str, message: &str) -> ToolResult {
+    tracing::error!(
+        tool = %tool_name,
+        error = %message,
+        "node-attached MCP governance mutation failed at submit_proposal"
+    );
+    ToolResult::error(
+        json!({
+            "error": "mcp_governance_mutation_submission_failed",
+            "tool": tool_name,
+            "message": message,
+        })
+        .to_string(),
+    )
+}
+
+/// Run `reactor::submit_proposal` to completion from this tool's synchronous
+/// dispatch entry point.
+///
+/// MCP tool execution is synchronous end-to-end (`ToolResult` is returned,
+/// not a `Future`), but `submit_proposal` is `async`. Rather than thread an
+/// async runtime requirement through the entire MCP dispatch surface for
+/// this one interim mutation path, this mirrors the existing
+/// `store::block_on_dagdb` pattern: spawn a dedicated OS thread carrying its
+/// own fresh Tokio runtime and block on it there. This is safe to call from
+/// inside an already-running Tokio runtime (e.g. an async test or the async
+/// MCP transport loop), which a plain `Handle::current().block_on(..)` is
+/// not.
+fn block_on_submit_proposal(
+    reactor_state: crate::reactor::SharedReactorState,
+    store: Arc<std::sync::Mutex<crate::store::SqliteDagStore>>,
+    net_handle: Arc<crate::network::NetworkHandle>,
+    payload: Vec<u8>,
+) -> anyhow::Result<exo_dag::dag::DagNode> {
+    let run = move || {
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| anyhow::anyhow!("node-attached mutation runtime: {e}"))?;
+        runtime.block_on(async move {
+            crate::reactor::submit_proposal(&reactor_state, &store, &net_handle, &payload).await
+        })
+    };
+
+    match tokio::runtime::Handle::try_current() {
+        Ok(_) => std::thread::spawn(run)
+            .join()
+            .map_err(|_| anyhow::anyhow!("node-attached mutation worker thread panicked"))?,
+        Err(_) => run(),
+    }
+}
+
+/// Marker prefix for the synthetic, guaranteed-non-validator DID used as the
+/// interim `RemoveValidator` vehicle DID (see
+/// [`build_interim_governance_payload`]). Chosen so the marker is
+/// self-describing in audit logs and DAG payload inspection, and cannot
+/// collide with a real `did:exo:v{n}`-style validator DID minted by
+/// `identity::did_from_public_key` (which is base58-alphanumeric, never
+/// containing this literal marker segment).
+const INTERIM_DECISION_MARKER_SEGMENT: &str = "mcp-interim-decision-marker";
+
+/// Derive a syntactically valid, deterministic, non-validator marker DID for
+/// one node-attached decision-creation proposal.
+///
+/// Bound to the proposer DID and decision title so distinct proposals get
+/// distinct marker DIDs (useful for correlating DAG payloads back to the
+/// MCP call in an audit trail), while remaining ASCII-safe for
+/// `Did::validate`'s `[a-zA-Z0-9_:-]+` charset (hex digest only). Construction
+/// from a fixed alphanumeric prefix plus a lowercase-hex digest cannot
+/// actually fail `Did::validate`, but this still returns a `Result` rather
+/// than panicking on that assumption — an unexpected failure here becomes an
+/// honest mutation-submission refusal instead of a crash.
+fn interim_decision_marker_did(proposer_did: &Did, title: &str) -> Result<Did, String> {
+    let mut hasher_input = Vec::with_capacity(proposer_did.as_str().len() + title.len() + 1);
+    hasher_input.extend_from_slice(proposer_did.as_str().as_bytes());
+    hasher_input.push(0);
+    hasher_input.extend_from_slice(title.as_bytes());
+    let digest = exo_core::types::Hash256::digest(&hasher_input);
+    // `did:exo:<segment>-<hex>` stays within `Did::validate`'s charset and is
+    // effectively collision-free for this interim marker's purpose.
+    let did_str = format!("did:exo:{INTERIM_DECISION_MARKER_SEGMENT}-{digest}");
+    Did::new(&did_str).map_err(|e| format!("build interim decision marker DID: {e}"))
+}
+
+/// Build the interim `ValidatorChange` envelope carrying this mutation
+/// through `reactor::submit_proposal`'s typed payload gate.
+///
+/// `submit_proposal`'s payload is decoded strictly as a canonical
+/// `ValidatorChange` (`AddValidator` / `RemoveValidator`) CBOR value — there
+/// is no generic governance-decision payload variant on the wire yet, and
+/// this lane does not introduce one (that is reactor/wire surface, out of
+/// scope for VCG-004b). `AddValidator` is not usable as a neutral vehicle:
+/// it cryptographically cross-checks that the supplied public key hashes to
+/// the claimed DID (VCG-015), so it can only ever encode a *real* validator
+/// key change, never a content-bearing decision. `RemoveValidator` has no
+/// such cross-check, but using it against the *proposer's own* DID would be
+/// a genuine validator-removal proposal riding along with a "create
+/// decision" call — exactly the kind of BFT-floor-bypassing hazard
+/// `api.rs::handle_validator_change`'s `validator_count <= 4` guard exists
+/// to prevent for real removals (see that handler).
+///
+/// Instead, this targets a synthetic, deterministic marker DID (see
+/// [`interim_decision_marker_did`]) that is never a member of the live
+/// validator set. Applying `RemoveValidator` for a DID that was never
+/// present is a verified no-op (`BTreeSet::remove`/`BTreeMap::remove` on an
+/// absent key does nothing) — so even in the pathological case where this
+/// proposal alone reached quorum and committed, the validator set and its
+/// public-key resolver are unchanged. The proposal's real, honest effect is
+/// exactly what the DAG-append and consensus self-vote already are: a
+/// durable, independently-adjudicated record that this decision-creation
+/// request was submitted by `proposer_did`.
+fn build_interim_governance_payload(proposer_did: &Did, title: &str) -> Result<Vec<u8>, String> {
+    let marker_did = interim_decision_marker_did(proposer_did, title)?;
+    let change = crate::wire::ValidatorChange::RemoveValidator { did: marker_did };
+    let mut payload = Vec::new();
+    ciborium::into_writer(&change, &mut payload)
+        .map_err(|e| format!("encode interim governance proposal payload: {e}"))?;
+    Ok(payload)
+}
+
+/// Prefix `reactor::submit_proposal` gives its own error exactly and only
+/// when every step through the DAG append, store persistence, and consensus
+/// self-vote has already succeeded, and the sole remaining failure is the
+/// network broadcast acknowledgement (see `reactor.rs`'s
+/// `.map_err(|e| anyhow::anyhow!("broadcast proposal: {e}"))?` — the last
+/// fallible step in the function, after which nothing else can fail). This
+/// is a stable, code-controlled string from this codebase, not
+/// user-influenced input, so matching on it to distinguish "the real
+/// constitutional record already landed, only the gossip announcement is
+/// unacknowledged" from "the proposal was never recorded at all" is safe.
+const SUBMIT_PROPOSAL_BROADCAST_STAGE_ERROR_PREFIX: &str = "broadcast proposal: ";
+
+/// Route a governance mutation through the real, independently-adjudicated
+/// `reactor::submit_proposal` path when `context` is node-attached under the
+/// interim capability profile (see the module doc comment and
+/// [`NodeContext::is_node_attached`]). Returns `None` when the context is
+/// not node-attached, so the caller falls back to the standard fail-closed
+/// refusal.
+fn try_route_mutation_through_submit_proposal(
+    tool_name: &str,
+    context: &NodeContext,
+    proposer_did: &Did,
+    title: &str,
+) -> Option<ToolResult> {
+    if !context.is_node_attached() {
+        return None;
+    }
+
+    // `is_node_attached` guarantees these are all `Some`.
+    let reactor_state = context.reactor_state.clone()?;
+    let store = context.store.clone()?;
+    let net_handle = context.net_handle.clone()?;
+
+    let payload = match build_interim_governance_payload(proposer_did, title) {
+        Ok(payload) => payload,
+        Err(message) => return Some(mutation_submission_failed(tool_name, &message)),
+    };
+
+    let success_response = |node_hash: String| {
+        ToolResult::success(
+            json!({
+                "status": "proposal_submitted",
+                "proposer_did": proposer_did.as_str(),
+                "node_hash": node_hash,
+                "message": "Submitted as a governance proposal for independent BFT \
+                             consensus adjudication under the interim node-attached \
+                             capability profile (VCG-004b, D2). The MCP caller does not \
+                             adjudicate or commit this proposal itself.",
+            })
+            .to_string(),
+        )
+    };
+
+    let store_for_recovery = Arc::clone(&store);
+    match block_on_submit_proposal(reactor_state, store, net_handle, payload) {
+        Ok(node) => Some(success_response(node.hash.to_string())),
+        Err(e) => {
+            let message = e.to_string();
+            if !message.starts_with(SUBMIT_PROPOSAL_BROADCAST_STAGE_ERROR_PREFIX) {
+                return Some(mutation_submission_failed(tool_name, &message));
+            }
+            // The constitutional record (DAG append, persisted payload,
+            // consensus self-vote) already landed — only the gossip
+            // broadcast acknowledgement did not arrive. Report success with
+            // the actual committed tip hash rather than treating an
+            // unacknowledged (not unsent) network announcement as if the
+            // proposal itself had failed.
+            match store_for_recovery.lock() {
+                Ok(store) => match store.tips_sync() {
+                    Ok(tips) if tips.len() == 1 => Some(success_response(tips[0].to_string())),
+                    _ => Some(mutation_submission_failed(tool_name, &message)),
+                },
+                Err(_) => Some(mutation_submission_failed(tool_name, &message)),
+            }
+        }
+    }
 }
 
 fn governance_runtime_unavailable(tool_name: &str) -> ToolResult {
@@ -132,7 +355,7 @@ pub fn create_decision_definition() -> ToolDefinition {
 
 /// Execute the `exochain_create_decision` tool.
 #[must_use]
-pub fn execute_create_decision(params: &Value, _context: &NodeContext) -> ToolResult {
+pub fn execute_create_decision(params: &Value, context: &NodeContext) -> ToolResult {
     let title = match params.get("title").and_then(Value::as_str) {
         Some(s) => s,
         None => {
@@ -174,9 +397,15 @@ pub fn execute_create_decision(params: &Value, _context: &NodeContext) -> ToolRe
         return result;
     }
 
-    if Did::new(proposer_str).is_err() {
-        return invalid_parameter_error("proposer_did", "must be a syntactically valid EXO DID");
-    }
+    let proposer_did = match Did::new(proposer_str) {
+        Ok(did) => did,
+        Err(_) => {
+            return invalid_parameter_error(
+                "proposer_did",
+                "must be a syntactically valid EXO DID",
+            );
+        }
+    };
 
     let decision_class = params
         .get("decision_class")
@@ -186,6 +415,15 @@ pub fn execute_create_decision(params: &Value, _context: &NodeContext) -> ToolRe
         decision_class,
         "decision_class",
         MAX_GOVERNANCE_MCP_ID_BYTES,
+    ) {
+        return result;
+    }
+
+    if let Some(result) = try_route_mutation_through_submit_proposal(
+        "exochain_create_decision",
+        context,
+        &proposer_did,
+        title,
     ) {
         return result;
     }
