@@ -1039,4 +1039,277 @@ mod tests {
         assert!(!text.contains("amendment_id"));
         assert!(!text.contains("\"requirements\""));
     }
+
+    // ==================================================================
+    // VCG-004b RED: mutation-effect wiring
+    //
+    // These tests pin the NodeContext shape and dispatch contract that
+    // GREEN must implement. See GAP-REGISTRY.md VCG-004, ratified D2
+    // (2026-07-02): `exochain mcp` remains a standalone process behind an
+    // authenticated, read-scoped RPC bridge as the committed end state;
+    // any interim node-attached mode runs under a NAMED capability
+    // profile, and the MCP caller never adjudicates its own governance
+    // proposal — mutations route through `reactor::submit_proposal`,
+    // which is independently adjudicated by BFT consensus, never applied
+    // directly by the MCP dispatch path.
+    //
+    // Assumed shape (GREEN must match):
+    //   - `NodeContext.net_handle: Option<Arc<crate::network::NetworkHandle>>`
+    //   - `NodeContext.capability_profile: Option<McpCapabilityProfile>`
+    //     where `McpCapabilityProfile::NodeAttachedInterim { name: String }`
+    //     is the interim, explicitly-named profile documented as interim
+    //     pending the D2 standalone RPC bridge.
+    //   - `NodeContext::is_node_attached(&self) -> bool` is true only when
+    //     `reactor_state`, `store`, `net_handle`, AND a
+    //     `NodeAttachedInterim` `capability_profile` are ALL present.
+    //   - A governance mutation tool (`exochain_create_decision` here)
+    //     routes through `reactor::submit_proposal` when
+    //     `context.is_node_attached()`, and keeps refusing via
+    //     `governance_runtime_unavailable` otherwise.
+    // ==================================================================
+
+    #[cfg(test)]
+    mod mutation_effect_red {
+        use std::sync::{Arc, Mutex};
+
+        use exo_core::crypto::KeyPair;
+        use tokio::sync::mpsc;
+
+        use super::*;
+        use crate::{
+            mcp::context::{McpCapabilityProfile, NodeContext},
+            network::{NetworkCommand, NetworkHandle},
+            reactor::{self, ReactorConfig, create_reactor_state},
+            store::SqliteDagStore,
+            wire::{ValidatorChange, WireMessage, topics},
+        };
+
+        /// Deterministic per-index validator keypair, mirroring
+        /// `reactor::tests::validator_keypair` (private to that module, so
+        /// this RED test module carries its own copy rather than reaching
+        /// across a private `mod tests` boundary).
+        fn validator_keypair(index: usize) -> KeyPair {
+            let seed = u8::try_from(index + 1).expect("test validator index fits in u8");
+            KeyPair::from_secret_bytes([seed; 32]).expect("deterministic validator keypair")
+        }
+
+        fn make_validators(n: usize) -> std::collections::BTreeSet<Did> {
+            (0..n)
+                .map(|i| Did::new(&format!("did:exo:v{i}")).expect("valid DID"))
+                .collect()
+        }
+
+        fn make_validator_public_keys(
+            validators: &std::collections::BTreeSet<Did>,
+        ) -> std::collections::BTreeMap<Did, exo_core::types::PublicKey> {
+            validators
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(idx, did)| (did, *validator_keypair(idx).public_key()))
+                .collect()
+        }
+
+        /// A node-attached `NodeContext`: real reactor state, a real
+        /// on-disk DAG store, a `NetworkHandle` whose command channel the
+        /// test can drain, and the interim node-attached capability
+        /// profile — matching the D2 "named capability profile" gate.
+        ///
+        /// Returns the context, the leaked temp-dir (kept alive for the
+        /// store's lifetime), and the command receiver so the test can
+        /// assert a `Publish` was actually sent.
+        fn node_attached_context() -> (
+            NodeContext,
+            tempfile::TempDir,
+            mpsc::Receiver<NetworkCommand>,
+        ) {
+            let validators = make_validators(4);
+            let config = ReactorConfig {
+                node_did: Did::new("did:exo:v0").expect("valid DID"),
+                is_validator: true,
+                validator_public_keys: make_validator_public_keys(&validators),
+                validators,
+                round_timeout_ms: 5000,
+            };
+            let sign_fn: Arc<dyn Fn(&[u8]) -> exo_core::types::Signature + Send + Sync> = {
+                let keypair = validator_keypair(0);
+                Arc::new(move |data: &[u8]| keypair.sign(data))
+            };
+            let reactor_state = create_reactor_state(&config, sign_fn, None);
+
+            let dir = tempfile::tempdir().expect("temp dir");
+            let store = Arc::new(Mutex::new(
+                SqliteDagStore::open(dir.path()).expect("open store"),
+            ));
+
+            let (cmd_tx, cmd_rx) = mpsc::channel(32);
+            let net_handle = NetworkHandle::new(cmd_tx);
+
+            let context = NodeContext {
+                reactor_state: Some(reactor_state),
+                store: Some(store),
+                net_handle: Some(Arc::new(net_handle)),
+                node_did: Some("did:exo:v0".to_string()),
+                capability_profile: Some(McpCapabilityProfile::NodeAttachedInterim {
+                    name: "vcg-004b-node-attached-interim".to_string(),
+                }),
+                ..NodeContext::empty()
+            };
+
+            (context, dir, cmd_rx)
+        }
+
+        /// A NON-node-attached context: no reactor state, no store, no
+        /// network handle, no capability profile — the same shape the
+        /// standalone `exochain mcp` command builds via
+        /// `mcp_node_context_from_env()` in `main.rs` today.
+        fn standalone_context() -> NodeContext {
+            NodeContext::empty()
+        }
+
+        /// RED (a): `mcp_mutation_effect` — a node-attached context under
+        /// the interim capability profile must produce a REAL effect when
+        /// a governance mutation tool is dispatched: a DAG node appended
+        /// via `reactor::submit_proposal`, with the acting DID bound, and
+        /// (given a live network command channel) a `ConsensusProposal`
+        /// `Publish` observed on `topics::CONSENSUS`.
+        ///
+        /// Fails today: `NodeContext` has no `net_handle` or
+        /// `capability_profile` field (compile error), and even once those
+        /// exist, `execute_create_decision` unconditionally calls
+        /// `governance_runtime_unavailable` regardless of context.
+        #[tokio::test]
+        async fn mcp_mutation_effect() {
+            let (context, _dir, mut cmd_rx) = node_attached_context();
+            assert!(
+                context.is_node_attached(),
+                "fixture must build a fully node-attached context"
+            );
+
+            let params = json!({
+                "title": "Approve data sharing policy",
+                "description": "Allow cross-org medical data sharing under bailment.",
+                "proposer_did": "did:exo:v0",
+            });
+
+            let result = execute_create_decision(&params, &context);
+
+            assert!(
+                !result.is_error,
+                "node-attached governance mutation tool must succeed, got error: {}",
+                result.content[0].text()
+            );
+            let text = result.content[0].text();
+            assert!(
+                text.contains("did:exo:v0"),
+                "mutation effect response must bind the acting DID, got: {text}"
+            );
+
+            // Real effect #1: a DAG node was actually appended (submit_proposal's
+            // local effect), independent of whether the network broadcast
+            // below is also observed.
+            {
+                let reactor_state = context
+                    .reactor_state
+                    .as_ref()
+                    .expect("node-attached context carries reactor_state");
+                let s = reactor_state.lock().expect("reactor state lock");
+                assert_eq!(
+                    s.dag.len(),
+                    1,
+                    "submit_proposal must append exactly one DAG node for this mutation"
+                );
+            }
+
+            // Real effect #2: a governance-event Publish was emitted on the
+            // network command channel for the submitted proposal.
+            let command = cmd_rx
+                .try_recv()
+                .expect("expected a NetworkCommand::Publish from submit_proposal's broadcast");
+            match command {
+                NetworkCommand::Publish { topic, message, .. } => {
+                    assert_eq!(
+                        topic,
+                        topics::CONSENSUS,
+                        "governance mutation proposal must broadcast on the consensus topic"
+                    );
+                    assert!(
+                        matches!(message, WireMessage::ConsensusProposal(_)),
+                        "expected a ConsensusProposal wire message, got: {message:?}"
+                    );
+                }
+                other => panic!("expected NetworkCommand::Publish, got: {other:?}"),
+            }
+
+            // The MCP caller must never adjudicate its own proposal: the
+            // node's own consensus round must still be unresolved pending
+            // quorum, not unilaterally committed by the tool call.
+            {
+                let reactor_state = context
+                    .reactor_state
+                    .as_ref()
+                    .expect("node-attached context carries reactor_state");
+                let s = reactor_state.lock().expect("reactor state lock");
+                assert_eq!(
+                    s.consensus.current_round, 0,
+                    "the MCP caller's own proposal submission must not itself advance/commit \
+                     the round — consensus adjudicates independently"
+                );
+            }
+        }
+
+        /// RED (b): `mcp_mutation_refused_without_node_attachment` —
+        /// regression guard proving the capability profile actually gates.
+        /// A non-node-attached (standalone-style) context must refuse the
+        /// identical mutation fail-closed, exactly as it does today.
+        ///
+        /// This must keep passing after GREEN lands — it is the proof
+        /// that `is_node_attached()` actually gates the mutation path
+        /// rather than routing unconditionally.
+        #[test]
+        fn mcp_mutation_refused_without_node_attachment() {
+            let context = standalone_context();
+            assert!(
+                !context.is_node_attached(),
+                "fixture must build a NON-node-attached (standalone-style) context"
+            );
+
+            let params = json!({
+                "title": "Approve data sharing policy",
+                "description": "Allow cross-org medical data sharing under bailment.",
+                "proposer_did": "did:exo:v0",
+            });
+
+            let result = execute_create_decision(&params, &context);
+
+            assert_governance_runtime_unavailable(&result, "exochain_create_decision");
+        }
+
+        /// Sanity check on the CBOR payload shape `submit_proposal`
+        /// expects, so GREEN's payload construction has an unambiguous
+        /// reference: a decision-creation mutation must encode as a
+        /// canonical `ValidatorChange`-compatible governance proposal
+        /// payload today (VCG-004b's minimal wiring may reuse the existing
+        /// validator-change payload envelope, or introduce a new decision
+        /// payload variant — either way `submit_proposal`'s
+        /// `validate_governance_proposal_payload` gate must accept
+        /// whatever shape GREEN emits). This test only documents that the
+        /// reactor's existing typed-payload gate is reachable from this
+        /// module for GREEN to target; it does not assert a specific
+        /// payload encoding.
+        #[test]
+        fn reactor_governance_payload_gate_is_reachable_from_mcp_module() {
+            let change = ValidatorChange::RemoveValidator {
+                did: Did::new("did:exo:v4").expect("valid DID"),
+            };
+            let mut payload = Vec::new();
+            ciborium::into_writer(&change, &mut payload).expect("encode ValidatorChange");
+            assert!(!payload.is_empty());
+            // `reactor::submit_proposal` is the real mutation sink GREEN
+            // must call; referencing it here (without invoking it) keeps
+            // this module's `use reactor::{self, ...}` import meaningful
+            // and documents the call site GREEN wires into.
+            let _ = reactor::submit_proposal;
+        }
+    }
 }

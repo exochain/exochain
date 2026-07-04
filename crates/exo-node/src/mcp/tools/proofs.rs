@@ -1487,4 +1487,51 @@ mod tests {
             );
         }
     }
+
+    // -----------------------------------------------------------------
+    // VCG-004b named closure-gate regression lock: `cgr_proof_fail_closed`
+    // -----------------------------------------------------------------
+
+    /// REGRESSION LOCK named for the VCG-004b closure gate
+    /// (`cargo test -p exochain-node cgr_proof_fail_closed`,
+    /// `GAP-REGISTRY.md` VCG-004 closure gate).
+    ///
+    /// This is a SEPARATE, explicitly-named sibling of
+    /// `cgr_proof_fail_closed_with_wellformed_envelope` above (same
+    /// well-formed-envelope construction, reused via
+    /// `wellformed_cgr_envelope_params`) so the exact substring
+    /// `cgr_proof_fail_closed` used by the closure gate's test filter
+    /// resolves to a real test in this lane, independent of whether the
+    /// pre-existing sibling's name ever changes.
+    ///
+    /// `exochain_verify_cgr_proof` inherits VCG-001's ceiling per
+    /// `GAP-REGISTRY.md` VCG-004 ("the CGR verification half inherits
+    /// VCG-001's ceiling") and the VCG-004b work order's explicit
+    /// instruction: do NOT wire a real verifier here, do NOT return
+    /// success. This test PASSES TODAY (documented pre-existing green)
+    /// and MUST STILL PASS after VCG-004b's mutation-effect wiring lands
+    /// — a future change that makes this test fail (i.e. the CGR tool
+    /// starts returning success) is the regression this lock exists to
+    /// catch.
+    #[test]
+    fn cgr_proof_fail_closed() {
+        let context = NodeContext::empty();
+        let params = wellformed_cgr_envelope_params(&context);
+
+        let result = execute_verify_cgr_proof(&params, &context);
+
+        assert!(
+            result.is_error,
+            "cgr_proof_fail_closed regression lock: exochain_verify_cgr_proof must stay \
+             fail-closed for a well-formed envelope with a real checkpoint root, even after \
+             VCG-004b wires governance mutation effects elsewhere in the MCP surface — the \
+             CGR proof-verification half inherits VCG-001's ceiling and must not be wired \
+             to a real verifier by this lane"
+        );
+        let text = result.content[0].text();
+        assert!(
+            text.contains("CGR proof verification is unavailable"),
+            "refusal body must carry the handler's actual refusal message, got: {text}"
+        );
+    }
 }
