@@ -480,6 +480,24 @@ fn optional_scoped_bearer_from_env(
     }
 }
 
+fn livesafe_public_output_scoped_bearer_from_config(
+    admin_token: &str,
+    scoped_token: Option<zeroize::Zeroizing<String>>,
+) -> anyhow::Result<auth::ScopedBearerAuth> {
+    match scoped_token {
+        Some(token) => {
+            if token.as_str() == admin_token {
+                anyhow::bail!(
+                    "{} must be distinct from EXOCHAIN_ADMIN_BEARER_TOKEN",
+                    EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV
+                );
+            }
+            Ok(auth::ScopedBearerAuth::livesafe_public_adapter_output_authorization(token))
+        }
+        None => Ok(auth::ScopedBearerAuth::none()),
+    }
+}
+
 fn dagdb_node_scope_from_env() -> anyhow::Result<(String, String)> {
     Ok((
         required_env_value(EXO_DAGDB_NODE_TENANT_ID_ENV)?,
@@ -996,12 +1014,12 @@ async fn start_node(
     let bearer_auth = auth::BearerAuth {
         token: Arc::new(admin_token),
     };
-    let scoped_bearer_auth = match optional_scoped_bearer_from_env(
-        EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV,
-    )? {
-        Some(token) => auth::ScopedBearerAuth::livesafe_public_adapter_output_authorization(token),
-        None => auth::ScopedBearerAuth::none(),
-    };
+    let scoped_bearer_auth = livesafe_public_output_scoped_bearer_from_config(
+        bearer_auth.token.as_str(),
+        optional_scoped_bearer_from_env(
+            EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV,
+        )?,
+    )?;
     if scoped_bearer_auth.livesafe_public_adapter_output_authorization_configured() {
         tracing::info!(
             env = EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV,
@@ -1484,6 +1502,23 @@ mod tests {
         let text = err.to_string();
         assert!(text.contains("duplicate validator DID"));
         assert!(text.contains("did:exo:alice"));
+    }
+
+    #[test]
+    fn livesafe_public_output_scoped_bearer_config_rejects_admin_token_reuse_without_leaking_secret()
+     {
+        let err = match livesafe_public_output_scoped_bearer_from_config(
+            "shared-bearer-token",
+            Some(zeroize::Zeroizing::new("shared-bearer-token".to_owned())),
+        ) {
+            Ok(_) => panic!("scoped LiveSafe bearer must reject admin token reuse"),
+            Err(err) => err,
+        };
+
+        let text = err.to_string();
+        assert!(text.contains("EXOCHAIN_ADMIN_BEARER_TOKEN"));
+        assert!(text.contains(EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV));
+        assert!(!text.contains("shared-bearer-token"));
     }
 
     #[cfg(feature = "dagdb-gateway-proxy")]
