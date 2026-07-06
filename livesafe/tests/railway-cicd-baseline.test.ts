@@ -38,6 +38,16 @@ function readWorkflowJob(workflow: string, jobId: string): string {
   return workflow.slice(jobStart, afterJobStart + jobEnd);
 }
 
+function readWorkflowGlobalEnv(workflow: string): string {
+  const envStart = workflow.indexOf("\nenv:\n");
+  const jobsStart = workflow.indexOf("\njobs:\n");
+
+  expect(envStart, "workflow should define top-level env").toBeGreaterThanOrEqual(0);
+  expect(jobsStart, "workflow should define jobs").toBeGreaterThan(envStart);
+
+  return workflow.slice(envStart, jobsStart);
+}
+
 function expectRailwayAuthSecret(
   workflow: string,
   jobId: string,
@@ -54,6 +64,23 @@ function expectRailwayAuthSecret(
   expect(job, `${jobId} must not require a Railway API token fallback`).not.toContain(
     "secrets.RAILWAY_API_TOKEN",
   );
+}
+
+function expectExplicitSmokeTimeoutBudget(workflow: string, jobId: string): void {
+  const envName = "LIVESAFE_RAILWAY_SMOKE_TIMEOUT_SECONDS";
+  const job = readWorkflowJob(workflow, jobId);
+  const jobTimeoutMatch = job.match(
+    new RegExp(`\\n\\s{6}${envName}:\\s*"?([0-9]+)"?`),
+  );
+  const globalTimeoutMatch = readWorkflowGlobalEnv(workflow).match(
+    new RegExp(`\\n\\s{2}${envName}:\\s*"?([0-9]+)"?`),
+  );
+  const timeoutSeconds = Number(jobTimeoutMatch?.[1] ?? globalTimeoutMatch?.[1]);
+
+  expect(
+    timeoutSeconds,
+    `${jobId} should explicitly budget Railway smoke above the 600 second script default`,
+  ).toBeGreaterThan(600);
 }
 
 function expectPromotionSmokePublicClaimsEnv(workflow: string, jobId: string): void {
@@ -169,6 +196,14 @@ describe("LiveSafe Railway CI/CD baseline", () => {
     expect(workflow).toContain(
       'scripts/livesafe-railway-smoke.sh "$TARGET_ENVIRONMENT"',
     );
+  });
+
+  it("sets an explicit Railway smoke timeout above the 600 second script default", () => {
+    const workflow = readRepoFile(".github/workflows/livesafe-railway-deploy.yml");
+
+    expectExplicitSmokeTimeoutBudget(workflow, "deploy-development");
+    expectExplicitSmokeTimeoutBudget(workflow, "deploy-staging");
+    expectExplicitSmokeTimeoutBudget(workflow, "deploy-production");
   });
 
   it("threads the expected public-claims dispatch choice into staging and production smoke only", () => {
