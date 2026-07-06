@@ -6,6 +6,7 @@ const PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT = "livesafe.ai";
 const PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE =
   "https://livesafe.ai/api/trust/status";
 const PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_MAX_AGE_MS = 5 * 60 * 1000;
+const PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_EXOCHAIN_HLC_BASIS = "exochain_hlc";
 const ALLOWED_PUBLIC_ADAPTER_OUTPUT_CLAIMS = [
   "livesafe_public_trust_status",
   "exochain_production_evidence_verified",
@@ -222,6 +223,9 @@ function validateTimestamps({ authorization, currentAt, reasons }) {
   const generatedMilliseconds = parseIsoTimestamp(authorization.generated_at);
   const validFromMilliseconds = parseIsoTimestamp(authorization.valid_from);
   const expiresMilliseconds = parseIsoTimestamp(authorization.expires_at);
+  const hasExochainHlcBasis =
+    authorization.timestamp_basis ===
+    PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_EXOCHAIN_HLC_BASIS;
 
   if (currentMilliseconds === null) {
     reasons.push(
@@ -253,8 +257,9 @@ function validateTimestamps({ authorization, currentAt, reasons }) {
   }
 
   if (
+    !hasExochainHlcBasis &&
     currentMilliseconds - generatedMilliseconds >
-    PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_MAX_AGE_MS
+      PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_MAX_AGE_MS
   ) {
     reasons.push("Public adapter-output authorization is stale.");
   }

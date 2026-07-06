@@ -284,6 +284,23 @@ describe("public adapter-output authorization evaluator", () => {
     );
   });
 
+  it("allows EXOCHAIN HLC-backed proof timestamps without weakening wall-clock stale denial", () => {
+    const decision = evaluate(
+      validDecision({
+        value: validAuthorization({
+          timestamp_basis: "exochain_hlc",
+          generated_at: "1970-01-01T00:16:40.000Z",
+          valid_from: "1970-01-01T00:16:40.000Z",
+          expires_at: "2026-07-05T12:05:00.000Z",
+        }),
+      }),
+    );
+
+    expect(decision.allowed).toBe(true);
+    expect(decision.reasons).toEqual([]);
+    expect(decision.metadata).not.toHaveProperty("timestamp_basis");
+  });
+
   it("denies revoked authorizations", () => {
     const decision = evaluate(
       validDecision({

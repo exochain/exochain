@@ -369,6 +369,23 @@ function coreTimestampToIso(value) {
   return null;
 }
 
+function isCoreHlcTimestamp(value) {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  const physicalMs = Number.isInteger(value.physical_ms)
+    ? value.physical_ms
+    : value.physicalMs;
+
+  return (
+    Number.isInteger(physicalMs) &&
+    physicalMs >= 0 &&
+    Number.isInteger(value.logical) &&
+    value.logical >= 0
+  );
+}
+
 const RAW_SENSITIVE_FIELD_KEYS = new Set([
   'authorization_header',
   'bearer_token',
@@ -609,6 +626,9 @@ function adaptCorePublicAdapterOutputAuthorizationEnvelope(
       schema: PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SCHEMA,
       subject: proof.subject,
       audience: proof.audience,
+      ...(isCoreHlcTimestamp(proof.issued_at)
+        ? { timestamp_basis: 'exochain_hlc' }
+        : {}),
       claims: [...ALLOWED_PUBLIC_ADAPTER_OUTPUT_CLAIMS],
       evidence_hash: evidenceHash,
       receipt_id: receiptId,

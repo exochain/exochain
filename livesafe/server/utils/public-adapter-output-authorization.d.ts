@@ -13,6 +13,7 @@ export interface PublicAdapterOutputAuthorizationDto {
   schema: "livesafe.public_adapter_output_authorization.v1";
   subject: "livesafe.ai";
   audience: "https://livesafe.ai/api/trust/status";
+  timestamp_basis?: "exochain_hlc";
   claims: string[];
   evidence_hash: string;
   receipt_id: string;

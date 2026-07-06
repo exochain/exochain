@@ -103,6 +103,7 @@ const PUBLIC_ADAPTER_AUTHORIZATION_DTO_FROM_RUST = {
   schema: "livesafe.public_adapter_output_authorization.v1",
   subject: "livesafe.ai",
   audience: "https://livesafe.ai/api/trust/status",
+  timestamp_basis: "exochain_hlc",
   claims: [
     "livesafe_public_trust_status",
     "exochain_production_evidence_verified",
@@ -1014,6 +1015,48 @@ describe("EXOCHAIN client timestamp preservation", () => {
       value: {
         ...PUBLIC_ADAPTER_AUTHORIZATION_DTO_FROM_RUST,
         receipt_id: `sha256:${RECEIPT_ID_HEX}`,
+      },
+    });
+  });
+
+  it("accepts EXOCHAIN HLC-issued public adapter-output envelopes without treating them as stale wall-clock DTOs", async () => {
+    configurePublicAdapterAuthorizationEnv();
+    const client = new ExochainClient("http://example.invalid/graphql");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () =>
+          rustCoreEnvelope({
+            proof: {
+              credential_id: CREDENTIAL_ID_BYTES,
+              receipt_id: RECEIPT_ID_BYTES,
+              issued_at: {
+                physical_ms: 1000000,
+                logical: 6,
+              },
+              expires_at: {
+                physical_ms: Date.parse("2026-07-05T12:05:00.000Z"),
+                logical: 0,
+              },
+            },
+          }),
+      })),
+    );
+
+    const result = await client.getPublicAdapterOutputAuthorization({
+      subject: "livesafe.ai",
+      audience: "https://livesafe.ai/api/trust/status",
+      currentAt: "2026-07-05T12:00:00.000Z",
+    });
+
+    expect(result).toEqual({
+      state: "permit",
+      value: {
+        ...PUBLIC_ADAPTER_AUTHORIZATION_DTO_FROM_RUST,
+        receipt_id: `sha256:${RECEIPT_ID_HEX}`,
+        generated_at: "1970-01-01T00:16:40.000Z",
+        valid_from: "1970-01-01T00:16:40.000Z",
       },
     });
   });
