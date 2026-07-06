@@ -34,6 +34,13 @@ fn must_err<T: Debug, E>(result: Result<T, E>, context: &str) -> E {
     }
 }
 
+fn must_some<T>(option: Option<T>, context: &str) -> T {
+    match option {
+        Some(value) => value,
+        None => panic!("{context}"),
+    }
+}
+
 fn issuer_keypair() -> KeyPair {
     must_ok(
         KeyPair::from_secret_bytes(ISSUER_SEED),
@@ -464,14 +471,20 @@ fn ceremony_authorization_request_serializes_env_ready_sha256_values() {
         ciborium::de::from_reader(bytes.as_slice()),
         "decode ceremony output",
     );
-    let authorization_request =
-        cbor_map_field(&value, "authorization_request").expect("authorization_request object");
-    let credential_id = cbor_map_field(authorization_request, "credential_id")
-        .and_then(ciborium::value::Value::as_text)
-        .expect("credential_id string");
-    let evidence_hash = cbor_map_field(authorization_request, "evidence_hash")
-        .and_then(ciborium::value::Value::as_text)
-        .expect("evidence_hash string");
+    let authorization_request = must_some(
+        cbor_map_field(&value, "authorization_request"),
+        "authorization_request object",
+    );
+    let credential_id = must_some(
+        cbor_map_field(authorization_request, "credential_id")
+            .and_then(ciborium::value::Value::as_text),
+        "credential_id string",
+    );
+    let evidence_hash = must_some(
+        cbor_map_field(authorization_request, "evidence_hash")
+            .and_then(ciborium::value::Value::as_text),
+        "evidence_hash string",
+    );
 
     assert_eq!(
         credential_id,

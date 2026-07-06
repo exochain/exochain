@@ -340,14 +340,16 @@ mod public_output_authorization_tests {
             .expect("LiveSafe public-output test credential expiry");
         draft.delegated_intent.intent_id =
             crate::livesafe_public_output_ceremony::livesafe_public_output_credential_ceremony_intent_id(
-                &draft.issuer_did,
-                &draft.subject_did,
-                LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT,
-                LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
-                &draft.delegated_intent.allowed_objectives,
-                &evidence_hash,
-                &draft.created_at,
-                &expires_at,
+                &crate::livesafe_public_output_ceremony::LivesafePublicOutputCredentialCeremonyIntentInput {
+                    issuer_did: &draft.issuer_did,
+                    credential_subject_did: &draft.subject_did,
+                    public_subject: LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT,
+                    public_audience: LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
+                    allowed_claim_names: &draft.delegated_intent.allowed_objectives,
+                    evidence_hash: &evidence_hash,
+                    not_before: &draft.created_at,
+                    expires_at: &expires_at,
+                },
             )
             .expect("LiveSafe public-output test ceremony intent id");
     }

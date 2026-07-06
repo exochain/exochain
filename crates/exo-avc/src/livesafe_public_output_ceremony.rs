@@ -128,6 +128,18 @@ struct CeremonyIntentPayload<'a> {
     expires_at: &'a Timestamp,
 }
 
+/// Borrowed inputs for the signed LiveSafe public-output ceremony intent hash.
+pub(crate) struct LivesafePublicOutputCredentialCeremonyIntentInput<'a> {
+    pub(crate) issuer_did: &'a Did,
+    pub(crate) credential_subject_did: &'a Did,
+    pub(crate) public_subject: &'a str,
+    pub(crate) public_audience: &'a str,
+    pub(crate) allowed_claim_names: &'a [String],
+    pub(crate) evidence_hash: &'a Hash256,
+    pub(crate) not_before: &'a Timestamp,
+    pub(crate) expires_at: &'a Timestamp,
+}
+
 mod sha256_hash_serde {
     use exo_core::Hash256;
     use serde::{Deserialize, Deserializer, Serializer, de};
@@ -185,28 +197,21 @@ pub fn parse_livesafe_public_output_evidence_sha256(value: &str) -> Result<Hash2
 /// # Errors
 /// Returns [`AvcError::Serialization`] if canonical intent hashing fails.
 pub(crate) fn livesafe_public_output_credential_ceremony_intent_id(
-    issuer_did: &Did,
-    credential_subject_did: &Did,
-    public_subject: &str,
-    public_audience: &str,
-    allowed_claim_names: &[String],
-    evidence_hash: &Hash256,
-    not_before: &Timestamp,
-    expires_at: &Timestamp,
+    input: &LivesafePublicOutputCredentialCeremonyIntentInput<'_>,
 ) -> Result<Hash256, AvcError> {
-    let mut normalized_allowed_claim_names = allowed_claim_names.to_vec();
+    let mut normalized_allowed_claim_names = input.allowed_claim_names.to_vec();
     normalized_allowed_claim_names.sort();
     normalized_allowed_claim_names.dedup();
     hash_structured(&CeremonyIntentPayload {
         domain: LIVESAFE_PUBLIC_OUTPUT_CREDENTIAL_CEREMONY_DOMAIN,
-        issuer_did,
-        credential_subject_did,
-        public_subject,
-        public_audience,
+        issuer_did: input.issuer_did,
+        credential_subject_did: input.credential_subject_did,
+        public_subject: input.public_subject,
+        public_audience: input.public_audience,
         allowed_claim_names: &normalized_allowed_claim_names,
-        evidence_hash,
-        not_before,
-        expires_at,
+        evidence_hash: input.evidence_hash,
+        not_before: input.not_before,
+        expires_at: input.expires_at,
     })
     .map_err(AvcError::from)
 }
@@ -230,14 +235,16 @@ where
     allowed_claim_names.sort();
     allowed_claim_names.dedup();
     let intent_id = livesafe_public_output_credential_ceremony_intent_id(
-        &input.issuer_did,
-        &input.credential_subject_did,
-        &input.public_subject,
-        &input.public_audience,
-        &allowed_claim_names,
-        &evidence_hash,
-        &input.not_before,
-        &input.expires_at,
+        &LivesafePublicOutputCredentialCeremonyIntentInput {
+            issuer_did: &input.issuer_did,
+            credential_subject_did: &input.credential_subject_did,
+            public_subject: &input.public_subject,
+            public_audience: &input.public_audience,
+            allowed_claim_names: &allowed_claim_names,
+            evidence_hash: &evidence_hash,
+            not_before: &input.not_before,
+            expires_at: &input.expires_at,
+        },
     )?;
     let jurisdiction = input
         .issuer_authority_scope

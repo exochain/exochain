@@ -30,6 +30,7 @@ use crate::{
     error::AvcError,
     livesafe_public_output_ceremony::{
         LIVESAFE_PUBLIC_ADAPTER_OUTPUT_CREDENTIAL_SUBJECT_DID,
+        LivesafePublicOutputCredentialCeremonyIntentInput,
         livesafe_public_output_credential_ceremony_intent_id,
     },
     validation::{
@@ -513,14 +514,16 @@ fn validate_ceremony_evidence_hash_binding(
         });
     };
     let expected_intent_id = livesafe_public_output_credential_ceremony_intent_id(
-        &draft.credential.issuer_did,
-        &draft.credential.subject_did,
-        &draft.subject,
-        &draft.audience,
-        &draft.credential.delegated_intent.allowed_objectives,
-        &draft.evidence_hash,
-        &draft.credential.created_at,
-        &credential_expires_at,
+        &LivesafePublicOutputCredentialCeremonyIntentInput {
+            issuer_did: &draft.credential.issuer_did,
+            credential_subject_did: &draft.credential.subject_did,
+            public_subject: &draft.subject,
+            public_audience: &draft.audience,
+            allowed_claim_names: &draft.credential.delegated_intent.allowed_objectives,
+            evidence_hash: &draft.evidence_hash,
+            not_before: &draft.credential.created_at,
+            expires_at: &credential_expires_at,
+        },
     )?;
     if draft.credential.delegated_intent.intent_id != expected_intent_id {
         return Err(AvcError::InvalidInput {
