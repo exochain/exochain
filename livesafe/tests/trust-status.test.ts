@@ -54,6 +54,28 @@ const VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION = {
   },
 };
 
+const VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_METADATA = {
+  schema: "livesafe.public_adapter_output_authorization.v1",
+  subject: "livesafe.ai",
+  audience: "https://livesafe.ai/api/trust/status",
+  claims: [
+    "livesafe_public_trust_status",
+    "exochain_production_evidence_verified",
+    "livesafe_runtime_adapter_verified",
+  ],
+  evidence_hash:
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  receipt_id: "exo-receipt:public-adapter-output:2026-07-05",
+  proof_id: "exo-proof:public-adapter-output:2026-07-05",
+  proof_ref: "exo://receipts/public-adapter-output/2026-07-05",
+  generated_at: "2026-07-05T11:59:00.000Z",
+  valid_from: "2026-07-05T11:55:00.000Z",
+  expires_at: "2026-07-05T12:05:00.000Z",
+  proof_type: "ed25519-public-adapter-output-authorization",
+  response_state: "permit",
+  transport_called: true,
+};
+
 describe("trust status API contract", () => {
   it("builds an explicitly inactive machine-readable trust payload", () => {
     const payload = createTrustStatusPayload({
@@ -385,6 +407,42 @@ describe("trust status API contract", () => {
       response_state: "permit",
       transport_called: true,
     });
+    expect(JSON.stringify(payload.public_adapter_output_authorization)).not.toContain(
+      "signature",
+    );
+  });
+
+  it("allows live trust status when the adapter returns an already evaluated permit decision", () => {
+    const payload = createTrustStatusPayload({
+      exochainConnected: true,
+      version: "1.0.0",
+      uptimeSeconds: 16,
+      generatedAt: "2026-07-05T12:00:00.000Z",
+      runtimeStatus: {
+        adapter_state: "verified",
+        surface_classification: "core-runtime-adapter",
+        public_claims_allowed: true,
+        can_read_exochain_core_state: true,
+        can_write_exochain_core_state: true,
+        disablement_path:
+          "Disable EXOCHAIN adapter environment variables and remove the trust-status route from the load balancer.",
+        source_basis: ["server/utils/livesafe-exochain-adapter.js"],
+      },
+      adapterOutputAuthorization: {
+        allowed: true,
+        responseState: "permit",
+        transportCalled: true,
+        value: VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_METADATA,
+      },
+      productionTrustEvidence: VERIFIED_PRODUCTION_TRUST_EVIDENCE,
+    });
+
+    expect(payload.state).toBe("externally-verified");
+    expect(payload.machine_state).toBe("public_trust_claims_allowed");
+    expect(payload.public_claims_allowed).toBe(true);
+    expect(payload.public_adapter_output_authorization).toEqual(
+      VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_METADATA,
+    );
     expect(JSON.stringify(payload.public_adapter_output_authorization)).not.toContain(
       "signature",
     );

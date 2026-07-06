@@ -5,7 +5,9 @@ const {
   exochainProductionTrustEvidence,
 } = require("./exochain-production-trust-evidence");
 const {
+  ALLOWED_PUBLIC_ADAPTER_OUTPUT_CLAIMS,
   PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
+  PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SCHEMA,
   PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT,
   evaluatePublicAdapterOutputAuthorization,
 } = require("./public-adapter-output-authorization");
@@ -40,6 +42,137 @@ const VERIFIED_TOKEN = {
   display_text: "VERIFIED",
   machine_state: "public_trust_claims_allowed"
 };
+
+const PUBLIC_ADAPTER_OUTPUT_METADATA_KEYS = new Set([
+  "schema",
+  "subject",
+  "audience",
+  "claims",
+  "evidence_hash",
+  "receipt_id",
+  "proof_id",
+  "proof_ref",
+  "generated_at",
+  "valid_from",
+  "expires_at",
+  "proof_type",
+  "response_state",
+  "transport_called",
+]);
+const SHA256_EVIDENCE_HASH_PATTERN = /^sha256:[a-f0-9]{64}$/;
+
+function isObjectRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function parseIsoTimestamp(value) {
+  if (!isNonEmptyString(value)) {
+    return null;
+  }
+
+  const milliseconds = Date.parse(value);
+  return Number.isNaN(milliseconds) ? null : milliseconds;
+}
+
+function claimsMatchAllowedSet(claims) {
+  if (!Array.isArray(claims) || claims.length !== ALLOWED_PUBLIC_ADAPTER_OUTPUT_CLAIMS.length) {
+    return false;
+  }
+
+  const sortedClaims = [...claims].sort();
+  const sortedAllowed = [...ALLOWED_PUBLIC_ADAPTER_OUTPUT_CLAIMS].sort();
+  return sortedClaims.every((claim, index) => claim === sortedAllowed[index]);
+}
+
+function evaluatedPermitMetadataDecision(
+  adapterOutputAuthorization,
+  { currentAt, subject, audience },
+) {
+  if (
+    !isObjectRecord(adapterOutputAuthorization) ||
+    adapterOutputAuthorization.allowed !== true ||
+    adapterOutputAuthorization.responseState !== "permit" ||
+    adapterOutputAuthorization.transportCalled !== true
+  ) {
+    return null;
+  }
+
+  const metadata = adapterOutputAuthorization.value;
+  if (!isObjectRecord(metadata)) {
+    return null;
+  }
+
+  const keys = Object.keys(metadata);
+  if (!keys.every((key) => PUBLIC_ADAPTER_OUTPUT_METADATA_KEYS.has(key))) {
+    return null;
+  }
+
+  const currentMilliseconds = parseIsoTimestamp(currentAt);
+  const validFromMilliseconds = parseIsoTimestamp(metadata.valid_from);
+  const expiresMilliseconds = parseIsoTimestamp(metadata.expires_at);
+
+  if (
+    currentMilliseconds === null ||
+    validFromMilliseconds === null ||
+    expiresMilliseconds === null ||
+    currentMilliseconds < validFromMilliseconds ||
+    currentMilliseconds > expiresMilliseconds
+  ) {
+    return null;
+  }
+
+  if (
+    metadata.schema !== PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SCHEMA ||
+    metadata.subject !== subject ||
+    metadata.audience !== audience ||
+    !claimsMatchAllowedSet(metadata.claims) ||
+    !SHA256_EVIDENCE_HASH_PATTERN.test(metadata.evidence_hash || "") ||
+    !isNonEmptyString(metadata.receipt_id) ||
+    !isNonEmptyString(metadata.proof_id) ||
+    !isNonEmptyString(metadata.proof_ref) ||
+    !isNonEmptyString(metadata.generated_at) ||
+    !isNonEmptyString(metadata.proof_type) ||
+    metadata.response_state !== "permit" ||
+    metadata.transport_called !== true
+  ) {
+    return null;
+  }
+
+  return {
+    allowed: true,
+    reasons: [],
+    required_evidence: [],
+    responseState: "permit",
+    transportCalled: true,
+    metadata,
+  };
+}
+
+function resolvePublicAdapterOutputAuthorizationDecision(
+  adapterOutputAuthorization,
+  { currentAt, subject, audience },
+) {
+  const rawDecision = evaluatePublicAdapterOutputAuthorization(
+    adapterOutputAuthorization,
+    { currentAt, subject, audience },
+  );
+
+  if (rawDecision.allowed) {
+    return rawDecision;
+  }
+
+  return (
+    evaluatedPermitMetadataDecision(adapterOutputAuthorization, {
+      currentAt,
+      subject,
+      audience,
+    }) || rawDecision
+  );
+}
 
 function isProductionEvidenceVerified(productionTrustEvidence) {
   return (
@@ -102,7 +235,7 @@ function createTrustStatusPayload({
     resolvedProductionTrustEvidence,
   );
   const publicAdapterOutputAuthorizationDecision =
-    evaluatePublicAdapterOutputAuthorization(adapterOutputAuthorization, {
+    resolvePublicAdapterOutputAuthorizationDecision(adapterOutputAuthorization, {
       currentAt: generatedAt,
       subject: PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT,
       audience: PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
