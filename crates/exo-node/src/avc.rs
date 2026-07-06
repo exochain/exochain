@@ -5686,34 +5686,68 @@ mod tests {
     }
 
     fn livesafe_public_output_credential() -> AutonomousVolitionCredential {
-        livesafe_public_output_credential_with_window(
+        livesafe_public_output_credential_for_evidence(Hash256::from_bytes([0xE1; 32]))
+    }
+
+    fn livesafe_public_output_credential_for_evidence(
+        evidence_hash: Hash256,
+    ) -> AutonomousVolitionCredential {
+        livesafe_public_output_credential_with_window_for_evidence(
             Timestamp::new(1_000_000, 0),
             Timestamp::new(2_000_000, 0),
+            evidence_hash,
         )
     }
 
-    fn livesafe_public_output_credential_with_window(
+    fn livesafe_public_output_credential_with_window_for_evidence(
         created_at: Timestamp,
         expires_at: Timestamp,
+        evidence_hash: Hash256,
     ) -> AutonomousVolitionCredential {
-        let mut draft = baseline_draft();
-        draft.subject_did = Did::new("did:exo:livesafe-public-adapter").unwrap();
-        draft.subject_kind = AvcSubjectKind::Service {
-            service_id: exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT.into(),
-        };
-        draft.created_at = created_at;
-        draft.expires_at = Some(expires_at);
-        draft.delegated_intent.purpose = "Authorize narrow LiveSafe public adapter output".into();
-        draft.delegated_intent.allowed_objectives = vec!["publish-redacted-trust-status".into()];
-        draft.delegated_intent.autonomy_level = AutonomyLevel::ExecuteWithinBounds;
-        draft.authority_scope = AuthorityScope {
-            permissions: vec![Permission::Read],
-            tools: vec![exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_DOMAIN.into()],
-            data_classes: vec![exo_avc::DataClass::Public],
-            counterparties: vec![],
-            jurisdictions: vec!["US".into()],
-        };
-        issue_avc(draft, |bytes| issuer_keypair().sign(bytes)).unwrap()
+        exo_avc::issue_livesafe_public_output_credential_ceremony(
+            exo_avc::LivesafePublicOutputCredentialCeremonyInput {
+                issuer_did: Did::new("did:exo:issuer").unwrap(),
+                issuer_authority_scope: AuthorityScope {
+                    permissions: vec![Permission::Read],
+                    tools: vec![
+                        exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_DOMAIN.into(),
+                    ],
+                    data_classes: vec![exo_avc::DataClass::Public],
+                    counterparties: vec![],
+                    jurisdictions: vec!["US".into()],
+                },
+                credential_subject_did: Did::new(
+                    exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_CREDENTIAL_SUBJECT_DID,
+                )
+                .unwrap(),
+                public_subject: exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT
+                    .into(),
+                public_audience: exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE
+                    .into(),
+                allowed_claim_names: vec![
+                    exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_DOMAIN.into(),
+                ],
+                evidence: exo_avc::LivesafePublicOutputCredentialCeremonyEvidence {
+                    sha256_hash: evidence_hash,
+                },
+                not_before: created_at,
+                expires_at,
+                idempotency_key: "node-test-livesafe-public-output".into(),
+            },
+            |bytes| issuer_keypair().sign(bytes),
+        )
+        .unwrap()
+        .credential
+    }
+
+    fn store_livesafe_public_output_credential_for_evidence(
+        state: &AvcApiState,
+        evidence_hash: Hash256,
+    ) -> Hash256 {
+        store_livesafe_public_output_credential(
+            state,
+            livesafe_public_output_credential_for_evidence(evidence_hash),
+        )
     }
 
     fn store_livesafe_public_output_credential(
@@ -5799,13 +5833,14 @@ mod tests {
     async fn livesafe_public_output_scoped_bearer_accepts_public_output_authorization_when_configured()
      {
         let state = fresh_state();
+        let evidence_hash = Hash256::from_bytes([0xF1; 32]);
         let credential_id =
-            store_livesafe_public_output_credential(&state, livesafe_public_output_credential());
+            store_livesafe_public_output_credential_for_evidence(&state, evidence_hash);
         let app = avc_router_with_bearer_gate(Arc::clone(&state));
         let request = public_output_authorization_request(
             credential_id,
             "public-output-scoped-bearer-idem",
-            Hash256::from_bytes([0xF1; 32]),
+            evidence_hash,
             exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
         );
 
@@ -5826,13 +5861,14 @@ mod tests {
     #[tokio::test]
     async fn public_output_authorization_exports_redacted_proof_happy_path() {
         let state = fresh_state();
+        let evidence_hash = Hash256::from_bytes([0xE2; 32]);
         let credential_id =
-            store_livesafe_public_output_credential(&state, livesafe_public_output_credential());
+            store_livesafe_public_output_credential_for_evidence(&state, evidence_hash);
         let app = avc_router_with_bearer_gate(Arc::clone(&state));
         let request = public_output_authorization_request(
             credential_id,
             "public-output-idem-2",
-            Hash256::from_bytes([0xE2; 32]),
+            evidence_hash,
             exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
         );
 
@@ -5863,15 +5899,16 @@ mod tests {
     async fn public_output_authorization_uses_trusted_local_hlc_for_proof_and_receipt_time() {
         let state = fresh_state();
         let trusted_floor = trusted_local_hlc_timestamp(&state).unwrap();
+        let evidence_hash = Hash256::from_bytes([0xD1; 32]);
         let credential_id =
-            store_livesafe_public_output_credential(&state, livesafe_public_output_credential());
+            store_livesafe_public_output_credential_for_evidence(&state, evidence_hash);
         let app = avc_router_with_bearer_gate(Arc::clone(&state));
         let caller_supplied_time = Timestamp::new(1_500_000, 0);
         let request = serde_json::json!({
             "credential_id": credential_id,
             "subject": exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT,
             "audience": exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
-            "evidence_hash": Hash256::from_bytes([0xD1; 32]),
+            "evidence_hash": evidence_hash,
             "idempotency_key": "public-output-idem-trusted-hlc",
             "issued_at": caller_supplied_time,
             "expires_at": Timestamp::new(1_700_000, 0)
@@ -5900,9 +5937,11 @@ mod tests {
     #[tokio::test]
     async fn public_output_authorization_rejects_backdated_resurrection_of_expired_credential() {
         let state = fresh_state();
-        let credential = livesafe_public_output_credential_with_window(
+        let evidence_hash = Hash256::from_bytes([0xD2; 32]);
+        let credential = livesafe_public_output_credential_with_window_for_evidence(
             Timestamp::new(900_000, 0),
             Timestamp::new(1_000_000, 0),
+            evidence_hash,
         );
         let credential_id = store_livesafe_public_output_credential(&state, credential);
         let app = avc_router_with_bearer_gate(Arc::clone(&state));
@@ -5910,7 +5949,7 @@ mod tests {
             "credential_id": credential_id,
             "subject": exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT,
             "audience": exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
-            "evidence_hash": Hash256::from_bytes([0xD2; 32]),
+            "evidence_hash": evidence_hash,
             "idempotency_key": "public-output-idem-backdate-expired",
             "issued_at": Timestamp::new(950_000, 0),
             "expires_at": Timestamp::new(999_000, 0)
@@ -5926,9 +5965,11 @@ mod tests {
     #[tokio::test]
     async fn public_output_authorization_rejects_future_dated_premature_not_yet_valid_credential() {
         let state = fresh_state();
-        let credential = livesafe_public_output_credential_with_window(
+        let evidence_hash = Hash256::from_bytes([0xD3; 32]);
+        let credential = livesafe_public_output_credential_with_window_for_evidence(
             Timestamp::new(1_100_000, 0),
             Timestamp::new(1_700_000, 0),
+            evidence_hash,
         );
         let credential_id = store_livesafe_public_output_credential(&state, credential);
         let app = avc_router_with_bearer_gate(Arc::clone(&state));
@@ -5936,7 +5977,7 @@ mod tests {
             "credential_id": credential_id,
             "subject": exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT,
             "audience": exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
-            "evidence_hash": Hash256::from_bytes([0xD3; 32]),
+            "evidence_hash": evidence_hash,
             "idempotency_key": "public-output-idem-future-date-not-yet-valid",
             "issued_at": Timestamp::new(1_200_000, 0),
             "expires_at": Timestamp::new(1_500_000, 0)
@@ -5952,14 +5993,15 @@ mod tests {
     #[tokio::test]
     async fn public_output_authorization_replay_omits_caller_time_and_reuses_trusted_receipt() {
         let state = fresh_state();
+        let evidence_hash = Hash256::from_bytes([0xD4; 32]);
         let credential_id =
-            store_livesafe_public_output_credential(&state, livesafe_public_output_credential());
+            store_livesafe_public_output_credential_for_evidence(&state, evidence_hash);
         let app = avc_router_with_bearer_gate(Arc::clone(&state));
         let request = serde_json::json!({
             "credential_id": credential_id,
             "subject": exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT,
             "audience": exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
-            "evidence_hash": Hash256::from_bytes([0xD4; 32]),
+            "evidence_hash": evidence_hash,
             "idempotency_key": "public-output-idem-no-caller-time",
             "expires_at": Timestamp::new(1_700_000, 0)
         });
@@ -5982,13 +6024,14 @@ mod tests {
     #[tokio::test]
     async fn public_output_authorization_replay_same_body_returns_same_proof() {
         let state = fresh_state();
+        let evidence_hash = Hash256::from_bytes([0xE3; 32]);
         let credential_id =
-            store_livesafe_public_output_credential(&state, livesafe_public_output_credential());
+            store_livesafe_public_output_credential_for_evidence(&state, evidence_hash);
         let app = avc_router_with_bearer_gate(Arc::clone(&state));
         let request = public_output_authorization_request(
             credential_id,
             "public-output-idem-3",
-            Hash256::from_bytes([0xE3; 32]),
+            evidence_hash,
             exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
         );
 
@@ -6014,13 +6057,14 @@ mod tests {
     #[tokio::test]
     async fn public_output_authorization_conflicts_on_idempotency_key_reuse_with_changed_expiry() {
         let state = fresh_state();
+        let evidence_hash = Hash256::from_bytes([0xE7; 32]);
         let credential_id =
-            store_livesafe_public_output_credential(&state, livesafe_public_output_credential());
+            store_livesafe_public_output_credential_for_evidence(&state, evidence_hash);
         let app = avc_router_with_bearer_gate(Arc::clone(&state));
         let first_request = public_output_authorization_request(
             credential_id,
             "public-output-idem-expiry-conflict",
-            Hash256::from_bytes([0xE7; 32]),
+            evidence_hash,
             exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
         );
         let mut changed_expiry = first_request.clone();
@@ -6059,13 +6103,14 @@ mod tests {
     #[tokio::test]
     async fn public_output_authorization_conflicts_on_idempotency_key_reuse() {
         let state = fresh_state();
+        let evidence_hash = Hash256::from_bytes([0xE4; 32]);
         let credential_id =
-            store_livesafe_public_output_credential(&state, livesafe_public_output_credential());
+            store_livesafe_public_output_credential_for_evidence(&state, evidence_hash);
         let app = avc_router_with_bearer_gate(Arc::clone(&state));
         let first_request = public_output_authorization_request(
             credential_id,
             "public-output-idem-4",
-            Hash256::from_bytes([0xE4; 32]),
+            evidence_hash,
             exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
         );
         let changed_evidence = public_output_authorization_request(

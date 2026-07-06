@@ -97,6 +97,18 @@ LiveSafe runtime configuration step:
 - `authorization_request.audience`
 - `authorization_request.expires_at`
 
+`authorization_request.credential_id` and
+`authorization_request.evidence_hash` are operator handoff strings already
+serialized as `sha256:<64 lowercase hex>`. Give LiveSafe those exact prefixed
+values, not raw `Hash256` JSON arrays or plain bytes:
+
+```bash
+export LIVESAFE_PUBLIC_OUTPUT_CEREMONY=/secure/operator/livesafe-public-output-ceremony.json
+
+export EXOCHAIN_PUBLIC_ADAPTER_OUTPUT_CREDENTIAL_ID="$(jq -r '.authorization_request.credential_id' "$LIVESAFE_PUBLIC_OUTPUT_CEREMONY")"
+export EXOCHAIN_PUBLIC_ADAPTER_OUTPUT_EVIDENCE_HASH="$(jq -r '.authorization_request.evidence_hash' "$LIVESAFE_PUBLIC_OUTPUT_CEREMONY")"
+```
+
 The LiveSafe app still remains fail-closed until its own runtime has
 `EXOCHAIN_NODE_AVC_URL`,
 `EXOCHAIN_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER`,

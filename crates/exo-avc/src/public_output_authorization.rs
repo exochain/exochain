@@ -28,6 +28,10 @@ use crate::{
     AvcRegistryRead,
     credential::{AVC_SCHEMA_VERSION, AutonomousVolitionCredential, AvcSubjectKind, DataClass},
     error::AvcError,
+    livesafe_public_output_ceremony::{
+        LIVESAFE_PUBLIC_ADAPTER_OUTPUT_CREDENTIAL_SUBJECT_DID,
+        livesafe_public_output_credential_ceremony_intent_id,
+    },
     validation::{
         AvcActionRequest, AvcDecision, AvcValidationRequest, AvcValidationResult,
         avc_action_commitment_hash, validate_avc,
@@ -236,6 +240,9 @@ pub fn validate_livesafe_public_adapter_output_authorization<R: AvcRegistryRead>
     }
     validate_registered_issuer_grant(&draft.credential, registry)?;
     validate_subject_kind(&draft.credential)?;
+    validate_credential_subject_did(&draft.credential)?;
+    validate_allowed_public_output_objectives(&draft.credential)?;
+    validate_ceremony_evidence_hash_binding(draft)?;
     validate_expiry_bounds(draft)?;
 
     let action = livesafe_public_adapter_output_authorization_action_request(
@@ -456,6 +463,71 @@ fn validate_subject_kind(credential: &AutonomousVolitionCredential) -> Result<()
             ),
         }),
     }
+}
+
+fn validate_credential_subject_did(
+    credential: &AutonomousVolitionCredential,
+) -> Result<(), AvcError> {
+    let expected =
+        Did::new(LIVESAFE_PUBLIC_ADAPTER_OUTPUT_CREDENTIAL_SUBJECT_DID).map_err(|error| {
+            AvcError::InvalidInput {
+                reason: format!(
+                    "LiveSafe public adapter output credential subject DID is invalid: {error}"
+                ),
+            }
+        })?;
+    if credential.subject_did != expected {
+        return Err(AvcError::InvalidInput {
+            reason: format!(
+                "LiveSafe public adapter output credential subject DID must be exactly {}",
+                LIVESAFE_PUBLIC_ADAPTER_OUTPUT_CREDENTIAL_SUBJECT_DID
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_allowed_public_output_objectives(
+    credential: &AutonomousVolitionCredential,
+) -> Result<(), AvcError> {
+    let mut allowed_objectives = credential.delegated_intent.allowed_objectives.clone();
+    allowed_objectives.sort();
+    allowed_objectives.dedup();
+    if allowed_objectives != vec![LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_DOMAIN.to_owned()] {
+        return Err(AvcError::InvalidInput {
+            reason: format!(
+                "LiveSafe public adapter output allowed objectives must be exactly {}",
+                LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_DOMAIN
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_ceremony_evidence_hash_binding(
+    draft: &LivesafePublicAdapterOutputAuthorizationDraft,
+) -> Result<(), AvcError> {
+    let Some(credential_expires_at) = draft.credential.expires_at else {
+        return Err(AvcError::InvalidInput {
+            reason: "LiveSafe public adapter output credential must carry a ceremony expiry".into(),
+        });
+    };
+    let expected_intent_id = livesafe_public_output_credential_ceremony_intent_id(
+        &draft.credential.issuer_did,
+        &draft.credential.subject_did,
+        &draft.subject,
+        &draft.audience,
+        &draft.credential.delegated_intent.allowed_objectives,
+        &draft.evidence_hash,
+        &draft.credential.created_at,
+        &credential_expires_at,
+    )?;
+    if draft.credential.delegated_intent.intent_id != expected_intent_id {
+        return Err(AvcError::InvalidInput {
+            reason: "LiveSafe public adapter output evidence hash does not match the signed ceremony credential binding".into(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_expiry_bounds(

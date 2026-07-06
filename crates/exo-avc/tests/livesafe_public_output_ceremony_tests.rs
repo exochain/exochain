@@ -7,14 +7,18 @@ use exo_avc::{
     LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_DOMAIN,
     LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT,
     LIVESAFE_PUBLIC_ADAPTER_OUTPUT_CREDENTIAL_SUBJECT_DID,
-    LivesafePublicOutputCredentialCeremonyEvidence, LivesafePublicOutputCredentialCeremonyInput,
-    issue_livesafe_public_output_credential_ceremony,
+    LivesafePublicAdapterOutputAuthorizationDraft, LivesafePublicOutputCredentialCeremonyEvidence,
+    LivesafePublicOutputCredentialCeremonyInput, issue_livesafe_public_output_credential_ceremony,
+    livesafe_public_adapter_output_authorization_action_commitment_hash,
     livesafe_public_adapter_output_authorization_action_request,
+    livesafe_public_adapter_output_authorization_idempotency_hash,
+    mint_livesafe_public_adapter_output_authorization_proof,
     parse_livesafe_public_output_evidence_sha256, validate_avc,
 };
 use exo_core::{Did, Hash256, Timestamp, crypto::KeyPair};
 
 const ISSUER_SEED: [u8; 32] = [0x42; 32];
+const PROOF_SIGNER_SEED: [u8; 32] = [0x24; 32];
 
 fn must_ok<T, E: Display>(result: Result<T, E>, context: &str) -> T {
     match result {
@@ -34,6 +38,13 @@ fn issuer_keypair() -> KeyPair {
     must_ok(
         KeyPair::from_secret_bytes(ISSUER_SEED),
         "valid issuer keypair",
+    )
+}
+
+fn proof_signer_keypair() -> KeyPair {
+    must_ok(
+        KeyPair::from_secret_bytes(PROOF_SIGNER_SEED),
+        "valid proof signer keypair",
     )
 }
 
@@ -97,6 +108,74 @@ fn issue(
 ) -> Result<exo_avc::LivesafePublicOutputCredentialCeremonyOutput, exo_avc::AvcError> {
     let issuer = issuer_keypair();
     issue_livesafe_public_output_credential_ceremony(input, |payload| issuer.sign(payload))
+}
+
+fn registry_for_issued_ceremony(
+    output: &exo_avc::LivesafePublicOutputCredentialCeremonyOutput,
+    issuer_did: Did,
+) -> InMemoryAvcRegistry {
+    let mut registry = InMemoryAvcRegistry::new();
+    registry.put_public_key(issuer_did.clone(), issuer_keypair().public);
+    registry.put_issuer_permission_grant(issuer_did, vec![Permission::Read]);
+    let registered_id = must_ok(
+        registry.put_credential(output.credential.clone()),
+        "node issue path accepts ceremony credential",
+    );
+    assert_eq!(registered_id, output.credential_id);
+    registry
+}
+
+fn authorization_draft_for(
+    output: &exo_avc::LivesafePublicOutputCredentialCeremonyOutput,
+    evidence_hash: Hash256,
+) -> LivesafePublicAdapterOutputAuthorizationDraft {
+    let idempotency_key_hash = must_ok(
+        livesafe_public_adapter_output_authorization_idempotency_hash(
+            &output.authorization_request.idempotency_key,
+        ),
+        "idempotency hash",
+    );
+    let issued_at = output.not_before;
+    let expires_at = output.authorization_request.expires_at;
+    let action_commitment_hash = must_ok(
+        livesafe_public_adapter_output_authorization_action_commitment_hash(
+            &output.credential,
+            &output.authorization_request.subject,
+            &output.authorization_request.audience,
+            evidence_hash,
+            idempotency_key_hash,
+            &issued_at,
+            &expires_at,
+        ),
+        "action commitment hash",
+    );
+
+    LivesafePublicAdapterOutputAuthorizationDraft {
+        credential: output.credential.clone(),
+        subject: output.authorization_request.subject.clone(),
+        audience: output.authorization_request.audience.clone(),
+        evidence_hash,
+        credential_id: Some(output.credential_id),
+        receipt_id: Hash256::from_bytes([0x5a; 32]),
+        action_commitment_hash,
+        idempotency_key_hash,
+        issued_at,
+        expires_at,
+        signer_did: did("did:exo:livesafe-public-output-proof-signer"),
+    }
+}
+
+fn cbor_map_field<'a>(
+    value: &'a ciborium::value::Value,
+    field: &str,
+) -> Option<&'a ciborium::value::Value> {
+    value.as_map()?.iter().find_map(|(key, value)| {
+        if key.as_text() == Some(field) {
+            Some(value)
+        } else {
+            None
+        }
+    })
 }
 
 #[test]
@@ -295,6 +374,124 @@ fn ceremony_output_is_signed_and_accepted_by_existing_avc_validation_path() {
         "validate credential",
     );
     assert_eq!(validation.decision, AvcDecision::Allow);
+}
+
+#[test]
+fn public_output_authorization_rejects_evidence_hash_not_bound_to_ceremony_credential() {
+    let input = valid_input();
+    let output = must_ok(issue(input.clone()), "issue ceremony output");
+    let registry = registry_for_issued_ceremony(&output, input.issuer_did);
+    let forged_evidence_hash = Hash256::from_bytes([0x77; 32]);
+    assert_ne!(
+        forged_evidence_hash,
+        output.authorization_request.evidence_hash
+    );
+
+    let error = must_err(
+        mint_livesafe_public_adapter_output_authorization_proof(
+            authorization_draft_for(&output, forged_evidence_hash),
+            &registry,
+            |payload| proof_signer_keypair().sign(payload),
+        ),
+        "draft evidence hash not bound into ceremony credential must fail",
+    );
+
+    assert!(
+        error.to_string().contains("evidence hash"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn public_output_authorization_rejects_livesafe_service_credential_with_wrong_subject_did() {
+    let input = valid_input();
+    let mut output = must_ok(issue(input.clone()), "issue ceremony output");
+    let original = output.credential.clone();
+    let wrong_subject_did = did("did:exo:livesafe-public-adapter-shadow");
+    assert_ne!(wrong_subject_did, original.subject_did);
+    let credential = must_ok(
+        exo_avc::issue_avc(
+            exo_avc::AvcDraft {
+                schema_version: original.schema_version,
+                issuer_did: original.issuer_did,
+                principal_did: original.principal_did,
+                subject_did: wrong_subject_did,
+                holder_did: original.holder_did,
+                subject_kind: original.subject_kind,
+                created_at: original.created_at,
+                expires_at: original.expires_at,
+                delegated_intent: original.delegated_intent,
+                authority_scope: original.authority_scope,
+                constraints: original.constraints,
+                authority_chain: original.authority_chain,
+                consent_refs: original.consent_refs,
+                policy_refs: original.policy_refs,
+                parent_avc_id: original.parent_avc_id,
+            },
+            |payload| issuer_keypair().sign(payload),
+        ),
+        "issue signed credential with wrong subject DID",
+    );
+    output.credential = credential;
+    output.credential_id = must_ok(output.credential.id(), "wrong subject credential id");
+    output.authorization_request.credential_id = output.credential_id;
+    let registry = registry_for_issued_ceremony(&output, input.issuer_did);
+
+    let error = must_err(
+        mint_livesafe_public_adapter_output_authorization_proof(
+            authorization_draft_for(&output, output.authorization_request.evidence_hash),
+            &registry,
+            |payload| proof_signer_keypair().sign(payload),
+        ),
+        "credential with wrong subject DID must fail",
+    );
+
+    assert!(
+        error.to_string().contains("credential subject DID"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn ceremony_authorization_request_serializes_env_ready_sha256_values() {
+    let output = must_ok(issue(valid_input()), "issue ceremony output");
+    let mut bytes = Vec::new();
+    must_ok(
+        ciborium::ser::into_writer(&output, &mut bytes),
+        "serialize ceremony output",
+    );
+    let value: ciborium::value::Value = must_ok(
+        ciborium::de::from_reader(bytes.as_slice()),
+        "decode ceremony output",
+    );
+    let authorization_request =
+        cbor_map_field(&value, "authorization_request").expect("authorization_request object");
+    let credential_id = cbor_map_field(authorization_request, "credential_id")
+        .and_then(ciborium::value::Value::as_text)
+        .expect("credential_id string");
+    let evidence_hash = cbor_map_field(authorization_request, "evidence_hash")
+        .and_then(ciborium::value::Value::as_text)
+        .expect("evidence_hash string");
+
+    assert_eq!(
+        credential_id,
+        format!("sha256:{}", output.authorization_request.credential_id)
+    );
+    assert_eq!(evidence_hash, livesafe_sha256_value());
+}
+
+#[test]
+fn ceremony_docs_instruct_livesafe_env_vars_from_prefixed_authorization_request_values() {
+    let docs = include_str!("../../../docs/avc/livesafe-public-output-ceremony.md");
+
+    assert!(docs.contains(
+        "export EXOCHAIN_PUBLIC_ADAPTER_OUTPUT_CREDENTIAL_ID=\"$(jq -r '.authorization_request.credential_id'"
+    ));
+    assert!(docs.contains(
+        "export EXOCHAIN_PUBLIC_ADAPTER_OUTPUT_EVIDENCE_HASH=\"$(jq -r '.authorization_request.evidence_hash'"
+    ));
+    assert!(docs.contains("sha256:<64 lowercase hex>"));
+    assert!(docs.contains("not raw `Hash256` JSON arrays or plain bytes"));
 }
 
 #[test]

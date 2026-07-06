@@ -306,7 +306,9 @@ mod public_output_authorization_tests {
             delegated_intent: DelegatedIntent {
                 intent_id: h256(0xA1),
                 purpose: "Authorize narrow LiveSafe public adapter output".into(),
-                allowed_objectives: vec!["publish-redacted-trust-status".into()],
+                allowed_objectives: vec![
+                    LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_DOMAIN.into(),
+                ],
                 prohibited_objectives: vec![],
                 autonomy_level: AutonomyLevel::ExecuteWithinBounds,
                 delegation_allowed: false,
@@ -332,12 +334,31 @@ mod public_output_authorization_tests {
         }
     }
 
+    fn bind_ceremony_intent(draft: &mut AvcDraft, evidence_hash: Hash256) {
+        let expires_at = draft
+            .expires_at
+            .expect("LiveSafe public-output test credential expiry");
+        draft.delegated_intent.intent_id =
+            crate::livesafe_public_output_ceremony::livesafe_public_output_credential_ceremony_intent_id(
+                &draft.issuer_did,
+                &draft.subject_did,
+                LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT,
+                LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
+                &draft.delegated_intent.allowed_objectives,
+                &evidence_hash,
+                &draft.created_at,
+                &expires_at,
+            )
+            .expect("LiveSafe public-output test ceremony intent id");
+    }
+
     fn issue_credential(mut draft: AvcDraft) -> AutonomousVolitionCredential {
         let issuer = issuer_keypair();
         if draft.issuer_did != did("did:exo:livesafe-issuer") {
             draft.issuer_did = did("did:exo:livesafe-issuer");
             draft.principal_did = did("did:exo:livesafe-issuer");
         }
+        bind_ceremony_intent(&mut draft, h256(0xE1));
         issue_avc(draft, |bytes| issuer.sign(bytes)).expect("valid LiveSafe AVC")
     }
 
@@ -585,7 +606,11 @@ mod public_output_authorization_tests {
             },
             {
                 let mut altered = livesafe_draft();
-                altered.delegated_intent.intent_id = h256(0xA2);
+                altered.created_at = ts(1_000_001);
+                altered.constraints.allowed_time_window = Some(TimeWindow {
+                    not_before: ts(1_000_001),
+                    not_after: ts(2_000_000),
+                });
                 draft_for(issue_credential(altered))
             },
             {
