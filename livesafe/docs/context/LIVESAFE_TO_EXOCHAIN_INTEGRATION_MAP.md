@@ -15,12 +15,15 @@
 - `fly.toml`
 - `server/index.js`
 - `server/utils/exochain-production-trust-evidence.js`
+- `server/utils/public-adapter-output-authorization.js`
 - `server/utils/livesafe-exochain-adapter.js`
 - `server/utils/exochain-client.js`
+- `scripts/exochain-public-output-evidence-hash.mjs`
 - `src/exochain-root-trust-state.ts`
 - `src/exochain-boundary.ts`
 - `src/exochain_adapter_activation.rs`
 - `tests/exochain-production-trust-evidence.test.ts`
+- `tests/public-output-evidence-summary.test.ts`
 - `tests/public-exochain-copy-boundary.test.ts`
 - `tests/exochain-root-trust-state.test.ts`
 - Read-only EXOCHAIN commit `3fb81ea457e727c010052beafcfe49735ebd0546`.
@@ -90,6 +93,10 @@ The current integration state is fail-closed and incomplete:
   classification `exochain_root_evidence_verified`.
 - Current EXOCHAIN production evidence verifies the AVC root-trust bundle, but
   this does not authorize LiveSafe public trust claims without adapter proof.
+- The canonical public-output evidence summary hash is deterministic AVC
+  ceremony input for public adapter-output authorization. It is generated from
+  non-secret public metadata only and does not authorize public claims by
+  itself.
 - The runtime reports `exochain_connected: false` in current production health
   evidence.
 - The repo contains EXOCHAIN-facing client code, a fail-closed runtime adapter
@@ -106,6 +113,7 @@ The current integration state is fail-closed and incomplete:
 | Health route | `GET /api/health` in `server/index.js`; `server/utils/health-status.js`; `server/utils/exochain-connectivity-status.js` | Returns app, database, and EXOCHAIN connection status | active runtime, reports `exochain_connected: false` in live production evidence, skips raw EXOCHAIN probes while the adapter remains unverified, and redacts raw database error text from the public failure payload |
 | Trust-status route | `GET /api/trust/status` in `server/index.js`; `server/utils/trust-status.js` | Returns explicit inactive trust-state metadata for API consumers | active runtime, live production evidence reports `state: not-verified`, `machine_state: not_verified`, and `public_claims_allowed: false` |
 | EXOCHAIN production evidence evaluator | `config/exochain-production-trust.json`; `server/utils/exochain-production-trust-evidence.js` | Evaluates source-backed EXOCHAIN production health, readiness, root-trust bundle verification, and sentinel observations | active repo contract, reports verified EXOCHAIN production evidence while keeping public LiveSafe claims gated by adapter proof |
+| Public-output evidence summary hash | `server/utils/exochain-production-trust-evidence.js`; `scripts/exochain-public-output-evidence-hash.mjs` | Builds and hashes sorted-key canonical public evidence metadata for AVC public adapter-output binding | adjacent operator contract; emits non-secret `sha256:<hex>` evidence only and keeps `public_claims_allowed: false` until separate proof-bearing authorization passes |
 | Runtime adapter facade | `server/utils/livesafe-exochain-adapter.js` | Fail-closed LiveSafe boundary around EXOCHAIN-facing runtime calls | active in runtime, but still inactive because `runtimeAdapterStatus` remains `not-wired` |
 | EXOCHAIN client | `server/utils/exochain-client.js` | GraphQL client for identity, audit, scan, consent, and P.A.C.E. calls | subordinate transport only; now wrapped by the runtime adapter facade and fails closed on malformed direct-client audit inputs, identity/P.A.C.E. subscriber DIDs, scan/consent identifiers, missing consent input objects, and optional authority fields |
 | Boundary evaluator | `src/exochain-boundary.ts` | Denies trust claims and core access without a verified adapter | implemented policy gate |
