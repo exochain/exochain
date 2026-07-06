@@ -5796,6 +5796,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn livesafe_public_output_scoped_bearer_accepts_public_output_authorization_when_configured()
+     {
+        let state = fresh_state();
+        let credential_id =
+            store_livesafe_public_output_credential(&state, livesafe_public_output_credential());
+        let app = avc_router_with_bearer_gate(Arc::clone(&state));
+        let request = public_output_authorization_request(
+            credential_id,
+            "public-output-scoped-bearer-idem",
+            Hash256::from_bytes([0xF1; 32]),
+            exo_avc::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
+        );
+
+        let response = post_public_output_authorization(
+            app,
+            request,
+            Some("livesafe-public-output-scoped-token"),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let envelope: exo_avc::LivesafePublicAdapterOutputAuthorizationEnvelope =
+            serde_json::from_slice(&read_body(response).await).unwrap();
+        assert_eq!(envelope.proof.credential_id, credential_id);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    #[tokio::test]
     async fn public_output_authorization_exports_redacted_proof_happy_path() {
         let state = fresh_state();
         let credential_id =
@@ -7811,9 +7839,14 @@ mod tests {
         let auth = crate::auth::BearerAuth {
             token: Arc::new(zeroize::Zeroizing::new("vcg-006a-admin-token".to_string())),
         };
+        let scoped_auth =
+            crate::auth::ScopedBearerAuth::livesafe_public_adapter_output_authorization(
+                zeroize::Zeroizing::new("livesafe-public-output-scoped-token".to_string()),
+            );
         avc_router(state).layer(axum::middleware::from_fn(move |req, next| {
             let auth = auth.clone();
-            crate::auth::require_bearer_on_writes(auth, req, next)
+            let scoped_auth = scoped_auth.clone();
+            crate::auth::require_bearer_on_writes_with_scoped_bearers(auth, scoped_auth, req, next)
         }))
     }
 

@@ -100,6 +100,8 @@ const EXO_DAGDB_MCP_ENV_VARS: &[&str] = &[
 ];
 const EXO_DAGDB_NODE_TENANT_ID_ENV: &str = "EXO_DAGDB_TENANT_ID";
 const EXO_DAGDB_NODE_NAMESPACE_ENV: &str = "EXO_DAGDB_NAMESPACE";
+const EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV: &str =
+    "EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER";
 
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -465,6 +467,34 @@ fn required_env_value(name: &str) -> anyhow::Result<String> {
         Ok(_) => anyhow::bail!("{name} must not be empty"),
         Err(std::env::VarError::NotPresent) => anyhow::bail!("{name} is required"),
         Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} is not valid Unicode"),
+    }
+}
+
+fn optional_scoped_bearer_from_env(
+    name: &str,
+) -> anyhow::Result<Option<zeroize::Zeroizing<String>>> {
+    match std::env::var(name) {
+        Ok(value) if !value.trim().is_empty() => Ok(Some(zeroize::Zeroizing::new(value))),
+        Ok(_) | Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} is not valid Unicode"),
+    }
+}
+
+fn livesafe_public_output_scoped_bearer_from_config(
+    admin_token: &str,
+    scoped_token: Option<zeroize::Zeroizing<String>>,
+) -> anyhow::Result<auth::ScopedBearerAuth> {
+    match scoped_token {
+        Some(token) => {
+            if token.as_str() == admin_token {
+                anyhow::bail!(
+                    "{} must be distinct from EXOCHAIN_ADMIN_BEARER_TOKEN",
+                    EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV
+                );
+            }
+            Ok(auth::ScopedBearerAuth::livesafe_public_adapter_output_authorization(token))
+        }
+        None => Ok(auth::ScopedBearerAuth::none()),
     }
 }
 
@@ -984,6 +1014,19 @@ async fn start_node(
     let bearer_auth = auth::BearerAuth {
         token: Arc::new(admin_token),
     };
+    let scoped_bearer_auth = livesafe_public_output_scoped_bearer_from_config(
+        bearer_auth.token.as_str(),
+        optional_scoped_bearer_from_env(
+            EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV,
+        )?,
+    )?;
+    if scoped_bearer_auth.livesafe_public_adapter_output_authorization_configured() {
+        tracing::info!(
+            env = EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV,
+            route = auth::LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_ROUTE,
+            "Scoped LiveSafe public adapter-output bearer configured; token material omitted from logs"
+        );
+    }
 
     // Build the agent passport API router.
     let passport_state = Arc::new(passport::PassportApiState {
@@ -1194,7 +1237,14 @@ async fn start_node(
         .merge(zerodentity_onboarding_ui_router)
         .layer(axum::middleware::from_fn(move |req, next| {
             let a = bearer_auth.clone();
-            auth::require_bearer_on_writes(a, req, next)
+            let scoped = scoped_bearer_auth.clone();
+            async move {
+                if scoped.livesafe_public_adapter_output_authorization_configured() {
+                    auth::require_bearer_on_writes_with_scoped_bearers(a, scoped, req, next).await
+                } else {
+                    auth::require_bearer_on_writes(a, req, next).await
+                }
+            }
         }));
 
     // Start the gateway HTTP server (blocks).
@@ -1452,6 +1502,23 @@ mod tests {
         let text = err.to_string();
         assert!(text.contains("duplicate validator DID"));
         assert!(text.contains("did:exo:alice"));
+    }
+
+    #[test]
+    fn livesafe_public_output_scoped_bearer_config_rejects_admin_token_reuse_without_leaking_secret()
+     {
+        let err = match livesafe_public_output_scoped_bearer_from_config(
+            "shared-bearer-token",
+            Some(zeroize::Zeroizing::new("shared-bearer-token".to_owned())),
+        ) {
+            Ok(_) => panic!("scoped LiveSafe bearer must reject admin token reuse"),
+            Err(err) => err,
+        };
+
+        let text = err.to_string();
+        assert!(text.contains("EXOCHAIN_ADMIN_BEARER_TOKEN"));
+        assert!(text.contains(EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV));
+        assert!(!text.contains("shared-bearer-token"));
     }
 
     #[cfg(feature = "dagdb-gateway-proxy")]
