@@ -73,6 +73,7 @@ SPDX-License-Identifier: Apache-2.0
 - [AVC Root Trust Authority](avc/root-trust-authority.md) — Root trust bundle semantics and ceremony-binding policy.
 - [AVC Root Trust Install Runbook](avc/root-trust-installation.md) — Emitted-bundle verification and publish manifest process.
 - [AVC Root Trust Install Intake](avc/root-trust-install-intake.md) — Adjacent-surface trust-boundary and governance record.
+- [LiveSafe Public-Output AVC Ceremony](avc/livesafe-public-output-ceremony.md) — Exact operator command sequence for the narrow LiveSafe public trust-status credential package.
 
 ## Proofs
 

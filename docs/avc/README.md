@@ -64,6 +64,7 @@ flowchart TD
 | Operation | Function | Domain tag |
 |-----------|----------|------------|
 | Issue | `issue_avc(draft, sign)` | `exo.avc.credential.v1` |
+| LiveSafe public-output ceremony | `issue_livesafe_public_output_credential_ceremony(input, sign)` | `livesafe.public_output_credential_ceremony.v1` |
 | Validate | `validate_avc(request, registry)` | (read-only) |
 | Delegate | `delegate_avc(parent, child_draft, sign)` | `exo.avc.credential.v1` |
 | Revoke | `revoke_avc(id, revoker, reason, now, sign)` | `exo.avc.revocation.v1` |

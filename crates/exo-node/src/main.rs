@@ -48,6 +48,7 @@ mod economy;
 mod exoforge;
 mod holons;
 mod identity;
+mod livesafe_public_output_ceremony_cli;
 mod mcp;
 mod metrics;
 mod network;
@@ -1407,6 +1408,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             }
         }
         Command::Genesis { command } => root_genesis_cli::run_genesis_command(command).await,
+        Command::Avc { command } => {
+            livesafe_public_output_ceremony_cli::run_avc_command(command).await
+        }
     }
 }
 

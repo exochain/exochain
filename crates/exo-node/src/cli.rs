@@ -18,7 +18,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{ArgGroup, Args, Parser, Subcommand};
 
 pub const ROOT_GENESIS_LONG_HELP: &str = "\
 Root genesis creates a 7-of-13 institutional root authority. Genesis DKG \
@@ -192,6 +192,101 @@ pub enum Command {
         #[command(subcommand)]
         command: GenesisCommand,
     },
+
+    /// Run bounded AVC operator utilities.
+    Avc {
+        #[command(subcommand)]
+        command: AvcCommand,
+    },
+}
+
+#[derive(Subcommand)]
+/// AVC operator commands.
+pub enum AvcCommand {
+    /// Prepare or register the LiveSafe public-output credential ceremony.
+    #[command(name = "livesafe-public-output-ceremony")]
+    LivesafePublicOutputCeremony {
+        #[command(subcommand)]
+        command: LivesafePublicOutputCeremonyCommand,
+    },
+}
+
+#[derive(Subcommand)]
+/// LiveSafe public-output ceremony commands.
+pub enum LivesafePublicOutputCeremonyCommand {
+    /// Build a redacted registration package from explicit operator inputs.
+    Prepare(LivesafePublicOutputCeremonyPrepareArgs),
+
+    /// Register a prepared package with a running EXOCHAIN node.
+    Register(LivesafePublicOutputCeremonyRegisterArgs),
+}
+
+#[derive(Args)]
+/// Build a LiveSafe public-output registration package.
+pub struct LivesafePublicOutputCeremonyPrepareArgs {
+    /// Issuer DID that signs the narrow public-output AVC.
+    #[arg(long)]
+    pub issuer_did: String,
+
+    /// Path to local issuer signing material JSON. The file must contain
+    /// `issuer_did` and `signing_secret_hex`; the secret is never accepted on
+    /// argv and is never written to the ceremony output.
+    #[arg(long)]
+    pub issuer_secret_input: PathBuf,
+
+    /// Optional evidence file existence proof. The file is not hashed by this
+    /// command; the canonical hash comes from the LiveSafe evidence contract.
+    #[arg(long)]
+    pub evidence_input: Option<PathBuf>,
+
+    /// Canonical LiveSafe evidence summary hash as `sha256:<64 lowercase hex>`.
+    #[arg(long)]
+    pub evidence_hash: String,
+
+    /// Explicit credential not-before HLC physical milliseconds.
+    #[arg(long)]
+    pub not_before_physical_ms: u64,
+
+    /// Explicit credential expiry HLC physical milliseconds.
+    #[arg(long)]
+    pub expires_at_physical_ms: u64,
+
+    /// Idempotency key for the later public-output authorization proof request.
+    #[arg(long)]
+    pub idempotency_key: String,
+
+    /// Output JSON path. Omit to print the redacted public package to stdout.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Args)]
+#[command(group(
+    ArgGroup::new("admin_bearer_source")
+        .required(true)
+        .args(["admin_bearer_env", "admin_bearer_file"])
+))]
+/// Register a prepared LiveSafe public-output credential package.
+pub struct LivesafePublicOutputCeremonyRegisterArgs {
+    /// Prepared ceremony package JSON path.
+    #[arg(long)]
+    pub input: PathBuf,
+
+    /// EXOCHAIN node base URL or full `/api/v1/avc/issue` URL.
+    #[arg(long)]
+    pub node_url: String,
+
+    /// Environment variable containing the operator admin bearer at runtime.
+    #[arg(long)]
+    pub admin_bearer_env: Option<String>,
+
+    /// File containing the operator admin bearer at runtime.
+    #[arg(long)]
+    pub admin_bearer_file: Option<PathBuf>,
+
+    /// Output JSON path. Omit to print the sanitized registration response.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -606,6 +701,141 @@ mod tests {
         assert!(
             with_argv_secret.is_err(),
             "no CLI argument may carry 32-byte signing-secret material"
+        );
+    }
+
+    #[test]
+    fn livesafe_public_output_ceremony_cli_uses_secret_and_bearer_sources_not_inline_values() {
+        use clap::Parser;
+
+        let prepare_help = long_help_for(&["avc", "livesafe-public-output-ceremony", "prepare"]);
+        assert!(prepare_help.contains("sha256:<64 lowercase hex>"));
+
+        let evidence_hash = format!("sha256:{}", "ab".repeat(32));
+        let prepare_with_secret_file = Cli::try_parse_from([
+            "exochain",
+            "avc",
+            "livesafe-public-output-ceremony",
+            "prepare",
+            "--issuer-did",
+            "did:exo:livesafe-public-output-issuer",
+            "--issuer-secret-input",
+            "issuer.private.json",
+            "--evidence-input",
+            "livesafe-public-output-evidence.json",
+            "--evidence-hash",
+            &evidence_hash,
+            "--not-before-physical-ms",
+            "1000000",
+            "--expires-at-physical-ms",
+            "2000000",
+            "--idempotency-key",
+            "livesafe-public-output-ceremony-20260705",
+            "--output",
+            "livesafe-public-output-ceremony.json",
+        ]);
+        assert!(
+            prepare_with_secret_file.is_ok(),
+            "operator signing material must be supplied by file path"
+        );
+
+        let prepare_with_inline_secret = Cli::try_parse_from([
+            "exochain",
+            "avc",
+            "livesafe-public-output-ceremony",
+            "prepare",
+            "--issuer-did",
+            "did:exo:livesafe-public-output-issuer",
+            "--issuer-secret-hex",
+            &"42".repeat(32),
+            "--evidence-input",
+            "livesafe-public-output-evidence.json",
+            "--evidence-hash",
+            &evidence_hash,
+            "--not-before-physical-ms",
+            "1000000",
+            "--expires-at-physical-ms",
+            "2000000",
+            "--idempotency-key",
+            "livesafe-public-output-ceremony-20260705",
+            "--output",
+            "livesafe-public-output-ceremony.json",
+        ]);
+        assert!(
+            prepare_with_inline_secret.is_err(),
+            "issuer secret material must not be accepted on argv"
+        );
+
+        let register_with_env_bearer = Cli::try_parse_from([
+            "exochain",
+            "avc",
+            "livesafe-public-output-ceremony",
+            "register",
+            "--input",
+            "livesafe-public-output-ceremony.json",
+            "--node-url",
+            "https://node.example.invalid",
+            "--admin-bearer-env",
+            "EXOCHAIN_OPERATOR_AVC_ADMIN_BEARER",
+            "--output",
+            "livesafe-public-output-registration.json",
+        ]);
+        assert!(
+            register_with_env_bearer.is_ok(),
+            "registration must accept an explicit runtime env bearer source"
+        );
+
+        let register_with_file_bearer = Cli::try_parse_from([
+            "exochain",
+            "avc",
+            "livesafe-public-output-ceremony",
+            "register",
+            "--input",
+            "livesafe-public-output-ceremony.json",
+            "--node-url",
+            "https://node.example.invalid",
+            "--admin-bearer-file",
+            "operator-admin-bearer.txt",
+            "--output",
+            "livesafe-public-output-registration.json",
+        ]);
+        assert!(
+            register_with_file_bearer.is_ok(),
+            "registration must accept an explicit runtime file bearer source"
+        );
+
+        let register_without_bearer_source = Cli::try_parse_from([
+            "exochain",
+            "avc",
+            "livesafe-public-output-ceremony",
+            "register",
+            "--input",
+            "livesafe-public-output-ceremony.json",
+            "--node-url",
+            "https://node.example.invalid",
+            "--output",
+            "livesafe-public-output-registration.json",
+        ]);
+        assert!(
+            register_without_bearer_source.is_err(),
+            "registration must fail closed without a runtime bearer source"
+        );
+
+        let register_with_inline_bearer = Cli::try_parse_from([
+            "exochain",
+            "avc",
+            "livesafe-public-output-ceremony",
+            "register",
+            "--input",
+            "livesafe-public-output-ceremony.json",
+            "--node-url",
+            "https://node.example.invalid",
+            "--admin-bearer",
+            "super-secret-admin-token",
+        ]);
+        assert!(
+            register_with_inline_bearer.is_err(),
+            "admin bearer values must not be accepted on argv"
         );
     }
 
