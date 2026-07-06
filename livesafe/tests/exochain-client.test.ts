@@ -19,8 +19,10 @@ const PROOF_HASH_BYTES = repeatedByte(0xcc, 32);
 const ACTION_COMMITMENT_HASH_BYTES = repeatedByte(0xdd, 32);
 const IDEMPOTENCY_KEY_HASH_BYTES = repeatedByte(0xee, 32);
 const ED25519_SIGNATURE_BYTES = repeatedByte(0xaa, 64);
+const RECEIPT_ID_BYTES = repeatedByte(0x6f, 32);
 const EVIDENCE_HASH_HEX = repeatedHex(0xbb, 32);
 const CREDENTIAL_ID_HEX = repeatedHex(0xbc, 32);
+const RECEIPT_ID_HEX = repeatedHex(0x6f, 32);
 const ALT_EVIDENCE_HASH_HEX = repeatedHex(0xab, 32);
 const ALT_CREDENTIAL_ID_HEX = repeatedHex(0xcd, 32);
 const PROOF_HASH_HEX = repeatedHex(0xcc, 32);
@@ -981,6 +983,38 @@ describe("EXOCHAIN client timestamp preservation", () => {
     expect(result).toEqual({
       state: "permit",
       value: PUBLIC_ADAPTER_AUTHORIZATION_DTO_FROM_RUST,
+    });
+  });
+
+  it("adapts Rust core byte-array credential and receipt ids in public adapter-output envelopes", async () => {
+    configurePublicAdapterAuthorizationEnv();
+    const client = new ExochainClient("http://example.invalid/graphql");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () =>
+          rustCoreEnvelope({
+            proof: {
+              credential_id: CREDENTIAL_ID_BYTES,
+              receipt_id: RECEIPT_ID_BYTES,
+            },
+          }),
+      })),
+    );
+
+    const result = await client.getPublicAdapterOutputAuthorization({
+      subject: "livesafe.ai",
+      audience: "https://livesafe.ai/api/trust/status",
+      currentAt: "2026-07-05T12:00:00.000Z",
+    });
+
+    expect(result).toEqual({
+      state: "permit",
+      value: {
+        ...PUBLIC_ADAPTER_AUTHORIZATION_DTO_FROM_RUST,
+        receipt_id: `sha256:${RECEIPT_ID_HEX}`,
+      },
     });
   });
 
