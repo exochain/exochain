@@ -13,6 +13,7 @@
     "rust:test": "cargo test",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "evidence:public-output-hash": "node scripts/exochain-public-output-evidence-hash.mjs",
     "quality": "npm run context:lint && npm run typecheck && npm test && npm run rust:fmt && npm run rust:clippy && npm run rust:test"
   },
   "engines": {

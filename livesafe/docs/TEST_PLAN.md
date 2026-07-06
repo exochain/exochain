@@ -923,6 +923,12 @@ The gate runs:
   root-trust bundle id, issuer DID, verifier commit, verified timestamp, and
   non-blocking observations while keeping `public_claims_allowed: false`
   unless LiveSafe adapter proof also passes.
+- The public-output evidence summary hash contract validates sorted-key
+  canonical JSON determinism, hash changes for required public evidence field
+  changes, fail-closed rejection for missing or false production, EXOCHAIN
+  connectivity, runtime-adapter, or pre-authorization public-claim evidence,
+  explicit timestamp freshness without system time, secret/sensitive material
+  rejection, and the one-command non-secret machine-readable operator output.
 - The public EXOCHAIN copy boundary validates that customer-facing UI and
   public metadata do not claim active EXOCHAIN trust, bailment, audit,
   sovereignty, on-chain custody, active consent anchoring, or immutable
