@@ -313,6 +313,8 @@ jobs:
         run: bash tools/test_no_orphan_rust_modules.sh
       - name: Railway entrypoint ingress contract
         run: bash tools/test_railway_entrypoint_args.sh
+      - name: LiveSafe Railway deploy ref guard
+        run: bash tools/test_livesafe_railway_deploy_ref_guard.sh
       - name: Deployment readiness probes
         run: bash tools/test_deployment_readiness_probes.sh
       - name: Public route verifier portability

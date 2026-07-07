@@ -105,20 +105,45 @@ jobs:
       TARGET_ENVIRONMENT_ID: a223bc12-fbe4-430f-abce-8e3ee7c9abd3
       LIVESAFE_EXPECT_PUBLIC_CLAIMS_ALLOWED: ${{ inputs.expected_public_claims_allowed || 'false' }}
     steps:
+      - name: Resolve safe main commit
+        id: safe-ref
+        env:
+          REQUESTED_COMMIT_SHA: ${{ inputs.commit_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REQUESTED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "manual Railway promotions require a full lowercase commit SHA" >&2
+            exit 1
+          fi
+          safe_repo="$RUNNER_TEMP/livesafe-safe-ref.git"
+          git init --bare "$safe_repo"
+          git -C "$safe_repo" remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git -C "$safe_repo" fetch --no-tags origin "$REQUESTED_COMMIT_SHA"
+          git -C "$safe_repo" fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          git -C "$safe_repo" cat-file -e "$REQUESTED_COMMIT_SHA^{commit}"
+          if ! git -C "$safe_repo" merge-base --is-ancestor "$REQUESTED_COMMIT_SHA" refs/remotes/origin/main; then
+            echo "commit_sha must be reachable from origin/main before Railway secrets are exposed" >&2
+            exit 1
+          fi
+          echo "sha=$REQUESTED_COMMIT_SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ inputs.commit_sha || github.sha }}
+          ref: ${{ steps.safe-ref.outputs.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
       - name: Install Railway CLI
         run: npm install -g @railway/cli@4.65.0
       - name: Promote exochain-node
+        env:
+          SAFE_DEPLOY_SHA: ${{ steps.safe-ref.outputs.sha }}
         run: |
-          railway up . --path-as-root --project "$RAILWAY_PROJECT_ID" --environment "$TARGET_ENVIRONMENT_ID" --service "$EXOCHAIN_NODE_SERVICE_ID" --detach --json -m "${TARGET_ENVIRONMENT} exochain-node ${GITHUB_SHA}"
+          railway up . --path-as-root --project "$RAILWAY_PROJECT_ID" --environment "$TARGET_ENVIRONMENT_ID" --service "$EXOCHAIN_NODE_SERVICE_ID" --detach --json -m "${TARGET_ENVIRONMENT} exochain-node ${SAFE_DEPLOY_SHA}"
       - name: Promote livesafe
+        env:
+          SAFE_DEPLOY_SHA: ${{ steps.safe-ref.outputs.sha }}
         run: |
-          railway up . --path-as-root --project "$RAILWAY_PROJECT_ID" --environment "$TARGET_ENVIRONMENT_ID" --service "$LIVESAFE_SERVICE_ID" --detach --json -m "${TARGET_ENVIRONMENT} livesafe ${GITHUB_SHA}"
+          railway up . --path-as-root --project "$RAILWAY_PROJECT_ID" --environment "$TARGET_ENVIRONMENT_ID" --service "$LIVESAFE_SERVICE_ID" --detach --json -m "${TARGET_ENVIRONMENT} livesafe ${SAFE_DEPLOY_SHA}"
       - name: Smoke staging
         run: scripts/livesafe-railway-smoke.sh "$TARGET_ENVIRONMENT"
 
@@ -134,19 +159,44 @@ jobs:
       TARGET_ENVIRONMENT_ID: 1e5153e1-15f4-4447-bf7c-029af33927fb
       LIVESAFE_EXPECT_PUBLIC_CLAIMS_ALLOWED: ${{ inputs.expected_public_claims_allowed || 'false' }}
     steps:
+      - name: Resolve safe main commit
+        id: safe-ref
+        env:
+          REQUESTED_COMMIT_SHA: ${{ inputs.commit_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REQUESTED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "manual Railway promotions require a full lowercase commit SHA" >&2
+            exit 1
+          fi
+          safe_repo="$RUNNER_TEMP/livesafe-safe-ref.git"
+          git init --bare "$safe_repo"
+          git -C "$safe_repo" remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git -C "$safe_repo" fetch --no-tags origin "$REQUESTED_COMMIT_SHA"
+          git -C "$safe_repo" fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          git -C "$safe_repo" cat-file -e "$REQUESTED_COMMIT_SHA^{commit}"
+          if ! git -C "$safe_repo" merge-base --is-ancestor "$REQUESTED_COMMIT_SHA" refs/remotes/origin/main; then
+            echo "commit_sha must be reachable from origin/main before Railway secrets are exposed" >&2
+            exit 1
+          fi
+          echo "sha=$REQUESTED_COMMIT_SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ inputs.commit_sha || github.sha }}
+          ref: ${{ steps.safe-ref.outputs.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
       - name: Install Railway CLI
         run: npm install -g @railway/cli@4.65.0
       - name: Promote exochain-node
+        env:
+          SAFE_DEPLOY_SHA: ${{ steps.safe-ref.outputs.sha }}
         run: |
-          railway up . --path-as-root --project "$RAILWAY_PROJECT_ID" --environment "$TARGET_ENVIRONMENT_ID" --service "$EXOCHAIN_NODE_SERVICE_ID" --detach --json -m "${TARGET_ENVIRONMENT} exochain-node ${GITHUB_SHA}"
+          railway up . --path-as-root --project "$RAILWAY_PROJECT_ID" --environment "$TARGET_ENVIRONMENT_ID" --service "$EXOCHAIN_NODE_SERVICE_ID" --detach --json -m "${TARGET_ENVIRONMENT} exochain-node ${SAFE_DEPLOY_SHA}"
       - name: Promote livesafe
+        env:
+          SAFE_DEPLOY_SHA: ${{ steps.safe-ref.outputs.sha }}
         run: |
-          railway up . --path-as-root --project "$RAILWAY_PROJECT_ID" --environment "$TARGET_ENVIRONMENT_ID" --service "$LIVESAFE_SERVICE_ID" --detach --json -m "${TARGET_ENVIRONMENT} livesafe ${GITHUB_SHA}"
+          railway up . --path-as-root --project "$RAILWAY_PROJECT_ID" --environment "$TARGET_ENVIRONMENT_ID" --service "$LIVESAFE_SERVICE_ID" --detach --json -m "${TARGET_ENVIRONMENT} livesafe ${SAFE_DEPLOY_SHA}"
       - name: Smoke production
         run: scripts/livesafe-railway-smoke.sh "$TARGET_ENVIRONMENT"

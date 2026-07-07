@@ -34,11 +34,12 @@
 //! layer.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{Arc, Mutex},
 };
 
 use exo_core::{
+    crypto,
     hlc::HybridClock,
     types::{Did, Hash256, PublicKey, Timestamp},
 };
@@ -51,6 +52,7 @@ use exo_dag::{
 use tokio::sync::mpsc;
 
 use crate::{
+    identity,
     network::{NetworkEvent, NetworkHandle},
     store::SqliteDagStore,
     wire::{
@@ -60,6 +62,7 @@ use crate::{
 };
 
 const MAX_SNAPSHOT_CHUNK_SIZE: u32 = 500;
+const MAX_HLC_ANOMALY_EVIDENCE: usize = 1024;
 
 // ---------------------------------------------------------------------------
 // Distributed HLC sync anomaly evidence (VCG-012 / D6)
@@ -83,16 +86,16 @@ pub struct HlcAnomalyEvidence {
     pub reason: String,
 }
 
-/// Append-only recorder for HLC anomaly evidence objects.
+/// Bounded recorder for HLC anomaly evidence objects.
 ///
 /// This is intentionally the minimal, in-process DAG-evidence surface for
 /// VCG-012: every anomaly recorded here is retrievable, ordered, and never
-/// silently dropped. Production wiring may persist these into the durable
-/// DAG evidence store; the recorder is the constitutional seam that
-/// guarantees an anomaly is never *just* a log line.
+/// only a log line. Production wiring may persist these into the durable DAG
+/// evidence store; the in-process recorder keeps a bounded latest-evidence
+/// window so unauthenticated or drifted network traffic cannot exhaust memory.
 #[derive(Debug, Default)]
 pub struct HlcAnomalyRecorder {
-    evidence: Mutex<Vec<HlcAnomalyEvidence>>,
+    evidence: Mutex<VecDeque<HlcAnomalyEvidence>>,
 }
 
 impl HlcAnomalyRecorder {
@@ -108,7 +111,10 @@ impl HlcAnomalyRecorder {
             .evidence
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard.push(evidence);
+        if guard.len() == MAX_HLC_ANOMALY_EVIDENCE {
+            guard.pop_front();
+        }
+        guard.push_back(evidence);
     }
 
     /// Return all recorded anomaly evidence objects, in recording order.
@@ -117,8 +123,28 @@ impl HlcAnomalyRecorder {
         self.evidence
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+            .iter()
+            .cloned()
+            .collect()
     }
+}
+
+fn validate_hlc_sync_authority(msg: &HlcSyncMsg) -> Result<(), String> {
+    let derived_did = identity::did_from_public_key(&msg.public_key)
+        .map_err(|error| format!("HLC sync public key did derivation failed: {error}"))?;
+    if derived_did != msg.sender {
+        return Err(format!(
+            "HLC sync sender {} does not match signing public key DID {}",
+            msg.sender, derived_did
+        ));
+    }
+
+    let payload = msg.payload_to_verify()?;
+    if !crypto::verify(&payload, &msg.signature, &msg.public_key) {
+        return Err("HLC sync signature verification failed".to_owned());
+    }
+
+    Ok(())
 }
 
 /// Observe a remote HLC timestamp received over the wire: merge it into
@@ -445,6 +471,15 @@ impl SyncEngine {
     /// into this node's `HybridClock`. A drift/replay anomaly is recorded as
     /// a DAG evidence object (D6) rather than only logged.
     async fn handle_hlc_sync(&mut self, msg: HlcSyncMsg) {
+        if let Err(err) = validate_hlc_sync_authority(&msg) {
+            self.hlc_anomalies.record(HlcAnomalyEvidence {
+                anomaly_physical_ms: msg.timestamp.physical_ms,
+                anomaly_logical: msg.timestamp.logical,
+                reason: err,
+            });
+            return;
+        }
+
         let mut clock = self
             .hlc
             .lock()
@@ -998,6 +1033,19 @@ mod tests {
         }
     }
 
+    fn signed_hlc_sync(seed: u8, timestamp: Timestamp) -> HlcSyncMsg {
+        let keypair = KeyPair::from_secret_bytes([seed; 32]).expect("valid HLC sync keypair");
+        let sender = identity::did_from_public_key(keypair.public_key()).unwrap();
+        let payload =
+            HlcSyncMsg::signing_payload(&sender, &timestamp, keypair.public_key()).unwrap();
+        HlcSyncMsg {
+            sender,
+            timestamp,
+            public_key: *keypair.public_key(),
+            signature: keypair.sign(&payload),
+        }
+    }
+
     fn make_sign_fn() -> Box<dyn Fn(&[u8]) -> Signature> {
         let keypair = test_keypair();
         Box::new(move |data: &[u8]| keypair.sign(data))
@@ -1109,6 +1157,55 @@ mod tests {
         assert!(
             !production.contains("put_committed_many_sync(&nodes_with_heights)"),
             "snapshot sync must not mark externally supplied nodes committed without certificates"
+        );
+    }
+
+    #[test]
+    fn hlc_anomaly_recorder_keeps_bounded_latest_evidence() {
+        let recorder = HlcAnomalyRecorder::new();
+
+        for idx in 0..(MAX_HLC_ANOMALY_EVIDENCE + 17) {
+            recorder.record(HlcAnomalyEvidence {
+                anomaly_physical_ms: u64::try_from(idx).unwrap(),
+                anomaly_logical: 0,
+                reason: "test anomaly".to_owned(),
+            });
+        }
+
+        let evidence = recorder.recorded_evidence();
+        assert_eq!(evidence.len(), MAX_HLC_ANOMALY_EVIDENCE);
+        assert_eq!(evidence[0].anomaly_physical_ms, 17);
+        assert_eq!(
+            evidence[MAX_HLC_ANOMALY_EVIDENCE - 1].anomaly_physical_ms,
+            u64::try_from(MAX_HLC_ANOMALY_EVIDENCE + 16).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn hlc_sync_rejects_sender_not_bound_to_signing_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(SqliteDagStore::open(dir.path()).unwrap()));
+        let (net_handle, _) = acking_network_handle();
+        let (event_tx, _event_rx) = mpsc::channel(32);
+        let mut engine = SyncEngine::new(sync_config(50, 200), store, net_handle, event_tx);
+        let original_clock = engine.hlc_current();
+        let mut forged = signed_hlc_sync(42, Timestamp::new(original_clock.physical_ms + 100, 1));
+        forged.sender = Did::new("did:exo:forged-hlc-sender").unwrap();
+
+        engine.handle_message(WireMessage::HlcSync(forged)).await;
+
+        assert_eq!(
+            engine.hlc_current(),
+            original_clock,
+            "forged HLC sync must not advance the local clock"
+        );
+        let anomalies = engine.hlc_anomalies();
+        assert_eq!(anomalies.len(), 1);
+        assert!(
+            anomalies[0]
+                .reason
+                .contains("does not match signing public key DID"),
+            "forged HLC sync rejection must be recorded as evidence"
         );
     }
 

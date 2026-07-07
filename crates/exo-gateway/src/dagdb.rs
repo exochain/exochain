@@ -3098,6 +3098,15 @@ fn import_finality_payload_hash(
     approval_timestamp: &str,
 ) -> Result<Hash256, DagDbHandlerError> {
     validate_external_finality_authority(&request.requester_did, approval_authority_did)?;
+    let request_hash = import_route_request_hash(request).map_err(|response| {
+        DagDbHandlerError::from_response(*d5_record_rejected_response(
+            "import finality approval",
+            format!(
+                "import request hash could not be computed: {:?}",
+                response.status()
+            ),
+        ))
+    })?;
     operation_finality_payload_hash(
         "dagdb.gateway.import.external_finality",
         &(
@@ -3107,6 +3116,7 @@ fn import_finality_payload_hash(
             &request.idempotency_key,
             &request.db_set_version,
             &request.source_hash,
+            request_hash.to_string(),
             authorization_payload_hash.to_string(),
             approval_authority_did,
             approval_timestamp,
@@ -7238,19 +7248,13 @@ fn receipt_event_type_name(event_type: ReceiptEventType) -> &'static str {
 }
 
 #[cfg(feature = "production-db")]
-fn mounted_audit_tenant_id(headers: &HeaderMap, request_tenant_id: &str) -> String {
-    header_text(headers, TENANT_HEADER)
-        .filter(|tenant_id| !tenant_id.trim().is_empty())
-        .unwrap_or(request_tenant_id)
-        .to_owned()
+fn mounted_audit_tenant_id(_headers: &HeaderMap, request_tenant_id: &str) -> String {
+    request_tenant_id.to_owned()
 }
 
 #[cfg(feature = "production-db")]
-fn mounted_audit_namespace(headers: &HeaderMap, request_namespace: &str) -> String {
-    header_text(headers, NAMESPACE_HEADER)
-        .filter(|namespace| !namespace.trim().is_empty())
-        .unwrap_or(request_namespace)
-        .to_owned()
+fn mounted_audit_namespace(_headers: &HeaderMap, request_namespace: &str) -> String {
+    request_namespace.to_owned()
 }
 
 /// Insert a gateway idempotency reservation stamped by the trusted database
@@ -11822,6 +11826,30 @@ mod tests {
 
         use super::*;
 
+        #[test]
+        fn pre_auth_operational_audit_ignores_spoofed_scope_headers() {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                TENANT_HEADER,
+                HeaderValue::from_static("tenant-attacker-controlled"),
+            );
+            headers.insert(
+                NAMESPACE_HEADER,
+                HeaderValue::from_static("namespace-attacker-controlled"),
+            );
+
+            assert_eq!(
+                mounted_audit_tenant_id(&headers, "tenant-request-body"),
+                "tenant-request-body",
+                "pre-auth audit receipts must stamp the parsed request tenant, not spoofable headers"
+            );
+            assert_eq!(
+                mounted_audit_namespace(&headers, "namespace-request-body"),
+                "namespace-request-body",
+                "pre-auth audit receipts must stamp the parsed request namespace, not spoofable headers"
+            );
+        }
+
         #[tokio::test]
         async fn bind_requester_to_session_actor_rejects_self_asserted_requester() {
             // A session authenticated as one actor must not be able to drive an
@@ -13623,6 +13651,34 @@ mod tests {
             })
             .expect("changed export request hash");
             assert_ne!(export_hash, changed_export_hash);
+        }
+
+        #[test]
+        fn import_finality_payload_binds_import_report_body() {
+            let import = import_request();
+            let authorization_hash = Hash256::digest(b"import authorization payload");
+            let finality_hash = import_finality_payload_hash(
+                &import,
+                authorization_hash,
+                "did:exo:import-finality-authority",
+                "2026-06-20T00:00:00Z",
+            )
+            .unwrap_or_else(|_| panic!("import finality hash"));
+
+            let mut mutated = import;
+            mutated.import_report["warnings"] = json!(["mutated-import-report-body"]);
+            let mutated_hash = import_finality_payload_hash(
+                &mutated,
+                authorization_hash,
+                "did:exo:import-finality-authority",
+                "2026-06-20T00:00:00Z",
+            )
+            .unwrap_or_else(|_| panic!("mutated import finality hash"));
+
+            assert_ne!(
+                finality_hash, mutated_hash,
+                "import finality signatures must bind the canonical import_report body, not only source_hash"
+            );
         }
 
         #[test]

@@ -58,7 +58,7 @@ use sqlx::{PgPool, Postgres, Row, Transaction};
 
 use super::types::{
     BehavioralSample, ClaimStatus, DeviceFingerprint, IdentityClaim, IdentitySession, OtpChallenge,
-    OtpChannel, OtpHmacSecret, OtpState, PeerAttestation, ZerodentityScore,
+    OtpChannel, OtpState, PeerAttestation, ZerodentityScore,
 };
 
 pub type ReceiptSigner = Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>;
@@ -223,7 +223,7 @@ struct OtpChallengeRecord {
     challenge_id: String,
     subject_did: Did,
     channel: OtpChannel,
-    hmac_secret: [u8; 32],
+    hmac_secret_digest: Hash256,
     dispatched_ms: u64,
     ttl_ms: u64,
     attempts: u32,
@@ -237,33 +237,13 @@ impl From<&OtpChallenge> for OtpChallengeRecord {
             challenge_id: challenge.challenge_id.clone(),
             subject_did: challenge.subject_did.clone(),
             channel: challenge.channel.clone(),
-            hmac_secret: *challenge.hmac_secret.expose_secret(),
+            hmac_secret_digest: otp_hmac_secret_digest(challenge.hmac_secret.expose_secret()),
             dispatched_ms: challenge.dispatched_ms,
             ttl_ms: challenge.ttl_ms,
             attempts: challenge.attempts,
             max_attempts: challenge.max_attempts,
             state: challenge.state.clone(),
         }
-    }
-}
-
-impl TryFrom<OtpChallengeRecord> for OtpChallenge {
-    type Error = anyhow::Error;
-
-    fn try_from(record: OtpChallengeRecord) -> anyhow::Result<Self> {
-        let hmac_secret = OtpHmacSecret::new(record.hmac_secret)
-            .ok_or_else(|| anyhow::anyhow!("persisted OTP HMAC secret is all zero"))?;
-        Ok(Self {
-            challenge_id: record.challenge_id,
-            subject_did: record.subject_did,
-            channel: record.channel,
-            hmac_secret,
-            dispatched_ms: record.dispatched_ms,
-            ttl_ms: record.ttl_ms,
-            attempts: record.attempts,
-            max_attempts: record.max_attempts,
-            state: record.state,
-        })
     }
 }
 
@@ -274,9 +254,45 @@ struct OtpLockoutRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct IdentitySessionRecord {
+    session_token_digest: String,
+    subject_did: Did,
+    public_key: Vec<u8>,
+    created_ms: u64,
+    last_active_ms: u64,
+    revoked: bool,
+}
+
+impl From<&IdentitySession> for IdentitySessionRecord {
+    fn from(session: &IdentitySession) -> Self {
+        Self {
+            session_token_digest: session_token_digest(&session.session_token),
+            subject_did: session.subject_did.clone(),
+            public_key: session.public_key.clone(),
+            created_ms: session.created_ms,
+            last_active_ms: session.last_active_ms,
+            revoked: session.revoked,
+        }
+    }
+}
+
+impl From<IdentitySessionRecord> for IdentitySession {
+    fn from(record: IdentitySessionRecord) -> Self {
+        Self {
+            session_token: record.session_token_digest,
+            subject_did: record.subject_did,
+            public_key: record.public_key,
+            created_ms: record.created_ms,
+            last_active_ms: record.last_active_ms,
+            revoked: record.revoked,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct SessionNonceRecord {
-    session_token: String,
-    nonce: String,
+    session_token_digest: String,
+    nonce_digest: String,
 }
 
 #[derive(Clone)]
@@ -360,6 +376,34 @@ fn canonicalize_behavioral_samples(samples: &mut [BehavioralSample]) {
                     .cmp(&right.baseline_similarity_bp),
             )
     });
+}
+
+fn persisted_auth_digest(domain: &str, material: &[u8]) -> Hash256 {
+    let mut payload = Vec::with_capacity(domain.len() + 1 + material.len());
+    payload.extend_from_slice(domain.as_bytes());
+    payload.push(0);
+    payload.extend_from_slice(material);
+    Hash256::digest(&payload)
+}
+
+fn otp_hmac_secret_digest(secret: &[u8; 32]) -> Hash256 {
+    persisted_auth_digest("exo.zerodentity.persisted_otp_hmac_secret.v1", secret)
+}
+
+fn session_token_digest(token: &str) -> String {
+    persisted_auth_digest(
+        "exo.zerodentity.persisted_session_token.v1",
+        token.as_bytes(),
+    )
+    .to_string()
+}
+
+fn session_nonce_digest(nonce: &str) -> String {
+    persisted_auth_digest(
+        "exo.zerodentity.persisted_session_nonce.v1",
+        nonce.as_bytes(),
+    )
+    .to_string()
 }
 
 pub(crate) fn otp_challenge_expired(challenge: &OtpChallenge, now_ms: u64) -> bool {
@@ -778,11 +822,12 @@ impl ZerodentityStore {
                         .push(sample);
                 }
                 ZerodentityRecordFamily::OtpChallenge => {
-                    let persisted: OtpChallengeRecord =
+                    let _persisted: OtpChallengeRecord =
                         decode_cbor(&row.cbor_payload, "0dentity OTP challenge")?;
-                    let challenge = OtpChallenge::try_from(persisted)?;
-                    self.otp_challenges
-                        .insert(challenge.challenge_id.clone(), challenge);
+                    // Persisted OTP rows intentionally carry only a digest of
+                    // the HMAC secret. Pending challenges that survive a
+                    // process restart fail closed instead of rehydrating live
+                    // verifier secret material from DAG DB.
                 }
                 ZerodentityRecordFamily::OtpLockout => {
                     let lockout: OtpLockoutRecord =
@@ -804,15 +849,16 @@ impl ZerodentityStore {
                     );
                 }
                 ZerodentityRecordFamily::IdentitySession => {
-                    let session: IdentitySession =
+                    let persisted: IdentitySessionRecord =
                         decode_cbor(&row.cbor_payload, "0dentity identity session")?;
+                    let session = IdentitySession::from(persisted);
                     self.sessions.insert(session.session_token.clone(), session);
                 }
                 ZerodentityRecordFamily::SessionNonce => {
                     let nonce: SessionNonceRecord =
                         decode_cbor(&row.cbor_payload, "0dentity session nonce")?;
                     self.session_request_nonces
-                        .insert((nonce.session_token, nonce.nonce));
+                        .insert((nonce.session_token_digest, nonce.nonce_digest));
                 }
                 ZerodentityRecordFamily::DagNode => {
                     let node: DagNode = decode_cbor(&row.cbor_payload, "0dentity DAG node")?;
@@ -1399,12 +1445,13 @@ impl ZerodentityStore {
 
     /// Persist an identity session.
     pub fn insert_session(&mut self, session: &IdentitySession) -> anyhow::Result<()> {
+        let persisted = IdentitySessionRecord::from(session);
         self.persist_payload(
             ZerodentityRecordFamily::IdentitySession,
             session.subject_did.as_str().to_owned(),
-            session.session_token.clone(),
+            persisted.session_token_digest.clone(),
             String::new(),
-            session,
+            &persisted,
         )?;
         self.sessions
             .insert(session.session_token.clone(), session.clone());
@@ -1421,25 +1468,36 @@ impl ZerodentityStore {
         nonce: &str,
     ) -> anyhow::Result<bool> {
         let nonce_key = (session_token.to_owned(), nonce.to_owned());
-        if self.session_request_nonces.contains(&nonce_key) {
+        let persisted_nonce_key = (
+            session_token_digest(session_token),
+            session_nonce_digest(nonce),
+        );
+        if self.session_request_nonces.contains(&nonce_key)
+            || self.session_request_nonces.contains(&persisted_nonce_key)
+        {
             return Ok(false);
         }
-        let subject_did = self.sessions.get(session_token).map_or_else(
-            || "unbound-session-nonce".to_owned(),
-            |session| session.subject_did.as_str().to_owned(),
-        );
+        let subject_did = self
+            .sessions
+            .get(session_token)
+            .or_else(|| self.sessions.get(&persisted_nonce_key.0))
+            .map_or_else(
+                || "unbound-session-nonce".to_owned(),
+                |session| session.subject_did.as_str().to_owned(),
+            );
         let record = SessionNonceRecord {
-            session_token: session_token.to_owned(),
-            nonce: nonce.to_owned(),
+            session_token_digest: persisted_nonce_key.0.clone(),
+            nonce_digest: persisted_nonce_key.1.clone(),
         };
         self.persist_payload(
             ZerodentityRecordFamily::SessionNonce,
             subject_did,
-            session_token.to_owned(),
-            nonce.to_owned(),
+            persisted_nonce_key.0.clone(),
+            persisted_nonce_key.1.clone(),
             &record,
         )?;
         self.session_request_nonces.insert(nonce_key);
+        self.session_request_nonces.insert(persisted_nonce_key);
         Ok(true)
     }
 
@@ -1579,9 +1637,11 @@ impl ZerodentityStore {
     /// Returns `None` if no matching session exists or if the session has been
     /// revoked or expired.
     pub fn get_session(&self, token: &str, now_ms: u64) -> anyhow::Result<Option<IdentitySession>> {
+        let token_digest = session_token_digest(token);
         Ok(self
             .sessions
             .get(token)
+            .or_else(|| self.sessions.get(&token_digest))
             .filter(|s| !s.revoked && now_ms >= s.created_ms && !s.is_expired_at(now_ms))
             .cloned())
     }
@@ -1832,12 +1892,13 @@ impl ZerodentityStore {
             .values()
             .filter(|session| session.subject_did.as_str() == did.as_str())
         {
+            let persisted = IdentitySessionRecord::from(session);
             self.persist_payload(
                 ZerodentityRecordFamily::IdentitySession,
                 session.subject_did.as_str().to_owned(),
-                session.session_token.clone(),
+                persisted.session_token_digest.clone(),
                 String::new(),
-                session,
+                &persisted,
             )?;
         }
         self.persist_dag_node(&erasure_node)?;
@@ -1947,6 +2008,13 @@ mod tests {
         OtpHmacSecret::new([seed; 32]).unwrap()
     }
 
+    fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
+        !needle.is_empty()
+            && haystack
+                .windows(needle.len())
+                .any(|window| window == needle)
+    }
+
     fn signed_store(seed: u8) -> (ZerodentityStore, Did, PublicKey) {
         let keypair = KeyPair::from_secret_bytes([seed; 32]).unwrap();
         let public_key = *keypair.public_key();
@@ -1990,6 +2058,91 @@ mod tests {
             signature: Signature::Empty,
             dag_node_hash: h(),
         }
+    }
+
+    #[test]
+    fn persisted_otp_challenge_record_redacts_hmac_secret() {
+        let raw_secret = [0x42; 32];
+        let challenge = OtpChallenge {
+            challenge_id: "otp-persist-redaction".into(),
+            subject_did: did("did:exo:otp-redaction"),
+            channel: OtpChannel::Email,
+            hmac_secret: OtpHmacSecret::new(raw_secret).unwrap(),
+            dispatched_ms: 1_000,
+            ttl_ms: OtpChannel::Email.ttl_ms(),
+            attempts: 0,
+            max_attempts: 3,
+            state: OtpState::Pending,
+        };
+
+        let record = OtpChallengeRecord::from(&challenge);
+        let encoded = canonical_cbor(&record).unwrap();
+
+        assert_ne!(record.hmac_secret_digest.as_bytes(), &raw_secret);
+        assert!(
+            !bytes_contain(&encoded, &raw_secret),
+            "persisted OTP challenge CBOR must not contain raw HMAC secret bytes"
+        );
+    }
+
+    #[test]
+    fn persisted_session_and_nonce_records_redact_bearer_material() {
+        let token = "session-token-must-not-hit-dagdb";
+        let nonce = "nonce-must-not-hit-dagdb";
+        let session = IdentitySession {
+            session_token: token.into(),
+            subject_did: did("did:exo:session-redaction"),
+            public_key: vec![7; 32],
+            created_ms: 1_000,
+            last_active_ms: 1_000,
+            revoked: false,
+        };
+
+        let session_record = IdentitySessionRecord::from(&session);
+        let session_encoded = canonical_cbor(&session_record).unwrap();
+        let nonce_record = SessionNonceRecord {
+            session_token_digest: session_token_digest(token),
+            nonce_digest: session_nonce_digest(nonce),
+        };
+        let nonce_encoded = canonical_cbor(&nonce_record).unwrap();
+
+        assert_ne!(session_record.session_token_digest, token);
+        assert!(!bytes_contain(&session_encoded, token.as_bytes()));
+        assert!(!bytes_contain(&nonce_encoded, token.as_bytes()));
+        assert!(!bytes_contain(&nonce_encoded, nonce.as_bytes()));
+    }
+
+    #[test]
+    fn persisted_session_digest_lookup_accepts_presented_token() {
+        let token = "presented-session-token";
+        let session = IdentitySession {
+            session_token: session_token_digest(token),
+            subject_did: did("did:exo:session-digest-lookup"),
+            public_key: vec![8; 32],
+            created_ms: 1_000,
+            last_active_ms: 1_000,
+            revoked: false,
+        };
+        let mut store = ZerodentityStore::new();
+        store
+            .sessions
+            .insert(session.session_token.clone(), session.clone());
+
+        let loaded = store.get_session(token, 2_000).unwrap();
+
+        assert_eq!(loaded.map(|s| s.subject_did), Some(session.subject_did));
+    }
+
+    #[test]
+    fn persisted_nonce_digest_blocks_replay_with_presented_token() {
+        let token = "nonce-replay-session-token";
+        let nonce = "nonce-replay-value";
+        let mut store = ZerodentityStore::new();
+        store
+            .session_request_nonces
+            .insert((session_token_digest(token), session_nonce_digest(nonce)));
+
+        assert!(!store.consume_session_nonce(token, nonce).unwrap());
     }
 
     #[test]

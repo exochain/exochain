@@ -663,6 +663,27 @@ pub struct StateSnapshotChunkMsg {
 pub struct HlcSyncMsg {
     pub sender: Did,
     pub timestamp: Timestamp,
+    pub public_key: PublicKey,
+    #[serde(deserialize_with = "deserialize_bounded_signature")]
+    pub signature: Signature,
+}
+
+impl HlcSyncMsg {
+    pub fn signing_payload(
+        sender: &Did,
+        timestamp: &Timestamp,
+        public_key: &PublicKey,
+    ) -> Result<Vec<u8>, String> {
+        let payload = ("exo.node.hlc_sync.v1", sender, timestamp, public_key);
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&payload, &mut bytes)
+            .map_err(|error| format!("HLC sync signing payload encode: {error}"))?;
+        Ok(bytes)
+    }
+
+    pub fn payload_to_verify(&self) -> Result<Vec<u8>, String> {
+        Self::signing_payload(&self.sender, &self.timestamp, &self.public_key)
+    }
 }
 
 // ---------------------------------------------------------------------------

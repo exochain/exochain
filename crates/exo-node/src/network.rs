@@ -994,9 +994,19 @@ mod tests {
 
         // HLC rides the existing DAG-sync (consensus) gossipsub channel per
         // D6 — it does not get a dedicated clock topic.
+        let hlc_keypair = exo_core::crypto::KeyPair::from_secret_bytes([42u8; 32]).unwrap();
+        let hlc_sender = crate::identity::did_from_public_key(hlc_keypair.public_key()).unwrap();
+        let hlc_payload = wire::HlcSyncMsg::signing_payload(
+            &hlc_sender,
+            &remote_timestamp,
+            hlc_keypair.public_key(),
+        )
+        .unwrap();
         let hlc_message = WireMessage::HlcSync(wire::HlcSyncMsg {
-            sender: Did::new("did:exo:hlc-node-a").unwrap(),
+            sender: hlc_sender,
             timestamp: remote_timestamp,
+            public_key: *hlc_keypair.public_key(),
+            signature: hlc_keypair.sign(&hlc_payload),
         });
 
         handle1
