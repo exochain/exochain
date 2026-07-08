@@ -50,7 +50,7 @@ Exit criterion: The plan, audit, frozen goal, prompt, branch, PR, and automation
 
 | Chunk ID | Name | Priority | Status | Dependencies | Branch | PR | Commit | Blocking issue |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| CHUNK-01 | Goal Freeze and Surface Classification | P0 | implemented | none | `codex/post-audit-remediation-plan` | `https://github.com/exochain/exochain/pull/785` | `79a206653eb23331a9526921672bbb42e66aac28` | Maintainer acceptance remains pending until PR review or merge. |
+| CHUNK-01 | Goal Freeze and Surface Classification | P0 | PR-open | none | `codex/post-audit-remediation-plan` | `https://github.com/exochain/exochain/pull/785` | `79a206653eb23331a9526921672bbb42e66aac28` | Maintainer acceptance remains pending until PR review or merge. |
 | CHUNK-02 | Route and Contract Truth Inventory | P0 | pending | CHUNK-01 | pending | pending | pending | none recorded |
 | CHUNK-03 | Gateway, Web, and SDK Contract Repair | P0 | pending | CHUNK-02 | pending | pending | pending | none recorded |
 | CHUNK-04 | DAG DB Runtime Truth and Boundary Hardening | P0/P1 | pending | CHUNK-02 | pending | pending | pending | none recorded |
@@ -162,9 +162,13 @@ Adversarial post-review:
 - PR Readiness Reviewer: pass for draft PR update; full system readiness remains unclaimed.
 - Final Assembly Reviewer: pass; this unlocks the next chunk but does not make the system goal-ready.
 
-Commit: `79a206653eb23331a9526921672bbb42e66aac28`.
+Implementation commit: `79a206653eb23331a9526921672bbb42e66aac28`.
+
+Ledger evidence commit: `043272659b5164691993f4db34a78efe52ec07a4`.
 
 PR: `https://github.com/exochain/exochain/pull/785`.
+
+PR action: branch pushed to `mstewartbz/codex/post-audit-remediation-plan`; draft PR title and body updated with CHUNK-01 evidence, automation id, checklist, and remaining limitations.
 
 Remaining risks:
 
