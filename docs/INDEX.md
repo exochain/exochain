@@ -2,7 +2,7 @@
 title: "EXOCHAIN Documentation Index"
 status: active
 created: 2026-03-18
-updated: 2026-04-15
+updated: 2026-07-08
 tags: [exochain, documentation, index]
 ---
 <!--
@@ -28,7 +28,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Constitutional Trust Fabric for Safe Superintelligence Governance**
 
-124165 lines of Rust under `crates/` · 20 workspace packages · 3,001 listed tests · 40 MCP tools · 8 constitutional invariants
+384772 lines of Rust under `crates/` · 31 workspace crates · 6,228 listed tests · 23 numbered CI quality gates plus the required aggregator
 
 ---
 
@@ -95,6 +95,8 @@ SPDX-License-Identifier: Apache-2.0
 ## Audit and truth
 
 - [Repo Truth Baseline](audit/REPO-TRUTH-BASELINE.md) — Audited metrics, build status, claim verification.
+- [Whole-System Audit - 2026-07-08](audit/WHOLE-SYSTEM-AUDIT-2026-07-08.md) — Adversarial cross-surface audit of current `main`.
+- [Post-Audit Whole-System Remediation Plan - 2026-07-08](audit/POST-AUDIT-IMPLEMENTATION-PLAN-2026-07-08.md) — Test-driven execution plan for the audit findings.
 - [`tools/repo_truth.sh`](../tools/repo_truth.sh) — Regenerate truth baseline from source.
 
 ---
@@ -191,7 +193,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## CI/CD
 
-- `.github/workflows/ci.yml` — 20 numbered quality gates plus required aggregator per CR-001 §8.8.
+- `.github/workflows/ci.yml` — 23 numbered quality gates plus required aggregator per CR-001 §8.8.
 - `.github/workflows/release.yml` — Release with manual approval + provenance attestation.
 - `.github/workflows/exoforge-triage.yml` — Automatic ExoForge triage for GitHub issues.
 - `.github/ISSUE_TEMPLATE/` — Structured issue templates (bug report, feature request).
