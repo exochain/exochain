@@ -35,7 +35,7 @@ MAJOR.MINOR.PATCH
 The workspace version is set in `Cargo.toml`:
 ```toml
 [workspace.package]
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 ```
 
 ## Release Process
@@ -86,9 +86,9 @@ Create and verify the signed release tag only after the key is configured:
 
 ```bash
 git fetch origin main --tags
-git tag -s v0.2.0-beta "$(git rev-parse origin/main)" -m "EXOCHAIN v0.2.0-beta"
-git tag -v v0.2.0-beta
-git push origin v0.2.0-beta
+git tag -s v0.2.1-beta "$(git rev-parse origin/main)" -m "EXOCHAIN v0.2.1-beta"
+git tag -v v0.2.1-beta
+git push origin v0.2.1-beta
 ```
 
 ### Dry Run
@@ -121,10 +121,10 @@ resolution requiring retraction.
 
 ```bash
 # Yank a specific crate version (repeats for each affected crate)
-cargo yank --version 0.2.0-beta exo-core
+cargo yank --version 0.2.1-beta exo-core
 
 # Restore a yank if issued in error
-cargo yank --version 0.2.0-beta exo-core --undo
+cargo yank --version 0.2.1-beta exo-core --undo
 ```
 
 Yanks must be logged as a governance action: open an issue with label

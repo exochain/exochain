@@ -33,18 +33,18 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-decision-forum = { package = "exochain-decision-forum", path = "../decision-forum", version = "=0.2.0-beta" }
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.0-beta" }
-exo-api = { package = "exochain-api", path = "../exo-api", version = "=0.2.0-beta" }
-exo-dag-db-core = { package = "exochain-dag-db-core", path = "../exo-dag-db-core", version = "=0.2.0-beta" }
-exo-dag-db-domain = { package = "exochain-dag-db-domain", path = "../exo-dag-db-domain", version = "=0.2.0-beta" }
-exo-dag-db-exchange = { package = "exochain-dag-db-exchange", path = "../exo-dag-db-exchange", version = "=0.2.0-beta" }
-exo-dag-db-postgres = { package = "exochain-dag-db-postgres", path = "../exo-dag-db-postgres", version = "=0.2.0-beta", default-features = false, optional = true }
-exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.0-beta" }
-exo-consent = { package = "exochain-consent", path = "../exo-consent", version = "=0.2.0-beta" }
-exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.0-beta" }
-exo-governance = { package = "exochain-governance", path = "../exo-governance", version = "=0.2.0-beta" }
-exo-legal = { package = "exochain-legal", path = "../exo-legal", version = "=0.2.0-beta" }
+decision-forum = { package = "exochain-decision-forum", path = "../decision-forum", version = "=0.2.1-beta" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.1-beta" }
+exo-api = { package = "exochain-api", path = "../exo-api", version = "=0.2.1-beta" }
+exo-dag-db-core = { package = "exochain-dag-db-core", path = "../exo-dag-db-core", version = "=0.2.1-beta" }
+exo-dag-db-domain = { package = "exochain-dag-db-domain", path = "../exo-dag-db-domain", version = "=0.2.1-beta" }
+exo-dag-db-exchange = { package = "exochain-dag-db-exchange", path = "../exo-dag-db-exchange", version = "=0.2.1-beta" }
+exo-dag-db-postgres = { package = "exochain-dag-db-postgres", path = "../exo-dag-db-postgres", version = "=0.2.1-beta", default-features = false, optional = true }
+exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.1-beta" }
+exo-consent = { package = "exochain-consent", path = "../exo-consent", version = "=0.2.1-beta" }
+exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.1-beta" }
+exo-governance = { package = "exochain-governance", path = "../exo-governance", version = "=0.2.1-beta" }
+exo-legal = { package = "exochain-legal", path = "../exo-legal", version = "=0.2.1-beta" }
 bs58 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

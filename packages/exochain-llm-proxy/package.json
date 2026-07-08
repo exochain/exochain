@@ -1,6 +1,6 @@
 {
   "name": "@exochain/llm-proxy",
-  "version": "0.2.0-beta",
+  "version": "0.2.1-beta",
   "description": "EXOCHAIN LYNK Protocol proxy for receipted LLM and MCP usage",
   "license": "Apache-2.0",
   "repository": {

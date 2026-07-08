@@ -80,6 +80,15 @@ checks = {
     "packages/exochain-sdk/package-lock.json packages.@exochain/sdk": json_version(
         "packages/exochain-sdk/package-lock.json", ("packages", "", "version")
     ),
+    "packages/exochain-llm-proxy/package.json": json_version(
+        "packages/exochain-llm-proxy/package.json"
+    ),
+    "packages/exochain-llm-proxy/package-lock.json": json_version(
+        "packages/exochain-llm-proxy/package-lock.json"
+    ),
+    "packages/exochain-llm-proxy/package-lock.json packages.@exochain/llm-proxy": json_version(
+        "packages/exochain-llm-proxy/package-lock.json", ("packages", "", "version")
+    ),
     "crates/exochain-sdk/src/lib.rs PROTOCOL_VERSION": regex_value(
         "crates/exochain-sdk/src/lib.rs",
         r'PROTOCOL_VERSION:\s*&str\s*=\s*"([^"]+)"',

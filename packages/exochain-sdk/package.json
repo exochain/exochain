@@ -1,6 +1,6 @@
 {
   "name": "@exochain/sdk",
-  "version": "0.2.0-beta",
+  "version": "0.2.1-beta",
   "description": "EXOCHAIN SDK — constitutional governance fabric for AI and data sovereignty",
   "license": "Apache-2.0",
   "repository": {

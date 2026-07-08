@@ -168,7 +168,7 @@
 /// server reports a different major/minor so users can distinguish
 /// protocol skew from transport errors. All three SDKs (Rust, TypeScript,
 /// Python) expose a matching `PROTOCOL_VERSION` constant.
-pub const PROTOCOL_VERSION: &str = "0.2.0-beta";
+pub const PROTOCOL_VERSION: &str = "0.2.1-beta";
 
 pub mod authority;
 pub mod avc;
@@ -208,6 +208,6 @@ mod tests {
 
     #[test]
     fn protocol_version_is_stable() {
-        assert_eq!(PROTOCOL_VERSION, "0.2.0-beta");
+        assert_eq!(PROTOCOL_VERSION, "0.2.1-beta");
     }
 }

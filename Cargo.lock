@@ -1762,7 +1762,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-api"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "ciborium",
@@ -1778,7 +1778,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-authority"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "ciborium",
@@ -1791,7 +1791,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-avc"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "ciborium",
  "exochain-authority",
@@ -1803,7 +1803,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-catapult"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "ciborium",
  "exochain-authority",
@@ -1819,7 +1819,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-consensus"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "exochain-core",
  "exochain-decision-forum",
@@ -1830,7 +1830,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-consent"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "ciborium",
@@ -1841,7 +1841,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-core"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "chrono",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "async-trait",
  "blake3",
@@ -1880,7 +1880,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-api"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "serde",
  "serde_json",
@@ -1888,7 +1888,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-core"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -1900,7 +1900,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-domain"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "ciborium",
  "exochain-authority",
@@ -1919,7 +1919,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-exchange"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "exochain-authority",
  "exochain-avc",
@@ -1938,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-graph"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-lab"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "criterion",
  "exochain-core",
@@ -1972,7 +1972,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-postgres"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "exochain-core",
  "exochain-dag",
@@ -1992,7 +1992,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-retrieval"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "exochain-core",
  "exochain-dag-db-api",
@@ -2007,7 +2007,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-decision-forum"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "exochain-authority",
@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-economy"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -2035,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-escalation"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -2049,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-gatekeeper"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2074,7 +2074,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-gateway"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",
@@ -2117,7 +2117,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-governance"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2133,7 +2133,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-identity"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "bs58",
@@ -2153,7 +2153,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-legal"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2170,7 +2170,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-messaging"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -2188,7 +2188,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-node"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2258,7 +2258,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-proofs"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2272,7 +2272,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-root"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -2292,7 +2292,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-sdk"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "exochain-avc",
@@ -2311,7 +2311,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-tenant"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "exochain-core",
@@ -2324,7 +2324,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-wasm"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "ed25519-dalek",
  "exochain-api",

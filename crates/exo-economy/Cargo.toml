@@ -33,7 +33,7 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.0-beta" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.1-beta" }
 serde = { workspace = true }
 ciborium = { workspace = true }
 thiserror = { workspace = true }

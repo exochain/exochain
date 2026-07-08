@@ -53,14 +53,14 @@ harness = false
 required-features = ["postgres"]
 
 [dependencies]
-exo-dag-db-api = { package = "exochain-dag-db-api", path = "../exo-dag-db-api", version = "=0.2.0-beta" }
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.0-beta" }
-exo-dag-db-core = { package = "exochain-dag-db-core", path = "../exo-dag-db-core", version = "=0.2.0-beta" }
-exo-dag-db-domain = { package = "exochain-dag-db-domain", path = "../exo-dag-db-domain", version = "=0.2.0-beta" }
-exo-dag-db-exchange = { package = "exochain-dag-db-exchange", path = "../exo-dag-db-exchange", version = "=0.2.0-beta" }
-exo-dag-db-graph = { package = "exochain-dag-db-graph", path = "../exo-dag-db-graph", version = "=0.2.0-beta" }
-exo-dag-db-postgres = { package = "exochain-dag-db-postgres", path = "../exo-dag-db-postgres", version = "=0.2.0-beta" }
-exo-dag-db-retrieval = { package = "exochain-dag-db-retrieval", path = "../exo-dag-db-retrieval", version = "=0.2.0-beta" }
+exo-dag-db-api = { package = "exochain-dag-db-api", path = "../exo-dag-db-api", version = "=0.2.1-beta" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.1-beta" }
+exo-dag-db-core = { package = "exochain-dag-db-core", path = "../exo-dag-db-core", version = "=0.2.1-beta" }
+exo-dag-db-domain = { package = "exochain-dag-db-domain", path = "../exo-dag-db-domain", version = "=0.2.1-beta" }
+exo-dag-db-exchange = { package = "exochain-dag-db-exchange", path = "../exo-dag-db-exchange", version = "=0.2.1-beta" }
+exo-dag-db-graph = { package = "exochain-dag-db-graph", path = "../exo-dag-db-graph", version = "=0.2.1-beta" }
+exo-dag-db-postgres = { package = "exochain-dag-db-postgres", path = "../exo-dag-db-postgres", version = "=0.2.1-beta" }
+exo-dag-db-retrieval = { package = "exochain-dag-db-retrieval", path = "../exo-dag-db-retrieval", version = "=0.2.1-beta" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

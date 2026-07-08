@@ -43,7 +43,7 @@ workspace = true
 unaudited-pedagogical-proofs = []
 
 [dependencies]
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.0-beta" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.1-beta" }
 serde = { workspace = true }
 blake3 = { workspace = true }
 sha2 = { workspace = true }

@@ -36,12 +36,12 @@ workspace = true
 # Core crates (only those actually `use`d today; see removed-deps
 # note in commit message when adding back — avoid drift between
 # `pub use` surface and dependency graph)
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.0-beta" }
-exo-dag-db-api = { package = "exochain-dag-db-api", path = "../exo-dag-db-api", version = "=0.2.0-beta" }
-exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.0-beta" }
-exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.0-beta" }
-exo-avc = { package = "exochain-avc", path = "../exo-avc", version = "=0.2.0-beta" }
-exo-economy = { package = "exochain-economy", path = "../exo-economy", version = "=0.2.0-beta" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.1-beta" }
+exo-dag-db-api = { package = "exochain-dag-db-api", path = "../exo-dag-db-api", version = "=0.2.1-beta" }
+exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.1-beta" }
+exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.1-beta" }
+exo-avc = { package = "exochain-avc", path = "../exo-avc", version = "=0.2.1-beta" }
+exo-economy = { package = "exochain-economy", path = "../exo-economy", version = "=0.2.1-beta" }
 
 # Serialization
 serde = { workspace = true }

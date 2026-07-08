@@ -16,14 +16,14 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-exo-dag-db-api = { package = "exochain-dag-db-api", path = "../exo-dag-db-api", version = "=0.2.0-beta" }
-exo-authority = { package = "exochain-authority", path = "../exo-authority", version = "=0.2.0-beta" }
-exo-avc = { package = "exochain-avc", path = "../exo-avc", version = "=0.2.0-beta" }
-exo-consent = { package = "exochain-consent", path = "../exo-consent", version = "=0.2.0-beta" }
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.0-beta" }
-exo-dag-db-core = { package = "exochain-dag-db-core", path = "../exo-dag-db-core", version = "=0.2.0-beta" }
-exo-dag-db-graph = { package = "exochain-dag-db-graph", path = "../exo-dag-db-graph", version = "=0.2.0-beta" }
-exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.0-beta" }
+exo-dag-db-api = { package = "exochain-dag-db-api", path = "../exo-dag-db-api", version = "=0.2.1-beta" }
+exo-authority = { package = "exochain-authority", path = "../exo-authority", version = "=0.2.1-beta" }
+exo-avc = { package = "exochain-avc", path = "../exo-avc", version = "=0.2.1-beta" }
+exo-consent = { package = "exochain-consent", path = "../exo-consent", version = "=0.2.1-beta" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.1-beta" }
+exo-dag-db-core = { package = "exochain-dag-db-core", path = "../exo-dag-db-core", version = "=0.2.1-beta" }
+exo-dag-db-graph = { package = "exochain-dag-db-graph", path = "../exo-dag-db-graph", version = "=0.2.1-beta" }
+exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.1-beta" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ciborium = { workspace = true }

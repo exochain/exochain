@@ -391,7 +391,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-authority"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "ciborium",
@@ -404,7 +404,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-consent"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "ciborium",
@@ -415,7 +415,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-core"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "chrono",
@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-governance"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "ciborium",
@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-identity"
-version = "0.2.0-beta"
+version = "0.2.1-beta"
 dependencies = [
  "blake3",
  "bs58",

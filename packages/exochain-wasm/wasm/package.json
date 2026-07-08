@@ -1,7 +1,7 @@
 {
   "name": "@exochain/exochain-wasm",
   "description": "ExoChain governance engine — WebAssembly bindings for Node.js",
-  "version": "0.2.0-beta",
+  "version": "0.2.1-beta",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

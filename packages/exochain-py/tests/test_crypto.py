@@ -23,7 +23,7 @@ from exochain import PROTOCOL_VERSION, sha256, sha256_hex
 
 def test_protocol_version_is_exported() -> None:
     """The Python SDK exposes the fabric protocol version for skew checks."""
-    assert PROTOCOL_VERSION == "0.2.0-beta"
+    assert PROTOCOL_VERSION == "0.2.1-beta"
 
 
 def test_sha256_is_deterministic() -> None:

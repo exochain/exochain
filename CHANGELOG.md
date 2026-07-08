@@ -25,6 +25,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1-beta] - 2026-07-08
+
+### Added
+
+- LYNK Protocol receipt evidence and adapter packaging for receipted LLM and
+  MCP usage, including release artifacts for the `@exochain/llm-proxy` npm
+  package.
+- Coverage-first LYNK documentation, public-site discovery copy, privacy guards,
+  and future-wave OpenAI/MCP/Anthropic/API/SDK baseline tests.
+
+### Release
+
+- Workspace, Rust SDK, TypeScript SDK, Python SDK, WASM package, and LYNK proxy
+  package metadata are aligned for `v0.2.1-beta`.
+- The governed release workflow now verifies and publishes both
+  `@exochain/exochain-wasm` and `@exochain/llm-proxy` with npm provenance.
+
 ## [0.2.0-beta] - 2026-06-30
 
 ### Production Proof

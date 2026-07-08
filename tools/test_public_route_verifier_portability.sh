@@ -76,7 +76,7 @@ path="${url#https://exochain.test}"
 case "${method} ${path}" in
   "GET /health")
     code="200"
-    payload='{"status":"ok","version":"0.2.0-beta"}'
+    payload='{"status":"ok","version":"0.2.1-beta"}'
     ;;
   "GET /ready")
     code="200"

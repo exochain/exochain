@@ -29,22 +29,22 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # ExoChain crates (excludes exo-gateway which is server-only)
-exo-core       = { package = "exochain-core", path = "../exo-core", version = "=0.2.0-beta" }
-exo-avc        = { package = "exochain-avc", path = "../exo-avc", version = "=0.2.0-beta" }
-exo-identity   = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.0-beta" }
-exo-consent    = { package = "exochain-consent", path = "../exo-consent", version = "=0.2.0-beta" }
-exo-authority  = { package = "exochain-authority", path = "../exo-authority", version = "=0.2.0-beta" }
-exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.0-beta" }
-exo-governance = { package = "exochain-governance", path = "../exo-governance", version = "=0.2.0-beta" }
-exo-escalation = { package = "exochain-escalation", path = "../exo-escalation", version = "=0.2.0-beta" }
-exo-legal      = { package = "exochain-legal", path = "../exo-legal", version = "=0.2.0-beta" }
-exo-dag        = { package = "exochain-dag", path = "../exo-dag", version = "=0.2.0-beta" }
-exo-proofs     = { package = "exochain-proofs", path = "../exo-proofs", version = "=0.2.0-beta" }
-exo-api        = { package = "exochain-api", path = "../exo-api", version = "=0.2.0-beta" }
-decision-forum = { package = "exochain-decision-forum", path = "../decision-forum", version = "=0.2.0-beta" }
-exo-catapult   = { package = "exochain-catapult", path = "../exo-catapult", version = "=0.2.0-beta" }
-exo-messaging  = { package = "exochain-messaging", path = "../exo-messaging", version = "=0.2.0-beta" }
-exo-economy    = { package = "exochain-economy", path = "../exo-economy", version = "=0.2.0-beta" }
+exo-core       = { package = "exochain-core", path = "../exo-core", version = "=0.2.1-beta" }
+exo-avc        = { package = "exochain-avc", path = "../exo-avc", version = "=0.2.1-beta" }
+exo-identity   = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.1-beta" }
+exo-consent    = { package = "exochain-consent", path = "../exo-consent", version = "=0.2.1-beta" }
+exo-authority  = { package = "exochain-authority", path = "../exo-authority", version = "=0.2.1-beta" }
+exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.1-beta" }
+exo-governance = { package = "exochain-governance", path = "../exo-governance", version = "=0.2.1-beta" }
+exo-escalation = { package = "exochain-escalation", path = "../exo-escalation", version = "=0.2.1-beta" }
+exo-legal      = { package = "exochain-legal", path = "../exo-legal", version = "=0.2.1-beta" }
+exo-dag        = { package = "exochain-dag", path = "../exo-dag", version = "=0.2.1-beta" }
+exo-proofs     = { package = "exochain-proofs", path = "../exo-proofs", version = "=0.2.1-beta" }
+exo-api        = { package = "exochain-api", path = "../exo-api", version = "=0.2.1-beta" }
+decision-forum = { package = "exochain-decision-forum", path = "../decision-forum", version = "=0.2.1-beta" }
+exo-catapult   = { package = "exochain-catapult", path = "../exo-catapult", version = "=0.2.1-beta" }
+exo-messaging  = { package = "exochain-messaging", path = "../exo-messaging", version = "=0.2.1-beta" }
+exo-economy    = { package = "exochain-economy", path = "../exo-economy", version = "=0.2.1-beta" }
 
 # WASM bindings
 wasm-bindgen = "=0.2.100"

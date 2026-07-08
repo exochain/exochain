@@ -577,12 +577,130 @@ jobs:
         working-directory: packages/exochain-wasm/wasm
 
   # -----------------------------------------------------------------------
+  # Publish LYNK LLM proxy package to npm (unless dry run)
+  # -----------------------------------------------------------------------
+  publish-llm-proxy-npm:
+    name: "Package and publish LYNK npm package"
+    runs-on: ubuntu-latest
+    needs: [approve, verify-signed-tag, validate-release-inputs]
+    permissions:
+      id-token: write
+    steps:
+      - name: Resolve release source ref
+        id: release-ref
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            printf 'ref=%s\n' "${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            printf 'ref=refs/tags/%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ steps.release-ref.outputs.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify npm registry authentication
+        if: ${{ !inputs.dry_run }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN is required to publish @exochain/llm-proxy." >&2
+            exit 1
+          fi
+          npm ping --registry=https://registry.npmjs.org
+          npm_user="$(npm whoami --registry=https://registry.npmjs.org)"
+          echo "NPM_TOKEN authenticates to npm registry as ${npm_user}; npm publish will perform the authoritative package permission check."
+
+      - name: Install LYNK package dependencies
+        run: npm ci
+        working-directory: packages/exochain-llm-proxy
+
+      - name: Run LYNK package coverage gate
+        run: npm run test:coverage
+        working-directory: packages/exochain-llm-proxy
+
+      - name: Verify LYNK npm package release metadata
+        env:
+          RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const manifest = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          if (manifest.name !== '@exochain/llm-proxy') {
+            throw new Error(`unexpected LYNK package name ${manifest.name}`);
+          }
+          if (manifest.version !== process.env.RELEASE_VERSION) {
+            throw new Error(`LYNK package version ${manifest.version} must match release ${process.env.RELEASE_VERSION}`);
+          }
+          const requiredFiles = ['dist', 'README.md', 'AGENTS.md', 'examples', 'snippets'];
+          for (const required of requiredFiles) {
+            if (!manifest.files.includes(required)) {
+              throw new Error(`LYNK package files list must include ${required}`);
+            }
+          }
+          if (manifest.private === true) {
+            throw new Error('LYNK npm package must not be private');
+          }
+          NODE
+        working-directory: packages/exochain-llm-proxy
+
+      - name: Dry-pack LYNK npm package
+        run: npm run pack:dry-run
+        working-directory: packages/exochain-llm-proxy
+
+      - name: Publish LYNK npm package
+        if: ${{ !inputs.dry_run }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
+        run: |
+          set -euo pipefail
+          npm_package_version_published() {
+            local output
+            local status
+
+            set +e
+            output="$(npm view "@exochain/llm-proxy@${RELEASE_VERSION}" version --registry=https://registry.npmjs.org 2>&1)"
+            status=$?
+            set -e
+
+            if [ "$status" -eq 0 ] && [ "$output" = "$RELEASE_VERSION" ]; then
+              return 0
+            fi
+            if grep -E 'E404|404 Not Found|No match found for version' <<<"$output" >/dev/null; then
+              return 1
+            fi
+
+            printf '%s\n' "$output" >&2
+            return "$status"
+          }
+
+          if npm_package_version_published; then
+            echo "@exochain/llm-proxy ${RELEASE_VERSION} is already published; skipping npm publish."
+            exit 0
+          fi
+
+          npm publish --access public --provenance
+        working-directory: packages/exochain-llm-proxy
+
+  # -----------------------------------------------------------------------
   # Create GitHub Release
   # -----------------------------------------------------------------------
   github-release:
     name: "Create GitHub Release"
     runs-on: ubuntu-latest
-    needs: [release-build, sbom-and-attest, publish, publish-wasm-npm, validate-release-inputs]
+    needs: [release-build, sbom-and-attest, publish, publish-wasm-npm, publish-llm-proxy-npm, validate-release-inputs]
     if: ${{ !inputs.dry_run }}
     permissions:
       contents: write
@@ -614,6 +732,7 @@ jobs:
             - Deny: license and advisory policy verified
             - Documentation: builds without warnings
             - SBOM: CycloneDX component graph generated
+            - npm: WASM and LYNK proxy packages verified and published with provenance
 
             ### Supply-Chain Verification
 

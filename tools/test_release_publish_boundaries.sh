@@ -36,10 +36,12 @@ job_block() {
 
 publish_block=$(job_block "publish")
 wasm_publish_block=$(job_block "publish-wasm-npm")
+llm_proxy_publish_block=$(job_block "publish-llm-proxy-npm")
 github_release_block=$(job_block "github-release")
 
 [[ -n "$publish_block" ]] || fail "publish job is missing"
 [[ -n "$wasm_publish_block" ]] || fail "publish-wasm-npm job is missing"
+[[ -n "$llm_proxy_publish_block" ]] || fail "publish-llm-proxy-npm job is missing"
 [[ -n "$github_release_block" ]] || fail "github-release job is missing"
 
 grep -F 'if: ${{ !inputs.dry_run }}' <<<"$publish_block" >/dev/null \
@@ -48,6 +50,8 @@ grep -F 'if: ${{ !inputs.dry_run }}' <<<"$github_release_block" >/dev/null \
   || fail "github-release job must be skipped for dry-run releases"
 grep -F 'if: ${{ !inputs.dry_run }}' <<<"$wasm_publish_block" >/dev/null \
   || fail "publish-wasm-npm must guard the npm publish step for dry-run releases"
+grep -F 'if: ${{ !inputs.dry_run }}' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must guard the npm publish step for dry-run releases"
 
 grep -F 'CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}' <<<"$publish_block" >/dev/null \
   || fail "publish job must use the crates.io registry token"
@@ -92,6 +96,28 @@ grep -F 'npm pack --dry-run' <<<"$wasm_publish_block" >/dev/null \
   || fail "publish-wasm-npm must dry-pack before publish"
 grep -F 'manifest.version !== process.env.RELEASE_VERSION' <<<"$wasm_publish_block" >/dev/null \
   || fail "publish-wasm-npm must bind package version to the validated release version"
+grep -F 'NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm job must use the npm automation token"
+grep -F 'name: Verify npm registry authentication' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must verify npm registry authentication before package checks"
+grep -F 'npm ping --registry=https://registry.npmjs.org' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must verify npm registry reachability before publishing"
+grep -F 'npm whoami --registry=https://registry.npmjs.org' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must verify npm token identity before publishing"
+grep -F 'npm run test:coverage' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must run the LYNK package coverage gate"
+grep -F 'npm run pack:dry-run' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must dry-pack before publish"
+grep -F 'npm_package_version_published()' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must support resumable npm package publication checks"
+grep -F 'npm view "@exochain/llm-proxy@${RELEASE_VERSION}" version --registry=https://registry.npmjs.org' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must check whether the LYNK npm package version already exists"
+grep -F '@exochain/llm-proxy ${RELEASE_VERSION} is already published; skipping npm publish.' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must skip already-published LYNK npm package versions"
+grep -F 'npm publish --access public --provenance' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must publish the public package with npm provenance"
+grep -F 'manifest.version !== process.env.RELEASE_VERSION' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must bind package version to the validated release version"
 
 if grep -E 'cargo publish.*\|\|' <<<"$publish_block" >/dev/null; then
   fail "cargo publish failures must fail the publish job"
@@ -101,5 +127,7 @@ grep -E 'needs:.*publish' <<<"$github_release_block" >/dev/null \
   || fail "github-release must depend on successful crates.io publication"
 grep -E 'needs:.*publish-wasm-npm' <<<"$github_release_block" >/dev/null \
   || fail "github-release must depend on successful WASM npm package verification/publication"
+grep -E 'needs:.*publish-llm-proxy-npm' <<<"$github_release_block" >/dev/null \
+  || fail "github-release must depend on successful LYNK npm package verification/publication"
 
 printf 'release publish boundary test passed\n'

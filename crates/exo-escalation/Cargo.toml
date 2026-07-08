@@ -33,16 +33,16 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.0-beta" }
-exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.0-beta" }
-exo-governance = { package = "exochain-governance", path = "../exo-governance", version = "=0.2.0-beta" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.1-beta" }
+exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.1-beta" }
+exo-governance = { package = "exochain-governance", path = "../exo-governance", version = "=0.2.1-beta" }
 ciborium = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.0-beta" }
+exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.1-beta" }
 
 [package.metadata.cargo-machete]
 # Pre-existing workspace dep used via re-exports.

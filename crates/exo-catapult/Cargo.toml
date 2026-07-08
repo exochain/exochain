@@ -33,11 +33,11 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.0-beta" }
-exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.0-beta" }
-exo-consent = { package = "exochain-consent", path = "../exo-consent", version = "=0.2.0-beta" }
-exo-authority = { package = "exochain-authority", path = "../exo-authority", version = "=0.2.0-beta" }
-exo-escalation = { package = "exochain-escalation", path = "../exo-escalation", version = "=0.2.0-beta" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.1-beta" }
+exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.1-beta" }
+exo-consent = { package = "exochain-consent", path = "../exo-consent", version = "=0.2.1-beta" }
+exo-authority = { package = "exochain-authority", path = "../exo-authority", version = "=0.2.1-beta" }
+exo-escalation = { package = "exochain-escalation", path = "../exo-escalation", version = "=0.2.1-beta" }
 ciborium = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
