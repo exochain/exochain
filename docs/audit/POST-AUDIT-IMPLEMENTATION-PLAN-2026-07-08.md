@@ -136,13 +136,15 @@ Sub-Agent Delegation Protocol: A future execution orchestrator may delegate disc
 
 Goal: Convert the inferred audit goal into an accepted repository goal and classify every future changed path under `AGENTS.md`.
 
-Allowed write scope: `docs/audit/**`, `README.md`, `AGENTS.md`, `GAP-REGISTRY.md`, governance records, and PR descriptions for later execution PRs.
+Allowed write scope: `docs/audit/**`, `tools/test_post_audit_goal_freeze.sh`, `README.md`, `AGENTS.md`, `GAP-REGISTRY.md`, governance records, and PR descriptions for later execution PRs.
 
 Requirements: Address `P0-01`. No implementation PR may claim the whole system meets its goal until the goal is accepted, revised through a requirement-change proposal, or explicitly marked blocked.
 
 Specification: The accepted goal record states the system-level goal, non-negotiable acceptance criteria, in-scope surfaces, out-of-scope surfaces, adjacent-surface trust boundaries, evidence required for success, and what cannot be claimed yet.
 
 Test plan: Add a source guard or documentation check that fails when the accepted goal record is missing, lacks acceptance criteria, or omits `AGENTS.md` path classification for touched paths.
+
+Goal record path: `docs/audit/POST-AUDIT-FROZEN-GOAL-2026-07-08.md`.
 
 Exit criterion: Future implementation PRs have a maintainer-accepted goal and path-classification boundary before code edits.
 
@@ -255,6 +257,7 @@ bash tools/repo_truth.sh
 bash tools/test_repo_truth.sh
 bash tools/test_gap_registry_truth.sh
 bash tools/check_systemic_integrity_claims.sh
+bash tools/test_post_audit_goal_freeze.sh
 rg -n "Whole-System Audit|Post-Audit Whole-System Remediation Plan" docs/INDEX.md
 ```
 
@@ -263,6 +266,7 @@ rg -n "Whole-System Audit|Post-Audit Whole-System Remediation Plan" docs/INDEX.m
 Slice 1:
 
 ```bash
+bash tools/test_post_audit_goal_freeze.sh
 rg -n "system-level goal|non-negotiable acceptance criteria|EXOCHAIN core|Core runtime adapter|Adjacent surface" docs/audit README.md AGENTS.md
 ```
 
@@ -331,6 +335,7 @@ bash tools/repo_truth.sh
 bash tools/test_repo_truth.sh
 bash tools/test_gap_registry_truth.sh
 bash tools/check_systemic_integrity_claims.sh
+bash tools/test_post_audit_goal_freeze.sh
 rg -n "Whole-System Audit|Post-Audit Whole-System Remediation Plan" docs/INDEX.md
 ```
 

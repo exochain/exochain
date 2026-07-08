@@ -97,6 +97,8 @@ SPDX-License-Identifier: Apache-2.0
 - [Repo Truth Baseline](audit/REPO-TRUTH-BASELINE.md) — Audited metrics, build status, claim verification.
 - [Whole-System Audit - 2026-07-08](audit/WHOLE-SYSTEM-AUDIT-2026-07-08.md) — Adversarial cross-surface audit of current `main`.
 - [Post-Audit Whole-System Remediation Plan - 2026-07-08](audit/POST-AUDIT-IMPLEMENTATION-PLAN-2026-07-08.md) — Test-driven execution plan for the audit findings.
+- [Post-Audit Frozen System Goal - 2026-07-08](audit/POST-AUDIT-FROZEN-GOAL-2026-07-08.md) — Fixed goal and claim boundary for execution chunks.
+- [Post-Audit Execution Ledger - 2026-07-08](audit/POST-AUDIT-EXECUTION-LEDGER-2026-07-08.md) — Chunk registry, run evidence, and automation state for post-audit execution.
 - [`tools/repo_truth.sh`](../tools/repo_truth.sh) — Regenerate truth baseline from source.
 
 ---
