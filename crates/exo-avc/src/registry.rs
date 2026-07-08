@@ -1086,6 +1086,7 @@ mod tests {
             action_commitment_hash: None,
             action_descriptor: None,
             action_descriptor_hash: None,
+            llm_usage_evidence_hash: None,
             previous_receipt_hash: None,
             timestamp_provenance: None,
             external_timestamp_proof: None,
@@ -1116,6 +1117,7 @@ mod tests {
             action_commitment_hash: Some(h256(action_byte.wrapping_add(1))),
             action_descriptor: None,
             action_descriptor_hash: None,
+            llm_usage_evidence_hash: None,
             previous_receipt_hash,
             timestamp_provenance: Some(
                 crate::receipt::AvcReceiptTimestampProvenance::LocalHybridLogicalClock,

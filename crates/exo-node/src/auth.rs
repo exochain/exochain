@@ -240,14 +240,18 @@ fn is_zerodentity_local_signed_write(method: &axum::http::Method, path: &str) ->
 /// Route-shape check for the AVC subject-signed receipt-emission write
 /// (VCG-006a / #737).
 ///
-/// This only recognizes the exact `POST /api/v1/avc/receipts/emit` route by
+/// This only recognizes exact AVC subject-signed receipt emission routes by
 /// method and path — mirroring `is_zerodentity_local_signed_write`'s
 /// route-shape style. It makes no claim about authority; it just identifies
-/// which route may be eligible for the carve-out in
+/// which routes may be eligible for the carve-out in
 /// `require_bearer_on_writes`, which independently confirms a genuine
 /// (non-empty) subject signature is present before admitting the request.
 fn is_avc_receipts_emit_route(method: &axum::http::Method, path: &str) -> bool {
-    method == axum::http::Method::POST && path == "/api/v1/avc/receipts/emit"
+    method == axum::http::Method::POST
+        && matches!(
+            path,
+            "/api/v1/avc/receipts/emit" | "/api/v1/avc/llm-usage/receipts/emit"
+        )
 }
 
 fn is_livesafe_public_adapter_output_authorization_route(
@@ -263,27 +267,28 @@ fn is_livesafe_public_adapter_output_authorization_route(
 /// the downstream router would have rejected anyway.
 const AVC_EMIT_RECEIPT_CARVE_OUT_MAX_BODY_BYTES: usize = 64 * 1024;
 
-/// Determine whether a `POST /api/v1/avc/receipts/emit` request carries a
+/// Determine whether an AVC subject-signed receipt-emission request carries a
 /// genuine (non-empty) subject signature, without weakening the real
 /// authority check.
 ///
 /// This buffers the request body (bounded to
 /// `AVC_EMIT_RECEIPT_CARVE_OUT_MAX_BODY_BYTES`) and parses it as
-/// `crate::avc::EmitReceiptRequest`, reusing the exact same type and
-/// `Signature::is_empty()` predicate the handler and `verify_subject_action_signature`
-/// use — no duplicated signature-shape logic. It reconstructs an equivalent
-/// request from the buffered bytes so the downstream handler still receives
-/// the original body.
+/// the route-specific request DTO, reusing the exact same type and
+/// `Signature::is_empty()` predicate the handlers and
+/// `verify_subject_action_signature` use — no duplicated signature-shape
+/// logic. It reconstructs an equivalent request from the buffered bytes so
+/// the downstream handler still receives the original body.
 ///
 /// This function never performs cryptographic signature verification —
 /// that remains exclusively `verify_subject_action_signature` inside
-/// `handle_emit_receipt`. A body that merely contains a non-empty signature
+/// the AVC emit handlers. A body that merely contains a non-empty signature
 /// field is let through to the handler, which is the actual authority gate
 /// and can still reject an invalid signature. A body with no signature
 /// (empty, missing, or unparseable) is never let through — this carve-out
 /// must never open an unauthenticated hole.
 async fn avc_emit_receipt_carve_out(request: Request<Body>) -> (Request<Body>, bool) {
     let (parts, body) = request.into_parts();
+    let path = parts.uri.path().to_owned();
     let bytes = match axum::body::to_bytes(body, AVC_EMIT_RECEIPT_CARVE_OUT_MAX_BODY_BYTES).await {
         Ok(bytes) => bytes,
         Err(_) => {
@@ -295,8 +300,17 @@ async fn avc_emit_receipt_carve_out(request: Request<Body>) -> (Request<Body>, b
         }
     };
 
-    let has_subject_signature = serde_json::from_slice::<crate::avc::EmitReceiptRequest>(&bytes)
-        .is_ok_and(|parsed| !parsed.subject_signature.is_empty());
+    let has_subject_signature = match path.as_str() {
+        "/api/v1/avc/receipts/emit" => {
+            serde_json::from_slice::<crate::avc::EmitReceiptRequest>(&bytes)
+                .is_ok_and(|parsed| !parsed.subject_signature.is_empty())
+        }
+        "/api/v1/avc/llm-usage/receipts/emit" => {
+            serde_json::from_slice::<crate::avc::LlmUsageReceiptEmitRequest>(&bytes)
+                .is_ok_and(|parsed| !parsed.subject_signature.is_empty())
+        }
+        _ => false,
+    };
 
     let rebuilt = Request::from_parts(parts, Body::from(bytes));
     (rebuilt, has_subject_signature)

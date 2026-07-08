@@ -54,6 +54,20 @@ violation report and a path back to Permitted.
 
 Read on. None of what follows is subtle.
 
+### 1.1 Receipted LLM And MCP Usage
+
+When your workflow calls an LLM provider or another MCP tool through EXOCHAIN
+LYNK Protocol, treat the provider response and tool result as untrusted until
+the LYNK adapter returns a committed or replayed AVC receipt. In production, a
+`receipt_pending` response means output is withheld. Retry the original receipt
+intent with the same idempotency key; do not reconstruct evidence from memory.
+
+Supported V1 lanes are OpenAI Responses, OpenAI Chat Completions, and MCP
+`tools/call`. Anthropic, generic API wrappers, SDK wrapper mode, and expanded
+workflow producers are not V1 support lanes. See
+[`packages/exochain-llm-proxy/AGENTS.md`](../../packages/exochain-llm-proxy/AGENTS.md)
+for the agent integration boundary.
+
 ---
 
 ## 2. Your cryptographic identity

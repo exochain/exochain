@@ -23,6 +23,7 @@ const PRIMARY_LINKS = [
   { href: '/avc', label: 'AVC' },
   { href: '/chain-of-custody', label: 'Chain-of-Custody' },
   { href: '/trust-receipts', label: 'Trust Receipts' },
+  { href: '/lynk', label: 'LYNK' },
   { href: '/custody-native-blockchain', label: 'Blockchain' },
   { href: '/developers', label: 'Developers' },
   { href: '/docs', label: 'Docs' },

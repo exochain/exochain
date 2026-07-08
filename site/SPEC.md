@@ -63,6 +63,7 @@ All three surfaces are served by a single Next.js app behind a CDN, with hard ro
 ### 3.1 Vocabulary (use consistently)
 
 EXOCHAIN · Autonomous Volition Credential · AVC · chain-of-custody · custody-native blockchain · autonomous execution · evidentiary execution · trust receipt · settlement receipt · delegated authority · agent identity · holon · consent · revocation · custody verifier · governance · policy enforcement · zero-priced launch settlement · custody fabric · agent economy · human trust layer · machine-readable trust.
+LYNK Protocol · receipted LLM usage · MCP tools/call receipt · receipt_minimized · LLM usage evidence.
 
 ### 3.2 Conceptual one-liners
 
@@ -84,6 +85,7 @@ EXOCHAIN · Autonomous Volition Credential · AVC · chain-of-custody · custody
 ├── /chain-of-custody            Chain-of-custody for AI
 ├── /avc                         Autonomous Volition Credentials
 ├── /trust-receipts              Trust receipts
+├── /lynk                        LYNK Protocol public discovery
 ├── /custody-native-blockchain   Custody-native blockchain
 ├── /developers                  Developer landing
 ├── /docs                        Docs index
@@ -261,6 +263,14 @@ Every administrative action — extranet or intranet — writes an audit log ent
 - Definition: a trust receipt is a hash-chained, signed record proving identity, authority, consent, policy, action, timestamp, revocation state, and custody hash for a single execution event.
 - Sample receipt fields with annotated JSON.
 - Trust receipt vs. settlement receipt: trust receipts always exist; settlement receipts exist when the economic layer is invoked.
+
+#### `/lynk`
+- Public discovery page for the EXOCHAIN LYNK Protocol.
+- Classify `/site` as an adjacent public surface: the page may describe the tested adapter path, but must not imply the public site performs constitutional enforcement.
+- Name V1 tested lanes: OpenAI Responses, OpenAI Chat Completions, and MCP `tools/call`.
+- Point to the actual core receipt endpoint: `POST /api/v1/avc/llm-usage/receipts/emit`.
+- Explain `receipt_minimized` privacy posture without including prompts, completions, tool arguments, tool results, provider keys, bearer credentials, KMS material, object-store locations, or decryptable payload material.
+- Future waves remain fail-closed until separately implemented and tested.
 
 #### `/custody-native-blockchain`
 - The blockchain mechanism is preserved. The "chain" is reframed as chain-of-custody.

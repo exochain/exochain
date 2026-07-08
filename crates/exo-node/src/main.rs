@@ -1186,7 +1186,7 @@ async fn start_node(
     }
     let avc_router = avc::avc_router(Arc::clone(&avc_state));
     tracing::info!(
-        "AVC router ready — /api/v1/avc/{{issue,validate,receipts,receipts/emit,protocol,delegate,revoke,:id}}, /api/v1/agents/:did/avcs"
+        "AVC router ready — /api/v1/avc/{{issue,validate,receipts,receipts/emit,llm-usage/receipts/emit,protocol,delegate,revoke,:id}}, /api/v1/agents/:did/avcs"
     );
 
     // Build the economy API router (zero-priced launch settlement).

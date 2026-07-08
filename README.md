@@ -94,6 +94,17 @@ pricing or settlement state, and the economy layer never gates trust on
 payment availability. Future governance amendments can switch nonzero
 pricing on by policy without modifying AVC validation.
 
+The local worktree also contains the **EXOCHAIN LYNK Protocol** package at
+[`packages/exochain-llm-proxy`](packages/exochain-llm-proxy/). LYNK is a
+core runtime adapter for receipted LLM and MCP usage: OpenAI Responses, OpenAI
+Chat Completions, and MCP `tools/call` are wrapped in signed AVC evidence and
+`POST /api/v1/avc/llm-usage/receipts/emit`. Production callers fail closed:
+provider output is withheld when receipt emission returns `receipt_pending`.
+Package release readiness depends on the coverage-first Task 8 gates recorded in
+[`docs/superpowers/lynk-coverage-evidence-2026-07-08.md`](docs/superpowers/lynk-coverage-evidence-2026-07-08.md)
+and planned in
+[`docs/superpowers/plans/2026-07-08-llm-usage-receipt-extensions.md`](docs/superpowers/plans/2026-07-08-llm-usage-receipt-extensions.md).
+
 HonorGood and Apex Velocity Catalyst Mission Economics now live in
 `exo-economy` as core provenance and settlement primitives: Missions,
 Contribution Receipts, Legacy Receipts, Value Contribution Nodes,

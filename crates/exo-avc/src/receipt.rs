@@ -55,6 +55,8 @@ pub struct AvcTrustReceipt {
     #[serde(default)]
     pub action_descriptor_hash: Option<Hash256>,
     #[serde(default)]
+    pub llm_usage_evidence_hash: Option<Hash256>,
+    #[serde(default)]
     pub previous_receipt_hash: Option<Hash256>,
     #[serde(default)]
     pub timestamp_provenance: Option<AvcReceiptTimestampProvenance>,
@@ -83,6 +85,8 @@ pub struct AvcTrustReceiptEvidence {
     pub action_commitment_hash: Option<Hash256>,
     /// Minimal canonical action meaning embedded for audit reconstruction.
     pub action_descriptor: Option<AvcActionDescriptor>,
+    /// EXOCHAIN LYNK Protocol evidence hash for LLM/MCP usage receipts.
+    pub llm_usage_evidence_hash: Option<Hash256>,
     /// Previous receipt hash used to link extended receipts in order.
     pub previous_receipt_hash: Option<Hash256>,
     /// Source of the trusted timestamp used for this receipt.
@@ -325,6 +329,7 @@ struct ExtendedReceiptSigningPayload<'a> {
     action_commitment_hash: Option<&'a Hash256>,
     action_descriptor: Option<&'a AvcActionDescriptor>,
     action_descriptor_hash: Option<&'a Hash256>,
+    llm_usage_evidence_hash: Option<&'a Hash256>,
     previous_receipt_hash: Option<&'a Hash256>,
     timestamp_provenance: Option<&'a AvcReceiptTimestampProvenance>,
     external_timestamp_proof: Option<&'a AvcReceiptExternalTimestampProof>,
@@ -341,6 +346,7 @@ impl AvcTrustReceipt {
         self.action_commitment_hash.is_some()
             || self.action_descriptor.is_some()
             || self.action_descriptor_hash.is_some()
+            || self.llm_usage_evidence_hash.is_some()
             || self.previous_receipt_hash.is_some()
             || self.timestamp_provenance.is_some()
             || self.external_timestamp_proof.is_some()
@@ -361,6 +367,7 @@ impl AvcTrustReceipt {
                 action_commitment_hash: self.action_commitment_hash.as_ref(),
                 action_descriptor: self.action_descriptor.as_ref(),
                 action_descriptor_hash: self.action_descriptor_hash.as_ref(),
+                llm_usage_evidence_hash: self.llm_usage_evidence_hash.as_ref(),
                 previous_receipt_hash: self.previous_receipt_hash.as_ref(),
                 timestamp_provenance: self.timestamp_provenance.as_ref(),
                 external_timestamp_proof: self.external_timestamp_proof.as_ref(),
@@ -471,6 +478,7 @@ where
         action_commitment_hash: evidence.action_commitment_hash,
         action_descriptor: evidence.action_descriptor,
         action_descriptor_hash,
+        llm_usage_evidence_hash: evidence.llm_usage_evidence_hash,
         previous_receipt_hash: evidence.previous_receipt_hash,
         timestamp_provenance: evidence.timestamp_provenance,
         external_timestamp_proof: evidence.external_timestamp_proof,
@@ -811,6 +819,7 @@ mod tests {
         let decoded: AvcTrustReceipt = ciborium::de::from_reader(bytes.as_slice()).unwrap();
 
         assert_eq!(decoded.action_commitment_hash, None);
+        assert_eq!(decoded.llm_usage_evidence_hash, None);
         assert_eq!(decoded.previous_receipt_hash, None);
         assert_eq!(decoded.timestamp_provenance, None);
         assert_eq!(
@@ -838,6 +847,7 @@ mod tests {
             AvcTrustReceiptEvidence {
                 action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
                 action_descriptor: None,
+                llm_usage_evidence_hash: None,
                 previous_receipt_hash: None,
                 timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
                 external_timestamp_proof: None,
@@ -855,6 +865,81 @@ mod tests {
         );
         assert_ne!(legacy.receipt_id, extended.receipt_id);
         assert!(extended.verify_id().unwrap());
+    }
+
+    #[test]
+    fn llm_usage_evidence_hash_changes_signed_receipt_payload_and_id() {
+        let (validation, _id) = sample_validation();
+        let action_id = Hash256::from_bytes([0x42; 32]);
+        let baseline = create_trust_receipt_with_evidence(
+            &validation,
+            Some(action_id),
+            AvcTrustReceiptEvidence {
+                action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
+                action_descriptor: None,
+                llm_usage_evidence_hash: Some(Hash256::from_bytes([0xB1; 32])),
+                previous_receipt_hash: None,
+                timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
+                external_timestamp_proof: None,
+            },
+            did("validator"),
+            ts(2_000),
+            |_| fixed_signature(),
+        )
+        .unwrap();
+        let changed = create_trust_receipt_with_evidence(
+            &validation,
+            Some(action_id),
+            AvcTrustReceiptEvidence {
+                action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
+                action_descriptor: None,
+                llm_usage_evidence_hash: Some(Hash256::from_bytes([0xB2; 32])),
+                previous_receipt_hash: None,
+                timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
+                external_timestamp_proof: None,
+            },
+            did("validator"),
+            ts(2_000),
+            |_| fixed_signature(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            baseline.llm_usage_evidence_hash,
+            Some(Hash256::from_bytes([0xB1; 32]))
+        );
+        assert_ne!(
+            baseline.signing_payload().unwrap(),
+            changed.signing_payload().unwrap()
+        );
+        assert_ne!(baseline.receipt_id, changed.receipt_id);
+        assert!(baseline.verify_id().unwrap());
+        assert!(changed.verify_id().unwrap());
+    }
+
+    #[test]
+    fn verify_id_fails_when_llm_usage_evidence_hash_is_tampered() {
+        let (validation, _id) = sample_validation();
+        let mut receipt = create_trust_receipt_with_evidence(
+            &validation,
+            Some(Hash256::from_bytes([0x42; 32])),
+            AvcTrustReceiptEvidence {
+                action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
+                action_descriptor: None,
+                llm_usage_evidence_hash: Some(Hash256::from_bytes([0xB1; 32])),
+                previous_receipt_hash: None,
+                timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
+                external_timestamp_proof: None,
+            },
+            did("validator"),
+            ts(2_000),
+            |_| fixed_signature(),
+        )
+        .unwrap();
+
+        assert!(receipt.verify_id().unwrap());
+        receipt.llm_usage_evidence_hash = Some(Hash256::from_bytes([0xB2; 32]));
+        assert!(!receipt.verify_id().unwrap());
     }
 
     #[test]
@@ -883,6 +968,7 @@ mod tests {
             AvcTrustReceiptEvidence {
                 action_commitment_hash: Some(evidence_subject.action_commitment_hash),
                 action_descriptor: Some(action_descriptor.clone()),
+                llm_usage_evidence_hash: None,
                 previous_receipt_hash: None,
                 timestamp_provenance: Some(
                     AvcReceiptTimestampProvenance::ExternalTimestampAuthority,
@@ -919,6 +1005,7 @@ mod tests {
             AvcTrustReceiptEvidence {
                 action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
                 action_descriptor: Some(action_descriptor.clone()),
+                llm_usage_evidence_hash: None,
                 previous_receipt_hash: None,
                 timestamp_provenance: Some(
                     AvcReceiptTimestampProvenance::ExternalTimestampAuthority,
@@ -938,6 +1025,7 @@ mod tests {
             AvcTrustReceiptEvidence {
                 action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
                 action_descriptor: Some(action_descriptor),
+                llm_usage_evidence_hash: None,
                 previous_receipt_hash: None,
                 timestamp_provenance: Some(
                     AvcReceiptTimestampProvenance::ExternalTimestampAuthority,

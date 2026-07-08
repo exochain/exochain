@@ -29,6 +29,7 @@ environments.
 | Package                                   | Language                 | Distribution                              | Purpose                                                                 |
 | ----------------------------------------- | ------------------------ | ----------------------------------------- | ----------------------------------------------------------------------- |
 | [`exochain-sdk`](./exochain-sdk/)         | TypeScript / JavaScript  | `npm install @exochain/sdk`               | Pure-JS client SDK for browsers and Node 20+; HTTP transport to gateway. |
+| [`exochain-llm-proxy`](./exochain-llm-proxy/) | TypeScript / JavaScript | `npm install @exochain/llm-proxy`         | LYNK Protocol adapter for receipted OpenAI and MCP usage. |
 | [`exochain-py`](./exochain-py/)           | Python 3.11+             | `pip install exochain`                    | Python client SDK with `httpx` async transport and pydantic v2 models. |
 | [`exochain-wasm`](./exochain-wasm/)       | WebAssembly + TS shim    | `npm install @exochain/exochain-wasm`     | Precompiled WASM build of the Rust governance engine for embedding.     |
 
@@ -47,6 +48,9 @@ Pick by deployment target first, then by language preference:
   Safari 17+, Firefox 130+).
 - **Node.js service or CLI** — `@exochain/sdk` on Node 20 or newer. Same
   package, same APIs as the browser SDK.
+- **Receipted LLM or MCP calls** — `@exochain/llm-proxy`. Use this when a
+  service must withhold model/tool output until EXOCHAIN commits an AVC LYNK
+  receipt.
 - **Python async service or notebook** — `exochain`. Ships with `httpx` for
   async HTTP, `cryptography` for Ed25519, and `blake3` for DID derivation.
   Python 3.11+.

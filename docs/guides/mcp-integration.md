@@ -39,6 +39,7 @@ The EXOCHAIN node ships an embedded MCP server exposing the full constitutional 
 - [Running the MCP server](#running-the-mcp-server)
 - [Claude Code configuration](#claude-code-configuration)
 - [Constitutional enforcement](#constitutional-enforcement)
+- [Receipted MCP tool usage with LYNK](#receipted-mcp-tool-usage-with-lynk)
 - [The 40 tools, by domain](#the-40-tools-by-domain)
 - [The 6 resources](#the-6-resources)
 - [The 4 prompts](#the-4-prompts)
@@ -54,6 +55,18 @@ The EXOCHAIN node ships an embedded MCP server exposing the full constitutional 
 Model Context Protocol (MCP) is the standard Anthropic published for giving AI agents structured access to tools, data, and prompt templates. The EXOCHAIN node implements MCP so any compliant client — Claude Desktop, Claude Code, LM Studio, or a custom agent — can drive the constitutional fabric by name.
 
 Every request flows through the same pipeline the human-facing gateway uses: MCP middleware (the 6 rules) -> CGR Kernel (8 invariants) -> the tool's effect. An AI agent cannot forge identity, self-escalate, or act without provenance. When the kernel denies an action, the response carries the invariant name and a human-readable reason, so the agent can adapt.
+
+## Receipted MCP tool usage with LYNK
+
+The EXOCHAIN LYNK Protocol package can proxy MCP `tools/call` requests and emit
+AVC usage receipts for the call/result pair. It hashes the tool arguments and
+result, emits `POST /api/v1/avc/llm-usage/receipts/emit`, and releases the tool
+result only after a committed or replayed receipt in production. If the receipt
+path fails after the MCP server succeeds, callers receive `receipt_pending` and
+must withhold output until retry succeeds.
+
+Use [`packages/exochain-llm-proxy`](../../packages/exochain-llm-proxy/) for
+agent-facing examples, coverage gates, and the receipt-pending runbook.
 
 ---
 

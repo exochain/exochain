@@ -27,6 +27,8 @@
 **/node_modules/
 
 # Build artifacts
+coverage/
+packages/exochain-llm-proxy/dist-test/
 demo/packages/exochain-wasm/wasm/
 demo/apps/vitallock/src/wasm/
 demo/apps/vitallock/dist/

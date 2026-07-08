@@ -30,6 +30,7 @@
 //! | `POST` | `/api/v1/avc/issue` | Register a signed credential. |
 //! | `POST` | `/api/v1/avc/validate` | Validate a credential and optional action. |
 //! | `POST` | `/api/v1/avc/receipts/emit` | Validate a subject-signed action and mint a node-signed receipt. |
+//! | `POST` | `/api/v1/avc/llm-usage/receipts/emit` | Validate subject-signed EXOCHAIN LYNK Protocol evidence and mint a node-signed receipt. |
 //! | `POST` | `/api/v1/avc/livesafe/public-adapter-output-authorization` | Mint/export the redacted LiveSafe public adapter-output authorization proof. |
 //! | `GET`  | `/api/v1/avc/receipts/:hash` | Fetch a stored AVC trust receipt by hash. |
 //! | `GET`  | `/api/v1/avc/receipts?actor=<did>&limit=N` | List stored AVC trust receipts for a subject DID. |
@@ -72,12 +73,13 @@ use exo_avc::{
     AvcRegistryRead, AvcRegistryWrite, AvcRevocation, AvcTrustReceipt, AvcTrustReceiptEvidence,
     AvcValidationRequest, AvcValidationResult, InMemoryAvcRegistry,
     LivesafePublicAdapterOutputAuthorizationDraft,
-    LivesafePublicAdapterOutputAuthorizationEnvelope, avc_action_commitment_hash,
-    avc_action_descriptor_hash, avc_action_signature_payload, create_trust_receipt_with_evidence,
+    LivesafePublicAdapterOutputAuthorizationEnvelope, LlmUsageEvidenceEnvelope,
+    avc_action_commitment_hash, avc_action_descriptor_hash, avc_action_signature_payload,
+    avc_llm_usage_action_request, create_trust_receipt_with_evidence,
     livesafe_public_adapter_output_authorization_action_commitment_hash,
     livesafe_public_adapter_output_authorization_action_request,
-    livesafe_public_adapter_output_authorization_idempotency_hash,
-    mint_livesafe_public_adapter_output_authorization_proof,
+    livesafe_public_adapter_output_authorization_idempotency_hash, llm_usage_evidence_hash,
+    llm_usage_evidence_signature_payload, mint_livesafe_public_adapter_output_authorization_proof,
     require_supported_avc_protocol_version, validate_avc,
     validate_livesafe_public_adapter_output_authorization,
 };
@@ -2009,6 +2011,23 @@ pub struct EmitReceiptRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LlmUsageReceiptEmitRequest {
+    pub validation: AvcValidationRequest,
+    pub subject_signature: Signature,
+    /// Optional subject public key for did:exo values derived from a key.
+    /// If the registry already has a trusted key for the actor DID, that
+    /// registered key wins and this field is ignored.
+    pub subject_public_key: Option<PublicKey>,
+    pub llm_usage_evidence: LlmUsageEvidenceEnvelope,
+    pub adapter_signature: Signature,
+    /// Optional adapter public key for did:exo values derived from a key.
+    /// If the registry already has a trusted key for the adapter DID, that
+    /// registered key wins and this field is ignored.
+    pub adapter_public_key: Option<PublicKey>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EmitReceiptResponse {
     pub receipt_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2438,6 +2457,21 @@ fn require_action(request: &AvcValidationRequest) -> ApiResult<&AvcActionRequest
     ))
 }
 
+fn require_matching_llm_usage_action(
+    request: &AvcValidationRequest,
+    expected_action: &AvcActionRequest,
+) -> ApiResult<()> {
+    let submitted_action = require_action(request)?;
+    if submitted_action != expected_action {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "LLM usage receipt validation action must match canonical evidence-derived action"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 fn resolve_subject_public_key(
     registry: &InMemoryAvcRegistry,
     action: &AvcActionRequest,
@@ -2469,6 +2503,30 @@ fn resolve_subject_public_key(
     Ok(public_key)
 }
 
+fn resolve_did_public_key(
+    registry: &InMemoryAvcRegistry,
+    did: &Did,
+    supplied_public_key: Option<PublicKey>,
+    unresolved_message: &'static str,
+    mismatch_message: &'static str,
+) -> ApiResult<PublicKey> {
+    if let Some(public_key) = registry.resolve_public_key(did) {
+        return Ok(public_key);
+    }
+
+    let Some(public_key) = supplied_public_key else {
+        return Err((StatusCode::UNAUTHORIZED, unresolved_message.into()));
+    };
+    let derived_did = crate::identity::did_from_public_key(&public_key).map_err(|err| {
+        tracing::warn!(%err, "rejected AVC DID-bound public key");
+        (StatusCode::UNAUTHORIZED, mismatch_message.into())
+    })?;
+    if &derived_did != did {
+        return Err((StatusCode::UNAUTHORIZED, mismatch_message.into()));
+    }
+    Ok(public_key)
+}
+
 fn verify_subject_action_signature(
     registry: &InMemoryAvcRegistry,
     request: &AvcValidationRequest,
@@ -2489,6 +2547,35 @@ fn verify_subject_action_signature(
         return Err((
             StatusCode::UNAUTHORIZED,
             "subject action signature is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn verify_llm_usage_evidence_signature(
+    registry: &InMemoryAvcRegistry,
+    envelope: &LlmUsageEvidenceEnvelope,
+    adapter_signature: &Signature,
+    adapter_public_key: Option<PublicKey>,
+) -> ApiResult<()> {
+    if adapter_signature.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "LLM usage adapter signature must not be empty".into(),
+        ));
+    }
+    let public_key = resolve_did_public_key(
+        registry,
+        &envelope.adapter_did,
+        adapter_public_key,
+        "LLM usage adapter public key is unresolved",
+        "LLM usage adapter public key does not match adapter DID",
+    )?;
+    let payload = llm_usage_evidence_signature_payload(envelope).map_err(map_avc_error)?;
+    if !crypto::verify(&payload, adapter_signature, &public_key) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "LLM usage adapter signature is invalid".into(),
         ));
     }
     Ok(())
@@ -2532,6 +2619,7 @@ fn validate_idempotent_receipt_hit(
     credential_id: Hash256,
     action_id: Hash256,
     action_commitment_hash: Hash256,
+    expected_llm_usage_evidence_hash: Option<Hash256>,
     validation: &AvcValidationResult,
 ) -> ApiResult<()> {
     let validation_hash = hash_structured(validation)
@@ -2540,11 +2628,30 @@ fn validate_idempotent_receipt_hit(
     if receipt.credential_id == credential_id
         && receipt.action_id == Some(action_id)
         && receipt.action_commitment_hash == Some(action_commitment_hash)
+        && receipt.llm_usage_evidence_hash == expected_llm_usage_evidence_hash
         && receipt.validation_hash == validation_hash
         && receipt.decision == validation.decision
         && receipt.reason_codes == validation.reason_codes
     {
         return Ok(());
+    }
+
+    if expected_llm_usage_evidence_hash.is_some()
+        && receipt.credential_id == credential_id
+        && receipt.action_id == Some(action_id)
+        && receipt.action_commitment_hash == Some(action_commitment_hash)
+        && receipt.llm_usage_evidence_hash != expected_llm_usage_evidence_hash
+    {
+        tracing::warn!(
+            receipt_id = %receipt.receipt_id,
+            stored_llm_usage_evidence_hash = ?receipt.llm_usage_evidence_hash,
+            expected_llm_usage_evidence_hash = ?expected_llm_usage_evidence_hash,
+            "AVC LYNK idempotency evidence conflict"
+        );
+        return Err((
+            StatusCode::CONFLICT,
+            "AVC LYNK idempotency evidence conflict".into(),
+        ));
     }
 
     tracing::error!(
@@ -2659,6 +2766,7 @@ async fn handle_emit_receipt(
                 credential_id,
                 action_id,
                 action_commitment_hash,
+                None,
                 &validation,
             )?;
             return Ok(emit_receipt_response(receipt, validation));
@@ -2675,6 +2783,136 @@ async fn handle_emit_receipt(
             AvcTrustReceiptEvidence {
                 action_commitment_hash: Some(action_commitment_hash),
                 action_descriptor: Some(action_descriptor),
+                llm_usage_evidence_hash: None,
+                previous_receipt_hash,
+                timestamp_provenance: Some(timestamp_evidence.provenance),
+                external_timestamp_proof: timestamp_evidence.external_timestamp_proof,
+            },
+            validator_did,
+            trusted_now,
+            |bytes| (receipt_signer)(bytes),
+        )
+        .map_err(map_avc_error)?;
+        store_receipt_idempotent(registry, receipt.clone())?;
+        Ok(emit_receipt_response(receipt, validation))
+    })
+    .await?;
+    let finality = commit_exochain_finality(
+        &state.finality_store,
+        &response.receipt,
+        &state.validator_did,
+        &state.receipt_signer,
+    )
+    .map_err(exochain_finality_error)?;
+    attach_exochain_finality(&mut response, finality);
+    Ok(Json(response))
+}
+
+async fn handle_llm_usage_emit_receipt(
+    State(state): State<Arc<AvcApiState>>,
+    Json(payload): Json<LlmUsageReceiptEmitRequest>,
+) -> ApiResult<Json<EmitReceiptResponse>> {
+    let validator_did = state.validator_did.clone();
+    let receipt_signer = Arc::clone(&state.receipt_signer);
+    let envelope = payload.llm_usage_evidence.clone();
+    let llm_evidence_hash = llm_usage_evidence_hash(&envelope.evidence).map_err(map_avc_error)?;
+    let evidence_action =
+        avc_llm_usage_action_request(&envelope.evidence).map_err(map_avc_error)?;
+    let submitted_request = payload.validation.clone();
+    require_matching_llm_usage_action(&submitted_request, &evidence_action)?;
+    let action_id = evidence_action.action_id;
+    let action_commitment_hash = avc_action_commitment_hash(
+        &submitted_request.credential,
+        &evidence_action,
+        &submitted_request.now,
+    )
+    .map_err(map_avc_error)?;
+    let action_descriptor = AvcActionDescriptor::from_action(&evidence_action);
+    let action_descriptor_hash =
+        avc_action_descriptor_hash(&action_descriptor).map_err(map_avc_error)?;
+    let subject_signature = payload.subject_signature.clone();
+    let subject_public_key = payload.subject_public_key;
+    let adapter_signature = payload.adapter_signature.clone();
+    let adapter_public_key = payload.adapter_public_key;
+    let preflight_request = submitted_request.clone();
+    let preflight_subject_signature = subject_signature.clone();
+    let preflight_adapter_signature = adapter_signature.clone();
+    let preflight_envelope = envelope.clone();
+    let preflight = with_registry_blocking(Arc::clone(&state), false, move |registry| {
+        let credential_id = require_registered_credential(registry, &preflight_request)?;
+        verify_llm_usage_evidence_signature(
+            registry,
+            &preflight_envelope,
+            &preflight_adapter_signature,
+            adapter_public_key,
+        )?;
+        verify_subject_action_signature(
+            registry,
+            &preflight_request,
+            &preflight_subject_signature,
+            subject_public_key,
+        )?;
+        Ok((credential_id, registry.receipt_chain_head()))
+    })
+    .await?;
+    let (credential_id, previous_receipt_hash) = preflight;
+    let evidence_subject = AvcReceiptEvidenceSubject {
+        credential_id,
+        action_id,
+        action_commitment_hash,
+        action_descriptor_hash,
+        previous_receipt_hash,
+    };
+    let timestamp_evidence = trusted_receipt_timestamp_evidence(&state, &evidence_subject).await?;
+    let trusted_now = timestamp_evidence.trusted_now;
+    let state_for_registry = Arc::clone(&state);
+    let mut response = with_registry_blocking(state_for_registry, true, move |registry| {
+        let credential_id = require_registered_credential(registry, &submitted_request)?;
+        verify_llm_usage_evidence_signature(
+            registry,
+            &envelope,
+            &adapter_signature,
+            adapter_public_key,
+        )?;
+        verify_subject_action_signature(
+            registry,
+            &submitted_request,
+            &subject_signature,
+            subject_public_key,
+        )?;
+        let mut validation_request = submitted_request;
+        validation_request.now = trusted_now;
+        let validation = validate_avc(&validation_request, registry).map_err(map_avc_error)?;
+        if validation.decision != AvcDecision::Allow {
+            return Err((
+                StatusCode::FORBIDDEN,
+                format!("AVC validation denied: {:?}", validation.reason_codes),
+            ));
+        }
+        if let Some(receipt) = registry.get_receipt_by_action_commitment(&action_commitment_hash) {
+            validate_idempotent_receipt_hit(
+                &receipt,
+                credential_id,
+                action_id,
+                action_commitment_hash,
+                Some(llm_evidence_hash),
+                &validation,
+            )?;
+            return Ok(emit_receipt_response(receipt, validation));
+        }
+        if registry.receipt_chain_head() != previous_receipt_hash {
+            return Err((
+                StatusCode::CONFLICT,
+                "AVC receipt chain advanced during external timestamp attestation".into(),
+            ));
+        }
+        let receipt = create_trust_receipt_with_evidence(
+            &validation,
+            Some(action_id),
+            AvcTrustReceiptEvidence {
+                action_commitment_hash: Some(action_commitment_hash),
+                action_descriptor: Some(action_descriptor),
+                llm_usage_evidence_hash: Some(llm_evidence_hash),
                 previous_receipt_hash,
                 timestamp_provenance: Some(timestamp_evidence.provenance),
                 external_timestamp_proof: timestamp_evidence.external_timestamp_proof,
@@ -2808,6 +3046,7 @@ async fn handle_public_output_authorization(
             AvcTrustReceiptEvidence {
                 action_commitment_hash: Some(action_commitment_hash),
                 action_descriptor: Some(action_descriptor),
+                llm_usage_evidence_hash: None,
                 previous_receipt_hash,
                 timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
                 external_timestamp_proof: None,
@@ -3169,6 +3408,10 @@ pub fn avc_router(state: Arc<AvcApiState>) -> Router {
         .route("/api/v1/avc/validate", post(handle_validate))
         .route("/api/v1/avc/receipts/emit", post(handle_emit_receipt))
         .route(
+            "/api/v1/avc/llm-usage/receipts/emit",
+            post(handle_llm_usage_emit_receipt),
+        )
+        .route(
             "/api/v1/avc/livesafe/public-adapter-output-authorization",
             post(handle_public_output_authorization),
         )
@@ -3207,10 +3450,13 @@ mod tests {
     };
     use exo_authority::permission::Permission;
     use exo_avc::{
-        AVC_SCHEMA_VERSION, AuthorityScope, AutonomyLevel, AvcActionDescriptor, AvcActionRequest,
-        AvcConstraints, AvcDecision, AvcDraft, AvcReasonCode, AvcReceiptEvidenceSubject,
-        AvcReceiptExternalTimestampProofKind, AvcRevocationReason, AvcSubjectKind, DelegatedIntent,
-        avc_action_descriptor_hash, create_trust_receipt, issue_avc, revoke_avc,
+        AVC_LLM_USAGE_EVIDENCE_DOMAIN, AVC_SCHEMA_VERSION, AuthorityScope, AutonomyLevel,
+        AvcActionDescriptor, AvcActionRequest, AvcConstraints, AvcDecision, AvcDraft,
+        AvcReasonCode, AvcReceiptEvidenceSubject, AvcReceiptExternalTimestampProofKind,
+        AvcRevocationReason, AvcSubjectKind, DataClass, DelegatedIntent, EncryptedPayloadRef,
+        LlmUsageCustodyMode, LlmUsageEvidence, LlmUsageEvidenceEnvelope, ProviderUsageMetrics,
+        avc_action_descriptor_hash, avc_llm_usage_action_request, create_trust_receipt, issue_avc,
+        llm_usage_evidence_hash, llm_usage_evidence_signature_payload, revoke_avc,
     };
     use exo_core::{Hash256, Signature, Timestamp, crypto, crypto::KeyPair};
     use tower::ServiceExt;
@@ -3221,6 +3467,8 @@ mod tests {
     const SUBJECT_SEED: [u8; 32] = [0x22; 32];
     const VALIDATOR_SEED: [u8; 32] = [0x33; 32];
     const TIMESTAMP_AUTHORITY_SEED: [u8; 32] = [0x44; 32];
+    const LYNK_ADAPTER_SEED: [u8; 32] = [0x66; 32];
+    const LYNK_RECEIPT_URI: &str = "/api/v1/avc/llm-usage/receipts/emit";
     const MICROSOFT_PUBLIC_RSA_TSA_DID: &str = "did:exo:microsoft-public-rsa-tsa";
     const MICROSOFT_FIXTURE_SIGNER_SPKI_HEX: &str = "30820222300d06092a864886f70d01010105000382020f003082020a0282020100b4a59f9bfba5d36eff77c4656fc327fe0d1052fbcba98d95b32ded23c536b454aca53668999383dc11d3f0b911f91ae130981bd558c0285372b1a2bd70b49789f3c648806b3c282cf4fe32db896b2449ab57a439cf8066a8c8483eb66112f6675a9092e073bb8d849e8bf9f1982effd44afe9792e0dcf992c5bf1dd8855c011c52c350789b107a5c8d2791e97dc1ad5d61bdb07c6a687eb6859b164ec53f5e361b782c7d1105256e79b6ba64da634bfd20b5f9bbaa2222c8fea9e8f4734d36cc9d5aac1e757f77fad6d331f1f90f90359e7052a2a64d9241f6153ce77fb6a57e6b0df2b7dae358f7f5813809b36ea82911d4246e231abd43325034a19b2708be01dd4274b6d3bb138fc33e9092f7b4e75a84fb8fa8cc2c6820a075fc30431d0ef5329eec54af6c0118b3502795d0a5fca1c6642395bd436a8f22f5d092ded3ff860fdff29ea5c6585a573a36ae9ef67f70a44e8633783397bac71d1bda68aa70f8a2e3f8a2d9985e29a9652444fb08a96915286cdf0ca0e85fdfa2343142f3e76d60f8372c7a9618d68f09a82dcc7ac351520ad6af2c2972df704b452953538a8a53169af1ded837b12aa67f573b4498d2e98ebca157ad61fbaf197ef626a2722b5d9d34e4b009d18ef7a474a4f7960ee544c7e67d953cbd73623745182734fd123aa3466d2e37f874a17c4f84d7cf62a7856f23d7186c73698533eb3c77a9370203010001";
     const MICROSOFT_LIVE_SIGNER_SPKI_HEX_20260627: &str = "30820222300d06092a864886f70d01010105000382020f003082020a02820201009d7834a47690ecf5409659fe1d966b24570ba0a6de9215b5c8bf9034152014552c8d920a6aaa8de28209b09337a6cd2b24d48eee7742351b990d7d9682eaf7024efb797ae5a015ea6663ba6555de0cd4422e5756e00d3f35f8f327b5d791d1218ebf358215c4a51ef30bec1b68d37eb0f4b1ccb01905e89b0c53fb5f0b39c17d19b48b0dd5adbe5eae5bbd6a77911332b70b244e3ba746078b64bfed069db7ec955d44f14043d8d844aa42a94068fefd718c12d1095dcf6a52a39c67dbdcc37853b8d5caa89f1474a17275b9084451a019946bab32803cc54abf1ede0f774cf34b1548af504d0698b7db5f971e0f51add45719eb1fc92d5013ce4e7e0561db331c092159153d3a9248c8d0e8a4ca75c9eade91f4738005269fe096f729ab453d7f36488c9186bdda62b2195197bed142d5214a3c47bc29f72c2ff1a904303874900ec1a1e8d5f60f445fb12c84b53001c8069efb6c351c1c930d372695334b12e40b7828f580d05d2168f458e6320ed8e343ff224d663a7b2d6f6fda87963223e478089dd4f93fd318936560d9eee129464d04d6c0fe1b2006cba867e217f3d5af8c437d69b17dd52e0e255ba29e62ac2cefcc2db9e5ee292e0f474dea803461ec320d09dcb35dac33d1ceb6eef6400fd366579fbd6f2bf71b4c5c06284257068ec93c5b851cedc7ea56a6c83e376873c6710732dc5dc5723f8a797322f0be430203010001";
@@ -3251,6 +3499,10 @@ mod tests {
 
     fn timestamp_authority_keypair() -> KeyPair {
         KeyPair::from_secret_bytes(TIMESTAMP_AUTHORITY_SEED).expect("valid seed")
+    }
+
+    fn lynk_adapter_keypair() -> KeyPair {
+        KeyPair::from_secret_bytes(LYNK_ADAPTER_SEED).expect("valid seed")
     }
 
     fn validator_did() -> Did {
@@ -3463,6 +3715,153 @@ mod tests {
             requires_human_approval: false,
             action_name: None,
         }
+    }
+
+    fn lynk_credential() -> AutonomousVolitionCredential {
+        lynk_credential_for_subject(Did::new("did:exo:agent").unwrap())
+    }
+
+    fn lynk_credential_for_subject(subject_did: Did) -> AutonomousVolitionCredential {
+        let mut draft = baseline_draft();
+        draft.subject_did = subject_did;
+        draft.delegated_intent.purpose = "EXOCHAIN LYNK Protocol usage receipts".into();
+        draft.delegated_intent.allowed_objectives = vec![exo_avc::AVC_LLM_USAGE_ACTION_NAME.into()];
+        draft.authority_scope.permissions = vec![Permission::Execute];
+        draft.authority_scope.tools = vec![AVC_LLM_USAGE_EVIDENCE_DOMAIN.into()];
+        draft.authority_scope.data_classes = vec![
+            DataClass::Internal,
+            DataClass::Confidential,
+            DataClass::Restricted,
+        ];
+        let kp = issuer_keypair();
+        issue_avc(draft, |bytes| kp.sign(bytes)).unwrap()
+    }
+
+    fn test_hash(byte: u8) -> Hash256 {
+        Hash256::from_bytes([byte; 32])
+    }
+
+    fn lynk_encrypted_payload_ref() -> EncryptedPayloadRef {
+        EncryptedPayloadRef {
+            ref_id_hash: test_hash(0xA0),
+            ciphertext_hash: test_hash(0xA1),
+            storage_policy_hash: test_hash(0xA2),
+            key_policy_hash: test_hash(0xA3),
+            payload_kind: "provider_exchange".into(),
+            byte_length: 512,
+        }
+    }
+
+    fn lynk_usage_evidence(custody_mode: LlmUsageCustodyMode) -> LlmUsageEvidence {
+        lynk_usage_evidence_for_actor(Did::new("did:exo:agent").unwrap(), custody_mode)
+    }
+
+    fn lynk_usage_evidence_for_actor(
+        actor_did: Did,
+        custody_mode: LlmUsageCustodyMode,
+    ) -> LlmUsageEvidence {
+        let encrypted_payload_refs = match custody_mode {
+            LlmUsageCustodyMode::ExternalPayloadRef => vec![lynk_encrypted_payload_ref()],
+            LlmUsageCustodyMode::ReceiptMinimized | LlmUsageCustodyMode::DagDbCustody => Vec::new(),
+        };
+        LlmUsageEvidence {
+            schema_version: AVC_SCHEMA_VERSION,
+            tenant_id: "tenant-alpha".into(),
+            namespace: "default".into(),
+            actor_did,
+            provider: "openai".into(),
+            provider_endpoint: "responses".into(),
+            model_id: "gpt-4.1-mini".into(),
+            provider_request_id_hash: Some(test_hash(0x80)),
+            session_id_hash: Some(test_hash(0x81)),
+            idempotency_key_hash: test_hash(0x82),
+            action_id: test_hash(0x83),
+            prompt_hash: test_hash(0x84),
+            completion_hash: Some(test_hash(0x85)),
+            tool_call_hash: None,
+            tool_result_hash: None,
+            usage: ProviderUsageMetrics {
+                input_tokens: 321,
+                output_tokens: 89,
+                total_tokens: 410,
+                cached_input_tokens: Some(21),
+                reasoning_tokens: Some(13),
+                cost_minor_units: Some(7),
+                cost_currency: Some("USD".into()),
+                usage_complete: true,
+            },
+            custody_mode,
+            encrypted_payload_refs,
+            custody_policy_hash: test_hash(0x86),
+            created_at: Timestamp::new(1_500_100, 0),
+        }
+    }
+
+    fn lynk_envelope(evidence: LlmUsageEvidence) -> LlmUsageEvidenceEnvelope {
+        let adapter_did =
+            crate::identity::did_from_public_key(lynk_adapter_keypair().public_key()).unwrap();
+        LlmUsageEvidenceEnvelope {
+            schema_version: AVC_SCHEMA_VERSION,
+            adapter_did,
+            issued_at: Timestamp::new(1_500_200, 0),
+            evidence,
+        }
+    }
+
+    fn sign_lynk_envelope(envelope: &LlmUsageEvidenceEnvelope, keypair: &KeyPair) -> Signature {
+        let payload = llm_usage_evidence_signature_payload(envelope).unwrap();
+        keypair.sign(&payload)
+    }
+
+    fn lynk_emit_request_for_evidence(
+        credential: AutonomousVolitionCredential,
+        evidence: LlmUsageEvidence,
+    ) -> LlmUsageReceiptEmitRequest {
+        let envelope = lynk_envelope(evidence);
+        let action = avc_llm_usage_action_request(&envelope.evidence).unwrap();
+        let validation = AvcValidationRequest {
+            credential,
+            action: Some(action),
+            now: Timestamp::new(1_500_000, 0),
+        };
+        LlmUsageReceiptEmitRequest {
+            validation: validation.clone(),
+            subject_signature: sign_action(&validation, &subject_keypair()),
+            subject_public_key: None,
+            adapter_signature: sign_lynk_envelope(&envelope, &lynk_adapter_keypair()),
+            adapter_public_key: Some(lynk_adapter_keypair().public),
+            llm_usage_evidence: envelope,
+        }
+    }
+
+    async fn post_lynk_emit_request(
+        app: Router,
+        request: &LlmUsageReceiptEmitRequest,
+    ) -> axum::response::Response {
+        let body = serde_json::to_vec(request).unwrap();
+        app.oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(LYNK_RECEIPT_URI)
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn post_lynk_emit_json(app: Router, body: serde_json::Value) -> axum::response::Response {
+        app.oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(LYNK_RECEIPT_URI)
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
     }
 
     fn sign_action(request: &AvcValidationRequest, keypair: &KeyPair) -> Signature {
@@ -4553,6 +4952,592 @@ mod tests {
             validator_keypair().public_key()
         ));
         assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_accepts_valid_openai_style_evidence() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        let credential_id = credential.id().unwrap();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        let expected_evidence_hash =
+            llm_usage_evidence_hash(&request.llm_usage_evidence.evidence).unwrap();
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let response_body = read_body(response).await;
+        let response_text = String::from_utf8(response_body.clone()).unwrap();
+        assert!(!response_text.contains("secret-prompt"));
+        assert!(!response_text.contains("secret-output"));
+        assert!(!response_text.contains("provider_api_key"));
+        assert!(!response_text.contains("bearer"));
+        assert!(!response_text.contains("raw_prompt"));
+        assert!(!response_text.contains("raw_output"));
+        assert!(!response_text.contains("response_text"));
+        assert!(!response_text.contains("kms_key"));
+        assert!(!response_text.contains("https://customer.example"));
+        let parsed: EmitReceiptResponse = serde_json::from_slice(&response_body).unwrap();
+        assert_eq!(parsed.validation.decision, AvcDecision::Allow);
+        assert_eq!(parsed.receipt.credential_id, credential_id);
+        assert_eq!(
+            parsed.receipt.llm_usage_evidence_hash,
+            Some(expected_evidence_hash)
+        );
+        let action_descriptor = parsed
+            .receipt
+            .action_descriptor
+            .as_ref()
+            .expect("LYNK receipt must carry action descriptor");
+        assert_eq!(action_descriptor.requested_permission, Permission::Execute);
+        assert_eq!(
+            action_descriptor.tool.as_deref(),
+            Some(AVC_LLM_USAGE_EVIDENCE_DOMAIN)
+        );
+        assert_eq!(action_descriptor.data_class, Some(DataClass::Internal));
+        assert_eq!(
+            action_descriptor.action_name.as_deref(),
+            Some(exo_avc::AVC_LLM_USAGE_ACTION_NAME)
+        );
+        assert_eq!(
+            parsed.receipt.timestamp_provenance,
+            Some(AvcReceiptTimestampProvenance::ExternalTimestampAuthority)
+        );
+        assert!(parsed.receipt.verify_id().unwrap());
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_uses_registry_adapter_key() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        {
+            let mut registry = state.registry.lock().unwrap();
+            registry.put_public_key(
+                request.llm_usage_evidence.adapter_did.clone(),
+                lynk_adapter_keypair().public,
+            );
+        }
+        request.adapter_public_key = None;
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_uses_supplied_subject_key() {
+        let state = fresh_state();
+        let subject = crate::identity::did_from_public_key(subject_keypair().public_key()).unwrap();
+        let credential = lynk_credential_for_subject(subject.clone());
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence_for_actor(subject, LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        request.subject_public_key = Some(*subject_keypair().public_key());
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_validation_action_mismatch() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        request
+            .validation
+            .action
+            .as_mut()
+            .unwrap()
+            .requested_permission = Permission::Read;
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_missing_avc_credential() {
+        let state = fresh_state();
+        let request = lynk_emit_request_for_evidence(
+            lynk_credential(),
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_revoked_avc_credential() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        let credential_id = credential.id().unwrap();
+        {
+            let kp = issuer_keypair();
+            let mut registry = state.registry.lock().unwrap();
+            registry.put_credential(credential.clone()).unwrap();
+            let revocation = revoke_avc(
+                credential_id,
+                Did::new("did:exo:issuer").unwrap(),
+                AvcRevocationReason::IssuerRevoked,
+                Timestamp::new(1_100_000, 0),
+                |bytes| kp.sign(bytes),
+            )
+            .unwrap();
+            registry.put_revocation(revocation).unwrap();
+        }
+        let request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_empty_adapter_evidence_signature() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        request.adapter_signature = Signature::empty();
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_bad_adapter_evidence_signature() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        request.adapter_signature = Signature::from_bytes([0x8A; 64]);
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_unresolved_adapter_public_key() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        request.adapter_public_key = None;
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_mismatched_adapter_public_key() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        request.adapter_public_key = Some(subject_keypair().public);
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_bad_subject_signature() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        request.subject_signature = Signature::from_bytes([0x8B; 64]);
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_unresolved_subject_public_key() {
+        let state = fresh_state();
+        let subject = crate::identity::did_from_public_key(subject_keypair().public_key()).unwrap();
+        let credential = lynk_credential_for_subject(subject.clone());
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence_for_actor(subject, LlmUsageCustodyMode::ReceiptMinimized),
+        );
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_mismatched_supplied_subject_key() {
+        let state = fresh_state();
+        let subject = Did::new("did:exo:detached-agent").unwrap();
+        let credential = lynk_credential_for_subject(subject.clone());
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence_for_actor(subject, LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        request.subject_public_key = Some(*subject_keypair().public_key());
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_missing_idempotency_hash() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        request.llm_usage_evidence.evidence.idempotency_key_hash = Hash256::ZERO;
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_raw_payload_json_keys() {
+        for forbidden_key in [
+            "prompt",
+            "messages",
+            "completion",
+            "response_text",
+            "raw_output",
+            "raw_prompt",
+            "provider_api_key",
+            "bearer_token",
+            "kms_key",
+            "object_uri",
+        ] {
+            let state = fresh_state();
+            let credential = lynk_credential();
+            state
+                .registry
+                .lock()
+                .unwrap()
+                .put_credential(credential.clone())
+                .unwrap();
+            let request = lynk_emit_request_for_evidence(
+                credential,
+                lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+            );
+            let mut body = serde_json::to_value(&request).unwrap();
+            body["llm_usage_evidence"]["evidence"][forbidden_key] =
+                serde_json::Value::String("secret-prompt".into());
+
+            let response = post_lynk_emit_json(avc_router(Arc::clone(&state)), body).await;
+
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "forbidden LYNK evidence key `{forbidden_key}` must be rejected before receipt storage"
+            );
+            assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_external_payload_ref_without_refs() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut evidence = lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized);
+        evidence.custody_mode = LlmUsageCustodyMode::ExternalPayloadRef;
+        evidence.encrypted_payload_refs = Vec::new();
+        let request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        let mut body = serde_json::to_value(&request).unwrap();
+        body["llm_usage_evidence"]["evidence"] = serde_json::to_value(evidence).unwrap();
+
+        let response = post_lynk_emit_json(avc_router(Arc::clone(&state)), body).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_dagdb_custody_without_policy_hash() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut evidence = lynk_usage_evidence(LlmUsageCustodyMode::DagDbCustody);
+        evidence.custody_policy_hash = Hash256::ZERO;
+        let request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        let mut body = serde_json::to_value(&request).unwrap();
+        body["llm_usage_evidence"]["evidence"] = serde_json::to_value(evidence).unwrap();
+
+        let response = post_lynk_emit_json(avc_router(Arc::clone(&state)), body).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_duplicate_idempotency_with_different_evidence_hash()
+     {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let first_request = lynk_emit_request_for_evidence(
+            credential.clone(),
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        let mut changed_evidence = lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized);
+        changed_evidence.model_id = "gpt-4.1".into();
+        let second_request = lynk_emit_request_for_evidence(credential, changed_evidence);
+        assert_eq!(
+            first_request.validation.action, second_request.validation.action,
+            "model metadata must change evidence hash without changing the action commitment"
+        );
+
+        let app = avc_router(Arc::clone(&state));
+        let first_response = post_lynk_emit_request(app.clone(), &first_request).await;
+        let second_response = post_lynk_emit_request(app, &second_request).await;
+
+        assert_eq!(first_response.status(), StatusCode::OK);
+        assert_eq!(second_response.status(), StatusCode::CONFLICT);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_chain_advance_during_timestamp_attestation() {
+        async fn timestamp_and_advance_chain(
+            State((state, credential_id)): State<(Arc<AvcApiState>, Hash256)>,
+            axum::Json(request): axum::Json<serde_json::Value>,
+        ) -> axum::response::Response {
+            let subject_hash = request
+                .get("subject_hash")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|raw| parse_hash_anyhow(raw, "test LYNK timestamp subject hash").ok())
+                .unwrap();
+            {
+                let mut registry = state.registry.lock().unwrap();
+                let validation = AvcValidationResult {
+                    credential_id,
+                    decision: AvcDecision::Allow,
+                    reason_codes: Vec::new(),
+                    normalized_holder_did: Did::new("did:exo:agent").unwrap(),
+                    valid_until: Some(Timestamp::new(2_000_000, 0)),
+                    receipt: None,
+                };
+                let advancing_receipt = create_trust_receipt_with_evidence(
+                    &validation,
+                    None,
+                    AvcTrustReceiptEvidence {
+                        action_commitment_hash: None,
+                        action_descriptor: None,
+                        llm_usage_evidence_hash: None,
+                        previous_receipt_hash: None,
+                        timestamp_provenance: Some(
+                            AvcReceiptTimestampProvenance::FixedTestTimestamp,
+                        ),
+                        external_timestamp_proof: None,
+                    },
+                    validator_did(),
+                    Timestamp::new(1_599_999, 0),
+                    |bytes| validator_keypair().sign(bytes),
+                )
+                .unwrap();
+                registry.put_receipt(advancing_receipt).unwrap();
+            }
+            let issued_at = Timestamp::new(1_700_000, 0);
+            let proof = AvcReceiptExternalTimestampProof::signed(
+                timestamp_authority_did(),
+                subject_hash,
+                issued_at,
+                |bytes| timestamp_authority_keypair().sign(bytes),
+            )
+            .unwrap();
+
+            axum::Json(serde_json::json!({
+                "authority_did": proof.authority_did.to_string(),
+                "subject_hash": proof.subject_hash.to_string(),
+                "issued_at_physical_ms": proof.issued_at.physical_ms,
+                "issued_at_logical": proof.issued_at.logical,
+                "signature_hex": proof.signature.to_string(),
+            }))
+            .into_response()
+        }
+
+        let mut state_inner = AvcApiState::new_with_external_timestamp_source(
+            validator_did(),
+            Arc::new(|payload: &[u8]| validator_keypair().sign(payload)),
+            fixed_external_timestamp_source(Timestamp::new(1_600_000, 0)),
+        );
+        seed_avc_trust_keys(&state_inner);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        state_inner.external_timestamp_source =
+            http_external_timestamp_source(format!("http://{address}"));
+        let state = Arc::new(state_inner);
+        let credential = lynk_credential();
+        let credential_id = credential.id().unwrap();
+        let timestamp_server = tokio::spawn({
+            let state = Arc::clone(&state);
+            async move {
+                let app = Router::new()
+                    .route("/", post(timestamp_and_advance_chain))
+                    .with_state((state, credential_id));
+                axum::serve(listener, app).await.unwrap();
+            }
+        });
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+        timestamp_server.abort();
     }
 
     #[tokio::test]
@@ -6212,6 +7197,7 @@ mod tests {
                 AvcTrustReceiptEvidence {
                     action_commitment_hash: Some(action_commitment_hash),
                     action_descriptor: None,
+                    llm_usage_evidence_hash: None,
                     previous_receipt_hash: None,
                     timestamp_provenance: Some(AvcReceiptTimestampProvenance::FixedTestTimestamp),
                     external_timestamp_proof: None,
@@ -7943,6 +8929,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn avc_receipts_emit_lynk_accepts_subject_signature_without_bearer() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+
+        let app = avc_router_with_bearer_gate(Arc::clone(&state));
+        let response = post_lynk_emit_request(app, &request).await;
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "a LYNK receipt request with a genuine subject signature must be admitted through \
+             the production bearer gate without an admin bearer token"
+        );
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    #[tokio::test]
     async fn avc_receipts_emit_still_rejects_unsigned_without_bearer() {
         let state = fresh_state();
         let credential = baseline_credential();
@@ -7986,6 +8999,34 @@ mod tests {
             StatusCode::UNAUTHORIZED,
             "an unsigned write with no admin bearer token must still be rejected by the \
              production require_bearer_on_writes gate"
+        );
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn avc_receipts_emit_lynk_still_rejects_unsigned_without_bearer() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let mut request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        request.subject_signature = Signature::empty();
+
+        let app = avc_router_with_bearer_gate(Arc::clone(&state));
+        let response = post_lynk_emit_request(app, &request).await;
+
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "a LYNK receipt request with no admin bearer and no genuine subject signature must \
+             stay outside the carve-out"
         );
         assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
     }

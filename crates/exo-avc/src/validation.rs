@@ -40,6 +40,10 @@ use crate::{
         AVC_SCHEMA_VERSION, AuthorityScope, AutonomousVolitionCredential, AvcConstraints, DataClass,
     },
     error::AvcError,
+    llm_usage_receipt::{
+        AVC_LLM_USAGE_EVIDENCE_DOMAIN, LlmUsageCustodyMode, LlmUsageEvidence,
+        validate_llm_usage_evidence,
+    },
     receipt::AvcTrustReceipt,
     registry::AvcRegistryRead,
 };
@@ -52,6 +56,8 @@ pub const AVC_ACTION_SIGNING_DOMAIN: &str = "exo.avc.action.v1";
 pub const AVC_ACTION_COMMITMENT_DOMAIN: &str = "exo.avc.action.commitment.v1";
 /// Signing domain tag for canonical receipt action descriptors.
 pub const AVC_ACTION_DESCRIPTOR_DOMAIN: &str = "exo.avc.action.descriptor.v1";
+/// Canonical AVC action name for EXOCHAIN LYNK Protocol usage receipts.
+pub const AVC_LLM_USAGE_ACTION_NAME: &str = "llm.usage.receipt.emit";
 
 // ---------------------------------------------------------------------------
 // Decision / Reason
@@ -486,6 +492,38 @@ pub fn avc_action_descriptor_hash(descriptor: &AvcActionDescriptor) -> Result<Ha
     .map_err(AvcError::from)
 }
 
+/// Build the AVC action request represented by validated EXOCHAIN LYNK
+/// Protocol evidence.
+///
+/// # Errors
+/// Returns [`AvcError`] when LYNK evidence is structurally invalid.
+pub fn avc_llm_usage_action_request(
+    evidence: &LlmUsageEvidence,
+) -> Result<AvcActionRequest, AvcError> {
+    validate_llm_usage_evidence(evidence)?;
+    Ok(AvcActionRequest {
+        action_id: evidence.action_id,
+        actor_did: evidence.actor_did.clone(),
+        requested_permission: Permission::Execute,
+        tool: Some(AVC_LLM_USAGE_EVIDENCE_DOMAIN.into()),
+        target_did: None,
+        data_class: Some(llm_usage_custody_data_class(evidence.custody_mode)),
+        estimated_budget_minor_units: evidence.usage.cost_minor_units,
+        estimated_risk_bp: None,
+        human_approval: None,
+        requires_human_approval: false,
+        action_name: Some(AVC_LLM_USAGE_ACTION_NAME.into()),
+    })
+}
+
+fn llm_usage_custody_data_class(custody_mode: LlmUsageCustodyMode) -> DataClass {
+    match custody_mode {
+        LlmUsageCustodyMode::ReceiptMinimized => DataClass::Internal,
+        LlmUsageCustodyMode::ExternalPayloadRef => DataClass::Confidential,
+        LlmUsageCustodyMode::DagDbCustody => DataClass::Restricted,
+    }
+}
+
 fn evaluate_action<R: AvcRegistryRead>(
     credential: &AutonomousVolitionCredential,
     action: &AvcActionRequest,
@@ -671,6 +709,7 @@ mod tests {
             AVC_SCHEMA_VERSION, AuthorityChainRef, AvcConstraints, AvcDraft, AvcSubjectKind,
             ConsentRef, PolicyRef, TimeWindow, issue_avc, test_support::*,
         },
+        llm_usage_receipt::{EncryptedPayloadRef, ProviderUsageMetrics},
         registry::{AvcRegistryWrite, InMemoryAvcRegistry},
         revocation::{AvcRevocationReason, revoke_avc},
     };
@@ -730,6 +769,51 @@ mod tests {
         }
     }
 
+    fn baseline_llm_usage_evidence(custody_mode: LlmUsageCustodyMode) -> LlmUsageEvidence {
+        let mut evidence = LlmUsageEvidence {
+            schema_version: AVC_SCHEMA_VERSION,
+            tenant_id: "tenant-alpha".into(),
+            namespace: "default".into(),
+            actor_did: did("agent"),
+            provider: "openai".into(),
+            provider_endpoint: "responses".into(),
+            model_id: "gpt-test".into(),
+            provider_request_id_hash: Some(h256(0xA1)),
+            session_id_hash: Some(h256(0xA2)),
+            idempotency_key_hash: h256(0xA3),
+            action_id: h256(0xA4),
+            prompt_hash: h256(0xA5),
+            completion_hash: Some(h256(0xA6)),
+            tool_call_hash: None,
+            tool_result_hash: None,
+            usage: ProviderUsageMetrics {
+                input_tokens: 10,
+                output_tokens: 20,
+                total_tokens: 30,
+                cached_input_tokens: None,
+                reasoning_tokens: None,
+                cost_minor_units: Some(125),
+                cost_currency: Some("USD".into()),
+                usage_complete: true,
+            },
+            custody_mode,
+            encrypted_payload_refs: Vec::new(),
+            custody_policy_hash: h256(0xA7),
+            created_at: ts(1_600_000),
+        };
+        if custody_mode == LlmUsageCustodyMode::ExternalPayloadRef {
+            evidence.encrypted_payload_refs = vec![EncryptedPayloadRef {
+                ref_id_hash: h256(0xB1),
+                ciphertext_hash: h256(0xB2),
+                storage_policy_hash: h256(0xB3),
+                key_policy_hash: h256(0xB4),
+                payload_kind: "provider_exchange".into(),
+                byte_length: 128,
+            }];
+        }
+        evidence
+    }
+
     fn attach_signed_human_approval(
         credential: &AutonomousVolitionCredential,
         action: &mut AvcActionRequest,
@@ -758,6 +842,56 @@ mod tests {
             .as_mut()
             .expect("approval placeholder")
             .signature = approver_keypair.sign(&payload);
+    }
+
+    #[test]
+    fn llm_usage_action_request_uses_execute_and_evidence_fields() {
+        let evidence = baseline_llm_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized);
+        let action = avc_llm_usage_action_request(&evidence).expect("LYNK action");
+
+        assert_eq!(action.action_id, evidence.action_id);
+        assert_eq!(action.actor_did, evidence.actor_did);
+        assert_eq!(action.requested_permission, Permission::Execute);
+        assert_eq!(action.tool, Some(AVC_LLM_USAGE_EVIDENCE_DOMAIN.into()));
+        assert_eq!(action.data_class, Some(DataClass::Internal));
+        assert_eq!(action.estimated_budget_minor_units, Some(125));
+        assert_eq!(action.estimated_risk_bp, None);
+        assert_eq!(action.action_name, Some(AVC_LLM_USAGE_ACTION_NAME.into()));
+        assert!(!action.requires_human_approval);
+        assert!(action.human_approval.is_none());
+    }
+
+    #[test]
+    fn llm_usage_action_request_derives_data_class_from_custody_mode() {
+        let minimized = avc_llm_usage_action_request(&baseline_llm_usage_evidence(
+            LlmUsageCustodyMode::ReceiptMinimized,
+        ))
+        .expect("minimized action");
+        let external = avc_llm_usage_action_request(&baseline_llm_usage_evidence(
+            LlmUsageCustodyMode::ExternalPayloadRef,
+        ))
+        .expect("external action");
+        let dagdb = avc_llm_usage_action_request(&baseline_llm_usage_evidence(
+            LlmUsageCustodyMode::DagDbCustody,
+        ))
+        .expect("dagdb action");
+
+        assert_eq!(minimized.data_class, Some(DataClass::Internal));
+        assert_eq!(external.data_class, Some(DataClass::Confidential));
+        assert_eq!(dagdb.data_class, Some(DataClass::Restricted));
+    }
+
+    #[test]
+    fn llm_usage_action_request_fails_closed_on_invalid_evidence() {
+        let mut evidence = baseline_llm_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized);
+        evidence.provider_endpoint = " ".into();
+
+        assert!(matches!(
+            avc_llm_usage_action_request(&evidence),
+            Err(AvcError::EmptyField {
+                field: "llm_usage.provider_endpoint"
+            })
+        ));
     }
 
     #[test]

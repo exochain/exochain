@@ -130,4 +130,16 @@ assert_contains "$validator_prompt" "validation_evidence"
 assert_contains "$validator_prompt" "prose-only"
 assert_contains "$validator_prompt" "LLM judgment"
 
+overclaim_subject="EXOCHAIN"
+overclaim_predicate="never stores decryptable payload material"
+overclaim_matches=$(
+  rg -n -i -F "$overclaim_predicate" \
+    INTEGRATION.md docs crates packages tools \
+    --glob '!docs/superpowers/plans/2026-07-08-llm-usage-receipt-extensions.md' \
+    | grep -Ei "$overclaim_subject" || true
+)
+if [[ -n "$overclaim_matches" ]]; then
+  fail "LLM usage custody docs must distinguish receipt minimization from DAG DB custody: $overclaim_matches"
+fi
+
 echo "agent prompt boundary test passed"

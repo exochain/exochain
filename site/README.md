@@ -56,6 +56,7 @@ npm run typecheck    # tsc --noEmit
 npm run lint         # next lint
 npm run build        # production build
 npm run security:auth-boundary
+npm run security:lynk-public-claims
 npm start            # serve the production build
 ```
 
@@ -81,7 +82,7 @@ rejected by middleware and server-side session loading.
 
 ```
 /  /why  /chain-of-custody  /avc  /trust-receipts
-/custody-native-blockchain  /developers  /docs  /api  /node
+/lynk  /custody-native-blockchain  /developers  /docs  /api  /node
 /trust-center  /security  /governance  /research  /status
 /blog  /contact  /brand  /legal/privacy  /legal/terms
 /docs/{getting-started,concepts,avc,trust-receipts,settlement,
@@ -127,6 +128,33 @@ rejected by middleware and server-side session loading.
   `ZeroPriceBanner` and amount = `0 EXO`.
 - **No fake claims.** The Trust Center, Security page, and copy generally
   distinguish *current capabilities* from *roadmap items*.
+
+## LYNK adjacent public-surface intake
+
+- **Classification:** `/site` is an adjacent public surface.
+- **Owner / maintainer:** EXOCHAIN Foundation public-site maintainers.
+- **Deployment status:** production public website; LYNK package readiness
+  remains gated by the coverage-first plan and package/core tests.
+- **Allowed claims:** `/lynk` may make LYNK discoverable, name the V1 tested
+  lanes, and describe the core receipt endpoint
+  `POST /api/v1/avc/llm-usage/receipts/emit`.
+- **Disallowed claims:** the public site must not imply it mints receipts,
+  validates AVCs, publishes packages, completes audits, or provides
+  constitutional enforcement beyond the actual EXOCHAIN core/API receipt path.
+- **Core access:** the public LYNK page and `public/llms.txt` do not read or
+  write EXOCHAIN core state, signatures, governance outcomes, consent records,
+  provenance records, prompts, outputs, provider keys, bearer credentials, KMS
+  material, object-store locations, or decryptable payload material.
+- **Trust boundary:** site copy is discovery and routing only; the LYNK adapter
+  produces signed evidence and EXOCHAIN core performs receipt validation and
+  emission.
+- **Site-specific gate:** `npm run security:lynk-public-claims` checks LYNK
+  discovery links, privacy language, endpoint scoping, and unsupported readiness
+  claims.
+- **Runtime configuration:** no LYNK secrets or provider runtime configuration
+  are required by the public page.
+- **Rollback path:** remove `/lynk`, `public/llms.txt`, and the public links
+  from navigation, footer, home, and developer resources.
 
 ## Design system
 

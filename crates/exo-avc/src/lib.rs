@@ -107,6 +107,7 @@ pub mod credential;
 pub mod delegation;
 pub mod error;
 pub mod livesafe_public_output_ceremony;
+pub mod llm_usage_receipt;
 pub mod public_output_authorization;
 pub mod receipt;
 pub mod registry;
@@ -130,6 +131,12 @@ pub use livesafe_public_output_ceremony::{
     LivesafePublicOutputCredentialCeremonyEvidence, LivesafePublicOutputCredentialCeremonyInput,
     LivesafePublicOutputCredentialCeremonyOutput, LivesafePublicOutputCredentialIssueRequest,
     issue_livesafe_public_output_credential_ceremony, parse_livesafe_public_output_evidence_sha256,
+};
+pub use llm_usage_receipt::{
+    AVC_LLM_USAGE_EVIDENCE_DOMAIN, AVC_LLM_USAGE_EVIDENCE_SIGNATURE_DOMAIN,
+    EXOCHAIN_LYNK_PROTOCOL_NAME, EncryptedPayloadRef, LlmUsageCustodyMode, LlmUsageEvidence,
+    LlmUsageEvidenceEnvelope, ProviderUsageMetrics, llm_usage_evidence_hash,
+    llm_usage_evidence_signature_payload, validate_llm_usage_evidence,
 };
 pub use public_output_authorization::{
     LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
@@ -162,10 +169,11 @@ pub use revocation::{
 };
 pub use validation::{
     AVC_ACTION_COMMITMENT_DOMAIN, AVC_ACTION_DESCRIPTOR_DOMAIN, AVC_ACTION_SIGNING_DOMAIN,
-    AVC_HUMAN_APPROVAL_SIGNING_DOMAIN, AvcActionDescriptor, AvcActionRequest, AvcDecision,
-    AvcHumanApproval, AvcReasonCode, AvcValidationRequest, AvcValidationResult,
-    avc_action_commitment_hash, avc_action_descriptor_hash, avc_action_signature_payload,
-    human_approval_signature_payload, validate_avc,
+    AVC_HUMAN_APPROVAL_SIGNING_DOMAIN, AVC_LLM_USAGE_ACTION_NAME, AvcActionDescriptor,
+    AvcActionRequest, AvcDecision, AvcHumanApproval, AvcReasonCode, AvcValidationRequest,
+    AvcValidationResult, avc_action_commitment_hash, avc_action_descriptor_hash,
+    avc_action_signature_payload, avc_llm_usage_action_request, human_approval_signature_payload,
+    validate_avc,
 };
 
 /// All AVC signing domains as a sorted slice — used by hygiene tests
@@ -176,6 +184,8 @@ pub const AVC_SIGNING_DOMAINS: &[&str] = &[
     AVC_ACTION_SIGNING_DOMAIN,
     AVC_CREDENTIAL_SIGNING_DOMAIN,
     AVC_HUMAN_APPROVAL_SIGNING_DOMAIN,
+    AVC_LLM_USAGE_EVIDENCE_DOMAIN,
+    AVC_LLM_USAGE_EVIDENCE_SIGNATURE_DOMAIN,
     LIVESAFE_PUBLIC_OUTPUT_CREDENTIAL_CEREMONY_DOMAIN,
     LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_DOMAIN,
     AVC_RECEIPT_EVIDENCE_SUBJECT_DOMAIN,
@@ -212,6 +222,7 @@ mod hygiene_tests {
             include_str!("error.rs"),
             include_str!("livesafe_public_output_ceremony.rs"),
             include_str!("lib.rs"),
+            include_str!("llm_usage_receipt.rs"),
             include_str!("public_output_authorization.rs"),
             include_str!("receipt.rs"),
             include_str!("registry.rs"),
@@ -243,6 +254,7 @@ mod hygiene_tests {
             include_str!("error.rs"),
             include_str!("livesafe_public_output_ceremony.rs"),
             include_str!("lib.rs"),
+            include_str!("llm_usage_receipt.rs"),
             include_str!("public_output_authorization.rs"),
             include_str!("receipt.rs"),
             include_str!("registry.rs"),

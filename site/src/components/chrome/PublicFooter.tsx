@@ -33,6 +33,7 @@ const cols = [
     heading: 'Build',
     links: [
       { href: '/developers', label: 'Developers' },
+      { href: '/lynk', label: 'LYNK Protocol' },
       { href: '/docs', label: 'Docs' },
       { href: '/api', label: 'API Reference' },
       { href: '/node', label: 'Run a Node' },

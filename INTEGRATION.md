@@ -105,6 +105,20 @@ Consumers must not write the `dagdb_*` tables directly; the raw
 `exo_dag_db_postgres::postgres::*` functions are not a public,
 governance-bearing surface.
 
+### LYNK LLM usage custody boundary
+
+The EXOCHAIN LYNK Protocol receipt adapter uses receipt minimization by default:
+AVC LLM/MCP usage receipts store hashes, usage counters, safe metadata, custody
+policy hashes, and receipt/finality links, not raw prompts, completions, tool
+arguments, tool results, raw object URIs, provider keys, bearer tokens, KMS
+material, or other decryptable payload material. This is an adapter policy, not
+a global claim that DAG DB never stores data.
+
+DAG DB can store governed tenant data when `dagdb_custody` is explicitly
+authorized by consent, policy evidence, signatures, idempotency, RLS, and served
+route or persistence API checks. The full LYNK custody contract is documented in
+[`docs/dagdb/llm-usage-custody.md`](docs/dagdb/llm-usage-custody.md).
+
 The four PRD-D5 gate methods (`persist_lifecycle_action`, `persist_default_route`,
 `persist_continuation_record`, `persist_context_packet_record`) are now reached
 from served REST paths: default route persistence calls

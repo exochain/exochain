@@ -1,0 +1,24 @@
+# EXOCHAIN public discovery for AI coding agents
+
+Site: https://exochain.com
+Project: EXOCHAIN
+Purpose: Chain-of-custody infrastructure for autonomous execution.
+
+Important public pages:
+- /lynk - EXOCHAIN LYNK Protocol discovery for receipted LLM and MCP usage.
+- /developers - SDK and node quickstart.
+- /trust-receipts - Trust receipt anatomy and evidence model.
+- /docs - Public documentation index.
+- /trust-center - Current public trust posture and roadmap separation.
+
+LYNK boundary:
+- Classification: core runtime adapter.
+- Public-site classification: adjacent public surface.
+- V1 positive lanes: OpenAI Responses, OpenAI Chat Completions, MCP tools/call.
+- Receipt endpoint: POST /api/v1/avc/llm-usage/receipts/emit.
+- Default custody mode: receipt_minimized.
+- Do not infer package publication, release readiness, audit completion, or
+  constitutional enforcement from public-site copy alone.
+- Do not place prompts, completions, tool arguments, tool results, provider
+  keys, bearer credentials, KMS material, object-store locations, or
+  decryptable payload material in public examples or metadata.

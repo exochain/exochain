@@ -69,6 +69,7 @@ flowchart TD
 | Delegate | `delegate_avc(parent, child_draft, sign)` | `exo.avc.credential.v1` |
 | Revoke | `revoke_avc(id, revoker, reason, now, sign)` | `exo.avc.revocation.v1` |
 | Trust receipt | `create_trust_receipt(...)` | `exo.avc.receipt.v1` |
+| LYNK usage receipt | `POST /api/v1/avc/llm-usage/receipts/emit` | `exo.avc.lynk.llm_usage.evidence.v1` |
 
 Validation is **fail-closed**: missing keys, missing required consent
 or policy refs, malformed structural values, scope violations,
@@ -143,6 +144,33 @@ delegation depth is rejected with `AvcError::DelegationWidens`.
   even if every other field is valid.
 - The MVP registry is in-memory; production deployments must back it
   with a durable, governance-controlled store.
+
+## EXOCHAIN LYNK Protocol
+
+LYNK binds supported LLM and MCP usage to AVC trust receipts. V1 covers OpenAI
+Responses, OpenAI Chat Completions, and MCP `tools/call`. The trusted adapter
+route is:
+
+```text
+POST /api/v1/avc/llm-usage/receipts/emit
+```
+
+The route verifies the adapter evidence signature, the subject action
+signature, registered AVC authority, `Permission::Execute`, idempotency, receipt
+chain position, timestamp/finality evidence, and the LYNK evidence hash before
+storing a receipt. The generic external receipt-ingestion path remains
+fail-closed.
+
+Receipts are minimized by default. They carry hashes, counters, policy hashes,
+safe metadata, and receipt/finality links. Raw provider or tool payloads,
+provider secrets, bearer tokens, KMS material, raw object locations, and raw
+signatures do not belong in receipt bodies. DAG DB custody is a separate
+governed storage mode that requires explicit consent and policy evidence.
+
+Human and AI coding agents should start with
+[`packages/exochain-llm-proxy/README.md`](../../packages/exochain-llm-proxy/README.md)
+and
+[`packages/exochain-llm-proxy/AGENTS.md`](../../packages/exochain-llm-proxy/AGENTS.md).
 
 ## Example: a research-only AVC
 

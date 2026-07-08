@@ -134,6 +134,11 @@ assert_eq!(sr.amount, "0");`}
             <CardBody>
               <ul className="text-sm space-y-1.5">
                 <li>
+                  <Link href="/lynk" className="underline">
+                    LYNK Protocol
+                  </Link>
+                </li>
+                <li>
                   <Link href="/docs/getting-started" className="underline">
                     Getting Started
                   </Link>

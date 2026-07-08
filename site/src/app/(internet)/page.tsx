@@ -45,6 +45,9 @@ export default function HomePage() {
               <LinkButton href="/developers" size="lg">
                 Build on EXOCHAIN
               </LinkButton>
+              <LinkButton href="/lynk" variant="secondary" size="lg">
+                LYNK for LLM receipts
+              </LinkButton>
               <LinkButton href="/contact" variant="secondary" size="lg">
                 Talk to us
               </LinkButton>
@@ -176,9 +179,12 @@ export default function HomePage() {
                 Issue and validate AVCs. Generate trust receipts. Run a node.
                 The Rust SDK is shipping; Node and Python are on the roadmap.
               </p>
-              <div className="mt-3">
+              <div className="mt-3 flex flex-wrap gap-2">
                 <LinkButton href="/developers" size="sm">
                   Quickstart
+                </LinkButton>
+                <LinkButton href="/lynk" size="sm" variant="secondary">
+                  LYNK
                 </LinkButton>
               </div>
             </CardBody>

@@ -1,0 +1,41 @@
+{
+  "name": "@exochain/llm-proxy",
+  "version": "0.2.0-beta",
+  "description": "EXOCHAIN LYNK Protocol proxy for receipted LLM and MCP usage",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/exochain/exochain.git",
+    "directory": "packages/exochain-llm-proxy"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "exochain-llm-proxy": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "AGENTS.md", "examples", "snippets"],
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
+    "test:coverage": "tsc -p tsconfig.test.json && node --test --experimental-test-coverage --test-coverage-include='dist-test/src/**/*.js' --test-coverage-exclude='dist-test/test/**/*.js' --test-coverage-lines=95 --test-coverage-functions=95 --test-coverage-branches=90 dist-test/test/*.test.js",
+    "lint": "tsc --noEmit",
+    "check:package": "npm run build && node scripts/check-package-artifacts.mjs",
+    "pack:dry-run": "npm run check:package && npm pack --dry-run",
+    "clean": "rm -rf dist dist-test"
+  },
+  "keywords": ["exochain", "lynk", "llm", "mcp", "receipts", "openai"],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.0.0",
+    "typescript": "5.3.3"
+  }
+}
