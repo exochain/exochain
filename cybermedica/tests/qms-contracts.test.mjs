@@ -230,3 +230,29 @@ test('participant consent revocation and tenant mismatch deny regulated access',
   assert.equal(tenantMismatchDecision.decision, 'denied');
   assert.ok(tenantMismatchDecision.reasons.includes('tenant_boundary_violation'));
 });
+
+test('unknown governed actions fail closed even with otherwise valid authority', async () => {
+  const { evaluateGovernedAction } = await loadQmsContracts();
+
+  const decision = evaluateGovernedAction({
+    action: 'unregistered_public_claim_lift',
+    tenantId: 'tenant-site-alpha',
+    targetTenantId: 'tenant-site-alpha',
+    actor: { did: 'did:exo:principal-investigator-alpha', kind: 'human' },
+    authority: { valid: true, revoked: false, expired: false, permissions: ['govern', 'read', 'write'] },
+    consent: { required: false },
+    decisionForum: {
+      verified: true,
+      state: 'approved',
+      humanGate: { verified: true },
+      quorum: { status: 'met' },
+      openChallenge: false,
+    },
+    evidenceBundle: { complete: true, phiBoundaryAttested: true },
+  });
+
+  assert.equal(decision.decision, 'denied');
+  assert.equal(decision.failClosed, true);
+  assert.ok(decision.reasons.includes('governed_action_unknown'));
+  assert.equal(decision.exochainProductionClaim, false);
+});

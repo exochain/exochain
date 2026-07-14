@@ -327,6 +327,7 @@ function hasPermission(authority, permission) {
 
 function evaluateAuthority(action, authority, reasons) {
   const requiredPermission = GOVERNED_ACTION_PERMISSION[action];
+  addReason(reasons, !hasText(requiredPermission), 'governed_action_unknown');
   addReason(reasons, !authority || authority.valid !== true, 'authority_chain_invalid');
   addReason(reasons, authority?.revoked === true, 'authority_chain_revoked');
   addReason(reasons, authority?.expired === true, 'authority_chain_expired');
