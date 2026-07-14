@@ -18,6 +18,13 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
+const previewAllowedHosts = [
+  'localhost',
+  '127.0.0.1',
+  'healthcheck.railway.app',
+  '.railway.app',
+];
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -35,9 +42,6 @@ export default defineConfig({
     },
   },
   preview: {
-    // Production serving on Railway (`npm run start`). Host check disabled: preview only
-    // serves static dist/, and Railway's healthchecker uses an internal Host header
-    // (healthcheck.railway.app) that an allowlist would 403, failing every deploy.
-    allowedHosts: true,
+    allowedHosts: previewAllowedHosts,
   },
 });
