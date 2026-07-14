@@ -10,6 +10,7 @@ const {
 } = require("./public-adapter-output-authorization");
 
 const VERIFIED_ADAPTER_STATE = "verified";
+const PUBLIC_AUTHORIZATION_BY_ADAPTER_DECISION = new WeakMap();
 const EXOCHAIN_DID_PATTERN = /^did:exo:[a-z0-9_-]+:[A-Za-z0-9._:-]+$/;
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 const CONSENT_SCOPE_PATTERN = /^[a-z0-9][a-z0-9_:-]*$/;
@@ -284,19 +285,29 @@ function createRuntimeExochainAdapter({
           currentAt,
         }),
     );
+    const evaluationInput = {
+      allowed: operationDecision.allowed,
+      responseState: operationDecision.responseState,
+      transportCalled: operationDecision.transportCalled,
+      value: operationDecision.value,
+    };
     const evaluation = evaluatePublicAdapterOutputAuthorization(
-      {
-        allowed: operationDecision.allowed,
-        responseState: operationDecision.responseState,
-        transportCalled: operationDecision.transportCalled,
-        value: operationDecision.value,
-      },
+      evaluationInput,
       {
         currentAt,
         subject: PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_SUBJECT,
         audience: PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_AUDIENCE,
       },
     );
+    const publicAdapterDecision = {
+      allowed: operationDecision.allowed && evaluation.allowed,
+      reasons: [],
+      required_evidence: [],
+      responseState: operationDecision.responseState,
+      transportCalled: operationDecision.transportCalled,
+      value: evaluation.allowed ? evaluation.metadata : null,
+      metadata: evaluation.metadata,
+    };
     const reasons = [
       ...operationDecision.reasons,
       ...evaluation.reasons.filter(
@@ -310,15 +321,14 @@ function createRuntimeExochainAdapter({
       ),
     ];
 
-    return {
-      allowed: operationDecision.allowed && evaluation.allowed,
-      reasons,
-      required_evidence: requiredEvidence,
-      responseState: operationDecision.responseState,
-      transportCalled: operationDecision.transportCalled,
-      value: evaluation.allowed ? evaluation.metadata : null,
-      metadata: evaluation.metadata,
-    };
+    publicAdapterDecision.allowed = operationDecision.allowed && evaluation.allowed;
+    publicAdapterDecision.reasons = reasons;
+    publicAdapterDecision.required_evidence = requiredEvidence;
+    PUBLIC_AUTHORIZATION_BY_ADAPTER_DECISION.set(
+      publicAdapterDecision,
+      operationDecision.value,
+    );
+    return publicAdapterDecision;
   }
 
   return {
@@ -427,8 +437,26 @@ function createRuntimeExochainAdapter({
 
 const runtimeExochainAdapter = createRuntimeExochainAdapter();
 
+function evaluateVerifiedPublicAdapterOutputDecision(decision, options) {
+  const authorization = PUBLIC_AUTHORIZATION_BY_ADAPTER_DECISION.get(decision);
+  if (typeof authorization === "undefined") {
+    return null;
+  }
+
+  return evaluatePublicAdapterOutputAuthorization(
+    {
+      allowed: decision.allowed,
+      responseState: decision.responseState,
+      transportCalled: decision.transportCalled,
+      value: authorization,
+    },
+    options,
+  );
+}
+
 module.exports = {
   createRuntimeExochainAdapter,
+  evaluateVerifiedPublicAdapterOutputDecision,
   executeRuntimeExochainOperation,
   runtimeExochainAdapter,
 };

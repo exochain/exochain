@@ -9,6 +9,12 @@ import type { TrustStatusPayloadOptions } from "../server/utils/trust-status.js"
 
 type RuntimeStatus = NonNullable<TrustStatusPayloadOptions["runtimeStatus"]>;
 type RuntimeOperations = NonNullable<RuntimeStatus["wrapped_operations"]>;
+type AdapterAuthorizationDecision = {
+  allowed: boolean;
+  responseState: string;
+  transportCalled: boolean;
+  value: unknown;
+};
 
 const VERIFIED_PRODUCTION_TRUST_EVIDENCE = {
   evidence_state: "verified" as const,
@@ -75,6 +81,37 @@ const VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_METADATA = {
   response_state: "permit",
   transport_called: true,
 };
+
+async function runtimeAdapterAuthorizationDecision({
+  state = "permit",
+  value = VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value,
+}: {
+  state?: string;
+  value?: unknown;
+} = {}) {
+  const { createRuntimeExochainAdapter } = require(
+    "../server/utils/livesafe-exochain-adapter.js",
+  ) as {
+    createRuntimeExochainAdapter: (options: Record<string, unknown>) => {
+      getPublicAdapterOutputAuthorization: (
+        options: Record<string, unknown>,
+      ) => Promise<AdapterAuthorizationDecision>;
+    };
+  };
+  const adapter = createRuntimeExochainAdapter({
+    adapterStatus: "verified",
+    client: {
+      async getPublicAdapterOutputAuthorization() {
+        return { state, value };
+      },
+    },
+  });
+
+  return adapter.getPublicAdapterOutputAuthorization({
+    currentAt: "2026-07-05T12:00:00.000Z",
+    returnDecision: true,
+  });
+}
 
 describe("trust status API contract", () => {
   it("builds an explicitly inactive machine-readable trust payload", () => {
@@ -263,75 +300,62 @@ describe("trust status API contract", () => {
     expect(payload).not.toHaveProperty("public_adapter_output_authorization");
   });
 
-  it("denies verified public trust status unless the public adapter-output authorization decision and DTO are complete", () => {
+  it("denies verified public trust status unless the public adapter-output authorization decision and DTO are complete", async () => {
     const invalidAuthorizations = [
       {
         name: "denied evaluator decision",
-        adapterOutputAuthorization: {
-          ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION,
-          allowed: false,
-        },
+        state: "deny",
+        value: VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value,
       },
       {
         name: "non-permit EXOCHAIN response",
-        adapterOutputAuthorization: {
-          ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION,
-          responseState: "stale",
-        },
+        state: "stale",
+        value: VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value,
       },
       {
         name: "uncalled transport",
-        adapterOutputAuthorization: {
-          ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION,
-          transportCalled: false,
-        },
+        state: "not-called",
+        value: VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value,
       },
       {
         name: "wrong subject",
-        adapterOutputAuthorization: {
-          ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION,
-          value: {
-            ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value,
-            subject: "www.livesafe.ai",
-          },
+        value: {
+          ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value,
+          subject: "www.livesafe.ai",
         },
       },
       {
         name: "wrong audience",
-        adapterOutputAuthorization: {
-          ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION,
-          value: {
-            ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value,
-            audience: "https://livesafe.ai/api/health",
-          },
+        value: {
+          ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value,
+          audience: "https://livesafe.ai/api/health",
         },
       },
       {
         name: "forbidden claim",
-        adapterOutputAuthorization: {
-          ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION,
-          value: {
-            ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value,
-            claims: [
-              ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value.claims,
-              "medical_status_verified",
-            ],
-          },
+        value: {
+          ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value,
+          claims: [
+            ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value.claims,
+            "medical_status_verified",
+          ],
         },
       },
       {
         name: "missing evidence hash",
-        adapterOutputAuthorization: {
-          ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION,
-          value: {
-            ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value,
-            evidence_hash: "",
-          },
+        value: {
+          ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value,
+          evidence_hash: "",
         },
       },
     ];
 
-    for (const { adapterOutputAuthorization, name } of invalidAuthorizations) {
+    for (const { name, state, value } of invalidAuthorizations) {
+      const adapterOutputAuthorization =
+        await runtimeAdapterAuthorizationDecision({
+          state: state ?? "permit",
+          value,
+        });
       const payload = createTrustStatusPayload({
         exochainConnected: true,
         version: "1.0.0",
@@ -359,7 +383,9 @@ describe("trust status API contract", () => {
     }
   });
 
-  it("allows verified public trust status only with permit-backed proof-bearing public adapter-output authorization", () => {
+  it("allows verified public trust status only with a runtime-adapter-bound proof-bearing authorization", async () => {
+    const adapterOutputAuthorization =
+      await runtimeAdapterAuthorizationDecision();
     const payload = createTrustStatusPayload({
       exochainConnected: true,
       version: "1.0.0",
@@ -375,7 +401,7 @@ describe("trust status API contract", () => {
           "Disable EXOCHAIN adapter environment variables and remove the trust-status route from the load balancer.",
         source_basis: ["server/utils/livesafe-exochain-adapter.js"],
       },
-      adapterOutputAuthorization: VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION,
+      adapterOutputAuthorization,
       productionTrustEvidence: VERIFIED_PRODUCTION_TRUST_EVIDENCE,
     });
 
@@ -412,7 +438,7 @@ describe("trust status API contract", () => {
     );
   });
 
-  it("allows live trust status when the adapter returns an already evaluated permit decision", () => {
+  it("denies caller-supplied sanitized metadata masquerading as an evaluated permit", () => {
     const payload = createTrustStatusPayload({
       exochainConnected: true,
       version: "1.0.0",
@@ -437,18 +463,49 @@ describe("trust status API contract", () => {
       productionTrustEvidence: VERIFIED_PRODUCTION_TRUST_EVIDENCE,
     });
 
-    expect(payload.state).toBe("externally-verified");
-    expect(payload.machine_state).toBe("public_trust_claims_allowed");
-    expect(payload.public_claims_allowed).toBe(true);
-    expect(payload.public_adapter_output_authorization).toEqual(
-      VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_METADATA,
+    expect(payload.state).toBe("not-verified");
+    expect(payload.machine_state).toBe("not_verified");
+    expect(payload.public_claims_allowed).toBe(false);
+    expect(payload.public_claims_reason).toContain(
+      "proof-bearing public adapter-output authorization",
     );
-    expect(JSON.stringify(payload.public_adapter_output_authorization)).not.toContain(
-      "signature",
-    );
+    expect(payload).not.toHaveProperty("public_adapter_output_authorization");
   });
 
-  it("denies public trust status when EXOCHAIN connectivity is false even with proof authorization", () => {
+  it("denies caller-supplied or cloned decisions that did not retain runtime adapter provenance", async () => {
+    const trustedDecision = await runtimeAdapterAuthorizationDecision();
+
+    for (const adapterOutputAuthorization of [
+      VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION,
+      { ...trustedDecision },
+    ]) {
+      const payload = createTrustStatusPayload({
+        exochainConnected: true,
+        version: "1.0.0",
+        uptimeSeconds: 16,
+        generatedAt: "2026-07-05T12:00:00.000Z",
+        runtimeStatus: {
+          adapter_state: "verified",
+          surface_classification: "core-runtime-adapter",
+          can_read_exochain_core_state: true,
+          can_write_exochain_core_state: true,
+          disablement_path:
+            "Disable EXOCHAIN adapter environment variables and remove the trust-status route from the load balancer.",
+          source_basis: ["server/utils/livesafe-exochain-adapter.js"],
+        },
+        adapterOutputAuthorization,
+        productionTrustEvidence: VERIFIED_PRODUCTION_TRUST_EVIDENCE,
+      });
+
+      expect(payload.public_claims_allowed).toBe(false);
+      expect(payload.machine_state).toBe("not_verified");
+      expect(payload).not.toHaveProperty("public_adapter_output_authorization");
+    }
+  });
+
+  it("denies public trust status when EXOCHAIN connectivity is false even with proof authorization", async () => {
+    const adapterOutputAuthorization =
+      await runtimeAdapterAuthorizationDecision();
     const payload = createTrustStatusPayload({
       exochainConnected: false,
       version: "1.0.0",
@@ -464,7 +521,7 @@ describe("trust status API contract", () => {
           "Disable EXOCHAIN adapter environment variables and remove the trust-status route from the load balancer.",
         source_basis: ["server/utils/livesafe-exochain-adapter.js"],
       },
-      adapterOutputAuthorization: VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION,
+      adapterOutputAuthorization,
       productionTrustEvidence: VERIFIED_PRODUCTION_TRUST_EVIDENCE,
     });
 
@@ -499,16 +556,18 @@ describe("trust status API contract", () => {
         source_basis: ["server/utils/livesafe-exochain-adapter.js"],
       } as RuntimeStatus,
     },
-  ])("allows verified public trust status with $label when proof authorization permits", ({
+  ])("allows verified public trust status with $label when proof authorization permits", async ({
     runtimeStatus,
   }) => {
+    const adapterOutputAuthorization =
+      await runtimeAdapterAuthorizationDecision();
     const payload = createTrustStatusPayload({
       exochainConnected: true,
       version: "1.0.0",
       uptimeSeconds: 16,
       generatedAt: "2026-07-05T12:00:00.000Z",
       runtimeStatus,
-      adapterOutputAuthorization: VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION,
+      adapterOutputAuthorization,
       productionTrustEvidence: VERIFIED_PRODUCTION_TRUST_EVIDENCE,
     });
 
@@ -546,32 +605,23 @@ describe("trust status API contract", () => {
   it("live trust status responder requests proof-bearing adapter output with the generated timestamp before sending", async () => {
     const currentAt = "2026-07-05T12:00:00.000Z";
     const getPublicAdapterOutputAuthorization = vi.fn(async () => ({
-      ...VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION,
+      state: "permit",
+      value: VALID_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION.value,
     }));
-    const adapter = {
-      getRuntimeStatus(): RuntimeStatus {
-        return {
-          adapter_state: "verified" as const,
-          surface_classification: "core-runtime-adapter" as const,
-          public_claims_allowed: true,
-          can_read_exochain_core_state: true,
-          can_write_exochain_core_state: true,
-          wrapped_operations: [
-            "getIdentity",
-            "registerIdentity",
-            "anchorAuditReceipt",
-            "anchorScan",
-            "anchorConsent",
-            "getPaceStatus",
-            "getPublicAdapterOutputAuthorization",
-          ] as RuntimeOperations,
-          disablement_path:
-            "Disable EXOCHAIN adapter environment variables and remove the trust-status route from the load balancer.",
-          source_basis: ["server/utils/livesafe-exochain-adapter.js"],
-        };
-      },
-      getPublicAdapterOutputAuthorization,
+    const { createRuntimeExochainAdapter } = require(
+      "../server/utils/livesafe-exochain-adapter.js",
+    ) as {
+      createRuntimeExochainAdapter: (options: Record<string, unknown>) => {
+        getRuntimeStatus: () => RuntimeStatus;
+        getPublicAdapterOutputAuthorization: (
+          options: Record<string, unknown>,
+        ) => Promise<AdapterAuthorizationDecision>;
+      };
     };
+    const adapter = createRuntimeExochainAdapter({
+      adapterStatus: "verified",
+      client: { getPublicAdapterOutputAuthorization },
+    });
     const json = vi.fn();
     const response = {
       status: vi.fn(() => ({ json })),
@@ -587,8 +637,9 @@ describe("trust status API contract", () => {
     });
 
     expect(getPublicAdapterOutputAuthorization).toHaveBeenCalledWith({
+      audience: "https://livesafe.ai/api/trust/status",
       currentAt,
-      returnDecision: true,
+      subject: "livesafe.ai",
     });
     expect(response.status).toHaveBeenCalledWith(200);
     expect(json).toHaveBeenCalledWith(
