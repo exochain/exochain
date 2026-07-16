@@ -82,6 +82,13 @@ governance systems:
 - The current REST router creates and reads individual decisions but does not
   provide the complete list, vote, typed transition, review, publication,
   continuing-review, E-STOP, CAPA, or RESET surface needed by the product.
+- With the production database feature enabled, the gateway provisions the
+  DAG DB schema and opens its runtime pool with the `dagdb,public` search path.
+  Decision Forum's current `decisions` and `audit_entries` tables therefore
+  resolve inside the DAG DB schema. DAG DB also supplies serializable receipt
+  append/replay and receipt-chain reconstruction through `dagdb_receipts` and
+  `dagdb_subject_receipt_heads`. The remaining gap is that every Decision Forum
+  mutation is not yet atomically bound to that authoritative receipt chain.
 - `web/` is an implemented React/Vite Decision Forum product, but its status
   vocabulary, classes, request bodies, and assumed routes drift from the Rust
   contracts. It also generates local feedback identifiers with wall-clock time
@@ -505,7 +512,7 @@ session actor, and never accepts caller-supplied actor type as authority. Local
 stores are caches only. Authoritative IDs, HLC timestamps, receipts, states,
 and actions come from the governed backend.
 
-## 10. Core API and persistence boundaries
+## 10. Core API and DAG DB persistence boundaries
 
 The REST surface extends the existing decision root instead of inventing a
 parallel protocol service. The target resources are:
@@ -540,6 +547,42 @@ events, receipts, publications, and interventions are immutable. Tenant-scoped
 foreign keys and indexes prevent same-ID cross-tenant joins. Deletion of
 protected content uses crypto-shredding or approved erasure semantics while
 preserving structural receipt integrity.
+
+### 10.1 Persistence authority
+
+DAG DB is required infrastructure for Decision Forum. It is not an optional
+retrieval enhancement or a benchmark dependency. The production authority
+boundary is:
+
+- current protocol and workflow rows live in tenant-scoped tables provisioned
+  in the `dagdb` schema and act as query projections;
+- immutable governance events are appended to `dagdb_receipts` under a
+  protocol/decision subject and reconstruct through
+  `dagdb_subject_receipt_heads`;
+- the receipt chain, canonical package hash, and signed event body determine
+  historical authority; a mutable projection never overrides them;
+- every state mutation and corresponding receipt append occur in one database
+  transaction, so either both commit or neither commits;
+- idempotent replay returns the existing receipt, while a stale previous hash,
+  conflicting body, broken chain, tenant mismatch, or sequence conflict fails
+  closed; and
+- missing database configuration, failed DAG DB migrations, failed tenant/RLS
+  binding, or receipt-store failure prevents governed mutation. There is no
+  in-memory or `public`-schema authority fallback.
+
+The implementation extends DAG DB's subject/event vocabulary only as necessary
+to distinguish protocol package publication, peer review, authorization,
+monitoring, E-STOP, CAPA, RESET, and closeout receipts. It reuses the existing
+receipt store, Postgres transaction, RLS, idempotency, outbox, import/export,
+and reconstruction machinery rather than building another ledger.
+
+### 10.2 DAG DB scope boundary
+
+This protocol includes the persistence work needed to store and reconstruct
+Decision Forum state and receipts. It does not include changes to DAG DB
+context compression, similarity, graph ranking, retrieval quality, model
+judging, token economics, or the cheaper-and-better thesis. Those questions are
+independent research claims and cannot block the governance control surface.
 
 ## 11. Proprietary adjacent-surface contracts
 
@@ -576,7 +619,7 @@ LegalDyne and LiveSafe remain commercial adjacent products. This protocol does
 not silently enroll or modify them. Any later adapter must pass the same intake,
 licensure, secret isolation, fail-closed, rollback, and core-regression gates.
 
-## 12. Dogfood protocol: release claims and DAG DB evaluation
+## 12. Dogfood protocol: release claims and process validation
 
 The first full protocol executed through the new system is the EXOCHAIN v0.2.3
 evaluator and README claim-assessment campaign. It will:
@@ -585,13 +628,15 @@ evaluator and README claim-assessment campaign. It will:
    DAG DB, package, deployment, and licensing claim;
 2. bind each claim to source, deterministic tests, benchmark artifacts,
    deployment/runtime evidence, or an explicit unsupported/limited result;
-3. repair or remove synthetic, hard-coded, or non-reproducible DAG DB quality,
-   cost, and savings claims;
+3. identify existing DAG DB measurements by their historical commit and
+   evidence package, remove or qualify unsupported current-tense guarantees,
+   and make no new DAG DB performance or savings claim;
 4. qualify the OpenAI, Anthropic, xAI, and Gemini evaluator seats before using
    their judgments;
-5. execute the predeclared benchmark matrix with blinded outputs, independent
-   model judges, human audit of all disagreements plus a fixed 20 percent
-   sample, and complete token/cost/runtime provenance;
+5. execute only the predeclared tests and benchmarks required for selected
+   non-DAG-DB claims, using blinded outputs, independent model judges, human
+   audit of all disagreements plus a fixed 20 percent sample, and complete
+   token/cost/runtime provenance;
 6. subject the evidence dossier and README revision to the same blinded review,
    response matrix, Council disposition, AI-IRB assessment, and publication
    workflow; and
@@ -603,6 +648,15 @@ The protocol reports negative and inconclusive findings. Provider judgments
 are evidence, not ground truth. The final README links the published protocol
 package and verification command instead of presenting unreceipted benchmark
 language.
+
+DAG DB's retrieval, quality, compression, and economic thesis becomes
+`DF-ROADMAP-001 — Deterministic DAG DB Claim Reassessment`. The completed
+Decision Forum process will analyze, peer-review, prioritize, authorize, and
+receipt that card as its own protocol. The card records the hypothesis,
+baseline and treatment arms, success/failure thresholds, provider and human
+review requirements, blinding, credential and cost budget, runtime evidence,
+stopping rules, and publication criteria. Creating the card does not assign it
+priority or authorize its execution.
 
 ## 13. Security and failure behavior
 
@@ -663,6 +717,16 @@ The system is accepted only when deterministic tests prove all of the following:
     judge disagreements, and audit results without synthetic substitutions.
 16. Full Rust, TypeScript, database, security, release-boundary, documentation,
     license, and cross-implementation gates pass from a clean checkout.
+17. With DAG DB unavailable or degraded, every governed mutation and
+    authoritative mutable read fails closed. A previously exported static
+    publication may be served only when its package and signature verify, and
+    it is visibly labeled with the degraded runtime state.
+18. Each protocol mutation atomically commits its projection and DAG DB receipt;
+    forced failure on either side leaves neither side changed.
+19. Receipt reconstruction returns the exact ordered protocol history and
+    rejects replay conflicts, stale heads, broken links, and cross-tenant reads.
+20. No Decision Forum acceptance test depends on DAG DB retrieval quality,
+    compression, ranking, token savings, or model-judged answer quality.
 
 ## 15. Delivery decomposition
 
@@ -677,9 +741,10 @@ review boundary, not a deferral mechanism.
 3. **Council, AI-IRB, and stop authority:** qualified seats, eligible
    unanimity, independence, dissent, progressive/adverse decisions, E-STOP,
    CAPA, and RESET.
-4. **Gateway, persistence, SDK, and bypass closure:** migrations, REST/OpenAPI,
-   SDK clients, mounted hardened voting, typed transitions, transactional
-   receipts, tenant isolation, and sibling-ingress tests.
+4. **Gateway, DAG DB persistence, SDK, and bypass closure:** migrations,
+   REST/OpenAPI, SDK clients, mounted hardened voting, typed transitions,
+   atomic projection-and-receipt transactions, receipt reconstruction, tenant
+   isolation, and sibling-ingress tests.
 5. **Deterministic publisher:** canonical package builder, Markdown/HTML/PDF/A
    projections, manifests, verification CLI, and reproducible-publication tests.
 6. **Decision Forum commercial control surface:** protocol editor, blinded
@@ -690,9 +755,10 @@ review boundary, not a deferral mechanism.
    verification contract.
 8. **CyberMedica commercial QMS alignment:** bounded-authority policy migration,
    document control, CAPA/reporting integration, and adjacent-surface gates.
-9. **Dogfood evaluator protocol:** provider qualification, deterministic DAG
-   and DAG DB benchmarks, claim registry, peer-reviewed evidence package,
-   attribution, and evaluator-first README publication.
+9. **Dogfood evaluator protocol:** provider qualification, non-DAG-DB claim
+   tests, historical DAG DB claim qualification, claim registry, peer-reviewed
+   evidence package, attribution, evaluator-first README publication, and the
+   separately prioritized `DF-ROADMAP-001` card.
 10. **Genesis adoption and closeout:** import immutable pre-activation evidence,
     execute the peer review, issue prospective adoption receipts, verify every
     published artifact, and report repository/CI/deployment/runtime/release/
