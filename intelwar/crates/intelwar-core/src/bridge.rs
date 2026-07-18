@@ -312,6 +312,8 @@ pub fn bridge_append(state_dir: &Path, req: BridgeAppendRequest) -> Result<Bridg
         previous_receipt_hash: previous,
         crosschecks: Vec::new(),
         debate: None,
+        debate_decision: None,
+        verified_human_voters: std::collections::BTreeSet::new(),
         provenance_timestamp: format!("hlc:{}:0", hlc.physical_ms),
     };
 

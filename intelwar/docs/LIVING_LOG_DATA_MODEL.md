@@ -195,8 +195,15 @@ Fail closed at any step (IW-6); no partial DAG write after kernel denial.
 
 ## DebateSession (reference)
 
-Maps to decision-forum `DecisionObject` id + BCTS state. IntelWar stores only
-the reference and expected terminal states (`Approved` / `Closed` / `Recorded`).
+Maps to decision-forum `DecisionObject` id + BCTS state. IntelWar stores the
+Living Log reference (`debate_ref` / `DebateSession`) and accepts terminal
+states derived from BCTS `Approved` / `Executed` / `Recorded` / `Closed`.
+
+**PM-003 enforcement:** `Doctrine` and `ConstitutionalAmendment` appends require
+a real `DecisionObject` (`AppendRequest.debate_decision`). Bare session claims
+without a DecisionObject fail closed. Strategic/Constitutional classes also
+require the decision-forum human gate with externally verified human voter DIDs.
+`ConstitutionalAmendment` requires `DecisionClass::Constitutional`.
 
 ---
 

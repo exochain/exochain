@@ -98,7 +98,8 @@ the adapter. Adjacent JS apps are **not** workspace members.
 
 | Gap | Status |
 |-----|--------|
-| Gateway DAG DB persistence for Living Log | Pending (use in-memory `Dag` in core tests; Node API simulated store) |
+| Gateway DAG DB persistence for Living Log | Local multi-node + optional gateway (PM-002); live pool CI still pending |
+| DebateSession ↔ decision-forum | **Done (PM-003):** Doctrine/Amendment require DecisionObject + human gate |
 | WASM export of IntelWar overlays | Hook stubs in `intelwar/wasm/` |
 | Real AVC minting for agent sessions | Scaffold via attestation fields |
 | Railway production secrets / tenant | Fail closed until configured |

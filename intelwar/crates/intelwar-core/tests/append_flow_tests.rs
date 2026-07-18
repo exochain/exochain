@@ -89,6 +89,8 @@ fn append_genesis_development_decision_succeeds() {
         previous_receipt_hash: None,
         crosschecks: Vec::new(),
         debate: None,
+        debate_decision: None,
+        verified_human_voters: Default::default(),
         provenance_timestamp: "2026-07-18T00:00:00Z".into(),
     };
 
@@ -152,6 +154,8 @@ fn append_fails_without_consent() {
         previous_receipt_hash: None,
         crosschecks: Vec::new(),
         debate: None,
+        debate_decision: None,
+        verified_human_voters: Default::default(),
         provenance_timestamp: "2026-07-18T00:00:00Z".into(),
     };
 

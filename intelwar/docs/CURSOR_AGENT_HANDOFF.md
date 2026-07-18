@@ -66,7 +66,7 @@ When stopping: append or update the session block with **Open Questions**, set *
 
 - **Continue** the item named in §8 “Authorized now” without asking.
 - **Start a new PM item** only if: (a) §8 authorizes it, or (b) the human explicitly names it in the latest user message, or (c) the prior session’s Recommended Next Action names it **and** no HOLD blocks it.
-- **Do not** start PM-003+, PM-007 (deploy), or marketing work while §8 marks them HOLD.
+- **Do not** start PM-004+, PM-007 (deploy), or marketing work while §8 marks them HOLD.
 - Completing an item: mark DONE in §4, update §3/§8, recommend the next item — but do not begin the next HOLD item until authorized.
 
 ### 1.5 Constitutional / trust / secrets / deploy (summary)
@@ -120,7 +120,7 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 
 ## 3. Current Global State
 
-*As of PM-001 hardening + PM-002 session 2026-07-18. Confirm with `git log -1 --oneline` on `intelwar`.*
+*As of PM-003 session 2026-07-18. Confirm with `git log -1 --oneline` on `intelwar`.*
 
 ### 3.1 Branch & commits
 
@@ -128,7 +128,7 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 |------|--------|
 | Branch | `intelwar` |
 | Base | Tag `v0.2.3` / `a50a15fd` |
-| Notable commits | `dec9ddc8` bootstrap · `f0846b01` adopt IW-1…IW-8 · `9146588d` PM-001 Kernel bridge · `8b48b159` autonomy handoff · tip includes PM-001 harden + PM-002 |
+| Notable commits | `dec9ddc8` bootstrap · `f0846b01` IW adopt · `9146588d` PM-001 · `0d0f343a` PM-001 harden + PM-002 · tip includes PM-003 |
 | Remote / main | No PR to `main` authorized; do not push unless human asks |
 
 ### 3.2 Constitutional foundation (adopted)
@@ -147,7 +147,8 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 
 | Component | Path | Status |
 |-----------|------|--------|
-| Living Log core | `intelwar/crates/intelwar-core` | **Real Kernel path:** consent → authority → CGR → overlays → receipt → `exo_dag::append`. Tests + clippy clean when last validated. |
+| Living Log core | `intelwar/crates/intelwar-core` | **Real Kernel path** + PM-003 doctrine↔decision-forum. Tests + clippy clean when last validated. |
+| DebateSession | `debate_session.rs` | Binds to `DecisionObject`; human gate for Strategic/Constitutional |
 | Kernel bridge | `bridge.rs` + bin `intelwar-log-append` | **Real** adjudication; **local multi-node DAG** via payload-history replay; receipt chain in state file |
 | Trust model doc | `docs/BRIDGE_TRUST_MODEL.md` | Binding limitations for bridge / log-api / DAG DB |
 | log-api | `intelwar/services/log-api` | Simulated by default; Kernel via `INTELWAR_CORE_BIN`; optional DAG DB via `INTELWAR_DAGDB_*`; **503 fail-closed** |
@@ -185,7 +186,7 @@ Still not production-complete: dual consent model; plaintext fixture keys in `br
 |----|-------|-------|--------|-------|
 | PM-001 | Wire log-api ↔ intelwar-core (CLI bridge) | Agent | **DONE** | Bridge-complete; hardening (Kernel IT + trust doc) done |
 | PM-002 | Persist via exo-gateway DAG DB + multi-node continuity | Agent | **DONE** | Local multi-node replay + env-gated gateway fail-closed |
-| PM-003 | DebateSession ↔ decision-forum | Agent | Queued | IW-4 evidence links; closed roles |
+| PM-003 | DebateSession ↔ decision-forum | Agent | **DONE** | Doctrine/Amendment require DecisionObject + human gate |
 | PM-004 | .ai crosscheck → CrossCheckResult verify | Agent | Queued | IW-3 / IW-4 |
 | PM-005 | .tv provenance viewer over receipts | Agent | Queued | IW-2 / IW-8 |
 | PM-006 | ExoForge-style issue triage + IW labels | Agent | Queued | Process automation |
@@ -335,12 +336,12 @@ Ideally only:
 | Authorization | Scope |
 |---------------|--------|
 | **Active** | Handoff maintenance; session logging |
-| **Not active** | Starting **PM-003** (or any new major PM) until human authorizes — human said stop after PM-002 for new major items |
+| **Not active** | Starting **PM-004** (or any new major PM) until human authorizes |
 | **Standing permission** | Bugfixes for regressions introduced while authorized; docs clarifications that do not change IW semantics |
 
 ### 8.2 Explicit HOLD (do not start)
 
-1. **PM-003+** — next major backlog items — **await human go-ahead** (PM-001 harden + PM-002 complete).  
+1. **PM-004+** — next major backlog items — **await human go-ahead** (PM-003 complete).  
 2. **PM-007** — Railway/production deploy — **await human go-ahead**.  
 3. **Marketing / public narrative / intelwar.net positioning** — **await human go-ahead**.  
 4. **Invariant or constitution amendments** — **await human go-ahead**.  
@@ -348,7 +349,7 @@ Ideally only:
 
 ### 8.3 Decisions pending human
 
-1. Authorize **PM-003** (DebateSession ↔ decision-forum)?  
+1. Authorize **PM-004** (.ai crosscheck → CrossCheckResult verify)?  
 2. Are disk fixture keys in `bridge_state.json` acceptable until deploy, or must secret policy land first?  
 3. Remain Node consent forever adjacent-only, or eventually bind to Kernel bailment?  
 4. Require live exo-gateway CI evidence before any production trust claim?
@@ -504,3 +505,57 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - tool: cursor-agent
 - model_id: cursor-grok-4.5
 - summary: Hardened PM-001 and completed PM-002 multi-node + DAG DB fail-closed
+
+## Session 2026-07-18 19:20 EDT — PM-003 DebateSession ↔ decision-forum
+
+**Authorization context:**
+- Authorized item: PM-003 (human: “continue with the next slice”)
+- Hold status: holding on PM-004+, PM-007, marketing, push/PR to main, invariant amendments
+
+**Changes Made:**
+- Added `decision-forum` dependency; mapped BCTS → DebateTerminalState
+- Doctrine / ConstitutionalAmendment appends require `debate_decision` DecisionObject (fail closed)
+- Strategic/Constitutional classes enforce decision-forum human gate with verified human voter DIDs
+- Integration tests: missing DecisionObject, human-gate denial, approved Strategic happy path
+- Updated DEPENDENCY_PLAN, Living Log data model, integration map, this handoff
+
+**Files Modified:**
+- `intelwar/crates/intelwar-core/Cargo.toml`
+- `intelwar/crates/intelwar-core/src/debate_session.rs`
+- `intelwar/crates/intelwar-core/src/append_flow.rs`
+- `intelwar/crates/intelwar-core/src/bridge.rs`
+- `intelwar/crates/intelwar-core/src/lib.rs`
+- `intelwar/crates/intelwar-core/tests/append_flow_tests.rs`
+- `intelwar/crates/intelwar-core/tests/debate_doctrine_tests.rs`
+- `intelwar/DEPENDENCY_PLAN.md`
+- `intelwar/docs/LIVING_LOG_DATA_MODEL.md`
+- `intelwar/docs/INTELWAR_EXOCHAIN_v0.2.3_INTEGRATION.md`
+- `intelwar/docs/CURSOR_AGENT_HANDOFF.md`
+
+**Commits:**
+- (tip after this session commit)
+
+**State Deltas:**
+- PM-003 DONE; bare DebateSession claims no longer suffice for doctrine/amendment
+- Next major item PM-004 requires human authorization
+
+**Backlog Updates:**
+- PM-003 → DONE
+- HOLD now starts at PM-004+
+
+**Validation Commands Run:**
+- `cargo test -p intelwar-core` → pass (including 3 doctrine integration tests)
+- `cargo clippy -p intelwar-core --all-targets -- -D warnings` → pass
+
+**Open Questions / Decisions for Human:**
+- Authorize PM-004?
+- Secret policy / Node consent binding / live gateway CI (unchanged)
+
+**Recommended Next Action:**
+- Await human authorization for PM-004 (or other named item); do not start PM-004 until instructed
+
+**Agent attestation (IW-3):**
+- voice_kind: synthetic
+- tool: cursor-agent
+- model_id: cursor-grok-4.5
+- summary: Wired DebateSession to decision-forum DecisionObject with fail-closed doctrine path

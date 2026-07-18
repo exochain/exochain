@@ -3205,10 +3205,12 @@ dependencies = [
  "ciborium",
  "exochain-core",
  "exochain-dag",
+ "exochain-decision-forum",
  "exochain-gatekeeper",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
+ "uuid",
 ]
 
 [[package]]

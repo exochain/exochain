@@ -17,6 +17,9 @@
 //! Minimal Living Log append flow:
 //! consent → authority → CGR → IntelWar overlays → provenance receipt → DAG append.
 
+use std::collections::BTreeSet;
+
+use decision_forum::decision_object::DecisionObject;
 use exo_core::{
     Did, Hash256, SecretKey, Signature, Timestamp,
     crypto::{self, KeyPair},
@@ -37,7 +40,7 @@ use serde::Serialize;
 
 use crate::consent_flow::{LOG_APPEND_PERMISSION, consent_allows_log_append};
 use crate::crosscheck::{CrossCheckResult, crosschecks_satisfy};
-use crate::debate_session::{DebateSession, require_approved_debate};
+use crate::debate_session::{DebateSession, require_decision_forum_debate};
 use crate::error::{IntelwarError, Result};
 use crate::invariants::{IntelWarInvariant, IntelWarInvariantContext, enforce_all};
 use crate::log_entry::{
@@ -62,7 +65,12 @@ pub struct AppendRequest {
     pub human_override_preserved: bool,
     pub previous_receipt_hash: Option<Hash256>,
     pub crosschecks: Vec<CrossCheckResult>,
+    /// Optional claimed debate session; must match `debate_decision` when both set.
     pub debate: Option<DebateSession>,
+    /// Required for Doctrine / ConstitutionalAmendment (decision-forum source of truth).
+    pub debate_decision: Option<DecisionObject>,
+    /// Externally verified human voter DIDs for decision-forum human gate (IW-4 / IW-5).
+    pub verified_human_voters: BTreeSet<Did>,
     pub provenance_timestamp: String,
 }
 
@@ -90,10 +98,44 @@ pub fn append_log_entry(
     clock: &mut DeterministicDagClock,
     request: AppendRequest,
 ) -> Result<AppendReceipt> {
-    let actor = request.entry_body.author_did.clone();
+    let mut entry_body = request.entry_body;
+    let actor = entry_body.author_did.clone();
+
+    // 0. Doctrine / amendment must bind to decision-forum DecisionObject (IW-4 / PM-003)
+    let debate_satisfied = match entry_body.entry_kind {
+        EntryKind::Doctrine | EntryKind::ConstitutionalAmendment => {
+            let decision = request.debate_decision.as_ref().ok_or_else(|| {
+                IntelwarError::Debate {
+                    reason: "Doctrine/ConstitutionalAmendment requires debate_decision DecisionObject".into(),
+                }
+            })?;
+            let require_constitutional =
+                entry_body.entry_kind == EntryKind::ConstitutionalAmendment;
+            let session = require_decision_forum_debate(
+                decision,
+                request.debate.as_ref(),
+                &request.verified_human_voters,
+                require_constitutional,
+            )?;
+            if let Some(existing) = entry_body.debate_ref.as_ref() {
+                if existing != &session.decision_id {
+                    return Err(IntelwarError::Debate {
+                        reason: format!(
+                            "entry debate_ref {existing} does not match DecisionObject {}",
+                            session.decision_id
+                        ),
+                    });
+                }
+            } else {
+                entry_body.debate_ref = Some(session.decision_id);
+            }
+            true
+        }
+        _ => true,
+    };
 
     // 1. Seal entry + verify content hash
-    let entry = request.entry_body.seal()?;
+    let entry = entry_body.seal()?;
     entry.verify_content_hash()?;
 
     // 2. Consent gate (IW-1 / ConsentRequired)
@@ -126,19 +168,12 @@ pub fn append_log_entry(
         });
     }
 
-    // 5. Crosscheck / debate preconditions
+    // 5. Crosscheck preconditions
     let crosscheck_satisfied = if entry.requires_crosscheck {
         crosschecks_satisfy(&actor, &entry.content_hash, &request.crosschecks)?;
         true
     } else {
         true
-    };
-    let debate_satisfied = match entry.entry_kind {
-        EntryKind::Doctrine | EntryKind::ConstitutionalAmendment => {
-            require_approved_debate(request.debate.as_ref())?;
-            true
-        }
-        _ => true,
     };
 
     // 6. Signed provenance for CGR ProvenanceVerifiable + IW-2 / IW-3

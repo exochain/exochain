@@ -18,11 +18,11 @@ Alternative (not chosen for bootstrap): consume crates.io `exochain-*` once
 | exo-core | `exochain-core` | Did, Hash256, Timestamp, crypto, CBOR hashing |
 | exo-gatekeeper | `exochain-gatekeeper` | Kernel, Provenance, invariants |
 | exo-dag | `exochain-dag` | Append-only DAG |
+| decision-forum | `exochain-decision-forum` | DecisionObject + human gate for IW-4 doctrine evidence (PM-003) |
 | exo-consent | `exochain-consent` | Planned: `ConsentGate` deeper wiring (currently gatekeeper `BailmentState`) |
-| serde / ciborium / thiserror / blake3 | workspace | Serialization & errors |
+| serde / ciborium / thiserror / blake3 / uuid | workspace | Serialization & errors |
 
-Optional later: `exochain-proofs`, `exochain-avc`, `decision-forum`,
-`exochain-authority` when DebateSession / AVC receipts leave scaffold stage.
+Optional later: `exochain-proofs`, `exochain-avc`, `exochain-authority` when AVC receipts leave scaffold stage.
 
 ## WASM / JS
 

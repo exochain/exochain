@@ -35,12 +35,14 @@ workspace = true
 exo-core = { package = "exochain-core", path = "../../../crates/exo-core", version = "=0.2.3" }
 exo-gatekeeper = { package = "exochain-gatekeeper", path = "../../../crates/exo-gatekeeper", version = "=0.2.3" }
 exo-dag = { package = "exochain-dag", path = "../../../crates/exo-dag", version = "=0.2.3" }
+decision-forum = { package = "exochain-decision-forum", path = "../../../crates/decision-forum", version = "=0.2.3" }
 # exo-consent: planned deeper bailment wiring (ConsentGate); gatekeeper BailmentState used now.
 serde = { workspace = true }
 serde_json = { workspace = true }
 ciborium = { workspace = true }
 blake3 = { workspace = true }
 thiserror = { workspace = true }
+uuid = { workspace = true }
 
 [[bin]]
 name = "intelwar-log-append"
