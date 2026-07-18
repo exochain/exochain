@@ -166,6 +166,61 @@ test("INTELWAR_CORE_BIN fail-closed on bad binary (no simulated fallback)", asyn
   );
 });
 
+test("POST /api/crosscheck/verify structural path without core bin", async () => {
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/api/crosscheck/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        author_did: "did:exo:author",
+        subject_entry_hash_hex: "ab".repeat(32),
+        crosschecks: [
+          {
+            checker_did: "did:exo:checker",
+            subject_entry_hash_hex: "ab".repeat(32),
+            verdict: "agree",
+            evidence_hash_hex: "cd".repeat(32),
+            voice_kind: "synthetic",
+            signature_hex: "11".repeat(64),
+          },
+        ],
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.simulated, true);
+    assert.equal(body.core_verified, false);
+  });
+});
+
+test("POST /api/crosscheck/verify rejects self-crosscheck", async () => {
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/api/crosscheck/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        author_did: "did:exo:same",
+        subject_entry_hash_hex: "ab".repeat(32),
+        crosschecks: [
+          {
+            checker_did: "did:exo:same",
+            subject_entry_hash_hex: "ab".repeat(32),
+            verdict: "agree",
+            evidence_hash_hex: "cd".repeat(32),
+            voice_kind: "human",
+            signature_hex: "11".repeat(64),
+          },
+        ],
+      }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.error, "self_crosscheck");
+  });
+});
+
 test("loadDagDbConfig: unset URL is no-op; incomplete URL fails closed", () => {
   assert.equal(loadDagDbConfig({}), null);
   assert.throws(

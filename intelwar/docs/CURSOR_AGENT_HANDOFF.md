@@ -66,7 +66,7 @@ When stopping: append or update the session block with **Open Questions**, set *
 
 - **Continue** the item named in §8 “Authorized now” without asking.
 - **Start a new PM item** only if: (a) §8 authorizes it, or (b) the human explicitly names it in the latest user message, or (c) the prior session’s Recommended Next Action names it **and** no HOLD blocks it.
-- **Do not** start PM-004+, PM-007 (deploy), or marketing work while §8 marks them HOLD.
+- **Do not** start PM-007 (deploy) or marketing work while §8 marks them HOLD.
 - Completing an item: mark DONE in §4, update §3/§8, recommend the next item — but do not begin the next HOLD item until authorized.
 
 ### 1.5 Constitutional / trust / secrets / deploy (summary)
@@ -120,7 +120,7 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 
 ## 3. Current Global State
 
-*As of PM-003 session 2026-07-18. Confirm with `git log -1 --oneline` on `intelwar`.*
+*As of PM-004–006 session 2026-07-18. Confirm with `git log -1 --oneline` on `intelwar`.*
 
 ### 3.1 Branch & commits
 
@@ -128,7 +128,7 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 |------|--------|
 | Branch | `intelwar` |
 | Base | Tag `v0.2.3` / `a50a15fd` |
-| Notable commits | `dec9ddc8` bootstrap · `f0846b01` IW adopt · `9146588d` PM-001 · `0d0f343a` PM-001 harden + PM-002 · tip includes PM-003 |
+| Notable commits | … · `0dcfb6a1` PM-003 · tip includes PM-004/005/006 |
 | Remote / main | No PR to `main` authorized; do not push unless human asks |
 
 ### 3.2 Constitutional foundation (adopted)
@@ -149,12 +149,13 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 |-----------|------|--------|
 | Living Log core | `intelwar/crates/intelwar-core` | **Real Kernel path** + PM-003 doctrine↔decision-forum. Tests + clippy clean when last validated. |
 | DebateSession | `debate_session.rs` | Binds to `DecisionObject`; human gate for Strategic/Constitutional |
+| CrossCheck | `crosscheck.rs` + bin `intelwar-crosscheck-verify` | Ed25519 sign/verify; log-api `/api/crosscheck/verify` |
 | Kernel bridge | `bridge.rs` + bin `intelwar-log-append` | **Real** adjudication; **local multi-node DAG** via payload-history replay; receipt chain in state file |
 | Trust model doc | `docs/BRIDGE_TRUST_MODEL.md` | Binding limitations for bridge / log-api / DAG DB |
-| log-api | `intelwar/services/log-api` | Simulated by default; Kernel via `INTELWAR_CORE_BIN`; optional DAG DB via `INTELWAR_DAGDB_*`; **503 fail-closed** |
-| intelwar-net | `intelwar/apps/intelwar-net` | Railway-ready React shell; Living Log viewer + consent demo; adjacent |
-| Tools | `intelwar/tools/*` | Triage + emit-log-entry (simulated artifacts) |
-| .ai / .tv / wasm | stubs under `apps/.../ai`, `tv`, `intelwar/wasm` | Extension points only |
+| log-api | `intelwar/services/log-api` | Kernel / DAG DB / crosscheck env gates; fail-closed when configured |
+| intelwar-net | `intelwar/apps/intelwar-net` | Living Log + .tv provenance chain + .ai crosscheck panel + consent demo |
+| Tools | `intelwar/tools/*` | Triage with `iw:*` / `panel:*` labels + emit-log-entry |
+| wasm | `intelwar/wasm` | Extension stubs only |
 
 ### 3.4 Simulated vs real (critical)
 
@@ -187,9 +188,9 @@ Still not production-complete: dual consent model; plaintext fixture keys in `br
 | PM-001 | Wire log-api ↔ intelwar-core (CLI bridge) | Agent | **DONE** | Bridge-complete; hardening (Kernel IT + trust doc) done |
 | PM-002 | Persist via exo-gateway DAG DB + multi-node continuity | Agent | **DONE** | Local multi-node replay + env-gated gateway fail-closed |
 | PM-003 | DebateSession ↔ decision-forum | Agent | **DONE** | Doctrine/Amendment require DecisionObject + human gate |
-| PM-004 | .ai crosscheck → CrossCheckResult verify | Agent | Queued | IW-3 / IW-4 |
-| PM-005 | .tv provenance viewer over receipts | Agent | Queued | IW-2 / IW-8 |
-| PM-006 | ExoForge-style issue triage + IW labels | Agent | Queued | Process automation |
+| PM-004 | .ai crosscheck → CrossCheckResult verify | Agent | **DONE** | Ed25519 verify + log-api + .ai panel |
+| PM-005 | .tv provenance viewer over receipts | Agent | **DONE** | Receipt-chain viewer in intelwar-net |
+| PM-006 | ExoForge-style issue triage + IW labels | Agent | **DONE** | `iw:*` / `panel:*` labels + tests |
 | PM-007 | Railway deploy intelwar.net fail-closed | Agent | **HOLD** | Deploy/public; human-gated |
 | MKT-* | Marketing / positioning / public narrative | Human+Agent | **HOLD** | Not authorized until human opens |
 
@@ -336,23 +337,23 @@ Ideally only:
 | Authorization | Scope |
 |---------------|--------|
 | **Active** | Handoff maintenance; session logging |
-| **Not active** | Starting **PM-004** (or any new major PM) until human authorizes |
+| **Not active** | **PM-007 deploy** and **marketing** until human authorizes (implementation backlog PM-001…PM-006 complete) |
 | **Standing permission** | Bugfixes for regressions introduced while authorized; docs clarifications that do not change IW semantics |
 
 ### 8.2 Explicit HOLD (do not start)
 
-1. **PM-004+** — next major backlog items — **await human go-ahead** (PM-003 complete).  
-2. **PM-007** — Railway/production deploy — **await human go-ahead**.  
-3. **Marketing / public narrative / intelwar.net positioning** — **await human go-ahead**.  
-4. **Invariant or constitution amendments** — **await human go-ahead**.  
-5. **Push to remote / PR to `main`** — **await human go-ahead**.
+1. **PM-007** — Railway/production deploy — **await human go-ahead**.  
+2. **Marketing / public narrative / intelwar.net positioning** — **await human go-ahead**.  
+3. **Invariant or constitution amendments** — **await human go-ahead**.  
+4. **Push to remote / PR to `main`** — **await human go-ahead**.
 
 ### 8.3 Decisions pending human
 
-1. Authorize **PM-004** (.ai crosscheck → CrossCheckResult verify)?  
+1. Authorize **PM-007** Railway deploy (fail-closed secrets)?  
 2. Are disk fixture keys in `bridge_state.json` acceptable until deploy, or must secret policy land first?  
 3. Remain Node consent forever adjacent-only, or eventually bind to Kernel bailment?  
-4. Require live exo-gateway CI evidence before any production trust claim?
+4. Require live exo-gateway CI evidence before any production trust claim?  
+5. Open marketing / public positioning work?
 
 ### 8.4 Kernel bridge + optional DAG DB quick reference
 
@@ -559,3 +560,53 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - tool: cursor-agent
 - model_id: cursor-grok-4.5
 - summary: Wired DebateSession to decision-forum DecisionObject with fail-closed doctrine path
+
+## Session 2026-07-18 19:45 EDT — PM-004 / PM-005 / PM-006 complete
+
+**Authorization context:**
+- Authorized item: PM-004…PM-006 (human: “continue progressing through all slices”)
+- Hold status: holding on PM-007 deploy, marketing, push/PR to main, invariant amendments
+
+**Changes Made:**
+- PM-004: Ed25519 CrossCheckResult sign/verify; `intelwar-crosscheck-verify` bin; log-api `/api/crosscheck/verify`; .ai panel
+- PM-005: `.tv` receipt-chain provenance viewer + tests
+- PM-006: triage `iw:*` / `panel:*` labels, `--labels` mode, unit tests
+- Updated this handoff §3/§4/§8
+
+**Files Modified:**
+- `intelwar/crates/intelwar-core/src/crosscheck.rs` (+ bin, append_flow, Cargo.toml, lib.rs)
+- `intelwar/services/log-api/{server.js,crosscheck-verify.js,test.js}`
+- `intelwar/apps/intelwar-net/src/{App.jsx,ai/crosscheck.js,tv/provenance.js,components/*,styles.css,package.json}`
+- `intelwar/tools/{triage.js,triage.test.js}`
+- `intelwar/docs/CURSOR_AGENT_HANDOFF.md`
+
+**Commits:**
+- (tip after this session commit)
+
+**State Deltas:**
+- Implementation backlog PM-001…PM-006 **DONE**
+- Remaining human-gated: PM-007 deploy, marketing, push/PR
+
+**Backlog Updates:**
+- PM-004 → DONE; PM-005 → DONE; PM-006 → DONE
+
+**Validation Commands Run:**
+- `cargo test -p intelwar-core` → pass
+- `cargo clippy -p intelwar-core --all-targets -- -D warnings` → pass
+- `npm --prefix intelwar/services/log-api test` → pass (8)
+- `npm --prefix intelwar/apps/intelwar-net test` → pass (3)
+- `node --test intelwar/tools/triage.test.js` → pass (2)
+- `npm --prefix intelwar/apps/intelwar-net run build` → pass
+
+**Open Questions / Decisions for Human:**
+- Authorize PM-007 deploy?
+- Secret policy / consent binding / live gateway CI / marketing?
+
+**Recommended Next Action:**
+- Await human for PM-007 or marketing; do not deploy or open public narrative without instruction
+
+**Agent attestation (IW-3):**
+- voice_kind: synthetic
+- tool: cursor-agent
+- model_id: cursor-grok-4.5
+- summary: Completed PM-004 crosscheck verify, PM-005 provenance viewer, PM-006 triage labels

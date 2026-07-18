@@ -44,7 +44,10 @@ pub use append_flow::{
 };
 pub use bridge::{BridgeAppendRequest, BridgeAppendResponse, bridge_append};
 pub use consent_flow::{LOG_APPEND_PERMISSION, consent_allows_log_append};
-pub use crosscheck::{CrossCheckResult, CrossCheckVerdict, crosschecks_satisfy};
+pub use crosscheck::{
+    CROSSCHECK_DOMAIN, CrossCheckResult, CrossCheckVerdict, crosscheck_signing_hash,
+    crosschecks_satisfy, sign_crosscheck, verify_crosscheck_signature,
+};
 pub use debate_session::{
     DebateSession, DebateTerminalState, debate_session_from_decision, require_approved_debate,
     require_decision_forum_debate, terminal_state_from_bcts, verify_debate_against_decision,

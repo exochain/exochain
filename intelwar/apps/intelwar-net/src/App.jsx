@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import ConsentDemo from "./components/ConsentDemo.jsx";
+import CrossCheckPanel from "./components/CrossCheckPanel.jsx";
 import LivingLogViewer from "./components/LivingLogViewer.jsx";
-import { draftCrossCheck } from "./ai/crosscheck.js";
-import { summarizeProvenance } from "./tv/provenance.js";
+import ProvenanceViewer from "./components/ProvenanceViewer.jsx";
 
 const apiBase = (import.meta.env.VITE_LOG_API_URL || "").replace(/\/$/, "");
 
@@ -11,7 +11,6 @@ export default function App() {
   const [consent, setConsent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [provNote, setProvNote] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -26,20 +25,6 @@ export default function App() {
       const c = consentRes.ok ? await consentRes.json() : null;
       setEntries(log.entries || []);
       setConsent(c);
-      if (log.entries?.[0]) {
-        const summary = summarizeProvenance(log.entries[0]);
-        setProvNote(
-          `Provenance hook: voice=${summary.voice_kind}, simulated=${summary.simulated}`,
-        );
-      }
-      // Touch .ai scaffold so the extension point stays wired in the bundle.
-      draftCrossCheck({
-        checker_did: "did:exo:crosscheck-stub",
-        subject_entry_hash: "pending",
-        verdict: "abstain",
-        evidence_hash: "pending",
-        voice_kind: "system",
-      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "fetch_failed");
     } finally {
@@ -91,12 +76,29 @@ export default function App() {
         <h2>Living Log</h2>
         <p className="support">
           Append-only memory with multi-intelligence transparency. Simulated rows
-          are labeled until the Rust `intelwar-core` adapter is wired through
-          WASM/gateway.
+          are labeled until Kernel adjudication succeeds via{" "}
+          <code>INTELWAR_CORE_BIN</code>.
         </p>
         <div className="panel">
           <LivingLogViewer entries={entries} loading={loading} error={error} />
-          {provNote ? <p className="status-line">{provNote}</p> : null}
+        </div>
+      </section>
+
+      <section className="section" id="tv-provenance">
+        <h2>.tv Provenance</h2>
+        <p className="support">
+          Receipt-chain viewer over Living Log rows (IW-2 / IW-8). Broken chains
+          are labeled — this surface does not mint trust.
+        </p>
+        <div className="panel">
+          <ProvenanceViewer entries={entries} />
+        </div>
+      </section>
+
+      <section className="section" id="ai-crosscheck">
+        <h2>.ai CrossCheck</h2>
+        <div className="panel">
+          <CrossCheckPanel apiBase={apiBase} entries={entries} />
         </div>
       </section>
 
@@ -104,7 +106,8 @@ export default function App() {
         <h2>Consent-gated demo</h2>
         <p className="support">
           Grant demo consent, then append. This is an adjacent shell for
-          intelwar.net — constitutional append is `intelwar_core::append_log_entry`.
+          intelwar.net — constitutional append is{" "}
+          <code>intelwar_core::append_log_entry</code>.
         </p>
         <ConsentDemo
           apiBase={apiBase}

@@ -66,6 +66,14 @@ Unset URL → local multi-node only (no gateway call). Incomplete config with UR
 - That adjacent UI “is” the Living Log without Kernel adjudication  
 - Cross-process LogIntegrity without a shared `INTELWAR_CORE_STATE_DIR` (and gateway when required)
 
+## CrossCheck verify (PM-004)
+
+| `INTELWAR_CROSSCHECK_BIN` | Behavior |
+|---------------------------|----------|
+| Unset | log-api structural checks only; `simulated: true`, `core_verified: false` |
+| Set + success | Ed25519 verify via `intelwar-crosscheck-verify`; `core_verified: true` |
+| Set + failure | **HTTP 503 fail-closed** |
+
 ## Related invariants
 
-IW-1 (consent fixtures vs demo), IW-2 (receipts), IW-6 (fail closed), IW-8 (LogIntegrity — local multi-node + optional gateway persist).
+IW-1 (consent fixtures vs demo), IW-2 (receipts), IW-4 (crosscheck), IW-6 (fail closed), IW-8 (LogIntegrity — local multi-node + optional gateway persist).

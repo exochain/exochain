@@ -48,5 +48,9 @@ uuid = { workspace = true }
 name = "intelwar-log-append"
 path = "src/bin/intelwar_log_append.rs"
 
+[[bin]]
+name = "intelwar-crosscheck-verify"
+path = "src/bin/intelwar_crosscheck_verify.rs"
+
 [dev-dependencies]
 exo-core = { package = "exochain-core", path = "../../../crates/exo-core", version = "=0.2.3" }

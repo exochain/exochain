@@ -168,9 +168,14 @@ pub fn append_log_entry(
         });
     }
 
-    // 5. Crosscheck preconditions
+    // 5. Crosscheck preconditions (IW-4 / PM-004 — Ed25519 verify against trusted keys)
     let crosscheck_satisfied = if entry.requires_crosscheck {
-        crosschecks_satisfy(&actor, &entry.content_hash, &request.crosschecks)?;
+        crosschecks_satisfy(
+            &actor,
+            &entry.content_hash,
+            &request.crosschecks,
+            &request.trusted_provenance_keys,
+        )?;
         true
     } else {
         true

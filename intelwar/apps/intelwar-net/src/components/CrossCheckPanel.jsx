@@ -1,0 +1,78 @@
+import { useState } from "react";
+import { draftCrossCheck, verifyCrossCheck } from "../ai/crosscheck.js";
+
+export default function CrossCheckPanel({ apiBase, entries }) {
+  const first = Array.isArray(entries) ? entries[0] : null;
+  const [authorDid, setAuthorDid] = useState(
+    () => first?.author_did || "did:exo:intelwar-human-1",
+  );
+  const [subjectHex, setSubjectHex] = useState(
+    () => String(first?.content_hash || "").replace(/^sim-/, "") || "00".repeat(32),
+  );
+  const [checkerDid, setCheckerDid] = useState("did:exo:crosscheck-peer");
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function onVerify() {
+    setBusy(true);
+    setResult(null);
+    try {
+      const draft = draftCrossCheck({
+        checker_did: checkerDid,
+        subject_entry_hash_hex: subjectHex,
+        verdict: "abstain",
+        evidence_hash_hex: subjectHex,
+        voice_kind: "synthetic",
+        // Placeholder 64-byte sig hex for structural path; core path needs real sig.
+        signature_hex: "ab".repeat(64),
+      });
+      if (!draft.ok) {
+        setResult(draft);
+        return;
+      }
+      const verified = await verifyCrossCheck(apiBase, {
+        author_did: authorDid,
+        subject_entry_hash_hex: subjectHex,
+        crosschecks: [draft.result],
+        trusted_checker_keys_hex: {},
+      });
+      setResult(verified);
+    } catch (err) {
+      setResult({
+        ok: false,
+        error: "client_error",
+        message: err instanceof Error ? err.message : "failed",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="crosscheck-panel">
+      <p className="support">
+        Adjacent .ai path posts to <code>/api/crosscheck/verify</code>. Without{" "}
+        <code>INTELWAR_CROSSCHECK_BIN</code> the API returns structural-only
+        results (<code>core_verified: false</code>).
+      </p>
+      <label>
+        Author DID
+        <input value={authorDid} onChange={(e) => setAuthorDid(e.target.value)} />
+      </label>
+      <label>
+        Subject content hash (hex)
+        <input value={subjectHex} onChange={(e) => setSubjectHex(e.target.value)} />
+      </label>
+      <label>
+        Checker DID
+        <input value={checkerDid} onChange={(e) => setCheckerDid(e.target.value)} />
+      </label>
+      <button type="button" className="primary" disabled={busy} onClick={onVerify}>
+        {busy ? "Verifying…" : "Verify crosscheck"}
+      </button>
+      {result ? (
+        <pre className="result-block">{JSON.stringify(result, null, 2)}</pre>
+      ) : null}
+    </div>
+  );
+}

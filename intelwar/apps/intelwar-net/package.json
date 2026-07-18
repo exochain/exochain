@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "start": "vite preview --host 0.0.0.0 --port ${PORT:-4173}",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test src/tv/provenance.test.js"
   },
   "engines": {
     "node": ">=20"

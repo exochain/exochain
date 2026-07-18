@@ -12,12 +12,17 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
+  invokeCoreCrosscheckVerify,
+  structuralCrosscheckCheck,
+} from "./crosscheck-verify.js";
+import {
   loadDagDbConfig,
   persistBridgeEntryToGateway,
 } from "./dagdb-persist.js";
 
 const PORT = Number(process.env.PORT || 8787);
 const CORE_BIN = process.env.INTELWAR_CORE_BIN || "";
+const CROSSCHECK_BIN = process.env.INTELWAR_CROSSCHECK_BIN || "";
 const CORE_STATE_DIR =
   process.env.INTELWAR_CORE_STATE_DIR || ".intelwar-bridge-state";
 const app = express();
@@ -64,11 +69,37 @@ app.get("/health", (_req, res) => {
     surface: "intelwar-log-api",
     trust_claim: "none",
     kernel_bridge_configured: Boolean(CORE_BIN),
+    crosscheck_verify_configured: Boolean(CROSSCHECK_BIN),
     dagdb_persist_configured: dagDbConfigured(),
     note: CORE_BIN
       ? "INTELWAR_CORE_BIN set — append uses Kernel bridge (fail closed)."
       : "Adjacent shell. Set INTELWAR_CORE_BIN to enable Kernel-gated append.",
   });
+});
+
+app.post("/api/crosscheck/verify", async (req, res) => {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const structural = structuralCrosscheckCheck(body);
+  if (!structural.ok) {
+    return res.status(400).json({ ...structural, fail_closed: true });
+  }
+
+  if (!CROSSCHECK_BIN) {
+    return res.status(200).json(structural);
+  }
+
+  try {
+    const verified = await invokeCoreCrosscheckVerify(body, CROSSCHECK_BIN);
+    return res.status(200).json(verified);
+  } catch (err) {
+    return res.status(503).json({
+      ok: false,
+      error: err.code || "crosscheck_verify_failed",
+      message: err.message || "crosscheck verify failed",
+      fail_closed: true,
+      note: "INTELWAR_CROSSCHECK_BIN set — refusing structural-only success (IW-6).",
+    });
+  }
 });
 
 app.get("/api/log", (_req, res) => {
