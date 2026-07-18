@@ -29,6 +29,7 @@
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
 pub mod append_flow;
+pub mod bridge;
 pub mod consent_flow;
 pub mod crosscheck;
 pub mod debate_session;
@@ -41,6 +42,7 @@ pub use append_flow::{
     default_invariant_id_lists, development_decision_body, intelwar_kernel, judicial_role,
     signed_authority_link,
 };
+pub use bridge::{BridgeAppendRequest, BridgeAppendResponse, bridge_append};
 pub use consent_flow::{LOG_APPEND_PERMISSION, consent_allows_log_append};
 pub use crosscheck::{CrossCheckResult, CrossCheckVerdict, crosschecks_satisfy};
 pub use debate_session::{DebateSession, DebateTerminalState, require_approved_debate};

@@ -36,6 +36,8 @@ demo/web/dist/
 web/dist/
 intelwar/apps/*/dist/
 intelwar/docs/log-artifacts/*.json
+.intelwar-bridge-state/
+**/.intelwar-bridge-state/
 
 # CommandBase runtime files
 command-base/the_team.db
