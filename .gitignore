@@ -34,6 +34,8 @@ demo/apps/vitallock/src/wasm/
 demo/apps/vitallock/dist/
 demo/web/dist/
 web/dist/
+intelwar/apps/*/dist/
+intelwar/docs/log-artifacts/*.json
 
 # CommandBase runtime files
 command-base/the_team.db

@@ -1,0 +1,24 @@
+{
+  "name": "intelwar-net",
+  "version": "0.1.0",
+  "private": true,
+  "description": "IntelWar .net MVP shell — Living Log viewer + consent-gated demo",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "vite preview --host 0.0.0.0 --port ${PORT:-4173}",
+    "preview": "vite preview"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}

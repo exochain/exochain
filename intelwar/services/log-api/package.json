@@ -1,0 +1,19 @@
+{
+  "name": "intelwar-log-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Adjacent Living Log API shell for intelwar.net (not constitutional enforcement)",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  }
+}

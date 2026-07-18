@@ -1,0 +1,7 @@
+UNLICENSED proprietary adjacent software.
+
+The IntelWar product shells under `intelwar/apps/` and `intelwar/services/`
+are not part of the Apache-2.0 EXOCHAIN Rust trust fabric.
+
+Constitutional documents under `intelwar/docs/` and the Rust adapter
+`intelwar/crates/intelwar-core` remain Apache-2.0 (see repository LICENSE).

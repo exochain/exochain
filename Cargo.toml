@@ -47,6 +47,7 @@ members = [
     "crates/exo-avc",
     "crates/exo-economy",
     "crates/exo-root",
+    "intelwar/crates/intelwar-core",
 ]
 # The livesafe/ and cybermedica/ subtrees are proprietary commercial
 # applications (see their subtree LICENSE files), not part of the Apache-2.0
