@@ -533,7 +533,7 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - `intelwar/docs/CURSOR_AGENT_HANDOFF.md`
 
 **Commits:**
-- (tip after this session commit)
+- `0dcfb6a1` — intelwar: PM-003 bind DebateSession to decision-forum
 
 **State Deltas:**
 - PM-003 DONE; bare DebateSession claims no longer suffice for doctrine/amendment
