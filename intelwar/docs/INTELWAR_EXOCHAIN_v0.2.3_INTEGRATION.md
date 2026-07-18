@@ -27,16 +27,18 @@
 
 ## Invariant alignment table
 
-| # | EXOCHAIN | IntelWar overlay | Encode as |
-|---|----------|------------------|-----------|
-| 1 | SeparationOfPowers | DebateBeforeDoctrine (IW-7) | Roles + debate_ref |
-| 2 | ConsentRequired | ConsentBeforeMemory (IW-2) | Bailment + scope `log:append` |
-| 3 | NoSelfGrant | AuthorityBoundAppend (IW-3) | `is_self_grant` |
-| 4 | HumanOverride | HumanOverrideSacred (IW-5) | `human_override_preserved` |
-| 5 | KernelImmutability | LivingLogIntegrity (IW-1) | Append-only DAG |
-| 6 | AuthorityChainValid | AuthorityBoundAppend (IW-3) | Signed chain |
-| 7 | QuorumLegitimate | CrossCheckBeforeCommit (IW-6) + MIT | Quorum + crosscheck |
-| 8 | ProvenanceVerifiable | MultiIntelligenceTransparent (IW-4) + ProvenanceCompounding (IW-8) | Voice + receipt chain |
+| # | IntelWar (adopted) | Primary EXOCHAIN hooks | Encode as |
+|---|--------------------|------------------------|-----------|
+| IW-1 | ConsentRequired | `ConsentRequired` | Bailment + scope `log:append` |
+| IW-2 | ProvenanceVerifiable | `ProvenanceVerifiable` | Content hash + LivingLogReceipt chain |
+| IW-3 | MultiIntelligenceTransparent | `VoiceKind` / AVC / quorum voice rules | Attestation fields on entry |
+| IW-4 | EvidenceDisciplined | decision-forum + crosscheck | Payload / CrossCheck / DebateSession |
+| IW-5 | HumanOverridePriority | `HumanOverride` | `human_override_preserved` |
+| IW-6 | FailClosedEnforcement | Kernel denials / no bypass | Reject on any invariant miss |
+| IW-7 | StrategicUtility | (policy overlay) | Non-empty strategic summary |
+| IW-8 | LogIntegrity | DAG append-only / `KernelImmutability` spirit | Parent tips + content hash |
+
+See also v0.2.3 Implementation Notes in `INTELWAR_INVARIANTS_v1.md`.
 
 ---
 

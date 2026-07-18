@@ -1,5 +1,5 @@
 /**
- * .tv provenance viewer hooks (IW-4 / IW-8 extension point).
+ * .tv provenance viewer hooks (IW-2 / IW-3 / IW-8 extension point).
  *
  * Future: render gatekeeper Provenance + LivingLogReceipt chains, optionally
  * via exochain-wasm verification helpers.

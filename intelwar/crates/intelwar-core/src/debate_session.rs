@@ -14,7 +14,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! DebateSession references (IW-7) — decision-forum extension point.
+//! DebateSession references (IW-4 EvidenceDisciplined) — decision-forum extension point.
 
 use serde::{Deserialize, Serialize};
 

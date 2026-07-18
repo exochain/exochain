@@ -38,9 +38,9 @@ Canonical CBOR map (logical fields):
 | `independence` | enum? | required for human |
 | `review_order` | enum? | required for human |
 | `agent_attestation` | map? | required for synthetic |
-| `requires_crosscheck` | bool | IW-6 |
+| `requires_crosscheck` | bool | IW-4 |
 | `crosscheck_refs` | `[string]` | entry_ids or content hashes of CrossCheckResults |
-| `debate_ref` | string? | required for doctrine / amendment (IW-7) |
+| `debate_ref` | string? | required for doctrine / amendment (IW-4) |
 | `consent_scope` | string | must cover append permission |
 | `intelwar_invariants` | `[string]` | invariant IDs claimed satisfied |
 | `exochain_invariants` | `[string]` | EXOCHAIN invariant IDs from kernel pass |
@@ -93,14 +93,14 @@ The stored entry includes `content_hash` after hashing the body.
   "debate_ref": null,
   "consent_scope": "log:append",
   "intelwar_invariants": [
-    "living-log-integrity",
-    "consent-before-memory",
-    "authority-bound-append",
+    "consent-required",
+    "provenance-verifiable",
     "multi-intelligence-transparent",
-    "human-override-sacred",
-    "crosscheck-before-commit",
-    "debate-before-doctrine",
-    "provenance-compounding"
+    "evidence-disciplined",
+    "human-override-priority",
+    "fail-closed-enforcement",
+    "strategic-utility",
+    "log-integrity"
   ],
   "exochain_invariants": [
     "separation-of-powers",
@@ -166,17 +166,17 @@ Alignment notes:
 3. Consent check (bailment active, scope covers log:append)
 4. Authority chain verify (terminal grantee = actor, permission log:append)
 5. Build ActionRequest { action: "intelwar.log.append", ... }
-6. Attach signed Provenance (voice taxonomy for IW-4)
+6. Attach signed Provenance (voice taxonomy for IW-3)
 7. Kernel::adjudicate → must be Verdict::Permitted
-8. IntelWarInvariantEngine::enforce_all → Ok
-9. If requires_crosscheck: verify CrossCheckResult set (IW-6)
-10. If Doctrine/Amendment: verify DebateSession approved (IW-7)
-11. exo_dag::append(payload = CBOR(entry), parents = parent_hashes)
-12. Mint LivingLogReceipt chaining previous_receipt_hash
+8. IntelWarInvariantEngine::enforce_all → Ok (IW-1…IW-8)
+9. If requires_crosscheck: verify CrossCheckResult set (IW-4)
+10. If Doctrine/Amendment: verify DebateSession approved (IW-4)
+11. exo_dag::append(payload = CBOR(entry), parents = parent_hashes) (IW-8)
+12. Mint LivingLogReceipt chaining previous_receipt_hash (IW-2)
 13. Optionally append ReceiptAnchor entry citing receipt_hash
 ```
 
-Fail closed at any step; no partial DAG write after kernel denial.
+Fail closed at any step (IW-6); no partial DAG write after kernel denial.
 
 ---
 

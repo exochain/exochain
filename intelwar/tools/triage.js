@@ -15,14 +15,14 @@ const PANELS = {
 };
 
 const INVARIANTS = [
-  ["living-log-integrity", ["log", "append", "dag", "hash", "rewrite"]],
-  ["consent-before-memory", ["consent", "bailment", "memory"]],
-  ["authority-bound-append", ["authority", "delegation", "permission"]],
-  ["multi-intelligence-transparent", ["voice", "synthetic", "agent", "attestation", "ai"]],
-  ["human-override-sacred", ["override", "human", "emergency"]],
-  ["crosscheck-before-commit", ["crosscheck", "cross-check", ".ai"]],
-  ["debate-before-doctrine", ["debate", "doctrine", "amendment"]],
-  ["provenance-compounding", ["receipt", "provenance", "proof"]],
+  ["consent-required", ["consent", "bailment", "revoke"]],
+  ["provenance-verifiable", ["provenance", "receipt", "hash", "lineage", "attester"]],
+  ["multi-intelligence-transparent", ["voice", "synthetic", "agent", "attestation", "ai", "avc"]],
+  ["evidence-disciplined", ["evidence", "crosscheck", "assertion", "debate"]],
+  ["human-override-priority", ["override", "human", "emergency", "contested"]],
+  ["fail-closed-enforcement", ["fail-closed", "bypass", "unauthorized", "reject"]],
+  ["strategic-utility", ["strategy", "utility", "insight", "narrative", "truth"]],
+  ["log-integrity", ["log", "append", "dag", "integrity", "export"]],
 ];
 
 function scoreKeywords(text, keywords) {
@@ -46,7 +46,7 @@ function triage(raw) {
   return {
     schema: "intelwar.triage.v1",
     panels: panels.length ? panels : [{ panel: "Architecture", score: 0 }],
-    invariants: invariants.length ? invariants : [{ id: "living-log-integrity", score: 0 }],
+    invariants: invariants.length ? invariants : [{ id: "log-integrity", score: 0 }],
     constitution_ref: "INTELWAR_CONSTITUTION.md",
     next: "Emit a LogEntry via tools/emit-log-entry.js and update CURSOR_AGENT_HANDOFF.md backlog.",
   };

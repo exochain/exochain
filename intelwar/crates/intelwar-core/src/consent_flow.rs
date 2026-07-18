@@ -14,7 +14,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Consent gate helpers for Living Log append (IW-2).
+//! Consent gate helpers for Living Log append (IW-1).
 
 use exo_gatekeeper::{
     invariants::consent_scope_covers_permissions,

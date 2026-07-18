@@ -70,7 +70,7 @@ pub enum ReviewOrder {
     Derivative,
 }
 
-/// Explicit AI/agent attestation (IW-4).
+/// Explicit AI/agent attestation (IW-3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentAttestation {
     pub model_id: String,
@@ -173,7 +173,7 @@ impl LogEntry {
     }
 }
 
-/// Chaining Living Log receipt (IW-8).
+/// Chaining Living Log receipt (IW-2 / IW-8).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LivingLogReceipt {
     pub schema_version: u16,

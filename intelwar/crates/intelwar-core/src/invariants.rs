@@ -16,52 +16,60 @@
 
 //! Eight IntelWar invariants — overlays on EXOCHAIN CGR.
 //!
-//! Spec: `intelwar/docs/INTELWAR_INVARIANTS_v1.md`
+//! Spec: `intelwar/docs/INTELWAR_INVARIANTS_v1.md` (adopted dec9ddc8).
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{IntelwarError, Result};
 use crate::log_entry::{EntryKind, LogEntry, VoiceKind};
 
-/// IntelWar invariant identifiers (stable kebab-case).
+/// IntelWar invariant identifiers (stable kebab-case wire ids).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum IntelWarInvariant {
-    LivingLogIntegrity,
-    ConsentBeforeMemory,
-    AuthorityBoundAppend,
+    /// IW-1
+    ConsentRequired,
+    /// IW-2
+    ProvenanceVerifiable,
+    /// IW-3
     MultiIntelligenceTransparent,
-    HumanOverrideSacred,
-    CrossCheckBeforeCommit,
-    DebateBeforeDoctrine,
-    ProvenanceCompounding,
+    /// IW-4
+    EvidenceDisciplined,
+    /// IW-5
+    HumanOverridePriority,
+    /// IW-6
+    FailClosedEnforcement,
+    /// IW-7
+    StrategicUtility,
+    /// IW-8
+    LogIntegrity,
 }
 
 impl IntelWarInvariant {
     #[must_use]
     pub fn id(self) -> &'static str {
         match self {
-            Self::LivingLogIntegrity => "living-log-integrity",
-            Self::ConsentBeforeMemory => "consent-before-memory",
-            Self::AuthorityBoundAppend => "authority-bound-append",
+            Self::ConsentRequired => "consent-required",
+            Self::ProvenanceVerifiable => "provenance-verifiable",
             Self::MultiIntelligenceTransparent => "multi-intelligence-transparent",
-            Self::HumanOverrideSacred => "human-override-sacred",
-            Self::CrossCheckBeforeCommit => "crosscheck-before-commit",
-            Self::DebateBeforeDoctrine => "debate-before-doctrine",
-            Self::ProvenanceCompounding => "provenance-compounding",
+            Self::EvidenceDisciplined => "evidence-disciplined",
+            Self::HumanOverridePriority => "human-override-priority",
+            Self::FailClosedEnforcement => "fail-closed-enforcement",
+            Self::StrategicUtility => "strategic-utility",
+            Self::LogIntegrity => "log-integrity",
         }
     }
 
     #[must_use]
     pub fn all() -> [Self; 8] {
         [
-            Self::LivingLogIntegrity,
-            Self::ConsentBeforeMemory,
-            Self::AuthorityBoundAppend,
+            Self::ConsentRequired,
+            Self::ProvenanceVerifiable,
             Self::MultiIntelligenceTransparent,
-            Self::HumanOverrideSacred,
-            Self::CrossCheckBeforeCommit,
-            Self::DebateBeforeDoctrine,
-            Self::ProvenanceCompounding,
+            Self::EvidenceDisciplined,
+            Self::HumanOverridePriority,
+            Self::FailClosedEnforcement,
+            Self::StrategicUtility,
+            Self::LogIntegrity,
         ]
     }
 }
@@ -80,16 +88,16 @@ pub struct IntelWarInvariantContext<'a> {
     pub debate_satisfied: bool,
 }
 
-/// Enforce all eight IntelWar overlays. Fail closed on first logical group.
+/// Enforce all eight IntelWar overlays. Fail closed (IW-6).
 pub fn enforce_all(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
-    check_living_log_integrity(ctx)?;
-    check_consent_before_memory(ctx)?;
-    check_authority_bound_append(ctx)?;
+    check_consent_required(ctx)?;
+    check_provenance_verifiable(ctx)?;
     check_multi_intelligence_transparent(ctx)?;
-    check_human_override_sacred(ctx)?;
-    check_crosscheck_before_commit(ctx)?;
-    check_debate_before_doctrine(ctx)?;
-    check_provenance_compounding(ctx)?;
+    check_evidence_disciplined(ctx)?;
+    check_human_override_priority(ctx)?;
+    check_fail_closed_enforcement(ctx)?;
+    check_strategic_utility(ctx)?;
+    check_log_integrity(ctx)?;
     Ok(())
 }
 
@@ -100,43 +108,33 @@ fn deny(invariant: IntelWarInvariant, description: impl Into<String>) -> Intelwa
     }
 }
 
-fn check_living_log_integrity(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
-    if !ctx.content_hash_valid {
-        return Err(deny(
-            IntelWarInvariant::LivingLogIntegrity,
-            "content_hash does not match canonical CBOR body",
-        ));
-    }
-    if !ctx.dag_parents_valid {
-        return Err(deny(
-            IntelWarInvariant::LivingLogIntegrity,
-            "parent_hashes are not valid for append (missing parent or illegal empty parents)",
-        ));
-    }
-    Ok(())
-}
-
-fn check_consent_before_memory(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
+fn check_consent_required(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
     if !ctx.consent_ok {
         return Err(deny(
-            IntelWarInvariant::ConsentBeforeMemory,
-            "active bailment consent covering log:append is required",
+            IntelWarInvariant::ConsentRequired,
+            "active bailment consent covering log:append is required before Log append",
         ));
     }
     if ctx.entry.consent_scope.trim().is_empty() {
         return Err(deny(
-            IntelWarInvariant::ConsentBeforeMemory,
+            IntelWarInvariant::ConsentRequired,
             "consent_scope must be non-empty on LogEntry",
         ));
     }
     Ok(())
 }
 
-fn check_authority_bound_append(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
-    if !ctx.authority_ok {
+fn check_provenance_verifiable(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
+    if !ctx.content_hash_valid {
         return Err(deny(
-            IntelWarInvariant::AuthorityBoundAppend,
-            "verified authority chain terminating at actor with log:append is required",
+            IntelWarInvariant::ProvenanceVerifiable,
+            "content_hash does not match canonical CBOR body",
+        ));
+    }
+    if !ctx.receipt_will_chain {
+        return Err(deny(
+            IntelWarInvariant::ProvenanceVerifiable,
+            "append must mint a chaining LivingLogReceipt (previous entry / receipt pointer)",
         ));
     }
     Ok(())
@@ -148,7 +146,7 @@ fn check_multi_intelligence_transparent(ctx: &IntelWarInvariantContext<'_>) -> R
             if ctx.entry.independence.is_none() || ctx.entry.review_order.is_none() {
                 return Err(deny(
                     IntelWarInvariant::MultiIntelligenceTransparent,
-                    "human voice requires independence and review_order",
+                    "human voice requires independence and review_order disclosure",
                 ));
             }
         }
@@ -156,7 +154,7 @@ fn check_multi_intelligence_transparent(ctx: &IntelWarInvariantContext<'_>) -> R
             if ctx.entry.agent_attestation.is_none() {
                 return Err(deny(
                     IntelWarInvariant::MultiIntelligenceTransparent,
-                    "synthetic voice requires agent_attestation",
+                    "synthetic voice requires agent_attestation (AVC or equivalent)",
                 ));
             }
         }
@@ -165,45 +163,86 @@ fn check_multi_intelligence_transparent(ctx: &IntelWarInvariantContext<'_>) -> R
     Ok(())
 }
 
-fn check_human_override_sacred(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
-    if !ctx.human_override_preserved {
-        return Err(deny(
-            IntelWarInvariant::HumanOverrideSacred,
-            "human_override_preserved must remain true",
-        ));
-    }
-    Ok(())
-}
-
-fn check_crosscheck_before_commit(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
+fn check_evidence_disciplined(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
+    // Bare assertion: empty payload + empty summary already fails StrategicUtility;
+    // permanent-record kinds need evidence linkage (crosscheck and/or debate).
     if ctx.entry.requires_crosscheck && !ctx.crosscheck_satisfied {
         return Err(deny(
-            IntelWarInvariant::CrossCheckBeforeCommit,
+            IntelWarInvariant::EvidenceDisciplined,
             "requires_crosscheck=true but no valid distinct-intelligence CrossCheckResult",
         ));
     }
-    Ok(())
-}
-
-fn check_debate_before_doctrine(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
     let needs_debate = matches!(
         ctx.entry.entry_kind,
         EntryKind::Doctrine | EntryKind::ConstitutionalAmendment
     );
     if needs_debate && !ctx.debate_satisfied {
         return Err(deny(
-            IntelWarInvariant::DebateBeforeDoctrine,
-            "Doctrine/ConstitutionalAmendment requires approved DebateSession reference",
+            IntelWarInvariant::EvidenceDisciplined,
+            "Doctrine/ConstitutionalAmendment requires approved DebateSession evidence link",
+        ));
+    }
+    if matches!(
+        ctx.entry.entry_kind,
+        EntryKind::Analysis | EntryKind::Observation | EntryKind::DebateNote
+    ) && ctx.entry.payload.is_empty()
+        && ctx.entry.summary.trim().len() < 8
+    {
+        return Err(deny(
+            IntelWarInvariant::EvidenceDisciplined,
+            "bare assertion inadmissible: provide payload evidence or a substantive summary",
         ));
     }
     Ok(())
 }
 
-fn check_provenance_compounding(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
-    if !ctx.receipt_will_chain {
+fn check_human_override_priority(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
+    if !ctx.human_override_preserved {
         return Err(deny(
-            IntelWarInvariant::ProvenanceCompounding,
-            "append must mint a chaining LivingLogReceipt",
+            IntelWarInvariant::HumanOverridePriority,
+            "human_override_preserved must remain true; machine paths must not disable override",
+        ));
+    }
+    Ok(())
+}
+
+fn check_fail_closed_enforcement(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
+    if !ctx.authority_ok {
+        return Err(deny(
+            IntelWarInvariant::FailClosedEnforcement,
+            "unauthorized authority path — action rejected with no privileged bypass",
+        ));
+    }
+    if !ctx.consent_ok {
+        return Err(deny(
+            IntelWarInvariant::FailClosedEnforcement,
+            "missing consent — action rejected with no privileged bypass",
+        ));
+    }
+    Ok(())
+}
+
+fn check_strategic_utility(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
+    if ctx.entry.summary.trim().is_empty() {
+        return Err(deny(
+            IntelWarInvariant::StrategicUtility,
+            "Log contributions must carry a non-empty summary of strategic utility",
+        ));
+    }
+    Ok(())
+}
+
+fn check_log_integrity(ctx: &IntelWarInvariantContext<'_>) -> Result<()> {
+    if !ctx.content_hash_valid {
+        return Err(deny(
+            IntelWarInvariant::LogIntegrity,
+            "content_hash does not match canonical CBOR body",
+        ));
+    }
+    if !ctx.dag_parents_valid {
+        return Err(deny(
+            IntelWarInvariant::LogIntegrity,
+            "parent_hashes are not valid for append (missing parent or illegal empty parents)",
         ));
     }
     Ok(())
@@ -219,14 +258,14 @@ mod tests {
         assert_eq!(
             ids,
             vec![
-                "living-log-integrity",
-                "consent-before-memory",
-                "authority-bound-append",
+                "consent-required",
+                "provenance-verifiable",
                 "multi-intelligence-transparent",
-                "human-override-sacred",
-                "crosscheck-before-commit",
-                "debate-before-doctrine",
-                "provenance-compounding",
+                "evidence-disciplined",
+                "human-override-priority",
+                "fail-closed-enforcement",
+                "strategic-utility",
+                "log-integrity",
             ]
         );
     }

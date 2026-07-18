@@ -6,7 +6,7 @@ After every major IntelWar work unit, the agent (or human) MUST:
 2. **Emit a Log artifact** — `node intelwar/tools/emit-log-entry.js --summary "..."`.
 3. **Triage residue** — `node intelwar/tools/triage.js "..."` for leftover risks.
 4. **Write 3–5 next tasks** into `CURSOR_AGENT_HANDOFF.md` → Perpetual Motion Backlog.
-5. **Attest AI work** — synthetic voice + agent_attestation fields (IW-4).
+5. **Attest AI work** — synthetic voice + agent_attestation fields (IW-3).
 
 ## Structured next-task format (paste into handoff)
 
@@ -14,7 +14,7 @@ After every major IntelWar work unit, the agent (or human) MUST:
 - id: PM-00N
   title: Short imperative title
   why: Compounding value in one line
-  invariants: [consent-before-memory, provenance-compounding]
+  invariants: [consent-required, provenance-verifiable, log-integrity]
   paths: [intelwar/crates/intelwar-core/src/...]
   command: cargo test -p intelwar-core
   done_when: Observable acceptance check

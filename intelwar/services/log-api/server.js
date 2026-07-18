@@ -82,7 +82,7 @@ app.post("/api/log/append", (req, res) => {
     return res.status(403).json({
       ok: false,
       error: "consent_required",
-      message: "Grant demo consent before append (IW-2 / ConsentRequired spirit).",
+      message: "Grant demo consent before append (IW-1 ConsentRequired).",
     });
   }
 
@@ -107,7 +107,7 @@ app.post("/api/log/append", (req, res) => {
     return res.status(400).json({
       ok: false,
       error: "multi_intelligence_transparent",
-      message: "Synthetic voice requires agent attestation (IW-4).",
+      message: "Synthetic voice requires agent attestation (IW-3).",
     });
   }
 

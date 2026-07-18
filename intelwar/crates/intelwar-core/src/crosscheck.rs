@@ -14,7 +14,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! CrossCheckResult types (IW-6) — .ai extension point.
+//! CrossCheckResult types (IW-4 EvidenceDisciplined) — .ai extension point.
 
 use exo_core::{Did, Hash256};
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,7 @@ pub struct CrossCheckResult {
     pub signature: Vec<u8>,
 }
 
-/// Validate that crosschecks satisfy IW-6 for a subject authored by `author`.
+/// Validate that crosschecks satisfy IW-4 for a subject authored by `author`.
 pub fn crosschecks_satisfy(
     author: &Did,
     subject_hash: &Hash256,

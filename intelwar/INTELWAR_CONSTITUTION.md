@@ -2,7 +2,7 @@
 
 **Version:** 1.0.0-bootstrap  
 **Substrate:** EXOCHAIN v0.2.3  
-**Amendments:** Require IW-7 (`debate-before-doctrine`) + Living Log entry
+**Amendments:** Require IW-4 (`evidence-disciplined`) debate evidence + Living Log entry (IW-8)
 
 This short compact is the governance root for IntelWar. Future changes to code,
 docs, doctrine, or process MUST cite it (and the invariant IDs they affect) in
@@ -38,15 +38,16 @@ IntelWar is built **on** EXOCHAIN, not beside it as a parallel kernel.
 
 ## Article IV — Human Override & Consent
 
-1. Human override is sacred (IW-5 / EXOCHAIN `HumanOverride`).
-2. Consent is sacred (IW-2 / EXOCHAIN `ConsentRequired`).
-3. AI/agent contributions MUST be attested (IW-4). Unattested agent prose is
+1. Human override has priority (IW-5 / EXOCHAIN `HumanOverride`).
+2. Consent is required (IW-1 / EXOCHAIN `ConsentRequired`).
+3. AI/agent contributions MUST be attested (IW-3). Unattested agent prose is
    never constitutional authority.
+4. Enforcement fails closed (IW-6) — no privileged Kernel bypass.
 
 ## Article V — Separation of Powers
 
 No actor may simultaneously exercise legislative, executive, and judicial power
-over IntelWar doctrine (EXOCHAIN `SeparationOfPowers` + IW-7).
+over IntelWar doctrine (EXOCHAIN `SeparationOfPowers` + IW-4 evidence / debate links).
 
 ## Article VI — Self-Governance (ExoForge spirit)
 

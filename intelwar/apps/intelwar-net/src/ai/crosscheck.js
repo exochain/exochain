@@ -1,5 +1,5 @@
 /**
- * .ai crosscheck scaffolding (IW-6 extension point).
+ * .ai crosscheck scaffolding (IW-4 EvidenceDisciplined extension point).
  *
  * Future: proxy to crosschecked.ai / decision-forum contestation while keeping
  * constitutional truth in intelwar-core + CGR Kernel.
@@ -40,6 +40,6 @@ export async function requestCrossCheck(_subjectHash) {
     ok: false,
     error: "ai_crosscheck_unconfigured",
     message:
-      "Configure .ai adapter before requesting live crosschecks. See intelwar/wasm and IW-6.",
+      "Configure .ai adapter before requesting live crosschecks. See intelwar/wasm and IW-4.",
   };
 }

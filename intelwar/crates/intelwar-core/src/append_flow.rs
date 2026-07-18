@@ -96,7 +96,7 @@ pub fn append_log_entry(
     let entry = request.entry_body.seal()?;
     entry.verify_content_hash()?;
 
-    // 2. Consent gate (IW-2 / ConsentRequired substrate)
+    // 2. Consent gate (IW-1 / ConsentRequired)
     consent_allows_log_append(&actor, &request.bailment_state, &request.consent_records)?;
 
     // 3. Authority pre-check (non-empty chain ending at actor)
@@ -141,7 +141,7 @@ pub fn append_log_entry(
         _ => true,
     };
 
-    // 6. Signed provenance for CGR ProvenanceVerifiable + IW-4
+    // 6. Signed provenance for CGR ProvenanceVerifiable + IW-2 / IW-3
     let action_hash = hash_action(&entry)?;
     let provenance = sign_provenance(
         &actor,
@@ -217,7 +217,7 @@ pub fn append_log_entry(
         }
     })?;
 
-    // 9. Living Log receipt (IW-8)
+    // 9. Living Log receipt (IW-2 ProvenanceVerifiable + IW-8 LogIntegrity)
     let mut living_receipt = LivingLogReceipt {
         schema_version: 1,
         receipt_id: format!("receipt-{}", entry.entry_id),
