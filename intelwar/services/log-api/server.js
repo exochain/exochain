@@ -11,12 +11,25 @@ import express from "express";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import {
+  loadDagDbConfig,
+  persistBridgeEntryToGateway,
+} from "./dagdb-persist.js";
 
 const PORT = Number(process.env.PORT || 8787);
 const CORE_BIN = process.env.INTELWAR_CORE_BIN || "";
 const CORE_STATE_DIR =
   process.env.INTELWAR_CORE_STATE_DIR || ".intelwar-bridge-state";
 const app = express();
+
+function dagDbConfigured() {
+  try {
+    return Boolean(loadDagDbConfig());
+  } catch {
+    // Incomplete config is still "configured" for health honesty; append will fail closed.
+    return Boolean(String(process.env.INTELWAR_DAGDB_GATEWAY_URL || "").trim());
+  }
+}
 
 /** @type {Array<Record<string, unknown>>} */
 const logEntries = [
@@ -51,6 +64,7 @@ app.get("/health", (_req, res) => {
     surface: "intelwar-log-api",
     trust_claim: "none",
     kernel_bridge_configured: Boolean(CORE_BIN),
+    dagdb_persist_configured: dagDbConfigured(),
     note: CORE_BIN
       ? "INTELWAR_CORE_BIN set — append uses Kernel bridge (fail closed)."
       : "Adjacent shell. Set INTELWAR_CORE_BIN to enable Kernel-gated append.",
@@ -163,6 +177,20 @@ app.post("/api/log/append", async (req, res) => {
             ? body.payload
             : JSON.stringify({ via: "log-api", consent_bailee: consent.bailee }),
       });
+      let gatewayPersist;
+      try {
+        gatewayPersist = await persistBridgeEntryToGateway(bridge);
+      } catch (persistErr) {
+        return res.status(503).json({
+          ok: false,
+          error: persistErr.code || "dagdb_persist_failed",
+          message: persistErr.message || "DAG DB persist failed",
+          fail_closed: true,
+          note: "INTELWAR_DAGDB_* configured — refusing append without gateway write (IW-6 / PM-002).",
+          bridge,
+        });
+      }
+
       const entry = {
         entry_id: bridge.entry_id,
         entry_kind:
@@ -178,6 +206,7 @@ app.post("/api/log/append", async (req, res) => {
         simulated: false,
         kernel_adjudicated: true,
         dag_scope: bridge.dag_scope,
+        gateway_persisted: Boolean(gatewayPersist?.attempted),
         constitution_ref: "INTELWAR_CONSTITUTION.md",
       };
       logEntries.push(entry);
@@ -185,6 +214,7 @@ app.post("/api/log/append", async (req, res) => {
         ok: true,
         entry,
         bridge,
+        gateway_persist: gatewayPersist,
       });
     } catch (err) {
       return res.status(503).json({

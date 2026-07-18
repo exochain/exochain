@@ -14,17 +14,31 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! File-backed Kernel bridge for adjacent `log-api` (PM-001).
+//! File-backed Kernel bridge for adjacent `log-api` (PM-001 / PM-002).
 //!
-//! Each invoke runs a full CGR + IntelWar append into an ephemeral single-node
-//! DAG (persistence of a multi-node DAG is PM-002). Receipt hashes still chain
-//! across invokes via `previous_receipt_hash` in the state file.
+//! # Trust model (summary)
+//!
+//! - **Real:** CGR Kernel adjudication, IntelWar overlays, signed provenance,
+//!   LivingLogReceipt chaining, `exo_dag` append for the entry payload.
+//! - **Fixture / adjacent:** Node demo consent ≠ Kernel bailment; actor/root
+//!   keys live in local `bridge_state.json`; synthetic attestation may use
+//!   placeholder signatures until AVC wiring.
+//! - **Fail closed:** Callers that configure `INTELWAR_CORE_BIN` must not fall
+//!   back to simulated Permitted on bridge failure (enforced in log-api).
+//!
+//! Full write-up: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
+//!
+//! # DAG continuity
+//!
+//! Payload history is replayed into an in-memory `Dag` so new appends can use
+//! prior tips as parents (`dag_scope: local-multi-node`). Optional gateway
+//! persistence is env-gated and fail-closed when configured.
 
 use std::fs;
 use std::path::Path;
 
-use exo_core::{Did, Hash256, SecretKey, Timestamp, crypto};
-use exo_dag::dag::{Dag, DeterministicDagClock};
+use exo_core::{Did, Hash256, SecretKey, Signature, Timestamp, crypto};
+use exo_dag::dag::{Dag, DeterministicDagClock, append as dag_append, tips};
 use exo_gatekeeper::types::{
     AuthorityChain, BailmentState, ConsentRecord, TrustedAuthorityKeys, TrustedProvenanceKeys,
 };
@@ -88,6 +102,9 @@ struct BridgeState {
     previous_receipt_hash_hex: Option<String>,
     physical_ms_base: u64,
     append_count: u64,
+    /// Exact DAG payloads (hex) in append order for multi-node replay (PM-002).
+    #[serde(default)]
+    dag_payload_history_hex: Vec<String>,
 }
 
 impl BridgeState {
@@ -100,6 +117,7 @@ impl BridgeState {
             previous_receipt_hash_hex: None,
             physical_ms_base: 1_752_854_400_000,
             append_count: 0,
+            dag_payload_history_hex: Vec::new(),
         }
     }
 }
@@ -177,24 +195,67 @@ pub fn bridge_append(state_dir: &Path, req: BridgeAppendRequest) -> Result<Bridg
         .entry_id
         .clone()
         .unwrap_or_else(|| format!("bridge-{}", state.append_count + 1));
-    let physical_ms = state
-        .physical_ms_base
-        .saturating_add(state.append_count.saturating_mul(1_000));
-    let payload = req
+
+    // Rebuild DAG from sealed payload history so new parents can reference tips.
+    let sign_sk = actor_sk.clone();
+    let sign_fn = move |msg: &[u8]| -> Signature { crypto::sign(msg, &sign_sk) };
+    let mut dag = Dag::new();
+    let mut clock = DeterministicDagClock::with_time(state.physical_ms_base);
+    for payload_hex in &state.dag_payload_history_hex {
+        let prior = hex_to_bytes(payload_hex)?;
+        let parents = match tips(&dag).as_slice() {
+            [] => Vec::new(),
+            [only] => vec![*only],
+            many => {
+                let mut sorted = many.to_vec();
+                sorted.sort();
+                vec![sorted[0]]
+            }
+        };
+        dag_append(
+            &mut dag,
+            &parents,
+            &prior,
+            &actor,
+            &sign_fn,
+            &mut clock,
+        )
+        .map_err(|e| IntelwarError::Dag {
+            reason: format!("history replay failed: {e}"),
+        })?;
+    }
+
+    let parent_hashes = match tips(&dag).as_slice() {
+        [] => Vec::new(),
+        [only] => vec![*only],
+        many => {
+            let mut sorted = many.to_vec();
+            sorted.sort();
+            vec![sorted[0]]
+        }
+    };
+
+    let domain_payload = req
         .payload
         .clone()
         .unwrap_or_else(|| {
-            r#"{"source":"intelwar-log-api","bridge":"pm-001"}"#.into()
+            r#"{"source":"intelwar-log-api","bridge":"pm-002"}"#.into()
         })
         .into_bytes();
+    let hlc = Timestamp::new(
+        state
+            .physical_ms_base
+            .saturating_add(state.append_count.saturating_mul(1_000)),
+        0,
+    );
 
     let mut body = development_decision_body(
         entry_id.clone(),
         actor.clone(),
-        Timestamp::new(physical_ms, 0),
+        hlc,
         req.summary.trim(),
-        payload,
-        Vec::new(),
+        domain_payload,
+        parent_hashes,
     );
     if let Some(kind) = req.entry_kind.as_deref() {
         body.entry_kind = parse_entry_kind(kind)?;
@@ -251,22 +312,30 @@ pub fn bridge_append(state_dir: &Path, req: BridgeAppendRequest) -> Result<Bridg
         previous_receipt_hash: previous,
         crosschecks: Vec::new(),
         debate: None,
-        provenance_timestamp: format!("hlc:{physical_ms}:0"),
+        provenance_timestamp: format!("hlc:{}:0", hlc.physical_ms),
     };
 
-    let mut dag = Dag::new();
-    let mut clock = DeterministicDagClock::with_time(physical_ms);
     let receipt = append_log_entry(&mut dag, &mut clock, request)?;
+    let sealed_cbor = receipt.entry.to_cbor()?;
 
     state.append_count = state.append_count.saturating_add(1);
     state.previous_receipt_hash_hex = Some(bytes_to_hex(receipt.living_receipt_hash.as_bytes()));
+    state
+        .dag_payload_history_hex
+        .push(bytes_to_hex(&sealed_cbor));
     save_state(state_dir, &state)?;
+
+    let dag_scope = if state.dag_payload_history_hex.len() > 1 {
+        "local-multi-node"
+    } else {
+        "local-multi-node-genesis"
+    };
 
     Ok(BridgeAppendResponse {
         ok: true,
         simulated: false,
         kernel_adjudicated: true,
-        dag_scope: "ephemeral-single-node",
+        dag_scope,
         entry_id: receipt.entry.entry_id.clone(),
         summary: receipt.entry.summary.clone(),
         author_did: receipt.entry.author_did.to_string(),
@@ -277,7 +346,7 @@ pub fn bridge_append(state_dir: &Path, req: BridgeAppendRequest) -> Result<Bridg
         kernel_verdict: receipt.living_receipt.kernel_verdict.clone(),
         intelwar_verdict: receipt.living_receipt.intelwar_verdict.clone(),
         previous_receipt_hash: previous.map(|h| bytes_to_hex(h.as_bytes())),
-        note: "Kernel-adjudicated via intelwar-core bridge. Multi-node DAG persistence is PM-002."
+        note: "Kernel-adjudicated via intelwar-core bridge with local multi-node DAG replay (PM-002)."
             .into(),
     })
 }
@@ -329,19 +398,29 @@ fn hash_from_hex(hex: &str) -> Result<Hash256> {
 }
 
 fn hex_to_32(hex: &str) -> Result<[u8; 32]> {
-    if hex.len() != 64 {
+    let bytes = hex_to_bytes(hex)?;
+    let arr: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
+        IntelwarError::Validation {
+            reason: format!("expected 32 bytes, got {}", bytes.len()),
+        }
+    })?;
+    Ok(arr)
+}
+
+fn hex_to_bytes(hex: &str) -> Result<Vec<u8>> {
+    if hex.len() % 2 != 0 {
         return Err(IntelwarError::Validation {
-            reason: format!("expected 64 hex chars, got {}", hex.len()),
+            reason: "hex length must be even".into(),
         });
     }
-    let mut out = [0u8; 32];
-    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+    let mut out = Vec::with_capacity(hex.len() / 2);
+    for chunk in hex.as_bytes().chunks(2) {
         let s = std::str::from_utf8(chunk).map_err(|e| IntelwarError::Validation {
             reason: e.to_string(),
         })?;
-        out[i] = u8::from_str_radix(s, 16).map_err(|e| IntelwarError::Validation {
+        out.push(u8::from_str_radix(s, 16).map_err(|e| IntelwarError::Validation {
             reason: e.to_string(),
-        })?;
+        })?);
     }
     Ok(out)
 }
@@ -398,6 +477,8 @@ mod tests {
             r2.previous_receipt_hash.as_deref(),
             Some(r1.receipt_hash.as_str())
         );
+        assert_eq!(r2.dag_scope, "local-multi-node");
+        assert_ne!(r1.dag_node_hash, r2.dag_node_hash);
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -66,7 +66,7 @@ When stopping: append or update the session block with **Open Questions**, set *
 
 - **Continue** the item named in §8 “Authorized now” without asking.
 - **Start a new PM item** only if: (a) §8 authorizes it, or (b) the human explicitly names it in the latest user message, or (c) the prior session’s Recommended Next Action names it **and** no HOLD blocks it.
-- **Do not** start PM-002, PM-007 (deploy), or marketing work while §8 marks them HOLD.
+- **Do not** start PM-003+, PM-007 (deploy), or marketing work while §8 marks them HOLD.
 - Completing an item: mark DONE in §4, update §3/§8, recommend the next item — but do not begin the next HOLD item until authorized.
 
 ### 1.5 Constitutional / trust / secrets / deploy (summary)
@@ -120,7 +120,7 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 
 ## 3. Current Global State
 
-*As of handoff rewrite session 2026-07-18. Confirm with `git log -1 --oneline` on `intelwar`.*
+*As of PM-001 hardening + PM-002 session 2026-07-18. Confirm with `git log -1 --oneline` on `intelwar`.*
 
 ### 3.1 Branch & commits
 
@@ -128,7 +128,7 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 |------|--------|
 | Branch | `intelwar` |
 | Base | Tag `v0.2.3` / `a50a15fd` |
-| Notable commits | `dec9ddc8` bootstrap · `f0846b01` adopt IW-1…IW-8 · `9146588d` PM-001 Kernel bridge · tip may include later handoff-only commits |
+| Notable commits | `dec9ddc8` bootstrap · `f0846b01` adopt IW-1…IW-8 · `9146588d` PM-001 Kernel bridge · `8b48b159` autonomy handoff · tip includes PM-001 harden + PM-002 |
 | Remote / main | No PR to `main` authorized; do not push unless human asks |
 
 ### 3.2 Constitutional foundation (adopted)
@@ -148,8 +148,9 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 | Component | Path | Status |
 |-----------|------|--------|
 | Living Log core | `intelwar/crates/intelwar-core` | **Real Kernel path:** consent → authority → CGR → overlays → receipt → `exo_dag::append`. Tests + clippy clean when last validated. |
-| Kernel bridge | `bridge.rs` + bin `intelwar-log-append` | **Real** adjudication per invoke; **ephemeral single-node DAG**; receipt hashes chain via state file |
-| log-api | `intelwar/services/log-api` | **Simulated by default**; Kernel when `INTELWAR_CORE_BIN` set; **503 fail-closed** on bridge error |
+| Kernel bridge | `bridge.rs` + bin `intelwar-log-append` | **Real** adjudication; **local multi-node DAG** via payload-history replay; receipt chain in state file |
+| Trust model doc | `docs/BRIDGE_TRUST_MODEL.md` | Binding limitations for bridge / log-api / DAG DB |
+| log-api | `intelwar/services/log-api` | Simulated by default; Kernel via `INTELWAR_CORE_BIN`; optional DAG DB via `INTELWAR_DAGDB_*`; **503 fail-closed** |
 | intelwar-net | `intelwar/apps/intelwar-net` | Railway-ready React shell; Living Log viewer + consent demo; adjacent |
 | Tools | `intelwar/tools/*` | Triage + emit-log-entry (simulated artifacts) |
 | .ai / .tv / wasm | stubs under `apps/.../ai`, `tv`, `intelwar/wasm` | Extension points only |
@@ -159,9 +160,9 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 | Path | Label | Meaning |
 |------|-------|---------|
 | log-api without `INTELWAR_CORE_BIN` | `simulated: true` | Adjacent demo only; not Kernel-adjudicated |
-| log-api with `INTELWAR_CORE_BIN` + success | `simulated: false`, `kernel_adjudicated: true` | CGR + overlays ran; DAG scope still `ephemeral-single-node` |
+| log-api with `INTELWAR_CORE_BIN` + success | `simulated: false`, `kernel_adjudicated: true` | CGR + overlays; `dag_scope` `local-multi-node(-genesis)` |
 | Node `/api/consent` | Demo consent | **Not** exo-consent bailment; Kernel uses fixture bailment in bridge |
-| Multi-node LogIntegrity | Not yet | PM-002 |
+| Multi-node LogIntegrity | Local replay + optional gateway | Shared `INTELWAR_CORE_STATE_DIR`; gateway when `INTELWAR_DAGDB_*` set |
 
 ### 3.5 v0.2.3 constraints in force
 
@@ -170,9 +171,9 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 - `QuorumLegitimate` no-op when `quorum_evidence` is `None` (OK for single-actor).  
 - Adjacent surfaces stay honestly labeled until WASM + gateway prove Permitted for production claims.
 
-### 3.6 PM-001 review verdict (standing)
+### 3.6 PM-001 / PM-002 standing gaps
 
-Accepted as **bridge-complete** with known gaps: dual consent model, plaintext fixture keys in `bridge_state.json`, placeholder synthetic attestation, no Kernel-path npm integration test, ephemeral DAG. Not production LogIntegrity-complete.
+Still not production-complete: dual consent model; plaintext fixture keys in `bridge_state.json`; placeholder synthetic attestation; Kernel state may advance before a failing gateway write (client must treat 503 as non-durable for DAG DB); no live exo-gateway CI against a real pool.
 
 ---
 
@@ -182,8 +183,8 @@ Accepted as **bridge-complete** with known gaps: dual consent model, plaintext f
 
 | ID | Title | Owner | Status | Notes |
 |----|-------|-------|--------|-------|
-| PM-001 | Wire log-api ↔ intelwar-core (CLI bridge) | Agent | **DONE** | `9146588d`; gaps documented in §3.6 |
-| PM-002 | Persist via exo-gateway DAG DB + multi-node continuity | Agent | **HOLD** | Requires human go-ahead; primary IW-8 closer |
+| PM-001 | Wire log-api ↔ intelwar-core (CLI bridge) | Agent | **DONE** | Bridge-complete; hardening (Kernel IT + trust doc) done |
+| PM-002 | Persist via exo-gateway DAG DB + multi-node continuity | Agent | **DONE** | Local multi-node replay + env-gated gateway fail-closed |
 | PM-003 | DebateSession ↔ decision-forum | Agent | Queued | IW-4 evidence links; closed roles |
 | PM-004 | .ai crosscheck → CrossCheckResult verify | Agent | Queued | IW-3 / IW-4 |
 | PM-005 | .tv provenance viewer over receipts | Agent | Queued | IW-2 / IW-8 |
@@ -191,7 +192,7 @@ Accepted as **bridge-complete** with known gaps: dual consent model, plaintext f
 | PM-007 | Railway deploy intelwar.net fail-closed | Agent | **HOLD** | Deploy/public; human-gated |
 | MKT-* | Marketing / positioning / public narrative | Human+Agent | **HOLD** | Not authorized until human opens |
 
-Optional hardening (not separate PMs unless §8 authorizes): Kernel-path npm test; tighten synthetic attestation; secret-storage policy for bridge state.
+Optional follow-ups (not authorized as new major PM): live gateway IT against real pool; tighten synthetic attestation; secret-storage policy for bridge state.
 
 ### 4.2 Process for advancing or reordering
 
@@ -333,34 +334,38 @@ Ideally only:
 
 | Authorization | Scope |
 |---------------|--------|
-| **Active** | Maintain and improve this handoff; session logging; triage/emit tooling docs alignment |
-| **Not active** | New feature implementation on PM-002+ until human releases HOLD |
-| **Standing permission** | Bugfixes strictly limited to regressions the agent introduced while authorized; docs clarifications that do not change IW semantics |
+| **Active** | Handoff maintenance; session logging |
+| **Not active** | Starting **PM-003** (or any new major PM) until human authorizes — human said stop after PM-002 for new major items |
+| **Standing permission** | Bugfixes for regressions introduced while authorized; docs clarifications that do not change IW semantics |
 
 ### 8.2 Explicit HOLD (do not start)
 
-1. **PM-002** — exo-gateway DAG DB persistence / multi-node LogIntegrity — **await human go-ahead**.  
+1. **PM-003+** — next major backlog items — **await human go-ahead** (PM-001 harden + PM-002 complete).  
 2. **PM-007** — Railway/production deploy — **await human go-ahead**.  
 3. **Marketing / public narrative / intelwar.net positioning** — **await human go-ahead**.  
 4. **Invariant or constitution amendments** — **await human go-ahead**.  
 5. **Push to remote / PR to `main`** — **await human go-ahead**.
 
-### 8.3 Decisions pending human (from PM-001 review)
+### 8.3 Decisions pending human
 
-Recorded for continuity; agent must not assume answers:
-
-1. Proceed to PM-002 as-is, or require Kernel-path npm integration test first?  
+1. Authorize **PM-003** (DebateSession ↔ decision-forum)?  
 2. Are disk fixture keys in `bridge_state.json` acceptable until deploy, or must secret policy land first?  
-3. Remain Node consent forever adjacent-only, or eventually bind to Kernel bailment?
+3. Remain Node consent forever adjacent-only, or eventually bind to Kernel bailment?  
+4. Require live exo-gateway CI evidence before any production trust claim?
 
-### 8.4 Kernel bridge quick reference (PM-001)
+### 8.4 Kernel bridge + optional DAG DB quick reference
 
 ```bash
 cargo build -p intelwar-core --bin intelwar-log-append
 export INTELWAR_CORE_BIN="$PWD/target/debug/intelwar-log-append"
 export INTELWAR_CORE_STATE_DIR="$PWD/.intelwar-bridge-state"
+# Optional fail-closed gateway persist (all INTELWAR_DAGDB_* required when URL set):
+# export INTELWAR_DAGDB_GATEWAY_URL=...
 npm --prefix intelwar/services/log-api start
+npm --prefix intelwar/services/log-api test
 ```
+
+Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 
 ### 8.5 First actions for a new session
 
@@ -445,3 +450,57 @@ npm --prefix intelwar/services/log-api start
 - tool: cursor-agent
 - model_id: cursor-grok-4.5
 - summary: Rewrote handoff for higher autonomy with constitutional hold points
+
+## Session 2026-07-18 18:45 EDT — PM-001 harden + PM-002 complete
+
+**Authorization context:**
+- Authorized item: PM-001 light hardening, then PM-002 (human released HOLD)
+- Hold status: holding on PM-003+, PM-007, marketing, push/PR to main, invariant amendments
+
+**Changes Made:**
+- Documented bridge trust model (`BRIDGE_TRUST_MODEL.md` + `bridge.rs` module docs)
+- Added log-api Kernel-path integration test (two-append continuity) and fail-closed DAG DB tests
+- PM-002: local multi-node DAG via `dag_payload_history_hex` replay; `dag_scope` labels
+- PM-002: env-gated exo-gateway intake (`dagdb-persist.js`) with fail-closed incomplete/reject paths
+- Updated this handoff §3/§4/§8
+
+**Files Modified:**
+- `intelwar/crates/intelwar-core/src/bridge.rs`
+- `intelwar/docs/BRIDGE_TRUST_MODEL.md`
+- `intelwar/docs/CURSOR_AGENT_HANDOFF.md`
+- `intelwar/services/log-api/server.js`
+- `intelwar/services/log-api/dagdb-persist.js`
+- `intelwar/services/log-api/test.js`
+
+**Commits:**
+- (see git log tip after this session commit)
+
+**State Deltas:**
+- PM-001 hardening complete; PM-002 marked DONE for stated prototype scope
+- Multi-node continuity is local state-dir replay; gateway persist optional and fail-closed
+- Next major PM (PM-003) requires human authorization
+
+**Backlog Updates:**
+- PM-001 → DONE (hardened)
+- PM-002 → DONE
+- HOLD now starts at PM-003+
+
+**Validation Commands Run:**
+- `cargo test -p intelwar-core` → pass
+- `cargo clippy -p intelwar-core --all-targets -- -D warnings` → pass
+- `cargo build -p intelwar-core --bin intelwar-log-append` → pass
+- `npm --prefix intelwar/services/log-api test` → pass (6)
+
+**Open Questions / Decisions for Human:**
+- Authorize PM-003?
+- Secret policy for `bridge_state.json` before any deploy?
+- Live gateway CI required before production claims?
+
+**Recommended Next Action:**
+- Await human authorization for PM-003 (or other named item); do not start PM-003 until instructed
+
+**Agent attestation (IW-3):**
+- voice_kind: synthetic
+- tool: cursor-agent
+- model_id: cursor-grok-4.5
+- summary: Hardened PM-001 and completed PM-002 multi-node + DAG DB fail-closed
