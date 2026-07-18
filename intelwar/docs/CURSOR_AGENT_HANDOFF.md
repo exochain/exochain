@@ -473,7 +473,7 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - `intelwar/services/log-api/test.js`
 
 **Commits:**
-- (see git log tip after this session commit)
+- `0d0f343a` — intelwar: harden PM-001 and complete PM-002 multi-node + DAG DB
 
 **State Deltas:**
 - PM-001 hardening complete; PM-002 marked DONE for stated prototype scope
