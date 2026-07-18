@@ -581,7 +581,7 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - `intelwar/docs/CURSOR_AGENT_HANDOFF.md`
 
 **Commits:**
-- (tip after this session commit)
+- `63b6295e` — intelwar: complete PM-004 crosscheck, PM-005 provenance, PM-006 triage
 
 **State Deltas:**
 - Implementation backlog PM-001…PM-006 **DONE**
