@@ -400,3 +400,48 @@ npm --prefix intelwar/services/log-api start
 **Recommended Next Action:** Await human; strengthen handoff autonomy.
 
 <!-- New sessions append below this line -->
+
+## Session 2026-07-18 18:26 EDT — Autonomy handoff rewrite
+
+**Authorization context:**
+- Authorized item: handoff-only (human instructed rewrite + commit; no PM implementation)
+- Hold status: holding on PM-002, PM-007, marketing, push/PR to main, invariant amendments
+
+**Changes Made:**
+- Completely rewrote `CURSOR_AGENT_HANDOFF.md` as a self-contained operating document
+- Added Autonomy & Decision Framework (§1), Operating Principles (§2), expanded Global State (§3), Backlog Management (§4), mandatory Session Protocol (§5), Validation & Quality Gates (§6), Communication rules (§7), Current Task & Hold Points (§8)
+- Preserved condensed historical session memory in §9
+- Committed rewrite as `8b48b159`
+
+**Files Modified:**
+- `intelwar/docs/CURSOR_AGENT_HANDOFF.md`
+
+**Commits:**
+- `8b48b159` — intelwar: rewrite CURSOR_AGENT_HANDOFF for autonomous operation
+- (this session block committed in follow-up)
+
+**State Deltas:**
+- Agent autonomy boundaries are now explicit (what to do vs when to STOP)
+- PM-002 / PM-007 / marketing remain HOLD pending human
+- PM-001 remains DONE (bridge-complete with documented gaps)
+- No technical backlog implementation performed this session
+
+**Backlog Updates:**
+- None to PM status; process for advancing items documented in §4.2
+
+**Validation Commands Run:**
+- N/A for code (docs-only) — `git status` / commit on `intelwar` only
+- Branch confirmed: `intelwar`
+
+**Open Questions / Decisions for Human:**
+- Same as §8.3 (PM-002 start criteria; bridge secret policy; Node consent binding)
+- Optional: confirm this autonomy framework is acceptable as standing policy
+
+**Recommended Next Action:**
+- Await human: either release HOLD on PM-002 (or name hardening-first), or assign another authorized item; do not start PM-002 until instructed
+
+**Agent attestation (IW-3):**
+- voice_kind: synthetic
+- tool: cursor-agent
+- model_id: cursor-grok-4.5
+- summary: Rewrote handoff for higher autonomy with constitutional hold points
