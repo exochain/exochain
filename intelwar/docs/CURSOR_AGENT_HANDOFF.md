@@ -2,7 +2,7 @@
 
 **Project**: IntelWar  
 **Branch**: `intelwar` (from v0.2.3 `a50a15fd`)  
-**Latest Commit**: _(see tip of `intelwar`; update after each commit)_  
+**Latest Commit**: `9146588d` (PM-001 Kernel bridge + handoff sessions)
 **Current Status**: PM-001 Kernel bridge landed (CLI + env-gated log-api). Next: PM-002.  
 **Entry Point Rule**: Every new Cursor agent session **must** start by reading this entire file.
 
