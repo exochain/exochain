@@ -826,3 +826,21 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - tool: cursor-agent
 - model_id: cursor-grok-4.5
 - summary: Executed final polish PRD across host-locked surfaces
+
+## Session 2026-07-18 23:25 EDT — Kernel-required (no stubs)
+
+**Authorization context:** Plan “Make IntelWar Real on EXOCHAIN (100% TDD, No Stubs)” approved
+
+**Changes Made:**
+- Simulated append/verify **removed**; bins required or 503
+- Bridge: caller-supplied consent; signed synthetic attestation; log_mirror; `durable`
+- Bins: `intelwar-log-append`, `intelwar-crosscheck-verify`, `intelwar-crosscheck-sign`
+- log-api + UI honesty; Railway multi-stage Linux deploy via pack-railway-context.sh
+
+**Live proof:** `POST /api/log/append` → `simulated: false`, `kernel_adjudicated: true`, `trust_claim: kernel_local`
+
+**Agent attestation (IW-3):**
+- voice_kind: synthetic
+- tool: cursor-agent
+- model_id: cursor-grok-4.5
+- summary: Eliminated simulated path; Kernel-required Living Log live on Railway

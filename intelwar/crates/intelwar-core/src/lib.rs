@@ -42,7 +42,9 @@ pub use append_flow::{
     default_invariant_id_lists, development_decision_body, intelwar_kernel, judicial_role,
     signed_authority_link,
 };
-pub use bridge::{BridgeAppendRequest, BridgeAppendResponse, bridge_append};
+pub use bridge::{
+    BridgeAppendRequest, BridgeAppendResponse, BridgeConsentWire, bridge_append, load_log_mirror,
+};
 pub use consent_flow::{LOG_APPEND_PERMISSION, consent_allows_log_append};
 pub use crosscheck::{
     CROSSCHECK_DOMAIN, CrossCheckResult, CrossCheckVerdict, crosscheck_signing_hash,

@@ -13,8 +13,9 @@ export default function NetSurface({
   onAppended,
   onNavigate,
 }) {
-  const simulated =
-    !entries.length || entries.some((e) => e.simulated !== false);
+  const kernelLinked =
+    entries.length > 0 && entries.every((e) => e.simulated === false);
+  const durable = entries.find((e) => e.durable)?.durable || "local_kernel";
 
   return (
     <>
@@ -24,8 +25,8 @@ export default function NetSurface({
           <h1 className="brand brand-sm">Living Log</h1>
           <p className="headline">Functional entry to the arena.</p>
           <p className="lede">
-            Consent-governed, append-only memory. Instrument of the frame — home
-            is{" "}
+            Consent-governed, Kernel-adjudicated memory. Instrument of the frame —
+            home is{" "}
             <button type="button" className="inline-link" onClick={() => onNavigate("org")}>
               intelwar.org
             </button>
@@ -33,13 +34,13 @@ export default function NetSurface({
             <button type="button" className="inline-link" onClick={() => onNavigate("press")}>
               intelwar.press
             </button>
-            . Status below is honest: simulated until Kernel is deliberately wired.
+            . Simulated append path removed — API fail-closes without bins.
           </p>
           <div className="status-row" aria-label="Path status">
-            <span className={`status-pill ${simulated ? "is-sim" : "is-kernel"}`}>
-              {simulated ? "Path: simulated" : "Path: Kernel-linked"}
+            <span className={`status-pill ${kernelLinked ? "is-kernel" : "is-neutral"}`}>
+              {kernelLinked ? "Path: Kernel-linked" : "Path: awaiting Kernel entries"}
             </span>
-            <span className="status-pill is-neutral">trust_claim: none</span>
+            <span className="status-pill is-neutral">durable: {durable}</span>
           </div>
           <div className="cta-row">
             <button

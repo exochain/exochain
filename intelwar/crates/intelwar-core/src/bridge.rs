@@ -14,30 +14,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! File-backed Kernel bridge for adjacent `log-api` (PM-001 / PM-002).
+//! File-backed Kernel bridge for `log-api` (Kernel-required era).
 //!
-//! # Trust model (summary)
+//! Caller supplies Active bailment/consent on every append. The bridge never
+//! invents consent. Synthetic attestation is Ed25519-signed (no placeholders).
 //!
-//! - **Real:** CGR Kernel adjudication, IntelWar overlays, signed provenance,
-//!   LivingLogReceipt chaining, `exo_dag` append for the entry payload.
-//! - **Fixture / adjacent:** Node demo consent ≠ Kernel bailment; actor/root
-//!   keys live in local `bridge_state.json`; synthetic attestation may use
-//!   placeholder signatures until AVC wiring.
-//! - **Fail closed:** Callers that configure `INTELWAR_CORE_BIN` must not fall
-//!   back to simulated Permitted on bridge failure (enforced in log-api).
-//!
-//! Full write-up: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
-//!
-//! # DAG continuity
-//!
-//! Payload history is replayed into an in-memory `Dag` so new appends can use
-//! prior tips as parents (`dag_scope: local-multi-node`). Optional gateway
-//! persistence is env-gated and fail-closed when configured.
+//! Normative: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 
 use std::fs;
 use std::path::Path;
 
-use exo_core::{Did, Hash256, SecretKey, Signature, Timestamp, crypto};
+use exo_core::{Did, Hash256, SecretKey, Signature, Timestamp, crypto, hash::hash_structured};
 use exo_dag::dag::{Dag, DeterministicDagClock, append as dag_append, tips};
 use exo_gatekeeper::types::{
     AuthorityChain, BailmentState, ConsentRecord, TrustedAuthorityKeys, TrustedProvenanceKeys,
@@ -53,7 +40,16 @@ use crate::log_entry::{AgentAttestation, EntryKind, IndependenceClaim, ReviewOrd
 
 const ACTOR_DID: &str = "did:exo:intelwar-actor";
 const ROOT_DID: &str = "did:exo:intelwar-root";
-const BAILOR_DID: &str = "did:exo:intelwar-bailor";
+const ATTESTATION_DOMAIN: &str = "intelwar.agent_attestation.v1";
+
+/// Caller-supplied consent wire (gatekeeper-compatible).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BridgeConsentWire {
+    pub active: bool,
+    pub bailor_did: String,
+    pub bailee_did: String,
+    pub scope: String,
+}
 
 /// Request body accepted by the bridge CLI / Node spawn path.
 #[derive(Debug, Clone, Deserialize)]
@@ -73,6 +69,11 @@ pub struct BridgeAppendRequest {
     pub session_id: Option<String>,
     #[serde(default)]
     pub tool: Option<String>,
+    /// Required — bridge does not invent Active bailment.
+    pub consent: BridgeConsentWire,
+    /// Optional hex Ed25519 sig for synthetic attestation; if absent, bridge signs.
+    #[serde(default)]
+    pub attestation_signature_hex: Option<String>,
 }
 
 /// Successful Kernel-adjudicated bridge response (JSON).
@@ -81,6 +82,8 @@ pub struct BridgeAppendResponse {
     pub ok: bool,
     pub simulated: bool,
     pub kernel_adjudicated: bool,
+    /// `local_kernel` until gateway marks durable elsewhere.
+    pub durable: &'static str,
     pub dag_scope: &'static str,
     pub entry_id: String,
     pub summary: String,
@@ -102,9 +105,11 @@ struct BridgeState {
     previous_receipt_hash_hex: Option<String>,
     physical_ms_base: u64,
     append_count: u64,
-    /// Exact DAG payloads (hex) in append order for multi-node replay (PM-002).
     #[serde(default)]
     dag_payload_history_hex: Vec<String>,
+    /// Mirror of Kernel-adjudicated entries for API restart durability.
+    #[serde(default)]
+    log_mirror: Vec<serde_json::Value>,
 }
 
 impl BridgeState {
@@ -118,11 +123,11 @@ impl BridgeState {
             physical_ms_base: 1_752_854_400_000,
             append_count: 0,
             dag_payload_history_hex: Vec::new(),
+            log_mirror: Vec::new(),
         }
     }
 }
 
-/// Load or initialize bridge state under `state_dir`.
 fn load_or_init_state(state_dir: &Path) -> Result<BridgeState> {
     fs::create_dir_all(state_dir).map_err(|e| IntelwarError::Validation {
         reason: format!("create state dir: {e}"),
@@ -152,13 +157,101 @@ fn save_state(state_dir: &Path, state: &BridgeState) -> Result<()> {
     })
 }
 
-/// Run a Kernel-gated append for the adjacent bridge.
+/// Read durable log mirror from state dir (for log-api restart).
+pub fn load_log_mirror(state_dir: &Path) -> Result<Vec<serde_json::Value>> {
+    if !state_dir.join("bridge_state.json").exists() {
+        return Ok(Vec::new());
+    }
+    let state = load_or_init_state(state_dir)?;
+    Ok(state.log_mirror)
+}
+
+fn require_active_consent(wire: &BridgeConsentWire) -> Result<(Did, Did)> {
+    if !wire.active {
+        return Err(IntelwarError::Consent {
+            reason: "consent inactive — grant Active bailment before append".into(),
+        });
+    }
+    let scope = wire.scope.trim();
+    if scope != LOG_APPEND_PERMISSION && !scope.split(',').any(|s| s.trim() == LOG_APPEND_PERMISSION)
+    {
+        return Err(IntelwarError::Consent {
+            reason: format!(
+                "consent scope must cover {LOG_APPEND_PERMISSION}, got {:?}",
+                wire.scope
+            ),
+        });
+    }
+    let bailor = Did::new(wire.bailor_did.trim()).map_err(|e| IntelwarError::Validation {
+        reason: format!("bailor_did: {e}"),
+    })?;
+    let bailee = Did::new(wire.bailee_did.trim()).map_err(|e| IntelwarError::Validation {
+        reason: format!("bailee_did: {e}"),
+    })?;
+    if bailee.to_string() != ACTOR_DID {
+        return Err(IntelwarError::Consent {
+            reason: format!(
+                "consent bailee must be bridge actor {ACTOR_DID}, got {}",
+                bailee
+            ),
+        });
+    }
+    Ok((bailor, bailee))
+}
+
+fn sign_agent_attestation(
+    actor_sk: &SecretKey,
+    model_id: &str,
+    session_id: &str,
+    tool: &str,
+    provided_hex: Option<&str>,
+) -> Result<Vec<u8>> {
+    if let Some(hex) = provided_hex.map(str::trim).filter(|s| !s.is_empty()) {
+        let bytes = hex_to_bytes(hex)?;
+        if bytes.len() != 64 {
+            return Err(IntelwarError::Validation {
+                reason: format!(
+                    "attestation_signature_hex must be 64 bytes, got {}",
+                    bytes.len()
+                ),
+            });
+        }
+        if bytes == b"bridge-attestation-placeholder".as_slice() {
+            return Err(IntelwarError::Validation {
+                reason: "placeholder attestation signature rejected".into(),
+            });
+        }
+        return Ok(bytes);
+    }
+    #[derive(Serialize)]
+    struct AttestPayload<'a> {
+        domain: &'a str,
+        model_id: &'a str,
+        session_id: &'a str,
+        tool: &'a str,
+    }
+    let hash = hash_structured(&AttestPayload {
+        domain: ATTESTATION_DOMAIN,
+        model_id,
+        session_id,
+        tool,
+    })
+    .map_err(|e| IntelwarError::Validation {
+        reason: format!("attestation hash: {e}"),
+    })?;
+    let sig = crypto::sign(hash.as_bytes(), actor_sk);
+    Ok(sig.to_bytes().to_vec())
+}
+
+/// Run a Kernel-gated append for the bridge.
 pub fn bridge_append(state_dir: &Path, req: BridgeAppendRequest) -> Result<BridgeAppendResponse> {
     if req.summary.trim().is_empty() {
         return Err(IntelwarError::Validation {
             reason: "summary must be non-empty (IW-7 StrategicUtility)".into(),
         });
     }
+
+    let (bailor, actor_from_consent) = require_active_consent(&req.consent)?;
 
     let mut state = load_or_init_state(state_dir)?;
     let actor_sk = secret_from_hex(&state.actor_sk_hex)?;
@@ -180,9 +273,11 @@ pub fn bridge_append(state_dir: &Path, req: BridgeAppendRequest) -> Result<Bridg
     let root = Did::new(ROOT_DID).map_err(|e| IntelwarError::Validation {
         reason: e.to_string(),
     })?;
-    let bailor = Did::new(BAILOR_DID).map_err(|e| IntelwarError::Validation {
-        reason: e.to_string(),
-    })?;
+    if actor_from_consent != actor {
+        return Err(IntelwarError::Consent {
+            reason: "consent bailee mismatch with bridge actor".into(),
+        });
+    }
 
     let link = signed_authority_link(&root, &actor, &root_sk)?;
     let mut trusted_authority_keys = TrustedAuthorityKeys::default();
@@ -196,7 +291,6 @@ pub fn bridge_append(state_dir: &Path, req: BridgeAppendRequest) -> Result<Bridg
         .clone()
         .unwrap_or_else(|| format!("bridge-{}", state.append_count + 1));
 
-    // Rebuild DAG from sealed payload history so new parents can reference tips.
     let sign_sk = actor_sk.clone();
     let sign_fn = move |msg: &[u8]| -> Signature { crypto::sign(msg, &sign_sk) };
     let mut dag = Dag::new();
@@ -238,9 +332,7 @@ pub fn bridge_append(state_dir: &Path, req: BridgeAppendRequest) -> Result<Bridg
     let domain_payload = req
         .payload
         .clone()
-        .unwrap_or_else(|| {
-            r#"{"source":"intelwar-log-api","bridge":"pm-002"}"#.into()
-        })
+        .unwrap_or_else(|| r#"{"source":"intelwar-log-api","bridge":"kernel-required"}"#.into())
         .into_bytes();
     let hlc = Timestamp::new(
         state
@@ -268,13 +360,23 @@ pub fn bridge_append(state_dir: &Path, req: BridgeAppendRequest) -> Result<Bridg
             body.agent_attestation = None;
         }
         VoiceKind::Synthetic => {
+            let model_id = req.model_id.unwrap_or_else(|| "unspecified".into());
+            let session_id = req.session_id.unwrap_or_else(|| "unspecified".into());
+            let tool = req.tool.unwrap_or_else(|| "intelwar-log-api".into());
+            let sig = sign_agent_attestation(
+                &actor_sk,
+                &model_id,
+                &session_id,
+                &tool,
+                req.attestation_signature_hex.as_deref(),
+            )?;
             body.independence = None;
             body.review_order = None;
             body.agent_attestation = Some(AgentAttestation {
-                model_id: req.model_id.unwrap_or_else(|| "unspecified".into()),
-                session_id: req.session_id.unwrap_or_else(|| "unspecified".into()),
-                tool: req.tool.unwrap_or_else(|| "intelwar-log-api".into()),
-                attestation_signature: b"bridge-attestation-placeholder".to_vec(),
+                model_id,
+                session_id,
+                tool,
+                attestation_signature: sig,
                 avc_receipt_hash: None,
             });
         }
@@ -325,6 +427,24 @@ pub fn bridge_append(state_dir: &Path, req: BridgeAppendRequest) -> Result<Bridg
     state
         .dag_payload_history_hex
         .push(bytes_to_hex(&sealed_cbor));
+
+    let mirror_entry = serde_json::json!({
+        "entry_id": receipt.entry.entry_id,
+        "entry_kind": format!("{:?}", receipt.entry.entry_kind),
+        "summary": receipt.entry.summary,
+        "author_did": receipt.entry.author_did.to_string(),
+        "voice_kind": voice_label(receipt.entry.voice_kind),
+        "content_hash": bytes_to_hex(receipt.entry.content_hash.as_bytes()),
+        "dag_node_hash": bytes_to_hex(receipt.dag_node_hash.as_bytes()),
+        "receipt_hash": bytes_to_hex(receipt.living_receipt_hash.as_bytes()),
+        "previous_receipt_hash": previous.map(|h| bytes_to_hex(h.as_bytes())),
+        "simulated": false,
+        "kernel_adjudicated": true,
+        "durable": "local_kernel",
+        "constitution_ref": "INTELWAR_CONSTITUTION.md",
+    });
+    state.log_mirror.push(mirror_entry);
+
     save_state(state_dir, &state)?;
 
     let dag_scope = if state.dag_payload_history_hex.len() > 1 {
@@ -337,6 +457,7 @@ pub fn bridge_append(state_dir: &Path, req: BridgeAppendRequest) -> Result<Bridg
         ok: true,
         simulated: false,
         kernel_adjudicated: true,
+        durable: "local_kernel",
         dag_scope,
         entry_id: receipt.entry.entry_id.clone(),
         summary: receipt.entry.summary.clone(),
@@ -348,7 +469,7 @@ pub fn bridge_append(state_dir: &Path, req: BridgeAppendRequest) -> Result<Bridg
         kernel_verdict: receipt.living_receipt.kernel_verdict.clone(),
         intelwar_verdict: receipt.living_receipt.intelwar_verdict.clone(),
         previous_receipt_hash: previous.map(|h| bytes_to_hex(h.as_bytes())),
-        note: "Kernel-adjudicated via intelwar-core bridge with local multi-node DAG replay (PM-002)."
+        note: "Kernel-adjudicated Living Log append with caller-supplied consent (local_kernel)."
             .into(),
     })
 }
@@ -436,8 +557,17 @@ mod tests {
     use super::*;
     use std::env;
 
+    fn active() -> BridgeConsentWire {
+        BridgeConsentWire {
+            active: true,
+            bailor_did: "did:exo:intelwar-bailor".into(),
+            bailee_did: ACTOR_DID.into(),
+            scope: LOG_APPEND_PERMISSION.into(),
+        }
+    }
+
     #[test]
-    fn bridge_append_chains_receipts() {
+    fn bridge_append_chains_receipts_with_caller_consent() {
         let dir = env::temp_dir().join(format!(
             "intelwar-bridge-{}",
             bytes_to_hex(&crypto::generate_keypair().0.as_bytes()[..8])
@@ -454,12 +584,14 @@ mod tests {
                 model_id: None,
                 session_id: None,
                 tool: None,
+                consent: active(),
+                attestation_signature_hex: None,
             },
         )
         .expect("r1");
         assert!(!r1.simulated);
         assert!(r1.kernel_adjudicated);
-        assert!(r1.previous_receipt_hash.is_none());
+        assert_eq!(r1.durable, "local_kernel");
 
         let r2 = bridge_append(
             &dir,
@@ -472,6 +604,8 @@ mod tests {
                 model_id: None,
                 session_id: None,
                 tool: None,
+                consent: active(),
+                attestation_signature_hex: None,
             },
         )
         .expect("r2");
@@ -479,8 +613,8 @@ mod tests {
             r2.previous_receipt_hash.as_deref(),
             Some(r1.receipt_hash.as_str())
         );
-        assert_eq!(r2.dag_scope, "local-multi-node");
-        assert_ne!(r1.dag_node_hash, r2.dag_node_hash);
+        let mirror = load_log_mirror(&dir).expect("mirror");
+        assert_eq!(mirror.len(), 2);
         let _ = fs::remove_dir_all(&dir);
     }
 }

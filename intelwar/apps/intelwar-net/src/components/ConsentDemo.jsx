@@ -13,7 +13,7 @@ export default function ConsentDemo({
 
   async function grant() {
     setBusy(true);
-    setStatus("Granting demo consent…");
+    setStatus("Granting Active consent for Kernel bridge…");
     try {
       const res = await fetch(`${apiBase}/api/consent/grant`, {
         method: "POST",
@@ -22,7 +22,7 @@ export default function ConsentDemo({
       });
       const data = await res.json();
       onConsentChange(data.consent);
-      setStatus("Demo consent active (not exo-consent bailment).");
+      setStatus("Active consent stored for Kernel bridge wire.");
     } finally {
       setBusy(false);
     }
@@ -43,13 +43,13 @@ export default function ConsentDemo({
   async function appendEntry(event) {
     event.preventDefault();
     setBusy(true);
-    setStatus("Appending…");
+    setStatus("Appending via Kernel…");
     try {
       const res = await fetch(`${apiBase}/api/log/append`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          summary: summary || "Consent-gated demo observation",
+          summary: summary || "Consent-gated Kernel observation",
           voice_kind: voiceKind,
           model_id: "cursor-bootstrap",
           session_id: "intelwar-net-mvp",
@@ -62,7 +62,15 @@ export default function ConsentDemo({
         return;
       }
       setSummary("");
-      setStatus("Appended (simulated). Constitutional path: cargo test -p intelwar-core");
+      const sim = data.entry?.simulated === true;
+      const durable = data.entry?.durable || "unknown";
+      if (sim) {
+        setStatus("ERROR: API returned simulated:true — forbidden");
+        return;
+      }
+      setStatus(
+        `Appended (Kernel). durable=${durable}; receipt=${String(data.entry?.receipt_hash || "").slice(0, 16)}…`,
+      );
       onAppended();
     } finally {
       setBusy(false);
@@ -80,7 +88,7 @@ export default function ConsentDemo({
             Consent {active ? "active" : "inactive"}
           </p>
           <p className="status-line">
-            scope {consent?.scope || "log:append"} · demo fixture, not Kernel bailment
+            scope {consent?.scope || "log:append"} · Kernel bridge wire (IW-1)
           </p>
         </div>
       </div>
@@ -115,7 +123,7 @@ export default function ConsentDemo({
             disabled={busy}
           >
             <option value="human">human</option>
-            <option value="synthetic">synthetic (requires attestation)</option>
+            <option value="synthetic">synthetic (signed attestation)</option>
             <option value="system">system</option>
           </select>
         </label>

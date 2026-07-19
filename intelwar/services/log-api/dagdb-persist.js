@@ -110,5 +110,11 @@ export async function persistBridgeEntryToGateway(bridgeResult, env = process.en
     throw err;
   }
 
-  return { attempted: true, ok: true, status: response.status };
+  return {
+    attempted: true,
+    ok: true,
+    status: response.status,
+    durable: "dagdb",
+    idempotency_key: idempotencyKey,
+  };
 }

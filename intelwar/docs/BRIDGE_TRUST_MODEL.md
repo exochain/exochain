@@ -1,79 +1,64 @@
-# IntelWar Kernel Bridge — Trust Model & Limitations
+# IntelWar Kernel Bridge — Trust Model (Kernel-Required)
 
-**Status:** Binding for PM-001 / PM-002 prototype  
-**Code:** `intelwar/crates/intelwar-core/src/bridge.rs`, bin `intelwar-log-append`  
-**Adjacent caller:** `intelwar/services/log-api` via `INTELWAR_CORE_BIN`
+**Status:** Binding — simulated path **deleted**  
+**Code:** `intelwar/crates/intelwar-core/src/bridge.rs`, bins `intelwar-log-append`, `intelwar-crosscheck-verify`  
+**Caller:** `intelwar/services/log-api` (requires bins)
 
 ## What is real
 
-When `intelwar-log-append` runs successfully:
+Every successful append:
 
-1. Gatekeeper **CGR Kernel** adjudicates `intelwar.log.append` against all eight EXOCHAIN invariants.
-2. IntelWar overlays (IW-1…IW-8) run in `intelwar_core::invariants::enforce_all`.
-3. A signed gatekeeper `Provenance` is verified with trusted DID keys.
-4. A `LivingLogReceipt` is minted; `previous_receipt_hash` chains across invokes.
-5. An `exo_dag` node is created for the entry payload (CBOR).
+1. Caller-supplied **Active** bailment + `ConsentRecord` covering `log:append` (not invented by the bridge).
+2. Gatekeeper **CGR Kernel** adjudicates `intelwar.log.append` against all eight EXOCHAIN invariants.
+3. IntelWar overlays (IW-1…IW-8) run in `intelwar_core::invariants::enforce_all`.
+4. Signed gatekeeper `Provenance` verified with trusted DID keys.
+5. `LivingLogReceipt` chained on `previous_receipt_hash`.
+6. `exo_dag` node for the sealed CBOR entry payload.
+7. Synthetic voice: attestation signature is **Ed25519 over a canonical message** (actor key) — no placeholder bytes.
 
-Responses from this path set `simulated: false` and `kernel_adjudicated: true`.
+Responses set `simulated: false` and `kernel_adjudicated: true`. Success paths **never** return `simulated: true`.
 
-## What is adjacent / fixture
+## Required env (log-api)
 
-| Concern | Reality |
+| Variable | Role |
+|----------|------|
+| `INTELWAR_CORE_BIN` | Path to `intelwar-log-append` — **required** or append → 503 |
+| `INTELWAR_CROSSCHECK_BIN` | Path to `intelwar-crosscheck-verify` — **required** or verify → 503 |
+| `INTELWAR_CORE_STATE_DIR` | Durable bridge state + log mirror (volume in production) |
+
+Optional DAG DB (all-or-nothing when URL set):
+
+- `INTELWAR_DAGDB_GATEWAY_URL` + auth/tenant/namespace/DIDs/write signature
+
+| Durability label | Meaning |
+|------------------|---------|
+| `local_kernel` | Kernel + local multi-node DAG; gateway unset |
+| `dagdb` | Kernel success **and** gateway intake OK |
+
+Kernel success + configured gateway failure → **HTTP 503** (fail closed). Client must not treat the append as DAG-DB durable.
+
+## Consent
+
+| Surface | Reality |
 |---------|---------|
-| Node `/api/consent` | Demo gate only — **not** exo-consent bailment |
-| Kernel bailment | Fixture `BailmentState` + `ConsentRecord` inside the bridge |
-| Actor / root keys | Generated once into `bridge_state.json` (local prototype secrets) |
-| Synthetic attestation | Placeholder bytes until real AVC wiring (PM-004+) |
-| log-api in-memory list | Convenience mirror; not the cryptographic Log |
+| `POST /api/consent/grant` | Stores gatekeeper-compatible consent for the bridge stdin wire |
+| Bridge stdin `consent` | Required; inactive/missing → bridge error → API 503 |
+| Node ≠ inventing Kernel bailment | Bridge uses caller wire only |
 
-## Simulated vs Kernel (log-api)
+## CrossCheck
 
-| `INTELWAR_CORE_BIN` | Behavior |
-|---------------------|----------|
-| Unset | Adjacent append; `simulated: true` |
-| Set + success | Kernel path; `simulated: false` |
-| Set + failure | **HTTP 503 fail-closed** — no simulated fallback |
-
-## DAG scope
-
-| Scope label | Meaning |
-|-------------|---------|
-| `local-multi-node-genesis` | First append in a state dir; empty parent set |
-| `local-multi-node` | Subsequent appends; prior sealed CBOR payloads replayed into an in-memory `Dag`, tip used as parent |
-| Gateway persist (optional) | When `INTELWAR_DAGDB_GATEWAY_URL` is set, log-api POSTs intake to exo-gateway after Kernel success |
-
-### Gateway env (log-api, PM-002)
-
-All required when the URL is set (else append **503 fail-closed**):
-
-- `INTELWAR_DAGDB_GATEWAY_URL`
-- `INTELWAR_DAGDB_AUTH_TOKEN`
-- `INTELWAR_DAGDB_TENANT_ID`
-- `INTELWAR_DAGDB_NAMESPACE`
-- `INTELWAR_DAGDB_OWNER_DID`
-- `INTELWAR_DAGDB_CONTROLLER_DID`
-- `INTELWAR_DAGDB_SUBMITTED_BY_DID`
-- `INTELWAR_DAGDB_WRITE_SIGNATURE`
-
-Unset URL → local multi-node only (no gateway call). Incomplete config with URL set → fail closed at append.
-
-**Note:** Kernel bridge state advances before gateway write. A 503 after Kernel success means the client must not treat the append as durable in DAG DB; local `bridge_state.json` may already contain the receipt/history (retry/idempotency via intake key).
+| Condition | Behavior |
+|-----------|----------|
+| Bin missing | **503** — no structural-only success |
+| Bin + valid Ed25519 | `core_verified: true`, `simulated: false` |
+| Bin + failure | **503** fail-closed |
 
 ## Do not claim
 
-- Production DID/consent lifecycle  
-- Multi-tenant DAG DB authority without gateway config  
-- That adjacent UI “is” the Living Log without Kernel adjudication  
-- Cross-process LogIntegrity without a shared `INTELWAR_CORE_STATE_DIR` (and gateway when required)
-
-## CrossCheck verify (PM-004)
-
-| `INTELWAR_CROSSCHECK_BIN` | Behavior |
-|---------------------------|----------|
-| Unset | log-api structural checks only; `simulated: true`, `core_verified: false` |
-| Set + success | Ed25519 verify via `intelwar-crosscheck-verify`; `core_verified: true` |
-| Set + failure | **HTTP 503 fail-closed** |
+- Full AVC receipt minting (typed follow-on; synthetic uses signed attestation today)
+- Multi-tenant DID/KMS beyond state-dir / Railway secrets
+- That UI proximity alone is constitutional enforcement
 
 ## Related invariants
 
-IW-1 (consent fixtures vs demo), IW-2 (receipts), IW-4 (crosscheck), IW-6 (fail closed), IW-8 (LogIntegrity — local multi-node + optional gateway persist).
+IW-1 (caller consent), IW-2 (receipts), IW-4 (crosscheck), IW-6 (fail closed), IW-8 (LogIntegrity — local multi-node + optional gateway).

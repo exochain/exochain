@@ -52,5 +52,9 @@ path = "src/bin/intelwar_log_append.rs"
 name = "intelwar-crosscheck-verify"
 path = "src/bin/intelwar_crosscheck_verify.rs"
 
+[[bin]]
+name = "intelwar-crosscheck-sign"
+path = "src/bin/intelwar_crosscheck_sign.rs"
+
 [dev-dependencies]
 exo-core = { package = "exochain-core", path = "../../../crates/exo-core", version = "=0.2.3" }

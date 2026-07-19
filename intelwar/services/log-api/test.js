@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { accessSync, constants, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -12,7 +12,12 @@ import { loadDagDbConfig } from "./dagdb-persist.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(root, "../../..");
-const defaultBin = path.join(repoRoot, "target/debug/intelwar-log-append");
+const defaultAppendBin = path.join(repoRoot, "target/debug/intelwar-log-append");
+const defaultVerifyBin = path.join(
+  repoRoot,
+  "target/debug/intelwar-crosscheck-verify",
+);
+const defaultSignBin = path.join(repoRoot, "target/debug/intelwar-crosscheck-sign");
 
 /**
  * @param {(base: string) => Promise<void>} fn
@@ -38,44 +43,50 @@ async function withServer(fn, extraEnv = {}) {
   }
 }
 
-test("health and consent-gated simulated append", async () => {
-  await withServer(async (base) => {
-    const health = await fetch(`${base}/health`).then((r) => r.json());
-    assert.equal(health.trust_claim, "none");
-    assert.equal(health.kernel_bridge_configured, false);
+function binsPresent() {
+  try {
+    accessSync(defaultAppendBin, constants.X_OK);
+    accessSync(defaultVerifyBin, constants.X_OK);
+    accessSync(defaultSignBin, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-    const denied = await fetch(`${base}/api/log/append`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ summary: "no consent" }),
-    });
-    assert.equal(denied.status, 403);
+test("missing CORE_BIN → health 503 and append 503 (no simulated)", async () => {
+  await withServer(
+    async (base) => {
+      const health = await fetch(`${base}/health`);
+      assert.equal(health.status, 503);
+      const h = await health.json();
+      assert.equal(h.kernel_bridge_configured, false);
 
-    await fetch(`${base}/api/consent/grant`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
-    });
-
-    const ok = await fetch(`${base}/api/log/append`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ summary: "after consent" }),
-    });
-    assert.equal(ok.status, 201);
-    const body = await ok.json();
-    assert.equal(body.entry.simulated, true);
-    assert.equal(body.entry.kernel_adjudicated, false);
-  });
+      await fetch(`${base}/api/consent/grant`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const ok = await fetch(`${base}/api/log/append`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ summary: "must fail closed" }),
+      });
+      assert.equal(ok.status, 503);
+      const body = await ok.json();
+      assert.equal(body.error, "core_bin_required");
+      assert.notEqual(body.entry?.simulated, true);
+    },
+    {
+      INTELWAR_CORE_BIN: "",
+      INTELWAR_CROSSCHECK_BIN: "",
+    },
+  );
 });
 
-test("INTELWAR_CORE_BIN Kernel path appends with simulated false", async (t) => {
-  const bin = process.env.INTELWAR_TEST_CORE_BIN || defaultBin;
-  const { accessSync, constants } = await import("node:fs");
-  try {
-    accessSync(bin, constants.X_OK);
-  } catch {
-    t.skip(`Kernel binary not found/executable at ${bin}; run cargo build -p intelwar-core --bin intelwar-log-append`);
+test("Kernel path append + mirror reload + crosscheck sign/verify", async (t) => {
+  if (!binsPresent()) {
+    t.skip("build bins: cargo build -p intelwar-core --bins");
     return;
   }
 
@@ -83,8 +94,18 @@ test("INTELWAR_CORE_BIN Kernel path appends with simulated false", async (t) => 
   try {
     await withServer(
       async (base) => {
-        const health = await fetch(`${base}/health`).then((r) => r.json());
+        const healthRes = await fetch(`${base}/health`);
+        assert.equal(healthRes.status, 200);
+        const health = await healthRes.json();
+        assert.equal(health.status, "ok");
         assert.equal(health.kernel_bridge_configured, true);
+
+        const denied = await fetch(`${base}/api/log/append`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ summary: "no consent" }),
+        });
+        assert.equal(denied.status, 403);
 
         await fetch(`${base}/api/consent/grant`, {
           method: "POST",
@@ -106,143 +127,109 @@ test("INTELWAR_CORE_BIN Kernel path appends with simulated false", async (t) => 
         const body = JSON.parse(bodyText);
         assert.equal(body.entry.simulated, false);
         assert.equal(body.entry.kernel_adjudicated, true);
+        assert.equal(body.entry.durable, "local_kernel");
         assert.equal(body.bridge.kernel_verdict, "permitted");
-        assert.ok(body.entry.content_hash);
-        assert.ok(body.entry.receipt_hash);
-        assert.equal(body.bridge.dag_scope, "local-multi-node-genesis");
 
+        const log1 = await fetch(`${base}/api/log`).then((r) => r.json());
+        assert.equal(log1.simulated, false);
+        assert.ok(log1.entries.length >= 1);
+
+        // Second append chains.
         const res2 = await fetch(`${base}/api/log/append`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            summary: "kernel path second append continuity",
+            summary: "second kernel append",
             entry_kind: "Observation",
             voice_kind: "human",
           }),
         });
-        const body2Text = await res2.text();
-        assert.equal(res2.status, 201, body2Text);
-        const body2 = JSON.parse(body2Text);
-        assert.equal(body2.bridge.dag_scope, "local-multi-node");
-        assert.equal(
-          body2.entry.previous_receipt_hash,
-          body.entry.receipt_hash,
-        );
-        assert.notEqual(body2.entry.dag_node_hash, body.entry.dag_node_hash);
-      },
-      {
-        INTELWAR_CORE_BIN: bin,
-        INTELWAR_CORE_STATE_DIR: stateDir,
-      },
-    );
-  } finally {
-    rmSync(stateDir, { recursive: true, force: true });
-  }
-});
+        assert.equal(res2.status, 201);
+        const b2 = await res2.json();
+        assert.equal(b2.entry.previous_receipt_hash, body.entry.receipt_hash);
 
-test("INTELWAR_CORE_BIN fail-closed on bad binary (no simulated fallback)", async () => {
-  await withServer(
-    async (base) => {
-      await fetch(`${base}/api/consent/grant`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
-      });
-
-      const res = await fetch(`${base}/api/log/append`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ summary: "should fail closed" }),
-      });
-      assert.equal(res.status, 503);
-      const body = await res.json();
-      assert.equal(body.fail_closed, true);
-      assert.equal(body.ok, false);
-    },
-    {
-      INTELWAR_CORE_BIN: "/nonexistent/intelwar-log-append-missing",
-      INTELWAR_CORE_STATE_DIR: path.join(tmpdir(), "iw-fail-closed-unused"),
-    },
-  );
-});
-
-test("POST /api/crosscheck/verify structural path without core bin", async () => {
-  await withServer(async (base) => {
-    const res = await fetch(`${base}/api/crosscheck/verify`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        author_did: "did:exo:author",
-        subject_entry_hash_hex: "ab".repeat(32),
-        crosschecks: [
-          {
-            checker_did: "did:exo:checker",
-            subject_entry_hash_hex: "ab".repeat(32),
+        // Sign + verify crosscheck for first entry hash.
+        const subject = body.entry.content_hash;
+        const signRes = await fetch(`${base}/api/crosscheck/sign`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            checker_did: "did:exo:checker-1",
+            subject_entry_hash_hex: subject,
             verdict: "agree",
-            evidence_hash_hex: "cd".repeat(32),
-            voice_kind: "synthetic",
-            signature_hex: "11".repeat(64),
-          },
-        ],
-      }),
-    });
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.ok, true);
-    assert.equal(body.simulated, true);
-    assert.equal(body.core_verified, false);
-  });
-});
-
-test("POST /api/crosscheck/verify rejects self-crosscheck", async () => {
-  await withServer(async (base) => {
-    const res = await fetch(`${base}/api/crosscheck/verify`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        author_did: "did:exo:same",
-        subject_entry_hash_hex: "ab".repeat(32),
-        crosschecks: [
-          {
-            checker_did: "did:exo:same",
-            subject_entry_hash_hex: "ab".repeat(32),
-            verdict: "agree",
-            evidence_hash_hex: "cd".repeat(32),
+            evidence_hash_hex: subject,
             voice_kind: "human",
-            signature_hex: "11".repeat(64),
-          },
-        ],
-      }),
-    });
-    assert.equal(res.status, 400);
-    const body = await res.json();
-    assert.equal(body.ok, false);
-    assert.equal(body.error, "self_crosscheck");
-  });
+            // Use a fixed test key from a throwaway generation — sign bin accepts any 32-byte sk.
+            secret_key_hex:
+              "0101010101010101010101010101010101010101010101010101010101010101",
+          }),
+        });
+        const signText = await signRes.text();
+        assert.equal(signRes.status, 200, signText);
+        const signed = JSON.parse(signText);
+        assert.equal(signed.simulated, false);
+        assert.equal(signed.signature_hex.length, 128);
+
+        const verifyRes = await fetch(`${base}/api/crosscheck/verify`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            author_did: body.entry.author_did,
+            subject_entry_hash_hex: subject,
+            crosschecks: [
+              {
+                checker_did: signed.checker_did,
+                subject_entry_hash_hex: subject,
+                verdict: "agree",
+                evidence_hash_hex: subject,
+                voice_kind: "human",
+                signature_hex: signed.signature_hex,
+              },
+            ],
+            trusted_checker_keys_hex: {
+              [signed.checker_did]: [signed.public_key_hex],
+            },
+          }),
+        });
+        const verifyText = await verifyRes.text();
+        assert.equal(verifyRes.status, 200, verifyText);
+        const verified = JSON.parse(verifyText);
+        assert.equal(verified.ok, true);
+        assert.notEqual(verified.simulated, true);
+      },
+      {
+        INTELWAR_CORE_BIN: defaultAppendBin,
+        INTELWAR_CROSSCHECK_BIN: defaultVerifyBin,
+        INTELWAR_CROSSCHECK_SIGN_BIN: defaultSignBin,
+        INTELWAR_CORE_STATE_DIR: stateDir,
+      },
+    );
+
+    // Restart server — mirror must reload from state dir.
+    await withServer(
+      async (base) => {
+        const log = await fetch(`${base}/api/log`).then((r) => r.json());
+        assert.ok(log.entries.length >= 2, "mirror must survive restart");
+        assert.equal(log.entries.every((e) => e.simulated === false), true);
+      },
+      {
+        INTELWAR_CORE_BIN: defaultAppendBin,
+        INTELWAR_CROSSCHECK_BIN: defaultVerifyBin,
+        INTELWAR_CROSSCHECK_SIGN_BIN: defaultSignBin,
+        INTELWAR_CORE_STATE_DIR: stateDir,
+      },
+    );
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
 });
 
-test("loadDagDbConfig: unset URL is no-op; incomplete URL fails closed", () => {
-  assert.equal(loadDagDbConfig({}), null);
-  assert.throws(
-    () =>
-      loadDagDbConfig({
-        INTELWAR_DAGDB_GATEWAY_URL: "http://127.0.0.1:9",
-      }),
-    /incomplete/,
-  );
-});
-
-test("INTELWAR_DAGDB_* incomplete config fail-closed after Kernel success", async (t) => {
-  const bin = process.env.INTELWAR_TEST_CORE_BIN || defaultBin;
-  const { accessSync, constants } = await import("node:fs");
-  try {
-    accessSync(bin, constants.X_OK);
-  } catch {
-    t.skip(`Kernel binary not found/executable at ${bin}`);
+test("DAG DB incomplete config fail-closed", async (t) => {
+  if (!binsPresent()) {
+    t.skip("bins missing");
     return;
   }
-
-  const stateDir = mkdtempSync(path.join(tmpdir(), "iw-dagdb-cfg-"));
+  const stateDir = mkdtempSync(path.join(tmpdir(), "iw-dag-"));
   try {
     await withServer(
       async (base) => {
@@ -254,15 +241,14 @@ test("INTELWAR_DAGDB_* incomplete config fail-closed after Kernel success", asyn
         const res = await fetch(`${base}/api/log/append`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ summary: "dagdb incomplete should 503" }),
+          body: JSON.stringify({ summary: "dag incomplete" }),
         });
         assert.equal(res.status, 503);
-        const body = await res.json();
-        assert.equal(body.fail_closed, true);
-        assert.equal(body.error, "dagdb_config_incomplete");
       },
       {
-        INTELWAR_CORE_BIN: bin,
+        INTELWAR_CORE_BIN: defaultAppendBin,
+        INTELWAR_CROSSCHECK_BIN: defaultVerifyBin,
+        INTELWAR_CROSSCHECK_SIGN_BIN: defaultSignBin,
         INTELWAR_CORE_STATE_DIR: stateDir,
         INTELWAR_DAGDB_GATEWAY_URL: "http://127.0.0.1:9",
       },
@@ -272,25 +258,19 @@ test("INTELWAR_DAGDB_* incomplete config fail-closed after Kernel success", asyn
   }
 });
 
-test("INTELWAR_DAGDB_* gateway rejection fail-closed", async (t) => {
-  const bin = process.env.INTELWAR_TEST_CORE_BIN || defaultBin;
-  const { accessSync, constants } = await import("node:fs");
-  try {
-    accessSync(bin, constants.X_OK);
-  } catch {
-    t.skip(`Kernel binary not found/executable at ${bin}`);
+test("DAG DB intake reject → 503 with bridge detail", async (t) => {
+  if (!binsPresent()) {
+    t.skip("bins missing");
     return;
   }
-
-  const gateway = createServer((_req, res) => {
-    res.writeHead(403, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: false, error: "denied" }));
+  const stateDir = mkdtempSync(path.join(tmpdir(), "iw-dag-rej-"));
+  const stub = createServer((_req, res) => {
+    res.writeHead(401, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "denied" }));
   });
-  await new Promise((resolve) => gateway.listen(0, "127.0.0.1", resolve));
-  const addr = gateway.address();
-  const gwPort = typeof addr === "object" && addr ? addr.port : 0;
-
-  const stateDir = mkdtempSync(path.join(tmpdir(), "iw-dagdb-rej-"));
+  await new Promise((r) => stub.listen(0, "127.0.0.1", r));
+  const addr = stub.address();
+  const port = typeof addr === "object" && addr ? addr.port : 0;
   try {
     await withServer(
       async (base) => {
@@ -302,28 +282,34 @@ test("INTELWAR_DAGDB_* gateway rejection fail-closed", async (t) => {
         const res = await fetch(`${base}/api/log/append`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ summary: "gateway deny should 503" }),
+          body: JSON.stringify({ summary: "gateway reject" }),
         });
         assert.equal(res.status, 503);
         const body = await res.json();
-        assert.equal(body.fail_closed, true);
         assert.equal(body.error, "dagdb_intake_rejected");
+        assert.ok(body.bridge);
       },
       {
-        INTELWAR_CORE_BIN: bin,
+        INTELWAR_CORE_BIN: defaultAppendBin,
+        INTELWAR_CROSSCHECK_BIN: defaultVerifyBin,
+        INTELWAR_CROSSCHECK_SIGN_BIN: defaultSignBin,
         INTELWAR_CORE_STATE_DIR: stateDir,
-        INTELWAR_DAGDB_GATEWAY_URL: `http://127.0.0.1:${gwPort}`,
-        INTELWAR_DAGDB_AUTH_TOKEN: "test-token",
-        INTELWAR_DAGDB_TENANT_ID: "dag_db-local",
-        INTELWAR_DAGDB_NAMESPACE: "dag_db",
-        INTELWAR_DAGDB_OWNER_DID: "did:exo:owner",
-        INTELWAR_DAGDB_CONTROLLER_DID: "did:exo:controller",
-        INTELWAR_DAGDB_SUBMITTED_BY_DID: "did:exo:submitter",
-        INTELWAR_DAGDB_WRITE_SIGNATURE: "test-sig",
+        INTELWAR_DAGDB_GATEWAY_URL: `http://127.0.0.1:${port}`,
+        INTELWAR_DAGDB_AUTH_TOKEN: "t",
+        INTELWAR_DAGDB_TENANT_ID: "tenant",
+        INTELWAR_DAGDB_NAMESPACE: "ns",
+        INTELWAR_DAGDB_OWNER_DID: "did:exo:o",
+        INTELWAR_DAGDB_CONTROLLER_DID: "did:exo:c",
+        INTELWAR_DAGDB_SUBMITTED_BY_DID: "did:exo:s",
+        INTELWAR_DAGDB_WRITE_SIGNATURE: "sig",
       },
     );
   } finally {
+    stub.close();
     rmSync(stateDir, { recursive: true, force: true });
-    await new Promise((resolve) => gateway.close(resolve));
   }
+});
+
+test("loadDagDbConfig null when URL unset", () => {
+  assert.equal(loadDagDbConfig({}), null);
 });

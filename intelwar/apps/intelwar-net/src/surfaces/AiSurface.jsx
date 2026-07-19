@@ -17,9 +17,9 @@ export default function AiSurface({ apiBase, entries, onNavigate }) {
             this surface will not invent a Permitted outcome.
           </p>
           <div className="status-row">
-            <span className="status-pill is-sim">Demo: simulated path</span>
+            <span className="status-pill is-kernel">Core verify required</span>
             <span className="status-pill is-neutral">
-              Kernel path requires INTELWAR_CROSSCHECK_BIN
+              sign-demo → INTELWAR_CROSSCHECK_BIN
             </span>
           </div>
           <div className="cta-row">

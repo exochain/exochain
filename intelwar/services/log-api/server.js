@@ -1,17 +1,17 @@
 /**
- * IntelWar Living Log API — adjacent prototype.
+ * IntelWar Living Log API — Kernel-required (no simulated success path).
  *
- * Default path: `simulated: true` (honest adjacent shell).
- * Kernel path: set `INTELWAR_CORE_BIN` to `intelwar-log-append`. When configured,
- * appends fail closed on bridge errors (no silent simulated Permitted).
+ * Requires INTELWAR_CORE_BIN + INTELWAR_CROSSCHECK_BIN or fail-closed 503.
  */
 
 import cors from "cors";
 import express from "express";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { once } from "node:events";
+import path from "node:path";
 import {
+  invokeCoreCrosscheckSign,
   invokeCoreCrosscheckVerify,
   structuralCrosscheckCheck,
 } from "./crosscheck-verify.js";
@@ -21,73 +21,156 @@ import {
 } from "./dagdb-persist.js";
 
 const PORT = Number(process.env.PORT || 8787);
-const CORE_BIN = process.env.INTELWAR_CORE_BIN || "";
-const CROSSCHECK_BIN = process.env.INTELWAR_CROSSCHECK_BIN || "";
+const CORE_BIN = String(process.env.INTELWAR_CORE_BIN || "").trim();
+const CROSSCHECK_BIN = String(process.env.INTELWAR_CROSSCHECK_BIN || "").trim();
+const CROSSCHECK_SIGN_BIN = String(
+  process.env.INTELWAR_CROSSCHECK_SIGN_BIN || "",
+).trim();
 const CORE_STATE_DIR =
   process.env.INTELWAR_CORE_STATE_DIR || ".intelwar-bridge-state";
+const ACTOR_DID = "did:exo:intelwar-actor";
+const BAILOR_DID = "did:exo:intelwar-bailor";
+
 const app = express();
 
 function dagDbConfigured() {
   try {
     return Boolean(loadDagDbConfig());
   } catch {
-    // Incomplete config is still "configured" for health honesty; append will fail closed.
     return Boolean(String(process.env.INTELWAR_DAGDB_GATEWAY_URL || "").trim());
   }
 }
 
-/** @type {Array<Record<string, unknown>>} */
-const logEntries = [
-  {
-    entry_id: "bootstrap-001",
-    entry_kind: "DevelopmentDecision",
-    summary: "Adopt Living Log + 8 IntelWar Invariants on EXOCHAIN v0.2.3",
-    author_did: "did:exo:intelwar-human-1",
-    voice_kind: "human",
-    consent_scope: "log:append",
-    hlc_timestamp: { physical_ms: 1752854400000, logical: 0 },
-    content_hash: "genesis-placeholder-not-cbor",
-    simulated: true,
-    constitution_ref: "INTELWAR_CONSTITUTION.md",
-  },
-];
+function trustClaim() {
+  if (!CORE_BIN || !CROSSCHECK_BIN) return "none";
+  if (dagDbConfigured()) return "kernel_local_and_dagdb_env";
+  return "kernel_local";
+}
+
+/** @returns {Array<Record<string, unknown>>} */
+function loadMirrorEntries() {
+  const statePath = path.join(CORE_STATE_DIR, "bridge_state.json");
+  if (!existsSync(statePath)) return [];
+  try {
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    return Array.isArray(state.log_mirror) ? state.log_mirror : [];
+  } catch {
+    return [];
+  }
+}
 
 /** @type {{ active: boolean, scope: string, bailor: string, bailee: string }} */
 let consent = {
   active: false,
   scope: "log:append",
-  bailor: "did:exo:intelwar-bailor",
-  bailee: "did:exo:intelwar-demo-actor",
+  bailor: BAILOR_DID,
+  bailee: ACTOR_DID,
 };
 
 app.use(cors());
 app.use(express.json({ limit: "64kb" }));
 
 app.get("/health", (_req, res) => {
-  res.json({
-    status: "ok",
+  const ready = Boolean(CORE_BIN && CROSSCHECK_BIN);
+  res.status(ready ? 200 : 503).json({
+    status: ready ? "ok" : "kernel_required",
     surface: "intelwar-log-api",
-    trust_claim: "none",
+    trust_claim: trustClaim(),
     kernel_bridge_configured: Boolean(CORE_BIN),
     crosscheck_verify_configured: Boolean(CROSSCHECK_BIN),
+    crosscheck_sign_configured: Boolean(CROSSCHECK_SIGN_BIN),
     dagdb_persist_configured: dagDbConfigured(),
-    note: CORE_BIN
-      ? "INTELWAR_CORE_BIN set — append uses Kernel bridge (fail closed)."
-      : "Adjacent shell. Set INTELWAR_CORE_BIN to enable Kernel-gated append.",
+    durable_default: dagDbConfigured() ? "dagdb" : "local_kernel",
+    note: ready
+      ? "Kernel + CrossCheck bins required — append/verify fail closed."
+      : "Set INTELWAR_CORE_BIN and INTELWAR_CROSSCHECK_BIN (kernel_required).",
   });
 });
 
+app.post("/api/crosscheck/sign", async (req, res) => {
+  if (!CROSSCHECK_SIGN_BIN) {
+    return res.status(503).json({
+      ok: false,
+      error: "crosscheck_sign_bin_required",
+      fail_closed: true,
+      message: "Set INTELWAR_CROSSCHECK_SIGN_BIN to intelwar-crosscheck-sign",
+    });
+  }
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  try {
+    const signed = await invokeCoreCrosscheckSign(body, CROSSCHECK_SIGN_BIN);
+    return res.status(200).json(signed);
+  } catch (err) {
+    return res.status(503).json({
+      ok: false,
+      error: err.code || "crosscheck_sign_failed",
+      message: err.message || "sign failed",
+      fail_closed: true,
+    });
+  }
+});
+
+/** Sign with server-held demo checker key (never accept client secret_key_hex). */
+app.post("/api/crosscheck/sign-demo", async (req, res) => {
+  if (!CROSSCHECK_SIGN_BIN) {
+    return res.status(503).json({
+      ok: false,
+      error: "crosscheck_sign_bin_required",
+      fail_closed: true,
+    });
+  }
+  const sk = String(process.env.INTELWAR_DEMO_CHECKER_SK_HEX || "").trim();
+  const checkerDid = String(
+    process.env.INTELWAR_DEMO_CHECKER_DID || "did:exo:crosscheck-peer",
+  ).trim();
+  if (sk.length !== 64) {
+    return res.status(503).json({
+      ok: false,
+      error: "demo_checker_key_required",
+      fail_closed: true,
+      message:
+        "Set INTELWAR_DEMO_CHECKER_SK_HEX (64 hex chars) for UI CrossCheck signing",
+    });
+  }
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  try {
+    const signed = await invokeCoreCrosscheckSign(
+      {
+        checker_did: checkerDid,
+        subject_entry_hash_hex: body.subject_entry_hash_hex,
+        verdict: body.verdict || "abstain",
+        evidence_hash_hex:
+          body.evidence_hash_hex || body.subject_entry_hash_hex,
+        voice_kind: body.voice_kind || "synthetic",
+        secret_key_hex: sk,
+      },
+      CROSSCHECK_SIGN_BIN,
+    );
+    return res.status(200).json(signed);
+  } catch (err) {
+    return res.status(503).json({
+      ok: false,
+      error: err.code || "crosscheck_sign_failed",
+      message: err.message || "sign failed",
+      fail_closed: true,
+    });
+  }
+});
+
 app.post("/api/crosscheck/verify", async (req, res) => {
+  if (!CROSSCHECK_BIN) {
+    return res.status(503).json({
+      ok: false,
+      error: "crosscheck_bin_required",
+      fail_closed: true,
+      message: "Set INTELWAR_CROSSCHECK_BIN (no structural-only success).",
+    });
+  }
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const structural = structuralCrosscheckCheck(body);
   if (!structural.ok) {
     return res.status(400).json({ ...structural, fail_closed: true });
   }
-
-  if (!CROSSCHECK_BIN) {
-    return res.status(200).json(structural);
-  }
-
   try {
     const verified = await invokeCoreCrosscheckVerify(body, CROSSCHECK_BIN);
     return res.status(200).json(verified);
@@ -97,23 +180,26 @@ app.post("/api/crosscheck/verify", async (req, res) => {
       error: err.code || "crosscheck_verify_failed",
       message: err.message || "crosscheck verify failed",
       fail_closed: true,
-      note: "INTELWAR_CROSSCHECK_BIN set — refusing structural-only success (IW-6).",
     });
   }
 });
 
 app.get("/api/log", (_req, res) => {
-  const anySimulated = logEntries.some((e) => e.simulated !== false);
+  const entries = loadMirrorEntries();
   res.json({
-    schema_version: 1,
-    simulated: anySimulated,
+    schema_version: 2,
+    simulated: false,
     kernel_bridge_configured: Boolean(CORE_BIN),
-    entries: logEntries,
+    durable_default: dagDbConfigured() ? "dagdb" : "local_kernel",
+    entries,
   });
 });
 
 app.get("/api/consent", (_req, res) => {
-  res.json(consent);
+  res.json({
+    ...consent,
+    note: "Gatekeeper-compatible consent wire for Kernel bridge (not Node demo).",
+  });
 });
 
 app.post("/api/consent/grant", (req, res) => {
@@ -121,10 +207,14 @@ app.post("/api/consent/grant", (req, res) => {
   consent = {
     active: true,
     scope: typeof body.scope === "string" ? body.scope : "log:append",
-    bailor: typeof body.bailor === "string" ? body.bailor : consent.bailor,
-    bailee: typeof body.bailee === "string" ? body.bailee : consent.bailee,
+    bailor: typeof body.bailor === "string" ? body.bailor : BAILOR_DID,
+    bailee: typeof body.bailee === "string" ? body.bailee : ACTOR_DID,
   };
-  res.json({ ok: true, consent, note: "Demo consent only — not exo-consent bailment." });
+  res.json({
+    ok: true,
+    consent,
+    note: "Active consent stored for Kernel bridge stdin wire.",
+  });
 });
 
 app.post("/api/consent/revoke", (_req, res) => {
@@ -137,6 +227,11 @@ app.post("/api/consent/revoke", (_req, res) => {
  * @returns {Promise<Record<string, unknown>>}
  */
 async function invokeKernelBridge(payload) {
+  if (!CORE_BIN) {
+    const err = new Error("INTELWAR_CORE_BIN required (kernel_required)");
+    err.code = "core_bin_required";
+    throw err;
+  }
   const child = spawn(CORE_BIN, [], {
     env: { ...process.env, INTELWAR_CORE_STATE_DIR: CORE_STATE_DIR },
     stdio: ["pipe", "pipe", "pipe"],
@@ -173,15 +268,36 @@ async function invokeKernelBridge(payload) {
     err.detail = parsed;
     throw err;
   }
+  if (parsed.simulated === true) {
+    const err = new Error("kernel bridge returned simulated:true — forbidden");
+    err.code = "simulated_success_forbidden";
+    throw err;
+  }
   return parsed;
 }
 
 app.post("/api/log/append", async (req, res) => {
+  if (!CORE_BIN) {
+    return res.status(503).json({
+      ok: false,
+      error: "core_bin_required",
+      fail_closed: true,
+      message: "INTELWAR_CORE_BIN required — simulated append removed.",
+    });
+  }
+  if (!CROSSCHECK_BIN) {
+    return res.status(503).json({
+      ok: false,
+      error: "crosscheck_bin_required",
+      fail_closed: true,
+      message: "INTELWAR_CROSSCHECK_BIN required alongside Kernel append.",
+    });
+  }
   if (!consent.active) {
     return res.status(403).json({
       ok: false,
       error: "consent_required",
-      message: "Grant demo consent before append (IW-1 ConsentRequired).",
+      message: "Grant Active consent before append (IW-1).",
     });
   }
 
@@ -193,110 +309,79 @@ app.post("/api/log/append", async (req, res) => {
   const voiceKind =
     typeof body.voice_kind === "string" ? body.voice_kind : "human";
 
-  if (CORE_BIN) {
-    try {
-      const bridge = await invokeKernelBridge({
-        summary,
-        entry_kind:
-          typeof body.entry_kind === "string" ? body.entry_kind : "Observation",
-        voice_kind: voiceKind,
-        model_id: body.model_id,
-        session_id: body.session_id,
-        tool: body.tool || "intelwar-log-api",
-        payload:
-          typeof body.payload === "string"
-            ? body.payload
-            : JSON.stringify({ via: "log-api", consent_bailee: consent.bailee }),
-      });
-      let gatewayPersist;
-      try {
-        gatewayPersist = await persistBridgeEntryToGateway(bridge);
-      } catch (persistErr) {
-        return res.status(503).json({
-          ok: false,
-          error: persistErr.code || "dagdb_persist_failed",
-          message: persistErr.message || "DAG DB persist failed",
-          fail_closed: true,
-          note: "INTELWAR_DAGDB_* configured — refusing append without gateway write (IW-6 / PM-002).",
-          bridge,
-        });
-      }
+  try {
+    const bridge = await invokeKernelBridge({
+      summary,
+      entry_kind:
+        typeof body.entry_kind === "string" ? body.entry_kind : "Observation",
+      voice_kind: voiceKind,
+      model_id: body.model_id,
+      session_id: body.session_id,
+      tool: body.tool || "intelwar-log-api",
+      payload:
+        typeof body.payload === "string"
+          ? body.payload
+          : JSON.stringify({ via: "log-api", consent_bailee: consent.bailee }),
+      consent: {
+        active: consent.active,
+        bailor_did: consent.bailor,
+        bailee_did: consent.bailee,
+        scope: consent.scope,
+      },
+    });
 
-      const entry = {
-        entry_id: bridge.entry_id,
-        entry_kind:
-          typeof body.entry_kind === "string" ? body.entry_kind : "Observation",
-        summary: bridge.summary,
-        author_did: bridge.author_did,
-        voice_kind: bridge.voice_kind,
-        consent_scope: consent.scope,
-        content_hash: bridge.content_hash,
-        dag_node_hash: bridge.dag_node_hash,
-        receipt_hash: bridge.receipt_hash,
-        previous_receipt_hash: bridge.previous_receipt_hash,
-        simulated: false,
-        kernel_adjudicated: true,
-        dag_scope: bridge.dag_scope,
-        gateway_persisted: Boolean(gatewayPersist?.attempted),
-        constitution_ref: "INTELWAR_CONSTITUTION.md",
-      };
-      logEntries.push(entry);
-      return res.status(201).json({
-        ok: true,
-        entry,
-        bridge,
-        gateway_persist: gatewayPersist,
-      });
-    } catch (err) {
+    let gatewayPersist;
+    let durable = "local_kernel";
+    try {
+      gatewayPersist = await persistBridgeEntryToGateway(bridge);
+      if (gatewayPersist?.attempted && gatewayPersist?.ok) {
+        durable = "dagdb";
+      }
+    } catch (persistErr) {
       return res.status(503).json({
         ok: false,
-        error: err.code || "kernel_bridge_failed",
-        message: err.message || "Kernel bridge failed",
+        error: persistErr.code || "dagdb_persist_failed",
+        message: persistErr.message || "DAG DB persist failed",
         fail_closed: true,
-        note: "INTELWAR_CORE_BIN is set — refusing simulated fallback (IW-6).",
+        durable: "local_kernel_not_acked",
+        note: "INTELWAR_DAGDB_* configured — refusing durable claim without gateway write.",
+        bridge,
       });
     }
+
+    const entry = {
+      entry_id: bridge.entry_id,
+      entry_kind:
+        typeof body.entry_kind === "string" ? body.entry_kind : "Observation",
+      summary: bridge.summary,
+      author_did: bridge.author_did,
+      voice_kind: bridge.voice_kind,
+      consent_scope: consent.scope,
+      content_hash: bridge.content_hash,
+      dag_node_hash: bridge.dag_node_hash,
+      receipt_hash: bridge.receipt_hash,
+      previous_receipt_hash: bridge.previous_receipt_hash,
+      simulated: false,
+      kernel_adjudicated: true,
+      durable,
+      dag_scope: bridge.dag_scope,
+      gateway_persisted: Boolean(gatewayPersist?.attempted),
+      constitution_ref: "INTELWAR_CONSTITUTION.md",
+    };
+    return res.status(201).json({
+      ok: true,
+      entry,
+      bridge,
+      gateway_persist: gatewayPersist,
+    });
+  } catch (err) {
+    return res.status(503).json({
+      ok: false,
+      error: err.code || "kernel_bridge_failed",
+      message: err.message || "Kernel bridge failed",
+      fail_closed: true,
+    });
   }
-
-  const agentAttestation =
-    voiceKind === "synthetic"
-      ? {
-          model_id: body.model_id || "unspecified",
-          session_id: body.session_id || "unspecified",
-          tool: body.tool || "cursor-agent",
-          note: "Adjacent attestation placeholder — set INTELWAR_CORE_BIN for Kernel path",
-        }
-      : undefined;
-
-  const entry = {
-    entry_id: randomUUID(),
-    entry_kind:
-      typeof body.entry_kind === "string" ? body.entry_kind : "Observation",
-    summary,
-    author_did:
-      typeof body.author_did === "string" ? body.author_did : consent.bailee,
-    voice_kind: voiceKind,
-    independence: voiceKind === "human" ? "independent" : undefined,
-    review_order: voiceKind === "human" ? "first_order" : undefined,
-    agent_attestation: agentAttestation,
-    consent_scope: consent.scope,
-    hlc_timestamp: {
-      physical_ms: Date.now(),
-      logical: logEntries.length,
-    },
-    content_hash: `sim-${randomUUID()}`,
-    simulated: true,
-    kernel_adjudicated: false,
-    constitution_ref: "INTELWAR_CONSTITUTION.md",
-  };
-
-  logEntries.push(entry);
-  return res.status(201).json({
-    ok: true,
-    entry,
-    warning:
-      "simulated:true — set INTELWAR_CORE_BIN to intelwar-log-append for Kernel adjudication.",
-  });
 });
 
 app.listen(PORT, () => {
@@ -305,7 +390,7 @@ app.listen(PORT, () => {
     JSON.stringify({
       event: "intelwar_log_api_listen",
       port: PORT,
-      trust_claim: "none",
+      trust_claim: trustClaim(),
       kernel_bridge_configured: Boolean(CORE_BIN),
       crosscheck_verify_configured: Boolean(CROSSCHECK_BIN),
       dagdb_persist_configured: dagDbConfigured(),
