@@ -193,7 +193,7 @@ Still not production-complete: dual consent model; plaintext fixture keys in `br
 | PM-004 | .ai crosscheck → CrossCheckResult verify | Agent | **DONE** | Ed25519 verify + log-api + .ai panel |
 | PM-005 | .tv provenance viewer over receipts | Agent | **DONE** | Receipt-chain viewer in intelwar-net |
 | PM-006 | ExoForge-style issue triage + IW labels | Agent | **DONE** | `iw:*` / `panel:*` labels + tests |
-| PM-007 | Railway deploy intelwar.net fail-closed | Agent | **DONE** | Live on Railway.app; custom domain DNS pending |
+| PM-007 | Railway deploy intelwar.net fail-closed | Agent | **DONE** | Live at https://intelwar.net (+ www); API on Railway.app subdomain |
 | MKT-* | Marketing / positioning / public narrative | Human+Agent | **HOLD** | Not authorized until human opens |
 
 Optional follow-ups (not authorized as new major PM): live gateway IT against real pool; tighten synthetic attestation; secret-storage policy for bridge state.
@@ -351,7 +351,7 @@ Ideally only:
 
 ### 8.3 Decisions pending human
 
-1. Point DNS for `intelwar.net` / `www` at Railway and re-run `railway domain intelwar.net` (CLI hit Unauthorized mid-session).  
+1. ~~Point DNS for `intelwar.net` / `www` at Railway~~ — DONE (Cloudflare CNAME + `_railway-verify` TXT; both verified HTTPS 200).  
 2. Are disk fixture keys / Kernel bridge acceptable on public Railway, or keep simulated-only?  
 3. Remain Node consent forever adjacent-only, or eventually bind to Kernel bailment?  
 4. Require live exo-gateway CI evidence before any production trust claim?  
@@ -660,3 +660,58 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - tool: cursor-agent
 - model_id: cursor-grok-4.5
 - summary: Deployed IntelWar public adjacent shell to Railway with fail-closed API wiring
+
+## Session 2026-07-18 20:28 EDT — Cloudflare DNS for intelwar.net
+
+**Authorization context:**
+- Authorized item: custom domain DNS setup (human: domains at Cloudflare; approve wrangler)
+- Hold status: holding on marketing, push/PR to main, Kernel/DAG secrets on public
+
+**Changes Made:**
+- Wrangler OAuth login succeeded (`bob@bobstewart.com`) — OAuth is zone:read only (cannot write DNS)
+- Used Cloudflare Code Mode MCP token (`dns_records:edit`) to upsert DNS
+- Railway custom domains recreated; Cloudflare set to current CNAME targets + `_railway-verify` TXT (required — missing TXT → Railway edge 404)
+- Certs issued; both domains `verified=true`; HTTPS 200 IntelWar Living Log
+- Updated `docs/RAILWAY_DEPLOY.md` live URLs + DNS table
+
+**Live:**
+- https://intelwar.net
+- https://www.intelwar.net
+- API unchanged: https://log-api-production-0798.up.railway.app
+
+**Open Questions / Decisions for Human:**
+- Enable Kernel bridge secrets on public, or keep simulated?
+- Authorize marketing?
+- Commit DNS doc updates on `intelwar`?
+
+**Recommended Next Action:**
+- Human: marketing go/no-go; optional Kernel on public; commit handoff/deploy doc updates if desired
+
+**Agent attestation (IW-3):**
+- voice_kind: synthetic
+- tool: cursor-agent
+- model_id: cursor-grok-4.5
+- summary: Wired Cloudflare DNS + Railway verify TXT; intelwar.net and www serving HTTPS 200
+
+## Session 2026-07-18 21:18 EDT — Public shell UX redesign
+
+**Authorization context:**
+- Authorized item: human critique of lumped ugly single-page shell (nav/footer/graphics missing)
+- Hold status: marketing narrative still HOLD for claims; UX chrome treated as authorized fix
+
+**Changes Made:**
+- Split .net / .ai / .tv into distinct surfaces (hash + future host routing), not one scroll dump
+- Added SiteNav, SiteFooter, animated ArenaMark SVG, cool-archive visual system (Syne/Figtree)
+- Redeployed `intelwar-net` to Railway production
+
+**Validation:** `npm test` pass; HTTPS 200 on intelwar.net
+
+**Open Questions / Decisions for Human:**
+- Point real DNS for intelwar.ai / intelwar.tv at this service (host auto-routes)?
+- Commit + continue visual polish / marketing copy?
+
+**Agent attestation (IW-3):**
+- voice_kind: synthetic
+- tool: cursor-agent
+- model_id: cursor-grok-4.5
+- summary: Redesigned public shell into navigable surfaces with mark, nav, footer; redeployed

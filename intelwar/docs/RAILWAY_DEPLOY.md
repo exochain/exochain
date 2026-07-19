@@ -10,11 +10,22 @@
 
 | Surface | URL |
 |---------|-----|
-| Web shell | https://intelwar-net-production.up.railway.app |
+| Web shell (custom) | https://intelwar.net · https://www.intelwar.net |
+| Web shell (Railway) | https://intelwar-net-production.up.railway.app |
 | Log API | https://log-api-production-0798.up.railway.app |
-| Custom domain | `intelwar.net` — pending DNS + `railway domain intelwar.net --service intelwar-net` (requires authenticated CLI) |
 
 Dashboard: https://railway.com/project/e451ab4d-a7f7-4a20-9c76-d652774e548b
+
+### Custom domain DNS (Cloudflare, DNS only / grey cloud)
+
+| Type | Name | Content |
+|------|------|---------|
+| CNAME | `@` (`intelwar.net`) | Railway-assigned `*.up.railway.app` target (see service Settings → Networking) |
+| CNAME | `www` | Railway-assigned `*.up.railway.app` target for `www` |
+| TXT | `_railway-verify` | `railway-verify=…` token from Railway (required or edge returns 404) |
+| TXT | `_railway-verify.www` | `railway-verify=…` token for www |
+
+Keep records **DNS only** (not proxied) so Railway can issue/serve TLS. After recreate, refresh CNAME + TXT targets from Railway before editing Cloudflare.
 
 ## Services
 

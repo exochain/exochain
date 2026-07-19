@@ -1,58 +1,25 @@
-/* ==========================================================================
-   IntelWar — winning mashup styles.css
-   Foundation doctrine: "Harvey Charcoal" (color tokens #18, typography #17,
-   motion #19). Interaction/data layer: "Brutalist Provenance Ledger"
-   (primary/ghost/ink CTAs #5/#6/#15, panel #9, log row #10, badge #11),
-   reconciled onto the Harvey token set per coherence-pass rules.
-   "Editorial Institute" and "Precision Cartography" are excluded — both
-   hard-fail the typeface rule three-plus times (serif-as-brand-voice /
-   Inter-as-hero, respectively) and are disqualified from the mashup.
-   See /tmp/intelwar-winners.md for the full per-element rationale.
-   ========================================================================== */
+/* IntelWar public shell — cool archive / command parchment
+   Avoids: purple gradients, warm cream+terracotta, broadsheet, dark-mode glow */
 
 :root {
-  /* grounds — deep, near-black, layered rather than flat */
-  --ink-0: #0a0b0d; /* page ground */
-  --ink-1: #0e1013; /* section / footer ground */
-  --ink-2: #12141a; /* panel / card elevation */
-  --ink-3: #171a21; /* hover / active elevation */
-
-  /* hairlines — replace "borders" as a concept; almost never opaque */
-  --hairline: rgba(237, 237, 232, 0.09);
-  --hairline-strong: rgba(237, 237, 232, 0.16);
-  --hairline-accent: rgba(125, 143, 199, 0.38);
-
-  /* text — off-white, never pure #fff, three weights of quiet */
-  --paper: #edede8;
-  --paper-dim: rgba(237, 237, 232, 0.66);
-  /* CORRECTED: was 0.4 (composited to ~3.3:1, fails WCAG AA 4.5:1 for
-     normal text). Raised to 0.58 — verified >=5.7:1 against --ink-0,
-     --ink-1 and --ink-2. This single fix is what makes the lede, section
-     support copy, meta/provenance line, footer and form labels legible. */
-  --paper-faint: rgba(237, 237, 232, 0.58);
-
-  /* the one accent — muted indigo, spent on purpose only */
-  --accent: #3d4f7c; /* solid fills: hover/focus states, rails */
-  --accent-strong: #4d61a3; /* hover state of accent fills */
-  --accent-text: #8d9dcf; /* accent used as text/links (contrast-safe on ink-0) */
-  --accent-wash: rgba(61, 79, 124, 0.14); /* subtle backgrounds */
-
-  /* type */
-  --font-display: "Instrument Sans", "Charter", Georgia, serif;
-  --font-body: "Instrument Sans", -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "IBM Plex Mono", "SFMono-Regular", monospace;
-
-  /* geometry */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 14px;
-
-  /* motion — CORRECTED: --dur-reveal was 640ms, over the 200-400ms
-     entrance/reveal budget; brought down to 380ms. --dur-micro added for
-     hover/focus transitions (120-200ms budget). */
-  --ease-quiet: cubic-bezier(0.16, 1, 0.3, 1);
-  --dur-micro: 160ms;
-  --dur-reveal: 380ms;
+  --ground: #e6e8e4;
+  --ground-deep: #d8dbd5;
+  --ink: #141816;
+  --ink-soft: rgba(20, 24, 22, 0.72);
+  --ink-faint: rgba(20, 24, 22, 0.55);
+  --panel: #f3f4f1;
+  --panel-edge: rgba(20, 24, 22, 0.12);
+  --accent: #1f6b5a;
+  --accent-strong: #155546;
+  --accent-wash: rgba(31, 107, 90, 0.1);
+  --steel: #2a6f97;
+  --font-display: "Syne", "Avenir Next", "Segoe UI", sans-serif;
+  --font-body: "Figtree", "Avenir Next", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --radius: 6px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur: 360ms;
+  --nav-h: 4.25rem;
 }
 
 * {
@@ -68,131 +35,280 @@ body,
 
 body {
   font-family: var(--font-body);
-  color: var(--paper);
+  color: var(--ink);
   background:
-    linear-gradient(180deg, rgba(61, 79, 124, 0.06) 0%, transparent 42%),
-    var(--ink-0);
+    radial-gradient(ellipse 90% 55% at 85% -10%, rgba(31, 107, 90, 0.12), transparent 55%),
+    linear-gradient(180deg, #eceee9 0%, var(--ground) 38%, var(--ground-deep) 100%);
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
 }
 
 a {
-  color: var(--accent-text);
-  text-decoration-color: var(--hairline-accent);
+  color: var(--accent-strong);
 }
 
 ::selection {
   background: var(--accent-wash);
-  color: var(--paper);
+  color: var(--ink);
 }
 
-::-webkit-scrollbar {
-  width: 10px;
+code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: rgba(20, 24, 22, 0.06);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
 }
 
-::-webkit-scrollbar-track {
-  background: var(--ink-0);
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
-::-webkit-scrollbar-thumb {
-  background: var(--ink-3);
-  border-radius: var(--radius-sm);
-}
+/* ---------- Nav ---------- */
 
-.shell {
-  width: min(1100px, calc(100% - 2rem));
-  margin: 0 auto;
-  padding: 3rem 0 4rem;
-  counter-reset: section-index;
-}
-
-/* ---------------------------------------------------------------------
-   Hero
-   --------------------------------------------------------------------- */
-
-.brand-hero {
-  position: relative;
-  min-height: min(72vh, 640px);
+.site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 40;
   display: grid;
-  align-content: end;
-  gap: 1.1rem;
-  padding: 2.5rem 0 3rem;
-  overflow: hidden;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1rem;
+  min-height: var(--nav-h);
+  padding: 0.65rem clamp(1rem, 3vw, 2rem);
+  background: rgba(243, 244, 241, 0.88);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--panel-edge);
 }
 
-.brand-hero::before {
-  content: "";
+.nav-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.2rem;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.nav-mark {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 3px 3px 0 0 rgba(42, 111, 151, 0.45);
+}
+
+.nav-surfaces {
+  display: flex;
+  justify-content: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.nav-surface {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--radius);
+  padding: 0.45rem 0.85rem;
+  display: grid;
+  gap: 0.05rem;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink-soft);
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.nav-surface:hover {
+  background: rgba(20, 24, 22, 0.04);
+  color: var(--ink);
+}
+
+.nav-surface.is-active {
+  background: var(--panel);
+  border-color: var(--panel-edge);
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.nav-surface-label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.nav-surface-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.nav-skip {
   position: absolute;
-  inset: -8% -12% auto -12%;
-  height: 78%;
-  background:
-    linear-gradient(155deg, rgba(18, 20, 26, 0.98) 0%, rgba(10, 11, 13, 0.55) 55%, transparent 100%),
-    radial-gradient(ellipse 80% 60% at 18% 30%, rgba(61, 79, 124, 0.22), transparent 70%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'%3E%3Cpath d='M0 24h48M24 0v48' stroke='%23edede808' stroke-width='1'/%3E%3C/svg%3E");
-  z-index: 0;
-  pointer-events: none;
+  left: -999px;
+  top: 0;
 }
 
-.brand-hero > * {
-  position: relative;
-  z-index: 1;
-  max-width: 38rem;
+.nav-skip:focus {
+  left: 1rem;
+  top: 1rem;
+  background: var(--panel);
+  padding: 0.5rem 0.75rem;
+  z-index: 50;
+}
+
+/* ---------- Hero ---------- */
+
+main {
+  flex: 1;
+  width: min(1120px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 1.5rem 0 3rem;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: clamp(1.5rem, 4vw, 3rem);
+  align-items: center;
+  min-height: min(72vh, 620px);
+  padding: 1.5rem 0 2.5rem;
+}
+
+.hero-compact {
+  min-height: auto;
+  padding: 1.25rem 0 1.75rem;
+}
+
+.hero-copy {
+  display: grid;
+  gap: 0.85rem;
+  max-width: 36rem;
+  animation: rise var(--dur) var(--ease) both;
+}
+
+.eyebrow {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
 }
 
 .brand {
-  position: relative;
-  display: inline-block;
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: clamp(2.6rem, 6vw, 3.8rem);
-  letter-spacing: -0.01em;
-  line-height: 1;
-  color: var(--paper);
   margin: 0;
-  animation: reveal var(--dur-reveal) var(--ease-quiet) both;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(3.2rem, 8vw, 5.2rem);
+  line-height: 0.92;
+  letter-spacing: -0.035em;
+  color: var(--ink);
 }
 
-.brand::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  bottom: -0.35rem;
-  width: 2.75rem;
-  height: 2px;
-  background: var(--accent);
+.brand-sm {
+  font-size: clamp(2.4rem, 6vw, 3.6rem);
 }
 
 .headline {
-  font-family: var(--font-display);
-  font-weight: 400;
-  font-size: clamp(1.4rem, 2.6vw, 1.9rem);
-  line-height: 1.3;
-  color: var(--paper-dim);
   margin: 0;
-  animation: reveal var(--dur-reveal) 60ms var(--ease-quiet) both;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: clamp(1.35rem, 2.8vw, 1.85rem);
+  line-height: 1.25;
+  color: var(--ink-soft);
 }
 
 .lede {
   margin: 0;
-  max-width: 34rem;
-  font-size: 1.02rem;
+  font-size: 1.05rem;
   line-height: 1.6;
-  color: var(--paper-faint);
-  animation: reveal var(--dur-reveal) 120ms var(--ease-quiet) both;
+  color: var(--ink-faint);
+  max-width: 34rem;
 }
 
 .cta-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  margin-top: 0.6rem;
-  animation: reveal var(--dur-reveal) 180ms var(--ease-quiet) both;
+  gap: 0.7rem;
+  margin-top: 0.35rem;
 }
 
-@keyframes reveal {
+.hero-visual {
+  position: relative;
+  min-height: 280px;
+  border: 1px solid var(--panel-edge);
+  border-radius: calc(var(--radius) + 4px);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.55), transparent 50%),
+    var(--panel);
+  overflow: hidden;
+  animation: rise calc(var(--dur) + 80ms) 80ms var(--ease) both;
+}
+
+.hero-visual-sm {
+  min-height: 220px;
+}
+
+.arena-mark {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.arena-orbits .orbit {
+  transform-origin: 360px 240px;
+  animation: spin 28s linear infinite;
+}
+
+.arena-orbits .orbit-b {
+  animation-duration: 18s;
+  animation-direction: reverse;
+}
+
+.arena-orbits .orbit-c {
+  animation-duration: 11s;
+}
+
+.chain-path {
+  stroke-dasharray: 12 10;
+  animation: dash 4.5s linear infinite;
+}
+
+.node {
+  transform-origin: center;
+  animation: pulse 2.8s var(--ease) infinite;
+}
+
+.node-1 { animation-delay: 0.2s; }
+.node-2 { animation-delay: 0.4s; }
+.node-3 { animation-delay: 0.6s; }
+.node-4 { animation-delay: 0.8s; }
+.node-5 { animation-delay: 1s; }
+.node-6 { animation-delay: 1.2s; }
+
+.arena-scan {
+  transform-origin: 360px 240px;
+  animation: sweep 6s var(--ease) infinite;
+}
+
+.scan-dot {
+  animation: blink 1.4s ease-in-out infinite;
+}
+
+@keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(14px);
   }
   to {
     opacity: 1;
@@ -200,40 +316,77 @@ a {
   }
 }
 
-/* ---------------------------------------------------------------------
-   Buttons — grayscale by default, accent appears only on hover/focus.
-   Winning idea from "Brutalist Provenance Ledger" (#5/#6/#15): the
-   accent means "you can act here," never "look at me." Reconciled onto
-   the foundation's --paper/--ink-0/--accent tokens and sans-case label
-   typography (mono is reserved for data/provenance per the foundation's
-   own typography doctrine, so button labels stay in --font-body, not
-   uppercase mono).
-   --------------------------------------------------------------------- */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes dash {
+  to {
+    stroke-dashoffset: -120;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes sweep {
+  0% {
+    transform: rotate(-18deg);
+    opacity: 0.35;
+  }
+  50% {
+    transform: rotate(42deg);
+    opacity: 0.9;
+  }
+  100% {
+    transform: rotate(108deg);
+    opacity: 0.25;
+  }
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ---------- Buttons ---------- */
 
 button,
 .button {
   appearance: none;
   border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  padding: 0.68rem 1.2rem;
+  border-radius: var(--radius);
+  padding: 0.72rem 1.15rem;
   font: inherit;
-  font-weight: 500;
-  font-size: 0.94rem;
+  font-weight: 600;
+  font-size: 0.95rem;
   cursor: pointer;
   transition:
-    background var(--dur-micro) var(--ease-quiet),
-    border-color var(--dur-micro) var(--ease-quiet),
-    color var(--dur-micro) var(--ease-quiet),
-    transform var(--dur-micro) var(--ease-quiet);
+    background 160ms var(--ease),
+    border-color 160ms var(--ease),
+    color 160ms var(--ease),
+    transform 160ms var(--ease);
 }
 
-button:hover,
-.button:hover {
+button:hover {
   transform: translateY(-1px);
 }
 
 button:focus-visible,
-.button:focus-visible,
 input:focus-visible,
 select:focus-visible {
   outline: 2px solid var(--accent);
@@ -241,479 +394,408 @@ select:focus-visible {
 }
 
 button.primary {
-  background: var(--paper);
-  color: var(--ink-0);
-  border-color: var(--paper);
+  background: var(--ink);
+  color: var(--panel);
+  border-color: var(--ink);
 }
 
 button.primary:hover,
 button.primary:focus-visible {
-  border-color: var(--accent);
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
 }
 
 button.ghost {
   background: transparent;
-  border-color: var(--hairline-strong);
-  color: var(--paper);
+  border-color: var(--panel-edge);
+  color: var(--ink);
 }
 
 button.ghost:hover,
 button.ghost:focus-visible {
   border-color: var(--accent);
-  color: var(--paper);
+  color: var(--accent-strong);
 }
 
 button.ink {
-  background: var(--paper);
-  color: var(--ink-0);
-  border-color: var(--paper);
+  background: var(--accent);
+  color: #f5f7f4;
+  border-color: var(--accent);
   padding: 0.6rem 1rem;
 }
 
-button.ink:hover,
-button.ink:focus-visible {
-  border-color: var(--accent);
+button.ink:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
 }
 
 button.ink.secondary {
   background: transparent;
-  border-color: var(--hairline-strong);
-  color: var(--accent-text);
+  color: var(--accent-strong);
+  border-color: rgba(31, 107, 90, 0.35);
 }
 
-button.ink.secondary:hover,
-button.ink.secondary:focus-visible {
-  border-color: var(--accent);
-  color: var(--paper);
-}
-
-/* ---------------------------------------------------------------------
-   Sections
-   --------------------------------------------------------------------- */
+/* ---------- Sections / panels ---------- */
 
 .section {
-  margin-top: 3rem;
-  counter-increment: section-index;
+  margin-top: 2.75rem;
+}
+
+.section-head {
+  margin-bottom: 1.1rem;
+  max-width: 40rem;
 }
 
 .section h2 {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
+  margin: 0 0 0.45rem;
   font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 1.55rem;
-  color: var(--paper);
-  margin: 0 0 0.5rem;
+  font-weight: 700;
+  font-size: 1.7rem;
+  letter-spacing: -0.02em;
 }
 
-.section h2::before {
-  content: "";
-  display: inline-block;
-  width: 20px;
-  height: 2px;
-  background: var(--accent);
-  flex: 0 0 auto;
-}
-
-.section p.support {
-  margin: 0 0 1.5rem;
-  max-width: 38rem;
-  font-size: 0.98rem;
+.support {
+  margin: 0;
+  color: var(--ink-faint);
   line-height: 1.55;
-  color: var(--paper-faint);
 }
-
-/* ---------------------------------------------------------------------
-   Living Log panel — winning idea from "Brutalist Provenance Ledger"
-   (#9): a header-strip label turns the container into a labeled
-   instrument rather than a generic bordered card. Reconciled onto the
-   foundation's --ink-2 elevation and --radius-md (kept non-pill, but
-   not razor-sharp either, to stay one consistent geometry system rather
-   than introducing a second, competing radius scale).
-   --------------------------------------------------------------------- */
 
 .panel {
-  position: relative;
-  background: var(--ink-2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: calc(var(--radius) + 2px);
   padding: 1.25rem;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset;
 }
 
-#living-log .panel,
-#tv-provenance .panel,
-#ai-crosscheck .panel,
-#consent-demo .panel {
-  padding: 1.75rem 1.25rem 1.25rem;
-}
-
-#living-log .panel::before,
-#tv-provenance .panel::before,
-#ai-crosscheck .panel::before,
-#consent-demo .panel::before {
-  position: absolute;
-  top: 0.7rem;
-  left: 1.25rem;
+.panel[data-panel]::before {
+  content: attr(data-panel);
+  display: inline-block;
+  margin: -0.35rem 0 0.85rem;
+  padding: 0.2rem 0.5rem;
   font-family: var(--font-mono);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   letter-spacing: 0.08em;
-  color: var(--paper-faint);
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-radius: 3px;
 }
 
-#living-log .panel::before {
-  content: "LOG // APPEND-ONLY";
+.status-line {
+  margin: 0;
+  color: var(--ink-faint);
 }
-
-#tv-provenance .panel::before {
-  content: "TV // RECEIPT CHAIN";
-}
-
-#ai-crosscheck .panel::before {
-  content: "AI // CROSSCHECK";
-}
-
-#consent-demo .panel::before {
-  content: "CONSENT // DEMO SCOPE";
-}
-
-code,
-.mono {
-  font-family: var(--font-mono);
-  font-size: 0.92em;
-  color: var(--accent-text);
-}
-
-.lede code,
-.support code {
-  font-size: 0.9em;
-}
-
-/* ---------------------------------------------------------------------
-   Log entries — winning idea from Brutal (#10): the left gutter stays
-   transparent at rest and turns accent-colored only on hover/focus, so
-   color always means "you can act here."
-   --------------------------------------------------------------------- */
 
 .log-list {
   list-style: none;
   margin: 0;
   padding: 0;
+  display: grid;
+  gap: 0.65rem;
 }
 
 .log-item {
-  display: grid;
-  gap: 0.4rem;
-  padding: 0.9rem 0 0.9rem 0.75rem;
-  border-bottom: 1px solid var(--hairline);
-  border-left: 2px solid transparent;
-  transition: border-left-color var(--dur-micro) var(--ease-quiet);
-}
-
-.log-item:last-child {
-  border-bottom: none;
-}
-
-.log-item:hover,
-.log-item:focus-within {
-  border-left-color: var(--accent);
-}
-
-.log-item strong {
-  color: var(--paper);
-  font-weight: 500;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.45);
 }
 
 .log-item .meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 0 0.9rem;
+  gap: 0.65rem 1rem;
+  margin-top: 0.45rem;
   font-family: var(--font-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.01em;
-  color: var(--paper-faint);
+  font-size: 0.75rem;
+  color: var(--ink-faint);
 }
-
-.log-item .meta span:not(:last-child)::after {
-  content: "\00a0\00b7\00a0";
-  color: var(--hairline-strong);
-}
-
-/* ---------------------------------------------------------------------
-   Simulated badge — winning idea from Brutal (#11): bracket the label
-   instead of coloring it. Zero color signal, still legible, never reads
-   as an alarm. Reconciled onto the foundation's neutral text/border
-   tiers and IBM Plex Mono (already shared by both doctrines here).
-   --------------------------------------------------------------------- */
 
 .badge {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
+  padding: 0.12rem 0.4rem;
+  border-radius: 3px;
   font-family: var(--font-mono);
-  font-size: 0.66rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--paper-dim);
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-sm);
-  padding: 0.1rem 0.4rem;
-  margin-right: 0.4rem;
+  background: rgba(42, 111, 151, 0.12);
+  color: var(--steel);
+  vertical-align: middle;
 }
 
-.badge::before {
-  content: "[";
-  margin-right: 0.15rem;
-  color: var(--hairline-strong);
-}
+/* Consent / forms (existing components) */
 
-.badge::after {
-  content: "]";
-  margin-left: 0.15rem;
-  color: var(--hairline-strong);
-}
-
-/* ---------------------------------------------------------------------
-   Status line — shared by the Living Log's loading/error/empty states
-   and by the consent-demo's status + append messages (all render
-   through the same existing <p className="status-line"> element, so
-   one generic treatment has to serve all of them well).
-   --------------------------------------------------------------------- */
-
-.status-line {
-  font-family: var(--font-mono);
-  font-size: 0.84rem;
-  color: var(--paper-dim);
-  border-left: 2px solid var(--accent);
-  padding: 0.1rem 0 0.1rem 0.75rem;
-  margin: 0.9rem 0 0;
-  line-height: 1.5;
-}
-
-.status-line:empty {
-  display: none;
-}
-
-.status-line strong {
-  color: var(--paper);
-  font-weight: 600;
-}
-
-/* ---------------------------------------------------------------------
-   Forms
-   --------------------------------------------------------------------- */
-
-.form-row {
+.consent-demo,
+.crosscheck-panel,
+.provenance-viewer {
   display: grid;
   gap: 1rem;
-  max-width: 34rem;
-  margin-top: 1.1rem;
 }
 
-.form-row label {
+.consent-demo label,
+.crosscheck-panel label {
   display: grid;
-  gap: 0.4rem;
-  font-size: 0.8rem;
-  color: var(--paper-faint);
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
 }
 
 input,
-textarea,
-select {
-  width: 100%;
-  background: var(--ink-1);
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-sm);
-  padding: 0.65rem 0.8rem;
+select,
+textarea {
   font: inherit;
-  color: var(--paper);
-  transition: border-color var(--dur-micro) var(--ease-quiet);
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius);
+  padding: 0.55rem 0.7rem;
+  background: #fff;
+  color: var(--ink);
 }
 
-input::placeholder,
-textarea::placeholder {
-  color: var(--paper-faint);
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: end;
 }
 
-input:focus-visible,
-select:focus-visible {
+/* Surface rail */
+
+.surface-rail {
+  margin-top: 3rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.rail-card {
+  display: grid;
+  gap: 0.25rem;
+  text-align: left;
+  padding: 1.15rem 1.2rem;
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: calc(var(--radius) + 2px);
+  color: var(--ink);
+}
+
+.rail-card:hover {
   border-color: var(--accent);
+  background: #f7f8f5;
+}
+
+.rail-label {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--accent);
+}
+
+.rail-card strong {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+}
+
+.rail-card span:last-child {
+  color: var(--ink-faint);
+  font-size: 0.92rem;
+}
+
+/* ---------- Footer ---------- */
+
+.site-footer {
+  margin-top: auto;
+  border-top: 1px solid var(--panel-edge);
+  background: #dfe2dc;
+  padding: 2.5rem clamp(1rem, 3vw, 2rem) 1.25rem;
+}
+
+.footer-grid {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: 2rem;
+}
+
+.footer-brand {
+  margin: 0 0 0.5rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.35rem;
+}
+
+.footer-lede {
+  margin: 0;
+  max-width: 28rem;
+  color: var(--ink-faint);
+  line-height: 1.55;
+  font-size: 0.95rem;
+}
+
+.footer-heading {
+  margin: 0 0 0.65rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.footer-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.footer-links button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-weight: 500;
+  text-align: left;
+}
+
+.footer-links button:hover {
+  color: var(--accent-strong);
+  transform: none;
+}
+
+.footer-links span {
+  color: var(--ink-faint);
+  font-size: 0.92rem;
+}
+
+.footer-bar {
+  width: min(1120px, 100%);
+  margin: 2rem auto 0;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(20, 24, 22, 0.1);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+  font-size: 0.85rem;
+  color: var(--ink-faint);
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 860px) {
+  .site-nav {
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+    gap: 0.65rem;
+    padding-top: 0.85rem;
+    padding-bottom: 0.85rem;
+  }
+
+  .nav-surfaces {
+    justify-content: flex-start;
+  }
+
+  .hero,
+  .footer-grid,
+  .surface-rail {
+    grid-template-columns: 1fr;
+  }
+
+  .hero {
+    min-height: auto;
+  }
+
+  .hero-visual {
+    order: -1;
+    min-height: 220px;
+  }
 }
 
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
+  gap: 0.55rem;
   margin: 0.85rem 0;
-}
-
-/* ---------------------------------------------------------------------
-   Footer
-   --------------------------------------------------------------------- */
-
-.foot {
-  margin-top: 3.5rem;
-  padding: 1.1rem 0;
-  border-top: 1px solid var(--hairline);
-  background: var(--ink-1);
-  font-family: var(--font-mono);
-  font-size: 0.76rem;
-  color: var(--paper-faint);
-}
-
-/* ---------------------------------------------------------------------
-   Motion accessibility — required, not optional.
-   --------------------------------------------------------------------- */
-
-@media (prefers-reduced-motion: reduce) {
-  .brand,
-  .headline,
-  .lede,
-  .cta-row {
-    animation: none;
-  }
-
-  button,
-  .button,
-  .log-item,
-  input,
-  textarea,
-  select {
-    transition: none;
-  }
-}
-
-/* ---------------------------------------------------------------------
-   Provenance + CrossCheck — every remaining element on the winning system
-   --------------------------------------------------------------------- */
-
-.prov-viewer,
-.crosscheck-panel {
-  display: grid;
-  gap: 1rem;
-}
-
-.prov-select,
-.crosscheck-panel label {
-  display: grid;
-  gap: 0.4rem;
-  font-size: 0.8rem;
-  color: var(--paper-faint);
-}
-
-.prov-summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-  gap: 0.75rem 1rem;
-  margin: 0;
-}
-
-.prov-summary div {
-  display: grid;
-  gap: 0.2rem;
-  padding: 0.55rem 0.65rem;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--ink-1);
-}
-
-.prov-summary dt {
-  font-family: var(--font-mono);
-  font-size: 0.66rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--paper-faint);
-}
-
-.prov-summary dd {
-  margin: 0;
-  color: var(--paper);
-  font-size: 0.9rem;
-  word-break: break-all;
-}
-
-.prov-chain {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 0.65rem;
-  counter-reset: chain-step;
-}
-
-.prov-chain li {
-  position: relative;
-  display: grid;
-  gap: 0.35rem;
-  padding: 0.75rem 0.75rem 0.75rem 0.9rem;
-  border: 1px solid var(--hairline);
-  border-left: 2px solid transparent;
-  border-radius: var(--radius-sm);
-  background: var(--ink-1);
-  transition: border-left-color var(--dur-micro) var(--ease-quiet);
-  counter-increment: chain-step;
-}
-
-.prov-chain li:hover,
-.prov-chain li:focus-within {
-  border-left-color: var(--accent);
-}
-
-.prov-chain li::before {
-  content: counter(chain-step, decimal-leading-zero);
-  font-family: var(--font-mono);
-  font-size: 0.66rem;
-  color: var(--paper-faint);
-  letter-spacing: 0.04em;
-}
-
-.prov-chain .meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 0.9rem;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: var(--paper-faint);
-}
-
-.badge-real {
-  color: var(--accent-text);
-  border-color: var(--hairline-accent);
-}
-
-.crosscheck-panel .support {
-  margin: 0;
-  max-width: none;
 }
 
 .result-block {
   margin: 0;
-  padding: 0.85rem 1rem;
+  padding: 0.85rem;
   overflow: auto;
-  max-height: 18rem;
-  background: var(--ink-1);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
+  max-height: 22rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--panel-edge);
+  background: rgba(20, 24, 22, 0.04);
   font-family: var(--font-mono);
   font-size: 0.78rem;
   line-height: 1.45;
-  color: var(--paper-dim);
 }
 
-button:disabled,
-.button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  transform: none;
+.prov-viewer {
+  display: grid;
+  gap: 1rem;
 }
 
-@media (max-width: 640px) {
-  .shell {
-    width: calc(100% - 1.25rem);
-  }
+.prov-select {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
 
-  .brand-hero {
-    min-height: 58vh;
+.prov-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.prov-summary div {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.prov-summary dt {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 0.25rem;
+}
+
+.prov-summary dd {
+  margin: 0;
+  font-size: 0.92rem;
+  word-break: break-all;
+}
+
+.prov-chain {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+}
+
+.badge-real {
+  background: var(--accent-wash);
+  color: var(--accent-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
   }
 }
