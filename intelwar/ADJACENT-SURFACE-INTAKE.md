@@ -9,7 +9,8 @@ must obey EXOCHAIN `AGENTS.md` determinism and invariant rules.
 
 - Owner: IntelWar founding eng / Exochain Foundation collaborator on duty
 - Accountable maintainer: branch maintainer for `intelwar`
-- Deployment status: `prototype` (target public shell: intelwar.net)
+- Deployment status: `customer-zero` / public Railway shell (target custom domain: intelwar.net)
+- Deploy runbook: `docs/RAILWAY_DEPLOY.md` (PM-007)
 
 ## Trust boundary
 
@@ -33,14 +34,14 @@ must obey EXOCHAIN `AGENTS.md` determinism and invariant rules.
   - `npm --prefix intelwar/apps/intelwar-net test` (when present)
 - CI gate (proposed): add focused job for `intelwar-core`; keep adjacent apps
   out of `cargo --workspace` deny/doc unless explicitly expanded.
-- Runtime configuration source: environment variables outside Git
-  (`INTELWAR_LOG_API_URL`, future `EXO_*` / DAG DB vars).
-- Secrets inventory: no production signing keys in this subtree at bootstrap.
+- Runtime configuration source: Railway service variables outside Git
+  (`VITE_LOG_API_URL`, optional `INTELWAR_CORE_BIN` / `INTELWAR_DAGDB_*`).
+- Secrets inventory: no production signing keys in the public shell by default.
   Demo consent is local fixture only. Never share core bootstrap / emergency
   override credentials with the MVP.
-- Rollback/disablement: undeploy Railway service; unset API URL so the web app
-  fails closed to read-only empty Log; core DAG state remains outside adjacent
-  rollback.
+- Rollback/disablement: undeploy Railway services or remove custom domain; rebuild
+  web without `VITE_LOG_API_URL` is blocked (fail closed). Core DAG state remains
+  outside adjacent rollback.
 
 ## Licensing
 

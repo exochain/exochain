@@ -302,6 +302,14 @@ app.post("/api/log/append", async (req, res) => {
 app.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(
-    `intelwar log-api listening on :${PORT} (kernel_bridge=${Boolean(CORE_BIN)})`,
+    JSON.stringify({
+      event: "intelwar_log_api_listen",
+      port: PORT,
+      trust_claim: "none",
+      kernel_bridge_configured: Boolean(CORE_BIN),
+      crosscheck_verify_configured: Boolean(CROSSCHECK_BIN),
+      dagdb_persist_configured: dagDbConfigured(),
+      node_env: process.env.NODE_ENV || "development",
+    }),
   );
 });

@@ -66,7 +66,7 @@ When stopping: append or update the session block with **Open Questions**, set *
 
 - **Continue** the item named in §8 “Authorized now” without asking.
 - **Start a new PM item** only if: (a) §8 authorizes it, or (b) the human explicitly names it in the latest user message, or (c) the prior session’s Recommended Next Action names it **and** no HOLD blocks it.
-- **Do not** start PM-007 (deploy) or marketing work while §8 marks them HOLD.
+- **Do not** start marketing work, or enable Kernel/DAG secrets on public Railway, while §8 marks them HOLD.
 - Completing an item: mark DONE in §4, update §3/§8, recommend the next item — but do not begin the next HOLD item until authorized.
 
 ### 1.5 Constitutional / trust / secrets / deploy (summary)
@@ -120,7 +120,7 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 
 ## 3. Current Global State
 
-*As of PM-004–006 session 2026-07-18. Confirm with `git log -1 --oneline` on `intelwar`.*
+*As of PM-007 public deploy session 2026-07-18. Confirm with `git log -1 --oneline` on `intelwar`.*
 
 ### 3.1 Branch & commits
 
@@ -128,8 +128,9 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 |------|--------|
 | Branch | `intelwar` |
 | Base | Tag `v0.2.3` / `a50a15fd` |
-| Notable commits | … · `0dcfb6a1` PM-003 · tip includes PM-004/005/006 |
+| Notable commits | … · `63b6295e` PM-004–006 · tip includes PM-007 deploy |
 | Remote / main | No PR to `main` authorized; do not push unless human asks |
+| Public URLs | Web https://intelwar-net-production.up.railway.app · API https://log-api-production-0798.up.railway.app |
 
 ### 3.2 Constitutional foundation (adopted)
 
@@ -153,8 +154,9 @@ Treat as **human-gated** unless §8 later lifts the gate in writing:
 | Kernel bridge | `bridge.rs` + bin `intelwar-log-append` | **Real** adjudication; **local multi-node DAG** via payload-history replay; receipt chain in state file |
 | Trust model doc | `docs/BRIDGE_TRUST_MODEL.md` | Binding limitations for bridge / log-api / DAG DB |
 | log-api | `intelwar/services/log-api` | Kernel / DAG DB / crosscheck env gates; fail-closed when configured |
-| intelwar-net | `intelwar/apps/intelwar-net` | Living Log + .tv provenance chain + .ai crosscheck panel + consent demo |
+| intelwar-net | `intelwar/apps/intelwar-net` | **Public** on Railway; Living Log + .tv + .ai + consent demo |
 | Tools | `intelwar/tools/*` | Triage with `iw:*` / `panel:*` labels + emit-log-entry |
+| Deploy runbook | `docs/RAILWAY_DEPLOY.md` | PM-007 fail-closed Railway ops |
 | wasm | `intelwar/wasm` | Extension stubs only |
 
 ### 3.4 Simulated vs real (critical)
@@ -191,7 +193,7 @@ Still not production-complete: dual consent model; plaintext fixture keys in `br
 | PM-004 | .ai crosscheck → CrossCheckResult verify | Agent | **DONE** | Ed25519 verify + log-api + .ai panel |
 | PM-005 | .tv provenance viewer over receipts | Agent | **DONE** | Receipt-chain viewer in intelwar-net |
 | PM-006 | ExoForge-style issue triage + IW labels | Agent | **DONE** | `iw:*` / `panel:*` labels + tests |
-| PM-007 | Railway deploy intelwar.net fail-closed | Agent | **HOLD** | Deploy/public; human-gated |
+| PM-007 | Railway deploy intelwar.net fail-closed | Agent | **DONE** | Live on Railway.app; custom domain DNS pending |
 | MKT-* | Marketing / positioning / public narrative | Human+Agent | **HOLD** | Not authorized until human opens |
 
 Optional follow-ups (not authorized as new major PM): live gateway IT against real pool; tighten synthetic attestation; secret-storage policy for bridge state.
@@ -336,21 +338,21 @@ Ideally only:
 
 | Authorization | Scope |
 |---------------|--------|
-| **Active** | Handoff maintenance; session logging |
-| **Not active** | **PM-007 deploy** and **marketing** until human authorizes (implementation backlog PM-001…PM-006 complete) |
+| **Active** | Handoff maintenance; session logging; ops fixes to live Railway services |
+| **Not active** | **Marketing** narrative; Kernel/DAG DB secrets in public; push/PR to main |
 | **Standing permission** | Bugfixes for regressions introduced while authorized; docs clarifications that do not change IW semantics |
 
 ### 8.2 Explicit HOLD (do not start)
 
-1. **PM-007** — Railway/production deploy — **await human go-ahead**.  
-2. **Marketing / public narrative / intelwar.net positioning** — **await human go-ahead**.  
-3. **Invariant or constitution amendments** — **await human go-ahead**.  
-4. **Push to remote / PR to `main`** — **await human go-ahead**.
+1. **Marketing / public narrative / intelwar.net positioning** — **await human go-ahead**.  
+2. **Invariant or constitution amendments** — **await human go-ahead**.  
+3. **Push to remote / PR to `main`** — **await human go-ahead**.  
+4. **Enabling `INTELWAR_CORE_BIN` / DAG DB secrets on public Railway** — **await human** (secret policy).
 
 ### 8.3 Decisions pending human
 
-1. Authorize **PM-007** Railway deploy (fail-closed secrets)?  
-2. Are disk fixture keys in `bridge_state.json` acceptable until deploy, or must secret policy land first?  
+1. Point DNS for `intelwar.net` / `www` at Railway and re-run `railway domain intelwar.net` (CLI hit Unauthorized mid-session).  
+2. Are disk fixture keys / Kernel bridge acceptable on public Railway, or keep simulated-only?  
 3. Remain Node consent forever adjacent-only, or eventually bind to Kernel bailment?  
 4. Require live exo-gateway CI evidence before any production trust claim?  
 5. Open marketing / public positioning work?
@@ -610,3 +612,51 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - tool: cursor-agent
 - model_id: cursor-grok-4.5
 - summary: Completed PM-004 crosscheck verify, PM-005 provenance viewer, PM-006 triage labels
+
+## Session 2026-07-18 20:05 EDT — PM-007 public Railway deploy
+
+**Authorization context:**
+- Authorized item: PM-007 full public deploy (human: “continue with full public deploy”)
+- Hold status: holding on marketing, push/PR to main, invariant amendments, enabling Kernel/DAG secrets on public
+
+**Changes Made:**
+- Created Railway project `intelwar` (ARMORCLOUD); services `log-api` + `intelwar-net`
+- Deployed both; fail-closed `VITE_LOG_API_URL` gate; static `serve.mjs` for healthchecks
+- Documented runbook `docs/RAILWAY_DEPLOY.md`; updated intake + README
+- Custom domain `intelwar.net` not attached (CLI Unauthorized); Railway.app URLs live
+
+**Files Modified:**
+- `intelwar/apps/intelwar-net/{railway.json,package.json,scripts/*}`
+- `intelwar/services/log-api/{railway.json,server.js}`
+- `intelwar/docs/{RAILWAY_DEPLOY.md,CURSOR_AGENT_HANDOFF.md}`
+- `intelwar/{README.md,ADJACENT-SURFACE-INTAKE.md}`
+
+**Commits:**
+- (tip after this session commit)
+
+**State Deltas:**
+- PM-007 DONE for public Railway.app shell (adjacent, `trust_claim: none`, Kernel unset)
+- Custom domain + marketing remain human
+
+**Backlog Updates:**
+- PM-007 → DONE
+
+**Validation Commands Run:**
+- `npm --prefix intelwar/apps/intelwar-net test` → pass
+- `curl https://log-api-production-0798.up.railway.app/health` → ok, trust_claim none
+- `curl https://intelwar-net-production.up.railway.app/` → HTTP 200
+- Railway deploy log-api + intelwar-net → SUCCESS
+
+**Open Questions / Decisions for Human:**
+- Attach `intelwar.net` DNS (re-auth Railway if needed)?
+- Enable Kernel bridge secrets on public, or keep simulated?
+- Authorize marketing?
+
+**Recommended Next Action:**
+- Human: DNS for intelwar.net + `railway login` then `railway domain intelwar.net --service intelwar-net`; optionally authorize marketing
+
+**Agent attestation (IW-3):**
+- voice_kind: synthetic
+- tool: cursor-agent
+- model_id: cursor-grok-4.5
+- summary: Deployed IntelWar public adjacent shell to Railway with fail-closed API wiring

@@ -60,7 +60,7 @@ export default function ConsentDemo({
         <strong>{consent?.active ? "active" : "inactive"}</strong> · scope{" "}
         {consent?.scope || "log:append"}
       </p>
-      <div className="actions" style={{ margin: "0.85rem 0" }}>
+      <div className="actions">
         <button type="button" className="ink" onClick={grant}>
           Grant consent
         </button>

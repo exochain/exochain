@@ -59,7 +59,12 @@ cd intelwar/services/log-api && npm install && npm start
 cd intelwar/apps/intelwar-net && npm install && npm run dev
 ```
 
-Deploy target for the web shell: **intelwar.net** (Railway via `apps/intelwar-net/railway.json`).
+**Public deploy (PM-007):**
+
+- Web: https://intelwar-net-production.up.railway.app  
+- API: https://log-api-production-0798.up.railway.app  
+- Runbook: [`docs/RAILWAY_DEPLOY.md`](docs/RAILWAY_DEPLOY.md)  
+- Custom domain target: **intelwar.net** (DNS still human-gated)
 
 ## Classification
 

@@ -1,17 +1,17 @@
 export default function LivingLogViewer({ entries, loading, error }) {
   if (loading) {
-    return <p className="status-line">Loading Living Log…</p>;
+    return <p className="status-line">Reading log stream…</p>;
   }
   if (error) {
     return (
       <p className="status-line">
-        Log API unavailable ({error}). Start `intelwar/services/log-api` or set
-        `VITE_LOG_API_URL`.
+        Log stream unavailable — {error}. Start intelwar/services/log-api or set
+        VITE_LOG_API_URL.
       </p>
     );
   }
   if (!entries?.length) {
-    return <p className="status-line">No entries yet.</p>;
+    return <p className="status-line">No entries recorded yet.</p>;
   }
 
   return (

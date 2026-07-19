@@ -40,11 +40,13 @@ export default function App() {
     <div className="shell">
       <header className="brand-hero">
         <h1 className="brand">IntelWar</h1>
-        <p className="headline">A consent-governed Living Log for strategic wisdom.</p>
+        <p className="headline">Where arguments earn their survival.</p>
         <p className="lede">
-          Built on EXOCHAIN v0.2.3 — CGR Kernel, bailment consent, and provenance
-          receipts. Adjacent demo surfaces never claim constitutional enforcement
-          by proximity.
+          A consent-governed Living Log for the intelligentsia — built on
+          EXOCHAIN v0.2.3&apos;s CGR Kernel, bailment consent, and provenance
+          receipts. This adjacent demo surface makes no constitutional claim by
+          proximity: real enforcement lives in{" "}
+          <code>intelwar_core::append_log_entry</code>, not in this shell.
         </p>
         <div className="cta-row">
           <button
