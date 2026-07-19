@@ -788,7 +788,7 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - Scaffold `X_Profile_Assets.md` marked live + org website recommendation
 
 **Open Questions / Decisions for Human:**
-- Change X website link from intelwar.net → intelwar.org?
+- ~~Change X website link from intelwar.net → intelwar.org?~~ **DONE** (human flipped)
 - Pin first post when ready?
 
 **Agent attestation (IW-3):**
@@ -796,3 +796,15 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - tool: cursor-agent
 - model_id: cursor-grok-4.5
 - summary: Linked live @intelwar into public shell; noted .org as preferred X website
+
+## Session 2026-07-18 22:48 EDT — X website → .org
+
+**Authorization context:** human confirmed @intelwar website flipped to https://intelwar.org
+
+**Changes Made:** scaffold + handoff updated to record live website = intelwar.org
+
+**Agent attestation (IW-3):**
+- voice_kind: synthetic
+- tool: cursor-agent
+- model_id: cursor-grok-4.5
+- summary: Recorded X profile website flip to intelwar.org

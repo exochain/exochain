@@ -1,8 +1,8 @@
 # @intelwar X Profile Assets
 
 **Handle**: [@intelwar](https://x.com/intelwar)  
-**Status (2026-07-18):** Live — bio + header + avatar set; website currently `intelwar.net`.  
-**Recommended website link:** `https://intelwar.org` (institutional home; `.net` is the Living Log instrument).  
+**Status (2026-07-18):** Live — bio + header + avatar set; website **`https://intelwar.org`** (flipped from `.net`).  
+**Website link:** `https://intelwar.org` (institutional home; `.net` remains the Living Log instrument).  
 **Goal**: Establish a sophisticated, high-signal presence aligned with the intellectual positioning.
 
 ## Live Bio (Primary)
