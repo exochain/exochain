@@ -8,24 +8,30 @@
 
 ## Live URLs (PM-007)
 
-| Surface | URL |
-|---------|-----|
-| Web shell (custom) | https://intelwar.net · https://www.intelwar.net |
-| Web shell (Railway) | https://intelwar-net-production.up.railway.app |
-| Log API | https://log-api-production-0798.up.railway.app |
+| Surface | URL | Host locks to |
+|---------|-----|----------------|
+| Living Log | https://intelwar.net · https://www.intelwar.net | `.net` |
+| CrossCheck | https://intelwar.ai · https://www.intelwar.ai | `.ai` |
+| Provenance | https://intelwar.tv · https://www.intelwar.tv | `.tv` |
+| Web (Railway) | https://intelwar-net-production.up.railway.app | hash `#net`/`#ai`/`#tv` |
+| Log API | https://log-api-production-0798.up.railway.app | — |
 
 Dashboard: https://railway.com/project/e451ab4d-a7f7-4a20-9c76-d652774e548b
 
+All three brand zones (`intelwar.net`, `intelwar.ai`, `intelwar.tv`) are Cloudflare → Railway custom domains on service `intelwar-net`. Nav uses sibling HTTPS hosts in production.
+
 ### Custom domain DNS (Cloudflare, DNS only / grey cloud)
+
+Per zone (`intelwar.net` / `.ai` / `.tv`):
 
 | Type | Name | Content |
 |------|------|---------|
-| CNAME | `@` (`intelwar.net`) | Railway-assigned `*.up.railway.app` target (see service Settings → Networking) |
+| CNAME | `@` | Railway-assigned `*.up.railway.app` target (Settings → Networking) |
 | CNAME | `www` | Railway-assigned `*.up.railway.app` target for `www` |
-| TXT | `_railway-verify` | `railway-verify=…` token from Railway (required or edge returns 404) |
-| TXT | `_railway-verify.www` | `railway-verify=…` token for www |
+| TXT | `_railway-verify` | `railway-verify=…` from Railway (**required** or edge 404) |
+| TXT | `_railway-verify.www` | `railway-verify=…` for www |
 
-Keep records **DNS only** (not proxied) so Railway can issue/serve TLS. After recreate, refresh CNAME + TXT targets from Railway before editing Cloudflare.
+Keep records **DNS only** (not proxied). After recreate, refresh CNAME + TXT from Railway before editing Cloudflare.
 
 ## Services
 

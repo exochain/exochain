@@ -21,7 +21,12 @@ export default function ProvenanceViewer({ entries }) {
     : { ok: false, error: "no_selection" };
 
   if (!selectable.length) {
-    return <p className="status-line">No entries for provenance view.</p>;
+    return (
+      <div className="empty-state">
+        <p className="empty-title">No entries for provenance</p>
+        <p className="status-line">Append on .net first, then inspect the chain here.</p>
+      </div>
+    );
   }
 
   return (
@@ -73,17 +78,19 @@ export default function ProvenanceViewer({ entries }) {
         <>
           <p className="status-line">
             Receipt chain depth {chain.depth}
-            {chain.broken ? " · chain broken / incomplete" : ""}
+            {chain.broken ? " · chain broken / incomplete" : " · intact walk"}
           </p>
           <ol className="prov-chain">
             {chain.chain.map((node, idx) => (
               <li key={`${node.entry_id}-${idx}`}>
-                <strong>{node.entry_id}</strong>
-                {node.simulated ? (
-                  <span className="badge">Simulated</span>
-                ) : (
-                  <span className="badge badge-real">Kernel</span>
-                )}
+                <div className="log-item-head">
+                  <strong>{node.entry_id}</strong>
+                  {node.simulated ? (
+                    <span className="badge">Simulated</span>
+                  ) : (
+                    <span className="badge badge-real">Kernel</span>
+                  )}
+                </div>
                 <div className="meta">
                   <span>{node.summary}</span>
                   <span className="mono">

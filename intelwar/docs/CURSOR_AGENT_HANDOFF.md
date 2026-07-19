@@ -715,3 +715,30 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - tool: cursor-agent
 - model_id: cursor-grok-4.5
 - summary: Redesigned public shell into navigable surfaces with mark, nav, footer; redeployed
+
+## Session 2026-07-18 21:52 EDT — Complete brand domains + shell titration
+
+**Authorization context:**
+- Authorized item: human “do all the needful and titrate until complete”
+- Hold status: marketing narrative claims still HOLD; UX + DNS treated as authorized
+
+**Changes Made:**
+- Committed redesign `d3c6e2a3`; polished domain-locked nav, pillars, consent meter, verify cards, skeletons, favicon
+- Railway + Cloudflare for `intelwar.ai` / `www` + `intelwar.tv` / `www` (CNAME + `_railway-verify` TXT)
+- Host locks surface; production nav assigns to sibling domains
+- Redeployed polished shell
+
+**Live (HTTPS 200):**
+- https://intelwar.net · https://intelwar.ai · https://intelwar.tv (+ www variants)
+
+**Validation:** `npm test` (10) pass; all brand URLs 200
+
+**Open Questions / Decisions for Human:**
+- Further visual refinement / marketing copy release?
+- Push `intelwar` remote?
+
+**Agent attestation (IW-3):**
+- voice_kind: synthetic
+- tool: cursor-agent
+- model_id: cursor-grok-4.5
+- summary: Wired .ai/.tv DNS; titrated shell; all brand domains serving

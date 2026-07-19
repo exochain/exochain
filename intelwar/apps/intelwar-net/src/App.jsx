@@ -6,7 +6,12 @@ import LivingLogViewer from "./components/LivingLogViewer.jsx";
 import ProvenanceViewer from "./components/ProvenanceViewer.jsx";
 import SiteFooter from "./components/SiteFooter.jsx";
 import SiteNav from "./components/SiteNav.jsx";
-import { resolveSurface, surfaceTitle } from "./lib/surface.js";
+import {
+  isProductionHost,
+  resolveSurface,
+  surfaceHref,
+  surfaceTitle,
+} from "./lib/surface.js";
 
 const apiBase = (import.meta.env.VITE_LOG_API_URL || "").replace(/\/$/, "");
 
@@ -18,6 +23,13 @@ export default function App() {
   const [error, setError] = useState(null);
 
   const navigate = useCallback((next) => {
+    if (isProductionHost(window.location.hostname)) {
+      const href = surfaceHref(next);
+      if (href.startsWith("http") && !href.includes(window.location.host)) {
+        window.location.assign(href);
+        return;
+      }
+    }
     setSurface(next);
     const hash = next === "net" ? "net" : next;
     if (window.location.hash.replace(/^#/, "") !== hash) {
@@ -134,6 +146,21 @@ function NetSurface({
         <div className="hero-visual" aria-hidden="true">
           <ArenaMark />
         </div>
+      </section>
+
+      <section className="pillars" aria-label="What IntelWar protects">
+        <article>
+          <h3>Consent before memory</h3>
+          <p>Nothing enters the Log without an active consent gate.</p>
+        </article>
+        <article>
+          <h3>Provenance compounds</h3>
+          <p>Every row chains to what came before — auditable, not decorative.</p>
+        </article>
+        <article>
+          <h3>Attested intelligence</h3>
+          <p>Synthetic voices must declare themselves. Unattested prose is noise.</p>
+        </article>
       </section>
 
       <section className="section" id="living-log">

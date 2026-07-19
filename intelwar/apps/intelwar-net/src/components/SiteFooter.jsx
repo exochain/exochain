@@ -1,3 +1,5 @@
+import { surfaceHref } from "../lib/surface.js";
+
 export default function SiteFooter({ onNavigate }) {
   return (
     <footer className="site-footer">
@@ -14,19 +16,19 @@ export default function SiteFooter({ onNavigate }) {
           <p className="footer-heading">Surfaces</p>
           <ul className="footer-links">
             <li>
-              <button type="button" onClick={() => onNavigate("net")}>
+              <a href={surfaceHref("net")} onClick={(e) => { e.preventDefault(); onNavigate("net"); }}>
                 .net Living Log
-              </button>
+              </a>
             </li>
             <li>
-              <button type="button" onClick={() => onNavigate("ai")}>
+              <a href={surfaceHref("ai")} onClick={(e) => { e.preventDefault(); onNavigate("ai"); }}>
                 .ai CrossCheck
-              </button>
+              </a>
             </li>
             <li>
-              <button type="button" onClick={() => onNavigate("tv")}>
+              <a href={surfaceHref("tv")} onClick={(e) => { e.preventDefault(); onNavigate("tv"); }}>
                 .tv Provenance
-              </button>
+              </a>
             </li>
           </ul>
         </div>
