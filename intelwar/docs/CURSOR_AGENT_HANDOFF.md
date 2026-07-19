@@ -632,7 +632,7 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - `intelwar/{README.md,ADJACENT-SURFACE-INTAKE.md}`
 
 **Commits:**
-- (tip after this session commit)
+- `afb9dede` — intelwar: PM-007 public Railway deploy with fail-closed shell
 
 **State Deltas:**
 - PM-007 DONE for public Railway.app shell (adjacent, `trust_claim: none`, Kernel unset)
