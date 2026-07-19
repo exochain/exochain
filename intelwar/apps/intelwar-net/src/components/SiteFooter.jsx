@@ -1,7 +1,7 @@
 import { surfaceHref } from "../lib/surface.js";
 
 const LINKS = [
-  { id: "org", label: ".org Home" },
+  { id: "org", label: ".org Foundation" },
   { id: "press", label: ".press Spine" },
   { id: "net", label: ".net Living Log" },
   { id: "ai", label: ".ai CrossCheck" },
@@ -15,10 +15,10 @@ export default function SiteFooter({ onNavigate }) {
         <div>
           <p className="footer-brand">IntelWar</p>
           <p className="footer-lede">
-            <strong>intelwar.org</strong> is home. <strong>intelwar.press</strong>{" "}
-            is spine. The instruments (.net / .ai / .tv) hang from that frame.
-            Adjacent shell — enforcement lives in <code>intelwar-core</code>, not
-            by proximity.
+            Built under constitutional rules.{" "}
+            <strong>intelwar.org</strong> is home; <strong>intelwar.press</strong>{" "}
+            is spine. Instruments hang from that frame. Adjacent shell —
+            enforcement lives in <code>intelwar-core</code>, not by proximity.
           </p>
         </div>
         <div>
@@ -40,7 +40,7 @@ export default function SiteFooter({ onNavigate }) {
           </ul>
         </div>
         <div>
-          <p className="footer-heading">Channel</p>
+          <p className="footer-heading">Channel & constitution</p>
           <ul className="footer-links">
             <li>
               <a
@@ -52,10 +52,12 @@ export default function SiteFooter({ onNavigate }) {
               </a>
             </li>
             <li>
-              <span>Invariants IW-1…IW-8</span>
+              <button type="button" onClick={() => onNavigate("org")}>
+                Review the Constitution
+              </button>
             </li>
             <li>
-              <span>Substrate EXOCHAIN v0.2.3</span>
+              <span>Invariants IW-1…IW-8</span>
             </li>
             <li>
               <span>trust_claim: none (this shell)</span>

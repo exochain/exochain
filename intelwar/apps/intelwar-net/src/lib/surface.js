@@ -59,7 +59,7 @@ export function resolveSurface(
 export function surfaceTitle(surface) {
   switch (surface) {
     case "org":
-      return "IntelWar.org — Home";
+      return "IntelWar.org — Foundation";
     case "press":
       return "IntelWar.press — Spine";
     case "ai":

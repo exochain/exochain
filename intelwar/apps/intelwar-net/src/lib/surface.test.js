@@ -9,7 +9,7 @@ import {
 } from "./surface.js";
 
 test("surfaceTitle maps surfaces", () => {
-  assert.match(surfaceTitle("org"), /Home/);
+  assert.match(surfaceTitle("org"), /Foundation/);
   assert.match(surfaceTitle("press"), /Spine/);
   assert.match(surfaceTitle("net"), /Living Log/);
   assert.match(surfaceTitle("ai"), /CrossCheck/);

@@ -9,8 +9,8 @@
 const DEFAULT_ORIGIN = "https://intelwar-net-production.up.railway.app";
 
 const TITLE_BY_HOST = {
-  "intelwar.org": "IntelWar.org — Home",
-  "www.intelwar.org": "IntelWar.org — Home",
+  "intelwar.org": "IntelWar.org — Foundation",
+  "www.intelwar.org": "IntelWar.org — Foundation",
   "intelwar.press": "IntelWar.press — Spine",
   "www.intelwar.press": "IntelWar.press — Spine",
 };

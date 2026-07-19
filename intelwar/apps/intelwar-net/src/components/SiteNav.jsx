@@ -1,6 +1,6 @@
 import { surfaceHref } from "../lib/surface.js";
 
-const HOME = { id: "org", label: ".org", title: "Home" };
+const HOME = { id: "org", label: ".org", title: "Foundation" };
 const SPINE = { id: "press", label: ".press", title: "Spine" };
 const INSTRUMENTS = [
   { id: "net", label: ".net", title: "Log" },

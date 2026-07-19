@@ -808,3 +808,21 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - tool: cursor-agent
 - model_id: cursor-grok-4.5
 - summary: Recorded X profile website flip to intelwar.org
+
+## Session 2026-07-18 23:02 EDT — Final Polish PRD
+
+**Authorization context:** human provided `intelwar-final-polish.zip` (FINAL_POLISH_PRD.md)
+
+**Changes Made:**
+- Archived PRD to `intelwar/docs/scaffold/FINAL_POLISH_PRD.md`
+- Org: positioning hero, narrative arc, cognitive warfare, Living Log SVG flow, 4 explainers
+- Press: dispatch cards + voice distinction; AI: adversarial flow; Net: portal + status pills
+- .tv remains Provenance (live product); polished with Key Claims / Strategic Terrain — not a fake video library
+
+**Validation:** npm test; Railway `--path-as-root` deploy; edge title Foundation
+
+**Agent attestation (IW-3):**
+- voice_kind: synthetic
+- tool: cursor-agent
+- model_id: cursor-grok-4.5
+- summary: Executed final polish PRD across host-locked surfaces
