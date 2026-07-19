@@ -1,5 +1,13 @@
 import { surfaceHref } from "../lib/surface.js";
 
+const LINKS = [
+  { id: "org", label: ".org Home" },
+  { id: "press", label: ".press Spine" },
+  { id: "net", label: ".net Living Log" },
+  { id: "ai", label: ".ai CrossCheck" },
+  { id: "tv", label: ".tv Provenance" },
+];
+
 export default function SiteFooter({ onNavigate }) {
   return (
     <footer className="site-footer">
@@ -7,29 +15,28 @@ export default function SiteFooter({ onNavigate }) {
         <div>
           <p className="footer-brand">IntelWar</p>
           <p className="footer-lede">
-            Constitutional arena and compounding memory for rigorous intellectual
-            combat. Adjacent shell — enforcement lives in{" "}
-            <code>intelwar-core</code>, not by proximity.
+            <strong>intelwar.org</strong> is home. <strong>intelwar.press</strong>{" "}
+            is spine. The instruments (.net / .ai / .tv) hang from that frame.
+            Adjacent shell — enforcement lives in <code>intelwar-core</code>, not
+            by proximity.
           </p>
         </div>
         <div>
           <p className="footer-heading">Surfaces</p>
           <ul className="footer-links">
-            <li>
-              <a href={surfaceHref("net")} onClick={(e) => { e.preventDefault(); onNavigate("net"); }}>
-                .net Living Log
-              </a>
-            </li>
-            <li>
-              <a href={surfaceHref("ai")} onClick={(e) => { e.preventDefault(); onNavigate("ai"); }}>
-                .ai CrossCheck
-              </a>
-            </li>
-            <li>
-              <a href={surfaceHref("tv")} onClick={(e) => { e.preventDefault(); onNavigate("tv"); }}>
-                .tv Provenance
-              </a>
-            </li>
+            {LINKS.map((l) => (
+              <li key={l.id}>
+                <a
+                  href={surfaceHref(l.id)}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onNavigate(l.id);
+                  }}
+                >
+                  {l.label}
+                </a>
+              </li>
+            ))}
           </ul>
         </div>
         <div>

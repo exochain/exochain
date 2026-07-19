@@ -106,8 +106,22 @@ code {
 .nav-surfaces {
   display: flex;
   justify-content: center;
-  gap: 0.35rem;
+  align-items: center;
+  gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.nav-group {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.nav-divider {
+  width: 1px;
+  height: 2rem;
+  background: var(--panel-edge);
+  opacity: 0.85;
 }
 
 .nav-surface {
@@ -129,6 +143,18 @@ code {
     color var(--dur) var(--ease);
 }
 
+.surface-org {
+  --accent: #1f6b5a;
+  --accent-strong: #165246;
+  --accent-wash: rgba(31, 107, 90, 0.12);
+}
+
+.surface-press {
+  --accent: #8b5a2b;
+  --accent-strong: #6e4622;
+  --accent-wash: rgba(139, 90, 43, 0.12);
+}
+
 .surface-ai {
   --accent: #2a6f97;
   --accent-strong: #1f5676;
@@ -139,6 +165,44 @@ code {
   --accent: #3d5a40;
   --accent-strong: #2f4632;
   --accent-wash: rgba(61, 90, 64, 0.12);
+}
+
+.inline-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+.press-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.press-card {
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.35rem;
+}
+
+.press-card h3 {
+  margin: 0 0 0.5rem;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+}
+
+.press-card p {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.55;
 }
 
 .nav-surface:hover {
@@ -698,6 +762,14 @@ textarea {
 /* ---------- Responsive ---------- */
 
 @media (max-width: 860px) {
+  .press-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .nav-divider {
+    display: none;
+  }
+
   .site-nav {
     grid-template-columns: 1fr;
     justify-items: stretch;

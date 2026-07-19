@@ -1,0 +1,15 @@
+name = "intelwar-edge"
+main = "src/worker.js"
+compatibility_date = "2026-07-18"
+account_id = "de7202b1bcc7f7ff7201983cf6e2e94e"
+
+# custom_domain attaches hostname + DNS in the zone (no Railway slot needed)
+routes = [
+  { pattern = "intelwar.org", custom_domain = true },
+  { pattern = "www.intelwar.org", custom_domain = true },
+  { pattern = "intelwar.press", custom_domain = true },
+  { pattern = "www.intelwar.press", custom_domain = true },
+]
+
+[vars]
+ORIGIN = "https://intelwar-net-production.up.railway.app"

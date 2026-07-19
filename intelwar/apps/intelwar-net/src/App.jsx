@@ -75,6 +75,10 @@ export default function App() {
       <SiteNav surface={surface} onNavigate={navigate} />
 
       <main id="main">
+        {surface === "org" ? <OrgSurface onNavigate={navigate} /> : null}
+
+        {surface === "press" ? <PressSurface onNavigate={navigate} /> : null}
+
         {surface === "net" ? (
           <NetSurface
             entries={entries}
@@ -101,6 +105,216 @@ export default function App() {
   );
 }
 
+function OrgSurface({ onNavigate }) {
+  return (
+    <>
+      <section className="hero">
+        <div className="hero-copy">
+          <p className="eyebrow">IntelWar.org · Home</p>
+          <h1 className="brand">IntelWar</h1>
+          <p className="headline">Where arguments earn their survival.</p>
+          <p className="lede">
+            Institutional home of the arena. Constitution before instruments.
+            The Living Log, CrossCheck, and Provenance hang from this frame —
+            they do not replace it. Adjacent shell; Kernel enforcement is not
+            claimed by proximity.
+          </p>
+          <div className="cta-row">
+            <button
+              type="button"
+              className="primary"
+              onClick={() => onNavigate("press")}
+            >
+              Read the Spine
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => onNavigate("net")}
+            >
+              Enter the Living Log
+            </button>
+          </div>
+        </div>
+        <div className="hero-visual" aria-hidden="true">
+          <ArenaMark />
+        </div>
+      </section>
+
+      <section className="pillars" aria-label="Constitutional frame">
+        <article>
+          <h3>.org is home</h3>
+          <p>
+            Identity, mission, and constitutional posture live here — not on
+            instrument TLDs.
+          </p>
+        </article>
+        <article>
+          <h3>.press is spine</h3>
+          <p>
+            Narrative and doctrine that hold the instruments upright. Without
+            spine, tools are orphaned widgets.
+          </p>
+        </article>
+        <article>
+          <h3>Instruments serve</h3>
+          <p>
+            .net memory, .ai verify, .tv audit — each fail-closed, none mint
+            trust alone.
+          </p>
+        </article>
+      </section>
+
+      <section className="surface-rail" aria-label="Open a surface">
+        <button
+          type="button"
+          className="rail-card"
+          onClick={() => onNavigate("press")}
+        >
+          <span className="rail-label">.press</span>
+          <strong>Spine</strong>
+          <span>Doctrine, narrative, publishing frame</span>
+        </button>
+        <button
+          type="button"
+          className="rail-card"
+          onClick={() => onNavigate("net")}
+        >
+          <span className="rail-label">.net</span>
+          <strong>Living Log</strong>
+          <span>Consent-gated append-only memory</span>
+        </button>
+        <button
+          type="button"
+          className="rail-card"
+          onClick={() => onNavigate("ai")}
+        >
+          <span className="rail-label">.ai</span>
+          <strong>CrossCheck</strong>
+          <span>Multi-intelligence attestations</span>
+        </button>
+        <button
+          type="button"
+          className="rail-card"
+          onClick={() => onNavigate("tv")}
+        >
+          <span className="rail-label">.tv</span>
+          <strong>Provenance</strong>
+          <span>Receipt chains you can audit</span>
+        </button>
+      </section>
+    </>
+  );
+}
+
+function PressSurface({ onNavigate }) {
+  return (
+    <>
+      <section className="hero hero-compact">
+        <div className="hero-copy">
+          <p className="eyebrow">IntelWar.press · Spine</p>
+          <h1 className="brand brand-sm">Spine</h1>
+          <p className="headline">Narrative that holds the instruments.</p>
+          <p className="lede">
+            Publishing frame for doctrine and contested argument. The spine is
+            not a blog skin over .net — it is the story-structure that makes the
+            Log, CrossCheck, and Provenance coherent as one arena.
+          </p>
+          <div className="cta-row">
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => onNavigate("org")}
+            >
+              ← Home
+            </button>
+            <button
+              type="button"
+              className="primary"
+              onClick={() => onNavigate("net")}
+            >
+              Open Living Log →
+            </button>
+          </div>
+        </div>
+        <div className="hero-visual hero-visual-sm" aria-hidden="true">
+          <ArenaMark />
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>What the spine carries</h2>
+          <p className="support">
+            Eight invariants (IW-1…IW-8) on EXOCHAIN substrate v0.2.3. This page
+            states posture — it does not adjudicate. Adjudication is Kernel work.
+          </p>
+        </div>
+        <div className="press-grid">
+          <article className="press-card">
+            <h3>Consent before memory</h3>
+            <p>
+              Nothing enters durable record without an active consent gate.
+              Unconsented append is noise, not history.
+            </p>
+          </article>
+          <article className="press-card">
+            <h3>Provenance compounds</h3>
+            <p>
+              Every claim that survives must chain. Broken chains are labeled —
+              never papered over.
+            </p>
+          </article>
+          <article className="press-card">
+            <h3>Attested intelligence</h3>
+            <p>
+              Synthetic voices declare themselves. CrossCheck refuses when verify
+              is unset — fail closed, not decorative.
+            </p>
+          </article>
+          <article className="press-card">
+            <h3>No trust by proximity</h3>
+            <p>
+              Adjacent shell ≠ constitutional enforcement.{" "}
+              <code>trust_claim: none</code> until Kernel paths are proven.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section className="surface-rail">
+        <button
+          type="button"
+          className="rail-card"
+          onClick={() => onNavigate("org")}
+        >
+          <span className="rail-label">.org</span>
+          <strong>Home</strong>
+          <span>Institutional frame</span>
+        </button>
+        <button
+          type="button"
+          className="rail-card"
+          onClick={() => onNavigate("ai")}
+        >
+          <span className="rail-label">.ai</span>
+          <strong>CrossCheck</strong>
+          <span>Verify or refuse</span>
+        </button>
+        <button
+          type="button"
+          className="rail-card"
+          onClick={() => onNavigate("tv")}
+        >
+          <span className="rail-label">.tv</span>
+          <strong>Provenance</strong>
+          <span>Audit the chain</span>
+        </button>
+      </section>
+    </>
+  );
+}
+
 function NetSurface({
   entries,
   loading,
@@ -115,12 +329,20 @@ function NetSurface({
       <section className="hero">
         <div className="hero-copy">
           <p className="eyebrow">IntelWar.net · Living Log</p>
-          <h1 className="brand">IntelWar</h1>
-          <p className="headline">Where arguments earn their survival.</p>
+          <h1 className="brand">Living Log</h1>
+          <p className="headline">Consent-governed memory.</p>
           <p className="lede">
-            Consent-governed, append-only memory for the intelligentsia. Ideas
-            contested under constitutional rules; the record compounds. This
-            shell is adjacent — Kernel adjudication is not claimed by proximity.
+            Append-only stream for contested ideas under constitutional rules.
+            Instrument of the arena — home is{" "}
+            <button type="button" className="inline-link" onClick={() => onNavigate("org")}>
+              intelwar.org
+            </button>
+            ; spine is{" "}
+            <button type="button" className="inline-link" onClick={() => onNavigate("press")}>
+              intelwar.press
+            </button>
+            . This shell is adjacent — Kernel adjudication is not claimed by
+            proximity.
           </p>
           <div className="cta-row">
             <button
@@ -194,6 +416,11 @@ function NetSurface({
       </section>
 
       <section className="surface-rail">
+        <button type="button" className="rail-card" onClick={() => onNavigate("org")}>
+          <span className="rail-label">.org</span>
+          <strong>Home</strong>
+          <span>Institutional frame</span>
+        </button>
         <button type="button" className="rail-card" onClick={() => onNavigate("ai")}>
           <span className="rail-label">.ai</span>
           <strong>CrossCheck</strong>
@@ -222,8 +449,8 @@ function AiSurface({ apiBase, entries, onNavigate }) {
             is unset — this page will not invent a Permitted outcome.
           </p>
           <div className="cta-row">
-            <button type="button" className="ghost" onClick={() => onNavigate("net")}>
-              ← Living Log
+            <button type="button" className="ghost" onClick={() => onNavigate("org")}>
+              ← Home
             </button>
             <button type="button" className="ghost" onClick={() => onNavigate("tv")}>
               Provenance .tv →
@@ -257,8 +484,8 @@ function TvSurface({ entries, onNavigate }) {
             are labeled. This surface does not mint trust.
           </p>
           <div className="cta-row">
-            <button type="button" className="ghost" onClick={() => onNavigate("net")}>
-              ← Living Log
+            <button type="button" className="ghost" onClick={() => onNavigate("org")}>
+              ← Home
             </button>
             <button type="button" className="ghost" onClick={() => onNavigate("ai")}>
               CrossCheck .ai →

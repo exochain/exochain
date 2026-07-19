@@ -742,3 +742,31 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - tool: cursor-agent
 - model_id: cursor-grok-4.5
 - summary: Wired .ai/.tv DNS; titrated shell; all brand domains serving
+
+## Session 2026-07-18 22:35 EDT — .org home + .press spine
+
+**Authorization context:**
+- Authorized item: human — intelwar.org / intelwar.press are home and spine; instruments need that frame
+- Hold status: marketing narrative claims still HOLD; UX + DNS treated as authorized
+
+**Changes Made:**
+- Product model: `.org` = Home, `.press` = Spine; `.net`/`.ai`/`.tv` = instruments
+- SPA surfaces + nav/footer (home/spine first); default non-brand host → `#org`
+- Cloudflare Worker `intelwar-edge` custom domains for org/press (proxies Railway; preserves Host)
+- Redeployed shell with `railway up … --path-as-root` (without it, root Dockerfile wins)
+
+**Live (HTTPS 200):**
+- https://intelwar.org · https://intelwar.press (+ www)
+- https://intelwar.net · https://intelwar.ai · https://intelwar.tv (+ www)
+
+**Validation:** `npm test` pass; edge `x-intelwar-edge: proxied`; titles host-correct
+
+**Open Questions / Decisions for Human:**
+- Commit on `intelwar`?
+- Later: migrate org/press to native Railway custom domains once write-auth is stable?
+
+**Agent attestation (IW-3):**
+- voice_kind: synthetic
+- tool: cursor-agent
+- model_id: cursor-grok-4.5
+- summary: Wired .org home + .press spine via edge proxy; instruments hang from frame

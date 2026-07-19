@@ -7,7 +7,7 @@
       name="description"
       content="IntelWar — constitutional arena and living strategic memory for rigorous intellectual combat."
     />
-    <title>IntelWar.net — Living Log</title>
+    <title>IntelWar.org — Home</title>
     <meta name="theme-color" content="#1f6b5a" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -22,8 +22,14 @@
     <script>
       (function () {
         var h = (location.hostname || "").toLowerCase();
-        var title = "IntelWar.net — Living Log";
-        if (h === "intelwar.ai" || h === "www.intelwar.ai") {
+        var title = "IntelWar.org — Home";
+        if (h === "intelwar.org" || h === "www.intelwar.org") {
+          title = "IntelWar.org — Home";
+        } else if (h === "intelwar.press" || h === "www.intelwar.press") {
+          title = "IntelWar.press — Spine";
+        } else if (h === "intelwar.net" || h === "www.intelwar.net") {
+          title = "IntelWar.net — Living Log";
+        } else if (h === "intelwar.ai" || h === "www.intelwar.ai") {
           title = "IntelWar.ai — CrossCheck";
         } else if (h === "intelwar.tv" || h === "www.intelwar.tv") {
           title = "IntelWar.tv — Provenance";

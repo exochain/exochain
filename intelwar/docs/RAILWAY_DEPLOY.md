@@ -10,17 +10,22 @@
 
 | Surface | URL | Host locks to |
 |---------|-----|----------------|
+| **Home** | https://intelwar.org · https://www.intelwar.org | `.org` |
+| **Spine** | https://intelwar.press · https://www.intelwar.press | `.press` |
 | Living Log | https://intelwar.net · https://www.intelwar.net | `.net` |
 | CrossCheck | https://intelwar.ai · https://www.intelwar.ai | `.ai` |
 | Provenance | https://intelwar.tv · https://www.intelwar.tv | `.tv` |
-| Web (Railway) | https://intelwar-net-production.up.railway.app | hash `#net`/`#ai`/`#tv` |
+| Web (Railway) | https://intelwar-net-production.up.railway.app | hash `#org`/`#press`/`#net`/`#ai`/`#tv` |
 | Log API | https://log-api-production-0798.up.railway.app | — |
 
 Dashboard: https://railway.com/project/e451ab4d-a7f7-4a20-9c76-d652774e548b
 
-All three brand zones (`intelwar.net`, `intelwar.ai`, `intelwar.tv`) are Cloudflare → Railway custom domains on service `intelwar-net`. Nav uses sibling HTTPS hosts in production.
+**Frame:** `.org` is institutional home; `.press` is narrative spine. Instruments (`.net` / `.ai` / `.tv`) hang from that frame.
 
-### Custom domain DNS (Cloudflare, DNS only / grey cloud)
+- **Instruments** (`.net` / `.ai` / `.tv`): Cloudflare → Railway custom domains on `intelwar-net` (DNS only + `_railway-verify` TXT).
+- **Home / spine** (`.org` / `.press`): Cloudflare Worker `intelwar-edge` custom domains reverse-proxy the Railway SPA while preserving browser hostname (surface lock). Worker source: `intelwar/apps/intelwar-edge/`.
+
+### Custom domain DNS — instruments (Cloudflare, DNS only / grey cloud)
 
 Per zone (`intelwar.net` / `.ai` / `.tv`):
 
@@ -33,12 +38,20 @@ Per zone (`intelwar.net` / `.ai` / `.tv`):
 
 Keep records **DNS only** (not proxied). After recreate, refresh CNAME + TXT from Railway before editing Cloudflare.
 
+### Home / spine edge (`intelwar-edge`)
+
+```bash
+cd intelwar/apps/intelwar-edge
+npx wrangler deploy   # attaches intelwar.org / .press (+ www) as Worker custom domains
+```
+
 ## Services
 
 | Service | Root | Public role |
 |---------|------|-------------|
 | `log-api` | `intelwar/services/log-api` | Living Log API + crosscheck verify + optional Kernel/DAG DB env gates |
-| `intelwar-net` | `intelwar/apps/intelwar-net` | Public React shell (intelwar.net target) |
+| `intelwar-net` | `intelwar/apps/intelwar-net` | Public React shell (all brand surfaces) |
+| `intelwar-edge` | `intelwar/apps/intelwar-edge` | Cloudflare Worker proxy for `.org` / `.press` |
 
 ## Fail-closed rules (production)
 
@@ -84,12 +97,17 @@ railway domain --service log-api   # note https URL
 # 3) Wire web to API, then deploy web
 railway variable set VITE_LOG_API_URL="https://<log-api-domain>" --service intelwar-net
 railway variable set RAILPACK_NODE_VERSION=20 --service intelwar-net
-cd ../../apps/intelwar-net
-railway up --service intelwar-net --ci -m "intelwar-net public shell"
+# 3b) Deploy web — MUST use --path-as-root or the monorepo root
+#     Dockerfile is built instead of the Node shell.
+cd /path/to/exochain
+railway up intelwar/apps/intelwar-net --path-as-root --service intelwar-net --ci -m "intelwar-net public shell"
 railway domain --service intelwar-net
 
-# 4) Optional custom domain (DNS must point at Railway)
+# 4) Instrument custom domains (DNS must point at Railway)
 railway domain add intelwar.net --service intelwar-net
+
+# 5) Home + spine via Cloudflare Worker (no Railway domain slot required)
+cd intelwar/apps/intelwar-edge && npx wrangler deploy
 ```
 
 ## Validation after deploy
