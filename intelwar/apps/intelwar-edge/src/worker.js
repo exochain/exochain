@@ -46,7 +46,6 @@ export default {
     const upstream = await fetch(target, init);
     const outHeaders = new Headers(upstream.headers);
     outHeaders.set("x-intelwar-edge", "proxied");
-    outHeaders.set("x-intelwar-host", incoming.hostname);
 
     const ctype = String(upstream.headers.get("content-type") || "");
     const wantTitle = titleForHost(incoming.hostname);
@@ -57,18 +56,13 @@ export default {
       upstream.status >= 200 &&
       upstream.status < 300;
 
-    outHeaders.set("x-intelwar-title-rewrite", canRewrite ? "1" : "0");
-
     if (canRewrite) {
-      let html = await upstream.text();
+      const html = await upstream.text();
       const next = html.replace(
         /<title>[\s\S]*?<\/title>/i,
         `<title>${wantTitle}</title>`,
       );
       outHeaders.delete("content-length");
-      if (next !== html) {
-        outHeaders.set("x-intelwar-title", wantTitle);
-      }
       return new Response(next, {
         status: upstream.status,
         statusText: upstream.statusText,
