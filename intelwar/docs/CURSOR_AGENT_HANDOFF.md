@@ -770,3 +770,29 @@ Trust model: `intelwar/docs/BRIDGE_TRUST_MODEL.md`.
 - tool: cursor-agent
 - model_id: cursor-grok-4.5
 - summary: Wired .org home + .press spine via edge proxy; instruments hang from frame
+
+## Session 2026-07-18 22:42 EDT — @intelwar X channel
+
+**Authorization context:**
+- Human note: https://x.com/intelwar has been updated
+- Hold status: marketing narrative claims still HOLD; channel link + bio alignment treated as UX
+
+**Observed on X:**
+- Bio matches scaffold primary: strategic arena + living memory…
+- Website link: intelwar.net (recommend flip to intelwar.org)
+- Header/avatar set; no posts yet
+
+**Changes Made:**
+- Footer Channel → `@intelwar on X`
+- `.org` home lede aligned to live X bio (still no trust-by-proximity claim)
+- Scaffold `X_Profile_Assets.md` marked live + org website recommendation
+
+**Open Questions / Decisions for Human:**
+- Change X website link from intelwar.net → intelwar.org?
+- Pin first post when ready?
+
+**Agent attestation (IW-3):**
+- voice_kind: synthetic
+- tool: cursor-agent
+- model_id: cursor-grok-4.5
+- summary: Linked live @intelwar into public shell; noted .org as preferred X website

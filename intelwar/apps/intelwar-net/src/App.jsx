@@ -114,10 +114,11 @@ function OrgSurface({ onNavigate }) {
           <h1 className="brand">IntelWar</h1>
           <p className="headline">Where arguments earn their survival.</p>
           <p className="lede">
-            Institutional home of the arena. Constitution before instruments.
-            The Living Log, CrossCheck, and Provenance hang from this frame —
-            they do not replace it. Adjacent shell; Kernel enforcement is not
-            claimed by proximity.
+            Strategic arena + living memory for rigorous intellectual combat.
+            Human + AI. Constitutional rules. Compounding strategic knowledge.
+            Home before instruments — Living Log, CrossCheck, and Provenance hang
+            from this frame. Adjacent shell; Kernel enforcement is not claimed by
+            proximity.
           </p>
           <div className="cta-row">
             <button

@@ -40,8 +40,17 @@ export default function SiteFooter({ onNavigate }) {
           </ul>
         </div>
         <div>
-          <p className="footer-heading">Constitution</p>
+          <p className="footer-heading">Channel</p>
           <ul className="footer-links">
+            <li>
+              <a
+                href="https://x.com/intelwar"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                @intelwar on X
+              </a>
+            </li>
             <li>
               <span>Invariants IW-1…IW-8</span>
             </li>
