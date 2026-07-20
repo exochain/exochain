@@ -21,7 +21,9 @@ COPY intelwar/services/log-api/package.json intelwar/services/log-api/package-lo
 RUN npm ci --omit=dev
 COPY intelwar/services/log-api/server.js \
      intelwar/services/log-api/crosscheck-verify.js \
-     intelwar/services/log-api/dagdb-persist.js ./
+     intelwar/services/log-api/dagdb-persist.js \
+     intelwar/services/log-api/adversarial.js \
+     intelwar/services/log-api/campaign-zero.js ./
 RUN mkdir -p /app/native
 COPY --from=rust-builder /app/target/release/intelwar-log-append /app/native/
 COPY --from=rust-builder /app/target/release/intelwar-crosscheck-verify /app/native/

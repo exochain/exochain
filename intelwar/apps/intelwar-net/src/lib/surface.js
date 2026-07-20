@@ -35,17 +35,33 @@ export function isProductionHost(hostname) {
   return BRAND_HOSTS.has(String(hostname || "").toLowerCase());
 }
 
+export function isSocialHash(hash) {
+  const h = String(hash || "")
+    .replace(/^#/, "")
+    .toLowerCase();
+  return h === "social" || h.startsWith("social/") || h === "merit";
+}
+
 export function resolveSurface(
   locationLike = typeof window !== "undefined" ? window.location : null,
 ) {
   if (!locationLike) return "org";
 
-  const locked = hostSurface(locationLike.hostname);
-  if (locked) return locked;
-
   const hash = String(locationLike.hash || "")
     .replace(/^#/, "")
     .toLowerCase();
+  const locked = hostSurface(locationLike.hostname);
+
+  // Social + reputation live on intelwar.net only — never override .org theatre.
+  if (isSocialHash(hash)) {
+    if (locked === "org" || locked === "press" || locked === "ai" || locked === "tv") {
+      return locked;
+    }
+    return "net";
+  }
+
+  if (locked) return locked;
+
   if (hash === "org" || hash === "home" || hash === "") return "org";
   if (hash === "press" || hash.startsWith("press/")) return "press";
   if (hash === "ai" || hash.startsWith("ai/")) return "ai";
@@ -59,15 +75,18 @@ export function resolveSurface(
 export function surfaceTitle(surface) {
   switch (surface) {
     case "org":
-      return "IntelWar.org — Foundation";
+      return "IntelWar.org — Mind War Theatre";
     case "press":
-      return "IntelWar.press — Spine";
+      return "IntelWar.press — Fourth Estate";
     case "ai":
-      return "IntelWar.ai — CrossCheck";
+      return "IntelWar.ai — Adversarial Intelligence";
     case "tv":
-      return "IntelWar.tv — Provenance";
+      return "IntelWar.tv — Filmstrip Theatre";
     case "net":
-      return "IntelWar.net — Living Log";
+      return "IntelWar.net — Social + Living Log";
+    case "social":
+      // Alias kept for callers; canonical title is .net
+      return "IntelWar.net — Social + Living Log";
     default:
       return "IntelWar.org — Home";
   }
@@ -78,7 +97,18 @@ export function surfaceHref(
   surface,
   locationLike = typeof window !== "undefined" ? window.location : null,
 ) {
-  if (!locationLike) return `#${surface}`;
+  if (!locationLike) {
+    if (surface === "social") return "#net";
+    return `#${surface}`;
+  }
+  // Social is an operational concern of .net — never .org
+  if (surface === "social") {
+    if (isProductionHost(locationLike.hostname)) {
+      const proto = locationLike.protocol === "http:" ? "http:" : "https:";
+      return `${proto}//intelwar.net/#social`;
+    }
+    return "#net";
+  }
   if (isProductionHost(locationLike.hostname)) {
     const host = SURFACE_HOST[surface] || SURFACE_HOST.org;
     const proto = locationLike.protocol === "http:" ? "http:" : "https:";

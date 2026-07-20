@@ -1,11 +1,11 @@
 import { surfaceHref } from "../lib/surface.js";
 
 const LINKS = [
-  { id: "org", label: ".org Foundation" },
-  { id: "press", label: ".press Spine" },
-  { id: "net", label: ".net Living Log" },
-  { id: "ai", label: ".ai CrossCheck" },
-  { id: "tv", label: ".tv Provenance" },
+  { id: "org", label: ".org Theatre" },
+  { id: "press", label: ".press Fourth Estate" },
+  { id: "net", label: ".net Social + Log" },
+  { id: "ai", label: ".ai Adversary" },
+  { id: "tv", label: ".tv Filmstrip" },
 ];
 
 export default function SiteFooter({ onNavigate }) {
@@ -16,9 +16,12 @@ export default function SiteFooter({ onNavigate }) {
           <p className="footer-brand">IntelWar</p>
           <p className="footer-lede">
             Built under constitutional rules.{" "}
-            <strong>intelwar.org</strong> is home; <strong>intelwar.press</strong>{" "}
-            is spine. Instruments hang from that frame. Adjacent shell —
-            enforcement lives in <code>intelwar-core</code>, not by proximity.
+            <strong>intelwar.org</strong> is the theatre;{" "}
+            <strong>intelwar.press</strong> is the protected publishing and
+            contest layer. <strong>intelwar.net</strong> is the operational
+            social, reputation, and Living Log layer. Instruments hang from
+            that frame. Adjacent shell — enforcement lives in{" "}
+            <code>intelwar-core</code>, not by proximity.
           </p>
         </div>
         <div>

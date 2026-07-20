@@ -9,7 +9,7 @@
     "build": "node ./scripts/check-prod-env.mjs && vite build",
     "start": "node ./scripts/serve.mjs",
     "preview": "vite preview",
-    "test": "node --test src/tv/provenance.test.js src/lib/surface.test.js src/ai/crosscheck.test.js scripts/check-prod-env.test.mjs"
+    "test": "node --test src/tv/provenance.test.js src/tv/filmstrip.test.js src/social/merit.test.js src/social/reputation.test.js src/lib/surface.test.js src/ai/crosscheck.test.js src/ai/adversarial.test.js scripts/check-prod-env.test.mjs"
   },
   "engines": {
     "node": ">=20"

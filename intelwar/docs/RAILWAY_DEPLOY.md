@@ -11,7 +11,7 @@
 | Home | https://intelwar.org | `.org` |
 | Spine | https://intelwar.press | `.press` |
 | Living Log | https://intelwar.net | `.net` |
-| CrossCheck | https://intelwar.ai | `.ai` |
+| Adversary | https://intelwar.ai | `.ai` |
 | Provenance | https://intelwar.tv | `.tv` |
 | Log API | https://log-api-production-0798.up.railway.app | Kernel-required |
 
@@ -40,6 +40,8 @@ railway variable set \
   --service log-api
 
 # Attach a volume at /data for bridge state (Railway UI).
+# Optional frontier adversarial (intelwar.ai):
+# railway variable set OPENROUTER_API_KEY="<key>" --service log-api
 
 cd /tmp/intelwar-log-api-railway-ctx
 railway up . --path-as-root --service log-api --ci --no-gitignore \

@@ -9,11 +9,12 @@ import {
 } from "./surface.js";
 
 test("surfaceTitle maps surfaces", () => {
-  assert.match(surfaceTitle("org"), /Foundation/);
-  assert.match(surfaceTitle("press"), /Spine/);
-  assert.match(surfaceTitle("net"), /Living Log/);
-  assert.match(surfaceTitle("ai"), /CrossCheck/);
-  assert.match(surfaceTitle("tv"), /Provenance/);
+  assert.match(surfaceTitle("org"), /Theatre/);
+  assert.match(surfaceTitle("press"), /Fourth Estate/);
+  assert.match(surfaceTitle("net"), /Social \+ Living Log/);
+  assert.match(surfaceTitle("ai"), /Adversarial/);
+  assert.match(surfaceTitle("tv"), /Filmstrip/);
+  assert.match(surfaceTitle("social"), /Social \+ Living Log/);
 });
 
 test("hostSurface locks brand TLDs", () => {
@@ -51,6 +52,25 @@ test("resolveSurface prefers host over hash on brand domains", () => {
   );
 });
 
+test("social hash never steals org theatre; lands on net elsewhere", () => {
+  assert.equal(
+    resolveSurface({ hostname: "intelwar.org", hash: "#social" }),
+    "org",
+  );
+  assert.equal(
+    resolveSurface({ hostname: "intelwar.press", hash: "#merit" }),
+    "press",
+  );
+  assert.equal(
+    resolveSurface({ hostname: "intelwar.net", hash: "#social" }),
+    "net",
+  );
+  assert.equal(
+    resolveSurface({ hostname: "localhost", hash: "#social" }),
+    "net",
+  );
+});
+
 test("surfaceHref uses sibling domains on production hosts", () => {
   assert.equal(
     surfaceHref("org", { hostname: "intelwar.net", protocol: "https:" }),
@@ -67,6 +87,14 @@ test("surfaceHref uses sibling domains on production hosts", () => {
   assert.equal(
     surfaceHref("tv", { hostname: "localhost", protocol: "http:" }),
     "#tv",
+  );
+  assert.equal(
+    surfaceHref("social", { hostname: "intelwar.org", protocol: "https:" }),
+    "https://intelwar.net/#social",
+  );
+  assert.equal(
+    surfaceHref("social", { hostname: "localhost", protocol: "http:" }),
+    "#net",
   );
   assert.equal(isProductionHost("intelwar.org"), true);
   assert.equal(isProductionHost("intelwar.press"), true);

@@ -19,6 +19,20 @@ import {
   loadDagDbConfig,
   persistBridgeEntryToGateway,
 } from "./dagdb-persist.js";
+import {
+  CEILINGS_MICRO_USD,
+  FRONTIER_ROSTER,
+  loadModelCatalog,
+  openRouterConfigured,
+  runAdversarial,
+} from "./adversarial.js";
+import {
+  CAMPAIGN_ZERO,
+  campaignZeroStatus,
+  foundingEntries,
+  foundingEntryPayload,
+  isCampaignZeroEntry,
+} from "./campaign-zero.js";
 
 const PORT = Number(process.env.PORT || 8787);
 const CORE_BIN = String(process.env.INTELWAR_CORE_BIN || "").trim();
@@ -80,10 +94,226 @@ app.get("/health", (_req, res) => {
     crosscheck_verify_configured: Boolean(CROSSCHECK_BIN),
     crosscheck_sign_configured: Boolean(CROSSCHECK_SIGN_BIN),
     dagdb_persist_configured: dagDbConfigured(),
+    openrouter_configured: openRouterConfigured(),
+    adversarial_models: loadModelCatalog(),
     durable_default: dagDbConfigured() ? "dagdb" : "local_kernel",
     note: ready
       ? "Kernel + CrossCheck bins required — append/verify fail closed."
       : "Set INTELWAR_CORE_BIN and INTELWAR_CROSSCHECK_BIN (kernel_required).",
+  });
+});
+
+/**
+ * Mandatory-attempt Log write for analysis events (Campaign Zero directive).
+ * Honest: reports attempted/ok/error — never fabricates an entry.
+ * @param {Record<string, unknown>} result — successful runAdversarial output
+ */
+async function writeAnalysisEventToLog(result) {
+  if (!CORE_BIN || !CROSSCHECK_BIN) {
+    return {
+      attempted: false,
+      ok: false,
+      error: "kernel_bins_required",
+      note: "Analysis returned without Log write — Kernel bins unset.",
+    };
+  }
+  if (!consent.active) {
+    return {
+      attempted: false,
+      ok: false,
+      error: "consent_required",
+      note: "Analysis returned without Log write — grant Active consent first.",
+    };
+  }
+  try {
+    const models = Array.isArray(result.models_used) ? result.models_used : [];
+    const bridge = await invokeKernelBridge({
+      summary: `analysis.${result.mode}: ${String(result.claim).slice(0, 140)}`,
+      entry_kind: "Analysis",
+      voice_kind: "synthetic",
+      model_id: models.join(",") || "openrouter",
+      session_id: result.cost?.session_id,
+      tool: "intelwar-ai-adversarial",
+      payload: JSON.stringify({
+        event_type: `analysis.${result.mode}`,
+        provider: "openrouter",
+        models_used: models,
+        cost_micro_usd: result.cost?.spent_micro_usd || 0,
+        ceiling_micro_usd: result.cost?.ceiling_micro_usd || 0,
+        disclosure: result.disclosure,
+        merit_scope: "provisional",
+        attestation: "audit metadata, not certification",
+      }),
+      consent: {
+        active: consent.active,
+        bailor_did: consent.bailor,
+        bailee_did: consent.bailee,
+        scope: consent.scope,
+      },
+    });
+    return {
+      attempted: true,
+      ok: true,
+      entry_id: bridge.entry_id,
+      receipt_hash: bridge.receipt_hash,
+      event_type: `analysis.${result.mode}`,
+    };
+  } catch (err) {
+    return {
+      attempted: true,
+      ok: false,
+      error: err.code || "kernel_bridge_failed",
+      message: err.message || "Log write failed",
+    };
+  }
+}
+
+/**
+ * Adversarial intelligence (intelwar.ai) via OpenRouter.
+ * Fail-closed without OPENROUTER_API_KEY. Never claims final authority.
+ * Cost ceilings enforced in code; analysis events written to the Living Log.
+ */
+app.post("/api/adversarial/run", async (req, res) => {
+  if (!openRouterConfigured()) {
+    return res.status(503).json({
+      ok: false,
+      error: "openrouter_unconfigured",
+      fail_closed: true,
+      message:
+        "Set OPENROUTER_API_KEY on log-api for frontier adversarial runs.",
+      final_authority: false,
+    });
+  }
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  try {
+    const result = await runAdversarial(body);
+    const logWrite =
+      body.skip_log_write === true
+        ? { attempted: false, ok: false, error: "skipped_by_caller" }
+        : await writeAnalysisEventToLog(result);
+    return res.status(200).json({ ...result, log_write: logWrite });
+  } catch (err) {
+    const status = err.code === "claim_required" || err.code === "claim_too_long"
+      ? 400
+      : err.status && err.status >= 400 && err.status < 600
+        ? err.status
+        : 503;
+    return res.status(status).json({
+      ok: false,
+      error: err.code || "adversarial_failed",
+      message: err.message || "adversarial run failed",
+      fail_closed: true,
+      final_authority: false,
+      detail: err.detail || undefined,
+    });
+  }
+});
+
+app.get("/api/adversarial/catalog", (_req, res) => {
+  res.json({
+    ok: true,
+    provider: "openrouter",
+    configured: openRouterConfigured(),
+    models: loadModelCatalog(),
+    roster: FRONTIER_ROSTER,
+    modes: ["stress_test", "cross_check", "red_team"],
+    ceilings_micro_usd: CEILINGS_MICRO_USD,
+    log_write: {
+      kernel_ready: Boolean(CORE_BIN && CROSSCHECK_BIN),
+      consent_active: consent.active,
+    },
+    final_authority: false,
+    note: "Multi-Intelligence Transparency — model identity always returned on runs.",
+  });
+});
+
+/** Campaign Zero — founding campaign metadata + Kernel-mirrored entries. */
+app.get("/api/campaign-zero", (_req, res) => {
+  const mirror = loadMirrorEntries();
+  const entries = mirror.filter(isCampaignZeroEntry);
+  res.json({
+    ok: true,
+    campaign: CAMPAIGN_ZERO,
+    status: campaignZeroStatus(mirror),
+    planned: foundingEntries().map((e) => ({
+      code: e.code,
+      summary: e.summary,
+      voice_kind: e.voice_kind,
+      model_id: e.model_id || null,
+      event_type: e.event_type,
+      decision: e.decision,
+      counters: e.counters,
+    })),
+    entries,
+    merit_note:
+      "Founding-campaign merit is sandboxed and non-portable until diluted by external contribution.",
+  });
+});
+
+/**
+ * Seed missing Campaign Zero founding entries through the Kernel bridge.
+ * Fail-closed: requires bins + active consent; idempotent by summary.
+ */
+app.post("/api/campaign-zero/seed", async (_req, res) => {
+  if (!CORE_BIN || !CROSSCHECK_BIN) {
+    return res.status(503).json({
+      ok: false,
+      error: "kernel_bins_required",
+      fail_closed: true,
+      message: "Campaign Zero seeding requires Kernel append + CrossCheck bins.",
+    });
+  }
+  if (!consent.active) {
+    return res.status(403).json({
+      ok: false,
+      error: "consent_required",
+      message: "Grant Active consent before seeding founding entries.",
+    });
+  }
+  const before = campaignZeroStatus(loadMirrorEntries());
+  const toSeed = foundingEntries().filter((e) =>
+    before.missing_codes.includes(e.code),
+  );
+  const appended = [];
+  for (const entry of toSeed) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const bridge = await invokeKernelBridge({
+        summary: entry.summary,
+        entry_kind: entry.entry_kind,
+        voice_kind: entry.voice_kind,
+        model_id: entry.model_id,
+        session_id: CAMPAIGN_ZERO.id,
+        tool: "intelwar-campaign-zero-seed",
+        payload: foundingEntryPayload(entry),
+        consent: {
+          active: consent.active,
+          bailor_did: consent.bailor,
+          bailee_did: consent.bailee,
+          scope: consent.scope,
+        },
+      });
+      appended.push({
+        code: entry.code,
+        entry_id: bridge.entry_id,
+        receipt_hash: bridge.receipt_hash,
+      });
+    } catch (err) {
+      return res.status(503).json({
+        ok: false,
+        error: err.code || "kernel_bridge_failed",
+        message: `Seeding stopped at ${entry.code}: ${err.message}`,
+        fail_closed: true,
+        appended,
+      });
+    }
+  }
+  return res.status(appended.length ? 201 : 200).json({
+    ok: true,
+    campaign: CAMPAIGN_ZERO.id,
+    appended,
+    status: campaignZeroStatus(loadMirrorEntries()),
+    merit_scope: CAMPAIGN_ZERO.merit_scope,
   });
 });
 

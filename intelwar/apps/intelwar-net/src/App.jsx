@@ -23,20 +23,53 @@ export default function App() {
   const [error, setError] = useState(null);
 
   const navigate = useCallback((next) => {
+    // Social aliases to operational .net
+    const target = next === "social" ? "net" : next;
+
     if (isProductionHost(window.location.hostname)) {
-      const href = surfaceHref(next);
+      const href =
+        next === "social"
+          ? surfaceHref("social")
+          : surfaceHref(target);
       if (href.startsWith("http") && !href.includes(window.location.host)) {
         window.location.assign(href);
         return;
       }
+      // Already on .net and asking for social — stay, set hash for scroll anchor
+      if (
+        next === "social" &&
+        /^(www\.)?intelwar\.net$/i.test(window.location.hostname)
+      ) {
+        setSurface("net");
+        if (window.location.hash.replace(/^#/, "") !== "social") {
+          window.history.replaceState(null, "", "#social");
+        }
+        document.title = surfaceTitle("net");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        requestAnimationFrame(() => {
+          document
+            .getElementById("social-layer")
+            ?.scrollIntoView({ behavior: "smooth" });
+        });
+        return;
+      }
     }
-    setSurface(next);
-    const hash = next === "net" ? "net" : next;
+
+    setSurface(target);
+    const hash =
+      next === "social" ? "social" : target === "net" ? "net" : target;
     if (window.location.hash.replace(/^#/, "") !== hash) {
       window.history.replaceState(null, "", `#${hash}`);
     }
-    document.title = surfaceTitle(next);
+    document.title = surfaceTitle(target);
     window.scrollTo({ top: 0, behavior: "smooth" });
+    if (next === "social") {
+      requestAnimationFrame(() => {
+        document
+          .getElementById("social-layer")
+          ?.scrollIntoView({ behavior: "smooth" });
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -44,6 +77,19 @@ export default function App() {
     const onHash = () => setSurface(resolveSurface());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
+  }, [surface]);
+
+  useEffect(() => {
+    if (surface !== "net") return undefined;
+    const hash = window.location.hash.replace(/^#/, "").toLowerCase();
+    if (hash === "social" || hash === "merit") {
+      requestAnimationFrame(() => {
+        document
+          .getElementById("social-layer")
+          ?.scrollIntoView({ behavior: "smooth" });
+      });
+    }
+    return undefined;
   }, [surface]);
 
   const refresh = useCallback(async () => {

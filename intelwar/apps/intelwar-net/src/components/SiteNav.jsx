@@ -1,11 +1,11 @@
 import { surfaceHref } from "../lib/surface.js";
 
-const HOME = { id: "org", label: ".org", title: "Foundation" };
-const SPINE = { id: "press", label: ".press", title: "Spine" };
+const HOME = { id: "org", label: ".org", title: "Theatre" };
+const SPINE = { id: "press", label: ".press", title: "Press" };
 const INSTRUMENTS = [
-  { id: "net", label: ".net", title: "Log" },
-  { id: "ai", label: ".ai", title: "Check" },
-  { id: "tv", label: ".tv", title: "Prov" },
+  { id: "net", label: ".net", title: "Social" },
+  { id: "ai", label: ".ai", title: "Adversary" },
+  { id: "tv", label: ".tv", title: "Film" },
 ];
 
 export default function SiteNav({ surface, onNavigate }) {
