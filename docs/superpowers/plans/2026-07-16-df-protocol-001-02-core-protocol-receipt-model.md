@@ -345,7 +345,7 @@ pub struct VerifiedGenesisIssuerAuthorityV1 {
 pub fn verify_genesis_adoption_receipt_semantics(
     receipt: &GenesisAdoptionReceipt,
     chronology_artifacts: &BTreeMap<GitObjectId, VerifiedHistoricalArtifactV1>,
-    review_evidence: &VerifiedReviewRevealV1,
+    review_evidence: &VerifiedHistoricalReviewRevealV1,
     issuer_authority: &VerifiedGenesisIssuerAuthorityV1,
     forbidden_current_roots: &ForbiddenCurrentGenesisRootsV1,
 ) -> Result<VerifiedGenesisAdoptionV1, ProtocolError>;
@@ -358,16 +358,13 @@ submitted, unchanged, assigned, sealed-review, revealed, qualified, disposed,
 and reviewed artifacts; verifies the signing payload under the distinct domain
 `exo.decision_forum.genesis_adoption_signing_payload.v1`; resolves issuer DID,
 key, role, tenant, protocol, version, scope, validity, revocation, and conflict
-only from `VerifiedGenesisIssuerAuthorityV1`; and rejects any historical entry
-or string/byte field equal to the current authorization target,
-prepublication root, or final package root. This is the same closed
-three-root cycle-prevention set Slice 1 already checks, for the same reason
-Slice 1 gives: the artifact-manifest root is outside the package and cannot
-create an indirect cycle through package-internal fields. A "closeout index
-root" is a Slice 10 (genesis adoption and closeout) concept that does not
-exist yet in any committed schema or Rust type as of this slice; it is
-deferred until a later slice defines it, rather than fabricated here as a
-placeholder. The verified result is cycle-free and always non-retroactive.
+only from `VerifiedGenesisIssuerAuthorityV1`. Semantic validation rejects any of
+the three selected current-package ProtocolHash256 roots
+(authorization_target_hash, prepublication_root, final_package_root) appearing
+in the scanned genesis ProtocolHash256 fields, via the same closed three-root
+set carried by ForbiddenCurrentGenesisRootsV1 / CurrentPackageCommitments. A
+closeout-index root is a Slice 10 concept and is not fabricated here. The
+verified result is cycle-free and always non-retroactive.
 
 The committed Rust, strict JSON Schema, full input vector, TypeScript actual
 executor, and mutation oracle include literal cases named
@@ -1878,23 +1875,18 @@ impl VerifiedPackageTrustRegistryV1 {
 
         let mut assignments = BTreeMap::new();
         for assignment in &package.review_bundle.assignments {
-            let (facts, attestation_hash) = seats.get(&assignment.seat_id).ok_or_else(|| {
-                graph_mismatch(
-                    "/review_bundle/assignments/*/seat_id",
-                    "verified roster seat",
-                    assignment.seat_id.to_string(),
-                )
-            })?;
-            if assignment.seat_kind != facts.seat_kind
-                || assignment.protocol_version_hash != protocol_version
-                || assignment.seat_attestation_hash != *attestation_hash
-                || assignment.context_manifest_hash != facts.context_manifest_hash
+            // Pre-reveal blind custody: assignment carries no seat_id /
+            // seat_attestation_hash. Identity is bound only at reveal and via
+            // review signatures against the independently verified seat roster.
+            if assignment.protocol_version_hash != protocol_version
+                || assignment.blind_assignment_commitment == ProtocolHash256::ZERO
+                || assignment.ephemeral_reviewer_key_commitment == ProtocolHash256::ZERO
+                || assignment.context_commitment == ProtocolHash256::ZERO
+                || assignment.conflict_commitment == ProtocolHash256::ZERO
             {
                 return Err(graph_mismatch(
                     "/review_bundle/assignments/*/context",
-                    format!(
-                        "trusted seat, version {protocol_version}, attestation {attestation_hash}"
-                    ),
+                    format!("version {protocol_version} with nonzero blind commitments"),
                     format!("assignment {}", assignment.assignment_id),
                 ));
             }
@@ -1915,17 +1907,6 @@ impl VerifiedPackageTrustRegistryV1 {
                 expected: 10,
                 actual: assignments.len(),
             });
-        }
-        let assigned_seats = assignments
-            .values()
-            .map(|assignment| assignment.seat_id.clone())
-            .collect::<BTreeSet<_>>();
-        if assigned_seats != seats.keys().cloned().collect::<BTreeSet<_>>() {
-            return Err(graph_mismatch(
-                "/review_bundle/assignments",
-                "exactly one assignment for each of the ten independently verified seats",
-                format!("{assigned_seats:?}"),
-            ));
         }
         let council_roles = assignments
             .values()
@@ -1971,7 +1952,26 @@ impl VerifiedPackageTrustRegistryV1 {
                     review.assignment_id.to_string(),
                 )
             })?;
-            let (facts, _) = &seats[&assignment.seat_id];
+            let (seat_id, (facts, _)) = seats
+                .iter()
+                .find(|(_, (candidate, _))| {
+                    candidate.seat_signing_key_id == review.signature.signing_key_id
+                        && candidate.seat_verification_key == review.signature.verification_key
+                })
+                .ok_or_else(|| {
+                    graph_mismatch(
+                        format!("/review_bundle/signed_reviews/{review_index}/signature"),
+                        "trusted reviewer key from independently verified seat roster",
+                        review.signature.signing_key_id.to_string(),
+                    )
+                })?;
+            if facts.seat_kind != assignment.seat_kind {
+                return Err(graph_mismatch(
+                    assignment_path.clone(),
+                    format!("seat_kind {:?}", assignment.seat_kind),
+                    format!("signer seat_kind {:?} for {seat_id}", facts.seat_kind),
+                ));
+            }
             if review.protocol_version_hash != protocol_version
                 || review.authorization_target_hash != authorization_target
             {
@@ -1981,27 +1981,6 @@ impl VerifiedPackageTrustRegistryV1 {
                         "authenticated supported review disposition, version {protocol_version}, target {authorization_target}"
                     ),
                     review.review_id.to_string(),
-                ));
-            }
-            if review.signature.signing_key_id != facts.seat_signing_key_id
-                || review.signature.verification_key != facts.seat_verification_key
-            {
-                let actual_signer = seats.iter().find_map(|(seat_id, (candidate, _))| {
-                    (review.signature.signing_key_id == candidate.seat_signing_key_id
-                        && review.signature.verification_key == candidate.seat_verification_key)
-                        .then(|| seat_id.to_string())
-                });
-                if let Some(actual_signer) = actual_signer {
-                    return Err(ProtocolError::CrossBinding {
-                        path: assignment_path,
-                        expected: assignment.seat_id.to_string(),
-                        actual: actual_signer,
-                    });
-                }
-                return Err(graph_mismatch(
-                    format!("/review_bundle/signed_reviews/{review_index}/signature"),
-                    format!("trusted reviewer key for {}", assignment.seat_id),
-                    review.signature.signing_key_id.to_string(),
                 ));
             }
             let digest = domain_hash(
@@ -2804,9 +2783,13 @@ pub struct VerifiedGenesisAdoptionV1 {
 /// verifies the signing payload under
 /// `exo.decision_forum.genesis_adoption_signing_payload.v1`; resolves issuer
 /// DID/key/role/tenant/protocol/version/scope/validity/revocation/conflict
-/// only from `VerifiedGenesisIssuerAuthorityV1`; and rejects any historical
-/// entry or string/byte field equal to the current authorization target,
-/// prepublication root, or final package root.
+/// only from `VerifiedGenesisIssuerAuthorityV1`. Semantic validation rejects
+/// any of the three selected current-package ProtocolHash256 roots
+/// (authorization_target_hash, prepublication_root, final_package_root)
+/// appearing in the scanned genesis ProtocolHash256 fields, via the same
+/// closed three-root set carried by ForbiddenCurrentGenesisRootsV1 /
+/// CurrentPackageCommitments. A closeout-index root is a Slice 10 concept
+/// and is not fabricated here.
 pub fn verify_genesis_adoption_receipt_semantics(
     receipt: &GenesisAdoptionReceipt,
     chronology_artifacts: &BTreeMap<GitObjectId, VerifiedHistoricalArtifactV1>,
@@ -3064,10 +3047,10 @@ fn cross_binding_graph_rejects_rebound_and_early_failures_at_exact_layers() {
         &package,
         &trust,
         |value| {
-            value.review_bundle.assignments[0].seat_id =
-                Did::parse("did:exo:unknown").expect("test DID");
+            value.review_bundle.assignments[0].blind_assignment_commitment =
+                ProtocolHash256::ZERO;
         },
-        "/review_bundle/assignments/*/seat_id",
+        "/review_bundle/assignments/*/context",
     );
     assert_graph_error(
         &package,
@@ -3794,14 +3777,15 @@ fn review_types_preserve_exact_links() {
     let authorization_target_hash = ProtocolHash256::from_bytes([12; 32]);
     let assignment = ReviewAssignment {
         assignment_id,
-        seat_id: Did::parse("did:exo:council-openai").expect("Gate-04 seat DID"),
+        tenant_id: "tenant-a".to_owned(),
+        protocol_id: "DF-PROTOCOL-001".to_owned(),
         seat_kind: SeatKind::Council,
         protocol_version_hash: version_hash,
-        seat_attestation_hash: ProtocolHash256::from_bytes([13; 32]),
-        context_manifest_hash: ProtocolHash256::from_bytes([14; 32]),
         review_role: ReviewRole::Governance,
-        blind_commitment: ProtocolHash256::from_bytes([15; 32]),
-        conflict_declaration_hash: ProtocolHash256::from_bytes([16; 32]),
+        blind_assignment_commitment: ProtocolHash256::from_bytes([15; 32]),
+        ephemeral_reviewer_key_commitment: ProtocolHash256::from_bytes([16; 32]),
+        context_commitment: ProtocolHash256::from_bytes([14; 32]),
+        conflict_commitment: ProtocolHash256::from_bytes([17; 32]),
         assigned_at: ProtocolHlc::new(10, 0),
     };
     let review = PeerReview {
@@ -7201,52 +7185,28 @@ pub fn validate_context_graph(
 
     let mut assignments = BTreeMap::new();
     for assignment in &package.review_bundle.assignments {
-        let expected =
-            seats
-                .get(&assignment.seat_id)
-                .ok_or_else(|| ProtocolError::CrossBinding {
-                    path: "/review_bundle/assignments/seat_id".to_owned(),
-                    expected: "roster seat DID".to_owned(),
-                    actual: assignment.seat_id.to_string(),
-                })?;
-        if assignment.seat_kind != expected.0 {
-            return Err(ProtocolError::SeatKind {
-                path: "/review_bundle/assignments/seat_kind".to_owned(),
-                expected: format!("{:?}", expected.0),
-                actual: format!("{:?}", assignment.seat_kind),
+        if assignment.protocol_version_hash != computed_version
+            || assignment.blind_assignment_commitment == ProtocolHash256::ZERO
+            || assignment.ephemeral_reviewer_key_commitment == ProtocolHash256::ZERO
+            || assignment.context_commitment == ProtocolHash256::ZERO
+            || assignment.conflict_commitment == ProtocolHash256::ZERO
+        {
+            return Err(ProtocolError::CrossBinding {
+                path: "/review_bundle/assignments/context".to_owned(),
+                expected: format!("version={computed_version} with nonzero blind commitments"),
+                actual: assignment.assignment_id.to_string(),
             });
         }
-        for (path, actual, wanted) in [
-            (
-                "protocol_version_hash",
-                assignment.protocol_version_hash,
-                computed_version,
-            ),
-            (
-                "seat_attestation_hash",
-                assignment.seat_attestation_hash,
-                expected.1,
-            ),
-            (
-                "context_manifest_hash",
-                assignment.context_manifest_hash,
-                expected.2,
-            ),
-            (
-                "conflict_declaration_hash",
-                assignment.conflict_declaration_hash,
-                expected.3,
-            ),
-        ] {
-            if actual != wanted {
-                return Err(ProtocolError::CrossBinding {
-                    path: format!("/review_bundle/assignments/{path}"),
-                    expected: wanted.to_string(),
-                    actual: actual.to_string(),
-                });
-            }
+        if assignments
+            .insert(assignment.assignment_id, assignment)
+            .is_some()
+        {
+            return Err(ProtocolError::CrossBinding {
+                path: "/review_bundle/assignments".to_owned(),
+                expected: "unique assignment IDs".to_owned(),
+                actual: assignment.assignment_id.to_string(),
+            });
         }
-        assignments.insert(assignment.assignment_id, assignment);
     }
 
     let mut reviews_by_assignment = BTreeMap::<ProtocolUuid, usize>::new();
@@ -7264,9 +7224,10 @@ pub fn validate_context_graph(
             .entry(review.assignment_id)
             .or_insert(0) += 1;
         review_ids.insert(review.review_id);
+        let signer_known = seats.values().any(|seat| seat.4 == review.signature.signing_key_id);
         if review.protocol_version_hash != computed_version
             || review.authorization_target_hash != authorization_target
-            || review.signature.signing_key_id != seats[&assignment.seat_id].4
+            || !signer_known
         {
             return Err(ProtocolError::CrossBinding {
                 path: "/review_bundle/signed_reviews/context".to_owned(),
@@ -7277,6 +7238,7 @@ pub fn validate_context_graph(
                 ),
             });
         }
+        let _ = assignment; // keep assignment binding required above
     }
     for assignment_id in assignments.keys() {
         let actual = reviews_by_assignment
@@ -8560,6 +8522,8 @@ pub const HISTORICAL_ARTIFACT_SET_COMMITMENT_V1_HASH_DOMAIN: &str =
     "exo.decision_forum.historical_artifact_set_commitment.v1";
 pub const HISTORICAL_BLIND_REVIEW_COVERAGE_V1_HASH_DOMAIN: &str =
     "exo.decision_forum.historical_blind_review_coverage.v1";
+pub const BLIND_REVIEW_REVEAL_PACKAGE_V1_HASH_DOMAIN: &str =
+    "exo.decision_forum.blind_review_reveal_package.v1";
 pub const PROTOCOL_MILESTONE_EVENT_V1_HASH_DOMAIN: &str =
     "exo.decision_forum.protocol_milestone_event.v1";
 pub const PROTOCOL_EVENT_V1_HASH_DOMAIN: &str = "exo.decision_forum.protocol_event.v1";
@@ -8609,6 +8573,7 @@ pub enum ProtocolHashDomain {
     GenesisEvidenceBundleV1,
     GenesisAdoptionReceiptV1,
     GenesisAdoptionSigningPayloadV1,
+    BlindReviewRevealPackageV1,
     HistoricalActChronologyEntryV1,
     HistoricalActChronologyV1,
     HistoricalArtifactSetCommitmentV1,
@@ -8621,7 +8586,7 @@ pub enum ProtocolHashDomain {
 }
 
 impl ProtocolHashDomain {
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 47] = [
         Self::PeerReviewedProtocolPackageV1,
         Self::ProtocolAuthorizationTargetV1,
         Self::ProtocolVersionV1,
@@ -8659,6 +8624,7 @@ impl ProtocolHashDomain {
         Self::GenesisEvidenceBundleV1,
         Self::GenesisAdoptionReceiptV1,
         Self::GenesisAdoptionSigningPayloadV1,
+        Self::BlindReviewRevealPackageV1,
         Self::HistoricalActChronologyEntryV1,
         Self::HistoricalActChronologyV1,
         Self::HistoricalArtifactSetCommitmentV1,
@@ -8740,6 +8706,7 @@ impl ProtocolHashDomain {
             Self::GenesisAdoptionSigningPayloadV1 => {
                 GENESIS_ADOPTION_SIGNING_PAYLOAD_V1_HASH_DOMAIN
             }
+            Self::BlindReviewRevealPackageV1 => BLIND_REVIEW_REVEAL_PACKAGE_V1_HASH_DOMAIN,
             Self::HistoricalActChronologyEntryV1 => HISTORICAL_ACT_CHRONOLOGY_ENTRY_V1_HASH_DOMAIN,
             Self::HistoricalActChronologyV1 => HISTORICAL_ACT_CHRONOLOGY_V1_HASH_DOMAIN,
             Self::HistoricalArtifactSetCommitmentV1 => {
@@ -9975,22 +9942,24 @@ pub fn valid_v1_package() -> PeerReviewedProtocolPackageV1 {
         domain: "governance".to_owned(),
     };
     let version = protocol_version_hash(&identity).expect("v1 protocol version");
+    let mut assignment_seat_ids = BTreeMap::<ProtocolUuid, Did>::new();
     let mut assignments = (0..10)
-        .map(|index| ReviewAssignment {
-            assignment_id: uuid(fixture_u8(index) + 1),
-            seat_id: all_seats[index].seat_id.clone(),
-            seat_kind: all_seats[index].seat_kind,
-            protocol_version_hash: version,
-            seat_attestation_hash: domain_hash(
-                ProtocolHashDomain::SeatAttestationV1,
-                all_seats[index],
-            )
-            .expect("seat attestation hash"),
-            context_manifest_hash: all_seats[index].context_manifest_hash,
-            review_role: roles[index],
-            blind_commitment: hash(fixture_u8(index) + 71),
-            conflict_declaration_hash: all_seats[index].conflict_declaration_hash,
-            assigned_at: Timestamp::new(10 + fixture_u64(index), 0),
+        .map(|index| {
+            let assignment = ReviewAssignment {
+                assignment_id: uuid(fixture_u8(index) + 1),
+                tenant_id: "tenant-alpha".to_owned(),
+                protocol_id: "DF-PROTOCOL-001".to_owned(),
+                seat_kind: all_seats[index].seat_kind,
+                protocol_version_hash: version,
+                review_role: roles[index],
+                blind_assignment_commitment: hash(fixture_u8(index) + 71),
+                ephemeral_reviewer_key_commitment: hash(fixture_u8(index) + 81),
+                context_commitment: all_seats[index].context_manifest_hash,
+                conflict_commitment: all_seats[index].conflict_declaration_hash,
+                assigned_at: Timestamp::new(10 + fixture_u64(index), 0),
+            };
+            assignment_seat_ids.insert(assignment.assignment_id, all_seats[index].seat_id.clone());
+            assignment
         })
         .collect::<Vec<_>>();
     assignments.sort_by_key(|value| (value.seat_kind, value.review_role, value.assignment_id));
@@ -9998,9 +9967,13 @@ pub fn valid_v1_package() -> PeerReviewedProtocolPackageV1 {
         .iter()
         .enumerate()
         .map(|(index, assignment)| {
+            let seat_id = assignment_seat_ids
+                .get(&assignment.assignment_id)
+                .expect("fixture assignment seat")
+                .clone();
             let seat = all_seats
                 .iter()
-                .find(|seat| seat.seat_id == assignment.seat_id)
+                .find(|seat| seat.seat_id == seat_id)
                 .expect("assigned seat");
             PeerReview {
                 review_id: uuid(fixture_u8(index) + 31),
@@ -10197,9 +10170,12 @@ pub fn valid_v1_package() -> PeerReviewedProtocolPackageV1 {
             .iter()
             .find(|value| value.assignment_id == review.assignment_id)
             .expect("assignment");
+        let seat_id = assignment_seat_ids
+            .get(&assignment.assignment_id)
+            .expect("fixture assignment seat");
         let seat_index = all_seats
             .iter()
-            .position(|value| value.seat_id == assignment.seat_id)
+            .position(|value| value.seat_id == *seat_id)
             .expect("seat index");
         let digest = domain_hash(
             ProtocolHashDomain::PeerReviewSigningPayloadV1,
@@ -10486,26 +10462,32 @@ fn resign_complete_package_graph(
         }
     }
     let version = protocol_version_hash(&package.protocol_identity).expect("protocol version");
+    let roster_seats = seats.values().cloned().collect::<Vec<_>>();
+    let mut by_kind: BTreeMap<SeatKind, Vec<Did>> = BTreeMap::new();
+    for seat in roster_seats {
+        by_kind.entry(seat.seat_kind).or_default().push(seat.seat_id.clone());
+    }
+    for ids in by_kind.values_mut() {
+        ids.sort();
+    }
+    let mut kind_cursor: BTreeMap<SeatKind, usize> = BTreeMap::new();
     let assignment_seats = package
         .review_bundle
         .assignments
         .iter_mut()
         .map(|assignment| {
-            let seat = seats.get(&assignment.seat_id).expect("assignment seat");
             assignment.protocol_version_hash = version;
-            assignment.seat_attestation_hash =
-                domain_hash(ProtocolHashDomain::SeatAttestationV1, seat)
-                    .expect("seat attestation hash");
-            assignment.context_manifest_hash = seat.context_manifest_hash;
-            (assignment.assignment_id, assignment.seat_id.clone())
+            let cursor = kind_cursor.entry(assignment.seat_kind).or_insert(0);
+            let seat_id = by_kind
+                .get(&assignment.seat_kind)
+                .and_then(|ids| ids.get(*cursor))
+                .expect("assignment seat by kind")
+                .clone();
+            *cursor += 1;
+            (assignment.assignment_id, seat_id)
         })
         .collect::<BTreeMap<_, _>>();
-    let review_index_seats = package
-        .review_bundle
-        .assignments
-        .iter()
-        .map(|assignment| assignment.seat_id.clone())
-        .collect::<Vec<_>>();
+    let review_index_seats = assignment_seats.values().cloned().collect::<Vec<_>>();
     for (index, review) in package.review_bundle.signed_reviews.iter_mut().enumerate() {
         review.protocol_version_hash = version;
         review.authorization_target_hash = ProtocolHash256::ZERO;
@@ -67695,7 +67677,13 @@ in `receipt/history.rs`:
 fn raw_assignment_rebind_fails_self_consistency() {
     let trust = verified_test_registries();
     let mut package = test_fixtures::valid_v1_package();
-    package.review_bundle.assignments[0].seat_id = Did::parse("did:exo:attacker").expect("DID");
+    // Blind custody: assignment has no seat_id. Rebind attempt flips seat_kind
+    // so the existing review signer no longer matches the assignment kind.
+    package.review_bundle.assignments[0].seat_kind =
+        match package.review_bundle.assignments[0].seat_kind {
+            SeatKind::Council => SeatKind::AiIrb,
+            SeatKind::AiIrb => SeatKind::Council,
+        };
     assert!(matches!(
         verify_v1_package_root(&package, &trust),
         Err(ProtocolError::CommitmentMismatch {
@@ -68443,6 +68431,47 @@ pub struct SealedReviewCommitmentV1 {
     pub signature: PeerReviewSignatureV1,
 }
 
+/// Leaf types required for plan-only materialization of Wave-20 real fences.
+/// Extracted by the Slice 2 materializer so `cargo test --no-run` is green with
+/// no external diagnostic shim. Do not redefine ReviewAssignment under that name.
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlindAssignmentOpeningV1 {
+    pub opening_hash: ProtocolHash256,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlindCommitmentOpeningV1 {
+    pub opening_hash: ProtocolHash256,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlindReviewRevealPackageSignatureV1 {
+    pub algorithm: String,
+    pub signing_key_id: ProtocolHash256,
+    pub verification_key: Ed25519VerificationKey,
+    pub signature: Ed25519Signature,
+    pub signed_payload_hash: ProtocolHash256,
+    pub signed_payload_target: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlindReviewRevealEntryV1 {
+    pub assignment_id: ProtocolUuid,
+    pub assignment_opening: BlindAssignmentOpeningV1,
+    pub commitment_opening: BlindCommitmentOpeningV1,
+    pub seat_id: Did,
+    pub seat_attestation_hash: ProtocolHash256,
+    pub ephemeral_reviewer_public_key: Ed25519VerificationKey,
+    pub seat_ephemeral_key_binding_signature: Ed25519Signature,
+    pub sealed_review_hash: ProtocolHash256,
+    pub final_custody_head: ProtocolHash256,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignedBlindReviewRevealPackageV1 {
@@ -68460,6 +68489,12 @@ pub struct SignedBlindReviewRevealPackageV1 {
     pub adapter_key_id: ProtocolHash256,
     pub signature: BlindReviewRevealPackageSignatureV1,
 }
+
+/// Residual transport name used by older vector/mutation owners.
+/// Defined as a type alias to SignedBlindReviewRevealPackageV1 (not a
+/// standalone obsolete struct) so plan-only materialization compiles while
+/// the Wave-20 guard forbid of that obsolete struct form remains GREEN.
+pub type RevealCommitmentV1 = SignedBlindReviewRevealPackageV1;
 
 pub fn sealed_review_hash(
     review: &SealedReviewCommitmentV1,
@@ -70301,7 +70336,8 @@ pub fn valid_v2_package(predecessor: &VerifiedExecutionHistory) -> PeerReviewedP
         let old = assignment.assignment_id;
         assignment.assignment_id = uuid(150 + u8::try_from(index).expect("assignment index"));
         assignment.protocol_version_hash = version;
-        assignment.blind_commitment = hash(40 + u8::try_from(index).expect("assignment index"));
+        assignment.blind_assignment_commitment =
+            hash(40 + u8::try_from(index).expect("assignment index"));
         assignment.assigned_at =
             Timestamp::new(140 + u64::try_from(index).expect("assignment index"), 0);
         assignment_ids.insert(old, assignment.assignment_id);
@@ -70310,7 +70346,7 @@ pub fn valid_v2_package(predecessor: &VerifiedExecutionHistory) -> PeerReviewedP
         .review_bundle
         .assignments
         .iter()
-        .map(|assignment| assignment.blind_commitment)
+        .map(|assignment| assignment.blind_assignment_commitment)
         .collect();
     package.review_bundle.reveal_package_hash = Some(hash(219));
 
@@ -70343,11 +70379,33 @@ pub fn valid_v2_package(predecessor: &VerifiedExecutionHistory) -> PeerReviewedP
     }
 
     let authorization = authorization_target_hash(&package).expect("v2 target");
+    let mut v2_by_kind: BTreeMap<SeatKind, Vec<Did>> = BTreeMap::new();
+    for seat_id in stable_seat_keys.keys() {
+        let kind = if seat_id.to_string().contains("council") {
+            SeatKind::Council
+        } else {
+            SeatKind::AiIrb
+        };
+        v2_by_kind.entry(kind).or_default().push(seat_id.clone());
+    }
+    for ids in v2_by_kind.values_mut() {
+        ids.sort();
+    }
+    let mut v2_cursor: BTreeMap<SeatKind, usize> = BTreeMap::new();
     let assignment_seats = package
         .review_bundle
         .assignments
         .iter()
-        .map(|assignment| (assignment.assignment_id, assignment.seat_id.clone()))
+        .map(|assignment| {
+            let cursor = v2_cursor.entry(assignment.seat_kind).or_insert(0);
+            let seat_id = v2_by_kind
+                .get(&assignment.seat_kind)
+                .and_then(|ids| ids.get(*cursor))
+                .expect("v2 assignment seat")
+                .clone();
+            *cursor += 1;
+            (assignment.assignment_id, seat_id)
+        })
         .collect::<BTreeMap<_, _>>();
     for review in &mut package.review_bundle.signed_reviews {
         review.authorization_target_hash = authorization;
@@ -71745,6 +71803,37 @@ Gate 06 adds the typed Rust renderer input alongside
 as typed values, never `Debug` text or suffix-guessed maps:
 
 ```rust
+/// Leaf types for plan-only materialization of the transitive renderer lock.
+/// No external diagnostic shim.
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sha256Digest(pub [u8; 32]);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolLockV1 {
+    pub tool_name: String,
+    pub tool_version: String,
+    pub tool_digest: ProtocolHash256,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RendererAssetLockV1 {
+    pub asset_path_hash: ProtocolHash256,
+    pub asset_content_hash: ProtocolHash256,
+    pub media_type: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RendererResourcePolicyV1 {
+    pub max_memory_bytes: u64,
+    pub max_cpu_milliseconds: u64,
+    pub network_allowed: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProtocolRendererManifestV1 {

@@ -53,3 +53,61 @@ Planning task P1: in progress
 - Ninth original-validator re-review: specification `/root/plan_spec_validator` — `APPROVED`; technical `/root/plan_technical_validator` — `APPROVED`.
 - Independent whole-plan re-review: `/root/plan_whole_reviewer` — `APPROVED`; no critical, important, or minor findings remain. The reviewer independently reproduced rejection of the former provider-judgment evidence-floor exploit before `VerifiedPackageRoot`, confirmed execution-chain denial, ran both full compiled semantic/commitment tests, and passed the schema, type, digest, formatting, syntax, reference, fence, and whitespace guards.
 - Planning task P1 complete: immutable reviewed content range `23742d90ad4f08f62a668ca7b371b9e318177885..c0a18d1eaa2c2666554b81a2508130e98ff5eda1`; documentation-only content commit `c0a18d1eaa2c2666554b81a2508130e98ff5eda1`; implementer/fixer and validator identities, RED/GREEN commands, findings, repairs, and final approvals are recorded above. Push/PR/CI truth is verified separately after this audit entry because a commit cannot contain its own object ID.
+
+## DF-PROTOCOL-001 Wave 20 findings 1–5 (Slice 1–2 plan repair)
+
+**Date:** 2026-07-24  
+**Base HEAD (fix-spec commit, unchanged during writer pass):** `372c3ceeed90bfdb7a06f5099b96ebbde1be0341`  
+**Branch:** `bob-stewart/decision-forum-peer-reviewed-protocol-design`  
+**PR:** #809 (draft/open; no force-push)
+
+### Pre-repair plan hashes (21ff7bc plan bodies under fix-spec HEAD)
+- Slice 1: `3a72b3d960aed2196ca3dff8a7f4e29a9948013192f43718847f033fe1d038b8`
+- Slice 2: `bdfe5cdcbbfc11e954f4af478d6565bc0540687b543d48e477c6f69da243a31e`
+- Fix-spec (dual-approved, already committed): `c4a26a375d7beb26f3b672675ca9ed2154254fd214e9bab7293b17afa7a4635b`
+
+### Post-repair plan hashes
+- Slice 1: `4e3a97540dae01dbe0b9ae9b162fc225a67e5f51d2072762f19d901c123ea081`
+- Slice 2: `fa804fefdb56d9595afc6517923bb2316b6b3917ddae3a6110cf41f03036fb22`
+
+### RED → GREEN
+- **RED:** dual-approved findings 1–5 on pre-repair plans (CRITICAL plan-only compile depended on external diagnostic shim; IMPORTANT VerifiedReviewReveal rename collision; IMPORTANT CommitmentScheme 20 vs 35; MINOR forbidden-root prose; MINOR GenesisAdoptionSignature naming).
+- **GREEN (semantic guard):** `python3 /Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-guard.py` → `wave20_semantic_contract=GREEN failures=0`.
+- **GREEN (plan-only no-run, no shim):** disposable archive materialize → `cargo test -p exochain-decision-forum --all-targets --no-run` exit 0.
+- **GREEN (clippy):** `cargo clippy -p exochain-decision-forum --all-targets -- -D warnings` exit 0.
+- **GREEN (focused genesis):** `cargo test -p exochain-decision-forum genesis_` → 10/10 ok.
+- **Fmt:** pre-existing rustfmt RED under current nightly (~289 Diff hunks on baseline materialization); not claimed GREEN for this repair.
+
+### Identities
+- **Writer (sole plan editor for this pass):** Wave 20 findings 1–5 orchestrator/writer session.
+- **Independent specification re-review:** PASS WITH MINOR FINDINGS — `slice-2-wave-20-findings-1-5-spec-rereview.md`.
+- **Independent technical re-review:** PASS WITH MINOR FINDINGS — `slice-2-wave-20-findings-1-5-technical-rereview.md` (independently reproduced no-run/clippy/genesis without shim).
+- **Independent whole-slice re-review:** PASS WITH MINOR FINDINGS — `slice-2-wave-20-findings-1-5-whole-slice-rereview.md`.
+
+### Findings repaired
+1. CRITICAL — plan-only leaf types + no-shim compile; no second `ReviewAssignment`; RevealCommitmentV1 as type alias (guard-compatible).
+2. IMPORTANT — aspirational genesis `VerifiedHistoricalReviewRevealV1` only.
+3. IMPORTANT — Slice 1 CommitmentScheme closed set 20 → 35 matching Slice 2.
+4. MINOR — three-root forbidden prose; closeout-index Slice 10.
+5. MINOR — `GenesisAdoptionSignatureV1` in Slice 1.
+
+### Minor residuals accepted by all three validators
+- RevealCommitmentV1 type alias (not two-field struct) required by guard forbid of `pub struct RevealCommitmentV1`.
+- Leaf types injected into existing real fences (inventory 67 preserved).
+- Guard still prints stale EXPECTED_HEAD (informational).
+
+### Explicit non-claims
+- No production crates, governance schemas, tools, or release/licensure work.
+- No force-push, merge, deploy, ratify, release, or publish.
+- Full frozen all-target test wrapper not re-run this pass (genesis-focused freeze used).
+- Slice 3–10 planning continues after this documentation commit/push boundary.
+
+### AAR control preserved
+Wave 20 consolidated downstream-interface semantic guard remains the durable AAR control (`slice-2-wave-20-guard.py`, max_iterations=8, double-failure stop).
+
+### Evidence (mode 0600 under backups)
+`/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-findings-1-5-writer-report.md`  
+`/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-findings-1-5-writer.log`  
+`/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-findings-1-5-spec-rereview.md`  
+`/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-findings-1-5-technical-rereview.md`  
+`/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-findings-1-5-whole-slice-rereview.md`
