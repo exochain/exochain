@@ -316,6 +316,8 @@ pub const GENESIS_EVIDENCE_BUNDLE_V1_HASH_DOMAIN: &str =
     "exo.decision_forum.genesis_evidence_bundle.v1";
 pub const GENESIS_ADOPTION_RECEIPT_V1_HASH_DOMAIN: &str =
     "exo.decision_forum.genesis_adoption_receipt.v1";
+pub const GENESIS_ADOPTION_SIGNING_PAYLOAD_V1_HASH_DOMAIN: &str =
+    "exo.decision_forum.genesis_adoption_signing_payload.v1";
 pub const FINAL_PACKAGE_ROOT_NORMALIZATION: &str =
     "replace receipt_manifest.final_package_root with 32 zero bytes";
 ```
@@ -512,18 +514,43 @@ verification or changes the external chain root. Only a successor package may
 commit that completed root through `prior_execution_receipt_chain`; a chain
 never appears in the package whose root it authorizes.
 
-`GenesisEvidenceBundleV1` is a pre-activation-only object containing typed Git
-object IDs, a chronology-manifest hash, and a historical-review-evidence hash.
-Its domain-separated hash is
+`GenesisEvidenceBundleV1` is a pre-activation-only object containing a typed,
+ordered `chronology_entries` list of `HistoricalActChronologyEntryV1` records
+(each a typed Git object ID, artifact content/path hash, occurrence HLC,
+provenance hash, and the hash of its immediate predecessor entry, or `null`
+only for the first entry), the domain-separated `chronology_root` over that
+exact list, a `historical_artifact_set` commitment
+(`HistoricalArtifactSetCommitmentV1`) over the set of chronology artifact
+content hashes, an `unchanged_content_proof`
+(`HistoricalArtifactSetEqualityProofV1`) asserting exact set equality between
+the submitted, reviewed, and unchanged artifact sets, and an
+`ordinary_blinded_review` coverage record (`HistoricalBlindReviewCoverageV1`)
+committing the historical assignment, commitment, sealed-review,
+reveal, qualification, and disposition hash sets against that same reviewed
+artifact set. Its domain-separated hash is
 `exo.decision_forum.genesis_evidence_bundle.v1`; it has no field capable of
 naming the current package, authorization target, prepublication root, or
-final package root. `GenesisAdoptionReceipt` commits that bundle hash and its
-own prospective effect. Its `receipt_root` is recomputed under
+final package root. `GenesisAdoptionReceipt` commits that bundle hash, a
+tenant/protocol/version binding, and a closed, single-variant
+`prospective_effect` (`AuthorizeSubsequentExecutionOnly`) and
+`prospective_scope` (`ExactReviewedProtocolEnvelopeOnly`) so no retroactive or
+out-of-envelope claim is representable. Its Ed25519 signature commits
+`GenesisAdoptionSigningPayloadV1`, every receipt field except `evidence_bundle`,
+`signature`, and `receipt_root`, under domain
+`exo.decision_forum.genesis_adoption_signing_payload.v1`; the signing key,
+verification key, and `issuer_key_id` resolve only through the independently
+verified, external genesis-issuer authority binding, never from the receipt's
+own claim. Its `receipt_root` is recomputed under
 `exo.decision_forum.genesis_adoption_receipt.v1` after normalizing only
-`receipt_root` to 32 zero bytes. Semantic validation additionally rejects any
-genesis string field that equals the current authorization target,
-prepublication root, or final package root. This preserves pre-activation
-chronology without a current-root cycle or retroactive signature claim.
+`receipt_root` to 32 zero bytes. Semantic validation recomputes every
+chronology entry hash and predecessor link, requires strictly increasing
+`(occurred_at, act_kind, act_id)` ordering, requires the historical artifact
+set, equality proof, and blind-review coverage to be internally
+self-consistent and set-equal, and additionally rejects any genesis string
+field that equals the current authorization target, prepublication root, or
+final package root. This preserves pre-activation chronology without a
+current-root cycle, a reorderable or duplicable act, or a retroactive
+signature claim.
 
 `DeterministicArtifactManifestV1` is outside the package and cannot create an
 indirect cycle. It contains the final package root, pinned renderer-manifest
@@ -604,6 +631,9 @@ file with this exact code:
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // SPDX-License-Identifier: Apache-2.0
+
+//! DF-PROTOCOL-001 normative charter and schema contract tests.
+#![allow(clippy::expect_used)]
 
 use std::{fs, path::PathBuf};
 
@@ -1094,6 +1124,12 @@ fn fixture_authority_registry() -> VerifiedAuthorityRegistryV1 {
             14_u8,
             '8',
         ),
+        (
+            "did:exo:bob-stewart",
+            "GenesisAdoptionReceiptV1",
+            16_u8,
+            '9',
+        ),
     ] {
         let (signing_key_id, verification_key) = fixture_key_material(seed);
         let binding = VerifiedAuthorityBindingV1 {
@@ -1130,6 +1166,7 @@ fn fixture_authority_seed(actor_did: &str, scope: &str) -> u8 {
         ("did:exo:bob-stewart", "PublicationAuthorizationReceiptV1") => 11,
         ("did:exo:executor-13", "ProtocolExecutionReceiptV1") => 13,
         ("did:exo:executor-14", "ProtocolExecutionReceiptV1") => 14,
+        ("did:exo:bob-stewart", "GenesisAdoptionReceiptV1") => 16,
         ("did:exo:attacker", "ProtocolExecutionReceiptV1") => 15,
         _ => panic!("unexpected fixture authority {actor_did} for {scope}"),
     }
@@ -1675,7 +1712,7 @@ fn five_seat_roster(seat_kind: &str) -> Value {
 
 fn peer_review(index: usize) -> Value {
     let assignment_ordinal = if index < 5 { index + 10 } else { index + 15 };
-    let seed = (index + 1) as u8;
+    let seed = u8::try_from(index + 1).expect("fixture seed index must fit in u8");
     json!({
         "review_id": format!("00000000-0000-4000-8001-{seed:012}"),
         "assignment_id": format!("00000000-0000-4000-8000-{assignment_ordinal:012}"),
@@ -1725,14 +1762,108 @@ fn review_resolution(index: usize) -> Value {
     })
 }
 
+fn historical_chronology_entry_hash(entry: &Value) -> String {
+    hash_fixture(
+        "exo.decision_forum.historical_act_chronology_entry.v1",
+        entry,
+    )
+}
+
+fn historical_artifact_set_commitment(entry_hashes: &[String]) -> Value {
+    let mut sorted_hashes = entry_hashes.to_vec();
+    sorted_hashes.sort();
+    sorted_hashes.dedup();
+    let mut commitment = json!({
+        "artifact_entry_hashes": sorted_hashes,
+        "artifact_set_hash": repeated_hex('0', 64)
+    });
+    commitment["artifact_set_hash"] = json!(hash_fixture(
+        "exo.decision_forum.historical_artifact_set_commitment.v1",
+        &commitment,
+    ));
+    commitment
+}
+
+fn historical_blind_review_coverage(reviewed_artifact_set_hash: &str) -> Value {
+    let mut coverage = json!({
+        "assignment_hashes": [hash_with('9')],
+        "assignment_commitment_hashes": [hash_with('a')],
+        "sealed_review_hashes": [hash_with('b')],
+        "verified_reveal_hash": hash_with('c'),
+        "reviewer_qualification_hashes": [hash_with('d')],
+        "disposition_hashes": [hash_with('e')],
+        "reviewed_artifact_set_hash": reviewed_artifact_set_hash,
+        "coverage_hash": repeated_hex('0', 64)
+    });
+    coverage["coverage_hash"] = json!(hash_fixture(
+        "exo.decision_forum.historical_blind_review_coverage.v1",
+        &coverage,
+    ));
+    coverage
+}
+
 fn genesis_evidence_bundle() -> Value {
-    json!({
-        "historical_commit_ids": [{
+    let first_entry = json!({
+        "act_id": "00000000-0000-4000-8000-0000000000e1",
+        "act_kind": "DesignRecord",
+        "status": "CompletedBeforeProtocolActivation",
+        "git_object_id": {
             "algorithm": "sha1",
             "digest": "23742d90ad4f08f62a668ca7b371b9e318177885"
-        }],
-        "chronology_manifest_hash": hash_with('2'),
-        "historical_review_evidence_hash": hash_with('3')
+        },
+        "artifact_content_hash": hash_with('2'),
+        "artifact_path_hash": hash_with('3'),
+        "occurred_at": timestamp(2),
+        "provenance_hash": hash_with('4'),
+        "predecessor_entry_hash": null
+    });
+    let first_entry_hash = historical_chronology_entry_hash(&first_entry);
+    let second_entry = json!({
+        "act_id": "00000000-0000-4000-8000-0000000000e2",
+        "act_kind": "DeliveryPlan",
+        "status": "CompletedBeforeProtocolActivation",
+        "git_object_id": {
+            "algorithm": "sha1",
+            "digest": repeated_hex('5', 40)
+        },
+        "artifact_content_hash": hash_with('6'),
+        "artifact_path_hash": hash_with('7'),
+        "occurred_at": timestamp(3),
+        "provenance_hash": hash_with('8'),
+        "predecessor_entry_hash": first_entry_hash
+    });
+    let chronology_entries = vec![first_entry, second_entry];
+    let chronology_root = hash_fixture(
+        "exo.decision_forum.historical_act_chronology.v1",
+        &json!(chronology_entries),
+    );
+    let artifact_entry_hashes: Vec<String> = chronology_entries
+        .iter()
+        .map(|entry| {
+            entry["artifact_content_hash"]
+                .as_str()
+                .expect("fixture chronology entry content hash")
+                .to_owned()
+        })
+        .collect();
+    let historical_artifact_set = historical_artifact_set_commitment(&artifact_entry_hashes);
+    let artifact_set_hash = historical_artifact_set["artifact_set_hash"]
+        .as_str()
+        .expect("fixture artifact set hash")
+        .to_owned();
+    let unchanged_content_proof = json!({
+        "submitted_artifact_set_hash": artifact_set_hash.clone(),
+        "reviewed_artifact_set_hash": artifact_set_hash.clone(),
+        "unchanged_content_set_hash": artifact_set_hash.clone(),
+        "exact_set_equal": true
+    });
+    let ordinary_blinded_review = historical_blind_review_coverage(&artifact_set_hash);
+    json!({
+        "chronology_entries": chronology_entries,
+        "chronology_root": chronology_root,
+        "historical_artifact_set": historical_artifact_set,
+        "unchanged_content_proof": unchanged_content_proof,
+        "ordinary_blinded_review": ordinary_blinded_review
     })
 }
 
@@ -1749,16 +1880,41 @@ fn genesis_adoption_receipt_root(receipt: &Value) -> String {
     )
 }
 
+fn genesis_adoption_signing_payload_fixture(receipt: &Value) -> Value {
+    let mut payload = serde_json::Map::new();
+    for field in [
+        "receipt_id",
+        "tenant_id",
+        "protocol_id",
+        "protocol_version_hash",
+        "evidence_bundle_hash",
+        "prospective_effect",
+        "prospective_scope",
+        "effect_starts_at",
+        "issuer_did",
+        "issuer_key_id",
+    ] {
+        payload.insert(field.to_owned(), receipt[field].clone());
+    }
+    Value::Object(payload)
+}
+
 fn genesis_adoption_receipt() -> Value {
     let evidence_bundle = genesis_evidence_bundle();
+    let issuer_key_id = fixture_key_material(16).0;
     let mut receipt = json!({
         "receipt_id": "00000000-0000-4000-8000-000000000007",
+        "tenant_id": "tenant-1",
         "protocol_id": "DF-PROTOCOL-001",
-        "pre_activation": true,
+        "protocol_version_hash": hash256(),
         "evidence_bundle_hash": genesis_evidence_bundle_hash(&evidence_bundle),
         "evidence_bundle": evidence_bundle,
-        "prospective_effect_starts_at": timestamp(1),
-        "retroactive_signature_claimed": false,
+        "prospective_effect": "AuthorizeSubsequentExecutionOnly",
+        "prospective_scope": "ExactReviewedProtocolEnvelopeOnly",
+        "effect_starts_at": timestamp(4),
+        "issuer_did": "did:exo:bob-stewart",
+        "issuer_key_id": issuer_key_id,
+        "signature": unsigned_signature_envelope("GenesisAdoptionReceiptV1", 16),
         "receipt_root": repeated_hex('0', 64)
     });
     receipt["receipt_root"] = json!(genesis_adoption_receipt_root(&receipt));
@@ -1820,7 +1976,7 @@ fn valid_package() -> Value {
                 "Council",
                 seat_id,
                 "CouncilDispositionV1",
-                (index + 1) as u8,
+                u8::try_from(index + 1).expect("fixture disposition index must fit in u8"),
             )
         })
         .collect();
@@ -1828,7 +1984,12 @@ fn valid_package() -> Value {
         .iter()
         .enumerate()
         .map(|(index, seat_id)| {
-            disposition("AiIrb", seat_id, "AiIrbDispositionV1", (index + 6) as u8)
+            disposition(
+                "AiIrb",
+                seat_id,
+                "AiIrbDispositionV1",
+                u8::try_from(index + 6).expect("fixture disposition index must fit in u8"),
+            )
         })
         .collect();
     let signed_reviews: Vec<Value> = (0..10).map(peer_review).collect();
@@ -1907,9 +2068,17 @@ fn valid_package() -> Value {
             "council_seat_attestations": five_seat_roster("Council"),
             "ai_irb_seat_attestations": five_seat_roster("AiIrb"),
             "assignments": council_ids.iter().enumerate()
-                .map(|(index, seat_id)| assignment(seat_id, "Council", (index + 10) as u8))
+                .map(|(index, seat_id)| assignment(
+                    seat_id,
+                    "Council",
+                    u8::try_from(index + 10).expect("fixture assignment ordinal must fit in u8"),
+                ))
                 .chain(ai_irb_ids.iter().enumerate()
-                    .map(|(index, seat_id)| assignment(seat_id, "AiIrb", (index + 20) as u8)))
+                    .map(|(index, seat_id)| assignment(
+                        seat_id,
+                        "AiIrb",
+                        u8::try_from(index + 20).expect("fixture assignment ordinal must fit in u8"),
+                    )))
                 .collect::<Vec<_>>(),
             "blind_commitments": [hash256()],
             "conflict_declarations": [reference.clone()],
@@ -2012,6 +2181,11 @@ fn valid_package() -> Value {
                 "execution_receipt_chain_domain": "exo.decision_forum.protocol_execution_receipt_chain.v1",
                 "genesis_evidence_bundle_domain": "exo.decision_forum.genesis_evidence_bundle.v1",
                 "genesis_adoption_receipt_domain": "exo.decision_forum.genesis_adoption_receipt.v1",
+                "genesis_adoption_signing_payload_domain": "exo.decision_forum.genesis_adoption_signing_payload.v1",
+                "historical_act_chronology_entry_domain": "exo.decision_forum.historical_act_chronology_entry.v1",
+                "historical_act_chronology_domain": "exo.decision_forum.historical_act_chronology.v1",
+                "historical_artifact_set_commitment_domain": "exo.decision_forum.historical_artifact_set_commitment.v1",
+                "historical_blind_review_coverage_domain": "exo.decision_forum.historical_blind_review_coverage.v1",
                 "final_root_normalization": "replace receipt_manifest.final_package_root with 32 zero bytes"
             },
             "publication_authorization_receipt": {
@@ -2053,6 +2227,17 @@ fn bind_package(mut package: Value) -> Value {
         "exo.decision_forum.protocol_version.v1",
         &package["protocol_identity"],
     );
+    if !package["receipt_manifest"]["genesis_adoption_receipt"].is_null() {
+        let genesis = &mut package["receipt_manifest"]["genesis_adoption_receipt"];
+        genesis["protocol_version_hash"] = json!(protocol_version_hash.clone());
+        genesis["signature"] = sign_payload(
+            "exo.decision_forum.genesis_adoption_signing_payload.v1",
+            "GenesisAdoptionReceiptV1",
+            &genesis_adoption_signing_payload_fixture(genesis),
+            16,
+        );
+        genesis["receipt_root"] = json!(genesis_adoption_receipt_root(genesis));
+    }
     let seat_authority_registry = fixture_seat_authority_registry();
     let mut seat_contracts = BTreeMap::new();
     for (seat_id, seat_kind) in council_ids
@@ -2237,11 +2422,12 @@ fn fully_resign_with_untrusted_seat_keys(package: &Value) -> Value {
     for (index, (seat_did, seat_kind, _, _, authority_scope, _, _, _, _)) in
         fixture_seat_rows().into_iter().enumerate()
     {
+        let index_u8 = u8::try_from(index).expect("fixture attacker seat index must fit in u8");
         let seat_seed = 31_u8
-            .checked_add(index as u8)
+            .checked_add(index_u8)
             .expect("fixture attacker seat seed");
         let controller_seed = 51_u8
-            .checked_add(index as u8)
+            .checked_add(index_u8)
             .expect("fixture attacker controller seed");
         let roster_name = if seat_kind == "Council" {
             "council_seat_attestations"
@@ -2659,7 +2845,7 @@ fn create_execution_chain(
             "receipt_kind": kind,
             "previous_receipt_hash": previous,
             "payload_hash": hash_with(payload_character),
-            "idempotency_key_hash": hash_with(char::from_digit((offset + 4) as u32, 16).expect("fixture offset is hexadecimal")),
+            "idempotency_key_hash": hash_with(char::from_digit(u32::try_from(offset + 4).expect("fixture offset must fit in u32"), 16).expect("fixture offset is hexadecimal")),
             "occurred_at": timestamp(sequence),
             "signer_did": signer_did,
             "signature": unsigned_signature_envelope("ProtocolExecutionReceiptV1", signer_seed)
@@ -2792,7 +2978,9 @@ fn verify_execution_chain(
     let receipts = chain["receipts"]
         .as_array()
         .ok_or_else(|| "execution receipts must be an array".to_owned())?;
-    if receipts.len() as u64 != expected.expected_receipt_count
+    let receipt_count = u64::try_from(receipts.len())
+        .map_err(|_| "execution receipt count exceeds u64".to_owned())?;
+    if receipt_count != expected.expected_receipt_count
         || chain["receipt_count"] != expected.expected_receipt_count
     {
         return Err("execution receipt count mismatch".to_owned());
@@ -2815,8 +3003,10 @@ fn verify_execution_chain(
     let mut receipt_ids = BTreeSet::new();
     let mut idempotency_keys = BTreeSet::new();
     for (index, receipt) in receipts.iter().enumerate() {
+        let index_u64 =
+            u64::try_from(index).map_err(|_| "execution receipt index exceeds u64".to_owned())?;
         let expected_sequence = expected_first_sequence
-            .checked_add(index as u64)
+            .checked_add(index_u64)
             .ok_or_else(|| "execution sequence overflow".to_owned())?;
         if receipt["sequence"] != expected_sequence
             || receipt["tenant_id"] != verified_root.tenant_id
@@ -2973,7 +3163,7 @@ fn resign_and_relink_execution_chain(
         (
             receipts.first().expect("fixture first execution receipt")["sequence"].clone(),
             receipts.last().expect("fixture terminal execution receipt")["sequence"].clone(),
-            receipts.len() as u64,
+            u64::try_from(receipts.len()).expect("fixture receipt count must fit in u64"),
         )
     };
     chain["first_sequence"] = first_sequence;
@@ -3826,15 +4016,154 @@ fn assert_binding_semantics(
     let genesis = &package["receipt_manifest"]["genesis_adoption_receipt"];
     if !genesis.is_null() {
         if genesis["protocol_id"] != package["protocol_identity"]["protocol_id"]
+            || genesis["tenant_id"] != package["protocol_identity"]["tenant_id"]
+            || genesis["protocol_version_hash"] != expected_protocol_version_hash
             || genesis["evidence_bundle_hash"]
                 != genesis_evidence_bundle_hash(&genesis["evidence_bundle"])
             || genesis["receipt_root"] != genesis_adoption_receipt_root(genesis)
-            || genesis["retroactive_signature_claimed"] != false
+            || genesis["prospective_effect"] != "AuthorizeSubsequentExecutionOnly"
+            || genesis["prospective_scope"] != "ExactReviewedProtocolEnvelopeOnly"
         {
             return Err(
                 "genesis evidence bundle, root, or prospective-only contract mismatch".to_owned(),
             );
         }
+        let issuer_did = genesis["issuer_did"]
+            .as_str()
+            .ok_or_else(|| "genesis issuer DID missing".to_owned())?;
+        let trusted_genesis_issuer = authority_registry.resolve(
+            tenant_id,
+            protocol_id,
+            issuer_did,
+            "GenesisAdoptionReceiptV1",
+        )?;
+        if genesis["issuer_key_id"] != trusted_genesis_issuer.signing_key_id
+            || genesis["issuer_key_id"]
+                != hash_fixture(
+                    "exo.decision_forum.verification_key_id.v1",
+                    &json!({ "verification_key": trusted_genesis_issuer.verification_key }),
+                )
+        {
+            return Err(
+                "genesis issuer DID or signing-key attestation does not resolve".to_owned(),
+            );
+        }
+        verify_signed_payload(
+            "exo.decision_forum.genesis_adoption_signing_payload.v1",
+            "GenesisAdoptionReceiptV1",
+            &genesis_adoption_signing_payload_fixture(genesis),
+            &genesis["signature"],
+            &trusted_genesis_issuer.signing_key_id,
+            &trusted_genesis_issuer.verification_key,
+        )?;
+
+        let chronology_entries = genesis["evidence_bundle"]["chronology_entries"]
+            .as_array()
+            .ok_or_else(|| "genesis chronology entries must be an array".to_owned())?;
+        if chronology_entries.is_empty() {
+            return Err("genesis chronology must include at least one act".to_owned());
+        }
+        let mut previous_entry_hash: Option<String> = None;
+        let mut previous_sort_key: Option<(u64, u64, String, String)> = None;
+        let mut artifact_content_hashes = BTreeSet::new();
+        for entry in chronology_entries {
+            let predecessor_matches = match &previous_entry_hash {
+                None => entry["predecessor_entry_hash"].is_null(),
+                Some(expected) => {
+                    entry["predecessor_entry_hash"].as_str() == Some(expected.as_str())
+                }
+            };
+            if !predecessor_matches {
+                return Err("genesis chronology predecessor link is broken".to_owned());
+            }
+            let sort_key = (
+                entry["occurred_at"]["physical_ms"]
+                    .as_u64()
+                    .ok_or_else(|| "genesis entry occurred_at missing".to_owned())?,
+                entry["occurred_at"]["logical"]
+                    .as_u64()
+                    .ok_or_else(|| "genesis entry occurred_at missing".to_owned())?,
+                entry["act_kind"]
+                    .as_str()
+                    .ok_or_else(|| "genesis entry act_kind missing".to_owned())?
+                    .to_owned(),
+                entry["act_id"]
+                    .as_str()
+                    .ok_or_else(|| "genesis entry act_id missing".to_owned())?
+                    .to_owned(),
+            );
+            if let Some(previous) = &previous_sort_key {
+                if sort_key <= *previous {
+                    return Err("genesis chronology entries are not strictly ordered".to_owned());
+                }
+            }
+            previous_sort_key = Some(sort_key);
+            artifact_content_hashes.insert(
+                entry["artifact_content_hash"]
+                    .as_str()
+                    .ok_or_else(|| "genesis entry artifact content hash missing".to_owned())?
+                    .to_owned(),
+            );
+            previous_entry_hash = Some(historical_chronology_entry_hash(entry));
+        }
+        let recomputed_chronology_root = hash_fixture(
+            "exo.decision_forum.historical_act_chronology.v1",
+            &genesis["evidence_bundle"]["chronology_entries"],
+        );
+        if genesis["evidence_bundle"]["chronology_root"] != recomputed_chronology_root {
+            return Err("genesis chronology root mismatch".to_owned());
+        }
+
+        let historical_artifact_set = &genesis["evidence_bundle"]["historical_artifact_set"];
+        let mut normalized_artifact_set = historical_artifact_set.clone();
+        normalized_artifact_set["artifact_set_hash"] = json!(repeated_hex('0', 64));
+        let recomputed_artifact_set_hash = hash_fixture(
+            "exo.decision_forum.historical_artifact_set_commitment.v1",
+            &normalized_artifact_set,
+        );
+        let stored_artifact_entry_hashes: BTreeSet<String> =
+            historical_artifact_set["artifact_entry_hashes"]
+                .as_array()
+                .ok_or_else(|| "genesis artifact entry hashes must be an array".to_owned())?
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| "genesis artifact entry hash must be a string".to_owned())
+                })
+                .collect::<Result<_, _>>()?;
+        if historical_artifact_set["artifact_set_hash"] != recomputed_artifact_set_hash
+            || stored_artifact_entry_hashes != artifact_content_hashes
+        {
+            return Err("genesis historical artifact set commitment mismatch".to_owned());
+        }
+        let artifact_set_hash = historical_artifact_set["artifact_set_hash"].clone();
+
+        let unchanged_content_proof = &genesis["evidence_bundle"]["unchanged_content_proof"];
+        if unchanged_content_proof["exact_set_equal"] != true
+            || unchanged_content_proof["submitted_artifact_set_hash"] != artifact_set_hash
+            || unchanged_content_proof["reviewed_artifact_set_hash"] != artifact_set_hash
+            || unchanged_content_proof["unchanged_content_set_hash"] != artifact_set_hash
+        {
+            return Err(
+                "genesis unchanged-content equality proof is not self-consistent".to_owned(),
+            );
+        }
+
+        let ordinary_blinded_review = &genesis["evidence_bundle"]["ordinary_blinded_review"];
+        let mut normalized_coverage = ordinary_blinded_review.clone();
+        normalized_coverage["coverage_hash"] = json!(repeated_hex('0', 64));
+        let recomputed_coverage_hash = hash_fixture(
+            "exo.decision_forum.historical_blind_review_coverage.v1",
+            &normalized_coverage,
+        );
+        if ordinary_blinded_review["coverage_hash"] != recomputed_coverage_hash
+            || ordinary_blinded_review["reviewed_artifact_set_hash"] != artifact_set_hash
+        {
+            return Err("genesis historical blind-review coverage mismatch".to_owned());
+        }
+
         let expected_prepublication_root = prepublication_fixture_hash(package);
         let forbidden_roots = [
             expected_authorization_target.as_str(),
@@ -3999,6 +4328,15 @@ fn normative_schema_fixes_package_components_and_deterministic_primitives() {
         "ChairAuthorityV1",
         "ChairInterventionSignature",
         "PublicationAuthorizationSignature",
+        "GenesisAdoptionSignature",
+        "HistoricalActKindV1",
+        "HistoricalActStatusV1",
+        "HistoricalActChronologyEntryV1",
+        "HistoricalArtifactSetCommitmentV1",
+        "HistoricalArtifactSetEqualityProofV1",
+        "HistoricalBlindReviewCoverageV1",
+        "GenesisProspectiveEffectV1",
+        "GenesisProspectiveScopeV1",
         "ProviderClass",
         "EvidenceClass",
         "IndependentEvidenceClass",
@@ -4786,7 +5124,7 @@ fn normative_schema_fixes_package_components_and_deterministic_primitives() {
     assert_invalid(&validator, &noncanonical_uuid, "uppercase UUID");
 
     let mut genesis_bundle_mutation = valid.clone();
-    genesis_bundle_mutation["receipt_manifest"]["genesis_adoption_receipt"]["evidence_bundle"]["chronology_manifest_hash"] =
+    genesis_bundle_mutation["receipt_manifest"]["genesis_adoption_receipt"]["evidence_bundle"]["chronology_root"] =
         json!(hash_with('f'));
     assert_semantically_invalid(&genesis_bundle_mutation, "genesis evidence bundle mutation");
 
@@ -4794,6 +5132,74 @@ fn normative_schema_fixes_package_components_and_deterministic_primitives() {
     genesis_root_mutation["receipt_manifest"]["genesis_adoption_receipt"]["receipt_root"] =
         json!(hash_with('f'));
     assert_semantically_invalid(&genesis_root_mutation, "genesis receipt-root mutation");
+
+    let mut genesis_tenant_mutation = valid.clone();
+    genesis_tenant_mutation["receipt_manifest"]["genesis_adoption_receipt"]["tenant_id"] =
+        json!("tenant-2");
+    assert_semantically_invalid(&genesis_tenant_mutation, "genesis tenant mutation");
+
+    let mut genesis_effect_mutation = valid.clone();
+    genesis_effect_mutation["receipt_manifest"]["genesis_adoption_receipt"]["prospective_effect"] =
+        json!("RetroactiveEffect");
+    assert_semantically_invalid(
+        &genesis_effect_mutation,
+        "genesis prospective effect mutation",
+    );
+
+    let mut genesis_scope_mutation = valid.clone();
+    genesis_scope_mutation["receipt_manifest"]["genesis_adoption_receipt"]["prospective_scope"] =
+        json!("BroaderThanReviewedEnvelope");
+    assert_semantically_invalid(
+        &genesis_scope_mutation,
+        "genesis prospective scope mutation",
+    );
+
+    let mut genesis_signature_mutation = valid.clone();
+    genesis_signature_mutation["receipt_manifest"]["genesis_adoption_receipt"]["signature"]["signature"] =
+        json!(repeated_hex('f', 128));
+    assert_semantically_invalid(
+        &genesis_signature_mutation,
+        "genesis issuer signature mutation",
+    );
+
+    let mut genesis_forged_issuer_key = valid.clone();
+    {
+        let forged_receipt =
+            &mut genesis_forged_issuer_key["receipt_manifest"]["genesis_adoption_receipt"];
+        let (forged_signing_key_id, _forged_verification_key) = fixture_key_material(15);
+        forged_receipt["issuer_key_id"] = json!(forged_signing_key_id);
+        forged_receipt["signature"] = sign_payload(
+            "exo.decision_forum.genesis_adoption_signing_payload.v1",
+            "GenesisAdoptionReceiptV1",
+            &genesis_adoption_signing_payload_fixture(forged_receipt),
+            15,
+        );
+        let forged_root = genesis_adoption_receipt_root(forged_receipt);
+        forged_receipt["receipt_root"] = json!(forged_root);
+    }
+    assert_semantically_invalid(
+        &genesis_forged_issuer_key,
+        "genesis forged issuer key rejected",
+    );
+
+    let mut genesis_reorder_mutation = valid.clone();
+    genesis_reorder_mutation["receipt_manifest"]["genesis_adoption_receipt"]["evidence_bundle"]
+        ["chronology_entries"]
+        .as_array_mut()
+        .expect("fixture chronology entries must be an array")
+        .swap(0, 1);
+    assert_semantically_invalid(
+        &genesis_reorder_mutation,
+        "genesis chronology reorder rejected",
+    );
+
+    let mut genesis_unchanged_mutation = valid.clone();
+    genesis_unchanged_mutation["receipt_manifest"]["genesis_adoption_receipt"]["evidence_bundle"]
+        ["unchanged_content_proof"]["exact_set_equal"] = json!(false);
+    assert_semantically_invalid(
+        &genesis_unchanged_mutation,
+        "genesis unchanged-content proof mutation",
+    );
 
     for (case, root) in [
         (
@@ -4813,8 +5219,14 @@ fn normative_schema_fixes_package_components_and_deterministic_primitives() {
         ),
     ] {
         let mut injected = valid.clone();
-        injected["receipt_manifest"]["genesis_adoption_receipt"]["evidence_bundle"]["historical_review_evidence_hash"] =
-            json!(root);
+        injected["receipt_manifest"]["genesis_adoption_receipt"]["evidence_bundle"]["chronology_entries"]
+            [1]["provenance_hash"] = json!(root);
+        let chronology_root = hash_fixture(
+            "exo.decision_forum.historical_act_chronology.v1",
+            &injected["receipt_manifest"]["genesis_adoption_receipt"]["evidence_bundle"]["chronology_entries"],
+        );
+        injected["receipt_manifest"]["genesis_adoption_receipt"]["evidence_bundle"]["chronology_root"] =
+            json!(chronology_root);
         let bundle_hash = genesis_evidence_bundle_hash(
             &injected["receipt_manifest"]["genesis_adoption_receipt"]["evidence_bundle"],
         );
@@ -4829,8 +5241,8 @@ fn normative_schema_fixes_package_components_and_deterministic_primitives() {
     }
 
     let mut wrong_git_digest = valid;
-    wrong_git_digest["receipt_manifest"]["genesis_adoption_receipt"]["evidence_bundle"]["historical_commit_ids"]
-        [0]["digest"] = json!(hash256());
+    wrong_git_digest["receipt_manifest"]["genesis_adoption_receipt"]["evidence_bundle"]["chronology_entries"]
+        [0]["git_object_id"]["digest"] = json!(hash256());
     assert_invalid(
         &validator,
         &wrong_git_digest,
@@ -4903,7 +5315,7 @@ fn commitment_construction_is_acyclic_and_mutation_complete() {
         ),
         (
             "genesis adoption receipt",
-            "/receipt_manifest/genesis_adoption_receipt/evidence_bundle/chronology_manifest_hash",
+            "/receipt_manifest/genesis_adoption_receipt/evidence_bundle/chronology_root",
         ),
         (
             "prior version link",
@@ -5085,7 +5497,7 @@ fn commitment_construction_is_acyclic_and_mutation_complete() {
     }
 
     for pointer in [
-        "/receipt_manifest/genesis_adoption_receipt/evidence_bundle/chronology_manifest_hash",
+        "/receipt_manifest/genesis_adoption_receipt/evidence_bundle/chronology_root",
         "/receipt_manifest/genesis_adoption_receipt/evidence_bundle_hash",
         "/receipt_manifest/genesis_adoption_receipt/receipt_root",
     ] {
@@ -6186,37 +6598,149 @@ with an Apache-2.0 license recorded in `$comment` and these exact constraints:
         "authority_effect": { "const": "ContextOnlyNoEnactmentAuthority" }
       }
     },
-    "GenesisEvidenceBundleV1": {
-      "description": "Pre-activation evidence only. The canonical body contains exactly typed historical Git IDs, chronology_manifest_hash, and historical_review_evidence_hash; it cannot name a current package or authorization root.",
+    "HistoricalActKindV1": {
+      "enum": [
+        "DesignRecord", "DeliveryPlan", "ImplementationMerge",
+        "IndependentReview", "GateEvidence", "AfterActionReview"
+      ]
+    },
+    "HistoricalActStatusV1": {
+      "const": "CompletedBeforeProtocolActivation"
+    },
+    "HistoricalActChronologyEntryV1": {
+      "description": "One immutable pre-activation act. predecessor_entry_hash chains this entry under exo.decision_forum.historical_act_chronology_entry.v1 to the immediately preceding chronology entry and is null only for the first entry.",
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "historical_commit_ids", "chronology_manifest_hash",
-        "historical_review_evidence_hash"
+        "act_id", "act_kind", "status", "git_object_id", "artifact_content_hash",
+        "artifact_path_hash", "occurred_at", "provenance_hash", "predecessor_entry_hash"
       ],
       "properties": {
-        "historical_commit_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/GitObjectId" } },
-        "chronology_manifest_hash": { "$ref": "#/$defs/Hash256" },
-        "historical_review_evidence_hash": { "$ref": "#/$defs/Hash256" }
+        "act_id": { "$ref": "#/$defs/Uuid" },
+        "act_kind": { "$ref": "#/$defs/HistoricalActKindV1" },
+        "status": { "$ref": "#/$defs/HistoricalActStatusV1" },
+        "git_object_id": { "$ref": "#/$defs/GitObjectId" },
+        "artifact_content_hash": { "$ref": "#/$defs/Hash256" },
+        "artifact_path_hash": { "$ref": "#/$defs/Hash256" },
+        "occurred_at": { "$ref": "#/$defs/Timestamp" },
+        "provenance_hash": { "$ref": "#/$defs/Hash256" },
+        "predecessor_entry_hash": {
+          "oneOf": [{ "$ref": "#/$defs/Hash256" }, { "type": "null" }]
+        }
+      }
+    },
+    "HistoricalArtifactSetCommitmentV1": {
+      "description": "Set commitment over historical chronology artifact_content_hash values. artifact_set_hash uses exo.decision_forum.historical_artifact_set_commitment.v1 after normalizing only artifact_set_hash to 32 zero bytes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_entry_hashes", "artifact_set_hash"],
+      "properties": {
+        "artifact_entry_hashes": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/Hash256" }
+        },
+        "artifact_set_hash": { "$ref": "#/$defs/Hash256" }
+      }
+    },
+    "HistoricalArtifactSetEqualityProofV1": {
+      "description": "Asserts exact set equality among the submitted, reviewed, and unchanged historical artifact sets. Semantic validation additionally requires exact_set_equal to be true and every hash to equal the historical_artifact_set commitment.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "submitted_artifact_set_hash", "reviewed_artifact_set_hash",
+        "unchanged_content_set_hash", "exact_set_equal"
+      ],
+      "properties": {
+        "submitted_artifact_set_hash": { "$ref": "#/$defs/Hash256" },
+        "reviewed_artifact_set_hash": { "$ref": "#/$defs/Hash256" },
+        "unchanged_content_set_hash": { "$ref": "#/$defs/Hash256" },
+        "exact_set_equal": { "type": "boolean" }
+      }
+    },
+    "HistoricalBlindReviewCoverageV1": {
+      "description": "Unchanged historical blind-review coverage. coverage_hash uses exo.decision_forum.historical_blind_review_coverage.v1 after normalizing only coverage_hash to 32 zero bytes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assignment_hashes", "assignment_commitment_hashes", "sealed_review_hashes",
+        "verified_reveal_hash", "reviewer_qualification_hashes", "disposition_hashes",
+        "reviewed_artifact_set_hash", "coverage_hash"
+      ],
+      "properties": {
+        "assignment_hashes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/Hash256" } },
+        "assignment_commitment_hashes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/Hash256" } },
+        "sealed_review_hashes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/Hash256" } },
+        "verified_reveal_hash": { "$ref": "#/$defs/Hash256" },
+        "reviewer_qualification_hashes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/Hash256" } },
+        "disposition_hashes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/Hash256" } },
+        "reviewed_artifact_set_hash": { "$ref": "#/$defs/Hash256" },
+        "coverage_hash": { "$ref": "#/$defs/Hash256" }
+      }
+    },
+    "GenesisProspectiveEffectV1": {
+      "enum": ["AuthorizeSubsequentExecutionOnly"]
+    },
+    "GenesisProspectiveScopeV1": {
+      "enum": ["ExactReviewedProtocolEnvelopeOnly"]
+    },
+    "GenesisAdoptionSignature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm", "signing_key_id", "verification_key", "signature", "signed_payload_hash",
+        "signed_payload_target"
+      ],
+      "properties": {
+        "algorithm": { "const": "Ed25519" },
+        "signing_key_id": { "$ref": "#/$defs/Hash256" },
+        "verification_key": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "signature": { "type": "string", "pattern": "^[0-9a-f]{128}$" },
+        "signed_payload_hash": { "$ref": "#/$defs/Hash256" },
+        "signed_payload_target": { "const": "GenesisAdoptionReceiptV1" }
+      }
+    },
+    "GenesisEvidenceBundleV1": {
+      "description": "Pre-activation evidence only. chronology_entries is a typed, ordered, hash-chained per-act chronology; chronology_root is exo.decision_forum.historical_act_chronology.v1 over that exact list. historical_artifact_set, unchanged_content_proof, and ordinary_blinded_review commit immutable artifact-set equality and unchanged historical blind-review coverage over that same chronology. No field can name a current package or authorization root.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chronology_entries", "chronology_root", "historical_artifact_set",
+        "unchanged_content_proof", "ordinary_blinded_review"
+      ],
+      "properties": {
+        "chronology_entries": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/HistoricalActChronologyEntryV1" }
+        },
+        "chronology_root": { "$ref": "#/$defs/Hash256" },
+        "historical_artifact_set": { "$ref": "#/$defs/HistoricalArtifactSetCommitmentV1" },
+        "unchanged_content_proof": { "$ref": "#/$defs/HistoricalArtifactSetEqualityProofV1" },
+        "ordinary_blinded_review": { "$ref": "#/$defs/HistoricalBlindReviewCoverageV1" }
       }
     },
     "GenesisAdoptionReceipt": {
-      "description": "Prospective genesis receipt. evidence_bundle_hash uses exo.decision_forum.genesis_evidence_bundle.v1. receipt_root uses exo.decision_forum.genesis_adoption_receipt.v1 after normalizing only receipt_root to 32 zero bytes.",
+      "description": "Prospective, signed genesis receipt issued only after the minimum publication path is operational. evidence_bundle_hash uses exo.decision_forum.genesis_evidence_bundle.v1. The signature commits exo.decision_forum.genesis_adoption_signing_payload.v1 over every field except evidence_bundle, signature, and receipt_root; its signing key, verification key, and issuer_key_id resolve only through the independently verified external genesis-issuer authority. receipt_root uses exo.decision_forum.genesis_adoption_receipt.v1 after normalizing only receipt_root to 32 zero bytes. prospective_effect and prospective_scope are closed to their single ratified variant so no retroactive or out-of-envelope claim is representable.",
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "receipt_id", "protocol_id", "pre_activation", "evidence_bundle_hash",
-        "evidence_bundle", "prospective_effect_starts_at",
-        "retroactive_signature_claimed", "receipt_root"
+        "receipt_id", "tenant_id", "protocol_id", "protocol_version_hash",
+        "evidence_bundle_hash", "evidence_bundle", "prospective_effect",
+        "prospective_scope", "effect_starts_at", "issuer_did", "issuer_key_id",
+        "signature", "receipt_root"
       ],
       "properties": {
         "receipt_id": { "$ref": "#/$defs/Uuid" },
+        "tenant_id": { "type": "string", "minLength": 1 },
         "protocol_id": { "type": "string", "minLength": 1 },
-        "pre_activation": { "const": true },
+        "protocol_version_hash": { "$ref": "#/$defs/Hash256" },
         "evidence_bundle_hash": { "$ref": "#/$defs/Hash256" },
         "evidence_bundle": { "$ref": "#/$defs/GenesisEvidenceBundleV1" },
-        "prospective_effect_starts_at": { "$ref": "#/$defs/Timestamp" },
-        "retroactive_signature_claimed": { "const": false },
+        "prospective_effect": { "$ref": "#/$defs/GenesisProspectiveEffectV1" },
+        "prospective_scope": { "$ref": "#/$defs/GenesisProspectiveScopeV1" },
+        "effect_starts_at": { "$ref": "#/$defs/Timestamp" },
+        "issuer_did": { "$ref": "#/$defs/Did" },
+        "issuer_key_id": { "$ref": "#/$defs/Hash256" },
+        "signature": { "$ref": "#/$defs/GenesisAdoptionSignature" },
         "receipt_root": { "$ref": "#/$defs/Hash256" }
       }
     },
@@ -6452,7 +6976,10 @@ with an Apache-2.0 license recorded in `$comment` and these exact constraints:
         "publication_authorization_domain", "final_package_domain",
         "artifact_manifest_domain", "execution_receipt_domain",
         "execution_receipt_chain_domain", "genesis_evidence_bundle_domain",
-        "genesis_adoption_receipt_domain", "final_root_normalization"
+        "genesis_adoption_receipt_domain", "genesis_adoption_signing_payload_domain",
+        "historical_act_chronology_entry_domain", "historical_act_chronology_domain",
+        "historical_artifact_set_commitment_domain", "historical_blind_review_coverage_domain",
+        "final_root_normalization"
       ],
       "properties": {
         "authorization_target_domain": { "const": "exo.decision_forum.protocol_authorization_target.v1" },
@@ -6469,6 +6996,11 @@ with an Apache-2.0 license recorded in `$comment` and these exact constraints:
         "execution_receipt_chain_domain": { "const": "exo.decision_forum.protocol_execution_receipt_chain.v1" },
         "genesis_evidence_bundle_domain": { "const": "exo.decision_forum.genesis_evidence_bundle.v1" },
         "genesis_adoption_receipt_domain": { "const": "exo.decision_forum.genesis_adoption_receipt.v1" },
+        "genesis_adoption_signing_payload_domain": { "const": "exo.decision_forum.genesis_adoption_signing_payload.v1" },
+        "historical_act_chronology_entry_domain": { "const": "exo.decision_forum.historical_act_chronology_entry.v1" },
+        "historical_act_chronology_domain": { "const": "exo.decision_forum.historical_act_chronology.v1" },
+        "historical_artifact_set_commitment_domain": { "const": "exo.decision_forum.historical_artifact_set_commitment.v1" },
+        "historical_blind_review_coverage_domain": { "const": "exo.decision_forum.historical_blind_review_coverage.v1" },
         "final_root_normalization": { "const": "replace receipt_manifest.final_package_root with 32 zero bytes" }
       }
     },
