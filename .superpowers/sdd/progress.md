@@ -111,3 +111,40 @@ Wave 20 consolidated downstream-interface semantic guard remains the durable AAR
 `/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-findings-1-5-spec-rereview.md`  
 `/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-findings-1-5-technical-rereview.md`  
 `/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-findings-1-5-whole-slice-rereview.md`
+
+## DF-PROTOCOL-001 Slice 3 plan (Council, AI-IRB, and stop authority)
+
+**Date:** 2026-07-25  
+**Base HEAD:** `72ac3ec99db40c18b3e3b71483192f6a49ec4c5d`  
+**Branch:** `bob-stewart/decision-forum-peer-reviewed-protocol-design`  
+**PR:** #809  
+
+### Artifact
+- Plan: `docs/superpowers/plans/2026-07-16-df-protocol-001-03-council-ai-irb-stop-authority.md`
+- Plan SHA-256: `9ffdb2200b094bae7d462b0806cc29f3e4ffa2f88e0e22957062c27367c5d4dd`
+- Predecessor Slice 1: `4e3a97540dae01dbe0b9ae9b162fc225a67e5f51d2072762f19d901c123ea081`
+- Predecessor Slice 2: `fa804fefdb56d9595afc6517923bb2316b6b3917ddae3a6110cf41f03036fb22`
+
+### Method
+Promoted Wave 4 author brief into delivery-map plan path; reconciled to Wave 20-approved Slice 1/2 (domain inventory **47→89**, not Wave-4 26→68); closed residual implementer-facing 68/`ALL[26..]` after first FAIL triad.
+
+### Plan self-validation
+`slice3_plan_self_validation=GREEN` (predecessor hashes, vocabulary, fence balance, domain-residue rejection).
+
+### Independent plan reviews (same hash `9ffdb2200b094bae7d462b0806cc29f3e4ffa2f88e0e22957062c27367c5d4dd`)
+| Review | Verdict | Report |
+|---|---|---|
+| Specification | **PASS** | `slice-3-plan-spec-rereview.md` |
+| Technical | **PASS** | `slice-3-plan-technical-rereview.md` |
+| Whole-slice | **PASS WITH MINOR FINDINGS** | `slice-3-plan-whole-slice-rereview.md` |
+
+Minor (non-blocking): Gate 10 helper currently tautological with `ALL[47..]` (cross-impl KAV still required); recon wording polish.
+
+### Scope / non-claims
+- Documentation/plan only. No production crates implemented.
+- No merge, deploy, ratify, release, publish.
+- Implementation begins only after a dedicated implementer wave from this plan with RED-first Gates 00–11.
+- Pure authority engine; Slice 4 owns ingress/persistence/bypass closure.
+
+### Evidence (mode 0600)
+`/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-3-plan-*.md`
