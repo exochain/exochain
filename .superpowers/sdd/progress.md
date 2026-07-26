@@ -148,3 +148,39 @@ Minor (non-blocking): Gate 10 helper currently tautological with `ALL[47..]` (cr
 
 ### Evidence (mode 0600)
 `/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-3-plan-*.md`
+
+## HPC-001 Holographic Perfecting Control (EXOCHAIN native)
+
+**Date:** 2026-07-26  
+**Base HEAD:** `1b2da9c0f1a89308ba70b7fb90bd6580b556a984`  
+**Branch:** `bob-stewart/decision-forum-peer-reviewed-protocol-design`  
+**PR:** #809  
+
+### ArtifactDelta
+- Created `docs/superpowers/specs/2026-07-26-exochain-holographic-perfecting-control.md`
+  SHA-256 `cbb9f6e8b63f3dadfa0f6100f1b0085311ac09782c93d51e5d85d74e94f08805`
+- Modified `docs/superpowers/plans/2026-07-16-df-protocol-001-delivery-map.md`
+  (program-gates pointer to HPC-001); SHA-256 `ae05b9df666ff95ce5fa8b39b44ec4fc1158c75f4fe172093a7ac3a6f1f84106`
+
+### ControlDelta
+- `control_id:` HPC-001
+- `defect_class:` destination-perfectionism / L0-only wave closeout / prose-only AAR / boundary smuggling
+- `proof_of_ratchet:` control self-validation requires ArtifactDelta, ControlDelta, NonClaimSet, HPC-INV-1..5 vocabulary; delivery map binds DF waves to HPC-001 by path
+
+### NonClaimSet
+- deployment_control_plane_truth
+- runtime_probe_truth
+- constitutional_ratification_truth
+- publication_truth
+- ci_truth (not re-run full CI for this docs wave)
+- pr_merge_truth (comment/push only; no merge)
+
+### RED/GREEN
+- RED was conceptual: process could close on L0 alone without L2 ratchet
+- GREEN: `hpc001_control_self_validation=GREEN` on control path; delivery-map binding present
+
+### hpc_complete
+yes (this wave defines the control; subsequent waves must emit full triple)
+
+### Non-claims
+Documentation/process control only. No production crate changes. No D9 ratification, credentials, deploy, release, or publish.

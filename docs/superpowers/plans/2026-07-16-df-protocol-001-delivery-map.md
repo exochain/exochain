@@ -197,3 +197,16 @@ constitutional ratification state, and publication state. A passing local or CI
 gate does not imply merge, deployment, ratification, or publication. A merged
 implementation does not enable binding Council or AI-IRB behavior until the
 content-addressed amendment and credentials satisfy the human-controlled gate.
+
+### Holographic Perfecting Control (HPC-001)
+
+DF-PROTOCOL-001 waves after adoption of HPC-001 obey
+`docs/superpowers/specs/2026-07-26-exochain-holographic-perfecting-control.md`
+(`exo.governance.holographic_perfecting_control.v1`). Destination perfectionism
+is rejected. Every closed wave must emit **ArtifactDelta** (L0), **ControlDelta**
+(L1/L2 ratchet with `proof_of_ratchet`), and **NonClaimSet** (explicit truth
+boundaries not advanced). L0-only closeout is incomplete. Prose AAR without a
+bound control is incomplete. Diagnostic-shim GREEN claims are forbidden.
+Independent specification/technical/whole-slice validation remains required for
+plan and critical repairs. HPC-001 does not ratify D9, issue credentials, deploy,
+or publish.
