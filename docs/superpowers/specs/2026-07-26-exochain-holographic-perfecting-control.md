@@ -302,50 +302,24 @@ no forbidden shim GREEN claim.
 
 Validates **this document** only. Does not compile crates or claim deployment.
 
+**Canonical entry point (shipped):** `tools/hpc001_self_validate.sh`  
+**Regression driver:** `tools/test_hpc001_self_validate.sh` (positive GREEN path +
+negative reject of a mutated control missing a required needle).
+
 ```bash
-set -euo pipefail
-ROOT="$(git rev-parse --show-toplevel)"
-CTRL="$ROOT/docs/superpowers/specs/2026-07-26-exochain-holographic-perfecting-control.md"
-test -f "$CTRL"
-
-for needle in \
-  HPC-001 \
-  exo.governance.holographic_perfecting_control.v1 \
-  ArtifactDelta \
-  ControlDelta \
-  NonClaimSet \
-  HPC-INV-1 \
-  HPC-INV-2 \
-  HPC-INV-3 \
-  HPC-INV-4 \
-  HPC-INV-5 \
-  constitutional_ratification_truth \
-  publication_truth \
-  max_iterations \
-  proof_of_ratchet
-do
-  rg -q --fixed-strings "$needle" "$CTRL" || { echo "missing $needle" >&2; exit 1; }
-done
-
-# Forbid destination-perfection language as a claimed end-state for EXOCHAIN process
-if rg -n 'destination perfectionism is the goal|stop improving after GREEN' "$CTRL"; then
-  echo "forbidden destination-perfection claim" >&2
-  exit 1
-fi
-
-python3 - "$CTRL" <<'PY'
-from pathlib import Path
-import sys
-text = Path(sys.argv[1]).read_text()
-markers = sum(1 for line in text.splitlines() if line.strip().startswith("`" * 3))
-if markers % 2 != 0:
-    raise SystemExit(f"unbalanced fences markers={markers}")
-print("fences_ok")
-PY
-
-echo "hpc001_control_self_validation=GREEN"
-shasum -a 256 "$CTRL"
+bash tools/hpc001_self_validate.sh
+# expected: hpc001_control_self_validation=GREEN and a SHA-256 line
+bash tools/test_hpc001_self_validate.sh
+# expected: test_hpc001_self_validate: ok
 ```
+
+The validator requires fixed needles including `HPC-001`,
+`exo.governance.holographic_perfecting_control.v1`, `ArtifactDelta`,
+`ControlDelta`, `NonClaimSet`, `HPC-INV-1` through `HPC-INV-5`,
+`constitutional_ratification_truth`, `publication_truth`, `max_iterations`,
+and `proof_of_ratchet`; balanced markdown fences; and rejects destination-
+perfection end-state language. Optional argument: alternate control path
+(used by the negative regression only).
 
 ## 13. Worked EXOCHAIN precedents (illustrative, not authority)
 

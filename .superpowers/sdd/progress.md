@@ -184,3 +184,34 @@ yes (this wave defines the control; subsequent waves must emit full triple)
 
 ### Non-claims
 Documentation/process control only. No production crate changes. No D9 ratification, credentials, deploy, release, or publish.
+
+## HPC-001 durable self-validation entry point
+
+**Date:** 2026-07-26  
+**Base HEAD:** `a66cfbfe6c0f8d53f0e05a89f833b5e7a5840bfc`  
+**Goal:** self-governed perfecting (HPC-001 verification + shipped ratchet)
+
+### ArtifactDelta
+- `tools/hpc001_self_validate.sh` — canonical GREEN self-validation entry point
+- `tools/test_hpc001_self_validate.sh` — positive GREEN + negative mutation reject
+- §12 of HPC-001 control points at those tools paths
+- Control SHA-256 after §12 update: `bb0b4d6354a321cf85205b377ebafcaab9b9e7305a5dd621a8ffbc540dad2ff3`
+
+### ControlDelta
+- `control_id:` HPC-001-SELF-VAL-RUNNER
+- `defect_class:` process control without executable proof_of_ratchet entry point / L0-only essay adoption
+- `proof_of_ratchet:` `bash tools/test_hpc001_self_validate.sh` must print `test_hpc001_self_validate: ok`; fails if control loses needles or if broken copy is accepted
+
+### NonClaimSet
+- constitutional_ratification_truth
+- publication_truth
+- deployment_control_plane_truth
+- runtime_probe_truth
+- pr_merge_truth
+
+### RED/GREEN
+- RED: missing executable validator → perfecting claim untestable
+- GREEN: `hpc001_control_self_validation=GREEN` twice; `test_hpc001_self_validate: ok`
+
+### hpc_complete
+yes
