@@ -101,6 +101,24 @@ pub enum AvcReasonCode {
     MalformedCredential,
     ForbiddenAction,
     OutsideTimeWindow,
+    /// Commercially gated action is in-scope but has no payment evidence.
+    /// This is a challenge, not a deny: payment cannot outrank a real deny.
+    PaymentEvidenceMissing,
+    /// Requested currency does not match the credential budget currency.
+    CurrencyMismatch,
+}
+
+impl AvcReasonCode {
+    /// Payment-challenge reasons may emit `ChallengeRequired` only when no
+    /// deny reason is present. Human approval still outranks collection.
+    #[must_use]
+    pub const fn is_payment_challenge(self) -> bool {
+        matches!(self, Self::PaymentEvidenceMissing | Self::CurrencyMismatch)
+    }
+}
+
+const fn skip_if_false(value: &bool) -> bool {
+    !*value
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +140,42 @@ pub struct AvcActionRequest {
     pub requires_human_approval: bool,
     /// Free-form action name used to enforce `forbidden_actions`.
     pub action_name: Option<String>,
+    /// When true, an in-scope unpaid action yields `ChallengeRequired`
+    /// instead of `Allow`. Default false keeps existing callers byte-stable.
+    #[serde(default, skip_serializing_if = "skip_if_false")]
+    pub commercially_gated: bool,
+    /// Canonical hash of payment evidence (`exo.avc.payment.evidence.v1`).
+    /// `None` or `Hash256::ZERO` is treated as unpaid when commercially gated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payment_evidence_hash: Option<Hash256>,
+    /// Currency of the requested spend, compared against `AvcConstraints.currency_code`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_currency_code: Option<String>,
+    /// Cumulative session spend already incurred (MPP session / x402 exact).
+    /// Added to `estimated_budget_minor_units` before comparing the cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_spent_minor_units: Option<u64>,
+}
+
+impl AvcActionRequest {
+    /// Strip commercial overlay fields so LYNK evidence-derived actions can
+    /// still match a Worker-submitted action that carries payment evidence.
+    #[must_use]
+    pub fn without_commercial_overlay(&self) -> Self {
+        let mut cloned = self.clone();
+        cloned.commercially_gated = false;
+        cloned.payment_evidence_hash = None;
+        cloned.requested_currency_code = None;
+        cloned.session_spent_minor_units = None;
+        cloned
+    }
+
+    /// Non-zero payment evidence hash bound into a trust receipt, if any.
+    #[must_use]
+    pub fn bound_payment_evidence_hash(&self) -> Option<Hash256> {
+        self.payment_evidence_hash
+            .filter(|hash| *hash != Hash256::ZERO)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,6 +192,10 @@ pub struct AvcActionDescriptor {
     pub requires_human_approval: bool,
     pub human_approval_present: bool,
     pub action_name: Option<String>,
+    #[serde(default, skip_serializing_if = "skip_if_false")]
+    pub commercially_gated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_currency_code: Option<String>,
 }
 
 impl AvcActionDescriptor {
@@ -156,6 +214,8 @@ impl AvcActionDescriptor {
             requires_human_approval: action.requires_human_approval,
             human_approval_present: action.human_approval.is_some(),
             action_name: action.action_name.clone(),
+            commercially_gated: action.commercially_gated,
+            requested_currency_code: action.requested_currency_code.clone(),
         }
     }
 }
@@ -330,16 +390,10 @@ pub fn validate_avc<R: AvcRegistryRead>(
     }
 
     let mut sorted: Vec<AvcReasonCode> = reasons.into_iter().collect();
-    let decision = if sorted.is_empty() {
+    let decision = decide_avc(&sorted, human_approval_required);
+    if sorted.is_empty() {
         sorted.push(AvcReasonCode::Valid);
-        AvcDecision::Allow
-    } else if human_approval_required
-        && reasons_are_only(&sorted, AvcReasonCode::HumanApprovalMissing)
-    {
-        AvcDecision::HumanApprovalRequired
-    } else {
-        AvcDecision::Deny
-    };
+    }
 
     Ok(AvcValidationResult {
         credential_id,
@@ -351,8 +405,27 @@ pub fn validate_avc<R: AvcRegistryRead>(
     })
 }
 
-fn reasons_are_only(reasons: &[AvcReasonCode], expected: AvcReasonCode) -> bool {
-    reasons.len() == 1 && reasons[0] == expected
+fn decide_avc(reasons: &[AvcReasonCode], human_approval_required: bool) -> AvcDecision {
+    if reasons.is_empty() {
+        return AvcDecision::Allow;
+    }
+    let only_payment_challenges = reasons.iter().all(|reason| reason.is_payment_challenge());
+    let only_human_or_payment = reasons.iter().all(|reason| {
+        *reason == AvcReasonCode::HumanApprovalMissing || reason.is_payment_challenge()
+    });
+    let has_human_approval_missing = reasons.contains(&AvcReasonCode::HumanApprovalMissing);
+    if only_payment_challenges {
+        AvcDecision::ChallengeRequired
+    } else if has_human_approval_missing && only_human_or_payment {
+        AvcDecision::HumanApprovalRequired
+    } else if human_approval_required
+        && reasons.len() == 1
+        && reasons[0] == AvcReasonCode::HumanApprovalMissing
+    {
+        AvcDecision::HumanApprovalRequired
+    } else {
+        AvcDecision::Deny
+    }
 }
 
 fn verify_signature(
@@ -513,6 +586,10 @@ pub fn avc_llm_usage_action_request(
         human_approval: None,
         requires_human_approval: false,
         action_name: Some(AVC_LLM_USAGE_ACTION_NAME.into()),
+        commercially_gated: false,
+        payment_evidence_hash: None,
+        requested_currency_code: evidence.usage.cost_currency.clone(),
+        session_spent_minor_units: None,
     })
 }
 
@@ -549,6 +626,7 @@ fn evaluate_action<R: AvcRegistryRead>(
     enforce_data_class(&credential.authority_scope, action, reasons);
     enforce_counterparty(&credential.authority_scope, action, reasons);
     enforce_budget(&credential.constraints, action, reasons);
+    enforce_payment_evidence(action, reasons);
     enforce_risk(
         credential,
         &credential.constraints,
@@ -606,13 +684,62 @@ fn enforce_budget(
     action: &AvcActionRequest,
     reasons: &mut BTreeSet<AvcReasonCode>,
 ) {
-    if let (Some(cap), Some(estimate)) = (
-        constraints.max_budget_minor_units,
-        action.estimated_budget_minor_units,
-    ) {
-        if estimate > cap {
+    enforce_currency(constraints, action, reasons);
+    let Some(cap) = constraints.max_budget_minor_units else {
+        return;
+    };
+    if action.estimated_budget_minor_units.is_none() && action.session_spent_minor_units.is_none() {
+        return;
+    }
+    let estimate = action.estimated_budget_minor_units.unwrap_or(0);
+    let session_spent = action.session_spent_minor_units.unwrap_or(0);
+    match session_spent.checked_add(estimate) {
+        Some(total) if total > cap => {
             reasons.insert(AvcReasonCode::BudgetExceeded);
         }
+        None => {
+            reasons.insert(AvcReasonCode::BudgetExceeded);
+        }
+        Some(_) => {}
+    }
+}
+
+fn enforce_currency(
+    constraints: &AvcConstraints,
+    action: &AvcActionRequest,
+    reasons: &mut BTreeSet<AvcReasonCode>,
+) {
+    let constrained = constraints
+        .currency_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let requested = action
+        .requested_currency_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    match (constrained, requested) {
+        (Some(expected), Some(got)) if expected != got => {
+            reasons.insert(AvcReasonCode::CurrencyMismatch);
+        }
+        (Some(_), None)
+            if action.commercially_gated
+                || action.estimated_budget_minor_units.is_some()
+                || action.session_spent_minor_units.is_some() =>
+        {
+            reasons.insert(AvcReasonCode::CurrencyMismatch);
+        }
+        _ => {}
+    }
+}
+
+fn enforce_payment_evidence(action: &AvcActionRequest, reasons: &mut BTreeSet<AvcReasonCode>) {
+    if !action.commercially_gated {
+        return;
+    }
+    if action.bound_payment_evidence_hash().is_none() {
+        reasons.insert(AvcReasonCode::PaymentEvidenceMissing);
     }
 }
 
@@ -766,6 +893,10 @@ mod tests {
             human_approval: None,
             requires_human_approval: false,
             action_name: None,
+            commercially_gated: false,
+            payment_evidence_hash: None,
+            requested_currency_code: None,
+            session_spent_minor_units: None,
         }
     }
 
@@ -857,6 +988,8 @@ mod tests {
         assert_eq!(action.estimated_budget_minor_units, Some(125));
         assert_eq!(action.estimated_risk_bp, None);
         assert_eq!(action.action_name, Some(AVC_LLM_USAGE_ACTION_NAME.into()));
+        assert!(!action.commercially_gated);
+        assert_eq!(action.requested_currency_code, Some("USD".into()));
         assert!(!action.requires_human_approval);
         assert!(action.human_approval.is_none());
     }
@@ -1359,6 +1492,64 @@ mod tests {
         request.action = Some(action);
         let result = validate_avc(&request, &h.registry).unwrap();
         assert!(result.reason_codes.contains(&AvcReasonCode::BudgetExceeded));
+    }
+
+    #[test]
+    fn session_spend_plus_estimate_over_cap_is_budget_exceeded_deny() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.max_budget_minor_units = Some(1_000);
+        let cred = h.issue(draft);
+        let actor = cred.subject_did.clone();
+        let mut action = baseline_action(actor);
+        action.estimated_budget_minor_units = Some(400);
+        action.session_spent_minor_units = Some(700);
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(action);
+        let result = validate_avc(&request, &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(result.reason_codes.contains(&AvcReasonCode::BudgetExceeded));
+        assert!(
+            !result
+                .reason_codes
+                .iter()
+                .any(|reason| reason.is_payment_challenge())
+        );
+    }
+
+    #[test]
+    fn session_spend_overflow_is_budget_exceeded_deny() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.max_budget_minor_units = Some(u64::MAX);
+        let cred = h.issue(draft);
+        let actor = cred.subject_did.clone();
+        let mut action = baseline_action(actor);
+        action.estimated_budget_minor_units = Some(1);
+        action.session_spent_minor_units = Some(u64::MAX);
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(action);
+        let result = validate_avc(&request, &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(result.reason_codes.contains(&AvcReasonCode::BudgetExceeded));
+    }
+
+    #[test]
+    fn currency_mismatch_on_budgeted_action_is_challenge_not_deny() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.max_budget_minor_units = Some(1_000);
+        draft.constraints.currency_code = Some("USD".into());
+        let cred = h.issue(draft);
+        let actor = cred.subject_did.clone();
+        let mut action = baseline_action(actor);
+        action.estimated_budget_minor_units = Some(100);
+        action.requested_currency_code = Some("USDC".into());
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(action);
+        let result = validate_avc(&request, &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::ChallengeRequired);
+        assert_eq!(result.reason_codes, vec![AvcReasonCode::CurrencyMismatch]);
     }
 
     #[test]
@@ -2039,5 +2230,170 @@ mod tests {
         let cred = h.issue(draft);
         let result = validate_avc(&baseline_request(cred, ts(1_500_000)), &h.registry).unwrap();
         assert_eq!(result.decision, AvcDecision::Allow);
+    }
+
+    #[test]
+    fn commercially_gated_unpaid_in_scope_action_is_challenge_required() {
+        let h = Harness::new();
+        let cred = h.issue(baseline_draft());
+        let actor = cred.subject_did.clone();
+        let mut action = baseline_action(actor);
+        action.commercially_gated = true;
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(action);
+        let result = validate_avc(&request, &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::ChallengeRequired);
+        assert_eq!(
+            result.reason_codes,
+            vec![AvcReasonCode::PaymentEvidenceMissing]
+        );
+    }
+
+    #[test]
+    fn commercially_gated_zero_payment_hash_is_challenge_required() {
+        let h = Harness::new();
+        let cred = h.issue(baseline_draft());
+        let actor = cred.subject_did.clone();
+        let mut action = baseline_action(actor);
+        action.commercially_gated = true;
+        action.payment_evidence_hash = Some(Hash256::ZERO);
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(action);
+        let result = validate_avc(&request, &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::ChallengeRequired);
+        assert_eq!(
+            result.reason_codes,
+            vec![AvcReasonCode::PaymentEvidenceMissing]
+        );
+    }
+
+    #[test]
+    fn commercially_gated_paid_in_scope_action_allows() {
+        let h = Harness::new();
+        let cred = h.issue(baseline_draft());
+        let actor = cred.subject_did.clone();
+        let mut action = baseline_action(actor);
+        action.commercially_gated = true;
+        action.payment_evidence_hash = Some(h256(0xC1));
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(action);
+        let result = validate_avc(&request, &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Allow);
+        assert_eq!(result.reason_codes, vec![AvcReasonCode::Valid]);
+    }
+
+    #[test]
+    fn deny_outranks_payment_challenge_for_forbidden_unpaid_action() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.forbidden_actions = vec!["payment.execute".into()];
+        let cred = h.issue(draft);
+        let actor = cred.subject_did.clone();
+        let mut action = baseline_action(actor);
+        action.commercially_gated = true;
+        action.action_name = Some("payment.execute".into());
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(action);
+        let result = validate_avc(&request, &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::ForbiddenAction)
+        );
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::PaymentEvidenceMissing)
+        );
+    }
+
+    #[test]
+    fn budget_exceeded_outranks_missing_payment_evidence() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.max_budget_minor_units = Some(10);
+        let cred = h.issue(draft);
+        let actor = cred.subject_did.clone();
+        let mut action = baseline_action(actor);
+        action.commercially_gated = true;
+        action.estimated_budget_minor_units = Some(50);
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(action);
+        let result = validate_avc(&request, &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Deny);
+        assert!(result.reason_codes.contains(&AvcReasonCode::BudgetExceeded));
+    }
+
+    #[test]
+    fn human_approval_outranks_payment_collection() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.human_approval_required = true;
+        let cred = h.issue(draft);
+        let actor = cred.subject_did.clone();
+        let mut action = baseline_action(actor);
+        action.commercially_gated = true;
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(action);
+        let result = validate_avc(&request, &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::HumanApprovalRequired);
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::HumanApprovalMissing)
+        );
+        assert!(
+            result
+                .reason_codes
+                .contains(&AvcReasonCode::PaymentEvidenceMissing)
+        );
+    }
+
+    #[test]
+    fn default_action_cbor_omitting_commercial_fields_stays_allow() {
+        let h = Harness::new();
+        let cred = h.issue(baseline_draft());
+        let actor = cred.subject_did.clone();
+        let action = baseline_action(actor);
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(&action, &mut buf).unwrap();
+        let value: ciborium::value::Value = ciborium::de::from_reader(buf.as_slice()).unwrap();
+        let ciborium::value::Value::Map(entries) = value else {
+            panic!("action CBOR must be a map");
+        };
+        for (key, _) in &entries {
+            let label = key.as_text().unwrap_or_default();
+            assert_ne!(label, "commercially_gated");
+            assert_ne!(label, "payment_evidence_hash");
+            assert_ne!(label, "requested_currency_code");
+            assert_ne!(label, "session_spent_minor_units");
+        }
+        let decoded: AvcActionRequest = ciborium::de::from_reader(buf.as_slice()).unwrap();
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(decoded);
+        let result = validate_avc(&request, &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Allow);
+    }
+
+    #[test]
+    fn matching_currency_on_commercially_gated_paid_action_allows() {
+        let h = Harness::new();
+        let mut draft = baseline_draft();
+        draft.constraints.max_budget_minor_units = Some(1_000);
+        draft.constraints.currency_code = Some("USD".into());
+        let cred = h.issue(draft);
+        let actor = cred.subject_did.clone();
+        let mut action = baseline_action(actor);
+        action.commercially_gated = true;
+        action.estimated_budget_minor_units = Some(250);
+        action.requested_currency_code = Some("USD".into());
+        action.payment_evidence_hash = Some(h256(0xC2));
+        action.session_spent_minor_units = Some(100);
+        let mut request = baseline_request(cred, ts(1_500_000));
+        request.action = Some(action);
+        let result = validate_avc(&request, &h.registry).unwrap();
+        assert_eq!(result.decision, AvcDecision::Allow);
+        assert_eq!(result.reason_codes, vec![AvcReasonCode::Valid]);
     }
 }

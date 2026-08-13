@@ -155,9 +155,13 @@ pub fn compute_breakdown(
     let protocol_vig = apply_bp(gross, policy.protocol_vig_bp);
     gross = gross.saturating_add(protocol_vig);
 
-    let charged = gross
-        .max(policy.global_floor_micro_exo)
-        .min(policy.global_ceiling_micro_exo);
+    let charged = if inputs.event_class.is_never_paywalled() {
+        0
+    } else {
+        gross
+            .max(policy.global_floor_micro_exo)
+            .min(policy.global_ceiling_micro_exo)
+    };
 
     Ok(PriceBreakdown {
         compute_component_micro_exo: compute,
@@ -378,6 +382,37 @@ mod tests {
         policy.compute_unit_price_micro_exo = 1;
         policy.global_ceiling_micro_exo = u128::MAX;
         let mut inputs = baseline_inputs();
+        inputs.event_class = EventClass::HolonCommercialAction;
+        inputs.compute_units = 1_000;
+        let breakdown = compute_breakdown(&policy, &inputs).unwrap();
+        assert!(breakdown.charged_amount_micro_exo > 0);
+    }
+
+    #[test]
+    fn never_paywalled_events_charge_zero_under_nonzero_policy() {
+        let mut policy = PricingPolicy::zero_launch_default();
+        policy.compute_unit_price_micro_exo = 1;
+        policy.global_ceiling_micro_exo = u128::MAX;
+        policy.global_floor_micro_exo = 1;
+        for event in EventClass::NEVER_PAYWALLED {
+            let mut inputs = baseline_inputs();
+            inputs.event_class = event;
+            inputs.compute_units = 1_000;
+            let breakdown = compute_breakdown(&policy, &inputs).unwrap();
+            assert_eq!(
+                breakdown.charged_amount_micro_exo, 0,
+                "constitutional event {event:?} must remain uncharged"
+            );
+        }
+    }
+
+    #[test]
+    fn agentic_resource_payment_can_charge_under_nonzero_policy() {
+        let mut policy = PricingPolicy::zero_launch_default();
+        policy.compute_unit_price_micro_exo = 1;
+        policy.global_ceiling_micro_exo = u128::MAX;
+        let mut inputs = baseline_inputs();
+        inputs.event_class = EventClass::AgenticResourcePayment;
         inputs.compute_units = 1_000;
         let breakdown = compute_breakdown(&policy, &inputs).unwrap();
         assert!(breakdown.charged_amount_micro_exo > 0);

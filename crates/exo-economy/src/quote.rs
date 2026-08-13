@@ -147,6 +147,8 @@ pub fn quote(
     let breakdown = compute_breakdown(policy, inputs)?;
     let pricing_mode = if breakdown.charged_amount_micro_exo == 0 {
         PricingMode::Zero
+    } else if inputs.event_class == EventClass::AgenticResourcePayment {
+        PricingMode::UsageMetered
     } else {
         PricingMode::Hybrid
     };
@@ -495,6 +497,47 @@ mod tests {
         assert!(q.charged_amount_micro_exo > 0);
         assert!(q.zero_fee_reason.is_none());
         assert_eq!(q.pricing_mode, PricingMode::Hybrid);
+    }
+
+    #[test]
+    fn never_paywalled_events_quote_zero_under_nonzero_policy() {
+        let mut policy = PricingPolicy::zero_launch_default();
+        policy.compute_unit_price_micro_exo = 1;
+        policy.global_ceiling_micro_exo = u128::MAX;
+        policy.global_floor_micro_exo = 1;
+        let expected = [
+            (EventClass::AvcValidate, ZeroFeeReason::AgentValidation),
+            (
+                EventClass::IdentityResolution,
+                ZeroFeeReason::IdentityLookup,
+            ),
+            (
+                EventClass::AgentPassportLookup,
+                ZeroFeeReason::IdentityLookup,
+            ),
+            (EventClass::ConsentRevoke, ZeroFeeReason::ConsentRevocation),
+        ];
+        for (event, reason) in expected {
+            let mut inputs = baseline_inputs(ActorClass::Holon, event);
+            inputs.compute_units = 1_000;
+            let q = quote(&policy, &inputs, "q-constitutional".into()).unwrap();
+            assert_eq!(q.charged_amount_micro_exo, 0, "{event:?}");
+            assert_eq!(q.pricing_mode, PricingMode::Zero, "{event:?}");
+            assert_eq!(q.zero_fee_reason, Some(reason), "{event:?}");
+        }
+    }
+
+    #[test]
+    fn agentic_resource_payment_quotes_usage_metered_when_charged() {
+        let mut policy = PricingPolicy::zero_launch_default();
+        policy.compute_unit_price_micro_exo = 1;
+        policy.global_ceiling_micro_exo = u128::MAX;
+        let mut inputs = baseline_inputs(ActorClass::Holon, EventClass::AgenticResourcePayment);
+        inputs.compute_units = 1_000;
+        let q = quote(&policy, &inputs, "q-agentic".into()).unwrap();
+        assert!(q.charged_amount_micro_exo > 0);
+        assert!(q.zero_fee_reason.is_none());
+        assert_eq!(q.pricing_mode, PricingMode::UsageMetered);
     }
 
     #[test]

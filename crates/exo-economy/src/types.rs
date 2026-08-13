@@ -84,10 +84,11 @@ pub enum EventClass {
     LegalEvidenceExport,
     HolonCommercialAction,
     AgentToAgentHandshake,
+    AgenticResourcePayment,
 }
 
 impl EventClass {
-    pub const ALL: [EventClass; 17] = [
+    pub const ALL: [EventClass; 18] = [
         EventClass::IdentityResolution,
         EventClass::AgentPassportLookup,
         EventClass::AvcIssue,
@@ -105,7 +106,30 @@ impl EventClass {
         EventClass::LegalEvidenceExport,
         EventClass::HolonCommercialAction,
         EventClass::AgentToAgentHandshake,
+        EventClass::AgenticResourcePayment,
     ];
+
+    /// Constitutional events that must remain zero-fee even under a nonzero
+    /// pricing policy. Paywalling these would charge for identity, consent
+    /// revocation, or AVC validation.
+    pub const NEVER_PAYWALLED: [EventClass; 4] = [
+        EventClass::IdentityResolution,
+        EventClass::AgentPassportLookup,
+        EventClass::AvcValidate,
+        EventClass::ConsentRevoke,
+    ];
+
+    /// Returns true when this event class must never be charged.
+    #[must_use]
+    pub const fn is_never_paywalled(self) -> bool {
+        matches!(
+            self,
+            Self::IdentityResolution
+                | Self::AgentPassportLookup
+                | Self::AvcValidate
+                | Self::ConsentRevoke
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -227,7 +251,13 @@ mod tests {
 
     #[test]
     fn event_class_all_includes_every_variant() {
-        assert_eq!(EventClass::ALL.len(), 17);
+        assert_eq!(EventClass::ALL.len(), 18);
+        assert_eq!(EventClass::NEVER_PAYWALLED.len(), 4);
+        for event in EventClass::NEVER_PAYWALLED {
+            assert!(event.is_never_paywalled());
+        }
+        assert!(!EventClass::AgenticResourcePayment.is_never_paywalled());
+        assert!(!EventClass::HolonCommercialAction.is_never_paywalled());
     }
 
     #[test]

@@ -41,6 +41,8 @@ pub const AVC_RECEIPT_EXTERNAL_TIMESTAMP_DOMAIN: &str = "exo.avc.receipt.externa
 /// Domain tag for the receipt evidence subject sent to external timestamp
 /// authorities.
 pub const AVC_RECEIPT_EVIDENCE_SUBJECT_DOMAIN: &str = "exo.avc.receipt.evidence_subject.v1";
+/// Domain tag for canonical payment-evidence hashes bound into trust receipts.
+pub const AVC_PAYMENT_EVIDENCE_DOMAIN: &str = "exo.avc.payment.evidence.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AvcTrustReceipt {
@@ -56,6 +58,8 @@ pub struct AvcTrustReceipt {
     pub action_descriptor_hash: Option<Hash256>,
     #[serde(default)]
     pub llm_usage_evidence_hash: Option<Hash256>,
+    #[serde(default)]
+    pub payment_evidence_hash: Option<Hash256>,
     #[serde(default)]
     pub previous_receipt_hash: Option<Hash256>,
     #[serde(default)]
@@ -87,6 +91,8 @@ pub struct AvcTrustReceiptEvidence {
     pub action_descriptor: Option<AvcActionDescriptor>,
     /// EXOCHAIN LYNK Protocol evidence hash for LLM/MCP usage receipts.
     pub llm_usage_evidence_hash: Option<Hash256>,
+    /// Canonical payment-evidence hash (`exo.avc.payment.evidence.v1`).
+    pub payment_evidence_hash: Option<Hash256>,
     /// Previous receipt hash used to link extended receipts in order.
     pub previous_receipt_hash: Option<Hash256>,
     /// Source of the trusted timestamp used for this receipt.
@@ -330,6 +336,8 @@ struct ExtendedReceiptSigningPayload<'a> {
     action_descriptor: Option<&'a AvcActionDescriptor>,
     action_descriptor_hash: Option<&'a Hash256>,
     llm_usage_evidence_hash: Option<&'a Hash256>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payment_evidence_hash: Option<&'a Hash256>,
     previous_receipt_hash: Option<&'a Hash256>,
     timestamp_provenance: Option<&'a AvcReceiptTimestampProvenance>,
     external_timestamp_proof: Option<&'a AvcReceiptExternalTimestampProof>,
@@ -366,6 +374,7 @@ impl AvcTrustReceipt {
             || self.action_descriptor.is_some()
             || self.action_descriptor_hash.is_some()
             || self.llm_usage_evidence_hash.is_some()
+            || self.payment_evidence_hash.is_some()
             || self.previous_receipt_hash.is_some()
             || self.timestamp_provenance.is_some()
             || self.external_timestamp_proof.is_some()
@@ -387,6 +396,7 @@ impl AvcTrustReceipt {
                 action_descriptor: self.action_descriptor.as_ref(),
                 action_descriptor_hash: self.action_descriptor_hash.as_ref(),
                 llm_usage_evidence_hash: self.llm_usage_evidence_hash.as_ref(),
+                payment_evidence_hash: self.payment_evidence_hash.as_ref(),
                 previous_receipt_hash: self.previous_receipt_hash.as_ref(),
                 timestamp_provenance: self.timestamp_provenance.as_ref(),
                 external_timestamp_proof: self.external_timestamp_proof.as_ref(),
@@ -440,6 +450,7 @@ impl AvcTrustReceipt {
         if self.schema_version != AVC_SCHEMA_VERSION
             || !self.has_extended_evidence()
             || self.llm_usage_evidence_hash.is_some()
+            || self.payment_evidence_hash.is_some()
         {
             return Ok(None);
         }
@@ -544,6 +555,7 @@ where
         action_descriptor: evidence.action_descriptor,
         action_descriptor_hash,
         llm_usage_evidence_hash: evidence.llm_usage_evidence_hash,
+        payment_evidence_hash: evidence.payment_evidence_hash,
         previous_receipt_hash: evidence.previous_receipt_hash,
         timestamp_provenance: evidence.timestamp_provenance,
         external_timestamp_proof: evidence.external_timestamp_proof,
@@ -616,6 +628,10 @@ mod tests {
             human_approval: None,
             requires_human_approval: false,
             action_name: Some("records.search.case".into()),
+            commercially_gated: false,
+            payment_evidence_hash: None,
+            requested_currency_code: None,
+            session_spent_minor_units: None,
         };
         AvcActionDescriptor::from_action(&action)
     }
@@ -913,6 +929,7 @@ mod tests {
                 action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
                 action_descriptor: None,
                 llm_usage_evidence_hash: None,
+                payment_evidence_hash: None,
                 previous_receipt_hash: None,
                 timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
                 external_timestamp_proof: None,
@@ -943,6 +960,7 @@ mod tests {
                 action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
                 action_descriptor: None,
                 llm_usage_evidence_hash: Some(Hash256::from_bytes([0xB1; 32])),
+                payment_evidence_hash: None,
                 previous_receipt_hash: None,
                 timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
                 external_timestamp_proof: None,
@@ -959,6 +977,7 @@ mod tests {
                 action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
                 action_descriptor: None,
                 llm_usage_evidence_hash: Some(Hash256::from_bytes([0xB2; 32])),
+                payment_evidence_hash: None,
                 previous_receipt_hash: None,
                 timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
                 external_timestamp_proof: None,
@@ -992,6 +1011,7 @@ mod tests {
                 action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
                 action_descriptor: None,
                 llm_usage_evidence_hash: Some(Hash256::from_bytes([0xB1; 32])),
+                payment_evidence_hash: None,
                 previous_receipt_hash: None,
                 timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
                 external_timestamp_proof: None,
@@ -1034,6 +1054,7 @@ mod tests {
                 action_commitment_hash: Some(evidence_subject.action_commitment_hash),
                 action_descriptor: Some(action_descriptor.clone()),
                 llm_usage_evidence_hash: None,
+                payment_evidence_hash: None,
                 previous_receipt_hash: None,
                 timestamp_provenance: Some(
                     AvcReceiptTimestampProvenance::ExternalTimestampAuthority,
@@ -1071,6 +1092,7 @@ mod tests {
                 action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
                 action_descriptor: Some(action_descriptor.clone()),
                 llm_usage_evidence_hash: None,
+                payment_evidence_hash: None,
                 previous_receipt_hash: None,
                 timestamp_provenance: Some(
                     AvcReceiptTimestampProvenance::ExternalTimestampAuthority,
@@ -1091,6 +1113,7 @@ mod tests {
                 action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
                 action_descriptor: Some(action_descriptor),
                 llm_usage_evidence_hash: None,
+                payment_evidence_hash: None,
                 previous_receipt_hash: None,
                 timestamp_provenance: Some(
                     AvcReceiptTimestampProvenance::ExternalTimestampAuthority,
@@ -1104,5 +1127,64 @@ mod tests {
         .unwrap();
 
         assert_ne!(baseline.receipt_id, changed.receipt_id);
+    }
+
+    #[test]
+    fn payment_evidence_hash_changes_signed_receipt_payload_and_id() {
+        let (validation, _id) = sample_validation();
+        let action_id = Hash256::from_bytes([0x42; 32]);
+        let unpaid = create_trust_receipt_with_evidence(
+            &validation,
+            Some(action_id),
+            AvcTrustReceiptEvidence {
+                action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
+                action_descriptor: None,
+                llm_usage_evidence_hash: None,
+                payment_evidence_hash: None,
+                previous_receipt_hash: None,
+                timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
+                external_timestamp_proof: None,
+            },
+            did("validator"),
+            ts(2_000),
+            |_| fixed_signature(),
+        )
+        .unwrap();
+        let paid = create_trust_receipt_with_evidence(
+            &validation,
+            Some(action_id),
+            AvcTrustReceiptEvidence {
+                action_commitment_hash: Some(Hash256::from_bytes([0xA1; 32])),
+                action_descriptor: None,
+                llm_usage_evidence_hash: None,
+                payment_evidence_hash: Some(Hash256::from_bytes([0xD1; 32])),
+                previous_receipt_hash: None,
+                timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
+                external_timestamp_proof: None,
+            },
+            did("validator"),
+            ts(2_000),
+            |_| fixed_signature(),
+        )
+        .unwrap();
+
+        assert!(unpaid.has_extended_evidence());
+        assert!(paid.has_extended_evidence());
+        assert_eq!(
+            paid.payment_evidence_hash,
+            Some(Hash256::from_bytes([0xD1; 32]))
+        );
+        assert_ne!(
+            unpaid.signing_payload().unwrap(),
+            paid.signing_payload().unwrap()
+        );
+        assert_ne!(unpaid.receipt_id, paid.receipt_id);
+        assert!(unpaid.verify_id().unwrap());
+        assert!(paid.verify_id().unwrap());
+    }
+
+    #[test]
+    fn payment_evidence_domain_is_versioned() {
+        assert_eq!(AVC_PAYMENT_EVIDENCE_DOMAIN, "exo.avc.payment.evidence.v1");
     }
 }

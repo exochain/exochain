@@ -192,6 +192,10 @@ pub fn livesafe_public_adapter_output_authorization_action_request(
         action_name: Some(format!(
             "{LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_ACTION_NAME}:{action_name_hash}"
         )),
+        commercially_gated: false,
+        payment_evidence_hash: None,
+        requested_currency_code: None,
+        session_spent_minor_units: None,
     })
 }
 

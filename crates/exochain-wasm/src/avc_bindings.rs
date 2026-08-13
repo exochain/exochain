@@ -270,6 +270,10 @@ fn ensure_action_shape(value: &AvcActionRequest) -> Result<(), String> {
     ensure_optional_did_shape("action.target_did", value.target_did.as_ref())?;
     ensure_optional_data_class_shape("action.data_class", value.data_class.as_ref())?;
     ensure_optional_string_shape("action.action_name", value.action_name.as_ref())?;
+    ensure_optional_string_shape(
+        "action.requested_currency_code",
+        value.requested_currency_code.as_ref(),
+    )?;
     if let Some(approval) = &value.human_approval {
         ensure_did_shape("action.human_approval.approver_did", &approval.approver_did)?;
     }
@@ -535,6 +539,10 @@ mod tests {
             human_approval: None,
             requires_human_approval: false,
             action_name: Some("test-action".into()),
+            commercially_gated: false,
+            payment_evidence_hash: None,
+            requested_currency_code: None,
+            session_spent_minor_units: None,
         }
     }
 
