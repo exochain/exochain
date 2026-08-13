@@ -29,6 +29,8 @@
 # Build artifacts
 coverage/
 packages/exochain-llm-proxy/dist-test/
+packages/exo-x402-edge/dist/
+packages/exo-x402-edge/dist-test/
 demo/packages/exochain-wasm/wasm/
 demo/apps/vitallock/src/wasm/
 demo/apps/vitallock/dist/

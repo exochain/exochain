@@ -1,0 +1,23 @@
+{
+  "name": "@exochain/x402-edge",
+  "version": "0.2.3",
+  "private": true,
+  "description": "Cloudflare Worker translator: x402 HTTP 402/403/428/200 mapped from Exochain AVC decisions. Authorization facilitator, not a payments stack.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/worker.js",
+  "types": "./dist/worker.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist dist-test"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.0.0",
+    "typescript": "5.3.3"
+  }
+}
