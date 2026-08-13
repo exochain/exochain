@@ -46,6 +46,7 @@ members = [
     "crates/exochain-sdk",
     "crates/exo-avc",
     "crates/exo-economy",
+    "crates/exo-x402",
     "crates/exo-root",
 ]
 # The livesafe/ and cybermedica/ subtrees are proprietary commercial

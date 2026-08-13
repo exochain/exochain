@@ -415,6 +415,7 @@ jobs:
             exochain-api
             exochain-authority
             exochain-avc
+            exochain-x402
             exochain-consent
             exochain-dag-db-core
             exochain-dag-db-graph
