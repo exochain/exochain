@@ -154,11 +154,12 @@ pub use public_output_authorization::{
     verify_livesafe_public_adapter_output_authorization_proof,
 };
 pub use receipt::{
-    AVC_RECEIPT_EVIDENCE_SUBJECT_DOMAIN, AVC_RECEIPT_EXTERNAL_TIMESTAMP_DOMAIN,
-    AVC_RECEIPT_SIGNING_DOMAIN, AvcReceiptEvidenceSubject, AvcReceiptExternalTimestampProof,
-    AvcReceiptExternalTimestampProofKind, AvcReceiptRfc3161TimestampProof,
-    AvcReceiptRfc3161TrustAnchorKind, AvcReceiptTimestampProvenance, AvcTrustReceipt,
-    AvcTrustReceiptEvidence, create_trust_receipt, create_trust_receipt_with_evidence,
+    AVC_PAYMENT_EVIDENCE_DOMAIN, AVC_RECEIPT_EVIDENCE_SUBJECT_DOMAIN,
+    AVC_RECEIPT_EXTERNAL_TIMESTAMP_DOMAIN, AVC_RECEIPT_SIGNING_DOMAIN, AvcReceiptEvidenceSubject,
+    AvcReceiptExternalTimestampProof, AvcReceiptExternalTimestampProofKind,
+    AvcReceiptRfc3161TimestampProof, AvcReceiptRfc3161TrustAnchorKind,
+    AvcReceiptTimestampProvenance, AvcTrustReceipt, AvcTrustReceiptEvidence, create_trust_receipt,
+    create_trust_receipt_with_evidence,
 };
 pub use registry::{
     AvcRegistryDurableState, AvcRegistryRead, AvcRegistryWrite, InMemoryAvcRegistry,
@@ -186,6 +187,7 @@ pub const AVC_SIGNING_DOMAINS: &[&str] = &[
     AVC_HUMAN_APPROVAL_SIGNING_DOMAIN,
     AVC_LLM_USAGE_EVIDENCE_DOMAIN,
     AVC_LLM_USAGE_EVIDENCE_SIGNATURE_DOMAIN,
+    AVC_PAYMENT_EVIDENCE_DOMAIN,
     LIVESAFE_PUBLIC_OUTPUT_CREDENTIAL_CEREMONY_DOMAIN,
     LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_DOMAIN,
     AVC_RECEIPT_EVIDENCE_SUBJECT_DOMAIN,

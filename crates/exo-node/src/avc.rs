@@ -2462,7 +2462,8 @@ fn require_matching_llm_usage_action(
     expected_action: &AvcActionRequest,
 ) -> ApiResult<()> {
     let submitted_action = require_action(request)?;
-    if submitted_action != expected_action {
+    if submitted_action.without_commercial_overlay() != expected_action.without_commercial_overlay()
+    {
         return Err((
             StatusCode::BAD_REQUEST,
             "LLM usage receipt validation action must match canonical evidence-derived action"
@@ -2717,6 +2718,7 @@ async fn handle_emit_receipt(
     let action_descriptor = AvcActionDescriptor::from_action(action);
     let action_descriptor_hash =
         avc_action_descriptor_hash(&action_descriptor).map_err(map_avc_error)?;
+    let payment_evidence_hash = action.bound_payment_evidence_hash();
     let subject_signature = payload.subject_signature.clone();
     let subject_public_key = payload.subject_public_key;
     let preflight_request = submitted_request.clone();
@@ -2784,6 +2786,7 @@ async fn handle_emit_receipt(
                 action_commitment_hash: Some(action_commitment_hash),
                 action_descriptor: Some(action_descriptor),
                 llm_usage_evidence_hash: None,
+                payment_evidence_hash,
                 previous_receipt_hash,
                 timestamp_provenance: Some(timestamp_evidence.provenance),
                 external_timestamp_proof: timestamp_evidence.external_timestamp_proof,
@@ -2830,6 +2833,10 @@ async fn handle_llm_usage_emit_receipt(
     let action_descriptor = AvcActionDescriptor::from_action(&evidence_action);
     let action_descriptor_hash =
         avc_action_descriptor_hash(&action_descriptor).map_err(map_avc_error)?;
+    let payment_evidence_hash = submitted_request
+        .action
+        .as_ref()
+        .and_then(AvcActionRequest::bound_payment_evidence_hash);
     let subject_signature = payload.subject_signature.clone();
     let subject_public_key = payload.subject_public_key;
     let adapter_signature = payload.adapter_signature.clone();
@@ -2913,6 +2920,7 @@ async fn handle_llm_usage_emit_receipt(
                 action_commitment_hash: Some(action_commitment_hash),
                 action_descriptor: Some(action_descriptor),
                 llm_usage_evidence_hash: Some(llm_evidence_hash),
+                payment_evidence_hash,
                 previous_receipt_hash,
                 timestamp_provenance: Some(timestamp_evidence.provenance),
                 external_timestamp_proof: timestamp_evidence.external_timestamp_proof,
@@ -3047,6 +3055,7 @@ async fn handle_public_output_authorization(
                 action_commitment_hash: Some(action_commitment_hash),
                 action_descriptor: Some(action_descriptor),
                 llm_usage_evidence_hash: None,
+                payment_evidence_hash: None,
                 previous_receipt_hash,
                 timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
                 external_timestamp_proof: None,
@@ -3715,6 +3724,10 @@ mod tests {
             human_approval: None,
             requires_human_approval: false,
             action_name: None,
+            commercially_gated: false,
+            payment_evidence_hash: None,
+            requested_currency_code: None,
+            session_spent_minor_units: None,
         }
     }
 
@@ -4274,6 +4287,7 @@ mod tests {
                 action_commitment_hash: Some(Hash256::from_bytes([0x72; 32])),
                 action_descriptor: None,
                 llm_usage_evidence_hash: None,
+                payment_evidence_hash: None,
                 previous_receipt_hash: None,
                 timestamp_provenance: Some(AvcReceiptTimestampProvenance::FixedTestTimestamp),
                 external_timestamp_proof: None,
@@ -5619,6 +5633,7 @@ mod tests {
                         action_commitment_hash: None,
                         action_descriptor: None,
                         llm_usage_evidence_hash: None,
+                        payment_evidence_hash: None,
                         previous_receipt_hash: None,
                         timestamp_provenance: Some(
                             AvcReceiptTimestampProvenance::FixedTestTimestamp,
@@ -7349,6 +7364,7 @@ mod tests {
                     action_commitment_hash: Some(action_commitment_hash),
                     action_descriptor: None,
                     llm_usage_evidence_hash: None,
+                    payment_evidence_hash: None,
                     previous_receipt_hash: None,
                     timestamp_provenance: Some(AvcReceiptTimestampProvenance::FixedTestTimestamp),
                     external_timestamp_proof: None,
@@ -8093,6 +8109,10 @@ mod tests {
             human_approval: None,
             requires_human_approval: true,
             action_name: None,
+            commercially_gated: false,
+            payment_evidence_hash: None,
+            requested_currency_code: None,
+            session_spent_minor_units: None,
         };
         let request = AvcValidationRequest {
             credential,

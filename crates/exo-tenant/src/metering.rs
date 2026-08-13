@@ -567,4 +567,28 @@ mod tests {
                 .settlement_authorized
         );
     }
+
+    #[test]
+    fn d7_metering_module_never_imports_economy_or_settles() {
+        let production = include_str!("metering.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("metering production source");
+        assert!(
+            !production.contains("exo_economy"),
+            "D7: metering must not import exo-economy"
+        );
+        assert!(
+            !production.contains("settle("),
+            "D7: metering must not call settle"
+        );
+        assert!(
+            production.contains("SettlementMode::Observed"),
+            "D7: metering must default to Observed"
+        );
+        assert!(
+            production.contains("PaidOptIn"),
+            "D7: paid settlement is opt-in only"
+        );
+    }
 }
