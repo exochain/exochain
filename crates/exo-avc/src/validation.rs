@@ -112,7 +112,7 @@ impl AvcReasonCode {
     /// Payment-challenge reasons may emit `ChallengeRequired` only when no
     /// deny reason is present. Human approval still outranks collection.
     #[must_use]
-    pub const fn is_payment_challenge(self) -> bool {
+    pub const fn is_payment_challenge(&self) -> bool {
         matches!(self, Self::PaymentEvidenceMissing | Self::CurrencyMismatch)
     }
 }
@@ -416,11 +416,10 @@ fn decide_avc(reasons: &[AvcReasonCode], human_approval_required: bool) -> AvcDe
     let has_human_approval_missing = reasons.contains(&AvcReasonCode::HumanApprovalMissing);
     if only_payment_challenges {
         AvcDecision::ChallengeRequired
-    } else if has_human_approval_missing && only_human_or_payment {
-        AvcDecision::HumanApprovalRequired
-    } else if human_approval_required
-        && reasons.len() == 1
-        && reasons[0] == AvcReasonCode::HumanApprovalMissing
+    } else if (has_human_approval_missing && only_human_or_payment)
+        || (human_approval_required
+            && reasons.len() == 1
+            && reasons[0] == AvcReasonCode::HumanApprovalMissing)
     {
         AvcDecision::HumanApprovalRequired
     } else {

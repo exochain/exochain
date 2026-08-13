@@ -2358,6 +2358,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "exochain-x402"
+version = "0.2.3"
+dependencies = [
+ "ciborium",
+ "exochain-avc",
+ "exochain-core",
+ "serde",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
