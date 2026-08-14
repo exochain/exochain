@@ -1389,4 +1389,3 @@ AACP v1 is complete only when all statements are true:
 - Revocation and termination remain final.
 - Cross-language hashes and state transitions match the conformance fixtures.
 - The protocol is production-fail-closed when provider evidence, gateway state, authority, consent, human verification, sentinel identity, or persistence is unavailable.
-
