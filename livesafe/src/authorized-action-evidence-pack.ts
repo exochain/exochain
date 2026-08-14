@@ -59,7 +59,7 @@ export function presentAuthorizedActionEvidencePack(
     classification: request.classification,
     adapterState: request.adapterState,
     exochainResponse: request.exochainResponse,
-    claimsExochainTrust: request.adapterState === "verified",
+    claimsExochainTrust: true,
     readsExochainCoreState: true,
     writesExochainCoreState: false,
     storesRawSensitiveDataOnChain: request.storesRawPhi,
