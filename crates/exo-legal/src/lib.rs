@@ -21,6 +21,7 @@
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
 pub mod ai_transparency;
+pub mod authorized_action_counsel_pack;
 pub mod bundle;
 pub mod cert_902_11;
 pub mod compliance_report;
