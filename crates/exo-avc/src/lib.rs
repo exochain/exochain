@@ -103,6 +103,7 @@
 
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
+pub mod authorized_action_evidence_pack;
 pub mod credential;
 pub mod delegation;
 pub mod error;
@@ -114,6 +115,11 @@ pub mod registry;
 pub mod revocation;
 pub mod validation;
 
+pub use authorized_action_evidence_pack::{
+    AUTHORIZED_ACTION_EVIDENCE_PACK_DOMAIN, AUTHORIZED_ACTION_EVIDENCE_PACK_SCHEMA,
+    AssembleAuthorizedActionEvidencePackInput, AuthorizedActionEvidencePack,
+    assemble_authorized_action_evidence_pack,
+};
 pub use credential::{
     AVC_CREDENTIAL_SIGNING_DOMAIN, AVC_MAX_SUPPORTED_PROTOCOL_VERSION,
     AVC_MIN_SUPPORTED_PROTOCOL_VERSION, AVC_PROTOCOL_DEPRECATION_WINDOW_DAYS, AVC_PROTOCOL_VERSION,
@@ -180,6 +186,7 @@ pub use validation::{
 /// All AVC signing domains as a sorted slice — used by hygiene tests
 /// and external auditors who need to ensure no domain collisions.
 pub const AVC_SIGNING_DOMAINS: &[&str] = &[
+    AUTHORIZED_ACTION_EVIDENCE_PACK_DOMAIN,
     AVC_ACTION_COMMITMENT_DOMAIN,
     AVC_ACTION_DESCRIPTOR_DOMAIN,
     AVC_ACTION_SIGNING_DOMAIN,
@@ -219,6 +226,7 @@ mod hygiene_tests {
     #[test]
     fn no_hashmap_or_hashset_in_production_sources() {
         let sources = [
+            include_str!("authorized_action_evidence_pack.rs"),
             include_str!("credential.rs"),
             include_str!("delegation.rs"),
             include_str!("error.rs"),
@@ -251,6 +259,7 @@ mod hygiene_tests {
     #[test]
     fn no_floating_point_in_production_sources() {
         let sources = [
+            include_str!("authorized_action_evidence_pack.rs"),
             include_str!("credential.rs"),
             include_str!("delegation.rs"),
             include_str!("error.rs"),

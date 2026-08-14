@@ -30,6 +30,7 @@
 //! | `POST` | `/api/v1/avc/issue` | Register a signed credential. |
 //! | `POST` | `/api/v1/avc/validate` | Validate a credential and optional action. |
 //! | `POST` | `/api/v1/avc/receipts/emit` | Validate a subject-signed action and mint a node-signed receipt. |
+//! | `POST` | `/api/v1/avc/evidence-packs/assemble` | Assemble SKU A Authorized Action Evidence Pack from a stored Allow receipt. |
 //! | `POST` | `/api/v1/avc/llm-usage/receipts/emit` | Validate subject-signed EXOCHAIN LYNK Protocol evidence and mint a node-signed receipt. |
 //! | `POST` | `/api/v1/avc/livesafe/public-adapter-output-authorization` | Mint/export the redacted LiveSafe public adapter-output authorization proof. |
 //! | `GET`  | `/api/v1/avc/receipts/:hash` | Fetch a stored AVC trust receipt by hash. |
@@ -2139,7 +2140,7 @@ fn parse_did(raw: &str) -> ApiResult<Did> {
     })
 }
 
-fn parse_hash(raw: &str) -> ApiResult<Hash256> {
+pub(crate) fn parse_hash(raw: &str) -> ApiResult<Hash256> {
     if !raw
         .as_bytes()
         .iter()
@@ -2376,7 +2377,7 @@ where
     Ok(result)
 }
 
-async fn with_registry_blocking<T, F>(
+pub(crate) async fn with_registry_blocking<T, F>(
     state: Arc<AvcApiState>,
     persist_after: bool,
     op: F,
@@ -3416,6 +3417,10 @@ pub fn avc_router(state: Arc<AvcApiState>) -> Router {
         .route("/api/v1/avc/issue", post(handle_issue))
         .route("/api/v1/avc/validate", post(handle_validate))
         .route("/api/v1/avc/receipts/emit", post(handle_emit_receipt))
+        .route(
+            "/api/v1/avc/evidence-packs/assemble",
+            post(crate::avc_evidence_pack::handle_assemble_evidence_pack),
+        )
         .route(
             "/api/v1/avc/llm-usage/receipts/emit",
             post(handle_llm_usage_emit_receipt),
