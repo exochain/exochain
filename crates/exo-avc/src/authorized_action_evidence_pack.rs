@@ -108,8 +108,9 @@ pub fn assemble_authorized_action_evidence_pack(
     }
     if input.created_at == Timestamp::ZERO {
         return Err(AvcError::InvalidTimestamp {
-            reason: "authorized action evidence pack created_at must be a caller-supplied HLC timestamp"
-                .into(),
+            reason:
+                "authorized action evidence pack created_at must be a caller-supplied HLC timestamp"
+                    .into(),
         });
     }
     let payment_evidence_hash = receipt
@@ -170,17 +171,17 @@ fn hash_authorized_action_evidence_pack(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        AVC_SCHEMA_VERSION, AvcConstraints, AvcDraft, AvcSubjectKind, AvcTrustReceiptEvidence,
-        AvcValidationRequest, AutonomyLevel, AuthorityScope, DelegatedIntent, InMemoryAvcRegistry,
-        create_trust_receipt_with_evidence, issue_avc, validate_avc,
-    };
-    use crate::receipt::{
-        AvcReceiptExternalTimestampProof, AvcReceiptRfc3161TrustAnchorKind,
-    };
     use exo_authority::permission::Permission;
     use exo_core::{Did, Signature, crypto::KeyPair};
+
+    use super::*;
+    use crate::{
+        AVC_SCHEMA_VERSION, AuthorityScope, AutonomyLevel, AvcConstraints, AvcDraft,
+        AvcRegistryWrite, AvcSubjectKind, AvcTrustReceiptEvidence, AvcValidationRequest,
+        DelegatedIntent, InMemoryAvcRegistry, create_trust_receipt_with_evidence, issue_avc,
+        receipt::{AvcReceiptExternalTimestampProof, AvcReceiptRfc3161TrustAnchorKind},
+        validate_avc,
+    };
 
     fn did(suffix: &str) -> Did {
         Did::new(&format!("did:exo:{suffix}")).unwrap()
@@ -302,27 +303,25 @@ mod tests {
 
     #[test]
     fn rejects_non_allow_decision() {
-        let err = assemble_authorized_action_evidence_pack(
-            &AssembleAuthorizedActionEvidencePackInput {
+        let err =
+            assemble_authorized_action_evidence_pack(&AssembleAuthorizedActionEvidencePackInput {
                 receipt: deny_receipt(),
                 commercially_gated: false,
                 created_at: ts(1_800),
-            },
-        )
-        .unwrap_err();
+            })
+            .unwrap_err();
         assert!(matches!(err, AvcError::InvalidInput { .. }));
     }
 
     #[test]
     fn commercially_gated_pack_requires_bound_payment_evidence() {
-        let err = assemble_authorized_action_evidence_pack(
-            &AssembleAuthorizedActionEvidencePackInput {
+        let err =
+            assemble_authorized_action_evidence_pack(&AssembleAuthorizedActionEvidencePackInput {
                 receipt: allow_receipt(None),
                 commercially_gated: true,
                 created_at: ts(1_800),
-            },
-        )
-        .unwrap_err();
+            })
+            .unwrap_err();
         assert!(matches!(err, AvcError::InvalidInput { .. }));
         assert!(
             assemble_authorized_action_evidence_pack(&AssembleAuthorizedActionEvidencePackInput {
@@ -336,14 +335,13 @@ mod tests {
 
     #[test]
     fn zero_payment_hash_is_unpaid_for_commercially_gated_pack() {
-        let err = assemble_authorized_action_evidence_pack(
-            &AssembleAuthorizedActionEvidencePackInput {
+        let err =
+            assemble_authorized_action_evidence_pack(&AssembleAuthorizedActionEvidencePackInput {
                 receipt: allow_receipt(Some(Hash256::ZERO)),
                 commercially_gated: true,
                 created_at: ts(1_800),
-            },
-        )
-        .unwrap_err();
+            })
+            .unwrap_err();
         assert!(matches!(err, AvcError::InvalidInput { .. }));
     }
 
@@ -352,22 +350,20 @@ mod tests {
         let first = allow_receipt(Some(Hash256::from_bytes([0xC1; 32])));
         let mut second = first.clone();
         second.llm_usage_evidence_hash = Some(Hash256::from_bytes([0xEE; 32]));
-        let left = assemble_authorized_action_evidence_pack(
-            &AssembleAuthorizedActionEvidencePackInput {
+        let left =
+            assemble_authorized_action_evidence_pack(&AssembleAuthorizedActionEvidencePackInput {
                 receipt: first,
                 commercially_gated: true,
                 created_at: ts(1_800),
-            },
-        )
-        .unwrap();
-        let right = assemble_authorized_action_evidence_pack(
-            &AssembleAuthorizedActionEvidencePackInput {
+            })
+            .unwrap();
+        let right =
+            assemble_authorized_action_evidence_pack(&AssembleAuthorizedActionEvidencePackInput {
                 receipt: second,
                 commercially_gated: true,
                 created_at: ts(1_800),
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         assert_ne!(left.pack_hash, right.pack_hash);
     }
 }

@@ -50,31 +50,33 @@ pub async fn handle_assemble_evidence_pack(
             .ok_or((StatusCode::NOT_FOUND, "receipt not found".into()))
     })
     .await?;
-    let pack = assemble_authorized_action_evidence_pack(&AssembleAuthorizedActionEvidencePackInput {
-        receipt,
-        commercially_gated,
-        created_at,
-    })
-    .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))?;
+    let pack =
+        assemble_authorized_action_evidence_pack(&AssembleAuthorizedActionEvidencePackInput {
+            receipt,
+            commercially_gated,
+            created_at,
+        })
+        .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(pack))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::avc::{AvcApiState, AvcReceiptSigner, avc_router};
     use axum::{
         body::{self, Body},
         http::{Method, Request},
     };
-    use exo_avc::{
-        AVC_SCHEMA_VERSION, AUTHORIZED_ACTION_EVIDENCE_PACK_SCHEMA, AuthorityScope, AutonomyLevel,
-        AvcConstraints, AvcDraft, AvcSubjectKind, AvcValidationRequest, DelegatedIntent,
-        InMemoryAvcRegistry, create_trust_receipt, issue_avc, validate_avc,
-    };
     use exo_authority::permission::Permission;
+    use exo_avc::{
+        AUTHORIZED_ACTION_EVIDENCE_PACK_SCHEMA, AVC_SCHEMA_VERSION, AuthorityScope, AutonomyLevel,
+        AvcConstraints, AvcDraft, AvcRegistryWrite, AvcSubjectKind, AvcValidationRequest,
+        DelegatedIntent, InMemoryAvcRegistry, create_trust_receipt, issue_avc, validate_avc,
+    };
     use exo_core::{Did, Hash256, Timestamp, crypto::KeyPair};
     use tower::ServiceExt;
+
+    use super::*;
+    use crate::avc::{AvcApiState, AvcReceiptSigner, avc_router};
 
     fn did(suffix: &str) -> Did {
         Did::new(&format!("did:exo:{suffix}")).unwrap()
@@ -89,8 +91,7 @@ mod tests {
     }
 
     fn test_state() -> Arc<AvcApiState> {
-        let signer: AvcReceiptSigner =
-            Arc::new(|payload: &[u8]| validator_kp().sign(payload));
+        let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_kp().sign(payload));
         Arc::new(AvcApiState::new(did("validator"), signer))
     }
 
@@ -155,7 +156,10 @@ mod tests {
         receipt_id
     }
 
-    async fn post_assemble(state: Arc<AvcApiState>, body: serde_json::Value) -> (StatusCode, String) {
+    async fn post_assemble(
+        state: Arc<AvcApiState>,
+        body: serde_json::Value,
+    ) -> (StatusCode, String) {
         let response = avc_router(state)
             .oneshot(
                 Request::builder()

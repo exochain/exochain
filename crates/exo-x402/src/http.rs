@@ -175,9 +175,9 @@ mod tests {
     fn bound_evidence_settles_only_for_nonzero_hash() {
         assert!(!payment_settled_from_bound_evidence(None));
         assert!(!payment_settled_from_bound_evidence(Some(Hash256::ZERO)));
-        assert!(payment_settled_from_bound_evidence(Some(Hash256::from_bytes(
-            [0xC1; 32]
-        ))));
+        assert!(payment_settled_from_bound_evidence(Some(
+            Hash256::from_bytes([0xC1; 32])
+        )));
     }
 
     #[test]

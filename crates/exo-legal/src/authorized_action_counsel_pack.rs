@@ -36,8 +36,7 @@ pub const AUTHORIZED_ACTION_COUNSEL_PACK_SCHEMA: &str = "authorized_action_couns
 pub const AUTHORIZED_ACTION_COUNSEL_PACK_DOMAIN: &str =
     "exo.legal.authorized_action_counsel_pack.v1";
 const AUTHORIZED_ACTION_COUNSEL_PACK_SCHEMA_VERSION: u16 = 1;
-const DECLARANT_TEMPLATE: &str =
-    "[DECLARANT NAME, TITLE, ORGANIZATION — COMPLETE BEFORE FILING]";
+const DECLARANT_TEMPLATE: &str = "[DECLARANT NAME, TITLE, ORGANIZATION — COMPLETE BEFORE FILING]";
 
 /// Hash-only assembly input. Callers supply HLC time; this module does not
 /// read the wall clock.
@@ -128,8 +127,9 @@ pub fn assemble_authorized_action_counsel_pack(
     }
     if declarant_placeholder_incomplete(&input.declarant_placeholder) {
         return Err(LegalError::InvalidStateTransition {
-            reason: "FRE 902(11) declarant_placeholder must be completed by a qualified human declarant"
-                .into(),
+            reason:
+                "FRE 902(11) declarant_placeholder must be completed by a qualified human declarant"
+                    .into(),
         });
     }
     let declarant_completed = true;
@@ -165,12 +165,14 @@ pub fn assemble_authorized_action_counsel_pack_from_bundle(
     counsel_attested: bool,
     created_at: Timestamp,
 ) -> Result<AuthorizedActionCounselPack> {
-    let certification = bundle.certification.as_ref().ok_or_else(|| {
-        LegalError::InvalidStateTransition {
-            reason: "counsel pack requires an EvidenceBundle with FRE 902(11) certification"
-                .into(),
-        }
-    })?;
+    let certification =
+        bundle
+            .certification
+            .as_ref()
+            .ok_or_else(|| LegalError::InvalidStateTransition {
+                reason: "counsel pack requires an EvidenceBundle with FRE 902(11) certification"
+                    .into(),
+            })?;
     assemble_authorized_action_counsel_pack(&AssembleAuthorizedActionCounselPackInput {
         evidence_pack_hash,
         bundle_hash: bundle.bundle_hash,
@@ -205,6 +207,9 @@ fn hash_counsel_pack(pack: &AuthorizedActionCounselPack) -> Result<Hash256> {
 
 #[cfg(test)]
 mod tests {
+    use exo_core::{Did, Signature};
+    use uuid::Uuid;
+
     use super::*;
     use crate::{
         bundle::{
@@ -214,8 +219,6 @@ mod tests {
         cert_902_11::generate_902_11_cert,
         evidence::create_evidence,
     };
-    use exo_core::{Did, Signature};
-    use uuid::Uuid;
 
     fn did(suffix: &str) -> Did {
         Did::new(&format!("did:exo:{suffix}")).unwrap()
@@ -263,9 +266,12 @@ mod tests {
             ts(900),
         )
         .unwrap();
-        let cert =
-            generate_902_11_cert(&evidence, "EXOCHAIN AVC evidence pack v1", 1_700_000_001_000)
-                .unwrap();
+        let cert = generate_902_11_cert(
+            &evidence,
+            "EXOCHAIN AVC evidence pack v1",
+            1_700_000_001_000,
+        )
+        .unwrap();
         assemble(BundleAssemblyInput {
             id: "bundle-counsel".into(),
             created_at: ts(2_500),
