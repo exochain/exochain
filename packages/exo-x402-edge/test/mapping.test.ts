@@ -26,8 +26,10 @@ import {
   HTTP_PAYMENT_REQUIRED,
   HTTP_PRECONDITION_REQUIRED,
   authorizationChallenge,
+  isBoundPaymentEvidenceHash,
   isNeverPaywalledPath,
   mapAuthorizationToHttp,
+  paymentSettledFromBoundEvidence,
 } from "../src/mapping.js";
 import { handlePaidRequest, type WorkerEnv } from "../src/worker.js";
 
@@ -66,6 +68,31 @@ test("never paywalls validate, identity, or consent paths", () => {
   assert.equal(isNeverPaywalledPath("/api/v1/0dentity/did:exo:a/score"), true);
   assert.equal(isNeverPaywalledPath("/api/v1/agents/did:exo:a/consent"), true);
   assert.equal(isNeverPaywalledPath("/mcp/tools/call"), false);
+});
+
+const BOUND_PAYMENT_EVIDENCE_HASH =
+  "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1";
+
+test("bound payment evidence hash rejects header-shaped strings and zero hashes", () => {
+  assert.equal(isBoundPaymentEvidenceHash(BOUND_PAYMENT_EVIDENCE_HASH), true);
+  assert.equal(isBoundPaymentEvidenceHash("0".repeat(64)), false);
+  assert.equal(isBoundPaymentEvidenceHash("facilitator-sig"), false);
+  assert.equal(isBoundPaymentEvidenceHash(Array(32).fill(0xc1)), true);
+  assert.equal(isBoundPaymentEvidenceHash(Array(32).fill(0)), false);
+});
+
+test("settlement uses bound hash, not PAYMENT-SIGNATURE presence", () => {
+  assert.equal(
+    paymentSettledFromBoundEvidence(BOUND_PAYMENT_EVIDENCE_HASH, {}),
+    true,
+  );
+  assert.equal(
+    paymentSettledFromBoundEvidence(undefined, {
+      action: { payment_evidence_hash: BOUND_PAYMENT_EVIDENCE_HASH },
+    }),
+    true,
+  );
+  assert.equal(paymentSettledFromBoundEvidence(undefined, {}), false);
 });
 
 test("402 extension carries AVC reason codes, not x402 protocol types", () => {
@@ -137,14 +164,42 @@ test("worker returns 402 with PAYMENT-REQUIRED on ChallengeRequired", async () =
   assert.deepEqual(challenge.reason_codes, ["PaymentEvidenceMissing"]);
 });
 
-test("worker executes origin and emits receipt on Allow when paid", async () => {
+test("worker returns 402 when Allow has only a PAYMENT-SIGNATURE header", async () => {
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/avc/validate")) {
+      return new Response(
+        JSON.stringify({ decision: "Allow", reason_codes: ["Valid"] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const request = new Request("https://edge.example/paid-tool", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      [HEADER_PAYMENT_SIGNATURE]: "facilitator-sig",
+    },
+    body: JSON.stringify({ commercially_gated: true }),
+  });
+  const response = await handlePaidRequest(request, env, fetchImpl);
+  assert.equal(response.status, HTTP_PAYMENT_REQUIRED);
+  assert.ok(response.headers.get(HEADER_PAYMENT_REQUIRED));
+});
+
+test("worker executes origin and emits receipt on Allow with bound payment evidence", async () => {
   const calls: string[] = [];
   const fetchImpl: typeof fetch = async (input) => {
     const url = String(input);
     calls.push(url);
     if (url.endsWith("/api/v1/avc/validate")) {
       return new Response(
-        JSON.stringify({ decision: "Allow", reason_codes: ["Valid"] }),
+        JSON.stringify({
+          decision: "Allow",
+          reason_codes: ["Valid"],
+          payment_evidence_hash: BOUND_PAYMENT_EVIDENCE_HASH,
+        }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }
@@ -161,11 +216,11 @@ test("worker executes origin and emits receipt on Allow when paid", async () => 
   };
   const request = new Request("https://edge.example/paid-tool", {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      [HEADER_PAYMENT_SIGNATURE]: "facilitator-sig",
-    },
-    body: JSON.stringify({ commercially_gated: true }),
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      commercially_gated: true,
+      action: { payment_evidence_hash: BOUND_PAYMENT_EVIDENCE_HASH },
+    }),
   });
   const response = await handlePaidRequest(request, env, fetchImpl);
   assert.equal(response.status, HTTP_OK);

@@ -26,6 +26,7 @@
 //! - `Allow` but unpaid → 402 (fail closed)
 
 use exo_avc::{AvcDecision, AvcReasonCode};
+use exo_core::Hash256;
 use serde::{Deserialize, Serialize};
 
 /// HTTP 200 OK after Allow and settled payment.
@@ -75,6 +76,14 @@ impl AuthorizationChallenge {
             commercially_gated: true,
         }
     }
+}
+
+/// Settlement is a non-zero bound payment-evidence hash.
+///
+/// Header presence (`PAYMENT-SIGNATURE`) is never evidence.
+#[must_use]
+pub fn payment_settled_from_bound_evidence(hash: Option<Hash256>) -> bool {
+    hash.is_some_and(|value| value != Hash256::ZERO)
 }
 
 /// Map an AVC decision onto HTTP. Deny always outranks payment.
@@ -160,6 +169,15 @@ mod tests {
         assert_eq!(mapped.status, HTTP_PAYMENT_REQUIRED);
         assert!(mapped.payment_required);
         assert!(!mapped.payment_response);
+    }
+
+    #[test]
+    fn bound_evidence_settles_only_for_nonzero_hash() {
+        assert!(!payment_settled_from_bound_evidence(None));
+        assert!(!payment_settled_from_bound_evidence(Some(Hash256::ZERO)));
+        assert!(payment_settled_from_bound_evidence(Some(Hash256::from_bytes(
+            [0xC1; 32]
+        ))));
     }
 
     #[test]

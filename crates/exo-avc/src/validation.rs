@@ -243,6 +243,12 @@ pub struct AvcValidationResult {
     pub normalized_holder_did: Did,
     pub valid_until: Option<Timestamp>,
     pub receipt: Option<AvcTrustReceipt>,
+    /// Non-zero payment evidence hash bound from the validated action, if any.
+    ///
+    /// `None` is omitted from canonical CBOR so existing unpaid receipts keep
+    /// the same `validation_hash`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payment_evidence_hash: Option<Hash256>,
 }
 
 #[derive(Serialize)]
@@ -394,6 +400,10 @@ pub fn validate_avc<R: AvcRegistryRead>(
     if sorted.is_empty() {
         sorted.push(AvcReasonCode::Valid);
     }
+    let payment_evidence_hash = request
+        .action
+        .as_ref()
+        .and_then(AvcActionRequest::bound_payment_evidence_hash);
 
     Ok(AvcValidationResult {
         credential_id,
@@ -402,6 +412,7 @@ pub fn validate_avc<R: AvcRegistryRead>(
         normalized_holder_did,
         valid_until: credential.expires_at,
         receipt: None,
+        payment_evidence_hash,
     })
 }
 
@@ -2246,6 +2257,7 @@ mod tests {
             result.reason_codes,
             vec![AvcReasonCode::PaymentEvidenceMissing]
         );
+        assert_eq!(result.payment_evidence_hash, None);
     }
 
     #[test]
@@ -2279,6 +2291,7 @@ mod tests {
         let result = validate_avc(&request, &h.registry).unwrap();
         assert_eq!(result.decision, AvcDecision::Allow);
         assert_eq!(result.reason_codes, vec![AvcReasonCode::Valid]);
+        assert_eq!(result.payment_evidence_hash, Some(h256(0xC1)));
     }
 
     #[test]

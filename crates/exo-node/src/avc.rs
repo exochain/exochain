@@ -4153,6 +4153,7 @@ mod tests {
             normalized_holder_did: credential.subject_did.clone(),
             valid_until: credential.expires_at,
             receipt: None,
+            payment_evidence_hash: None,
         };
         let receipt = create_trust_receipt(
             &validation,
@@ -4279,6 +4280,7 @@ mod tests {
             normalized_holder_did: credential.subject_did,
             valid_until: credential.expires_at,
             receipt: None,
+            payment_evidence_hash: None,
         };
         let mut receipt = create_trust_receipt_with_evidence(
             &validation,
@@ -5625,6 +5627,7 @@ mod tests {
                     normalized_holder_did: Did::new("did:exo:agent").unwrap(),
                     valid_until: Some(Timestamp::new(2_000_000, 0)),
                     receipt: None,
+                    payment_evidence_hash: None,
                 };
                 let advancing_receipt = create_trust_receipt_with_evidence(
                     &validation,
@@ -6269,6 +6272,7 @@ mod tests {
                 normalized_holder_did: Did::new("did:exo:agent").unwrap(),
                 valid_until: Some(Timestamp::new(2_000_000, 0)),
                 receipt: None,
+                payment_evidence_hash: None,
             };
             create_trust_receipt(
                 &validation,
@@ -7455,6 +7459,7 @@ mod tests {
             normalized_holder_did: Did::new("did:exo:agent").unwrap(),
             valid_until: Some(Timestamp::new(2_000_000, 0)),
             receipt: None,
+            payment_evidence_hash: None,
         };
         let receipt = create_trust_receipt(
             &validation,
@@ -7521,6 +7526,7 @@ mod tests {
             normalized_holder_did: Did::new("did:exo:agent").unwrap(),
             valid_until: Some(Timestamp::new(2_000_000, 0)),
             receipt: None,
+            payment_evidence_hash: None,
         };
         let receipt = create_trust_receipt(
             &validation,
@@ -7594,6 +7600,7 @@ mod tests {
             normalized_holder_did: Did::new("did:exo:agent").unwrap(),
             valid_until: Some(Timestamp::new(2_000_000, 0)),
             receipt: None,
+            payment_evidence_hash: None,
         };
         let receipt = create_trust_receipt(
             &validation,

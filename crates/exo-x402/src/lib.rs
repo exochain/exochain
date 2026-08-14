@@ -42,7 +42,7 @@ pub use http::{
     AUTHORIZATION_CHALLENGE_SCHEMA, AuthorizationChallenge, AuthorizationHttpMapping,
     HEADER_PAYMENT_REQUIRED, HEADER_PAYMENT_RESPONSE, HEADER_PAYMENT_SIGNATURE, HTTP_FORBIDDEN,
     HTTP_OK, HTTP_PAYMENT_REQUIRED, HTTP_PRECONDITION_REQUIRED, is_never_paywalled_path,
-    map_authorization_to_http,
+    map_authorization_to_http, payment_settled_from_bound_evidence,
 };
 
 #[cfg(test)]

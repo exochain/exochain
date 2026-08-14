@@ -18,16 +18,17 @@ import {
   AvcDecision,
   HEADER_PAYMENT_REQUIRED,
   HEADER_PAYMENT_RESPONSE,
-  HEADER_PAYMENT_SIGNATURE,
   HTTP_BAD_GATEWAY,
   authorizationChallenge,
   isNeverPaywalledPath,
   mapAuthorizationToHttp,
+  paymentSettledFromBoundEvidence,
 } from "./mapping.js";
 
 export interface AvcValidationResult {
   decision: AvcDecision;
   reason_codes: string[];
+  payment_evidence_hash?: unknown;
 }
 
 export interface WorkerEnv {
@@ -94,7 +95,6 @@ export async function handlePaidRequest(
     return jsonResponse(400, { error: "invalid_json_body" });
   }
 
-  const paymentSettled = request.headers.has(HEADER_PAYMENT_SIGNATURE);
   const validateResponse = await fetchImpl(
     nodeUrl(env, "/api/v1/avc/validate"),
     {
@@ -111,6 +111,10 @@ export async function handlePaidRequest(
   }
 
   const validation = (await validateResponse.json()) as AvcValidationResult;
+  const paymentSettled = paymentSettledFromBoundEvidence(
+    validation.payment_evidence_hash,
+    validationBody,
+  );
   const mapped = mapAuthorizationToHttp(validation.decision, paymentSettled);
 
   if (mapped.status !== 200) {
