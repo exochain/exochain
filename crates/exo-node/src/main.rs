@@ -53,6 +53,7 @@ mod mcp;
 mod metrics;
 mod network;
 mod passport;
+mod pdp_store;
 mod provenance;
 mod reactor;
 mod receipt_dashboard;
@@ -1273,8 +1274,26 @@ async fn start_node(
     // and apply bearer-token auth middleware. 0dentity signed writes use their
     // local DID session and request-signature verifiers.
     // NOTE: /health and /ready are provided by the gateway's own router.
+    let pdp = pdp_store::load_or_create(data_dir)?;
+    let shared_pdp = exo_pdp::SharedPdp::from_pdp(pdp);
+    let persist_pdp = shared_pdp.clone();
+    let persist_dir = data_dir.to_path_buf();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            tick.tick().await;
+            if let Ok(guard) = persist_pdp.lock() {
+                if let Err(e) = pdp_store::save(&persist_dir, &guard) {
+                    tracing::warn!(err = %e, "failed to persist PDP evidence pack");
+                }
+            }
+        }
+    });
+    let pdp_router = exo_pdp::http::pdp_router(shared_pdp);
+
     let extra_router = metrics_router
         .merge(governance_router)
+        .merge(pdp_router)
         .merge(passport_router)
         .merge(dashboard_router)
         .merge(challenge_router)
@@ -1450,6 +1469,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             Ok(())
         }
 
+        Command::Pdp { command } => run_pdp(command),
+
         Command::Mcp {
             data_dir,
             actor_did,
@@ -1512,6 +1533,33 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Genesis { command } => root_genesis_cli::run_genesis_command(command).await,
         Command::Avc { command } => {
             livesafe_public_output_ceremony_cli::run_avc_command(command).await
+        }
+    }
+}
+
+fn run_pdp(command: cli::PdpCommand) -> anyhow::Result<()> {
+    match command {
+        cli::PdpCommand::Verify { pack } => {
+            let bytes = std::fs::read(&pack)?;
+            let pack = exo_pdp::EvidencePack::from_json(&bytes)?;
+            pack.verify()?;
+            println!("ok");
+            println!("spec:                 {}", pack.spec);
+            println!("never_moves_money:    {}", pack.never_moves_money);
+            println!("entries:              {}", pack.entries.len());
+            println!(
+                "article_26.retention: {} days",
+                pack.article_26.retention_days_min
+            );
+            println!("article_26.denies:    {}", pack.article_26.incident_denies);
+            println!("tip:                  {}", pack.tip_hex);
+            Ok(())
+        }
+        cli::PdpCommand::Inspect { pack } => {
+            let bytes = std::fs::read(&pack)?;
+            let pack = exo_pdp::EvidencePack::from_json(&bytes)?;
+            println!("{}", String::from_utf8_lossy(&pack.to_json()?));
+            Ok(())
         }
     }
 }

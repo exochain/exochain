@@ -35,6 +35,7 @@ pub mod governance_bindings;
 pub mod identity_bindings;
 pub mod legal_bindings;
 pub mod messaging_bindings;
+pub mod pdp_bindings;
 mod serde_bridge;
 
 // Flat re-exports so integration tests and downstream rlib consumers can
@@ -52,6 +53,7 @@ pub use governance_bindings::*;
 pub use identity_bindings::*;
 pub use legal_bindings::*;
 pub use messaging_bindings::*;
+pub use pdp_bindings::*;
 
 #[cfg(test)]
 mod source_guard_tests {
@@ -68,6 +70,7 @@ mod source_guard_tests {
             ),
             ("economy_bindings.rs", include_str!("economy_bindings.rs")),
             ("avc_bindings.rs", include_str!("avc_bindings.rs")),
+            ("pdp_bindings.rs", include_str!("pdp_bindings.rs")),
         ];
 
         for (path, source) in binding_sources {

@@ -2218,6 +2218,7 @@ dependencies = [
  "exochain-governance",
  "exochain-identity",
  "exochain-legal",
+ "exochain-pdp",
  "exochain-root",
  "exochain-sdk",
  "futures",
@@ -2255,6 +2256,23 @@ dependencies = [
  "x25519-dalek",
  "x509-cert",
  "zeroize",
+]
+
+[[package]]
+name = "exochain-pdp"
+version = "0.2.3"
+dependencies = [
+ "axum 0.7.9",
+ "blake3",
+ "ed25519-dalek",
+ "exochain-authority",
+ "exochain-core",
+ "hex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2343,6 +2361,7 @@ dependencies = [
  "exochain-identity",
  "exochain-legal",
  "exochain-messaging",
+ "exochain-pdp",
  "exochain-proofs",
  "getrandom 0.2.16",
  "hex",

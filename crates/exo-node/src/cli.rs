@@ -198,6 +198,29 @@ pub enum Command {
         #[command(subcommand)]
         command: AvcCommand,
     },
+
+    /// Policy decision point — never moves money.
+    Pdp {
+        #[command(subcommand)]
+        command: PdpCommand,
+    },
+}
+
+/// Offline evidence-pack tools. A third party can verify a pack without a node.
+#[derive(Subcommand)]
+pub enum PdpCommand {
+    /// Independently verify an exported evidence pack (Article 26 log).
+    Verify {
+        /// Path to `pdp-evidence.json` (or any `exochain-evidence-pack-v1` file).
+        #[arg(long)]
+        pack: PathBuf,
+    },
+    /// Print Article 26 summary of a pack without mutating it.
+    Inspect {
+        /// Path to an evidence pack.
+        #[arg(long)]
+        pack: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]

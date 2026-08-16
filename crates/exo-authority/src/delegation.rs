@@ -511,6 +511,40 @@ impl DelegationRegistry {
         Ok(revocation)
     }
 
+    /// Number of active delegations granted by `did`.
+    #[must_use]
+    pub fn granted_by(&self, did: &Did) -> usize {
+        self.by_delegator
+            .get(did.as_str())
+            .map(Vec::len)
+            .unwrap_or(0)
+    }
+
+    /// Number of active delegations received by `did`.
+    #[must_use]
+    pub fn received_by(&self, did: &Did) -> usize {
+        self.by_delegate
+            .get(did.as_str())
+            .map(Vec::len)
+            .unwrap_or(0)
+    }
+
+    /// Union of permissions on links where `did` is the delegate.
+    #[must_use]
+    pub fn permissions_held_by(&self, did: &Did) -> crate::permission::PermissionSet {
+        let mut set = crate::permission::PermissionSet::empty();
+        if let Some(ids) = self.by_delegate.get(did.as_str()) {
+            for id in ids {
+                if let Some(link) = self.links.get(id) {
+                    for p in &link.scope {
+                        set.insert(*p);
+                    }
+                }
+            }
+        }
+        set
+    }
+
     /// Find a delegation chain from `from` to `to`.
     #[must_use]
     pub fn find_chain(&self, from: &Did, to: &Did) -> Option<AuthorityChain> {

@@ -30,6 +30,8 @@ pub enum Permission {
     Govern,
     Escalate,
     Challenge,
+    /// Authorize an agent to initiate a payment. Never grants custody.
+    Spend,
 }
 
 /// A deterministic set of permissions (BTreeSet for canonical ordering).
@@ -207,6 +209,7 @@ mod tests {
         assert_ne!(Permission::Execute, Permission::Delegate);
         assert_ne!(Permission::Govern, Permission::Escalate);
         assert_ne!(Permission::Challenge, Permission::Read);
+        assert_ne!(Permission::Spend, Permission::Read);
         assert_eq!(Permission::Read, Permission::Read);
     }
 
