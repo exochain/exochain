@@ -511,4 +511,193 @@ mod tests {
         );
         assert!(guard.resolve_public(&actor).is_none());
     }
+
+    #[test]
+    fn http_helpers_cover_router_inputs_and_successful_persistence() {
+        let pdp = SharedPdp::ephemeral();
+        let no_persist = PdpHttpState {
+            pdp: pdp.clone(),
+            persist: None,
+        };
+        let mut guard = no_persist.pdp.lock().unwrap();
+        assert!(no_persist.checkpoint(&guard).unwrap().is_none());
+        assert!(no_persist.persist_or_rollback(&mut guard, None).is_ok());
+        drop(guard);
+
+        let persisted = PdpHttpState {
+            pdp: pdp.clone(),
+            persist: Some(Arc::new(|_| Ok(()))),
+        };
+        let mut guard = persisted.pdp.lock().unwrap();
+        let checkpoint = persisted.checkpoint(&guard).unwrap();
+        assert!(checkpoint.is_some());
+        assert!(
+            persisted
+                .persist_or_rollback(&mut guard, checkpoint)
+                .is_ok()
+        );
+        drop(guard);
+
+        let _ephemeral_router = pdp_router(pdp.clone());
+        let _persistent_router = pdp_router_with_persistence(pdp.clone(), |_| Ok(()));
+
+        assert_eq!(require_now_ms(Some(7)).unwrap(), Timestamp::new(7, 0));
+        assert!(matches!(require_now_ms(None), Err(PdpError::BadRequest(_))));
+        assert!(matches!(
+            require_now_ms(Some(0)),
+            Err(PdpError::BadRequest(_))
+        ));
+
+        let expected = [
+            ("READ", Permission::Read),
+            ("write", Permission::Write),
+            ("execute", Permission::Execute),
+            ("delegate", Permission::Delegate),
+            ("govern", Permission::Govern),
+            ("escalate", Permission::Escalate),
+            ("challenge", Permission::Challenge),
+            ("spend", Permission::Spend),
+        ];
+        for (wire, permission) in expected {
+            assert_eq!(parse_perm(wire).unwrap(), permission);
+        }
+        assert!(matches!(parse_perm("mint"), Err(PdpError::BadRequest(_))));
+
+        let hash_hex = "ab".repeat(32);
+        assert_eq!(parse_hash(&hash_hex).unwrap().to_string(), hash_hex);
+        assert!(matches!(parse_hash("zz"), Err(PdpError::BadRequest(_))));
+        assert!(matches!(parse_hash("ab"), Err(PdpError::BadRequest(_))));
+
+        assert_eq!(
+            err(PdpError::BadRequest("bad".into())).0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(err(PdpError::EvidenceNotFound).0, StatusCode::NOT_FOUND);
+        assert_eq!(err(PdpError::Revoked).0, StatusCode::FORBIDDEN);
+        let internal = err(PdpError::Persistence("disk".into()));
+        assert_eq!(internal.0, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(internal.1.0["never_moves_money"], true);
+
+        let actor = Did::new("did:exo:snapshot-test").unwrap();
+        let snapshot = pdp.snapshot_for(&actor).unwrap();
+        assert_eq!(snapshot.granted, 0);
+        assert_eq!(snapshot.received, 0);
+        assert!(snapshot.permissions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn mutation_and_pack_handlers_cover_fail_closed_http_boundary() {
+        let state = PdpHttpState {
+            pdp: SharedPdp::ephemeral(),
+            persist: Some(Arc::new(|_| Ok(()))),
+        };
+        let actor = Did::new("did:exo:http-handler-test").unwrap();
+        let actor_key = KeyPair::generate();
+
+        let registered = handle_register_key(
+            State(state.clone()),
+            Json(RegisterKeyBody {
+                did: actor.to_string(),
+                public_key_hex: hex::encode(actor_key.public_key().as_bytes()),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(registered.0["registered"], true);
+        assert_eq!(registered.0["did"], actor.to_string());
+
+        let invalid_key = handle_register_key(
+            State(state.clone()),
+            Json(RegisterKeyBody {
+                did: actor.to_string(),
+                public_key_hex: "ab".into(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(invalid_key.0, StatusCode::BAD_REQUEST);
+
+        let mandate_hash = "11".repeat(32);
+        let reserved = handle_reserve(
+            State(state.clone()),
+            Json(HashBody {
+                mandate_hash: mandate_hash.clone(),
+                now_ms: Some(10),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(reserved.0["state"], "reserved");
+
+        let released = handle_release(
+            State(state.clone()),
+            Json(HashBody {
+                mandate_hash: mandate_hash.clone(),
+                now_ms: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(released.0["state"], "released");
+
+        let _ = handle_reserve(
+            State(state.clone()),
+            Json(HashBody {
+                mandate_hash: mandate_hash.clone(),
+                now_ms: Some(11),
+            }),
+        )
+        .await
+        .unwrap();
+        let committed = handle_commit(
+            State(state.clone()),
+            Json(HashBody {
+                mandate_hash: mandate_hash.clone(),
+                now_ms: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(committed.0["state"], "committed");
+
+        let delegation_hash = "22".repeat(32);
+        let revoked = handle_revoke(
+            State(state.clone()),
+            Json(RevokeBody {
+                mandate_hash: Some(mandate_hash.clone()),
+                agent: Some(actor.to_string()),
+                delegation_id: Some(delegation_hash),
+                reason: None,
+                now_ms: Some(12),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(revoked.0["revoked"], true);
+
+        let missing = handle_evidence(State(state.clone()), Path("33".repeat(32)))
+            .await
+            .unwrap_err();
+        assert_eq!(missing.0, StatusCode::NOT_FOUND);
+
+        let (pack, service_key_hex) = {
+            let guard = state.pdp.lock().unwrap();
+            (
+                guard.export_pack().unwrap(),
+                hex::encode(guard.service_public_key().as_bytes()),
+            )
+        };
+        let exported = handle_export_pack(State(state.clone())).await.unwrap();
+        assert_eq!(exported.0.spec, pack.spec);
+
+        let verified = handle_verify_pack(Json(VerifyPackBody {
+            pack,
+            expected_service_public_key_hex: service_key_hex,
+        }))
+        .await
+        .unwrap();
+        assert_eq!(verified.0["ok"], true);
+        assert_eq!(verified.0["independently_verifiable"], true);
+        assert_eq!(verified.0["never_moves_money"], true);
+    }
 }

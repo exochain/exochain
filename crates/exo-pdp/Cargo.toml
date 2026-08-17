@@ -45,3 +45,6 @@ axum = { workspace = true, optional = true }
 [features]
 default = ["http"]
 http = ["dep:axum"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
