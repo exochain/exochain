@@ -85,7 +85,10 @@ frost-ristretto255 = { version = "=3.0.0", default-features = false, features = 
 argon2 = { version = "=0.5.3", features = ["zeroize"] }
 # Post-quantum cryptography — NIST FIPS 204 (ML-DSA / CRYSTALS-Dilithium)
 # v0.1.0-rc.7 patches RUSTSEC-2025-0144 timing side-channel (fixed in rc.3+)
-ml-dsa = { version = "=0.1.0-rc.7", features = ["zeroize"] }
+# default-features includes pkcs8=0.11.0-rc.10; crates.io consumers resolve
+# released pkcs8 0.11.0 and fail to compile (issue #812). Core only needs
+# seed/sign/verify via the `zeroize` surface.
+ml-dsa = { version = "=0.1.0-rc.7", default-features = false, features = ["zeroize"] }
 
 # Deterministic data structures
 indexmap = { version = "=2.12.1", features = ["serde"] }

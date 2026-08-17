@@ -1157,6 +1157,7 @@ mod tests {
             action_descriptor: None,
             action_descriptor_hash: None,
             llm_usage_evidence_hash: None,
+            payment_evidence_hash: None,
             previous_receipt_hash: None,
             timestamp_provenance: None,
             external_timestamp_proof: None,
@@ -1188,6 +1189,7 @@ mod tests {
             action_descriptor: None,
             action_descriptor_hash: None,
             llm_usage_evidence_hash: None,
+            payment_evidence_hash: None,
             previous_receipt_hash,
             timestamp_provenance: Some(
                 crate::receipt::AvcReceiptTimestampProvenance::LocalHybridLogicalClock,
@@ -1244,6 +1246,7 @@ mod tests {
             action_descriptor: None,
             action_descriptor_hash: None,
             llm_usage_evidence_hash: None,
+            payment_evidence_hash: None,
             previous_receipt_hash,
             timestamp_provenance: Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock),
             external_timestamp_proof: None,

@@ -330,6 +330,9 @@ pub fn validate_avc<R: AvcRegistryRead>(
     }
 
     let mut sorted: Vec<AvcReasonCode> = reasons.into_iter().collect();
+    // Payment challenges are PDP decisions, not credential validation.
+    // This function must not emit HTTP 402 or treat a missing payment
+    // hash as Deny. `ChallengeRequired` stays unused here on purpose.
     let decision = if sorted.is_empty() {
         sorted.push(AvcReasonCode::Valid);
         AvcDecision::Allow

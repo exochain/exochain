@@ -25,18 +25,18 @@ use exo_core::{Did, PublicKey, Timestamp};
 use crate::{
     error::Result,
     evidence::Decision,
-    mandate::{Mandate, ProposedAction},
+    mandate::{Mandate, MandateKind, ProposedAction},
     reservation::ReservationBook,
     revocation::RevocationSet,
 };
 
-/// Input to a single policy decision. Payment validity never overrides deny.
+/// Input to a single policy decision. A bound payment hash never overrides deny.
 #[derive(Debug, Clone)]
 pub struct DecisionRequest {
     pub mandate: Mandate,
     pub proposed: ProposedAction,
-    /// Facilitator/PSP says the payment payload itself is valid.
-    pub payment_valid: bool,
+    /// BLAKE3 of canonical payment evidence. Header presence is not this.
+    pub payment_evidence_hash: Option<exo_core::Hash256>,
     pub now: Timestamp,
 }
 
@@ -83,10 +83,6 @@ pub fn evaluate(
         return Ok(deny(req, &e.to_string()));
     }
 
-    if !req.payment_valid {
-        return Ok(deny(req, "payment payload is not valid"));
-    }
-
     // Delegation must exist principal → agent and include the implied permission.
     // Fail-closed: missing chain is a deny, never an allow.
     match delegations.find_chain(&mandate.principal, &mandate.agent) {
@@ -111,11 +107,30 @@ pub fn evaluate(
         None => return Ok(deny(req, "no principal→agent delegation")),
     }
 
+    if commercially_gated(mandate) && !bound_payment_hash(req.payment_evidence_hash) {
+        return Ok(PolicyVerdict {
+            decision: Decision::Challenge,
+            reason: "payment evidence missing".into(),
+            payment_outranked: false,
+        });
+    }
+
     Ok(PolicyVerdict {
         decision: Decision::Allow,
         reason: "permitted".into(),
         payment_outranked: false,
     })
+}
+
+fn commercially_gated(mandate: &Mandate) -> bool {
+    matches!(
+        mandate.kind,
+        MandateKind::X402Payload | MandateKind::Ap2Payment | MandateKind::AcpDelegatePayment
+    ) || mandate.amount_minor.is_some()
+}
+
+fn bound_payment_hash(hash: Option<exo_core::Hash256>) -> bool {
+    hash.is_some_and(|h| h != exo_core::Hash256::ZERO)
 }
 
 fn verify_chain_or_deny<F>(chain: &AuthorityChain, now: &Timestamp, keys: F) -> Result<()>
@@ -129,7 +144,7 @@ fn deny(req: &DecisionRequest, reason: &str) -> PolicyVerdict {
     PolicyVerdict {
         decision: Decision::Deny,
         reason: reason.to_owned(),
-        payment_outranked: req.payment_valid,
+        payment_outranked: bound_payment_hash(req.payment_evidence_hash),
     }
 }
 
@@ -176,7 +191,7 @@ mod tests {
                 merchant: None,
                 rail: None,
             },
-            payment_valid: true,
+            payment_evidence_hash: Some(exo_core::Hash256::from_bytes([0x11; 32])),
             now: Timestamp::new(1, 0),
         };
         let keys = |d: &Did| {
@@ -199,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_payment_is_denied_even_with_signed_delegation() {
+    fn missing_payment_is_challenge_when_otherwise_permitted() {
         let alice = KeyPair::generate();
         let mut mandate = Mandate {
             kind: MandateKind::Native,
@@ -248,7 +263,7 @@ mod tests {
                 merchant: None,
                 rail: None,
             },
-            payment_valid: false,
+            payment_evidence_hash: None,
             now,
         };
         let keys = |d: &Did| {
@@ -266,7 +281,8 @@ mod tests {
             &RevocationSet::new(),
         )
         .unwrap();
-        assert_eq!(v.decision, Decision::Deny);
+        assert_eq!(v.decision, Decision::Challenge);
+        assert_eq!(v.reason, "payment evidence missing");
         assert!(!v.payment_outranked);
     }
 
@@ -301,7 +317,7 @@ mod tests {
                 merchant: None,
                 rail: None,
             },
-            payment_valid: true,
+            payment_evidence_hash: Some(exo_core::Hash256::from_bytes([0x11; 32])),
             now: Timestamp::new(2, 0),
         };
 

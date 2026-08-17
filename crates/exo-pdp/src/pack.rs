@@ -262,7 +262,7 @@ mod tests {
                 reason: "cap".into(),
                 mandate: &mandate(),
                 proposed: &proposed,
-                payment_presented: true,
+                payment_evidence_hash: Some(exo_core::Hash256::from_bytes([0x11; 32])),
                 payment_outranked: true,
                 now: Timestamp::new(1_000, 0),
             },

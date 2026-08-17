@@ -48,4 +48,8 @@ pub use policy::{DecisionRequest, PolicyVerdict};
 pub use reservation::{Reservation, ReservationBook, ReservationState};
 pub use revocation::{Revocation, RevocationSet, RevocationTarget};
 pub use service::{DecideOutcome, DecideResponse, PdpSnapshot, PolicyDecisionPoint, SharedPdp};
-pub use x402::{X402VerifyRequest, X402VerifyResponse};
+pub use x402::{
+    HEADER_PAYMENT_SIGNATURE, HTTP_FORBIDDEN, HTTP_OK, HTTP_PAYMENT_REQUIRED,
+    HTTP_PRECONDITION_REQUIRED, PAYMENT_EVIDENCE_DOMAIN, X402VerifyRequest, X402VerifyResponse,
+    is_never_paywalled_path, map_decision_to_http,
+};
