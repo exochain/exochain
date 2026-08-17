@@ -414,6 +414,7 @@ jobs:
             exochain-identity
             exochain-api
             exochain-authority
+            exochain-pdp
             exochain-avc
             exochain-consent
             exochain-dag-db-core
