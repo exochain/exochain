@@ -33,11 +33,11 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.3" }
-exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.3" }
-exo-authority = { package = "exochain-authority", path = "../exo-authority", version = "=0.2.3" }
-exo-governance = { package = "exochain-governance", path = "../exo-governance", version = "=0.2.3" }
-exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.3" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.4" }
+exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.4" }
+exo-authority = { package = "exochain-authority", path = "../exo-authority", version = "=0.2.4" }
+exo-governance = { package = "exochain-governance", path = "../exo-governance", version = "=0.2.4" }
+exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.4" }
 serde = { workspace = true }
 ciborium = { workspace = true }
 blake3 = { workspace = true }

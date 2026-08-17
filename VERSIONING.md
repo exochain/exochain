@@ -35,20 +35,21 @@ MAJOR.MINOR.PATCH
 The workspace version is set in `Cargo.toml`:
 ```toml
 [workspace.package]
-version = "0.2.3"
+version = "0.2.4"
 ```
 
-This repository state is an unpublished `0.2.3` release candidate. The latest
-published release claim remains `v0.2.1-beta`; repository version alignment is
-not evidence of a tag, GitHub Release, registry publication, deployment, or live
-runtime activation.
+This repository state is the unpublished `0.2.4` release candidate: PDP
+decides, AVC records, x402 adapts; crates.io `ml-dsa` consumers can build.
+The latest published release remains `v0.2.3`. Workspace version alignment
+is not evidence of a tag, GitHub Release, registry publication, deployment,
+or live runtime activation.
 
 ## Release Process
 
 See `.github/workflows/release.yml` for the automated release workflow:
 
 1. The full CI workflow, including the numbered constitutional gates and required aggregator, must pass.
-2. Every dispatch traverses the workflow job that references the GitHub `release` environment. Repository settings, not workflow source, determine whether that environment actually requires approval.
+2. Every dispatch traverses two independent GitHub environments (`release` and `release-second`) with distinct required reviewers. One environment is one-of; two environments are two-of. Repository settings, not workflow source, determine the reviewer lists.
 3. Non-dry-run releases must have an existing, verifiable signed `v<version>` tag before artifacts build or publish.
 4. Native artifacts are built for `x86_64-linux-gnu` and `aarch64-linux-gnu`.
 5. Non-dry-run releases generate CycloneDX workspace SBOMs and GitHub SLSA build attestations via OIDC/Sigstore.
@@ -111,20 +112,23 @@ cargo test --workspace
 
 ### DualControl Configuration
 
-The workflow source proves only that its approval job references the `release`
-environment. It does not prove the repository's current environment protection
-rules. Inspect those rules before every live release:
+The workflow source proves that publication jobs `need` both `release` and
+`release-second` environment gates. It does not prove the repository's current
+environment protection rules. Inspect those rules before every live release:
 
 ```bash
 gh api repos/exochain/exochain/environments/release \
+  --jq '{protection_rules, can_admins_bypass}'
+gh api repos/exochain/exochain/environments/release-second \
   --jq '{protection_rules, can_admins_bypass}'
 ```
 
 GitHub environment required reviewers are a one-of gate: Only one configured
 required reviewer needs to approve a waiting job. Listing two council reviewers
-therefore does not establish two-person approval. `prevent_self_review` and
-`can_admins_bypass=false` strengthen a single approval but still do not create a
-second independent approval.
+on a single environment therefore does not establish two-person approval.
+`prevent_self_review` and `can_admins_bypass=false` strengthen a single
+approval but still do not create a second independent approval. Two
+environments with distinct reviewers do.
 
 A live release must not be dispatched until two distinct approvals are enforced
 by independently protected workflow gates or an equivalent custom deployment

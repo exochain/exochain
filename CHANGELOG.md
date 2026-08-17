@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-08-17
+
+Release candidate for the authorization stack. Not an evidence-grade /
+v0.3.0 close. See `governance/releases/v0.2.4/RC.md`.
+
 ### Security / Correctness
 
 - PDP decides Allow / Deny / Challenge. Missing bound payment evidence is
@@ -35,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signing payloads. `validate_avc` still does not emit payment 402.
 - `ml-dsa` no longer enables default `pkcs8`, so `exochain-core` can build
   from crates.io (issue #812).
+- Non-dry-run publication now requires two independent GitHub environments
+  (`release` and `release-second`) instead of one one-of reviewer list.
+
+### Out of scope for 0.2.4
+
+- Production SNARK/STARK/ZKML (VCG-001)
+- CGR reduction traces / MCP proof verifier (VCG-004, issue #810)
+- Evidence-grade / Article 26 legal certification (#813)
 
 ## [0.2.3] - 2026-07-14
 

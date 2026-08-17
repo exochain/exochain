@@ -46,3 +46,6 @@ Facilitators call only `/x402/verify`. `POST /api/v1/avc/validate` stays free an
 AACP, CIM fiction, marketplace take-rate, LegalDyne branding, EXO Credits, Gamma, and a second evidence-pack product on AVC validate.
 
 Tracks #813. Implements the durable split decided 2026-08-17.
+
+The first shippable cut of this split is **0.2.4**, not a 0.3.0 close.
+See `governance/releases/v0.2.4/RC.md`.

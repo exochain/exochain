@@ -88,13 +88,26 @@ jobs:
           RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
         run: printf 'Release %s passed the configured release environment gate.\n' "$RELEASE_VERSION"
 
+  # Independent second approval. GitHub required-reviewers on one environment
+  # are one-of; a second environment with a distinct reviewer is two-of.
+  approve-second:
+    name: "Release Second Approver Gate"
+    runs-on: ubuntu-latest
+    needs: [ci, validate-release-inputs]
+    environment: release-second
+    steps:
+      - name: Second environment gate passed
+        env:
+          RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
+        run: printf 'Release %s passed the second release environment gate.\n' "$RELEASE_VERSION"
+
   # -----------------------------------------------------------------------
   # Signed tag gate for real releases
   # -----------------------------------------------------------------------
   verify-signed-tag:
     name: "Verify Signed Release Tag"
     runs-on: ubuntu-latest
-    needs: [approve, validate-release-inputs]
+    needs: [approve, approve-second, validate-release-inputs]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -145,7 +158,7 @@ jobs:
   release-build:
     name: "Build Release Artifacts"
     runs-on: ubuntu-latest
-    needs: [approve, verify-signed-tag, validate-release-inputs]
+    needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
     strategy:
       matrix:
         target:
@@ -465,7 +478,7 @@ jobs:
   publish-wasm-npm:
     name: "Package and publish WASM npm package"
     runs-on: ubuntu-latest
-    needs: [approve, verify-signed-tag, validate-release-inputs]
+    needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
     permissions:
       id-token: write
     steps:
@@ -584,7 +597,7 @@ jobs:
   publish-llm-proxy-npm:
     name: "Package and publish LYNK npm package"
     runs-on: ubuntu-latest
-    needs: [approve, verify-signed-tag, validate-release-inputs]
+    needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
     permissions:
       id-token: write
     steps:
