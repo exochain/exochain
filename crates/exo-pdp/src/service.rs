@@ -203,7 +203,7 @@ impl PolicyDecisionPoint {
                 reason: verdict.reason.clone(),
                 mandate: &req.mandate,
                 proposed: &req.proposed,
-                payment_presented: req.payment_valid,
+                payment_evidence_hash: req.payment_evidence_hash,
                 payment_outranked: verdict.payment_outranked,
                 now: req.now,
             },
@@ -446,7 +446,7 @@ mod tests {
                 merchant: None,
                 rail: None,
             },
-            payment_valid: true,
+            payment_evidence_hash: Some(Hash256::from_bytes([0x11; 32])),
             now: Timestamp::new(2, 0),
         };
         let out = pdp.verify_before_settle(req).unwrap();

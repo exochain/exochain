@@ -25,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security / Correctness
+
+- PDP decides Allow / Deny / Challenge. Missing bound payment evidence is
+  Challenge (402), not Deny (403). A payment hash never outranks deny.
+- x402 `/verify` accepts only a non-zero payment-evidence hash. Header
+  presence (`PAYMENT-SIGNATURE`) is never paid.
+- AVC receipts can record `payment_evidence_hash` without changing legacy
+  signing payloads. `validate_avc` still does not emit payment 402.
+- `ml-dsa` no longer enables default `pkcs8`, so `exochain-core` can build
+  from crates.io (issue #812).
+
 ## [0.2.3] - 2026-07-14
 
 ### Security / Correctness

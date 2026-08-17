@@ -42,6 +42,9 @@ const EVIDENCE_ENTRY_SIGNING_SCHEMA_VERSION: u16 = 1;
 pub enum Decision {
     Allow,
     Deny,
+    /// Otherwise-permitted commercial action lacking bound payment evidence.
+    /// Never a Deny. Adapts to HTTP 402, not 403.
+    Challenge,
 }
 
 /// Inputs for a new evidence entry.
@@ -50,7 +53,7 @@ pub struct EvidenceDraft<'a> {
     pub reason: String,
     pub mandate: &'a Mandate,
     pub proposed: &'a ProposedAction,
-    pub payment_presented: bool,
+    pub payment_evidence_hash: Option<Hash256>,
     pub payment_outranked: bool,
     pub now: Timestamp,
 }
@@ -70,7 +73,7 @@ pub struct EvidenceEntry {
     pub action: String,
     pub amount_minor: Option<u64>,
     pub currency: Option<String>,
-    pub payment_presented: bool,
+    pub payment_evidence_hash: Option<Hash256>,
     pub payment_outranked: bool,
     pub timestamp: Timestamp,
     pub signature: Signature,
@@ -93,7 +96,7 @@ impl EvidenceEntry {
             action: &'a str,
             amount_minor: Option<u64>,
             currency: &'a Option<String>,
-            payment_presented: bool,
+            payment_evidence_hash: Option<&'a Hash256>,
             payment_outranked: bool,
             timestamp: &'a Timestamp,
         }
@@ -111,7 +114,7 @@ impl EvidenceEntry {
             action: &self.action,
             amount_minor: self.amount_minor,
             currency: &self.currency,
-            payment_presented: self.payment_presented,
+            payment_evidence_hash: self.payment_evidence_hash.as_ref(),
             payment_outranked: self.payment_outranked,
             timestamp: &self.timestamp,
         };
@@ -162,7 +165,7 @@ impl EvidenceLog {
             action: draft.proposed.action.clone(),
             amount_minor: draft.proposed.amount_minor,
             currency: draft.proposed.currency.clone(),
-            payment_presented: draft.payment_presented,
+            payment_evidence_hash: draft.payment_evidence_hash,
             payment_outranked: draft.payment_outranked,
             timestamp: draft.now,
             signature: Signature::empty(),
@@ -300,7 +303,7 @@ mod tests {
                 reason: "ok".into(),
                 mandate: &mandate(),
                 proposed: &proposed,
-                payment_presented: false,
+                payment_evidence_hash: None,
                 payment_outranked: false,
                 now: Timestamp::new(1, 0),
             },
@@ -313,7 +316,7 @@ mod tests {
                 reason: "cap".into(),
                 mandate: &mandate(),
                 proposed: &proposed,
-                payment_presented: true,
+                payment_evidence_hash: Some(Hash256::from_bytes([0x11; 32])),
                 payment_outranked: true,
                 now: Timestamp::new(2, 0),
             },
@@ -338,7 +341,7 @@ mod tests {
                 reason: "ok".into(),
                 mandate: &mandate(),
                 proposed: &proposed,
-                payment_presented: false,
+                payment_evidence_hash: None,
                 payment_outranked: false,
                 now: Timestamp::new(1, 0),
             },
@@ -375,7 +378,7 @@ mod tests {
                     reason: "permitted".into(),
                     mandate: &first_mandate,
                     proposed: &first_action,
-                    payment_presented: true,
+                    payment_evidence_hash: Some(Hash256::from_bytes([0x11; 32])),
                     payment_outranked: false,
                     now: Timestamp::new(1, 0),
                 },
@@ -389,7 +392,7 @@ mod tests {
                     reason: "permitted".into(),
                     mandate: &second_mandate,
                     proposed: &second_action,
-                    payment_presented: true,
+                    payment_evidence_hash: Some(Hash256::from_bytes([0x11; 32])),
                     payment_outranked: false,
                     now: Timestamp::new(1, 0),
                 },

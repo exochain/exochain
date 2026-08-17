@@ -149,7 +149,7 @@ struct DecideBody {
     #[serde(default)]
     proposed: Option<ProposedAction>,
     #[serde(default)]
-    payment_valid: bool,
+    payment_evidence_hash_hex: Option<String>,
     #[serde(default)]
     now_ms: Option<u64>,
 }
@@ -167,10 +167,24 @@ async fn handle_decide(
         merchant: mandate.merchant.clone(),
         rail: None,
     });
+    let payment_evidence_hash = match body.payment_evidence_hash_hex.as_deref() {
+        None | Some("") => None,
+        Some(raw) => {
+            let bytes = hex::decode(raw).map_err(|e| err(PdpError::BadRequest(e.to_string())))?;
+            if bytes.len() != 32 {
+                return Err(err(PdpError::BadRequest(
+                    "payment_evidence_hash_hex must be 32 bytes".into(),
+                )));
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            Some(Hash256::from_bytes(arr))
+        }
+    };
     let req = DecisionRequest {
         mandate,
         proposed,
-        payment_valid: body.payment_valid,
+        payment_evidence_hash,
         now: require_now_ms(body.now_ms).map_err(err)?,
     };
     let mut guard = pdp.lock().map_err(err)?;
