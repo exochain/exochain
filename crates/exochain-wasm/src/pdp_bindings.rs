@@ -27,9 +27,38 @@ use crate::serde_bridge::*;
 /// Does not talk to a node and never moves money. Returns
 /// `{ok: true, ...}` or `{ok: false, error: "..."}`.
 #[wasm_bindgen]
-pub fn wasm_verify_evidence_pack(pack_json: &str) -> Result<JsValue, JsValue> {
-    let pack: exo_pdp::EvidencePack = from_json_str(pack_json)?;
-    match pack.verify() {
+pub fn wasm_verify_evidence_pack(
+    pack_json: &str,
+    expected_service_public_key_hex: &str,
+) -> Result<JsValue, JsValue> {
+    if pack_json.len() > MAX_JSON_INPUT_BYTES {
+        return to_js_value(&serde_json::json!({
+            "ok": false,
+            "error": "JSON input exceeds maximum size",
+            "never_moves_money": true,
+        }));
+    }
+    let pack: exo_pdp::EvidencePack = match serde_json::from_str(pack_json) {
+        Ok(pack) => pack,
+        Err(_) => {
+            return to_js_value(&serde_json::json!({
+                "ok": false,
+                "error": "JSON parse error",
+                "never_moves_money": true,
+            }));
+        }
+    };
+    let expected_key = match exo_pdp::pack::parse_public_key_hex(expected_service_public_key_hex) {
+        Ok(key) => key,
+        Err(e) => {
+            return to_js_value(&serde_json::json!({
+                "ok": false,
+                "error": e.to_string(),
+                "never_moves_money": true,
+            }));
+        }
+    };
+    match pack.verify_with_key(&expected_key) {
         Ok(()) => to_js_value(&serde_json::json!({
             "ok": true,
             "independently_verifiable": true,

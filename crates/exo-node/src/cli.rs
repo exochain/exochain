@@ -206,7 +206,7 @@ pub enum Command {
     },
 }
 
-/// Offline evidence-pack tools. A third party can verify a pack without a node.
+/// Offline evidence-pack tools. Verification requires a separately obtained service key.
 #[derive(Subcommand)]
 pub enum PdpCommand {
     /// Independently verify an exported evidence pack (Article 26 log).
@@ -214,8 +214,11 @@ pub enum PdpCommand {
         /// Path to `pdp-evidence.json` (or any `exochain-evidence-pack-v1` file).
         #[arg(long)]
         pack: PathBuf,
+        /// Trusted service Ed25519 public key (32-byte hex), obtained separately.
+        #[arg(long)]
+        service_public_key: String,
     },
-    /// Print Article 26 summary of a pack without mutating it.
+    /// Print an unverified Article 26 summary without mutating the pack.
     Inspect {
         /// Path to an evidence pack.
         #[arg(long)]
