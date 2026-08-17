@@ -139,7 +139,7 @@ mod tests {
             signature: exo_core::Signature::empty(),
             raw_hash: exo_core::Hash256::ZERO,
         };
-        m.signature = alice.sign(&m.signable_payload());
+        m.signature = alice.sign(&m.signable_payload().unwrap());
 
         let body = X402VerifyRequest {
             mandate: WireMandate {
@@ -212,7 +212,7 @@ mod tests {
             signature: exo_core::Signature::empty(),
             raw_hash: exo_core::Hash256::ZERO,
         };
-        m.signature = alice.sign(&m.signable_payload());
+        m.signature = alice.sign(&m.signable_payload().unwrap());
 
         let body = X402VerifyRequest {
             mandate: WireMandate {

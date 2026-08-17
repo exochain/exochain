@@ -22,6 +22,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{PdpError, Result};
 
+const MANDATE_SIGNING_DOMAIN: &str = "exo.pdp.mandate.v1";
+const MANDATE_SIGNING_SCHEMA_VERSION: u16 = 1;
+const FOREIGN_DID_HASH_DOMAIN: &str = "exo.pdp.foreign-did.v1";
+const WIRE_BYTES_HASH_DOMAIN: &str = "exo.pdp.wire-bytes.v1";
+
 /// Wire format of a mandate. The enforcement core is format-neutral.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -60,43 +65,54 @@ pub struct Mandate {
     pub expires: Option<Timestamp>,
     pub consume_once: bool,
     pub signature: Signature,
-    /// BLAKE3 of the original wire bytes (or of the canonical payload if native).
+    /// BLAKE3 of the original wire bytes, or zero when no original bytes exist.
     pub raw_hash: Hash256,
 }
 
 impl Mandate {
-    /// Canonical bytes the principal must sign.
-    #[must_use]
-    pub fn signable_payload(&self) -> Vec<u8> {
+    /// Domain-separated canonical CBOR bytes the principal must sign.
+    pub fn signable_payload(&self) -> Result<Vec<u8>> {
+        #[derive(Serialize)]
+        struct SigningPayload<'a> {
+            domain: &'static str,
+            schema_version: u16,
+            kind: MandateKind,
+            principal: &'a Did,
+            agent: &'a Did,
+            action: &'a str,
+            amount_minor: Option<u64>,
+            currency: &'a Option<String>,
+            merchant: &'a Option<String>,
+            caveats: &'a [Caveat],
+            expires: &'a Option<Timestamp>,
+            consume_once: bool,
+            raw_hash: &'a Hash256,
+        }
+
+        let payload = SigningPayload {
+            domain: MANDATE_SIGNING_DOMAIN,
+            schema_version: MANDATE_SIGNING_SCHEMA_VERSION,
+            kind: self.kind,
+            principal: &self.principal,
+            agent: &self.agent,
+            action: &self.action,
+            amount_minor: self.amount_minor,
+            currency: &self.currency,
+            merchant: &self.merchant,
+            caveats: &self.caveats,
+            expires: &self.expires,
+            consume_once: self.consume_once,
+            raw_hash: &self.raw_hash,
+        };
         let mut data = Vec::new();
-        data.extend_from_slice(format!("{:?}", self.kind).as_bytes());
-        data.extend_from_slice(self.principal.as_str().as_bytes());
-        data.extend_from_slice(self.agent.as_str().as_bytes());
-        data.extend_from_slice(self.action.as_bytes());
-        if let Some(amt) = self.amount_minor {
-            data.extend_from_slice(&amt.to_le_bytes());
-        }
-        if let Some(cur) = &self.currency {
-            data.extend_from_slice(cur.as_bytes());
-        }
-        if let Some(m) = &self.merchant {
-            data.extend_from_slice(m.as_bytes());
-        }
-        for c in &self.caveats {
-            data.extend_from_slice(format!("{c:?}").as_bytes());
-        }
-        if let Some(exp) = &self.expires {
-            data.extend_from_slice(&exp.physical_ms.to_le_bytes());
-            data.extend_from_slice(&exp.logical.to_le_bytes());
-        }
-        data.push(u8::from(self.consume_once));
-        data
+        ciborium::ser::into_writer(&payload, &mut data)
+            .map_err(|e| PdpError::Serialization(e.to_string()))?;
+        Ok(data)
     }
 
     /// Content-addressed mandate hash (independent of signature).
-    #[must_use]
-    pub fn mandate_hash(&self) -> Hash256 {
-        Hash256::digest(&self.signable_payload())
+    pub fn mandate_hash(&self) -> Result<Hash256> {
+        Ok(Hash256::digest(&self.signable_payload()?))
     }
 
     /// Append caveats only. Existing caveats cannot be removed or relaxed.
@@ -135,7 +151,7 @@ impl Mandate {
         if self.signature.is_empty() {
             return Err(PdpError::InvalidSignature);
         }
-        if !exo_core::crypto::verify(&self.signable_payload(), &self.signature, principal_key) {
+        if !exo_core::crypto::verify(&self.signable_payload()?, &self.signature, principal_key) {
             return Err(PdpError::InvalidSignature);
         }
         Ok(())
@@ -143,6 +159,40 @@ impl Mandate {
 
     /// Evaluate caveats + expiry against a proposed action. Fail-closed.
     pub fn check_caveats(&self, now: &Timestamp, proposed: &ProposedAction) -> Result<()> {
+        if self.implied_permission()? == Permission::Spend
+            && (self.amount_minor.is_none() || self.currency.is_none())
+        {
+            return Err(PdpError::InvalidMandate(
+                "spend mandates require signed amount_minor and currency bounds".into(),
+            ));
+        }
+        if proposed.action != self.action {
+            return Err(PdpError::CaveatFailed(format!(
+                "proposed action {} does not match signed mandate action {}",
+                proposed.action, self.action
+            )));
+        }
+        if let Some(amount) = self.amount_minor {
+            if proposed.amount_minor != Some(amount) {
+                return Err(PdpError::CaveatFailed(
+                    "proposed amount does not match signed mandate amount".into(),
+                ));
+            }
+        }
+        if let Some(currency) = &self.currency {
+            if proposed.currency.as_deref() != Some(currency.as_str()) {
+                return Err(PdpError::CaveatFailed(
+                    "proposed currency does not match signed mandate currency".into(),
+                ));
+            }
+        }
+        if let Some(merchant) = &self.merchant {
+            if proposed.merchant.as_deref() != Some(merchant.as_str()) {
+                return Err(PdpError::CaveatFailed(
+                    "proposed merchant does not match signed mandate merchant".into(),
+                ));
+            }
+        }
         if let Some(exp) = &self.expires {
             if exp.is_expired(now) {
                 return Err(PdpError::Expired);
@@ -183,10 +233,13 @@ impl Mandate {
                 }
                 Caveat::ConsumeOnce => {}
                 Caveat::RailIn(rails) => {
-                    if let Some(rail) = &proposed.rail {
-                        if !rails.iter().any(|r| r == rail) {
-                            return Err(PdpError::CaveatFailed(format!("rail {rail} not allowed")));
-                        }
+                    let Some(rail) = &proposed.rail else {
+                        return Err(PdpError::CaveatFailed(
+                            "rail required by signed mandate".into(),
+                        ));
+                    };
+                    if !rails.iter().any(|r| r == rail) {
+                        return Err(PdpError::CaveatFailed(format!("rail {rail} not allowed")));
                     }
                 }
             }
@@ -195,17 +248,35 @@ impl Mandate {
     }
 
     /// Permission implied by this mandate's action.
-    #[must_use]
-    pub fn implied_permission(&self) -> Permission {
-        if self.action.starts_with("payment") || self.action.contains("settle") {
-            Permission::Spend
-        } else if self.action.contains("write") {
-            Permission::Write
-        } else if self.action.contains("execute") {
-            Permission::Execute
-        } else {
-            Permission::Read
+    pub fn implied_permission(&self) -> Result<Permission> {
+        if self.kind != MandateKind::Native {
+            return Ok(Permission::Spend);
         }
+
+        let action = self.action.to_ascii_lowercase();
+        let verb = action.split(['.', ':', '/']).next().unwrap_or_default();
+        match verb {
+            "payment" | "pay" | "purchase" | "settle" | "spend" | "transfer" => {
+                Ok(Permission::Spend)
+            }
+            "write" | "create" | "update" | "delete" | "mutate" => Ok(Permission::Write),
+            "execute" | "run" | "invoke" => Ok(Permission::Execute),
+            "read" | "get" | "list" | "view" => Ok(Permission::Read),
+            _ => Err(PdpError::InvalidMandate(format!(
+                "unsupported native action {}",
+                self.action
+            ))),
+        }
+    }
+
+    /// Whether the signed mandate requires reserve/commit single use.
+    #[must_use]
+    pub fn requires_single_use(&self) -> bool {
+        self.consume_once
+            || self
+                .caveats
+                .iter()
+                .any(|c| matches!(c, Caveat::ConsumeOnce))
     }
 }
 
@@ -262,7 +333,7 @@ impl MandateAdapter for WireMandate {
         let signature = parse_sig_hex(&self.signature_hex)?;
         let raw_hash = if let Some(raw) = &self.raw_hex {
             let bytes = hex::decode(raw).map_err(|e| PdpError::BadRequest(e.to_string()))?;
-            Hash256::digest(&bytes)
+            domain_separated_hash(WIRE_BYTES_HASH_DOMAIN, &bytes)?
         } else {
             Hash256::ZERO
         };
@@ -280,9 +351,7 @@ impl MandateAdapter for WireMandate {
             signature,
             raw_hash,
         };
-        if mandate.raw_hash == Hash256::ZERO {
-            mandate.raw_hash = mandate.mandate_hash();
-        }
+        mandate.consume_once = mandate.requires_single_use();
         if mandate.consume_once
             && !mandate
                 .caveats
@@ -295,25 +364,23 @@ impl MandateAdapter for WireMandate {
     }
 }
 
-/// Coerce any DID-like string into EXOCHAIN `did:exo:…`.
+/// Coerce any DID-like string into a collision-resistant EXOCHAIN external DID.
 pub fn coerce_did(raw: &str) -> Result<Did> {
     match Did::new(raw) {
         Ok(d) => Ok(d),
         Err(ExoError::InvalidDid { .. }) => {
-            let sanitized: String = raw
-                .chars()
-                .map(|c| {
-                    if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ':' {
-                        c
-                    } else {
-                        '-'
-                    }
-                })
-                .collect();
-            Did::new(&format!("did:exo:ext:{sanitized}")).map_err(PdpError::from)
+            let digest = domain_separated_hash(FOREIGN_DID_HASH_DOMAIN, raw)?;
+            Did::new(&format!("did:exo:ext:{digest}")).map_err(PdpError::from)
         }
         Err(e) => Err(PdpError::from(e)),
     }
+}
+
+fn domain_separated_hash<T: Serialize + ?Sized>(domain: &str, value: &T) -> Result<Hash256> {
+    let mut data = Vec::new();
+    ciborium::ser::into_writer(&(domain, 1_u16, value), &mut data)
+        .map_err(|e| PdpError::Serialization(e.to_string()))?;
+    Ok(Hash256::digest(&data))
 }
 
 pub(crate) fn parse_sig_hex(hex_str: &str) -> Result<Signature> {
@@ -357,8 +424,7 @@ mod tests {
             signature: Signature::empty(),
             raw_hash: Hash256::ZERO,
         };
-        m.signature = kp.sign(&m.signable_payload());
-        m.raw_hash = m.mandate_hash();
+        m.signature = kp.sign(&m.signable_payload().unwrap());
         m
     }
 
@@ -377,6 +443,141 @@ mod tests {
         assert_eq!(
             m.verify_signature(kp.public_key()),
             Err(PdpError::InvalidSignature)
+        );
+    }
+
+    #[test]
+    fn signable_payload_separates_agent_and_action_fields() {
+        let kp = KeyPair::generate();
+        let mut first = signed_mandate(&kp, false);
+        first.agent = did("a");
+        first.action = "bc".into();
+        let mut second = first.clone();
+        second.agent = did("ab");
+        second.action = "c".into();
+
+        assert_ne!(
+            first.signable_payload().unwrap(),
+            second.signable_payload().unwrap(),
+            "distinct typed mandates must never share signing bytes"
+        );
+    }
+
+    #[test]
+    fn all_signed_payment_fields_are_enforced_against_proposed_action() {
+        let kp = KeyPair::generate();
+        let m = signed_mandate(&kp, false);
+        let valid = ProposedAction {
+            action: m.action.clone(),
+            amount_minor: m.amount_minor,
+            currency: m.currency.clone(),
+            merchant: m.merchant.clone(),
+            rail: None,
+        };
+        let mut substitutions = Vec::new();
+        let mut action = valid.clone();
+        action.action = "account.read".into();
+        substitutions.push(action);
+        let mut amount = valid.clone();
+        amount.amount_minor = Some(501);
+        substitutions.push(amount);
+        let mut currency = valid.clone();
+        currency.currency = Some("EUR".into());
+        substitutions.push(currency);
+        let mut merchant = valid;
+        merchant.merchant = Some("other-store".into());
+        substitutions.push(merchant);
+
+        for proposed in substitutions {
+            assert!(
+                m.check_caveats(&Timestamp::new(1_000, 0), &proposed)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn rail_caveat_requires_an_explicit_allowed_rail() {
+        let kp = KeyPair::generate();
+        let mut m = signed_mandate(&kp, false);
+        m.caveats.push(Caveat::RailIn(vec!["ach".into()]));
+        let proposed = ProposedAction {
+            action: m.action.clone(),
+            amount_minor: m.amount_minor,
+            currency: m.currency.clone(),
+            merchant: m.merchant.clone(),
+            rail: None,
+        };
+
+        assert!(
+            m.check_caveats(&Timestamp::new(1_000, 0), &proposed)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn consume_once_caveat_normalizes_wire_mandate_to_single_use() {
+        let wire = WireMandate {
+            kind: MandateKind::X402Payload,
+            principal: "did:exo:alice".into(),
+            agent: "did:exo:agent".into(),
+            action: "payment.settle".into(),
+            amount_minor: Some(1),
+            currency: Some("USD".into()),
+            merchant: None,
+            caveats: vec![Caveat::ConsumeOnce],
+            expires_ms: None,
+            consume_once: false,
+            signature_hex: "00".repeat(64),
+            raw_hex: None,
+        };
+
+        let mandate = wire.into_mandate().unwrap();
+        assert!(mandate.consume_once);
+    }
+
+    #[test]
+    fn payment_protocol_kind_requires_spend_for_short_action_name() {
+        let kp = KeyPair::generate();
+        let mut m = signed_mandate(&kp, false);
+        m.kind = MandateKind::X402Payload;
+        m.action = "pay".into();
+        assert_eq!(m.implied_permission().unwrap(), Permission::Spend);
+    }
+
+    #[test]
+    fn unknown_native_action_is_denied() {
+        let kp = KeyPair::generate();
+        let mut m = signed_mandate(&kp, false);
+        m.action = "custom-operation".into();
+        assert!(matches!(
+            m.implied_permission(),
+            Err(PdpError::InvalidMandate(_))
+        ));
+    }
+
+    #[test]
+    fn spend_mandate_requires_signed_amount_and_currency_bounds() {
+        let kp = KeyPair::generate();
+        let mut m = signed_mandate(&kp, false);
+        m.amount_minor = None;
+        let proposed = ProposedAction {
+            action: m.action.clone(),
+            amount_minor: Some(500),
+            currency: m.currency.clone(),
+            merchant: m.merchant.clone(),
+            rail: None,
+        };
+        assert!(
+            m.check_caveats(&Timestamp::new(1_000, 0), &proposed)
+                .is_err()
+        );
+
+        m.amount_minor = Some(500);
+        m.currency = None;
+        assert!(
+            m.check_caveats(&Timestamp::new(1_000, 0), &proposed)
+                .is_err()
         );
     }
 
@@ -420,7 +621,14 @@ mod tests {
     #[test]
     fn coerce_foreign_did() {
         let d = coerce_did("did:web:example.com:alice").unwrap();
-        assert!(d.as_str().starts_with("did:exo:"));
+        assert!(d.as_str().starts_with("did:exo:ext:"));
+    }
+
+    #[test]
+    fn coerce_foreign_did_does_not_collapse_distinct_inputs() {
+        let dotted = coerce_did("did:web:example.com:alice").unwrap();
+        let slashed = coerce_did("did:web:example/com:alice").unwrap();
+        assert_ne!(dotted, slashed);
     }
 
     #[test]

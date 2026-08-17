@@ -119,6 +119,23 @@ impl ReservationBook {
             Some(ReservationState::Reserved)
         )
     }
+
+    /// Stable records for durable state snapshots.
+    #[must_use]
+    pub fn records(&self) -> Vec<Reservation> {
+        self.entries.values().cloned().collect()
+    }
+
+    /// Rebuild a reservation book from a signed durable snapshot.
+    pub fn from_records(records: Vec<Reservation>) -> Result<Self> {
+        let mut entries = BTreeMap::new();
+        for record in records {
+            if entries.insert(record.mandate_hash, record).is_some() {
+                return Err(PdpError::ReservationState);
+            }
+        }
+        Ok(Self { entries })
+    }
 }
 
 #[cfg(test)]

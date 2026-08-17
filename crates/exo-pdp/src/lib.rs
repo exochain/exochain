@@ -47,5 +47,5 @@ pub use pack::{
 pub use policy::{DecisionRequest, PolicyVerdict};
 pub use reservation::{Reservation, ReservationBook, ReservationState};
 pub use revocation::{Revocation, RevocationSet, RevocationTarget};
-pub use service::{DecideOutcome, DecideResponse, PolicyDecisionPoint, SharedPdp};
+pub use service::{DecideOutcome, DecideResponse, PdpSnapshot, PolicyDecisionPoint, SharedPdp};
 pub use x402::{X402VerifyRequest, X402VerifyResponse};

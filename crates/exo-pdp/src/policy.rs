@@ -58,16 +58,17 @@ pub fn evaluate(
     revocations: &RevocationSet,
 ) -> Result<PolicyVerdict> {
     let mandate = &req.mandate;
-    let hash = mandate.mandate_hash();
+    let hash = mandate.mandate_hash()?;
 
     if revocations.is_mandate_revoked(&hash) || revocations.is_agent_revoked(&mandate.agent) {
         return Ok(deny(req, "revoked"));
     }
 
-    if mandate.consume_once && reservations.is_consumed(&hash) {
+    let requires_single_use = mandate.requires_single_use();
+    if requires_single_use && reservations.is_consumed(&hash) {
         return Ok(deny(req, "mandate already consumed"));
     }
-    if mandate.consume_once && reservations.is_reserved(&hash) {
+    if requires_single_use && reservations.is_reserved(&hash) {
         return Ok(deny(req, "mandate already reserved"));
     }
 
@@ -82,6 +83,10 @@ pub fn evaluate(
         return Ok(deny(req, &e.to_string()));
     }
 
+    if !req.payment_valid {
+        return Ok(deny(req, "payment payload is not valid"));
+    }
+
     // Delegation must exist principal → agent and include the implied permission.
     // Fail-closed: missing chain is a deny, never an allow.
     match delegations.find_chain(&mandate.principal, &mandate.agent) {
@@ -89,15 +94,17 @@ pub fn evaluate(
             if let Err(e) = verify_chain_or_deny(&chain, &req.now, keys) {
                 return Ok(deny(req, &e.to_string()));
             }
-            let needed = mandate.implied_permission();
+            let needed = match mandate.implied_permission() {
+                Ok(permission) => permission,
+                Err(e) => return Ok(deny(req, &e.to_string())),
+            };
             if !chain::has_permission(&chain, &needed) {
                 return Ok(deny(req, &format!("delegation does not grant {needed:?}")));
             }
             for link in &chain.links {
-                if let Ok(id) = link.id() {
-                    if revocations.is_delegation_revoked(&id) {
-                        return Ok(deny(req, "delegation link revoked"));
-                    }
+                let id = link.id()?;
+                if revocations.is_delegation_revoked(&id) {
+                    return Ok(deny(req, "delegation link revoked"));
                 }
             }
         }
@@ -158,7 +165,7 @@ mod tests {
             signature: exo_core::Signature::empty(),
             raw_hash: exo_core::Hash256::ZERO,
         };
-        mandate.signature = principal.sign(&mandate.signable_payload());
+        mandate.signature = principal.sign(&mandate.signable_payload().unwrap());
 
         let req = DecisionRequest {
             mandate,
@@ -192,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn allow_with_signed_delegation() {
+    fn invalid_payment_is_denied_even_with_signed_delegation() {
         let alice = KeyPair::generate();
         let mut mandate = Mandate {
             kind: MandateKind::Native,
@@ -208,7 +215,7 @@ mod tests {
             signature: exo_core::Signature::empty(),
             raw_hash: exo_core::Hash256::ZERO,
         };
-        mandate.signature = alice.sign(&mandate.signable_payload());
+        mandate.signature = alice.sign(&mandate.signable_payload().unwrap());
 
         let mut reg = DelegationRegistry::new();
         let now = Timestamp::new(1, 0);
@@ -259,7 +266,55 @@ mod tests {
             &RevocationSet::new(),
         )
         .unwrap();
-        assert_eq!(v.decision, Decision::Allow);
+        assert_eq!(v.decision, Decision::Deny);
         assert!(!v.payment_outranked);
+    }
+
+    #[test]
+    fn consume_once_caveat_cannot_bypass_existing_reservation() {
+        let principal = KeyPair::generate();
+        let mut mandate = Mandate {
+            kind: MandateKind::X402Payload,
+            principal: did("alice"),
+            agent: did("agent"),
+            action: "payment.settle".into(),
+            amount_minor: Some(5),
+            currency: Some("USD".into()),
+            merchant: None,
+            caveats: vec![Caveat::ConsumeOnce],
+            expires: None,
+            consume_once: false,
+            signature: exo_core::Signature::empty(),
+            raw_hash: exo_core::Hash256::ZERO,
+        };
+        mandate.signature = principal.sign(&mandate.signable_payload().unwrap());
+        let mut reservations = ReservationBook::new();
+        reservations
+            .reserve(mandate.mandate_hash().unwrap(), Timestamp::new(1, 0))
+            .unwrap();
+        let req = DecisionRequest {
+            mandate,
+            proposed: ProposedAction {
+                action: "payment.settle".into(),
+                amount_minor: Some(5),
+                currency: Some("USD".into()),
+                merchant: None,
+                rail: None,
+            },
+            payment_valid: true,
+            now: Timestamp::new(2, 0),
+        };
+
+        let verdict = evaluate(
+            &req,
+            &|_| None,
+            &DelegationRegistry::new(),
+            &reservations,
+            &RevocationSet::new(),
+        )
+        .unwrap();
+
+        assert_eq!(verdict.decision, Decision::Deny);
+        assert_eq!(verdict.reason, "mandate already reserved");
     }
 }

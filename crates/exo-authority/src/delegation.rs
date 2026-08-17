@@ -33,7 +33,7 @@ const DELEGATION_AUDIT_EVENT_DOMAIN: &str = "exo.authority.delegation_audit_even
 const DELEGATION_AUDIT_EVENT_SCHEMA_VERSION: u16 = 1;
 
 /// Registry of all active delegations.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DelegationRegistry {
     /// Links indexed by their hash ID.
     links: BTreeMap<Hash256, AuthorityLink>,
@@ -310,6 +310,82 @@ impl DelegationRegistry {
             }
             previous_event_hash = event.event_hash;
         }
+        Ok(())
+    }
+
+    /// Validate a deserialized registry before it becomes authoritative.
+    ///
+    /// This closes over the active-link signatures and every derived index in
+    /// addition to the append-only audit chain.
+    pub fn validate_persisted_state(&self) -> Result<(), AuthorityError> {
+        self.verify_audit_chain()?;
+
+        if self.links.len() != self.link_delegator_public_keys.len() {
+            return Err(AuthorityError::InvalidDelegation {
+                reason: "persisted delegation link/key cardinality mismatch".into(),
+            });
+        }
+
+        for (id, link) in &self.links {
+            if link.id()? != *id {
+                return Err(AuthorityError::InvalidDelegation {
+                    reason: format!("persisted delegation id mismatch for {id}"),
+                });
+            }
+            let key = self.link_delegator_public_keys.get(id).ok_or_else(|| {
+                AuthorityError::InvalidDelegation {
+                    reason: format!("persisted delegation {id} has no verifying key"),
+                }
+            })?;
+            if !crypto::verify(&link.signing_payload()?, &link.signature, key) {
+                return Err(AuthorityError::InvalidSignature { index: link.depth });
+            }
+            let forward = self
+                .by_delegator
+                .get(link.delegator_did.as_str())
+                .is_some_and(|ids| ids.iter().any(|candidate| candidate == id));
+            let reverse = self
+                .by_delegate
+                .get(link.delegate_did.as_str())
+                .is_some_and(|ids| ids.iter().any(|candidate| candidate == id));
+            if !forward || !reverse {
+                return Err(AuthorityError::InvalidDelegation {
+                    reason: format!("persisted delegation {id} is missing a derived index"),
+                });
+            }
+        }
+
+        for (did, ids) in &self.by_delegator {
+            for id in ids {
+                let link = self
+                    .links
+                    .get(id)
+                    .ok_or_else(|| AuthorityError::InvalidDelegation {
+                        reason: format!("delegator index {did} references missing link {id}"),
+                    })?;
+                if link.delegator_did.as_str() != did {
+                    return Err(AuthorityError::InvalidDelegation {
+                        reason: format!("delegator index {did} misbinds link {id}"),
+                    });
+                }
+            }
+        }
+        for (did, ids) in &self.by_delegate {
+            for id in ids {
+                let link = self
+                    .links
+                    .get(id)
+                    .ok_or_else(|| AuthorityError::InvalidDelegation {
+                        reason: format!("delegate index {did} references missing link {id}"),
+                    })?;
+                if link.delegate_did.as_str() != did {
+                    return Err(AuthorityError::InvalidDelegation {
+                        reason: format!("delegate index {did} misbinds link {id}"),
+                    });
+                }
+            }
+        }
+
         Ok(())
     }
 

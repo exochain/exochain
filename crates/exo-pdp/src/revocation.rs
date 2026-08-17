@@ -21,6 +21,8 @@ use std::collections::BTreeSet;
 use exo_core::{Did, Hash256, Timestamp};
 use serde::{Deserialize, Serialize};
 
+use crate::error::{PdpError, Result};
+
 /// A revocation entry. Presence in the set is sufficient to deny.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Revocation {
@@ -99,6 +101,20 @@ impl RevocationSet {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.log.is_empty()
+    }
+
+    /// Rebuild the indexes from a signed append-only revocation log.
+    pub fn from_log(log: Vec<Revocation>) -> Result<Self> {
+        let mut set = Self::new();
+        for revocation in log {
+            if revocation.revoked_at == Timestamp::ZERO {
+                return Err(PdpError::InvalidMandate(
+                    "revocation timestamp must be non-zero".into(),
+                ));
+            }
+            set.revoke(revocation.target, revocation.revoked_at, revocation.reason);
+        }
+        Ok(set)
     }
 }
 

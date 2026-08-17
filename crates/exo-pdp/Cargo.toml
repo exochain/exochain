@@ -37,14 +37,11 @@ exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.3"
 exo-authority = { package = "exochain-authority", path = "../exo-authority", version = "=0.2.3" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+ciborium = { workspace = true }
 thiserror = { workspace = true }
-blake3 = { workspace = true }
-ed25519-dalek = { workspace = true }
 hex = { workspace = true }
 axum = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
-tracing = { workspace = true }
 
 [features]
 default = ["http"]
-http = ["dep:axum", "dep:tokio"]
+http = ["dep:axum"]

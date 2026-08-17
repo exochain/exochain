@@ -16,11 +16,13 @@
 
 //! In-process policy decision point. Never moves money.
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 
 use exo_authority::{DelegationGrant, DelegationRegistry, chain::AuthorityLink};
-use exo_core::{Did, Hash256, PublicKey, Timestamp, crypto::KeyPair};
+use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto::KeyPair};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -31,9 +33,71 @@ use crate::{
     revocation::{RevocationSet, RevocationTarget},
 };
 
+const PDP_STATE_SPEC: &str = "exochain-pdp-state-v1";
+const PDP_STATE_SIGNING_DOMAIN: &str = "exo.pdp.state.v1";
+const PDP_STATE_SIGNING_SCHEMA_VERSION: u16 = 1;
+
 /// Shared handle used by gateway and node routers.
 #[derive(Clone)]
 pub struct SharedPdp(Arc<Mutex<PolicyDecisionPoint>>);
+
+/// Service-signed durable runtime authority state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PdpSnapshot {
+    spec: String,
+    service_public_key_hex: String,
+    keys: BTreeMap<Did, PublicKey>,
+    delegations: DelegationRegistry,
+    reservations: Vec<crate::reservation::Reservation>,
+    revocations: Vec<crate::revocation::Revocation>,
+    evidence_entries: Vec<EvidenceEntry>,
+    signature: Signature,
+}
+
+impl PdpSnapshot {
+    fn signing_payload(&self) -> Result<Vec<u8>> {
+        #[derive(Serialize)]
+        struct SigningPayload<'a> {
+            domain: &'static str,
+            schema_version: u16,
+            spec: &'a str,
+            service_public_key_hex: &'a str,
+            keys: &'a BTreeMap<Did, PublicKey>,
+            delegations: &'a DelegationRegistry,
+            reservations: &'a [crate::reservation::Reservation],
+            revocations: &'a [crate::revocation::Revocation],
+            evidence_entries: &'a [EvidenceEntry],
+        }
+        let payload = SigningPayload {
+            domain: PDP_STATE_SIGNING_DOMAIN,
+            schema_version: PDP_STATE_SIGNING_SCHEMA_VERSION,
+            spec: &self.spec,
+            service_public_key_hex: &self.service_public_key_hex,
+            keys: &self.keys,
+            delegations: &self.delegations,
+            reservations: &self.reservations,
+            revocations: &self.revocations,
+            evidence_entries: &self.evidence_entries,
+        };
+        let mut data = Vec::new();
+        ciborium::ser::into_writer(&payload, &mut data)
+            .map_err(|e| PdpError::Serialization(e.to_string()))?;
+        Ok(data)
+    }
+
+    /// Encode the signed snapshot as deterministic CBOR.
+    pub fn to_cbor(&self) -> Result<Vec<u8>> {
+        let mut data = Vec::new();
+        ciborium::ser::into_writer(self, &mut data)
+            .map_err(|e| PdpError::Serialization(e.to_string()))?;
+        Ok(data)
+    }
+
+    /// Decode a signed snapshot. The PDP verifies it before import.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self> {
+        ciborium::de::from_reader(bytes).map_err(|e| PdpError::BadRequest(e.to_string()))
+    }
+}
 
 impl SharedPdp {
     #[must_use]
@@ -143,7 +207,7 @@ impl PolicyDecisionPoint {
                 payment_outranked: verdict.payment_outranked,
                 now: req.now,
             },
-        );
+        )?;
         Ok(DecideOutcome {
             verdict,
             evidence: entry,
@@ -152,8 +216,8 @@ impl PolicyDecisionPoint {
 
     /// x402 `/verify` hop: decide, then reserve consume-once mandates on allow.
     pub fn verify_before_settle(&mut self, req: DecisionRequest) -> Result<DecideOutcome> {
-        let consume = req.mandate.consume_once;
-        let hash = req.mandate.mandate_hash();
+        let consume = req.mandate.requires_single_use();
+        let hash = req.mandate.mandate_hash()?;
         let now = req.now;
         let out = self.decide(req)?;
         if out.verdict.decision == Decision::Allow && consume {
@@ -190,19 +254,64 @@ impl PolicyDecisionPoint {
     }
 
     /// Export a portable Article 26 evidence pack.
-    #[must_use]
-    pub fn export_pack(&self) -> crate::pack::EvidencePack {
-        crate::pack::EvidencePack::from_log(&self.evidence, self.service_key.public_key())
+    pub fn export_pack(&self) -> Result<crate::pack::EvidencePack> {
+        crate::pack::EvidencePack::from_log(&self.evidence, &self.service_key)
     }
 
     /// Replace the in-memory log from a previously exported pack.
     pub fn import_pack(&mut self, pack: crate::pack::EvidencePack) -> Result<()> {
-        pack.verify()?;
-        let expected = hex::encode(self.service_key.public_key().as_bytes());
-        if pack.service_public_key_hex != expected {
+        pack.verify_with_key(self.service_key.public_key())?;
+        self.evidence = crate::evidence::EvidenceLog::from_entries(pack.entries)?;
+        Ok(())
+    }
+
+    /// Export all replay-, revocation-, authority-, and evidence-critical state.
+    pub fn export_snapshot(&self) -> Result<PdpSnapshot> {
+        let mut snapshot = PdpSnapshot {
+            spec: PDP_STATE_SPEC.into(),
+            service_public_key_hex: hex::encode(self.service_key.public_key().as_bytes()),
+            keys: self.keys.clone(),
+            delegations: self.delegations.clone(),
+            reservations: self.reservations.records(),
+            revocations: self.revocations.log().to_vec(),
+            evidence_entries: self.evidence.entries().to_vec(),
+            signature: Signature::empty(),
+        };
+        snapshot.signature = self.service_key.sign(&snapshot.signing_payload()?);
+        Ok(snapshot)
+    }
+
+    /// Verify and atomically replace all in-memory PDP state from a snapshot.
+    pub fn import_snapshot(&mut self, snapshot: PdpSnapshot) -> Result<()> {
+        if snapshot.spec != PDP_STATE_SPEC {
+            return Err(PdpError::BadRequest(format!(
+                "unknown PDP state spec {}",
+                snapshot.spec
+            )));
+        }
+        let expected_key_hex = hex::encode(self.service_key.public_key().as_bytes());
+        if snapshot.service_public_key_hex != expected_key_hex
+            || snapshot.signature.is_empty()
+            || !exo_core::crypto::verify(
+                &snapshot.signing_payload()?,
+                &snapshot.signature,
+                self.service_key.public_key(),
+            )
+        {
             return Err(PdpError::InvalidSignature);
         }
-        self.evidence = crate::evidence::EvidenceLog::from_entries(pack.entries)?;
+
+        snapshot.delegations.validate_persisted_state()?;
+        let reservations = ReservationBook::from_records(snapshot.reservations)?;
+        let revocations = RevocationSet::from_log(snapshot.revocations)?;
+        let evidence = EvidenceLog::from_entries(snapshot.evidence_entries)?;
+        evidence.verify_all(self.service_key.public_key())?;
+
+        self.keys = snapshot.keys;
+        self.delegations = snapshot.delegations;
+        self.reservations = reservations;
+        self.revocations = revocations;
+        self.evidence = evidence;
         Ok(())
     }
 
@@ -229,6 +338,16 @@ impl PolicyDecisionPoint {
             .iter()
             .map(|p| format!("{p:?}"))
             .collect()
+    }
+
+    #[must_use]
+    pub fn is_mandate_revoked(&self, hash: &Hash256) -> bool {
+        self.revocations.is_mandate_revoked(hash)
+    }
+
+    #[must_use]
+    pub fn is_consumed(&self, hash: &Hash256) -> bool {
+        self.reservations.is_consumed(hash)
     }
 }
 
@@ -265,10 +384,11 @@ impl From<&DecideOutcome> for DecideResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::mandate::{Caveat, Mandate, MandateKind, ProposedAction};
     use exo_authority::{DelegateeKind, Permission};
     use exo_core::crypto::KeyPair;
+
+    use super::*;
+    use crate::mandate::{Caveat, Mandate, MandateKind, ProposedAction};
 
     fn did(n: &str) -> Did {
         Did::new(&format!("did:exo:{n}")).unwrap()
@@ -314,8 +434,8 @@ mod tests {
             signature: exo_core::Signature::empty(),
             raw_hash: Hash256::ZERO,
         };
-        mandate.signature = alice.sign(&mandate.signable_payload());
-        let hash = mandate.mandate_hash();
+        mandate.signature = alice.sign(&mandate.signable_payload().unwrap());
+        let hash = mandate.mandate_hash().unwrap();
 
         let req = DecisionRequest {
             mandate,
@@ -334,5 +454,71 @@ mod tests {
         assert!(pdp.reservations.is_reserved(&hash));
         pdp.commit(&hash).unwrap();
         assert!(pdp.reservations.is_consumed(&hash));
+    }
+
+    #[test]
+    fn signed_snapshot_preserves_authority_revocation_and_replay_state() {
+        let service = KeyPair::generate();
+        let service_secret = *service.secret_key().as_bytes();
+        let alice = KeyPair::generate();
+        let alice_did = did("alice");
+        let agent_did = did("agent");
+        let now = Timestamp::new(1, 0);
+        let mut pdp = PolicyDecisionPoint::new(service);
+        pdp.register_key(alice_did.clone(), *alice.public_key());
+        pdp.delegate(
+            DelegationGrant {
+                from: &alice_did,
+                to: &agent_did,
+                scope: &[Permission::Spend],
+                expires: Timestamp::new(99_000, 0),
+                now: &now,
+                parent_link_id: None,
+                delegatee_kind: DelegateeKind::AiAgent {
+                    model_id: "snapshot-agent".into(),
+                },
+                delegator_public_key: alice.public_key(),
+            },
+            |payload| alice.sign(payload),
+        )
+        .unwrap();
+        let mandate_hash = Hash256::digest(b"snapshot-mandate");
+        pdp.reserve(mandate_hash, Timestamp::new(2, 0)).unwrap();
+        pdp.commit(&mandate_hash).unwrap();
+        pdp.revoke_mandate(mandate_hash, Timestamp::new(3, 0), "revoked".into());
+
+        let encoded = pdp.export_snapshot().unwrap().to_cbor().unwrap();
+        let snapshot = PdpSnapshot::from_cbor(&encoded).unwrap();
+        let mut restored =
+            PolicyDecisionPoint::new(KeyPair::from_secret_bytes(service_secret).unwrap());
+        restored.import_snapshot(snapshot).unwrap();
+
+        assert_eq!(
+            restored.resolve_public(&alice_did),
+            Some(*alice.public_key())
+        );
+        assert_eq!(restored.granted_by(&alice_did), 1);
+        assert!(restored.is_consumed(&mandate_hash));
+        assert!(restored.is_mandate_revoked(&mandate_hash));
+    }
+
+    #[test]
+    fn signed_snapshot_rejects_tampered_authority_state() {
+        let service = KeyPair::generate();
+        let service_secret = *service.secret_key().as_bytes();
+        let mut pdp = PolicyDecisionPoint::new(service);
+        let mut snapshot = pdp.export_snapshot().unwrap();
+        snapshot
+            .keys
+            .insert(did("forged"), *KeyPair::generate().public_key());
+
+        let err = pdp.import_snapshot(snapshot).unwrap_err();
+        assert_eq!(err, PdpError::InvalidSignature);
+        assert!(pdp.resolve_public(&did("forged")).is_none());
+
+        let clean = pdp.export_snapshot().unwrap();
+        let mut restored =
+            PolicyDecisionPoint::new(KeyPair::from_secret_bytes(service_secret).unwrap());
+        restored.import_snapshot(clean).unwrap();
     }
 }

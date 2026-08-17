@@ -16,6 +16,8 @@
 
 //! Axum routes for the policy decision point.
 
+use std::sync::Arc;
+
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -34,8 +36,65 @@ use crate::{
     x402::{self, X402VerifyRequest, X402VerifyResponse},
 };
 
+type PersistHook =
+    Arc<dyn Fn(&crate::service::PolicyDecisionPoint) -> crate::error::Result<()> + Send + Sync>;
+
+#[derive(Clone)]
+struct PdpHttpState {
+    pdp: SharedPdp,
+    persist: Option<PersistHook>,
+}
+
+impl PdpHttpState {
+    fn checkpoint(
+        &self,
+        pdp: &crate::service::PolicyDecisionPoint,
+    ) -> crate::error::Result<Option<crate::service::PdpSnapshot>> {
+        self.persist
+            .as_ref()
+            .map(|_| pdp.export_snapshot())
+            .transpose()
+    }
+
+    fn persist_or_rollback(
+        &self,
+        pdp: &mut crate::service::PolicyDecisionPoint,
+        checkpoint: Option<crate::service::PdpSnapshot>,
+    ) -> crate::error::Result<()> {
+        let Some(persist) = &self.persist else {
+            return Ok(());
+        };
+        if let Err(persistence_error) = persist(pdp) {
+            if let Some(checkpoint) = checkpoint {
+                pdp.import_snapshot(checkpoint).map_err(|rollback_error| {
+                    PdpError::Persistence(format!(
+                        "{persistence_error}; in-memory rollback failed: {rollback_error}"
+                    ))
+                })?;
+            }
+            return Err(persistence_error);
+        }
+        Ok(())
+    }
+}
+
 /// Build the PDP router (own state — merge after gateway `with_state`).
 pub fn pdp_router(pdp: SharedPdp) -> Router {
+    build_pdp_router(PdpHttpState { pdp, persist: None })
+}
+
+/// Build the PDP router with a fail-closed mutation persistence boundary.
+pub fn pdp_router_with_persistence<F>(pdp: SharedPdp, persist: F) -> Router
+where
+    F: Fn(&crate::service::PolicyDecisionPoint) -> crate::error::Result<()> + Send + Sync + 'static,
+{
+    build_pdp_router(PdpHttpState {
+        pdp,
+        persist: Some(Arc::new(persist)),
+    })
+}
+
+fn build_pdp_router(state: PdpHttpState) -> Router {
     Router::new()
         .route("/api/v1/authority/decide", post(handle_decide))
         .route("/api/v1/authority/register-key", post(handle_register_key))
@@ -52,7 +111,7 @@ pub fn pdp_router(pdp: SharedPdp) -> Router {
         .route("/api/v1/authority/pack", get(handle_export_pack))
         .route("/api/v1/authority/pack/verify", post(handle_verify_pack))
         .route("/x402/verify", post(handle_x402_verify))
-        .with_state(pdp)
+        .with_state(state)
 }
 
 fn require_now_ms(now_ms: Option<u64>) -> crate::error::Result<Timestamp> {
@@ -96,9 +155,10 @@ struct DecideBody {
 }
 
 async fn handle_decide(
-    State(pdp): State<SharedPdp>,
+    State(state): State<PdpHttpState>,
     Json(body): Json<DecideBody>,
 ) -> Result<Json<DecideResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let pdp = &state.pdp;
     let mandate = body.mandate.into_mandate().map_err(err)?;
     let proposed = body.proposed.unwrap_or_else(|| ProposedAction {
         action: mandate.action.clone(),
@@ -114,7 +174,11 @@ async fn handle_decide(
         now: require_now_ms(body.now_ms).map_err(err)?,
     };
     let mut guard = pdp.lock().map_err(err)?;
+    let checkpoint = state.checkpoint(&guard).map_err(err)?;
     let out = guard.decide(req).map_err(err)?;
+    state
+        .persist_or_rollback(&mut guard, checkpoint)
+        .map_err(err)?;
     Ok(Json(DecideResponse::from(&out)))
 }
 
@@ -125,9 +189,10 @@ struct RegisterKeyBody {
 }
 
 async fn handle_register_key(
-    State(pdp): State<SharedPdp>,
+    State(state): State<PdpHttpState>,
     Json(body): Json<RegisterKeyBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let pdp = &state.pdp;
     let did = crate::mandate::coerce_did(&body.did).map_err(err)?;
     let bytes =
         hex::decode(&body.public_key_hex).map_err(|e| err(PdpError::BadRequest(e.to_string())))?;
@@ -139,7 +204,11 @@ async fn handle_register_key(
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
     let mut guard = pdp.lock().map_err(err)?;
+    let checkpoint = state.checkpoint(&guard).map_err(err)?;
     guard.register_key(did.clone(), exo_core::PublicKey::from_bytes(arr));
+    state
+        .persist_or_rollback(&mut guard, checkpoint)
+        .map_err(err)?;
     Ok(Json(
         serde_json::json!({ "did": did.to_string(), "registered": true }),
     ))
@@ -174,9 +243,10 @@ fn parse_perm(s: &str) -> Result<Permission, PdpError> {
 }
 
 async fn handle_delegate(
-    State(pdp): State<SharedPdp>,
+    State(state): State<PdpHttpState>,
     Json(body): Json<DelegateBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let pdp = &state.pdp;
     let from = crate::mandate::coerce_did(&body.from).map_err(err)?;
     let to = crate::mandate::coerce_did(&body.to).map_err(err)?;
     let mut scope = Vec::new();
@@ -203,7 +273,11 @@ async fn handle_delegate(
         delegatee_kind: kind,
         delegator_public_key: &pk,
     };
+    let checkpoint = state.checkpoint(&guard).map_err(err)?;
     let link = guard.delegate(grant, move |_| sig).map_err(err)?;
+    state
+        .persist_or_rollback(&mut guard, checkpoint)
+        .map_err(err)?;
     let link_id = link.id().map_err(|e| err(PdpError::from(e)))?;
     Ok(Json(serde_json::json!({
         "link_id": link_id.to_string(),
@@ -237,12 +311,14 @@ fn parse_hash(s: &str) -> Result<Hash256, PdpError> {
 }
 
 async fn handle_revoke(
-    State(pdp): State<SharedPdp>,
+    State(state): State<PdpHttpState>,
     Json(body): Json<RevokeBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let now = Timestamp::new(body.now_ms.unwrap_or(0), 0);
+    let pdp = &state.pdp;
+    let now = require_now_ms(body.now_ms).map_err(err)?;
     let reason = body.reason.unwrap_or_else(|| "revoked".into());
     let mut guard = pdp.lock().map_err(err)?;
+    let checkpoint = state.checkpoint(&guard).map_err(err)?;
     if let Some(h) = body.mandate_hash {
         let hash = parse_hash(&h).map_err(err)?;
         guard.revoke_mandate(hash, now, reason.clone());
@@ -255,6 +331,9 @@ async fn handle_revoke(
         let hash = parse_hash(&d).map_err(err)?;
         guard.revoke_delegation(hash, now, reason);
     }
+    state
+        .persist_or_rollback(&mut guard, checkpoint)
+        .map_err(err)?;
     Ok(Json(serde_json::json!({ "revoked": true })))
 }
 
@@ -266,41 +345,57 @@ struct HashBody {
 }
 
 async fn handle_reserve(
-    State(pdp): State<SharedPdp>,
+    State(state): State<PdpHttpState>,
     Json(body): Json<HashBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let pdp = &state.pdp;
     let hash = parse_hash(&body.mandate_hash).map_err(err)?;
     let mut guard = pdp.lock().map_err(err)?;
+    let checkpoint = state.checkpoint(&guard).map_err(err)?;
     guard
         .reserve(hash, require_now_ms(body.now_ms).map_err(err)?)
+        .map_err(err)?;
+    state
+        .persist_or_rollback(&mut guard, checkpoint)
         .map_err(err)?;
     Ok(Json(serde_json::json!({ "state": "reserved" })))
 }
 
 async fn handle_commit(
-    State(pdp): State<SharedPdp>,
+    State(state): State<PdpHttpState>,
     Json(body): Json<HashBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let pdp = &state.pdp;
     let hash = parse_hash(&body.mandate_hash).map_err(err)?;
     let mut guard = pdp.lock().map_err(err)?;
+    let checkpoint = state.checkpoint(&guard).map_err(err)?;
     guard.commit(&hash).map_err(err)?;
+    state
+        .persist_or_rollback(&mut guard, checkpoint)
+        .map_err(err)?;
     Ok(Json(serde_json::json!({ "state": "committed" })))
 }
 
 async fn handle_release(
-    State(pdp): State<SharedPdp>,
+    State(state): State<PdpHttpState>,
     Json(body): Json<HashBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let pdp = &state.pdp;
     let hash = parse_hash(&body.mandate_hash).map_err(err)?;
     let mut guard = pdp.lock().map_err(err)?;
+    let checkpoint = state.checkpoint(&guard).map_err(err)?;
     guard.release(&hash).map_err(err)?;
+    state
+        .persist_or_rollback(&mut guard, checkpoint)
+        .map_err(err)?;
     Ok(Json(serde_json::json!({ "state": "released" })))
 }
 
 async fn handle_evidence(
-    State(pdp): State<SharedPdp>,
+    State(state): State<PdpHttpState>,
     Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let pdp = &state.pdp;
     let h = parse_hash(&hash).map_err(err)?;
     let guard = pdp.lock().map_err(err)?;
     let entry = guard
@@ -312,9 +407,10 @@ async fn handle_evidence(
 }
 
 async fn handle_verify_evidence(
-    State(pdp): State<SharedPdp>,
+    State(state): State<PdpHttpState>,
     Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let pdp = &state.pdp;
     let h = parse_hash(&hash).map_err(err)?;
     let guard = pdp.lock().map_err(err)?;
     let entry = guard.verify_evidence(&h).map_err(err)?;
@@ -327,32 +423,46 @@ async fn handle_verify_evidence(
 }
 
 async fn handle_export_pack(
-    State(pdp): State<SharedPdp>,
+    State(state): State<PdpHttpState>,
 ) -> Result<Json<crate::pack::EvidencePack>, (StatusCode, Json<serde_json::Value>)> {
+    let pdp = &state.pdp;
     let guard = pdp.lock().map_err(err)?;
-    Ok(Json(guard.export_pack()))
+    guard.export_pack().map(Json).map_err(err)
+}
+
+#[derive(Debug, Deserialize)]
+struct VerifyPackBody {
+    pack: crate::pack::EvidencePack,
+    expected_service_public_key_hex: String,
 }
 
 async fn handle_verify_pack(
-    Json(pack): Json<crate::pack::EvidencePack>,
+    Json(body): Json<VerifyPackBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    pack.verify().map_err(err)?;
+    let expected_key =
+        crate::pack::parse_public_key_hex(&body.expected_service_public_key_hex).map_err(err)?;
+    body.pack.verify_with_key(&expected_key).map_err(err)?;
     Ok(Json(serde_json::json!({
         "ok": true,
         "independently_verifiable": true,
         "never_moves_money": true,
-        "article_26": pack.article_26,
-        "entries": pack.entries.len(),
-        "tip": pack.tip_hex,
+        "article_26": body.pack.article_26,
+        "entries": body.pack.entries.len(),
+        "tip": body.pack.tip_hex,
     })))
 }
 
 async fn handle_x402_verify(
-    State(pdp): State<SharedPdp>,
+    State(state): State<PdpHttpState>,
     Json(body): Json<X402VerifyRequest>,
 ) -> Result<Json<X402VerifyResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let pdp = &state.pdp;
     let mut guard = pdp.lock().map_err(err)?;
+    let checkpoint = state.checkpoint(&guard).map_err(err)?;
     let resp = x402::verify(&mut guard, body).map_err(err)?;
+    state
+        .persist_or_rollback(&mut guard, checkpoint)
+        .map_err(err)?;
     Ok(Json(resp))
 }
 
@@ -372,5 +482,33 @@ impl SharedPdp {
             received: u64::try_from(guard.received_by(did)).unwrap_or(0),
             permissions: guard.permissions_for(did),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use exo_core::{Did, crypto::KeyPair};
+
+    use super::*;
+
+    #[test]
+    fn failed_persistence_rolls_back_authority_mutation() {
+        let state = PdpHttpState {
+            pdp: SharedPdp::ephemeral(),
+            persist: Some(Arc::new(|_| {
+                Err(PdpError::Persistence("disk unavailable".into()))
+            })),
+        };
+        let actor = Did::new("did:exo:persistence-test").unwrap();
+        let key = KeyPair::generate();
+        let mut guard = state.pdp.lock().unwrap();
+        let checkpoint = state.checkpoint(&guard).unwrap();
+        guard.register_key(actor.clone(), *key.public_key());
+
+        assert_eq!(
+            state.persist_or_rollback(&mut guard, checkpoint),
+            Err(PdpError::Persistence("disk unavailable".into()))
+        );
+        assert!(guard.resolve_public(&actor).is_none());
     }
 }

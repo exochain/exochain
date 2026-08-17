@@ -33,6 +33,9 @@ use crate::{
     mandate::{Mandate, MandateKind, ProposedAction},
 };
 
+const EVIDENCE_ENTRY_SIGNING_DOMAIN: &str = "exo.pdp.evidence_entry.v1";
+const EVIDENCE_ENTRY_SIGNING_SCHEMA_VERSION: u16 = 1;
+
 /// Policy outcome recorded in the evidence pack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,28 +77,48 @@ pub struct EvidenceEntry {
 }
 
 impl EvidenceEntry {
-    fn signable(&self) -> Vec<u8> {
-        let mut d = Vec::new();
-        d.extend_from_slice(&self.seq.to_le_bytes());
-        d.extend_from_slice(self.prev_hash.as_bytes());
-        d.extend_from_slice(format!("{:?}", self.decision).as_bytes());
-        d.extend_from_slice(self.reason.as_bytes());
-        d.extend_from_slice(self.mandate_hash.as_bytes());
-        d.extend_from_slice(format!("{:?}", self.mandate_kind).as_bytes());
-        d.extend_from_slice(self.principal.as_str().as_bytes());
-        d.extend_from_slice(self.agent.as_str().as_bytes());
-        d.extend_from_slice(self.action.as_bytes());
-        if let Some(a) = self.amount_minor {
-            d.extend_from_slice(&a.to_le_bytes());
+    fn signable(&self) -> Result<Vec<u8>> {
+        #[derive(Serialize)]
+        struct SigningPayload<'a> {
+            domain: &'static str,
+            schema_version: u16,
+            seq: u64,
+            prev_hash: &'a Hash256,
+            decision: Decision,
+            reason: &'a str,
+            mandate_hash: &'a Hash256,
+            mandate_kind: MandateKind,
+            principal: &'a Did,
+            agent: &'a Did,
+            action: &'a str,
+            amount_minor: Option<u64>,
+            currency: &'a Option<String>,
+            payment_presented: bool,
+            payment_outranked: bool,
+            timestamp: &'a Timestamp,
         }
-        if let Some(c) = &self.currency {
-            d.extend_from_slice(c.as_bytes());
-        }
-        d.push(u8::from(self.payment_presented));
-        d.push(u8::from(self.payment_outranked));
-        d.extend_from_slice(&self.timestamp.physical_ms.to_le_bytes());
-        d.extend_from_slice(&self.timestamp.logical.to_le_bytes());
-        d
+        let payload = SigningPayload {
+            domain: EVIDENCE_ENTRY_SIGNING_DOMAIN,
+            schema_version: EVIDENCE_ENTRY_SIGNING_SCHEMA_VERSION,
+            seq: self.seq,
+            prev_hash: &self.prev_hash,
+            decision: self.decision,
+            reason: &self.reason,
+            mandate_hash: &self.mandate_hash,
+            mandate_kind: self.mandate_kind,
+            principal: &self.principal,
+            agent: &self.agent,
+            action: &self.action,
+            amount_minor: self.amount_minor,
+            currency: &self.currency,
+            payment_presented: self.payment_presented,
+            payment_outranked: self.payment_outranked,
+            timestamp: &self.timestamp,
+        };
+        let mut data = Vec::new();
+        ciborium::ser::into_writer(&payload, &mut data)
+            .map_err(|e| PdpError::Serialization(e.to_string()))?;
+        Ok(data)
     }
 }
 
@@ -124,7 +147,7 @@ impl EvidenceLog {
     }
 
     /// Append a signed entry. Returns the new entry.
-    pub fn append(&mut self, signer: &KeyPair, draft: EvidenceDraft<'_>) -> EvidenceEntry {
+    pub fn append(&mut self, signer: &KeyPair, draft: EvidenceDraft<'_>) -> Result<EvidenceEntry> {
         let seq = u64::try_from(self.entries.len()).unwrap_or(u64::MAX);
         let mut entry = EvidenceEntry {
             seq,
@@ -132,7 +155,7 @@ impl EvidenceLog {
             entry_hash: Hash256::ZERO,
             decision: draft.decision,
             reason: draft.reason,
-            mandate_hash: draft.mandate.mandate_hash(),
+            mandate_hash: draft.mandate.mandate_hash()?,
             mandate_kind: draft.mandate.kind,
             principal: draft.mandate.principal.clone(),
             agent: draft.mandate.agent.clone(),
@@ -144,13 +167,13 @@ impl EvidenceLog {
             timestamp: draft.now,
             signature: Signature::empty(),
         };
-        let payload = entry.signable();
+        let payload = entry.signable()?;
         entry.signature = signer.sign(&payload);
         entry.entry_hash = Hash256::digest(&payload);
         self.by_hash.insert(entry.entry_hash, self.entries.len());
         self.tip = entry.entry_hash;
         self.entries.push(entry.clone());
-        entry
+        Ok(entry)
     }
 
     #[must_use]
@@ -204,7 +227,7 @@ impl EvidenceLog {
             if e.prev_hash != expected_prev {
                 return Err(PdpError::EvidenceBroken);
             }
-            let payload = e.signable();
+            let payload = e.signable()?;
             if Hash256::digest(&payload) != e.entry_hash {
                 return Err(PdpError::EvidenceBroken);
             }
@@ -222,7 +245,7 @@ impl EvidenceLog {
 
     /// Verify a single entry (hash + signature). Does not walk the chain.
     pub fn verify_entry(entry: &EvidenceEntry, service_key: &PublicKey) -> Result<()> {
-        let payload = entry.signable();
+        let payload = entry.signable()?;
         if Hash256::digest(&payload) != entry.entry_hash {
             return Err(PdpError::EvidenceBroken);
         }
@@ -281,7 +304,8 @@ mod tests {
                 payment_outranked: false,
                 now: Timestamp::new(1, 0),
             },
-        );
+        )
+        .unwrap();
         log.append(
             &kp,
             EvidenceDraft {
@@ -293,7 +317,8 @@ mod tests {
                 payment_outranked: true,
                 now: Timestamp::new(2, 0),
             },
-        );
+        )
+        .unwrap();
         assert_eq!(log.len(), 2);
         assert!(log.verify_all(kp.public_key()).is_ok());
     }
@@ -317,8 +342,60 @@ mod tests {
                 payment_outranked: false,
                 now: Timestamp::new(1, 0),
             },
-        );
+        )
+        .unwrap();
         log.entries[0].reason = "tampered".into();
         assert!(log.verify_all(kp.public_key()).is_err());
+    }
+
+    #[test]
+    fn entry_hash_separates_agent_and_action_fields() {
+        let kp = KeyPair::generate();
+        let mut first_mandate = mandate();
+        first_mandate.agent = did("a");
+        first_mandate.action = "bc".into();
+        let mut second_mandate = first_mandate.clone();
+        second_mandate.agent = did("ab");
+        second_mandate.action = "c".into();
+        let first_action = ProposedAction {
+            action: "bc".into(),
+            ..ProposedAction::default()
+        };
+        let second_action = ProposedAction {
+            action: "c".into(),
+            ..ProposedAction::default()
+        };
+        let mut first_log = EvidenceLog::new();
+        let mut second_log = EvidenceLog::new();
+        let first = first_log
+            .append(
+                &kp,
+                EvidenceDraft {
+                    decision: Decision::Allow,
+                    reason: "permitted".into(),
+                    mandate: &first_mandate,
+                    proposed: &first_action,
+                    payment_presented: true,
+                    payment_outranked: false,
+                    now: Timestamp::new(1, 0),
+                },
+            )
+            .unwrap();
+        let second = second_log
+            .append(
+                &kp,
+                EvidenceDraft {
+                    decision: Decision::Allow,
+                    reason: "permitted".into(),
+                    mandate: &second_mandate,
+                    proposed: &second_action,
+                    payment_presented: true,
+                    payment_outranked: false,
+                    now: Timestamp::new(1, 0),
+                },
+            )
+            .unwrap();
+
+        assert_ne!(first.entry_hash, second.entry_hash);
     }
 }

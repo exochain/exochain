@@ -72,6 +72,12 @@ pub enum PdpError {
     #[error("bad request: {0}")]
     BadRequest(String),
 
+    #[error("canonical serialization failed: {0}")]
+    Serialization(String),
+
+    #[error("durable state persistence failed: {0}")]
+    Persistence(String),
+
     #[error("authority: {0}")]
     Authority(String),
 }
@@ -115,6 +121,8 @@ mod tests {
             PdpError::EvidenceBroken,
             PdpError::LockPoisoned,
             PdpError::BadRequest("b".into()),
+            PdpError::Serialization("s".into()),
+            PdpError::Persistence("p".into()),
             PdpError::Authority("c".into()),
         ];
         for e in errs {
