@@ -29,13 +29,13 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 > Run `bash tools/repo_truth.sh` to regenerate these numbers from source.
 >
 > The crate count includes `exo-root`, `exo-catapult`, `exo-consensus`,
-> `exo-messaging`, `exochain-sdk`, `exo-avc`, and `exo-economy`.
+> `exo-messaging`, `exochain-sdk`, `exo-avc`, `exo-economy`, and `exo-pdp`.
 
 | Metric | Value | Source |
 |--------|-------|--------|
-| Rust crates | 31 | `ls -d crates/*/` |
-| Rust source files | 471 | `git ls-files 'crates/**/*.rs'` |
-| Workspace tests | 6,267 listed | `cargo test --workspace -- --list` |
+| Rust crates | 32 | `cargo metadata --no-deps --format-version 1` |
+| Rust source files | 484 | `git ls-files 'crates/**/*.rs'` |
+| Workspace tests | 6,311 listed | `cargo test --workspace -- --list` |
 | CI quality gates | 23 | `.github/workflows/ci.yml` numbered gates; required aggregator is separate |
 | Latest published release | `v0.2.3` (GitHub Release published 2026-07-15; all release crates plus `@exochain/exochain-wasm` and `@exochain/llm-proxy` resolve the same version) | `gh release list`; crates.io version API; `npm view @exochain/exochain-wasm version`; `npm view @exochain/llm-proxy version` |
 | License | Apache-2.0 for EXOCHAIN core primitives; commercial terms for Decision Forum, LegalDyne, CyberMedica, LiveSafe, and CrossChecked products | `governance/commercial-product-licensing.json`; product license files where present |
@@ -43,7 +43,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 
 ### What is verified today
 
-- **6,267 workspace tests are listed** by `cargo test --workspace -- --list`; CI Gate 2 runs them in debug and release modes
+- **6,311 workspace tests are listed** by `cargo test --workspace -- --list`; CI Gate 2 runs them in debug and release modes
 - **Build succeeds** for all library crates, binaries, tests, and benchmarks
 - **Clippy clean** under `-D warnings` for all workspace targets
 - **Format clean** under `cargo +nightly fmt --all -- --check`
@@ -123,13 +123,13 @@ Catalyst is named explicitly.
 ## Architecture
 
 ```
-Layer 1: CGR Kernel         (Rust, 31 crates)
+Layer 1: CGR Kernel         (Rust, 32 crates)
          Constitutional governance runtime — deterministic, no floats,
          production Ed25519/BLAKE3 cryptography plus unaudited pedagogical
-         SNARK/STARK/ZKML skeletons, 6,267 listed workspace tests
+         SNARK/STARK/ZKML skeletons, 6,311 listed workspace tests
 
 Layer 2: WASM Bridge        (packages/exochain-wasm/)
-         165 verified WASM exports covered by 172 bridge checks — Rust -> WebAssembly -> JavaScript
+         166 verified WASM exports covered by 175 bridge checks — Rust -> WebAssembly -> JavaScript
 
 Layer 3: CommandBase.ai     (command-base/)
          Adjacent cockpit adapter for cognitiveplane.ai

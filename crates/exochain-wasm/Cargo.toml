@@ -45,6 +45,7 @@ decision-forum = { package = "exochain-decision-forum", path = "../decision-foru
 exo-catapult   = { package = "exochain-catapult", path = "../exo-catapult", version = "=0.2.3" }
 exo-messaging  = { package = "exochain-messaging", path = "../exo-messaging", version = "=0.2.3" }
 exo-economy    = { package = "exochain-economy", path = "../exo-economy", version = "=0.2.3" }
+exo-pdp        = { package = "exochain-pdp", path = "../exo-pdp", version = "=0.2.3", default-features = false }
 
 # WASM bindings
 wasm-bindgen = "=0.2.100"

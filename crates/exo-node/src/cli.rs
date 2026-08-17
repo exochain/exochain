@@ -198,6 +198,32 @@ pub enum Command {
         #[command(subcommand)]
         command: AvcCommand,
     },
+
+    /// Policy decision point — never moves money.
+    Pdp {
+        #[command(subcommand)]
+        command: PdpCommand,
+    },
+}
+
+/// Offline evidence-pack tools. Verification requires a separately obtained service key.
+#[derive(Subcommand)]
+pub enum PdpCommand {
+    /// Independently verify an exported evidence pack (Article 26 log).
+    Verify {
+        /// Path to `pdp-evidence.json` (or any `exochain-evidence-pack-v1` file).
+        #[arg(long)]
+        pack: PathBuf,
+        /// Trusted service Ed25519 public key (32-byte hex), obtained separately.
+        #[arg(long)]
+        service_public_key: String,
+    },
+    /// Print an unverified Article 26 summary without mutating the pack.
+    Inspect {
+        /// Path to an evidence pack.
+        #[arg(long)]
+        pack: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]

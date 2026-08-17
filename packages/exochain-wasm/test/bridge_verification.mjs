@@ -2782,6 +2782,65 @@ test('wasm_avc_build_emit_request_from_signature includes explicit subject publi
 });
 
 // =========================================================================
+// Module 26b — PDP Evidence Pack
+// =========================================================================
+
+console.log('\n--- PDP Evidence Pack ---');
+
+const PDP_SERVICE_PUBLIC_KEY = 'ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c';
+const PDP_EMPTY_PACK = {
+  spec: 'exochain-evidence-pack-v1',
+  never_moves_money: true,
+  service_public_key_hex: PDP_SERVICE_PUBLIC_KEY,
+  tip_hex: ZERO_32_HEX,
+  article_26: {
+    regulation: 'EU 2024/1689',
+    article: '26',
+    automatically_generated: true,
+    retention_days_min: 180,
+    human_oversight: 'principal-signed mandate required; deny-outranks-payment',
+    incident_denies: 0,
+    never_moves_money: true,
+  },
+  entries: [],
+  pack_signature: {
+    Ed25519: [
+      70, 175, 175, 243, 72, 39, 220, 203, 244, 160, 75, 204, 118, 209, 178, 166,
+      147, 105, 132, 25, 92, 0, 51, 27, 8, 52, 58, 86, 105, 131, 35, 52,
+      186, 223, 89, 154, 26, 167, 11, 223, 24, 216, 183, 94, 239, 214, 112, 167,
+      58, 89, 219, 23, 150, 168, 15, 144, 139, 19, 52, 148, 125, 173, 2, 15,
+    ],
+  },
+};
+
+test('wasm_verify_evidence_pack accepts a correctly signed pack with a pinned key', () => {
+  const result = wasm.wasm_verify_evidence_pack(
+    JSON.stringify(PDP_EMPTY_PACK),
+    PDP_SERVICE_PUBLIC_KEY,
+  );
+  if (!result.ok || !result.independently_verifiable || !result.never_moves_money) {
+    throw new Error('signed evidence pack must verify against its separately pinned service key');
+  }
+  return result;
+});
+
+test('wasm_verify_evidence_pack rejects an attacker-selected embedded key', () => {
+  const result = wasm.wasm_verify_evidence_pack(JSON.stringify(PDP_EMPTY_PACK), NONZERO_32_HEX);
+  if (result.ok !== false) {
+    throw new Error('pack must not verify against a different trusted service key');
+  }
+  return result;
+});
+
+test('wasm_verify_evidence_pack returns a structured malformed-input denial', () => {
+  const result = wasm.wasm_verify_evidence_pack('{not-json', PDP_SERVICE_PUBLIC_KEY);
+  if (result.ok !== false || result.error !== 'JSON parse error') {
+    throw new Error('malformed evidence JSON must return a structured fail-closed result');
+  }
+  return result;
+});
+
+// =========================================================================
 // Module 27 — Bridge Coverage Guard
 // =========================================================================
 

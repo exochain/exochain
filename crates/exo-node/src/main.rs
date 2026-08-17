@@ -53,6 +53,7 @@ mod mcp;
 mod metrics;
 mod network;
 mod passport;
+mod pdp_store;
 mod provenance;
 mod reactor;
 mod receipt_dashboard;
@@ -1273,8 +1274,37 @@ async fn start_node(
     // and apply bearer-token auth middleware. 0dentity signed writes use their
     // local DID session and request-signature verifiers.
     // NOTE: /health and /ready are provided by the gateway's own router.
+    let pdp = pdp_store::load_or_create(data_dir)?;
+    let shared_pdp = exo_pdp::SharedPdp::from_pdp(pdp);
+    let persist_pdp = shared_pdp.clone();
+    let shutdown_pdp = shared_pdp.clone();
+    let persist_dir = data_dir.to_path_buf();
+    background_tasks.spawn_critical("PDP state persistence", async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            tick.tick().await;
+            let guard = match persist_pdp.lock() {
+                Ok(guard) => guard,
+                Err(error) => {
+                    tracing::error!(err = %error, "PDP state lock failed; stopping node");
+                    return;
+                }
+            };
+            if let Err(error) = pdp_store::save(&persist_dir, &guard) {
+                tracing::error!(err = %error, "PDP state persistence failed; stopping node");
+                return;
+            }
+        }
+    });
+    let request_persist_dir = data_dir.to_path_buf();
+    let pdp_router = exo_pdp::http::pdp_router_with_persistence(shared_pdp, move |pdp| {
+        pdp_store::save(&request_persist_dir, pdp)
+            .map_err(|error| exo_pdp::PdpError::Persistence(error.to_string()))
+    });
+
     let extra_router = metrics_router
         .merge(governance_router)
+        .merge(pdp_router)
         .merge(passport_router)
         .merge(dashboard_router)
         .merge(challenge_router)
@@ -1347,6 +1377,10 @@ async fn start_node(
         task_result = background_tasks.next_failure() => task_result,
     };
     background_tasks.shutdown().await;
+    {
+        let guard = shutdown_pdp.lock()?;
+        pdp_store::save(data_dir, &guard)?;
+    }
     run_result?;
 
     tracing::info!("HTTP server drained — signaling subsystems to stop");
@@ -1450,6 +1484,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             Ok(())
         }
 
+        Command::Pdp { command } => run_pdp(command),
+
         Command::Mcp {
             data_dir,
             actor_did,
@@ -1512,6 +1548,46 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Genesis { command } => root_genesis_cli::run_genesis_command(command).await,
         Command::Avc { command } => {
             livesafe_public_output_ceremony_cli::run_avc_command(command).await
+        }
+    }
+}
+
+fn run_pdp(command: cli::PdpCommand) -> anyhow::Result<()> {
+    match command {
+        cli::PdpCommand::Verify {
+            pack,
+            service_public_key,
+        } => {
+            let bytes = std::fs::read(&pack)?;
+            let pack = exo_pdp::EvidencePack::from_json(&bytes)?;
+            let expected_key = exo_pdp::pack::parse_public_key_hex(&service_public_key)?;
+            pack.verify_with_key(&expected_key)?;
+            println!("ok");
+            println!("spec:                 {}", pack.spec);
+            println!("never_moves_money:    {}", pack.never_moves_money);
+            println!("entries:              {}", pack.entries.len());
+            println!(
+                "article_26.retention: {} days",
+                pack.article_26.retention_days_min
+            );
+            println!("article_26.denies:    {}", pack.article_26.incident_denies);
+            println!("tip:                  {}", pack.tip_hex);
+            Ok(())
+        }
+        cli::PdpCommand::Inspect { pack } => {
+            let bytes = std::fs::read(&pack)?;
+            let pack = exo_pdp::EvidencePack::from_json(&bytes)?;
+            println!("unverified:           true");
+            println!("spec:                 {}", pack.spec);
+            println!("never_moves_money:    {}", pack.never_moves_money);
+            println!("entries:              {}", pack.entries.len());
+            println!(
+                "article_26.retention: {} days",
+                pack.article_26.retention_days_min
+            );
+            println!("article_26.denies:    {}", pack.article_26.incident_denies);
+            println!("tip:                  {}", pack.tip_hex);
+            Ok(())
         }
     }
 }
@@ -1881,6 +1957,11 @@ mod tests {
         assert!(
             !production.contains("tokio::spawn("),
             "startup must not discard JoinHandles from raw tokio::spawn"
+        );
+        assert!(
+            production.contains("spawn_critical(\"PDP state persistence\"")
+                && production.contains("pdp_router_with_persistence"),
+            "PDP state must be synchronously durable and supervised"
         );
     }
 

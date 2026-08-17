@@ -48,6 +48,7 @@ exo-avc = { package = "exochain-avc", path = "../exo-avc", version = "=0.2.3" }
 exo-authority = { package = "exochain-authority", path = "../exo-authority", version = "=0.2.3" }
 exo-economy = { package = "exochain-economy", path = "../exo-economy", version = "=0.2.3" }
 exo-root = { package = "exochain-root", path = "../exo-root", version = "=0.2.3" }
+exo-pdp = { package = "exochain-pdp", path = "../exo-pdp", version = "=0.2.3" }
 
 # DAG DB MCP gateway proxy client (P1-B SDK). The default node compiles the
 # governed gateway proxy transport so MCP DAG DB tools can call the production

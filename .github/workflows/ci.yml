@@ -720,7 +720,7 @@ jobs:
         run: npm pack --dry-run
         working-directory: packages/exochain-wasm/wasm
       - name: Verify WASM exports
-        # Expected export count = 165. Baseline was 110 before
+        # Expected export count = 166. Baseline was 110 before
         # decision-forum, messaging, death-trigger, and franchise/NewCo
         # scaffold were added; the adjudicated decision transition bridge
         # adds the current security boundary, and the HonorGood economy bridge
@@ -734,7 +734,7 @@ jobs:
         run: |
           COUNT=$(grep -c "module.exports.wasm_" packages/exochain-wasm/wasm/exochain_wasm.js)
           echo "Found $COUNT WASM exports"
-          [ "$COUNT" -eq 165 ] || (echo "Expected 165 exports, got $COUNT" && exit 1)
+          [ "$COUNT" -eq 166 ] || (echo "Expected 166 exports, got $COUNT" && exit 1)
       - name: Upload WASM artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -776,7 +776,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Verify Rust exports match JS expectations
-        # Expected #[wasm_bindgen] count = 165. Baseline was 110 before the
+        # Expected #[wasm_bindgen] count = 166. Baseline was 110 before the
         # Sprint-4 additions (decision-forum, messaging, death-trigger,
         # franchise/NewCo scaffold); the adjudicated decision transition bridge
         # adds the current security boundary, the HonorGood economy bridge
@@ -791,7 +791,7 @@ jobs:
         run: |
           RUST_COUNT=$(grep -r '#\[wasm_bindgen\]' crates/exochain-wasm/src/ | wc -l | tr -d ' ')
           echo "Rust #[wasm_bindgen] exports: $RUST_COUNT"
-          [ "$RUST_COUNT" -eq 165 ] || (echo "WASM export count changed from 165 to $RUST_COUNT — update bridge tests" && exit 1)
+          [ "$RUST_COUNT" -eq 166 ] || (echo "WASM export count changed from 166 to $RUST_COUNT — update bridge tests" && exit 1)
 
   # -----------------------------------------------------------------------
   # Gate 23: Unaudited feature matrix

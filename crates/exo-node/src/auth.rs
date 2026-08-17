@@ -204,6 +204,7 @@ fn is_sensitive_read_path(path: &str) -> bool {
         || path.starts_with("/api/v1/receipts/")
         || path.starts_with("/api/v1/provenance/")
         || path.starts_with("/api/v1/avc/")
+        || path.starts_with("/api/v1/authority/")
         || path == "/api/v1/challenges"
         || path.starts_with("/api/v1/challenges/")
         || path == "/exoforge"
@@ -861,6 +862,17 @@ mod tests {
         assert!(is_sensitive_read_path("/api/v1/forge/tasks"));
         assert!(is_sensitive_read_path("/api/v1/forge/stats"));
         assert!(is_sensitive_read_path("/api/v1/forge/activity"));
+    }
+
+    #[test]
+    fn authority_evidence_reads_require_bearer_authentication() {
+        assert!(is_sensitive_read_path("/api/v1/authority/pack"));
+        assert!(is_sensitive_read_path(
+            "/api/v1/authority/evidence/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ));
+        assert!(is_sensitive_read_path(
+            "/api/v1/authority/evidence/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/verify"
+        ));
     }
 
     #[tokio::test]
