@@ -30,7 +30,7 @@ use crate::{
 pub const CGR_TRACE_SPEC: &str = "exo.cgr.reduction_trace.v1";
 const CGR_TRACE_SIGNING_SCHEMA_VERSION: u16 = 1;
 
-/// Evidence type tag placed on [`exo_legal::Evidence`] items that carry a trace.
+/// Evidence type tag placed on legal evidence items that carry a trace.
 pub const CGR_TRACE_EVIDENCE_TYPE: &str = "cgr.reduction_trace.v1";
 
 /// One reduction node: kind, depth, input/output hashes, success or error.

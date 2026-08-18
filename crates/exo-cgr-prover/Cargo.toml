@@ -40,12 +40,10 @@ path = "src/bin/generate-cgr-receipt-fixture.rs"
 required-features = ["prove"]
 
 [dependencies]
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.4" }
 exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.4" }
 exo-proofs = { package = "exochain-proofs", path = "../exo-proofs", version = "=0.2.4" }
 serde = { version = "=1.0.228", features = ["derive"] }
 ciborium = "=0.2.2"
-thiserror = "2"
 exo-cgr-methods = { package = "exochain-cgr-methods", path = "../exo-cgr-methods", optional = true }
 risc0-zkvm = { version = "=3.0.5", optional = true }
 

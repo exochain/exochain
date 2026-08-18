@@ -25,4 +25,3 @@ edition = "2024"
 risc0-zkvm = { version = "=3.0.5", default-features = false, features = ["std"] }
 exo-gatekeeper = { package = "exochain-gatekeeper", path = "../../exo-gatekeeper", version = "=0.2.4", default-features = false }
 exo-proofs = { package = "exochain-proofs", path = "../../exo-proofs", version = "=0.2.4", default-features = false }
-serde = { version = "=1.0.228", features = ["derive"] }
