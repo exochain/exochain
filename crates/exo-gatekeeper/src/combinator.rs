@@ -21,9 +21,13 @@
 
 use std::{cell::Cell, collections::BTreeMap};
 
+use exo_core::hash::hash_structured;
 use serde::{Deserialize, Deserializer, Serialize, de};
 
-use crate::error::GatekeeperError;
+use crate::{
+    cgr_trace::{CgrReductionTrace, CgrTraceStep},
+    error::GatekeeperError,
+};
 
 // ---------------------------------------------------------------------------
 // Combinator types
@@ -407,7 +411,81 @@ pub fn reduce(
 ) -> Result<CombinatorOutput, GatekeeperError> {
     validate_combinator_structure(combinator)?;
     let mut budgets = Vec::new();
-    reduce_inner(combinator, input, 0, &mut budgets)
+    reduce_inner(combinator, input, 0, &mut budgets, None)
+}
+
+/// Reduce a combinator and seal a content-addressed reduction trace.
+///
+/// The output is identical to [`reduce`]. The trace records every node
+/// that actually reduced, in pre-order, with input/output hashes.
+pub fn reduce_with_trace(
+    combinator: &Combinator,
+    input: &CombinatorInput,
+) -> Result<(CombinatorOutput, CgrReductionTrace), GatekeeperError> {
+    validate_combinator_structure(combinator)?;
+    let mut budgets = Vec::new();
+    let mut steps = Vec::new();
+    let output = reduce_inner(combinator, input, 0, &mut budgets, Some(&mut steps))?;
+    let trace = CgrReductionTrace::seal(combinator, input, &output, steps, Vec::new())?;
+    Ok((output, trace))
+}
+
+fn combinator_kind(combinator: &Combinator) -> &'static str {
+    match combinator {
+        Combinator::Identity => "Identity",
+        Combinator::Sequence(_) => "Sequence",
+        Combinator::Parallel(_) => "Parallel",
+        Combinator::Choice(_) => "Choice",
+        Combinator::Guard(_, _) => "Guard",
+        Combinator::Transform(_, _) => "Transform",
+        Combinator::Retry(_, _) => "Retry",
+        Combinator::Timeout(_, _) => "Timeout",
+        Combinator::Checkpoint(_, _) => "Checkpoint",
+    }
+}
+
+fn begin_trace_step(
+    steps: &mut Vec<CgrTraceStep>,
+    combinator: &Combinator,
+    input: &CombinatorInput,
+    depth: usize,
+) -> Result<usize, GatekeeperError> {
+    let idx = steps.len();
+    let input_hash = hash_structured(input)
+        .map_err(|e| GatekeeperError::CombinatorError(format!("trace input hash failed: {e}")))?;
+    steps.push(CgrTraceStep {
+        seq: u64::try_from(idx).unwrap_or(u64::MAX),
+        depth: u32::try_from(depth).unwrap_or(u32::MAX),
+        kind: combinator_kind(combinator).to_owned(),
+        input_hash,
+        output_hash: None,
+        ok: false,
+        error: None,
+    });
+    Ok(idx)
+}
+
+fn finish_trace_step_ok(
+    steps: &mut [CgrTraceStep],
+    idx: usize,
+    output: &CombinatorOutput,
+) -> Result<(), GatekeeperError> {
+    let output_hash = hash_structured(output)
+        .map_err(|e| GatekeeperError::CombinatorError(format!("trace output hash failed: {e}")))?;
+    let step = steps.get_mut(idx).ok_or_else(|| {
+        GatekeeperError::CombinatorError("trace step index missing after reduction".into())
+    })?;
+    step.output_hash = Some(output_hash);
+    step.ok = true;
+    step.error = None;
+    Ok(())
+}
+
+fn finish_trace_step_err(steps: &mut [CgrTraceStep], idx: usize, err: &GatekeeperError) {
+    if let Some(step) = steps.get_mut(idx) {
+        step.ok = false;
+        step.error = Some(err.to_string());
+    }
 }
 
 fn validate_combinator_structure(combinator: &Combinator) -> Result<(), GatekeeperError> {
@@ -471,6 +549,7 @@ fn reduce_inner(
     input: &CombinatorInput,
     depth: usize,
     budgets: &mut Vec<ReductionBudget>,
+    mut steps: Option<&mut Vec<CgrTraceStep>>,
 ) -> Result<CombinatorOutput, GatekeeperError> {
     if depth > MAX_COMBINATOR_DEPTH {
         return Err(GatekeeperError::CombinatorError(format!(
@@ -480,6 +559,32 @@ fn reduce_inner(
     }
     consume_active_budgets(budgets)?;
 
+    let step_idx = match steps.as_deref_mut() {
+        Some(log) => Some(begin_trace_step(log, combinator, input, depth)?),
+        None => None,
+    };
+
+    let result = reduce_node(combinator, input, depth, budgets, steps.as_deref_mut());
+
+    if let Some(idx) = step_idx {
+        if let Some(log) = steps {
+            match &result {
+                Ok(output) => finish_trace_step_ok(log, idx, output)?,
+                Err(err) => finish_trace_step_err(log, idx, err),
+            }
+        }
+    }
+
+    result
+}
+
+fn reduce_node(
+    combinator: &Combinator,
+    input: &CombinatorInput,
+    depth: usize,
+    budgets: &mut Vec<ReductionBudget>,
+    mut steps: Option<&mut Vec<CgrTraceStep>>,
+) -> Result<CombinatorOutput, GatekeeperError> {
     match combinator {
         Combinator::Identity => Ok(CombinatorOutput::from_input(input)),
 
@@ -489,9 +594,8 @@ fn reduce_inner(
             let mut last_output = CombinatorOutput::from_input(input);
 
             for (i, c) in combinators.iter().enumerate() {
-                match reduce_inner(c, &current_input, depth + 1, budgets) {
+                match reduce_inner(c, &current_input, depth + 1, budgets, steps.as_deref_mut()) {
                     Ok(output) => {
-                        // Feed output as next input.
                         current_input = CombinatorInput {
                             fields: output.fields.clone(),
                         };
@@ -513,7 +617,7 @@ fn reduce_inner(
             let mut merged = CombinatorOutput::from_input(input);
 
             for (i, c) in combinators.iter().enumerate() {
-                match reduce_inner(c, input, depth + 1, budgets) {
+                match reduce_inner(c, input, depth + 1, budgets, steps.as_deref_mut()) {
                     Ok(output) => {
                         merged.merge(&output);
                     }
@@ -531,7 +635,7 @@ fn reduce_inner(
         Combinator::Choice(combinators) => {
             enforce_branch_width("Choice", combinators.len())?;
             for c in combinators {
-                match reduce_inner(c, input, depth + 1, budgets) {
+                match reduce_inner(c, input, depth + 1, budgets, steps.as_deref_mut()) {
                     Ok(output) => return Ok(output),
                     Err(_) => continue,
                 }
@@ -548,11 +652,11 @@ fn reduce_inner(
                     predicate.name
                 )));
             }
-            reduce_inner(inner, input, depth + 1, budgets)
+            reduce_inner(inner, input, depth + 1, budgets, steps)
         }
 
         Combinator::Transform(inner, transform) => {
-            let mut output = reduce_inner(inner, input, depth + 1, budgets)?;
+            let mut output = reduce_inner(inner, input, depth + 1, budgets, steps)?;
             output.set(transform.output_key.clone(), transform.output_value.clone());
             Ok(output)
         }
@@ -561,7 +665,7 @@ fn reduce_inner(
             policy.validate()?;
             let mut last_err = None;
             for attempt in 0..=policy.max_retries {
-                match reduce_inner(inner, input, depth + 1, budgets) {
+                match reduce_inner(inner, input, depth + 1, budgets, steps.as_deref_mut()) {
                     Ok(mut output) => {
                         output.set("retry_attempts", attempt.to_string());
                         return Ok(output);
@@ -577,7 +681,7 @@ fn reduce_inner(
 
         Combinator::Timeout(inner, duration) => {
             budgets.push(ReductionBudget::new(*duration));
-            let result = reduce_inner(inner, input, depth + 1, budgets);
+            let result = reduce_inner(inner, input, depth + 1, budgets, steps);
             if budgets.pop().is_none() {
                 return Err(GatekeeperError::CombinatorError(
                     "timeout budget stack underflow".into(),
@@ -589,7 +693,7 @@ fn reduce_inner(
         }
 
         Combinator::Checkpoint(inner, checkpoint_id) => {
-            let mut output = reduce_inner(inner, input, depth + 1, budgets)?;
+            let mut output = reduce_inner(inner, input, depth + 1, budgets, steps)?;
             output.checkpoint = Some(checkpoint_id.clone());
             Ok(output)
         }
@@ -1254,5 +1358,57 @@ mod tests {
         let choice = Combinator::Choice(vec![Combinator::Identity]);
         let output = reduce(&choice, &input).unwrap();
         assert_eq!(output.fields, input.fields);
+    }
+
+    #[test]
+    fn reduce_with_trace_matches_reduce_output() {
+        let input = sample_input();
+        let combinator = Combinator::Sequence(vec![
+            Combinator::Transform(
+                Box::new(Combinator::Identity),
+                TransformFn {
+                    name: "step1".into(),
+                    output_key: "x".into(),
+                    output_value: "1".into(),
+                },
+            ),
+            Combinator::Checkpoint(Box::new(Combinator::Identity), CheckpointId("cp".into())),
+        ]);
+
+        let plain = reduce(&combinator, &input).unwrap();
+        let (traced, trace) = reduce_with_trace(&combinator, &input).unwrap();
+        assert_eq!(plain.fields, traced.fields);
+        assert_eq!(plain.checkpoint, traced.checkpoint);
+        assert!(trace.steps.len() >= 4);
+        assert!(trace.steps.iter().all(|step| step.ok));
+        assert_eq!(trace.steps[0].kind, "Sequence");
+        trace.verify_replay(&combinator, &input).unwrap();
+    }
+
+    #[test]
+    fn reduce_with_trace_is_deterministic() {
+        let input = sample_input();
+        let combinator = Combinator::Parallel(vec![
+            Combinator::Transform(
+                Box::new(Combinator::Identity),
+                TransformFn {
+                    name: "a".into(),
+                    output_key: "a".into(),
+                    output_value: "1".into(),
+                },
+            ),
+            Combinator::Transform(
+                Box::new(Combinator::Identity),
+                TransformFn {
+                    name: "b".into(),
+                    output_key: "b".into(),
+                    output_value: "2".into(),
+                },
+            ),
+        ]);
+        let (_out1, t1) = reduce_with_trace(&combinator, &input).unwrap();
+        let (_out2, t2) = reduce_with_trace(&combinator, &input).unwrap();
+        assert_eq!(t1.trace_hash, t2.trace_hash);
+        assert_eq!(t1.steps, t2.steps);
     }
 }

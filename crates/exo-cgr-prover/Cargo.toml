@@ -1,0 +1,51 @@
+# Copyright 2026 Exochain Foundation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "exochain-cgr-prover"
+description = "Server-side RISC Zero prover for CGR combinator reduction receipts"
+version = "0.2.4"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/exochain/exochain"
+publish = false
+
+[workspace]
+
+[lib]
+name = "exo_cgr_prover"
+path = "src/lib.rs"
+
+[features]
+default = []
+prove = ["dep:risc0-zkvm", "dep:exo-cgr-methods"]
+
+[[bin]]
+name = "generate-cgr-receipt-fixture"
+path = "src/bin/generate-cgr-receipt-fixture.rs"
+required-features = ["prove"]
+
+[dependencies]
+exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.4" }
+exo-proofs = { package = "exochain-proofs", path = "../exo-proofs", version = "=0.2.4" }
+serde = { version = "=1.0.228", features = ["derive"] }
+ciborium = "=0.2.2"
+exo-cgr-methods = { package = "exochain-cgr-methods", path = "../exo-cgr-methods", optional = true }
+risc0-zkvm = { version = "=3.0.5", optional = true }
+
+[dev-dependencies]
+exo-proofs = { package = "exochain-proofs", path = "../exo-proofs", version = "=0.2.4" }

@@ -23,17 +23,11 @@
 //! for external cryptographic review (ratified decision D1, `GAP-REGISTRY.md`
 //! VCG-001).
 //!
-//! ## This type is NOT wired into production verification
-//!
-//! [`ProofEnvelope::verify`](crate::envelope::ProofEnvelope::verify) continues to
-//! call [`FailClosedRiscZeroVerifier`](crate::envelope::FailClosedRiscZeroVerifier)
-//! exclusively, and [`crate::envelope::default_registry`] continues to register
-//! [`crate::envelope::BackendId::RiscZero`] as
-//! [`crate::envelope::AuditStatus::PendingExternalReview`] (never
-//! `ProductionReviewed`). Swapping this verifier into the seam — and promoting the
-//! registry entry — is a separate, later change (O-1.6) that must not happen
-//! before external cryptographic review of this code lands. Until then this module
-//! is dead-code-linted-safe (kept `pub`) but otherwise inert.
+//! [`ProofEnvelope::verify`](crate::envelope::ProofEnvelope::verify) calls this
+//! verifier for [`crate::envelope::BackendId::RiscZero`]. A valid receipt
+//! returns `Ok(true)`. The registry still marks RISC Zero
+//! [`crate::envelope::AuditStatus::PendingExternalReview`] — that is the
+//! external-review label, not a claim that `verify` is a no-op.
 //!
 //! ## Verification contract
 //!

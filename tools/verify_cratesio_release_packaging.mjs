@@ -28,8 +28,8 @@ const workspaceVersion = workspaceToml.match(/^\[workspace\.package\][\s\S]*?^ve
 if (!workspaceVersion) {
   throw new Error("workspace package version is missing");
 }
-if (workspaceVersion !== "0.2.3") {
-  throw new Error(`workspace package version must be 0.2.3 for this release, got ${workspaceVersion}`);
+if (!/^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$/.test(workspaceVersion)) {
+  throw new Error(`workspace package version is not a release version, got ${workspaceVersion}`);
 }
 if (!/^\[workspace\.package\][\s\S]*^publish = true$/m.test(workspaceToml)) {
   throw new Error("workspace package publish must be true for release packaging");

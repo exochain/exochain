@@ -362,10 +362,11 @@ inclusion proofs — for admissibility review.
    bundle's custody chain. The tool checks UUID/DID/hash metadata,
    transfer continuity, non-empty reasons, and HLC ordering; it does
    not accept signatures as proof of transfer authority.
-4. Do not treat `exochain_verify_cgr_proof` as a verifier in default
-   builds. It refuses hash-only CGR proof claims until proof bytes,
-   public inputs, checkpoint roots, validator signatures, and a
-   production verifier are wired.
+4. Call `exochain_verify_cgr_proof` with the combinator program, input
+   envelope, and sealed reduction trace. The tool replays the combinator
+   and checks the sealed BLAKE3 trace hash. Supply `envelope` and
+   `receipt_hex` to also run RISC Zero `Receipt::verify`. Hash-only calls
+   are refused.
 5. Produce an admissibility statement: either "the bundle is
    self-consistent, signed end-to-end, and verifies against
    checkpoint X" or a list of specific defects, including unavailable
@@ -404,10 +405,12 @@ set.
 
 ### 6.1 How to retrieve a trust receipt
 
-`exochain_verify_cgr_proof` currently refuses hash-only verification
-claims and names `Initiatives/fix-mcp-cgr-proof-verification-stub.md`
-in the refusal body. Treat that refusal as a missing verification
-surface, not as a negative proof result or a verified trust receipt.
+`exochain_verify_cgr_proof` refuses hash-only verification claims and
+names `Initiatives/fix-mcp-cgr-proof-verification-stub.md` in that
+refusal body. Supply `combinator`, `input`, and the sealed `trace` to
+run deterministic replay. Treat a hash-only refusal as an incomplete
+request, not as a negative proof result. A successful replay is a CGR
+trace receipt, not a SNARK.
 
 ### 6.2 How to read a trust receipt
 

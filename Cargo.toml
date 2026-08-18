@@ -54,10 +54,15 @@ members = [
 # Rust workspace. LiveSafe's nested Cargo manifest is deliberately excluded so
 # the constitutional cargo gates (build/test/clippy/deny/doc --workspace) never
 # reach into it; CyberMedica has no Cargo manifest.
-exclude = ["livesafe"]
+exclude = [
+    "livesafe",
+    "crates/exo-cgr-methods",
+    "crates/exo-cgr-methods/guest",
+    "crates/exo-cgr-prover",
+]
 
 [workspace.package]
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"

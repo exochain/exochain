@@ -981,6 +981,18 @@ async fn start_node(
                             "Infrastructure Holon terminated"
                         );
                     }
+                    HolonEvent::CgrProofIssued {
+                        holon_id,
+                        trace_hash,
+                        invariants_checked,
+                    } => {
+                        tracing::info!(
+                            %holon_id,
+                            %trace_hash,
+                            invariants_checked,
+                            "Infrastructure Holon issued CGR reduction trace"
+                        );
+                    }
                 }
             }
         });

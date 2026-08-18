@@ -38,8 +38,8 @@ serde.workspace = true
 thiserror.workspace = true
 
 # Local
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.3" }
-decision-forum = { package = "exochain-decision-forum", path = "../decision-forum", version = "=0.2.3" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.4" }
+decision-forum = { package = "exochain-decision-forum", path = "../decision-forum", version = "=0.2.4" }
 
 [dev-dependencies]
 proptest.workspace = true

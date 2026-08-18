@@ -27,37 +27,62 @@
 
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
+pub mod cgr_trace;
 pub mod combinator;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod dagdb_gate;
 pub mod error;
-pub mod governance_monitor;
-pub mod holon;
 pub mod invariants;
-pub mod kernel;
-pub mod mcp;
-pub mod mcp_audit;
-pub mod tee;
 pub mod types;
 
+#[cfg(all(
+    feature = "runtime",
+    not(target_arch = "wasm32"),
+    not(target_os = "zkvm")
+))]
+pub mod dagdb_gate;
+#[cfg(feature = "runtime")]
+pub mod governance_monitor;
+#[cfg(feature = "runtime")]
+pub mod holon;
+#[cfg(feature = "runtime")]
+pub mod kernel;
+#[cfg(feature = "runtime")]
+pub mod mcp;
+#[cfg(feature = "runtime")]
+pub mod mcp_audit;
+#[cfg(feature = "runtime")]
+pub mod tee;
+
 // Re-export primary types.
-pub use combinator::{Combinator, CombinatorInput, CombinatorOutput};
-#[cfg(not(target_arch = "wasm32"))]
+pub use cgr_trace::{
+    CGR_TRACE_EVIDENCE_TYPE, CGR_TRACE_SPEC, CgrInvariantCheck, CgrReductionTrace, CgrTraceStep,
+};
+pub use combinator::{Combinator, CombinatorInput, CombinatorOutput, reduce, reduce_with_trace};
+#[cfg(all(
+    feature = "runtime",
+    not(target_arch = "wasm32"),
+    not(target_os = "zkvm")
+))]
 pub use dagdb_gate::{
     ConsentEngine, DagDbConsentRecord, DagDbGatekeeperService, IdentityRegistry,
     sign_write_payload, usage_event_payload_hash, verify_write_consent, verify_write_signature,
 };
 pub use error::GatekeeperError;
+#[cfg(feature = "runtime")]
 pub use governance_monitor::{
     ApprovalGate, ApprovalStatus, GovernanceAttestation, GovernanceCircuitBreaker,
     GovernanceMonitorError,
 };
+#[cfg(feature = "runtime")]
 pub use holon::{Holon, HolonState};
 pub use invariants::{
     ConstitutionalInvariant, InvariantEngine, InvariantSet, authority_link_signature_message,
     provenance_signature_message,
 };
+#[cfg(feature = "runtime")]
 pub use kernel::{ActionRequest, AdjudicationContext, Kernel, Verdict};
+#[cfg(feature = "runtime")]
 pub use mcp::{McpContext, McpRule, McpViolation};
+#[cfg(feature = "runtime")]
 pub use mcp_audit::{McpAuditLog, McpAuditRecord, McpEnforcementOutcome};
+#[cfg(feature = "runtime")]
 pub use tee::{TeeAttestation, TeePlatform, TeePolicy};

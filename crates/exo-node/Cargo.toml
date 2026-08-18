@@ -34,28 +34,29 @@ workspace = true
 
 [dependencies]
 # Workspace crates
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.3" }
-exo-dag = { package = "exochain-dag", path = "../exo-dag", version = "=0.2.3" }
-exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.3" }
-exo-gateway = { package = "exochain-gateway", path = "../exo-gateway", version = "=0.2.3", default-features = false }
-exo-api = { package = "exochain-api", path = "../exo-api", version = "=0.2.3" }
-exo-governance = { package = "exochain-governance", path = "../exo-governance", version = "=0.2.3" }
-exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.3" }
-exo-consent = { package = "exochain-consent", path = "../exo-consent", version = "=0.2.3" }
-exo-escalation = { package = "exochain-escalation", path = "../exo-escalation", version = "=0.2.3" }
-exo-legal = { package = "exochain-legal", path = "../exo-legal", version = "=0.2.3" }
-exo-avc = { package = "exochain-avc", path = "../exo-avc", version = "=0.2.3" }
-exo-authority = { package = "exochain-authority", path = "../exo-authority", version = "=0.2.3" }
-exo-economy = { package = "exochain-economy", path = "../exo-economy", version = "=0.2.3" }
-exo-root = { package = "exochain-root", path = "../exo-root", version = "=0.2.3" }
-exo-pdp = { package = "exochain-pdp", path = "../exo-pdp", version = "=0.2.3" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.4" }
+exo-dag = { package = "exochain-dag", path = "../exo-dag", version = "=0.2.4" }
+exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.4" }
+exo-gateway = { package = "exochain-gateway", path = "../exo-gateway", version = "=0.2.4", default-features = false }
+exo-api = { package = "exochain-api", path = "../exo-api", version = "=0.2.4" }
+exo-governance = { package = "exochain-governance", path = "../exo-governance", version = "=0.2.4" }
+exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.4" }
+exo-consent = { package = "exochain-consent", path = "../exo-consent", version = "=0.2.4" }
+exo-escalation = { package = "exochain-escalation", path = "../exo-escalation", version = "=0.2.4" }
+exo-legal = { package = "exochain-legal", path = "../exo-legal", version = "=0.2.4" }
+exo-avc = { package = "exochain-avc", path = "../exo-avc", version = "=0.2.4" }
+exo-authority = { package = "exochain-authority", path = "../exo-authority", version = "=0.2.4" }
+exo-economy = { package = "exochain-economy", path = "../exo-economy", version = "=0.2.4" }
+exo-root = { package = "exochain-root", path = "../exo-root", version = "=0.2.4" }
+exo-pdp = { package = "exochain-pdp", path = "../exo-pdp", version = "=0.2.4" }
+exo-proofs = { package = "exochain-proofs", path = "../exo-proofs", version = "=0.2.4" }
 
 # DAG DB MCP gateway proxy client (P1-B SDK). The default node compiles the
 # governed gateway proxy transport so MCP DAG DB tools can call the production
 # gateway path when runtime config is present. Missing runtime config still
 # fails closed; it never falls back to fabricated packet/writeback/import/export
 # results.
-exochain-sdk = { package = "exochain-sdk", path = "../exochain-sdk", version = "=0.2.3", optional = true }
+exochain-sdk = { package = "exochain-sdk", path = "../exochain-sdk", version = "=0.2.4", optional = true }
 
 # CLI
 clap = { version = "4", features = ["derive"] }

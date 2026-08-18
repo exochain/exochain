@@ -67,7 +67,7 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use exo_core::{
-    PublicKey, Signature,
+    Hash256, PublicKey, Signature,
     hash::hash_structured,
     types::{Did, Timestamp},
 };
@@ -134,6 +134,12 @@ pub enum HolonEvent {
     },
     /// A Holon was terminated due to capability denial.
     HolonTerminated { holon_id: Did, reason: String },
+    /// A successful holon step produced a sealed CGR reduction trace.
+    CgrProofIssued {
+        holon_id: Did,
+        trace_hash: Hash256,
+        invariants_checked: u32,
+    },
 }
 
 /// Health status of the node.
@@ -145,6 +151,24 @@ pub enum HealthStatus {
     Degraded { reason: String },
     /// Critical issue detected.
     Critical { reason: String },
+}
+
+async fn emit_cgr_proof_event(holon: &Holon, event_tx: &mpsc::Sender<HolonEvent>) {
+    let Some(trace) = holon.last_trace.as_ref() else {
+        return;
+    };
+    let invariants_checked = u32::try_from(trace.invariants_checked.len()).unwrap_or(u32::MAX);
+    if event_tx
+        .send(HolonEvent::CgrProofIssued {
+            holon_id: holon.id.clone(),
+            trace_hash: trace.trace_hash,
+            invariants_checked,
+        })
+        .await
+        .is_err()
+    {
+        tracing::warn!("Holon event channel closed — CgrProofIssued dropped");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -811,6 +835,7 @@ pub async fn run_holon_manager(
                         }).await.is_err() {
                             tracing::warn!("Holon event channel closed — TopologyAnalysis dropped");
                         }
+                        emit_cgr_proof_event(&topology_holon, &event_tx).await;
 
                         tracing::debug!(
                             peer_count,
@@ -898,6 +923,7 @@ pub async fn run_holon_manager(
                         }).await.is_err() {
                             tracing::warn!("Holon event channel closed — ScalingRecommendation dropped");
                         }
+                        emit_cgr_proof_event(&scaling_holon, &event_tx).await;
 
                         // Recommendation-only, full stop (D5): if validator count
                         // is critical (< 3) and we're a validator, emit a named
@@ -1045,6 +1071,7 @@ pub async fn run_holon_manager(
                         }).await.is_err() {
                             tracing::warn!("Holon event channel closed — HealthCheck dropped");
                         }
+                        emit_cgr_proof_event(&health_holon, &event_tx).await;
 
                         tracing::debug!(
                             consensus_round,
@@ -1622,6 +1649,20 @@ mod tests {
             output.fields.get("topology_recommendation"),
             Some(&"analyzed".to_string())
         );
+        let trace = h
+            .last_trace
+            .as_ref()
+            .expect("successful holon step records a CGR trace");
+        trace.verify_replay(&h.combinator_chain, &input).unwrap();
+        let events = h
+            .last_events
+            .as_ref()
+            .expect("successful holon step records CGR events");
+        assert!(matches!(
+            &events[0],
+            exo_core::events::EventPayload::HolonActionVerified { cgr_proof_hash, .. }
+                if *cgr_proof_hash == trace.trace_hash
+        ));
     }
 
     #[test]
@@ -1636,14 +1677,8 @@ mod tests {
 
         let result = holon::step(&mut h, &input, &kernel, &ctx);
         assert!(result.is_err(), "Guard should reject missing peer_count");
-        // Holon should NOT be terminated — it's a combinator error, not a capability denial.
-        // Actually, let's check — the guard failure comes from reduce(), which returns
-        // GatekeeperError, and step() would set state to what? Let's see.
-        // After reduce() fails, step() returns the error but state transitions happen
-        // before reduce. Actually, the reduce error is returned directly.
-        // The state was set to Executing, then reduce fails, and the function returns
-        // the error without setting state back. So state is Executing after guard failure.
-        // This is a known behavior of the current runtime.
+        assert_eq!(h.state, HolonState::Idle);
+        assert!(h.last_trace.is_none());
     }
 
     #[test]

@@ -213,6 +213,20 @@ pub fn enforce_all(
     }
 }
 
+/// Evaluate every configured invariant and return the individual results.
+#[must_use]
+pub fn evaluate_all(
+    engine: &InvariantEngine,
+    context: &InvariantContext,
+) -> Vec<(ConstitutionalInvariant, bool)> {
+    engine
+        .invariant_set
+        .invariants
+        .iter()
+        .map(|invariant| (*invariant, check_invariant(*invariant, context).is_ok()))
+        .collect()
+}
+
 fn check_invariant(
     invariant: ConstitutionalInvariant,
     context: &InvariantContext,

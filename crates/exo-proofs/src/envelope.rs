@@ -421,7 +421,11 @@ impl ProofEnvelope {
     ///
     /// Returns [`ProofError::InvalidProofFormat`] if canonical CBOR encoding of
     /// the binding tuple fails.
-    pub fn binding_digest(&self) -> Result<Hash256> {
+    /// Canonical CBOR bytes hashed by [`Self::binding_digest`].
+    ///
+    /// A RISC Zero guest must commit exactly these bytes so
+    /// `blake3(journal.bytes)` equals the envelope binding digest.
+    pub fn binding_payload(&self) -> Result<Vec<u8>> {
         let binding = EnvelopeBinding {
             domain: ENVELOPE_BINDING_DOMAIN,
             statement_kind: &self.statement_kind,
@@ -438,7 +442,11 @@ impl ProofEnvelope {
                 "failed to canonical-CBOR encode envelope binding for digest: {err}"
             ))
         })?;
-        Ok(Hash256(*blake3::hash(&encoded).as_bytes()))
+        Ok(encoded)
+    }
+
+    pub fn binding_digest(&self) -> Result<Hash256> {
+        Ok(Hash256(*blake3::hash(&self.binding_payload()?).as_bytes()))
     }
 
     /// Runs the RISC Zero seam against `verifier`, threading the serialized
@@ -519,26 +527,67 @@ impl ProofEnvelope {
                 )))
             }
             BackendId::RiscZero => {
-                // The RiscZero seam's refusal is NOT gated by
-                // `unaudited-pedagogical-proofs` — that feature concerns
-                // only this crate's own pedagogical blake3 stand-in.
-                // FailClosedRiscZeroVerifier always refuses, regardless of
-                // feature state, because no external cryptographic review
-                // of the risc0 verify path has landed yet (ratified
-                // decision D1). O-1.1: verify_riscz binds the full envelope
-                // context (statement_kind, commitment_roots, domain_separator,
-                // ...) into the journal digest the audited verifier will check
-                // the receipt against, so it can never certify an unbound
-                // statement once wired. O-1.2: receipt_bytes are threaded to
-                // the seam so the audited verifier has the serialized receipt
-                // to decode and check; the fail-closed default ignores them.
-                self.verify_riscz(receipt_bytes, &FailClosedRiscZeroVerifier)
+                #[cfg(feature = "risc0-verifier")]
+                {
+                    self.verify_riscz(receipt_bytes, &crate::riscz::Risc0Groth16Verifier)
+                }
+                #[cfg(not(feature = "risc0-verifier"))]
+                {
+                    let _ = receipt_bytes;
+                    Err(ProofError::VerificationFailed(
+                        "risc0-verifier feature is disabled; cannot verify RISC Zero receipts"
+                            .into(),
+                    ))
+                }
             }
             BackendId::Unknown(_) => unreachable!(
                 "validate_backend() above must have already refused an unregistered backend id"
             ),
         }
     }
+}
+
+/// Public inputs a CGR RISC Zero guest must reproduce from combinator replay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CgrZkPublicInputs {
+    pub combinator_hash: Hash256,
+    pub input_hash: Hash256,
+    pub output_hash: Hash256,
+    pub trace_hash: Hash256,
+}
+
+impl CgrZkPublicInputs {
+    #[must_use]
+    pub fn to_public_inputs(&self) -> Vec<Vec<u8>> {
+        vec![
+            self.combinator_hash.as_bytes().to_vec(),
+            self.input_hash.as_bytes().to_vec(),
+            self.output_hash.as_bytes().to_vec(),
+            self.trace_hash.as_bytes().to_vec(),
+        ]
+    }
+
+    pub fn from_public_inputs(inputs: &[Vec<u8>]) -> Result<Self> {
+        if inputs.len() != 4 {
+            return Err(ProofError::InvalidProofFormat(format!(
+                "CGR zk public inputs must be 4 hashes, got {}",
+                inputs.len()
+            )));
+        }
+        Ok(Self {
+            combinator_hash: hash_from_bytes(&inputs[0], "combinator_hash")?,
+            input_hash: hash_from_bytes(&inputs[1], "input_hash")?,
+            output_hash: hash_from_bytes(&inputs[2], "output_hash")?,
+            trace_hash: hash_from_bytes(&inputs[3], "trace_hash")?,
+        })
+    }
+}
+
+fn hash_from_bytes(bytes: &[u8], name: &str) -> Result<Hash256> {
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| ProofError::InvalidProofFormat(format!("{name} must be exactly 32 bytes")))?;
+    Ok(Hash256(arr))
 }
 
 // ---------------------------------------------------------------------------
