@@ -21,9 +21,11 @@ use exo_core::{
     Did, Hash256, Timestamp,
     hash::{merkle_proof, merkle_root, merkle_root_with_leaf_count},
 };
+use exo_gatekeeper::{CgrReductionTrace, Combinator, CombinatorInput};
 use exo_legal::evidence::{
     create_evidence_from_hash, custody_chain_digest, transfer_custody, verify_chain_of_custody,
 };
+use exo_proofs::envelope::ProofEnvelope;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -727,7 +729,7 @@ pub fn execute_generate_merkle_proof(params: &Value, _context: &NodeContext) -> 
 pub fn verify_cgr_proof_definition() -> ToolDefinition {
     ToolDefinition {
         name: "exochain_verify_cgr_proof".to_owned(),
-        description: "Fail-closed placeholder for CGR kernel proof verification until proof bytes, public inputs, checkpoint roots, and a production verifier are wired.".to_owned(),
+        description: "Verify a CGR reduction by deterministic combinator replay. Optional RISC Zero receipt_hex + envelope are verified with Receipt::verify. Hash-only claims are refused.".to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -735,7 +737,7 @@ pub fn verify_cgr_proof_definition() -> ToolDefinition {
                     "type": "string",
                     "minLength": CGR_PROOF_HASH_HEX_CHARS,
                     "maxLength": CGR_PROOF_HASH_HEX_CHARS,
-                    "description": "Hex-encoded hash claim for the CGR proof. Hash-only verification is refused."
+                    "description": "Hex-encoded sealed CGR trace hash. Must match the presented trace when combinator, input, and trace are supplied."
                 },
                 "invariants_checked": {
                     "type": "array",
@@ -744,11 +746,30 @@ pub fn verify_cgr_proof_definition() -> ToolDefinition {
                         "maxLength": MAX_CGR_INVARIANT_NAME_BYTES
                     },
                     "maxItems": MAX_CGR_INVARIANTS_CHECKED,
-                    "description": "Caller-declared invariant names. These are not accepted as proof of verification."
+                    "description": "Caller-declared invariant names. When a sealed trace is present they must appear on that trace. They are not accepted as proof by themselves."
                 },
                 "verified_at_ms": {
                     "type": "integer",
                     "description": "Caller-supplied nonzero HLC physical milliseconds accepted only for backward-compatible request validation; it is not returned as a trusted refusal timestamp."
+                },
+                "combinator": {
+                    "description": "Combinator program to replay. Required together with input and trace."
+                },
+                "input": {
+                    "type": "object",
+                    "description": "CombinatorInput envelope to replay. Required together with combinator and trace."
+                },
+                "trace": {
+                    "type": "object",
+                    "description": "Sealed CgrReductionTrace. Required together with combinator and input."
+                },
+                "envelope": {
+                    "type": "object",
+                    "description": "ProofEnvelope for a RISC Zero CGR receipt. Required together with receipt_hex."
+                },
+                "receipt_hex": {
+                    "type": "string",
+                    "description": "Hex-encoded canonical-CBOR RISC Zero Receipt. Required together with envelope."
                 }
             },
             "required": ["proof_hash", "invariants_checked", "verified_at_ms"],
@@ -776,14 +797,142 @@ pub fn execute_verify_cgr_proof(params: &Value, _context: &NodeContext) -> ToolR
         return result;
     }
 
-    ToolResult::error(
+    let combinator_present = params.get("combinator").is_some();
+    let input_present = params.get("input").is_some();
+    let trace_present = params.get("trace").is_some();
+    let replay_fields =
+        usize::from(combinator_present) + usize::from(input_present) + usize::from(trace_present);
+    if replay_fields == 0 {
+        return ToolResult::error(
+            json!({
+                "error": format!(
+                    "CGR proof verification is unavailable: exochain_verify_cgr_proof has no proof bytes, public inputs, checkpoint root, validator signature set, or production CGR proof verifier wired; refusing hash-only verification claims. See {MCP_CGR_PROOF_INITIATIVE}."
+                ),
+                "invariant_count": invariant_count,
+                "refusal_time_source": "not_recorded_without_trusted_hlc",
+                "initiative": MCP_CGR_PROOF_INITIATIVE,
+            })
+            .to_string(),
+        );
+    }
+    if replay_fields != 3 {
+        return tool_error(
+            "CGR replay verification requires combinator, input, and trace together",
+        );
+    }
+
+    let combinator: Combinator = match serde_json::from_value(params["combinator"].clone()) {
+        Ok(value) => value,
+        Err(_) => return tool_error("combinator is not a valid Combinator program"),
+    };
+    let input: CombinatorInput = match serde_json::from_value(params["input"].clone()) {
+        Ok(value) => value,
+        Err(_) => return tool_error("input is not a valid CombinatorInput"),
+    };
+    let trace: CgrReductionTrace = match serde_json::from_value(params["trace"].clone()) {
+        Ok(value) => value,
+        Err(_) => return tool_error("trace is not a valid sealed CgrReductionTrace"),
+    };
+
+    let claimed_hash = match params
+        .get("proof_hash")
+        .and_then(Value::as_str)
+        .ok_or_else(|| tool_error("missing required parameter: proof_hash"))
+        .and_then(|value| parse_hash256_hex(value, "proof_hash"))
+    {
+        Ok(hash) => hash,
+        Err(result) => return result,
+    };
+    if claimed_hash != trace.trace_hash {
+        return tool_error("proof_hash does not match the sealed CGR trace hash");
+    }
+
+    let declared = match params.get("invariants_checked").and_then(Value::as_array) {
+        Some(items) => items,
+        None => {
+            return tool_error("missing required parameter: invariants_checked (must be an array)");
+        }
+    };
+    for (index, item) in declared.iter().enumerate() {
+        let Some(name) = item.as_str() else {
+            return tool_error(format!("invariants_checked[{index}] must be a string"));
+        };
+        if !trace
+            .invariants_checked
+            .iter()
+            .any(|checked| checked.name == name)
+        {
+            return tool_error("declared invariant is not present on the sealed CGR trace");
+        }
+    }
+
+    if trace.verify_replay(&combinator, &input).is_err() {
+        return ToolResult::error(
+            json!({
+                "error": "CGR combinator replay did not match the sealed trace",
+                "replay_ok": false,
+            })
+            .to_string(),
+        );
+    }
+
+    let envelope_present = params.get("envelope").is_some();
+    let receipt_present = params.get("receipt_hex").is_some();
+    if envelope_present != receipt_present {
+        return tool_error("RISC Zero verification requires envelope and receipt_hex together");
+    }
+
+    let mut risc0_ok = false;
+    if envelope_present {
+        let envelope: ProofEnvelope = match serde_json::from_value(params["envelope"].clone()) {
+            Ok(value) => value,
+            Err(_) => return tool_error("envelope is not a valid ProofEnvelope"),
+        };
+        let receipt_hex = match params.get("receipt_hex").and_then(Value::as_str) {
+            Some(value) if !value.is_empty() => value,
+            _ => return tool_error("receipt_hex must be a nonempty hex string"),
+        };
+        if receipt_hex.len() > 2_000_000 {
+            return tool_error("receipt_hex exceeds maximum length");
+        }
+        let receipt_bytes = match hex::decode(receipt_hex) {
+            Ok(bytes) => bytes,
+            Err(_) => return tool_error("receipt_hex must be valid hexadecimal"),
+        };
+        match envelope.verify(&receipt_bytes) {
+            Ok(true) => risc0_ok = true,
+            Ok(false) => {
+                return ToolResult::error(
+                    json!({
+                        "error": "RISC Zero receipt verification returned false",
+                        "replay_ok": true,
+                        "risc0_ok": false,
+                    })
+                    .to_string(),
+                );
+            }
+            Err(_) => {
+                return ToolResult::error(
+                    json!({
+                        "error": "RISC Zero receipt verification failed",
+                        "replay_ok": true,
+                        "risc0_ok": false,
+                    })
+                    .to_string(),
+                );
+            }
+        }
+    }
+
+    ToolResult::success(
         json!({
-            "error": format!(
-                "CGR proof verification is unavailable: exochain_verify_cgr_proof has no proof bytes, public inputs, checkpoint root, validator signature set, or production CGR proof verifier wired; refusing hash-only verification claims. See {MCP_CGR_PROOF_INITIATIVE}."
-            ),
-            "invariant_count": invariant_count,
-            "refusal_time_source": "not_recorded_without_trusted_hlc",
-            "initiative": MCP_CGR_PROOF_INITIATIVE,
+            "replay_ok": true,
+            "risc0_ok": risc0_ok,
+            "trace_hash": trace.trace_hash.to_string(),
+            "step_count": trace.steps.len(),
+            "invariant_count": trace.invariants_checked.len(),
+            "output_hash": trace.output_hash.to_string(),
+            "spec": trace.spec,
         })
         .to_string(),
     )
@@ -1442,28 +1591,107 @@ mod tests {
         );
     }
 
-    /// STANDING RED — documented to FAIL when run with `--ignored` today.
-    ///
-    /// Asserts that a well-formed, envelope-backed CGR proof request
-    /// verifies successfully once real CGR verification is wired in.
-    /// This is red until VCG-001b lands the production CGR proof
-    /// verifier and VCG-004b wires it into
-    /// `exochain_verify_cgr_proof`. Wiring to the pedagogical
-    /// `exo-proofs` verifiers is explicitly NOT an acceptable closure
-    /// for this red (see GAP-REGISTRY.md row VCG-004 / the VCG-004a
-    /// work order's ledger non-closure note).
+    fn produced_cgr_replay_params() -> (Value, CgrReductionTrace) {
+        let combinator = Combinator::Sequence(vec![
+            Combinator::Identity,
+            Combinator::Transform(
+                Box::new(Combinator::Identity),
+                exo_gatekeeper::combinator::TransformFn {
+                    name: "tag".into(),
+                    output_key: "tagged".into(),
+                    output_value: "yes".into(),
+                },
+            ),
+        ]);
+        let input = CombinatorInput::new().with("k", "v");
+        let (_output, trace) = exo_gatekeeper::reduce_with_trace(&combinator, &input).unwrap();
+        let params = json!({
+            "proof_hash": trace.trace_hash.to_string(),
+            "invariants_checked": [],
+            "verified_at_ms": 1_700_000_000_002_u64,
+            "combinator": combinator,
+            "input": input,
+            "trace": trace,
+        });
+        (params, trace)
+    }
+
     #[test]
-    #[ignore = "red until VCG-001b production verifier and VCG-004b wiring land"]
-    fn cgr_real_verification_consumes_envelope() {
-        let context = NodeContext::empty();
-        let params = wellformed_cgr_envelope_params(&context);
+    fn execute_verify_cgr_proof_replays_produced_trace() {
+        let (params, trace) = produced_cgr_replay_params();
+        let result = execute_verify_cgr_proof(&params, &NodeContext::empty());
+        assert!(!result.is_error, "{}", result.content[0].text());
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+        assert_eq!(v["replay_ok"], true);
+        assert_eq!(v["trace_hash"], trace.trace_hash.to_string());
+        assert_eq!(v["spec"], exo_gatekeeper::CGR_TRACE_SPEC);
+        assert!(v["step_count"].as_u64().unwrap() >= 3);
+    }
 
-        let result = execute_verify_cgr_proof(&params, &context);
+    #[test]
+    fn execute_verify_cgr_proof_rejects_tampered_trace() {
+        let (mut params, _trace) = produced_cgr_replay_params();
+        params["trace"]["steps"][0]["kind"] = json!("Forged");
+        let result = execute_verify_cgr_proof(&params, &NodeContext::empty());
+        assert!(result.is_error);
+        let text = result.content[0].text();
+        assert!(
+            text.contains("CGR combinator replay did not match the sealed trace")
+                || text.contains("trace is not a valid sealed CgrReductionTrace")
+                || text.contains("proof_hash does not match")
+        );
+        assert!(!text.contains("Forged"));
+    }
 
+    #[test]
+    fn execute_verify_cgr_proof_rejects_partial_replay_fields() {
+        let (mut params, _trace) = produced_cgr_replay_params();
+        params.as_object_mut().unwrap().remove("trace");
+        let result = execute_verify_cgr_proof(&params, &NodeContext::empty());
+        assert!(result.is_error);
+        assert!(
+            result.content[0]
+                .text()
+                .contains("requires combinator, input, and trace together")
+        );
+    }
+
+    #[test]
+    fn execute_verify_cgr_proof_verifies_risc0_receipt() {
+        let combinator = Combinator::Identity;
+        let input = CombinatorInput::new().with("k", "v");
+        let (_output, trace) = exo_gatekeeper::reduce_with_trace(&combinator, &input).unwrap();
+        let fixture_dir = format!("{}/../exo-cgr-prover/fixtures", env!("CARGO_MANIFEST_DIR"));
+        let receipt = std::fs::read(format!("{fixture_dir}/cgr_identity_receipt.cbor"))
+            .expect("CGR RISC Zero receipt fixture");
+        let envelope_bytes = std::fs::read(format!("{fixture_dir}/cgr_identity_envelope.cbor"))
+            .expect("CGR RISC Zero envelope fixture");
+        let envelope: ProofEnvelope =
+            ciborium::from_reader(envelope_bytes.as_slice()).expect("decode envelope");
+        let params = json!({
+            "proof_hash": trace.trace_hash.to_string(),
+            "invariants_checked": [],
+            "verified_at_ms": 1_700_000_000_002_u64,
+            "combinator": combinator,
+            "input": input,
+            "trace": trace,
+            "envelope": envelope,
+            "receipt_hex": hex::encode(receipt),
+        });
+        let result = execute_verify_cgr_proof(&params, &NodeContext::empty());
+        assert!(!result.is_error, "{}", result.content[0].text());
+        let v: Value = serde_json::from_str(result.content[0].text()).expect("valid JSON");
+        assert_eq!(v["replay_ok"], true);
+        assert_eq!(v["risc0_ok"], true);
+    }
+
+    #[test]
+    fn cgr_real_verification_consumes_produced_trace() {
+        let (params, _trace) = produced_cgr_replay_params();
+        let result = execute_verify_cgr_proof(&params, &NodeContext::empty());
         assert!(
             !result.is_error,
-            "expected a well-formed, envelope-backed CGR proof request to verify \
-             successfully once real CGR verification is wired; got error: {}",
+            "produced CGR traces must replay successfully; got error: {}",
             result.content[0].text()
         );
     }

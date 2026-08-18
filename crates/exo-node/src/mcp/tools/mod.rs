@@ -43,12 +43,12 @@
 //!    does not exist yet. This is the strictest posture in the registry
 //!    and must be preserved: [`messaging`]'s `send_encrypted`,
 //!    `receive_encrypted`, and `configure_death_trigger` always refuse.
-//!    `verify_cgr_proof` ([`proofs`]) is also unconditionally fail-closed
-//!    today: it has no `proof_bytes`/checkpoint-root/validator-signature
-//!    wire fields and no production CGR verifier wired, so it refuses
-//!    regardless of any feature flag (see the CGR proof-verification
-//!    lock tests in the [`proofs`] module's `tests` submodule and
-//!    `Initiatives/fix-mcp-cgr-proof-verification-stub.md`).
+//!    `verify_cgr_proof` ([`proofs`]) refuses hash-only claims and
+//!    incomplete envelopes. When `combinator`, `input`, and a sealed
+//!    `trace` are all present it verifies by deterministic combinator
+//!    replay against the sealed BLAKE3 trace hash. That is CGR
+//!    completeness as specified (replay, not a SNARK). Production
+//!    SNARK/STARK verification remains VCG-001 and is not claimed here.
 //!
 //! 3. **Feature-gated simulation tools** — otherwise-truthy-shaped
 //!    mutation handlers that have no live backing store or reactor

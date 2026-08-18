@@ -23,12 +23,14 @@
 //! attest to the hash without altering it.
 
 use exo_core::{Did, Hash256, PublicKey, SecretKey, Signature, Timestamp, crypto};
+use exo_gatekeeper::{CGR_TRACE_EVIDENCE_TYPE, CgrReductionTrace, Combinator, CombinatorInput};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{
     cert_902_11::Cert902_11,
     error::{LegalError, Result},
-    evidence::Evidence,
+    evidence::{Evidence, create_evidence_from_hash},
 };
 
 /// Owned snapshot of a `Cert902_11` for bundle serialization.
@@ -80,9 +82,22 @@ pub struct EvidenceBundle {
     pub contract_summary: Option<ContractSummary>,
     pub certification: Option<CertSnapshot>,
     pub dag_anchor: DagAnchor,
+    #[serde(default)]
+    pub cgr_program: Option<CgrProgramEvidence>,
     pub verification: VerificationManifest,
     pub bundle_hash: Hash256,
     pub signatures: Vec<BundleSignature>,
+}
+
+/// Combinator program, input, and sealed reduction trace carried on a bundle.
+///
+/// Present only when the bundle documents a Holon/CGR reduction. Absent
+/// bundles keep the original hash payload bytes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CgrProgramEvidence {
+    pub combinator: Combinator,
+    pub input: CombinatorInput,
+    pub trace: CgrReductionTrace,
 }
 
 /// Deterministic assembly input for an evidence bundle.
@@ -101,6 +116,7 @@ pub struct BundleAssemblyInput {
     pub contract_summary: Option<ContractSummary>,
     pub certification: Option<Cert902_11>,
     pub dag_anchor: DagAnchor,
+    pub cgr_program: Option<CgrProgramEvidence>,
 }
 
 /// What a bundle is about.
@@ -219,6 +235,7 @@ pub struct VerificationResult {
     pub hash_valid: bool,
     pub event_chain_valid: bool,
     pub causal_order_valid: bool,
+    pub cgr_valid: bool,
     pub signatures_valid: Vec<SignatureCheck>,
     pub overall: bool,
 }
@@ -254,6 +271,7 @@ const BUNDLE_VERSION: u32 = 1;
 const BUNDLE_DOMAIN: &[u8] = b"exo:bundle:v1:";
 const BUNDLE_HASH_DOMAIN: &str = "exo.legal.bundle.hash.v1";
 const BUNDLE_HASH_SCHEMA_VERSION: u32 = 1;
+const BUNDLE_CGR_HASH_DOMAIN: &str = "exo.legal.bundle.cgr_program.v1";
 const BUNDLE_EVENT_CHAIN_DOMAIN: &str = "exo.legal.bundle.event_chain.v1";
 const BUNDLE_EVIDENCE_HASHES_DOMAIN: &str = "exo.legal.bundle.evidence_hashes.v1";
 const BUNDLE_SIGNATURE_DOMAIN: &str = "exo.legal.bundle.signature.v1";
@@ -284,6 +302,13 @@ pub fn assemble(input: BundleAssemblyInput) -> Result<EvidenceBundle> {
     }
 
     let cert_snapshot = input.certification.as_ref().map(CertSnapshot::from_cert);
+    if let Some(cgr) = &input.cgr_program {
+        cgr.trace
+            .verify_replay(&cgr.combinator, &cgr.input)
+            .map_err(|err| LegalError::InvalidStateTransition {
+                reason: format!("CGR trace replay failed during bundle assembly: {err}"),
+            })?;
+    }
     // Validate events
     if input.events.is_empty() {
         return Err(LegalError::InvalidStateTransition {
@@ -305,6 +330,7 @@ pub fn assemble(input: BundleAssemblyInput) -> Result<EvidenceBundle> {
         contract_summary: input.contract_summary,
         certification: cert_snapshot,
         dag_anchor: input.dag_anchor,
+        cgr_program: input.cgr_program,
         verification: VerificationManifest {
             format_version: BUNDLE_VERSION,
             hash_algorithm: "BLAKE3".into(),
@@ -377,29 +403,71 @@ fn validate_causal_chain(events: &[BundleEvent]) -> Result<()> {
 /// # Errors
 /// Returns `LegalError` if canonical payload serialization fails.
 pub fn bundle_hash_payload(bundle: &EvidenceBundle) -> Result<Vec<u8>> {
-    let payload = (
-        BUNDLE_HASH_DOMAIN,
-        BUNDLE_HASH_SCHEMA_VERSION,
-        &bundle.id,
-        bundle.version,
-        bundle.created_at,
-        &bundle.subject,
-        &bundle.events,
-        &bundle.evidence_items,
-        &bundle.consent_records,
-        &bundle.contract_summary,
-        &bundle.certification,
-        &bundle.dag_anchor,
-        bundle.verification.format_version,
-        &bundle.verification.hash_algorithm,
-    );
     let mut encoded = Vec::new();
-    ciborium::into_writer(&payload, &mut encoded).map_err(|e| {
-        LegalError::InvalidStateTransition {
-            reason: format!("bundle hash payload CBOR serialization failed: {e}"),
-        }
-    })?;
+    if let Some(cgr) = &bundle.cgr_program {
+        let payload = (
+            BUNDLE_HASH_DOMAIN,
+            BUNDLE_HASH_SCHEMA_VERSION,
+            &bundle.id,
+            bundle.version,
+            bundle.created_at,
+            &bundle.subject,
+            &bundle.events,
+            &bundle.evidence_items,
+            &bundle.consent_records,
+            &bundle.contract_summary,
+            &bundle.certification,
+            &bundle.dag_anchor,
+            bundle.verification.format_version,
+            &bundle.verification.hash_algorithm,
+            BUNDLE_CGR_HASH_DOMAIN,
+            cgr,
+        );
+        ciborium::into_writer(&payload, &mut encoded).map_err(|e| {
+            LegalError::InvalidStateTransition {
+                reason: format!("bundle hash payload CBOR serialization failed: {e}"),
+            }
+        })?;
+    } else {
+        let payload = (
+            BUNDLE_HASH_DOMAIN,
+            BUNDLE_HASH_SCHEMA_VERSION,
+            &bundle.id,
+            bundle.version,
+            bundle.created_at,
+            &bundle.subject,
+            &bundle.events,
+            &bundle.evidence_items,
+            &bundle.consent_records,
+            &bundle.contract_summary,
+            &bundle.certification,
+            &bundle.dag_anchor,
+            bundle.verification.format_version,
+            &bundle.verification.hash_algorithm,
+        );
+        ciborium::into_writer(&payload, &mut encoded).map_err(|e| {
+            LegalError::InvalidStateTransition {
+                reason: format!("bundle hash payload CBOR serialization failed: {e}"),
+            }
+        })?;
+    }
     Ok(encoded)
+}
+
+/// Build a litigation-grade evidence item whose content hash is the sealed CGR trace hash.
+pub fn evidence_from_cgr_trace(
+    id: Uuid,
+    creator: &Did,
+    timestamp: Timestamp,
+    trace: &CgrReductionTrace,
+) -> Result<Evidence> {
+    create_evidence_from_hash(
+        id,
+        trace.trace_hash,
+        creator,
+        CGR_TRACE_EVIDENCE_TYPE,
+        timestamp,
+    )
 }
 
 /// Compute the deterministic BLAKE3 root hash of a canonical CBOR bundle payload.
@@ -432,7 +500,7 @@ fn build_verification_steps(bundle: &EvidenceBundle) -> Result<Vec<VerificationS
     let evidence_hashes: Vec<Hash256> = bundle.evidence_items.iter().map(|e| e.hash).collect();
     let evidence_hash = canonical_input_hash(BUNDLE_EVIDENCE_HASHES_DOMAIN, &evidence_hashes)?;
 
-    Ok(vec![
+    let mut steps = vec![
         VerificationStep {
             step_number: 1,
             description: "Verify event chain hash".into(),
@@ -451,7 +519,16 @@ fn build_verification_steps(bundle: &EvidenceBundle) -> Result<Vec<VerificationS
             input_hashes: vec![bundle.bundle_hash],
             expected_output: bundle.bundle_hash,
         },
-    ])
+    ];
+    if let Some(cgr) = &bundle.cgr_program {
+        steps.push(VerificationStep {
+            step_number: 4,
+            description: "Replay CGR combinator reduction and match sealed trace hash".into(),
+            input_hashes: vec![cgr.trace.trace_hash, cgr.trace.output_hash],
+            expected_output: cgr.trace.trace_hash,
+        });
+    }
+    Ok(steps)
 }
 
 // ---------------------------------------------------------------------------
@@ -515,12 +592,17 @@ fn verify_inner(
         .collect();
 
     let sigs_ok = signatures_valid.iter().all(|s| s.valid);
-    let overall = hash_valid && event_chain_valid && causal_order_valid && sigs_ok;
+    let cgr_valid = match &bundle.cgr_program {
+        None => true,
+        Some(cgr) => cgr.trace.verify_replay(&cgr.combinator, &cgr.input).is_ok(),
+    };
+    let overall = hash_valid && event_chain_valid && causal_order_valid && sigs_ok && cgr_valid;
 
     Ok(VerificationResult {
         hash_valid,
         event_chain_valid,
         causal_order_valid,
+        cgr_valid,
         signatures_valid,
         overall,
     })
@@ -812,6 +894,7 @@ mod tests {
             contract_summary: None,
             certification: None,
             dag_anchor: make_anchor(),
+            cgr_program: None,
         }
     }
 
@@ -1001,6 +1084,7 @@ mod tests {
                 contract_summary: None,
                 certification: None,
                 dag_anchor: make_anchor(),
+                cgr_program: None,
                 verification: VerificationManifest {
                     format_version: BUNDLE_VERSION,
                     hash_algorithm: "BLAKE3".into(),
@@ -1122,6 +1206,7 @@ mod tests {
                 contract_summary: None,
                 certification: None,
                 dag_anchor: make_anchor(),
+                cgr_program: None,
                 verification: VerificationManifest {
                     format_version: BUNDLE_VERSION,
                     hash_algorithm: "BLAKE3".into(),
@@ -1361,6 +1446,7 @@ mod tests {
                 contract_summary: contract,
                 certification: None,
                 dag_anchor: make_anchor(),
+                cgr_program: None,
                 verification: VerificationManifest {
                     format_version: BUNDLE_VERSION,
                     hash_algorithm: "BLAKE3".into(),
@@ -1408,6 +1494,7 @@ mod tests {
                 contract_summary: None,
                 certification: None,
                 dag_anchor: make_anchor(),
+                cgr_program: None,
                 verification: VerificationManifest {
                     format_version: BUNDLE_VERSION,
                     hash_algorithm: "BLAKE3".into(),
@@ -1683,6 +1770,7 @@ mod tests {
                 contract_summary: None,
                 certification: c.as_ref().map(CertSnapshot::from_cert),
                 dag_anchor: make_anchor(),
+                cgr_program: None,
                 verification: VerificationManifest {
                     format_version: BUNDLE_VERSION,
                     hash_algorithm: "BLAKE3".into(),
@@ -1695,5 +1783,106 @@ mod tests {
             b.bundle_hash
         };
         assert_ne!(mk(Some(cert)), mk(None));
+    }
+
+    fn sample_cgr_program() -> CgrProgramEvidence {
+        let combinator = Combinator::Sequence(vec![
+            Combinator::Identity,
+            exo_gatekeeper::combinator::Combinator::Transform(
+                Box::new(Combinator::Identity),
+                exo_gatekeeper::combinator::TransformFn {
+                    name: "tag".into(),
+                    output_key: "tagged".into(),
+                    output_value: "yes".into(),
+                },
+            ),
+        ]);
+        let input = CombinatorInput::new().with("k", "v");
+        let (_output, trace) = exo_gatekeeper::reduce_with_trace(&combinator, &input).unwrap();
+        CgrProgramEvidence {
+            combinator,
+            input,
+            trace,
+        }
+    }
+
+    #[test]
+    fn absent_cgr_program_keeps_legacy_hash_payload() {
+        type DecodedBundleHashPayload = (
+            String,
+            u32,
+            String,
+            u32,
+            Timestamp,
+            BundleSubject,
+            Vec<BundleEvent>,
+            Vec<crate::evidence::Evidence>,
+            Vec<ConsentSummary>,
+            Option<ContractSummary>,
+            Option<CertSnapshot>,
+            DagAnchor,
+            u32,
+            String,
+        );
+
+        let without = assemble_minimal();
+        assert!(without.cgr_program.is_none());
+        let payload = bundle_hash_payload(&without).unwrap();
+        let decoded: DecodedBundleHashPayload =
+            ciborium::de::from_reader(payload.as_slice()).expect("14-tuple legacy payload");
+        assert_eq!(decoded.0, BUNDLE_HASH_DOMAIN);
+        let result = verify(&without).unwrap();
+        assert!(result.cgr_valid);
+        assert!(result.hash_valid);
+    }
+
+    #[test]
+    fn cgr_program_is_hashed_and_replay_verified() {
+        let cgr = sample_cgr_program();
+        let evidence =
+            evidence_from_cgr_trace(Uuid::from_u128(0xC6), &did("holon"), ts(2500), &cgr.trace)
+                .unwrap();
+        assert_eq!(evidence.type_tag, CGR_TRACE_EVIDENCE_TYPE);
+        assert_eq!(evidence.hash, cgr.trace.trace_hash);
+
+        let mut input = make_assembly_input("bundle-cgr", vec![make_event(0, vec![])]);
+        input.evidence_items = vec![evidence];
+        input.cgr_program = Some(cgr.clone());
+        let bundle = assemble(input).unwrap();
+        assert!(bundle.cgr_program.is_some());
+        assert_eq!(bundle.verification.verification_steps.len(), 4);
+
+        let none_input = make_assembly_input("bundle-cgr", vec![make_event(0, vec![])]);
+        let without = assemble(none_input).unwrap();
+        assert_ne!(bundle.bundle_hash, without.bundle_hash);
+
+        let result = verify(&bundle).unwrap();
+        assert!(result.cgr_valid);
+        assert!(result.hash_valid);
+        assert!(result.overall);
+    }
+
+    #[test]
+    fn assemble_rejects_tampered_cgr_trace() {
+        let mut cgr = sample_cgr_program();
+        cgr.trace.steps[0].kind = "Forged".into();
+        let mut input = make_assembly_input("bundle-cgr-tamper", vec![make_event(0, vec![])]);
+        input.cgr_program = Some(cgr);
+        let err = assemble(input).unwrap_err();
+        assert!(err.to_string().contains("CGR trace replay failed"));
+    }
+
+    #[test]
+    fn verify_fails_when_cgr_trace_is_tampered_after_assembly() {
+        let cgr = sample_cgr_program();
+        let mut input = make_assembly_input("bundle-cgr-post", vec![make_event(0, vec![])]);
+        input.cgr_program = Some(cgr);
+        let mut bundle = assemble(input).unwrap();
+        if let Some(cgr) = bundle.cgr_program.as_mut() {
+            cgr.trace.steps[0].kind = "Forged".into();
+        }
+        let result = verify(&bundle).unwrap();
+        assert!(!result.cgr_valid);
+        assert!(!result.overall);
     }
 }

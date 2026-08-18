@@ -33,6 +33,11 @@ path = "src/lib.rs"
 workspace = true
 
 [features]
+default = ["risc0-verifier"]
+# Vendored RISC Zero receipt verifier (host only). The zkVM guest compiles
+# this crate with `--no-default-features` so it can use the envelope types
+# without pulling the host verifier graph.
+risc0-verifier = ["dep:risc0-zkvm"]
 # Opt-in flag required to execute any proof/verify/setup API. Without it,
 # every entry point returns ProofError::UnauditedImplementation. This is a
 # safety rail: exo-proofs is a structural skeleton, not production crypto.
@@ -59,7 +64,7 @@ ciborium = { workspace = true }
 # "prove"/"client"/"bonsai" feature -- pulling those in would reintroduce the
 # exact heavy prover surface (and its supply chain) this seam is designed to
 # avoid on the verify-only path.
-risc0-zkvm = { version = "=3.0.5", default-features = false, features = ["std"] }
+risc0-zkvm = { version = "=3.0.5", default-features = false, features = ["std"], optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

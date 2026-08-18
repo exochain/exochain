@@ -438,6 +438,7 @@ jobs:
             exochain-dag
             exochain-dag-db-postgres
             exochain-gatekeeper
+            exochain-proofs
             exochain-governance
             exochain-escalation
             exochain-tenant
@@ -452,7 +453,6 @@ jobs:
             exochain-root
             exochain-sdk
             exochain-node
-            exochain-proofs
             exochain-wasm
           )
           for crate in "${CRATES[@]}"; do

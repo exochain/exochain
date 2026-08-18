@@ -26,9 +26,10 @@ use exo_core::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    cgr_trace::{CgrInvariantCheck, invariant_check},
     invariants::{
         ConstitutionalInvariant, InvariantContext, InvariantEngine, InvariantSet,
-        InvariantViolation, enforce_all,
+        InvariantViolation, enforce_all, evaluate_all,
     },
     types::{
         AuthorityChain, BailmentState, ConsentRecord, PermissionSet, Provenance, QuorumEvidence,
@@ -117,8 +118,11 @@ impl Kernel {
         }
     }
 
-    pub fn adjudicate(&self, action: &ActionRequest, context: &AdjudicationContext) -> Verdict {
-        let inv_ctx = InvariantContext {
+    fn invariant_context(
+        action: &ActionRequest,
+        context: &AdjudicationContext,
+    ) -> InvariantContext {
+        InvariantContext {
             actor: action.actor.clone(),
             actor_roles: context.actor_roles.clone(),
             bailment_state: context.bailment_state.clone(),
@@ -133,7 +137,11 @@ impl Kernel {
             requested_permissions: action.required_permissions.clone(),
             trusted_authority_keys: context.trusted_authority_keys.clone(),
             trusted_provenance_keys: context.trusted_provenance_keys.clone(),
-        };
+        }
+    }
+
+    pub fn adjudicate(&self, action: &ActionRequest, context: &AdjudicationContext) -> Verdict {
+        let inv_ctx = Self::invariant_context(action, context);
 
         match enforce_all(&self.invariant_engine, &inv_ctx) {
             Ok(()) => match &context.active_challenge_reason {
@@ -167,6 +175,22 @@ impl Kernel {
     #[must_use]
     pub fn invariant_engine(&self) -> &InvariantEngine {
         &self.invariant_engine
+    }
+
+    /// Re-evaluate every configured invariant and return the live results.
+    #[must_use]
+    pub fn evaluate_invariants(
+        &self,
+        action: &ActionRequest,
+        context: &AdjudicationContext,
+    ) -> Vec<CgrInvariantCheck> {
+        evaluate_all(
+            &self.invariant_engine,
+            &Self::invariant_context(action, context),
+        )
+        .into_iter()
+        .map(|(invariant, passed)| invariant_check(invariant, passed))
+        .collect()
     }
 }
 

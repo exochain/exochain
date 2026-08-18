@@ -54,13 +54,19 @@
 
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
+#[cfg(not(target_os = "zkvm"))]
 pub mod circuit;
 pub mod envelope;
 pub mod error;
+#[cfg(all(feature = "risc0-verifier", not(target_os = "zkvm")))]
 pub mod riscz;
+#[cfg(not(target_os = "zkvm"))]
 pub mod snark;
+#[cfg(not(target_os = "zkvm"))]
 pub mod stark;
+#[cfg(not(target_os = "zkvm"))]
 pub mod verifier;
+#[cfg(not(target_os = "zkvm"))]
 pub mod zkml;
 
 /// Internal guard used by every public entry point. Returns an error

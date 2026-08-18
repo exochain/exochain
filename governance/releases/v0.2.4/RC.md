@@ -32,13 +32,15 @@ This is **not** v0.3.0 evidence-grade closure. Issue #813 stays open.
 | crates.io `ml-dsa` default-features off (#812) | In tree; published only after this version ships |
 | Two independent release environments (#789) | Workflow `approve` + `approve-second` |
 | ExoChained contract re-pin (#811) | Toolkit PR against `e0e6dacf` |
+| CGR reduction traces + combinator replay | Combinator/holon emit sealed traces; bundles carry them; MCP replays |
+| RISC Zero CGR execution receipts | Guest + server prover; `ProofEnvelope::verify` calls `Receipt::verify` |
 
 ## Out of scope (still open)
 
 | Item | Why it stays open |
 | --- | --- |
-| VCG-001 production SNARK/STARK/ZKML | No production backend exists. Do not claim one. |
-| VCG-004 / #810 CGR traces | Combinator still emits no trace; verifier is fail-closed stub. |
+| VCG-001 `ProductionReviewed` | External cryptographic review of the integration has not landed. Receipt verify is live; the registry label is not. |
+| Groth16 receipt compression wrap | Default prover emits a zkVM execution receipt, not the on-chain Groth16 wrap. |
 | #813 evidence-grade train | G00 / Art. 26 certification not claimed. |
 | Signed tag + crates.io publish | Requires two environment approvals and a signed `v0.2.4` tag. |
 
@@ -50,4 +52,6 @@ This is **not** v0.3.0 evidence-grade closure. Issue #813 stays open.
 4. Dispatch `EXOCHAIN Release` with `version=0.2.4` and `dry_run=false`.
 5. Yank crates.io `0.2.3` after `0.2.4` is live (`ml-dsa`/`pkcs8` break).
 
-Do not describe this RC as court-ready, CGR-complete, or a 0.3.0 close.
+Do not describe this RC as court-ready, Article 26 certified, or a 0.3.0 close.
+CGR completeness here means sealed combinator replay plus an optional RISC Zero
+execution receipt. It is not `AuditStatus::ProductionReviewed`.

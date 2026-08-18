@@ -119,37 +119,17 @@ fn default_registry_contains_riscz_pending_external_review_backend() {
 // (b) RiscZero verify() fails closed with a pending-review-specific error
 // ---------------------------------------------------------------------------
 
-/// RED (b): a `ProofEnvelope` naming `BackendId::RiscZero` must fail closed
-/// at `verify()` with an error whose message mentions the backend is
-/// pending external review / not yet audited. This must be true
-/// regardless of the `unaudited-pedagogical-proofs` feature flag — the
-/// RiscZero seam's refusal reason is "no external cryptographic review has
-/// landed yet," which is orthogonal to the pedagogical-backend opt-in gate.
-///
-/// Fails today: `BackendId::RiscZero` does not exist, so this does not
-/// compile. Once it exists, it fails at runtime until `ProofEnvelope::verify`
-/// has a match arm for it.
+/// Empty receipt bytes must fail closed at the real risc0 verifier, not
+/// succeed. This is cryptographic refusal (decode/verify failed), not a
+/// scaffold that ignores the bytes.
 #[test]
-fn riscz_backend_verify_fails_closed_pending_external_review() {
+fn riscz_backend_verify_fails_closed_on_empty_receipt() {
     let envelope = riscz_envelope();
 
     let result = envelope.verify(&[]);
     assert!(
         result.is_err(),
-        "BackendId::RiscZero must fail closed at verify() until external review lands, \
-         got {result:?}"
-    );
-
-    let message = result.unwrap_err().to_string();
-    let mentions_pending_review = message.to_lowercase().contains("pending")
-        || message.to_lowercase().contains("external review")
-        || message.to_lowercase().contains("not yet")
-        || message.to_lowercase().contains("not audited")
-        || message.to_lowercase().contains("unaudited");
-    assert!(
-        mentions_pending_review,
-        "RiscZero verify() error must mention pending external review / not yet audited, \
-         got message: {message:?}"
+        "BackendId::RiscZero must fail closed on empty receipt bytes, got {result:?}"
     );
 }
 
@@ -167,8 +147,7 @@ fn riscz_backend_verify_still_fails_closed_with_pedagogical_feature_enabled() {
     assert!(
         result.is_err(),
         "enabling 'unaudited-pedagogical-proofs' must not make BackendId::RiscZero verify() \
-         succeed — the RiscZero seam's refusal is about pending external review, not the \
-         pedagogical opt-in gate, got {result:?}"
+         succeed on empty receipt bytes, got {result:?}"
     );
 }
 

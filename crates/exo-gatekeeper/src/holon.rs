@@ -19,11 +19,12 @@
 //! A Holon is an autonomous agent that executes a combinator program
 //! under kernel adjudication. Every step is capability-checked.
 
-use exo_core::Did;
+use exo_core::{Did, Hash256, events::EventPayload};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    combinator::{CheckpointId, Combinator, CombinatorInput, CombinatorOutput, reduce},
+    cgr_trace::CgrReductionTrace,
+    combinator::{CheckpointId, Combinator, CombinatorInput, CombinatorOutput, reduce_with_trace},
     error::GatekeeperError,
     kernel::{ActionRequest, AdjudicationContext, Kernel, Verdict},
     types::PermissionSet,
@@ -53,6 +54,8 @@ pub struct Checkpoint {
     pub holon_id: Did,
     pub state: HolonState,
     pub last_output: Option<CombinatorOutput>,
+    pub last_trace: Option<CgrReductionTrace>,
+    pub last_events: Option<Vec<EventPayload>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -67,6 +70,8 @@ pub struct Holon {
     pub state: HolonState,
     pub combinator_chain: Combinator,
     pub last_output: Option<CombinatorOutput>,
+    pub last_trace: Option<CgrReductionTrace>,
+    pub last_events: Option<Vec<EventPayload>>,
 }
 
 /// Create a new holon in the `Idle` state with the given identity, capabilities, and program.
@@ -78,6 +83,8 @@ pub fn spawn(id: Did, capabilities: PermissionSet, program: Combinator) -> Holon
         state: HolonState::Idle,
         combinator_chain: program,
         last_output: None,
+        last_trace: None,
+        last_events: None,
     }
 }
 
@@ -127,8 +134,34 @@ pub fn step(
     }
 
     holon.state = HolonState::Executing;
-    let output = reduce(&holon.combinator_chain, input)?;
+    let (output, trace) = match reduce_with_trace(&holon.combinator_chain, input) {
+        Ok(result) => result,
+        Err(err) => {
+            holon.state = HolonState::Idle;
+            return Err(err);
+        }
+    };
+
+    let checks = kernel.evaluate_invariants(&action, adjudication_context);
+    if checks.iter().any(|check| !check.passed) {
+        holon.state = HolonState::Idle;
+        return Err(GatekeeperError::InvariantViolation(
+            "kernel invariant re-evaluation failed after combinator reduction".into(),
+        ));
+    }
+
+    let constitution_hash = Hash256::from_bytes(*kernel.constitution_hash());
+    let trace = match trace.with_attestation(checks, Some(constitution_hash)) {
+        Ok(trace) => trace,
+        Err(err) => {
+            holon.state = HolonState::Idle;
+            return Err(err);
+        }
+    };
+    let events = trace.event_payloads(holon.id.clone());
     holon.last_output = Some(output.clone());
+    holon.last_trace = Some(trace);
+    holon.last_events = Some(events);
     holon.state = HolonState::Idle;
     Ok(output)
 }
@@ -146,6 +179,8 @@ pub fn suspend(holon: &mut Holon) -> Result<Checkpoint, GatekeeperError> {
         holon_id: holon.id.clone(),
         state: holon.state,
         last_output: holon.last_output.clone(),
+        last_trace: holon.last_trace.clone(),
+        last_events: holon.last_events.clone(),
     })
 }
 
@@ -162,6 +197,8 @@ pub fn resume(holon: &mut Holon, checkpoint: &Checkpoint) -> Result<(), Gatekeep
         ));
     }
     holon.last_output.clone_from(&checkpoint.last_output);
+    holon.last_trace.clone_from(&checkpoint.last_trace);
+    holon.last_events.clone_from(&checkpoint.last_events);
     holon.state = HolonState::Idle;
     Ok(())
 }
@@ -300,6 +337,26 @@ mod tests {
         .unwrap();
         assert_eq!(out.fields.get("x"), Some(&"1".to_string()));
         assert_eq!(h.state, HolonState::Idle);
+        let trace = h
+            .last_trace
+            .as_ref()
+            .expect("successful step records a CGR trace");
+        trace
+            .verify_replay(&h.combinator_chain, &CombinatorInput::new().with("x", "1"))
+            .unwrap();
+        assert!(trace.kernel_constitution_hash.is_some());
+        assert_eq!(trace.invariants_checked.len(), 8);
+        assert!(trace.invariants_checked.iter().all(|check| check.passed));
+        let events = h
+            .last_events
+            .as_ref()
+            .expect("successful step records CGR events");
+        assert!(matches!(
+            &events[0],
+            EventPayload::HolonActionVerified { cgr_proof_hash, .. }
+                if *cgr_proof_hash == trace.trace_hash
+        ));
+        assert!(matches!(events[1], EventPayload::CgrProofIssued { .. }));
     }
 
     #[test]
@@ -373,6 +430,8 @@ mod tests {
             holon_id: h.id.clone(),
             state: HolonState::Idle,
             last_output: None,
+            last_trace: None,
+            last_events: None,
         };
         assert!(resume(&mut h, &cp).is_err());
     }
@@ -386,6 +445,8 @@ mod tests {
             holon_id: did("did:exo:wrong"),
             state: HolonState::Suspended,
             last_output: None,
+            last_trace: None,
+            last_events: None,
         };
         assert!(resume(&mut h, &cp).is_err());
     }

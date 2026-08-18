@@ -42,11 +42,17 @@ v0.3.0 close. See `governance/releases/v0.2.4/RC.md`.
   from crates.io (issue #812).
 - Non-dry-run publication now requires two independent GitHub environments
   (`release` and `release-second`) instead of one one-of reviewer list.
+- Combinator reduction emits a sealed CGR trace. Holon steps record it and
+  `HolonActionVerified` / `CgrProofIssued` events. Evidence bundles carry
+  the program and replay it. MCP `exochain_verify_cgr_proof` refuses
+  hash-only claims and verifies combinator replay.
+- Optional RISC Zero execution receipts: a CGR guest plus server-side
+  prover; `ProofEnvelope::verify` calls vendored `Receipt::verify`. The
+  registry stays `PendingExternalReview` until external review lands.
 
 ### Out of scope for 0.2.4
 
-- Production SNARK/STARK/ZKML (VCG-001)
-- CGR reduction traces / MCP proof verifier (VCG-004, issue #810)
+- VCG-001 `ProductionReviewed` / Groth16 on-chain receipt wrap
 - Evidence-grade / Article 26 legal certification (#813)
 
 ## [0.2.3] - 2026-07-14

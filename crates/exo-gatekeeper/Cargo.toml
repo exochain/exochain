@@ -32,21 +32,35 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
+[features]
+default = ["runtime"]
+# Full judicial-branch runtime. The zkVM guest compiles this crate with
+# `--no-default-features` so only combinator/CGR trace code is linked.
+runtime = [
+    "dep:exo-api",
+    "dep:exo-consent",
+    "dep:exo-identity",
+    "dep:tracing",
+    "dep:ed25519-dalek",
+    "dep:hex",
+    "dep:uuid",
+]
+
 [dependencies]
-exo-api = { package = "exochain-api", path = "../exo-api", version = "=0.2.4" }
-exo-consent = { package = "exochain-consent", path = "../exo-consent", version = "=0.2.4" }
 exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.4" }
-exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.4" }
 serde = { workspace = true }
 blake3 = { workspace = true }
 ciborium = { workspace = true }
 thiserror = { workspace = true }
-uuid = { workspace = true }
-tracing = { workspace = true }
-ed25519-dalek = { workspace = true }
-hex = { workspace = true }
+exo-api = { package = "exochain-api", path = "../exo-api", version = "=0.2.4", optional = true }
+exo-consent = { package = "exochain-consent", path = "../exo-consent", version = "=0.2.4", optional = true }
+exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.4", optional = true }
+uuid = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+ed25519-dalek = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "zkvm")))'.dependencies]
 exo-dag-db-core = { package = "exochain-dag-db-core", path = "../exo-dag-db-core", version = "=0.2.4" }
 exo-dag-db-domain = { package = "exochain-dag-db-domain", path = "../exo-dag-db-domain", version = "=0.2.4" }
 exo-dag-db-exchange = { package = "exochain-dag-db-exchange", path = "../exo-dag-db-exchange", version = "=0.2.4" }
