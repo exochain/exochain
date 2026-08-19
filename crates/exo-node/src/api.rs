@@ -43,6 +43,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use exo_authority::{AuthorityChain, DelegationRegistry, chain};
+#[cfg(feature = "unaudited-admin-governance-shortcut")]
 use exo_core::types::PublicKey;
 use exo_core::types::{Did, Hash256, ReceiptOutcome, Signature, Timestamp, TrustReceipt};
 #[cfg(test)]
