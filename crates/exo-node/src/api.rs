@@ -43,7 +43,6 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use exo_authority::{AuthorityChain, DelegationRegistry, chain};
-#[cfg(feature = "unaudited-admin-governance-shortcut")]
 use exo_core::types::PublicKey;
 use exo_core::types::{Did, Hash256, ReceiptOutcome, Signature, Timestamp, TrustReceipt};
 #[cfg(test)]
@@ -281,6 +280,20 @@ pub struct NodeStatusResponse {
     pub validator_count: usize,
     pub is_validator: bool,
     pub validators: Vec<String>,
+    /// Public verification material for the active validator set, ordered by DID.
+    ///
+    /// Validator DIDs are self-certifying hashes of these Ed25519 keys. Publishing
+    /// the keys lets offline clients verify node-signed receipts without granting
+    /// write authority or exposing private material.
+    pub validator_trust_anchors: Vec<ValidatorTrustAnchorResponse>,
+}
+
+/// Public, non-secret verification material for one active validator.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValidatorTrustAnchorResponse {
+    pub did: String,
+    pub algorithm: String,
+    pub public_key_hex: String,
 }
 
 struct NodeStatusSnapshot {
@@ -288,6 +301,7 @@ struct NodeStatusSnapshot {
     committed_height: u64,
     validators: Vec<String>,
     is_validator: bool,
+    validator_trust_anchors: Vec<ValidatorTrustAnchorResponse>,
 }
 
 // ---------------------------------------------------------------------------
@@ -322,6 +336,16 @@ async fn read_node_status_snapshot(
                 .map(|d| d.to_string())
                 .collect::<Vec<_>>(),
             is_validator: s.is_validator,
+            validator_trust_anchors: s
+                .validator_public_keys
+                .as_map()
+                .iter()
+                .map(|(did, public_key)| ValidatorTrustAnchorResponse {
+                    did: did.to_string(),
+                    algorithm: "ed25519_v1".to_owned(),
+                    public_key_hex: hex::encode(public_key.as_bytes()),
+                })
+                .collect(),
         })
     })
     .await
@@ -543,6 +567,7 @@ async fn handle_status(
         validator_count: snapshot.validators.len(),
         is_validator: snapshot.is_validator,
         validators: snapshot.validators,
+        validator_trust_anchors: snapshot.validator_trust_anchors,
     }))
 }
 
@@ -1187,6 +1212,12 @@ mod tests {
         assert_eq!(status.consensus_round, 0);
         assert_eq!(status.validator_count, 4);
         assert!(status.is_validator);
+        assert_eq!(status.validator_trust_anchors.len(), 4);
+        for anchor in status.validator_trust_anchors {
+            assert_eq!(anchor.algorithm, "ed25519_v1");
+            assert_eq!(anchor.public_key_hex.len(), 64);
+            assert!(status.validators.contains(&anchor.did));
+        }
     }
 
     #[cfg(feature = "unaudited-admin-governance-shortcut")]
