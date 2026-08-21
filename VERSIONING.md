@@ -38,11 +38,10 @@ The workspace version is set in `Cargo.toml`:
 version = "0.2.4"
 ```
 
-This repository state is the unpublished `0.2.4` release candidate: PDP
-decides, AVC records, x402 adapts; crates.io `ml-dsa` consumers can build.
-The latest published release remains `v0.2.3`. Workspace version alignment
-is not evidence of a tag, GitHub Release, registry publication, deployment,
-or live runtime activation.
+The published release is `v0.2.4`: PDP decides, AVC records, x402 adapts;
+crates.io `ml-dsa` consumers can build. Workspace version alignment is not
+by itself evidence of a later tag, GitHub Release, registry publication,
+deployment, or live runtime activation.
 
 ## Release Process
 

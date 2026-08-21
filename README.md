@@ -37,7 +37,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 | Rust source files | 491 | `git ls-files 'crates/**/*.rs'` |
 | Workspace tests | 6,331 listed | `cargo test --workspace -- --list` |
 | CI quality gates | 23 | `.github/workflows/ci.yml` numbered gates; required aggregator is separate |
-| Latest published release | `v0.2.3` (GitHub Release published 2026-07-15; all release crates plus `@exochain/exochain-wasm` and `@exochain/llm-proxy` resolve the same version) | `gh release list`; crates.io version API; `npm view @exochain/exochain-wasm version`; `npm view @exochain/llm-proxy version` |
+| Latest published release | `v0.2.4` (GitHub Release published 2026-08-18; all release crates plus `@exochain/exochain-wasm` and `@exochain/llm-proxy` resolve the same version) | `gh release list`; crates.io version API; `npm view @exochain/exochain-wasm version`; `npm view @exochain/llm-proxy version` |
 | License | Apache-2.0 for EXOCHAIN core primitives; commercial terms for Decision Forum, LegalDyne, CyberMedica, LiveSafe, and CrossChecked products | `governance/commercial-product-licensing.json`; product license files where present |
 | Live node health | Not inferred from repository state; verify each target at deploy or release time | `tools/verify_live_node_claim.sh` |
 

@@ -42,7 +42,7 @@ This is **not** v0.3.0 evidence-grade closure. Issue #813 stays open.
 | VCG-001 `ProductionReviewed` | External cryptographic review of the integration has not landed. Receipt verify is live; the registry label is not. |
 | Groth16 receipt compression wrap | Default prover emits a zkVM execution receipt, not the on-chain Groth16 wrap. |
 | #813 evidence-grade train | G00 / Art. 26 certification not claimed. |
-| Signed tag + crates.io publish | Requires two environment approvals and a signed `v0.2.4` tag. |
+| Signed tag + crates.io publish | Done: `v0.2.4` on `9ad6068a`; GitHub Release and 32 crates plus npm live. Yank of `0.2.3` is #822. |
 
 ## Publication sequence
 
