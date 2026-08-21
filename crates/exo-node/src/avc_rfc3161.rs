@@ -349,26 +349,23 @@ fn der_algorithm_identifier(oid: &str) -> anyhow::Result<Vec<u8>> {
     Ok(der_sequence(&value))
 }
 
-fn deterministic_nonce(
-    evidence_subject: &AvcReceiptEvidenceSubject,
-    policy_oid: &str,
-) -> anyhow::Result<[u8; 32]> {
+fn deterministic_nonce_from_bytes(policy_oid: &str, canonical_bytes: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(RFC3161_NONCE_DOMAIN);
     hasher.update(policy_oid.as_bytes());
-    hasher.update(evidence_subject.canonical_bytes()?);
+    hasher.update(canonical_bytes);
     let digest = hasher.finalize();
     let mut nonce = [0u8; 32];
     nonce.copy_from_slice(&digest);
-    Ok(nonce)
+    nonce
 }
 
-pub(crate) fn build_timestamp_request(
-    evidence_subject: &AvcReceiptEvidenceSubject,
+pub(crate) fn build_timestamp_request_from_imprint(
+    message_imprint_sha256: [u8; 32],
+    nonce_material: &[u8],
     policy_oid: &str,
 ) -> anyhow::Result<Rfc3161TimestampRequest> {
-    let message_imprint_sha256 = evidence_subject.rfc3161_sha256_message_imprint()?;
-    let nonce = deterministic_nonce(evidence_subject, policy_oid)?;
+    let nonce = deterministic_nonce_from_bytes(policy_oid, nonce_material);
     let mut message_imprint = Vec::new();
     message_imprint.extend_from_slice(&der_algorithm_identifier(RFC3161_SHA256_ALGORITHM_OID)?);
     message_imprint.extend_from_slice(&der_tlv(DER_OCTET_STRING, &message_imprint_sha256));
@@ -387,6 +384,17 @@ pub(crate) fn build_timestamp_request(
         nonce_hex: hex::encode(minimal_unsigned_integer_bytes(&nonce)),
         message_imprint_sha256,
     })
+}
+
+pub(crate) fn build_timestamp_request(
+    evidence_subject: &AvcReceiptEvidenceSubject,
+    policy_oid: &str,
+) -> anyhow::Result<Rfc3161TimestampRequest> {
+    build_timestamp_request_from_imprint(
+        evidence_subject.rfc3161_sha256_message_imprint()?,
+        &evidence_subject.canonical_bytes()?,
+        policy_oid,
+    )
 }
 
 fn parse_oid_value(value: &[u8]) -> anyhow::Result<String> {
@@ -1155,7 +1163,7 @@ pub(crate) fn verify_timestamp_response_with_trust_anchors(
 }
 
 #[cfg(test)]
-fn inspect_timestamp_response_without_spki_pin(
+pub(crate) fn inspect_timestamp_response_without_spki_pin(
     response_der: &[u8],
     expected_subject_hash: Hash256,
     expected_message_imprint_sha256: [u8; 32],

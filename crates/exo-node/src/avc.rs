@@ -30,6 +30,7 @@
 //! | `POST` | `/api/v1/avc/issue` | Register a signed credential. |
 //! | `POST` | `/api/v1/avc/validate` | Validate a credential and optional action. |
 //! | `POST` | `/api/v1/avc/receipts/emit` | Validate a subject-signed action and mint a node-signed receipt. |
+//! | `POST` | `/api/v1/avc/claims/stamp` | Hash-only claim hop: stamp `preimage_hash` + `hash_profile` + `kind` with the existing Microsoft RFC 3161 TSA. Does not mint a TrustReceipt. |
 //! | `POST` | `/api/v1/avc/llm-usage/receipts/emit` | Validate subject-signed EXOCHAIN LYNK Protocol evidence and mint a node-signed receipt. |
 //! | `POST` | `/api/v1/avc/livesafe/public-adapter-output-authorization` | Mint/export the redacted LiveSafe public adapter-output authorization proof. |
 //! | `GET`  | `/api/v1/avc/receipts/:hash` | Fetch a stored AVC trust receipt by hash. |
@@ -92,6 +93,7 @@ use exo_core::{
 use exo_dag::dag::{DagNode, compute_node_hash};
 use exo_root::{RootSignature, RootTrustBundle, verify_root_bundle, verify_root_signature};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use tower::limit::ConcurrencyLimitLayer;
 
@@ -218,6 +220,13 @@ const DEFAULT_AVC_RECEIPT_LIST_LIMIT: u32 = 50;
 const MAX_AVC_RECEIPT_LIST_LIMIT: u32 = 500;
 const WASM_PACKAGE_NAME: &str = "@exochain/exochain-wasm";
 const WASM_PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
+const HASH_ONLY_CLAIM_DOMAIN: &str = "exo.avc.claim.evidence_subject.v1";
+const HASH_ONLY_CLAIM_HASH_PROFILE: &str = "blake3-256";
+const HASH_ONLY_CLAIM_KIND_ACTION_RECEIPT_V2: &str = "crosschecked.action_receipt.v2";
+const HASH_ONLY_CLAIM_KIND_DECISION: &str = "crosschecked.decision.v1";
+const HASH_ONLY_CLAIM_KIND_CLAIM: &str = "crosschecked.claim.v1";
+const MICROSOFT_PUBLIC_RSA_TSA_DID: &str = "did:exo:microsoft-public-rsa-tsa";
+const MICROSOFT_ARTIFACT_SIGNING_POLICY_OID: &str = "1.3.6.1.4.1.601.10.3.1";
 
 pub type AvcReceiptSigner = Arc<dyn Fn(&[u8]) -> Signature + Send + Sync>;
 
@@ -619,6 +628,116 @@ impl AvcReceiptExternalTimestampSource {
                     tsa_issuer_subject: None,
                 },
             )),
+        }
+    }
+
+    async fn issue_hash_only_claim_proof(
+        &self,
+        subject_hash: Hash256,
+        message_imprint_sha256: [u8; 32],
+        nonce_material: &[u8],
+    ) -> anyhow::Result<AvcReceiptExternalTimestampProof> {
+        match self {
+            Self::Rfc3161 {
+                endpoint,
+                authority_did,
+                authority_public_key_spki_der_hexes,
+                issuing_ca_spki_der_hexes,
+                policy_oid,
+                client,
+            } => {
+                let request = crate::avc_rfc3161::build_timestamp_request_from_imprint(
+                    message_imprint_sha256,
+                    nonce_material,
+                    policy_oid.as_str(),
+                )
+                .map_err(|error| AvcExternalTimestampFailure::InvalidProof {
+                    reason: error.to_string(),
+                })?;
+                let response_der =
+                    fetch_rfc3161_timestamp_response(client, endpoint.as_str(), &request.der)
+                        .await?;
+                let trust_anchors = crate::avc_rfc3161::Rfc3161TrustAnchors::new(
+                    authority_public_key_spki_der_hexes.as_ref().clone(),
+                    issuing_ca_spki_der_hexes.as_ref().clone(),
+                )
+                .map_err(|error| AvcExternalTimestampFailure::InvalidProof {
+                    reason: error.to_string(),
+                })?;
+                let verified = crate::avc_rfc3161::verify_timestamp_response_with_trust_anchors(
+                    &response_der,
+                    subject_hash,
+                    request.message_imprint_sha256,
+                    &request.nonce_hex,
+                    policy_oid.as_str(),
+                    &trust_anchors,
+                )
+                .map_err(|error| AvcExternalTimestampFailure::InvalidProof {
+                    reason: error.to_string(),
+                })?;
+                let (tsa_trust_anchor_kind, tsa_issuer_subject) = match verified.trust_anchor.kind {
+                    crate::avc_rfc3161::Rfc3161TrustAnchorKind::SignerSpki => {
+                        (AvcReceiptRfc3161TrustAnchorKind::SignerSpki, None)
+                    }
+                    crate::avc_rfc3161::Rfc3161TrustAnchorKind::IssuingCaSpki => (
+                        AvcReceiptRfc3161TrustAnchorKind::IssuingCaSpki,
+                        Some(verified.trust_anchor.subject.clone()),
+                    ),
+                };
+                Ok(AvcReceiptExternalTimestampProof::rfc3161(
+                    authority_did.clone(),
+                    verified.subject_hash,
+                    verified.issued_at,
+                    AvcReceiptRfc3161TimestampProof {
+                        message_imprint_sha256_hex: verified.message_imprint_sha256_hex,
+                        token_der_base64: verified.token_der_base64,
+                        policy_oid: verified.policy_oid,
+                        serial_number_hex: verified.serial_number_hex,
+                        nonce_hex: verified.nonce_hex,
+                        tsa_subject: verified.tsa_subject,
+                        tsa_public_key_spki_der_hex: verified.tsa_public_key_spki_der_hex,
+                        tsa_trust_anchor_kind: Some(tsa_trust_anchor_kind),
+                        tsa_trust_anchor_spki_der_hex: Some(verified.trust_anchor.spki_der_hex),
+                        tsa_issuer_subject,
+                    },
+                ))
+            }
+            #[cfg(test)]
+            Self::FixedRfc3161 {
+                authority_did,
+                issued_at,
+                token_der_base64,
+                policy_oid,
+                serial_number_hex,
+                nonce_hex,
+                tsa_subject,
+                tsa_public_key_spki_der_hex,
+            } => Ok(AvcReceiptExternalTimestampProof::rfc3161(
+                authority_did.clone(),
+                subject_hash,
+                *issued_at,
+                AvcReceiptRfc3161TimestampProof {
+                    message_imprint_sha256_hex: hex::encode(message_imprint_sha256),
+                    token_der_base64: token_der_base64.clone(),
+                    policy_oid: policy_oid.clone(),
+                    serial_number_hex: serial_number_hex.clone(),
+                    nonce_hex: nonce_hex.clone(),
+                    tsa_subject: tsa_subject.clone(),
+                    tsa_public_key_spki_der_hex: tsa_public_key_spki_der_hex.clone(),
+                    tsa_trust_anchor_kind: Some(AvcReceiptRfc3161TrustAnchorKind::SignerSpki),
+                    tsa_trust_anchor_spki_der_hex: Some(tsa_public_key_spki_der_hex.clone()),
+                    tsa_issuer_subject: None,
+                },
+            )),
+            Self::Unconfigured | Self::HttpJson { .. } => {
+                Err(AvcExternalTimestampFailure::Unconfigured.into())
+            }
+            #[cfg(test)]
+            Self::Fixed { .. } => Err(AvcExternalTimestampFailure::InvalidProof {
+                reason: "hash-only claim hop requires Microsoft RFC 3161, not json-ed25519"
+                    .to_owned(),
+            }
+            .into()),
         }
     }
 }
@@ -3401,6 +3520,137 @@ async fn handle_get_issuer_registration_authority_chain(
 // Router
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HashOnlyClaimStampRequest {
+    preimage_hash: String,
+    hash_profile: String,
+    kind: String,
+}
+
+#[derive(Serialize)]
+struct HashOnlyClaimSubjectPayload<'a> {
+    domain: &'static str,
+    preimage_hash: &'a Hash256,
+    hash_profile: &'a str,
+    kind: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct HashOnlyClaimStampResponse {
+    preimage_hash: String,
+    hash_profile: String,
+    kind: String,
+    timestamp_provenance: AvcReceiptTimestampProvenance,
+    proof_kind: &'static str,
+    authority_did: String,
+    subject_hash: String,
+    issued_at_physical_ms: u64,
+    rfc3161: AvcReceiptRfc3161TimestampProof,
+}
+
+fn hash_only_claim_canonical_bytes(
+    preimage_hash: &Hash256,
+    hash_profile: &str,
+    kind: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let payload = HashOnlyClaimSubjectPayload {
+        domain: HASH_ONLY_CLAIM_DOMAIN,
+        preimage_hash,
+        hash_profile,
+        kind,
+    };
+    let mut bytes = Vec::new();
+    ciborium::into_writer(&payload, &mut bytes)
+        .map_err(|error| anyhow::anyhow!("hash-only claim subject encoding failed: {error}"))?;
+    Ok(bytes)
+}
+
+fn hash_only_claim_kind_is_supported(kind: &str) -> bool {
+    matches!(
+        kind,
+        HASH_ONLY_CLAIM_KIND_ACTION_RECEIPT_V2
+            | HASH_ONLY_CLAIM_KIND_DECISION
+            | HASH_ONLY_CLAIM_KIND_CLAIM
+    )
+}
+
+async fn handle_stamp_hash_only_claim(
+    State(state): State<Arc<AvcApiState>>,
+    Json(request): Json<HashOnlyClaimStampRequest>,
+) -> ApiResult<Json<HashOnlyClaimStampResponse>> {
+    if request.hash_profile != HASH_ONLY_CLAIM_HASH_PROFILE {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("hash_profile must be {HASH_ONLY_CLAIM_HASH_PROFILE}"),
+        ));
+    }
+    if !hash_only_claim_kind_is_supported(&request.kind) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "unsupported hash-only claim kind".into(),
+        ));
+    }
+    let preimage_hash = parse_hash_anyhow(&request.preimage_hash, "preimage_hash").map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid preimage_hash: {error}"),
+        )
+    })?;
+    if preimage_hash == Hash256::ZERO {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "preimage_hash must be non-zero".into(),
+        ));
+    }
+    let canonical = hash_only_claim_canonical_bytes(
+        &preimage_hash,
+        &request.hash_profile,
+        &request.kind,
+    )
+    .map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("hash-only claim subject encoding failed: {error}"),
+        )
+    })?;
+    let digest = Sha256::digest(&canonical);
+    let mut message_imprint_sha256 = [0u8; 32];
+    message_imprint_sha256.copy_from_slice(&digest);
+    let subject_hash = Hash256::digest(&canonical);
+    let proof = state
+        .external_timestamp_source
+        .issue_hash_only_claim_proof(subject_hash, message_imprint_sha256, &canonical)
+        .await
+        .map_err(external_timestamp_error)?;
+    let rfc3161 = proof.rfc3161.clone().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "AVC external timestamp proof could not be obtained (class: invalid_proof)".to_string(),
+    ))?;
+    if proof.proof_kind != exo_avc::AvcReceiptExternalTimestampProofKind::Rfc3161
+        || proof.authority_did.to_string() != MICROSOFT_PUBLIC_RSA_TSA_DID
+        || rfc3161.policy_oid != MICROSOFT_ARTIFACT_SIGNING_POLICY_OID
+        || rfc3161.token_der_base64.is_empty()
+        || rfc3161.serial_number_hex.is_empty()
+    {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "AVC external timestamp proof could not be obtained (class: invalid_proof)".into(),
+        ));
+    }
+    Ok(Json(HashOnlyClaimStampResponse {
+        preimage_hash: format!("{preimage_hash}"),
+        hash_profile: request.hash_profile,
+        kind: request.kind,
+        timestamp_provenance: AvcReceiptTimestampProvenance::ExternalTimestampAuthority,
+        proof_kind: "Rfc3161",
+        authority_did: proof.authority_did.to_string(),
+        subject_hash: format!("{}", proof.subject_hash),
+        issued_at_physical_ms: proof.issued_at.physical_ms,
+        rfc3161,
+    }))
+}
+
 /// Build the AVC API router. POST routes inherit bearer-token auth
 /// from the merged write guard in `main.rs`. The validation route returns
 /// ordinary AVC denials as `200 OK` with `decision: Deny`; receipt emission
@@ -3410,6 +3660,7 @@ pub fn avc_router(state: Arc<AvcApiState>) -> Router {
         .route("/api/v1/avc/issue", post(handle_issue))
         .route("/api/v1/avc/validate", post(handle_validate))
         .route("/api/v1/avc/receipts/emit", post(handle_emit_receipt))
+        .route("/api/v1/avc/claims/stamp", post(handle_stamp_hash_only_claim))
         .route(
             "/api/v1/avc/llm-usage/receipts/emit",
             post(handle_llm_usage_emit_receipt),
@@ -3473,7 +3724,6 @@ mod tests {
     const TIMESTAMP_AUTHORITY_SEED: [u8; 32] = [0x44; 32];
     const LYNK_ADAPTER_SEED: [u8; 32] = [0x66; 32];
     const LYNK_RECEIPT_URI: &str = "/api/v1/avc/llm-usage/receipts/emit";
-    const MICROSOFT_PUBLIC_RSA_TSA_DID: &str = "did:exo:microsoft-public-rsa-tsa";
     const MICROSOFT_FIXTURE_SIGNER_SPKI_HEX: &str = "30820222300d06092a864886f70d01010105000382020f003082020a0282020100b4a59f9bfba5d36eff77c4656fc327fe0d1052fbcba98d95b32ded23c536b454aca53668999383dc11d3f0b911f91ae130981bd558c0285372b1a2bd70b49789f3c648806b3c282cf4fe32db896b2449ab57a439cf8066a8c8483eb66112f6675a9092e073bb8d849e8bf9f1982effd44afe9792e0dcf992c5bf1dd8855c011c52c350789b107a5c8d2791e97dc1ad5d61bdb07c6a687eb6859b164ec53f5e361b782c7d1105256e79b6ba64da634bfd20b5f9bbaa2222c8fea9e8f4734d36cc9d5aac1e757f77fad6d331f1f90f90359e7052a2a64d9241f6153ce77fb6a57e6b0df2b7dae358f7f5813809b36ea82911d4246e231abd43325034a19b2708be01dd4274b6d3bb138fc33e9092f7b4e75a84fb8fa8cc2c6820a075fc30431d0ef5329eec54af6c0118b3502795d0a5fca1c6642395bd436a8f22f5d092ded3ff860fdff29ea5c6585a573a36ae9ef67f70a44e8633783397bac71d1bda68aa70f8a2e3f8a2d9985e29a9652444fb08a96915286cdf0ca0e85fdfa2343142f3e76d60f8372c7a9618d68f09a82dcc7ac351520ad6af2c2972df704b452953538a8a53169af1ded837b12aa67f573b4498d2e98ebca157ad61fbaf197ef626a2722b5d9d34e4b009d18ef7a474a4f7960ee544c7e67d953cbd73623745182734fd123aa3466d2e37f874a17c4f84d7cf62a7856f23d7186c73698533eb3c77a9370203010001";
     const MICROSOFT_LIVE_SIGNER_SPKI_HEX_20260627: &str = "30820222300d06092a864886f70d01010105000382020f003082020a02820201009d7834a47690ecf5409659fe1d966b24570ba0a6de9215b5c8bf9034152014552c8d920a6aaa8de28209b09337a6cd2b24d48eee7742351b990d7d9682eaf7024efb797ae5a015ea6663ba6555de0cd4422e5756e00d3f35f8f327b5d791d1218ebf358215c4a51ef30bec1b68d37eb0f4b1ccb01905e89b0c53fb5f0b39c17d19b48b0dd5adbe5eae5bbd6a77911332b70b244e3ba746078b64bfed069db7ec955d44f14043d8d844aa42a94068fefd718c12d1095dcf6a52a39c67dbdcc37853b8d5caa89f1474a17275b9084451a019946bab32803cc54abf1ede0f774cf34b1548af504d0698b7db5f971e0f51add45719eb1fc92d5013ce4e7e0561db331c092159153d3a9248c8d0e8a4ca75c9eade91f4738005269fe096f729ab453d7f36488c9186bdda62b2195197bed142d5214a3c47bc29f72c2ff1a904303874900ec1a1e8d5f60f445fb12c84b53001c8069efb6c351c1c930d372695334b12e40b7828f580d05d2168f458e6320ed8e343ff224d663a7b2d6f6fda87963223e478089dd4f93fd318936560d9eee129464d04d6c0fe1b2006cba867e217f3d5af8c437d69b17dd52e0e255ba29e62ac2cefcc2db9e5ee292e0f474dea803461ec320d09dcb35dac33d1ceb6eef6400fd366579fbd6f2bf71b4c5c06284257068ec93c5b851cedc7ea56a6c83e376873c6710732dc5dc5723f8a797322f0be430203010001";
     const MICROSOFT_FIXTURE_CA_SPKI_HEX: &str = "30820222300d06092a864886f70d01010105000382020f003082020a02820201009e7ce75263fde0c59f057d63b50622a31c1ed7e79733d11305bd6546477791c15d706f7fb2ab43970c4aa1521c6aa0dbfa89858a8e431c2e1105c6f24078d70b0324fe5dd3398b60a018f19c6fde5624b8b0ec7ccb8812abc660e3d44401fe61b9784891044a7b7431b3c4a0a74d8a1c0ce711afd2b1a87c9d6a39849335c739e446c14fbbaadf0c7799786d566b5c084af964a4e428a1350b166f34f59d1962543c2e9ee2e45f58722165c802b09faca337f911e1f92ab9459f1a6328a4dabf07c53fa5da199196506f1365a893a20468025a9c7af6e2aa2a14cf562de0544ae773faa2f9d47c036322033d243749e1ed2a883466e6c39388442d04b19df5585dd4c69dc6819c1eb442b12e6b3bdca1bf67e3247ae6950d042179a9e0384306278a50647e799e02344ddcb56e2ebd20d055e4a9f61d5268f57c51611fc93c601a33ac46979ec48bde47530f4d57fb82df2163ae1734f3ba8b2506b0482df1cd8fc45f3b13e08eec0dbc4e98cdab978b8a2ba784a6ead176e390da14e4986d614ae59806e9c518dbf6d4ab78376d002a66deb929c69ec04277672344a1bbf7e4d7fac4de85ac0ea317de38efe347bc28de58b09067733c9607827279e14c5b72417dd7802a1ce88457bc539c3d5aebdc3f513c708c4ba0a483cc20813aed2159d8f328dbbc6394b007596de5d421001632cd1dddc443bf4f52bf055177ad5ebd0203010001";
@@ -4091,6 +4341,236 @@ mod tests {
             .acquire_timeout(std::time::Duration::from_millis(100))
             .connect_lazy("postgres://exochain:test@127.0.0.1:1/exochain_test")
             .unwrap()
+    }
+
+    async fn stamp_hash_only_claim(
+        source: AvcReceiptExternalTimestampSource,
+        body: serde_json::Value,
+    ) -> (StatusCode, Vec<u8>) {
+        let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
+        let state = AvcApiState::new_with_external_timestamp_source(
+            validator_did(),
+            signer,
+            source,
+        );
+        let response = avc_router(Arc::new(state))
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/v1/avc/claims/stamp")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        (status, read_body(response).await)
+    }
+
+    fn hash_only_claim_body(preimage_hash: &str) -> serde_json::Value {
+        serde_json::json!({
+            "preimage_hash": preimage_hash,
+            "hash_profile": "blake3-256",
+            "kind": "crosschecked.action_receipt.v2"
+        })
+    }
+
+    #[tokio::test]
+    async fn hash_only_claim_stamp_returns_microsoft_rfc3161_leaf_without_trust_receipt() {
+        let preimage = "e912bfa2388277537cca0f8dc67588d79b99e498cd14e1bb0ea1ab7298d64c12";
+        let (status, body) = stamp_hash_only_claim(
+            fixed_rfc3161_external_timestamp_source(),
+            hash_only_claim_body(preimage),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["preimage_hash"], preimage);
+        assert_eq!(value["hash_profile"], "blake3-256");
+        assert_eq!(value["kind"], "crosschecked.action_receipt.v2");
+        assert_eq!(value["proof_kind"], "Rfc3161");
+        assert_eq!(value["authority_did"], MICROSOFT_PUBLIC_RSA_TSA_DID);
+        assert_eq!(
+            value["timestamp_provenance"],
+            "ExternalTimestampAuthority"
+        );
+        assert_eq!(
+            value["rfc3161"]["policy_oid"],
+            MICROSOFT_ARTIFACT_SIGNING_POLICY_OID
+        );
+        assert_eq!(value["rfc3161"]["serial_number_hex"], "6a1c57054080");
+        assert!(!value["rfc3161"]["token_der_base64"].as_str().unwrap().is_empty());
+        assert!(value.get("receipt").is_none());
+        assert!(value.get("receipt_hash").is_none());
+    }
+
+    #[tokio::test]
+    async fn hash_only_claim_stamp_fails_closed_when_rfc3161_is_unconfigured() {
+        let (status, body) = stamp_hash_only_claim(
+            AvcReceiptExternalTimestampSource::Unconfigured,
+            hash_only_claim_body(
+                "e912bfa2388277537cca0f8dc67588d79b99e498cd14e1bb0ea1ab7298d64c12",
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("class: unconfigured"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn hash_only_claim_stamp_rejects_blob_fields_and_unknown_kind() {
+        let mut body = hash_only_claim_body(
+            "e912bfa2388277537cca0f8dc67588d79b99e498cd14e1bb0ea1ab7298d64c12",
+        );
+        body["blob"] = serde_json::json!("never-store-the-preimage");
+        let (status, _) = stamp_hash_only_claim(
+            fixed_rfc3161_external_timestamp_source(),
+            body,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+        let mut body = hash_only_claim_body(
+            "e912bfa2388277537cca0f8dc67588d79b99e498cd14e1bb0ea1ab7298d64c12",
+        );
+        body["kind"] = serde_json::json!("not-a-supported-kind");
+        let (status, _) = stamp_hash_only_claim(
+            fixed_rfc3161_external_timestamp_source(),
+            body,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    #[ignore = "live Microsoft TSA hash-only claim hop; set EXO_AVC_RFC3161_LIVE_PREFLIGHT=1"]
+    async fn live_hash_only_claim_stamp_verifies_microsoft_rfc3161_token() {
+        if std::env::var("EXO_AVC_RFC3161_LIVE_PREFLIGHT")
+            .ok()
+            .as_deref()
+            != Some("1")
+        {
+            eprintln!("skipping live hash-only claim stamp; set EXO_AVC_RFC3161_LIVE_PREFLIGHT=1");
+            return;
+        }
+        let preimage = Hash256::digest(b"crosschecked.anchor.exhibit.v1:2026-08-21");
+        let canonical = hash_only_claim_canonical_bytes(
+            &preimage,
+            HASH_ONLY_CLAIM_HASH_PROFILE,
+            HASH_ONLY_CLAIM_KIND_ACTION_RECEIPT_V2,
+        )
+        .unwrap();
+        let digest = Sha256::digest(&canonical);
+        let mut message_imprint_sha256 = [0u8; 32];
+        message_imprint_sha256.copy_from_slice(&digest);
+        let subject_hash = Hash256::digest(&canonical);
+        let request = crate::avc_rfc3161::build_timestamp_request_from_imprint(
+            message_imprint_sha256,
+            &canonical,
+            MICROSOFT_ARTIFACT_SIGNING_POLICY_OID,
+        )
+        .unwrap();
+        let started = std::time::Instant::now();
+        let response = reqwest::Client::new()
+            .post(crate::avc_rfc3161::MICROSOFT_ARTIFACT_SIGNING_TIMESTAMP_URL)
+            .header("Content-Type", "application/timestamp-query")
+            .header("Accept", "application/timestamp-reply")
+            .body(request.der.clone())
+            .send()
+            .await
+            .expect("microsoft tsa transport");
+        let http_status = response.status();
+        let response_der = response.bytes().await.expect("microsoft tsa body").to_vec();
+        println!(
+            "live_hash_only_claim tsa_http={} bytes={} elapsed_ms={}",
+            http_status.as_u16(),
+            response_der.len(),
+            started.elapsed().as_millis()
+        );
+        let inspected = crate::avc_rfc3161::inspect_timestamp_response_without_spki_pin(
+            &response_der,
+            subject_hash,
+            request.message_imprint_sha256,
+            &request.nonce_hex,
+            MICROSOFT_ARTIFACT_SIGNING_POLICY_OID,
+        );
+        let inspected = match inspected {
+            Ok(verified) => verified,
+            Err(error) => {
+                let reason = error.to_string();
+                let redacted = if reason.len() > 240 {
+                    format!("{}...(redacted)", &reason[..240])
+                } else {
+                    reason
+                };
+                panic!("microsoft token inspect failed: {redacted}");
+            }
+        };
+        let signer_matches_fixture =
+            inspected.tsa_public_key_spki_der_hex == MICROSOFT_FIXTURE_SIGNER_SPKI_HEX;
+        let signer_matches_live_20260627 =
+            inspected.tsa_public_key_spki_der_hex == MICROSOFT_LIVE_SIGNER_SPKI_HEX_20260627;
+        println!(
+            "live_hash_only_claim inspect serial={} oid={} did={} tsa_subject={} issued_at_ms={} signer_pin_fixture={} signer_pin_20260627={}",
+            inspected.serial_number_hex,
+            inspected.policy_oid,
+            MICROSOFT_PUBLIC_RSA_TSA_DID,
+            inspected.tsa_subject,
+            inspected.issued_at.physical_ms,
+            signer_matches_fixture,
+            signer_matches_live_20260627
+        );
+        let source = AvcReceiptExternalTimestampSource::Rfc3161 {
+            endpoint: Arc::new(
+                crate::avc_rfc3161::MICROSOFT_ARTIFACT_SIGNING_TIMESTAMP_URL.to_owned(),
+            ),
+            authority_did: Did::new(MICROSOFT_PUBLIC_RSA_TSA_DID).unwrap(),
+            authority_public_key_spki_der_hexes: Arc::new(vec![
+                MICROSOFT_FIXTURE_SIGNER_SPKI_HEX.to_owned(),
+                MICROSOFT_LIVE_SIGNER_SPKI_HEX_20260627.to_owned(),
+            ]),
+            issuing_ca_spki_der_hexes: Arc::new(vec![MICROSOFT_FIXTURE_CA_SPKI_HEX.to_owned()]),
+            policy_oid: Arc::new(MICROSOFT_ARTIFACT_SIGNING_POLICY_OID.to_owned()),
+            client: reqwest::Client::new(),
+        };
+        let proof = source
+            .issue_hash_only_claim_proof(subject_hash, message_imprint_sha256, &canonical)
+            .await;
+        let proof = match proof {
+            Ok(proof) => proof,
+            Err(error) => {
+                let reason = error.to_string();
+                let redacted = if reason.len() > 240 {
+                    format!("{}...(redacted)", &reason[..240])
+                } else {
+                    reason
+                };
+                panic!(
+                    "hash-only stamp verify failed closed (inspect_ok serial={} fixture_pin={} live_20260627_pin={}): {redacted}",
+                    inspected.serial_number_hex,
+                    signer_matches_fixture,
+                    signer_matches_live_20260627
+                );
+            }
+        };
+        assert_eq!(
+            proof.proof_kind,
+            exo_avc::AvcReceiptExternalTimestampProofKind::Rfc3161
+        );
+        assert_eq!(proof.authority_did.to_string(), MICROSOFT_PUBLIC_RSA_TSA_DID);
+        let rfc3161 = proof.rfc3161.as_ref().expect("rfc3161 leaf");
+        assert_eq!(rfc3161.policy_oid, MICROSOFT_ARTIFACT_SIGNING_POLICY_OID);
+        assert!(!rfc3161.serial_number_hex.is_empty());
+        assert!(!rfc3161.token_der_base64.is_empty());
+        println!(
+            "live_hash_only_claim verified serial={} oid={} did={} tsa_subject={}",
+            rfc3161.serial_number_hex,
+            rfc3161.policy_oid,
+            proof.authority_did,
+            rfc3161.tsa_subject
+        );
     }
 
     async fn issue_credential(app: Router, credential: AutonomousVolitionCredential) -> StatusCode {
