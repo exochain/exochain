@@ -3591,29 +3591,27 @@ async fn handle_stamp_hash_only_claim(
             "unsupported hash-only claim kind".into(),
         ));
     }
-    let preimage_hash = parse_hash_anyhow(&request.preimage_hash, "preimage_hash").map_err(|error| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("invalid preimage_hash: {error}"),
-        )
-    })?;
+    let preimage_hash =
+        parse_hash_anyhow(&request.preimage_hash, "preimage_hash").map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("invalid preimage_hash: {error}"),
+            )
+        })?;
     if preimage_hash == Hash256::ZERO {
         return Err((
             StatusCode::BAD_REQUEST,
             "preimage_hash must be non-zero".into(),
         ));
     }
-    let canonical = hash_only_claim_canonical_bytes(
-        &preimage_hash,
-        &request.hash_profile,
-        &request.kind,
-    )
-    .map_err(|error| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("hash-only claim subject encoding failed: {error}"),
-        )
-    })?;
+    let canonical =
+        hash_only_claim_canonical_bytes(&preimage_hash, &request.hash_profile, &request.kind)
+            .map_err(|error| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("hash-only claim subject encoding failed: {error}"),
+                )
+            })?;
     let digest = Sha256::digest(&canonical);
     let mut message_imprint_sha256 = [0u8; 32];
     message_imprint_sha256.copy_from_slice(&digest);
@@ -3660,7 +3658,10 @@ pub fn avc_router(state: Arc<AvcApiState>) -> Router {
         .route("/api/v1/avc/issue", post(handle_issue))
         .route("/api/v1/avc/validate", post(handle_validate))
         .route("/api/v1/avc/receipts/emit", post(handle_emit_receipt))
-        .route("/api/v1/avc/claims/stamp", post(handle_stamp_hash_only_claim))
+        .route(
+            "/api/v1/avc/claims/stamp",
+            post(handle_stamp_hash_only_claim),
+        )
         .route(
             "/api/v1/avc/llm-usage/receipts/emit",
             post(handle_llm_usage_emit_receipt),
@@ -4348,11 +4349,8 @@ mod tests {
         body: serde_json::Value,
     ) -> (StatusCode, Vec<u8>) {
         let signer: AvcReceiptSigner = Arc::new(|payload: &[u8]| validator_keypair().sign(payload));
-        let state = AvcApiState::new_with_external_timestamp_source(
-            validator_did(),
-            signer,
-            source,
-        );
+        let state =
+            AvcApiState::new_with_external_timestamp_source(validator_did(), signer, source);
         let response = avc_router(Arc::new(state))
             .oneshot(
                 Request::builder()
@@ -4391,16 +4389,18 @@ mod tests {
         assert_eq!(value["kind"], "crosschecked.action_receipt.v2");
         assert_eq!(value["proof_kind"], "Rfc3161");
         assert_eq!(value["authority_did"], MICROSOFT_PUBLIC_RSA_TSA_DID);
-        assert_eq!(
-            value["timestamp_provenance"],
-            "ExternalTimestampAuthority"
-        );
+        assert_eq!(value["timestamp_provenance"], "ExternalTimestampAuthority");
         assert_eq!(
             value["rfc3161"]["policy_oid"],
             MICROSOFT_ARTIFACT_SIGNING_POLICY_OID
         );
         assert_eq!(value["rfc3161"]["serial_number_hex"], "6a1c57054080");
-        assert!(!value["rfc3161"]["token_der_base64"].as_str().unwrap().is_empty());
+        assert!(
+            !value["rfc3161"]["token_der_base64"]
+                .as_str()
+                .unwrap()
+                .is_empty()
+        );
         assert!(value.get("receipt").is_none());
         assert!(value.get("receipt_hash").is_none());
     }
@@ -4425,22 +4425,16 @@ mod tests {
             "e912bfa2388277537cca0f8dc67588d79b99e498cd14e1bb0ea1ab7298d64c12",
         );
         body["blob"] = serde_json::json!("never-store-the-preimage");
-        let (status, _) = stamp_hash_only_claim(
-            fixed_rfc3161_external_timestamp_source(),
-            body,
-        )
-        .await;
+        let (status, _) =
+            stamp_hash_only_claim(fixed_rfc3161_external_timestamp_source(), body).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
         let mut body = hash_only_claim_body(
             "e912bfa2388277537cca0f8dc67588d79b99e498cd14e1bb0ea1ab7298d64c12",
         );
         body["kind"] = serde_json::json!("not-a-supported-kind");
-        let (status, _) = stamp_hash_only_claim(
-            fixed_rfc3161_external_timestamp_source(),
-            body,
-        )
-        .await;
+        let (status, _) =
+            stamp_hash_only_claim(fixed_rfc3161_external_timestamp_source(), body).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
@@ -4559,17 +4553,17 @@ mod tests {
             proof.proof_kind,
             exo_avc::AvcReceiptExternalTimestampProofKind::Rfc3161
         );
-        assert_eq!(proof.authority_did.to_string(), MICROSOFT_PUBLIC_RSA_TSA_DID);
+        assert_eq!(
+            proof.authority_did.to_string(),
+            MICROSOFT_PUBLIC_RSA_TSA_DID
+        );
         let rfc3161 = proof.rfc3161.as_ref().expect("rfc3161 leaf");
         assert_eq!(rfc3161.policy_oid, MICROSOFT_ARTIFACT_SIGNING_POLICY_OID);
         assert!(!rfc3161.serial_number_hex.is_empty());
         assert!(!rfc3161.token_der_base64.is_empty());
         println!(
             "live_hash_only_claim verified serial={} oid={} did={} tsa_subject={}",
-            rfc3161.serial_number_hex,
-            rfc3161.policy_oid,
-            proof.authority_did,
-            rfc3161.tsa_subject
+            rfc3161.serial_number_hex, rfc3161.policy_oid, proof.authority_did, rfc3161.tsa_subject
         );
     }
 
