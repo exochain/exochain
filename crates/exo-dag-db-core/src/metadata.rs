@@ -110,7 +110,7 @@ pub fn sanitize_metadata(field: MetadataField, input: &str) -> SafeMetadata {
         redaction_codes: codes,
         original_hash: Hash256::digest(input.as_bytes()).to_string(),
         truncated,
-        byte_len: u32::try_from(input.len()).map_or(u32::MAX, core::convert::identity),
+        byte_len: u32::try_from(input.len()).unwrap_or(u32::MAX),
     }
 }
 
