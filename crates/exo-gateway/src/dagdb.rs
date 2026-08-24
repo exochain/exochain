@@ -676,7 +676,7 @@ async fn handle_dagdb_intake(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.intake", &request.tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     intake_handler(&ctx, request).await
 }
@@ -699,7 +699,7 @@ async fn handle_dagdb_route(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.route", &request.tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     route_handler(&ctx, &headers, request).await
 }
@@ -723,7 +723,7 @@ async fn handle_dagdb_context_packet(
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.context_packet", &request.tenant_id)
             .await
     {
-        return denied;
+        return *denied;
     }
     gated_context_packet_handler(&ctx, &headers, request).await
 }
@@ -746,7 +746,7 @@ async fn handle_dagdb_validate(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.validate", &request.tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     validate_handler(&ctx, request).await
 }
@@ -769,7 +769,7 @@ async fn handle_dagdb_writeback(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.writeback", &request.tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     writeback_handler(&ctx, &headers, request).await
 }
@@ -835,7 +835,7 @@ async fn handle_dagdb_import(
         .await
         {
             Ok(actor) => actor,
-            Err(denied) => return denied,
+            Err(denied) => return *denied,
         };
         if let Err(denied) = bind_requester_to_session_actor(
             &session_actor,
@@ -910,7 +910,7 @@ async fn handle_dagdb_export(
         .await
         {
             Ok(actor) => actor,
-            Err(denied) => return denied,
+            Err(denied) => return *denied,
         };
         if let Err(denied) = bind_requester_to_session_actor(
             &session_actor,
@@ -943,7 +943,7 @@ async fn handle_dagdb_trust_check(
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.trust_check", &request.tenant_id)
             .await
     {
-        return denied;
+        return *denied;
     }
     trust_check_handler(&ctx, request).await
 }
@@ -962,7 +962,7 @@ async fn handle_dagdb_council_decision(
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.council_decision", &request.tenant_id)
             .await
     {
-        return denied;
+        return *denied;
     }
     council_decision_handler(&ctx, request).await
 }
@@ -985,7 +985,7 @@ async fn handle_dagdb_receipt_lookup(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.receipt_lookup", &tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     receipt_lookup_handler(
         &ctx,
@@ -1017,7 +1017,7 @@ async fn handle_dagdb_catalog_lookup(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.catalog_lookup", &tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     catalog_lookup_handler(
         &ctx,
@@ -1050,7 +1050,7 @@ async fn handle_dagdb_route_lookup(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.route_lookup", &tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     route_lookup_handler(
         &ctx,
@@ -4695,7 +4695,7 @@ async fn verify_dagdb_session_authority(
     headers: &HeaderMap,
     route_name: &'static str,
     tenant_id: &str,
-) -> Result<DagDbSessionActor, Response> {
+) -> Result<DagDbSessionActor, Box<Response>> {
     let Some(pool) = ctx.pool.as_ref() else {
         return Ok(DagDbSessionActor::NoPool);
     };
@@ -4709,7 +4709,7 @@ async fn verify_dagdb_session_authority(
             tenant_id = %tenant_id,
             "DAG DB session binding failed closed: empty bearer token"
         );
-        return Err(dagdb_unauthenticated_response(false));
+        return Err(Box::new(dagdb_unauthenticated_response(false)));
     };
     let row = sqlx::query(
         "SELECT s.actor_did, u.tenant_id AS user_tenant_id \
@@ -4729,12 +4729,12 @@ async fn verify_dagdb_session_authority(
                 tenant_id = %tenant_id,
                 "DAG DB session binding failed closed: session lookup unavailable"
             );
-            Err(dagdb_error_response(
+            Err(Box::new(dagdb_error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "session_lookup_unavailable",
                 "DAG DB session validation is unavailable",
                 false,
-            ))
+            )))
         }
         Ok(None) => {
             warn!(
@@ -4742,7 +4742,7 @@ async fn verify_dagdb_session_authority(
                 tenant_id = %tenant_id,
                 "DAG DB session binding failed closed: no live session for bearer token"
             );
-            Err(dagdb_unauthenticated_response(false))
+            Err(Box::new(dagdb_unauthenticated_response(false)))
         }
         Ok(Some(row)) => {
             let user_tenant: Option<String> = row.try_get("user_tenant_id").ok();
@@ -4752,7 +4752,7 @@ async fn verify_dagdb_session_authority(
                     tenant_id = %tenant_id,
                     "DAG DB session binding failed closed: session user tenant mismatch"
                 );
-                return Err(dagdb_tenant_scope_mismatch_response(false));
+                return Err(Box::new(dagdb_tenant_scope_mismatch_response(false)));
             }
             let actor_did: Option<String> = row.try_get("actor_did").ok();
             match actor_did.filter(|did| !did.is_empty()) {
@@ -4763,7 +4763,7 @@ async fn verify_dagdb_session_authority(
                         tenant_id = %tenant_id,
                         "DAG DB session binding failed closed: session row missing actor_did"
                     );
-                    Err(dagdb_unauthenticated_response(false))
+                    Err(Box::new(dagdb_unauthenticated_response(false)))
                 }
             }
         }
