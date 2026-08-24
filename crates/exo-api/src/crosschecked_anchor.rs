@@ -26,7 +26,7 @@ use std::{cmp::Ordering, collections::BTreeMap};
 use ciborium::Value;
 use exo_core::{
     crypto,
-    types::{Did, Hash256, PublicKey, Signature, Timestamp, TrustReceipt},
+    types::{Did, Hash256, PublicKey, ReceiptOutcome, Signature, Timestamp, TrustReceipt},
 };
 use thiserror::Error;
 
@@ -44,6 +44,7 @@ pub const MAX_RESPONSE_BODY_BYTES: usize = 65_536;
 const REQUEST_DOMAIN: &str = "exo.crosschecked.anchor_request.v1";
 const IDEMPOTENCY_DOMAIN: &str = "exo.crosschecked.anchor_idempotency.v1";
 const RESPONSE_DOMAIN: &str = "exo.crosschecked.anchor_response.v1";
+const RECEIPT_ACTION_TYPE: &str = "crosschecked.receipt_commitment.record.v1";
 
 /// Errors returned before a request can reach authority or persistence code.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -258,8 +259,12 @@ impl CrossCheckedAnchorResponseV1 {
 pub struct ResponseValidationContext<'a> {
     pub expected_request_hash: Hash256,
     pub expected_action_hash: Hash256,
-    pub receipt_actor_public_key: &'a PublicKey,
-    pub node_public_key: &'a PublicKey,
+    pub expected_authority_chain_hash: Hash256,
+    pub expected_node_did: &'a str,
+    pub expected_node_key_id: &'a str,
+    pub expected_node_recorded_at: Timestamp,
+    /// The independently pinned node key verifies both the receipt and wrapper.
+    pub expected_node_public_key: &'a PublicKey,
 }
 
 /// A validated response together with its exact stable body bytes.
@@ -293,7 +298,7 @@ pub fn decode_and_validate_response(
     if !crypto::verify(
         &response.signing_preimage()?,
         &signature,
-        context.node_public_key,
+        context.expected_node_public_key,
     ) {
         return Err(AnchorCodecError::InvalidSignature);
     }
@@ -524,6 +529,7 @@ fn validate_response_fields(
     validate_did_and_key_id(&response.node_did, &response.node_key_id)?;
     if response.request_hash == Hash256::ZERO
         || response.action_hash == Hash256::ZERO
+        || response.exochain_receipt.authority_chain_hash == Hash256::ZERO
         || response.wrapper_signature.iter().all(|byte| *byte == 0)
     {
         return Err(AnchorCodecError::InvalidField("zero response field"));
@@ -531,13 +537,26 @@ fn validate_response_fields(
     if response.request_hash != context.expected_request_hash
         || response.action_hash != context.expected_action_hash
         || response.exochain_receipt.action_hash != response.action_hash
+        || response.node_did != context.expected_node_did
+        || response.node_key_id != context.expected_node_key_id
     {
         return Err(AnchorCodecError::CommitmentMismatch);
     }
-    if response.node_recorded_at != response.exochain_receipt.timestamp {
+    if response.exochain_receipt.authority_chain_hash != context.expected_authority_chain_hash {
+        return Err(AnchorCodecError::CommitmentMismatch);
+    }
+    if response.node_recorded_at != response.exochain_receipt.timestamp
+        || response.node_recorded_at != context.expected_node_recorded_at
+    {
         return Err(AnchorCodecError::InvalidField("node_recorded_at"));
     }
-    if Did::new(response.exochain_receipt.actor_did.as_str()).is_err() {
+    if Did::new(response.exochain_receipt.actor_did.as_str()).is_err()
+        || response.exochain_receipt.actor_did.as_str() != response.node_did
+        || response.exochain_receipt.action_type != RECEIPT_ACTION_TYPE
+        || response.exochain_receipt.outcome != ReceiptOutcome::Executed
+        || response.exochain_receipt.consent_reference.is_some()
+        || response.exochain_receipt.challenge_reference.is_some()
+    {
         return Err(AnchorCodecError::InvalidReceipt);
     }
     let valid_hash = response
@@ -546,7 +565,7 @@ fn validate_response_fields(
         .map_err(|_| AnchorCodecError::InvalidReceipt)?;
     let valid_signature = response
         .exochain_receipt
-        .verify_signature(context.receipt_actor_public_key)
+        .verify_signature(context.expected_node_public_key)
         .map_err(|_| AnchorCodecError::InvalidReceipt)?;
     if !valid_hash || !valid_signature {
         return Err(AnchorCodecError::InvalidReceipt);

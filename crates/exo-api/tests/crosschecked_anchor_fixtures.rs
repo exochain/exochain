@@ -60,10 +60,6 @@ fn locked_binary_fixtures_equal_the_independent_reference_generator() {
         &reference.response_signature
     );
     assert_eq!(
-        include_bytes!("../fixtures/crosschecked-anchor-v1/receipt-actor-public-key.ed25519"),
-        &reference.receipt_actor_public_key
-    );
-    assert_eq!(
         include_bytes!("../fixtures/crosschecked-anchor-v1/node-public-key.ed25519"),
         &reference.node_public_key
     );
@@ -71,7 +67,7 @@ fn locked_binary_fixtures_equal_the_independent_reference_generator() {
 
 #[test]
 fn locked_fixture_manifest_matches_every_binary() {
-    let fixtures: [(&str, &[u8]); 12] = [
+    let fixtures: [(&str, &[u8]); 11] = [
         (
             "authority-public-key.ed25519",
             include_bytes!("../fixtures/crosschecked-anchor-v1/authority-public-key.ed25519"),
@@ -87,10 +83,6 @@ fn locked_fixture_manifest_matches_every_binary() {
         (
             "node-public-key.ed25519",
             include_bytes!("../fixtures/crosschecked-anchor-v1/node-public-key.ed25519"),
-        ),
-        (
-            "receipt-actor-public-key.ed25519",
-            include_bytes!("../fixtures/crosschecked-anchor-v1/receipt-actor-public-key.ed25519"),
         ),
         (
             "request-hash.blake3-256",
@@ -142,7 +134,6 @@ fn locked_fixture_manifest_matches_every_binary() {
 fn locked_fixtures_validate_and_single_byte_poisoning_fails_closed() {
     let reference = build_reference_fixtures();
     let authority_key = PublicKey::from_bytes(reference.authority_public_key);
-    let receipt_actor_key = PublicKey::from_bytes(reference.receipt_actor_public_key);
     let node_key = PublicKey::from_bytes(reference.node_public_key);
 
     decode_and_validate_request(
@@ -162,8 +153,11 @@ fn locked_fixtures_validate_and_single_byte_poisoning_fails_closed() {
         ResponseValidationContext {
             expected_request_hash: Hash256::from_bytes(reference.request_hash),
             expected_action_hash: Hash256::from_bytes([0x53; 32]),
-            receipt_actor_public_key: &receipt_actor_key,
-            node_public_key: &node_key,
+            expected_authority_chain_hash: Hash256::from_bytes([0x71; 32]),
+            expected_node_did: "did:exo:anchor-node",
+            expected_node_key_id: "did:exo:anchor-node#response-2026",
+            expected_node_recorded_at: exo_core::types::Timestamp::new(1_800_000_000_123, 7),
+            expected_node_public_key: &node_key,
         },
     )
     .expect("locked response validates");
@@ -196,8 +190,14 @@ fn locked_fixtures_validate_and_single_byte_poisoning_fails_closed() {
                 ResponseValidationContext {
                     expected_request_hash: Hash256::from_bytes(reference.request_hash),
                     expected_action_hash: Hash256::from_bytes([0x53; 32]),
-                    receipt_actor_public_key: &receipt_actor_key,
-                    node_public_key: &node_key,
+                    expected_authority_chain_hash: Hash256::from_bytes([0x71; 32]),
+                    expected_node_did: "did:exo:anchor-node",
+                    expected_node_key_id: "did:exo:anchor-node#response-2026",
+                    expected_node_recorded_at: exo_core::types::Timestamp::new(
+                        1_800_000_000_123,
+                        7,
+                    ),
+                    expected_node_public_key: &node_key,
                 },
             )
             .is_err(),

@@ -53,10 +53,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             fixtures.response_signature.as_slice(),
         ),
         (
-            "receipt-actor-public-key.ed25519",
-            fixtures.receipt_actor_public_key.as_slice(),
-        ),
-        (
             "node-public-key.ed25519",
             fixtures.node_public_key.as_slice(),
         ),

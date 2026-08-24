@@ -13,6 +13,9 @@ use exo_core::{
     types::{Did, Hash256, ReceiptOutcome, Timestamp, TrustReceipt},
 };
 
+const NODE_DID: &str = "did:exo:anchor-node";
+const NODE_KEY_ID: &str = "did:exo:anchor-node#response-2026";
+
 fn encode(value: &Value) -> Vec<u8> {
     let mut encoded = Vec::new();
     ciborium::into_writer(value, &mut encoded).expect("literal CBOR encodes");
@@ -42,16 +45,16 @@ fn encode_canonical(mut value: Value) -> Vec<u8> {
     encode(&value)
 }
 
-fn fixture_receipt(actor_key: &KeyPair) -> TrustReceipt {
+fn fixture_receipt(node_key: &KeyPair) -> TrustReceipt {
     TrustReceipt::new(
-        Did::new("did:exo:receipt-actor").expect("DID"),
+        Did::new(NODE_DID).expect("DID"),
         Hash256::from_bytes([0x71; 32]),
-        Some(Hash256::from_bytes([0x72; 32])),
-        "crosschecked.anchor_commitment".to_owned(),
+        None,
+        "crosschecked.receipt_commitment.record.v1".to_owned(),
         Hash256::from_bytes([0x53; 32]),
         ReceiptOutcome::Executed,
         Timestamp::new(1_800_000_000_123, 7),
-        &|message| actor_key.sign(message),
+        &|message| node_key.sign(message),
     )
     .expect("receipt")
 }
@@ -75,12 +78,12 @@ fn independent_anchor_receipt_value(receipt: &TrustReceipt) -> Value {
     value
 }
 
-fn unsigned_response(actor_key: &KeyPair) -> CrossCheckedAnchorResponseV1 {
+fn unsigned_response(node_key: &KeyPair) -> CrossCheckedAnchorResponseV1 {
     CrossCheckedAnchorResponseV1 {
         protocol_version: 1,
         request_hash: Hash256::from_bytes([0x81; 32]),
         action_hash: Hash256::from_bytes([0x53; 32]),
-        exochain_receipt: fixture_receipt(actor_key),
+        exochain_receipt: fixture_receipt(node_key),
         recording_status: "node_recorded".to_owned(),
         consensus_finality: "not_asserted".to_owned(),
         node_did: "did:exo:anchor-node".to_owned(),
@@ -97,12 +100,92 @@ fn sign_response(response: &mut CrossCheckedAnchorResponseV1, node_key: &KeyPair
         .expect("Ed25519 signature");
 }
 
-fn context<'a>(actor_key: &'a KeyPair, node_key: &'a KeyPair) -> ResponseValidationContext<'a> {
+fn semantic_receipt(
+    actor_key: &KeyPair,
+    actor_did: &str,
+    action_type: &str,
+    outcome: ReceiptOutcome,
+    consent_reference: Option<Hash256>,
+    challenge_reference: Option<Hash256>,
+) -> TrustReceipt {
+    let mut receipt = TrustReceipt::new(
+        Did::new(actor_did).expect("semantic poison DID"),
+        Hash256::from_bytes([0x71; 32]),
+        consent_reference,
+        action_type.to_owned(),
+        Hash256::from_bytes([0x53; 32]),
+        outcome,
+        Timestamp::new(1_800_000_000_123, 7),
+        &|message| actor_key.sign(message),
+    )
+    .expect("semantic poison receipt");
+    receipt.challenge_reference = challenge_reference;
+    receipt
+}
+
+fn closed_receipt(
+    node_key: &KeyPair,
+    node_did: &str,
+    authority_chain_hash: Hash256,
+    timestamp: Timestamp,
+) -> TrustReceipt {
+    TrustReceipt::new(
+        Did::new(node_did).expect("node DID"),
+        authority_chain_hash,
+        None,
+        "crosschecked.receipt_commitment.record.v1".to_owned(),
+        Hash256::from_bytes([0x53; 32]),
+        ReceiptOutcome::Executed,
+        timestamp,
+        &|message| node_key.sign(message),
+    )
+    .expect("closed node receipt")
+}
+
+fn semantic_poison_is_accepted(
+    node_key: &KeyPair,
+    receipt: TrustReceipt,
+    node_did: &str,
+    node_key_id: &str,
+) -> bool {
+    let mut response = CrossCheckedAnchorResponseV1 {
+        protocol_version: 1,
+        request_hash: Hash256::from_bytes([0x81; 32]),
+        action_hash: Hash256::from_bytes([0x53; 32]),
+        exochain_receipt: receipt,
+        recording_status: "node_recorded".to_owned(),
+        consensus_finality: "not_asserted".to_owned(),
+        node_did: node_did.to_owned(),
+        node_key_id: node_key_id.to_owned(),
+        node_recorded_at: Timestamp::new(1_800_000_000_123, 7),
+        wrapper_signature: [0; 64],
+    };
+    sign_response(&mut response, node_key);
+    let body = response.to_canonical_cbor().expect("semantic poison body");
+    decode_and_validate_response(
+        &body,
+        ResponseValidationContext {
+            expected_request_hash: Hash256::from_bytes([0x81; 32]),
+            expected_action_hash: Hash256::from_bytes([0x53; 32]),
+            expected_authority_chain_hash: Hash256::from_bytes([0x71; 32]),
+            expected_node_did: NODE_DID,
+            expected_node_key_id: NODE_KEY_ID,
+            expected_node_recorded_at: Timestamp::new(1_800_000_000_123, 7),
+            expected_node_public_key: node_key.public_key(),
+        },
+    )
+    .is_ok()
+}
+
+fn context(node_key: &KeyPair) -> ResponseValidationContext<'_> {
     ResponseValidationContext {
         expected_request_hash: Hash256::from_bytes([0x81; 32]),
         expected_action_hash: Hash256::from_bytes([0x53; 32]),
-        receipt_actor_public_key: actor_key.public_key(),
-        node_public_key: node_key.public_key(),
+        expected_authority_chain_hash: Hash256::from_bytes([0x71; 32]),
+        expected_node_did: NODE_DID,
+        expected_node_key_id: NODE_KEY_ID,
+        expected_node_recorded_at: Timestamp::new(1_800_000_000_123, 7),
+        expected_node_public_key: node_key.public_key(),
     }
 }
 
@@ -113,9 +196,8 @@ fn signed_body(response: &mut CrossCheckedAnchorResponseV1, node_key: &KeyPair) 
 
 #[test]
 fn exact_response_preimage_nested_receipt_and_signatures_are_verified() {
-    let actor_key = KeyPair::from_secret_bytes([0x23; 32]).expect("fixed actor key");
     let node_key = KeyPair::from_secret_bytes([0x29; 32]).expect("fixed node key");
-    let mut response = unsigned_response(&actor_key);
+    let mut response = unsigned_response(&node_key);
     let receipt_value = independent_anchor_receipt_value(&response.exochain_receipt);
     let timestamp = Value::Array(vec![
         Value::Integer(1_800_000_000_123_u64.into()),
@@ -140,8 +222,8 @@ fn exact_response_preimage_nested_receipt_and_signatures_are_verified() {
     sign_response(&mut response, &node_key);
 
     let body = response.to_canonical_cbor().expect("response CBOR");
-    let validated = decode_and_validate_response(&body, context(&actor_key, &node_key))
-        .expect("valid response");
+    let validated =
+        decode_and_validate_response(&body, context(&node_key)).expect("valid response");
 
     assert_eq!(validated.response, response);
     assert_eq!(validated.canonical_body, body);
@@ -149,44 +231,43 @@ fn exact_response_preimage_nested_receipt_and_signatures_are_verified() {
 
 #[test]
 fn every_response_field_and_both_signatures_are_closed() {
-    let actor_key = KeyPair::from_secret_bytes([0x23; 32]).expect("fixed actor key");
     let node_key = KeyPair::from_secret_bytes([0x29; 32]).expect("fixed node key");
 
     let mut responses = Vec::new();
-    let mut response = unsigned_response(&actor_key);
+    let mut response = unsigned_response(&node_key);
     response.protocol_version = 2;
     responses.push(response);
-    let mut response = unsigned_response(&actor_key);
+    let mut response = unsigned_response(&node_key);
     response.request_hash = Hash256::from_bytes([0x82; 32]);
     responses.push(response);
-    let mut response = unsigned_response(&actor_key);
+    let mut response = unsigned_response(&node_key);
     response.action_hash = Hash256::from_bytes([0x54; 32]);
     responses.push(response);
-    let mut response = unsigned_response(&actor_key);
+    let mut response = unsigned_response(&node_key);
     response.exochain_receipt.receipt_hash = Hash256::from_bytes([0x91; 32]);
     responses.push(response);
-    let mut response = unsigned_response(&actor_key);
+    let mut response = unsigned_response(&node_key);
     response.recording_status = "consensus_recorded".to_owned();
     responses.push(response);
-    let mut response = unsigned_response(&actor_key);
+    let mut response = unsigned_response(&node_key);
     response.consensus_finality = "asserted".to_owned();
     responses.push(response);
-    let mut response = unsigned_response(&actor_key);
+    let mut response = unsigned_response(&node_key);
     response.node_did = "did:web:invalid".to_owned();
     responses.push(response);
-    let mut response = unsigned_response(&actor_key);
+    let mut response = unsigned_response(&node_key);
     response.node_key_id.push('!');
     responses.push(response);
-    let mut response = unsigned_response(&actor_key);
+    let mut response = unsigned_response(&node_key);
     response.node_recorded_at.logical += 1;
     responses.push(response);
 
     for mut response in responses {
         let body = signed_body(&mut response, &node_key);
-        assert!(decode_and_validate_response(&body, context(&actor_key, &node_key)).is_err());
+        assert!(decode_and_validate_response(&body, context(&node_key)).is_err());
     }
 
-    let mut response = unsigned_response(&actor_key);
+    let mut response = unsigned_response(&node_key);
     let mut body_value: Value =
         ciborium::from_reader(signed_body(&mut response, &node_key).as_slice())
             .expect("response map");
@@ -203,30 +284,288 @@ fn every_response_field_and_both_signatures_are_closed() {
     signature[0] ^= 1;
     let body = encode_canonical(body_value);
     assert_eq!(
-        decode_and_validate_response(&body, context(&actor_key, &node_key)),
+        decode_and_validate_response(&body, context(&node_key)),
         Err(AnchorCodecError::InvalidSignature)
     );
 
-    let wrong_actor = KeyPair::from_secret_bytes([0x24; 32]).expect("wrong actor key");
-    let mut response = unsigned_response(&actor_key);
+    let wrong_node = KeyPair::from_secret_bytes([0x24; 32]).expect("wrong node key");
+    let mut response = unsigned_response(&node_key);
     let body = signed_body(&mut response, &node_key);
     assert_eq!(
         decode_and_validate_response(
             &body,
             ResponseValidationContext {
-                receipt_actor_public_key: wrong_actor.public_key(),
-                ..context(&actor_key, &node_key)
+                expected_node_public_key: wrong_node.public_key(),
+                ..context(&node_key)
             }
         ),
         Err(AnchorCodecError::InvalidReceipt)
     );
+
+    let wrong_wrapper_signer =
+        KeyPair::from_secret_bytes([0x25; 32]).expect("wrong wrapper signer");
+    let mut response = unsigned_response(&node_key);
+    let body = signed_body(&mut response, &wrong_wrapper_signer);
+    assert_eq!(
+        decode_and_validate_response(&body, context(&node_key)),
+        Err(AnchorCodecError::InvalidSignature)
+    );
+}
+
+#[test]
+fn reviewer_semantic_poisons_fail_closed_after_rehash_and_resign() {
+    let actor_key = KeyPair::from_secret_bytes([0x23; 32]).expect("actor key");
+    let node_key = KeyPair::from_secret_bytes([0x29; 32]).expect("node key");
+    let cases = [
+        (
+            "actor_did_not_node_did_and_receipt_signed_by_other_role",
+            semantic_receipt(
+                &actor_key,
+                "did:exo:receipt-actor",
+                "crosschecked.receipt_commitment.record.v1",
+                ReceiptOutcome::Executed,
+                None,
+                None,
+            ),
+            NODE_DID,
+            NODE_KEY_ID,
+        ),
+        (
+            "wrong_action_type",
+            semantic_receipt(
+                &actor_key,
+                "did:exo:receipt-actor",
+                "crosschecked.anchor_commitment",
+                ReceiptOutcome::Executed,
+                None,
+                None,
+            ),
+            NODE_DID,
+            NODE_KEY_ID,
+        ),
+        (
+            "denied_outcome",
+            semantic_receipt(
+                &actor_key,
+                "did:exo:receipt-actor",
+                "crosschecked.receipt_commitment.record.v1",
+                ReceiptOutcome::Denied,
+                None,
+                None,
+            ),
+            NODE_DID,
+            NODE_KEY_ID,
+        ),
+        (
+            "consent_reference_present",
+            semantic_receipt(
+                &actor_key,
+                "did:exo:receipt-actor",
+                "crosschecked.receipt_commitment.record.v1",
+                ReceiptOutcome::Executed,
+                Some(Hash256::from_bytes([0xa1; 32])),
+                None,
+            ),
+            NODE_DID,
+            NODE_KEY_ID,
+        ),
+        (
+            "challenge_reference_present",
+            semantic_receipt(
+                &actor_key,
+                "did:exo:receipt-actor",
+                "crosschecked.receipt_commitment.record.v1",
+                ReceiptOutcome::Executed,
+                None,
+                Some(Hash256::from_bytes([0xa2; 32])),
+            ),
+            NODE_DID,
+            NODE_KEY_ID,
+        ),
+        (
+            "unbound_node_identity_and_key_id",
+            semantic_receipt(
+                &actor_key,
+                "did:exo:receipt-actor",
+                "crosschecked.receipt_commitment.record.v1",
+                ReceiptOutcome::Executed,
+                None,
+                None,
+            ),
+            "did:exo:other-node",
+            "did:exo:other-node#untrusted-label",
+        ),
+    ];
+
+    for (name, receipt, node_did, node_key_id) in cases {
+        assert!(
+            !semantic_poison_is_accepted(&node_key, receipt, node_did, node_key_id,),
+            "accepted reviewed semantic poison: {name}"
+        );
+    }
+}
+
+#[test]
+fn each_receipt_semantic_field_fails_independently_with_node_identity_and_key() {
+    let other_role_key = KeyPair::from_secret_bytes([0x23; 32]).expect("other role key");
+    let node_key = KeyPair::from_secret_bytes([0x29; 32]).expect("node key");
+    let cases = [
+        (
+            "actor_did_not_node_did",
+            semantic_receipt(
+                &node_key,
+                "did:exo:other-actor",
+                "crosschecked.receipt_commitment.record.v1",
+                ReceiptOutcome::Executed,
+                None,
+                None,
+            ),
+        ),
+        (
+            "receipt_signed_by_other_role",
+            semantic_receipt(
+                &other_role_key,
+                NODE_DID,
+                "crosschecked.receipt_commitment.record.v1",
+                ReceiptOutcome::Executed,
+                None,
+                None,
+            ),
+        ),
+        (
+            "wrong_action_type",
+            semantic_receipt(
+                &node_key,
+                NODE_DID,
+                "crosschecked.anchor_commitment",
+                ReceiptOutcome::Executed,
+                None,
+                None,
+            ),
+        ),
+        (
+            "denied_outcome",
+            semantic_receipt(
+                &node_key,
+                NODE_DID,
+                "crosschecked.receipt_commitment.record.v1",
+                ReceiptOutcome::Denied,
+                None,
+                None,
+            ),
+        ),
+        (
+            "consent_reference_present",
+            semantic_receipt(
+                &node_key,
+                NODE_DID,
+                "crosschecked.receipt_commitment.record.v1",
+                ReceiptOutcome::Executed,
+                Some(Hash256::from_bytes([0xa1; 32])),
+                None,
+            ),
+        ),
+        (
+            "challenge_reference_present",
+            semantic_receipt(
+                &node_key,
+                NODE_DID,
+                "crosschecked.receipt_commitment.record.v1",
+                ReceiptOutcome::Executed,
+                None,
+                Some(Hash256::from_bytes([0xa2; 32])),
+            ),
+        ),
+    ];
+
+    for (name, receipt) in cases {
+        assert!(
+            !semantic_poison_is_accepted(&node_key, receipt, NODE_DID, NODE_KEY_ID),
+            "accepted independently isolated semantic poison: {name}"
+        );
+    }
+}
+
+#[test]
+fn pinned_node_chain_and_timestamp_substitutions_fail_closed_after_resign() {
+    let node_key = KeyPair::from_secret_bytes([0x29; 32]).expect("node key");
+    let expected_timestamp = Timestamp::new(1_800_000_000_123, 7);
+    let cases = [
+        (
+            "unpinned_node_did",
+            closed_receipt(
+                &node_key,
+                "did:exo:other-node",
+                Hash256::from_bytes([0x71; 32]),
+                expected_timestamp,
+            ),
+            "did:exo:other-node",
+            "did:exo:other-node#response-2026",
+            expected_timestamp,
+        ),
+        (
+            "unpinned_node_key_id",
+            closed_receipt(
+                &node_key,
+                NODE_DID,
+                Hash256::from_bytes([0x71; 32]),
+                expected_timestamp,
+            ),
+            NODE_DID,
+            "did:exo:anchor-node#alternate-label",
+            expected_timestamp,
+        ),
+        (
+            "wrong_authority_chain",
+            closed_receipt(
+                &node_key,
+                NODE_DID,
+                Hash256::from_bytes([0x72; 32]),
+                expected_timestamp,
+            ),
+            NODE_DID,
+            NODE_KEY_ID,
+            expected_timestamp,
+        ),
+        (
+            "unexpected_timestamp",
+            closed_receipt(
+                &node_key,
+                NODE_DID,
+                Hash256::from_bytes([0x71; 32]),
+                Timestamp::new(1_800_000_000_124, 0),
+            ),
+            NODE_DID,
+            NODE_KEY_ID,
+            Timestamp::new(1_800_000_000_124, 0),
+        ),
+    ];
+
+    for (name, receipt, node_did, node_key_id, node_recorded_at) in cases {
+        let mut response = CrossCheckedAnchorResponseV1 {
+            protocol_version: 1,
+            request_hash: Hash256::from_bytes([0x81; 32]),
+            action_hash: Hash256::from_bytes([0x53; 32]),
+            exochain_receipt: receipt,
+            recording_status: "node_recorded".to_owned(),
+            consensus_finality: "not_asserted".to_owned(),
+            node_did: node_did.to_owned(),
+            node_key_id: node_key_id.to_owned(),
+            node_recorded_at,
+            wrapper_signature: [0; 64],
+        };
+        let body = signed_body(&mut response, &node_key);
+        assert!(
+            decode_and_validate_response(&body, context(&node_key)).is_err(),
+            "accepted independently resigned binding poison: {name}"
+        );
+    }
 }
 
 #[test]
 fn response_wire_has_no_algorithm_alias_and_both_timestamps_are_hlc_arrays() {
-    let actor_key = KeyPair::from_secret_bytes([0x23; 32]).expect("fixed actor key");
     let node_key = KeyPair::from_secret_bytes([0x29; 32]).expect("fixed node key");
-    let mut response = unsigned_response(&actor_key);
+    let mut response = unsigned_response(&node_key);
     let body = signed_body(&mut response, &node_key);
     let Value::Map(fields) =
         ciborium::from_reader::<Value, _>(body.as_slice()).expect("response map")
@@ -265,9 +604,8 @@ fn response_wire_has_no_algorithm_alias_and_both_timestamps_are_hlc_arrays() {
 
 #[test]
 fn response_rejects_map_shape_type_hlc_and_size_mutations() {
-    let actor_key = KeyPair::from_secret_bytes([0x23; 32]).expect("fixed actor key");
     let node_key = KeyPair::from_secret_bytes([0x29; 32]).expect("fixed node key");
-    let mut response = unsigned_response(&actor_key);
+    let mut response = unsigned_response(&node_key);
     let body = signed_body(&mut response, &node_key);
     let Value::Map(entries) =
         ciborium::from_reader::<Value, _>(body.as_slice()).expect("response map")
@@ -278,7 +616,7 @@ fn response_rejects_map_shape_type_hlc_and_size_mutations() {
     let mut missing = entries.clone();
     missing.pop();
     let missing = encode_canonical(Value::Map(missing));
-    assert!(decode_and_validate_response(&missing, context(&actor_key, &node_key)).is_err());
+    assert!(decode_and_validate_response(&missing, context(&node_key)).is_err());
 
     let mut extra = entries.clone();
     extra.push((
@@ -286,7 +624,7 @@ fn response_rejects_map_shape_type_hlc_and_size_mutations() {
         Value::Text("ed25519".to_owned()),
     ));
     let extra = encode_canonical(Value::Map(extra));
-    assert!(decode_and_validate_response(&extra, context(&actor_key, &node_key)).is_err());
+    assert!(decode_and_validate_response(&extra, context(&node_key)).is_err());
 
     for field in [
         "protocol_version",
@@ -307,7 +645,7 @@ fn response_rejects_map_shape_type_hlc_and_size_mutations() {
             .expect("field");
         *value = Value::Null;
         let wrong = encode_canonical(Value::Map(wrong));
-        assert!(decode_and_validate_response(&wrong, context(&actor_key, &node_key)).is_err());
+        assert!(decode_and_validate_response(&wrong, context(&node_key)).is_err());
     }
 
     let mut nested_map_timestamp = entries.clone();
@@ -330,10 +668,7 @@ fn response_rejects_map_shape_type_hlc_and_size_mutations() {
         (Value::Text("logical".to_owned()), Value::Integer(7.into())),
     ]);
     let nested_map_timestamp = encode_canonical(Value::Map(nested_map_timestamp));
-    assert!(
-        decode_and_validate_response(&nested_map_timestamp, context(&actor_key, &node_key))
-            .is_err()
-    );
+    assert!(decode_and_validate_response(&nested_map_timestamp, context(&node_key)).is_err());
 
     let mut overflowing_hlc = entries.clone();
     let (_, timestamp) = overflowing_hlc
@@ -345,22 +680,14 @@ fn response_rejects_map_shape_type_hlc_and_size_mutations() {
         Value::Integer((u64::from(u32::MAX) + 1).into()),
     ]);
     let overflowing_hlc = encode_canonical(Value::Map(overflowing_hlc));
-    assert!(
-        decode_and_validate_response(&overflowing_hlc, context(&actor_key, &node_key)).is_err()
-    );
+    assert!(decode_and_validate_response(&overflowing_hlc, context(&node_key)).is_err());
 
     assert_ne!(
-        decode_and_validate_response(
-            &vec![0; MAX_RESPONSE_BODY_BYTES],
-            context(&actor_key, &node_key)
-        ),
+        decode_and_validate_response(&vec![0; MAX_RESPONSE_BODY_BYTES], context(&node_key)),
         Err(AnchorCodecError::InvalidBodyLength)
     );
     assert_eq!(
-        decode_and_validate_response(
-            &vec![0; MAX_RESPONSE_BODY_BYTES + 1],
-            context(&actor_key, &node_key)
-        ),
+        decode_and_validate_response(&vec![0; MAX_RESPONSE_BODY_BYTES + 1], context(&node_key)),
         Err(AnchorCodecError::InvalidBodyLength)
     );
 }

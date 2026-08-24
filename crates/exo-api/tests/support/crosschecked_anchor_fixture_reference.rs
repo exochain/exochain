@@ -23,14 +23,11 @@ pub struct ReferenceFixtures {
     pub response: Vec<u8>,
     pub response_signing_preimage: Vec<u8>,
     pub response_signature: [u8; 64],
-    pub receipt_actor_public_key: [u8; 32],
     pub node_public_key: [u8; 32],
 }
 
 pub fn build_reference_fixtures() -> ReferenceFixtures {
     let authority_key = KeyPair::from_secret_bytes([0x17; 32]).expect("fixed authority key");
-    let receipt_actor_key =
-        KeyPair::from_secret_bytes([0x23; 32]).expect("fixed receipt actor key");
     let node_key = KeyPair::from_secret_bytes([0x29; 32]).expect("fixed node key");
     let authority_did = "did:exo:crosschecked-fixture-authority";
     let grant_id = [0x31; 32];
@@ -91,14 +88,14 @@ pub fn build_reference_fixtures() -> ReferenceFixtures {
     let request_hash = hash(&request);
 
     let receipt = TrustReceipt::new(
-        Did::new("did:exo:receipt-actor").expect("receipt actor DID"),
+        Did::new("did:exo:anchor-node").expect("node DID"),
         Hash256::from_bytes([0x71; 32]),
-        Some(Hash256::from_bytes([0x72; 32])),
-        "crosschecked.anchor_commitment".to_owned(),
+        None,
+        "crosschecked.receipt_commitment.record.v1".to_owned(),
         Hash256::from_bytes(action_hash),
         ReceiptOutcome::Executed,
         Timestamp::new(1_800_000_000_123, 7),
-        &|message| receipt_actor_key.sign(message),
+        &|message| node_key.sign(message),
     )
     .expect("receipt");
     let receipt_value = anchor_receipt_value(&receipt);
@@ -143,7 +140,6 @@ pub fn build_reference_fixtures() -> ReferenceFixtures {
         response,
         response_signing_preimage,
         response_signature,
-        receipt_actor_public_key: *receipt_actor_key.public_key().as_bytes(),
         node_public_key: *node_key.public_key().as_bytes(),
     }
 }
