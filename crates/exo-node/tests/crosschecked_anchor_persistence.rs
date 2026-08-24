@@ -39,6 +39,7 @@ const ISSUED_AT: u64 = 1_800_000_000_000;
 struct CountingDurableSigner {
     identity: AnchorNodeIdentity,
     key: KeyPair,
+    reservations: Mutex<BTreeMap<Hash256, Timestamp>>,
     operations: Mutex<BTreeMap<Hash256, (Hash256, Signature)>>,
     unique_calls: AtomicUsize,
     fail_next: AtomicUsize,
@@ -49,6 +50,7 @@ impl CountingDurableSigner {
         Self {
             identity,
             key: KeyPair::from_secret_bytes(secret).expect("fixed signer key"),
+            reservations: Mutex::new(BTreeMap::new()),
             operations: Mutex::new(BTreeMap::new()),
             unique_calls: AtomicUsize::new(0),
             fail_next: AtomicUsize::new(0),
@@ -67,6 +69,31 @@ impl CountingDurableSigner {
 impl DurableAnchorSigner for CountingDurableSigner {
     fn identity(&self) -> AnchorNodeIdentity {
         self.identity.clone()
+    }
+
+    fn reserved_recorded_at(
+        &self,
+        request_hash: Hash256,
+    ) -> Result<Option<Timestamp>, SignOnceError> {
+        Ok(self
+            .reservations
+            .lock()
+            .map_err(|_| SignOnceError::Unavailable("test reservation lock poisoned".into()))?
+            .get(&request_hash)
+            .copied())
+    }
+
+    fn reserve_recorded_at(
+        &self,
+        request_hash: Hash256,
+        proposed: Timestamp,
+    ) -> Result<Timestamp, SignOnceError> {
+        Ok(*self
+            .reservations
+            .lock()
+            .map_err(|_| SignOnceError::Unavailable("test reservation lock poisoned".into()))?
+            .entry(request_hash)
+            .or_insert(proposed))
     }
 
     fn sign_once(&self, operation_id: Hash256, payload: &[u8]) -> Result<Signature, SignOnceError> {

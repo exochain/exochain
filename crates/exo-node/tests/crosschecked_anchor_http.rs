@@ -32,8 +32,8 @@ use exochain_node::{
     },
     crosschecked_anchor_store::{
         AnchorNodeIdentity, AnchorStore, AnchorStoreConfig, AnchorStoreError,
-        AuthorityProvisioningV1, CrossCheckedScopeBindingV1, DurableAnchorSigner, SignOnceError,
-        SubmissionContext, authority_chain_fingerprint,
+        AuthorityProvisioningV1, AuthorityRetirementV1, CrossCheckedScopeBindingV1,
+        DurableAnchorSigner, SignOnceError, SubmissionContext, authority_chain_fingerprint,
     },
 };
 use tempfile::TempDir;
@@ -71,6 +71,7 @@ fn anchor_store_config() -> AnchorStoreConfig {
 struct CountingSigner {
     identity: AnchorNodeIdentity,
     key: KeyPair,
+    reservations: Mutex<BTreeMap<Hash256, Timestamp>>,
     operations: Mutex<BTreeMap<Hash256, (Hash256, Signature)>>,
 }
 
@@ -79,6 +80,7 @@ impl CountingSigner {
         Self {
             identity,
             key: KeyPair::from_secret_bytes(secret).expect("signer key"),
+            reservations: Mutex::new(BTreeMap::new()),
             operations: Mutex::new(BTreeMap::new()),
         }
     }
@@ -87,6 +89,31 @@ impl CountingSigner {
 impl DurableAnchorSigner for CountingSigner {
     fn identity(&self) -> AnchorNodeIdentity {
         self.identity.clone()
+    }
+
+    fn reserved_recorded_at(
+        &self,
+        request_hash: Hash256,
+    ) -> Result<Option<Timestamp>, SignOnceError> {
+        Ok(self
+            .reservations
+            .lock()
+            .map_err(|_| SignOnceError::Unavailable("test reservation lock poisoned".into()))?
+            .get(&request_hash)
+            .copied())
+    }
+
+    fn reserve_recorded_at(
+        &self,
+        request_hash: Hash256,
+        proposed: Timestamp,
+    ) -> Result<Timestamp, SignOnceError> {
+        Ok(*self
+            .reservations
+            .lock()
+            .map_err(|_| SignOnceError::Unavailable("test reservation lock poisoned".into()))?
+            .entry(request_hash)
+            .or_insert(proposed))
     }
 
     fn sign_once(&self, operation_id: Hash256, payload: &[u8]) -> Result<Signature, SignOnceError> {
@@ -111,6 +138,7 @@ struct Harness {
     _temp: TempDir,
     store_path: std::path::PathBuf,
     store: AnchorStore,
+    intermediate_key: KeyPair,
     authority_key: KeyPair,
     authority_did: String,
     authority_key_id: String,
@@ -147,6 +175,7 @@ impl Harness {
             _temp: temp,
             store_path,
             store,
+            intermediate_key,
             authority_key,
             authority_did,
             authority_key_id,
@@ -180,6 +209,17 @@ impl Harness {
         );
         crosschecked_anchor_router(state)
     }
+}
+
+fn signer_reservation_count(path: &std::path::Path) -> u64 {
+    let connection = rusqlite::Connection::open(path).expect("signer journal");
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM crosschecked_anchor_recorded_at_reservations",
+            [],
+            |row| row.get(0),
+        )
+        .expect("reservation count")
 }
 
 fn did(value: &str) -> Did {
@@ -762,16 +802,18 @@ fn signer_journal_commit_before_record_abort_restarts_into_one_exact_record() {
         )
         .expect("install record abort");
     let request_body = harness.request(0x5a, 0x6b);
-    let submission = || SubmissionContext {
+    let submission = |now| SubmissionContext {
         method: "POST",
         path: ANCHOR_PATH,
         content_type: "application/cbor",
         body: &request_body,
-        now: Timestamp::new(ISSUED_AT + 1_000, 0),
+        now,
     };
 
     assert!(matches!(
-        harness.store.record(submission(), &signer),
+        harness
+            .store
+            .record(submission(Timestamp::new(ISSUED_AT + 1_000, 0)), &signer),
         Err(AnchorStoreError::Storage(_))
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -787,12 +829,18 @@ fn signer_journal_commit_before_record_abort_restarts_into_one_exact_record() {
         SqliteDurableAnchorSigner::open(&signer_path, anchor_store_config().node_identity, sign_fn)
             .expect("restart signer journal");
     let created = restarted_store
-        .record(submission(), &restarted_signer)
-        .expect("convergent retry");
+        .record(
+            submission(Timestamp::new(ISSUED_AT + 2_000, 7)),
+            &restarted_signer,
+        )
+        .expect("changed-clock convergent retry");
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 
     let replay = restarted_store
-        .record(submission(), &restarted_signer)
+        .record(
+            submission(Timestamp::new(ISSUED_AT + 3_000, 9)),
+            &restarted_signer,
+        )
         .expect("exact replay");
     assert_eq!(replay.response_body, created.response_body);
     assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -810,7 +858,7 @@ fn signer_journal_commit_before_record_abort_restarts_into_one_exact_record() {
             .expect("record count");
         assert_eq!(count, 1, "table {table}");
     }
-    let journal = rusqlite::Connection::open(signer_path).expect("signer journal");
+    let journal = rusqlite::Connection::open(&signer_path).expect("signer journal");
     let signature_count: u64 = journal
         .query_row(
             "SELECT COUNT(*) FROM crosschecked_anchor_signatures",
@@ -819,6 +867,220 @@ fn signer_journal_commit_before_record_abort_restarts_into_one_exact_record() {
         )
         .expect("signature count");
     assert_eq!(signature_count, 2);
+    assert_eq!(signer_reservation_count(&signer_path), 1);
+}
+
+#[test]
+fn orphaned_signatures_retry_after_request_expiry_and_authority_retirement() {
+    let harness = Harness::new();
+    let signer_path = harness._temp.path().join("signatures-expiry.sqlite3");
+    let key = Arc::new(KeyPair::from_secret_bytes([0x29; 32]).expect("node key"));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let sign_fn = {
+        let key = Arc::clone(&key);
+        let calls = Arc::clone(&calls);
+        Arc::new(move |payload: &[u8]| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            key.sign(payload)
+        })
+    };
+    let signer = SqliteDurableAnchorSigner::open(
+        &signer_path,
+        anchor_store_config().node_identity,
+        sign_fn.clone(),
+    )
+    .expect("signer journal");
+    let records_connection = rusqlite::Connection::open(&harness.store_path).expect("records DB");
+    records_connection
+        .execute_batch(
+            "CREATE TRIGGER inject_expiry_record_abort
+             BEFORE INSERT ON crosschecked_anchor_requests
+             BEGIN
+               SELECT RAISE(ABORT, 'injected after signer journal commit');
+             END;",
+        )
+        .expect("install record abort");
+    let request_body = harness.request(0x5b, 0x6c);
+
+    assert!(matches!(
+        harness.store.record(
+            SubmissionContext {
+                method: "POST",
+                path: ANCHOR_PATH,
+                content_type: "application/cbor",
+                body: &request_body,
+                now: Timestamp::new(ISSUED_AT + 1_000, 0),
+            },
+            &signer
+        ),
+        Err(AnchorStoreError::Storage(_))
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    records_connection
+        .execute_batch("DROP TRIGGER inject_expiry_record_abort;")
+        .expect("remove record abort");
+    drop(records_connection);
+    drop(signer);
+
+    let mut retirement = AuthorityRetirementV1 {
+        protocol_version: 1,
+        authority_did: did(&harness.authority_did),
+        authority_key_id: harness.authority_key_id.clone(),
+        key_epoch: 1,
+        retired_at_ms: ISSUED_AT + 2_000,
+        signer_did: did(INTERMEDIATE_DID),
+        signer_key_id: INTERMEDIATE_KEY_ID.to_owned(),
+        signature: Signature::empty(),
+    };
+    retirement.signature = harness
+        .intermediate_key
+        .sign(&retirement.signing_preimage().expect("retirement payload"));
+    harness
+        .store
+        .retire_authority(&retirement)
+        .expect("retire authority after reservation");
+
+    let restarted_signer =
+        SqliteDurableAnchorSigner::open(&signer_path, anchor_store_config().node_identity, sign_fn)
+            .expect("restart signer journal");
+    let created = harness
+        .store
+        .record(
+            SubmissionContext {
+                method: "POST",
+                path: ANCHOR_PATH,
+                content_type: "application/cbor",
+                body: &request_body,
+                now: Timestamp::new(ISSUED_AT + 600_000, 0),
+            },
+            &restarted_signer,
+        )
+        .expect("reserved-time retry after expiry and retirement");
+    assert_eq!(
+        created.response.node_recorded_at,
+        Timestamp::new(ISSUED_AT + 1_000, 0)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(signer_reservation_count(&signer_path), 1);
+}
+
+#[test]
+fn invalid_or_untrusted_requests_create_no_recorded_at_reservation() {
+    let harness = Harness::new();
+    let signer_path = harness._temp.path().join("signatures-invalid.sqlite3");
+    let key = Arc::new(KeyPair::from_secret_bytes([0x29; 32]).expect("node key"));
+    let signer = SqliteDurableAnchorSigner::open(
+        &signer_path,
+        anchor_store_config().node_identity,
+        Arc::new(move |payload: &[u8]| key.sign(payload)),
+    )
+    .expect("signer journal");
+
+    let mut invalid_signature = harness.request(0x5c, 0x6d);
+    let last = invalid_signature.last_mut().expect("signature byte");
+    *last ^= 1;
+    assert!(matches!(
+        harness.store.record(
+            SubmissionContext {
+                method: "POST",
+                path: ANCHOR_PATH,
+                content_type: "application/cbor",
+                body: &invalid_signature,
+                now: Timestamp::new(ISSUED_AT + 1_000, 0),
+            },
+            &signer,
+        ),
+        Err(AnchorStoreError::Codec(_))
+    ));
+
+    let unknown_key = KeyPair::from_secret_bytes([0x55; 32]).expect("unknown authority key");
+    let unknown_did = "did:exo:crosschecked-unknown-workspace";
+    let unknown_key_id = format!("{unknown_did}#anchor-1");
+    let untrusted = signed_request(
+        &unknown_key,
+        unknown_did,
+        &unknown_key_id,
+        [0x71; 32],
+        [0x72; 32],
+        [0x73; 32],
+        [0x74; 32],
+    );
+    assert_eq!(
+        harness.store.record(
+            SubmissionContext {
+                method: "POST",
+                path: ANCHOR_PATH,
+                content_type: "application/cbor",
+                body: &untrusted,
+                now: Timestamp::new(ISSUED_AT + 1_000, 0),
+            },
+            &signer,
+        ),
+        Err(AnchorStoreError::AuthorityNotFound)
+    );
+    assert_eq!(signer_reservation_count(&signer_path), 0);
+}
+
+#[test]
+fn recorded_at_reservation_is_concurrent_restart_safe_and_identity_bound() {
+    let temp = TempDir::new().expect("temp");
+    let signer_path = temp.path().join("signatures-reservation.sqlite3");
+    let identity = anchor_store_config().node_identity;
+    let key = Arc::new(KeyPair::from_secret_bytes([0x29; 32]).expect("node key"));
+    let signer = Arc::new(
+        SqliteDurableAnchorSigner::open(
+            &signer_path,
+            identity.clone(),
+            Arc::new(move |payload: &[u8]| key.sign(payload)),
+        )
+        .expect("signer journal"),
+    );
+    let request_hash = Hash256::digest(b"concurrent-recorded-at-reservation");
+    let mut threads = Vec::new();
+    for index in 0_u32..100 {
+        let signer = Arc::clone(&signer);
+        threads.push(std::thread::spawn(move || {
+            signer
+                .reserve_recorded_at(
+                    request_hash,
+                    Timestamp::new(ISSUED_AT + u64::from(index), index),
+                )
+                .expect("reserve or read timestamp")
+        }));
+    }
+    let reservations: Vec<Timestamp> = threads
+        .into_iter()
+        .map(|thread| thread.join().expect("reservation thread"))
+        .collect();
+    assert!(reservations.iter().all(|value| *value == reservations[0]));
+    assert_eq!(signer_reservation_count(&signer_path), 1);
+    drop(signer);
+
+    let key = Arc::new(KeyPair::from_secret_bytes([0x29; 32]).expect("node key"));
+    let restarted = SqliteDurableAnchorSigner::open(
+        &signer_path,
+        identity.clone(),
+        Arc::new(move |payload: &[u8]| key.sign(payload)),
+    )
+    .expect("restart signer");
+    assert_eq!(
+        restarted
+            .reserved_recorded_at(request_hash)
+            .expect("read reservation"),
+        Some(reservations[0])
+    );
+
+    let mut other_identity = identity;
+    other_identity.key_id = "did:exo:anchor-node#substituted".to_owned();
+    let other_key = Arc::new(KeyPair::from_secret_bytes([0x29; 32]).expect("node key"));
+    assert!(
+        SqliteDurableAnchorSigner::open(
+            &signer_path,
+            other_identity,
+            Arc::new(move |payload: &[u8]| other_key.sign(payload)),
+        )
+        .is_err()
+    );
 }
 
 #[test]

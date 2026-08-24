@@ -220,6 +220,15 @@ pub enum SignOnceError {
 /// repeating an operation with another payload must fail closed.
 pub trait DurableAnchorSigner: Send + Sync {
     fn identity(&self) -> AnchorNodeIdentity;
+    fn reserved_recorded_at(
+        &self,
+        request_hash: Hash256,
+    ) -> Result<Option<Timestamp>, SignOnceError>;
+    fn reserve_recorded_at(
+        &self,
+        request_hash: Hash256,
+        proposed: Timestamp,
+    ) -> Result<Timestamp, SignOnceError>;
     fn sign_once(&self, operation_id: Hash256, payload: &[u8]) -> Result<Signature, SignOnceError>;
 }
 
@@ -520,8 +529,43 @@ impl AnchorStore {
         )?
         .ok_or(AnchorStoreError::AuthorityNotFound)?;
         validate_stored_authority(&self.config, &authority)?;
-        validate_authority_time(&authority, &locator, submission.now.physical_ms)?;
+        let signer_identity = signer.identity();
+        if signer_identity != self.config.node_identity {
+            return Err(AnchorStoreError::Signer(SignOnceError::Unavailable(
+                "signer identity does not match store policy".into(),
+            )));
+        }
 
+        let recorded_at = match signer
+            .reserved_recorded_at(locator.request_hash)
+            .map_err(AnchorStoreError::Signer)?
+        {
+            Some(recorded_at) => recorded_at,
+            None => {
+                validate_authority_time(&authority, &locator, submission.now.physical_ms)?;
+                let live_validated = decode_and_validate_request(
+                    submission.body,
+                    RequestValidationContext {
+                        method: submission.method,
+                        path: submission.path,
+                        content_type: submission.content_type,
+                        expected_audience: &self.config.expected_audience,
+                        now_ms: submission.now.physical_ms,
+                        authority_public_key: &authority.authority_public_key,
+                    },
+                )
+                .map_err(codec)?;
+                validate_request_binding(
+                    &live_validated.request,
+                    &authority.provisioning.scope_binding,
+                )?;
+                signer
+                    .reserve_recorded_at(locator.request_hash, submission.now)
+                    .map_err(AnchorStoreError::Signer)?
+            }
+        };
+
+        validate_authority_time(&authority, &locator, recorded_at.physical_ms)?;
         let validated = decode_and_validate_request(
             submission.body,
             RequestValidationContext {
@@ -529,19 +573,12 @@ impl AnchorStore {
                 path: submission.path,
                 content_type: submission.content_type,
                 expected_audience: &self.config.expected_audience,
-                now_ms: submission.now.physical_ms,
+                now_ms: recorded_at.physical_ms,
                 authority_public_key: &authority.authority_public_key,
             },
         )
         .map_err(codec)?;
         validate_request_binding(&validated.request, &authority.provisioning.scope_binding)?;
-
-        let signer_identity = signer.identity();
-        if signer_identity != self.config.node_identity {
-            return Err(AnchorStoreError::Signer(SignOnceError::Unavailable(
-                "signer identity does not match store policy".into(),
-            )));
-        }
 
         let action_hash = Hash256::from_bytes(validated.request.action_hash);
         let mut receipt = TrustReceipt::new(
@@ -553,7 +590,7 @@ impl AnchorStore {
             RECEIPT_ACTION_TYPE.to_owned(),
             action_hash,
             ReceiptOutcome::Executed,
-            submission.now,
+            recorded_at,
             &|_| Signature::empty(),
         )
         .map_err(|error| AnchorStoreError::Signer(SignOnceError::Unavailable(error.to_string())))?;
@@ -584,7 +621,7 @@ impl AnchorStore {
             consensus_finality: "not_asserted".to_owned(),
             node_did: signer_identity.did.clone(),
             node_key_id: signer_identity.key_id.clone(),
-            node_recorded_at: submission.now,
+            node_recorded_at: recorded_at,
             wrapper_signature: [0; 64],
         };
         let wrapper_payload = response.signing_preimage().map_err(codec)?;
@@ -603,7 +640,7 @@ impl AnchorStore {
                 expected_authority_chain_hash: authority.authority_chain_hash,
                 expected_node_did: &signer_identity.did,
                 expected_node_key_id: &signer_identity.key_id,
-                expected_node_recorded_at: submission.now,
+                expected_node_recorded_at: recorded_at,
                 expected_node_public_key: &signer_identity.public_key,
             },
         )
@@ -614,7 +651,7 @@ impl AnchorStore {
             &transaction,
             &validated,
             &authority,
-            submission.now,
+            recorded_at,
             &receipt,
             &receipt_body,
             &response_body,

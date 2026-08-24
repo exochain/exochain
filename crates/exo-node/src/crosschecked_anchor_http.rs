@@ -456,6 +456,13 @@ impl SqliteDurableAnchorSigner {
                     operation_id BLOB PRIMARY KEY,
                     payload_hash BLOB NOT NULL,
                     signature BLOB NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS crosschecked_anchor_recorded_at_reservations (
+                    request_hash BLOB PRIMARY KEY CHECK (length(request_hash) = 32),
+                    node_recorded_physical_ms INTEGER NOT NULL
+                        CHECK (node_recorded_physical_ms >= 0),
+                    node_recorded_logical INTEGER NOT NULL
+                        CHECK (node_recorded_logical >= 0)
                  );",
             )
             .map_err(signer_storage)?;
@@ -496,6 +503,62 @@ impl SqliteDurableAnchorSigner {
 impl DurableAnchorSigner for SqliteDurableAnchorSigner {
     fn identity(&self) -> AnchorNodeIdentity {
         self.identity.clone()
+    }
+
+    fn reserved_recorded_at(
+        &self,
+        request_hash: Hash256,
+    ) -> Result<Option<Timestamp>, SignOnceError> {
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                "SELECT node_recorded_physical_ms, node_recorded_logical
+                 FROM crosschecked_anchor_recorded_at_reservations
+                 WHERE request_hash = ?1",
+                [request_hash.as_bytes().as_slice()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()
+            .map_err(signer_storage)?
+            .map(|(physical_ms, logical)| signer_timestamp(physical_ms, logical))
+            .transpose()
+    }
+
+    fn reserve_recorded_at(
+        &self,
+        request_hash: Hash256,
+        proposed: Timestamp,
+    ) -> Result<Timestamp, SignOnceError> {
+        let physical_ms = i64::try_from(proposed.physical_ms).map_err(|_| {
+            SignOnceError::Unavailable(
+                "node recorded physical timestamp exceeds SQLite INTEGER".into(),
+            )
+        })?;
+        let logical = i64::from(proposed.logical);
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(signer_storage)?;
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO crosschecked_anchor_recorded_at_reservations
+                 (request_hash, node_recorded_physical_ms, node_recorded_logical)
+                 VALUES (?1, ?2, ?3)",
+                params![request_hash.as_bytes().as_slice(), physical_ms, logical],
+            )
+            .map_err(signer_storage)?;
+        let stored = transaction
+            .query_row(
+                "SELECT node_recorded_physical_ms, node_recorded_logical
+                 FROM crosschecked_anchor_recorded_at_reservations
+                 WHERE request_hash = ?1",
+                [request_hash.as_bytes().as_slice()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .map_err(signer_storage)?;
+        let reserved = signer_timestamp(stored.0, stored.1)?;
+        transaction.commit().map_err(signer_storage)?;
+        Ok(reserved)
     }
 
     fn sign_once(&self, operation_id: Hash256, payload: &[u8]) -> Result<Signature, SignOnceError> {
@@ -617,6 +680,16 @@ fn exact_array<const N: usize>(bytes: Vec<u8>, field: &str) -> Result<[u8; N], S
 
 fn signer_storage(error: rusqlite::Error) -> SignOnceError {
     SignOnceError::Unavailable(error.to_string())
+}
+
+fn signer_timestamp(physical_ms: i64, logical: i64) -> Result<Timestamp, SignOnceError> {
+    let physical_ms = u64::try_from(physical_ms).map_err(|_| {
+        SignOnceError::Unavailable("stored node recorded physical timestamp is negative".into())
+    })?;
+    let logical = u32::try_from(logical).map_err(|_| {
+        SignOnceError::Unavailable("stored node recorded logical timestamp is invalid".into())
+    })?;
+    Ok(Timestamp::new(physical_ms, logical))
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
