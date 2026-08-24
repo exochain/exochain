@@ -42,9 +42,8 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use exo_node::crosschecked_anchor_http::CrossCheckedBearerVerifier;
 use zeroize::{Zeroize, Zeroizing};
-
-use exochain_node::crosschecked_anchor_http::CrossCheckedBearerVerifier;
 
 pub const LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_ROUTE: &str =
     "/api/v1/avc/livesafe/public-adapter-output-authorization";

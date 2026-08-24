@@ -75,9 +75,12 @@ use std::{
 
 use clap::Parser;
 use cli::{Cli, Command};
-use exo_core::types::{Did, PublicKey};
-use exo_core::{error::ExoError, hlc::HybridClock};
-use exochain_node::{
+use exo_core::{
+    error::ExoError,
+    hlc::HybridClock,
+    types::{Did, PublicKey},
+};
+use exo_node::{
     crosschecked_anchor_http::{
         CROSSCHECKED_ANCHOR_BEARER_ENV, CROSSCHECKED_ANCHOR_EXPECTED_AUDIENCE_ENV,
         CROSSCHECKED_ANCHOR_INTERMEDIATE_DID_ENV, CROSSCHECKED_ANCHOR_INTERMEDIATE_KEY_ID_ENV,

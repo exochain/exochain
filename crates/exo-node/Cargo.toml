@@ -25,6 +25,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[lib]
+name = "exo_node"
+path = "src/lib.rs"
+
 [[bin]]
 name = "exochain"
 path = "src/main.rs"

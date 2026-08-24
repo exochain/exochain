@@ -20,7 +20,7 @@ use exo_core::{
     types::{Did, Hash256, Signature, Timestamp},
 };
 use exo_identity::did::{DidDocument, VerificationMethod};
-use exochain_node::crosschecked_anchor_store::{
+use exo_node::crosschecked_anchor_store::{
     AnchorConflictKind, AnchorNodeIdentity, AnchorRecordDisposition, AnchorStore,
     AnchorStoreConfig, AnchorStoreError, AuthorityProvisioningV1, AuthorityRetirementV1,
     CrossCheckedScopeBindingV1, DurableAnchorSigner, SignOnceError, SubmissionContext,
