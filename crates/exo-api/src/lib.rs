@@ -18,6 +18,7 @@
 
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
+pub mod crosschecked_anchor;
 pub mod dagdb;
 pub mod error;
 pub mod p2p;
