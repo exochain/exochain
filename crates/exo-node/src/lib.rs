@@ -18,4 +18,5 @@
 
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
+pub mod crosschecked_anchor_http;
 pub mod crosschecked_anchor_store;

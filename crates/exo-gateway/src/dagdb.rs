@@ -1,7 +1,9 @@
 //! Additive DAG DB gateway scaffolding and narrow council ingress.
 
+#[cfg(feature = "production-db")]
+use std::collections::BTreeSet;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     sync::{Arc, RwLock},
 };
 
@@ -23,19 +25,19 @@ use exo_api::dagdb::ConsentPurpose;
 // to those configurations so the default build is unused-import clean.
 #[cfg(any(test, feature = "production-db"))]
 use exo_api::dagdb::{
-    CatalogEntryResponse, CouncilDecisionStatus, CredentialStatus, DagDbCatalogLookupRequest,
+    CatalogEntryResponse, ContextPacketMemoryRef, CouncilDecisionStatus, CredentialStatus,
     DagDbCatalogLookupResponse, DagDbCouncilDecisionResponse, DagDbIntakeResponse,
-    DagDbReceiptLookupRequest, DagDbReceiptLookupResponse, DagDbRouteLookupRequest,
-    DagDbRouteLookupResponse, DagDbRouteResponse, DagDbTrustCheckResponse, DagDbValidateResponse,
-    DagDbWritebackResponse, ValidationDecision,
+    DagDbReceiptLookupResponse, DagDbRouteLookupResponse, DagDbRouteResponse,
+    DagDbTrustCheckResponse, DagDbValidateResponse, DagDbWritebackResponse, RiskClass, RouteStatus,
+    SafeMetadata, ValidationDecision,
 };
 use exo_api::dagdb::{
     ContextPacketLayerBudgetReport, ContextPacketLayerEdgeRef, ContextPacketLayerRef,
-    ContextPacketMemoryRef, CouncilReviewStatus, DagDbContextPacketRequest,
+    CouncilReviewStatus, DagDbCatalogLookupRequest, DagDbContextPacketRequest,
     DagDbContextPacketResponse, DagDbCouncilDecisionRequest, DagDbErrorEnvelope,
-    DagDbExportRequest, DagDbImportRequest, DagDbIntakeRequest, DagDbRouteRequest,
-    DagDbTrustCheckRequest, DagDbValidateRequest, DagDbWritebackRequest, DagFinalityStatus,
-    RiskClass, RouteStatus, SafeMetadata, ValidationStatus,
+    DagDbExportRequest, DagDbImportRequest, DagDbIntakeRequest, DagDbReceiptLookupRequest,
+    DagDbRouteLookupRequest, DagDbRouteRequest, DagDbTrustCheckRequest, DagDbValidateRequest,
+    DagDbWritebackRequest, DagFinalityStatus, ValidationStatus,
 };
 #[cfg(feature = "production-db")]
 use exo_api::dagdb::{DagDbExportResponse, DagDbImportResponse};
@@ -49,10 +51,9 @@ use exo_api::dagdb::{ReceiptEventType, SubjectKind};
 use exo_core::Hash256;
 #[cfg(feature = "production-db")]
 use exo_core::Timestamp;
-use exo_dag_db_core::{
-    hash::RequestHashMaterial,
-    metadata::{MetadataField, sanitize_keywords, sanitize_runtime_metadata},
-};
+use exo_dag_db_core::hash::RequestHashMaterial;
+#[cfg(any(test, feature = "production-db"))]
+use exo_dag_db_core::metadata::{MetadataField, sanitize_keywords, sanitize_runtime_metadata};
 #[cfg(test)]
 use exo_dag_db_domain::council::CouncilError;
 #[cfg(feature = "production-db")]
@@ -115,8 +116,12 @@ use exo_gatekeeper::{
 };
 #[cfg(feature = "production-db")]
 use exo_gatekeeper::{usage_event_payload_hash, verify_write_consent, verify_write_signature};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+#[cfg(any(test, feature = "production-db"))]
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Value;
+#[cfg(any(test, feature = "production-db"))]
+use serde_json::json;
 #[cfg(feature = "production-db")]
 use sqlx::{Postgres, Row, Transaction};
 #[cfg(any(feature = "production-db", debug_assertions))]
@@ -191,6 +196,7 @@ const REPLAYED_IDEMPOTENCY_BODY_STATUS: &str = "replayed";
 const GATEWAY_IDEMPOTENCY_RESERVATION_TTL_MS: i64 = 86_400_000;
 #[cfg(feature = "production-db")]
 const GATEWAY_AUTHORIZATION_PAYLOAD_HASH_FIELD: &str = "_gateway_authorization_payload_hash";
+#[cfg(feature = "production-db")]
 const GATEWAY_OPERATIONAL_AUDIT_ACTOR: &str = "did:exo:dagdb-gateway";
 #[cfg(feature = "production-db")]
 const GATEWAY_OPERATIONAL_AUDIT_SOURCE: &str = "dagdb_gateway_mounted_route";
@@ -4953,6 +4959,7 @@ fn dagdb_json_rejection_category(rejection: &JsonRejection) -> &'static str {
     }
 }
 
+#[cfg(any(test, feature = "production-db"))]
 fn intake_response_from_request(
     request: DagDbIntakeRequest,
     route_name: &str,
@@ -5461,6 +5468,7 @@ fn context_packet_response_from_request(
     })
 }
 
+#[cfg(any(test, feature = "production-db"))]
 fn validate_response_from_request(
     request: DagDbValidateRequest,
     route_name: &str,
@@ -8558,6 +8566,7 @@ fn route_lookup_response(request: DagDbRouteLookupRequest) -> DagDbRouteLookupRe
     }
 }
 
+#[cfg(any(test, feature = "production-db"))]
 fn sanitize_metadata(field: MetadataField, text: &str) -> Result<SafeMetadata, Box<Response>> {
     sanitize_runtime_metadata(field, text).map_err(|_| {
         Box::new(dagdb_error_response(
@@ -8569,6 +8578,7 @@ fn sanitize_metadata(field: MetadataField, text: &str) -> Result<SafeMetadata, B
     })
 }
 
+#[cfg(any(test, feature = "production-db"))]
 fn sanitize_optional_metadata(
     field: MetadataField,
     text: Option<&str>,
@@ -8577,6 +8587,7 @@ fn sanitize_optional_metadata(
         .transpose()
 }
 
+#[cfg(any(test, feature = "production-db"))]
 fn sanitize_keyword_texts(texts: Option<&[String]>) -> Result<Vec<SafeMetadata>, Box<Response>> {
     let empty = Vec::new();
     let keyword_texts = texts.unwrap_or(&empty);
@@ -8601,6 +8612,7 @@ fn request_json<T: Serialize>(request: &T) -> Result<Value, Box<Response>> {
     })
 }
 
+#[cfg(any(test, feature = "production-db"))]
 fn replace_metadata(
     body: &mut Value,
     inbound_field: &str,

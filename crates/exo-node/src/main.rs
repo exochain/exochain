@@ -76,6 +76,17 @@ use std::{
 use clap::Parser;
 use cli::{Cli, Command};
 use exo_core::types::{Did, PublicKey};
+use exo_core::{error::ExoError, hlc::HybridClock};
+use exochain_node::{
+    crosschecked_anchor_http::{
+        CROSSCHECKED_ANCHOR_BEARER_ENV, CROSSCHECKED_ANCHOR_EXPECTED_AUDIENCE_ENV,
+        CROSSCHECKED_ANCHOR_INTERMEDIATE_DID_ENV, CROSSCHECKED_ANCHOR_INTERMEDIATE_KEY_ID_ENV,
+        CROSSCHECKED_ANCHOR_INTERMEDIATE_PUBLIC_KEY_ENV, CROSSCHECKED_ANCHOR_NODE_KEY_ID_ENV,
+        CrossCheckedAnchorHttpState, CrossCheckedAnchorStartupConfig, SqliteDurableAnchorSigner,
+        crosschecked_anchor_router,
+    },
+    crosschecked_anchor_store::{AnchorStore, DurableAnchorSigner},
+};
 #[cfg(feature = "unaudited-infrastructure-holons")]
 use holons::{HolonActorKey, HolonEvent, HolonManagerConfig};
 use libp2p_core::Multiaddr;
@@ -84,6 +95,7 @@ use reactor::{ReactorConfig, ReactorEvent};
 use sync::{SyncConfig, SyncEngine, SyncEvent};
 use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
+use zeroize::Zeroize;
 
 #[cfg(feature = "dagdb-gateway-proxy")]
 const EXO_DAGDB_GATEWAY_URL_ENV: &str = "EXO_DAGDB_GATEWAY_URL";
@@ -498,6 +510,78 @@ fn livesafe_public_output_scoped_bearer_from_config(
         }
         None => Ok(auth::ScopedBearerAuth::none()),
     }
+}
+
+fn crosschecked_anchor_startup_config_from_environment(
+    admin_token: &str,
+) -> anyhow::Result<Option<CrossCheckedAnchorStartupConfig>> {
+    let mut values = BTreeMap::new();
+    for name in [
+        CROSSCHECKED_ANCHOR_BEARER_ENV,
+        CROSSCHECKED_ANCHOR_EXPECTED_AUDIENCE_ENV,
+        CROSSCHECKED_ANCHOR_INTERMEDIATE_DID_ENV,
+        CROSSCHECKED_ANCHOR_INTERMEDIATE_KEY_ID_ENV,
+        CROSSCHECKED_ANCHOR_INTERMEDIATE_PUBLIC_KEY_ENV,
+        CROSSCHECKED_ANCHOR_NODE_KEY_ID_ENV,
+    ] {
+        match std::env::var(name) {
+            Ok(value) => {
+                values.insert(name.to_owned(), value);
+            }
+            Err(std::env::VarError::NotPresent) => {}
+            Err(std::env::VarError::NotUnicode(_)) => {
+                anyhow::bail!("{name} is not valid Unicode");
+            }
+        }
+    }
+    crosschecked_anchor_startup_config_from_values(admin_token, &mut values)
+}
+
+fn crosschecked_anchor_startup_config_from_values(
+    admin_token: &str,
+    values: &mut BTreeMap<String, String>,
+) -> anyhow::Result<Option<CrossCheckedAnchorStartupConfig>> {
+    let result = CrossCheckedAnchorStartupConfig::from_values(admin_token, values)
+        .map_err(|error| anyhow::anyhow!(error));
+    if let Some(raw_bearer) = values.get_mut(CROSSCHECKED_ANCHOR_BEARER_ENV) {
+        raw_bearer.zeroize();
+    }
+    result
+}
+
+async fn postgres_crosschecked_anchor_clock(
+    pool: sqlx::PgPool,
+) -> anyhow::Result<Arc<dyn Fn() -> Result<exo_core::types::Timestamp, String> + Send + Sync>> {
+    const DATABASE_TIME_QUERY: &str =
+        "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT";
+    let initial: i64 = sqlx::query_scalar(DATABASE_TIME_QUERY)
+        .fetch_one(&pool)
+        .await
+        .map_err(|error| anyhow::anyhow!("CrossChecked anchor clock unavailable: {error}"))?;
+    u64::try_from(initial)
+        .map_err(|_| anyhow::anyhow!("CrossChecked anchor clock returned a negative timestamp"))?;
+
+    let runtime = tokio::runtime::Handle::current();
+    let physical_pool = pool;
+    let clock = Arc::new(Mutex::new(HybridClock::with_fallible_wall_clock(
+        move || {
+            let physical_ms: i64 = runtime
+                .block_on(sqlx::query_scalar(DATABASE_TIME_QUERY).fetch_one(&physical_pool))
+                .map_err(|error| ExoError::ClockUnavailable {
+                    reason: error.to_string(),
+                })?;
+            u64::try_from(physical_ms).map_err(|_| ExoError::ClockUnavailable {
+                reason: "database returned a negative timestamp".into(),
+            })
+        },
+    )));
+    Ok(Arc::new(move || {
+        clock
+            .lock()
+            .map_err(|_| "CrossChecked anchor HLC lock poisoned".to_owned())?
+            .now()
+            .map_err(|error| error.to_string())
+    }))
 }
 
 fn dagdb_node_scope_from_env() -> anyhow::Result<(String, String)> {
@@ -1030,11 +1114,9 @@ async fn start_node(
 
     // Build the governance API router.
     //
-    // `crosschecked_trust` starts empty: no CrossChecked authority is
-    // trusted until an operator explicitly delegates one via the root
-    // authority (VCG-007, D3), which keeps `POST /api/v1/receipts`
-    // fail-closed by default even when the
-    // `unaudited-crosschecked-receipt-anchor` feature is compiled in.
+    // Legacy CrossChecked compatibility state has no authorization effect:
+    // POST /api/v1/receipts is permanently 410. Active CrossChecked authority
+    // state exists only in the dedicated durable commitment route.
     let api_state = Arc::new(api::NodeApiState {
         reactor_state: Arc::clone(&reactor_state),
         store: Arc::clone(&shared_store),
@@ -1080,7 +1162,7 @@ async fn start_node(
     let bearer_auth = auth::BearerAuth {
         token: Arc::new(admin_token),
     };
-    let scoped_bearer_auth = livesafe_public_output_scoped_bearer_from_config(
+    let mut scoped_bearer_auth = livesafe_public_output_scoped_bearer_from_config(
         bearer_auth.token.as_str(),
         optional_scoped_bearer_from_env(
             EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV,
@@ -1093,6 +1175,41 @@ async fn start_node(
             "Scoped LiveSafe public adapter-output bearer configured; token material omitted from logs"
         );
     }
+
+    let crosschecked_anchor_router = match crosschecked_anchor_startup_config_from_environment(
+        bearer_auth.token.as_str(),
+    )? {
+        Some(config) => {
+            let persistence_dir = data_dir.join("crosschecked_anchor");
+            std::fs::create_dir_all(&persistence_dir).map_err(|error| {
+                anyhow::anyhow!(
+                    "CrossChecked anchor persistence directory unavailable at {}: {error}",
+                    persistence_dir.display()
+                )
+            })?;
+            let store_config =
+                config.store_config(node_identity.did.to_string(), *node_identity.public_key());
+            let signer_identity = store_config.node_identity.clone();
+            let store = AnchorStore::open(persistence_dir.join("records.sqlite3"), store_config)?;
+            let signer = Arc::new(SqliteDurableAnchorSigner::open(
+                persistence_dir.join("signatures.sqlite3"),
+                signer_identity,
+                Arc::clone(&sign_fn),
+            )?);
+            let signer: Arc<dyn DurableAnchorSigner> = signer;
+            let clock = postgres_crosschecked_anchor_clock(gateway_pool.clone()).await?;
+            let bearer_verifier = config.bearer_verifier();
+            let state =
+                CrossCheckedAnchorHttpState::new(store, signer, bearer_verifier.clone(), clock);
+            scoped_bearer_auth = scoped_bearer_auth.with_crosschecked_anchor(bearer_verifier);
+            tracing::info!(
+                route = exo_api::crosschecked_anchor::ANCHOR_PATH,
+                "CrossChecked commitment-only anchor route enabled; credential material omitted from logs"
+            );
+            Some(crosschecked_anchor_router(state))
+        }
+        None => None,
+    };
 
     // Build the agent passport API router.
     let passport_state = Arc::new(passport::PassportApiState {
@@ -1314,7 +1431,7 @@ async fn start_node(
             .map_err(|error| exo_pdp::PdpError::Persistence(error.to_string()))
     });
 
-    let extra_router = metrics_router
+    let mut extra_router = metrics_router
         .merge(governance_router)
         .merge(pdp_router)
         .merge(passport_router)
@@ -1329,18 +1446,23 @@ async fn start_node(
         .merge(zerodentity_onboarding_router)
         .merge(zerodentity_api_router)
         .merge(zerodentity_dashboard_router)
-        .merge(zerodentity_onboarding_ui_router)
-        .layer(axum::middleware::from_fn(move |req, next| {
-            let a = bearer_auth.clone();
-            let scoped = scoped_bearer_auth.clone();
-            async move {
-                if scoped.livesafe_public_adapter_output_authorization_configured() {
-                    auth::require_bearer_on_writes_with_scoped_bearers(a, scoped, req, next).await
-                } else {
-                    auth::require_bearer_on_writes(a, req, next).await
-                }
+        .merge(zerodentity_onboarding_ui_router);
+    if let Some(router) = crosschecked_anchor_router {
+        extra_router = extra_router.merge(router);
+    }
+    let extra_router = extra_router.layer(axum::middleware::from_fn(move |req, next| {
+        let a = bearer_auth.clone();
+        let scoped = scoped_bearer_auth.clone();
+        async move {
+            if scoped.livesafe_public_adapter_output_authorization_configured()
+                || scoped.crosschecked_anchor_configured()
+            {
+                auth::require_bearer_on_writes_with_scoped_bearers(a, scoped, req, next).await
+            } else {
+                auth::require_bearer_on_writes(a, req, next).await
             }
-        }));
+        }
+    }));
 
     // Start the gateway HTTP server (blocks).
     //
@@ -1663,6 +1785,28 @@ mod tests {
         assert!(text.contains("EXOCHAIN_ADMIN_BEARER_TOKEN"));
         assert!(text.contains(EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV));
         assert!(!text.contains("shared-bearer-token"));
+    }
+
+    #[test]
+    fn crosschecked_startup_parser_zeroizes_raw_bearer_even_when_configuration_fails() {
+        let raw_bearer = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let mut values = BTreeMap::from([(
+            CROSSCHECKED_ANCHOR_BEARER_ENV.to_owned(),
+            raw_bearer.to_owned(),
+        )]);
+
+        let error = crosschecked_anchor_startup_config_from_values(
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            &mut values,
+        )
+        .expect_err("partial configuration must fail closed");
+        assert!(error.to_string().contains("incomplete"));
+        assert_eq!(
+            values
+                .get(CROSSCHECKED_ANCHOR_BEARER_ENV)
+                .map(String::as_str),
+            Some("")
+        );
     }
 
     #[cfg(feature = "dagdb-gateway-proxy")]

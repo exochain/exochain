@@ -141,6 +141,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 jsonschema = { version = "0.19", default-features = false }
 
 [dev-dependencies]
+static_assertions = "=1.1.0"
 tempfile = "3"
 
 [package.metadata.cargo-machete]
@@ -178,16 +179,10 @@ dagdb-gateway-proxy = ["dep:exochain-sdk", "exochain-sdk/http-client"]
 # governance lifecycle.
 unaudited-admin-governance-shortcut = []
 
-# CrossChecked receipt anchoring was introduced as a convenience adapter for
-# customer-zero integration work. The route mints a node-signed TrustReceipt
-# from external CrossChecked metadata, but this crate does not yet have a
-# trusted CrossChecked authority resolver, proof fetcher, or tenant/workspace
-# authorization contract. The production default is therefore fail-closed.
-#
-# Do NOT enable this in production. Enabling it means: "I accept that
-# POST /api/v1/receipts can anchor CrossChecked metadata under the legacy,
-# unaudited adapter contract and does not prove the external receipt or
-# authority chain."
+# Compatibility-only feature name retained for old build invocations. It is
+# not an authorization mechanism and cannot reactivate the retired JSON
+# intake: POST /api/v1/receipts returns 410 in every build. New CrossChecked
+# records use only the dedicated canonical-CBOR commitment route.
 unaudited-crosschecked-receipt-anchor = []
 
 # GAP (Onyx pass 3, RED #2 and follow-on trust-surface scans): several

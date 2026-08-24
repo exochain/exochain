@@ -663,6 +663,7 @@ fn is_signature_value(value: &str) -> bool {
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+#[cfg(feature = "dagdb-gateway-proxy")]
 fn is_did_header_value(value: &str) -> bool {
     let bytes = value.as_bytes();
     value.len() >= 5
@@ -684,7 +685,6 @@ fn is_approval_timestamp_header_value(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
 }
 
-#[cfg(feature = "dagdb-gateway-proxy")]
 fn required_signature_headers(tool_name: &str) -> &'static [&'static str] {
     match tool_name {
         DAGDB_INTAKE_TOOL
@@ -2285,7 +2285,6 @@ mod tests {
         byte.to_string().repeat(SIGNATURE_HEX_CHARS)
     }
 
-    #[cfg(feature = "dagdb-gateway-proxy")]
     fn approval_timestamp() -> &'static str {
         "2026-06-20T00:00:00Z"
     }

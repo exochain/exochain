@@ -807,6 +807,7 @@ impl SqliteDagStore {
     /// standalone insert path for receipts that anchor an adjacent-surface
     /// event rather than a DAG commit (e.g. the VCG-007 CrossChecked
     /// receipt-anchor intake).
+    #[cfg(test)]
     pub fn save_receipt(&mut self, receipt: &TrustReceipt) -> DagResult<()> {
         if let Some(store) = self.dagdb() {
             let store = store.clone();
