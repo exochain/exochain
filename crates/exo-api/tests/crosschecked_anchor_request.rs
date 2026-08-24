@@ -6,7 +6,8 @@
 use ciborium::Value;
 use exo_api::crosschecked_anchor::{
     ANCHOR_PATH, AnchorCodecError, CrossCheckedAnchorRequestV1, MAX_REQUEST_BODY_BYTES,
-    RequestValidationContext, decode_and_validate_request, validate_preferred_cbor,
+    RequestValidationContext, decode_and_validate_request, decode_unverified_replay_locator,
+    validate_preferred_cbor,
 };
 use exo_core::{crypto::KeyPair, types::Hash256};
 
@@ -181,6 +182,62 @@ fn exact_request_preimage_and_complete_body_hash_are_verified() {
     assert_eq!(validated.request, request);
     assert_eq!(validated.canonical_body, body);
     assert_eq!(validated.request_hash, Hash256::digest(&body));
+}
+
+#[test]
+fn replay_locator_parses_only_a_canonical_static_request_without_authorizing_it() {
+    let authority_key = KeyPair::from_secret_bytes([0x17; 32]).expect("fixed key");
+    let wrong_key = KeyPair::from_secret_bytes([0x18; 32]).expect("wrong key");
+    let mut request = unsigned_request();
+    sign_request(&mut request, &wrong_key);
+    let body = request.to_canonical_cbor().expect("canonical body");
+
+    let locator = decode_unverified_replay_locator(&body, "POST", ANCHOR_PATH, "application/cbor")
+        .expect("canonical static envelope can be located after expiry");
+
+    assert_eq!(locator.source_code, "crosschecked");
+    assert_eq!(locator.authority_did, request.authority_did);
+    assert_eq!(locator.authority_key_id, request.authority_key_id);
+    assert_eq!(locator.idempotency_key, request.idempotency_key);
+    assert_eq!(locator.action_hash, request.action_hash);
+    assert_eq!(locator.request_hash, Hash256::digest(&body));
+    assert_eq!(locator.issued_at_ms, request.issued_at_ms);
+    assert_eq!(locator.expires_at_ms, request.expires_at_ms);
+
+    assert_eq!(
+        decode_and_validate_request(
+            &body,
+            context(&authority_key, request.expires_at_ms.saturating_add(1))
+        ),
+        Err(AnchorCodecError::InvalidValidity),
+        "the unverified locator must not be confused with live authorization"
+    );
+}
+
+#[test]
+fn replay_locator_rejects_noncanonical_or_statically_invalid_requests() {
+    let key = KeyPair::from_secret_bytes([0x17; 32]).expect("fixed key");
+    let mut request = unsigned_request();
+    request.idempotency_key[0] ^= 1;
+    let body = signed_body(&mut request, &key);
+    assert_eq!(
+        decode_unverified_replay_locator(&body, "POST", ANCHOR_PATH, "application/cbor"),
+        Err(AnchorCodecError::IdempotencyMismatch)
+    );
+
+    let mut request = unsigned_request();
+    let body = signed_body(&mut request, &key);
+    assert_eq!(
+        decode_unverified_replay_locator(&body, "GET", ANCHOR_PATH, "application/cbor"),
+        Err(AnchorCodecError::InvalidContext("method"))
+    );
+
+    let mut trailing = body;
+    trailing.push(0);
+    assert!(
+        decode_unverified_replay_locator(&trailing, "POST", ANCHOR_PATH, "application/cbor")
+            .is_err()
+    );
 }
 
 #[test]

@@ -32,6 +32,11 @@ pub enum Permission {
     Challenge,
     /// Authorize an agent to initiate a payment. Never grants custody.
     Spend,
+    /// Record an already-authorized external receipt commitment.
+    ///
+    /// This permission grants no evidence access, generic write authority,
+    /// delegation, governance, or consensus-finality capability.
+    AnchorReceiptCommitment,
 }
 
 /// A deterministic set of permissions (BTreeSet for canonical ordering).
@@ -210,7 +215,24 @@ mod tests {
         assert_ne!(Permission::Govern, Permission::Escalate);
         assert_ne!(Permission::Challenge, Permission::Read);
         assert_ne!(Permission::Spend, Permission::Read);
+        assert_ne!(Permission::AnchorReceiptCommitment, Permission::Write);
         assert_eq!(Permission::Read, Permission::Read);
+    }
+
+    #[test]
+    fn anchor_receipt_commitment_is_a_dedicated_least_privilege_permission() {
+        let anchor_only = PermissionSet::from_permissions(&[Permission::AnchorReceiptCommitment]);
+
+        assert!(anchor_only.contains(&Permission::AnchorReceiptCommitment));
+        assert!(!anchor_only.contains(&Permission::Read));
+        assert!(!anchor_only.contains(&Permission::Write));
+        assert!(!anchor_only.contains(&Permission::Execute));
+        assert!(!anchor_only.contains(&Permission::Delegate));
+        assert!(!anchor_only.contains(&Permission::Govern));
+        assert!(!anchor_only.contains(&Permission::Escalate));
+        assert!(!anchor_only.contains(&Permission::Challenge));
+        assert!(!anchor_only.contains(&Permission::Spend));
+        assert_eq!(anchor_only.len(), 1);
     }
 
     #[test]

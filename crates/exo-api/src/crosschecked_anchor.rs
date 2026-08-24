@@ -190,6 +190,24 @@ pub struct ValidatedCrossCheckedAnchorRequestV1 {
     pub request_hash: Hash256,
 }
 
+/// Minimal, explicitly unverified request fields used only to locate a
+/// previously committed replay record.
+///
+/// Construction proves exact transport context, canonical CBOR, closed static
+/// fields, and the deterministic idempotency derivation. It deliberately does
+/// not prove request freshness, authority state, or signature validity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnverifiedAnchorReplayLocatorV1 {
+    pub source_code: String,
+    pub authority_did: String,
+    pub authority_key_id: String,
+    pub idempotency_key: [u8; 32],
+    pub action_hash: [u8; 32],
+    pub request_hash: Hash256,
+    pub issued_at_ms: u64,
+    pub expires_at_ms: u64,
+}
+
 /// Exact 10-key commitment-only response.
 ///
 /// `exochain_receipt` remains the generic [`TrustReceipt`] semantic type. Its
@@ -320,7 +338,7 @@ pub fn decode_and_validate_request(
     body: &[u8],
     context: RequestValidationContext<'_>,
 ) -> Result<ValidatedCrossCheckedAnchorRequestV1, AnchorCodecError> {
-    validate_request_context(body, context)?;
+    validate_request_context(body, context.method, context.path, context.content_type)?;
     validate_preferred_cbor(body)?;
     let value: Value =
         ciborium::from_reader(body).map_err(|_| AnchorCodecError::NonCanonicalCbor("decode"))?;
@@ -344,20 +362,60 @@ pub fn decode_and_validate_request(
     })
 }
 
+/// Decode only the canonical, static fields required to locate an exact
+/// already-committed replay before live expiry or key-revocation checks.
+///
+/// This function never authorizes a new record. Callers must compare the full
+/// canonical body with the persisted request and cryptographically validate
+/// the persisted response before returning it. A cache miss must continue
+/// through [`decode_and_validate_request`] with a currently authorized key.
+///
+/// # Errors
+/// Returns a closed protocol error for any transport, CBOR, static-field, or
+/// idempotency mismatch.
+pub fn decode_unverified_replay_locator(
+    body: &[u8],
+    method: &str,
+    path: &str,
+    content_type: &str,
+) -> Result<UnverifiedAnchorReplayLocatorV1, AnchorCodecError> {
+    validate_request_context(body, method, path, content_type)?;
+    validate_preferred_cbor(body)?;
+    let value: Value =
+        ciborium::from_reader(body).map_err(|_| AnchorCodecError::NonCanonicalCbor("decode"))?;
+    let request = request_from_value(value)?;
+    validate_request_static_fields(&request)?;
+    if request.to_canonical_cbor()? != body {
+        return Err(AnchorCodecError::NonCanonicalCbor("round trip"));
+    }
+    Ok(UnverifiedAnchorReplayLocatorV1 {
+        source_code: request.source_code,
+        authority_did: request.authority_did,
+        authority_key_id: request.authority_key_id,
+        idempotency_key: request.idempotency_key,
+        action_hash: request.action_hash,
+        request_hash: Hash256::digest(body),
+        issued_at_ms: request.issued_at_ms,
+        expires_at_ms: request.expires_at_ms,
+    })
+}
+
 fn validate_request_context(
     body: &[u8],
-    context: RequestValidationContext<'_>,
+    method: &str,
+    path: &str,
+    content_type: &str,
 ) -> Result<(), AnchorCodecError> {
     if body.is_empty() || body.len() > MAX_REQUEST_BODY_BYTES {
         return Err(AnchorCodecError::InvalidBodyLength);
     }
-    if context.method != "POST" {
+    if method != "POST" {
         return Err(AnchorCodecError::InvalidContext("method"));
     }
-    if context.path != ANCHOR_PATH {
+    if path != ANCHOR_PATH {
         return Err(AnchorCodecError::InvalidContext("path"));
     }
-    if context.content_type != "application/cbor" {
+    if content_type != "application/cbor" {
         return Err(AnchorCodecError::InvalidContext("content type"));
     }
     Ok(())
@@ -367,6 +425,22 @@ fn validate_request_fields(
     request: &CrossCheckedAnchorRequestV1,
     expected_audience: &str,
     now_ms: u64,
+) -> Result<(), AnchorCodecError> {
+    validate_request_static_fields(request)?;
+    if request.audience != expected_audience {
+        return Err(AnchorCodecError::InvalidField("audience"));
+    }
+    if request.expires_at_ms <= now_ms {
+        return Err(AnchorCodecError::InvalidValidity);
+    }
+    if request.issued_at_ms > now_ms.saturating_add(MAX_FUTURE_SKEW_MS) {
+        return Err(AnchorCodecError::InvalidValidity);
+    }
+    Ok(())
+}
+
+fn validate_request_static_fields(
+    request: &CrossCheckedAnchorRequestV1,
 ) -> Result<(), AnchorCodecError> {
     if request.protocol_version != 1 {
         return Err(AnchorCodecError::InvalidField("protocol_version"));
@@ -388,9 +462,6 @@ fn validate_request_fields(
         "signature_algorithm",
     )?;
     validate_audience(&request.audience)?;
-    if request.audience != expected_audience {
-        return Err(AnchorCodecError::InvalidField("audience"));
-    }
     validate_did_and_key_id(&request.authority_did, &request.authority_key_id)?;
     for (name, value) in [
         ("grant_id", &request.grant_id),
@@ -413,10 +484,7 @@ fn validate_request_fields(
         .expires_at_ms
         .checked_sub(request.issued_at_ms)
         .ok_or(AnchorCodecError::InvalidValidity)?;
-    if validity == 0 || validity > MAX_VALIDITY_MS || request.expires_at_ms <= now_ms {
-        return Err(AnchorCodecError::InvalidValidity);
-    }
-    if request.issued_at_ms > now_ms.saturating_add(MAX_FUTURE_SKEW_MS) {
+    if validity == 0 || validity > MAX_VALIDITY_MS {
         return Err(AnchorCodecError::InvalidValidity);
     }
     Ok(())
