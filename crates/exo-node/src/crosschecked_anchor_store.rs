@@ -44,6 +44,7 @@ use exo_identity::{
     did::{DidDocument, VerificationMethod},
     did_verification::validate_verification_method_document_binding,
 };
+use frost_ed25519 as frost;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -55,7 +56,12 @@ const RETIREMENT_DOMAIN: &str = "exo.crosschecked.authority_retirement.v1";
 const SIGNING_OPERATION_DOMAIN: &str = "exo.crosschecked.signing_operation.v1";
 const RECEIPT_ACTION_TYPE: &str = "crosschecked.receipt_commitment.record.v1";
 const ANCHOR_PERMISSION_CODE: &str = "anchor_receipt_commitment";
-const STORE_SCHEMA_VERSION: &str = "crosschecked_anchor_store_v1";
+const STORE_SCHEMA_VERSION: &str = "crosschecked_anchor_store_v2_frost_governed";
+const AUTHORITY_GOVERNANCE_DOMAIN: &str = "exo.crosschecked.authority_governance.v1";
+const ANCHOR_NODE_POLICY_DOMAIN: &str = "exo.crosschecked.anchor_node_policy.v1";
+const GOVERNANCE_SIGNATURE_ALGORITHM: &str = "frost-ed25519-sha512-rfc9591";
+pub const CROSSCHECKED_GOVERNANCE_THRESHOLD: u16 = 7;
+pub const CROSSCHECKED_GOVERNANCE_PARTICIPANTS: u16 = 13;
 
 /// Node identity pinned into both receipt and response signatures.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,7 +78,100 @@ pub struct AnchorStoreConfig {
     pub crosschecked_intermediate_did: String,
     pub crosschecked_intermediate_key_id: String,
     pub crosschecked_intermediate_public_key: PublicKey,
+    pub governance_frost_group_public_key: [u8; 32],
+    pub governance_frost_key_epoch: u64,
     pub node_identity: AnchorNodeIdentity,
+}
+
+/// Closed authority lifecycle event signed by the CrossChecked governance group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthorityLifecycleEventV1 {
+    Provision,
+    Retire,
+    Revoke,
+}
+
+impl AuthorityLifecycleEventV1 {
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Provision => "provision",
+            Self::Retire => "retire",
+            Self::Revoke => "revoke",
+        }
+    }
+}
+
+/// RFC 9591 FROST(Ed25519, SHA-512) authorization for one exact authority mutation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorityGovernanceAuthorizationV1 {
+    pub protocol_version: u16,
+    pub authorization_id: [u8; 32],
+    pub ceremony_id: [u8; 32],
+    pub governance_key_epoch: u64,
+    pub threshold: u16,
+    pub participant_count: u16,
+    pub signer_ids: Vec<u16>,
+    pub lifecycle_event: AuthorityLifecycleEventV1,
+    pub authority_did: Did,
+    pub authority_key_id: String,
+    pub authority_key_epoch: u64,
+    pub scope_alias: [u8; 32],
+    pub package_hash: Hash256,
+    pub node_policy_hash: Hash256,
+    pub authorization_sequence: u64,
+    pub prior_authorization_hash: Hash256,
+    pub valid_from_ms: u64,
+    pub valid_until_ms: u64,
+    pub signature_algorithm: String,
+    pub signature: Vec<u8>,
+}
+
+impl AuthorityGovernanceAuthorizationV1 {
+    /// Deterministic CBOR bytes signed by the pinned FROST group key.
+    pub fn signing_preimage(&self) -> Result<Vec<u8>, AnchorStoreError> {
+        encode_value(&Value::Array(vec![
+            text(AUTHORITY_GOVERNANCE_DOMAIN),
+            unsigned(u64::from(self.protocol_version)),
+            bytes(&self.authorization_id),
+            bytes(&self.ceremony_id),
+            unsigned(self.governance_key_epoch),
+            unsigned(u64::from(self.threshold)),
+            unsigned(u64::from(self.participant_count)),
+            Value::Array(
+                self.signer_ids
+                    .iter()
+                    .map(|identifier| unsigned(u64::from(*identifier)))
+                    .collect(),
+            ),
+            text(self.lifecycle_event.code()),
+            text(self.authority_did.as_str()),
+            text(&self.authority_key_id),
+            unsigned(self.authority_key_epoch),
+            bytes(&self.scope_alias),
+            bytes(self.package_hash.as_bytes()),
+            bytes(self.node_policy_hash.as_bytes()),
+            unsigned(self.authorization_sequence),
+            bytes(self.prior_authorization_hash.as_bytes()),
+            unsigned(self.valid_from_ms),
+            unsigned(self.valid_until_ms),
+            text(&self.signature_algorithm),
+        ]))
+    }
+
+    /// Canonical CBOR authorization artifact persisted with its target mutation.
+    pub fn to_cbor_bytes(&self) -> Result<Vec<u8>, AnchorStoreError> {
+        encode_value(&Value::Array(vec![
+            Value::Bytes(self.signing_preimage()?),
+            bytes(&self.signature),
+        ]))
+    }
+
+    /// BLAKE3 commitment to the exact canonical authorization artifact.
+    pub fn authorization_hash(&self) -> Result<Hash256, AnchorStoreError> {
+        Ok(Hash256::digest(&self.to_cbor_bytes()?))
+    }
 }
 
 /// Signed binding between one child authority and one opaque workspace scope.
@@ -265,6 +364,10 @@ pub enum AnchorStoreError {
     AuthorityExpired,
     #[error("authority key epoch is retired")]
     AuthorityRetired,
+    #[error("authority governance authorization failed: {0}")]
+    GovernanceAuthorization(String),
+    #[error("authority governance authorization conflicts with durable state")]
+    GovernanceAuthorizationConflict,
     #[error("anchor conflict: {0:?}")]
     Conflict(AnchorConflictKind),
     #[error("durable signer failed: {0}")]
@@ -315,6 +418,37 @@ struct StoredAnchorRow {
     node_recorded_at: Timestamp,
 }
 
+#[derive(Clone, Debug)]
+struct StoredGovernanceAuthorization {
+    authorization: AuthorityGovernanceAuthorizationV1,
+    authorization_id: [u8; 32],
+    scope_alias: [u8; 32],
+    authorization_sequence: u64,
+    authorization_hash: Hash256,
+    lifecycle_event: AuthorityLifecycleEventV1,
+    authority_did: String,
+    authority_key_id: String,
+    authority_key_epoch: u64,
+    package_hash: Hash256,
+    applied_at_ms: u64,
+    authorization_cbor: Vec<u8>,
+}
+
+struct PersistedStoreConfig {
+    schema_version: String,
+    expected_audience: String,
+    intermediate_did: String,
+    intermediate_key_id: String,
+    intermediate_public_key: Vec<u8>,
+    node_did: String,
+    governance_frost_group_public_key: Vec<u8>,
+    governance_frost_key_epoch: i64,
+    governance_threshold: i64,
+    governance_participant_count: i64,
+    node_key_id: String,
+    node_public_key: Vec<u8>,
+}
+
 impl AnchorStore {
     /// Open or create the store and bind it to immutable runtime policy.
     ///
@@ -345,13 +479,55 @@ impl AnchorStore {
     pub fn provision_authority(
         &self,
         provisioning: &AuthorityProvisioningV1,
+        authorization: &AuthorityGovernanceAuthorizationV1,
+        applied_at_ms: u64,
     ) -> Result<(), AnchorStoreError> {
         let validated = validate_provisioning(&self.config, provisioning)?;
         let provisioning_cbor = provisioning.to_cbor_bytes()?;
+        let package_hash = Hash256::digest(&provisioning_cbor);
+        validate_governance_authorization(
+            &self.config,
+            authorization,
+            AuthorityLifecycleEventV1::Provision,
+            provisioning.scope_binding.authority_did.as_str(),
+            &provisioning.scope_binding.authority_key_id,
+            provisioning.scope_binding.key_epoch,
+            &provisioning.scope_binding.scope_alias,
+            package_hash,
+        )?;
+        let authorization_cbor = authorization.to_cbor_bytes()?;
+        let authorization_hash = authorization.authorization_hash()?;
         let mut connection = self.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage)?;
+
+        if let Some(existing) =
+            load_governance_authorization_by_id(&transaction, &authorization.authorization_id)?
+        {
+            validate_exact_governance_replay(
+                &existing,
+                authorization,
+                &authorization_cbor,
+                authorization_hash,
+                package_hash,
+            )?;
+            let existing_authority = load_authority(
+                &transaction,
+                provisioning.scope_binding.authority_did.as_str(),
+                &provisioning.scope_binding.authority_key_id,
+            )?
+            .ok_or(AnchorStoreError::GovernanceAuthorizationConflict)?;
+            if existing_authority.provisioning_cbor != provisioning_cbor {
+                return Err(AnchorStoreError::GovernanceAuthorizationConflict);
+            }
+            validate_stored_authority_governed(&transaction, &self.config, &existing_authority)?;
+            transaction.commit().map_err(storage)?;
+            return Ok(());
+        }
+
+        validate_governance_application_time(authorization, applied_at_ms)?;
+        validate_governance_sequence(&transaction, authorization, applied_at_ms)?;
 
         let existing: Option<Vec<u8>> = transaction
             .query_row(
@@ -365,11 +541,7 @@ impl AnchorStore {
             )
             .optional()
             .map_err(storage)?;
-        if let Some(existing) = existing {
-            if existing == provisioning_cbor {
-                transaction.commit().map_err(storage)?;
-                return Ok(());
-            }
+        if existing.is_some() {
             return Err(AnchorStoreError::AuthorityValidation(
                 "authority DID/key ID already has different provisioning".into(),
             ));
@@ -421,6 +593,13 @@ impl AnchorStore {
                     "persistent authority uniqueness rejected provisioning: {error}"
                 ))
             })?;
+        persist_governance_authorization(
+            &transaction,
+            authorization,
+            &authorization_cbor,
+            authorization_hash,
+            applied_at_ms,
+        )?;
         transaction.commit().map_err(storage)
     }
 
@@ -434,8 +613,41 @@ impl AnchorStore {
     pub fn retire_authority(
         &self,
         retirement: &AuthorityRetirementV1,
+        authorization: &AuthorityGovernanceAuthorizationV1,
+        applied_at_ms: u64,
+    ) -> Result<(), AnchorStoreError> {
+        self.end_authority(
+            retirement,
+            AuthorityLifecycleEventV1::Retire,
+            authorization,
+            applied_at_ms,
+        )
+    }
+
+    /// Persist a governance-authorized revocation of one exact authority epoch.
+    pub fn revoke_authority(
+        &self,
+        retirement: &AuthorityRetirementV1,
+        authorization: &AuthorityGovernanceAuthorizationV1,
+        applied_at_ms: u64,
+    ) -> Result<(), AnchorStoreError> {
+        self.end_authority(
+            retirement,
+            AuthorityLifecycleEventV1::Revoke,
+            authorization,
+            applied_at_ms,
+        )
+    }
+
+    fn end_authority(
+        &self,
+        retirement: &AuthorityRetirementV1,
+        lifecycle_event: AuthorityLifecycleEventV1,
+        authorization: &AuthorityGovernanceAuthorizationV1,
+        applied_at_ms: u64,
     ) -> Result<(), AnchorStoreError> {
         let retirement_cbor = retirement.to_cbor_bytes()?;
+        let package_hash = Hash256::digest(&retirement_cbor);
         let mut connection = self.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -446,28 +658,44 @@ impl AnchorStore {
             &retirement.authority_key_id,
         )?
         .ok_or(AnchorStoreError::AuthorityNotFound)?;
-        validate_stored_authority(&self.config, &authority)?;
+        validate_stored_authority_governed(&transaction, &self.config, &authority)?;
         validate_retirement(&self.config, &authority.provisioning, retirement)?;
+        validate_governance_authorization(
+            &self.config,
+            authorization,
+            lifecycle_event,
+            retirement.authority_did.as_str(),
+            &retirement.authority_key_id,
+            retirement.key_epoch,
+            &authority.provisioning.scope_binding.scope_alias,
+            package_hash,
+        )?;
+        let authorization_cbor = authorization.to_cbor_bytes()?;
+        let authorization_hash = authorization.authorization_hash()?;
 
-        if let Some(existing_retired_at) = authority.retired_at_ms {
-            let existing: Option<Vec<u8>> = transaction
-                .query_row(
-                    "SELECT retirement_cbor FROM crosschecked_anchor_authorities
-                     WHERE authority_did = ?1 AND authority_key_id = ?2",
-                    params![
-                        retirement.authority_did.as_str(),
-                        retirement.authority_key_id
-                    ],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(storage)?;
-            if existing_retired_at == retirement.retired_at_ms
-                && existing.as_deref() == Some(retirement_cbor.as_slice())
+        if let Some(existing) =
+            load_governance_authorization_by_id(&transaction, &authorization.authorization_id)?
+        {
+            validate_exact_governance_replay(
+                &existing,
+                authorization,
+                &authorization_cbor,
+                authorization_hash,
+                package_hash,
+            )?;
+            if authority.retired_at_ms != Some(retirement.retired_at_ms)
+                || authority.retirement_cbor.as_deref() != Some(retirement_cbor.as_slice())
             {
-                transaction.commit().map_err(storage)?;
-                return Ok(());
+                return Err(AnchorStoreError::GovernanceAuthorizationConflict);
             }
+            transaction.commit().map_err(storage)?;
+            return Ok(());
+        }
+
+        validate_governance_application_time(authorization, applied_at_ms)?;
+        validate_governance_sequence(&transaction, authorization, applied_at_ms)?;
+
+        if authority.retired_at_ms.is_some() {
             return Err(AnchorStoreError::AuthorityValidation(
                 "authority epoch already has different retirement evidence".into(),
             ));
@@ -486,6 +714,13 @@ impl AnchorStore {
                 ],
             )
             .map_err(storage)?;
+        persist_governance_authorization(
+            &transaction,
+            authorization,
+            &authorization_cbor,
+            authorization_hash,
+            applied_at_ms,
+        )?;
         transaction.commit().map_err(storage)
     }
 
@@ -546,7 +781,7 @@ impl AnchorStore {
             &locator.authority_key_id,
         )?
         .ok_or(AnchorStoreError::AuthorityNotFound)?;
-        validate_stored_authority(&self.config, &authority)?;
+        validate_stored_authority_governed(&transaction, &self.config, &authority)?;
         let signer_identity = signer.identity();
         if signer_identity != self.config.node_identity {
             return Err(AnchorStoreError::Signer(SignOnceError::Unavailable(
@@ -744,6 +979,106 @@ pub fn authority_chain_fingerprint(chain: &AuthorityChain) -> Result<Hash256, An
     Ok(Hash256::digest(&encode_value(&Value::Array(values))?))
 }
 
+/// Commitment to every immutable node policy field governing authority mutations.
+pub fn anchor_node_policy_hash(config: &AnchorStoreConfig) -> Result<Hash256, AnchorStoreError> {
+    Ok(Hash256::digest(&encode_value(&Value::Array(vec![
+        text(ANCHOR_NODE_POLICY_DOMAIN),
+        text(&config.expected_audience),
+        text(&config.crosschecked_intermediate_did),
+        text(&config.crosschecked_intermediate_key_id),
+        bytes(config.crosschecked_intermediate_public_key.as_bytes()),
+        text(&config.node_identity.did),
+        text(&config.node_identity.key_id),
+        bytes(config.node_identity.public_key.as_bytes()),
+        unsigned(config.governance_frost_key_epoch),
+        unsigned(u64::from(CROSSCHECKED_GOVERNANCE_THRESHOLD)),
+        unsigned(u64::from(CROSSCHECKED_GOVERNANCE_PARTICIPANTS)),
+        bytes(&config.governance_frost_group_public_key),
+    ]))?))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_governance_authorization(
+    config: &AnchorStoreConfig,
+    authorization: &AuthorityGovernanceAuthorizationV1,
+    expected_event: AuthorityLifecycleEventV1,
+    authority_did: &str,
+    authority_key_id: &str,
+    authority_key_epoch: u64,
+    scope_alias: &[u8; 32],
+    package_hash: Hash256,
+) -> Result<(), AnchorStoreError> {
+    validate_did_key_id(
+        authorization.authority_did.as_str(),
+        &authorization.authority_key_id,
+    )?;
+    let valid_signer_set = authorization.signer_ids.len()
+        == usize::from(CROSSCHECKED_GOVERNANCE_THRESHOLD)
+        && authorization
+            .signer_ids
+            .iter()
+            .all(|identifier| (1..=CROSSCHECKED_GOVERNANCE_PARTICIPANTS).contains(identifier))
+        && authorization
+            .signer_ids
+            .windows(2)
+            .all(|pair| pair[0] < pair[1]);
+    if authorization.protocol_version != 1
+        || authorization.authorization_id.iter().all(|byte| *byte == 0)
+        || authorization.ceremony_id.iter().all(|byte| *byte == 0)
+        || authorization.governance_key_epoch != config.governance_frost_key_epoch
+        || authorization.threshold != CROSSCHECKED_GOVERNANCE_THRESHOLD
+        || authorization.participant_count != CROSSCHECKED_GOVERNANCE_PARTICIPANTS
+        || !valid_signer_set
+        || authorization.lifecycle_event != expected_event
+        || authorization.authority_did.as_str() != authority_did
+        || authorization.authority_key_id != authority_key_id
+        || authorization.authority_key_epoch != authority_key_epoch
+        || authorization.scope_alias != *scope_alias
+        || authorization.package_hash != package_hash
+        || authorization.node_policy_hash != anchor_node_policy_hash(config)?
+        || authorization.authorization_sequence == 0
+        || authorization.valid_from_ms >= authorization.valid_until_ms
+        || authorization.signature_algorithm != GOVERNANCE_SIGNATURE_ALGORITHM
+        || authorization.signature.len() != 64
+    {
+        return Err(AnchorStoreError::GovernanceAuthorization(
+            "authorization target, policy, roster, sequence, or validity mismatch".into(),
+        ));
+    }
+
+    let verifying_key = frost::VerifyingKey::deserialize(&config.governance_frost_group_public_key)
+        .map_err(|error| {
+            AnchorStoreError::GovernanceAuthorization(format!(
+                "pinned FROST group public key rejected: {error}"
+            ))
+        })?;
+    let signature = frost::Signature::deserialize(&authorization.signature).map_err(|error| {
+        AnchorStoreError::GovernanceAuthorization(format!(
+            "FROST authorization signature encoding rejected: {error}"
+        ))
+    })?;
+    verifying_key
+        .verify(&authorization.signing_preimage()?, &signature)
+        .map_err(|_| {
+            AnchorStoreError::GovernanceAuthorization(
+                "FROST authorization signature rejected".into(),
+            )
+        })
+}
+
+fn validate_governance_application_time(
+    authorization: &AuthorityGovernanceAuthorizationV1,
+    applied_at_ms: u64,
+) -> Result<(), AnchorStoreError> {
+    if applied_at_ms < authorization.valid_from_ms || applied_at_ms >= authorization.valid_until_ms
+    {
+        return Err(AnchorStoreError::GovernanceAuthorization(
+            "governance authorization is not valid at first application".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_config(config: &AnchorStoreConfig) -> Result<(), AnchorStoreError> {
     validate_did_key_id(&config.node_identity.did, &config.node_identity.key_id)?;
     validate_did_key_id(
@@ -783,6 +1118,18 @@ fn validate_config(config: &AnchorStoreConfig) -> Result<(), AnchorStoreError> {
             "intermediate public key must be non-zero".into(),
         ));
     }
+    if config.governance_frost_key_epoch == 0 {
+        return Err(AnchorStoreError::AuthorityValidation(
+            "FROST governance key epoch must be non-zero".into(),
+        ));
+    }
+    frost::VerifyingKey::deserialize(&config.governance_frost_group_public_key).map_err(
+        |error| {
+            AnchorStoreError::AuthorityValidation(format!(
+                "invalid FROST governance group public key: {error}"
+            ))
+        },
+    )?;
     Ok(())
 }
 
@@ -1063,6 +1410,170 @@ fn validate_stored_authority(
     Ok(())
 }
 
+fn validate_stored_authority_governed(
+    connection: &Connection,
+    config: &AnchorStoreConfig,
+    authority: &StoredAuthority,
+) -> Result<(), AnchorStoreError> {
+    validate_stored_authority(config, authority)?;
+    let binding = &authority.provisioning.scope_binding;
+    let provisioning_hash = Hash256::digest(&authority.provisioning_cbor);
+    let provisioning_authorization =
+        load_governance_authorization_by_package(connection, provisioning_hash)?.ok_or_else(
+            || {
+                AnchorStoreError::ReadbackValidation(
+                    "authority provisioning lacks durable FROST authorization".into(),
+                )
+            },
+        )?;
+    validate_stored_governance_authorization(
+        connection,
+        config,
+        &provisioning_authorization,
+        AuthorityLifecycleEventV1::Provision,
+        binding.authority_did.as_str(),
+        &binding.authority_key_id,
+        binding.key_epoch,
+        &binding.scope_alias,
+        provisioning_hash,
+    )?;
+
+    if let (Some(_retired_at_ms), Some(retirement_cbor)) = (
+        authority.retired_at_ms,
+        authority.retirement_cbor.as_deref(),
+    ) {
+        let retirement_hash = Hash256::digest(retirement_cbor);
+        let retirement_authorization =
+            load_governance_authorization_by_package(connection, retirement_hash)?.ok_or_else(
+                || {
+                    AnchorStoreError::ReadbackValidation(
+                        "authority retirement lacks durable FROST authorization".into(),
+                    )
+                },
+            )?;
+        let event = retirement_authorization.authorization.lifecycle_event;
+        if !matches!(
+            event,
+            AuthorityLifecycleEventV1::Retire | AuthorityLifecycleEventV1::Revoke
+        ) {
+            return Err(AnchorStoreError::ReadbackValidation(
+                "authority retirement has wrong governance lifecycle event".into(),
+            ));
+        }
+        validate_stored_governance_authorization(
+            connection,
+            config,
+            &retirement_authorization,
+            event,
+            binding.authority_did.as_str(),
+            &binding.authority_key_id,
+            binding.key_epoch,
+            &binding.scope_alias,
+            retirement_hash,
+        )?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_stored_governance_authorization(
+    connection: &Connection,
+    config: &AnchorStoreConfig,
+    stored: &StoredGovernanceAuthorization,
+    expected_event: AuthorityLifecycleEventV1,
+    authority_did: &str,
+    authority_key_id: &str,
+    authority_key_epoch: u64,
+    scope_alias: &[u8; 32],
+    package_hash: Hash256,
+) -> Result<(), AnchorStoreError> {
+    validate_stored_governance_record(config, stored)?;
+    let authorization = &stored.authorization;
+    if authorization.lifecycle_event != expected_event
+        || authorization.authority_did.as_str() != authority_did
+        || authorization.authority_key_id != authority_key_id
+        || authorization.authority_key_epoch != authority_key_epoch
+        || authorization.scope_alias != *scope_alias
+        || authorization.package_hash != package_hash
+    {
+        return Err(AnchorStoreError::ReadbackValidation(
+            "governance authorization target does not match authority state".into(),
+        ));
+    }
+
+    let mut child = stored.clone();
+    loop {
+        if child.authorization_sequence == 1 {
+            validate_governance_root(&child.authorization).map_err(|_| {
+                AnchorStoreError::ReadbackValidation(
+                    "governance authorization root is invalid".into(),
+                )
+            })?;
+            break;
+        }
+        let predecessor = load_governance_authorization_by_scope_sequence(
+            connection,
+            &child.scope_alias,
+            child.authorization_sequence - 1,
+        )?
+        .ok_or_else(|| {
+            AnchorStoreError::ReadbackValidation(
+                "governance authorization predecessor is missing".into(),
+            )
+        })?;
+        validate_stored_governance_record(config, &predecessor)?;
+        if predecessor.authorization_hash != child.authorization.prior_authorization_hash {
+            return Err(AnchorStoreError::ReadbackValidation(
+                "governance authorization predecessor hash mismatch".into(),
+            ));
+        }
+        validate_governance_transition(
+            &predecessor.authorization,
+            predecessor.applied_at_ms,
+            &child.authorization,
+            child.applied_at_ms,
+        )
+        .map_err(|_| {
+            AnchorStoreError::ReadbackValidation(
+                "governance authorization transition is invalid".into(),
+            )
+        })?;
+        child = predecessor;
+    }
+    Ok(())
+}
+
+fn validate_stored_governance_record(
+    config: &AnchorStoreConfig,
+    stored: &StoredGovernanceAuthorization,
+) -> Result<(), AnchorStoreError> {
+    let authorization = &stored.authorization;
+    if stored.authorization_id != authorization.authorization_id
+        || stored.scope_alias != authorization.scope_alias
+        || stored.authorization_sequence != authorization.authorization_sequence
+        || stored.authorization_hash != authorization.authorization_hash()?
+        || stored.lifecycle_event != authorization.lifecycle_event
+        || stored.authority_did != authorization.authority_did.as_str()
+        || stored.authority_key_id != authorization.authority_key_id
+        || stored.authority_key_epoch != authorization.authority_key_epoch
+        || stored.package_hash != authorization.package_hash
+    {
+        return Err(AnchorStoreError::ReadbackValidation(
+            "governance authorization indexes do not match canonical artifact".into(),
+        ));
+    }
+    validate_governance_authorization(
+        config,
+        authorization,
+        authorization.lifecycle_event,
+        authorization.authority_did.as_str(),
+        &authorization.authority_key_id,
+        authorization.authority_key_epoch,
+        &authorization.scope_alias,
+        authorization.package_hash,
+    )
+}
+
 fn validate_authority_time(
     authority: &StoredAuthority,
     locator: &exo_api::crosschecked_anchor::UnverifiedAnchorReplayLocatorV1,
@@ -1220,7 +1731,7 @@ fn validate_stored_anchor(
         .ok_or_else(|| {
             AnchorStoreError::ReadbackValidation("stored authority is missing".into())
         })?;
-    validate_stored_authority(config, &authority)?;
+    validate_stored_authority_governed(connection, config, &authority)?;
     if stored.authority_chain_hash != authority.authority_chain_hash
         || stored.authority_public_key != authority.authority_public_key
     {
@@ -1352,6 +1863,31 @@ fn initialize_schema(
     connection: &Connection,
     config: &AnchorStoreConfig,
 ) -> Result<(), AnchorStoreError> {
+    let config_table_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'crosschecked_anchor_store_config'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(storage)?;
+    if config_table_exists {
+        let existing_version: String = connection
+            .query_row(
+                "SELECT schema_version FROM crosschecked_anchor_store_config WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(storage)?;
+        if existing_version != STORE_SCHEMA_VERSION {
+            return Err(AnchorStoreError::Storage(
+                "legacy or incompatible authority registry must be rebuilt under FROST governance"
+                    .into(),
+            ));
+        }
+    }
     connection
         .execute_batch(
             "PRAGMA journal_mode = WAL;
@@ -1364,6 +1900,10 @@ fn initialize_schema(
                  intermediate_did TEXT NOT NULL,
                  intermediate_key_id TEXT NOT NULL,
                  intermediate_public_key BLOB NOT NULL CHECK (length(intermediate_public_key) = 32),
+                 governance_frost_group_public_key BLOB NOT NULL CHECK (length(governance_frost_group_public_key) = 32),
+                 governance_frost_key_epoch INTEGER NOT NULL CHECK (governance_frost_key_epoch > 0),
+                 governance_threshold INTEGER NOT NULL CHECK (governance_threshold = 7),
+                 governance_participant_count INTEGER NOT NULL CHECK (governance_participant_count = 13),
                  node_did TEXT NOT NULL,
                  node_key_id TEXT NOT NULL,
                  node_public_key BLOB NOT NULL CHECK (length(node_public_key) = 32)
@@ -1385,6 +1925,27 @@ fn initialize_schema(
                  retirement_cbor BLOB,
                  PRIMARY KEY (authority_did, authority_key_id),
                  UNIQUE (authority_did, key_epoch)
+             );
+             CREATE TABLE IF NOT EXISTS crosschecked_anchor_governance_authorizations (
+                 authorization_id BLOB PRIMARY KEY CHECK (length(authorization_id) = 32),
+                 ceremony_id BLOB NOT NULL UNIQUE CHECK (length(ceremony_id) = 32),
+                 scope_alias BLOB NOT NULL CHECK (length(scope_alias) = 32),
+                 authorization_sequence INTEGER NOT NULL CHECK (authorization_sequence > 0),
+                 prior_authorization_hash BLOB NOT NULL CHECK (length(prior_authorization_hash) = 32),
+                 authorization_hash BLOB NOT NULL UNIQUE CHECK (length(authorization_hash) = 32),
+                 governance_key_epoch INTEGER NOT NULL CHECK (governance_key_epoch > 0),
+                 lifecycle_event TEXT NOT NULL CHECK (lifecycle_event IN ('provision', 'retire', 'revoke')),
+                 authority_did TEXT NOT NULL,
+                 authority_key_id TEXT NOT NULL,
+                 authority_key_epoch INTEGER NOT NULL CHECK (authority_key_epoch > 0),
+                 package_hash BLOB NOT NULL UNIQUE CHECK (length(package_hash) = 32),
+                 node_policy_hash BLOB NOT NULL CHECK (length(node_policy_hash) = 32),
+                 valid_from_ms INTEGER NOT NULL CHECK (valid_from_ms >= 0),
+                 valid_until_ms INTEGER NOT NULL CHECK (valid_until_ms > valid_from_ms),
+                 applied_at_ms INTEGER NOT NULL CHECK (applied_at_ms >= valid_from_ms AND applied_at_ms < valid_until_ms),
+                 authorization_cbor BLOB NOT NULL,
+                 authorization_record_cbor BLOB NOT NULL,
+                 UNIQUE (scope_alias, authorization_sequence)
              );
              CREATE TABLE IF NOT EXISTS crosschecked_anchor_requests (
                  request_hash BLOB PRIMARY KEY CHECK (length(request_hash) = 32),
@@ -1440,8 +2001,10 @@ fn initialize_schema(
             "INSERT OR IGNORE INTO crosschecked_anchor_store_config (
                 singleton, schema_version, expected_audience, intermediate_did,
                 intermediate_key_id, intermediate_public_key, node_did,
+                governance_frost_group_public_key, governance_frost_key_epoch,
+                governance_threshold, governance_participant_count,
                 node_key_id, node_public_key
-             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 STORE_SCHEMA_VERSION,
                 config.expected_audience,
@@ -1452,54 +2015,365 @@ fn initialize_schema(
                     .as_bytes()
                     .as_slice(),
                 config.node_identity.did,
+                config.governance_frost_group_public_key.as_slice(),
+                to_i64(
+                    config.governance_frost_key_epoch,
+                    "governance_frost_key_epoch"
+                )?,
+                i64::from(CROSSCHECKED_GOVERNANCE_THRESHOLD),
+                i64::from(CROSSCHECKED_GOVERNANCE_PARTICIPANTS),
                 config.node_identity.key_id,
                 config.node_identity.public_key.as_bytes().as_slice(),
             ],
         )
         .map_err(storage)?;
-    let persisted: (
-        String,
-        String,
-        String,
-        String,
-        Vec<u8>,
-        String,
-        String,
-        Vec<u8>,
-    ) = connection
+    let persisted: PersistedStoreConfig = connection
         .query_row(
             "SELECT schema_version, expected_audience, intermediate_did,
                     intermediate_key_id, intermediate_public_key, node_did,
+                    governance_frost_group_public_key, governance_frost_key_epoch,
+                    governance_threshold, governance_participant_count,
                     node_key_id, node_public_key
              FROM crosschecked_anchor_store_config WHERE singleton = 1",
             [],
             |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                ))
+                Ok(PersistedStoreConfig {
+                    schema_version: row.get(0)?,
+                    expected_audience: row.get(1)?,
+                    intermediate_did: row.get(2)?,
+                    intermediate_key_id: row.get(3)?,
+                    intermediate_public_key: row.get(4)?,
+                    node_did: row.get(5)?,
+                    governance_frost_group_public_key: row.get(6)?,
+                    governance_frost_key_epoch: row.get(7)?,
+                    governance_threshold: row.get(8)?,
+                    governance_participant_count: row.get(9)?,
+                    node_key_id: row.get(10)?,
+                    node_public_key: row.get(11)?,
+                })
             },
         )
         .map_err(storage)?;
-    if persisted.0 != STORE_SCHEMA_VERSION
-        || persisted.1 != config.expected_audience
-        || persisted.2 != config.crosschecked_intermediate_did
-        || persisted.3 != config.crosschecked_intermediate_key_id
-        || persisted.4 != config.crosschecked_intermediate_public_key.as_bytes()
-        || persisted.5 != config.node_identity.did
-        || persisted.6 != config.node_identity.key_id
-        || persisted.7 != config.node_identity.public_key.as_bytes()
+    if persisted.schema_version != STORE_SCHEMA_VERSION
+        || persisted.expected_audience != config.expected_audience
+        || persisted.intermediate_did != config.crosschecked_intermediate_did
+        || persisted.intermediate_key_id != config.crosschecked_intermediate_key_id
+        || persisted.intermediate_public_key
+            != config.crosschecked_intermediate_public_key.as_bytes()
+        || persisted.node_did != config.node_identity.did
+        || persisted.governance_frost_group_public_key != config.governance_frost_group_public_key
+        || persisted.governance_frost_key_epoch
+            != to_i64(
+                config.governance_frost_key_epoch,
+                "governance_frost_key_epoch",
+            )?
+        || persisted.governance_threshold != i64::from(CROSSCHECKED_GOVERNANCE_THRESHOLD)
+        || persisted.governance_participant_count != i64::from(CROSSCHECKED_GOVERNANCE_PARTICIPANTS)
+        || persisted.node_key_id != config.node_identity.key_id
+        || persisted.node_public_key != config.node_identity.public_key.as_bytes()
     {
         return Err(AnchorStoreError::Storage(
             "persisted store policy differs from requested policy".into(),
         ));
     }
+    Ok(())
+}
+
+fn lifecycle_event_from_code(code: &str) -> Result<AuthorityLifecycleEventV1, AnchorStoreError> {
+    match code {
+        "provision" => Ok(AuthorityLifecycleEventV1::Provision),
+        "retire" => Ok(AuthorityLifecycleEventV1::Retire),
+        "revoke" => Ok(AuthorityLifecycleEventV1::Revoke),
+        _ => Err(AnchorStoreError::ReadbackValidation(
+            "unknown governance lifecycle event".into(),
+        )),
+    }
+}
+
+fn load_governance_authorization_by_id(
+    connection: &Connection,
+    authorization_id: &[u8; 32],
+) -> Result<Option<StoredGovernanceAuthorization>, AnchorStoreError> {
+    query_governance_authorization(
+        connection,
+        "WHERE authorization_id = ?1",
+        params![authorization_id.as_slice()],
+    )
+}
+
+fn load_governance_authorization_by_package(
+    connection: &Connection,
+    package_hash: Hash256,
+) -> Result<Option<StoredGovernanceAuthorization>, AnchorStoreError> {
+    query_governance_authorization(
+        connection,
+        "WHERE package_hash = ?1",
+        params![package_hash.as_bytes().as_slice()],
+    )
+}
+
+fn load_governance_authorization_by_scope_sequence(
+    connection: &Connection,
+    scope_alias: &[u8; 32],
+    sequence: u64,
+) -> Result<Option<StoredGovernanceAuthorization>, AnchorStoreError> {
+    query_governance_authorization(
+        connection,
+        "WHERE scope_alias = ?1 AND authorization_sequence = ?2",
+        params![
+            scope_alias.as_slice(),
+            to_i64(sequence, "authorization_sequence")?,
+        ],
+    )
+}
+
+fn load_latest_governance_authorization(
+    connection: &Connection,
+    scope_alias: &[u8; 32],
+) -> Result<Option<StoredGovernanceAuthorization>, AnchorStoreError> {
+    query_governance_authorization(
+        connection,
+        "WHERE scope_alias = ?1 ORDER BY authorization_sequence DESC LIMIT 1",
+        params![scope_alias.as_slice()],
+    )
+}
+
+fn query_governance_authorization<P: rusqlite::Params>(
+    connection: &Connection,
+    predicate: &str,
+    query_params: P,
+) -> Result<Option<StoredGovernanceAuthorization>, AnchorStoreError> {
+    let sql = format!(
+        "SELECT authorization_id, scope_alias, authorization_sequence,
+                authorization_hash, lifecycle_event, authority_did,
+                authority_key_id, authority_key_epoch, package_hash,
+                applied_at_ms, authorization_cbor, authorization_record_cbor
+         FROM crosschecked_anchor_governance_authorizations {predicate}"
+    );
+    connection
+        .query_row(&sql, query_params, |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, Vec<u8>>(8)?,
+                row.get::<_, i64>(9)?,
+                row.get::<_, Vec<u8>>(10)?,
+                row.get::<_, Vec<u8>>(11)?,
+            ))
+        })
+        .optional()
+        .map_err(storage)?
+        .map(
+            |(
+                authorization_id,
+                scope_alias,
+                sequence,
+                authorization_hash,
+                lifecycle_event,
+                authority_did,
+                authority_key_id,
+                authority_key_epoch,
+                package_hash,
+                applied_at_ms,
+                authorization_cbor,
+                authorization_record_cbor,
+            )| {
+                let authorization: AuthorityGovernanceAuthorizationV1 =
+                    decode_serde(&authorization_record_cbor)?;
+                let applied_at_ms =
+                    from_i64(applied_at_ms, "governance authorization application time")?;
+                if encode_serde(&authorization)? != authorization_record_cbor
+                    || authorization.to_cbor_bytes()? != authorization_cbor
+                {
+                    return Err(AnchorStoreError::ReadbackValidation(
+                        "governance authorization bytes are not exact".into(),
+                    ));
+                }
+                validate_governance_application_time(&authorization, applied_at_ms).map_err(
+                    |_| {
+                        AnchorStoreError::ReadbackValidation(
+                            "governance authorization application time is invalid".into(),
+                        )
+                    },
+                )?;
+                Ok(StoredGovernanceAuthorization {
+                    authorization,
+                    authorization_id: exact_bytes(authorization_id, "authorization id")?,
+                    scope_alias: exact_bytes(scope_alias, "governance scope alias")?,
+                    authorization_sequence: from_i64(sequence, "authorization sequence")?,
+                    authorization_hash: Hash256::from_bytes(exact_bytes(
+                        authorization_hash,
+                        "authorization hash",
+                    )?),
+                    lifecycle_event: lifecycle_event_from_code(&lifecycle_event)?,
+                    authority_did,
+                    authority_key_id,
+                    authority_key_epoch: from_i64(
+                        authority_key_epoch,
+                        "governance authority key epoch",
+                    )?,
+                    package_hash: Hash256::from_bytes(exact_bytes(
+                        package_hash,
+                        "governance package hash",
+                    )?),
+                    applied_at_ms,
+                    authorization_cbor,
+                })
+            },
+        )
+        .transpose()
+}
+
+fn validate_exact_governance_replay(
+    stored: &StoredGovernanceAuthorization,
+    authorization: &AuthorityGovernanceAuthorizationV1,
+    authorization_cbor: &[u8],
+    authorization_hash: Hash256,
+    package_hash: Hash256,
+) -> Result<(), AnchorStoreError> {
+    if stored.authorization_id != authorization.authorization_id
+        || stored.scope_alias != authorization.scope_alias
+        || stored.authorization_sequence != authorization.authorization_sequence
+        || stored.authorization_hash != authorization_hash
+        || stored.lifecycle_event != authorization.lifecycle_event
+        || stored.authority_did != authorization.authority_did.as_str()
+        || stored.authority_key_id != authorization.authority_key_id
+        || stored.authority_key_epoch != authorization.authority_key_epoch
+        || stored.package_hash != package_hash
+        || stored.authorization_cbor != authorization_cbor
+    {
+        return Err(AnchorStoreError::GovernanceAuthorizationConflict);
+    }
+    Ok(())
+}
+
+fn validate_governance_sequence(
+    transaction: &Transaction<'_>,
+    authorization: &AuthorityGovernanceAuthorizationV1,
+    applied_at_ms: u64,
+) -> Result<(), AnchorStoreError> {
+    let latest = load_latest_governance_authorization(transaction, &authorization.scope_alias)?;
+    let Some(latest) = latest else {
+        return validate_governance_root(authorization);
+    };
+
+    validate_governance_transition(
+        &latest.authorization,
+        latest.applied_at_ms,
+        authorization,
+        applied_at_ms,
+    )
+}
+
+fn validate_governance_root(
+    authorization: &AuthorityGovernanceAuthorizationV1,
+) -> Result<(), AnchorStoreError> {
+    if authorization.authorization_sequence != 1
+        || authorization.prior_authorization_hash != Hash256::from_bytes([0; 32])
+        || authorization.lifecycle_event != AuthorityLifecycleEventV1::Provision
+    {
+        return Err(AnchorStoreError::GovernanceAuthorization(
+            "first scope authorization must be sequence-one provisioning".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_governance_transition(
+    latest: &AuthorityGovernanceAuthorizationV1,
+    latest_applied_at_ms: u64,
+    authorization: &AuthorityGovernanceAuthorizationV1,
+    applied_at_ms: u64,
+) -> Result<(), AnchorStoreError> {
+    if applied_at_ms < latest_applied_at_ms {
+        return Err(AnchorStoreError::GovernanceAuthorization(
+            "governance application time regressed below the persistent lifecycle watermark".into(),
+        ));
+    }
+    if authorization.authorization_sequence != latest.authorization_sequence.saturating_add(1)
+        || authorization.prior_authorization_hash != latest.authorization_hash()?
+        || authorization.authority_did != latest.authority_did
+        || authorization.scope_alias != latest.scope_alias
+    {
+        return Err(AnchorStoreError::GovernanceAuthorization(
+            "authorization sequence or prior authorization hash mismatch".into(),
+        ));
+    }
+    match authorization.lifecycle_event {
+        AuthorityLifecycleEventV1::Provision => {
+            if latest.lifecycle_event == AuthorityLifecycleEventV1::Provision
+                || authorization.authority_key_epoch <= latest.authority_key_epoch
+            {
+                return Err(AnchorStoreError::GovernanceAuthorization(
+                    "authority rotation requires a prior retirement and increasing key epoch"
+                        .into(),
+                ));
+            }
+        }
+        AuthorityLifecycleEventV1::Retire | AuthorityLifecycleEventV1::Revoke => {
+            if latest.lifecycle_event != AuthorityLifecycleEventV1::Provision
+                || authorization.authority_key_id != latest.authority_key_id
+                || authorization.authority_key_epoch != latest.authority_key_epoch
+            {
+                return Err(AnchorStoreError::GovernanceAuthorization(
+                    "retirement or revocation must target the current provisioned epoch".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn persist_governance_authorization(
+    transaction: &Transaction<'_>,
+    authorization: &AuthorityGovernanceAuthorizationV1,
+    authorization_cbor: &[u8],
+    authorization_hash: Hash256,
+    applied_at_ms: u64,
+) -> Result<(), AnchorStoreError> {
+    transaction
+        .execute(
+            "INSERT INTO crosschecked_anchor_governance_authorizations (
+                authorization_id, ceremony_id, scope_alias, authorization_sequence,
+                prior_authorization_hash, authorization_hash, governance_key_epoch,
+                lifecycle_event, authority_did, authority_key_id, authority_key_epoch,
+                package_hash, node_policy_hash, valid_from_ms, valid_until_ms,
+                applied_at_ms, authorization_cbor, authorization_record_cbor
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            params![
+                authorization.authorization_id.as_slice(),
+                authorization.ceremony_id.as_slice(),
+                authorization.scope_alias.as_slice(),
+                to_i64(
+                    authorization.authorization_sequence,
+                    "authorization_sequence",
+                )?,
+                authorization.prior_authorization_hash.as_bytes().as_slice(),
+                authorization_hash.as_bytes().as_slice(),
+                to_i64(
+                    authorization.governance_key_epoch,
+                    "governance_key_epoch",
+                )?,
+                authorization.lifecycle_event.code(),
+                authorization.authority_did.as_str(),
+                authorization.authority_key_id,
+                to_i64(authorization.authority_key_epoch, "authority_key_epoch")?,
+                authorization.package_hash.as_bytes().as_slice(),
+                authorization.node_policy_hash.as_bytes().as_slice(),
+                to_i64(authorization.valid_from_ms, "authorization_valid_from_ms")?,
+                to_i64(authorization.valid_until_ms, "authorization_valid_until_ms")?,
+                to_i64(applied_at_ms, "authorization_applied_at_ms")?,
+                authorization_cbor,
+                encode_serde(authorization)?,
+            ],
+        )
+        .map_err(|_| AnchorStoreError::GovernanceAuthorizationConflict)?;
     Ok(())
 }
 

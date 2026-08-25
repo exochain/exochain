@@ -20,14 +20,16 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use exo_authority::{AuthorityChain, AuthorityLink, DelegateeKind, Permission};
-use exo_core::{Did, PublicKey, Signature, Timestamp, crypto::KeyPair};
+use exo_core::{Did, Hash256, PublicKey, Signature, Timestamp, crypto::KeyPair};
 use exo_identity::did::{DidDocument, VerificationMethod};
 use exo_node::crosschecked_anchor_store::{
-    AnchorNodeIdentity, AnchorStore, AnchorStoreConfig, AuthorityProvisioningV1,
-    AuthorityRetirementV1, CrossCheckedScopeBindingV1, authority_chain_fingerprint,
+    AnchorNodeIdentity, AnchorStore, AnchorStoreConfig, AuthorityGovernanceAuthorizationV1,
+    AuthorityLifecycleEventV1, AuthorityProvisioningV1, AuthorityRetirementV1,
+    CrossCheckedScopeBindingV1, authority_chain_fingerprint,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -37,6 +39,7 @@ use crate::cli::{CrossCheckedAnchorAuthorityAdminArgs, CrossCheckedAnchorAuthori
 
 const OWNER_COMMAND_MAX_BYTES: u64 = 64 * 1024;
 const SIGNER_SECRET_MAX_BYTES: u64 = 4 * 1024;
+const GOVERNANCE_AUTHORIZATION_MAX_BYTES: u64 = 16 * 1024;
 const PROTOCOL_VERSION: u16 = 1;
 const PACKAGE_HASH_ALGORITHM: &str = "sha256";
 
@@ -53,6 +56,32 @@ struct IntermediateSigningMaterialV1 {
 #[derive(Deserialize, Zeroize)]
 #[serde(deny_unknown_fields)]
 #[zeroize(drop)]
+struct GovernanceAuthorizationInputV1 {
+    protocol_version: u16,
+    authorization_id_hex: String,
+    ceremony_id_hex: String,
+    governance_key_epoch: u64,
+    threshold: u16,
+    participant_count: u16,
+    signer_ids: Vec<u16>,
+    lifecycle_event: String,
+    authority_did: String,
+    authority_key_id: String,
+    authority_key_epoch: u64,
+    scope_alias_hex: String,
+    package_hash_hex: String,
+    node_policy_hash_hex: String,
+    authorization_sequence: u64,
+    prior_authorization_hash_hex: String,
+    valid_from_ms: u64,
+    valid_until_ms: u64,
+    signature_algorithm: String,
+    signature_hex: String,
+}
+
+#[derive(Deserialize, Zeroize)]
+#[serde(deny_unknown_fields)]
+#[zeroize(drop)]
 struct ProvisionAuthorityCommandV1 {
     protocol_version: u16,
     expected_audience: String,
@@ -62,6 +91,8 @@ struct ProvisionAuthorityCommandV1 {
     node_did: String,
     node_key_id: String,
     node_public_key_hex: String,
+    governance_group_public_key_hex: String,
+    governance_key_epoch: u64,
     authority_did: String,
     authority_key_id: String,
     authority_public_key_hex: String,
@@ -84,6 +115,8 @@ struct RetireAuthorityCommandV1 {
     node_did: String,
     node_key_id: String,
     node_public_key_hex: String,
+    governance_group_public_key_hex: String,
+    governance_key_epoch: u64,
     authority_did: String,
     authority_key_id: String,
     key_epoch: u64,
@@ -98,6 +131,8 @@ struct OwnerStorePolicyRef<'a> {
     node_did: &'a str,
     node_key_id: &'a str,
     node_public_key_hex: &'a str,
+    governance_group_public_key_hex: &'a str,
+    governance_key_epoch: u64,
 }
 
 impl ProvisionAuthorityCommandV1 {
@@ -110,6 +145,8 @@ impl ProvisionAuthorityCommandV1 {
             node_did: &self.node_did,
             node_key_id: &self.node_key_id,
             node_public_key_hex: &self.node_public_key_hex,
+            governance_group_public_key_hex: &self.governance_group_public_key_hex,
+            governance_key_epoch: self.governance_key_epoch,
         }
     }
 }
@@ -124,6 +161,8 @@ impl RetireAuthorityCommandV1 {
             node_did: &self.node_did,
             node_key_id: &self.node_key_id,
             node_public_key_hex: &self.node_public_key_hex,
+            governance_group_public_key_hex: &self.governance_group_public_key_hex,
+            governance_key_epoch: self.governance_key_epoch,
         }
     }
 }
@@ -139,7 +178,12 @@ struct RedactedOwnerCommandOutput<'a> {
 pub fn run(command: CrossCheckedAnchorAuthorityCommand) -> anyhow::Result<()> {
     match command {
         CrossCheckedAnchorAuthorityCommand::Provision(args) => provision(args),
-        CrossCheckedAnchorAuthorityCommand::Retire(args) => retire(args),
+        CrossCheckedAnchorAuthorityCommand::Retire(args) => {
+            retire(args, AuthorityLifecycleEventV1::Retire)
+        }
+        CrossCheckedAnchorAuthorityCommand::Revoke(args) => {
+            retire(args, AuthorityLifecycleEventV1::Revoke)
+        }
     }
 }
 
@@ -155,28 +199,37 @@ fn provision(args: CrossCheckedAnchorAuthorityAdminArgs) -> anyhow::Result<()> {
         SIGNER_SECRET_MAX_BYTES,
         "intermediate signer input rejected",
     )?;
+    let authorization: GovernanceAuthorizationInputV1 = read_private_json(
+        &args.governance_authorization,
+        GOVERNANCE_AUTHORIZATION_MAX_BYTES,
+        "governance authorization input rejected",
+    )?;
     require_protocol(command.protocol_version)?;
     let intermediate_key = intermediate_key(&signing_material)?;
     let store_config = store_config(command.store_policy(), &signing_material, &intermediate_key)?;
     let provisioning = signed_provisioning(&command, &signing_material, &intermediate_key)?;
+    let authorization = governance_authorization(authorization)?;
     let package_bytes = Zeroizing::new(
         provisioning
             .to_cbor_bytes()
             .map_err(|_| anyhow::anyhow!("signed provisioning package encoding failed"))?,
     );
 
-    let records_path = records_path(&args.data_dir, false)?;
+    let records_path = records_path(&args.data_dir, true)?;
     let store = AnchorStore::open(&records_path, store_config)
         .map_err(|_| anyhow::anyhow!("durable authority registry rejected store policy"))?;
     store
-        .provision_authority(&provisioning)
+        .provision_authority(&provisioning, &authorization, current_time_ms()?)
         .map_err(|_| anyhow::anyhow!("signed authority provisioning rejected"))?;
     restrict_registry_file(&records_path)?;
     write_optional_package(args.signed_package_out.as_deref(), &package_bytes)?;
     write_redacted_summary("provision", &package_bytes)
 }
 
-fn retire(args: CrossCheckedAnchorAuthorityAdminArgs) -> anyhow::Result<()> {
+fn retire(
+    args: CrossCheckedAnchorAuthorityAdminArgs,
+    lifecycle_event: AuthorityLifecycleEventV1,
+) -> anyhow::Result<()> {
     ensure_distinct_inputs(&args)?;
     let command: RetireAuthorityCommandV1 = read_private_json(
         &args.command,
@@ -188,10 +241,16 @@ fn retire(args: CrossCheckedAnchorAuthorityAdminArgs) -> anyhow::Result<()> {
         SIGNER_SECRET_MAX_BYTES,
         "intermediate signer input rejected",
     )?;
+    let authorization: GovernanceAuthorizationInputV1 = read_private_json(
+        &args.governance_authorization,
+        GOVERNANCE_AUTHORIZATION_MAX_BYTES,
+        "governance authorization input rejected",
+    )?;
     require_protocol(command.protocol_version)?;
     let intermediate_key = intermediate_key(&signing_material)?;
     let store_config = store_config(command.store_policy(), &signing_material, &intermediate_key)?;
     let retirement = signed_retirement(&command, &signing_material, &intermediate_key)?;
+    let authorization = governance_authorization(authorization)?;
     let package_bytes = Zeroizing::new(
         retirement
             .to_cbor_bytes()
@@ -201,12 +260,29 @@ fn retire(args: CrossCheckedAnchorAuthorityAdminArgs) -> anyhow::Result<()> {
     let records_path = records_path(&args.data_dir, true)?;
     let store = AnchorStore::open(&records_path, store_config)
         .map_err(|_| anyhow::anyhow!("durable authority registry rejected store policy"))?;
-    store
-        .retire_authority(&retirement)
-        .map_err(|_| anyhow::anyhow!("signed authority retirement rejected"))?;
+    match lifecycle_event {
+        AuthorityLifecycleEventV1::Retire => {
+            store.retire_authority(&retirement, &authorization, current_time_ms()?)
+        }
+        AuthorityLifecycleEventV1::Revoke => {
+            store.revoke_authority(&retirement, &authorization, current_time_ms()?)
+        }
+        AuthorityLifecycleEventV1::Provision => {
+            anyhow::bail!("governance lifecycle event rejected")
+        }
+    }
+    .map_err(|_| anyhow::anyhow!("signed authority retirement rejected"))?;
     restrict_registry_file(&records_path)?;
     write_optional_package(args.signed_package_out.as_deref(), &package_bytes)?;
-    write_redacted_summary("retire", &package_bytes)
+    write_redacted_summary(lifecycle_event.code(), &package_bytes)
+}
+
+fn current_time_ms() -> anyhow::Result<u64> {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| anyhow::anyhow!("trusted owner-command clock unavailable"))?
+        .as_millis();
+    u64::try_from(millis).map_err(|_| anyhow::anyhow!("trusted owner-command clock unavailable"))
 }
 
 fn require_protocol(protocol_version: u16) -> anyhow::Result<()> {
@@ -214,6 +290,62 @@ fn require_protocol(protocol_version: u16) -> anyhow::Result<()> {
         anyhow::bail!("owner command protocol version rejected");
     }
     Ok(())
+}
+
+fn governance_authorization(
+    authorization: GovernanceAuthorizationInputV1,
+) -> anyhow::Result<AuthorityGovernanceAuthorizationV1> {
+    require_protocol(authorization.protocol_version)?;
+    let lifecycle_event = match authorization.lifecycle_event.as_str() {
+        "provision" => AuthorityLifecycleEventV1::Provision,
+        "retire" => AuthorityLifecycleEventV1::Retire,
+        "revoke" => AuthorityLifecycleEventV1::Revoke,
+        _ => anyhow::bail!("governance authorization input rejected"),
+    };
+    Ok(AuthorityGovernanceAuthorizationV1 {
+        protocol_version: authorization.protocol_version,
+        authorization_id: decode_lower_hex(
+            &authorization.authorization_id_hex,
+            "governance authorization input rejected",
+        )?,
+        ceremony_id: decode_lower_hex(
+            &authorization.ceremony_id_hex,
+            "governance authorization input rejected",
+        )?,
+        governance_key_epoch: authorization.governance_key_epoch,
+        threshold: authorization.threshold,
+        participant_count: authorization.participant_count,
+        signer_ids: authorization.signer_ids.clone(),
+        lifecycle_event,
+        authority_did: parse_did(&authorization.authority_did)?,
+        authority_key_id: authorization.authority_key_id.clone(),
+        authority_key_epoch: authorization.authority_key_epoch,
+        scope_alias: decode_lower_hex(
+            &authorization.scope_alias_hex,
+            "governance authorization input rejected",
+        )?,
+        package_hash: Hash256::from_bytes(decode_lower_hex(
+            &authorization.package_hash_hex,
+            "governance authorization input rejected",
+        )?),
+        node_policy_hash: Hash256::from_bytes(decode_lower_hex(
+            &authorization.node_policy_hash_hex,
+            "governance authorization input rejected",
+        )?),
+        authorization_sequence: authorization.authorization_sequence,
+        prior_authorization_hash: Hash256::from_bytes(decode_lower_hex(
+            &authorization.prior_authorization_hash_hex,
+            "governance authorization input rejected",
+        )?),
+        valid_from_ms: authorization.valid_from_ms,
+        valid_until_ms: authorization.valid_until_ms,
+        signature_algorithm: authorization.signature_algorithm.clone(),
+        signature: decode_lower_hex::<64>(
+            &authorization.signature_hex,
+            "governance authorization input rejected",
+        )?
+        .to_vec(),
+    })
 }
 
 fn intermediate_key(material: &IntermediateSigningMaterialV1) -> anyhow::Result<KeyPair> {
@@ -241,6 +373,10 @@ fn store_config(
         crosschecked_intermediate_did: policy.intermediate_did.to_owned(),
         crosschecked_intermediate_key_id: policy.intermediate_key_id.to_owned(),
         crosschecked_intermediate_public_key: configured_intermediate_public_key,
+        governance_frost_group_public_key: decode_public_hex(
+            policy.governance_group_public_key_hex,
+        )?,
+        governance_frost_key_epoch: policy.governance_key_epoch,
         node_identity: AnchorNodeIdentity {
             did: policy.node_did.to_owned(),
             key_id: policy.node_key_id.to_owned(),
@@ -380,18 +516,22 @@ fn parse_did(value: &str) -> anyhow::Result<Did> {
 }
 
 fn decode_public_hex(value: &str) -> anyhow::Result<[u8; 32]> {
-    if value.len() != 64
+    decode_lower_hex(value, "owner command 32-byte lowercase hex field rejected")
+}
+
+fn decode_lower_hex<const N: usize>(
+    value: &str,
+    error_message: &'static str,
+) -> anyhow::Result<[u8; N]> {
+    if value.len() != N.saturating_mul(2)
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     {
-        anyhow::bail!("owner command 32-byte lowercase hex field rejected");
+        anyhow::bail!(error_message);
     }
-    let bytes = hex::decode(value)
-        .map_err(|_| anyhow::anyhow!("owner command 32-byte lowercase hex field rejected"))?;
-    bytes
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("owner command 32-byte lowercase hex field rejected"))
+    let bytes = hex::decode(value).map_err(|_| anyhow::anyhow!(error_message))?;
+    bytes.try_into().map_err(|_| anyhow::anyhow!(error_message))
 }
 
 fn decode_secret_hex(value: &str) -> anyhow::Result<Zeroizing<[u8; 32]>> {
@@ -415,8 +555,12 @@ fn decode_secret_hex(value: &str) -> anyhow::Result<Zeroizing<[u8; 32]>> {
 
 fn ensure_distinct_inputs(args: &CrossCheckedAnchorAuthorityAdminArgs) -> anyhow::Result<()> {
     if args.command == args.intermediate_secret_file
+        || args.command == args.governance_authorization
+        || args.intermediate_secret_file == args.governance_authorization
         || args.signed_package_out.as_ref().is_some_and(|output| {
-            output == &args.command || output == &args.intermediate_secret_file
+            output == &args.command
+                || output == &args.intermediate_secret_file
+                || output == &args.governance_authorization
         })
     {
         anyhow::bail!("owner command input and output paths must be distinct");

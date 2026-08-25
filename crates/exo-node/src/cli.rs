@@ -220,8 +220,10 @@ pub enum CrossCheckedAnchorAuthorityCommand {
     Provision(CrossCheckedAnchorAuthorityAdminArgs),
 
     /// Sign and persist one exact authority-key retirement package.
-    #[command(alias = "revoke")]
     Retire(CrossCheckedAnchorAuthorityAdminArgs),
+
+    /// Sign and persist one exact authority-key revocation package.
+    Revoke(CrossCheckedAnchorAuthorityAdminArgs),
 }
 
 #[derive(Args)]
@@ -238,6 +240,10 @@ pub struct CrossCheckedAnchorAuthorityAdminArgs {
     /// Intermediate signer JSON file. Secrets are never accepted on argv; mode must be 0400 or 0600.
     #[arg(long)]
     pub intermediate_secret_file: PathBuf,
+
+    /// RFC 9591 FROST governance authorization file. Mode must be 0400 or 0600.
+    #[arg(long)]
+    pub governance_authorization: PathBuf,
 
     /// Optional create-new 0600 output containing the exact signed CBOR package.
     #[arg(long)]
@@ -918,6 +924,8 @@ mod tests {
                 "owner-command.json",
                 "--intermediate-secret-file",
                 "crosschecked-intermediate.secret.json",
+                "--governance-authorization",
+                "frost-authorization.json",
                 "--signed-package-out",
                 "signed-package.cbor",
             ]);

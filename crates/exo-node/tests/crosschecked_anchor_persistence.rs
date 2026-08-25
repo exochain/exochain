@@ -3,6 +3,9 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "support/crosschecked_anchor_governance.rs"]
+mod governance_support;
+
 use std::{
     collections::BTreeMap,
     path::Path,
@@ -27,6 +30,13 @@ use exo_node::crosschecked_anchor_store::{
     authority_chain_fingerprint,
 };
 use tempfile::TempDir;
+
+use exo_node::crosschecked_anchor_store::AuthorityLifecycleEventV1;
+use governance_support::{
+    GOVERNANCE_KEY_EPOCH, configure_governance, governance_group_public_key,
+    governance_group_public_key_for_seed, provisioning_authorization, resign_authorization,
+    retirement_authorization,
+};
 
 const AUDIENCE: &str = "crosschecked.production";
 const INTERMEDIATE_DID: &str = "did:exo:crosschecked-intermediate";
@@ -140,6 +150,7 @@ struct Harness {
     scope_alias: [u8; 32],
     signer: Arc<CountingDurableSigner>,
     config: AnchorStoreConfig,
+    provisioning_authorization_hash: Hash256,
 }
 
 impl Harness {
@@ -153,13 +164,16 @@ impl Harness {
             key_id: NODE_KEY_ID.to_owned(),
             public_key: *node_key.public_key(),
         };
-        let config = AnchorStoreConfig {
+        let mut config = AnchorStoreConfig {
             expected_audience: AUDIENCE.to_owned(),
             crosschecked_intermediate_did: INTERMEDIATE_DID.to_owned(),
             crosschecked_intermediate_key_id: INTERMEDIATE_KEY_ID.to_owned(),
             crosschecked_intermediate_public_key: *intermediate_key.public_key(),
+            governance_frost_group_public_key: governance_group_public_key(),
+            governance_frost_key_epoch: GOVERNANCE_KEY_EPOCH,
             node_identity: node_identity.clone(),
         };
+        configure_governance(&mut config);
         let store = AnchorStore::open(&path, config.clone()).expect("open store");
         let authority_key = KeyPair::from_secret_bytes([0x17; 32]).expect("authority key");
         let authority_did = "did:exo:crosschecked-workspace-a".to_owned();
@@ -176,8 +190,23 @@ impl Harness {
             Permission::AnchorReceiptCommitment,
             1,
         );
+        let provisioning_authorization = provisioning_authorization(
+            &config,
+            &provisioning,
+            1,
+            Hash256::from_bytes([0; 32]),
+            0x71,
+            0x7001,
+        );
+        let provisioning_authorization_hash = provisioning_authorization
+            .authorization_hash()
+            .expect("provisioning authorization hash");
         store
-            .provision_authority(&provisioning)
+            .provision_authority(
+                &provisioning,
+                &provisioning_authorization,
+                provisioning.scope_binding.valid_from_ms,
+            )
             .expect("provision authority");
         let signer = Arc::new(CountingDurableSigner::new(node_identity, [0x29; 32]));
         Self {
@@ -192,6 +221,7 @@ impl Harness {
             scope_alias,
             signer,
             config,
+            provisioning_authorization_hash,
         }
     }
 
@@ -217,6 +247,23 @@ impl Harness {
             body,
             now,
         }
+    }
+
+    fn retirement(&self, retired_at_ms: u64) -> AuthorityRetirementV1 {
+        let mut retirement = AuthorityRetirementV1 {
+            protocol_version: 1,
+            authority_did: did(&self.authority_did),
+            authority_key_id: self.authority_key_id.clone(),
+            key_epoch: 1,
+            retired_at_ms,
+            signer_did: did(INTERMEDIATE_DID),
+            signer_key_id: INTERMEDIATE_KEY_ID.to_owned(),
+            signature: Signature::empty(),
+        };
+        retirement.signature = self
+            .intermediate_key
+            .sign(&retirement.signing_preimage().expect("retirement payload"));
+        retirement
     }
 }
 
@@ -364,13 +411,15 @@ fn authority_provisioning_rejects_missing_permission_and_key_epoch_substitution(
         crosschecked_intermediate_did: INTERMEDIATE_DID.to_owned(),
         crosschecked_intermediate_key_id: INTERMEDIATE_KEY_ID.to_owned(),
         crosschecked_intermediate_public_key: *intermediate.public_key(),
+        governance_frost_group_public_key: governance_group_public_key(),
+        governance_frost_key_epoch: GOVERNANCE_KEY_EPOCH,
         node_identity: AnchorNodeIdentity {
             did: NODE_DID.to_owned(),
             key_id: NODE_KEY_ID.to_owned(),
             public_key: *node_key.public_key(),
         },
     };
-    let store = AnchorStore::open(&path, config).expect("store");
+    let store = AnchorStore::open(&path, config.clone()).expect("store");
     let authority = KeyPair::from_secret_bytes([0x17; 32]).expect("authority");
     let authority_did = "did:exo:workspace-denied";
     let key_id = format!("{authority_did}#anchor-1");
@@ -385,8 +434,20 @@ fn authority_provisioning_rejects_missing_permission_and_key_epoch_substitution(
         Permission::Write,
         1,
     );
+    let missing_permission_authorization = provisioning_authorization(
+        &config,
+        &missing_permission,
+        1,
+        Hash256::from_bytes([0; 32]),
+        0x72,
+        0x7002,
+    );
     assert!(matches!(
-        store.provision_authority(&missing_permission),
+        store.provision_authority(
+            &missing_permission,
+            &missing_permission_authorization,
+            missing_permission.scope_binding.valid_from_ms,
+        ),
         Err(AnchorStoreError::AuthorityValidation(_))
     ));
 
@@ -407,8 +468,20 @@ fn authority_provisioning_rejects_missing_permission_and_key_epoch_substitution(
             .signing_preimage()
             .expect("wrong-epoch binding payload"),
     );
+    let wrong_epoch_authorization = provisioning_authorization(
+        &config,
+        &wrong_epoch,
+        1,
+        Hash256::from_bytes([0; 32]),
+        0x73,
+        0x7003,
+    );
     assert!(matches!(
-        store.provision_authority(&wrong_epoch),
+        store.provision_authority(
+            &wrong_epoch,
+            &wrong_epoch_authorization,
+            wrong_epoch.scope_binding.valid_from_ms,
+        ),
         Err(AnchorStoreError::AuthorityValidation(_))
     ));
     assert_eq!(count_rows(&path, "crosschecked_anchor_authorities"), 0);
@@ -423,21 +496,20 @@ fn authority_provisioning_rejects_substituted_intermediate_key_for_pinned_did() 
         KeyPair::from_secret_bytes([0x41; 32]).expect("trusted intermediate");
     let attacker_intermediate =
         KeyPair::from_secret_bytes([0x42; 32]).expect("attacker intermediate");
-    let store = AnchorStore::open(
-        &path,
-        AnchorStoreConfig {
-            expected_audience: AUDIENCE.to_owned(),
-            crosschecked_intermediate_did: INTERMEDIATE_DID.to_owned(),
-            crosschecked_intermediate_key_id: INTERMEDIATE_KEY_ID.to_owned(),
-            crosschecked_intermediate_public_key: *trusted_intermediate.public_key(),
-            node_identity: AnchorNodeIdentity {
-                did: NODE_DID.to_owned(),
-                key_id: NODE_KEY_ID.to_owned(),
-                public_key: *node_key.public_key(),
-            },
+    let config = AnchorStoreConfig {
+        expected_audience: AUDIENCE.to_owned(),
+        crosschecked_intermediate_did: INTERMEDIATE_DID.to_owned(),
+        crosschecked_intermediate_key_id: INTERMEDIATE_KEY_ID.to_owned(),
+        crosschecked_intermediate_public_key: *trusted_intermediate.public_key(),
+        governance_frost_group_public_key: governance_group_public_key(),
+        governance_frost_key_epoch: GOVERNANCE_KEY_EPOCH,
+        node_identity: AnchorNodeIdentity {
+            did: NODE_DID.to_owned(),
+            key_id: NODE_KEY_ID.to_owned(),
+            public_key: *node_key.public_key(),
         },
-    )
-    .expect("store");
+    };
+    let store = AnchorStore::open(&path, config.clone()).expect("store");
     let authority = KeyPair::from_secret_bytes([0x17; 32]).expect("authority");
     let authority_did = "did:exo:attacker-workspace";
     let candidate = provisioning(
@@ -450,9 +522,21 @@ fn authority_provisioning_rejects_substituted_intermediate_key_for_pinned_did() 
         Permission::AnchorReceiptCommitment,
         1,
     );
+    let candidate_authorization = provisioning_authorization(
+        &config,
+        &candidate,
+        1,
+        Hash256::from_bytes([0; 32]),
+        0x74,
+        0x7004,
+    );
 
     assert!(matches!(
-        store.provision_authority(&candidate),
+        store.provision_authority(
+            &candidate,
+            &candidate_authorization,
+            candidate.scope_binding.valid_from_ms,
+        ),
         Err(AnchorStoreError::AuthorityValidation(_))
     ));
     assert_eq!(count_rows(&path, "crosschecked_anchor_authorities"), 0);
@@ -605,18 +689,31 @@ fn idempotency_and_cross_scope_action_conflicts_are_typed_and_persist_nothing_ex
     let other_key = KeyPair::from_secret_bytes([0x18; 32]).expect("other authority");
     let other_did = "did:exo:crosschecked-workspace-b";
     let other_key_id = format!("{other_did}#anchor-1");
+    let other_provisioning = provisioning(
+        &harness.intermediate_key,
+        &other_key,
+        other_did,
+        &other_key_id,
+        [0x32; 32],
+        [0x43; 32],
+        Permission::AnchorReceiptCommitment,
+        1,
+    );
+    let other_authorization = provisioning_authorization(
+        &harness.config,
+        &other_provisioning,
+        1,
+        Hash256::from_bytes([0; 32]),
+        0x75,
+        0x7005,
+    );
     harness
         .store
-        .provision_authority(&provisioning(
-            &harness.intermediate_key,
-            &other_key,
-            other_did,
-            &other_key_id,
-            [0x32; 32],
-            [0x43; 32],
-            Permission::AnchorReceiptCommitment,
-            1,
-        ))
+        .provision_authority(
+            &other_provisioning,
+            &other_authorization,
+            other_provisioning.scope_binding.valid_from_ms,
+        )
         .expect("second scope");
     let cross_scope = signed_request(
         &other_key,
@@ -726,6 +823,580 @@ fn signer_failure_before_commit_leaves_zero_records_and_retry_creates_once() {
 }
 
 #[test]
+fn lifecycle_mutations_require_frost_and_fail_atomically_on_expiry_or_event_substitution() {
+    for case in [
+        "no-frost",
+        "expired",
+        "event-substitution",
+        "clock-regression",
+        "six-signer-roster",
+    ] {
+        let harness = Harness::new();
+        let retirement = harness.retirement(ISSUED_AT + 200);
+        let mut authorization = retirement_authorization(
+            &harness.config,
+            &retirement,
+            harness.scope_alias,
+            AuthorityLifecycleEventV1::Retire,
+            2,
+            harness.provisioning_authorization_hash,
+            0x78,
+            0x7008,
+        );
+        let mut applied_at_ms = retirement.retired_at_ms;
+        match case {
+            "no-frost" => authorization.signature.fill(0),
+            "expired" => {
+                authorization.valid_until_ms = retirement.retired_at_ms;
+                resign_authorization(&mut authorization, 0x7009);
+            }
+            "event-substitution" => {
+                authorization.lifecycle_event = AuthorityLifecycleEventV1::Revoke;
+                resign_authorization(&mut authorization, 0x7010);
+            }
+            "clock-regression" => {
+                authorization.valid_from_ms = ISSUED_AT - 10_000;
+                applied_at_ms = ISSUED_AT - 5_001;
+                resign_authorization(&mut authorization, 0x7018);
+            }
+            "six-signer-roster" => {
+                authorization.signer_ids.pop();
+            }
+            _ => unreachable!(),
+        }
+
+        assert!(matches!(
+            harness
+                .store
+                .retire_authority(&retirement, &authorization, applied_at_ms),
+            Err(AnchorStoreError::GovernanceAuthorization(_))
+        ));
+        assert_eq!(
+            count_rows(
+                &harness.path,
+                "crosschecked_anchor_governance_authorizations"
+            ),
+            1,
+            "{case} must not persist a governance authorization"
+        );
+        let retired_at: Option<i64> = rusqlite::Connection::open(&harness.path)
+            .expect("sqlite")
+            .query_row(
+                "SELECT retired_at_ms FROM crosschecked_anchor_authorities",
+                [],
+                |row| row.get(0),
+            )
+            .expect("authority lifecycle state");
+        assert_eq!(retired_at, None, "{case} must not mutate authority state");
+    }
+}
+
+#[test]
+fn governance_authorization_restarts_replay_exactly_and_conflicts_fail_closed() {
+    let harness = Harness::new();
+    let retirement = harness.retirement(ISSUED_AT + 200);
+    let authorization = retirement_authorization(
+        &harness.config,
+        &retirement,
+        harness.scope_alias,
+        AuthorityLifecycleEventV1::Retire,
+        2,
+        harness.provisioning_authorization_hash,
+        0x79,
+        0x7011,
+    );
+    harness
+        .store
+        .retire_authority(&retirement, &authorization, retirement.retired_at_ms)
+        .expect("initial retirement");
+    let applied_at_ms: i64 = rusqlite::Connection::open(&harness.path)
+        .expect("sqlite")
+        .query_row(
+            "SELECT applied_at_ms FROM crosschecked_anchor_governance_authorizations
+             WHERE authorization_sequence = 2",
+            [],
+            |row| row.get(0),
+        )
+        .expect("persisted first-application time");
+    assert_eq!(
+        u64::try_from(applied_at_ms).expect("non-negative application time"),
+        retirement.retired_at_ms
+    );
+
+    let restarted = AnchorStore::open(&harness.path, harness.config.clone()).expect("restart");
+    restarted
+        .retire_authority(
+            &retirement,
+            &authorization,
+            authorization.valid_until_ms + 1,
+        )
+        .expect("exact authorization replay after restart");
+    assert_eq!(
+        count_rows(
+            &harness.path,
+            "crosschecked_anchor_governance_authorizations"
+        ),
+        2,
+        "exact replay must not duplicate authorization"
+    );
+
+    let conflicting_retirement = harness.retirement(ISSUED_AT + 201);
+    let conflicting_authorization = retirement_authorization(
+        &harness.config,
+        &conflicting_retirement,
+        harness.scope_alias,
+        AuthorityLifecycleEventV1::Retire,
+        2,
+        harness.provisioning_authorization_hash,
+        0x79,
+        0x7012,
+    );
+    assert_eq!(
+        restarted.retire_authority(
+            &conflicting_retirement,
+            &conflicting_authorization,
+            conflicting_retirement.retired_at_ms,
+        ),
+        Err(AnchorStoreError::GovernanceAuthorizationConflict)
+    );
+    assert_eq!(
+        count_rows(
+            &harness.path,
+            "crosschecked_anchor_governance_authorizations"
+        ),
+        2
+    );
+}
+
+#[test]
+fn governance_ceremony_id_is_single_use_and_conflict_is_atomic() {
+    let harness = Harness::new();
+    let retirement = harness.retirement(ISSUED_AT + 200);
+    let mut authorization = retirement_authorization(
+        &harness.config,
+        &retirement,
+        harness.scope_alias,
+        AuthorityLifecycleEventV1::Retire,
+        2,
+        harness.provisioning_authorization_hash,
+        0x7f,
+        0x7019,
+    );
+    authorization.ceremony_id = [0x71_u8.wrapping_add(0x40); 32];
+    resign_authorization(&mut authorization, 0x7020);
+
+    assert_eq!(
+        harness
+            .store
+            .retire_authority(&retirement, &authorization, retirement.retired_at_ms,),
+        Err(AnchorStoreError::GovernanceAuthorizationConflict)
+    );
+    assert_eq!(
+        count_rows(
+            &harness.path,
+            "crosschecked_anchor_governance_authorizations"
+        ),
+        1,
+        "a reused ceremony must not persist another authorization"
+    );
+    let retired_at: Option<i64> = rusqlite::Connection::open(&harness.path)
+        .expect("sqlite")
+        .query_row(
+            "SELECT retired_at_ms FROM crosschecked_anchor_authorities",
+            [],
+            |row| row.get(0),
+        )
+        .expect("authority lifecycle state");
+    assert_eq!(
+        retired_at, None,
+        "a ceremony conflict must roll back the authority mutation"
+    );
+}
+
+#[test]
+fn authority_lifecycle_transaction_rolls_back_state_when_authorization_insert_aborts() {
+    let harness = Harness::new();
+    let retirement = harness.retirement(ISSUED_AT + 200);
+    let authorization = retirement_authorization(
+        &harness.config,
+        &retirement,
+        harness.scope_alias,
+        AuthorityLifecycleEventV1::Retire,
+        2,
+        harness.provisioning_authorization_hash,
+        0x7d,
+        0x7016,
+    );
+    let connection = rusqlite::Connection::open(&harness.path).expect("sqlite");
+    connection
+        .execute_batch(
+            "CREATE TRIGGER abort_governance_authorization_insert
+             BEFORE INSERT ON crosschecked_anchor_governance_authorizations
+             WHEN NEW.authorization_sequence = 2
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected lifecycle commit failure');
+             END;",
+        )
+        .expect("install failure trigger");
+    assert!(
+        harness
+            .store
+            .retire_authority(&retirement, &authorization, retirement.retired_at_ms)
+            .is_err()
+    );
+    let retired_at: Option<i64> = connection
+        .query_row(
+            "SELECT retired_at_ms FROM crosschecked_anchor_authorities",
+            [],
+            |row| row.get(0),
+        )
+        .expect("authority state after abort");
+    assert_eq!(
+        retired_at, None,
+        "retirement update must roll back atomically"
+    );
+    assert_eq!(
+        count_rows(
+            &harness.path,
+            "crosschecked_anchor_governance_authorizations"
+        ),
+        1
+    );
+
+    connection
+        .execute_batch("DROP TRIGGER abort_governance_authorization_insert;")
+        .expect("remove failure trigger");
+    harness
+        .store
+        .retire_authority(&retirement, &authorization, retirement.retired_at_ms)
+        .expect("retry after rollback");
+    assert_eq!(
+        count_rows(
+            &harness.path,
+            "crosschecked_anchor_governance_authorizations"
+        ),
+        2
+    );
+}
+
+#[test]
+fn first_provision_transaction_rolls_back_authority_when_authorization_insert_aborts() {
+    let temp = TempDir::new().expect("temp directory");
+    let path = temp.path().join("provision-atomic.sqlite3");
+    let node_key = KeyPair::from_secret_bytes([0x29; 32]).expect("node key");
+    let intermediate = KeyPair::from_secret_bytes([0x41; 32]).expect("intermediate key");
+    let config = AnchorStoreConfig {
+        expected_audience: AUDIENCE.to_owned(),
+        crosschecked_intermediate_did: INTERMEDIATE_DID.to_owned(),
+        crosschecked_intermediate_key_id: INTERMEDIATE_KEY_ID.to_owned(),
+        crosschecked_intermediate_public_key: *intermediate.public_key(),
+        governance_frost_group_public_key: governance_group_public_key(),
+        governance_frost_key_epoch: GOVERNANCE_KEY_EPOCH,
+        node_identity: AnchorNodeIdentity {
+            did: NODE_DID.to_owned(),
+            key_id: NODE_KEY_ID.to_owned(),
+            public_key: *node_key.public_key(),
+        },
+    };
+    let store = AnchorStore::open(&path, config.clone()).expect("store");
+    let authority = KeyPair::from_secret_bytes([0x17; 32]).expect("authority key");
+    let candidate = provisioning(
+        &intermediate,
+        &authority,
+        "did:exo:atomic-workspace",
+        "did:exo:atomic-workspace#anchor-1",
+        [0x34; 32],
+        [0x45; 32],
+        Permission::AnchorReceiptCommitment,
+        1,
+    );
+    let authorization = provisioning_authorization(
+        &config,
+        &candidate,
+        1,
+        Hash256::from_bytes([0; 32]),
+        0x7e,
+        0x7017,
+    );
+    let connection = rusqlite::Connection::open(&path).expect("sqlite");
+    connection
+        .execute_batch(
+            "CREATE TRIGGER abort_first_governance_authorization_insert
+             BEFORE INSERT ON crosschecked_anchor_governance_authorizations
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected provisioning commit failure');
+             END;",
+        )
+        .expect("install failure trigger");
+    assert!(
+        store
+            .provision_authority(
+                &candidate,
+                &authorization,
+                candidate.scope_binding.valid_from_ms,
+            )
+            .is_err()
+    );
+    assert_eq!(count_rows(&path, "crosschecked_anchor_authorities"), 0);
+    assert_eq!(
+        count_rows(&path, "crosschecked_anchor_governance_authorizations"),
+        0
+    );
+    connection
+        .execute_batch("DROP TRIGGER abort_first_governance_authorization_insert;")
+        .expect("remove failure trigger");
+    store
+        .provision_authority(
+            &candidate,
+            &authorization,
+            candidate.scope_binding.valid_from_ms,
+        )
+        .expect("retry after rollback");
+    assert_eq!(count_rows(&path, "crosschecked_anchor_authorities"), 1);
+    assert_eq!(
+        count_rows(&path, "crosschecked_anchor_governance_authorizations"),
+        1
+    );
+}
+
+#[test]
+fn missing_governance_predecessor_fails_route_before_signing_or_persistence() {
+    let harness = Harness::new();
+    rusqlite::Connection::open(&harness.path)
+        .expect("sqlite")
+        .execute(
+            "DELETE FROM crosschecked_anchor_governance_authorizations",
+            [],
+        )
+        .expect("simulate missing governance authorization");
+    let body = harness.request(0x53, 0x64);
+    assert!(matches!(
+        harness.store.record(
+            harness.submission(&body, Timestamp::new(ISSUED_AT + 123, 0)),
+            harness.signer.as_ref(),
+        ),
+        Err(AnchorStoreError::ReadbackValidation(_))
+    ));
+    assert_eq!(harness.signer.unique_calls(), 0);
+    assert_eq!(count_rows(&harness.path, "crosschecked_anchor_requests"), 0);
+}
+
+#[test]
+fn authority_rotation_requires_prior_frost_retirement_and_increasing_epoch() {
+    let harness = Harness::new();
+    let retirement = harness.retirement(ISSUED_AT + 200);
+    let retirement_authorization = retirement_authorization(
+        &harness.config,
+        &retirement,
+        harness.scope_alias,
+        AuthorityLifecycleEventV1::Revoke,
+        2,
+        harness.provisioning_authorization_hash,
+        0x7a,
+        0x7013,
+    );
+    harness
+        .store
+        .revoke_authority(
+            &retirement,
+            &retirement_authorization,
+            retirement.retired_at_ms,
+        )
+        .expect("governance-authorized revocation");
+    let retirement_authorization_hash = retirement_authorization
+        .authorization_hash()
+        .expect("retirement authorization hash");
+
+    let replacement_key = KeyPair::from_secret_bytes([0x18; 32]).expect("replacement key");
+    let replacement_key_id = format!("{}#anchor-2", harness.authority_did);
+    let replacement = provisioning(
+        &harness.intermediate_key,
+        &replacement_key,
+        &harness.authority_did,
+        &replacement_key_id,
+        [0x32; 32],
+        harness.scope_alias,
+        Permission::AnchorReceiptCommitment,
+        2,
+    );
+    let mut replacement_authorization = provisioning_authorization(
+        &harness.config,
+        &replacement,
+        3,
+        retirement_authorization_hash,
+        0x7b,
+        0x7014,
+    );
+    replacement_authorization.valid_from_ms = ISSUED_AT + 200;
+    replacement_authorization.valid_until_ms = ISSUED_AT + 300_000;
+    resign_authorization(&mut replacement_authorization, 0x7014);
+    harness
+        .store
+        .provision_authority(&replacement, &replacement_authorization, ISSUED_AT + 201)
+        .expect("governance-authorized increasing key epoch");
+
+    let stale_key_id = format!("{}#anchor-stale", harness.authority_did);
+    let stale = provisioning(
+        &harness.intermediate_key,
+        &replacement_key,
+        &harness.authority_did,
+        &stale_key_id,
+        [0x33; 32],
+        harness.scope_alias,
+        Permission::AnchorReceiptCommitment,
+        2,
+    );
+    let stale_authorization = provisioning_authorization(
+        &harness.config,
+        &stale,
+        4,
+        replacement_authorization
+            .authorization_hash()
+            .expect("replacement authorization hash"),
+        0x7c,
+        0x7015,
+    );
+    assert!(matches!(
+        harness
+            .store
+            .provision_authority(&stale, &stale_authorization, ISSUED_AT + 202,),
+        Err(AnchorStoreError::GovernanceAuthorization(_))
+            | Err(AnchorStoreError::AuthorityValidation(_))
+    ));
+    assert_eq!(
+        count_rows(&harness.path, "crosschecked_anchor_authorities"),
+        2
+    );
+    assert_eq!(
+        count_rows(
+            &harness.path,
+            "crosschecked_anchor_governance_authorizations"
+        ),
+        3
+    );
+}
+
+#[test]
+fn tampered_governance_predecessor_fails_route_before_signing_or_persistence() {
+    let harness = Harness::new();
+    let retirement = harness.retirement(ISSUED_AT + 200);
+    let mut retirement_authorization = retirement_authorization(
+        &harness.config,
+        &retirement,
+        harness.scope_alias,
+        AuthorityLifecycleEventV1::Revoke,
+        2,
+        harness.provisioning_authorization_hash,
+        0x81,
+        0x7021,
+    );
+    harness
+        .store
+        .revoke_authority(
+            &retirement,
+            &retirement_authorization,
+            retirement.retired_at_ms,
+        )
+        .expect("governance-authorized revocation");
+    let retirement_authorization_hash = retirement_authorization
+        .authorization_hash()
+        .expect("retirement authorization hash");
+
+    let replacement_key = KeyPair::from_secret_bytes([0x18; 32]).expect("replacement key");
+    let replacement_key_id = format!("{}#anchor-2", harness.authority_did);
+    let replacement = provisioning(
+        &harness.intermediate_key,
+        &replacement_key,
+        &harness.authority_did,
+        &replacement_key_id,
+        [0x35; 32],
+        harness.scope_alias,
+        Permission::AnchorReceiptCommitment,
+        2,
+    );
+    let mut replacement_authorization = provisioning_authorization(
+        &harness.config,
+        &replacement,
+        3,
+        retirement_authorization_hash,
+        0x82,
+        0x7022,
+    );
+    replacement_authorization.valid_from_ms = ISSUED_AT + 200;
+    replacement_authorization.valid_until_ms = ISSUED_AT + 300_000;
+    resign_authorization(&mut replacement_authorization, 0x7022);
+    harness
+        .store
+        .provision_authority(&replacement, &replacement_authorization, ISSUED_AT + 201)
+        .expect("governance-authorized replacement");
+
+    retirement_authorization.signature.fill(0);
+    let mut tampered_record = Vec::new();
+    ciborium::ser::into_writer(&retirement_authorization, &mut tampered_record)
+        .expect("tampered authorization record");
+    let tampered_cbor = retirement_authorization
+        .to_cbor_bytes()
+        .expect("tampered authorization CBOR");
+    rusqlite::Connection::open(&harness.path)
+        .expect("sqlite")
+        .execute(
+            "UPDATE crosschecked_anchor_governance_authorizations
+             SET authorization_cbor = ?1, authorization_record_cbor = ?2
+             WHERE authorization_sequence = 2",
+            rusqlite::params![tampered_cbor, tampered_record],
+        )
+        .expect("simulate predecessor artifact tampering");
+
+    let body = signed_request(
+        &replacement_key,
+        &harness.authority_did,
+        &replacement_key_id,
+        [0x35; 32],
+        harness.scope_alias,
+        [0x54; 32],
+        [0x65; 32],
+        ISSUED_AT + 202,
+        ISSUED_AT + 300_000,
+    );
+    assert!(matches!(
+        harness.store.record(
+            harness.submission(&body, Timestamp::new(ISSUED_AT + 203, 0)),
+            harness.signer.as_ref(),
+        ),
+        Err(AnchorStoreError::ReadbackValidation(_))
+            | Err(AnchorStoreError::GovernanceAuthorization(_))
+    ));
+    assert_eq!(harness.signer.unique_calls(), 0);
+    assert_eq!(count_rows(&harness.path, "crosschecked_anchor_requests"), 0);
+}
+
+#[test]
+fn persisted_frost_group_key_and_epoch_cannot_be_substituted_on_restart() {
+    let harness = Harness::new();
+    let mut wrong_epoch = harness.config.clone();
+    wrong_epoch.governance_frost_key_epoch += 1;
+    assert!(matches!(
+        AnchorStore::open(&harness.path, wrong_epoch),
+        Err(AnchorStoreError::Storage(_))
+    ));
+
+    let mut wrong_group = harness.config.clone();
+    wrong_group.governance_frost_group_public_key =
+        governance_group_public_key_for_seed(0x0BAD_5EED);
+    assert!(matches!(
+        AnchorStore::open(&harness.path, wrong_group),
+        Err(AnchorStoreError::Storage(_))
+    ));
+    assert_eq!(
+        count_rows(
+            &harness.path,
+            "crosschecked_anchor_governance_authorizations"
+        ),
+        1
+    );
+}
+
+#[test]
 fn lost_response_restart_expiry_and_key_retirement_replay_exact_committed_bytes() {
     let harness = Harness::new();
     let body = harness.request(0x53, 0x64);
@@ -752,7 +1423,23 @@ fn lost_response_restart_expiry_and_key_retirement_replay_exact_committed_bytes(
     retirement.signature = harness
         .intermediate_key
         .sign(&retirement.signing_preimage().expect("retirement payload"));
-    restarted.retire_authority(&retirement).expect("retire key");
+    let retirement_authorization = retirement_authorization(
+        &harness.config,
+        &retirement,
+        harness.scope_alias,
+        AuthorityLifecycleEventV1::Retire,
+        2,
+        harness.provisioning_authorization_hash,
+        0x76,
+        0x7006,
+    );
+    restarted
+        .retire_authority(
+            &retirement,
+            &retirement_authorization,
+            retirement.retired_at_ms,
+        )
+        .expect("retire key");
     let replay = restarted
         .record(
             SubmissionContext {
@@ -851,7 +1538,24 @@ fn incomplete_persisted_retirement_state_fails_closed() {
     retirement.signature = harness
         .intermediate_key
         .sign(&retirement.signing_preimage().expect("retirement payload"));
-    harness.store.retire_authority(&retirement).expect("retire");
+    let retirement_authorization = retirement_authorization(
+        &harness.config,
+        &retirement,
+        harness.scope_alias,
+        AuthorityLifecycleEventV1::Retire,
+        2,
+        harness.provisioning_authorization_hash,
+        0x77,
+        0x7007,
+    );
+    harness
+        .store
+        .retire_authority(
+            &retirement,
+            &retirement_authorization,
+            retirement.retired_at_ms,
+        )
+        .expect("retire");
 
     let connection = rusqlite::Connection::open(&harness.path).expect("sqlite");
     connection

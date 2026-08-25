@@ -39,6 +39,10 @@ pub const CROSSCHECKED_ANCHOR_INTERMEDIATE_KEY_ID_ENV: &str =
     "EXOCHAIN_CROSSCHECKED_ANCHOR_INTERMEDIATE_KEY_ID";
 pub const CROSSCHECKED_ANCHOR_INTERMEDIATE_PUBLIC_KEY_ENV: &str =
     "EXOCHAIN_CROSSCHECKED_ANCHOR_INTERMEDIATE_PUBLIC_KEY_HEX";
+pub const CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_PUBLIC_KEY_ENV: &str =
+    "EXOCHAIN_CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_PUBLIC_KEY_HEX";
+pub const CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_KEY_EPOCH_ENV: &str =
+    "EXOCHAIN_CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_KEY_EPOCH";
 pub const CROSSCHECKED_ANCHOR_NODE_KEY_ID_ENV: &str = "EXOCHAIN_CROSSCHECKED_ANCHOR_NODE_KEY_ID";
 
 const SOURCE_CODE: &str = "crosschecked";
@@ -129,6 +133,8 @@ pub struct CrossCheckedAnchorStartupConfig {
     intermediate_did: String,
     intermediate_key_id: String,
     intermediate_public_key: PublicKey,
+    governance_frost_group_public_key: [u8; 32],
+    governance_frost_key_epoch: u64,
     node_key_id: String,
 }
 
@@ -141,6 +147,10 @@ impl fmt::Debug for CrossCheckedAnchorStartupConfig {
             .field("intermediate_did", &self.intermediate_did)
             .field("intermediate_key_id", &self.intermediate_key_id)
             .field("intermediate_public_key", &self.intermediate_public_key)
+            .field(
+                "governance_frost_key_epoch",
+                &self.governance_frost_key_epoch,
+            )
             .field("node_key_id", &self.node_key_id)
             .finish()
     }
@@ -198,6 +208,23 @@ impl CrossCheckedAnchorStartupConfig {
             &public_key_hex,
             "intermediate_public_key",
         )?);
+        let governance_frost_group_public_key = decode_exact_hex::<32>(
+            &value(CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_PUBLIC_KEY_ENV)?,
+            "governance_frost_group_public_key",
+        )?;
+        frost_ed25519::VerifyingKey::deserialize(&governance_frost_group_public_key).map_err(
+            |_| CrossCheckedAnchorStartupError::InvalidField("governance_frost_group_public_key"),
+        )?;
+        let governance_frost_key_epoch = value(CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_KEY_EPOCH_ENV)?
+            .parse::<u64>()
+            .map_err(|_| {
+                CrossCheckedAnchorStartupError::InvalidField("governance_frost_key_epoch")
+            })?;
+        if governance_frost_key_epoch == 0 {
+            return Err(CrossCheckedAnchorStartupError::InvalidField(
+                "governance_frost_key_epoch",
+            ));
+        }
         let node_key_id = value(CROSSCHECKED_ANCHOR_NODE_KEY_ID_ENV)?;
         if node_key_id.is_empty() || node_key_id.len() > 321 {
             return Err(CrossCheckedAnchorStartupError::InvalidField("node_key_id"));
@@ -209,6 +236,8 @@ impl CrossCheckedAnchorStartupConfig {
             intermediate_did,
             intermediate_key_id,
             intermediate_public_key,
+            governance_frost_group_public_key,
+            governance_frost_key_epoch,
             node_key_id,
         }))
     }
@@ -230,6 +259,8 @@ impl CrossCheckedAnchorStartupConfig {
             crosschecked_intermediate_did: self.intermediate_did.clone(),
             crosschecked_intermediate_key_id: self.intermediate_key_id.clone(),
             crosschecked_intermediate_public_key: self.intermediate_public_key,
+            governance_frost_group_public_key: self.governance_frost_group_public_key,
+            governance_frost_key_epoch: self.governance_frost_key_epoch,
             node_identity: AnchorNodeIdentity {
                 did: node_did,
                 key_id: self.node_key_id.clone(),
@@ -379,6 +410,8 @@ fn store_error_response(error: AnchorStoreError) -> Response {
         }
         AnchorStoreError::Signer(_)
         | AnchorStoreError::Storage(_)
+        | AnchorStoreError::GovernanceAuthorization(_)
+        | AnchorStoreError::GovernanceAuthorizationConflict
         | AnchorStoreError::ReadbackValidation(_) => {
             error_response(StatusCode::SERVICE_UNAVAILABLE, "recording_unavailable")
         }
@@ -605,13 +638,15 @@ impl DurableAnchorSigner for SqliteDurableAnchorSigner {
     }
 }
 
-fn required_environment_names() -> [&'static str; 6] {
+fn required_environment_names() -> [&'static str; 8] {
     [
         CROSSCHECKED_ANCHOR_BEARER_ENV,
         CROSSCHECKED_ANCHOR_EXPECTED_AUDIENCE_ENV,
         CROSSCHECKED_ANCHOR_INTERMEDIATE_DID_ENV,
         CROSSCHECKED_ANCHOR_INTERMEDIATE_KEY_ID_ENV,
         CROSSCHECKED_ANCHOR_INTERMEDIATE_PUBLIC_KEY_ENV,
+        CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_PUBLIC_KEY_ENV,
+        CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_KEY_EPOCH_ENV,
         CROSSCHECKED_ANCHOR_NODE_KEY_ID_ENV,
     ]
 }
