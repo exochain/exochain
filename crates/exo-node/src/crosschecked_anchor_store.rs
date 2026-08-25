@@ -24,6 +24,7 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, MutexGuard},
     time::Duration,
 };
 
@@ -378,12 +379,14 @@ pub enum AnchorStoreError {
     ReadbackValidation(String),
 }
 
-/// SQLite-backed store. Each operation opens its own connection so callers
-/// may safely share the store across worker threads.
+/// SQLite-backed store. Each operation opens its own connection. Mutations
+/// share one process-local gate so expensive durable signing never holds a
+/// SQLite write transaction while sibling workers exhaust their busy timeout.
 #[derive(Clone, Debug)]
 pub struct AnchorStore {
     path: PathBuf,
     config: AnchorStoreConfig,
+    write_gate: Arc<Mutex<()>>,
 }
 
 #[derive(Clone, Debug)]
@@ -463,6 +466,7 @@ impl AnchorStore {
         let store = Self {
             path: path.as_ref().to_path_buf(),
             config,
+            write_gate: Arc::new(Mutex::new(())),
         };
         let connection = store.connection()?;
         initialize_schema(&connection, &store.config)?;
@@ -482,6 +486,7 @@ impl AnchorStore {
         authorization: &AuthorityGovernanceAuthorizationV1,
         applied_at_ms: u64,
     ) -> Result<(), AnchorStoreError> {
+        let _write_guard = self.write_guard()?;
         let validated = validate_provisioning(&self.config, provisioning)?;
         let provisioning_cbor = provisioning.to_cbor_bytes()?;
         let package_hash = Hash256::digest(&provisioning_cbor);
@@ -646,6 +651,7 @@ impl AnchorStore {
         authorization: &AuthorityGovernanceAuthorizationV1,
         applied_at_ms: u64,
     ) -> Result<(), AnchorStoreError> {
+        let _write_guard = self.write_guard()?;
         let retirement_cbor = retirement.to_cbor_bytes()?;
         let package_hash = Hash256::digest(&retirement_cbor);
         let mut connection = self.connection()?;
@@ -736,6 +742,7 @@ impl AnchorStore {
         submission: SubmissionContext<'_>,
         signer: &dyn DurableAnchorSigner,
     ) -> Result<AnchorRecord, AnchorStoreError> {
+        let _write_guard = self.write_guard()?;
         let locator = decode_unverified_replay_locator(
             submission.body,
             submission.method,
@@ -950,6 +957,12 @@ impl AnchorStore {
             .execute_batch("PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL;")
             .map_err(storage)?;
         Ok(connection)
+    }
+
+    fn write_guard(&self) -> Result<MutexGuard<'_, ()>, AnchorStoreError> {
+        self.write_gate.lock().map_err(|_| {
+            AnchorStoreError::Storage("anchor store write serialization is unavailable".into())
+        })
     }
 }
 

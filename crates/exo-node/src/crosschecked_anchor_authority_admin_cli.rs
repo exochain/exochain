@@ -773,3 +773,210 @@ fn write_redacted_summary(operation: &str, package_bytes: &[u8]) -> anyhow::Resu
         .write_all(b"\n")
         .map_err(|_| anyhow::anyhow!("redacted owner output write failed"))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    use tempfile::tempdir;
+
+    use super::*;
+
+    fn key(byte: u8) -> KeyPair {
+        KeyPair::from_secret_bytes([byte; 32]).unwrap()
+    }
+
+    fn signing_material() -> IntermediateSigningMaterialV1 {
+        IntermediateSigningMaterialV1 {
+            protocol_version: 1,
+            intermediate_did: "did:exo:crosschecked-intermediate".to_owned(),
+            intermediate_key_id: "did:exo:crosschecked-intermediate#key-1".to_owned(),
+            signing_secret_hex: hex::encode([0x41; 32]),
+        }
+    }
+
+    fn provision_command(intermediate: &KeyPair) -> ProvisionAuthorityCommandV1 {
+        let node = key(0x29);
+        let authority = key(0x17);
+        let governance = key(0x77);
+        ProvisionAuthorityCommandV1 {
+            protocol_version: 1,
+            expected_audience: "exochain-node-production".to_owned(),
+            intermediate_did: "did:exo:crosschecked-intermediate".to_owned(),
+            intermediate_key_id: "did:exo:crosschecked-intermediate#key-1".to_owned(),
+            intermediate_public_key_hex: hex::encode(intermediate.public_key().as_bytes()),
+            node_did: "did:exo:node".to_owned(),
+            node_key_id: "did:exo:node#key-1".to_owned(),
+            node_public_key_hex: hex::encode(node.public_key().as_bytes()),
+            governance_group_public_key_hex: hex::encode(governance.public_key().as_bytes()),
+            governance_key_epoch: 3,
+            authority_did: "did:exo:workspace-authority".to_owned(),
+            authority_key_id: "did:exo:workspace-authority#key-1".to_owned(),
+            authority_public_key_hex: hex::encode(authority.public_key().as_bytes()),
+            grant_id_hex: hex::encode([0x31; 32]),
+            scope_alias_hex: hex::encode([0x42; 32]),
+            key_epoch: 1,
+            valid_from_ms: 1_000,
+            valid_until_ms: 10_000,
+        }
+    }
+
+    fn retirement_command(intermediate: &KeyPair) -> RetireAuthorityCommandV1 {
+        let provision = provision_command(intermediate);
+        RetireAuthorityCommandV1 {
+            protocol_version: provision.protocol_version,
+            expected_audience: provision.expected_audience.clone(),
+            intermediate_did: provision.intermediate_did.clone(),
+            intermediate_key_id: provision.intermediate_key_id.clone(),
+            intermediate_public_key_hex: provision.intermediate_public_key_hex.clone(),
+            node_did: provision.node_did.clone(),
+            node_key_id: provision.node_key_id.clone(),
+            node_public_key_hex: provision.node_public_key_hex.clone(),
+            governance_group_public_key_hex: provision.governance_group_public_key_hex.clone(),
+            governance_key_epoch: provision.governance_key_epoch,
+            authority_did: provision.authority_did.clone(),
+            authority_key_id: provision.authority_key_id.clone(),
+            key_epoch: provision.key_epoch,
+            retired_at_ms: 5_000,
+        }
+    }
+
+    fn authorization(event: &str) -> GovernanceAuthorizationInputV1 {
+        GovernanceAuthorizationInputV1 {
+            protocol_version: 1,
+            authorization_id_hex: hex::encode([1; 32]),
+            ceremony_id_hex: hex::encode([2; 32]),
+            governance_key_epoch: 3,
+            threshold: 7,
+            participant_count: 13,
+            signer_ids: vec![1, 2, 3, 4, 5, 6, 7],
+            lifecycle_event: event.to_owned(),
+            authority_did: "did:exo:workspace-authority".to_owned(),
+            authority_key_id: "did:exo:workspace-authority#key-1".to_owned(),
+            authority_key_epoch: 1,
+            scope_alias_hex: hex::encode([3; 32]),
+            package_hash_hex: hex::encode([4; 32]),
+            node_policy_hash_hex: hex::encode([5; 32]),
+            authorization_sequence: 9,
+            prior_authorization_hash_hex: hex::encode([0; 32]),
+            valid_from_ms: 1_000,
+            valid_until_ms: 10_000,
+            signature_algorithm: "frost-ed25519-sha512".to_owned(),
+            signature_hex: hex::encode([6; 64]),
+        }
+    }
+
+    #[test]
+    fn owner_command_builders_cover_valid_packages_and_closed_rejections() {
+        let intermediate = key(0x41);
+        let material = signing_material();
+        let command = provision_command(&intermediate);
+        assert_eq!(command.store_policy().governance_key_epoch, 3);
+        let parsed_key = intermediate_key(&material).unwrap();
+        assert_eq!(parsed_key.public_key(), intermediate.public_key());
+        let config = store_config(command.store_policy(), &material, &parsed_key).unwrap();
+        assert_eq!(config.expected_audience, "exochain-node-production");
+        let package = signed_provisioning(&command, &material, &parsed_key).unwrap();
+        assert_eq!(package.did_documents.len(), 2);
+        assert_eq!(package.authority_chain.links.len(), 1);
+        assert_eq!(
+            package.scope_binding.permission,
+            Permission::AnchorReceiptCommitment
+        );
+
+        let retirement_command = retirement_command(&intermediate);
+        assert_eq!(retirement_command.store_policy().governance_key_epoch, 3);
+        let retirement = signed_retirement(&retirement_command, &material, &parsed_key).unwrap();
+        assert_eq!(retirement.retired_at_ms, 5_000);
+
+        for event in ["provision", "retire", "revoke"] {
+            assert_eq!(
+                governance_authorization(authorization(event))
+                    .unwrap()
+                    .lifecycle_event
+                    .code(),
+                event
+            );
+        }
+        assert!(governance_authorization(authorization("unknown")).is_err());
+        assert!(require_protocol(2).is_err());
+        assert!(parse_did("not-a-did").is_err());
+        assert!(decode_public_hex(&"AA".repeat(32)).is_err());
+        assert!(decode_secret_hex(&"AA".repeat(32)).is_err());
+        assert_eq!(decode_public_hex(&hex::encode([7; 32])).unwrap(), [7; 32]);
+        assert_eq!(*decode_secret_hex(&hex::encode([8; 32])).unwrap(), [8; 32]);
+
+        let mut wrong_material = signing_material();
+        wrong_material.intermediate_key_id = "did:exo:other#key".to_owned();
+        assert!(store_config(command.store_policy(), &wrong_material, &parsed_key).is_err());
+    }
+
+    #[test]
+    fn owner_only_files_and_registry_paths_fail_closed() {
+        let directory = tempdir().unwrap();
+        let input = directory.path().join("input.json");
+        fs::write(&input, br#"{"protocol_version":1}"#).unwrap();
+        fs::set_permissions(&input, fs::Permissions::from_mode(0o600)).unwrap();
+        let value: serde_json::Value = read_private_json(&input, 1024, "rejected").unwrap();
+        assert_eq!(value["protocol_version"], 1);
+        assert!(read_owner_only_file(&input, 2, "rejected").is_err());
+
+        fs::set_permissions(&input, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_owner_only_file(&input, 1024, "rejected").is_err());
+        fs::set_permissions(&input, fs::Permissions::from_mode(0o600)).unwrap();
+        let link = directory.path().join("link.json");
+        symlink(&input, &link).unwrap();
+        assert!(read_owner_only_file(&link, 1024, "rejected").is_err());
+
+        let data = directory.path().join("data");
+        fs::create_dir(&data).unwrap();
+        let records = records_path(&data, false).unwrap();
+        assert!(records.ends_with("crosschecked_anchor/records.sqlite3"));
+        assert!(records_path(&data, true).is_err());
+        fs::write(&records, b"sqlite-fixture").unwrap();
+        restrict_registry_file(&records).unwrap();
+        assert_eq!(
+            fs::metadata(&records).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(records_path(&data, true).unwrap(), records);
+
+        let output = directory.path().join("signed.cbor");
+        write_optional_package(Some(&output), b"package").unwrap();
+        assert_eq!(fs::read(&output).unwrap(), b"package");
+        assert!(write_optional_package(Some(&output), b"replace").is_err());
+        write_optional_package(None, b"ignored").unwrap();
+
+        let bad_data = directory.path().join("bad-data");
+        symlink(&data, &bad_data).unwrap();
+        assert!(records_path(&bad_data, false).is_err());
+    }
+
+    #[test]
+    fn path_separation_and_clock_contracts_are_enforced() {
+        let directory = tempdir().unwrap();
+        let base = CrossCheckedAnchorAuthorityAdminArgs {
+            data_dir: directory.path().join("data"),
+            command: directory.path().join("command.json"),
+            intermediate_secret_file: directory.path().join("secret.json"),
+            governance_authorization: directory.path().join("authorization.json"),
+            signed_package_out: Some(directory.path().join("package.cbor")),
+        };
+        assert!(ensure_distinct_inputs(&base).is_ok());
+        let mut duplicate = base;
+        duplicate.signed_package_out = Some(duplicate.command.clone());
+        assert!(ensure_distinct_inputs(&duplicate).is_err());
+        assert!(current_time_ms().unwrap() > 0);
+
+        let public_key = *key(9).public_key();
+        let document = did_document(
+            Did::new("did:exo:test").unwrap(),
+            "did:exo:test#key-1",
+            public_key,
+            4,
+            123,
+        );
+        assert_eq!(document.verification_methods[0].version, 4);
+        assert_eq!(document.created.physical_ms, 123);
+    }
+}
