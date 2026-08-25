@@ -66,4 +66,4 @@
 - [x] Generate the sorted relative-path SHA-256 manifest excluding only itself.
 - [x] Replay the manifest from a fresh command and verify path count and byte count.
 - [x] Run `git diff --check` and confirm the branch changes only preservation/spec/plan paths.
-- [ ] Stage only the reviewed paths, commit, push with tracking, and open a draft pull request.
+- [x] Stage only the reviewed paths, commit, push with tracking, and open a draft pull request.
