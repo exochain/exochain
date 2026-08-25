@@ -1242,7 +1242,6 @@ fn parse_timestamp_request_for_test(der: &[u8]) -> anyhow::Result<ParsedTimestam
 
 #[cfg(test)]
 mod tests {
-    use base64::Engine as _;
     use exo_avc::AvcReceiptEvidenceSubject;
     use exo_core::{Hash256, Timestamp};
 

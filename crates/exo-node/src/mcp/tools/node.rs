@@ -422,12 +422,9 @@ mod tests {
             Arc::new(|_data: &[u8]| Signature::from_bytes([0u8; 64]));
         let reactor_state = create_reactor_state(&config, sign_fn, None);
 
-        let context = NodeContext {
-            reactor_state: Some(reactor_state),
-            store: None,
-            node_did: Some(this_did.to_string()),
-            ..NodeContext::empty()
-        };
+        let mut context = NodeContext::empty();
+        context.reactor_state = Some(reactor_state);
+        context.node_did = Some(this_did.to_string());
 
         let result = execute_node_status(&serde_json::json!({}), &context);
         assert!(!result.is_error);

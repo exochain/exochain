@@ -27,6 +27,8 @@
 //! signatures. The LiveSafe public adapter-output authorization route may also
 //! accept its own scoped bearer token; that token is bound to the exact public
 //! output route and is never accepted for other mutating or sensitive routes.
+//! The CrossChecked commitment route and its exact readback route likewise
+//! accept only their dedicated scoped bearer; the admin bearer is rejected.
 
 use std::{
     io::{ErrorKind, Write},
@@ -40,6 +42,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use exo_node::crosschecked_anchor_http::CrossCheckedBearerVerifier;
 use zeroize::{Zeroize, Zeroizing};
 
 pub const LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_ROUTE: &str =
@@ -56,6 +59,7 @@ pub struct BearerAuth {
 #[derive(Clone, Default)]
 pub struct ScopedBearerAuth {
     livesafe_public_adapter_output_authorization: Option<Arc<Zeroizing<String>>>,
+    crosschecked_anchor: Option<CrossCheckedBearerVerifier>,
 }
 
 impl ScopedBearerAuth {
@@ -66,13 +70,23 @@ impl ScopedBearerAuth {
     pub fn livesafe_public_adapter_output_authorization(token: Zeroizing<String>) -> Self {
         Self {
             livesafe_public_adapter_output_authorization: Some(Arc::new(token)),
+            crosschecked_anchor: None,
         }
+    }
+
+    pub fn with_crosschecked_anchor(mut self, verifier: CrossCheckedBearerVerifier) -> Self {
+        self.crosschecked_anchor = Some(verifier);
+        self
     }
 
     pub fn livesafe_public_adapter_output_authorization_configured(&self) -> bool {
         self.livesafe_public_adapter_output_authorization
             .as_ref()
             .is_some()
+    }
+
+    pub fn crosschecked_anchor_configured(&self) -> bool {
+        self.crosschecked_anchor.is_some()
     }
 }
 
@@ -151,9 +165,11 @@ pub fn write_admin_token_file(path: &Path, token: &str) -> std::io::Result<()> {
 }
 
 fn bearer_header_value(headers: &HeaderMap) -> Result<&str, StatusCode> {
-    let header = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
+    let mut headers = headers.get_all(axum::http::header::AUTHORIZATION).iter();
+    let header = headers.next().and_then(|value| value.to_str().ok());
+    if headers.next().is_some() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
 
     match header {
         Some(value) if value.starts_with("Bearer ") => Ok(&value["Bearer ".len()..]),
@@ -187,6 +203,21 @@ fn verify_admin_or_livesafe_public_output_bearer(
     }
 
     Err(StatusCode::FORBIDDEN)
+}
+
+fn verify_crosschecked_anchor_bearer(
+    headers: &HeaderMap,
+    scoped_auth: &ScopedBearerAuth,
+) -> Result<(), StatusCode> {
+    let provided = bearer_header_value(headers)?;
+    let Some(verifier) = &scoped_auth.crosschecked_anchor else {
+        return Err(StatusCode::FORBIDDEN);
+    };
+    if verifier.verifies(provided) {
+        Ok(())
+    } else {
+        Err(StatusCode::FORBIDDEN)
+    }
 }
 
 /// axum middleware: require bearer token on every request.
@@ -260,6 +291,18 @@ fn is_livesafe_public_adapter_output_authorization_route(
     path: &str,
 ) -> bool {
     method == axum::http::Method::POST && path == LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_ROUTE
+}
+
+fn is_crosschecked_anchor_route(method: &axum::http::Method, path: &str) -> bool {
+    const ROUTE: &str = "/api/v1/anchors/crosschecked";
+    if method == axum::http::Method::POST {
+        return path == ROUTE;
+    }
+    if method != axum::http::Method::GET {
+        return false;
+    }
+    path.strip_prefix("/api/v1/anchors/crosschecked/")
+        .is_some_and(|action_hash| !action_hash.is_empty() && !action_hash.contains('/'))
 }
 
 /// Maximum body size read while peeking for a subject signature on the AVC
@@ -347,6 +390,10 @@ pub async fn require_bearer_on_writes_with_scoped_bearers(
 ) -> Result<Response, StatusCode> {
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
+    if is_crosschecked_anchor_route(&method, &path) {
+        verify_crosschecked_anchor_bearer(request.headers(), &scoped_auth)?;
+        return Ok(next.run(request).await);
+    }
     let is_public_read = (method == axum::http::Method::GET || method == axum::http::Method::HEAD)
         && !is_sensitive_read_path(&path);
     if is_public_read || is_zerodentity_local_signed_write(&method, &path) {
@@ -481,6 +528,28 @@ mod tests {
                 let a = auth.clone();
                 let scoped = scoped_auth.clone();
                 require_bearer_on_writes_with_scoped_bearers(a, scoped, req, next)
+            }))
+    }
+
+    fn crosschecked_scoped_bearer_test_app() -> Router {
+        let auth = test_auth();
+        let scoped_auth = ScopedBearerAuth::none().with_crosschecked_anchor(
+            CrossCheckedBearerVerifier::from_bearer(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            )
+            .unwrap(),
+        );
+        Router::new()
+            .route("/api/v1/anchors/crosschecked", post(|| async { "anchor" }))
+            .route(
+                "/api/v1/anchors/crosschecked/:action_hash",
+                get(|| async { "readback" }),
+            )
+            .route("/write", post(|| async { "write" }))
+            .layer(middleware::from_fn(move |req, next| {
+                let auth = auth.clone();
+                let scoped = scoped_auth.clone();
+                require_bearer_on_writes_with_scoped_bearers(auth, scoped, req, next)
             }))
     }
 
@@ -645,6 +714,62 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(scoped_resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn crosschecked_scoped_bearer_is_exact_route_only_and_rejects_admin() {
+        for (method, uri) in [
+            ("POST", "/api/v1/anchors/crosschecked"),
+            (
+                "GET",
+                "/api/v1/anchors/crosschecked/5353535353535353535353535353535353535353535353535353535353535353",
+            ),
+        ] {
+            let accepted = crosschecked_scoped_bearer_test_app()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header(
+                            "Authorization",
+                            "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                        )
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(accepted.status(), StatusCode::OK);
+
+            let admin = crosschecked_scoped_bearer_test_app()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header("Authorization", "Bearer test-token-abc123")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(admin.status(), StatusCode::FORBIDDEN);
+        }
+
+        let escaped = crosschecked_scoped_bearer_test_app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/write")
+                    .header(
+                        "Authorization",
+                        "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(escaped.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

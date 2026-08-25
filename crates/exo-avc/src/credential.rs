@@ -236,7 +236,7 @@ impl AuthorityScope {
         self.permissions = sort_dedup_copy(self.permissions.iter().copied());
         self.tools = sort_dedup(self.tools.drain(..));
         self.data_classes = sort_dedup(self.data_classes.drain(..));
-        let mut cp: Vec<Did> = self.counterparties.drain(..).collect();
+        let mut cp: Vec<Did> = std::mem::take(&mut self.counterparties);
         cp.sort();
         cp.dedup();
         self.counterparties = cp;

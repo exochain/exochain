@@ -46,6 +46,7 @@ ciborium = { workspace = true }
 [dev-dependencies]
 serde_json = { workspace = true }
 jsonschema = { version = "0.19", default-features = false }
+sha2 = { workspace = true }
 
 [package.metadata.cargo-machete]
 ignored = ["exo-identity"]

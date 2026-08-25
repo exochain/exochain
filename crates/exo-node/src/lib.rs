@@ -14,13 +14,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! EXOCHAIN constitutional trust fabric — P2P networking and external API types.
+//! Reusable, non-routed EXOCHAIN node runtime adapters.
 
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
-pub mod crosschecked_anchor;
-pub mod dagdb;
-pub mod error;
-pub mod p2p;
-pub mod schema;
-pub mod types;
+pub mod crosschecked_anchor_http;
+pub mod crosschecked_anchor_store;

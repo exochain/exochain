@@ -1,7 +1,9 @@
 //! Additive DAG DB gateway scaffolding and narrow council ingress.
 
+#[cfg(feature = "production-db")]
+use std::collections::BTreeSet;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     sync::{Arc, RwLock},
 };
 
@@ -23,19 +25,19 @@ use exo_api::dagdb::ConsentPurpose;
 // to those configurations so the default build is unused-import clean.
 #[cfg(any(test, feature = "production-db"))]
 use exo_api::dagdb::{
-    CatalogEntryResponse, CouncilDecisionStatus, CredentialStatus, DagDbCatalogLookupRequest,
+    CatalogEntryResponse, ContextPacketMemoryRef, CouncilDecisionStatus, CredentialStatus,
     DagDbCatalogLookupResponse, DagDbCouncilDecisionResponse, DagDbIntakeResponse,
-    DagDbReceiptLookupRequest, DagDbReceiptLookupResponse, DagDbRouteLookupRequest,
-    DagDbRouteLookupResponse, DagDbRouteResponse, DagDbTrustCheckResponse, DagDbValidateResponse,
-    DagDbWritebackResponse, ValidationDecision,
+    DagDbReceiptLookupResponse, DagDbRouteLookupResponse, DagDbRouteResponse,
+    DagDbTrustCheckResponse, DagDbValidateResponse, DagDbWritebackResponse, RiskClass, RouteStatus,
+    SafeMetadata, ValidationDecision,
 };
 use exo_api::dagdb::{
     ContextPacketLayerBudgetReport, ContextPacketLayerEdgeRef, ContextPacketLayerRef,
-    ContextPacketMemoryRef, CouncilReviewStatus, DagDbContextPacketRequest,
+    CouncilReviewStatus, DagDbCatalogLookupRequest, DagDbContextPacketRequest,
     DagDbContextPacketResponse, DagDbCouncilDecisionRequest, DagDbErrorEnvelope,
-    DagDbExportRequest, DagDbImportRequest, DagDbIntakeRequest, DagDbRouteRequest,
-    DagDbTrustCheckRequest, DagDbValidateRequest, DagDbWritebackRequest, DagFinalityStatus,
-    RiskClass, RouteStatus, SafeMetadata, ValidationStatus,
+    DagDbExportRequest, DagDbImportRequest, DagDbIntakeRequest, DagDbReceiptLookupRequest,
+    DagDbRouteLookupRequest, DagDbRouteRequest, DagDbTrustCheckRequest, DagDbValidateRequest,
+    DagDbWritebackRequest, DagFinalityStatus, ValidationStatus,
 };
 #[cfg(feature = "production-db")]
 use exo_api::dagdb::{DagDbExportResponse, DagDbImportResponse};
@@ -49,10 +51,9 @@ use exo_api::dagdb::{ReceiptEventType, SubjectKind};
 use exo_core::Hash256;
 #[cfg(feature = "production-db")]
 use exo_core::Timestamp;
-use exo_dag_db_core::{
-    hash::RequestHashMaterial,
-    metadata::{MetadataField, sanitize_keywords, sanitize_runtime_metadata},
-};
+use exo_dag_db_core::hash::RequestHashMaterial;
+#[cfg(any(test, feature = "production-db"))]
+use exo_dag_db_core::metadata::{MetadataField, sanitize_keywords, sanitize_runtime_metadata};
 #[cfg(test)]
 use exo_dag_db_domain::council::CouncilError;
 #[cfg(feature = "production-db")]
@@ -115,8 +116,12 @@ use exo_gatekeeper::{
 };
 #[cfg(feature = "production-db")]
 use exo_gatekeeper::{usage_event_payload_hash, verify_write_consent, verify_write_signature};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+#[cfg(any(test, feature = "production-db"))]
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Value;
+#[cfg(any(test, feature = "production-db"))]
+use serde_json::json;
 #[cfg(feature = "production-db")]
 use sqlx::{Postgres, Row, Transaction};
 #[cfg(any(feature = "production-db", debug_assertions))]
@@ -191,6 +196,7 @@ const REPLAYED_IDEMPOTENCY_BODY_STATUS: &str = "replayed";
 const GATEWAY_IDEMPOTENCY_RESERVATION_TTL_MS: i64 = 86_400_000;
 #[cfg(feature = "production-db")]
 const GATEWAY_AUTHORIZATION_PAYLOAD_HASH_FIELD: &str = "_gateway_authorization_payload_hash";
+#[cfg(feature = "production-db")]
 const GATEWAY_OPERATIONAL_AUDIT_ACTOR: &str = "did:exo:dagdb-gateway";
 #[cfg(feature = "production-db")]
 const GATEWAY_OPERATIONAL_AUDIT_SOURCE: &str = "dagdb_gateway_mounted_route";
@@ -670,7 +676,7 @@ async fn handle_dagdb_intake(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.intake", &request.tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     intake_handler(&ctx, request).await
 }
@@ -693,7 +699,7 @@ async fn handle_dagdb_route(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.route", &request.tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     route_handler(&ctx, &headers, request).await
 }
@@ -717,7 +723,7 @@ async fn handle_dagdb_context_packet(
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.context_packet", &request.tenant_id)
             .await
     {
-        return denied;
+        return *denied;
     }
     gated_context_packet_handler(&ctx, &headers, request).await
 }
@@ -740,7 +746,7 @@ async fn handle_dagdb_validate(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.validate", &request.tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     validate_handler(&ctx, request).await
 }
@@ -763,7 +769,7 @@ async fn handle_dagdb_writeback(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.writeback", &request.tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     writeback_handler(&ctx, &headers, request).await
 }
@@ -829,7 +835,7 @@ async fn handle_dagdb_import(
         .await
         {
             Ok(actor) => actor,
-            Err(denied) => return denied,
+            Err(denied) => return *denied,
         };
         if let Err(denied) = bind_requester_to_session_actor(
             &session_actor,
@@ -904,7 +910,7 @@ async fn handle_dagdb_export(
         .await
         {
             Ok(actor) => actor,
-            Err(denied) => return denied,
+            Err(denied) => return *denied,
         };
         if let Err(denied) = bind_requester_to_session_actor(
             &session_actor,
@@ -937,7 +943,7 @@ async fn handle_dagdb_trust_check(
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.trust_check", &request.tenant_id)
             .await
     {
-        return denied;
+        return *denied;
     }
     trust_check_handler(&ctx, request).await
 }
@@ -956,7 +962,7 @@ async fn handle_dagdb_council_decision(
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.council_decision", &request.tenant_id)
             .await
     {
-        return denied;
+        return *denied;
     }
     council_decision_handler(&ctx, request).await
 }
@@ -979,7 +985,7 @@ async fn handle_dagdb_receipt_lookup(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.receipt_lookup", &tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     receipt_lookup_handler(
         &ctx,
@@ -1011,7 +1017,7 @@ async fn handle_dagdb_catalog_lookup(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.catalog_lookup", &tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     catalog_lookup_handler(
         &ctx,
@@ -1044,7 +1050,7 @@ async fn handle_dagdb_route_lookup(
     if let Err(denied) =
         verify_dagdb_session_authority(&ctx, &headers, "dagdb.route_lookup", &tenant_id).await
     {
-        return denied;
+        return *denied;
     }
     route_lookup_handler(
         &ctx,
@@ -4689,7 +4695,7 @@ async fn verify_dagdb_session_authority(
     headers: &HeaderMap,
     route_name: &'static str,
     tenant_id: &str,
-) -> Result<DagDbSessionActor, Response> {
+) -> Result<DagDbSessionActor, Box<Response>> {
     let Some(pool) = ctx.pool.as_ref() else {
         return Ok(DagDbSessionActor::NoPool);
     };
@@ -4703,7 +4709,7 @@ async fn verify_dagdb_session_authority(
             tenant_id = %tenant_id,
             "DAG DB session binding failed closed: empty bearer token"
         );
-        return Err(dagdb_unauthenticated_response(false));
+        return Err(Box::new(dagdb_unauthenticated_response(false)));
     };
     let row = sqlx::query(
         "SELECT s.actor_did, u.tenant_id AS user_tenant_id \
@@ -4723,12 +4729,12 @@ async fn verify_dagdb_session_authority(
                 tenant_id = %tenant_id,
                 "DAG DB session binding failed closed: session lookup unavailable"
             );
-            Err(dagdb_error_response(
+            Err(Box::new(dagdb_error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "session_lookup_unavailable",
                 "DAG DB session validation is unavailable",
                 false,
-            ))
+            )))
         }
         Ok(None) => {
             warn!(
@@ -4736,7 +4742,7 @@ async fn verify_dagdb_session_authority(
                 tenant_id = %tenant_id,
                 "DAG DB session binding failed closed: no live session for bearer token"
             );
-            Err(dagdb_unauthenticated_response(false))
+            Err(Box::new(dagdb_unauthenticated_response(false)))
         }
         Ok(Some(row)) => {
             let user_tenant: Option<String> = row.try_get("user_tenant_id").ok();
@@ -4746,7 +4752,7 @@ async fn verify_dagdb_session_authority(
                     tenant_id = %tenant_id,
                     "DAG DB session binding failed closed: session user tenant mismatch"
                 );
-                return Err(dagdb_tenant_scope_mismatch_response(false));
+                return Err(Box::new(dagdb_tenant_scope_mismatch_response(false)));
             }
             let actor_did: Option<String> = row.try_get("actor_did").ok();
             match actor_did.filter(|did| !did.is_empty()) {
@@ -4757,7 +4763,7 @@ async fn verify_dagdb_session_authority(
                         tenant_id = %tenant_id,
                         "DAG DB session binding failed closed: session row missing actor_did"
                     );
-                    Err(dagdb_unauthenticated_response(false))
+                    Err(Box::new(dagdb_unauthenticated_response(false)))
                 }
             }
         }
@@ -4953,6 +4959,7 @@ fn dagdb_json_rejection_category(rejection: &JsonRejection) -> &'static str {
     }
 }
 
+#[cfg(any(test, feature = "production-db"))]
 fn intake_response_from_request(
     request: DagDbIntakeRequest,
     route_name: &str,
@@ -5461,6 +5468,7 @@ fn context_packet_response_from_request(
     })
 }
 
+#[cfg(any(test, feature = "production-db"))]
 fn validate_response_from_request(
     request: DagDbValidateRequest,
     route_name: &str,
@@ -8558,6 +8566,7 @@ fn route_lookup_response(request: DagDbRouteLookupRequest) -> DagDbRouteLookupRe
     }
 }
 
+#[cfg(any(test, feature = "production-db"))]
 fn sanitize_metadata(field: MetadataField, text: &str) -> Result<SafeMetadata, Box<Response>> {
     sanitize_runtime_metadata(field, text).map_err(|_| {
         Box::new(dagdb_error_response(
@@ -8569,6 +8578,7 @@ fn sanitize_metadata(field: MetadataField, text: &str) -> Result<SafeMetadata, B
     })
 }
 
+#[cfg(any(test, feature = "production-db"))]
 fn sanitize_optional_metadata(
     field: MetadataField,
     text: Option<&str>,
@@ -8577,6 +8587,7 @@ fn sanitize_optional_metadata(
         .transpose()
 }
 
+#[cfg(any(test, feature = "production-db"))]
 fn sanitize_keyword_texts(texts: Option<&[String]>) -> Result<Vec<SafeMetadata>, Box<Response>> {
     let empty = Vec::new();
     let keyword_texts = texts.unwrap_or(&empty);
@@ -8601,6 +8612,7 @@ fn request_json<T: Serialize>(request: &T) -> Result<Value, Box<Response>> {
     })
 }
 
+#[cfg(any(test, feature = "production-db"))]
 fn replace_metadata(
     body: &mut Value,
     inbound_field: &str,

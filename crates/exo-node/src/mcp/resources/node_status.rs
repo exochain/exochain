@@ -168,12 +168,9 @@ mod tests {
             state.consensus.committed.push(Hash256::digest(b"node-1"));
             state.consensus.committed.push(Hash256::digest(b"node-2"));
         }
-        let context = NodeContext {
-            reactor_state: Some(reactor_state),
-            store: None,
-            node_did: Some(node_did.to_string()),
-            ..NodeContext::empty()
-        };
+        let mut context = NodeContext::empty();
+        context.reactor_state = Some(reactor_state);
+        context.node_did = Some(node_did.to_string());
 
         let content = read(&context);
         let text = content.text.expect("text present");
