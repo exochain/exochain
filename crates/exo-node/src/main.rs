@@ -43,6 +43,7 @@ mod avc_rfc3161;
 mod challenges;
 mod cli;
 mod config;
+mod crosschecked_anchor_authority_admin_cli;
 mod dashboard;
 mod economy;
 mod exoforge;
@@ -1685,6 +1686,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Genesis { command } => root_genesis_cli::run_genesis_command(command).await,
         Command::Avc { command } => {
             livesafe_public_output_ceremony_cli::run_avc_command(command).await
+        }
+        Command::CrossCheckedAnchorAuthority { command } => {
+            crosschecked_anchor_authority_admin_cli::run(command)
         }
     }
 }

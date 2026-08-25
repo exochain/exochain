@@ -129,6 +129,16 @@ pub struct AuthorityProvisioningV1 {
     pub scope_binding: CrossCheckedScopeBindingV1,
 }
 
+impl AuthorityProvisioningV1 {
+    /// Encode the exact CBOR bytes persisted by [`AnchorStore::provision_authority`].
+    ///
+    /// # Errors
+    /// Returns a serialization error if CBOR encoding fails.
+    pub fn to_cbor_bytes(&self) -> Result<Vec<u8>, AnchorStoreError> {
+        encode_serde(self)
+    }
+}
+
 /// Signed retirement of one exact authority key epoch.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthorityRetirementV1 {
@@ -158,6 +168,14 @@ impl AuthorityRetirementV1 {
             text(self.signer_did.as_str()),
             text(&self.signer_key_id),
         ]))
+    }
+
+    /// Encode the exact CBOR bytes persisted by [`AnchorStore::retire_authority`].
+    ///
+    /// # Errors
+    /// Returns a serialization error if CBOR encoding fails.
+    pub fn to_cbor_bytes(&self) -> Result<Vec<u8>, AnchorStoreError> {
+        encode_serde(self)
     }
 }
 
@@ -329,7 +347,7 @@ impl AnchorStore {
         provisioning: &AuthorityProvisioningV1,
     ) -> Result<(), AnchorStoreError> {
         let validated = validate_provisioning(&self.config, provisioning)?;
-        let provisioning_cbor = encode_serde(provisioning)?;
+        let provisioning_cbor = provisioning.to_cbor_bytes()?;
         let mut connection = self.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -417,7 +435,7 @@ impl AnchorStore {
         &self,
         retirement: &AuthorityRetirementV1,
     ) -> Result<(), AnchorStoreError> {
-        let retirement_cbor = encode_serde(retirement)?;
+        let retirement_cbor = retirement.to_cbor_bytes()?;
         let mut connection = self.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)

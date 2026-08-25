@@ -204,6 +204,44 @@ pub enum Command {
         #[command(subcommand)]
         command: PdpCommand,
     },
+
+    /// Provision or retire one durable CrossChecked anchor authority epoch.
+    #[command(name = "crosschecked-anchor-authority")]
+    CrossCheckedAnchorAuthority {
+        #[command(subcommand)]
+        command: CrossCheckedAnchorAuthorityCommand,
+    },
+}
+
+#[derive(Subcommand)]
+/// Owner-only administration of the CrossChecked commitment authority registry.
+pub enum CrossCheckedAnchorAuthorityCommand {
+    /// Sign and persist one exact authority provisioning package.
+    Provision(CrossCheckedAnchorAuthorityAdminArgs),
+
+    /// Sign and persist one exact authority-key retirement package.
+    #[command(alias = "revoke")]
+    Retire(CrossCheckedAnchorAuthorityAdminArgs),
+}
+
+#[derive(Args)]
+/// File-only inputs shared by CrossChecked authority owner operations.
+pub struct CrossCheckedAnchorAuthorityAdminArgs {
+    /// Existing node data directory containing the durable registry directory.
+    #[arg(long)]
+    pub data_dir: PathBuf,
+
+    /// Owner command JSON file. Unknown fields are rejected; mode must be 0400 or 0600.
+    #[arg(long)]
+    pub command: PathBuf,
+
+    /// Intermediate signer JSON file. Secrets are never accepted on argv; mode must be 0400 or 0600.
+    #[arg(long)]
+    pub intermediate_secret_file: PathBuf,
+
+    /// Optional create-new 0600 output containing the exact signed CBOR package.
+    #[arg(long)]
+    pub signed_package_out: Option<PathBuf>,
 }
 
 /// Offline evidence-pack tools. Verification requires a separately obtained service key.
@@ -862,6 +900,63 @@ mod tests {
         assert!(
             register_with_inline_bearer.is_err(),
             "admin bearer values must not be accepted on argv"
+        );
+    }
+
+    #[test]
+    fn crosschecked_anchor_authority_cli_accepts_only_file_backed_owner_commands() {
+        use clap::Parser;
+
+        for operation in ["provision", "retire", "revoke"] {
+            let parsed = Cli::try_parse_from([
+                "exochain",
+                "crosschecked-anchor-authority",
+                operation,
+                "--data-dir",
+                "node-data",
+                "--command",
+                "owner-command.json",
+                "--intermediate-secret-file",
+                "crosschecked-intermediate.secret.json",
+                "--signed-package-out",
+                "signed-package.cbor",
+            ]);
+            assert!(
+                parsed.is_ok(),
+                "{operation} must accept only file-backed owner inputs"
+            );
+        }
+
+        let inline_secret = Cli::try_parse_from([
+            "exochain",
+            "crosschecked-anchor-authority",
+            "provision",
+            "--data-dir",
+            "node-data",
+            "--command",
+            "owner-command.json",
+            "--signing-secret-hex",
+            &"42".repeat(32),
+        ]);
+        assert!(
+            inline_secret.is_err(),
+            "intermediate signing material must never be accepted on argv"
+        );
+
+        let inline_authority = Cli::try_parse_from([
+            "exochain",
+            "crosschecked-anchor-authority",
+            "provision",
+            "--data-dir",
+            "node-data",
+            "--authority-did",
+            "did:exo:workspace-a",
+            "--intermediate-secret-file",
+            "crosschecked-intermediate.secret.json",
+        ]);
+        assert!(
+            inline_authority.is_err(),
+            "authority identifiers and scope material must stay out of argv"
         );
     }
 
