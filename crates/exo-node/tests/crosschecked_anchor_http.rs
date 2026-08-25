@@ -42,13 +42,12 @@ use exo_node::{
         authority_chain_fingerprint,
     },
 };
-use tempfile::TempDir;
-use tower::ServiceExt;
-
 use governance_support::{
     GOVERNANCE_KEY_EPOCH, governance_group_public_key, provisioning_authorization,
     retirement_authorization,
 };
+use tempfile::TempDir;
+use tower::ServiceExt;
 
 const AUDIENCE: &str = "crosschecked.production";
 const INTERMEDIATE_DID: &str = "did:exo:crosschecked-intermediate";

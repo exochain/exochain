@@ -38,13 +38,12 @@ use exo_node::{
     },
 };
 use frost_ed25519 as frost;
+use governance_support::governance_group_public_key;
 use rand::{SeedableRng, rngs::StdRng};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tower::ServiceExt;
-
-use governance_support::governance_group_public_key;
 
 const AUDIENCE: &str = "crosschecked.production";
 const INTERMEDIATE_DID: &str = "did:exo:crosschecked-intermediate";

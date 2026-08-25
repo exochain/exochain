@@ -25,18 +25,16 @@ use exo_core::{
 use exo_identity::did::{DidDocument, VerificationMethod};
 use exo_node::crosschecked_anchor_store::{
     AnchorConflictKind, AnchorNodeIdentity, AnchorRecordDisposition, AnchorStore,
-    AnchorStoreConfig, AnchorStoreError, AuthorityProvisioningV1, AuthorityRetirementV1,
-    CrossCheckedScopeBindingV1, DurableAnchorSigner, SignOnceError, SubmissionContext,
-    authority_chain_fingerprint,
+    AnchorStoreConfig, AnchorStoreError, AuthorityLifecycleEventV1, AuthorityProvisioningV1,
+    AuthorityRetirementV1, CrossCheckedScopeBindingV1, DurableAnchorSigner, SignOnceError,
+    SubmissionContext, authority_chain_fingerprint,
 };
-use tempfile::TempDir;
-
-use exo_node::crosschecked_anchor_store::AuthorityLifecycleEventV1;
 use governance_support::{
     GOVERNANCE_KEY_EPOCH, configure_governance, governance_group_public_key,
     governance_group_public_key_for_seed, provisioning_authorization, resign_authorization,
     retirement_authorization,
 };
+use tempfile::TempDir;
 
 const AUDIENCE: &str = "crosschecked.production";
 const INTERMEDIATE_DID: &str = "did:exo:crosschecked-intermediate";
