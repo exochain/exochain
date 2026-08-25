@@ -24,8 +24,8 @@ Authored registry and handoff files keep normal repository whitespace checks.
   same 140 tracked deletions in another worktree.
 - `missing-sources/`: exact prior bindings for G00 material whose source
   directories were no longer present when this package was created.
-- `MANIFEST.sha256`: the sorted relative-path digest list for this package,
-  excluding only the manifest itself.
+- `MANIFEST.sha256`: the sorted relative-path digest list generated from the
+  Git-tracked package paths, excluding only the manifest itself.
 
 ## Rules for the team
 
