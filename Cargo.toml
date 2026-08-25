@@ -87,6 +87,7 @@ hkdf = "=0.12.4"
 rand = "=0.8.6"
 zeroize = { version = "=1.8.2", features = ["derive"] }
 frost-ristretto255 = { version = "=3.0.0", default-features = false, features = ["serde"] }
+frost-ed25519 = { version = "=3.0.0", default-features = false, features = ["serde"] }
 argon2 = { version = "=0.5.3", features = ["zeroize"] }
 # Post-quantum cryptography — NIST FIPS 204 (ML-DSA / CRYSTALS-Dilithium)
 # v0.1.0-rc.7 patches RUSTSEC-2025-0144 timing side-channel (fixed in rc.3+)

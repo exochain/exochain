@@ -3,6 +3,9 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "support/crosschecked_anchor_governance.rs"]
+mod governance_support;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
@@ -25,6 +28,8 @@ use exo_identity::did::{DidDocument, VerificationMethod};
 use exo_node::{
     crosschecked_anchor_http::{
         CROSSCHECKED_ANCHOR_BEARER_ENV, CROSSCHECKED_ANCHOR_EXPECTED_AUDIENCE_ENV,
+        CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_KEY_EPOCH_ENV,
+        CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_PUBLIC_KEY_ENV,
         CROSSCHECKED_ANCHOR_INTERMEDIATE_DID_ENV, CROSSCHECKED_ANCHOR_INTERMEDIATE_KEY_ID_ENV,
         CROSSCHECKED_ANCHOR_INTERMEDIATE_PUBLIC_KEY_ENV, CROSSCHECKED_ANCHOR_NODE_KEY_ID_ENV,
         CrossCheckedAnchorHttpState, CrossCheckedAnchorStartupConfig, CrossCheckedBearerVerifier,
@@ -32,9 +37,14 @@ use exo_node::{
     },
     crosschecked_anchor_store::{
         AnchorNodeIdentity, AnchorStore, AnchorStoreConfig, AnchorStoreError,
-        AuthorityProvisioningV1, AuthorityRetirementV1, CrossCheckedScopeBindingV1,
-        DurableAnchorSigner, SignOnceError, SubmissionContext, authority_chain_fingerprint,
+        AuthorityLifecycleEventV1, AuthorityProvisioningV1, AuthorityRetirementV1,
+        CrossCheckedScopeBindingV1, DurableAnchorSigner, SignOnceError, SubmissionContext,
+        authority_chain_fingerprint,
     },
+};
+use governance_support::{
+    GOVERNANCE_KEY_EPOCH, governance_group_public_key, provisioning_authorization,
+    retirement_authorization,
 };
 use tempfile::TempDir;
 use tower::ServiceExt;
@@ -59,6 +69,8 @@ fn anchor_store_config() -> AnchorStoreConfig {
         crosschecked_intermediate_did: INTERMEDIATE_DID.to_owned(),
         crosschecked_intermediate_key_id: INTERMEDIATE_KEY_ID.to_owned(),
         crosschecked_intermediate_public_key: *intermediate_key.public_key(),
+        governance_frost_group_public_key: governance_group_public_key(),
+        governance_frost_key_epoch: GOVERNANCE_KEY_EPOCH,
         node_identity: AnchorNodeIdentity {
             did: NODE_DID.to_owned(),
             key_id: NODE_KEY_ID.to_owned(),
@@ -145,6 +157,8 @@ struct Harness {
     grant_id: [u8; 32],
     scope_alias: [u8; 32],
     signer: Arc<CountingSigner>,
+    config: AnchorStoreConfig,
+    provisioning_authorization_hash: Hash256,
 }
 
 impl Harness {
@@ -154,21 +168,37 @@ impl Harness {
         let intermediate_key = KeyPair::from_secret_bytes([0x41; 32]).expect("intermediate key");
         let store_config = anchor_store_config();
         let node_identity = store_config.node_identity.clone();
-        let store = AnchorStore::open(&store_path, store_config).expect("anchor store");
+        let store = AnchorStore::open(&store_path, store_config.clone()).expect("anchor store");
         let authority_key = KeyPair::from_secret_bytes([0x17; 32]).expect("authority key");
         let authority_did = "did:exo:crosschecked-workspace-a".to_owned();
         let authority_key_id = format!("{authority_did}#anchor-1");
         let grant_id = [0x31; 32];
         let scope_alias = [0x42; 32];
+        let provisioning = provisioning(
+            &intermediate_key,
+            &authority_key,
+            &authority_did,
+            &authority_key_id,
+            grant_id,
+            scope_alias,
+        );
+        let authorization = provisioning_authorization(
+            &store_config,
+            &provisioning,
+            1,
+            Hash256::from_bytes([0; 32]),
+            0x51,
+            0x5101,
+        );
+        let provisioning_authorization_hash = authorization
+            .authorization_hash()
+            .expect("provisioning authorization hash");
         store
-            .provision_authority(&provisioning(
-                &intermediate_key,
-                &authority_key,
-                &authority_did,
-                &authority_key_id,
-                grant_id,
-                scope_alias,
-            ))
+            .provision_authority(
+                &provisioning,
+                &authorization,
+                provisioning.scope_binding.valid_from_ms,
+            )
             .expect("provision authority");
         let signer = Arc::new(CountingSigner::new(node_identity, [0x29; 32]));
         Self {
@@ -182,6 +212,8 @@ impl Harness {
             grant_id,
             scope_alias,
             signer,
+            config: store_config,
+            provisioning_authorization_hash,
         }
     }
 
@@ -608,16 +640,29 @@ async fn conflicts_are_typed_409_responses() {
     let other_key = KeyPair::from_secret_bytes([0x18; 32]).expect("other authority");
     let other_did = "did:exo:crosschecked-workspace-b";
     let other_key_id = format!("{other_did}#anchor-1");
+    let other_provisioning = provisioning(
+        &intermediate_key,
+        &other_key,
+        other_did,
+        &other_key_id,
+        [0x32; 32],
+        [0x43; 32],
+    );
+    let other_authorization = provisioning_authorization(
+        &harness.config,
+        &other_provisioning,
+        1,
+        Hash256::from_bytes([0; 32]),
+        0x52,
+        0x5201,
+    );
     harness
         .store
-        .provision_authority(&provisioning(
-            &intermediate_key,
-            &other_key,
-            other_did,
-            &other_key_id,
-            [0x32; 32],
-            [0x43; 32],
-        ))
+        .provision_authority(
+            &other_provisioning,
+            &other_authorization,
+            other_provisioning.scope_binding.valid_from_ms,
+        )
         .expect("second scope");
     let same_action = signed_request(
         &other_key,
@@ -713,6 +758,14 @@ fn startup_config_is_disabled_only_when_all_values_are_absent_and_rejects_partia
     values.insert(
         CROSSCHECKED_ANCHOR_INTERMEDIATE_PUBLIC_KEY_ENV.to_owned(),
         "41".repeat(32),
+    );
+    values.insert(
+        CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_PUBLIC_KEY_ENV.to_owned(),
+        hex::encode(governance_group_public_key()),
+    );
+    values.insert(
+        CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_KEY_EPOCH_ENV.to_owned(),
+        GOVERNANCE_KEY_EPOCH.to_string(),
     );
     values.insert(
         CROSSCHECKED_ANCHOR_NODE_KEY_ID_ENV.to_owned(),
@@ -935,9 +988,19 @@ fn orphaned_signatures_retry_after_request_expiry_and_authority_retirement() {
     retirement.signature = harness
         .intermediate_key
         .sign(&retirement.signing_preimage().expect("retirement payload"));
+    let authorization = retirement_authorization(
+        &harness.config,
+        &retirement,
+        harness.scope_alias,
+        AuthorityLifecycleEventV1::Retire,
+        2,
+        harness.provisioning_authorization_hash,
+        0x53,
+        0x5301,
+    );
     harness
         .store
-        .retire_authority(&retirement)
+        .retire_authority(&retirement, &authorization, retirement.retired_at_ms)
         .expect("retire authority after reservation");
 
     let restarted_signer =
@@ -1163,6 +1226,14 @@ fn startup_config_debug_does_not_expose_transport_bearer() {
             "41".repeat(32),
         ),
         (
+            CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_PUBLIC_KEY_ENV.to_owned(),
+            hex::encode(governance_group_public_key()),
+        ),
+        (
+            CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_KEY_EPOCH_ENV.to_owned(),
+            GOVERNANCE_KEY_EPOCH.to_string(),
+        ),
+        (
             CROSSCHECKED_ANCHOR_NODE_KEY_ID_ENV.to_owned(),
             NODE_KEY_ID.to_owned(),
         ),
@@ -1181,7 +1252,9 @@ fn required_startup_environment_names_are_unique() {
         CROSSCHECKED_ANCHOR_INTERMEDIATE_DID_ENV,
         CROSSCHECKED_ANCHOR_INTERMEDIATE_KEY_ID_ENV,
         CROSSCHECKED_ANCHOR_INTERMEDIATE_PUBLIC_KEY_ENV,
+        CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_PUBLIC_KEY_ENV,
+        CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_KEY_EPOCH_ENV,
         CROSSCHECKED_ANCHOR_NODE_KEY_ID_ENV,
     ]);
-    assert_eq!(names.len(), 6);
+    assert_eq!(names.len(), 8);
 }

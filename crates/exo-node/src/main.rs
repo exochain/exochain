@@ -43,6 +43,7 @@ mod avc_rfc3161;
 mod challenges;
 mod cli;
 mod config;
+mod crosschecked_anchor_authority_admin_cli;
 mod dashboard;
 mod economy;
 mod exoforge;
@@ -83,6 +84,8 @@ use exo_core::{
 use exo_node::{
     crosschecked_anchor_http::{
         CROSSCHECKED_ANCHOR_BEARER_ENV, CROSSCHECKED_ANCHOR_EXPECTED_AUDIENCE_ENV,
+        CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_KEY_EPOCH_ENV,
+        CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_PUBLIC_KEY_ENV,
         CROSSCHECKED_ANCHOR_INTERMEDIATE_DID_ENV, CROSSCHECKED_ANCHOR_INTERMEDIATE_KEY_ID_ENV,
         CROSSCHECKED_ANCHOR_INTERMEDIATE_PUBLIC_KEY_ENV, CROSSCHECKED_ANCHOR_NODE_KEY_ID_ENV,
         CrossCheckedAnchorHttpState, CrossCheckedAnchorStartupConfig, SqliteDurableAnchorSigner,
@@ -525,6 +528,8 @@ fn crosschecked_anchor_startup_config_from_environment(
         CROSSCHECKED_ANCHOR_INTERMEDIATE_DID_ENV,
         CROSSCHECKED_ANCHOR_INTERMEDIATE_KEY_ID_ENV,
         CROSSCHECKED_ANCHOR_INTERMEDIATE_PUBLIC_KEY_ENV,
+        CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_PUBLIC_KEY_ENV,
+        CROSSCHECKED_ANCHOR_GOVERNANCE_FROST_KEY_EPOCH_ENV,
         CROSSCHECKED_ANCHOR_NODE_KEY_ID_ENV,
     ] {
         match std::env::var(name) {
@@ -1685,6 +1690,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Genesis { command } => root_genesis_cli::run_genesis_command(command).await,
         Command::Avc { command } => {
             livesafe_public_output_ceremony_cli::run_avc_command(command).await
+        }
+        Command::CrossCheckedAnchorAuthority { command } => {
+            crosschecked_anchor_authority_admin_cli::run(command)
         }
     }
 }
