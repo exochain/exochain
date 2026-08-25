@@ -8,3 +8,210 @@ Task 5: complete (`cd packages/exochain-llm-proxy && npm test`, `npm run build` 
 Task 6: complete (`node tools/llm_usage_receipt_smoke.mjs --fixture fake-openai --storage-mode receipt_minimized`, `--fixture fake-mcp --storage-mode receipt_minimized`, `--fixture fake-openai --storage-mode external_payload_ref`, plus expected failure cases `receipt_unavailable`, `idempotency_conflict`, `missing_custody`, `tenant_mismatch`, and `incomplete_usage_required` clean)
 Task 7: complete (Rust focused gates, TypeScript tests/build, privacy/source guards, success smokes, `cargo fmt --all -- --check`, and focused `cargo clippy` gates clean; broad raw privacy grep was replaced with `tools/test_lynk_receipt_privacy.sh` to avoid unrelated existing auth-variable hits)
 Task 8: complete (coverage-first release packaging, wave readiness, package artifacts, public `/site` discovery, and coverage evidence note complete; gates clean: `cargo test -p exochain-avc llm_usage -- --nocapture`, `cargo test -p exochain-avc receipt -- --nocapture`, `cargo test -p exochain-avc validation -- --nocapture`, `cargo test -p exochain-node avc_llm_usage -- --nocapture`, `cargo test -p exochain-node avc_receipts_emit -- --nocapture`, `cargo tarpaulin -p exochain-avc --include-files crates/exo-avc/src/llm_usage_receipt.rs --out xml --output-dir coverage/lynk-focused --engine llvm --timeout 900 --fail-under 90 -- llm_usage` at 94.23%, `cd packages/exochain-llm-proxy && npm test && npm run build && npm run test:coverage && npm run check:package && npm run pack:dry-run` with TypeScript coverage 99.71% lines / 95.92% functions / 96.17% branches, success and failure smoke matrix, `bash tools/test_agent_prompt_boundaries.sh`, `bash tools/test_lynk_receipt_privacy.sh`, `cd site && npm run security:lynk-public-claims && npm run typecheck && npm run lint && npm run build && npm run security:auth-boundary && npm run security:contact-disclosure && npm run security:contact-intake`, and full scoped Gate 3 `cargo tarpaulin --workspace --exclude exochain-wasm --exclude exochain-proofs --out xml --output-dir coverage --engine llvm --timeout 900 --fail-under 90` at 91.35% with local/CI artifact `coverage/cobertura.xml`; focused local/CI artifact `coverage/lynk-focused/cobertura.xml`; evidence note `docs/superpowers/lynk-coverage-evidence-2026-07-08.md`)
+
+## DF-PROTOCOL-001 Peer-Reviewed Governance
+
+Planning task P1: in progress
+
+- Base: `23742d90ad4f08f62a668ca7b371b9e318177885`
+- Orchestrator/author: `/root`
+- Repository truth: assigned worktree detached at the design head; named design branch checked out clean in `/Users/bobstewart/dev/exochain`; `origin/main=86e9a029b7a62417b658b04d0def7a979e21fc8b`; PR #809 open/draft/mergeable at `23742d90` when verified.
+- Baseline local test truth: `cargo build --workspace` passed; `cargo test -p exochain-decision-forum` passed with 236 unit tests and 13 integration tests.
+- Read-only investigation agents: `/root/core_gap_scan`, `/root/gateway_gap_scan`, `/root/surface_gap_scan`; all reported no edits.
+- Planning artifacts: `docs/superpowers/plans/2026-07-16-df-protocol-001-delivery-map.md`; `docs/superpowers/plans/2026-07-16-df-protocol-001-01-charter-normative-schema.md`.
+- Plan self-validation: embedded Amendment 1 BLAKE3 `38330feabc0d18c5d00eb7268631c6d92dc608118f465fc84e07871bd7217c81`; JSON Schema parsed with 33 definitions and 179 resolved references; code-fence, placeholder, T-18..T-25, DF-001..DF-020, and `git diff --check` guards passed.
+- Initial validator outcomes: specification `/root/plan_spec_validator` — `CHANGES_REQUIRED`; technical `/root/plan_technical_validator` — `CHANGES_REQUIRED`.
+- Initial findings assigned for repair: typed Git object IDs; complete workspace/coverage/audit/deny/cross-implementation gates; tracked ledger/report/base classification; exact DF-001..DF-020 ownership; body-specific signed Council/AI-IRB dispositions; semantic schema conditionals and closed enums; bounded seat maps; typed resource-ceiling map; immutable task-base ranges; non-skipping TypeScript root; traceability arithmetic; HLC zero/canonical UUID; schema directory creation; slice 4-to-5 closure-gate labeling.
+- Fresh fixer/implementer: `/root/plan_fixer_1`, sole writer for the two plan artifacts and this ledger while repairs are active.
+- Fresh-fixer result: all 13 validator findings were incorporated into the two plan artifacts without production/spec edits. Repaired self-checks passed: exact Amendment 1 BLAKE3 unchanged at `38330feabc0d18c5d00eb7268631c6d92dc608118f465fc84e07871bd7217c81`; embedded Draft 2020-12 schema parses with 43 definitions and 212 resolved references; all four executable Rust guard blocks pass `rustfmt --edition 2024 --check`; schema semantic jq assertions, fence balance, forbidden-marker search, T-18..T-25/DF-001..DF-020 presence, traceability totals, closure-gate label, recorded-base command guard, explicit non-skipping `--exo-ts-root` gate, tracked/untracked whitespace checks, and `git diff --check` pass.
+- Re-review technical outcome: `/root/plan_technical_validator` — `CHANGES_REQUIRED`. Critical findings: circular disposition/package and in-package final-root/publication commitments; `compare.sh` manufactured TypeScript pass counts rather than comparing vector outputs. Important findings: fixed provider rosters and exact binding-mode roster/eligible/vote/assignment/evidence semantics were incomplete; cross-implementation execution could leave repository residue and falsely cite an unrelated external `exo` test suite. Minor finding: fields promised as `u64` lacked the exact maximum. Specification re-review also requested direct non-circular gate/validation/evidence/whole-slice sequencing.
+- Second fresh fixer/implementer: `/root/plan_fixer_2`, sole writer for the two plan artifacts and this ledger during the second repair. Planned changes are bounded to documentation/planning and ledger files; no production/tool/spec file is being edited in this planning turn.
+- Second-fixer result: exact acyclic authorization-target, prepublication, in-package publication-authorization, normalized final-root, and external artifact-manifest construction; fixed four-provider-plus-independent rosters; binding semantic equality and body-separation adversarial tests; exact `u64` maxima; isolated real-output Rust/TypeScript cross-implementation TDD task with temporary results; and direct validator/fix/evidence/whole-slice sequencing are now specified in the plan. Self-checks: exact Amendment 1 BLAKE3 remains `38330feabc0d18c5d00eb7268631c6d92dc608118f465fc84e07871bd7217c81`; all embedded JSON parses; schema has 48 definitions and 235 resolved references; fixed-roster, binding-Approve, non-provider evidence, publication authorization, and normalization assertions pass; 10 promised-`u64` fields carry maximum `18446744073709551615`; 82 code fences are balanced; forbidden-marker, obsolete `package_hash`, trace-ID, tracked/untracked whitespace, and `git diff --check` scans pass. No approval is recorded until both original validators and the whole-slice reviewer re-review the repaired plan.
+- Third fresh fixer/implementer: `/root/plan_fixer_3`, sole writer for the first-slice plan and this ledger during the bounded third repair. Assigned defects: the exact Rust fixture reused an undefined `authorization` identifier and risked moving the common target; the planned TypeScript cross-implementation runner installed into repository-local `node_modules`; and `PeerReview` exposed only an ambiguous bare `signature_hash` instead of a verifiable body-specific signature envelope.
+- Third-fixer result: the exact normative Rust blocks now compile as one test crate, retain the common authorization target with explicit clones/borrows, and contain no undefined identifier; the pinned TypeScript package/lock/source/compiler contract is copied into a trap-cleaned temporary executor used by both the unit test and canonical gate, while final gates explicitly deny repository-local `node_modules`; and each peer review now carries a typed `PeerReviewV1` Ed25519 envelope whose domain-separated canonical payload binds the complete review body to the common authorization target and whose signing key resolves through the assignment to the attested seat. Updated schema/fixture/semantic/adversarial/mutation checks parse with 49 definitions and 237 resolved references. Self-checks passed: exact Amendment 1 BLAKE3 `38330feabc0d18c5d00eb7268631c6d92dc608118f465fc84e07871bd7217c81`; 82 balanced fences; all executable Rust blocks parse through `rustfmt`; combined exact normative Rust test blocks pass a direct `rustc --test` compile probe; 10 promised-`u64` fields retain maximum `18446744073709551615`; forbidden-marker, obsolete `package_hash`, final-gate repository npm, explicit temporary-cleanup, trailing-whitespace, and untracked-file whitespace checks pass. Approval remains pending original-validator and whole-slice re-review.
+- Reapproval, head, commit, push, and updated PR truth: not yet recorded; repaired plans must return to both original validators and the independent whole-plan reviewer.
+- Latest specification re-review: `/root/plan_spec_validator` — `CHANGES_REQUIRED`. Critical/important findings required removal of the indirect current action/event receipt cycle, exact ten-role assignment/review coverage, exact dual five-of-five quorum proofs, immutable committed task-base evidence, and unambiguous validator/fixer/evidence/whole-slice recovery ordering.
+- Latest technical re-review: `/root/plan_technical_validator` — `CHANGES_REQUIRED`. Critical finding: current action/event receipts still indirectly committed to the package root they referenced. Important findings: Council/AI-IRB dispositions and publication authorization lacked executable real-signature proof; assignment/review/quorum and mutation coverage were incomplete; task-base/clean-status evidence remained insufficient. Minor findings: exact Rust formatting, Task 6 dependency wording, and slice 1 CI/test-tool path classification.
+- Fourth fresh fixer/implementer: `/root/plan_fixer_4`, sole writer for the first-slice plan, delivery map, and this ledger during the bounded fourth repair. No production, tool, proposal, schema, or test file was edited; no commit or staging action was performed.
+- Fourth-fixer result: the plan now separates predecessor-only in-package lifecycle/receipt commitments from an independently signed current-version `ProtocolExecutionReceiptChainV1` that references the already-fixed package root, with successor-package commitment to the prior chain; uses real Ed25519 verification for ten role-complete peer reviews, ten Council/AI-IRB dispositions, and publication authorization; requires exactly two five-of-five body-specific quorum proofs with provider and independent-evidence floors; expands mutation/replay/link coverage; commits the immutable task base and initial ledger entry before RED; asserts an exactly empty dedicated worktree at every task boundary and final evidence boundary; makes Task 6 consume Tasks 1-5; and fixes recovery order to fixer, original dual-validator re-review, append-only evidence update, then whole-slice re-review. Self-checks passed: combined exact Task 1/2 Rust blocks compile through `cargo test --no-run`; all 6 exact Rust blocks pass `rustfmt --edition 2024 --check`; all 24 Bash blocks pass `bash -n`; the embedded schema parses with 57 definitions and 260 references with no unresolved local definition; 82 fences are balanced; Amendment 1 BLAKE3 remains `38330feabc0d18c5d00eb7268631c6d92dc608118f465fc84e07871bd7217c81`; T-18..T-25, DF-001..DF-020, receipt-chain, exact-role/quorum, Task 6 dependency, slice classification, whitespace, and `git diff --check` guards pass. Approval remains pending both original validators and the independent whole-slice reviewer.
+- Latest original-validator re-review remained `CHANGES_REQUIRED`: specification required predecessor/successor chain continuity, real Chair signatures, exact Approved binding state, one-to-one review-response resolution coverage, exact quorum-evidence recomputation, acyclic pre-activation genesis evidence, and explicit fixer -> original dual-validator re-review -> evidence update -> whole-slice ordering; technical required the same executable contracts plus warning-denied Rust compilation, complete mutation categories, and trap-cleaned Task 5 status snapshots.
+- Fifth fresh fixer/implementer: `/root/plan_fixer_5`, sole writer for the first plan, delivery map if required, and this ledger during the bounded fifth repair. Delivery-map changes were not required; no production, specification, schema artifact, tool, test, staging, or commit action was performed.
+- Fifth-fixer result: the plan now constructs and verifies an actual predecessor chain P, version-2 package S, current chain C, and successor package T with exact tenant/protocol/version/root/predecessor/terminal/count continuity; verifies allowed kinds, authorities, real signatures, links, replay resistance, terminal metadata, and recomputed roots against fork and field-substitution cases; signs Chair interventions with deterministic real Ed25519 through a resolvable Chair authority and exact choice/effect/scope binding; requires `Approved` at both schema and semantic layers; generates and verifies one response/revision/resolution row for each of ten signed reviews; requires each quorum proof to equal the package's exact evidence-class and provider sets even after proof rehashing; replaces the ambiguous genesis review-package hash with an acyclic `GenesisEvidenceBundleV1` plus normalized domain-separated adoption-receipt root; and covers lifecycle, Chair, genesis, chain, quorum, and external artifact-manifest mutations. The unused peer-review hash helper was removed and Task 5 snapshot cleanup now uses an EXIT trap. Self-checks passed: exact embedded Rust compiles with `RUSTFLAGS=-Dwarnings cargo test --no-run`; both extracted semantic tests pass against the extracted schema fixture; all 6 Rust blocks pass nightly rustfmt; all 24 Bash blocks pass `bash -n`; the embedded Draft 2020-12 schema parses and all local `$ref`s resolve; 82 fence markers are balanced; Amendment 1 BLAKE3 remains `38330feabc0d18c5d00eb7268631c6d92dc608118f465fc84e07871bd7217c81`; mutation/adversarial-name, obsolete-helper, whitespace, and `git diff --check` guards pass. Approval remains pending the original specification and technical validators, followed only after their approval by the evidence update and independent whole-slice reviewer.
+- Fifth original-validator re-review remained `CHANGES_REQUIRED`: both validators found that a forged stored final root could still authorize execution. Specification also required continuous DAG DB sequence numbering, Chair authority-chain resolution, and provider-controller independence; technical additionally required exact version-1/successor predecessor rules and independently sourced signer authority that rejects a fully re-signed attacker chain.
+- Sixth fresh fixer/implementer: `/root/plan_fixer_6`, sole writer for the first plan, delivery map if required, and this ledger during the bounded sixth repair. Delivery-map changes were not required; no production, specification, schema artifact, tool, test, staging, or commit action was performed.
+- Sixth-fixer result: the plan now recomputes and rejects a mismatched stored final root before returning opaque `VerifiedPackageRoot`, and execution/action interfaces accept only that verified type; version 1 requires null predecessor fields while every successor requires both exact predecessor fields; execution receipts use continuous DAG DB subject sequence numbers across chain segments; Chair and execution signers resolve through independently constructed `VerifiedAuthorityRegistryV1`; and seats resolve through a trusted provider/controller registry with distinct provider-specific controllers and independent-control proofs. The attacker test substitutes signer, key, and authority chain, re-signs and rehashes the chain, and remains denied by the verified registry. Self-check evidence from the fixer: exact combined Rust compiled with `RUSTFLAGS=-Dwarnings cargo test --offline --no-run`; both embedded semantic tests passed; all 6 Rust blocks passed nightly rustfmt; all 24 Bash blocks passed `bash -n`; and `git diff --check` passed. The orchestrator then completed the post-edit static pass: tracked/untracked paths remained confined to the two plan documents and this ledger; whitespace checks passed for tracked and untracked files; the prohibited fixture-helper name was replaced with `unsigned_signature_envelope`; approval remains pending original-validator and independent whole-plan re-review.
+- Sixth original-validator re-review: specification `/root/plan_spec_validator` — `APPROVED`; technical `/root/plan_technical_validator` — `CHANGES_REQUIRED`. The single critical technical finding was that peer-review and vote verification still derived its trusted seat signing keys from in-package attestations, allowing a completely re-signed ten-seat attacker graph to manufacture its own trust anchor.
+- Seventh fresh fixer/implementer: `/root/plan_fixer_7`, sole writer for the first plan and this ledger during the bounded seat-authority repair. Delivery-map changes were not required; no production, specification, schema artifact, tool, test, staging, commit, or PR action was performed.
+- Seventh-fixer result: the plan now defines an opaque, independently produced `VerifiedSeatAuthorityRegistryV1` binding all ten seats to tenant/protocol, body, provider/controller, seat and controller keys, exact context and signed-attestation hashes, validity, independence proof, scope, and verified authority-chain hash. `SeatAttestation` now carries a controller-verifiable Ed25519 envelope over exact domain-separated `SeatAttestationSigningPayloadV1`; reviews and Council/AI-IRB votes resolve keys only from the trusted registry; and the package authority chain must match exactly the ten seat references plus Chair and publisher. The adversarial guard replaces all ten seat keypairs, controller-re-signs attestations, re-signs reviews/votes/Chair/publication, and recomputes assignments, quorum proofs, authorization target, authority references, and final root while the trusted registry stays unchanged; verification rejects it. Focused guards also reject one-seat substitution, controller-signature mutation, seat-chain mismatch, expiration, and not-yet-valid authority. Current self-check evidence: exact combined Rust passed `RUSTFLAGS=-Dwarnings cargo test --offline --no-run`; both embedded semantic tests passed including the full ten-seat attack; all 6 Rust blocks passed nightly rustfmt; all 24 Bash blocks passed `bash -n`; the Draft 2020-12 schema parses with 61 definitions and 285 resolved local references; Amendment 1 retains BLAKE3 `38330feabc0d18c5d00eb7268631c6d92dc608118f465fc84e07871bd7217c81`; 82 fences are balanced; source/prohibition, whitespace, and `git diff --check` guards pass. Approval remains pending original technical-validator re-review and the independent whole-plan review sequence.
+- Seventh original-validator re-review: specification `/root/plan_spec_validator` — `CHANGES_REQUIRED`; technical `/root/plan_technical_validator` — `APPROVED`. The specification validator's important finding was that the embedded `PeerReviewSignature` description still resolved the trusted review key through an in-package seat attestation instead of only through the opaque independently produced `VerifiedSeatAuthorityRegistryV1`. Its two minor findings were that the delivery-map stable-interface summary omitted that registry, controller-signed `SeatAttestationSigningPayloadV1`, and the exact ten-seat plus Chair plus publisher twelve-reference authority chain, and that the Chair-authority mutation test edited seat reference 0 rather than the actual Chair reference.
+- Eighth fresh fixer/implementer: `/root/plan_fixer_8`, sole writer for the first plan, delivery map, and this ledger during the bounded seventh specification re-review repair. No production, specification, schema artifact, tool, test, staging, commit, push, or PR action was performed.
+- Eighth-fixer result: the `PeerReviewSignature` contract now preserves complete review-body and common-authorization-target binding while resolving the trusted signing key through `assignment_id` only from the opaque independently produced `VerifiedSeatAuthorityRegistryV1`, never from an in-package attestation; the delivery-map interface now names that registry, controller-signed `SeatAttestationSigningPayloadV1`, and the exact twelve-reference authority chain; and the Chair mutation performs a typed lookup for the `NonSeatAuthority`/Bob Stewart/`ChairInterventionV1` reference before changing its chain hash. Focused evidence: the extracted exact Rust passed `RUSTFLAGS=-Dwarnings cargo test --offline --no-run` and both `normative_schema_fixes_package_components_and_deterministic_primitives` and `commitment_construction_is_acyclic_and_mutation_complete`; all 6 Rust blocks passed nightly rustfmt; all 24 Bash blocks passed `bash -n`; the embedded Draft 2020-12 schema parses with 61 definitions and all 285 local references resolved; Amendment 1 retains BLAKE3 `38330feabc0d18c5d00eb7268631c6d92dc608118f465fc84e07871bd7217c81`; 82 plan fences and 2 delivery-map fences are balanced; targeted authority-source/chain/Chair guards, forbidden-placeholder checks, whitespace checks, and `git diff --check` pass. The prior technical `APPROVED` outcome is preserved; specification reapproval and independent whole-plan review remain pending.
+- Eighth original-validator re-review: specification `/root/plan_spec_validator` — `APPROVED`; technical `/root/plan_technical_validator` — `APPROVED`. Both reviewed the amended range and regression surface after the fresh fix. Independent whole-plan approval remains required before staging or commit.
+- Independent whole-plan review: `CHANGES_REQUIRED` with one IMPORTANT finding. The planned binding evidence floor used the broad `EvidenceClass`, so the exact pair `[ProviderModelJudgment, IndependentNonProviderEvidence]` remained transport-valid and semantic validation could treat provider model judgment as the second independent class. The design requires two genuinely independent evidence classes; provider prose/model judgment cannot qualify.
+- Ninth fresh fixer/implementer: `/root/plan_fixer_9`, sole writer for the first plan, delivery map, and this ledger during the bounded independent-evidence-floor repair. No production, specification, schema artifact, tool, test, staging, commit, push, or PR action was performed.
+- Ninth-fixer result: the plan now preserves `ProviderModelJudgment` only in the broad non-binding `EvidenceClass` inventory and defines a closed `IndependentEvidenceClass` for `EvidenceManifest.independent_evidence_classes`, `QuorumProof.evidence_classes`, and `EstopAuthorization.independent_evidence_classes`; exact Rust contracts use `BTreeSet<IndependentEvidenceClass>`, and semantic validation parses and compares exact typed independent-class sets. The adversarial compiled probe substitutes the formerly passing `[ProviderModelJudgment, IndependentNonProviderEvidence]` pair, fully re-signs/re-hashes the package and quorum proofs, and proves schema and semantic rejection before `VerifiedPackageRoot` or execution-chain creation. RED was observed by restoring the generic schema references and permissive semantic branch in an extracted temporary probe: the warning-denied compiled test exited 101 with `ProviderModelJudgment plus IndependentNonProviderEvidence produced VerifiedPackageRoot`. GREEN evidence: the exact extracted Rust passed `RUSTFLAGS=-Dwarnings cargo test --offline --no-run`; both focused semantic tests passed; all 6 Rust blocks passed nightly rustfmt; all 24 Bash blocks passed `bash -n`; the embedded Draft 2020-12 schema parses with 62 definitions and all 285 local references resolved; the binding/quorum/E-STOP refs all target `IndependentEvidenceClass`, whose enum excludes `ProviderModelJudgment`; Amendment 1 retains BLAKE3 `38330feabc0d18c5d00eb7268631c6d92dc608118f465fc84e07871bd7217c81`; 82 plan fences and 2 delivery-map fences are balanced; forbidden-placeholder, tracked/untracked whitespace, and `git diff --check` guards pass. Independent whole-plan re-review remains required before staging or commit.
+- Ninth original-validator re-review: specification `/root/plan_spec_validator` — `APPROVED`; technical `/root/plan_technical_validator` — `APPROVED`.
+- Independent whole-plan re-review: `/root/plan_whole_reviewer` — `APPROVED`; no critical, important, or minor findings remain. The reviewer independently reproduced rejection of the former provider-judgment evidence-floor exploit before `VerifiedPackageRoot`, confirmed execution-chain denial, ran both full compiled semantic/commitment tests, and passed the schema, type, digest, formatting, syntax, reference, fence, and whitespace guards.
+- Planning task P1 complete: immutable reviewed content range `23742d90ad4f08f62a668ca7b371b9e318177885..c0a18d1eaa2c2666554b81a2508130e98ff5eda1`; documentation-only content commit `c0a18d1eaa2c2666554b81a2508130e98ff5eda1`; implementer/fixer and validator identities, RED/GREEN commands, findings, repairs, and final approvals are recorded above. Push/PR/CI truth is verified separately after this audit entry because a commit cannot contain its own object ID.
+
+## DF-PROTOCOL-001 Wave 20 findings 1–5 (Slice 1–2 plan repair)
+
+**Date:** 2026-07-24  
+**Base HEAD (fix-spec commit, unchanged during writer pass):** `372c3ceeed90bfdb7a06f5099b96ebbde1be0341`  
+**Branch:** `bob-stewart/decision-forum-peer-reviewed-protocol-design`  
+**PR:** #809 (draft/open; no force-push)
+
+### Pre-repair plan hashes (21ff7bc plan bodies under fix-spec HEAD)
+- Slice 1: `3a72b3d960aed2196ca3dff8a7f4e29a9948013192f43718847f033fe1d038b8`
+- Slice 2: `bdfe5cdcbbfc11e954f4af478d6565bc0540687b543d48e477c6f69da243a31e`
+- Fix-spec (dual-approved, already committed): `c4a26a375d7beb26f3b672675ca9ed2154254fd214e9bab7293b17afa7a4635b`
+
+### Post-repair plan hashes
+- Slice 1: `4e3a97540dae01dbe0b9ae9b162fc225a67e5f51d2072762f19d901c123ea081`
+- Slice 2: `fa804fefdb56d9595afc6517923bb2316b6b3917ddae3a6110cf41f03036fb22`
+
+### RED → GREEN
+- **RED:** dual-approved findings 1–5 on pre-repair plans (CRITICAL plan-only compile depended on external diagnostic shim; IMPORTANT VerifiedReviewReveal rename collision; IMPORTANT CommitmentScheme 20 vs 35; MINOR forbidden-root prose; MINOR GenesisAdoptionSignature naming).
+- **GREEN (semantic guard):** `python3 /Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-guard.py` → `wave20_semantic_contract=GREEN failures=0`.
+- **GREEN (plan-only no-run, no shim):** disposable archive materialize → `cargo test -p exochain-decision-forum --all-targets --no-run` exit 0.
+- **GREEN (clippy):** `cargo clippy -p exochain-decision-forum --all-targets -- -D warnings` exit 0.
+- **GREEN (focused genesis):** `cargo test -p exochain-decision-forum genesis_` → 10/10 ok.
+- **Fmt:** pre-existing rustfmt RED under current nightly (~289 Diff hunks on baseline materialization); not claimed GREEN for this repair.
+
+### Identities
+- **Writer (sole plan editor for this pass):** Wave 20 findings 1–5 orchestrator/writer session.
+- **Independent specification re-review:** PASS WITH MINOR FINDINGS — `slice-2-wave-20-findings-1-5-spec-rereview.md`.
+- **Independent technical re-review:** PASS WITH MINOR FINDINGS — `slice-2-wave-20-findings-1-5-technical-rereview.md` (independently reproduced no-run/clippy/genesis without shim).
+- **Independent whole-slice re-review:** PASS WITH MINOR FINDINGS — `slice-2-wave-20-findings-1-5-whole-slice-rereview.md`.
+
+### Findings repaired
+1. CRITICAL — plan-only leaf types + no-shim compile; no second `ReviewAssignment`; RevealCommitmentV1 as type alias (guard-compatible).
+2. IMPORTANT — aspirational genesis `VerifiedHistoricalReviewRevealV1` only.
+3. IMPORTANT — Slice 1 CommitmentScheme closed set 20 → 35 matching Slice 2.
+4. MINOR — three-root forbidden prose; closeout-index Slice 10.
+5. MINOR — `GenesisAdoptionSignatureV1` in Slice 1.
+
+### Minor residuals accepted by all three validators
+- RevealCommitmentV1 type alias (not two-field struct) required by guard forbid of `pub struct RevealCommitmentV1`.
+- Leaf types injected into existing real fences (inventory 67 preserved).
+- Guard still prints stale EXPECTED_HEAD (informational).
+
+### Explicit non-claims
+- No production crates, governance schemas, tools, or release/licensure work.
+- No force-push, merge, deploy, ratify, release, or publish.
+- Full frozen all-target test wrapper not re-run this pass (genesis-focused freeze used).
+- Slice 3–10 planning continues after this documentation commit/push boundary.
+
+### AAR control preserved
+Wave 20 consolidated downstream-interface semantic guard remains the durable AAR control (`slice-2-wave-20-guard.py`, max_iterations=8, double-failure stop).
+
+### Evidence (mode 0600 under backups)
+`/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-findings-1-5-writer-report.md`  
+`/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-findings-1-5-writer.log`  
+`/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-findings-1-5-spec-rereview.md`  
+`/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-findings-1-5-technical-rereview.md`  
+`/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-2-wave-20-findings-1-5-whole-slice-rereview.md`
+
+## DF-PROTOCOL-001 Slice 3 plan (Council, AI-IRB, and stop authority)
+
+**Date:** 2026-07-25  
+**Base HEAD:** `72ac3ec99db40c18b3e3b71483192f6a49ec4c5d`  
+**Branch:** `bob-stewart/decision-forum-peer-reviewed-protocol-design`  
+**PR:** #809  
+
+### Artifact
+- Plan: `docs/superpowers/plans/2026-07-16-df-protocol-001-03-council-ai-irb-stop-authority.md`
+- Plan SHA-256: `9ffdb2200b094bae7d462b0806cc29f3e4ffa2f88e0e22957062c27367c5d4dd`
+- Predecessor Slice 1: `4e3a97540dae01dbe0b9ae9b162fc225a67e5f51d2072762f19d901c123ea081`
+- Predecessor Slice 2: `fa804fefdb56d9595afc6517923bb2316b6b3917ddae3a6110cf41f03036fb22`
+
+### Method
+Promoted Wave 4 author brief into delivery-map plan path; reconciled to Wave 20-approved Slice 1/2 (domain inventory **47→89**, not Wave-4 26→68); closed residual implementer-facing 68/`ALL[26..]` after first FAIL triad.
+
+### Plan self-validation
+`slice3_plan_self_validation=GREEN` (predecessor hashes, vocabulary, fence balance, domain-residue rejection).
+
+### Independent plan reviews (same hash `9ffdb2200b094bae7d462b0806cc29f3e4ffa2f88e0e22957062c27367c5d4dd`)
+| Review | Verdict | Report |
+|---|---|---|
+| Specification | **PASS** | `slice-3-plan-spec-rereview.md` |
+| Technical | **PASS** | `slice-3-plan-technical-rereview.md` |
+| Whole-slice | **PASS WITH MINOR FINDINGS** | `slice-3-plan-whole-slice-rereview.md` |
+
+Minor (non-blocking): Gate 10 helper currently tautological with `ALL[47..]` (cross-impl KAV still required); recon wording polish.
+
+### Scope / non-claims
+- Documentation/plan only. No production crates implemented.
+- No merge, deploy, ratify, release, publish.
+- Implementation begins only after a dedicated implementer wave from this plan with RED-first Gates 00–11.
+- Pure authority engine; Slice 4 owns ingress/persistence/bypass closure.
+
+### Evidence (mode 0600)
+`/Users/bobstewart/.codex/backups/exochain/df-protocol-001/slice-3-plan-*.md`
+
+## HPC-001 Holographic Perfecting Control (EXOCHAIN native)
+
+**Date:** 2026-07-26  
+**Base HEAD:** `1b2da9c0f1a89308ba70b7fb90bd6580b556a984`  
+**Branch:** `bob-stewart/decision-forum-peer-reviewed-protocol-design`  
+**PR:** #809  
+
+### ArtifactDelta
+- Created `docs/superpowers/specs/2026-07-26-exochain-holographic-perfecting-control.md`
+  SHA-256 `cbb9f6e8b63f3dadfa0f6100f1b0085311ac09782c93d51e5d85d74e94f08805`
+- Modified `docs/superpowers/plans/2026-07-16-df-protocol-001-delivery-map.md`
+  (program-gates pointer to HPC-001); SHA-256 `ae05b9df666ff95ce5fa8b39b44ec4fc1158c75f4fe172093a7ac3a6f1f84106`
+
+### ControlDelta
+- `control_id:` HPC-001
+- `defect_class:` destination-perfectionism / L0-only wave closeout / prose-only AAR / boundary smuggling
+- `proof_of_ratchet:` control self-validation requires ArtifactDelta, ControlDelta, NonClaimSet, HPC-INV-1..5 vocabulary; delivery map binds DF waves to HPC-001 by path
+
+### NonClaimSet
+- deployment_control_plane_truth
+- runtime_probe_truth
+- constitutional_ratification_truth
+- publication_truth
+- ci_truth (not re-run full CI for this docs wave)
+- pr_merge_truth (comment/push only; no merge)
+
+### RED/GREEN
+- RED was conceptual: process could close on L0 alone without L2 ratchet
+- GREEN: `hpc001_control_self_validation=GREEN` on control path; delivery-map binding present
+
+### hpc_complete
+yes (this wave defines the control; subsequent waves must emit full triple)
+
+### Non-claims
+Documentation/process control only. No production crate changes. No D9 ratification, credentials, deploy, release, or publish.
+
+## HPC-001 durable self-validation entry point
+
+**Date:** 2026-07-26  
+**Base HEAD:** `a66cfbfe6c0f8d53f0e05a89f833b5e7a5840bfc`  
+**Goal:** self-governed perfecting (HPC-001 verification + shipped ratchet)
+
+### ArtifactDelta
+- `tools/hpc001_self_validate.sh` — canonical GREEN self-validation entry point
+- `tools/test_hpc001_self_validate.sh` — positive GREEN + negative mutation reject
+- §12 of HPC-001 control points at those tools paths
+- Control SHA-256 after §12 update: `bb0b4d6354a321cf85205b377ebafcaab9b9e7305a5dd621a8ffbc540dad2ff3`
+
+### ControlDelta
+- `control_id:` HPC-001-SELF-VAL-RUNNER
+- `defect_class:` process control without executable proof_of_ratchet entry point / L0-only essay adoption
+- `proof_of_ratchet:` `bash tools/test_hpc001_self_validate.sh` must print `test_hpc001_self_validate: ok`; fails if control loses needles or if broken copy is accepted
+
+### NonClaimSet
+- constitutional_ratification_truth
+- publication_truth
+- deployment_control_plane_truth
+- runtime_probe_truth
+- pr_merge_truth
+
+### RED/GREEN
+- RED: missing executable validator → perfecting claim untestable
+- GREEN: `hpc001_control_self_validation=GREEN` twice; `test_hpc001_self_validate: ok`
+
+### hpc_complete
+yes
