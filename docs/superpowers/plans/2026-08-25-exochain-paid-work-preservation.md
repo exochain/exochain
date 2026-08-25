@@ -32,10 +32,11 @@
 - Consumes: authenticated external artifacts and read-only Git working trees
 - Produces: byte-exact preservation copies and deterministic state snapshots
 
-- [ ] Recompute source hashes, byte lengths, modes, file counts, and symlink counts.
-- [ ] Copy the authenticated documents, guard candidate, and historical workspace without editing them.
-- [ ] Export each relevant working-tree diff and name-status inventory without changing its source.
-- [ ] Recompute destination bindings and fail on any copy mismatch.
+- [x] Recompute source hashes, byte lengths, modes, file counts, and symlink counts.
+- [x] Copy available authenticated material without editing it; record exact
+  prior bindings and a missing-source disposition when a source is absent.
+- [x] Export each relevant working-tree diff and name-status inventory without changing its source.
+- [x] Recompute destination bindings and fail on any copy mismatch.
 
 ### Task 2: Add labels, registry, and team handoff
 
@@ -48,9 +49,9 @@
 - Consumes: Task 1 artifact paths and bindings
 - Produces: human-readable status and continuation instructions
 
-- [ ] Classify each artifact set as issued governance, non-operative intake, uncommitted candidate, historical failed evidence, contaminated state, or future work.
-- [ ] State that preservation is not approval, merge, release readiness, or executable authority.
-- [ ] Give the next IDE a short, source-first handoff that preserves dirty worktrees.
+- [x] Classify each artifact set as issued governance, non-operative intake, uncommitted candidate, historical failed evidence, contaminated state, or future work.
+- [x] State that preservation is not approval, merge, release readiness, or executable authority.
+- [x] Give the next IDE a short, source-first handoff that preserves dirty worktrees.
 
 ### Task 3: Seal, validate, commit, and publish
 
@@ -61,8 +62,8 @@
 - Consumes: complete preservation package from Tasks 1 and 2
 - Produces: verified Git commit, pushed branch, and draft pull request
 
-- [ ] Run a redacted secret scan over every file proposed for commit and stop on a validated secret.
-- [ ] Generate the sorted relative-path SHA-256 manifest excluding only itself.
-- [ ] Replay the manifest from a fresh command and verify path count and byte count.
-- [ ] Run `git diff --check` and confirm the branch changes only preservation/spec/plan paths.
+- [x] Run a redacted secret scan over every file proposed for commit and stop on a validated secret.
+- [x] Generate the sorted relative-path SHA-256 manifest excluding only itself.
+- [x] Replay the manifest from a fresh command and verify path count and byte count.
+- [x] Run `git diff --check` and confirm the branch changes only preservation/spec/plan paths.
 - [ ] Stage only the reviewed paths, commit, push with tracking, and open a draft pull request.

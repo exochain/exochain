@@ -4,7 +4,10 @@ Snapshot date: `2026-08-25`
 
 Preservation branch: `agent/exochain-paid-work-registry`
 
-Preservation base: `98bd90ee2081ab28f506236cfb009d726118c494`
+G00 preservation reference base: `98bd90ee2081ab28f506236cfb009d726118c494`
+
+Publication branch base: `origin/main` at
+`8020ceab355eefa7f5185d9cdd0436da7af46efb`
 
 ## Governing records
 

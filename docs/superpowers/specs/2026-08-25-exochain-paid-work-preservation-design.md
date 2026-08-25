@@ -28,9 +28,10 @@ preservation material, not current release evidence or executable authority.
 
 ## Acceptance
 
-- The branch contains the six authenticated directives/intakes, the preserved
-  guard candidate, the historical G00 workspace, and snapshots of relevant
-  contaminated working-tree deltas.
+- The branch contains the six authenticated directives/intakes and snapshots
+  of relevant current working-tree deltas. For the removed guard candidate and
+  historical G00 workspace, it contains their exact last authenticated tuples
+  and an explicit missing-source disposition rather than a reconstruction.
 - A registry classifies every top-level artifact set.
 - A sorted SHA-256 manifest verifies every preserved file other than itself.
 - Secret scanning, manifest replay, `git diff --check`, and tracked-path scope
