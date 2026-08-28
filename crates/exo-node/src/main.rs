@@ -1182,9 +1182,11 @@ async fn start_node(
         );
     }
 
-    let crosschecked_anchor_router = match crosschecked_anchor_startup_config_from_environment(
-        admin_token.as_str(),
-    )? {
+    let crosschecked_anchor_config =
+        crosschecked_anchor_startup_config_from_environment(admin_token.as_str())?;
+    drop(admin_token);
+
+    let crosschecked_anchor_router = match crosschecked_anchor_config {
         Some(config) => {
             let persistence_dir = data_dir.join("crosschecked_anchor");
             std::fs::create_dir_all(&persistence_dir).map_err(|error| {
@@ -1216,7 +1218,6 @@ async fn start_node(
         }
         None => None,
     };
-    drop(admin_token);
 
     // Build the agent passport API router.
     let passport_state = Arc::new(passport::PassportApiState {
