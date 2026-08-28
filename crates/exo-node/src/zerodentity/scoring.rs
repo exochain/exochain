@@ -94,7 +94,12 @@ fn int_ln_milli(x: u64) -> u64 {
     let k = u64::from(k_u32);
     let power = 1u64 << k_u32;
     // Encode fractional part f = x/2^k − 1 as f_num ∈ [0, 1024).
-    let f_num = (x.saturating_sub(power) << 10) / power;
+    let scaled_fraction = u128::from(x.saturating_sub(power))
+        .checked_shl(10)
+        .unwrap_or(u128::MAX);
+    let f_num = u64::try_from(scaled_fraction / u128::from(power))
+        .unwrap_or(1023)
+        .min(1023);
     // ln(1 + f) ≈ f − f²/2  (second-order Taylor)
     let term1 = f_num * 1000 / 1024;
     let term2 = f_num * f_num * 500 / (1024 * 1024);
@@ -630,6 +635,17 @@ mod tests {
         let v = int_ln_milli(2);
         // ln(2)*1000 ≈ 693 ± 30
         assert!(v >= 663 && v <= 723, "int_ln_milli(2) = {v}, expected ~693");
+    }
+
+    #[test]
+    fn int_ln_milli_handles_u64_max_without_overflow() {
+        let result = std::panic::catch_unwind(|| int_ln_milli(u64::MAX));
+
+        assert!(
+            result.is_ok(),
+            "u64::MAX must not overflow logarithm intermediates"
+        );
+        assert_eq!(result.expect("asserted above"), 44_159);
     }
 
     #[test]
