@@ -630,16 +630,11 @@ pub fn checked_basis_point_amount(
             max: MAX_BASIS_POINTS,
         });
     }
-    let product = amount_micro_exo
-        .checked_mul(MicroExo::from(share_bp))
-        .ok_or(EconomyError::ArithmeticOverflow {
-            operation: "settlement.amount_mul_bp",
-        })?;
-    product
-        .checked_div(MicroExo::from(MAX_BASIS_POINTS))
-        .ok_or(EconomyError::ArithmeticUnderflow {
-            operation: "settlement.amount_div_bp",
-        })
+    Ok(crate::price::mul_div_floor_saturating(
+        amount_micro_exo,
+        MicroExo::from(share_bp),
+        MicroExo::from(MAX_BASIS_POINTS),
+    ))
 }
 
 pub fn settlement_lines_from_ruleset(
@@ -865,15 +860,15 @@ mod tests {
     }
 
     #[test]
-    fn basis_point_calculation_uses_checked_integer_arithmetic() {
+    fn basis_point_calculation_is_exact_at_the_valid_maximum() {
         assert_eq!(
             checked_basis_point_amount(1_000_000, 1_000).unwrap(),
             100_000
         );
-        assert!(matches!(
+        assert_eq!(
             checked_basis_point_amount(MicroExo::MAX, 10_000),
-            Err(EconomyError::ArithmeticOverflow { .. })
-        ));
+            Ok(MicroExo::MAX)
+        );
         assert!(matches!(
             checked_basis_point_amount(1_000, 10_001),
             Err(EconomyError::BasisPointOutOfRange { .. })
