@@ -480,6 +480,25 @@ mod tests {
         BearerAuth::from_bearer("test-token-abc123")
     }
 
+    fn startup_drops_admin_token_before_first_await_after_configuration(startup: &str) -> bool {
+        let Some(configuration_start) = startup.find("let crosschecked_anchor_config =") else {
+            return false;
+        };
+        let Some(configuration_end_offset) = startup[configuration_start..].find(';') else {
+            return false;
+        };
+        let configuration_completion = configuration_start + configuration_end_offset + 1;
+        let post_configuration = &startup[configuration_completion..];
+        let Some(drop_offset) = post_configuration.find("drop(admin_token);") else {
+            return false;
+        };
+        let Some(first_await_offset) = post_configuration.find(".await") else {
+            return false;
+        };
+
+        drop_offset < first_await_offset
+    }
+
     #[test]
     fn bearer_tokens_are_compared_as_fixed_size_digests() {
         let verifier = BearerTokenVerifier::from_bearer("expected-node-token");
@@ -1320,19 +1339,21 @@ mod tests {
         let configuration_completion = crosschecked_configuration
             + startup[crosschecked_configuration..]
                 .find(';')
-                .expect("CrossChecked startup configuration call completes");
+                .expect("CrossChecked startup configuration call completes")
+            + 1;
         let configuration_statement =
-            &startup[crosschecked_configuration..=configuration_completion];
-        let drop_position = startup
-            .find("drop(admin_token);")
-            .expect("raw admin token explicitly dropped after startup configuration");
+            &startup[crosschecked_configuration..configuration_completion];
+        let drop_position = configuration_completion
+            + startup[configuration_completion..]
+                .find("drop(admin_token);")
+                .expect("raw admin token explicitly dropped after startup configuration");
         let crosschecked_router_match = startup
             .find("let crosschecked_anchor_router = match crosschecked_anchor_config")
             .expect("CrossChecked router construction uses the evaluated configuration");
-        let first_crosschecked_await = crosschecked_router_match
-            + startup[crosschecked_router_match..]
+        let first_await_after_configuration = configuration_completion
+            + startup[configuration_completion..]
                 .find(".await")
-                .expect("CrossChecked router construction contains its database await");
+                .expect("startup contains an await after CrossChecked configuration");
 
         assert!(
             configuration_statement
@@ -1349,17 +1370,40 @@ mod tests {
             "raw admin token must be dropped before CrossChecked router matching and construction"
         );
         assert!(
-            crosschecked_router_match < first_crosschecked_await,
-            "CrossChecked router matching must precede its first await"
+            drop_position < first_await_after_configuration,
+            "raw admin token must be dropped before the first await after CrossChecked configuration"
         );
         assert!(
-            startup[crosschecked_router_match..=first_crosschecked_await]
+            startup_drops_admin_token_before_first_await_after_configuration(startup),
+            "startup token-drop ordering predicate must accept the production sequence"
+        );
+        assert!(
+            crosschecked_router_match < first_await_after_configuration,
+            "CrossChecked router matching must precede the first await after configuration"
+        );
+        assert!(
+            startup[crosschecked_router_match..=first_await_after_configuration]
                 .contains("postgres_crosschecked_anchor_clock("),
             "the first CrossChecked router await must be the PostgreSQL anchor clock"
         );
         assert!(
             !startup[drop_position + "drop(admin_token);".len()..].contains("admin_token.as_str()"),
             "startup must not use raw admin token material after explicitly dropping it"
+        );
+    }
+
+    #[test]
+    fn startup_token_drop_order_rejects_await_before_drop() {
+        let mutated_startup = r#"
+            let crosschecked_anchor_config =
+                crosschecked_anchor_startup_config_from_environment(admin_token.as_str())?;
+            readiness_probe().await?;
+            drop(admin_token);
+        "#;
+
+        assert!(
+            !startup_drops_admin_token_before_first_await_after_configuration(mutated_startup),
+            "an await inserted after CrossChecked configuration but before raw-token destruction must be rejected"
         );
     }
 
