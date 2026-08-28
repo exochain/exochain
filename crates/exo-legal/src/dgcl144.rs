@@ -144,6 +144,92 @@ struct InterestedTransactionWire {
     fairness_evidence: Option<FairnessEvidence>,
 }
 
+fn validate_disclosure(disclosure: &Disclosure, initiated_at: Timestamp) -> Result<()> {
+    if disclosure.material_facts.trim().is_empty() {
+        return Err(LegalError::DisclosureVerificationInvalid {
+            reason: "safe-harbor material facts must not be blank".into(),
+        });
+    }
+    if disclosure.disclosed_at == Timestamp::ZERO {
+        return Err(LegalError::DisclosureVerificationInvalid {
+            reason: "safe-harbor disclosure requires a real timestamp".into(),
+        });
+    }
+    if disclosure.disclosed_at < initiated_at {
+        return Err(LegalError::DisclosureVerificationInvalid {
+            reason: format!(
+                "safe-harbor disclosure timestamp {} precedes initiation {}",
+                disclosure.disclosed_at, initiated_at
+            ),
+        });
+    }
+    let expected_hash = Hash256::digest(disclosure.material_facts.as_bytes());
+    if disclosure.facts_hash != expected_hash {
+        return Err(LegalError::DisclosureVerificationInvalid {
+            reason: "safe-harbor facts hash does not match material facts".into(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_fairness_evidence(
+    evidence: &FairnessEvidence,
+    interested_party: &Did,
+    counterparty: &Did,
+    disclosure: Option<&Disclosure>,
+) -> Result<()> {
+    if evidence.evaluator == *interested_party {
+        return Err(LegalError::ConflictOfInterest {
+            reason: format!(
+                "{} is the interested party and cannot evaluate transaction fairness",
+                evidence.evaluator
+            ),
+        });
+    }
+    if evidence.evaluator == *counterparty {
+        return Err(LegalError::ConflictOfInterest {
+            reason: format!(
+                "{} is the counterparty and cannot evaluate transaction fairness",
+                evidence.evaluator
+            ),
+        });
+    }
+    if evidence.methodology.trim().is_empty() {
+        return Err(LegalError::NotAdmissible {
+            reason: "fairness evidence methodology must not be blank".into(),
+        });
+    }
+    if evidence.conclusion.trim().is_empty() {
+        return Err(LegalError::NotAdmissible {
+            reason: "fairness evidence conclusion must not be blank".into(),
+        });
+    }
+    if evidence.evidence_hash == Hash256::ZERO {
+        return Err(LegalError::NotAdmissible {
+            reason: "fairness evidence hash must not be Hash256::ZERO".into(),
+        });
+    }
+    if evidence.evaluated_at == Timestamp::ZERO {
+        return Err(LegalError::InvalidStateTransition {
+            reason: "fairness evidence requires a real evaluation timestamp".into(),
+        });
+    }
+    let disclosed_at = disclosure
+        .ok_or_else(|| LegalError::DisclosureRequired {
+            action: "fairness evidence requires prior disclosure".into(),
+        })?
+        .disclosed_at;
+    if evidence.evaluated_at < disclosed_at {
+        return Err(LegalError::InvalidStateTransition {
+            reason: format!(
+                "fairness evaluation timestamp {} precedes disclosure {}",
+                evidence.evaluated_at, disclosed_at
+            ),
+        });
+    }
+    Ok(())
+}
+
 impl InterestedTransaction {
     #[must_use]
     pub fn id(&self) -> Uuid {
@@ -229,6 +315,19 @@ impl InterestedTransaction {
                 reason: "no safe-harbor path specified".into(),
             })?;
 
+        if let Some(disclosure) = &self.disclosure {
+            validate_disclosure(disclosure, self.initiated_at)?;
+        }
+
+        if let Some(evidence) = &self.fairness_evidence {
+            validate_fairness_evidence(
+                evidence,
+                &self.interested_party,
+                &self.counterparty,
+                self.disclosure.as_ref(),
+            )?;
+        }
+
         if self.disinterested_votes.len() > MAX_DISINTERESTED_VOTES {
             return Err(LegalError::InvalidStateTransition {
                 reason: format!("disinterested vote count exceeds {MAX_DISINTERESTED_VOTES}"),
@@ -249,6 +348,21 @@ impl InterestedTransaction {
             if !vote.independence_attestation {
                 return Err(LegalError::ConflictOfInterest {
                     reason: format!("{} did not attest independence", vote.voter),
+                });
+            }
+            if vote.timestamp == Timestamp::ZERO {
+                return Err(LegalError::InvalidStateTransition {
+                    reason: format!("vote from {} requires a real timestamp", vote.voter),
+                });
+            }
+            if let Some(disclosure) = &self.disclosure
+                && vote.timestamp < disclosure.disclosed_at
+            {
+                return Err(LegalError::InvalidStateTransition {
+                    reason: format!(
+                        "vote timestamp {} from {} precedes disclosure {}",
+                        vote.timestamp, vote.voter, disclosure.disclosed_at
+                    ),
                 });
             }
         }
@@ -946,6 +1060,278 @@ mod tests {
         let round_trip: InterestedTransaction =
             serde_json::from_value(serialized.clone()).expect("valid snapshots must deserialize");
         assert_eq!(serde_json::to_value(round_trip).unwrap(), serialized);
+    }
+
+    #[test]
+    fn disclosure_transition_rejects_invalid_content_or_time_without_mutation() {
+        for (name, material_facts, disclosed_at) in [
+            ("blank material facts", " \t", ts(2000)),
+            ("zero disclosure time", "material interest", Timestamp::ZERO),
+            ("disclosure before initiation", "material interest", ts(999)),
+        ] {
+            let mut txn = create_txn(SafeHarborPath::BoardApproval);
+            let original = serde_json::to_value(&txn).expect("transaction serializes");
+
+            let error = complete_disclosure(
+                &mut txn,
+                &did("director-alice"),
+                material_facts,
+                disclosed_at,
+            )
+            .expect_err(name);
+
+            assert!(
+                matches!(error, LegalError::DisclosureVerificationInvalid { .. }),
+                "{name} returned the wrong error: {error}"
+            );
+            assert_eq!(serde_json::to_value(&txn).unwrap(), original, "{name}");
+        }
+    }
+
+    #[test]
+    fn disclosure_snapshot_rejects_invalid_content_time_and_hash_binding() {
+        let mut txn = create_txn(SafeHarborPath::BoardApproval);
+        complete_disclosure(
+            &mut txn,
+            &did("director-alice"),
+            "director owns 30 percent of counterparty",
+            ts(2000),
+        )
+        .unwrap();
+        let valid = serde_json::to_value(&txn).unwrap();
+
+        let mut blank_facts = valid.clone();
+        blank_facts["disclosure"]["material_facts"] = serde_json::Value::String(" \n".into());
+
+        let mut zero_time = valid.clone();
+        zero_time["disclosure"]["disclosed_at"] = serde_json::to_value(Timestamp::ZERO).unwrap();
+
+        let mut before_initiation = valid.clone();
+        before_initiation["disclosure"]["disclosed_at"] = serde_json::to_value(ts(999)).unwrap();
+
+        let mut tampered_facts = valid;
+        tampered_facts["disclosure"]["material_facts"] =
+            serde_json::Value::String("attacker-modified material facts".into());
+
+        for (name, snapshot) in [
+            ("blank material facts", blank_facts),
+            ("zero disclosure time", zero_time),
+            ("disclosure before initiation", before_initiation),
+            ("material facts changed without rehashing", tampered_facts),
+        ] {
+            let error = serde_json::from_value::<InterestedTransaction>(snapshot)
+                .expect_err(name)
+                .to_string();
+            assert!(
+                error.contains("disclosure verification invalid"),
+                "{name} returned the wrong error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn vote_transition_rejects_zero_or_predisclosure_time_without_mutation() {
+        for (name, vote_time) in [
+            ("zero vote timestamp", Timestamp::ZERO),
+            ("vote before disclosure", ts(1999)),
+        ] {
+            let mut txn = create_txn(SafeHarborPath::BoardApproval);
+            complete_disclosure(&mut txn, &did("director-alice"), "interest", ts(2000)).unwrap();
+            let original = serde_json::to_value(&txn).unwrap();
+
+            let error = record_disinterested_vote(&mut txn, &did("director-bob"), true, vote_time)
+                .expect_err(name);
+
+            assert!(matches!(error, LegalError::InvalidStateTransition { .. }));
+            assert_eq!(serde_json::to_value(&txn).unwrap(), original, "{name}");
+        }
+    }
+
+    #[test]
+    fn vote_snapshot_rejects_zero_or_predisclosure_time() {
+        let mut txn = create_txn(SafeHarborPath::BoardApproval);
+        complete_disclosure(&mut txn, &did("director-alice"), "interest", ts(2000)).unwrap();
+        record_disinterested_vote(&mut txn, &did("director-bob"), true, ts(3000)).unwrap();
+        let valid = serde_json::to_value(&txn).unwrap();
+
+        for (name, vote_time) in [
+            ("zero vote timestamp", Timestamp::ZERO),
+            ("vote before disclosure", ts(1999)),
+        ] {
+            let mut snapshot = valid.clone();
+            snapshot["disinterested_votes"][0]["timestamp"] =
+                serde_json::to_value(vote_time).unwrap();
+            assert!(
+                serde_json::from_value::<InterestedTransaction>(snapshot).is_err(),
+                "{name} must be rejected during deserialization"
+            );
+        }
+    }
+
+    #[test]
+    fn fairness_transition_rejects_invalid_evidence_without_mutation() {
+        enum ExpectedError {
+            NotAdmissible,
+            InvalidStateTransition,
+            ConflictOfInterest,
+        }
+
+        let interested_party = did("director-alice");
+        let counterparty = did("alice-corp");
+        let independent = did("independent-valuator");
+        let cases = [
+            (
+                "blank methodology",
+                independent.clone(),
+                " \t",
+                "fair market range",
+                Hash256::digest(b"valuation-report"),
+                ts(2500),
+                ExpectedError::NotAdmissible,
+            ),
+            (
+                "blank conclusion",
+                independent.clone(),
+                "DCF analysis",
+                " \n",
+                Hash256::digest(b"valuation-report"),
+                ts(2500),
+                ExpectedError::NotAdmissible,
+            ),
+            (
+                "zero evidence hash",
+                independent.clone(),
+                "DCF analysis",
+                "fair market range",
+                Hash256::ZERO,
+                ts(2500),
+                ExpectedError::NotAdmissible,
+            ),
+            (
+                "zero evaluation time",
+                independent.clone(),
+                "DCF analysis",
+                "fair market range",
+                Hash256::digest(b"valuation-report"),
+                Timestamp::ZERO,
+                ExpectedError::InvalidStateTransition,
+            ),
+            (
+                "evaluation before disclosure",
+                independent,
+                "DCF analysis",
+                "fair market range",
+                Hash256::digest(b"valuation-report"),
+                ts(1999),
+                ExpectedError::InvalidStateTransition,
+            ),
+            (
+                "interested party evaluator",
+                interested_party,
+                "DCF analysis",
+                "fair market range",
+                Hash256::digest(b"valuation-report"),
+                ts(2500),
+                ExpectedError::ConflictOfInterest,
+            ),
+            (
+                "counterparty evaluator",
+                counterparty,
+                "DCF analysis",
+                "fair market range",
+                Hash256::digest(b"valuation-report"),
+                ts(2500),
+                ExpectedError::ConflictOfInterest,
+            ),
+        ];
+
+        for (name, evaluator, methodology, conclusion, hash, evaluated_at, expected) in cases {
+            let mut txn = create_txn(SafeHarborPath::FairnessProof);
+            complete_disclosure(&mut txn, &did("director-alice"), "interest", ts(2000)).unwrap();
+            let original = serde_json::to_value(&txn).unwrap();
+
+            let error = record_fairness_evidence(
+                &mut txn,
+                &evaluator,
+                methodology,
+                conclusion,
+                hash,
+                evaluated_at,
+            )
+            .expect_err(name);
+
+            match expected {
+                ExpectedError::NotAdmissible => {
+                    assert!(
+                        matches!(error, LegalError::NotAdmissible { .. }),
+                        "{name}: {error}"
+                    );
+                }
+                ExpectedError::InvalidStateTransition => assert!(
+                    matches!(error, LegalError::InvalidStateTransition { .. }),
+                    "{name}: {error}"
+                ),
+                ExpectedError::ConflictOfInterest => assert!(
+                    matches!(error, LegalError::ConflictOfInterest { .. }),
+                    "{name}: {error}"
+                ),
+            }
+            assert_eq!(serde_json::to_value(&txn).unwrap(), original, "{name}");
+        }
+    }
+
+    #[test]
+    fn fairness_snapshot_rejects_invalid_evidence_and_valid_round_trip_survives() {
+        let mut txn = create_txn(SafeHarborPath::FairnessProof);
+        complete_disclosure(&mut txn, &did("director-alice"), "interest", ts(2000)).unwrap();
+        record_fairness_evidence(
+            &mut txn,
+            &did("independent-valuator"),
+            "DCF analysis",
+            "fair market range",
+            Hash256::digest(b"valuation-report"),
+            ts(2500),
+        )
+        .unwrap();
+        let valid = serde_json::to_value(&txn).unwrap();
+        let round_trip: InterestedTransaction =
+            serde_json::from_value(valid.clone()).expect("valid fairness snapshot");
+        assert_eq!(serde_json::to_value(round_trip).unwrap(), valid);
+
+        let mut blank_methodology = valid.clone();
+        blank_methodology["fairness_evidence"]["methodology"] = " \t".into();
+        let mut blank_conclusion = valid.clone();
+        blank_conclusion["fairness_evidence"]["conclusion"] = " \n".into();
+        let mut zero_hash = valid.clone();
+        zero_hash["fairness_evidence"]["evidence_hash"] =
+            serde_json::to_value(Hash256::ZERO).unwrap();
+        let mut zero_time = valid.clone();
+        zero_time["fairness_evidence"]["evaluated_at"] =
+            serde_json::to_value(Timestamp::ZERO).unwrap();
+        let mut before_disclosure = valid.clone();
+        before_disclosure["fairness_evidence"]["evaluated_at"] =
+            serde_json::to_value(ts(1999)).unwrap();
+        let mut interested_evaluator = valid.clone();
+        interested_evaluator["fairness_evidence"]["evaluator"] =
+            serde_json::Value::String("did:exo:director-alice".into());
+        let mut counterparty_evaluator = valid;
+        counterparty_evaluator["fairness_evidence"]["evaluator"] =
+            serde_json::Value::String("did:exo:alice-corp".into());
+
+        for (name, snapshot) in [
+            ("blank methodology", blank_methodology),
+            ("blank conclusion", blank_conclusion),
+            ("zero evidence hash", zero_hash),
+            ("zero evaluation time", zero_time),
+            ("evaluation before disclosure", before_disclosure),
+            ("interested party evaluator", interested_evaluator),
+            ("counterparty evaluator", counterparty_evaluator),
+        ] {
+            assert!(
+                serde_json::from_value::<InterestedTransaction>(snapshot).is_err(),
+                "{name} must be rejected during deserialization"
+            );
+        }
     }
 
     #[test]

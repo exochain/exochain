@@ -206,6 +206,13 @@ pub fn rotate_verification_key(
     controller: &Did,
     current_time_ms: u64,
 ) -> Result<VerificationMethod, DidVerificationError> {
+    if controller != &doc.id {
+        return Err(DidVerificationError::MethodNotDocumentBound(format!(
+            "new verification method controller {controller} does not match document DID {}",
+            doc.id
+        )));
+    }
+
     // Find the old method
     let old_method_idx = doc
         .verification_methods
@@ -221,6 +228,11 @@ pub fn rotate_verification_key(
         .verification_methods
         .iter()
         .map(|method| method.version)
+        .chain(
+            doc.hybrid_verification_methods
+                .iter()
+                .map(|method| method.version),
+        )
         .max()
         .unwrap_or(0);
     let new_version = max_version.checked_add(1).ok_or_else(|| {
@@ -228,6 +240,20 @@ pub fn rotate_verification_key(
             "verification method version overflow for key {old_key_id}"
         ))
     })?;
+    let new_id = format!("{}#key-{}", doc.id, new_version);
+    if doc
+        .verification_methods
+        .iter()
+        .any(|method| method.id == new_id)
+        || doc
+            .hybrid_verification_methods
+            .iter()
+            .any(|method| method.id == new_id)
+    {
+        return Err(DidVerificationError::CryptoError(format!(
+            "verification method already exists: {new_id}"
+        )));
+    }
     let old_key_used_by_another_method =
         doc.verification_methods
             .iter()
@@ -238,14 +264,17 @@ pub fn rotate_verification_key(
                         decode_ed25519_multibase_public_key(&method.public_key_multibase),
                         Ok(public_key) if public_key == old_public_key
                     )
-            });
+            })
+            || doc
+                .hybrid_verification_methods
+                .iter()
+                .any(|method| method.classical_public_key == old_public_key);
 
     // Deactivate old key
     doc.verification_methods[old_method_idx].active = false;
     doc.verification_methods[old_method_idx].revoked_at = Some(current_time_ms);
 
     // Create new method with incremented version
-    let new_id = format!("{}#key-{}", doc.id, new_version);
     let multibase = format!("z{}", bs58::encode(new_public_key).into_string());
 
     let new_method = VerificationMethod {
@@ -280,11 +309,12 @@ pub fn rotate_verification_key(
 #[cfg(test)]
 mod tests {
     use exo_core::{
-        Timestamp,
-        crypto::{generate_keypair, sign},
+        PqPublicKey, Timestamp,
+        crypto::{generate_keypair, generate_pq_keypair, sign},
     };
 
     use super::*;
+    use crate::did::HybridVerificationMethod;
 
     fn test_did() -> Did {
         Did::new("did:exo:test-verification").expect("valid")
@@ -311,6 +341,34 @@ mod tests {
             created: Timestamp::new(1000, 0),
             updated: Timestamp::new(1000, 0),
             revoked: false,
+        }
+    }
+
+    fn make_hybrid_method(
+        did: &Did,
+        classical_public_key: PublicKey,
+        pq_public_key: PqPublicKey,
+        id: String,
+        version: u64,
+    ) -> HybridVerificationMethod {
+        HybridVerificationMethod {
+            id,
+            key_type: "HybridKeyEd25519MlDsa652020".to_string(),
+            controller: did.clone(),
+            classical_public_key_multibase: format!(
+                "z{}",
+                bs58::encode(classical_public_key.as_bytes()).into_string()
+            ),
+            pq_public_key_multibase: format!(
+                "z{}",
+                bs58::encode(pq_public_key.as_bytes()).into_string()
+            ),
+            pq_public_key,
+            classical_public_key,
+            version,
+            active: true,
+            valid_from: 1500,
+            revoked_at: None,
         }
     }
 
@@ -488,6 +546,170 @@ mod tests {
         );
         let new_signature = sign(message, &new_sk);
         assert!(verify_did_signature(&doc, &new_method.id, message, &new_signature).is_ok());
+    }
+
+    #[test]
+    fn rotate_key_allocates_after_highest_hybrid_version_and_preserves_hybrid_fixture() {
+        let (old_pk, _) = generate_keypair();
+        let (hybrid_classical_pk, _) = generate_keypair();
+        let (hybrid_pq_pk, _) = generate_pq_keypair();
+        let (new_pk, _) = generate_keypair();
+        let did = test_did();
+        let mut doc = make_doc_with_verification(did.clone(), old_pk);
+        doc.public_keys.push(hybrid_classical_pk);
+        let hybrid = make_hybrid_method(
+            &did,
+            hybrid_classical_pk,
+            hybrid_pq_pk,
+            format!("{did}#hybrid-key-9"),
+            9,
+        );
+        doc.hybrid_verification_methods.push(hybrid.clone());
+
+        let new_method = rotate_verification_key(
+            &mut doc,
+            &format!("{did}#key-1"),
+            new_pk.as_bytes(),
+            &did,
+            2000,
+        )
+        .expect("hybrid versions participate in allocation");
+
+        assert_eq!(new_method.version, 10);
+        assert_eq!(new_method.id, format!("{did}#key-10"));
+        assert_eq!(doc.hybrid_verification_methods, vec![hybrid]);
+        assert_eq!(doc.public_keys, vec![hybrid_classical_pk, new_pk]);
+    }
+
+    #[test]
+    fn rotate_key_rejects_maximum_hybrid_version_without_mutation() {
+        let (old_pk, _) = generate_keypair();
+        let (hybrid_classical_pk, _) = generate_keypair();
+        let (hybrid_pq_pk, _) = generate_pq_keypair();
+        let (new_pk, _) = generate_keypair();
+        let did = test_did();
+        let mut doc = make_doc_with_verification(did.clone(), old_pk);
+        doc.public_keys.push(hybrid_classical_pk);
+        doc.hybrid_verification_methods.push(make_hybrid_method(
+            &did,
+            hybrid_classical_pk,
+            hybrid_pq_pk,
+            format!("{did}#hybrid-key-max"),
+            u64::MAX,
+        ));
+        let original_doc = doc.clone();
+
+        let result = rotate_verification_key(
+            &mut doc,
+            &format!("{did}#key-1"),
+            new_pk.as_bytes(),
+            &did,
+            2000,
+        );
+
+        assert!(matches!(
+            result,
+            Err(DidVerificationError::CryptoError(ref reason))
+                if reason.contains("version overflow")
+        ));
+        assert_eq!(doc, original_doc);
+    }
+
+    #[test]
+    fn rotate_key_rejects_foreign_controller_without_mutation() {
+        let (old_pk, _) = generate_keypair();
+        let (new_pk, _) = generate_keypair();
+        let did = test_did();
+        let foreign_controller = Did::new("did:exo:foreign-controller").expect("valid DID");
+        let mut doc = make_doc_with_verification(did.clone(), old_pk);
+        let original_doc = doc.clone();
+
+        let result = rotate_verification_key(
+            &mut doc,
+            &format!("{did}#key-1"),
+            new_pk.as_bytes(),
+            &foreign_controller,
+            2000,
+        );
+
+        assert!(matches!(
+            result,
+            Err(DidVerificationError::MethodNotDocumentBound(_))
+        ));
+        assert_eq!(doc, original_doc);
+    }
+
+    #[test]
+    fn rotate_key_rejects_generated_id_collisions_across_method_kinds_without_mutation() {
+        for colliding_kind in ["classical", "hybrid"] {
+            let (old_pk, _) = generate_keypair();
+            let (highest_pk, _) = generate_keypair();
+            let (collision_pk, _) = generate_keypair();
+            let (new_pk, _) = generate_keypair();
+            let did = test_did();
+            let mut doc = make_doc_with_verification(did.clone(), old_pk);
+            doc.public_keys.extend([highest_pk, collision_pk]);
+            doc.verification_methods.push(VerificationMethod {
+                id: format!("{did}#legacy-highest"),
+                key_type: ED25519_VERIFICATION_KEY_TYPE.to_string(),
+                controller: did.clone(),
+                public_key_multibase: format!(
+                    "z{}",
+                    bs58::encode(highest_pk.as_bytes()).into_string()
+                ),
+                version: 7,
+                active: true,
+                valid_from: 1500,
+                revoked_at: None,
+            });
+
+            if colliding_kind == "classical" {
+                doc.verification_methods.push(VerificationMethod {
+                    id: format!("{did}#key-8"),
+                    key_type: ED25519_VERIFICATION_KEY_TYPE.to_string(),
+                    controller: did.clone(),
+                    public_key_multibase: format!(
+                        "z{}",
+                        bs58::encode(collision_pk.as_bytes()).into_string()
+                    ),
+                    version: 2,
+                    active: true,
+                    valid_from: 1500,
+                    revoked_at: None,
+                });
+            } else {
+                let (pq_pk, _) = generate_pq_keypair();
+                doc.hybrid_verification_methods.push(make_hybrid_method(
+                    &did,
+                    collision_pk,
+                    pq_pk,
+                    format!("{did}#key-8"),
+                    2,
+                ));
+            }
+            let original_doc = doc.clone();
+
+            let result = rotate_verification_key(
+                &mut doc,
+                &format!("{did}#key-1"),
+                new_pk.as_bytes(),
+                &did,
+                2000,
+            );
+
+            assert!(
+                matches!(
+                    result,
+                    Err(DidVerificationError::CryptoError(ref reason))
+                        if reason.contains("already exists")
+                ),
+                "{colliding_kind} ID collision must fail: {result:?}"
+            );
+            assert_eq!(
+                doc, original_doc,
+                "{colliding_kind} collision mutated document"
+            );
+        }
     }
 
     #[test]
