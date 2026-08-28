@@ -1167,11 +1167,9 @@ async fn start_node(
         token_path = %token_path.display(),
         "Admin bearer token generated and written to restrictive file; token material omitted from logs"
     );
-    let bearer_auth = auth::BearerAuth {
-        token: Arc::new(admin_token),
-    };
+    let bearer_auth = auth::BearerAuth::from_bearer(admin_token.as_str());
     let mut scoped_bearer_auth = livesafe_public_output_scoped_bearer_from_config(
-        bearer_auth.token.as_str(),
+        admin_token.as_str(),
         optional_scoped_bearer_from_env(
             EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV,
         )?,
@@ -1185,7 +1183,7 @@ async fn start_node(
     }
 
     let crosschecked_anchor_router = match crosschecked_anchor_startup_config_from_environment(
-        bearer_auth.token.as_str(),
+        admin_token.as_str(),
     )? {
         Some(config) => {
             let persistence_dir = data_dir.join("crosschecked_anchor");
@@ -1434,10 +1432,18 @@ async fn start_node(
         }
     });
     let request_persist_dir = data_dir.to_path_buf();
-    let pdp_router = exo_pdp::http::pdp_router_with_persistence(shared_pdp, move |pdp| {
-        pdp_store::save(&request_persist_dir, pdp)
-            .map_err(|error| exo_pdp::PdpError::Persistence(error.to_string()))
+    let pdp_bearer_auth = bearer_auth.clone();
+    let pdp_authorizer = exo_pdp::http::PdpMutationAuthorizer::new(move |headers| {
+        pdp_bearer_auth.verify_headers(headers).is_ok()
     });
+    let pdp_router = exo_pdp::http::pdp_router_with_authorized_persistence(
+        shared_pdp,
+        pdp_authorizer,
+        move |pdp| {
+            pdp_store::save(&request_persist_dir, pdp)
+                .map_err(|error| exo_pdp::PdpError::Persistence(error.to_string()))
+        },
+    );
 
     let mut extra_router = metrics_router
         .merge(governance_router)
@@ -2127,7 +2133,7 @@ mod tests {
         );
         assert!(
             production.contains("spawn_critical(\"PDP state persistence\"")
-                && production.contains("pdp_router_with_persistence"),
+                && production.contains("pdp_router_with_authorized_persistence"),
             "PDP state must be synchronously durable and supervised"
         );
     }

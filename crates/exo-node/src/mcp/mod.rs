@@ -66,6 +66,8 @@ use tokio::{
 };
 use zeroize::Zeroizing;
 
+use crate::auth::BearerTokenVerifier;
+
 const EXO_MCP_SSE_TOKEN_ENV: &str = "EXO_MCP_SSE_TOKEN";
 const MAX_SSE_EVENT_CONNECTIONS: usize = 64;
 
@@ -107,7 +109,7 @@ pub async fn serve_stdio(server: McpServer) -> std::io::Result<()> {
 pub struct SseState {
     /// The MCP server shared across all HTTP handlers.
     server: Arc<McpServer>,
-    bearer_token: Arc<Zeroizing<String>>,
+    bearer_verifier: BearerTokenVerifier,
     event_connections: Arc<Semaphore>,
 }
 
@@ -118,9 +120,10 @@ impl SseState {
         bearer_token: Zeroizing<String>,
         max_event_connections: usize,
     ) -> Self {
+        let bearer_verifier = BearerTokenVerifier::from_bearer(bearer_token.as_str());
         Self {
             server,
-            bearer_token: Arc::new(bearer_token),
+            bearer_verifier,
             event_connections: Arc::new(Semaphore::new(max_event_connections)),
         }
     }
@@ -131,26 +134,11 @@ impl SseState {
             .and_then(|value| value.to_str().ok());
 
         match header.and_then(|value| value.strip_prefix("Bearer ")) {
-            Some(provided)
-                if constant_time_eq(provided.as_bytes(), self.bearer_token.as_bytes()) =>
-            {
-                Ok(())
-            }
+            Some(provided) if self.bearer_verifier.verifies(provided) => Ok(()),
             Some(_) => Err(StatusCode::FORBIDDEN),
             None => Err(StatusCode::UNAUTHORIZED),
         }
     }
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (left, right) in a.iter().zip(b.iter()) {
-        diff |= left ^ right;
-    }
-    diff == 0
 }
 
 fn sse_bearer_token_from_env() -> std::io::Result<Zeroizing<String>> {
@@ -289,12 +277,12 @@ mod sse_tests {
         test_router_with_event_limit(64)
     }
 
-    fn test_router_with_event_limit(max_event_connections: usize) -> Router {
+    fn test_state(max_event_connections: usize) -> SseState {
         let did = exo_core::Did::new("did:exo:test").expect("valid DID");
         let keypair = exo_core::crypto::KeyPair::from_secret_bytes([0x4D; 32]).unwrap();
         let public_key = *keypair.public_key();
         let secret_key = keypair.secret_key().clone();
-        let state = SseState::new(
+        SseState::new(
             Arc::new(McpServer::with_authority(
                 did.clone(),
                 did,
@@ -303,8 +291,11 @@ mod sse_tests {
             )),
             Zeroizing::new(TEST_SSE_TOKEN.to_owned()),
             max_event_connections,
-        );
-        build_sse_router(state)
+        )
+    }
+
+    fn test_router_with_event_limit(max_event_connections: usize) -> Router {
+        build_sse_router(test_state(max_event_connections))
     }
 
     #[test]
@@ -327,10 +318,40 @@ mod sse_tests {
     }
 
     #[test]
-    fn constant_time_eq_matches_only_equal_same_length_tokens() {
-        assert!(constant_time_eq(b"token-123", b"token-123"));
-        assert!(!constant_time_eq(b"token-123", b"token-124"));
-        assert!(!constant_time_eq(b"token-123", b"token-1234"));
+    fn mcp_bearer_verifier_matches_only_equal_tokens() {
+        let verifier = BearerTokenVerifier::from_bearer("token-123");
+        assert!(verifier.verifies("token-123"));
+        assert!(!verifier.verifies("token-124"));
+        assert!(!verifier.verifies("token-1234"));
+    }
+
+    #[test]
+    fn mcp_authorization_preserves_missing_malformed_and_wrong_outcomes() {
+        let state = test_state(64);
+        assert_eq!(std::mem::size_of_val(&state.bearer_verifier), 32);
+
+        let missing = HeaderMap::new();
+        assert_eq!(state.authorize(&missing), Err(StatusCode::UNAUTHORIZED));
+
+        for malformed in ["Basic abc", "Bearer", "bearer wrong"] {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::AUTHORIZATION, malformed.parse().unwrap());
+            assert_eq!(state.authorize(&headers), Err(StatusCode::UNAUTHORIZED));
+        }
+
+        let long = format!("Bearer {}", "x".repeat(4_096));
+        for wrong in ["Bearer ", "Bearer short", long.as_str()] {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::AUTHORIZATION, wrong.parse().unwrap());
+            assert_eq!(state.authorize(&headers), Err(StatusCode::FORBIDDEN));
+        }
+
+        let mut correct = HeaderMap::new();
+        correct.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {TEST_SSE_TOKEN}").parse().unwrap(),
+        );
+        assert_eq!(state.authorize(&correct), Ok(()));
     }
 
     #[test]

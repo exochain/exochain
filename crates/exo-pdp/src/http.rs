@@ -20,8 +20,11 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
-    http::StatusCode,
+    body::Body,
+    extract::{DefaultBodyLimit, Path, State},
+    http::{HeaderMap, Request, StatusCode},
+    middleware::{self, Next},
+    response::Response,
     routing::{get, post},
 };
 use exo_authority::{DelegateeKind, DelegationGrant, Permission};
@@ -38,6 +41,27 @@ use crate::{
 
 type PersistHook =
     Arc<dyn Fn(&crate::service::PolicyDecisionPoint) -> crate::error::Result<()> + Send + Sync>;
+
+const MAX_PDP_BODY_BYTES: usize = 1_048_576;
+const MAX_DELEGATION_SCOPE_ITEMS: usize = 64;
+
+/// Opaque authorization boundary required by every PDP mutation router.
+#[derive(Clone)]
+pub struct PdpMutationAuthorizer(Arc<dyn Fn(&HeaderMap) -> bool + Send + Sync + 'static>);
+
+impl PdpMutationAuthorizer {
+    /// Construct a mutation authorizer from the embedding runtime's verifier.
+    pub fn new<F>(authorize: F) -> Self
+    where
+        F: Fn(&HeaderMap) -> bool + Send + Sync + 'static,
+    {
+        Self(Arc::new(authorize))
+    }
+
+    fn authorizes(&self, headers: &HeaderMap) -> bool {
+        (self.0)(headers)
+    }
+}
 
 #[derive(Clone)]
 struct PdpHttpState {
@@ -78,23 +102,86 @@ impl PdpHttpState {
     }
 }
 
-/// Build the PDP router (own state — merge after gateway `with_state`).
+/// Build only the PDP read and independent-verification routes.
+///
+/// This compatibility constructor deliberately installs no mutation routes.
 pub fn pdp_router(pdp: SharedPdp) -> Router {
-    build_pdp_router(PdpHttpState { pdp, persist: None })
+    pdp_read_router(pdp)
 }
 
-/// Build the PDP router with a fail-closed mutation persistence boundary.
+/// Build the complete PDP router with an explicit mutation authorizer.
+pub fn pdp_router_with_authorizer(pdp: SharedPdp, authorizer: PdpMutationAuthorizer) -> Router {
+    build_pdp_router(PdpHttpState { pdp, persist: None }, authorizer)
+}
+
+/// Build read and independent-verification routes with persistence state.
+///
+/// This compatibility constructor deliberately installs no mutation routes.
 pub fn pdp_router_with_persistence<F>(pdp: SharedPdp, persist: F) -> Router
 where
     F: Fn(&crate::service::PolicyDecisionPoint) -> crate::error::Result<()> + Send + Sync + 'static,
 {
-    build_pdp_router(PdpHttpState {
+    build_pdp_read_router(PdpHttpState {
         pdp,
         persist: Some(Arc::new(persist)),
     })
+    .layer(DefaultBodyLimit::max(MAX_PDP_BODY_BYTES))
 }
 
-fn build_pdp_router(state: PdpHttpState) -> Router {
+/// Build the complete PDP router with authorization and fail-closed persistence.
+pub fn pdp_router_with_authorized_persistence<F>(
+    pdp: SharedPdp,
+    authorizer: PdpMutationAuthorizer,
+    persist: F,
+) -> Router
+where
+    F: Fn(&crate::service::PolicyDecisionPoint) -> crate::error::Result<()> + Send + Sync + 'static,
+{
+    build_pdp_router(
+        PdpHttpState {
+            pdp,
+            persist: Some(Arc::new(persist)),
+        },
+        authorizer,
+    )
+}
+
+/// Build only read and independent verification routes.
+pub fn pdp_read_router(pdp: SharedPdp) -> Router {
+    build_pdp_read_router(PdpHttpState { pdp, persist: None })
+        .layer(DefaultBodyLimit::max(MAX_PDP_BODY_BYTES))
+}
+
+async fn require_mutation_authorization(
+    State(authorizer): State<PdpMutationAuthorizer>,
+    request: Request<Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    if !authorizer.authorizes(request.headers()) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(next.run(request).await)
+}
+
+fn build_pdp_router(state: PdpHttpState, authorizer: PdpMutationAuthorizer) -> Router {
+    build_pdp_read_router(state.clone())
+        .merge(build_pdp_mutation_router(state, authorizer))
+        .layer(DefaultBodyLimit::max(MAX_PDP_BODY_BYTES))
+}
+
+fn build_pdp_read_router(state: PdpHttpState) -> Router {
+    Router::new()
+        .route("/api/v1/authority/evidence/:hash", get(handle_evidence))
+        .route(
+            "/api/v1/authority/evidence/:hash/verify",
+            get(handle_verify_evidence),
+        )
+        .route("/api/v1/authority/pack", get(handle_export_pack))
+        .route("/api/v1/authority/pack/verify", post(handle_verify_pack))
+        .with_state(state)
+}
+
+fn build_pdp_mutation_router(state: PdpHttpState, authorizer: PdpMutationAuthorizer) -> Router {
     Router::new()
         .route("/api/v1/authority/decide", post(handle_decide))
         .route("/api/v1/authority/register-key", post(handle_register_key))
@@ -103,14 +190,11 @@ fn build_pdp_router(state: PdpHttpState) -> Router {
         .route("/api/v1/authority/reserve", post(handle_reserve))
         .route("/api/v1/authority/commit", post(handle_commit))
         .route("/api/v1/authority/release", post(handle_release))
-        .route("/api/v1/authority/evidence/:hash", get(handle_evidence))
-        .route(
-            "/api/v1/authority/evidence/:hash/verify",
-            get(handle_verify_evidence),
-        )
-        .route("/api/v1/authority/pack", get(handle_export_pack))
-        .route("/api/v1/authority/pack/verify", post(handle_verify_pack))
         .route("/x402/verify", post(handle_x402_verify))
+        .route_layer(middleware::from_fn_with_state(
+            authorizer,
+            require_mutation_authorization,
+        ))
         .with_state(state)
 }
 
@@ -261,6 +345,11 @@ async fn handle_delegate(
     Json(body): Json<DelegateBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let pdp = &state.pdp;
+    if body.scope.len() > MAX_DELEGATION_SCOPE_ITEMS {
+        return Err(err(PdpError::BadRequest(format!(
+            "delegation scope exceeds maximum of {MAX_DELEGATION_SCOPE_ITEMS} permissions"
+        ))));
+    }
     let from = crate::mandate::coerce_did(&body.from).map_err(err)?;
     let to = crate::mandate::coerce_did(&body.to).map_err(err)?;
     let mut scope = Vec::new();
@@ -501,9 +590,147 @@ impl SharedPdp {
 
 #[cfg(test)]
 mod tests {
-    use exo_core::{Did, crypto::KeyPair};
+    use axum::{body::Body, http::Request};
+    use exo_authority::AuthorityLink;
+    use exo_core::{Did, Signature, crypto::KeyPair};
+    use tower::ServiceExt;
 
     use super::*;
+
+    const TEST_AUTHORIZATION: &str = "Bearer pdp-test-token";
+
+    fn mutation_test_router(pdp: SharedPdp) -> Router {
+        pdp_router_with_authorizer(
+            pdp,
+            PdpMutationAuthorizer::new(|headers| {
+                headers
+                    .get(axum::http::header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    == Some(TEST_AUTHORIZATION)
+            }),
+        )
+    }
+
+    fn register_key_request(
+        did: &Did,
+        key: &KeyPair,
+        authorization: Option<&str>,
+    ) -> Request<Body> {
+        let body = serde_json::json!({
+            "did": did.to_string(),
+            "public_key_hex": hex::encode(key.public_key().as_bytes()),
+        });
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/authority/register-key")
+            .header("content-type", "application/json");
+        if let Some(value) = authorization {
+            request = request.header("authorization", value);
+        }
+        request.body(Body::from(body.to_string())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn exported_router_rejects_unauthorized_mutation_and_allows_configured_authorizer() {
+        let pdp = SharedPdp::ephemeral();
+        let actor = Did::new("did:exo:http-auth-boundary").unwrap();
+        let actor_key = KeyPair::from_secret_bytes([0x31; 32]).unwrap();
+        let router = mutation_test_router(pdp);
+
+        let register_key_without_authorization = router
+            .clone()
+            .oneshot(register_key_request(&actor, &actor_key, None))
+            .await
+            .unwrap();
+        let register_key_with_authorization = router
+            .oneshot(register_key_request(
+                &actor,
+                &actor_key,
+                Some(TEST_AUTHORIZATION),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            register_key_without_authorization.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(register_key_with_authorization.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn exported_router_rejects_oversized_mutation_body_before_json_extraction() {
+        let pdp = SharedPdp::ephemeral();
+        let actor = Did::new("did:exo:http-body-boundary").unwrap();
+        let actor_key = KeyPair::from_secret_bytes([0x32; 32]).unwrap();
+        let body = serde_json::json!({
+            "did": actor.to_string(),
+            "public_key_hex": hex::encode(actor_key.public_key().as_bytes()),
+            "padding": "x".repeat(1_048_576),
+        });
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/authority/register-key")
+            .header("content-type", "application/json")
+            .header("authorization", TEST_AUTHORIZATION)
+            .body(Body::from(body.to_string()))
+            .unwrap();
+
+        let oversized_delegate = mutation_test_router(pdp).oneshot(request).await.unwrap();
+
+        assert_eq!(oversized_delegate.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn exported_router_rejects_delegation_scope_above_sixty_four_items() {
+        let pdp = SharedPdp::ephemeral();
+        let from = Did::new("did:exo:http-scope-from").unwrap();
+        let to = Did::new("did:exo:http-scope-to").unwrap();
+        let key = KeyPair::from_secret_bytes([0x33; 32]).unwrap();
+        pdp.lock()
+            .unwrap()
+            .register_key(from.clone(), *key.public_key());
+
+        let now = Timestamp::new(10, 0);
+        let link = AuthorityLink {
+            delegator_did: from.clone(),
+            delegate_did: to.clone(),
+            scope: vec![Permission::Read],
+            created: now,
+            expires: Some(Timestamp::new(1_000, 0)),
+            signature: Signature::empty(),
+            depth: 0,
+            delegatee_kind: DelegateeKind::Human,
+        };
+        let signature = key.sign(&link.signing_payload().unwrap());
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/authority/delegate")
+            .header("content-type", "application/json")
+            .header("authorization", TEST_AUTHORIZATION)
+            .body(Body::from(
+                serde_json::json!({
+                    "from": from.to_string(),
+                    "to": to.to_string(),
+                    "scope": vec!["read"; 65],
+                    "expires_ms": 1_000,
+                    "now_ms": 10,
+                    "signature_hex": hex::encode(
+                        signature.ed25519_bytes().expect("Ed25519 test signature")
+                    ),
+                })
+                .to_string(),
+            ))
+            .unwrap();
+
+        let delegate_with_max_scope_plus_one =
+            mutation_test_router(pdp).oneshot(request).await.unwrap();
+
+        assert_eq!(
+            delegate_with_max_scope_plus_one.status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
 
     #[test]
     fn failed_persistence_rolls_back_authority_mutation() {
@@ -552,8 +779,13 @@ mod tests {
         );
         drop(guard);
 
-        let _ephemeral_router = pdp_router(pdp.clone());
-        let _persistent_router = pdp_router_with_persistence(pdp.clone(), |_| Ok(()));
+        let authorizer = PdpMutationAuthorizer::new(|_| true);
+        let _ephemeral_router = pdp_router_with_authorizer(pdp.clone(), authorizer.clone());
+        let _persistent_router =
+            pdp_router_with_authorized_persistence(pdp.clone(), authorizer, |_| Ok(()));
+        let _compat_read_router = pdp_router(pdp.clone());
+        let _compat_persistent_read_router = pdp_router_with_persistence(pdp.clone(), |_| Ok(()));
+        let _read_router = pdp_read_router(pdp.clone());
 
         assert_eq!(require_now_ms(Some(7)).unwrap(), Timestamp::new(7, 0));
         assert!(matches!(require_now_ms(None), Err(PdpError::BadRequest(_))));

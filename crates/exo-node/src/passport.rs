@@ -673,9 +673,7 @@ mod tests {
     }
 
     fn test_passport_auth() -> crate::auth::BearerAuth {
-        crate::auth::BearerAuth {
-            token: Arc::new(zeroize::Zeroizing::new("passport-test-token".to_string())),
-        }
+        crate::auth::BearerAuth::from_bearer("passport-test-token")
     }
 
     fn verified_claim(subject_did: &str) -> crate::zerodentity::types::IdentityClaim {
