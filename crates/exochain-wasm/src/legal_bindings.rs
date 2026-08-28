@@ -23,6 +23,20 @@ use crate::serde_bridge::*;
 const MAX_WASM_LEGAL_AUDIT_ACTIONS: usize = 4_096;
 const MAX_WASM_EDISCOVERY_CORPUS_ITEMS: usize = 4_096;
 const MAX_WASM_RETENTION_RECORDS: usize = 4_096;
+const FAIRNESS_EVIDENCE_HASH_VALIDATION_ERROR: &str =
+    "evidence hash must be exactly 64 ASCII hex characters";
+
+fn parse_fairness_evidence_hash_hex(
+    evidence_hash_hex: &str,
+) -> Result<exo_core::Hash256, &'static str> {
+    if evidence_hash_hex.len() != 64 || !evidence_hash_hex.is_ascii() {
+        return Err(FAIRNESS_EVIDENCE_HASH_VALIDATION_ERROR);
+    }
+    let mut hash_bytes = [0_u8; 32];
+    hex::decode_to_slice(evidence_hash_hex, &mut hash_bytes)
+        .map_err(|_| FAIRNESS_EVIDENCE_HASH_VALIDATION_ERROR)?;
+    Ok(exo_core::Hash256::from_bytes(hash_bytes))
+}
 
 /// Create a new piece of evidence with chain of custody
 #[wasm_bindgen]
@@ -253,13 +267,8 @@ pub fn wasm_record_fairness_evidence(
     let mut txn: exo_legal::dgcl144::InterestedTransaction = from_json_str(txn_json)?;
     let evaluator = exo_core::Did::new(evaluator_did)
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
-    let hash_bytes =
-        hex::decode(evidence_hash_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
-    let evidence_hash = exo_core::Hash256::from_bytes(
-        hash_bytes
-            .try_into()
-            .map_err(|_| JsValue::from_str("evidence hash must be 32 bytes"))?,
-    );
+    let evidence_hash =
+        parse_fairness_evidence_hash_hex(evidence_hash_hex).map_err(JsValue::from_str)?;
     let now = exo_core::types::Timestamp::new(now_ms, 0);
     exo_legal::dgcl144::record_fairness_evidence(
         &mut txn,
@@ -280,5 +289,51 @@ pub fn wasm_verify_safe_harbor(txn_json: &str) -> Result<JsValue, JsValue> {
     match exo_legal::dgcl144::verify_safe_harbor(&mut txn) {
         Ok(()) => to_js_value(&serde_json::json!({"ok": true})),
         Err(e) => to_js_value(&serde_json::json!({"ok": false, "error": e.to_string()})),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fairness_evidence_hash_is_bounded_before_stack_decoding() {
+        let source = include_str!("legal_bindings.rs");
+        let production = source.split("\n#[cfg(test)]").next().unwrap_or(source);
+
+        assert!(
+            production.contains("hex::decode_to_slice"),
+            "fairness evidence hashes must decode directly into a fixed stack buffer"
+        );
+        assert!(
+            !production.contains("hex::decode(evidence_hash_hex)"),
+            "the direct fairness hash input must not be decoded into an allocating Vec"
+        );
+        assert!(
+            production.contains("evidence hash must be exactly 64 ASCII hex characters"),
+            "all malformed fairness hash inputs must return a fixed client-safe validation message"
+        );
+    }
+
+    #[test]
+    fn fairness_evidence_hash_validation_is_fixed_and_accepts_exact_hex() {
+        let valid = "ab".repeat(32);
+        assert_eq!(
+            parse_fairness_evidence_hash_hex(&valid).unwrap(),
+            exo_core::Hash256::from_bytes([0xab; 32])
+        );
+
+        for malformed in [
+            "a".repeat(63),
+            "a".repeat(65),
+            "g".repeat(64),
+            "é".repeat(32),
+            "a".repeat(1_000_000),
+        ] {
+            assert_eq!(
+                parse_fairness_evidence_hash_hex(&malformed),
+                Err(FAIRNESS_EVIDENCE_HASH_VALIDATION_ERROR)
+            );
+        }
     }
 }
