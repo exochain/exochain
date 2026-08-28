@@ -732,6 +732,70 @@ test('wasm_verify_safe_harbor', () => {
   return wasm.wasm_verify_safe_harbor(JSON.stringify(shTxn));
 });
 
+test('wasm_record_fairness_evidence records and verifies a FairnessProof safe harbor', () => {
+  const methodology = 'DCF analysis plus comparable transactions';
+  const conclusion = 'Transaction price is within fair market range';
+  const fairnessTxn = wasm.wasm_initiate_safe_harbor(
+    UUID_4,
+    TEST_DID,
+    TEST_DID_2,
+    'Board member is counterparty',
+    NONZERO_32_HEX,
+    JSON.stringify('FairnessProof'),
+    NOW_MS
+  );
+  const fairnessDisclosedTxn = wasm.wasm_complete_disclosure(
+    JSON.stringify(fairnessTxn),
+    TEST_DID,
+    'All material facts disclosed',
+    NOW_MS
+  );
+  const fairnessEvidenceTxn = wasm.wasm_record_fairness_evidence(
+    JSON.stringify(fairnessDisclosedTxn),
+    TEST_DID_3,
+    methodology,
+    conclusion,
+    NONZERO_32_HEX,
+    NOW_MS
+  );
+
+  if (fairnessEvidenceTxn.status !== 'DisclosureMade') {
+    throw new Error('recording fairness evidence must preserve DisclosureMade status');
+  }
+  const recorded = fairnessEvidenceTxn.fairness_evidence;
+  if (!recorded) {
+    throw new Error('FairnessProof path must retain the recorded fairness evidence');
+  }
+  if (recorded.evaluator !== TEST_DID_3 || recorded.methodology !== methodology || recorded.conclusion !== conclusion) {
+    throw new Error('recorded fairness evidence must preserve evaluator, methodology, and conclusion');
+  }
+  if (hashHex(recorded.evidence_hash) !== NONZERO_32_HEX) {
+    throw new Error('recorded fairness evidence must preserve the nonzero evidence hash');
+  }
+
+  const verification = wasm.wasm_verify_safe_harbor(JSON.stringify(fairnessEvidenceTxn));
+  if (verification.ok !== true) {
+    throw new Error(`FairnessProof safe harbor must verify: ${verification.error || 'unknown error'}`);
+  }
+  return { fairnessEvidenceTxn, verification };
+});
+
+test('wasm_record_fairness_evidence rejects the BoardApproval path', () => {
+  if (!disclosedTxn) throw new Error('skipped -- no disclosed BoardApproval txn from setup');
+  return expectErrorContains(
+    'wasm_record_fairness_evidence wrong path',
+    () => wasm.wasm_record_fairness_evidence(
+      JSON.stringify(disclosedTxn),
+      TEST_DID_3,
+      'DCF analysis',
+      'Transaction price is within fair market range',
+      NONZERO_32_HEX,
+      NOW_MS
+    ),
+    'fairness evidence is only valid for the FairnessProof path'
+  );
+});
+
 // =========================================================================
 // Module 6 — Bailment
 // =========================================================================

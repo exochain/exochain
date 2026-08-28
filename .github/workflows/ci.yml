@@ -720,7 +720,7 @@ jobs:
         run: npm pack --dry-run
         working-directory: packages/exochain-wasm/wasm
       - name: Verify WASM exports
-        # Expected export count = 166. Baseline was 110 before
+        # Expected export count = 167. Baseline was 110 before
         # decision-forum, messaging, death-trigger, and franchise/NewCo
         # scaffold were added; the adjudicated decision transition bridge
         # adds the current security boundary, and the HonorGood economy bridge
@@ -730,11 +730,12 @@ jobs:
         # messaging adds caller-managed X25519 public-key derivation, and the
         # AVC bridge keeps legacy raw-subject-key entrypoints fail-closed and
         # adds external-signature payload/request builders plus explicit AVC
-        # protocol/package metadata for trust receipts.
+        # protocol/package metadata for trust receipts; the fairness-evidence
+        # transition adds the current FairnessProof safe-harbor bridge.
         run: |
           COUNT=$(grep -c "module.exports.wasm_" packages/exochain-wasm/wasm/exochain_wasm.js)
           echo "Found $COUNT WASM exports"
-          [ "$COUNT" -eq 166 ] || (echo "Expected 166 exports, got $COUNT" && exit 1)
+          [ "$COUNT" -eq 167 ] || (echo "Expected 167 exports, got $COUNT" && exit 1)
       - name: Upload WASM artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -776,7 +777,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Verify Rust exports match JS expectations
-        # Expected #[wasm_bindgen] count = 166. Baseline was 110 before the
+        # Expected #[wasm_bindgen] count = 167. Baseline was 110 before the
         # Sprint-4 additions (decision-forum, messaging, death-trigger,
         # franchise/NewCo scaffold); the adjudicated decision transition bridge
         # adds the current security boundary, the HonorGood economy bridge
@@ -787,11 +788,12 @@ jobs:
         # path, and the AVC bridge keeps legacy raw-subject-key entrypoints
         # fail-closed while adding external-signature payload/request builders
         # plus explicit AVC protocol/package metadata for trust-receipt
-        # emission.
+        # emission, and the fairness-evidence transition adds the current
+        # FairnessProof safe-harbor bridge.
         run: |
           RUST_COUNT=$(grep -r '#\[wasm_bindgen\]' crates/exochain-wasm/src/ | wc -l | tr -d ' ')
           echo "Rust #[wasm_bindgen] exports: $RUST_COUNT"
-          [ "$RUST_COUNT" -eq 166 ] || (echo "WASM export count changed from 166 to $RUST_COUNT — update bridge tests" && exit 1)
+          [ "$RUST_COUNT" -eq 167 ] || (echo "WASM export count changed from 167 to $RUST_COUNT — update bridge tests" && exit 1)
 
   # -----------------------------------------------------------------------
   # Gate 23: Unaudited feature matrix
