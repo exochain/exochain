@@ -112,11 +112,11 @@ impl RevenueShareTemplate {
     }
 }
 
-/// Allocate `charged_amount` across `template`, using saturating
-/// integer arithmetic. Always deterministic; never floating point.
+/// Allocate `charged_amount` across `template`, using exact floor
+/// multiplication and division. Always deterministic; never floating point.
 ///
 /// Each recipient amount is `charged_amount * share_bp / 10_000`
-/// using `saturating_mul`/`saturating_div`. The remainder (if any)
+/// without saturating the intermediate product. The remainder (if any)
 /// stays unallocated and is the caller's responsibility to direct
 /// (typically to the protocol treasury).
 ///
@@ -143,13 +143,10 @@ pub fn distribute_revenue(
     Ok(lines)
 }
 
-/// Apply a basis-point ratio to `amount` using saturating integer math.
+/// Apply a basis-point ratio using exact floor multiplication and division.
 #[must_use]
 pub fn apply_bp(amount: MicroExo, bp: BasisPoints) -> MicroExo {
-    let bp_u128 = u128::from(bp);
-    amount
-        .saturating_mul(bp_u128)
-        .saturating_div(u128::from(MAX_BASIS_POINTS))
+    crate::price::mul_div_floor_saturating(amount, u128::from(bp), u128::from(MAX_BASIS_POINTS))
 }
 
 #[cfg(test)]
@@ -221,13 +218,51 @@ mod tests {
     }
 
     #[test]
-    fn apply_bp_saturating_at_max_value_does_not_panic() {
-        // u128::MAX * 10_000 saturates to u128::MAX; dividing by 10_000
-        // yields u128::MAX / 10_000. The helper must never panic.
-        let result = apply_bp(u128::MAX, MAX_BASIS_POINTS);
+    fn extreme_apply_bp_is_exact_at_full_and_half_share() {
         assert_eq!(
-            result,
-            u128::MAX.saturating_div(u128::from(MAX_BASIS_POINTS))
+            apply_bp(340_282_366_920_938_463_463_374_607_431_768_211_455, 10_000,),
+            340_282_366_920_938_463_463_374_607_431_768_211_455,
+        );
+        assert_eq!(
+            apply_bp(340_282_366_920_938_463_463_374_607_431_768_211_455, 5_000,),
+            170_141_183_460_469_231_731_687_303_715_884_105_727,
+        );
+    }
+
+    #[test]
+    fn extreme_validated_two_line_distribution_never_exceeds_charge() {
+        let template = RevenueShareTemplate {
+            event_class: EventClass::ValueSettlement,
+            allocations: vec![
+                TemplateAllocation {
+                    recipient: RevenueRecipient::ProtocolTreasury,
+                    share_bp: 5_000,
+                },
+                TemplateAllocation {
+                    recipient: RevenueRecipient::ValidatorSet,
+                    share_bp: 5_000,
+                },
+            ],
+        };
+
+        let lines = distribute_revenue(
+            &template,
+            340_282_366_920_938_463_463_374_607_431_768_211_455,
+        )
+        .expect("validated revenue template");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            lines[0].amount_micro_exo,
+            170_141_183_460_469_231_731_687_303_715_884_105_727,
+        );
+        assert_eq!(
+            lines[1].amount_micro_exo,
+            170_141_183_460_469_231_731_687_303_715_884_105_727,
+        );
+        assert_eq!(
+            lines.iter().map(|line| line.amount_micro_exo).sum::<u128>(),
+            340_282_366_920_938_463_463_374_607_431_768_211_454,
         );
     }
 

@@ -32,7 +32,10 @@ use std::collections::BTreeMap;
 use exo_core::Timestamp;
 use uuid::Uuid;
 
-use crate::{error::Result, store::TenantStore};
+use crate::{
+    error::{Result, TenantError},
+    store::TenantStore,
+};
 
 /// The kind of billable activity a usage event records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,7 +204,9 @@ impl UsageMeter {
     }
 
     /// Aggregate this meter's recorded events for `tenant_id` within `window`,
-    /// using HLC timestamp ordering (never host wall-clock).
+    /// using HLC timestamp ordering (never host wall-clock). Totals saturate
+    /// at `u64::MAX` for backward compatibility; checked billing callers
+    /// should use [`Self::try_totals_in_window`].
     #[must_use]
     pub fn totals_in_window(&self, tenant_id: &Uuid, window: &UsageWindow) -> UsageTotals {
         let mut totals = UsageTotals::default();
@@ -210,11 +215,41 @@ impl UsageMeter {
                 continue;
             }
             match event.kind {
-                UsageKind::BytesWritten => totals.bytes_written += event.amount,
-                UsageKind::ApiCall => totals.api_calls += event.amount,
+                UsageKind::BytesWritten => {
+                    totals.bytes_written = totals.bytes_written.saturating_add(event.amount);
+                }
+                UsageKind::ApiCall => {
+                    totals.api_calls = totals.api_calls.saturating_add(event.amount);
+                }
             }
         }
         totals
+    }
+
+    /// Aggregate usage with checked totals for billing and reconciliation.
+    ///
+    /// # Errors
+    /// Returns [`TenantError::UsageTotalOverflow`] with the tenant and
+    /// overflowing field when a mathematical total exceeds `u64::MAX`.
+    pub fn try_totals_in_window(
+        &self,
+        tenant_id: &Uuid,
+        window: &UsageWindow,
+    ) -> Result<UsageTotals> {
+        Ok(UsageTotals {
+            bytes_written: self.try_usage_total(
+                tenant_id,
+                UsageKind::BytesWritten,
+                Some(window),
+                "bytes_written",
+            )?,
+            api_calls: self.try_usage_total(
+                tenant_id,
+                UsageKind::ApiCall,
+                Some(window),
+                "api_calls",
+            )?,
+        })
     }
 
     /// Reconcile this meter's self-reported byte totals for `tenant_id`
@@ -238,14 +273,9 @@ impl UsageMeter {
         tenant_id: &Uuid,
         store: &TenantStore,
     ) -> Result<ReconciledBytes> {
-        let store_total = store.total_bytes(tenant_id);
-
-        let meter_total: u64 = self
-            .events
-            .iter()
-            .filter(|e| e.tenant_id == *tenant_id && e.kind == UsageKind::BytesWritten)
-            .map(|e| e.amount)
-            .sum();
+        let store_total = store.try_total_bytes(tenant_id)?;
+        let meter_total =
+            self.try_usage_total(tenant_id, UsageKind::BytesWritten, None, "bytes_written")?;
 
         Ok(ReconciledBytes {
             store_total,
@@ -271,7 +301,9 @@ impl UsageMeter {
     /// Produce a deterministic billing export (invoice) for `tenant_id` over
     /// `window`. The same usage history must always yield the identical
     /// invoice. `settlement_authorized` is only ever `true` when the
-    /// tenant's billing plan is `SettlementMode::PaidOptIn`.
+    /// tenant's billing plan is `SettlementMode::PaidOptIn`. Totals saturate
+    /// at `u64::MAX` for backward compatibility; checked billing callers
+    /// should use [`Self::try_invoice`].
     #[must_use]
     pub fn invoice(&self, tenant_id: &Uuid, window: &UsageWindow) -> Invoice {
         let totals = self.totals_in_window(tenant_id, window);
@@ -284,6 +316,47 @@ impl UsageMeter {
             settlement_authorized,
         }
     }
+
+    /// Produce a deterministic billing export with checked usage totals.
+    ///
+    /// # Errors
+    /// Returns [`TenantError::UsageTotalOverflow`] with the tenant and
+    /// overflowing field when a mathematical total exceeds `u64::MAX`.
+    pub fn try_invoice(&self, tenant_id: &Uuid, window: &UsageWindow) -> Result<Invoice> {
+        let totals = self.try_totals_in_window(tenant_id, window)?;
+        let settlement_authorized =
+            matches!(self.settlement_mode(tenant_id), SettlementMode::PaidOptIn);
+        Ok(Invoice {
+            tenant_id: *tenant_id,
+            window: *window,
+            totals,
+            settlement_authorized,
+        })
+    }
+
+    fn try_usage_total(
+        &self,
+        tenant_id: &Uuid,
+        kind: UsageKind,
+        window: Option<&UsageWindow>,
+        field: &'static str,
+    ) -> Result<u64> {
+        self.events
+            .iter()
+            .filter(|event| {
+                event.tenant_id == *tenant_id
+                    && event.kind == kind
+                    && window.is_none_or(|usage_window| usage_window.contains(&event.at))
+            })
+            .try_fold(0u64, |total, event| {
+                total
+                    .checked_add(event.amount)
+                    .ok_or(TenantError::UsageTotalOverflow {
+                        tenant_id: *tenant_id,
+                        field,
+                    })
+            })
+    }
 }
 
 #[cfg(test)]
@@ -291,7 +364,10 @@ mod tests {
     use exo_core::Did;
 
     use super::*;
-    use crate::store::TenantData;
+    use crate::{
+        error::TenantError,
+        store::{TenantData, tests::store_with_byte_lengths},
+    };
 
     fn uuid(byte: u8) -> Uuid {
         Uuid::from_bytes([byte; 16])
@@ -485,6 +561,162 @@ mod tests {
         assert!(window.contains(&ts(1_000)));
         assert!(!window.contains(&ts(2_000)));
         assert!(!window.contains(&ts(500)));
+    }
+
+    #[test]
+    fn totals_in_window_overflow_saturates_for_compatibility() {
+        let mut meter = UsageMeter::new();
+        let tenant = uuid(1);
+        meter
+            .record_bytes_written(tenant, u64::MAX, ts(10))
+            .expect("first byte event");
+        meter
+            .record_bytes_written(tenant, 1, ts(20))
+            .expect("second byte event");
+        meter.events.push(UsageEvent {
+            tenant_id: tenant,
+            kind: UsageKind::ApiCall,
+            amount: u64::MAX,
+            at: ts(30),
+        });
+        meter.events.push(UsageEvent {
+            tenant_id: tenant,
+            kind: UsageKind::ApiCall,
+            amount: 1,
+            at: ts(40),
+        });
+        let window = UsageWindow::new(ts(0), ts(100));
+
+        assert_eq!(
+            meter.totals_in_window(&tenant, &window),
+            UsageTotals {
+                bytes_written: u64::MAX,
+                api_calls: u64::MAX,
+            }
+        );
+    }
+
+    #[test]
+    fn try_totals_in_window_bytes_overflow_returns_contextual_error() {
+        let mut meter = UsageMeter::new();
+        let tenant = uuid(1);
+        meter
+            .record_bytes_written(tenant, u64::MAX, ts(10))
+            .expect("first byte event");
+        meter
+            .record_bytes_written(tenant, 1, ts(20))
+            .expect("second byte event");
+        let window = UsageWindow::new(ts(0), ts(100));
+
+        assert!(matches!(
+            meter.try_totals_in_window(&tenant, &window),
+            Err(TenantError::UsageTotalOverflow {
+                tenant_id,
+                field: "bytes_written",
+            }) if tenant_id == tenant
+        ));
+    }
+
+    #[test]
+    fn try_totals_in_window_api_calls_overflow_returns_contextual_error() {
+        let mut meter = UsageMeter::new();
+        let tenant = uuid(1);
+        meter.events.push(UsageEvent {
+            tenant_id: tenant,
+            kind: UsageKind::ApiCall,
+            amount: u64::MAX,
+            at: ts(10),
+        });
+        meter.events.push(UsageEvent {
+            tenant_id: tenant,
+            kind: UsageKind::ApiCall,
+            amount: 1,
+            at: ts(20),
+        });
+        let window = UsageWindow::new(ts(0), ts(100));
+
+        assert!(matches!(
+            meter.try_totals_in_window(&tenant, &window),
+            Err(TenantError::UsageTotalOverflow {
+                tenant_id,
+                field: "api_calls",
+            }) if tenant_id == tenant
+        ));
+    }
+
+    #[test]
+    fn invoice_overflow_saturates_for_compatibility() {
+        let mut meter = UsageMeter::new();
+        let tenant = uuid(1);
+        meter
+            .record_bytes_written(tenant, u64::MAX, ts(10))
+            .expect("first byte event");
+        meter
+            .record_bytes_written(tenant, 1, ts(20))
+            .expect("second byte event");
+        let window = UsageWindow::new(ts(0), ts(100));
+
+        assert_eq!(
+            meter.invoice(&tenant, &window).totals.bytes_written,
+            u64::MAX
+        );
+    }
+
+    #[test]
+    fn try_invoice_overflow_returns_contextual_error() {
+        let mut meter = UsageMeter::new();
+        let tenant = uuid(1);
+        meter
+            .record_bytes_written(tenant, u64::MAX, ts(10))
+            .expect("first byte event");
+        meter
+            .record_bytes_written(tenant, 1, ts(20))
+            .expect("second byte event");
+        let window = UsageWindow::new(ts(0), ts(100));
+
+        assert!(matches!(
+            meter.try_invoice(&tenant, &window),
+            Err(TenantError::UsageTotalOverflow {
+                tenant_id,
+                field: "bytes_written",
+            }) if tenant_id == tenant
+        ));
+    }
+
+    #[test]
+    fn reconcile_store_total_overflow_returns_contextual_error() {
+        let tenant = uuid(1);
+        let meter = UsageMeter::new();
+        let store = store_with_byte_lengths(tenant, [u64::MAX, 1]);
+
+        assert!(matches!(
+            meter.reconcile_bytes_with_store(&tenant, &store),
+            Err(TenantError::UsageTotalOverflow {
+                tenant_id,
+                field: "store_total_bytes",
+            }) if tenant_id == tenant
+        ));
+    }
+
+    #[test]
+    fn reconcile_meter_total_overflow_returns_contextual_error() {
+        let tenant = uuid(1);
+        let store = TenantStore::new();
+        let mut meter = UsageMeter::new();
+        meter
+            .record_bytes_written(tenant, u64::MAX, ts(10))
+            .expect("first byte event");
+        meter
+            .record_bytes_written(tenant, 1, ts(20))
+            .expect("second byte event");
+
+        assert!(matches!(
+            meter.reconcile_bytes_with_store(&tenant, &store),
+            Err(TenantError::UsageTotalOverflow {
+                tenant_id,
+                field: "bytes_written",
+            }) if tenant_id == tenant
+        ));
     }
 
     /// (3) Deterministic billing export: replaying the identical usage
