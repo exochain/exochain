@@ -165,25 +165,35 @@ impl LatencyBreakdown {
         context_packet_tokens: u64,
     ) -> Self {
         let runner_factor = runner_factor(runner);
-        let catalog_lookup_ms =
-            1 + (corpus_count / 120) + (selected_ref_count / 32) + runner_factor;
-        let canonical_resolution_ms = (selected_ref_count / 16) + route_count + runner_factor;
-        let provenance_fetch_ms = (selected_ref_count / 24) + route_count;
-        let contradiction_fetch_ms = (selected_ref_count / 48) + (runner_factor / 4);
-        let routing_view_build_ms =
-            route_count.saturating_mul(2) + (selected_ref_count / 20) + runner_factor;
+        let catalog_lookup_ms = 1u64
+            .saturating_add(corpus_count / 120)
+            .saturating_add(selected_ref_count / 32)
+            .saturating_add(runner_factor);
+        let canonical_resolution_ms = (selected_ref_count / 16)
+            .saturating_add(route_count)
+            .saturating_add(runner_factor);
+        let provenance_fetch_ms = (selected_ref_count / 24).saturating_add(route_count);
+        let contradiction_fetch_ms = (selected_ref_count / 48).saturating_add(runner_factor / 4);
+        let routing_view_build_ms = route_count
+            .saturating_mul(2)
+            .saturating_add(selected_ref_count / 20)
+            .saturating_add(runner_factor);
         let validation_ms = match runner {
             BenchmarkRunnerName::NoMemory | BenchmarkRunnerName::LongContextDump => 0,
             BenchmarkRunnerName::FlatRag => 1,
-            BenchmarkRunnerName::DagDbRouting => 3 + (selected_ref_count / 24),
+            BenchmarkRunnerName::DagDbRouting => 3u64.saturating_add(selected_ref_count / 24),
             BenchmarkRunnerName::GovernedDagDbRouting
-            | BenchmarkRunnerName::GovernedDagDbOptimized => 5 + (selected_ref_count / 16),
+            | BenchmarkRunnerName::GovernedDagDbOptimized => {
+                5u64.saturating_add(selected_ref_count / 16)
+            }
         };
-        let context_packet_build_ms = 1 + (context_packet_tokens / 128) + (selected_ref_count / 32);
+        let context_packet_build_ms = 1u64
+            .saturating_add(context_packet_tokens / 128)
+            .saturating_add(selected_ref_count / 32);
         let writeback_ms = match runner {
             BenchmarkRunnerName::DagDbRouting
             | BenchmarkRunnerName::GovernedDagDbRouting
-            | BenchmarkRunnerName::GovernedDagDbOptimized => 2 + route_count,
+            | BenchmarkRunnerName::GovernedDagDbOptimized => 2u64.saturating_add(route_count),
             BenchmarkRunnerName::NoMemory
             | BenchmarkRunnerName::LongContextDump
             | BenchmarkRunnerName::FlatRag => 0,
@@ -252,7 +262,9 @@ impl LatencyBreakdown {
         let contradiction_fetch_ms = base.contradiction_fetch_ms;
         let routing_view_build_ms = base.routing_view_build_ms;
         let validation_ms = base.validation_ms;
-        let context_packet_build_ms = 1 + (context_packet_tokens / 256) + (selected_ref_count / 64);
+        let context_packet_build_ms = 1u64
+            .saturating_add(context_packet_tokens / 256)
+            .saturating_add(selected_ref_count / 64);
         let writeback_ms = if idempotency_read_reuse_hit {
             base.writeback_ms.saturating_sub(1)
         } else {
@@ -3548,6 +3560,27 @@ mod tests {
                 + latency.context_packet_build_ms
                 + latency.writeback_ms
         );
+    }
+
+    #[test]
+    fn latency_overflow_saturates_each_stage_and_total_deterministically() {
+        let latency = LatencyBreakdown::from_inputs(
+            u64::MAX,
+            BenchmarkRunnerName::GovernedDagDbRouting,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+        );
+
+        assert_eq!(latency.catalog_lookup_ms, 730_183_619_584_336_422);
+        assert_eq!(latency.canonical_resolution_ms, u64::MAX);
+        assert_eq!(latency.provenance_fetch_ms, u64::MAX);
+        assert_eq!(latency.contradiction_fetch_ms, 384_307_168_202_282_326);
+        assert_eq!(latency.routing_view_build_ms, u64::MAX);
+        assert_eq!(latency.validation_ms, 1_152_921_504_606_846_980);
+        assert_eq!(latency.context_packet_build_ms, 720_575_940_379_279_359);
+        assert_eq!(latency.writeback_ms, u64::MAX);
+        assert_eq!(latency.total_ms, u64::MAX);
     }
 
     #[test]

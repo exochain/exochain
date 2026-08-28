@@ -123,9 +123,7 @@ pub fn compute_breakdown(
     };
 
     let risk_component = match inputs.declared_value_micro_exo {
-        Some(value) => apply_bp(value, policy.risk_share_bp)
-            .saturating_mul(u128::from(inputs.risk_bp))
-            .saturating_div(u128::from(MAX_BASIS_POINTS)),
+        Some(value) => apply_bp(apply_bp(value, policy.risk_share_bp), inputs.risk_bp),
         None => 0,
     };
 
@@ -187,16 +185,26 @@ fn require_bp(field: &'static str, value: BasisPoints) -> Result<(), EconomyErro
 
 #[must_use]
 pub fn apply_bp(amount: MicroExo, bp: BasisPoints) -> MicroExo {
-    amount
-        .saturating_mul(u128::from(bp))
-        .saturating_div(u128::from(MAX_BASIS_POINTS))
+    mul_div_floor_saturating(amount, u128::from(bp), u128::from(MAX_BASIS_POINTS))
 }
 
 #[must_use]
 pub fn apply_multiplier(amount: MicroExo, multiplier_bp: BasisPoints) -> MicroExo {
-    amount
-        .saturating_mul(u128::from(multiplier_bp))
-        .saturating_div(u128::from(NEUTRAL_MULTIPLIER_BP))
+    mul_div_floor_saturating(
+        amount,
+        u128::from(multiplier_bp),
+        u128::from(NEUTRAL_MULTIPLIER_BP),
+    )
+}
+
+pub(crate) fn mul_div_floor_saturating(value: u128, numerator: u128, denominator: u128) -> u128 {
+    let quotient = value / denominator;
+    let remainder = value % denominator;
+    let fractional = (remainder * numerator) / denominator;
+    quotient
+        .checked_mul(numerator)
+        .and_then(|whole| whole.checked_add(fractional))
+        .unwrap_or(u128::MAX)
 }
 
 #[cfg(test)]
@@ -310,16 +318,41 @@ mod tests {
     }
 
     #[test]
-    fn apply_bp_at_max_saturates_without_panic() {
-        // u128::MAX * 10_000 saturates to u128::MAX, then / 10_000
-        // returns u128::MAX / 10_000. The point of this test is that the
-        // helper never panics under adversarial inputs.
-        let result = apply_bp(u128::MAX, MAX_BASIS_POINTS);
+    fn extreme_apply_bp_is_exact_at_full_and_half_share() {
         assert_eq!(
-            result,
-            u128::MAX.saturating_div(u128::from(MAX_BASIS_POINTS))
+            apply_bp(340_282_366_920_938_463_463_374_607_431_768_211_455, 10_000,),
+            340_282_366_920_938_463_463_374_607_431_768_211_455,
         );
-        assert!(result > 0);
+        assert_eq!(
+            apply_bp(340_282_366_920_938_463_463_374_607_431_768_211_455, 5_000,),
+            170_141_183_460_469_231_731_687_303_715_884_105_727,
+        );
+    }
+
+    #[test]
+    fn extreme_apply_multiplier_is_exact_without_intermediate_saturation() {
+        assert_eq!(
+            apply_multiplier(34_028_236_692_093_846_346_337_460_743_176_821_145, 100_000,),
+            340_282_366_920_938_463_463_374_607_431_768_211_450,
+        );
+    }
+
+    #[test]
+    fn extreme_risk_basis_point_stage_is_exact_without_intermediate_saturation() {
+        let mut policy = PricingPolicy::zero_launch_default();
+        policy.risk_share_bp = 10_000;
+        policy.global_ceiling_micro_exo = u128::MAX;
+        let mut inputs = baseline_inputs();
+        inputs.declared_value_micro_exo = Some(u128::MAX);
+        inputs.realized_value_micro_exo = None;
+        inputs.risk_bp = 5_000;
+
+        let breakdown = compute_breakdown(&policy, &inputs).expect("valid extreme pricing inputs");
+
+        assert_eq!(
+            breakdown.risk_component_micro_exo,
+            170_141_183_460_469_231_731_687_303_715_884_105_727,
+        );
     }
 
     #[test]

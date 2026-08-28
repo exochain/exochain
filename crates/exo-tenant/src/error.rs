@@ -35,6 +35,11 @@ pub enum TenantError {
     StorageRecordNotFound { tenant_id: Uuid, item_id: Uuid },
     #[error("cold storage reference already exists for tenant {tenant_id}, object {object_key}")]
     ColdStorageReferenceAlreadyExists { tenant_id: Uuid, object_key: String },
+    #[error("usage total overflow for tenant {tenant_id}, field {field}")]
+    UsageTotalOverflow {
+        tenant_id: Uuid,
+        field: &'static str,
+    },
     #[error("shard error: {reason}")]
     ShardError { reason: String },
     #[error("storage error: {reason}")]
@@ -66,6 +71,10 @@ mod tests {
             TenantError::ColdStorageReferenceAlreadyExists {
                 tenant_id: Uuid::nil(),
                 object_key: "x".into(),
+            },
+            TenantError::UsageTotalOverflow {
+                tenant_id: Uuid::nil(),
+                field: "bytes_written",
             },
             TenantError::ShardError { reason: "x".into() },
             TenantError::StorageError { reason: "x".into() },
