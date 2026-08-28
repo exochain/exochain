@@ -1216,6 +1216,7 @@ async fn start_node(
         }
         None => None,
     };
+    drop(admin_token);
 
     // Build the agent passport API router.
     let passport_state = Arc::new(passport::PassportApiState {
