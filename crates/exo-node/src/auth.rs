@@ -1310,20 +1310,55 @@ mod tests {
             .split("#[cfg(test)]")
             .next()
             .expect("tests marker present");
-        let crosschecked_configuration = production
-            .find("let crosschecked_anchor_router = match")
-            .expect("CrossChecked startup configuration present");
-        let drop_position = production
+        let startup = production
+            .split("async fn start_node(")
+            .nth(1)
+            .expect("start_node implementation present");
+        let crosschecked_configuration = startup
+            .find("let crosschecked_anchor_config =")
+            .expect("CrossChecked startup configuration local present");
+        let configuration_completion = crosschecked_configuration
+            + startup[crosschecked_configuration..]
+                .find(';')
+                .expect("CrossChecked startup configuration call completes");
+        let configuration_statement =
+            &startup[crosschecked_configuration..=configuration_completion];
+        let drop_position = startup
             .find("drop(admin_token);")
             .expect("raw admin token explicitly dropped after startup configuration");
+        let crosschecked_router_match = startup
+            .find("let crosschecked_anchor_router = match crosschecked_anchor_config")
+            .expect("CrossChecked router construction uses the evaluated configuration");
+        let first_crosschecked_await = crosschecked_router_match
+            + startup[crosschecked_router_match..]
+                .find(".await")
+                .expect("CrossChecked router construction contains its database await");
 
         assert!(
-            drop_position > crosschecked_configuration,
-            "raw admin token must remain available through its final CrossChecked configuration use"
+            configuration_statement
+                .contains("crosschecked_anchor_startup_config_from_environment(")
+                && configuration_statement.contains("admin_token.as_str()"),
+            "CrossChecked configuration must consume the raw admin token in the evaluated local"
         );
         assert!(
-            !production[drop_position + "drop(admin_token);".len()..]
-                .contains("admin_token.as_str()"),
+            configuration_completion < drop_position,
+            "raw admin token must be dropped only after CrossChecked configuration evaluation completes"
+        );
+        assert!(
+            drop_position < crosschecked_router_match,
+            "raw admin token must be dropped before CrossChecked router matching and construction"
+        );
+        assert!(
+            crosschecked_router_match < first_crosschecked_await,
+            "CrossChecked router matching must precede its first await"
+        );
+        assert!(
+            startup[crosschecked_router_match..=first_crosschecked_await]
+                .contains("postgres_crosschecked_anchor_clock("),
+            "the first CrossChecked router await must be the PostgreSQL anchor clock"
+        );
+        assert!(
+            !startup[drop_position + "drop(admin_token);".len()..].contains("admin_token.as_str()"),
             "startup must not use raw admin token material after explicitly dropping it"
         );
     }
