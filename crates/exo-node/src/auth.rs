@@ -43,22 +43,61 @@ use axum::{
     response::Response,
 };
 use exo_node::crosschecked_anchor_http::CrossCheckedBearerVerifier;
-use zeroize::{Zeroize, Zeroizing};
+use subtle::ConstantTimeEq;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 pub const LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_ROUTE: &str =
     "/api/v1/avc/livesafe/public-adapter-output-authorization";
 
-/// Shared bearer token state for the auth middleware.
+/// Fixed-size verifier retained instead of the configured bearer token.
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+pub(crate) struct BearerTokenVerifier {
+    digest: [u8; 32],
+}
+
+impl BearerTokenVerifier {
+    pub(crate) fn from_bearer(bearer: &str) -> Self {
+        Self {
+            digest: Self::digest(bearer),
+        }
+    }
+
+    fn digest(bearer: &str) -> [u8; 32] {
+        *blake3::hash(bearer.as_bytes()).as_bytes()
+    }
+
+    pub(crate) fn verifies(&self, bearer: &str) -> bool {
+        let mut candidate = Self::digest(bearer);
+        let matches = bool::from(candidate.ct_eq(&self.digest));
+        candidate.zeroize();
+        matches
+    }
+}
+
+/// Shared bearer-token verifier state for the auth middleware.
 #[derive(Clone)]
 pub struct BearerAuth {
-    /// The expected bearer token (hex-encoded 256-bit random value).
-    pub token: Arc<Zeroizing<String>>,
+    verifier: Arc<BearerTokenVerifier>,
+}
+
+impl BearerAuth {
+    /// Prehash a configured bearer once for subsequent fixed-size comparisons.
+    pub fn from_bearer(bearer: &str) -> Self {
+        Self {
+            verifier: Arc::new(BearerTokenVerifier::from_bearer(bearer)),
+        }
+    }
+
+    /// Apply the node's canonical bearer-header parser and verifier.
+    pub fn verify_headers(&self, headers: &HeaderMap) -> Result<(), StatusCode> {
+        verify_bearer_header(headers, self)
+    }
 }
 
 /// Optional route-scoped bearer tokens that never inherit admin authority.
 #[derive(Clone, Default)]
 pub struct ScopedBearerAuth {
-    livesafe_public_adapter_output_authorization: Option<Arc<Zeroizing<String>>>,
+    livesafe_public_adapter_output_authorization: Option<Arc<BearerTokenVerifier>>,
     crosschecked_anchor: Option<CrossCheckedBearerVerifier>,
 }
 
@@ -68,8 +107,9 @@ impl ScopedBearerAuth {
     }
 
     pub fn livesafe_public_adapter_output_authorization(token: Zeroizing<String>) -> Self {
+        let verifier = BearerTokenVerifier::from_bearer(token.as_str());
         Self {
-            livesafe_public_adapter_output_authorization: Some(Arc::new(token)),
+            livesafe_public_adapter_output_authorization: Some(Arc::new(verifier)),
             crosschecked_anchor: None,
         }
     }
@@ -179,7 +219,7 @@ fn bearer_header_value(headers: &HeaderMap) -> Result<&str, StatusCode> {
 
 fn verify_bearer_header(headers: &HeaderMap, auth: &BearerAuth) -> Result<(), StatusCode> {
     let provided = bearer_header_value(headers)?;
-    if constant_time_eq(provided.as_bytes(), auth.token.as_bytes()) {
+    if auth.verifier.verifies(provided) {
         Ok(())
     } else {
         Err(StatusCode::FORBIDDEN)
@@ -192,12 +232,12 @@ fn verify_admin_or_livesafe_public_output_bearer(
     scoped_auth: &ScopedBearerAuth,
 ) -> Result<(), StatusCode> {
     let provided = bearer_header_value(headers)?;
-    if constant_time_eq(provided.as_bytes(), auth.token.as_bytes()) {
+    if auth.verifier.verifies(provided) {
         return Ok(());
     }
 
-    if let Some(token) = &scoped_auth.livesafe_public_adapter_output_authorization {
-        if constant_time_eq(provided.as_bytes(), token.as_bytes()) {
+    if let Some(verifier) = &scoped_auth.livesafe_public_adapter_output_authorization {
+        if verifier.verifies(provided) {
             return Ok(());
         }
     }
@@ -418,30 +458,6 @@ pub async fn require_bearer_on_writes_with_scoped_bearers(
     Ok(next.run(request).await)
 }
 
-/// Constant-time byte-slice equality.
-///
-/// Returns `false` on length mismatch immediately (length is not a
-/// secret; the distinguishing side-channel we care about is content).
-/// For equal-length slices, performs a branchless XOR-accumulate over
-/// every byte so the total work is independent of where the first
-/// differing byte is located.
-///
-/// We inline this instead of pulling in `subtle` or `constant_time_eq`
-/// to avoid adding a dependency for one comparison. The implementation
-/// is the standard XOR-OR-fold and is sufficient against timing
-/// attacks on a bearer-token comparison.
-#[inline]
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -461,8 +477,23 @@ mod tests {
     use super::*;
 
     fn test_auth() -> BearerAuth {
-        BearerAuth {
-            token: Arc::new(Zeroizing::new("test-token-abc123".to_string())),
+        BearerAuth::from_bearer("test-token-abc123")
+    }
+
+    #[test]
+    fn bearer_tokens_are_compared_as_fixed_size_digests() {
+        let verifier = BearerTokenVerifier::from_bearer("expected-node-token");
+        let long = "x".repeat(4_096);
+        let cases = [
+            ("", false),
+            ("short", false),
+            ("expected-node-token", true),
+            (long.as_str(), false),
+        ];
+
+        for (provided, expected) in cases {
+            assert_eq!(BearerTokenVerifier::digest(provided).len(), 32);
+            assert_eq!(verifier.verifies(provided), expected);
         }
     }
 
@@ -1194,27 +1225,28 @@ mod tests {
     }
 
     #[test]
-    fn constant_time_eq_matches_equal() {
-        assert!(constant_time_eq(b"abcdef", b"abcdef"));
-        assert!(constant_time_eq(b"", b""));
-        assert!(constant_time_eq(&[0u8; 32], &[0u8; 32]));
+    fn bearer_token_verifier_matches_equal() {
+        assert!(BearerTokenVerifier::from_bearer("abcdef").verifies("abcdef"));
+        assert!(BearerTokenVerifier::from_bearer("").verifies(""));
     }
 
     #[test]
-    fn constant_time_eq_rejects_different() {
-        assert!(!constant_time_eq(b"abcdef", b"abcdeg"));
-        assert!(!constant_time_eq(b"short", b"different-length"));
-        assert!(!constant_time_eq(b"", b"a"));
+    fn bearer_token_verifier_rejects_different() {
+        let verifier = BearerTokenVerifier::from_bearer("abcdef");
+        assert!(!verifier.verifies("abcdeg"));
+        assert!(!verifier.verifies("different-length"));
+        assert!(!verifier.verifies(""));
     }
 
     #[test]
-    fn constant_time_eq_distinguishes_byte_differences() {
+    fn bearer_token_verifier_distinguishes_byte_differences() {
+        let verifier = BearerTokenVerifier::from_bearer("abcdef");
         // Difference at the first byte
-        assert!(!constant_time_eq(b"xbcdef", b"abcdef"));
+        assert!(!verifier.verifies("xbcdef"));
         // Difference at the last byte
-        assert!(!constant_time_eq(b"abcdex", b"abcdef"));
+        assert!(!verifier.verifies("abcdex"));
         // Multiple differences
-        assert!(!constant_time_eq(b"xxxxxx", b"abcdef"));
+        assert!(!verifier.verifies("xxxxxx"));
     }
 
     #[test]

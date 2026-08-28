@@ -103,11 +103,10 @@ fn decode_cbor<T: DeserializeOwned>(bytes: &[u8], label: &'static str) -> Result
     })
 }
 
-fn verify_snark(proof_bytes: &[u8], public_inputs_bytes: &[u8]) -> Result<bool> {
-    let bundle: SnarkBundle = decode_cbor(proof_bytes, "snark proof bundle")?;
-    let public_inputs: Vec<u64> = decode_cbor(public_inputs_bytes, "snark public inputs")?;
-
-    snark::verify(&bundle.vk, &bundle.proof, &public_inputs)
+fn verify_snark(_proof_bytes: &[u8], _public_inputs_bytes: &[u8]) -> Result<bool> {
+    Err(ProofError::UnauditedImplementation {
+        api: "snark::verify",
+    })
 }
 
 fn verify_stark(proof_bytes: &[u8], public_inputs_bytes: &[u8]) -> Result<bool> {
@@ -180,6 +179,15 @@ mod tests {
         encoded
     }
 
+    fn assert_legacy_snark_refused(result: Result<bool>) {
+        assert!(matches!(
+            result,
+            Err(ProofError::UnauditedImplementation {
+                api: "snark::verify"
+            })
+        ));
+    }
+
     /// x * y = z
     #[derive(Debug)]
     struct MulCircuit {
@@ -204,7 +212,44 @@ mod tests {
     }
 
     #[test]
-    fn verify_any_snark() {
+    fn legacy_snark_verify_refuses_forged_public_hash_chain_through_unified_verifier() {
+        let circuit_hash = exo_core::Hash256::from_bytes([0x52; 32]);
+        let public_inputs = vec![11u64, 121u64];
+        let a = [0xC3; 32];
+        let b = [0xD4; 32];
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"snark:c:verify:");
+        hasher.update(circuit_hash.as_bytes());
+        for input in &public_inputs {
+            hasher.update(&input.to_le_bytes());
+        }
+        hasher.update(&a);
+        hasher.update(&b);
+        let c = *hasher.finalize().as_bytes();
+        let bundle = SnarkBundle {
+            vk: snark::VerifyingKey {
+                num_public_inputs: public_inputs.len(),
+                circuit_hash,
+            },
+            proof: snark::Proof { a, b, c },
+        };
+
+        let result = verify_any(
+            ProofType::Snark,
+            &cbor_bytes(&bundle),
+            &cbor_bytes(&public_inputs),
+        );
+
+        assert!(matches!(
+            result,
+            Err(ProofError::UnauditedImplementation {
+                api: "snark::verify"
+            })
+        ));
+    }
+
+    #[test]
+    fn verify_any_refuses_generated_legacy_snark() {
         let circuit = MulCircuit {
             x: Some(3),
             y: Some(4),
@@ -217,12 +262,15 @@ mod tests {
         let proof_bytes = cbor_bytes(&bundle);
         let public_inputs_bytes = cbor_bytes(&vec![3u64, 12u64]);
 
-        let result = verify_any(ProofType::Snark, &proof_bytes, &public_inputs_bytes).unwrap();
-        assert!(result);
+        assert_legacy_snark_refused(verify_any(
+            ProofType::Snark,
+            &proof_bytes,
+            &public_inputs_bytes,
+        ));
     }
 
     #[test]
-    fn verify_any_snark_accepts_canonical_cbor() {
+    fn verify_any_refuses_canonical_cbor_legacy_snark() {
         let circuit = MulCircuit {
             x: Some(3),
             y: Some(4),
@@ -235,12 +283,15 @@ mod tests {
         let proof_bytes = cbor_bytes(&bundle);
         let public_inputs_bytes = cbor_bytes(&vec![3u64, 12u64]);
 
-        let result = verify_any(ProofType::Snark, &proof_bytes, &public_inputs_bytes).unwrap();
-        assert!(result);
+        assert_legacy_snark_refused(verify_any(
+            ProofType::Snark,
+            &proof_bytes,
+            &public_inputs_bytes,
+        ));
     }
 
     #[test]
-    fn verify_any_rejects_json_snark_bundle() {
+    fn verify_any_refuses_json_legacy_snark_without_parsing() {
         let circuit = MulCircuit {
             x: Some(3),
             y: Some(4),
@@ -253,8 +304,11 @@ mod tests {
         let proof_bytes = serde_json::to_vec(&bundle).unwrap();
         let public_inputs_bytes = serde_json::to_vec(&vec![3u64, 12u64]).unwrap();
 
-        let err = verify_any(ProofType::Snark, &proof_bytes, &public_inputs_bytes).unwrap_err();
-        assert!(matches!(err, ProofError::DeserializationError(_)));
+        assert_legacy_snark_refused(verify_any(
+            ProofType::Snark,
+            &proof_bytes,
+            &public_inputs_bytes,
+        ));
     }
 
     #[test]
@@ -295,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_any_snark_invalid() {
+    fn verify_any_refuses_legacy_snark_with_changed_inputs() {
         let circuit = MulCircuit {
             x: Some(3),
             y: Some(4),
@@ -308,8 +362,7 @@ mod tests {
         let proof_bytes = cbor_bytes(&bundle);
         let wrong_inputs = cbor_bytes(&vec![3u64, 13u64]);
 
-        let result = verify_any(ProofType::Snark, &proof_bytes, &wrong_inputs).unwrap();
-        assert!(!result);
+        assert_legacy_snark_refused(verify_any(ProofType::Snark, &proof_bytes, &wrong_inputs));
     }
 
     #[test]
@@ -363,13 +416,13 @@ mod tests {
     }
 
     #[test]
-    fn verify_any_bad_proof_bytes() {
-        let err = verify_any(ProofType::Snark, b"not cbor", b"[]").unwrap_err();
+    fn verify_any_bad_zkml_proof_bytes() {
+        let err = verify_any(ProofType::Zkml, b"not cbor", b"[]").unwrap_err();
         assert!(matches!(err, ProofError::DeserializationError(_)));
     }
 
     #[test]
-    fn verify_any_bad_public_inputs_bytes() {
+    fn verify_any_refuses_legacy_snark_before_public_input_parsing() {
         let circuit = MulCircuit {
             x: Some(3),
             y: Some(4),
@@ -382,8 +435,11 @@ mod tests {
         let proof_bytes = cbor_bytes(&bundle);
         let legacy_json_inputs = serde_json::to_vec(&vec![3u64, 12u64]).unwrap();
 
-        let err = verify_any(ProofType::Snark, &proof_bytes, &legacy_json_inputs).unwrap_err();
-        assert!(matches!(err, ProofError::DeserializationError(_)));
+        assert_legacy_snark_refused(verify_any(
+            ProofType::Snark,
+            &proof_bytes,
+            &legacy_json_inputs,
+        ));
     }
 
     #[test]

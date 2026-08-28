@@ -2248,6 +2248,7 @@ dependencies = [
  "sha2",
  "sqlx",
  "static_assertions",
+ "subtle",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
@@ -2274,6 +2275,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.17",
  "tokio",
+ "tower",
 ]
 
 [[package]]

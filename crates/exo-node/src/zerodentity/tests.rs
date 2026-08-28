@@ -3032,9 +3032,7 @@ mod tests {
         bearer_token: &str,
     ) -> Router {
         let onboarding = onboarding_app_with_fixed_clock(store, now_ms);
-        let auth = crate::auth::BearerAuth {
-            token: std::sync::Arc::new(zeroize::Zeroizing::new(bearer_token.to_owned())),
-        };
+        let auth = crate::auth::BearerAuth::from_bearer(bearer_token);
         onboarding.layer(axum::middleware::from_fn(move |req, next| {
             let a = auth.clone();
             crate::auth::require_bearer_on_writes(a, req, next)

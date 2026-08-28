@@ -14,11 +14,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! SNARK proof generation/verification (simplified Groth16-like).
+//! Legacy SNARK-shaped DTO generation with fail-closed verification.
 //!
-//! This is a pedagogical/structural implementation demonstrating the
-//! structure of a SNARK proof system. It is NOT cryptographically hardened.
-//! All operations use integer arithmetic (no floating point).
+//! This pedagogical hash skeleton is not a cryptographic proof system. Its
+//! DTOs remain readable for compatibility, but verification always returns a
+//! typed unaudited error. All operations use integer arithmetic.
 
 use exo_core::types::Hash256;
 use serde::{Deserialize, Serialize};
@@ -58,8 +58,10 @@ pub struct VerifyingKey {
 // Proof
 // ---------------------------------------------------------------------------
 
-/// A SNARK proof. In a real Groth16, a/b/c would be elliptic curve points.
-/// Here we use deterministic byte arrays derived from the witness.
+/// A legacy SNARK-shaped structural artifact.
+///
+/// These fields are deterministic byte arrays, not elliptic-curve proof
+/// elements, and must never be treated as evidence of a verified statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Proof {
     /// "A" component (32 bytes -- hash-based stand-in for a curve point).
@@ -115,7 +117,7 @@ pub fn setup(circuit: &dyn Circuit) -> Result<(ProvingKey, VerifyingKey)> {
 // Prove
 // ---------------------------------------------------------------------------
 
-/// Generate a proof for the given circuit with the provided witness values.
+/// Generate a legacy proof-shaped artifact for structural compatibility.
 ///
 /// The witness must contain values for ALL variables (public + private).
 ///
@@ -167,8 +169,8 @@ pub fn prove(pk: &ProvingKey, circuit: &dyn Circuit, witness: &[u64]) -> Result<
     let a = compute_proof_component(b"snark:a:statement:", &circuit_hash, &public_inputs);
     let b = compute_proof_component(b"snark:b:statement:", &circuit_hash, &public_inputs);
 
-    // c is derived from (a, b, circuit_hash, public_inputs) so the verifier can
-    // recompute it from the public statement.
+    // Retain the deterministic legacy C field for DTO compatibility only.
+    // Verification refuses this hash skeleton unconditionally.
     let c = compute_c_component(&circuit_hash, &public_inputs, &a, &b);
 
     Ok(Proof { a, b, c })
@@ -178,22 +180,15 @@ pub fn prove(pk: &ProvingKey, circuit: &dyn Circuit, witness: &[u64]) -> Result<
 // Verify
 // ---------------------------------------------------------------------------
 
-/// Verify a SNARK proof given a verifying key and public inputs.
+/// Refuse verification of a legacy SNARK-shaped artifact.
 ///
 /// Public inputs are the first `vk.num_public_inputs` values.
 ///
-/// **Unaudited** — gated behind the `unaudited-pedagogical-proofs` feature.
-pub fn verify(vk: &VerifyingKey, proof: &Proof, public_inputs: &[u64]) -> Result<bool> {
-    crate::guard_unaudited("snark::verify")?;
-    if public_inputs.len() != vk.num_public_inputs {
-        return Ok(false);
-    }
-
-    // Recompute what c should be from (circuit_hash, public_inputs, a, b).
-    // This mirrors how the prover computed c.
-    let expected_c = compute_c_component(&vk.circuit_hash, public_inputs, &proof.a, &proof.b);
-
-    Ok(proof.c == expected_c)
+/// This remains fail-closed even when pedagogical construction is enabled.
+pub fn verify(_vk: &VerifyingKey, _proof: &Proof, _public_inputs: &[u64]) -> Result<bool> {
+    Err(ProofError::UnauditedImplementation {
+        api: "snark::verify",
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +330,28 @@ mod tests {
     }
 
     #[test]
+    fn legacy_snark_verify_refuses_forged_public_hash_chain() {
+        let vk = VerifyingKey {
+            num_public_inputs: 2,
+            circuit_hash: Hash256::from_bytes([0x41; 32]),
+        };
+        let public_inputs = [7, 49];
+        let a = [0xA1; 32];
+        let b = [0xB2; 32];
+        let c = compute_c_component(&vk.circuit_hash, &public_inputs, &a, &b);
+        let forged = Proof { a, b, c };
+
+        let result = verify(&vk, &forged, &public_inputs);
+
+        assert!(matches!(
+            result,
+            Err(ProofError::UnauditedImplementation {
+                api: "snark::verify"
+            })
+        ));
+    }
+
+    #[test]
     fn setup_produces_keys() {
         let circuit = make_mul_circuit(3, 4);
         let (pk, vk) = setup(&circuit).unwrap();
@@ -346,26 +363,36 @@ mod tests {
     }
 
     #[test]
-    fn valid_proof_verifies() {
+    fn generated_legacy_proof_is_not_accepted() {
         let circuit = make_mul_circuit(3, 4);
         let (pk, vk) = setup(&circuit).unwrap();
 
         // witness: [x=3, y=4, z=12]
         let proof = prove(&pk, &circuit, &[3, 4, 12]).unwrap();
-        // public inputs: [x=3, z=12]
-        assert!(verify(&vk, &proof, &[3, 12]).unwrap());
+        let result = verify(&vk, &proof, &[3, 12]);
+        assert!(matches!(
+            result,
+            Err(ProofError::UnauditedImplementation {
+                api: "snark::verify"
+            })
+        ));
     }
 
     #[test]
-    fn invalid_proof_rejected() {
+    fn changed_public_inputs_do_not_unlock_legacy_verification() {
         let circuit = make_mul_circuit(3, 4);
         let (pk, vk) = setup(&circuit).unwrap();
 
         let proof = prove(&pk, &circuit, &[3, 4, 12]).unwrap();
 
-        // Wrong public inputs
-        assert!(!verify(&vk, &proof, &[3, 13]).unwrap());
-        assert!(!verify(&vk, &proof, &[4, 12]).unwrap());
+        for public_inputs in [[3, 13], [4, 12]] {
+            assert!(matches!(
+                verify(&vk, &proof, &public_inputs),
+                Err(ProofError::UnauditedImplementation {
+                    api: "snark::verify"
+                })
+            ));
+        }
     }
 
     #[test]
@@ -467,22 +494,33 @@ mod tests {
     }
 
     #[test]
-    fn wrong_public_input_count_rejected() {
+    fn wrong_public_input_count_does_not_unlock_legacy_verification() {
         let circuit = make_mul_circuit(3, 4);
         let (pk, vk) = setup(&circuit).unwrap();
 
         let proof = prove(&pk, &circuit, &[3, 4, 12]).unwrap();
-        assert!(!verify(&vk, &proof, &[3]).unwrap()); // too few
-        assert!(!verify(&vk, &proof, &[3, 12, 99]).unwrap()); // too many
+        for public_inputs in [vec![3], vec![3, 12, 99]] {
+            assert!(matches!(
+                verify(&vk, &proof, &public_inputs),
+                Err(ProofError::UnauditedImplementation {
+                    api: "snark::verify"
+                })
+            ));
+        }
     }
 
     #[test]
-    fn tampered_proof_rejected() {
+    fn tampered_legacy_proof_remains_unverifiable() {
         let circuit = make_mul_circuit(3, 4);
         let (pk, vk) = setup(&circuit).unwrap();
         let mut proof = prove(&pk, &circuit, &[3, 4, 12]).unwrap();
         proof.a[0] ^= 0xFF;
-        assert!(!verify(&vk, &proof, &[3, 12]).unwrap());
+        assert!(matches!(
+            verify(&vk, &proof, &[3, 12]),
+            Err(ProofError::UnauditedImplementation {
+                api: "snark::verify"
+            })
+        ));
     }
 
     #[test]

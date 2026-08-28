@@ -9498,9 +9498,7 @@ mod tests {
     // prove something about the wired stack, not just the handler in
     // isolation.
     fn avc_router_with_bearer_gate(state: Arc<AvcApiState>) -> Router {
-        let auth = crate::auth::BearerAuth {
-            token: Arc::new(zeroize::Zeroizing::new("vcg-006a-admin-token".to_string())),
-        };
+        let auth = crate::auth::BearerAuth::from_bearer("vcg-006a-admin-token");
         let scoped_auth =
             crate::auth::ScopedBearerAuth::livesafe_public_adapter_output_authorization(
                 zeroize::Zeroizing::new("livesafe-public-output-scoped-token".to_string()),
@@ -10120,9 +10118,7 @@ mod avc_issuer_conformance_tests {
     }
 
     fn issuer_router_with_bearer_gate(state: Arc<AvcApiState>) -> Router {
-        let auth = crate::auth::BearerAuth {
-            token: Arc::new(zeroize::Zeroizing::new("vcg-006b-admin-token".to_string())),
-        };
+        let auth = crate::auth::BearerAuth::from_bearer("vcg-006b-admin-token");
         avc_router(state).layer(axum::middleware::from_fn(move |req, next| {
             let auth = auth.clone();
             crate::auth::require_bearer_on_writes(auth, req, next)
@@ -10493,11 +10489,7 @@ mod avc_issuer_registration_authority_tests {
     }
 
     fn router_with_bearer_gate(state: Arc<AvcApiState>) -> Router {
-        let auth = crate::auth::BearerAuth {
-            token: Arc::new(zeroize::Zeroizing::new(
-                "vcg-006b-authority-test-token".to_string(),
-            )),
-        };
+        let auth = crate::auth::BearerAuth::from_bearer("vcg-006b-authority-test-token");
         avc_router(state).layer(axum::middleware::from_fn(move |req, next| {
             let auth = auth.clone();
             crate::auth::require_bearer_on_writes(auth, req, next)
