@@ -596,6 +596,7 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
+    use crate::mandate::{Caveat, Mandate, MandateKind};
 
     const TEST_AUTHORIZATION: &str = "Bearer pdp-test-token";
 
@@ -656,6 +657,105 @@ mod tests {
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(register_key_with_authorization.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn authorized_router_keeps_x402_verify_reachable() {
+        let pdp = SharedPdp::ephemeral();
+        let principal = Did::new("did:exo:x402-router-principal").unwrap();
+        let agent = Did::new("did:exo:x402-router-agent").unwrap();
+        let principal_key = KeyPair::from_secret_bytes([0x34; 32]).unwrap();
+        pdp.lock()
+            .unwrap()
+            .register_key(principal.clone(), *principal_key.public_key());
+
+        let mut mandate = Mandate {
+            kind: MandateKind::X402Payload,
+            principal: principal.clone(),
+            agent: agent.clone(),
+            action: "payment.settle".into(),
+            amount_minor: Some(99),
+            currency: Some("USD".into()),
+            merchant: None,
+            caveats: vec![Caveat::AmountMax {
+                minor: 1,
+                currency: "USD".into(),
+            }],
+            expires: None,
+            consume_once: false,
+            signature: Signature::empty(),
+            raw_hash: Hash256::ZERO,
+        };
+        mandate.signature = principal_key.sign(&mandate.signable_payload().unwrap());
+        let body = X402VerifyRequest {
+            mandate: WireMandate {
+                kind: MandateKind::X402Payload,
+                principal: principal.to_string(),
+                agent: agent.to_string(),
+                action: mandate.action,
+                amount_minor: mandate.amount_minor,
+                currency: mandate.currency,
+                merchant: None,
+                caveats: mandate.caveats,
+                expires_ms: None,
+                consume_once: false,
+                signature_hex: hex::encode(
+                    mandate
+                        .signature
+                        .ed25519_bytes()
+                        .expect("Ed25519 test signature"),
+                ),
+                raw_hex: None,
+            },
+            proposed: None,
+            payment_evidence_hash_hex: Some(hex::encode([0x11_u8; 32])),
+            payment_signature_header: None,
+            now_ms: Some(1),
+        };
+        let request = Request::builder()
+            .method("POST")
+            .uri("/x402/verify")
+            .header("content-type", "application/json")
+            .header("authorization", TEST_AUTHORIZATION)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+
+        let response = mutation_test_router(pdp).oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn compatibility_routers_omit_mutation_and_x402_routes() {
+        let pdp = SharedPdp::ephemeral();
+        let actor = Did::new("did:exo:compatibility-read-only").unwrap();
+        let actor_key = KeyPair::from_secret_bytes([0x35; 32]).unwrap();
+        let routers = [
+            pdp_router(pdp.clone()),
+            pdp_router_with_persistence(pdp, |_| Ok(())),
+        ];
+
+        for router in routers {
+            let mutation = router
+                .clone()
+                .oneshot(register_key_request(&actor, &actor_key, None))
+                .await
+                .unwrap();
+            let x402 = router
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/x402/verify")
+                        .header("content-type", "application/json")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(mutation.status(), StatusCode::NOT_FOUND);
+            assert_eq!(x402.status(), StatusCode::NOT_FOUND);
+        }
     }
 
     #[tokio::test]

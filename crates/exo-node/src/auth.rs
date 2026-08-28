@@ -1304,6 +1304,31 @@ mod tests {
     }
 
     #[test]
+    fn startup_drops_raw_admin_token_after_final_configuration_use() {
+        let source = include_str!("main.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("tests marker present");
+        let crosschecked_configuration = production
+            .find("let crosschecked_anchor_router = match")
+            .expect("CrossChecked startup configuration present");
+        let drop_position = production
+            .find("drop(admin_token);")
+            .expect("raw admin token explicitly dropped after startup configuration");
+
+        assert!(
+            drop_position > crosschecked_configuration,
+            "raw admin token must remain available through its final CrossChecked configuration use"
+        );
+        assert!(
+            !production[drop_position + "drop(admin_token);".len()..]
+                .contains("admin_token.as_str()"),
+            "startup must not use raw admin token material after explicitly dropping it"
+        );
+    }
+
+    #[test]
     fn startup_does_not_log_admin_token_material() {
         let main_source = include_str!("main.rs");
         let main_production = main_source
