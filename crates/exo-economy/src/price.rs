@@ -338,6 +338,11 @@ mod tests {
     }
 
     #[test]
+    fn extreme_apply_multiplier_saturates_only_unrepresentable_final_result() {
+        assert_eq!(apply_multiplier(u128::MAX, 100_000), u128::MAX);
+    }
+
+    #[test]
     fn extreme_risk_basis_point_stage_is_exact_without_intermediate_saturation() {
         let mut policy = PricingPolicy::zero_launch_default();
         policy.risk_share_bp = 10_000;
@@ -353,6 +358,21 @@ mod tests {
             breakdown.risk_component_micro_exo,
             170_141_183_460_469_231_731_687_303_715_884_105_727,
         );
+    }
+
+    #[test]
+    fn risk_component_preserves_two_stage_floor_rounding() {
+        let mut policy = PricingPolicy::zero_launch_default();
+        policy.risk_share_bp = 5_001;
+        policy.global_ceiling_micro_exo = u128::MAX;
+        let mut inputs = baseline_inputs();
+        inputs.declared_value_micro_exo = Some(2);
+        inputs.realized_value_micro_exo = None;
+        inputs.risk_bp = 9_999;
+
+        let breakdown = compute_breakdown(&policy, &inputs).expect("valid pricing inputs");
+
+        assert_eq!(breakdown.risk_component_micro_exo, 0);
     }
 
     #[test]
