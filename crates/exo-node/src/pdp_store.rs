@@ -183,12 +183,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(KEY_FILE);
         let original = [7u8; 32];
+        let expected_public_key = *KeyPair::from_secret_bytes(original).unwrap().public_key();
         let mut file = open_private_new(&path).unwrap();
         file.write_all(&original).unwrap();
         file.sync_all().unwrap();
 
         let loaded = load_or_create(dir.path()).unwrap();
-        assert_eq!(loaded.service_secret_bytes(), original);
+        assert_eq!(loaded.service_public_key(), expected_public_key);
         assert_eq!(std::fs::read(path).unwrap(), original);
     }
 }

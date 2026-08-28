@@ -17,11 +17,40 @@
 //! Identity bindings: DID management, PACE continuity, risk assessment, Shamir
 
 use wasm_bindgen::prelude::*;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::serde_bridge::*;
 
 const MAX_WASM_SHAMIR_SHARES: usize = u8::MAX as usize;
+const SHAMIR_RECONSTRUCT_ERROR: &str = "Shamir reconstruct error: invalid shares";
+
+#[derive(serde::Serialize)]
+struct ShamirSecretResponse<'a> {
+    secret: &'a str,
+}
+
+fn reconstruct_shamir_secret_json(
+    shares: &[exo_identity::shamir::Share],
+    config: &exo_identity::shamir::ShamirConfig,
+) -> Result<Zeroizing<String>, &'static str> {
+    let mut secret = exo_identity::shamir::reconstruct_zeroizing(shares, config)
+        .map_err(|_| SHAMIR_RECONSTRUCT_ERROR)?;
+    let mut secret_hex = Zeroizing::new(hex::encode(secret.as_slice()));
+    let serialized = match serde_json::to_string(&ShamirSecretResponse {
+        secret: secret_hex.as_str(),
+    }) {
+        Ok(serialized) => serialized,
+        Err(_) => {
+            secret.zeroize();
+            secret_hex.zeroize();
+            return Err("Shamir reconstruct error: response serialization failed");
+        }
+    };
+    let output = Zeroizing::new(serialized);
+    secret.zeroize();
+    secret_hex.zeroize();
+    Ok(output)
+}
 
 #[derive(serde::Deserialize)]
 struct RiskAssessmentMetadata {
@@ -95,6 +124,10 @@ pub fn wasm_shamir_split_with_entropy(
 }
 
 /// Reconstruct a secret from Shamir shares
+///
+/// Every Rust-owned secret intermediate is wiped after the final JavaScript
+/// value is built. JavaScript heap lifecycle is controlled by the host runtime
+/// and is outside this Rust zeroization boundary.
 #[wasm_bindgen]
 pub fn wasm_shamir_reconstruct(
     shares_json: &str,
@@ -107,11 +140,13 @@ pub fn wasm_shamir_reconstruct(
         threshold,
         shares: total_shares,
     };
-    let secret = exo_identity::shamir::reconstruct(&shares, &config)
-        .map_err(|e| JsValue::from_str(&format!("Shamir reconstruct error: {e}")))?;
-    to_js_value(&serde_json::json!({
-        "secret": hex::encode(&secret),
-    }))
+    let mut secret_json =
+        reconstruct_shamir_secret_json(&shares, &config).map_err(JsValue::from_str)?;
+    let result = js_sys::JSON::parse(secret_json.as_str()).map_err(|_| {
+        JsValue::from_str("Shamir reconstruct error: JavaScript value creation failed")
+    });
+    secret_json.zeroize();
+    result
 }
 
 /// Resolve PACE operator for current state
@@ -208,4 +243,63 @@ pub fn wasm_verify_risk_attestation(
         &attestation,
         &public_key,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_ENTROPY: &[u8] = b"exochain-wasm-shamir-test-entropy-v1";
+
+    #[test]
+    fn identity_shamir_reconstruct_preserves_exact_js_secret_contract() {
+        let config = exo_identity::shamir::ShamirConfig {
+            threshold: 2,
+            shares: 3,
+        };
+        let shares =
+            exo_identity::shamir::split_with_entropy(&[0x00, 0x01, 0xab], &config, TEST_ENTROPY)
+                .expect("split with explicit entropy");
+
+        let json = reconstruct_shamir_secret_json(&shares[..2], &config)
+            .expect("reconstruct valid shares");
+
+        assert_eq!(json.as_str(), r#"{"secret":"0001ab"}"#);
+    }
+
+    #[test]
+    fn identity_shamir_reconstruct_error_does_not_echo_malformed_share_bytes() {
+        let config = exo_identity::shamir::ShamirConfig {
+            threshold: 2,
+            shares: 3,
+        };
+        let mut shares =
+            exo_identity::shamir::split_with_entropy(b"secret-sentinel", &config, TEST_ENTROPY)
+                .expect("split with explicit entropy");
+        shares[0].data[0] = 0xde;
+
+        let error = match reconstruct_shamir_secret_json(&shares[..2], &config) {
+            Ok(_) => panic!("tampered share must fail closed"),
+            Err(error) => error,
+        };
+
+        assert!(!error.contains("222"));
+        assert!(!error.contains("de"));
+        assert!(!error.contains("secret-sentinel"));
+    }
+
+    #[test]
+    fn identity_shamir_wasm_path_uses_canonical_zeroizing_reconstruction() {
+        let source = include_str!("identity_bindings.rs");
+        let reconstruct_source = source
+            .split("fn reconstruct_shamir_secret_json")
+            .nth(1)
+            .expect("reconstruction helper exists")
+            .split("fn parse_secret_key_hex")
+            .next()
+            .expect("reconstruction helper ends before key parsing");
+
+        assert!(reconstruct_source.contains("shamir::reconstruct_zeroizing"));
+        assert!(!reconstruct_source.contains("shamir::reconstruct("));
+    }
 }

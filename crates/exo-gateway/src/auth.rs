@@ -135,7 +135,7 @@ pub fn request_signing_payload(request: &Request) -> Result<Vec<u8>> {
 
 /// Supported authentication credential types.
 /// All credentials resolve to a DID — there is no identity outside the DID system.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub enum Credential {
     /// Direct DID signature authentication (strongest).
     /// The actor signs a challenge with their DID key.
@@ -535,6 +535,9 @@ mod tests {
     };
 
     use super::*;
+
+    static_assertions::assert_not_impl_any!(Credential: serde::Serialize);
+    static_assertions::assert_impl_all!(Credential: serde::de::DeserializeOwned);
 
     fn req_ts() -> Timestamp {
         Timestamp::new(10_000, 0)
@@ -1129,6 +1132,16 @@ mod tests {
     // -----------------------------------------------------------------------
     // Credential / resolve_credential tests
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn credential_deserialization_remains_supported() {
+        let credential: Credential = serde_json::from_str(
+            r#"{"ApiKey":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}"#,
+        )
+        .expect("credential input must remain deserializable");
+
+        assert!(matches!(credential, Credential::ApiKey(_)));
+    }
 
     #[test]
     fn credential_did_signature_valid() {
