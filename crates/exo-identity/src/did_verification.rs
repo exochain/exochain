@@ -213,12 +213,32 @@ pub fn rotate_verification_key(
         .position(|m| m.id == old_key_id)
         .ok_or_else(|| DidVerificationError::MethodNotFound(old_key_id.to_string()))?;
 
-    let old_version = doc.verification_methods[old_method_idx].version;
-    let new_version = old_version.checked_add(1).ok_or_else(|| {
+    let old_public_key = validate_verification_method_document_binding(
+        doc,
+        &doc.verification_methods[old_method_idx],
+    )?;
+    let max_version = doc
+        .verification_methods
+        .iter()
+        .map(|method| method.version)
+        .max()
+        .unwrap_or(0);
+    let new_version = max_version.checked_add(1).ok_or_else(|| {
         DidVerificationError::CryptoError(format!(
             "verification method version overflow for key {old_key_id}"
         ))
     })?;
+    let old_key_used_by_another_method =
+        doc.verification_methods
+            .iter()
+            .enumerate()
+            .any(|(index, method)| {
+                index != old_method_idx
+                    && matches!(
+                        decode_ed25519_multibase_public_key(&method.public_key_multibase),
+                        Ok(public_key) if public_key == old_public_key
+                    )
+            });
 
     // Deactivate old key
     doc.verification_methods[old_method_idx].active = false;
@@ -239,8 +259,14 @@ pub fn rotate_verification_key(
         revoked_at: None,
     };
 
-    doc.public_keys.clear();
-    doc.public_keys.push(PublicKey::from_bytes(*new_public_key));
+    if !old_key_used_by_another_method {
+        doc.public_keys
+            .retain(|public_key| public_key != &old_public_key);
+    }
+    let new_public_key = PublicKey::from_bytes(*new_public_key);
+    if !doc.public_keys.contains(&new_public_key) {
+        doc.public_keys.push(new_public_key);
+    }
     doc.verification_methods.push(new_method.clone());
     doc.updated = exo_core::Timestamp::new(current_time_ms, 0);
 
@@ -411,6 +437,93 @@ mod tests {
         assert_eq!(doc.public_keys, vec![new_pk]);
         assert_eq!(doc.verification_methods.len(), 2);
         assert_eq!(doc.updated.physical_ms, 2000);
+    }
+
+    #[test]
+    fn rotate_verification_key_preserves_unrelated_active_methods() {
+        let (old_pk, old_sk) = generate_keypair();
+        let (unrelated_pk, unrelated_sk) = generate_keypair();
+        let (new_pk, new_sk) = generate_keypair();
+        let did = test_did();
+        let mut doc = make_doc_with_verification(did.clone(), old_pk);
+        let old_key_id = format!("{}#key-1", did);
+        let unrelated_key_id = format!("{}#key-7", did);
+        doc.public_keys.push(unrelated_pk);
+        doc.verification_methods.push(VerificationMethod {
+            id: unrelated_key_id.clone(),
+            key_type: ED25519_VERIFICATION_KEY_TYPE.to_string(),
+            controller: did.clone(),
+            public_key_multibase: format!(
+                "z{}",
+                bs58::encode(unrelated_pk.as_bytes()).into_string()
+            ),
+            version: 7,
+            active: true,
+            valid_from: 1500,
+            revoked_at: None,
+        });
+
+        let new_method =
+            rotate_verification_key(&mut doc, &old_key_id, new_pk.as_bytes(), &did, 2000)
+                .expect("rotation should preserve unrelated methods");
+
+        assert_eq!(new_method.version, 8);
+        assert_eq!(new_method.id, format!("{}#key-8", did));
+        assert_eq!(doc.public_keys, vec![unrelated_pk, new_pk]);
+        assert!(
+            doc.verification_methods
+                .iter()
+                .any(|method| method.id == unrelated_key_id && method.active)
+        );
+
+        let message = b"multi-method rotation";
+        let old_signature = sign(message, &old_sk);
+        assert!(matches!(
+            verify_did_signature(&doc, &old_key_id, message, &old_signature),
+            Err(DidVerificationError::MethodRevoked(_))
+        ));
+        let unrelated_signature = sign(message, &unrelated_sk);
+        assert!(
+            verify_did_signature(&doc, &unrelated_key_id, message, &unrelated_signature).is_ok()
+        );
+        let new_signature = sign(message, &new_sk);
+        assert!(verify_did_signature(&doc, &new_method.id, message, &new_signature).is_ok());
+    }
+
+    #[test]
+    fn rotate_key_rejects_maximum_existing_version_without_mutation() {
+        let (old_pk, _) = generate_keypair();
+        let (max_pk, _) = generate_keypair();
+        let (new_pk, _) = generate_keypair();
+        let did = test_did();
+        let mut doc = make_doc_with_verification(did.clone(), old_pk);
+        doc.public_keys.push(max_pk);
+        doc.verification_methods.push(VerificationMethod {
+            id: format!("{}#key-max", did),
+            key_type: ED25519_VERIFICATION_KEY_TYPE.to_string(),
+            controller: did.clone(),
+            public_key_multibase: format!("z{}", bs58::encode(max_pk.as_bytes()).into_string()),
+            version: u64::MAX,
+            active: true,
+            valid_from: 1500,
+            revoked_at: None,
+        });
+        let original_doc = doc.clone();
+
+        let result = rotate_verification_key(
+            &mut doc,
+            &format!("{}#key-1", did),
+            new_pk.as_bytes(),
+            &did,
+            2000,
+        );
+
+        assert!(matches!(
+            result,
+            Err(DidVerificationError::CryptoError(ref reason))
+                if reason.contains("version overflow")
+        ));
+        assert_eq!(doc, original_doc);
     }
 
     #[test]

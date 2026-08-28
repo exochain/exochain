@@ -240,6 +240,39 @@ pub fn wasm_record_disinterested_vote(
     to_js_value(&txn)
 }
 
+/// Record independent fairness evidence for a FairnessProof safe harbor path.
+#[wasm_bindgen]
+pub fn wasm_record_fairness_evidence(
+    txn_json: &str,
+    evaluator_did: &str,
+    methodology: &str,
+    conclusion: &str,
+    evidence_hash_hex: &str,
+    now_ms: u64,
+) -> Result<JsValue, JsValue> {
+    let mut txn: exo_legal::dgcl144::InterestedTransaction = from_json_str(txn_json)?;
+    let evaluator = exo_core::Did::new(evaluator_did)
+        .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
+    let hash_bytes =
+        hex::decode(evidence_hash_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
+    let evidence_hash = exo_core::Hash256::from_bytes(
+        hash_bytes
+            .try_into()
+            .map_err(|_| JsValue::from_str("evidence hash must be 32 bytes"))?,
+    );
+    let now = exo_core::types::Timestamp::new(now_ms, 0);
+    exo_legal::dgcl144::record_fairness_evidence(
+        &mut txn,
+        &evaluator,
+        methodology,
+        conclusion,
+        evidence_hash,
+        now,
+    )
+    .map_err(|e| JsValue::from_str(&format!("Fairness evidence error: {e}")))?;
+    to_js_value(&txn)
+}
+
 /// Verify that a safe harbor transaction meets all §144 requirements.
 #[wasm_bindgen]
 pub fn wasm_verify_safe_harbor(txn_json: &str) -> Result<JsValue, JsValue> {
