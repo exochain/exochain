@@ -42,6 +42,12 @@ sbom_block=$(job_block "sbom-and-attest")
 
 grep -F 'name: "SBOM + SLSA Attestation"' <<<"$sbom_block" >/dev/null \
   || fail "sbom-and-attest must remain the release SBOM and SLSA attestation job"
+grep -F 'contents: read' <<<"$sbom_block" >/dev/null \
+  || fail "sbom-and-attest needs contents: read for checkout and live tag revalidation"
+grep -F 'attestations: write' <<<"$sbom_block" >/dev/null \
+  || fail "sbom-and-attest needs attestations: write for build provenance"
+grep -F 'id-token: write' <<<"$sbom_block" >/dev/null \
+  || fail "sbom-and-attest needs id-token: write for keyless signing"
 grep -F 'bash tools/ci_cargo_retry.sh cargo install cargo-cyclonedx --version 0.5.9 --locked' <<<"$sbom_block" >/dev/null \
   || fail "release SBOM job must pin cargo-cyclonedx 0.5.9"
 grep -F 'cargo cyclonedx -f json --all' <<<"$sbom_block" >/dev/null \

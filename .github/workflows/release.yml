@@ -35,6 +35,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
@@ -56,6 +59,8 @@ jobs:
   validate-release-inputs:
     name: "Validate Release Inputs"
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.validate.outputs.version }}
       tag: ${{ steps.validate.outputs.tag }}
@@ -125,6 +130,8 @@ jobs:
     name: "Verify Signed Release Tag"
     runs-on: ubuntu-latest
     needs: [approve, approve-second, validate-release-inputs]
+    permissions:
+      contents: read
     outputs:
       tag_object_sha: ${{ steps.verify-tag.outputs.tag_object_sha }}
       tag_commit_sha: ${{ steps.verify-tag.outputs.tag_commit_sha }}
@@ -206,6 +213,15 @@ jobs:
     name: "Build Release Artifacts"
     runs-on: ubuntu-latest
     needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
+    permissions:
+      contents: read
+    env:
+      DRY_RUN: ${{ inputs.dry_run }}
+      RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+      EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+      EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+      EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+      TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
     strategy:
       matrix:
         target:
@@ -241,10 +257,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
+      - name: Reverify source and tag immediately before release build
+        run: bash tools/verify_release_side_effect.sh
+
       - name: Build release
         run: bash tools/ci_cargo_retry.sh cargo build --workspace --release --locked --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Reverify source and tag immediately before artifact packaging
+        env:
+          RELEASE_SOURCE_CLEAN_MODE: tracked
+        run: bash tools/verify_release_side_effect.sh
 
       - name: Package artifacts
         env:
@@ -254,6 +278,11 @@ jobs:
           cp target/${{ matrix.target }}/release/libexo_*.rlib dist/ 2>/dev/null || true
           cp target/${{ matrix.target }}/release/libexo_*.so dist/ 2>/dev/null || true
           tar czf "exochain-${RELEASE_VERSION}-${{ matrix.target }}.tar.gz" -C dist .
+
+      - name: Reverify source and tag immediately before artifact upload
+        env:
+          RELEASE_SOURCE_CLEAN_MODE: tracked
+        run: bash tools/verify_release_side_effect.sh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -280,8 +309,16 @@ jobs:
     needs: [release-build, verify-signed-tag, validate-release-inputs]
     if: ${{ !inputs.dry_run }}
     permissions:
+      contents: read      # checkout and exact remote-tag revalidation
       attestations: write  # write SLSA attestations to repo
       id-token: write      # GitHub OIDC token for keyless Sigstore signing
+    env:
+      DRY_RUN: ${{ inputs.dry_run }}
+      RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+      EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+      EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+      EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+      TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -311,6 +348,11 @@ jobs:
         with:
           path: artifacts
 
+      - name: Reverify source and tag immediately before archive collection
+        env:
+          RELEASE_SOURCE_CLEAN_MODE: tracked
+        run: bash tools/verify_release_side_effect.sh
+
       - name: Collect release archives
         run: |
           mkdir -p release-archives
@@ -321,6 +363,11 @@ jobs:
       # ── SBOM ─────────────────────────────────────────────────────────────
       - name: Install cargo-cyclonedx
         run: bash tools/ci_cargo_retry.sh cargo install cargo-cyclonedx --version 0.5.9 --locked
+
+      - name: Reverify source and tag immediately before SBOM generation
+        env:
+          RELEASE_SOURCE_CLEAN_MODE: tracked
+        run: bash tools/verify_release_side_effect.sh
 
       - name: Generate CycloneDX SBOM
         env:
@@ -343,6 +390,11 @@ jobs:
           echo "SBOM artifacts:"
           ls -lh "sbom/exochain-${RELEASE_VERSION}"-*.cdx.json
 
+      - name: Reverify source and tag immediately before SBOM upload
+        env:
+          RELEASE_SOURCE_CLEAN_MODE: tracked
+        run: bash tools/verify_release_side_effect.sh
+
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -351,6 +403,11 @@ jobs:
           retention-days: 2555  # 7 years — governance software retention policy
 
       # ── SLSA provenance attestation ──────────────────────────────────────
+      - name: Reverify source and tag immediately before provenance attestation
+        env:
+          RELEASE_SOURCE_CLEAN_MODE: tracked
+        run: bash tools/verify_release_side_effect.sh
+
       - name: Attest build provenance (SLSA Level 2)
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
         with:
@@ -364,6 +421,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: [release-build, sbom-and-attest, verify-signed-tag, validate-release-inputs]
     if: ${{ !inputs.dry_run }}
+    permissions:
+      contents: read
+    env:
+      DRY_RUN: ${{ inputs.dry_run }}
+      RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+      EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+      EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+      EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+      TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -433,10 +499,12 @@ jobs:
             local retry_seconds
 
             while [ "$attempt" -le "$max_attempts" ]; do
-              set +e
-              output="$(cargo publish -p "$crate" --locked --allow-dirty 2>&1)"
-              status=$?
-              set -e
+              bash tools/verify_release_side_effect.sh
+              if output="$(cargo publish -p "$crate" --locked 2>&1)"; then
+                status=0
+              else
+                status=$?
+              fi
               printf '%s\n' "$output"
 
               if [ "$status" -eq 0 ]; then
@@ -513,7 +581,8 @@ jobs:
               continue
             fi
             echo "Dry-running $crate..."
-            cargo publish -p "$crate" --dry-run --locked --allow-dirty
+            bash tools/verify_release_side_effect.sh
+            cargo publish -p "$crate" --dry-run --locked
             if crate_version_published "$crate"; then
               echo "${crate} ${RELEASE_VERSION} became available after dry-run; skipping publish."
               continue
@@ -534,6 +603,13 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      DRY_RUN: ${{ inputs.dry_run }}
+      RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+      EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+      EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+      EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+      TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -579,13 +655,21 @@ jobs:
       - name: Install wasm-pack
         run: bash tools/ci_cargo_retry.sh cargo install wasm-pack --version 0.14.0 --locked
 
+      - name: Reverify source and tag immediately before WASM build
+        run: bash tools/verify_release_side_effect.sh
+
       - name: Build scoped WASM npm package
-        run: bash tools/ci_cargo_retry.sh wasm-pack build crates/exochain-wasm --target nodejs --scope exochain --out-dir ../../packages/exochain-wasm/wasm -- --locked
+        run: bash tools/ci_cargo_retry.sh wasm-pack build crates/exochain-wasm --target nodejs --scope exochain --out-dir ../../.release-output/exochain-wasm -- --locked
+
+      - name: Reverify source and tag immediately before WASM package preparation
+        env:
+          RELEASE_SOURCE_CLEAN_MODE: tracked
+        run: bash tools/verify_release_side_effect.sh
 
       - name: Prepare scoped WASM npm package
         run: |
-          cp LICENSE packages/exochain-wasm/wasm/LICENSE
-          node tools/prepare_wasm_npm_package.mjs packages/exochain-wasm/wasm
+          cp LICENSE .release-output/exochain-wasm/LICENSE
+          node tools/prepare_wasm_npm_package.mjs .release-output/exochain-wasm
 
       - name: Verify WASM npm package release metadata
         env:
@@ -594,7 +678,7 @@ jobs:
           set -euo pipefail
           node - <<'NODE'
           const fs = require('node:fs');
-          const manifest = JSON.parse(fs.readFileSync('packages/exochain-wasm/wasm/package.json', 'utf8'));
+          const manifest = JSON.parse(fs.readFileSync('.release-output/exochain-wasm/package.json', 'utf8'));
           if (manifest.name !== '@exochain/exochain-wasm') {
             throw new Error(`unexpected WASM package name ${manifest.name}`);
           }
@@ -606,9 +690,14 @@ jobs:
           }
           NODE
 
+      - name: Reverify source and tag immediately before WASM dry-pack
+        env:
+          RELEASE_SOURCE_CLEAN_MODE: tracked
+        run: bash tools/verify_release_side_effect.sh
+
       - name: Dry-pack WASM npm package
         run: npm pack --dry-run
-        working-directory: packages/exochain-wasm/wasm
+        working-directory: .release-output/exochain-wasm
 
       - name: Publish WASM npm package
         if: ${{ !inputs.dry_run }}
@@ -642,8 +731,9 @@ jobs:
             exit 0
           fi
 
+          RELEASE_SOURCE_CLEAN_MODE=tracked bash "$GITHUB_WORKSPACE/tools/verify_release_side_effect.sh"
           npm publish --access public --provenance
-        working-directory: packages/exochain-wasm/wasm
+        working-directory: .release-output/exochain-wasm
 
   # -----------------------------------------------------------------------
   # Publish LYNK LLM proxy package to npm (unless dry run)
@@ -655,6 +745,13 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      DRY_RUN: ${{ inputs.dry_run }}
+      RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+      EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+      EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+      EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+      TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -696,6 +793,9 @@ jobs:
         run: npm ci
         working-directory: packages/exochain-llm-proxy
 
+      - name: Reverify source and tag immediately before LYNK coverage
+        run: bash tools/verify_release_side_effect.sh
+
       - name: Run LYNK package coverage gate
         run: npm run test:coverage
         working-directory: packages/exochain-llm-proxy
@@ -726,8 +826,22 @@ jobs:
           NODE
         working-directory: packages/exochain-llm-proxy
 
+      - name: Reverify source and tag immediately before LYNK build
+        run: bash tools/verify_release_side_effect.sh
+
+      - name: Build LYNK npm package
+        run: npm run build
+        working-directory: packages/exochain-llm-proxy
+
+      - name: Verify LYNK npm package artifacts
+        run: node scripts/check-package-artifacts.mjs
+        working-directory: packages/exochain-llm-proxy
+
+      - name: Reverify source and tag immediately before LYNK dry-pack
+        run: bash tools/verify_release_side_effect.sh
+
       - name: Dry-pack LYNK npm package
-        run: npm run pack:dry-run
+        run: npm pack --dry-run
         working-directory: packages/exochain-llm-proxy
 
       - name: Publish LYNK npm package
@@ -762,6 +876,7 @@ jobs:
             exit 0
           fi
 
+          bash "$GITHUB_WORKSPACE/tools/verify_release_side_effect.sh"
           npm publish --access public --provenance
         working-directory: packages/exochain-llm-proxy
 
@@ -775,6 +890,13 @@ jobs:
     if: ${{ !inputs.dry_run }}
     permissions:
       contents: write
+    env:
+      DRY_RUN: ${{ inputs.dry_run }}
+      RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+      EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+      EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+      EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+      TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -800,14 +922,10 @@ jobs:
         with:
           path: artifacts
 
-      - name: Reverify remote tag immediately before release creation
+      - name: Reverify source and tag immediately before release creation
         env:
-          DRY_RUN: ${{ inputs.dry_run }}
-          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
-          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
-          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
-          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
-        run: bash tools/verify_release_tag.sh
+          RELEASE_SOURCE_CLEAN_MODE: tracked
+        run: bash tools/verify_release_side_effect.sh
 
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65

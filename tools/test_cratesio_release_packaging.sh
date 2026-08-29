@@ -55,8 +55,11 @@ grep -F 'node tools/check_cratesio_namespace_ownership.mjs' "$workflow" >/dev/nu
   || fail "release workflow must run the crates.io namespace ownership guard before publishing"
 grep -F '/owners' tools/check_cratesio_namespace_ownership.mjs >/dev/null \
   || fail "crates.io namespace guard must inspect crates.io owner records, not only crate metadata"
-grep -F 'cargo publish -p "$crate" --dry-run --locked --allow-dirty' "$workflow" >/dev/null \
+grep -F 'cargo publish -p "$crate" --dry-run --locked' "$workflow" >/dev/null \
   || fail "release workflow must dry-run every crate without refreshing the lockfile"
+if grep -F -- '--allow-dirty' "$workflow" >/dev/null; then
+  fail "release workflow must not bypass Cargo's dirty-source rejection"
+fi
 grep -F 'bash tools/test_cratesio_release_packaging.sh' "$ci_workflow" >/dev/null \
   || fail "CI repo hygiene must run the crates.io release packaging guard"
 

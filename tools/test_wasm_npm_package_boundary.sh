@@ -39,8 +39,13 @@ grep -F 'node tools/prepare_wasm_npm_package.mjs packages/exochain-wasm/wasm' "$
 grep -F 'npm pack --dry-run' "$ci_workflow" >/dev/null \
   || fail "CI WASM build must dry-pack the npm package"
 
-grep -F 'wasm-pack build crates/exochain-wasm --target nodejs --scope exochain --out-dir ../../packages/exochain-wasm/wasm -- --locked' "$release_workflow" >/dev/null \
-  || fail "release workflow must generate the scoped @exochain package without refreshing Cargo.lock"
+grep -F 'wasm-pack build crates/exochain-wasm --target nodejs --scope exochain --out-dir ../../.release-output/exochain-wasm -- --locked' "$release_workflow" >/dev/null \
+  || fail "release workflow must stage the scoped @exochain package outside tracked source without refreshing Cargo.lock"
+grep -F 'node tools/prepare_wasm_npm_package.mjs .release-output/exochain-wasm' "$release_workflow" >/dev/null \
+  || fail "release workflow must normalize only the staged WASM package"
+if grep -F -- '--out-dir ../../packages/exochain-wasm/wasm' "$release_workflow" >/dev/null; then
+  fail "release workflow must not overwrite the tracked WASM package fixture"
+fi
 grep -F 'npm publish --access public --provenance' "$release_workflow" >/dev/null \
   || fail "release workflow must publish npm package with provenance"
 grep -F 'NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}' "$release_workflow" >/dev/null \

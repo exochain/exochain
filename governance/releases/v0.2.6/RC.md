@@ -69,18 +69,25 @@ live:    input version = workspace/manifests = 0.2.6
            = checked-out HEAD = trusted commit = workflow-dispatch SHA
 ```
 
-Every release checkout must also be clean. Before each live artifact or
-publication job, the workflow re-fetches the named remote tag and requires its
+Every release checkout must initially be clean, including untracked files.
+Immediately before each release build, archive, SBOM, attestation, Cargo
+dry-run/publish, WASM build/prepare/dry-pack/publish, LYNK
+coverage/build/dry-pack/publish, artifact upload, and GitHub Release side
+effect, the workflow rechecks the immutable HEAD and the applicable tag branch.
+After a step intentionally creates or downloads untracked artifacts, the guard
+still rejects every tracked or staged source change while permitting those
+untracked outputs. Live guards re-fetch the named remote tag and require its
 annotated-tag object ID and peeled commit to equal the signature-verified
 outputs. This object-ID equality binds the downstream check to the exact signed
-tag bytes, not merely its mutable name. The GitHub Release job repeats the
-remote comparison immediately before creation and binds its target fallback to
-the validated commit. A missing, deleted, lightweight, unsigned, unverifiable,
-retargeted, or mismatched tag fails closed. Dry runs emit no tag identity and do
-not fetch or require a tag.
+tag bytes, not merely its mutable name. The GitHub Release job repeats both the
+source and remote-tag comparison immediately before creation and binds its
+target fallback to the validated commit. A missing, deleted, lightweight,
+unsigned, unverifiable, retargeted, mismatched, or tracked-dirty source fails
+closed. Dry runs emit no tag identity and do not fetch or require a tag.
 
 Native Cargo builds and both dry-run and live `cargo publish` calls use
-`--locked`; `wasm-pack` receives `--locked` through its Cargo options. The
+`--locked`; publish commands do not permit `--allow-dirty`. `wasm-pack`
+receives `--locked` through its Cargo options. The
 pinned `cargo-cyclonedx` 0.5.9 CLI does not expose Cargo's `--locked` option,
 so its job first runs locked metadata and rejects any `Cargo.lock` mutation
 before SBOM upload or attestation.
