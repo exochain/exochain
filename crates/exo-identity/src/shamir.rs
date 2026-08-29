@@ -20,7 +20,10 @@
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Serialize,
+    de::{SeqAccess, Visitor},
+};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::error::IdentityError;
@@ -88,8 +91,70 @@ impl ShamirConfig {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Share {
     pub index: u8,
+    #[serde(deserialize_with = "deserialize_share_data")]
     pub data: Zeroizing<Vec<u8>>,
     pub commitment: [u8; 32],
+}
+
+fn grow_zeroizing_share_data<E>(bytes: &mut Zeroizing<Vec<u8>>) -> Result<(), E>
+where
+    E: serde::de::Error,
+{
+    const MAX_CAPACITY: usize = usize::MAX / 2;
+
+    let current_capacity = bytes.capacity();
+    let next_capacity = current_capacity
+        .checked_mul(2)
+        .unwrap_or(MAX_CAPACITY)
+        .clamp(1, MAX_CAPACITY);
+    if next_capacity <= current_capacity {
+        return Err(E::custom("Shamir share data exceeds supported capacity"));
+    }
+
+    let mut replacement = Zeroizing::new(Vec::new());
+    replacement
+        .try_reserve_exact(next_capacity)
+        .map_err(|_| E::custom("unable to allocate Shamir share data"))?;
+    replacement.extend_from_slice(bytes.as_slice());
+    bytes.zeroize();
+    *bytes = replacement;
+    Ok(())
+}
+
+fn deserialize_share_data<'de, D>(deserializer: D) -> Result<Zeroizing<Vec<u8>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct ShareDataVisitor;
+
+    impl<'de> Visitor<'de> for ShareDataVisitor {
+        type Value = Zeroizing<Vec<u8>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a sequence of Shamir share bytes")
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            const MAX_INITIAL_CAPACITY: usize = 4096;
+            let initial_capacity = sequence.size_hint().unwrap_or(0).min(MAX_INITIAL_CAPACITY);
+            let mut bytes = Zeroizing::new(Vec::new());
+            bytes.try_reserve_exact(initial_capacity).map_err(|_| {
+                <A::Error as serde::de::Error>::custom("unable to allocate Shamir share data")
+            })?;
+            while let Some(byte) = sequence.next_element::<u8>()? {
+                if bytes.len() == bytes.capacity() {
+                    grow_zeroizing_share_data::<A::Error>(&mut bytes)?;
+                }
+                bytes.push(byte);
+            }
+            Ok(bytes)
+        }
+    }
+
+    deserializer.deserialize_seq(ShareDataVisitor)
 }
 
 impl fmt::Debug for Share {
@@ -428,6 +493,90 @@ mod tests {
         let mut legacy_cbor = Vec::new();
         ciborium::into_writer(&legacy, &mut legacy_cbor).expect("serialize legacy share wire");
         assert_eq!(share_cbor, legacy_cbor);
+
+        let restored_json: Share = serde_json::from_str(
+            r#"{"index":7,"data":[1,2,255],"commitment":[3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3]}"#,
+        )
+        .expect("deserialize legacy JSON share wire");
+        let restored_cbor: Share = ciborium::from_reader(legacy_cbor.as_slice())
+            .expect("deserialize legacy CBOR share wire");
+        assert_eq!(restored_json, share);
+        assert_eq!(restored_cbor, share);
+    }
+
+    #[test]
+    fn shamir_share_deserializer_rejects_mid_array_json_type_error() {
+        let malformed = r#"{"index":1,"data":[17,34,"not-a-byte"]}"#;
+
+        let result: Result<Share, _> = serde_json::from_str(malformed);
+
+        assert!(
+            result.is_err(),
+            "mid-array JSON type errors must fail closed"
+        );
+    }
+
+    #[test]
+    fn shamir_share_deserializer_rejects_mid_array_cbor_type_error() {
+        #[derive(serde::Serialize)]
+        struct MalformedShareWire<'a> {
+            index: u8,
+            data: Vec<MalformedByte<'a>>,
+        }
+
+        #[derive(serde::Serialize)]
+        #[serde(untagged)]
+        enum MalformedByte<'a> {
+            Byte(u8),
+            Text(&'a str),
+        }
+
+        let malformed = MalformedShareWire {
+            index: 1,
+            data: vec![
+                MalformedByte::Byte(17),
+                MalformedByte::Byte(34),
+                MalformedByte::Text("not-a-byte"),
+            ],
+        };
+        let mut encoded = Vec::new();
+        ciborium::into_writer(&malformed, &mut encoded).expect("encode malformed CBOR fixture");
+
+        let result: Result<Share, _> = ciborium::from_reader(encoded.as_slice());
+
+        assert!(
+            result.is_err(),
+            "mid-array CBOR type errors must fail closed"
+        );
+    }
+
+    #[test]
+    fn shamir_share_deserializer_accumulates_inside_zeroizing_storage() {
+        let source = include_str!("shamir.rs");
+        let deserializer = source
+            .split("fn grow_zeroizing_share_data")
+            .nth(1)
+            .expect("Share data must use a dedicated deserializer")
+            .split("impl fmt::Debug for Share")
+            .next()
+            .expect("Share data deserializer ends before Debug implementation");
+
+        assert!(
+            deserializer.contains("Zeroizing::new(Vec::new())"),
+            "the sequence accumulator must be zeroizing before the first byte is read"
+        );
+        assert!(
+            deserializer.contains("try_reserve_exact"),
+            "share-data allocations must fail through the typed deserialization error path"
+        );
+        assert!(
+            deserializer.contains("next_element::<u8>()"),
+            "share bytes must be read directly into the zeroizing accumulator"
+        );
+        assert!(
+            deserializer.contains("bytes.zeroize()"),
+            "capacity growth must wipe the replaced allocation before it is released"
+        );
     }
 
     #[test]
