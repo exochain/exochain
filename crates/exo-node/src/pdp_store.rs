@@ -30,6 +30,7 @@ use crate::private_file::{
 
 const KEY_FILE: &str = "pdp.key";
 const STATE_FILE: &str = "pdp-state.cbor";
+const MAX_PDP_SNAPSHOT_BYTES: u64 = 67_108_864;
 
 fn read_key(path: &Path) -> anyhow::Result<KeyPair> {
     let mut secret_bytes = read_private_file(path, 32, "PDP key custody rejected")?;
@@ -82,11 +83,7 @@ pub fn load_or_create(data_dir: &Path) -> anyhow::Result<PolicyDecisionPoint> {
     let keypair = load_or_create_key(&key_path)?;
 
     let mut pdp = PolicyDecisionPoint::new(keypair);
-    match read_private_file(
-        &state_path,
-        64 * 1024 * 1024,
-        "PDP snapshot custody rejected",
-    ) {
+    match read_snapshot(&state_path) {
         Ok(bytes) => {
             let snapshot = PdpSnapshot::from_cbor(&bytes)?;
             pdp.import_snapshot(snapshot)?;
@@ -96,6 +93,14 @@ pub fn load_or_create(data_dir: &Path) -> anyhow::Result<PolicyDecisionPoint> {
         Err(error) => return Err(error.into()),
     }
     Ok(pdp)
+}
+
+fn read_snapshot(path: &Path) -> Result<Zeroizing<Vec<u8>>, PrivateFileReadError> {
+    read_private_file(
+        path,
+        MAX_PDP_SNAPSHOT_BYTES,
+        "PDP snapshot custody rejected",
+    )
 }
 
 /// Atomically write all signed PDP runtime state to disk.
@@ -108,9 +113,53 @@ pub fn save(data_dir: &Path, pdp: &PolicyDecisionPoint) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::OpenOptions;
+
     use exo_core::{Did, Hash256, Timestamp, crypto::KeyPair};
 
     use super::*;
+
+    fn create_sized_private_file(path: &Path, len: u64) {
+        write_private_create_new(path, b"x").expect("create private fixture");
+        OpenOptions::new()
+            .write(true)
+            .open(path)
+            .expect("open private fixture")
+            .set_len(len)
+            .expect("size private fixture");
+    }
+
+    #[test]
+    fn absent_pdp_snapshot_first_start_remains_accepted() {
+        let directory = tempfile::tempdir().expect("fixture");
+        let pdp = load_or_create(directory.path()).expect("first start");
+        assert_ne!(pdp.service_public_key().as_bytes(), &[0_u8; 32]);
+        assert!(!directory.path().join(STATE_FILE).exists());
+    }
+
+    #[test]
+    fn pdp_snapshot_bounds_are_enforced_before_cbor_parse() {
+        let directory = tempfile::tempdir().expect("fixture");
+        load_or_create(directory.path()).expect("create PDP key");
+        let path = directory.path().join(STATE_FILE);
+        create_sized_private_file(&path, 67_108_864);
+        assert_eq!(
+            read_snapshot(&path).expect("exact snapshot limit").len(),
+            67_108_864
+        );
+
+        OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open private fixture")
+            .set_len(67_108_865)
+            .expect("size oversized fixture");
+        let error = match load_or_create(directory.path()) {
+            Ok(_) => panic!("oversized snapshot must fail before CBOR parse"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("PDP snapshot custody rejected"));
+    }
 
     #[test]
     fn restart_preserves_key_revocation_and_consumed_state() {
