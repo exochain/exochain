@@ -68,6 +68,14 @@ grep -F 'GITHUB_SERVER_URL' "$tag_guard" >/dev/null \
   || fail "$tag_guard must derive the authoritative server from runner-protected context"
 grep -F 'GITHUB_REPOSITORY' "$tag_guard" >/dev/null \
   || fail "$tag_guard must derive the authoritative repository from runner-protected context"
+grep -F 'ls-tree -r -t -z --full-tree "$expected_commit_sha"' "$source_guard" >/dev/null \
+  || fail "$source_guard must derive a NUL-safe manifest from the immutable commit tree"
+grep -F 'hash-object --no-filters' "$source_guard" >/dev/null \
+  || fail "$source_guard must hash raw tracked bytes without clean filters"
+grep -F 'release source cannot contain Git submodules' "$source_guard" >/dev/null \
+  || fail "$source_guard must fail closed when the commit tree contains a gitlink"
+grep -F 'ls-files --others --exclude-per-directory=.gitignore -z' "$source_guard" >/dev/null \
+  || fail "$source_guard all mode must not trust local exclude files when finding untracked inputs"
 
 # Parse the workflow as YAML and reject duplicate mapping keys. YAML parsers
 # otherwise commonly accept the last duplicate silently, which can replace a
@@ -212,11 +220,15 @@ git -C "$fixture_dir" config user.email release-test@example.invalid
 git -C "$fixture_dir" config commit.gpgSign false
 git -C "$fixture_dir" config tag.gpgSign false
 printf 'tracked\n' > "$fixture_dir/tracked.txt"
+printf 'plain\n' > "$fixture_dir/plain.txt"
+printf '#!/bin/sh\nexit 0\n' > "$fixture_dir/executable.sh"
+chmod +x "$fixture_dir/executable.sh"
+ln -s tracked.txt "$fixture_dir/tracked-link"
 mkdir -p "$fixture_dir/tools"
 cp "$repo_root/$source_guard" "$fixture_dir/$source_guard"
 cp "$repo_root/$tag_guard" "$fixture_dir/$tag_guard"
 cp "$repo_root/$side_effect_guard" "$fixture_dir/$side_effect_guard"
-git -C "$fixture_dir" add tracked.txt tools
+git -C "$fixture_dir" add tracked.txt plain.txt executable.sh tracked-link tools
 git -C "$fixture_dir" commit -qm fixture
 fixture_sha="$(git -C "$fixture_dir" rev-parse HEAD)"
 git -C "$fixture_dir" remote add origin "$fixture_remote"
@@ -247,6 +259,55 @@ fi
 if run_source_guard "$fixture_sha" "$fixture_sha" "0000000000000000000000000000000000000000" >/dev/null 2>&1; then
   fail "source guard must reject a mutable or mismatched trusted ref"
 fi
+
+# Repository-local stat-cache settings can make Git report a same-size tracked
+# mutation as clean when its mtime is restored. Establish the exact concealment
+# precondition, then require the source guard to compare committed bytes rather
+# than trusting cached index metadata or checkout configuration.
+tracked_mtime_reference="$fixture_root/tracked-mtime-reference"
+touch -t 200001010000 "$fixture_dir/tracked.txt"
+cp -p "$fixture_dir/tracked.txt" "$tracked_mtime_reference"
+git -C "$fixture_dir" config core.trustctime false
+git -C "$fixture_dir" config core.checkStat minimal
+git -C "$fixture_dir" update-index --really-refresh
+printf 'changed\n' > "$fixture_dir/tracked.txt"
+touch -r "$tracked_mtime_reference" "$fixture_dir/tracked.txt"
+if [ -n "$(git -C "$fixture_dir" status --porcelain=v1 --untracked-files=no)" ]; then
+  fail "stat-cache regression fixture must conceal the same-size tracked mutation from git status"
+fi
+if run_source_guard "$fixture_sha" "$fixture_sha" "$fixture_sha" >/dev/null 2>&1; then
+  fail "source guard must reject tracked byte changes concealed by local trustctime and checkStat settings"
+fi
+git -C "$fixture_dir" restore --source=HEAD --worktree -- tracked.txt
+git -C "$fixture_dir" config --unset core.trustctime
+git -C "$fixture_dir" config --unset core.checkStat
+git -C "$fixture_dir" update-index --refresh
+
+chmod -x "$fixture_dir/executable.sh"
+if run_source_guard "$fixture_sha" "$fixture_sha" "$fixture_sha" >/dev/null 2>&1; then
+  fail "source guard must reject a committed executable whose execute bit was removed"
+fi
+chmod +x "$fixture_dir/executable.sh"
+
+chmod +x "$fixture_dir/plain.txt"
+if run_source_guard "$fixture_sha" "$fixture_sha" "$fixture_sha" >/dev/null 2>&1; then
+  fail "source guard must reject an executable bit added to a non-executable committed file"
+fi
+chmod -x "$fixture_dir/plain.txt"
+
+rm "$fixture_dir/tracked-link"
+ln -s plain.txt "$fixture_dir/tracked-link"
+if run_source_guard "$fixture_sha" "$fixture_sha" "$fixture_sha" >/dev/null 2>&1; then
+  fail "source guard must reject a tracked symlink whose target changed"
+fi
+rm "$fixture_dir/tracked-link"
+ln -s tracked.txt "$fixture_dir/tracked-link"
+
+rm "$fixture_dir/tracked.txt"
+if run_source_guard "$fixture_sha" "$fixture_sha" "$fixture_sha" >/dev/null 2>&1; then
+  fail "source guard must reject a deleted tracked file"
+fi
+git -C "$fixture_dir" restore --source=HEAD --worktree -- tracked.txt
 
 release_tag="v0.2.6"
 git -C "$fixture_dir" tag -a "$release_tag" -m "verified fixture"
@@ -520,6 +581,24 @@ if (
 ) >/dev/null 2>&1; then
   fail "source guard must reject an unknown cleanliness mode"
 fi
+
+git -C "$fixture_dir" update-index --add --cacheinfo "160000,$fixture_sha,unsupported-submodule"
+git -C "$fixture_dir" commit -qm "unsupported gitlink fixture"
+gitlink_fixture_sha="$(git -C "$fixture_dir" rev-parse HEAD)"
+gitlink_guard_output=""
+if gitlink_guard_output="$(
+  cd "$fixture_dir"
+  RELEASE_SOURCE_CLEAN_MODE=tracked \
+    EXPECTED_COMMIT_SHA="$gitlink_fixture_sha" \
+    GITHUB_SHA="$gitlink_fixture_sha" \
+    GITHUB_WORKSPACE="$fixture_dir" \
+    TRUSTED_RELEASE_REF="$gitlink_fixture_sha" \
+    bash "$repo_root/$source_guard" 2>&1
+)"; then
+  fail "source guard must fail closed when immutable release source contains a gitlink"
+fi
+grep -F 'release source cannot contain Git submodules: unsupported-submodule' <<<"$gitlink_guard_output" >/dev/null \
+  || fail "source guard must report the rejected gitlink path"
 
 job_block() {
   local job="$1"
