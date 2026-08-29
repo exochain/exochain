@@ -1019,6 +1019,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live PostgreSQL; mandatory in CI Gate 13"]
     async fn postgres_malformed_rows_return_typed_errors() {
         let database_url = std::env::var("DATABASE_URL")
             .expect("DATABASE_URL is required for postgres_malformed_rows_return_typed_errors");
