@@ -27,7 +27,10 @@
 use std::collections::BTreeSet;
 
 use exo_core::{Did, Hash256, Timestamp};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{IgnoredAny, SeqAccess, Visitor},
+};
 use uuid::Uuid;
 
 use crate::error::{LegalError, Result};
@@ -60,6 +63,9 @@ pub struct InterestedTransaction {
 
 /// Maximum number of unique disinterested voters accepted for one transaction.
 pub const MAX_DISINTERESTED_VOTES: usize = 10_000;
+
+/// Maximum UTF-8 byte length accepted for caller-controlled safe-harbor prose.
+pub const MAX_SAFE_HARBOR_TEXT_BYTES: usize = 65_536;
 
 /// The three safe-harbor paths under DGCL §144.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,11 +146,69 @@ struct InterestedTransactionWire {
     status: SafeHarborStatus,
     path: Option<SafeHarborPath>,
     disclosure: Option<Disclosure>,
+    #[serde(deserialize_with = "deserialize_disinterested_votes")]
     disinterested_votes: Vec<DisinterestedVote>,
     fairness_evidence: Option<FairnessEvidence>,
 }
 
+fn deserialize_disinterested_votes<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<DisinterestedVote>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct BoundedVotesVisitor;
+
+    impl<'de> Visitor<'de> for BoundedVotesVisitor {
+        type Value = Vec<DisinterestedVote>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                formatter,
+                "at most {MAX_DISINTERESTED_VOTES} disinterested votes"
+            )
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let capacity = sequence
+                .size_hint()
+                .unwrap_or(0)
+                .min(MAX_DISINTERESTED_VOTES);
+            let mut votes = Vec::with_capacity(capacity);
+            while votes.len() < MAX_DISINTERESTED_VOTES {
+                match sequence.next_element::<DisinterestedVote>()? {
+                    Some(vote) => votes.push(vote),
+                    None => return Ok(votes),
+                }
+            }
+
+            if sequence.next_element::<IgnoredAny>()?.is_some() {
+                return Err(serde::de::Error::custom(format!(
+                    "disinterested vote count exceeds {MAX_DISINTERESTED_VOTES}"
+                )));
+            }
+            Ok(votes)
+        }
+    }
+
+    deserializer.deserialize_seq(BoundedVotesVisitor)
+}
+
+fn validate_safe_harbor_text_length(label: &str, value: &str) -> std::result::Result<(), String> {
+    if value.len() > MAX_SAFE_HARBOR_TEXT_BYTES {
+        return Err(format!(
+            "{label} may contain at most {MAX_SAFE_HARBOR_TEXT_BYTES} bytes"
+        ));
+    }
+    Ok(())
+}
+
 fn validate_disclosure(disclosure: &Disclosure, initiated_at: Timestamp) -> Result<()> {
+    validate_safe_harbor_text_length("material facts", &disclosure.material_facts)
+        .map_err(|reason| LegalError::DisclosureVerificationInvalid { reason })?;
     if disclosure.material_facts.trim().is_empty() {
         return Err(LegalError::DisclosureVerificationInvalid {
             reason: "safe-harbor material facts must not be blank".into(),
@@ -199,11 +263,15 @@ fn validate_fairness_evidence(
             reason: "fairness evidence methodology must not be blank".into(),
         });
     }
+    validate_safe_harbor_text_length("methodology", &evidence.methodology)
+        .map_err(|reason| LegalError::NotAdmissible { reason })?;
     if evidence.conclusion.trim().is_empty() {
         return Err(LegalError::NotAdmissible {
             reason: "fairness evidence conclusion must not be blank".into(),
         });
     }
+    validate_safe_harbor_text_length("conclusion", &evidence.conclusion)
+        .map_err(|reason| LegalError::NotAdmissible { reason })?;
     if evidence.evidence_hash == Hash256::ZERO {
         return Err(LegalError::NotAdmissible {
             reason: "fairness evidence hash must not be Hash256::ZERO".into(),
@@ -297,6 +365,8 @@ impl InterestedTransaction {
                 reason: "safe-harbor interest description must not be empty".into(),
             });
         }
+        validate_safe_harbor_text_length("interest description", &self.interest_description)
+            .map_err(|reason| LegalError::InvalidStateTransition { reason })?;
         if self.terms_hash == Hash256::ZERO {
             return Err(LegalError::InvalidStateTransition {
                 reason: "safe-harbor terms hash must not be Hash256::ZERO".into(),
@@ -343,6 +413,11 @@ impl InterestedTransaction {
             if vote.voter == self.interested_party {
                 return Err(LegalError::ConflictOfInterest {
                     reason: format!("{} is the interested party and cannot vote", vote.voter),
+                });
+            }
+            if vote.voter == self.counterparty {
+                return Err(LegalError::ConflictOfInterest {
+                    reason: format!("{} is the counterparty and cannot vote", vote.voter),
                 });
             }
             if !vote.independence_attestation {
@@ -522,6 +597,8 @@ pub fn initiate_safe_harbor(
             reason: "safe-harbor interest description must not be empty".into(),
         });
     }
+    validate_safe_harbor_text_length("interest description", interest_description)
+        .map_err(|reason| LegalError::InvalidStateTransition { reason })?;
     if terms_hash == Hash256::ZERO {
         return Err(LegalError::InvalidStateTransition {
             reason: "safe-harbor terms hash must not be Hash256::ZERO".into(),
@@ -559,6 +636,8 @@ pub fn complete_disclosure(
     material_facts: &str,
     now: Timestamp,
 ) -> Result<()> {
+    validate_safe_harbor_text_length("material facts", material_facts)
+        .map_err(|reason| LegalError::DisclosureVerificationInvalid { reason })?;
     txn.validate()?;
     if txn.status != SafeHarborStatus::PendingDisclosure {
         return Err(LegalError::InvalidStateTransition {
@@ -608,10 +687,15 @@ pub fn record_disinterested_vote(
         });
     }
 
-    // The interested party cannot vote on their own transaction
+    // Neither party to the transaction is disinterested.
     if *voter == txn.interested_party {
         return Err(LegalError::ConflictOfInterest {
             reason: format!("{voter} is the interested party and cannot vote"),
+        });
+    }
+    if *voter == txn.counterparty {
+        return Err(LegalError::ConflictOfInterest {
+            reason: format!("{voter} is the counterparty and cannot vote"),
         });
     }
 
@@ -656,6 +740,10 @@ pub fn record_fairness_evidence(
     evidence_hash: Hash256,
     now: Timestamp,
 ) -> Result<()> {
+    validate_safe_harbor_text_length("methodology", methodology)
+        .map_err(|reason| LegalError::NotAdmissible { reason })?;
+    validate_safe_harbor_text_length("conclusion", conclusion)
+        .map_err(|reason| LegalError::NotAdmissible { reason })?;
     txn.validate()?;
     if txn.status != SafeHarborStatus::DisclosureMade {
         return Err(LegalError::InvalidStateTransition {
@@ -904,6 +992,34 @@ mod tests {
     }
 
     #[test]
+    fn counterparty_cannot_vote_and_rejection_does_not_mutate() {
+        let mut txn = create_txn(SafeHarborPath::BoardApproval);
+        complete_disclosure(&mut txn, &did("director-alice"), "interest", ts(2000)).unwrap();
+        let original = serde_json::to_value(&txn).unwrap();
+
+        let error = record_disinterested_vote(&mut txn, &did("alice-corp"), true, ts(3000))
+            .expect_err("the transaction counterparty is not a disinterested voter");
+
+        assert!(matches!(error, LegalError::ConflictOfInterest { .. }));
+        assert_eq!(serde_json::to_value(&txn).unwrap(), original);
+    }
+
+    #[test]
+    fn counterparty_vote_is_rejected_during_validated_deserialization() {
+        let mut txn = create_txn(SafeHarborPath::BoardApproval);
+        complete_disclosure(&mut txn, &did("director-alice"), "interest", ts(2000)).unwrap();
+        record_disinterested_vote(&mut txn, &did("director-bob"), true, ts(3000)).unwrap();
+        let mut snapshot = serde_json::to_value(txn).unwrap();
+        snapshot["disinterested_votes"][0]["voter"] =
+            serde_json::Value::String("did:exo:alice-corp".into());
+
+        let error = serde_json::from_value::<InterestedTransaction>(snapshot)
+            .expect_err("a serialized counterparty vote must fail validation");
+
+        assert!(error.to_string().contains("counterparty"));
+    }
+
+    #[test]
     fn disinterested_vote_count_is_bounded() {
         let mut txn = create_txn(SafeHarborPath::ShareholderApproval);
         complete_disclosure(&mut txn, &did("director-alice"), "interest", ts(2000)).unwrap();
@@ -929,6 +1045,185 @@ mod tests {
 
         assert!(matches!(err, LegalError::InvalidStateTransition { .. }));
         assert_eq!(txn.disinterested_votes.len(), 10_000);
+    }
+
+    #[test]
+    fn vote_deserializer_does_not_materialize_the_excess_vote() {
+        let mut txn = create_txn(SafeHarborPath::ShareholderApproval);
+        complete_disclosure(&mut txn, &did("director-alice"), "interest", ts(2000)).unwrap();
+        record_disinterested_vote(&mut txn, &did("shareholder-template"), true, ts(3000)).unwrap();
+        let mut snapshot = serde_json::to_value(txn).unwrap();
+        let vote_template = snapshot["disinterested_votes"][0].clone();
+        let votes = snapshot["disinterested_votes"]
+            .as_array_mut()
+            .expect("votes serialize as an array");
+        votes.clear();
+        for voter_number in 0_u64..10_000 {
+            let mut vote = vote_template.clone();
+            vote["voter"] =
+                serde_json::Value::String(format!("did:exo:shareholder-{voter_number}"));
+            votes.push(vote);
+        }
+        votes.push(serde_json::json!({
+            "sentinel": "this malformed excess item must be ignored rather than materialized"
+        }));
+
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        let error = serde_json::from_str::<InterestedTransaction>(&serialized)
+            .expect_err("the 10,001st streamed item must be rejected")
+            .to_string();
+
+        assert!(
+            error.contains("disinterested vote count exceeds 10000"),
+            "the excess item was materialized instead of consumed as IgnoredAny: {error}"
+        );
+    }
+
+    #[test]
+    fn safe_harbor_text_limit_is_enforced_before_transition_mutation() {
+        let exact = "x".repeat(65_536);
+        let over = "x".repeat(65_537);
+
+        initiate_safe_harbor(
+            id(0x304),
+            &did("director-alice"),
+            &did("alice-corp"),
+            &exact,
+            Hash256::digest(b"terms"),
+            SafeHarborPath::BoardApproval,
+            ts(1000),
+        )
+        .expect("an exact-limit interest description must be accepted");
+        assert!(
+            initiate_safe_harbor(
+                id(0x305),
+                &did("director-alice"),
+                &did("alice-corp"),
+                &over,
+                Hash256::digest(b"terms"),
+                SafeHarborPath::BoardApproval,
+                ts(1000),
+            )
+            .is_err()
+        );
+
+        let mut disclosure_txn = create_txn(SafeHarborPath::BoardApproval);
+        complete_disclosure(
+            &mut disclosure_txn,
+            &did("director-alice"),
+            &exact,
+            ts(2000),
+        )
+        .expect("exact-limit material facts must be accepted");
+        let mut disclosure_reject = create_txn(SafeHarborPath::BoardApproval);
+        let original_disclosure = serde_json::to_value(&disclosure_reject).unwrap();
+        assert!(
+            complete_disclosure(
+                &mut disclosure_reject,
+                &did("director-alice"),
+                &over,
+                ts(2000),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            serde_json::to_value(&disclosure_reject).unwrap(),
+            original_disclosure
+        );
+
+        for (name, methodology, conclusion) in [
+            ("methodology", over.as_str(), "fair market range"),
+            ("conclusion", "DCF analysis", over.as_str()),
+        ] {
+            let mut txn = create_txn(SafeHarborPath::FairnessProof);
+            complete_disclosure(&mut txn, &did("director-alice"), "interest", ts(2000)).unwrap();
+            let original = serde_json::to_value(&txn).unwrap();
+            let error = record_fairness_evidence(
+                &mut txn,
+                &did("independent-valuator"),
+                methodology,
+                conclusion,
+                Hash256::digest(b"valuation-report"),
+                ts(2500),
+            );
+            assert!(error.is_err(), "over-limit {name} must be rejected");
+            assert_eq!(serde_json::to_value(&txn).unwrap(), original, "{name}");
+        }
+
+        for (name, methodology, conclusion) in [
+            ("methodology", exact.as_str(), "fair market range"),
+            ("conclusion", "DCF analysis", exact.as_str()),
+        ] {
+            let mut txn = create_txn(SafeHarborPath::FairnessProof);
+            complete_disclosure(&mut txn, &did("director-alice"), "interest", ts(2000)).unwrap();
+            record_fairness_evidence(
+                &mut txn,
+                &did("independent-valuator"),
+                methodology,
+                conclusion,
+                Hash256::digest(b"valuation-report"),
+                ts(2500),
+            )
+            .unwrap_or_else(|error| panic!("exact-limit {name} must be accepted: {error}"));
+        }
+    }
+
+    #[test]
+    fn safe_harbor_snapshot_rejects_over_limit_prose_fields() {
+        let over_text = "x".repeat(65_537);
+        let over = serde_json::Value::String(over_text.clone());
+
+        let pending = serde_json::to_value(create_txn(SafeHarborPath::BoardApproval)).unwrap();
+        let mut interest = pending;
+        interest["interest_description"] = over.clone();
+
+        let mut disclosed_txn = create_txn(SafeHarborPath::BoardApproval);
+        complete_disclosure(
+            &mut disclosed_txn,
+            &did("director-alice"),
+            "interest",
+            ts(2000),
+        )
+        .unwrap();
+        let mut material_facts = serde_json::to_value(disclosed_txn).unwrap();
+        material_facts["disclosure"]["material_facts"] = over.clone();
+        material_facts["disclosure"]["facts_hash"] =
+            serde_json::to_value(Hash256::digest(over_text.as_bytes())).unwrap();
+
+        let mut fairness_txn = create_txn(SafeHarborPath::FairnessProof);
+        complete_disclosure(
+            &mut fairness_txn,
+            &did("director-alice"),
+            "interest",
+            ts(2000),
+        )
+        .unwrap();
+        record_fairness_evidence(
+            &mut fairness_txn,
+            &did("independent-valuator"),
+            "DCF analysis",
+            "fair market range",
+            Hash256::digest(b"valuation-report"),
+            ts(2500),
+        )
+        .unwrap();
+        let fairness = serde_json::to_value(fairness_txn).unwrap();
+        let mut methodology = fairness.clone();
+        methodology["fairness_evidence"]["methodology"] = over.clone();
+        let mut conclusion = fairness;
+        conclusion["fairness_evidence"]["conclusion"] = over;
+
+        for (name, snapshot) in [
+            ("interest_description", interest),
+            ("material_facts", material_facts),
+            ("methodology", methodology),
+            ("conclusion", conclusion),
+        ] {
+            assert!(
+                serde_json::from_value::<InterestedTransaction>(snapshot).is_err(),
+                "over-limit {name} must be rejected during snapshot validation"
+            );
+        }
     }
 
     #[test]

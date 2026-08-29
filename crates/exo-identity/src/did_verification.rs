@@ -54,6 +54,10 @@ pub enum DidVerificationError {
     /// Signature verification failed.
     #[error("invalid signature")]
     InvalidSignature,
+
+    /// Verification method lifecycle timestamps are inconsistent or nonmonotonic.
+    #[error("invalid verification method lifecycle: {0}")]
+    InvalidLifecycle(String),
 }
 
 fn decode_ed25519_multibase_public_key(encoded: &str) -> Result<PublicKey, DidVerificationError> {
@@ -213,12 +217,38 @@ pub fn rotate_verification_key(
         )));
     }
 
+    let rotation_time = exo_core::Timestamp::new(current_time_ms, 0);
+    if rotation_time == exo_core::Timestamp::ZERO {
+        return Err(DidVerificationError::InvalidLifecycle(
+            "rotation timestamp must not be Timestamp::ZERO".to_string(),
+        ));
+    }
+    if rotation_time <= doc.updated {
+        return Err(DidVerificationError::InvalidLifecycle(format!(
+            "rotation timestamp {rotation_time} must be strictly later than document update {}",
+            doc.updated
+        )));
+    }
+    if rotation_time < doc.created {
+        return Err(DidVerificationError::InvalidLifecycle(format!(
+            "rotation timestamp {rotation_time} precedes document creation {}",
+            doc.created
+        )));
+    }
+
     // Find the old method
     let old_method_idx = doc
         .verification_methods
         .iter()
         .position(|m| m.id == old_key_id)
         .ok_or_else(|| DidVerificationError::MethodNotFound(old_key_id.to_string()))?;
+
+    if current_time_ms < doc.verification_methods[old_method_idx].valid_from {
+        return Err(DidVerificationError::InvalidLifecycle(format!(
+            "rotation timestamp {current_time_ms} precedes selected verification method validity {}",
+            doc.verification_methods[old_method_idx].valid_from
+        )));
+    }
 
     let old_public_key = validate_verification_method_document_binding(
         doc,
@@ -297,7 +327,7 @@ pub fn rotate_verification_key(
         doc.public_keys.push(new_public_key);
     }
     doc.verification_methods.push(new_method.clone());
-    doc.updated = exo_core::Timestamp::new(current_time_ms, 0);
+    doc.updated = rotation_time;
 
     Ok(new_method)
 }
@@ -637,6 +667,90 @@ mod tests {
             Err(DidVerificationError::MethodNotDocumentBound(_))
         ));
         assert_eq!(doc, original_doc);
+    }
+
+    #[test]
+    fn rotate_key_rejects_nonmonotonic_lifecycle_timestamps_without_mutation() {
+        let cases = [
+            ("zero timestamp", Timestamp::ZERO, 0),
+            ("not later than updated", Timestamp::new(1000, 0), 1000),
+        ];
+
+        for (name, updated, rotation_ms) in cases {
+            let (old_pk, _) = generate_keypair();
+            let (new_pk, _) = generate_keypair();
+            let did = test_did();
+            let mut doc = make_doc_with_verification(did.clone(), old_pk);
+            doc.updated = updated;
+            let original_doc = doc.clone();
+
+            let result = rotate_verification_key(
+                &mut doc,
+                &format!("{did}#key-1"),
+                new_pk.as_bytes(),
+                &did,
+                rotation_ms,
+            );
+
+            assert!(result.is_err(), "{name} must be rejected");
+            assert_eq!(doc, original_doc, "{name} mutated the DID document");
+        }
+    }
+
+    #[test]
+    fn rotate_key_rejects_timestamp_before_created_or_selected_method_validity() {
+        for inconsistent_field in ["created", "selected method valid_from"] {
+            let (old_pk, _) = generate_keypair();
+            let (new_pk, _) = generate_keypair();
+            let did = test_did();
+            let mut doc = make_doc_with_verification(did.clone(), old_pk);
+            doc.created = Timestamp::new(100, 0);
+            doc.updated = Timestamp::new(200, 0);
+            doc.verification_methods[0].valid_from = 100;
+            let rotation_ms = if inconsistent_field == "created" {
+                doc.created = Timestamp::new(2000, 0);
+                doc.verification_methods[0].valid_from = 100;
+                1500
+            } else {
+                doc.verification_methods[0].valid_from = 2000;
+                1500
+            };
+            let original_doc = doc.clone();
+
+            let result = rotate_verification_key(
+                &mut doc,
+                &format!("{did}#key-1"),
+                new_pk.as_bytes(),
+                &did,
+                rotation_ms,
+            );
+
+            assert!(result.is_err(), "{inconsistent_field} must be rejected");
+            assert_eq!(
+                doc, original_doc,
+                "{inconsistent_field} rejection mutated the DID document"
+            );
+        }
+    }
+
+    #[test]
+    fn rotate_key_accepts_strictly_monotonic_timestamp() {
+        let (old_pk, _) = generate_keypair();
+        let (new_pk, _) = generate_keypair();
+        let did = test_did();
+        let mut doc = make_doc_with_verification(did.clone(), old_pk);
+        doc.updated = Timestamp::new(1500, 7);
+
+        rotate_verification_key(
+            &mut doc,
+            &format!("{did}#key-1"),
+            new_pk.as_bytes(),
+            &did,
+            1501,
+        )
+        .expect("a timestamp strictly later than updated must rotate");
+
+        assert_eq!(doc.updated, Timestamp::new(1501, 0));
     }
 
     #[test]
