@@ -30,11 +30,7 @@
 //! The CrossChecked commitment route and its exact readback route likewise
 //! accept only their dedicated scoped bearer; the admin bearer is rejected.
 
-use std::{
-    io::{ErrorKind, Write},
-    path::Path,
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 use axum::{
     body::Body,
@@ -156,52 +152,8 @@ where
 /// is applied atomically during open rather than by chmod after plaintext has
 /// already hit the filesystem. The final rename preserves restart behavior by
 /// replacing any prior token file.
-pub fn write_admin_token_file(path: &Path, token: &str) -> std::io::Result<()> {
-    let tmp_path = path.with_extension("tmp");
-    match std::fs::remove_file(&tmp_path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp_path)?;
-        file.write_all(token.as_bytes())?;
-        file.sync_all()?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)?;
-        file.write_all(token.as_bytes())?;
-        file.sync_all()?;
-    }
-
-    if let Err(error) = std::fs::rename(&tmp_path, path) {
-        return match std::fs::remove_file(&tmp_path) {
-            Ok(()) => Err(error),
-            Err(cleanup_error) if cleanup_error.kind() == ErrorKind::NotFound => Err(error),
-            Err(cleanup_error) => Err(std::io::Error::new(
-                cleanup_error.kind(),
-                format!(
-                    "failed to remove temporary admin token file {} after rename failure: {cleanup_error}; rename failure: {error}",
-                    tmp_path.display()
-                ),
-            )),
-        };
-    }
-
-    Ok(())
+pub fn write_admin_token_file(path: &Path, token: &str) -> anyhow::Result<()> {
+    crate::private_file::write_private_replace(path, token.as_bytes())
 }
 
 fn bearer_header_value(headers: &HeaderMap) -> Result<&str, StatusCode> {
@@ -1221,7 +1173,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("admin_token");
 
-        std::fs::write(&path, "old-token").unwrap();
+        write_admin_token_file(&path, "old-token").unwrap();
         write_admin_token_file(&path, "new-token").unwrap();
 
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "new-token");
@@ -1241,6 +1193,28 @@ mod tests {
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "secret-token");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_file_admin_writer_refuses_permissive_destination_and_stale_temp() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let permissive_destination = tempfile::tempdir().unwrap();
+        let path = permissive_destination.path().join("admin_token");
+        std::fs::write(&path, "legacy-token").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(write_admin_token_file(&path, "new-token").is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "legacy-token");
+
+        let permissive_temp = tempfile::tempdir().unwrap();
+        let path = permissive_temp.path().join("admin_token");
+        let temp = crate::private_file::private_temp_path(&path);
+        std::fs::write(&temp, "attacker temp").unwrap();
+        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(write_admin_token_file(&path, "new-token").is_err());
+        assert_eq!(std::fs::read_to_string(&temp).unwrap(), "attacker temp");
+        assert!(!path.exists());
     }
 
     #[test]
