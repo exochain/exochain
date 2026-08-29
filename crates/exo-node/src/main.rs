@@ -55,6 +55,7 @@ mod metrics;
 mod network;
 mod passport;
 mod pdp_store;
+mod private_file;
 mod provenance;
 mod reactor;
 mod receipt_dashboard;

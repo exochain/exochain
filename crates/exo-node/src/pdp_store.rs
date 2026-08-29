@@ -18,45 +18,21 @@
 
 //! Durable PDP identity and service-signed runtime authority state.
 
-use std::{
-    fs::{File, OpenOptions},
-    io::{ErrorKind, Read, Write},
-    path::Path,
-};
+use std::path::Path;
 
 use exo_core::crypto::KeyPair;
 use exo_pdp::{PdpSnapshot, PolicyDecisionPoint};
+use zeroize::{Zeroize, Zeroizing};
+
+use crate::private_file::{
+    PrivateFileReadError, read_private_file, write_private_create_new, write_private_replace,
+};
 
 const KEY_FILE: &str = "pdp.key";
 const STATE_FILE: &str = "pdp-state.cbor";
 
-fn open_private_new(path: &Path) -> std::io::Result<File> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path)
-}
-
 fn read_key(path: &Path) -> anyhow::Result<KeyPair> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(path)?.permissions().mode() & 0o777;
-        if mode & 0o077 != 0 {
-            anyhow::bail!(
-                "PDP key at {} has unsafe mode {:o}; expected owner-only permissions",
-                path.display(),
-                mode
-            );
-        }
-    }
-    let mut file = OpenOptions::new().read(true).open(path)?;
-    let mut secret_bytes = Vec::new();
-    file.read_to_end(&mut secret_bytes)?;
+    let mut secret_bytes = read_private_file(path, 32, "PDP key custody rejected")?;
     if secret_bytes.len() != 32 {
         anyhow::bail!(
             "corrupt PDP key at {} — expected 32 bytes, got {}",
@@ -64,28 +40,34 @@ fn read_key(path: &Path) -> anyhow::Result<KeyPair> {
             secret_bytes.len()
         );
     }
-    let mut buf = [0u8; 32];
+    let mut buf = Zeroizing::new([0u8; 32]);
     buf.copy_from_slice(&secret_bytes);
-    Ok(KeyPair::from_secret_bytes(buf)?)
+    secret_bytes.zeroize();
+    Ok(KeyPair::from_secret_bytes(std::mem::take(&mut *buf))?)
 }
 
 fn load_or_create_key(path: &Path) -> anyhow::Result<KeyPair> {
     match read_key(path) {
         Ok(key) => Ok(key),
         Err(read_error)
-            if read_error
-                .downcast_ref::<std::io::Error>()
-                .is_some_and(|error| error.kind() == ErrorKind::NotFound) =>
+            if matches!(
+                read_error.downcast_ref(),
+                Some(PrivateFileReadError::NotFound { .. })
+            ) =>
         {
             let keypair = KeyPair::generate();
-            match open_private_new(path) {
-                Ok(mut file) => {
-                    file.write_all(keypair.secret_key().as_bytes())?;
-                    file.sync_all()?;
-                    Ok(keypair)
+            match write_private_create_new(path, keypair.secret_key().as_bytes()) {
+                Ok(()) => Ok(keypair),
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io_error| {
+                            io_error.kind() == std::io::ErrorKind::AlreadyExists
+                        }) =>
+                {
+                    read_key(path)
                 }
-                Err(error) if error.kind() == ErrorKind::AlreadyExists => read_key(path),
-                Err(error) => Err(error.into()),
+                Err(error) => Err(error),
             }
         }
         Err(error) => Err(error),
@@ -100,13 +82,17 @@ pub fn load_or_create(data_dir: &Path) -> anyhow::Result<PolicyDecisionPoint> {
     let keypair = load_or_create_key(&key_path)?;
 
     let mut pdp = PolicyDecisionPoint::new(keypair);
-    match std::fs::read(&state_path) {
+    match read_private_file(
+        &state_path,
+        64 * 1024 * 1024,
+        "PDP snapshot custody rejected",
+    ) {
         Ok(bytes) => {
             let snapshot = PdpSnapshot::from_cbor(&bytes)?;
             pdp.import_snapshot(snapshot)?;
             tracing::info!(path = %state_path.display(), "loaded signed PDP runtime state");
         }
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(PrivateFileReadError::NotFound { .. }) => {}
         Err(error) => return Err(error.into()),
     }
     Ok(pdp)
@@ -114,15 +100,9 @@ pub fn load_or_create(data_dir: &Path) -> anyhow::Result<PolicyDecisionPoint> {
 
 /// Atomically write all signed PDP runtime state to disk.
 pub fn save(data_dir: &Path, pdp: &PolicyDecisionPoint) -> anyhow::Result<()> {
-    let bytes = pdp.export_snapshot()?.to_cbor()?;
-    let tmp = data_dir.join("pdp-state.cbor.tmp");
+    let bytes = Zeroizing::new(pdp.export_snapshot()?.to_cbor()?);
     let dest = data_dir.join(STATE_FILE);
-    let mut file = open_private_new(&tmp)?;
-    file.write_all(&bytes)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&tmp, &dest)?;
-    File::open(data_dir)?.sync_all()?;
+    write_private_replace(&dest, &bytes)?;
     Ok(())
 }
 
@@ -184,12 +164,51 @@ mod tests {
         let path = dir.path().join(KEY_FILE);
         let original = [7u8; 32];
         let expected_public_key = *KeyPair::from_secret_bytes(original).unwrap().public_key();
-        let mut file = open_private_new(&path).unwrap();
-        file.write_all(&original).unwrap();
-        file.sync_all().unwrap();
+        write_private_create_new(&path, &original).unwrap();
 
         let loaded = load_or_create(dir.path()).unwrap();
         assert_eq!(loaded.service_public_key(), expected_public_key);
         assert_eq!(std::fs::read(path).unwrap(), original);
+    }
+
+    #[test]
+    fn stale_pdp_temp_owned_regular_file_recovers_without_weakening_create_new() {
+        let directory = tempfile::tempdir().unwrap();
+        let pdp = load_or_create(directory.path()).unwrap();
+        let stale = directory.path().join("pdp-state.cbor.tmp");
+        crate::private_file::write_private_create_new(&stale, b"stale owned temp").unwrap();
+
+        save(directory.path(), &pdp).expect("exact owned stale temp must recover");
+
+        assert!(!stale.exists());
+        assert!(directory.path().join(STATE_FILE).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_file_pdp_rejects_permissive_snapshot_and_symlink_key_before_decode() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let snapshot_dir = tempfile::tempdir().unwrap();
+        let pdp = load_or_create(snapshot_dir.path()).unwrap();
+        save(snapshot_dir.path(), &pdp).unwrap();
+        let snapshot = snapshot_dir.path().join(STATE_FILE);
+        std::fs::set_permissions(&snapshot, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let error = match load_or_create(snapshot_dir.path()) {
+            Ok(_) => panic!("permissive PDP snapshot must fail before CBOR decode"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains(STATE_FILE));
+
+        let source = tempfile::tempdir().unwrap();
+        let source_pdp = load_or_create(source.path()).unwrap();
+        let linked = tempfile::tempdir().unwrap();
+        symlink(source.path().join(KEY_FILE), linked.path().join(KEY_FILE)).unwrap();
+        let error = match load_or_create(linked.path()) {
+            Ok(_) => panic!("symlink PDP key must fail before key decode"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains(KEY_FILE));
+        drop(source_pdp);
     }
 }

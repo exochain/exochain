@@ -1,6 +1,6 @@
 //! Root genesis CLI command implementation.
 
-use std::{collections::BTreeMap, fs, io::Write, net::SocketAddr};
+use std::{collections::BTreeMap, fmt, fs, io::Write, net::SocketAddr, path::Path};
 
 use exo_core::{Did, Hash256, SecretKey, Timestamp, crypto::KeyPair};
 use exo_root::{
@@ -14,8 +14,9 @@ use exo_root::{
     sign_share, threshold_sign, unseal_share, verify_root_bundle,
 };
 use rand::RngCore;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Visitor};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     cli::{
@@ -24,18 +25,179 @@ use crate::{
         GenesisPullEnvelopesArgs, GenesisSignCommitArgs, GenesisSignEnvelopeArgs,
         GenesisSignShareArgs, GenesisSubmitEnvelopeArgs,
     },
+    private_file::{read_private_file, remove_private_file, write_private_json_create_new},
     root_genesis::{RootGenesisApiState, root_genesis_router},
 };
 
 /// Portal HTTP path that accepts signed ceremony envelopes.
 const PORTAL_ENVELOPES_PATH: &str = "/api/v1/root-genesis/portal/envelopes";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct PrivateCertifierMaterial {
     did: Did,
     frost_identifier: u16,
-    signing_secret_hex: String,
-    transport_secret_hex: String,
+    #[serde(deserialize_with = "deserialize_zeroizing_fixed_32_hex")]
+    signing_secret_hex: Zeroizing<String>,
+    #[serde(deserialize_with = "deserialize_zeroizing_fixed_32_hex")]
+    transport_secret_hex: Zeroizing<String>,
+}
+
+impl fmt::Debug for PrivateCertifierMaterial {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivateCertifierMaterial")
+            .field("did", &self.did)
+            .field("frost_identifier", &self.frost_identifier)
+            .field("signing_secret_hex", &"[REDACTED]")
+            .field("transport_secret_hex", &"[REDACTED]")
+            .finish()
+    }
+}
+
+struct ZeroizingHexVisitor {
+    exact_len: Option<usize>,
+}
+
+struct ZeroizingByteAccumulator {
+    bytes: Zeroizing<Vec<u8>>,
+    logical_len: usize,
+}
+
+impl ZeroizingByteAccumulator {
+    fn new(size_hint: Option<usize>) -> Result<Self, &'static str> {
+        let initial = size_hint.unwrap_or(0).min(4096);
+        let mut bytes = Zeroizing::new(Vec::new());
+        bytes
+            .try_reserve_exact(initial)
+            .map_err(|_| "private byte allocation failed")?;
+        bytes.resize(initial, 0);
+        Ok(Self {
+            bytes,
+            logical_len: 0,
+        })
+    }
+
+    fn push(&mut self, byte: u8) -> Result<(), &'static str> {
+        if self.logical_len == self.bytes.len() {
+            let next = self
+                .bytes
+                .len()
+                .saturating_mul(2)
+                .clamp(64, 64 * 1024 * 1024);
+            if next <= self.logical_len {
+                return Err("private byte sequence too large");
+            }
+            let mut replacement = Zeroizing::new(Vec::new());
+            replacement
+                .try_reserve_exact(next)
+                .map_err(|_| "private byte allocation failed")?;
+            replacement.resize(next, 0);
+            replacement[..self.logical_len].copy_from_slice(&self.bytes[..self.logical_len]);
+            self.bytes.zeroize();
+            self.bytes = replacement;
+        }
+        self.bytes[self.logical_len] = byte;
+        self.logical_len += 1;
+        Ok(())
+    }
+
+    fn finish(mut self) -> Zeroizing<Vec<u8>> {
+        self.bytes.truncate(self.logical_len);
+        std::mem::take(&mut self.bytes)
+    }
+}
+
+impl Drop for ZeroizingByteAccumulator {
+    fn drop(&mut self) {
+        self.bytes.zeroize();
+        self.logical_len.zeroize();
+    }
+}
+
+impl zeroize::ZeroizeOnDrop for ZeroizingByteAccumulator {}
+
+struct ZeroizingByteVecVisitor;
+
+impl<'de> Visitor<'de> for ZeroizingByteVecVisitor {
+    type Value = Zeroizing<Vec<u8>>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a bounded byte sequence")
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        let mut accumulator = ZeroizingByteAccumulator::new(sequence.size_hint())
+            .map_err(serde::de::Error::custom)?;
+        while let Some(byte) = sequence.next_element::<u8>()? {
+            accumulator.push(byte).map_err(serde::de::Error::custom)?;
+        }
+        Ok(accumulator.finish())
+    }
+}
+
+impl<'de> Visitor<'de> for ZeroizingHexVisitor {
+    type Value = Zeroizing<String>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a bounded lowercase hexadecimal string")
+    }
+
+    fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit_str(value)
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        if value.is_empty()
+            || value.len() > 32 * 1024 * 1024
+            || value.len() % 2 != 0
+            || self.exact_len.is_some_and(|length| value.len() != length)
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        {
+            return Err(E::custom("private secret hex rejected"));
+        }
+        let mut secret = Zeroizing::new(String::new());
+        secret
+            .try_reserve_exact(value.len())
+            .map_err(|_| E::custom("private secret hex allocation failed"))?;
+        secret.push_str(value);
+        Ok(secret)
+    }
+}
+
+fn deserialize_zeroizing_hex<'de, D>(deserializer: D) -> Result<Zeroizing<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserializer.deserialize_str(ZeroizingHexVisitor { exact_len: None })
+}
+
+fn deserialize_zeroizing_fixed_32_hex<'de, D>(
+    deserializer: D,
+) -> Result<Zeroizing<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserializer.deserialize_str(ZeroizingHexVisitor {
+        exact_len: Some(64),
+    })
+}
+
+fn deserialize_zeroizing_bytes<'de, D>(deserializer: D) -> Result<Zeroizing<Vec<u8>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserializer.deserialize_seq(ZeroizingByteVecVisitor)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,31 +206,33 @@ struct Round1CommandInput {
     frost_identifier: u16,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct Round2CommandInput {
     config: GenesisCeremonyConfig,
     frost_identifier: u16,
-    round1_secret_package_hex: String,
+    #[serde(deserialize_with = "deserialize_zeroizing_hex")]
+    round1_secret_package_hex: Zeroizing<String>,
     round1_packages_hex: BTreeMapStringBytes,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct FinalizeDkgCommandInput {
     config: GenesisCeremonyConfig,
     frost_identifier: u16,
-    round2_secret_package_hex: String,
+    #[serde(deserialize_with = "deserialize_zeroizing_hex")]
+    round2_secret_package_hex: Zeroizing<String>,
     round1_packages_hex: BTreeMapStringBytes,
-    round2_packages_hex: BTreeMapStringBytes,
+    round2_packages_hex: BTreeMapZeroizingStringBytes,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct BuildFinalKeyConfirmationCommandInput {
     config: GenesisCeremonyConfig,
     dkg_output: RootParticipantDkgOutput,
     dkg_transcript_hash_hex: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct SignRootArtifactCommandInput {
     config: GenesisCeremonyConfig,
     public_key_package: RootPublicKeyPackage,
@@ -96,25 +260,38 @@ struct TranscriptHashCommandInput {
     envelopes: Vec<CeremonyEnvelope>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct SealShareCommandInput {
-    share_hex: String,
-    passphrase_hex: String,
+    #[serde(deserialize_with = "deserialize_zeroizing_hex")]
+    share_hex: Zeroizing<String>,
+    #[serde(deserialize_with = "deserialize_zeroizing_hex")]
+    passphrase_hex: Zeroizing<String>,
     associated_data_hex: String,
     salt_hex: String,
     nonce_hex: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct UnsealShareCommandInput {
     sealed: exo_root::SealedShare,
-    passphrase_hex: String,
+    #[serde(deserialize_with = "deserialize_zeroizing_hex")]
+    passphrase_hex: Zeroizing<String>,
     associated_data_hex: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct HexBytesOutput {
-    bytes_hex: String,
+    #[serde(deserialize_with = "deserialize_zeroizing_hex")]
+    bytes_hex: Zeroizing<String>,
+}
+
+impl fmt::Debug for HexBytesOutput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HexBytesOutput")
+            .field("bytes_hex", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,18 +311,21 @@ struct SignEnvelopeCommandInput {
     payload_bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct EncryptPairwiseCommandInput {
-    plaintext: Vec<u8>,
-    sender_transport_secret_hex: String,
+    #[serde(deserialize_with = "deserialize_zeroizing_bytes")]
+    plaintext: Zeroizing<Vec<u8>>,
+    #[serde(deserialize_with = "deserialize_zeroizing_fixed_32_hex")]
+    sender_transport_secret_hex: Zeroizing<String>,
     recipient_transport_pubkey_hex: String,
     associated_data_hex: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct DecryptPairwiseCommandInput {
     encrypted: PairwiseEncryptedPayload,
-    recipient_transport_secret_hex: String,
+    #[serde(deserialize_with = "deserialize_zeroizing_fixed_32_hex")]
+    recipient_transport_secret_hex: Zeroizing<String>,
     sender_transport_pubkey_hex: String,
     associated_data_hex: String,
 }
@@ -163,9 +343,19 @@ struct ArtifactBytesOutput {
     artifact_hex: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct PlaintextOutput {
-    plaintext: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_zeroizing_bytes")]
+    plaintext: Zeroizing<Vec<u8>>,
+}
+
+impl fmt::Debug for PlaintextOutput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PlaintextOutput")
+            .field("plaintext", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,7 +373,7 @@ struct PayloadBytesOutput {
     payload_bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct SignCommitCommandInput {
     config: GenesisCeremonyConfig,
     key_package: RootKeyPackage,
@@ -199,7 +389,7 @@ struct BuildSigningPackageCommandInput {
     artifact_hex: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct SignShareCommandInput {
     config: GenesisCeremonyConfig,
     key_package: RootKeyPackage,
@@ -220,6 +410,20 @@ struct AggregateSignatureCommandInput {
 }
 
 type BTreeMapStringBytes = BTreeMap<u16, String>;
+type BTreeMapZeroizingStringBytes = BTreeMap<u16, ZeroizingHex>;
+
+#[derive(PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+struct ZeroizingHex(Zeroizing<String>);
+
+impl<'de> Deserialize<'de> for ZeroizingHex {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserialize_zeroizing_hex(deserializer).map(Self)
+    }
+}
 
 /// Execute a root genesis CLI command.
 pub async fn run_genesis_command(command: GenesisCommand) -> anyhow::Result<()> {
@@ -267,12 +471,15 @@ fn run_ceremony_command(command: GenesisCeremonyCommand) -> anyhow::Result<()> {
 
 fn init_certifier(args: GenesisCertifierInitArgs) -> anyhow::Result<()> {
     let did = Did::new(&args.did)?;
-    let mut signing_seed = [0u8; 32];
-    let mut transport_secret = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut signing_seed);
-    rand::rngs::OsRng.fill_bytes(&mut transport_secret);
-    let signing_keypair = KeyPair::from_secret_bytes(signing_seed)?;
-    let transport_public = X25519PublicKey::from(&StaticSecret::from(transport_secret));
+    let mut signing_seed = Zeroizing::new([0u8; 32]);
+    let mut transport_secret = Zeroizing::new([0u8; 32]);
+    rand::rngs::OsRng.fill_bytes(signing_seed.as_mut());
+    rand::rngs::OsRng.fill_bytes(transport_secret.as_mut());
+    let signing_secret_hex = encode_hex_zeroizing(signing_seed.as_slice())?;
+    let transport_secret_hex = encode_hex_zeroizing(transport_secret.as_slice())?;
+    let signing_keypair = KeyPair::from_secret_bytes(std::mem::take(&mut *signing_seed))?;
+    let transport_secret_key = StaticSecret::from(std::mem::take(&mut *transport_secret));
+    let transport_public = X25519PublicKey::from(&transport_secret_key);
     let contact = CertifierContact {
         did: did.clone(),
         frost_identifier: args.frost_identifier,
@@ -282,11 +489,11 @@ fn init_certifier(args: GenesisCertifierInitArgs) -> anyhow::Result<()> {
     let private = PrivateCertifierMaterial {
         did,
         frost_identifier: args.frost_identifier,
-        signing_secret_hex: hex::encode(signing_seed),
-        transport_secret_hex: hex::encode(transport_secret),
+        signing_secret_hex,
+        transport_secret_hex,
     };
     write_json(&args.certifier_out, &contact)?;
-    write_json(&args.private_out, &private)?;
+    write_private_json_create_new(&args.private_out, &private)?;
     Ok(())
 }
 
@@ -328,30 +535,32 @@ fn run_round1(args: GenesisIoArgs) -> anyhow::Result<()> {
 }
 
 fn run_round2(args: GenesisIoArgs) -> anyhow::Result<()> {
-    let input: Round2CommandInput = read_json(&required_input(&args)?)?;
+    let input: Round2CommandInput = read_private_json(&required_input(&args)?)?;
+    let round1_secret = decode_secret_hex_zeroizing(&input.round1_secret_package_hex)?;
     let output = dkg_round2(
         &input.config,
         input.frost_identifier,
-        decode_hex(&input.round1_secret_package_hex)?.as_slice(),
+        round1_secret.as_slice(),
         decode_package_map(input.round1_packages_hex)?,
     )?;
     write_secret_output(&args, &output)
 }
 
 fn run_finalize_dkg(args: GenesisIoArgs) -> anyhow::Result<()> {
-    let input: FinalizeDkgCommandInput = read_json(&required_input(&args)?)?;
+    let input: FinalizeDkgCommandInput = read_private_json(&required_input(&args)?)?;
+    let round2_secret = decode_secret_hex_zeroizing(&input.round2_secret_package_hex)?;
     let output = dkg_finalize_participant(
         &input.config,
         input.frost_identifier,
-        decode_hex(&input.round2_secret_package_hex)?.as_slice(),
+        round2_secret.as_slice(),
         decode_package_map(input.round1_packages_hex)?,
-        decode_package_map(input.round2_packages_hex)?,
+        decode_private_package_map(input.round2_packages_hex)?,
     )?;
     write_secret_output(&args, &output)
 }
 
 fn run_build_final_key_confirmation(args: GenesisIoArgs) -> anyhow::Result<()> {
-    let input: BuildFinalKeyConfirmationCommandInput = read_json(&required_input(&args)?)?;
+    let input: BuildFinalKeyConfirmationCommandInput = read_private_json(&required_input(&args)?)?;
     let dkg_transcript_hash = parse_hash_hex(&input.dkg_transcript_hash_hex)?;
     let confirmation =
         build_final_key_confirmation(&input.config, &input.dkg_output, dkg_transcript_hash)?;
@@ -360,7 +569,7 @@ fn run_build_final_key_confirmation(args: GenesisIoArgs) -> anyhow::Result<()> {
 }
 
 fn run_sign_root_artifact(args: GenesisIoArgs) -> anyhow::Result<()> {
-    let input: SignRootArtifactCommandInput = read_json(&required_input(&args)?)?;
+    let input: SignRootArtifactCommandInput = read_private_json(&required_input(&args)?)?;
     let artifact = decode_hex(&input.artifact_hex)?;
     let mut rng = rand::rngs::OsRng;
     let signature = threshold_sign(
@@ -392,12 +601,14 @@ fn run_verify_bundle(args: GenesisIoArgs) -> anyhow::Result<()> {
 }
 
 fn run_seal_share(args: GenesisIoArgs) -> anyhow::Result<()> {
-    let input: SealShareCommandInput = read_json(&required_input(&args)?)?;
+    let input: SealShareCommandInput = read_private_json(&required_input(&args)?)?;
     let salt = decode_fixed_16(&input.salt_hex)?;
     let nonce = decode_fixed_24(&input.nonce_hex)?;
+    let share = decode_secret_hex_zeroizing(&input.share_hex)?;
+    let passphrase = decode_secret_hex_zeroizing(&input.passphrase_hex)?;
     let sealed = seal_share(
-        decode_hex(&input.share_hex)?.as_slice(),
-        decode_hex(&input.passphrase_hex)?.as_slice(),
+        share.as_slice(),
+        passphrase.as_slice(),
         decode_hex(&input.associated_data_hex)?.as_slice(),
         &salt,
         &nonce,
@@ -406,16 +617,17 @@ fn run_seal_share(args: GenesisIoArgs) -> anyhow::Result<()> {
 }
 
 fn run_unseal_share(args: GenesisIoArgs) -> anyhow::Result<()> {
-    let input: UnsealShareCommandInput = read_json(&required_input(&args)?)?;
-    let opened = unseal_share(
+    let input: UnsealShareCommandInput = read_private_json(&required_input(&args)?)?;
+    let passphrase = decode_secret_hex_zeroizing(&input.passphrase_hex)?;
+    let opened = Zeroizing::new(unseal_share(
         &input.sealed,
-        decode_hex(&input.passphrase_hex)?.as_slice(),
+        passphrase.as_slice(),
         decode_hex(&input.associated_data_hex)?.as_slice(),
-    )?;
+    )?);
     write_secret_output(
         &args,
         &HexBytesOutput {
-            bytes_hex: hex::encode(opened),
+            bytes_hex: encode_hex_zeroizing(opened.as_slice())?,
         },
     )
 }
@@ -445,7 +657,7 @@ fn run_sign_envelope(args: GenesisSignEnvelopeArgs) -> anyhow::Result<()> {
     }
     // The signing secret is read from the certifier's 0600 private-material file,
     // never from argv — see GenesisSignEnvelopeArgs.
-    let private: PrivateCertifierMaterial = read_json(&args.private_input)?;
+    let private: PrivateCertifierMaterial = read_private_json(&args.private_input)?;
     if private.did != input.sender_did {
         anyhow::bail!(
             "private material DID {} does not match envelope sender_did {}",
@@ -453,7 +665,8 @@ fn run_sign_envelope(args: GenesisSignEnvelopeArgs) -> anyhow::Result<()> {
             input.sender_did
         );
     }
-    let signing_secret = SecretKey::from_bytes(decode_fixed_32(&private.signing_secret_hex)?);
+    let mut signing_secret_bytes = decode_secret_fixed_32_zeroizing(&private.signing_secret_hex)?;
+    let signing_secret = SecretKey::from_bytes(std::mem::take(&mut *signing_secret_bytes));
     let draft = CeremonyEnvelopeDraft {
         ceremony_id: input.ceremony_id,
         phase: input.phase,
@@ -468,8 +681,8 @@ fn run_sign_envelope(args: GenesisSignEnvelopeArgs) -> anyhow::Result<()> {
 }
 
 fn run_encrypt_pairwise(args: GenesisIoArgs) -> anyhow::Result<()> {
-    let input: EncryptPairwiseCommandInput = read_json(&required_input(&args)?)?;
-    let sender_secret = decode_fixed_32(&input.sender_transport_secret_hex)?;
+    let input: EncryptPairwiseCommandInput = read_private_json(&required_input(&args)?)?;
+    let sender_secret = decode_secret_fixed_32_zeroizing(&input.sender_transport_secret_hex)?;
     let recipient_public = decode_fixed_32(&input.recipient_transport_pubkey_hex)?;
     // The 24-byte XChaCha20-Poly1305 nonce is generated internally with the OS
     // CSPRNG, never taken from caller input: a repeated nonce under the same
@@ -490,16 +703,16 @@ fn run_encrypt_pairwise(args: GenesisIoArgs) -> anyhow::Result<()> {
 }
 
 fn run_decrypt_pairwise(args: GenesisIoArgs) -> anyhow::Result<()> {
-    let input: DecryptPairwiseCommandInput = read_json(&required_input(&args)?)?;
-    let recipient_secret = decode_fixed_32(&input.recipient_transport_secret_hex)?;
+    let input: DecryptPairwiseCommandInput = read_private_json(&required_input(&args)?)?;
+    let recipient_secret = decode_secret_fixed_32_zeroizing(&input.recipient_transport_secret_hex)?;
     let sender_public = decode_fixed_32(&input.sender_transport_pubkey_hex)?;
     let associated_data = decode_hex(&input.associated_data_hex)?;
-    let plaintext = decrypt_pairwise_payload(
+    let plaintext = Zeroizing::new(decrypt_pairwise_payload(
         &recipient_secret,
         &sender_public,
         &input.encrypted,
         associated_data.as_slice(),
-    )?;
+    )?);
     write_secret_output(&args, &PlaintextOutput { plaintext })
 }
 
@@ -614,7 +827,7 @@ fn run_sign_commit(args: GenesisSignCommitArgs) -> anyhow::Result<()> {
         input: args.input.clone(),
         output: None,
     };
-    let input: SignCommitCommandInput = read_json(&required_input(&io)?)?;
+    let input: SignCommitCommandInput = read_private_json(&required_input(&io)?)?;
     let artifact = decode_hex(&input.artifact_hex)?;
     let mut rng = rand::rngs::OsRng;
     let (commitment, nonces) = sign_commit(
@@ -627,7 +840,7 @@ fn run_sign_commit(args: GenesisSignCommitArgs) -> anyhow::Result<()> {
     // the SECRET nonces go to a SEPARATE local-only file. Both writes are
     // create-new + 0600 and refuse to overwrite an existing path.
     write_json(&args.commitment_out, &commitment)?;
-    write_json(&args.nonces_out, &nonces)?;
+    write_private_json_create_new(&args.nonces_out, &nonces)?;
     Ok(())
 }
 
@@ -647,9 +860,9 @@ fn run_sign_share(args: GenesisSignShareArgs) -> anyhow::Result<()> {
         input: args.input.clone(),
         output: args.output.clone(),
     };
-    let input: SignShareCommandInput = read_json(&required_input(&io)?)?;
+    let input: SignShareCommandInput = read_private_json(&required_input(&io)?)?;
     // The secret nonces are read from the signer's local-only file, never inline.
-    let nonces: RootSigningNonces = read_json(&args.nonces)?;
+    let nonces: RootSigningNonces = read_private_json(&args.nonces)?;
     let artifact = decode_hex(&input.artifact_hex)?;
     let output = sign_share(
         &input.config,
@@ -662,7 +875,7 @@ fn run_sign_share(args: GenesisSignShareArgs) -> anyhow::Result<()> {
     // Single-use: consume (delete) the nonces file after a successful share so
     // the same nonces can never be reused. Fail loud if consumption fails — the
     // signing session must then be aborted and fresh commitments/nonces produced.
-    fs::remove_file(&args.nonces).map_err(|error| {
+    remove_private_file(&args.nonces).map_err(|error| {
         anyhow::anyhow!(
             "sign-share produced a share but failed to consume the single-use nonces file {}: \
              {error}; delete it manually and abort this signing session",
@@ -734,6 +947,21 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &std::path::Path) -> anyhow::Re
     Ok(value)
 }
 
+fn read_private_json<T: for<'de> Deserialize<'de>>(path: &Path) -> anyhow::Result<T> {
+    let bytes = read_private_file(
+        path,
+        64 * 1024 * 1024,
+        "private root genesis input rejected",
+    )?;
+    if bytes.contains(&b'\\') {
+        anyhow::bail!(
+            "private root genesis input rejected: escaped JSON strings are not accepted for private material"
+        );
+    }
+    serde_json::from_slice(bytes.as_slice())
+        .map_err(|error| anyhow::anyhow!("private root genesis input rejected: {error}"))
+}
+
 fn write_json<T: Serialize>(path: &std::path::Path, value: &T) -> anyhow::Result<()> {
     let bytes = serde_json::to_vec_pretty(value)?;
     write_json_bytes(path, bytes.as_slice())?;
@@ -784,16 +1012,48 @@ fn write_output<T: Serialize>(args: &GenesisIoArgs, value: &T) -> anyhow::Result
 }
 
 fn write_secret_output<T: Serialize>(args: &GenesisIoArgs, value: &T) -> anyhow::Result<()> {
-    if args.output.is_none() {
-        anyhow::bail!(
+    let path = args.output.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
             "--output is required for secret root genesis material; refusing to print to stdout"
-        );
+        )
+    })?;
+    write_private_json_create_new(path, value)
+}
+
+fn encode_hex_zeroizing(bytes: &[u8]) -> anyhow::Result<Zeroizing<String>> {
+    const ALPHABET: &[u8; 16] = b"0123456789abcdef";
+    let output_len = bytes
+        .len()
+        .checked_mul(2)
+        .ok_or_else(|| anyhow::anyhow!("secret hex length overflow"))?;
+    let mut output = Zeroizing::new(String::new());
+    output.try_reserve_exact(output_len)?;
+    for byte in bytes {
+        output.push(char::from(ALPHABET[usize::from(byte >> 4)]));
+        output.push(char::from(ALPHABET[usize::from(byte & 0x0f)]));
     }
-    write_output(args, value)
+    Ok(output)
 }
 
 fn decode_hex(value: &str) -> anyhow::Result<Vec<u8>> {
     Ok(hex::decode(value)?)
+}
+
+fn decode_secret_hex_zeroizing(value: &str) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+    if value.len() % 2 != 0 {
+        anyhow::bail!("secret hex must have even length");
+    }
+    let mut bytes = Zeroizing::new(Vec::new());
+    bytes.try_reserve_exact(value.len() / 2)?;
+    bytes.resize(value.len() / 2, 0);
+    hex::decode_to_slice(value.as_bytes(), bytes.as_mut_slice())?;
+    Ok(bytes)
+}
+
+fn decode_secret_fixed_32_zeroizing(value: &str) -> anyhow::Result<Zeroizing<[u8; 32]>> {
+    let mut bytes = Zeroizing::new([0u8; 32]);
+    hex::decode_to_slice(value.as_bytes(), bytes.as_mut_slice())?;
+    Ok(bytes)
 }
 
 fn decode_fixed_16(value: &str) -> anyhow::Result<[u8; 16]> {
@@ -834,6 +1094,20 @@ fn decode_package_map(packages: BTreeMapStringBytes) -> anyhow::Result<BTreeMap<
     Ok(decoded)
 }
 
+fn decode_private_package_map(
+    packages: BTreeMapZeroizingStringBytes,
+) -> anyhow::Result<BTreeMap<u16, Zeroizing<Vec<u8>>>> {
+    let mut decoded = BTreeMap::new();
+    for (identifier, package_hex) in packages {
+        let mut package = Zeroizing::new(Vec::new());
+        package.try_reserve_exact(package_hex.0.len() / 2)?;
+        package.resize(package_hex.0.len() / 2, 0);
+        hex::decode_to_slice(package_hex.0.as_bytes(), package.as_mut_slice())?;
+        decoded.insert(identifier, package);
+    }
+    Ok(decoded)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -841,9 +1115,227 @@ mod tests {
     use exo_authority::permission::Permission;
     use exo_core::PublicKey;
     use rand::SeedableRng;
+    use serde::Serialize;
     use tempfile::tempdir;
 
     use super::*;
+
+    #[derive(Serialize)]
+    struct LegacyPrivateCertifierMaterial<'a> {
+        did: &'a Did,
+        frost_identifier: u16,
+        signing_secret_hex: &'a String,
+        transport_secret_hex: &'a String,
+    }
+
+    #[derive(Serialize)]
+    struct LegacyEncryptPairwiseInput<'a> {
+        plaintext: &'a Vec<u8>,
+        sender_transport_secret_hex: &'a String,
+        recipient_transport_pubkey_hex: &'a String,
+        associated_data_hex: &'a String,
+    }
+
+    fn assert_zeroizing_carrier<T: zeroize::Zeroize + zeroize::ZeroizeOnDrop>(_: &T) {}
+
+    #[test]
+    fn private_file_root_cli_secret_material_is_redacted_zeroizing_and_json_compatible() {
+        let did = Did::new("did:exo:private-cli-test").expect("valid DID");
+        let signing_secret_hex = "deadbeef".repeat(8);
+        let transport_secret_hex = "cafebabe".repeat(8);
+        let material = PrivateCertifierMaterial {
+            did: did.clone(),
+            frost_identifier: 7,
+            signing_secret_hex: Zeroizing::new(signing_secret_hex.clone()),
+            transport_secret_hex: Zeroizing::new(transport_secret_hex.clone()),
+        };
+        let rendered = format!("{material:?}");
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(!rendered.contains(&signing_secret_hex));
+        assert!(!rendered.contains(&transport_secret_hex));
+        assert_zeroizing_carrier(&material.signing_secret_hex);
+        assert_zeroizing_carrier(&material.transport_secret_hex);
+
+        let legacy = LegacyPrivateCertifierMaterial {
+            did: &did,
+            frost_identifier: 7,
+            signing_secret_hex: &signing_secret_hex,
+            transport_secret_hex: &transport_secret_hex,
+        };
+        assert_eq!(
+            serde_json::to_vec(&material).expect("material JSON"),
+            serde_json::to_vec(&legacy).expect("legacy material JSON")
+        );
+    }
+
+    #[test]
+    fn private_file_root_cli_rejects_escaped_and_malformed_secret_strings_before_parsing() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let escaped = directory.path().join("escaped-private.json");
+        let plain_signing = "deadbeef".repeat(8);
+        let signing = format!("\\u0064{}", &plain_signing[1..]);
+        let encoded = format!(
+            "{{\"did\":\"did:exo:private-cli-test\",\"frost_identifier\":7,\"signing_secret_hex\":\"{signing}\",\"transport_secret_hex\":\"{}\"}}",
+            "cafebabe".repeat(8)
+        );
+        crate::private_file::write_private_create_new(&escaped, encoded.as_bytes())
+            .expect("escaped private fixture");
+        assert!(
+            read_private_json::<PrivateCertifierMaterial>(&escaped).is_err(),
+            "escaped secret spellings must be rejected before serde scratch allocation"
+        );
+
+        let malformed = directory.path().join("malformed-private.json");
+        crate::private_file::write_private_create_new(
+            &malformed,
+            br#"{"did":"did:exo:private-cli-test","frost_identifier":7,"signing_secret_hex":17,"transport_secret_hex":"cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe"}"#,
+        )
+        .expect("malformed private fixture");
+        assert!(read_private_json::<PrivateCertifierMaterial>(&malformed).is_err());
+    }
+
+    #[test]
+    fn private_file_root_cli_secret_dtos_cannot_regain_debug_or_unchecked_parsing() {
+        let source = include_str!("root_genesis_cli.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+        for declaration in [
+            "struct PrivateCertifierMaterial",
+            "struct Round2CommandInput",
+            "struct FinalizeDkgCommandInput",
+            "struct BuildFinalKeyConfirmationCommandInput",
+            "struct SignRootArtifactCommandInput",
+            "struct SealShareCommandInput",
+            "struct UnsealShareCommandInput",
+            "struct EncryptPairwiseCommandInput",
+            "struct DecryptPairwiseCommandInput",
+            "struct SignCommitCommandInput",
+            "struct SignShareCommandInput",
+            "struct HexBytesOutput",
+            "struct PlaintextOutput",
+        ] {
+            let offset = source.find(declaration).expect("secret DTO declaration");
+            let derive = source[..offset]
+                .rfind("#[derive(")
+                .map(|start| &source[start..offset])
+                .expect("secret DTO derive");
+            assert!(
+                !derive.contains("Debug"),
+                "{declaration} must not expose secret fields through derived Debug"
+            );
+            assert!(
+                !derive.contains("Clone"),
+                "{declaration} must not duplicate secret fields through derived Clone"
+            );
+        }
+        let private_reader = source
+            .split("fn read_private_json")
+            .nth(1)
+            .expect("private JSON reader")
+            .split("fn write_json")
+            .next()
+            .expect("private reader ends before public writer");
+        let escape_guard = private_reader
+            .find("bytes.contains(&b'\\\\')")
+            .expect("escaped private JSON guard");
+        let serde_parse = private_reader
+            .find("serde_json::from_slice")
+            .expect("private JSON parse");
+        assert!(escape_guard < serde_parse);
+        assert!(source.contains("deserialize_zeroizing_fixed_32_hex"));
+        assert!(source.contains("deserialize_zeroizing_hex"));
+    }
+
+    #[test]
+    fn private_file_root_cli_decodes_private_secrets_only_into_zeroizing_storage() {
+        let variable = decode_secret_hex_zeroizing("deadbeef").expect("secret bytes");
+        let fixed = decode_secret_fixed_32_zeroizing(&"ca".repeat(32)).expect("fixed secret");
+        assert_zeroizing_carrier(&variable);
+        assert_zeroizing_carrier(&fixed);
+        assert_eq!(variable.as_slice(), [0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(fixed.as_slice(), &[0xca; 32]);
+
+        let source = include_str!("root_genesis_cli.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+        for forbidden in [
+            "decode_hex(&input.round1_secret_package_hex)",
+            "decode_hex(&input.round2_secret_package_hex)",
+            "decode_hex(&input.share_hex)",
+            "decode_hex(&input.passphrase_hex)",
+            "decode_fixed_32(&private.signing_secret_hex)",
+            "decode_fixed_32(&input.sender_transport_secret_hex)",
+            "decode_fixed_32(&input.recipient_transport_secret_hex)",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "private secret decode must not create an ordinary temporary: {forbidden}"
+            );
+        }
+        assert!(source.contains("decode_secret_hex_zeroizing(&input.round1_secret_package_hex)"));
+        assert!(source.contains("decode_secret_hex_zeroizing(&input.round2_secret_package_hex)"));
+        assert!(source.contains("decode_secret_fixed_32_zeroizing(&private.signing_secret_hex)"));
+        assert!(
+            source.contains("decode_secret_fixed_32_zeroizing(&input.sender_transport_secret_hex)")
+        );
+        assert!(
+            source.contains(
+                "decode_secret_fixed_32_zeroizing(&input.recipient_transport_secret_hex)"
+            )
+        );
+
+        let plaintext = vec![17, 34, 51, 68];
+        let sender_secret = "ca".repeat(32);
+        let recipient_public = "db".repeat(32);
+        let associated_data = "01020304".to_owned();
+        let secure = EncryptPairwiseCommandInput {
+            plaintext: Zeroizing::new(plaintext.clone()),
+            sender_transport_secret_hex: Zeroizing::new(sender_secret.clone()),
+            recipient_transport_pubkey_hex: recipient_public.clone(),
+            associated_data_hex: associated_data.clone(),
+        };
+        assert_zeroizing_carrier(&secure.plaintext);
+        let legacy = LegacyEncryptPairwiseInput {
+            plaintext: &plaintext,
+            sender_transport_secret_hex: &sender_secret,
+            recipient_transport_pubkey_hex: &recipient_public,
+            associated_data_hex: &associated_data,
+        };
+        assert_eq!(
+            serde_json::to_vec(&secure).expect("secure wire"),
+            serde_json::to_vec(&legacy).expect("legacy wire")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_file_root_cli_rejects_private_input_before_json_parse_but_keeps_public_input_public()
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let private_path = directory.path().join("private.json");
+        std::fs::write(&private_path, b"not json").expect("private fixture");
+        std::fs::set_permissions(&private_path, std::fs::Permissions::from_mode(0o644))
+            .expect("permissive private fixture");
+        let error = read_private_json::<serde_json::Value>(&private_path)
+            .expect_err("private input must fail custody before parse");
+        assert!(
+            error
+                .to_string()
+                .contains("private root genesis input rejected")
+        );
+
+        let public_path = directory.path().join("public.json");
+        std::fs::write(&public_path, br#"{"public":true}"#).expect("public fixture");
+        std::fs::set_permissions(&public_path, std::fs::Permissions::from_mode(0o644))
+            .expect("permissive public fixture");
+        let public: serde_json::Value =
+            read_json(&public_path).expect("public input remains public");
+        assert_eq!(public, serde_json::json!({"public": true}));
+    }
 
     fn certifier(identifier: u16) -> CertifierContact {
         let byte = u8::try_from(identifier).expect("identifier fits in byte");
@@ -895,10 +1387,27 @@ mod tests {
         config
     }
 
+    fn take_key_package(dkg: &mut exo_root::RootDkgOutput, identifier: u16) -> RootKeyPackage {
+        dkg.key_packages
+            .remove(&identifier)
+            .expect("test key package")
+    }
+
+    fn take_key_packages(
+        dkg: &mut exo_root::RootDkgOutput,
+        count: usize,
+    ) -> BTreeMap<u16, RootKeyPackage> {
+        let identifiers: Vec<u16> = dkg.key_packages.keys().take(count).copied().collect();
+        identifiers
+            .into_iter()
+            .map(|identifier| (identifier, take_key_package(dkg, identifier)))
+            .collect()
+    }
+
     fn valid_root_trust_bundle() -> RootTrustBundle {
         let config = rostered_config();
         let mut rng = rand::rngs::StdRng::seed_from_u64(9683);
-        let dkg = exo_root::run_complete_dkg(&config, &mut rng).expect("dkg");
+        let mut dkg = exo_root::run_complete_dkg(&config, &mut rng).expect("dkg");
         let delegation = RootIssuerDelegation {
             issuer_did: Did::new("did:exo:root-cli-avc-issuer").expect("issuer DID"),
             issuer_public_key: PublicKey::from_bytes([0x44; 32]),
@@ -911,14 +1420,11 @@ mod tests {
         let payload = delegation
             .root_artifact_payload(&config, &dkg.public_key_package, transcript_hash)
             .expect("payload");
+        let signing_packages = take_key_packages(&mut dkg, 7);
         let root_signature = threshold_sign(
             &config,
             &dkg.public_key_package,
-            dkg.key_packages
-                .iter()
-                .take(7)
-                .map(|(identifier, key_package)| (*identifier, key_package.clone()))
-                .collect(),
+            signing_packages,
             &payload,
             &mut rng,
         )
@@ -1349,7 +1855,9 @@ mod tests {
             &Round2CommandInput {
                 config: config.clone(),
                 frost_identifier: 1,
-                round1_secret_package_hex: hex::encode(&round1_outputs[&1].round1_secret_package),
+                round1_secret_package_hex: Zeroizing::new(hex::encode(
+                    &round1_outputs[&1].round1_secret_package,
+                )),
                 round1_packages_hex: peer_round1_hex(1),
             },
         )
@@ -1364,9 +1872,10 @@ mod tests {
             read_json(&round2_output).expect("read round2 output");
         assert_eq!(first_round2.frost_identifier, 1);
         assert_eq!(first_round2.round2_packages.len(), 12);
+        let first_round2_secret_hex = hex::encode(&first_round2.round2_secret_package);
 
         let mut round2_outputs = BTreeMap::new();
-        round2_outputs.insert(1, first_round2.clone());
+        round2_outputs.insert(1, first_round2);
         for identifier in 2..=config.max_signers {
             let output = dkg_round2(
                 &config,
@@ -1395,9 +1904,14 @@ mod tests {
             &FinalizeDkgCommandInput {
                 config,
                 frost_identifier: 1,
-                round2_secret_package_hex: hex::encode(&first_round2.round2_secret_package),
+                round2_secret_package_hex: Zeroizing::new(first_round2_secret_hex),
                 round1_packages_hex: peer_round1_hex(1),
-                round2_packages_hex,
+                round2_packages_hex: round2_packages_hex
+                    .into_iter()
+                    .map(|(identifier, package)| {
+                        (identifier, ZeroizingHex(Zeroizing::new(package)))
+                    })
+                    .collect(),
             },
         )
         .expect("write finalize input");
@@ -1426,8 +1940,8 @@ mod tests {
         write_json(
             &seal_input_path,
             &SealShareCommandInput {
-                share_hex: hex::encode(share),
-                passphrase_hex: hex::encode(passphrase),
+                share_hex: Zeroizing::new(hex::encode(share)),
+                passphrase_hex: Zeroizing::new(hex::encode(passphrase)),
                 associated_data_hex: hex::encode(associated_data),
                 salt_hex: hex::encode([2u8; 16]),
                 nonce_hex: hex::encode([3u8; 24]),
@@ -1441,7 +1955,7 @@ mod tests {
             &unseal_input_path,
             &UnsealShareCommandInput {
                 sealed,
-                passphrase_hex: hex::encode(passphrase),
+                passphrase_hex: Zeroizing::new(hex::encode(passphrase)),
                 associated_data_hex: hex::encode(associated_data),
             },
         )
@@ -1449,7 +1963,7 @@ mod tests {
 
         run_unseal_share(io_args(unseal_input_path, opened_path.clone())).expect("unseal share");
         let opened: HexBytesOutput = read_json(&opened_path).expect("read opened share");
-        assert_eq!(opened.bytes_hex, hex::encode(share));
+        assert_eq!(opened.bytes_hex.as_str(), hex::encode(share));
     }
 
     #[test]
@@ -1465,7 +1979,7 @@ mod tests {
             &unseal_input_path,
             &UnsealShareCommandInput {
                 sealed,
-                passphrase_hex: hex::encode(passphrase),
+                passphrase_hex: Zeroizing::new(hex::encode(passphrase)),
                 associated_data_hex: hex::encode(associated_data),
             },
         )
@@ -1579,8 +2093,8 @@ mod tests {
             &PrivateCertifierMaterial {
                 did: signer.did.clone(),
                 frost_identifier: signer.frost_identifier,
-                signing_secret_hex: hex::encode([1u8; 32]),
-                transport_secret_hex: hex::encode([65u8; 32]),
+                signing_secret_hex: Zeroizing::new(hex::encode([1u8; 32])),
+                transport_secret_hex: Zeroizing::new(hex::encode([65u8; 32])),
             },
         )
         .expect("write private material");
@@ -1604,10 +2118,10 @@ mod tests {
     fn build_final_key_confirmation_emits_only_public_payload_bytes() {
         let config = rostered_config();
         let mut rng = rand::rngs::OsRng;
-        let dkg = exo_root::run_complete_dkg(&config, &mut rng).expect("dkg");
+        let mut dkg = exo_root::run_complete_dkg(&config, &mut rng).expect("dkg");
         let transcript_hash = Hash256::digest(b"accepted dkg transcript");
         let participant = RootParticipantDkgOutput {
-            key_package: dkg.key_packages[&1].clone(),
+            key_package: take_key_package(&mut dkg, 1),
             public_key_package: dkg.public_key_package.clone(),
         };
         let directory = tempdir().expect("temporary directory");
@@ -1715,10 +2229,10 @@ mod tests {
         let dkg_output: HashHexOutput = read_json(&dkg_out).expect("read dkg hash");
         assert_eq!(dkg_output.hash_hex, hex::encode(dkg_hash.as_bytes()));
 
-        let dkg = exo_root::run_complete_dkg(&config, &mut rng).expect("dkg");
+        let mut dkg = exo_root::run_complete_dkg(&config, &mut rng).expect("dkg");
         for identifier in 1..=13u16 {
             let participant = RootParticipantDkgOutput {
-                key_package: dkg.key_packages[&identifier].clone(),
+                key_package: take_key_package(&mut dkg, identifier),
                 public_key_package: dkg.public_key_package.clone(),
             };
             let confirmation =
@@ -1774,8 +2288,8 @@ mod tests {
             &PrivateCertifierMaterial {
                 did: signer.did.clone(),
                 frost_identifier: signer.frost_identifier,
-                signing_secret_hex: hex::encode([1u8; 32]),
-                transport_secret_hex: hex::encode([65u8; 32]),
+                signing_secret_hex: Zeroizing::new(hex::encode([1u8; 32])),
+                transport_secret_hex: Zeroizing::new(hex::encode([65u8; 32])),
             },
         )
         .expect("write private material");
@@ -1815,8 +2329,8 @@ mod tests {
             &PrivateCertifierMaterial {
                 did: other.did,
                 frost_identifier: other.frost_identifier,
-                signing_secret_hex: hex::encode([2u8; 32]),
-                transport_secret_hex: hex::encode([66u8; 32]),
+                signing_secret_hex: Zeroizing::new(hex::encode([2u8; 32])),
+                transport_secret_hex: Zeroizing::new(hex::encode([66u8; 32])),
             },
         )
         .expect("write mismatched private material");
@@ -1851,8 +2365,8 @@ mod tests {
         write_json(
             &encrypt_in,
             &EncryptPairwiseCommandInput {
-                plaintext: plaintext.clone(),
-                sender_transport_secret_hex: hex::encode(sender_secret),
+                plaintext: Zeroizing::new(plaintext.clone()),
+                sender_transport_secret_hex: Zeroizing::new(hex::encode(sender_secret)),
                 recipient_transport_pubkey_hex: hex::encode(recipient_public),
                 associated_data_hex: hex::encode(associated_data),
             },
@@ -1870,7 +2384,7 @@ mod tests {
             &decrypt_in,
             &DecryptPairwiseCommandInput {
                 encrypted,
-                recipient_transport_secret_hex: hex::encode(recipient_secret),
+                recipient_transport_secret_hex: Zeroizing::new(hex::encode(recipient_secret)),
                 sender_transport_pubkey_hex: hex::encode(sender_public),
                 associated_data_hex: hex::encode(associated_data),
             },
@@ -1878,7 +2392,7 @@ mod tests {
         .expect("write decrypt input");
         run_decrypt_pairwise(io_args(decrypt_in, decrypt_out.clone())).expect("decrypt pairwise");
         let opened: PlaintextOutput = read_json(&decrypt_out).expect("read plaintext");
-        assert_eq!(opened.plaintext, plaintext);
+        assert_eq!(opened.plaintext.as_slice(), plaintext);
     }
 
     #[test]
@@ -1890,8 +2404,8 @@ mod tests {
         let sender_secret = [5u8; 32];
         let recipient_public = *X25519PublicKey::from(&StaticSecret::from([6u8; 32])).as_bytes();
         let make_input = || EncryptPairwiseCommandInput {
-            plaintext: b"identical round2 plaintext".to_vec(),
-            sender_transport_secret_hex: hex::encode(sender_secret),
+            plaintext: Zeroizing::new(b"identical round2 plaintext".to_vec()),
+            sender_transport_secret_hex: Zeroizing::new(hex::encode(sender_secret)),
             recipient_transport_pubkey_hex: hex::encode(recipient_public),
             associated_data_hex: hex::encode(b"exo-root-round2"),
         };
@@ -1939,7 +2453,7 @@ mod tests {
             &decrypt_in,
             &DecryptPairwiseCommandInput {
                 encrypted,
-                recipient_transport_secret_hex: hex::encode(recipient_secret),
+                recipient_transport_secret_hex: Zeroizing::new(hex::encode(recipient_secret)),
                 sender_transport_pubkey_hex: hex::encode(sender_public),
                 associated_data_hex: hex::encode(b"exo-root-round2"),
             },
@@ -2000,7 +2514,7 @@ mod tests {
     async fn sign_root_artifact_and_assemble_bundle_dispatch_write_public_outputs() {
         let config = rostered_config();
         let mut rng = rand::rngs::StdRng::seed_from_u64(6_952);
-        let dkg = exo_root::run_complete_dkg(&config, &mut rng).expect("dkg");
+        let mut dkg = exo_root::run_complete_dkg(&config, &mut rng).expect("dkg");
         let delegation = RootIssuerDelegation {
             issuer_did: Did::new("did:exo:root-cli-sign-artifact-issuer").expect("issuer DID"),
             issuer_public_key: PublicKey::from_bytes([0x44; 32]),
@@ -2021,12 +2535,7 @@ mod tests {
             &SignRootArtifactCommandInput {
                 config: config.clone(),
                 public_key_package: dkg.public_key_package.clone(),
-                key_packages: dkg
-                    .key_packages
-                    .iter()
-                    .take(7)
-                    .map(|(identifier, key_package)| (*identifier, key_package.clone()))
-                    .collect(),
+                key_packages: take_key_packages(&mut dkg, 7),
                 artifact_hex: hex::encode(&artifact),
             },
         )
@@ -2072,7 +2581,11 @@ mod tests {
     #[test]
     fn distributed_signing_handlers_produce_a_verifiable_signature() {
         let config = rostered_config();
-        let dkg = exo_root::run_complete_dkg(&config, &mut rand::rngs::OsRng).expect("dkg");
+        let mut commitment_rng = rand::rngs::StdRng::seed_from_u64(22_501);
+        let mut dkg =
+            exo_root::run_complete_dkg(&config, &mut commitment_rng).expect("commitment dkg");
+        let mut share_rng = rand::rngs::StdRng::seed_from_u64(22_501);
+        let mut share_dkg = exo_root::run_complete_dkg(&config, &mut share_rng).expect("share dkg");
         let message = b"distributed root artifact";
         let artifact_hex = hex::encode(message);
         let directory = tempdir().expect("temporary directory");
@@ -2088,7 +2601,7 @@ mod tests {
                 &in_path,
                 &SignCommitCommandInput {
                     config: config.clone(),
-                    key_package: dkg.key_packages[id].clone(),
+                    key_package: take_key_package(&mut dkg, *id),
                     artifact_hex: artifact_hex.clone(),
                 },
             )
@@ -2161,7 +2674,7 @@ mod tests {
                 &in_path,
                 &SignShareCommandInput {
                     config: config.clone(),
-                    key_package: dkg.key_packages[id].clone(),
+                    key_package: take_key_package(&mut share_dkg, *id),
                     signing_package: package.clone(),
                     artifact_hex: artifact_hex.clone(),
                 },
@@ -2189,7 +2702,7 @@ mod tests {
             &agg_in,
             &AggregateSignatureCommandInput {
                 config: config.clone(),
-                public_key_package: dkg.public_key_package.clone(),
+                public_key_package: share_dkg.public_key_package.clone(),
                 signing_package_hex: hex::encode(package.signing_package.as_slice()),
                 shares_hex,
                 artifact_hex,
@@ -2200,7 +2713,7 @@ mod tests {
         let signature: exo_root::RootSignature = read_json(&agg_out).expect("read signature");
         assert_eq!(signature.signer_ids.len(), 7);
         exo_root::verify_root_signature(
-            &dkg.public_key_package.root_public_key,
+            &share_dkg.public_key_package.root_public_key,
             message,
             &signature.signature,
         )
@@ -2213,7 +2726,11 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let config = rostered_config();
-        let dkg = exo_root::run_complete_dkg(&config, &mut rand::rngs::OsRng).expect("dkg");
+        let mut commitment_rng = rand::rngs::StdRng::seed_from_u64(23_801);
+        let mut dkg =
+            exo_root::run_complete_dkg(&config, &mut commitment_rng).expect("commitment dkg");
+        let mut share_rng = rand::rngs::StdRng::seed_from_u64(23_801);
+        let mut share_dkg = exo_root::run_complete_dkg(&config, &mut share_rng).expect("share dkg");
         let artifact_hex = hex::encode(b"distributed root artifact cleanup failure");
         let directory = tempdir().expect("temporary directory");
         let nonces_directory = directory.path().join("nonces-dir");
@@ -2233,7 +2750,7 @@ mod tests {
                 &in_path,
                 &SignCommitCommandInput {
                     config: config.clone(),
-                    key_package: dkg.key_packages[&id].clone(),
+                    key_package: take_key_package(&mut dkg, id),
                     artifact_hex: artifact_hex.clone(),
                 },
             )
@@ -2275,7 +2792,7 @@ mod tests {
             &share_in,
             &SignShareCommandInput {
                 config,
-                key_package: dkg.key_packages[&1].clone(),
+                key_package: take_key_package(&mut share_dkg, 1),
                 signing_package: package,
                 artifact_hex,
             },
@@ -2461,7 +2978,7 @@ mod tests {
         write_json(
             &output_path,
             &HexBytesOutput {
-                bytes_hex: hex::encode(b"secret"),
+                bytes_hex: Zeroizing::new(hex::encode(b"secret")),
             },
         )
         .expect("write output");
@@ -2476,7 +2993,7 @@ mod tests {
             write_json(
                 &output_path,
                 &HexBytesOutput {
-                    bytes_hex: hex::encode(b"replacement"),
+                    bytes_hex: Zeroizing::new(hex::encode(b"replacement")),
                 },
             )
             .is_err()
@@ -2498,7 +3015,7 @@ mod tests {
             write_json(
                 &output_path,
                 &HexBytesOutput {
-                    bytes_hex: hex::encode(b"secret"),
+                    bytes_hex: Zeroizing::new(hex::encode(b"secret")),
                 },
             )
             .is_err()
@@ -2524,7 +3041,7 @@ mod tests {
             write_json(
                 &output_path,
                 &HexBytesOutput {
-                    bytes_hex: hex::encode(b"secret"),
+                    bytes_hex: Zeroizing::new(hex::encode(b"secret")),
                 },
             )
             .is_err()
