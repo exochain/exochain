@@ -2319,6 +2319,7 @@ name = "exochain-sdk"
 version = "0.2.4"
 dependencies = [
  "blake3",
+ "ciborium",
  "exochain-avc",
  "exochain-core",
  "exochain-dag-db-api",

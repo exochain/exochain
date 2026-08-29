@@ -44,6 +44,7 @@ exo-avc = { package = "exochain-avc", path = "../exo-avc", version = "=0.2.4" }
 exo-economy = { package = "exochain-economy", path = "../exo-economy", version = "=0.2.4" }
 
 # Serialization
+ciborium = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 percent-encoding = { workspace = true }
