@@ -130,3 +130,12 @@ fn unanswered_topic_summary_orders_ties_by_topic_and_deduplicates_session_topic_
         ]
     );
 }
+
+#[test]
+fn unanswered_topic_summary_saturates_timestamp_overflow() {
+    let summary = summarize_unanswered_topics(&[], i64::MIN);
+
+    assert_eq!(summary.window_started_at, i64::MIN + 1);
+    assert_eq!(summary.window_ended_at, i64::MIN);
+    assert!(summary.topic_counts.is_empty());
+}
