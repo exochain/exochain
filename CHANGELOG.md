@@ -59,7 +59,10 @@ a tag, GitHub Release, registry publication, deployment, or v0.3.0 close.
   hidden index flags, and lockfile drift. Every final boundary rebinds trusted
   inputs at step scope, neutralizes shell-startup injection, and executes guard
   blobs from the immutable dispatch commit with Git replacement objects
-  disabled. The signing keyring admits exactly the configured primary and its
+  disabled. Those guards also scrub persisted Git repository, index, object,
+  and configuration controls, resolve Git from the system utility path, anchor
+  inspection to `GITHUB_WORKSPACE`, and disable fsmonitor and untracked-cache
+  shortcuts. The signing keyring admits exactly the configured primary and its
   subkeys, and the actual tag signer's primary fingerprint must match it.
   Source and live tag identity are rechecked at the final safe point before
   every release artifact or publication side effect.

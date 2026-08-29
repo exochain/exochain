@@ -17,8 +17,52 @@
 
 set -euo pipefail
 
+fail() {
+  printf 'release tag signer verification failed: %s\n' "$1" >&2
+  exit 1
+}
+
+release_workspace="${GITHUB_WORKSPACE:-}"
+if [[ "$release_workspace" != /* ]] || [ ! -d "$release_workspace" ]; then
+  fail "GITHUB_WORKSPACE must name the absolute release checkout directory"
+fi
+release_workspace="$(cd "$release_workspace" && pwd -P)"
+
+scrub_git_environment() {
+  unset \
+    GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    GIT_CONFIG GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM \
+    GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS \
+    GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM \
+    GIT_IMPLICIT_WORK_TREE GIT_PREFIX GIT_INTERNAL_SUPER_PREFIX \
+    GIT_NAMESPACE GIT_REPLACE_REF_BASE GIT_NO_REPLACE_OBJECTS \
+    GIT_SHALLOW_FILE GIT_GRAFT_FILE GIT_QUARANTINE_PATH GIT_EXEC_PATH \
+    GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_ATTR_SOURCE
+}
+
+scrub_git_environment
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
+
+trusted_git() (
+  scrub_git_environment
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
+  command -p git \
+    -c core.fsmonitor=false \
+    -c core.untrackedCache=false \
+    -c core.ignoreStat=false \
+    -C "$release_workspace" \
+    "$@"
+)
+
+git_toplevel="$(trusted_git rev-parse --show-toplevel)"
+git_toplevel="$(cd "$git_toplevel" && pwd -P)"
+if [ "$git_toplevel" != "$release_workspace" ]; then
+  fail "GITHUB_WORKSPACE must be the root of the inspected Git checkout"
+fi
+
 release_tag="${RELEASE_TAG:-}"
-configured_primary="$(printf '%s' "${EXOCHAIN_RELEASE_SIGNING_FINGERPRINT:-}" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
+configured_primary="$(printf '%s' "${EXOCHAIN_RELEASE_SIGNING_FINGERPRINT:-}" | command -p tr -d '[:space:]' | command -p tr '[:lower:]' '[:upper:]')"
 
 if ! [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z-]*(\.[0-9A-Za-z][0-9A-Za-z-]*)*)?$ ]]; then
   echo "RELEASE_TAG must be a validated v-prefixed semantic version." >&2
@@ -32,9 +76,17 @@ if [ -z "${GNUPGHOME:-}" ] || [ ! -d "$GNUPGHOME" ]; then
   echo "GNUPGHOME must name the isolated release-verification keyring." >&2
   exit 1
 fi
+if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+  gpg_path="/usr/bin/gpg"
+else
+  gpg_path="$(type -P gpg || true)"
+fi
+if [[ "$gpg_path" != /* ]] || [ ! -x "$gpg_path" ]; then
+  fail "a trusted absolute GPG executable is required"
+fi
 
 primary_fingerprints="$(
-  gpg --batch --with-colons --fingerprint --list-keys | awk -F: '
+  "$gpg_path" --batch --with-colons --fingerprint --list-keys | command -p awk -F: '
     /^pub:/ { want_primary_fingerprint = 1; next }
     /^fpr:/ && want_primary_fingerprint {
       print toupper($10)
@@ -42,7 +94,7 @@ primary_fingerprints="$(
     }
   '
 )"
-primary_count="$(printf '%s\n' "$primary_fingerprints" | awk 'NF { count += 1 } END { print count + 0 }')"
+primary_count="$(printf '%s\n' "$primary_fingerprints" | command -p awk 'NF { count += 1 } END { print count + 0 }')"
 if [ "$primary_count" -ne 1 ]; then
   echo "Release verification keyring must contain exactly one primary key; found ${primary_count}." >&2
   exit 1
@@ -53,21 +105,21 @@ if [ "$primary_fingerprints" != "$configured_primary" ]; then
 fi
 
 verification_output=""
-if ! verification_output="$(git verify-tag --raw "$release_tag" 2>&1)"; then
+if ! verification_output="$(trusted_git -c "gpg.program=${gpg_path}" verify-tag --raw "$release_tag" 2>&1)"; then
   printf '%s\n' "$verification_output" >&2
   echo "Release tag ${release_tag} does not have a valid OpenPGP signature." >&2
   exit 1
 fi
 printf '%s\n' "$verification_output"
 
-validsig_count="$(grep -c '^\[GNUPG:\] VALIDSIG ' <<<"$verification_output" || true)"
+validsig_count="$(command -p grep -c '^\[GNUPG:\] VALIDSIG ' <<<"$verification_output" || true)"
 if [ "$validsig_count" -ne 1 ]; then
   echo "Release tag verification must produce exactly one VALIDSIG status; found ${validsig_count}." >&2
   exit 1
 fi
 
 read -r signing_fingerprint signer_primary_fingerprint < <(
-  awk '
+  command -p awk '
     /^\[GNUPG:\] VALIDSIG / {
       signing = toupper($3)
       candidate = toupper($NF)

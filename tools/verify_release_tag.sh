@@ -22,6 +22,45 @@ fail() {
   exit 1
 }
 
+release_workspace="${GITHUB_WORKSPACE:-}"
+if [[ "$release_workspace" != /* ]] || [ ! -d "$release_workspace" ]; then
+  fail "GITHUB_WORKSPACE must name the absolute release checkout directory"
+fi
+release_workspace="$(cd "$release_workspace" && pwd -P)"
+
+scrub_git_environment() {
+  unset \
+    GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    GIT_CONFIG GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM \
+    GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS \
+    GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM \
+    GIT_IMPLICIT_WORK_TREE GIT_PREFIX GIT_INTERNAL_SUPER_PREFIX \
+    GIT_NAMESPACE GIT_REPLACE_REF_BASE GIT_NO_REPLACE_OBJECTS \
+    GIT_SHALLOW_FILE GIT_GRAFT_FILE GIT_QUARANTINE_PATH GIT_EXEC_PATH \
+    GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_ATTR_SOURCE
+}
+
+scrub_git_environment
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
+
+trusted_git() (
+  scrub_git_environment
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
+  command -p git \
+    -c core.fsmonitor=false \
+    -c core.untrackedCache=false \
+    -c core.ignoreStat=false \
+    -C "$release_workspace" \
+    "$@"
+)
+
+git_toplevel="$(trusted_git rev-parse --show-toplevel)"
+git_toplevel="$(cd "$git_toplevel" && pwd -P)"
+if [ "$git_toplevel" != "$release_workspace" ]; then
+  fail "GITHUB_WORKSPACE must be the root of the inspected Git checkout"
+fi
+
 dry_run="${DRY_RUN:-}"
 release_tag="${RELEASE_TAG:-}"
 expected_tag_object_sha="${EXPECTED_TAG_OBJECT_SHA:-}"
@@ -62,18 +101,18 @@ fi
 
 # Fetch the named remote ref itself on every live job. Fetching only an object
 # ID would prove object availability, not that the release tag still names it.
-if ! git fetch --force --no-tags origin \
+if ! trusted_git fetch --force --no-tags origin \
   "+refs/tags/${release_tag}:refs/tags/${release_tag}"; then
   fail "remote release tag ${release_tag} is absent or could not be fetched"
 fi
 
-tag_type="$(git cat-file -t "refs/tags/${release_tag}")"
+tag_type="$(trusted_git cat-file -t "refs/tags/${release_tag}")"
 if [ "$tag_type" != "tag" ]; then
   fail "remote release tag ${release_tag} is no longer an annotated tag"
 fi
 
-actual_tag_object_sha="$(git rev-parse "refs/tags/${release_tag}")"
-actual_tag_commit_sha="$(git rev-parse "refs/tags/${release_tag}^{commit}")"
+actual_tag_object_sha="$(trusted_git rev-parse "refs/tags/${release_tag}")"
+actual_tag_commit_sha="$(trusted_git rev-parse "refs/tags/${release_tag}^{commit}")"
 if [ "$actual_tag_object_sha" != "$expected_tag_object_sha" ]; then
   fail "remote release tag object changed: got ${actual_tag_object_sha}, expected ${expected_tag_object_sha}"
 fi

@@ -30,13 +30,30 @@ side_effect_guard="tools/verify_release_side_effect.sh"
 [[ -f "$source_guard" ]] || fail "$source_guard is missing"
 [[ -f "$tag_guard" ]] || fail "$tag_guard is missing"
 [[ -f "$side_effect_guard" ]] || fail "$side_effect_guard is missing"
-grep -F 'GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_source.sh"' "$side_effect_guard" >/dev/null \
+grep -F 'trusted_git show "${GITHUB_SHA}:tools/verify_release_source.sh"' "$side_effect_guard" >/dev/null \
   || fail "$side_effect_guard must execute the source guard from the immutable dispatch commit"
-grep -F 'GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_tag.sh"' "$side_effect_guard" >/dev/null \
+grep -F 'trusted_git show "${GITHUB_SHA}:tools/verify_release_tag.sh"' "$side_effect_guard" >/dev/null \
   || fail "$side_effect_guard must execute the tag guard from the immutable dispatch commit"
-immutable_child_count=$(grep -cF 'GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash' "$side_effect_guard")
+immutable_child_count=$(grep -cF 'BASH_ENV=/dev/null command -p bash' "$side_effect_guard")
 [ "$immutable_child_count" -eq 2 ] \
   || fail "$side_effect_guard must disable replacement objects and BASH_ENV for both child guards"
+for hardened_guard in "$source_guard" "$tag_guard" "$side_effect_guard" tools/verify_release_tag_signer.sh; do
+  grep -F 'command -p git' "$hardened_guard" >/dev/null \
+    || fail "$hardened_guard must resolve Git through the trusted system utility path"
+  grep -F -- '-c core.fsmonitor=false' "$hardened_guard" >/dev/null \
+    || fail "$hardened_guard must disable fsmonitor while examining release source"
+  grep -F -- '-c core.untrackedCache=false' "$hardened_guard" >/dev/null \
+    || fail "$hardened_guard must disable the untracked cache while examining release source"
+  grep -F -- '-C "$release_workspace"' "$hardened_guard" >/dev/null \
+    || fail "$hardened_guard must anchor every Git command to GITHUB_WORKSPACE"
+  grep -F 'export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1' "$hardened_guard" >/dev/null \
+    || fail "$hardened_guard must ignore HOME-selected global and system Git configuration"
+  scrub_block="$(awk '/^scrub_git_environment\(\) \{/,/^}/' "$hardened_guard")"
+  for poisoned_git_name in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT; do
+    grep -wF "$poisoned_git_name" <<<"$scrub_block" >/dev/null \
+      || fail "$hardened_guard must scrub $poisoned_git_name"
+  done
+done
 
 # Parse the workflow as YAML and reject duplicate mapping keys. YAML parsers
 # otherwise commonly accept the last duplicate silently, which can replace a
@@ -151,6 +168,11 @@ repo_root="$(pwd -P)"
 fixture_root="$(mktemp -d)"
 fixture_dir="$fixture_root/checkout"
 fixture_remote="$fixture_root/remote.git"
+attacker_dir="$fixture_root/attacker-checkout"
+fake_bin_dir="$fixture_root/fake-bin"
+fake_git="$fake_bin_dir/git"
+poison_home="$fixture_root/poison-home"
+poison_fsmonitor="$fixture_root/poison-fsmonitor.sh"
 poison_bash_env="$fixture_root/poison-bash-env.sh"
 trap 'rm -rf "$fixture_root"' EXIT
 cat > "$poison_bash_env" <<'POISON'
@@ -163,6 +185,11 @@ export EXPECTED_COMMIT_SHA=0000000000000000000000000000000000000000
 export TRUSTED_RELEASE_REF=0000000000000000000000000000000000000000
 exit 0
 POISON
+mkdir -p "$fake_bin_dir" "$poison_home"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$fake_git"
+printf '#!/usr/bin/env bash\nprintf "poison-clock\\n"\n' > "$poison_fsmonitor"
+printf '[core]\n\tworktree = %s\n\tfsmonitor = %s\n' "$attacker_dir" "$poison_fsmonitor" > "$poison_home/.gitconfig"
+chmod +x "$fake_git" "$poison_fsmonitor"
 git init --bare -q "$fixture_remote"
 git init -q "$fixture_dir"
 git -C "$fixture_dir" config user.name EXOCHAIN
@@ -188,6 +215,7 @@ run_source_guard() {
     cd "$fixture_dir"
     EXPECTED_COMMIT_SHA="$expected_sha" \
       GITHUB_SHA="$dispatch_sha" \
+      GITHUB_WORKSPACE="$fixture_dir" \
       TRUSTED_RELEASE_REF="$trusted_ref" \
       bash "$repo_root/$source_guard"
   )
@@ -223,6 +251,7 @@ run_tag_guard() {
       EXPECTED_TAG_COMMIT_SHA="$expected_tag_commit" \
       EXPECTED_COMMIT_SHA="$fixture_sha" \
       GITHUB_SHA="$fixture_sha" \
+      GITHUB_WORKSPACE="$fixture_dir" \
       bash "$repo_root/$tag_guard"
   )
 }
@@ -244,8 +273,21 @@ run_immutable_side_effect_guard() {
     export EXPECTED_COMMIT_SHA=0000000000000000000000000000000000000000
     export TRUSTED_RELEASE_REF=0000000000000000000000000000000000000000
     export GITHUB_SHA="$fixture_sha"
-    GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | \
-      GIT_NO_REPLACE_OBJECTS=1 \
+    export GITHUB_WORKSPACE="$fixture_dir"
+    # Simulate GITHUB_PATH and GITHUB_ENV redirecting Git itself, repository
+    # discovery, the index, and runtime config to attacker-controlled state.
+    export PATH="$fake_bin_dir:$PATH"
+    export HOME="$poison_home"
+    export GIT_DIR="$attacker_dir/.git"
+    export GIT_COMMON_DIR="$attacker_dir/.git"
+    export GIT_WORK_TREE="$attacker_dir"
+    export GIT_INDEX_FILE="$attacker_dir/.git/index"
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0=core.fsmonitor
+    export GIT_CONFIG_VALUE_0="$poison_fsmonitor"
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_NAMESPACE GIT_REPLACE_REF_BASE GIT_NO_REPLACE_OBJECTS GIT_SHALLOW_FILE GIT_GRAFT_FILE GIT_EXEC_PATH GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_ATTR_SOURCE
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
+    command -p git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | \
       BASH_ENV=/dev/null \
       RELEASE_SOURCE_CLEAN_MODE="$clean_mode" \
       DRY_RUN=false \
@@ -255,14 +297,43 @@ run_immutable_side_effect_guard() {
       EXPECTED_COMMIT_SHA="$fixture_sha" \
       TRUSTED_RELEASE_REF="$fixture_sha" \
       GITHUB_SHA="$fixture_sha" \
-      bash
+      GITHUB_WORKSPACE="$fixture_dir" \
+      command -p bash
   )
 }
 
 run_tag_guard false "$fixture_tag_object" "$fixture_tag_commit" >/dev/null \
   || fail "tag guard must accept the exact remote annotated-tag object and peeled commit"
+git clone -q "$fixture_dir" "$attacker_dir"
 run_immutable_side_effect_guard all "$fixture_tag_object" "$fixture_tag_commit" >/dev/null \
   || fail "combined side-effect guard must override poisoned prior-step state and accept one exact clean signed-source boundary"
+
+printf 'lifecycle-poisoned source\n' >> "$fixture_dir/tracked.txt"
+if (
+  cd "$fixture_dir"
+  PATH="$fake_bin_dir:$PATH" \
+    HOME="$poison_home" \
+    GIT_DIR="$attacker_dir/.git" \
+    GIT_COMMON_DIR="$attacker_dir/.git" \
+    GIT_WORK_TREE="$attacker_dir" \
+    GIT_INDEX_FILE="$attacker_dir/.git/index" \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0=core.fsmonitor \
+    GIT_CONFIG_VALUE_0="$poison_fsmonitor" \
+    RELEASE_SOURCE_CLEAN_MODE=all \
+    EXPECTED_COMMIT_SHA="$fixture_sha" \
+    GITHUB_SHA="$fixture_sha" \
+    GITHUB_WORKSPACE="$fixture_dir" \
+    TRUSTED_RELEASE_REF="$fixture_sha" \
+    BASH_ENV=/dev/null \
+    command -p bash "$repo_root/$source_guard"
+) >/dev/null 2>&1; then
+  fail "source guard must inspect GITHUB_WORKSPACE instead of a clean checkout selected through poisoned Git controls"
+fi
+if run_immutable_side_effect_guard all "$fixture_tag_object" "$fixture_tag_commit" >/dev/null 2>&1; then
+  fail "immutable guard must reject dirty source despite poisoned PATH and Git repository, index, and fsmonitor controls"
+fi
+git -C "$fixture_dir" restore tracked.txt
 
 for mutable_guard in "$source_guard" "$tag_guard" "$side_effect_guard"; do
   printf '#!/usr/bin/env bash\nexit 0\n' > "$fixture_dir/$mutable_guard"
@@ -300,8 +371,7 @@ done
 tag_mismatch_output=""
 if tag_mismatch_output="$(
   cd "$fixture_dir"
-  GIT_NO_REPLACE_OBJECTS=1 git show "${fixture_sha}:tools/verify_release_tag.sh" | \
-    GIT_NO_REPLACE_OBJECTS=1 \
+  command -p git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$fixture_dir" show "${fixture_sha}:tools/verify_release_tag.sh" | \
     BASH_ENV=/dev/null \
     DRY_RUN=false \
     RELEASE_TAG="$release_tag" \
@@ -309,7 +379,8 @@ if tag_mismatch_output="$(
     EXPECTED_TAG_COMMIT_SHA="$fixture_tag_commit" \
     EXPECTED_COMMIT_SHA="$fixture_sha" \
     GITHUB_SHA="$fixture_sha" \
-    bash 2>&1
+    GITHUB_WORKSPACE="$fixture_dir" \
+    command -p bash 2>&1
 )"; then
   fail "immutable guard bootstrap must reject a remote tag mismatch despite no-op checkout guards"
 fi
@@ -345,6 +416,7 @@ fi
   RELEASE_SOURCE_CLEAN_MODE=tracked \
     EXPECTED_COMMIT_SHA="$fixture_sha" \
     GITHUB_SHA="$fixture_sha" \
+    GITHUB_WORKSPACE="$fixture_dir" \
     TRUSTED_RELEASE_REF="$fixture_sha" \
     bash "$repo_root/$source_guard"
 ) >/dev/null || fail "tracked-source mode must permit intentionally generated untracked artifacts"
@@ -354,6 +426,7 @@ if (
   RELEASE_SOURCE_CLEAN_MODE=tracked \
     EXPECTED_COMMIT_SHA="$fixture_sha" \
     GITHUB_SHA="$fixture_sha" \
+    GITHUB_WORKSPACE="$fixture_dir" \
     TRUSTED_RELEASE_REF="$fixture_sha" \
     bash "$repo_root/$source_guard"
 ) >/dev/null 2>&1; then
@@ -367,6 +440,7 @@ if (
   RELEASE_SOURCE_CLEAN_MODE=tracked \
     EXPECTED_COMMIT_SHA="$fixture_sha" \
     GITHUB_SHA="$fixture_sha" \
+    GITHUB_WORKSPACE="$fixture_dir" \
     TRUSTED_RELEASE_REF="$fixture_sha" \
     bash "$repo_root/$source_guard"
 ) >/dev/null 2>&1; then
@@ -379,6 +453,7 @@ if (
   RELEASE_SOURCE_CLEAN_MODE=invalid \
     EXPECTED_COMMIT_SHA="$fixture_sha" \
     GITHUB_SHA="$fixture_sha" \
+    GITHUB_WORKSPACE="$fixture_dir" \
     TRUSTED_RELEASE_REF="$fixture_sha" \
     bash "$repo_root/$source_guard"
 ) >/dev/null 2>&1; then
@@ -465,8 +540,12 @@ assert_guard_immediately_before_step() {
     fail "job $job must run $guard_name before $side_effect_name"
   fi
   between=$(sed -n "$((guard_line + 1)),$((side_effect_line - 1))p" <<<"$block")
-  grep -F 'GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash' <<<"$between" >/dev/null \
+  grep -F 'command -p git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | BASH_ENV=/dev/null command -p bash' <<<"$between" >/dev/null \
     || fail "job $job boundary $guard_name must execute the final guard from the immutable dispatch commit"
+  grep -F 'unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR' <<<"$between" >/dev/null \
+    || fail "job $job boundary $guard_name must scrub persisted Git control variables before the immutable bootstrap"
+  grep -F 'export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1' <<<"$between" >/dev/null \
+    || fail "job $job boundary $guard_name must isolate Git from inherited global and system configuration"
   for binding in \
     'BASH_ENV: /dev/null' \
     "RELEASE_SOURCE_CLEAN_MODE: $clean_mode" \

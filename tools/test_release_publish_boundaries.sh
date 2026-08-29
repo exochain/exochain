@@ -79,7 +79,8 @@ if grep -F -- '--allow-dirty' <<<"$publish_block" >/dev/null; then
   fail "signed-source-bound cargo publication must not bypass Cargo's dirty-source rejection"
 fi
 
-immutable_guard='GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash'
+git_control_scrub='unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR'
+immutable_guard='command -p git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | BASH_ENV=/dev/null command -p bash'
 
 live_guard_line=$(grep -nF "$immutable_guard" <<<"$publish_block" | head -n 1 | cut -d: -f1 || true)
 live_publish_line=$(grep -nF 'cargo publish -p "$crate" --locked' <<<"$publish_block" | head -n 1 | cut -d: -f1)
@@ -225,6 +226,10 @@ assert_publish_step_rebinds_guard_inputs() {
   done
   grep -F "$immutable_guard" <<<"$step" >/dev/null \
     || fail "$job step $step_name must execute the final guard from the immutable dispatch commit"
+  grep -F "$git_control_scrub" <<<"$step" >/dev/null \
+    || fail "$job step $step_name must scrub persisted Git controls before the immutable guard"
+  grep -F 'export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1' <<<"$step" >/dev/null \
+    || fail "$job step $step_name must isolate Git from inherited global and system configuration"
 }
 
 assert_publish_step_rebinds_guard_inputs publish "$publish_block" \
