@@ -34,11 +34,11 @@ grep -F 'trusted_git show "${GITHUB_SHA}:tools/verify_release_source.sh"' "$side
   || fail "$side_effect_guard must execute the source guard from the immutable dispatch commit"
 grep -F 'trusted_git show "${GITHUB_SHA}:tools/verify_release_tag.sh"' "$side_effect_guard" >/dev/null \
   || fail "$side_effect_guard must execute the tag guard from the immutable dispatch commit"
-immutable_child_count=$(grep -cF 'BASH_ENV=/dev/null command -p bash' "$side_effect_guard")
+immutable_child_count=$(grep -cF 'BASH_ENV=/dev/null /bin/bash --noprofile --norc -p' "$side_effect_guard")
 [ "$immutable_child_count" -eq 2 ] \
   || fail "$side_effect_guard must disable replacement objects and BASH_ENV for both child guards"
 for hardened_guard in "$source_guard" "$tag_guard" "$side_effect_guard" tools/verify_release_tag_signer.sh; do
-  grep -F 'command -p git' "$hardened_guard" >/dev/null \
+  grep -F '/usr/bin/git' "$hardened_guard" >/dev/null \
     || fail "$hardened_guard must resolve Git through the trusted system utility path"
   grep -F -- '-c core.fsmonitor=false' "$hardened_guard" >/dev/null \
     || fail "$hardened_guard must disable fsmonitor while examining release source"
@@ -48,12 +48,26 @@ for hardened_guard in "$source_guard" "$tag_guard" "$side_effect_guard" tools/ve
     || fail "$hardened_guard must anchor every Git command to GITHUB_WORKSPACE"
   grep -F 'export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1' "$hardened_guard" >/dev/null \
     || fail "$hardened_guard must ignore HOME-selected global and system Git configuration"
+  grep -F "^BASH_FUNC_.*%%=" "$hardened_guard" >/dev/null \
+    || fail "$hardened_guard must reject inherited shell functions"
   scrub_block="$(awk '/^scrub_git_environment\(\) \{/,/^}/' "$hardened_guard")"
   for poisoned_git_name in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT; do
     grep -wF "$poisoned_git_name" <<<"$scrub_block" >/dev/null \
       || fail "$hardened_guard must scrub $poisoned_git_name"
   done
 done
+grep -F 'shell: /bin/bash --noprofile --norc -p -e -o pipefail {0}' "$workflow" >/dev/null \
+  || fail "$workflow must run every release shell in privileged mode without inherited functions"
+grep -F 'trusted_remote_git' "$tag_guard" >/dev/null \
+  || fail "$tag_guard must query tag state from an isolated Git context"
+grep -F '/usr/bin/env -i' "$tag_guard" >/dev/null \
+  || fail "$tag_guard must give the authoritative tag query an empty inherited environment"
+grep -F 'ls-remote "$authoritative_remote_url"' "$tag_guard" >/dev/null \
+  || fail "$tag_guard must query the authoritative remote without trusting checkout remote config"
+grep -F 'GITHUB_SERVER_URL' "$tag_guard" >/dev/null \
+  || fail "$tag_guard must derive the authoritative server from runner-protected context"
+grep -F 'GITHUB_REPOSITORY' "$tag_guard" >/dev/null \
+  || fail "$tag_guard must derive the authoritative repository from runner-protected context"
 
 # Parse the workflow as YAML and reject duplicate mapping keys. YAML parsers
 # otherwise commonly accept the last duplicate silently, which can replace a
@@ -168,6 +182,7 @@ repo_root="$(pwd -P)"
 fixture_root="$(mktemp -d)"
 fixture_dir="$fixture_root/checkout"
 fixture_remote="$fixture_root/remote.git"
+attacker_remote="$fixture_root/attacker-remote.git"
 attacker_dir="$fixture_root/attacker-checkout"
 fake_bin_dir="$fixture_root/fake-bin"
 fake_git="$fake_bin_dir/git"
@@ -252,6 +267,9 @@ run_tag_guard() {
       EXPECTED_COMMIT_SHA="$fixture_sha" \
       GITHUB_SHA="$fixture_sha" \
       GITHUB_WORKSPACE="$fixture_dir" \
+      GITHUB_ACTIONS=false \
+      GITHUB_SERVER_URL="file://$fixture_root" \
+      GITHUB_REPOSITORY=remote \
       bash "$repo_root/$tag_guard"
   )
 }
@@ -287,7 +305,7 @@ run_immutable_side_effect_guard() {
     export GIT_CONFIG_VALUE_0="$poison_fsmonitor"
     unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_NAMESPACE GIT_REPLACE_REF_BASE GIT_NO_REPLACE_OBJECTS GIT_SHALLOW_FILE GIT_GRAFT_FILE GIT_EXEC_PATH GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_ATTR_SOURCE
     export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
-    command -p git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | \
+    /usr/bin/git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | \
       BASH_ENV=/dev/null \
       RELEASE_SOURCE_CLEAN_MODE="$clean_mode" \
       DRY_RUN=false \
@@ -298,15 +316,46 @@ run_immutable_side_effect_guard() {
       TRUSTED_RELEASE_REF="$fixture_sha" \
       GITHUB_SHA="$fixture_sha" \
       GITHUB_WORKSPACE="$fixture_dir" \
-      command -p bash
+      GITHUB_ACTIONS=false \
+      GITHUB_SERVER_URL="file://$fixture_root" \
+      GITHUB_REPOSITORY=remote \
+      /bin/bash --noprofile --norc -p
   )
 }
 
 run_tag_guard false "$fixture_tag_object" "$fixture_tag_commit" >/dev/null \
   || fail "tag guard must accept the exact remote annotated-tag object and peeled commit"
 git clone -q "$fixture_dir" "$attacker_dir"
+git clone --bare -q "$fixture_remote" "$attacker_remote"
 run_immutable_side_effect_guard all "$fixture_tag_object" "$fixture_tag_commit" >/dev/null \
   || fail "combined side-effect guard must override poisoned prior-step state and accept one exact clean signed-source boundary"
+
+poisoned_side_effect_marker="$fixture_root/poisoned-side-effect-ran"
+if /usr/bin/env \
+  'BASH_FUNC_cargo%%=() { /usr/bin/touch "$POISONED_SIDE_EFFECT_MARKER"; return 0; }' \
+  'BASH_FUNC_npm%%=() { /usr/bin/touch "$POISONED_SIDE_EFFECT_MARKER"; return 0; }' \
+  'BASH_FUNC_set%%=() { return 0; }' \
+  BASH_ENV=/dev/null \
+  POISONED_SIDE_EFFECT_MARKER="$poisoned_side_effect_marker" \
+  RELEASE_SOURCE_CLEAN_MODE=all \
+  DRY_RUN=false \
+  RELEASE_TAG="$release_tag" \
+  EXPECTED_TAG_OBJECT_SHA="$fixture_tag_object" \
+  EXPECTED_TAG_COMMIT_SHA="$fixture_tag_commit" \
+  EXPECTED_COMMIT_SHA="$fixture_sha" \
+  TRUSTED_RELEASE_REF="$fixture_sha" \
+  GITHUB_SHA="$fixture_sha" \
+  GITHUB_WORKSPACE="$fixture_dir" \
+  GITHUB_ACTIONS=false \
+  GITHUB_SERVER_URL="file://$fixture_root" \
+  GITHUB_REPOSITORY=remote \
+  /bin/bash --noprofile --norc -p -c \
+    'set -euo pipefail; /usr/bin/git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | BASH_ENV=/dev/null /bin/bash --noprofile --norc -p; cargo; npm; /usr/bin/touch "$POISONED_SIDE_EFFECT_MARKER"' \
+    >/dev/null 2>&1; then
+  fail "immutable guard must reject inherited cargo, npm, or shell-builtin functions before a release side effect"
+fi
+[ ! -e "$poisoned_side_effect_marker" ] \
+  || fail "inherited release functions must be rejected before the outer publish shell reaches a side effect"
 
 printf 'lifecycle-poisoned source\n' >> "$fixture_dir/tracked.txt"
 if (
@@ -326,7 +375,7 @@ if (
     GITHUB_WORKSPACE="$fixture_dir" \
     TRUSTED_RELEASE_REF="$fixture_sha" \
     BASH_ENV=/dev/null \
-    command -p bash "$repo_root/$source_guard"
+    /bin/bash --noprofile --norc -p "$repo_root/$source_guard"
 ) >/dev/null 2>&1; then
   fail "source guard must inspect GITHUB_WORKSPACE instead of a clean checkout selected through poisoned Git controls"
 fi
@@ -365,13 +414,22 @@ GIT_NO_REPLACE_OBJECTS=1 git -C "$fixture_dir" restore tracked.txt
 
 git -C "$fixture_dir" tag -f -a "$release_tag" -m "retargeted object" "$fixture_sha" >/dev/null
 git -C "$fixture_dir" push -q --force origin "refs/tags/$release_tag"
+canonical_fixture_url="file://${fixture_root}/remote.git"
+attacker_fixture_url="file://${attacker_remote}"
+git -C "$fixture_dir" remote set-url origin "$attacker_remote"
+git -C "$fixture_dir" config "url.${attacker_fixture_url}.insteadOf" "$canonical_fixture_url"
+if run_tag_guard false "$fixture_tag_object" "$fixture_tag_commit" >/dev/null 2>&1; then
+  fail "tag guard must reject canonical tag retargeting despite malicious origin and insteadOf configuration serving the old tag"
+fi
+git -C "$fixture_dir" remote set-url origin "$fixture_remote"
+git -C "$fixture_dir" config --unset-all "url.${attacker_fixture_url}.insteadOf"
 for mutable_guard in "$source_guard" "$tag_guard" "$side_effect_guard"; do
   printf '#!/usr/bin/env bash\nexit 0\n' > "$fixture_dir/$mutable_guard"
 done
 tag_mismatch_output=""
 if tag_mismatch_output="$(
   cd "$fixture_dir"
-  command -p git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$fixture_dir" show "${fixture_sha}:tools/verify_release_tag.sh" | \
+  /usr/bin/git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$fixture_dir" show "${fixture_sha}:tools/verify_release_tag.sh" | \
     BASH_ENV=/dev/null \
     DRY_RUN=false \
     RELEASE_TAG="$release_tag" \
@@ -380,11 +438,14 @@ if tag_mismatch_output="$(
     EXPECTED_COMMIT_SHA="$fixture_sha" \
     GITHUB_SHA="$fixture_sha" \
     GITHUB_WORKSPACE="$fixture_dir" \
-    command -p bash 2>&1
+    GITHUB_ACTIONS=false \
+    GITHUB_SERVER_URL="file://$fixture_root" \
+    GITHUB_REPOSITORY=remote \
+    /bin/bash --noprofile --norc -p 2>&1
 )"; then
   fail "immutable guard bootstrap must reject a remote tag mismatch despite no-op checkout guards"
 fi
-grep -F 'remote release tag object changed' <<<"$tag_mismatch_output" >/dev/null \
+grep -F 'authoritative release tag object changed' <<<"$tag_mismatch_output" >/dev/null \
   || fail "immutable tag guard must reject the remote tag mismatch after checkout guards are no-ops"
 git -C "$fixture_dir" restore tools
 if run_tag_guard false "$fixture_tag_object" "$fixture_tag_commit" >/dev/null 2>&1; then
@@ -482,7 +543,7 @@ for job in release-build sbom-and-attest publish publish-wasm-npm publish-llm-pr
     || fail "job $job source check must consume the validated commit SHA"
   grep -F 'TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}' <<<"$block" >/dev/null \
     || fail "job $job source check must consume the validated trusted ref"
-  grep -F 'run: bash tools/verify_release_source.sh' <<<"$block" >/dev/null \
+  grep -F 'run: /bin/bash --noprofile --norc -p tools/verify_release_source.sh' <<<"$block" >/dev/null \
     || fail "job $job must execute the shared source-identity guard"
   grep -F 'DRY_RUN: ${{ inputs.dry_run }}' <<<"$block" >/dev/null \
     || fail "job $job tag check must preserve the tag-free dry-run branch"
@@ -492,15 +553,17 @@ for job in release-build sbom-and-attest publish publish-wasm-npm publish-llm-pr
     || fail "job $job must consume the verified signed-tag object ID"
   grep -F 'EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}' <<<"$block" >/dev/null \
     || fail "job $job must consume the verified tag's peeled commit"
-  grep -F 'run: bash tools/verify_release_tag.sh' <<<"$block" >/dev/null \
+  grep -F 'RELEASE_GITHUB_TOKEN: ${{ github.token }}' <<<"$block" >/dev/null \
+    || fail "job $job must bind the repository token for authoritative tag lookup"
+  grep -F 'run: /bin/bash --noprofile --norc -p tools/verify_release_tag.sh' <<<"$block" >/dev/null \
     || fail "job $job must re-fetch and compare the current remote tag before side effects"
 
   checkout_line=$(grep -nF 'ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}' <<<"$block" | head -n 1 | cut -d: -f1)
-  verify_line=$(grep -nF 'run: bash tools/verify_release_source.sh' <<<"$block" | head -n 1 | cut -d: -f1)
+  verify_line=$(grep -nF 'run: /bin/bash --noprofile --norc -p tools/verify_release_source.sh' <<<"$block" | head -n 1 | cut -d: -f1)
   if [ "$verify_line" -le "$checkout_line" ]; then
     fail "job $job must verify source identity after checkout"
   fi
-  tag_verify_line=$(grep -nF 'run: bash tools/verify_release_tag.sh' <<<"$block" | head -n 1 | cut -d: -f1)
+  tag_verify_line=$(grep -nF 'run: /bin/bash --noprofile --norc -p tools/verify_release_tag.sh' <<<"$block" | head -n 1 | cut -d: -f1)
   if [ "$tag_verify_line" -le "$verify_line" ]; then
     fail "job $job must revalidate remote tag identity after verifying the checked-out source"
   fi
@@ -540,7 +603,7 @@ assert_guard_immediately_before_step() {
     fail "job $job must run $guard_name before $side_effect_name"
   fi
   between=$(sed -n "$((guard_line + 1)),$((side_effect_line - 1))p" <<<"$block")
-  grep -F 'command -p git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | BASH_ENV=/dev/null command -p bash' <<<"$between" >/dev/null \
+  grep -F '/usr/bin/git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | BASH_ENV=/dev/null /bin/bash --noprofile --norc -p' <<<"$between" >/dev/null \
     || fail "job $job boundary $guard_name must execute the final guard from the immutable dispatch commit"
   grep -F 'unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR' <<<"$between" >/dev/null \
     || fail "job $job boundary $guard_name must scrub persisted Git control variables before the immutable bootstrap"
@@ -554,7 +617,8 @@ assert_guard_immediately_before_step() {
     'EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}' \
     'EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}' \
     'EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}' \
-    'TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}'; do
+    'TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}' \
+    'RELEASE_GITHUB_TOKEN: ${{ github.token }}'; do
     grep -F "$binding" <<<"$between" >/dev/null \
       || fail "job $job boundary $guard_name must rebind $binding at step scope"
   done
@@ -604,7 +668,7 @@ assert_guard_immediately_before_step github-release \
   "Reverify source and tag immediately before release creation" "Create release" tracked
 
 github_release_block=$(job_block "github-release")
-github_initial_tag_verify_count=$(grep -cF 'run: bash tools/verify_release_tag.sh' <<<"$github_release_block")
+github_initial_tag_verify_count=$(grep -cF 'run: /bin/bash --noprofile --norc -p tools/verify_release_tag.sh' <<<"$github_release_block")
 if [ "$github_initial_tag_verify_count" -ne 1 ]; then
   fail "github-release must validate the remote tag after checkout before running job work"
 fi

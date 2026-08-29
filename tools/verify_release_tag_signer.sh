@@ -15,6 +15,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+if /usr/bin/env | /usr/bin/grep -Eq '^BASH_FUNC_.*%%='; then
+  /bin/echo "release tag signer verification failed: inherited shell functions are forbidden" >&2
+  exit 1
+fi
 set -euo pipefail
 
 fail() {
@@ -47,7 +51,7 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=
 trusted_git() (
   scrub_git_environment
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
-  command -p git \
+  /usr/bin/git \
     -c core.fsmonitor=false \
     -c core.untrackedCache=false \
     -c core.ignoreStat=false \
@@ -62,7 +66,7 @@ if [ "$git_toplevel" != "$release_workspace" ]; then
 fi
 
 release_tag="${RELEASE_TAG:-}"
-configured_primary="$(printf '%s' "${EXOCHAIN_RELEASE_SIGNING_FINGERPRINT:-}" | command -p tr -d '[:space:]' | command -p tr '[:lower:]' '[:upper:]')"
+configured_primary="$(printf '%s' "${EXOCHAIN_RELEASE_SIGNING_FINGERPRINT:-}" | /usr/bin/tr -d '[:space:]' | /usr/bin/tr '[:lower:]' '[:upper:]')"
 
 if ! [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z-]*(\.[0-9A-Za-z][0-9A-Za-z-]*)*)?$ ]]; then
   echo "RELEASE_TAG must be a validated v-prefixed semantic version." >&2
@@ -78,15 +82,21 @@ if [ -z "${GNUPGHOME:-}" ] || [ ! -d "$GNUPGHOME" ]; then
 fi
 if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
   gpg_path="/usr/bin/gpg"
+elif [ -x /opt/homebrew/bin/gpg ]; then
+  gpg_path="/opt/homebrew/bin/gpg"
+elif [ -x /usr/local/bin/gpg ]; then
+  gpg_path="/usr/local/bin/gpg"
+elif [ -x /usr/bin/gpg ]; then
+  gpg_path="/usr/bin/gpg"
 else
-  gpg_path="$(type -P gpg || true)"
+  gpg_path=""
 fi
 if [[ "$gpg_path" != /* ]] || [ ! -x "$gpg_path" ]; then
   fail "a trusted absolute GPG executable is required"
 fi
 
 primary_fingerprints="$(
-  "$gpg_path" --batch --with-colons --fingerprint --list-keys | command -p awk -F: '
+  "$gpg_path" --batch --with-colons --fingerprint --list-keys | /usr/bin/awk -F: '
     /^pub:/ { want_primary_fingerprint = 1; next }
     /^fpr:/ && want_primary_fingerprint {
       print toupper($10)
@@ -94,7 +104,7 @@ primary_fingerprints="$(
     }
   '
 )"
-primary_count="$(printf '%s\n' "$primary_fingerprints" | command -p awk 'NF { count += 1 } END { print count + 0 }')"
+primary_count="$(printf '%s\n' "$primary_fingerprints" | /usr/bin/awk 'NF { count += 1 } END { print count + 0 }')"
 if [ "$primary_count" -ne 1 ]; then
   echo "Release verification keyring must contain exactly one primary key; found ${primary_count}." >&2
   exit 1
@@ -112,14 +122,14 @@ if ! verification_output="$(trusted_git -c "gpg.program=${gpg_path}" verify-tag 
 fi
 printf '%s\n' "$verification_output"
 
-validsig_count="$(command -p grep -c '^\[GNUPG:\] VALIDSIG ' <<<"$verification_output" || true)"
+validsig_count="$(/usr/bin/grep -c '^\[GNUPG:\] VALIDSIG ' <<<"$verification_output" || true)"
 if [ "$validsig_count" -ne 1 ]; then
   echo "Release tag verification must produce exactly one VALIDSIG status; found ${validsig_count}." >&2
   exit 1
 fi
 
 read -r signing_fingerprint signer_primary_fingerprint < <(
-  command -p awk '
+  /usr/bin/awk '
     /^\[GNUPG:\] VALIDSIG / {
       signing = toupper($3)
       candidate = toupper($NF)

@@ -66,7 +66,7 @@ grep -F 'EXPECTED_COMMIT_SHA: ${{ github.sha }}' <<<"$validate_block" >/dev/null
   || fail "validation step must pass the workflow SHA as its expected commit"
 grep -F 'TRUSTED_RELEASE_REF: ${{ github.sha }}' <<<"$validate_block" >/dev/null \
   || fail "validation step must pass the workflow SHA as its trusted ref"
-grep -F 'bash tools/verify_release_source.sh' <<<"$validate_block" >/dev/null \
+grep -F '/bin/bash --noprofile --norc -p tools/verify_release_source.sh' <<<"$validate_block" >/dev/null \
   || fail "validation step must execute the shared source-identity guard"
 grep -F 'RELEASE_VERSION_EXPECTED="$version" bash tools/test_release_version_alignment.sh' <<<"$validate_block" >/dev/null \
   || fail "validation step must bind every release manifest to the sanitized input version"

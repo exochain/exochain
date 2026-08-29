@@ -80,7 +80,7 @@ if grep -F -- '--allow-dirty' <<<"$publish_block" >/dev/null; then
 fi
 
 git_control_scrub='unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR'
-immutable_guard='command -p git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | BASH_ENV=/dev/null command -p bash'
+immutable_guard='/usr/bin/git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | BASH_ENV=/dev/null /bin/bash --noprofile --norc -p'
 
 live_guard_line=$(grep -nF "$immutable_guard" <<<"$publish_block" | head -n 1 | cut -d: -f1 || true)
 live_publish_line=$(grep -nF 'cargo publish -p "$crate" --locked' <<<"$publish_block" | head -n 1 | cut -d: -f1)
@@ -220,7 +220,8 @@ assert_publish_step_rebinds_guard_inputs() {
     'EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}' \
     'EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}' \
     'EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}' \
-    'TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}'; do
+    'TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}' \
+    'RELEASE_GITHUB_TOKEN: ${{ github.token }}'; do
     grep -F "$binding" <<<"$step" >/dev/null \
       || fail "$job step $step_name must rebind $binding at step scope"
   done
