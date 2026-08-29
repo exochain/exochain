@@ -470,6 +470,8 @@ jobs:
         env:
           EXO_DAGDB_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
         run: cargo test -p exochain-dag-db-postgres --features postgres --test migration_contract pr708_migrator_upgrades_from_last_successful_deployed_ledger -- --nocapture
+      - name: Reject malformed Postgres node-store rows without panicking
+        run: cargo test -p exochain-node postgres_malformed_rows_return_typed_errors -- --nocapture --test-threads=1
       - name: Run DB-backed gateway library tests
         run: cargo test -p exochain-gateway --lib --features production-db -- --test-threads=1
       - name: Run DB-backed integration tests

@@ -28,7 +28,7 @@
 
 use std::collections::BTreeSet;
 
-use exo_core::types::{Did, Hash256, Timestamp, TrustReceipt};
+use exo_core::types::{Did, Hash256, Signature, Timestamp, TrustReceipt};
 use exo_dag::{
     consensus::{CommitCertificate, Vote},
     dag::DagNode,
@@ -36,7 +36,7 @@ use exo_dag::{
 };
 use exo_economy::{EconomyObjectKind, EconomyRecordAnchor};
 use serde::de::DeserializeOwned;
-use sqlx::{Postgres, Row, Transaction};
+use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 
 use super::{
     PostgresDagNodeStore, SqliteDagStore, decode_cbor, decode_did, decode_hash_bytes,
@@ -44,6 +44,46 @@ use super::{
     sqlite_u64_to_i64, store_err, validate_commit_certificate, validate_ed25519_signature,
     validate_signature, validate_vote,
 };
+
+fn row_type_decode_error(
+    field: &'static str,
+    expected_type: &'static str,
+    error: sqlx::Error,
+) -> DagError {
+    store_err(format!(
+        "{field} type decode failed (expected {expected_type}): {error}"
+    ))
+}
+
+fn decode_committed_row(row: &PgRow) -> DagResult<(Hash256, u64)> {
+    let hash: Vec<u8> = row
+        .try_get("hash")
+        .map_err(|error| row_type_decode_error("dagdb_node_committed.hash", "BYTEA", error))?;
+    let height: i64 = row
+        .try_get("height")
+        .map_err(|error| row_type_decode_error("dagdb_node_committed.height", "BIGINT", error))?;
+    Ok((
+        decode_hash_bytes(&hash, "dagdb_node_committed.hash")?,
+        sqlite_i64_to_u64(height, "dagdb_node_committed.height")?,
+    ))
+}
+
+fn decode_vote_row(row: &PgRow) -> DagResult<(Hash256, Did, Signature)> {
+    let hash_bytes: Vec<u8> = row.try_get("node_hash").map_err(|error| {
+        row_type_decode_error("dagdb_node_consensus_votes.node_hash", "BYTEA", error)
+    })?;
+    let voter_str: String = row.try_get("voter_did").map_err(|error| {
+        row_type_decode_error("dagdb_node_consensus_votes.voter_did", "TEXT", error)
+    })?;
+    let sig_bytes: Vec<u8> = row.try_get("signature").map_err(|error| {
+        row_type_decode_error("dagdb_node_consensus_votes.signature", "BYTEA", error)
+    })?;
+    Ok((
+        decode_hash_bytes(&hash_bytes, "dagdb_node_consensus_votes.node_hash")?,
+        decode_did(&voter_str, "dagdb_node_consensus_votes.voter_did")?,
+        decode_signature_bytes(&sig_bytes, "dagdb_node_consensus_votes.signature")?,
+    ))
+}
 
 impl PostgresDagNodeStore {
     pub(super) async fn verify_schema(&self) -> anyhow::Result<()> {
@@ -360,16 +400,7 @@ impl PostgresDagNodeStore {
         .await
         .map_err(store_err)?;
         tx.commit().await.map_err(store_err)?;
-        rows.into_iter()
-            .map(|row| {
-                let hash: Vec<u8> = row.get("hash");
-                let height: i64 = row.get("height");
-                Ok((
-                    decode_hash_bytes(&hash, "dagdb_node_committed.hash")?,
-                    sqlite_i64_to_u64(height, "dagdb_node_committed.height")?,
-                ))
-            })
-            .collect()
+        rows.iter().map(decode_committed_row).collect()
     }
 
     pub(super) async fn save_consensus_round_async(&self, round: u64) -> DagResult<()> {
@@ -445,20 +476,12 @@ impl PostgresDagNodeStore {
         tx.commit().await.map_err(store_err)?;
         rows.into_iter()
             .map(|row| {
-                let hash_bytes: Vec<u8> = row.get("node_hash");
-                let voter_str: String = row.get("voter_did");
-                let sig_bytes: Vec<u8> = row.get("signature");
+                let (node_hash, voter, signature) = decode_vote_row(&row)?;
                 Ok(Vote {
-                    voter: decode_did(&voter_str, "dagdb_node_consensus_votes.voter_did")?,
+                    voter,
                     round,
-                    node_hash: decode_hash_bytes(
-                        &hash_bytes,
-                        "dagdb_node_consensus_votes.node_hash",
-                    )?,
-                    signature: decode_signature_bytes(
-                        &sig_bytes,
-                        "dagdb_node_consensus_votes.signature",
-                    )?,
+                    node_hash,
+                    signature,
                 })
             })
             .collect()
@@ -974,5 +997,96 @@ impl PostgresDagNodeStore {
         result
             .map(|bytes| decode_cbor(&bytes, "dagdb_node_economy_anchors.cbor_data"))
             .transpose()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use exo_dag::error::DagError;
+
+    use super::*;
+
+    fn assert_store_decode_error(error: DagError, column: &str) {
+        match error {
+            DagError::StoreError(message) => {
+                assert!(message.contains(column), "error was {message}");
+                assert!(message.contains("decode"), "error was {message}");
+                assert!(message.contains("type"), "error was {message}");
+            }
+            other => panic!("expected StoreError for {column}, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn postgres_malformed_rows_return_typed_errors() {
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL is required for postgres_malformed_rows_return_typed_errors");
+        let pool = exo_gateway::db::init_pool(&database_url)
+            .await
+            .expect("initialize canonical gateway and DAG DB migrations");
+
+        let malformed_committed_hash =
+            sqlx::query("SELECT 'not-bytea'::TEXT AS hash, 1::BIGINT AS height")
+                .fetch_one(&pool)
+                .await
+                .expect("synthetic committed hash row");
+        assert_store_decode_error(
+            decode_committed_row(&malformed_committed_hash).unwrap_err(),
+            "dagdb_node_committed.hash",
+        );
+
+        let malformed_committed_height = sqlx::query(
+            "SELECT decode(repeat('11', 32), 'hex') AS hash, \
+             'not-bigint'::TEXT AS height",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("synthetic committed height row");
+        assert_store_decode_error(
+            decode_committed_row(&malformed_committed_height).unwrap_err(),
+            "dagdb_node_committed.height",
+        );
+
+        let malformed_vote_hash = sqlx::query(
+            "SELECT 'not-bytea'::TEXT AS node_hash, \
+             'did:exo:malformed-row'::TEXT AS voter_did, \
+             decode(repeat('22', 64), 'hex') AS signature",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("synthetic vote hash row");
+        assert_store_decode_error(
+            decode_vote_row(&malformed_vote_hash).unwrap_err(),
+            "dagdb_node_consensus_votes.node_hash",
+        );
+
+        let malformed_voter_did = sqlx::query(
+            "SELECT decode(repeat('11', 32), 'hex') AS node_hash, \
+             decode('22', 'hex') AS voter_did, \
+             decode(repeat('33', 64), 'hex') AS signature",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("synthetic voter DID row");
+        assert_store_decode_error(
+            decode_vote_row(&malformed_voter_did).unwrap_err(),
+            "dagdb_node_consensus_votes.voter_did",
+        );
+
+        let malformed_vote_signature = sqlx::query(
+            "SELECT decode(repeat('11', 32), 'hex') AS node_hash, \
+             'did:exo:malformed-row'::TEXT AS voter_did, \
+             'not-bytea'::TEXT AS signature",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("synthetic vote signature row");
+        assert_store_decode_error(
+            decode_vote_row(&malformed_vote_signature).unwrap_err(),
+            "dagdb_node_consensus_votes.signature",
+        );
+
+        pool.close().await;
     }
 }
