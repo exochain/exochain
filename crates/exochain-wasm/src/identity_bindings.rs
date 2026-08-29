@@ -22,33 +22,165 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::serde_bridge::*;
 
 const MAX_WASM_SHAMIR_SHARES: usize = u8::MAX as usize;
+const SHAMIR_SPLIT_RESPONSE_ERROR: &str = "Shamir split error: response serialization failed";
 const SHAMIR_RECONSTRUCT_ERROR: &str = "Shamir reconstruct error: invalid shares";
+const SHAMIR_RECONSTRUCT_RESPONSE_ERROR: &str =
+    "Shamir reconstruct error: response serialization failed";
 
 #[derive(serde::Serialize)]
 struct ShamirSecretResponse<'a> {
     secret: &'a str,
 }
 
+struct FixedLimitJsonWriter<'a> {
+    bytes: &'a mut Zeroizing<Vec<u8>>,
+    limit: usize,
+}
+
+impl std::io::Write for FixedLimitJsonWriter<'_> {
+    fn write(&mut self, incoming: &[u8]) -> std::io::Result<usize> {
+        let next_len = self
+            .bytes
+            .len()
+            .checked_add(incoming.len())
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "JSON response length overflow",
+                )
+            })?;
+        if next_len > self.limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "JSON response exceeds reserved capacity",
+            ));
+        }
+        self.bytes.extend_from_slice(incoming);
+        Ok(incoming.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn serialize_shamir_shares_response<T, E>(
+    shares: &[exo_identity::shamir::Share],
+    parse_json: impl FnOnce(&str) -> Result<T, E>,
+) -> Result<T, &'static str> {
+    const JSON_FIXED_BYTES_PER_SHARE: usize = 256;
+
+    let json_upper_bound = shares.iter().try_fold(2usize, |bound, share| {
+        let data_bound = share.data.len().checked_mul(4)?;
+        bound
+            .checked_add(JSON_FIXED_BYTES_PER_SHARE)?
+            .checked_add(data_bound)
+    });
+    let Some(json_upper_bound) = json_upper_bound else {
+        return Err(SHAMIR_SPLIT_RESPONSE_ERROR);
+    };
+    let mut serialized = Zeroizing::new(Vec::new());
+    if serialized.try_reserve_exact(json_upper_bound).is_err() {
+        serialized.zeroize();
+        return Err(SHAMIR_SPLIT_RESPONSE_ERROR);
+    }
+    let reserved_capacity = serialized.capacity();
+    let serialization_result = {
+        let mut writer = FixedLimitJsonWriter {
+            bytes: &mut serialized,
+            limit: json_upper_bound,
+        };
+        serde_json::to_writer(&mut writer, shares)
+    };
+    if serialization_result.is_err() {
+        serialized.zeroize();
+        return Err(SHAMIR_SPLIT_RESPONSE_ERROR);
+    }
+    if serialized.len() > json_upper_bound || serialized.capacity() != reserved_capacity {
+        serialized.zeroize();
+        return Err(SHAMIR_SPLIT_RESPONSE_ERROR);
+    }
+    let json = match std::str::from_utf8(serialized.as_slice()) {
+        Ok(json) => json,
+        Err(_) => {
+            serialized.zeroize();
+            return Err(SHAMIR_SPLIT_RESPONSE_ERROR);
+        }
+    };
+    let result = parse_json(json);
+    serialized.zeroize();
+    result.map_err(|_| SHAMIR_SPLIT_RESPONSE_ERROR)
+}
+
+fn shamir_shares_to_js_value(shares: &[exo_identity::shamir::Share]) -> Result<JsValue, JsValue> {
+    serialize_shamir_shares_response(shares, |json| js_sys::JSON::parse(json).map_err(|_| ()))
+        .map_err(JsValue::from_str)
+}
+
 fn reconstruct_shamir_secret_json(
     shares: &[exo_identity::shamir::Share],
     config: &exo_identity::shamir::ShamirConfig,
-) -> Result<Zeroizing<String>, &'static str> {
+) -> Result<Zeroizing<Vec<u8>>, &'static str> {
     let mut secret = exo_identity::shamir::reconstruct_zeroizing(shares, config)
         .map_err(|_| SHAMIR_RECONSTRUCT_ERROR)?;
-    let mut secret_hex = Zeroizing::new(hex::encode(secret.as_slice()));
-    let serialized = match serde_json::to_string(&ShamirSecretResponse {
-        secret: secret_hex.as_str(),
-    }) {
-        Ok(serialized) => serialized,
+    let Some(secret_hex_len) = secret.len().checked_mul(2) else {
+        secret.zeroize();
+        return Err(SHAMIR_RECONSTRUCT_RESPONSE_ERROR);
+    };
+    let mut secret_hex = Zeroizing::new(Vec::new());
+    if secret_hex.try_reserve_exact(secret_hex_len).is_err() {
+        secret.zeroize();
+        secret_hex.zeroize();
+        return Err(SHAMIR_RECONSTRUCT_RESPONSE_ERROR);
+    }
+    let secret_hex_capacity = secret_hex.capacity();
+    secret_hex.resize(secret_hex_len, 0);
+    if secret_hex.capacity() != secret_hex_capacity
+        || hex::encode_to_slice(secret.as_slice(), secret_hex.as_mut_slice()).is_err()
+    {
+        secret.zeroize();
+        secret_hex.zeroize();
+        return Err(SHAMIR_RECONSTRUCT_RESPONSE_ERROR);
+    }
+
+    let Some(json_upper_bound) = secret_hex.len().checked_add(32) else {
+        secret.zeroize();
+        secret_hex.zeroize();
+        return Err(SHAMIR_RECONSTRUCT_RESPONSE_ERROR);
+    };
+    let mut output = Zeroizing::new(Vec::new());
+    if output.try_reserve_exact(json_upper_bound).is_err() {
+        secret.zeroize();
+        secret_hex.zeroize();
+        output.zeroize();
+        return Err(SHAMIR_RECONSTRUCT_RESPONSE_ERROR);
+    }
+    let output_capacity = output.capacity();
+    let serialization_result = match std::str::from_utf8(secret_hex.as_slice()) {
+        Ok(secret_hex) => {
+            let response = ShamirSecretResponse { secret: secret_hex };
+            let mut writer = FixedLimitJsonWriter {
+                bytes: &mut output,
+                limit: json_upper_bound,
+            };
+            serde_json::to_writer(&mut writer, &response)
+        }
         Err(_) => {
             secret.zeroize();
             secret_hex.zeroize();
-            return Err("Shamir reconstruct error: response serialization failed");
+            output.zeroize();
+            return Err(SHAMIR_RECONSTRUCT_RESPONSE_ERROR);
         }
     };
-    let output = Zeroizing::new(serialized);
     secret.zeroize();
     secret_hex.zeroize();
+    if serialization_result.is_err()
+        || output.len() > json_upper_bound
+        || output.capacity() != output_capacity
+    {
+        output.zeroize();
+        return Err(SHAMIR_RECONSTRUCT_RESPONSE_ERROR);
+    }
     Ok(output)
 }
 
@@ -106,7 +238,7 @@ pub fn wasm_shamir_split(secret: &[u8], threshold: u8, shares: u8) -> Result<JsV
     let config = exo_identity::shamir::ShamirConfig { threshold, shares };
     let result = exo_identity::shamir::split(secret, &config)
         .map_err(|e| JsValue::from_str(&format!("Shamir split error: {e}")))?;
-    to_js_value(&result)
+    shamir_shares_to_js_value(&result)
 }
 
 /// Split a secret using Shamir's Secret Sharing with caller-supplied entropy.
@@ -120,7 +252,7 @@ pub fn wasm_shamir_split_with_entropy(
     let config = exo_identity::shamir::ShamirConfig { threshold, shares };
     let result = exo_identity::shamir::split_with_entropy(secret, &config, entropy)
         .map_err(|e| JsValue::from_str(&format!("Shamir split error: {e}")))?;
-    to_js_value(&result)
+    shamir_shares_to_js_value(&result)
 }
 
 /// Reconstruct a secret from Shamir shares
@@ -142,9 +274,13 @@ pub fn wasm_shamir_reconstruct(
     };
     let mut secret_json =
         reconstruct_shamir_secret_json(&shares, &config).map_err(JsValue::from_str)?;
-    let result = js_sys::JSON::parse(secret_json.as_str()).map_err(|_| {
-        JsValue::from_str("Shamir reconstruct error: JavaScript value creation failed")
-    });
+    let result = std::str::from_utf8(secret_json.as_slice())
+        .map_err(|_| JsValue::from_str(SHAMIR_RECONSTRUCT_RESPONSE_ERROR))
+        .and_then(|json| {
+            js_sys::JSON::parse(json).map_err(|_| {
+                JsValue::from_str("Shamir reconstruct error: JavaScript value creation failed")
+            })
+        });
     secret_json.zeroize();
     result
 }
@@ -264,7 +400,92 @@ mod tests {
         let json = reconstruct_shamir_secret_json(&shares[..2], &config)
             .expect("reconstruct valid shares");
 
-        assert_eq!(json.as_str(), r#"{"secret":"0001ab"}"#);
+        assert_eq!(
+            std::str::from_utf8(json.as_slice()).expect("JSON is UTF-8"),
+            r#"{"secret":"0001ab"}"#
+        );
+    }
+
+    #[test]
+    fn identity_shamir_split_response_uses_fixed_capacity_and_preserves_exact_js_array_contract() {
+        let config = exo_identity::shamir::ShamirConfig {
+            threshold: 1,
+            shares: 1,
+        };
+        let shares = exo_identity::shamir::split(&[0x00, 0x01, 0xab], &config)
+            .expect("split one-of-one share");
+
+        let parsed = serialize_shamir_shares_response(&shares, |json| {
+            assert_eq!(
+                json,
+                r#"[{"index":1,"data":[0,1,171],"commitment":[78,33,233,176,117,100,24,2,148,241,188,72,241,146,195,243,9,126,38,209,213,108,39,199,196,13,235,198,37,6,138,100]}]"#
+            );
+            Ok::<_, ()>("parsed")
+        })
+        .expect("serialize exact share response");
+
+        assert_eq!(parsed, "parsed");
+    }
+
+    #[test]
+    fn identity_shamir_split_response_writer_rejects_growth_before_reallocation() {
+        let mut bytes = Zeroizing::new(Vec::new());
+        bytes
+            .try_reserve_exact(3)
+            .expect("reserve fixed test buffer");
+        let reserved_capacity = bytes.capacity();
+        let mut writer = FixedLimitJsonWriter {
+            bytes: &mut bytes,
+            limit: 3,
+        };
+
+        std::io::Write::write_all(&mut writer, b"abc").expect("write within fixed limit");
+        let error = std::io::Write::write_all(&mut writer, b"d")
+            .expect_err("write beyond fixed limit must fail before growth");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(bytes.as_slice(), b"abc");
+        assert_eq!(bytes.capacity(), reserved_capacity);
+    }
+
+    #[test]
+    fn identity_shamir_split_exports_use_only_the_zeroizing_response_helper() {
+        let source = include_str!("identity_bindings.rs");
+        let split_exports = source
+            .split("pub fn wasm_shamir_split(")
+            .nth(1)
+            .expect("basic Shamir split export exists")
+            .split("/// Reconstruct a secret from Shamir shares")
+            .next()
+            .expect("split exports end before reconstruction");
+
+        assert_eq!(
+            split_exports
+                .matches("shamir_shares_to_js_value(&result)")
+                .count(),
+            2,
+            "both split exports must use the same specialized response helper"
+        );
+        assert!(
+            !split_exports
+                .lines()
+                .any(|line| line.trim() == "to_js_value(&result)"),
+            "neither split export may create a plaintext JSON String through the generic bridge"
+        );
+
+        let response_helper = source
+            .split("fn serialize_shamir_shares_response")
+            .nth(1)
+            .expect("specialized share response serializer exists")
+            .split("fn shamir_shares_to_js_value")
+            .next()
+            .expect("serializer ends before the JS adapter");
+        assert!(response_helper.contains("FixedLimitJsonWriter"));
+        assert!(
+            response_helper.contains("Zeroizing::new(Vec::new())")
+                && response_helper.contains("try_reserve_exact"),
+            "the JSON writer must have zeroizing ownership before its first allocation"
+        );
     }
 
     #[test]
@@ -301,5 +522,13 @@ mod tests {
 
         assert!(reconstruct_source.contains("shamir::reconstruct_zeroizing"));
         assert!(!reconstruct_source.contains("shamir::reconstruct("));
+        assert!(reconstruct_source.contains("FixedLimitJsonWriter"));
+        assert!(reconstruct_source.contains("try_reserve_exact"));
+        assert!(reconstruct_source.contains("hex::encode_to_slice"));
+        assert!(reconstruct_source.contains("secret_hex.len().checked_add(32)"));
+        assert!(
+            !reconstruct_source.contains("serde_json::to_string"),
+            "reconstruction must never allocate a plaintext JSON String"
+        );
     }
 }
