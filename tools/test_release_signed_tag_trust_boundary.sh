@@ -63,7 +63,7 @@ grep -F 'EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_s
   || fail "verify-signed-tag must consume the validated commit SHA"
 grep -F 'TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}' <<<"$verify_block" >/dev/null \
   || fail "verify-signed-tag must consume the validated trusted ref"
-grep -F 'run: bash tools/verify_release_source.sh' <<<"$verify_block" >/dev/null \
+grep -F 'run: /bin/bash --noprofile --norc -p tools/verify_release_source.sh' <<<"$verify_block" >/dev/null \
   || fail "verify-signed-tag must execute the shared source-identity guard"
 grep -F 'tag_type="$(git cat-file -t "refs/tags/${RELEASE_TAG}")"' <<<"$verify_block" >/dev/null \
   || fail "verify-signed-tag must inspect the release ref object type"
@@ -71,7 +71,7 @@ grep -F '"$tag_type" != "tag"' <<<"$verify_block" >/dev/null \
   || fail "verify-signed-tag must reject lightweight release tags"
 grep -F 'unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR' <<<"$verify_block" >/dev/null \
   || fail "verify-signed-tag must scrub persisted Git controls before loading its immutable signer guard"
-grep -F 'command -p git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_tag_signer.sh" | BASH_ENV=/dev/null command -p bash' <<<"$verify_block" >/dev/null \
+grep -F '/usr/bin/git -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_tag_signer.sh" | BASH_ENV=/dev/null /bin/bash --noprofile --norc -p' <<<"$verify_block" >/dev/null \
   || fail "verify-signed-tag must execute signer verification from the immutable dispatch commit"
 if grep -F 'git tag -v "${RELEASE_TAG}"' <<<"$verify_block" >/dev/null; then
   fail "verify-signed-tag must not accept any signer merely because git tag -v trusts an imported bundle"

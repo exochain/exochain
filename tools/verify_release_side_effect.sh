@@ -15,6 +15,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+if /usr/bin/env | /usr/bin/grep -Eq '^BASH_FUNC_.*%%='; then
+  /bin/echo "release side-effect verification failed: inherited shell functions are forbidden" >&2
+  exit 1
+fi
 set -euo pipefail
 
 fail() {
@@ -47,7 +51,7 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=
 trusted_git() (
   scrub_git_environment
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
-  command -p git \
+  /usr/bin/git \
     -c core.fsmonitor=false \
     -c core.untrackedCache=false \
     -c core.ignoreStat=false \
@@ -70,6 +74,6 @@ fi
 # dispatch commit. A build tool or npm lifecycle script may mutate checkout
 # files, but it cannot replace the guard code executed at a release boundary.
 trusted_git show "${GITHUB_SHA}:tools/verify_release_source.sh" | \
-  BASH_ENV=/dev/null command -p bash
+  BASH_ENV=/dev/null /bin/bash --noprofile --norc -p
 trusted_git show "${GITHUB_SHA}:tools/verify_release_tag.sh" | \
-  BASH_ENV=/dev/null command -p bash
+  BASH_ENV=/dev/null /bin/bash --noprofile --norc -p

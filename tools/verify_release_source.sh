@@ -15,6 +15,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+if /usr/bin/env | /usr/bin/grep -Eq '^BASH_FUNC_.*%%='; then
+  /bin/echo "release source verification failed: inherited shell functions are forbidden" >&2
+  exit 1
+fi
 set -euo pipefail
 
 fail() {
@@ -68,7 +72,7 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=
 trusted_git() (
   scrub_git_environment
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
-  command -p git \
+  /usr/bin/git \
     -c core.fsmonitor=false \
     -c core.untrackedCache=false \
     -c core.ignoreStat=false \
@@ -108,7 +112,7 @@ fi
 # flags. Release jobs never need either optimization, so reject them before
 # assessing cleanliness; otherwise a lifecycle script could hide a tracked
 # mutation from the final source boundary.
-hidden_index_paths="$(trusted_git ls-files -v | command -p awk '$1 ~ /^[a-zS]$/ { print substr($0, 3) }')"
+hidden_index_paths="$(trusted_git ls-files -v | /usr/bin/awk '$1 ~ /^[a-zS]$/ { print substr($0, 3) }')"
 if [ -n "$hidden_index_paths" ]; then
   fail "tracked paths must not use assume-unchanged or skip-worktree flags: ${hidden_index_paths//$'\n'/, }"
 fi
