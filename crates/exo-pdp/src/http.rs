@@ -44,6 +44,7 @@ type PersistHook =
 
 const MAX_PDP_BODY_BYTES: usize = 1_048_576;
 const MAX_DELEGATION_SCOPE_ITEMS: usize = 64;
+const INTERNAL_SERVER_ERROR_MESSAGE: &str = "internal server error";
 
 /// Opaque authorization boundary required by every PDP mutation router.
 #[derive(Clone)]
@@ -208,7 +209,7 @@ fn require_now_ms(now_ms: Option<u64>) -> crate::error::Result<Timestamp> {
 }
 
 fn err(e: PdpError) -> (StatusCode, Json<serde_json::Value>) {
-    let status = match e {
+    let status = match &e {
         PdpError::BadRequest(_) | PdpError::InvalidMandate(_) => StatusCode::BAD_REQUEST,
         PdpError::EvidenceNotFound | PdpError::ReservationNotFound(_) => StatusCode::NOT_FOUND,
         PdpError::Denied(_)
@@ -221,9 +222,15 @@ fn err(e: PdpError) -> (StatusCode, Json<serde_json::Value>) {
         | PdpError::InvalidSignature => StatusCode::FORBIDDEN,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
+    let message = if status == StatusCode::INTERNAL_SERVER_ERROR {
+        tracing::error!(error = ?e, "PDP HTTP request failed internally");
+        INTERNAL_SERVER_ERROR_MESSAGE.to_owned()
+    } else {
+        e.to_string()
+    };
     (
         status,
-        Json(serde_json::json!({ "error": e.to_string(), "never_moves_money": true })),
+        Json(serde_json::json!({ "error": message, "never_moves_money": true })),
     )
 }
 
@@ -506,7 +513,7 @@ async fn handle_evidence(
         .ok_or_else(|| err(PdpError::EvidenceNotFound))?;
     serde_json::to_value(entry)
         .map(Json)
-        .map_err(|e| err(PdpError::BadRequest(e.to_string())))
+        .map_err(|e| err(PdpError::Serialization(e.to_string())))
 }
 
 async fn handle_verify_evidence(
@@ -629,6 +636,13 @@ mod tests {
             request = request.header("authorization", value);
         }
         request.body(Body::from(body.to_string())).unwrap()
+    }
+
+    async fn response_json(response: axum::response::Response) -> serde_json::Value {
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .expect("response body");
+        serde_json::from_slice(&body).expect("JSON response")
     }
 
     #[tokio::test]
@@ -851,6 +865,79 @@ mod tests {
             Err(PdpError::Persistence("disk unavailable".into()))
         );
         assert!(guard.resolve_public(&actor).is_none());
+    }
+
+    #[test]
+    fn internal_error_mapper_redacts_persistence_serialization_and_rollback_details() {
+        let internal_errors = [
+            PdpError::Persistence("PDP_PERSISTENCE_SECRET_SENTINEL".into()),
+            PdpError::Serialization("PDP_SERIALIZATION_SECRET_SENTINEL".into()),
+            PdpError::Persistence(
+                "PDP_PERSISTENCE_SECRET_SENTINEL; in-memory rollback failed: \
+                 PDP_ROLLBACK_SECRET_SENTINEL"
+                    .into(),
+            ),
+        ];
+
+        for error in internal_errors {
+            let (status, Json(body)) = err(error);
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(body["error"], "internal server error");
+            assert_eq!(body["never_moves_money"], true);
+            let rendered = body.to_string();
+            assert!(!rendered.contains("SECRET_SENTINEL"), "body was {rendered}");
+        }
+    }
+
+    #[test]
+    fn internal_error_redaction_preserves_existing_client_error_contracts() {
+        let controls = [
+            (
+                PdpError::BadRequest("bad request detail".into()),
+                StatusCode::BAD_REQUEST,
+                "bad request: bad request detail",
+            ),
+            (
+                PdpError::Denied("denial detail".into()),
+                StatusCode::FORBIDDEN,
+                "policy denied: denial detail",
+            ),
+            (
+                PdpError::EvidenceNotFound,
+                StatusCode::NOT_FOUND,
+                "evidence not found",
+            ),
+        ];
+
+        for (error, expected_status, expected_message) in controls {
+            let (status, Json(body)) = err(error);
+            assert_eq!(status, expected_status);
+            assert_eq!(body["error"], expected_message);
+            assert_eq!(body["never_moves_money"], true);
+        }
+    }
+
+    #[tokio::test]
+    async fn internal_error_from_persistence_is_redacted_and_rolls_back_mutation() {
+        let pdp = SharedPdp::ephemeral();
+        let actor = Did::new("did:exo:persistence-redaction").unwrap();
+        let key = KeyPair::from_secret_bytes([0x36; 32]).unwrap();
+        let router = pdp_router_with_authorized_persistence(
+            pdp.clone(),
+            PdpMutationAuthorizer::new(|_| true),
+            |_| Err(PdpError::Persistence("PDP_ROUTE_SECRET_SENTINEL".into())),
+        );
+
+        let response = router
+            .oneshot(register_key_request(&actor, &key, None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = response_json(response).await;
+        assert_eq!(body["error"], "internal server error");
+        assert_eq!(body["never_moves_money"], true);
+        assert!(!body.to_string().contains("PDP_ROUTE_SECRET_SENTINEL"));
+        assert!(pdp.lock().unwrap().resolve_public(&actor).is_none());
     }
 
     #[test]
