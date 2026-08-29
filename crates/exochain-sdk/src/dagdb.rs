@@ -20,6 +20,26 @@ pub use exo_dag_db_api::{
     SafeMetadata, SafeMetadataDecision, SimilarityResult, SimilarityType, SourceType, SubjectKind,
     ValidationDecision, ValidationStatus,
 };
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, PercentEncode, utf8_percent_encode};
+
+const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+const QUERY_COMPONENT_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+fn encode_path_segment(value: &str) -> PercentEncode<'_> {
+    utf8_percent_encode(value, PATH_SEGMENT_ENCODE_SET)
+}
+
+fn encode_query_component(value: &str) -> PercentEncode<'_> {
+    utf8_percent_encode(value, QUERY_COMPONENT_ENCODE_SET)
+}
 
 /// HTTP verb for an SDK-prepared DAG DB request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,7 +154,10 @@ impl DagDbClient {
     ) -> DagDbRequestSpec<DagDbReceiptLookupRequest> {
         let mut path = format!(
             "{}/receipts/{}?tenant_id={}&namespace={}",
-            self.prefix, request.receipt_hash, request.tenant_id, request.namespace
+            self.prefix,
+            encode_path_segment(&request.receipt_hash),
+            encode_query_component(&request.tenant_id),
+            encode_query_component(&request.namespace)
         );
         append_bool_query(&mut path, "include_body", request.include_body);
         self.get(path)
@@ -147,7 +170,10 @@ impl DagDbClient {
     ) -> DagDbRequestSpec<DagDbCatalogLookupRequest> {
         let mut path = format!(
             "{}/catalog/{}?tenant_id={}&namespace={}",
-            self.prefix, request.catalog_id, request.tenant_id, request.namespace
+            self.prefix,
+            encode_path_segment(&request.catalog_id),
+            encode_query_component(&request.tenant_id),
+            encode_query_component(&request.namespace)
         );
         append_bool_query(&mut path, "include_children", request.include_children);
         append_bool_query(&mut path, "include_routes", request.include_routes);
@@ -161,7 +187,10 @@ impl DagDbClient {
     ) -> DagDbRequestSpec<DagDbRouteLookupRequest> {
         let mut path = format!(
             "{}/routes/{}?tenant_id={}&namespace={}",
-            self.prefix, request.route_id, request.tenant_id, request.namespace
+            self.prefix,
+            encode_path_segment(&request.route_id),
+            encode_query_component(&request.tenant_id),
+            encode_query_component(&request.namespace)
         );
         append_bool_query(
             &mut path,
@@ -1546,6 +1575,9 @@ mod tests {
 
     use super::*;
 
+    const ADVERSARIAL_TARGET_COMPONENT: &str = "Az09-._~/?&=#% \n雪";
+    const ENCODED_ADVERSARIAL_TARGET_COMPONENT: &str = "Az09-._~%2F%3F%26%3D%23%25%20%0A%E9%9B%AA";
+
     #[test]
     fn dagdb_json_fixtures() {
         let fixtures: serde_json::Value = serde_json::from_str(include_str!(
@@ -1648,6 +1680,57 @@ mod tests {
         assert_get(
             client.route_lookup(fixture(&fixtures, "requests", "route_lookup")),
             "/api/v1/dag-db/routes/",
+        );
+    }
+
+    #[test]
+    fn dagdb_lookup_request_specs_encode_every_caller_controlled_target_component() {
+        let client = DagDbClient::new();
+
+        let receipt = client.receipt_lookup(DagDbReceiptLookupRequest {
+            receipt_hash: ADVERSARIAL_TARGET_COMPONENT.to_owned(),
+            tenant_id: ADVERSARIAL_TARGET_COMPONENT.to_owned(),
+            namespace: ADVERSARIAL_TARGET_COMPONENT.to_owned(),
+            include_body: Some(true),
+        });
+        assert_eq!(
+            receipt.path,
+            format!(
+                "/api/v1/dag-db/receipts/{0}?tenant_id={0}&namespace={0}&include_body=true",
+                ENCODED_ADVERSARIAL_TARGET_COMPONENT
+            )
+        );
+
+        let catalog = client.catalog_lookup(DagDbCatalogLookupRequest {
+            catalog_id: ADVERSARIAL_TARGET_COMPONENT.to_owned(),
+            tenant_id: ADVERSARIAL_TARGET_COMPONENT.to_owned(),
+            namespace: ADVERSARIAL_TARGET_COMPONENT.to_owned(),
+            include_children: Some(true),
+            include_routes: Some(false),
+        });
+        assert_eq!(
+            catalog.path,
+            format!(
+                "/api/v1/dag-db/catalog/{0}?tenant_id={0}&namespace={0}\
+                 &include_children=true&include_routes=false",
+                ENCODED_ADVERSARIAL_TARGET_COMPONENT
+            )
+        );
+
+        let route = client.route_lookup(DagDbRouteLookupRequest {
+            route_id: ADVERSARIAL_TARGET_COMPONENT.to_owned(),
+            tenant_id: ADVERSARIAL_TARGET_COMPONENT.to_owned(),
+            namespace: ADVERSARIAL_TARGET_COMPONENT.to_owned(),
+            include_memory_refs: Some(false),
+            include_validation: Some(true),
+        });
+        assert_eq!(
+            route.path,
+            format!(
+                "/api/v1/dag-db/routes/{0}?tenant_id={0}&namespace={0}\
+                 &include_memory_refs=false&include_validation=true",
+                ENCODED_ADVERSARIAL_TARGET_COMPONENT
+            )
         );
     }
 
@@ -1774,6 +1857,11 @@ mod transport_tests {
             BearerToken, DagDbAuthConfig, DagDbClientError, DagDbHttpClient, DagDbSignatureHeaders,
         },
     };
+
+    const ADVERSARIAL_PATH_COMPONENT: &str = "Az09-._~/?&=#% \n雪";
+    const ENCODED_ADVERSARIAL_PATH_COMPONENT: &str = "Az09-._~%2F%3F%26%3D%23%25%20%0A%E9%9B%AA";
+    const ADVERSARIAL_QUERY_COMPONENT: &str = "scope/?&=#% space";
+    const ENCODED_ADVERSARIAL_QUERY_COMPONENT: &str = "scope%2F%3F%26%3D%23%25%20space";
 
     /// The raw HTTP request a [`TestServer`] captured from the SDK.
     struct CapturedRequest {
@@ -2413,6 +2501,77 @@ mod transport_tests {
             "route_lookup",
             "/api/v1/dag-db/routes/",
             "dagdb:route_lookup:tenant-a:primary"
+        );
+    }
+
+    #[tokio::test]
+    async fn dagdb_lookup_http_targets_preserve_components_without_target_injection() {
+        macro_rules! assert_lookup_target {
+            ($method:ident, $request:expr, $fixture:literal, $collection:literal, $flags:literal) => {{
+                let body = fixture_response("responses", $fixture);
+                let server = TestServer::spawn("200 OK", body).await;
+                let auth = DagDbAuthConfig::new(
+                    "super-secret-token-value",
+                    ADVERSARIAL_QUERY_COMPONENT,
+                    ADVERSARIAL_QUERY_COMPONENT,
+                );
+                let client = DagDbHttpClient::new(&server.base_url, auth).expect("client");
+
+                let _ = client.$method($request).await.expect("lookup response");
+                let request = server.captured().await;
+                let expected = format!(
+                    "GET /api/v1/dag-db/{collection}/{ENCODED_ADVERSARIAL_PATH_COMPONENT}\
+                     ?tenant_id={query}&namespace={query}{flags} HTTP/1.1",
+                    collection = $collection,
+                    query = ENCODED_ADVERSARIAL_QUERY_COMPONENT,
+                    flags = $flags,
+                );
+                assert_eq!(request.request_line, expected);
+                assert_eq!(
+                    request.header("x-exo-tenant-id"),
+                    Some(ADVERSARIAL_QUERY_COMPONENT)
+                );
+                assert!(request.body.is_empty());
+            }};
+        }
+
+        assert_lookup_target!(
+            receipt_lookup,
+            DagDbReceiptLookupRequest {
+                receipt_hash: ADVERSARIAL_PATH_COMPONENT.to_owned(),
+                tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+                namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+                include_body: Some(true),
+            },
+            "receipt_lookup",
+            "receipts",
+            "&include_body=true"
+        );
+        assert_lookup_target!(
+            catalog_lookup,
+            DagDbCatalogLookupRequest {
+                catalog_id: ADVERSARIAL_PATH_COMPONENT.to_owned(),
+                tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+                namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+                include_children: Some(true),
+                include_routes: Some(false),
+            },
+            "catalog_lookup",
+            "catalog",
+            "&include_children=true&include_routes=false"
+        );
+        assert_lookup_target!(
+            route_lookup,
+            DagDbRouteLookupRequest {
+                route_id: ADVERSARIAL_PATH_COMPONENT.to_owned(),
+                tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+                namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+                include_memory_refs: Some(false),
+                include_validation: Some(true),
+            },
+            "route_lookup",
+            "routes",
+            "&include_memory_refs=false&include_validation=true"
         );
     }
 
