@@ -17,8 +17,10 @@
  * Hashing primitives.
  *
  * BLAKE3 is used where the SDK must match Rust fabric derivations, including
- * local DID derivation. SHA-256 remains available for client-side proposal
- * IDs, decision IDs, and compatibility with existing TypeScript SDK records.
+ * local DID derivation. Rust and TypeScript `DecisionBuilder` IDs use full
+ * BLAKE3 over the canonical CBOR v2 decision frame. SHA-256 remains available
+ * and continues to back TypeScript bailment proposal IDs and compatibility
+ * with existing TypeScript SDK records.
  */
 import { blake3 as nobleBlake3 } from '@noble/hashes/blake3';
 import { CryptoError } from '../errors.js';

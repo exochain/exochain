@@ -257,11 +257,18 @@ const identity = await Identity.fromResolvedKeypair({
 });
 ```
 
-Bailment IDs, decision IDs, and chain identifiers are still hashed with
-SHA-256 in this SDK while Rust uses BLAKE3. All three SDKs agree on the
-*field layout* so JSON round-trips work seamlessly, but client-derived
-content IDs should be treated as language-local unless returned by the
-gateway.
+Rust and TypeScript `DecisionBuilder` now derive the same 64-hex decision ID:
+full BLAKE3 over the canonical CBOR array
+`["exochain:decision-id:v2", title, description, proposer]`.
+
+That decision-ID change does not alter other client-derived IDs. Rust bailment
+proposal IDs remain the first 16 hex characters of BLAKE3 over their existing
+frame. TypeScript and Python bailment proposal IDs remain full SHA-256 over
+their existing frames. Python decision IDs remain the first 16 hex characters
+of SHA-256 over its existing title/description/proposer frame. Chain
+identifiers are also unchanged. Treat IDs outside the documented Rust/TypeScript
+decision fixture as language- and version-specific unless the gateway returns
+the canonical identifier.
 
 ## Errors
 
