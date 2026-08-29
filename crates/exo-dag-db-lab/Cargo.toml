@@ -54,6 +54,8 @@ harness = false
 required-features = ["postgres"]
 
 [dependencies]
+cap-fs-ext = "=4.0.3"
+cap-std = "=4.0.3"
 exo-dag-db-api = { package = "exochain-dag-db-api", path = "../exo-dag-db-api", version = "=0.2.4" }
 exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.4" }
 exo-dag-db-core = { package = "exochain-dag-db-core", path = "../exo-dag-db-core", version = "=0.2.4" }
@@ -64,6 +66,7 @@ exo-dag-db-postgres = { package = "exochain-dag-db-postgres", path = "../exo-dag
 exo-dag-db-retrieval = { package = "exochain-dag-db-retrieval", path = "../exo-dag-db-retrieval", version = "=0.2.4" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+same-file = "1"
 sha2 = { workspace = true }
 sqlx = { workspace = true, optional = true }
 thiserror = { workspace = true }
@@ -71,4 +74,5 @@ tokio = { workspace = true, optional = true, features = ["rt", "macros"] }
 
 [dev-dependencies]
 criterion = { workspace = true }
+tempfile = "3"
 tokio = { workspace = true, features = ["rt", "macros"] }

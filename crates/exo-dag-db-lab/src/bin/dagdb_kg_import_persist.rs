@@ -4,9 +4,10 @@
 //! summary JSON to stdout. Uses `DATABASE_URL` when set, otherwise
 //! `EXO_DAGDB_TEST_DATABASE_URL`.
 
-use std::{env, fs, process};
+use std::{env, path::Path, process};
 
 use exo_dag_db_exchange::kg_import::KG_IMPORT_DATABASE_URL_ENV;
+use exo_dag_db_lab::kg_markdown_manifest::{MAX_JSON_FILE_BYTES, read_bounded_file};
 use exo_dag_db_postgres::postgres::{
     DAGDB_GRAPH_SCHEMA_SQL, DAGDB_SCHEMA_SQL, kg_import::persist_kg_import_report,
 };
@@ -22,7 +23,7 @@ async fn main() {
         }
     };
 
-    let report_json = match fs::read_to_string(&report_path) {
+    let report_json = match read_report_json(Path::new(&report_path)) {
         Ok(text) => text,
         Err(error) => {
             eprintln!("kg_import_report_read_failed: {error}");
@@ -72,5 +73,36 @@ async fn main() {
             eprintln!("{error}");
             process::exit(1);
         }
+    }
+}
+
+fn read_report_json(path: &Path) -> Result<String, String> {
+    let bytes = read_bounded_file(path, MAX_JSON_FILE_BYTES, "KG import report")?;
+    String::from_utf8(bytes).map_err(|error| format!("KG import report is not UTF-8: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn persisted_import_report_accepts_16_mib_and_rejects_plus_one() -> Result<(), String> {
+        let fixture = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let path = fixture.path().join("report.json");
+        let mut exact = b"{}".to_vec();
+        exact.resize(16_777_216, b' ');
+        fs::write(&path, &exact).map_err(|error| error.to_string())?;
+        assert_eq!(read_report_json(&path)?.len(), 16_777_216);
+
+        exact.push(b' ');
+        fs::write(&path, exact).map_err(|error| error.to_string())?;
+        let error = match read_report_json(&path) {
+            Err(error) => error,
+            Ok(_) => return Err("limit plus one was accepted".to_owned()),
+        };
+        assert!(error.contains("exceeds"));
+        Ok(())
     }
 }
