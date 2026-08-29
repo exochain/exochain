@@ -18,15 +18,22 @@
  * Governance decisions — build, cast votes, check quorum.
  *
  * Mirrors the Rust SDK's `governance` module. Decision IDs are content-
- * addressed (SHA-256 over the canonical title/description/proposer payload),
- * votes are appended in-order, and duplicate voters are rejected.
+ * addressed (full BLAKE3 over a canonical CBOR title/description/proposer
+ * frame), votes are appended in-order, and duplicate voters are rejected.
  */
 
 import { GovernanceError } from '../errors.js';
 import type { Did, Hash256, QuorumResult } from '../types.js';
 import { validateDid } from '../identity/did.js';
-import { sha256, bytesToHex } from '../crypto/hash.js';
+import { blake3Hex } from '../crypto/hash.js';
 import { Vote } from './vote.js';
+
+const DECISION_ID_DOMAIN = 'exochain:decision-id:v2';
+const CBOR_TEXT_INLINE_MAX = 23;
+const CBOR_UINT8_MAX = 0xff;
+const CBOR_UINT16_MAX = 0xffff;
+const CBOR_UINT32_MAX = 0xffff_ffff;
+const UTF8_ENCODER = new TextEncoder();
 
 /** Lifecycle states a decision may be in. */
 export type DecisionStatus =
@@ -167,19 +174,121 @@ async function computeDecisionId(
   description: string,
   proposer: Did,
 ): Promise<Hash256> {
-  const enc = new TextEncoder();
-  const a = enc.encode(title);
-  const b = enc.encode(description);
-  const c = enc.encode(proposer);
-  const payload = new Uint8Array(a.length + 1 + b.length + 1 + c.length);
-  let off = 0;
-  payload.set(a, off);
-  off += a.length;
-  payload[off++] = 0;
-  payload.set(b, off);
-  off += b.length;
-  payload[off++] = 0;
-  payload.set(c, off);
-  const digest = await sha256(payload);
-  return bytesToHex(digest) as Hash256;
+  const canonical = encodeCanonicalTextArray([
+    DECISION_ID_DOMAIN,
+    title,
+    description,
+    proposer,
+  ]);
+  return blake3Hex(canonical) as Hash256;
+}
+
+function encodeCanonicalTextArray(values: readonly string[]): Uint8Array {
+  if (values.length !== 4) {
+    throw new GovernanceError('decision ID CBOR frame must contain four values');
+  }
+
+  const byteLengths = values.map(utf8ByteLength);
+  let allocationLength = 1;
+  for (const byteLength of byteLengths) {
+    allocationLength = checkedAllocationLength(
+      allocationLength,
+      canonicalTextHeaderLength(byteLength),
+    );
+    allocationLength = checkedAllocationLength(allocationLength, byteLength);
+  }
+
+  const encoded = new Uint8Array(allocationLength);
+  encoded[0] = 0x84;
+  let offset = 1;
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index];
+    const byteLength = byteLengths[index];
+    if (value === undefined || byteLength === undefined) {
+      throw new GovernanceError('decision ID CBOR frame is incomplete');
+    }
+    offset = writeCanonicalTextHeader(encoded, offset, byteLength);
+    const result = UTF8_ENCODER.encodeInto(
+      value,
+      encoded.subarray(offset, offset + byteLength),
+    );
+    if (result.read !== value.length || result.written !== byteLength) {
+      throw new GovernanceError('decision ID UTF-8 encoding was incomplete');
+    }
+    offset += byteLength;
+  }
+
+  if (offset !== allocationLength) {
+    throw new GovernanceError('decision ID CBOR encoding length mismatch');
+  }
+  return encoded;
+}
+
+function utf8ByteLength(value: string): number {
+  let byteLength = 0;
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined) {
+      throw new GovernanceError('decision ID contains an invalid text value');
+    }
+    if (codePoint >= 0xd800 && codePoint <= 0xdfff) {
+      throw new GovernanceError('decision ID text must be well-formed Unicode');
+    }
+    const scalarLength =
+      codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
+    byteLength = checkedAllocationLength(byteLength, scalarLength);
+  }
+  return byteLength;
+}
+
+function canonicalTextHeaderLength(byteLength: number): number {
+  if (byteLength <= CBOR_TEXT_INLINE_MAX) return 1;
+  if (byteLength <= CBOR_UINT8_MAX) return 2;
+  if (byteLength <= CBOR_UINT16_MAX) return 3;
+  if (byteLength <= CBOR_UINT32_MAX) return 5;
+  throw new GovernanceError('decision ID text exceeds the supported CBOR length');
+}
+
+function checkedAllocationLength(current: number, increment: number): number {
+  if (
+    !Number.isSafeInteger(current) ||
+    !Number.isSafeInteger(increment) ||
+    current < 0 ||
+    increment < 0 ||
+    current > CBOR_UINT32_MAX - increment
+  ) {
+    throw new GovernanceError('decision ID CBOR payload exceeds safe allocation limits');
+  }
+  return current + increment;
+}
+
+function writeCanonicalTextHeader(
+  target: Uint8Array,
+  offset: number,
+  byteLength: number,
+): number {
+  if (byteLength <= CBOR_TEXT_INLINE_MAX) {
+    target[offset] = 0x60 | byteLength;
+    return offset + 1;
+  }
+  if (byteLength <= CBOR_UINT8_MAX) {
+    target[offset] = 0x78;
+    target[offset + 1] = byteLength;
+    return offset + 2;
+  }
+  if (byteLength <= CBOR_UINT16_MAX) {
+    target[offset] = 0x79;
+    target[offset + 1] = (byteLength >>> 8) & 0xff;
+    target[offset + 2] = byteLength & 0xff;
+    return offset + 3;
+  }
+  if (byteLength <= CBOR_UINT32_MAX) {
+    target[offset] = 0x7a;
+    target[offset + 1] = (byteLength >>> 24) & 0xff;
+    target[offset + 2] = (byteLength >>> 16) & 0xff;
+    target[offset + 3] = (byteLength >>> 8) & 0xff;
+    target[offset + 4] = byteLength & 0xff;
+    return offset + 5;
+  }
+  throw new GovernanceError('decision ID text exceeds the supported CBOR length');
 }

@@ -258,9 +258,10 @@ impl DecisionBuilder {
     /// Validate and build the [`Decision`].
     ///
     /// On success, returns a decision in [`DecisionStatus::Proposed`] with an
-    /// empty vote list. The `decision_id` is the first 16 hex chars of
-    /// `BLAKE3(title || 0 || description || 0 || proposer_did)` and is
-    /// therefore deterministic.
+    /// empty vote list. The `decision_id` is the full BLAKE3 digest of the
+    /// canonical CBOR array
+    /// `["exochain:decision-id:v2", title, description, proposer_did]` and is
+    /// therefore deterministic and unambiguous.
     ///
     /// # Errors
     ///
@@ -281,7 +282,7 @@ impl DecisionBuilder {
         if self.title.is_empty() {
             return Err(ExoError::Governance("title must be non-empty".into()));
         }
-        let decision_id = decision_id_for(&self.title, &self.description, &self.proposer);
+        let decision_id = decision_id_for(&self.title, &self.description, &self.proposer)?;
         Ok(Decision {
             decision_id,
             title: self.title,
@@ -418,20 +419,20 @@ fn count_choice(votes: &[Vote], choice: VoteChoice) -> u32 {
     u32::try_from(votes.iter().filter(|v| v.choice == choice).count()).unwrap_or(u32::MAX)
 }
 
-fn decision_id_for(title: &str, description: &str, proposer: &Did) -> String {
-    let mut payload = Vec::new();
-    payload.extend_from_slice(title.as_bytes());
-    payload.push(0);
-    payload.extend_from_slice(description.as_bytes());
-    payload.push(0);
-    payload.extend_from_slice(proposer.as_str().as_bytes());
-    let digest = blake3::hash(&payload);
-    let bytes = digest.as_bytes();
-    let mut hex = String::with_capacity(16);
-    for byte in bytes.iter().take(8) {
-        hex.push_str(&format!("{byte:02x}"));
-    }
-    hex
+fn decision_id_for(title: &str, description: &str, proposer: &Did) -> ExoResult<String> {
+    let frame = [
+        "exochain:decision-id:v2",
+        title,
+        description,
+        proposer.as_str(),
+    ];
+    let mut canonical = Vec::new();
+    ciborium::ser::into_writer(&frame, &mut canonical).map_err(|error| {
+        ExoError::Serialization(format!(
+            "decision ID canonical CBOR encoding failed: {error}"
+        ))
+    })?;
+    Ok(blake3::hash(&canonical).to_hex().to_string())
 }
 
 // ===========================================================================
@@ -453,6 +454,15 @@ mod tests {
             .expect("valid")
     }
 
+    fn assert_lowercase_hash256(value: &str) {
+        assert_eq!(value.len(), 64);
+        assert!(
+            value
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        );
+    }
+
     #[test]
     fn builder_creates_decision() {
         let d = basic_decision();
@@ -460,7 +470,7 @@ mod tests {
         assert_eq!(d.description, "Allocate budget");
         assert_eq!(d.status, DecisionStatus::Proposed);
         assert!(d.votes.is_empty());
-        assert_eq!(d.decision_id.len(), 16);
+        assert_lowercase_hash256(&d.decision_id);
     }
 
     #[test]
@@ -557,6 +567,55 @@ mod tests {
             .build()
             .expect("ok");
         assert_ne!(a.decision_id, b.decision_id);
+    }
+
+    #[test]
+    fn decision_id_frames_delimiter_collision_inputs() {
+        let a = DecisionBuilder::new("a", "b\0c", did("did:exo:p"))
+            .build()
+            .expect("ok");
+        let b = DecisionBuilder::new("a\0b", "c", did("did:exo:p"))
+            .build()
+            .expect("ok");
+
+        assert_ne!(a.decision_id, b.decision_id);
+        assert_lowercase_hash256(&a.decision_id);
+        assert_lowercase_hash256(&b.decision_id);
+    }
+
+    #[test]
+    fn decision_id_matches_literal_unicode_cross_language_fixture() {
+        let decision = DecisionBuilder::new("Budget 🛡️", "Allocate 10 EXO", did("did:exo:alice"))
+            .build()
+            .expect("ok");
+
+        assert_eq!(
+            decision.decision_id,
+            "ea4c36142a07f33ee7d008831c2417d502efbcfa1573a46b6d4ee6a51ccbaf53"
+        );
+        assert_lowercase_hash256(&decision.decision_id);
+    }
+
+    #[test]
+    fn decision_serde_preserves_legacy_decision_id() {
+        const LEGACY_DECISION_ID: &str = "0123456789abcdef";
+        let wire = r#"{
+            "decision_id": "0123456789abcdef",
+            "title": "Legacy decision",
+            "description": "Stored before decision ID v2",
+            "proposer": "did:exo:alice",
+            "status": "Proposed",
+            "votes": [],
+            "class": "ordinary"
+        }"#;
+
+        let decision: Decision = serde_json::from_str(wire).expect("legacy decision decodes");
+        assert_eq!(decision.decision_id, LEGACY_DECISION_ID);
+
+        let encoded = serde_json::to_string(&decision).expect("legacy decision encodes");
+        let roundtrip: serde_json::Value =
+            serde_json::from_str(&encoded).expect("encoded decision is JSON");
+        assert_eq!(roundtrip["decision_id"], LEGACY_DECISION_ID);
     }
 
     #[test]
