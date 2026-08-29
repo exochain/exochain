@@ -182,8 +182,12 @@ fn verify_private_parent(path: &Path) -> anyhow::Result<()> {
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 
 #[cfg(windows)]
-const WINDOWS_ACL_PROGRAM: &str = r#"param([string]$Target)
+const WINDOWS_ACL_TARGET_ENV: &str = "EXOCHAIN_PRIVATE_FILE_ACL_TARGET";
+
+#[cfg(windows)]
+const WINDOWS_ACL_PROGRAM: &str = r#"$Target = [Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_ACL_TARGET','Process')
 $ErrorActionPreference = 'Stop'
+if ([String]::IsNullOrEmpty($Target)) { throw 'private ACL target unavailable' }
 $acl = Get-Acl -LiteralPath $Target
 $owner = $acl.Owner
 try { $owner = ([System.Security.Principal.NTAccount]$owner).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {
@@ -274,7 +278,7 @@ fn inspect_windows_acl(path: &Path) -> anyhow::Result<WindowsAcl> {
             "-Command",
             WINDOWS_ACL_PROGRAM,
         ])
-        .arg(path)
+        .env(WINDOWS_ACL_TARGET_ENV, path)
         .output()?;
     if !output.status.success() || !output.stderr.is_empty() {
         anyhow::bail!("Windows ACL inspection rejected: {}", path.display());
@@ -803,10 +807,16 @@ fn publish_no_clobber(
 }
 
 #[cfg(windows)]
-const WINDOWS_REPLACE_PROGRAM: &str = "param([string]$Source,[string]$Destination); $ErrorActionPreference='Stop'; [System.IO.File]::Replace($Source,$Destination,$null,$true)";
+const WINDOWS_PUBLISH_SOURCE_ENV: &str = "EXOCHAIN_PRIVATE_FILE_PUBLISH_SOURCE";
 
 #[cfg(windows)]
-const WINDOWS_MOVE_PROGRAM: &str = "param([string]$Source,[string]$Destination); $ErrorActionPreference='Stop'; [System.IO.File]::Move($Source,$Destination)";
+const WINDOWS_PUBLISH_DESTINATION_ENV: &str = "EXOCHAIN_PRIVATE_FILE_PUBLISH_DESTINATION";
+
+#[cfg(windows)]
+const WINDOWS_REPLACE_PROGRAM: &str = "$ErrorActionPreference='Stop'; $Source=[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_PUBLISH_SOURCE','Process'); $Destination=[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_PUBLISH_DESTINATION','Process'); if ([String]::IsNullOrEmpty($Source) -or [String]::IsNullOrEmpty($Destination)) { throw 'private publication path unavailable' }; [System.IO.File]::Replace($Source,$Destination,$null,$true)";
+
+#[cfg(windows)]
+const WINDOWS_MOVE_PROGRAM: &str = "$ErrorActionPreference='Stop'; $Source=[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_PUBLISH_SOURCE','Process'); $Destination=[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_PUBLISH_DESTINATION','Process'); if ([String]::IsNullOrEmpty($Source) -or [String]::IsNullOrEmpty($Destination)) { throw 'private publication path unavailable' }; [System.IO.File]::Move($Source,$Destination)";
 
 #[cfg(windows)]
 fn run_windows_publish(program: &str, temp: &Path, destination: &Path) -> anyhow::Result<()> {
@@ -818,8 +828,8 @@ fn run_windows_publish(program: &str, temp: &Path, destination: &Path) -> anyhow
             "-Command",
             program,
         ])
-        .arg(temp)
-        .arg(destination)
+        .env(WINDOWS_PUBLISH_SOURCE_ENV, temp)
+        .env(WINDOWS_PUBLISH_DESTINATION_ENV, destination)
         .status()?;
     if !status.success() {
         anyhow::bail!("private Windows publication failed");
@@ -1255,14 +1265,54 @@ mod tests {
         assert!(fs::symlink_metadata(&linked).is_ok());
     }
 
+    #[test]
+    fn private_file_windows_paths_never_follow_powershell_command_text() {
+        let source = include_str!("private_file.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production private-file source");
+        let acl_inspection = source
+            .split("fn inspect_windows_acl")
+            .nth(1)
+            .expect("Windows ACL inspection")
+            .split("fn validate_sid")
+            .next()
+            .expect("Windows ACL inspection boundary");
+        assert!(!acl_inspection.contains(".arg(path)"));
+        assert!(acl_inspection.contains(".env(WINDOWS_ACL_TARGET_ENV, path)"));
+
+        let publication = source
+            .split("fn run_windows_publish")
+            .nth(1)
+            .expect("Windows publication")
+            .split("fn publish_replace")
+            .next()
+            .expect("Windows publication boundary");
+        assert!(!publication.contains(".arg(temp)"));
+        assert!(!publication.contains(".arg(destination)"));
+        assert!(publication.contains(".env(WINDOWS_PUBLISH_SOURCE_ENV, temp)"));
+        assert!(publication.contains(".env(WINDOWS_PUBLISH_DESTINATION_ENV, destination)"));
+
+        assert!(source.contains(
+            "[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_ACL_TARGET','Process')"
+        ));
+        assert!(source.contains(
+            "[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_PUBLISH_SOURCE','Process')"
+        ));
+        assert!(source.contains(
+            "[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_PUBLISH_DESTINATION','Process')"
+        ));
+    }
+
     #[cfg(windows)]
     mod windows {
         use std::{fs::OpenOptions, process::Command};
 
         use super::*;
         use crate::private_file::{
-            current_windows_sid, parse_whoami_sid, restrict_created_windows_file_with,
-            windows_file_is_owner_only,
+            WINDOWS_MOVE_PROGRAM, WINDOWS_REPLACE_PROGRAM, current_windows_sid,
+            inspect_windows_acl, parse_whoami_sid, restrict_created_windows_file_with,
+            run_windows_publish, windows_file_is_owner_only,
         };
 
         fn harden_parent(path: &Path) {
@@ -1275,6 +1325,26 @@ mod tests {
                 .status()
                 .expect("harden test parent");
             assert!(status.success());
+        }
+
+        fn harden_file(path: &Path) {
+            let sid = current_windows_sid().expect("current SID");
+            let grant = format!("*{sid}:(F)");
+            let status = Command::new("icacls")
+                .arg(path)
+                .args(["/inheritance:r", "/grant:r"])
+                .arg(grant)
+                .status()
+                .expect("harden test file");
+            assert!(status.success());
+        }
+
+        fn write_injection_probe(directory: &Path, helper_name: &str, sentinel_name: &str) {
+            let helper = directory.join(helper_name);
+            let source = format!(
+                "[IO.File]::WriteAllText((Join-Path $PSScriptRoot '{sentinel_name}'),'injected')"
+            );
+            fs::write(helper, source).expect("write PowerShell injection helper");
         }
 
         #[test]
@@ -1348,6 +1418,83 @@ mod tests {
                 .expect_err("create-new must not replace existing file");
             assert!(error.to_string().contains("admin"));
             assert_eq!(fs::read(&path).expect("still replaced"), b"second secret");
+        }
+
+        #[test]
+        fn private_file_windows_never_parses_no_whitespace_metacharacter_paths_as_code() {
+            let directory = tempfile::Builder::new()
+                .prefix("exo-private-path-probe-")
+                .tempdir()
+                .expect("probe directory");
+            harden_parent(directory.path());
+
+            let acl_helper_name = "acl-probe.ps1";
+            let acl_sentinel = directory.path().join("acl-injection-sentinel");
+            write_injection_probe(directory.path(), acl_helper_name, "acl-injection-sentinel");
+            let acl_target = directory.path().join("acl-probe.ps1;#[$()]&'雪.secret");
+            fs::write(&acl_target, b"acl secret").expect("write ACL target");
+            harden_file(&acl_target);
+
+            assert!(
+                !acl_target
+                    .to_string_lossy()
+                    .chars()
+                    .any(char::is_whitespace),
+                "the injection regression must not be masked by whitespace quoting"
+            );
+            inspect_windows_acl(&acl_target).expect("inspect metacharacter ACL target");
+            assert!(
+                !acl_sentinel.exists(),
+                "ACL inspection executed path text as PowerShell source"
+            );
+
+            let publish_helper_name = "publish-probe.ps1";
+            let publish_sentinel = directory.path().join("publish-injection-sentinel");
+            write_injection_probe(
+                directory.path(),
+                publish_helper_name,
+                "publish-injection-sentinel",
+            );
+            let publish_source = directory.path().join("publish-probe.ps1;#[$()]&'é.source");
+            let publish_destination = directory.path().join("destination[$()]&'雪.secret");
+            for path in [&publish_source, &publish_destination] {
+                assert!(
+                    !path.to_string_lossy().chars().any(char::is_whitespace),
+                    "the publication regression must not be masked by whitespace quoting"
+                );
+            }
+
+            fs::write(&publish_source, b"move secret").expect("write move source");
+            harden_file(&publish_source);
+            run_windows_publish(WINDOWS_MOVE_PROGRAM, &publish_source, &publish_destination)
+                .expect("publish distinct source and destination with File.Move");
+            assert!(!publish_source.exists());
+            assert_eq!(
+                fs::read(&publish_destination).expect("read moved destination"),
+                b"move secret"
+            );
+            assert!(
+                !publish_sentinel.exists(),
+                "File.Move publication executed path text as PowerShell source"
+            );
+
+            fs::write(&publish_source, b"replace secret").expect("write replace source");
+            harden_file(&publish_source);
+            run_windows_publish(
+                WINDOWS_REPLACE_PROGRAM,
+                &publish_source,
+                &publish_destination,
+            )
+            .expect("publish distinct source and destination with File.Replace");
+            assert!(!publish_source.exists());
+            assert_eq!(
+                fs::read(&publish_destination).expect("read replaced destination"),
+                b"replace secret"
+            );
+            assert!(
+                !publish_sentinel.exists(),
+                "File.Replace publication executed path text as PowerShell source"
+            );
         }
 
         #[test]
