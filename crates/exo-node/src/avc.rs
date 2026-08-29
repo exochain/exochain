@@ -99,6 +99,7 @@ use tower::limit::ConcurrencyLimitLayer;
 
 const MAX_AVC_API_BODY_BYTES: usize = 64 * 1024;
 const MAX_AVC_API_CONCURRENT_REQUESTS: usize = 64;
+const MAX_TIMESTAMP_RESPONSE_BYTES: usize = 1_048_576;
 const AVC_EXTERNAL_TIMESTAMP_AUTHORITY_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(not(test))]
 const AVC_RFC3161_TIMESTAMP_FETCH_RETRY_DELAYS: [Duration; 2] =
@@ -382,6 +383,63 @@ async fn wait_before_rfc3161_fetch_retry(delay: Duration) {
     }
 }
 
+async fn read_timestamp_response(
+    mut response: reqwest::Response,
+) -> Result<Vec<u8>, AvcExternalTimestampFailure> {
+    let max_bytes_u64 = u64::try_from(MAX_TIMESTAMP_RESPONSE_BYTES).map_err(|error| {
+        AvcExternalTimestampFailure::InvalidResponse {
+            reason: format!("timestamp response limit conversion failed: {error}"),
+        }
+    })?;
+    if response
+        .content_length()
+        .is_some_and(|content_length| content_length > max_bytes_u64)
+    {
+        return Err(AvcExternalTimestampFailure::InvalidResponse {
+            reason: format!(
+                "timestamp authority response Content-Length exceeds {MAX_TIMESTAMP_RESPONSE_BYTES} bytes"
+            ),
+        });
+    }
+
+    let limit_plus_one = MAX_TIMESTAMP_RESPONSE_BYTES.checked_add(1).ok_or_else(|| {
+        AvcExternalTimestampFailure::InvalidResponse {
+            reason: "timestamp response byte limit overflow".to_owned(),
+        }
+    })?;
+    let initial_capacity = response
+        .content_length()
+        .and_then(|content_length| usize::try_from(content_length).ok())
+        .map_or(0, |content_length| {
+            content_length.min(MAX_TIMESTAMP_RESPONSE_BYTES)
+        });
+    let mut body = Vec::with_capacity(initial_capacity);
+    while let Some(chunk) =
+        response
+            .chunk()
+            .await
+            .map_err(|error| AvcExternalTimestampFailure::InvalidResponse {
+                reason: error.to_string(),
+            })?
+    {
+        let remaining = limit_plus_one.checked_sub(body.len()).ok_or_else(|| {
+            AvcExternalTimestampFailure::InvalidResponse {
+                reason: "timestamp response byte limit accounting underflow".to_owned(),
+            }
+        })?;
+        let accepted_from_chunk = chunk.len().min(remaining);
+        body.extend_from_slice(&chunk[..accepted_from_chunk]);
+        if body.len() > MAX_TIMESTAMP_RESPONSE_BYTES {
+            return Err(AvcExternalTimestampFailure::InvalidResponse {
+                reason: format!(
+                    "timestamp authority response exceeds {MAX_TIMESTAMP_RESPONSE_BYTES} bytes"
+                ),
+            });
+        }
+    }
+    Ok(body)
+}
+
 async fn fetch_rfc3161_timestamp_response(
     client: &reqwest::Client,
     endpoint: &str,
@@ -418,13 +476,7 @@ async fn fetch_rfc3161_timestamp_response(
 
         let status = response.status();
         if status.is_success() {
-            return response
-                .bytes()
-                .await
-                .map(|bytes| bytes.to_vec())
-                .map_err(|error| AvcExternalTimestampFailure::InvalidResponse {
-                    reason: error.to_string(),
-                });
+            return read_timestamp_response(response).await;
         }
         if rfc3161_fetch_status_is_retryable(status) {
             if let Some(delay) = rfc3161_fetch_retry_delay(attempt_index) {
@@ -483,11 +535,10 @@ impl AvcReceiptExternalTimestampSource {
                     }
                     .into());
                 }
-                let wire: AvcExternalTimestampResponse =
-                    response.json().await.map_err(|error| {
-                        AvcExternalTimestampFailure::InvalidResponse {
-                            reason: error.to_string(),
-                        }
+                let response_bytes = read_timestamp_response(response).await?;
+                let wire: AvcExternalTimestampResponse = serde_json::from_slice(&response_bytes)
+                    .map_err(|error| AvcExternalTimestampFailure::InvalidResponse {
+                        reason: error.to_string(),
                     })?;
                 let proof = external_timestamp_proof_from_wire(wire).map_err(|error| {
                     AvcExternalTimestampFailure::InvalidResponse {
@@ -3695,11 +3746,12 @@ pub fn avc_router(state: Arc<AvcApiState>) -> Router {
 mod tests {
     use std::{
         collections::{BTreeMap, VecDeque},
+        convert::Infallible,
         sync::atomic::{AtomicUsize, Ordering},
     };
 
     use axum::{
-        body::{self, Body},
+        body::{self, Body, Bytes},
         http::{Method, Request},
         response::IntoResponse,
     };
@@ -4235,6 +4287,75 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         (format!("http://{address}"), handle)
+    }
+
+    async fn serve_test_timestamp_response_body(
+        body_len: usize,
+        chunked: bool,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        async fn issue_timestamp(
+            State((body_len, chunked)): State<(usize, bool)>,
+        ) -> axum::response::Response {
+            if !chunked {
+                return (StatusCode::OK, vec![0x30; body_len]).into_response();
+            }
+
+            let mut remaining = body_len;
+            let mut chunks = Vec::new();
+            while remaining > 0 {
+                let chunk_len = remaining.min(64 * 1024);
+                chunks.push(Ok::<_, Infallible>(Bytes::from(vec![0x30; chunk_len])));
+                remaining -= chunk_len;
+            }
+            axum::response::Response::new(Body::from_stream(futures::stream::iter(chunks)))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new()
+            .route("/", get(issue_timestamp))
+            .with_state((body_len, chunked));
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{address}"), handle)
+    }
+
+    async fn assert_timestamp_response_body_boundary(chunked: bool) {
+        for (body_len, accepted) in [
+            (MAX_TIMESTAMP_RESPONSE_BYTES, true),
+            (MAX_TIMESTAMP_RESPONSE_BYTES + 1, false),
+        ] {
+            let (endpoint, server) = serve_test_timestamp_response_body(body_len, chunked).await;
+            let response = reqwest::Client::new().get(endpoint).send().await.unwrap();
+            if chunked {
+                assert_eq!(response.content_length(), None);
+            } else {
+                assert_eq!(
+                    response.content_length(),
+                    Some(u64::try_from(body_len).unwrap())
+                );
+            }
+
+            let result = read_timestamp_response(response).await;
+            if accepted {
+                assert_eq!(result.unwrap().len(), MAX_TIMESTAMP_RESPONSE_BYTES);
+            } else {
+                let error = result.expect_err("timestamp response limit plus one must fail");
+                assert!(error.to_string().contains("exceeds"));
+            }
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn timestamp_response_reader_bounds_fixed_length_bodies() {
+        assert_timestamp_response_body_boundary(false).await;
+    }
+
+    #[tokio::test]
+    async fn timestamp_response_reader_bounds_chunked_bodies() {
+        assert_timestamp_response_body_boundary(true).await;
     }
 
     async fn serve_test_rfc3161_timestamp_authority_sequence(
