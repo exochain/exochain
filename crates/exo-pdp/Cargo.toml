@@ -41,10 +41,11 @@ ciborium = { workspace = true }
 thiserror = { workspace = true }
 hex = { workspace = true }
 axum = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 
 [features]
 default = ["http"]
-http = ["dep:axum"]
+http = ["dep:axum", "dep:tracing"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
