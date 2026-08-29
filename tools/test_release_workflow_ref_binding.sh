@@ -30,10 +30,13 @@ side_effect_guard="tools/verify_release_side_effect.sh"
 [[ -f "$source_guard" ]] || fail "$source_guard is missing"
 [[ -f "$tag_guard" ]] || fail "$tag_guard is missing"
 [[ -f "$side_effect_guard" ]] || fail "$side_effect_guard is missing"
-grep -F 'bash "$script_dir/verify_release_source.sh"' "$side_effect_guard" >/dev/null \
-  || fail "$side_effect_guard must verify immutable source identity and cleanliness first"
-grep -F 'bash "$script_dir/verify_release_tag.sh"' "$side_effect_guard" >/dev/null \
-  || fail "$side_effect_guard must verify the exact current remote tag after source identity"
+grep -F 'GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_source.sh"' "$side_effect_guard" >/dev/null \
+  || fail "$side_effect_guard must execute the source guard from the immutable dispatch commit"
+grep -F 'GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_tag.sh"' "$side_effect_guard" >/dev/null \
+  || fail "$side_effect_guard must execute the tag guard from the immutable dispatch commit"
+immutable_child_count=$(grep -cF 'GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash' "$side_effect_guard")
+[ "$immutable_child_count" -eq 2 ] \
+  || fail "$side_effect_guard must disable replacement objects and BASH_ENV for both child guards"
 
 # Parse the workflow as YAML and reject duplicate mapping keys. YAML parsers
 # otherwise commonly accept the last duplicate silently, which can replace a
@@ -148,7 +151,18 @@ repo_root="$(pwd -P)"
 fixture_root="$(mktemp -d)"
 fixture_dir="$fixture_root/checkout"
 fixture_remote="$fixture_root/remote.git"
+poison_bash_env="$fixture_root/poison-bash-env.sh"
 trap 'rm -rf "$fixture_root"' EXIT
+cat > "$poison_bash_env" <<'POISON'
+export RELEASE_SOURCE_CLEAN_MODE=invalid
+export DRY_RUN=true
+export RELEASE_TAG=v999.999.999
+export EXPECTED_TAG_OBJECT_SHA=0000000000000000000000000000000000000000
+export EXPECTED_TAG_COMMIT_SHA=0000000000000000000000000000000000000000
+export EXPECTED_COMMIT_SHA=0000000000000000000000000000000000000000
+export TRUSTED_RELEASE_REF=0000000000000000000000000000000000000000
+exit 0
+POISON
 git init --bare -q "$fixture_remote"
 git init -q "$fixture_dir"
 git -C "$fixture_dir" config user.name EXOCHAIN
@@ -156,7 +170,11 @@ git -C "$fixture_dir" config user.email release-test@example.invalid
 git -C "$fixture_dir" config commit.gpgSign false
 git -C "$fixture_dir" config tag.gpgSign false
 printf 'tracked\n' > "$fixture_dir/tracked.txt"
-git -C "$fixture_dir" add tracked.txt
+mkdir -p "$fixture_dir/tools"
+cp "$repo_root/$source_guard" "$fixture_dir/$source_guard"
+cp "$repo_root/$tag_guard" "$fixture_dir/$tag_guard"
+cp "$repo_root/$side_effect_guard" "$fixture_dir/$side_effect_guard"
+git -C "$fixture_dir" add tracked.txt tools
 git -C "$fixture_dir" commit -qm fixture
 fixture_sha="$(git -C "$fixture_dir" rev-parse HEAD)"
 git -C "$fixture_dir" remote add origin "$fixture_remote"
@@ -209,22 +227,95 @@ run_tag_guard() {
   )
 }
 
+run_immutable_side_effect_guard() {
+  local clean_mode="$1"
+  local expected_object="$2"
+  local expected_tag_commit="$3"
+  (
+    cd "$fixture_dir"
+    # Simulate a prior step writing every trusted input plus BASH_ENV through
+    # GITHUB_ENV. The late step's exact bindings must override every poison.
+    export BASH_ENV="$poison_bash_env"
+    export RELEASE_SOURCE_CLEAN_MODE=invalid
+    export DRY_RUN=true
+    export RELEASE_TAG=v999.999.999
+    export EXPECTED_TAG_OBJECT_SHA=0000000000000000000000000000000000000000
+    export EXPECTED_TAG_COMMIT_SHA=0000000000000000000000000000000000000000
+    export EXPECTED_COMMIT_SHA=0000000000000000000000000000000000000000
+    export TRUSTED_RELEASE_REF=0000000000000000000000000000000000000000
+    export GITHUB_SHA="$fixture_sha"
+    GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | \
+      GIT_NO_REPLACE_OBJECTS=1 \
+      BASH_ENV=/dev/null \
+      RELEASE_SOURCE_CLEAN_MODE="$clean_mode" \
+      DRY_RUN=false \
+      RELEASE_TAG="$release_tag" \
+      EXPECTED_TAG_OBJECT_SHA="$expected_object" \
+      EXPECTED_TAG_COMMIT_SHA="$expected_tag_commit" \
+      EXPECTED_COMMIT_SHA="$fixture_sha" \
+      TRUSTED_RELEASE_REF="$fixture_sha" \
+      GITHUB_SHA="$fixture_sha" \
+      bash
+  )
+}
+
 run_tag_guard false "$fixture_tag_object" "$fixture_tag_commit" >/dev/null \
   || fail "tag guard must accept the exact remote annotated-tag object and peeled commit"
-(
+run_immutable_side_effect_guard all "$fixture_tag_object" "$fixture_tag_commit" >/dev/null \
+  || fail "combined side-effect guard must override poisoned prior-step state and accept one exact clean signed-source boundary"
+
+for mutable_guard in "$source_guard" "$tag_guard" "$side_effect_guard"; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fixture_dir/$mutable_guard"
+done
+if run_immutable_side_effect_guard all "$fixture_tag_object" "$fixture_tag_commit" >/dev/null 2>&1; then
+  fail "immutable guard bootstrap must reject dirty source even when all checkout guards are replaced by no-ops"
+fi
+git -C "$fixture_dir" restore tools
+
+# A Git replacement ref can otherwise make `git show GITHUB_SHA:path` resolve
+# to attacker-controlled committed content while retaining the requested object
+# name. The bootstrap and both child guards must disable replacement objects.
+replacement_index="$fixture_root/replacement.index"
+GIT_INDEX_FILE="$replacement_index" git -C "$fixture_dir" read-tree "$fixture_sha"
+noop_blob="$(printf '#!/usr/bin/env bash\nexit 0\n' | git -C "$fixture_dir" hash-object -w --stdin)"
+for mutable_guard in "$source_guard" "$tag_guard" "$side_effect_guard"; do
+  GIT_INDEX_FILE="$replacement_index" git -C "$fixture_dir" update-index \
+    --add --cacheinfo "100755,$noop_blob,$mutable_guard"
+done
+replacement_tree="$(GIT_INDEX_FILE="$replacement_index" git -C "$fixture_dir" write-tree)"
+replacement_commit="$(printf 'malicious replacement guards\n' | git -C "$fixture_dir" commit-tree "$replacement_tree" -p "$fixture_sha")"
+git -C "$fixture_dir" replace "$fixture_sha" "$replacement_commit"
+printf 'replacement-ref attack\n' >> "$fixture_dir/tracked.txt"
+if run_immutable_side_effect_guard all "$fixture_tag_object" "$fixture_tag_commit" >/dev/null 2>&1; then
+  fail "immutable guard bootstrap must reject dirty source despite a no-op replacement commit for GITHUB_SHA"
+fi
+git -C "$fixture_dir" replace -d "$fixture_sha" >/dev/null
+GIT_NO_REPLACE_OBJECTS=1 git -C "$fixture_dir" restore tracked.txt
+
+git -C "$fixture_dir" tag -f -a "$release_tag" -m "retargeted object" "$fixture_sha" >/dev/null
+git -C "$fixture_dir" push -q --force origin "refs/tags/$release_tag"
+for mutable_guard in "$source_guard" "$tag_guard" "$side_effect_guard"; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fixture_dir/$mutable_guard"
+done
+tag_mismatch_output=""
+if tag_mismatch_output="$(
   cd "$fixture_dir"
-  RELEASE_SOURCE_CLEAN_MODE=all \
+  GIT_NO_REPLACE_OBJECTS=1 git show "${fixture_sha}:tools/verify_release_tag.sh" | \
+    GIT_NO_REPLACE_OBJECTS=1 \
+    BASH_ENV=/dev/null \
     DRY_RUN=false \
     RELEASE_TAG="$release_tag" \
     EXPECTED_TAG_OBJECT_SHA="$fixture_tag_object" \
     EXPECTED_TAG_COMMIT_SHA="$fixture_tag_commit" \
     EXPECTED_COMMIT_SHA="$fixture_sha" \
     GITHUB_SHA="$fixture_sha" \
-    TRUSTED_RELEASE_REF="$fixture_sha" \
-    bash "$repo_root/$side_effect_guard"
-) >/dev/null || fail "combined side-effect guard must accept one exact clean signed-source boundary"
-git -C "$fixture_dir" tag -f -a "$release_tag" -m "retargeted object" "$fixture_sha" >/dev/null
-git -C "$fixture_dir" push -q --force origin "refs/tags/$release_tag"
+    bash 2>&1
+)"; then
+  fail "immutable guard bootstrap must reject a remote tag mismatch despite no-op checkout guards"
+fi
+grep -F 'remote release tag object changed' <<<"$tag_mismatch_output" >/dev/null \
+  || fail "immutable tag guard must reject the remote tag mismatch after checkout guards are no-ops"
+git -C "$fixture_dir" restore tools
 if run_tag_guard false "$fixture_tag_object" "$fixture_tag_commit" >/dev/null 2>&1; then
   fail "tag guard must reject a retargeted annotated-tag object even when its peeled commit is unchanged"
 fi
@@ -268,6 +359,20 @@ if (
 ) >/dev/null 2>&1; then
   fail "tracked-source mode must reject a modified tracked source file"
 fi
+git -C "$fixture_dir" restore tracked.txt
+git -C "$fixture_dir" update-index --assume-unchanged tracked.txt
+printf 'hidden tracked mutation\n' >> "$fixture_dir/tracked.txt"
+if (
+  cd "$fixture_dir"
+  RELEASE_SOURCE_CLEAN_MODE=tracked \
+    EXPECTED_COMMIT_SHA="$fixture_sha" \
+    GITHUB_SHA="$fixture_sha" \
+    TRUSTED_RELEASE_REF="$fixture_sha" \
+    bash "$repo_root/$source_guard"
+) >/dev/null 2>&1; then
+  fail "source guard must reject assume-unchanged index flags that can hide tracked-source mutations"
+fi
+git -C "$fixture_dir" update-index --no-assume-unchanged tracked.txt
 git -C "$fixture_dir" restore tracked.txt
 if (
   cd "$fixture_dir"
@@ -346,6 +451,7 @@ assert_guard_immediately_before_step() {
   local job="$1"
   local guard_name="$2"
   local side_effect_name="$3"
+  local clean_mode="$4"
   local block
   local guard_line
   local side_effect_line
@@ -359,8 +465,20 @@ assert_guard_immediately_before_step() {
     fail "job $job must run $guard_name before $side_effect_name"
   fi
   between=$(sed -n "$((guard_line + 1)),$((side_effect_line - 1))p" <<<"$block")
-  grep -F 'verify_release_side_effect.sh' <<<"$between" >/dev/null \
-    || fail "job $job boundary $guard_name must execute the shared final side-effect guard"
+  grep -F 'GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash' <<<"$between" >/dev/null \
+    || fail "job $job boundary $guard_name must execute the final guard from the immutable dispatch commit"
+  for binding in \
+    'BASH_ENV: /dev/null' \
+    "RELEASE_SOURCE_CLEAN_MODE: $clean_mode" \
+    'DRY_RUN: ${{ inputs.dry_run }}' \
+    'RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}' \
+    'EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}' \
+    'EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}' \
+    'EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}' \
+    'TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}'; do
+    grep -F "$binding" <<<"$between" >/dev/null \
+      || fail "job $job boundary $guard_name must rebind $binding at step scope"
+  done
   if grep -E '^[[:space:]]+- (name:|uses:)' <<<"$between" >/dev/null; then
     fail "job $job must run no other step between $guard_name and $side_effect_name"
   fi
@@ -368,43 +486,43 @@ assert_guard_immediately_before_step() {
 
 assert_side_effect_guard_count release-build 3
 assert_guard_immediately_before_step release-build \
-  "Reverify source and tag immediately before release build" "Build release"
+  "Reverify source and tag immediately before release build" "Build release" all
 assert_guard_immediately_before_step release-build \
-  "Reverify source and tag immediately before artifact packaging" "Package artifacts"
+  "Reverify source and tag immediately before artifact packaging" "Package artifacts" tracked
 assert_guard_immediately_before_step release-build \
-  "Reverify source and tag immediately before artifact upload" "Upload artifacts"
+  "Reverify source and tag immediately before artifact upload" "Upload artifacts" tracked
 
 assert_side_effect_guard_count sbom-and-attest 4
 assert_guard_immediately_before_step sbom-and-attest \
-  "Reverify source and tag immediately before archive collection" "Collect release archives"
+  "Reverify source and tag immediately before archive collection" "Collect release archives" tracked
 assert_guard_immediately_before_step sbom-and-attest \
-  "Reverify source and tag immediately before SBOM generation" "Generate CycloneDX SBOM"
+  "Reverify source and tag immediately before SBOM generation" "Generate CycloneDX SBOM" tracked
 assert_guard_immediately_before_step sbom-and-attest \
-  "Reverify source and tag immediately before SBOM upload" "Upload SBOM artifacts"
+  "Reverify source and tag immediately before SBOM upload" "Upload SBOM artifacts" tracked
 assert_guard_immediately_before_step sbom-and-attest \
-  "Reverify source and tag immediately before provenance attestation" "Attest build provenance (SLSA Level 2)"
+  "Reverify source and tag immediately before provenance attestation" "Attest build provenance (SLSA Level 2)" tracked
 
 assert_side_effect_guard_count publish 2
 
 assert_side_effect_guard_count publish-wasm-npm 4
 assert_guard_immediately_before_step publish-wasm-npm \
-  "Reverify source and tag immediately before WASM build" "Build scoped WASM npm package"
+  "Reverify source and tag immediately before WASM build" "Build scoped WASM npm package" all
 assert_guard_immediately_before_step publish-wasm-npm \
-  "Reverify source and tag immediately before WASM package preparation" "Prepare scoped WASM npm package"
+  "Reverify source and tag immediately before WASM package preparation" "Prepare scoped WASM npm package" tracked
 assert_guard_immediately_before_step publish-wasm-npm \
-  "Reverify source and tag immediately before WASM dry-pack" "Dry-pack WASM npm package"
+  "Reverify source and tag immediately before WASM dry-pack" "Dry-pack WASM npm package" tracked
 
 assert_side_effect_guard_count publish-llm-proxy-npm 4
 assert_guard_immediately_before_step publish-llm-proxy-npm \
-  "Reverify source and tag immediately before LYNK coverage" "Run LYNK package coverage gate"
+  "Reverify source and tag immediately before LYNK coverage" "Run LYNK package coverage gate" all
 assert_guard_immediately_before_step publish-llm-proxy-npm \
-  "Reverify source and tag immediately before LYNK build" "Build LYNK npm package"
+  "Reverify source and tag immediately before LYNK build" "Build LYNK npm package" all
 assert_guard_immediately_before_step publish-llm-proxy-npm \
-  "Reverify source and tag immediately before LYNK dry-pack" "Dry-pack LYNK npm package"
+  "Reverify source and tag immediately before LYNK dry-pack" "Dry-pack LYNK npm package" all
 
 assert_side_effect_guard_count github-release 1
 assert_guard_immediately_before_step github-release \
-  "Reverify source and tag immediately before release creation" "Create release"
+  "Reverify source and tag immediately before release creation" "Create release" tracked
 
 github_release_block=$(job_block "github-release")
 github_initial_tag_verify_count=$(grep -cF 'run: bash tools/verify_release_tag.sh' <<<"$github_release_block")

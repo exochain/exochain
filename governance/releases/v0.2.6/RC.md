@@ -73,7 +73,13 @@ Every release checkout must initially be clean, including untracked files.
 Immediately before each release build, archive, SBOM, attestation, Cargo
 dry-run/publish, WASM build/prepare/dry-pack/publish, LYNK
 coverage/build/dry-pack/publish, artifact upload, and GitHub Release side
-effect, the workflow rechecks the immutable HEAD and the applicable tag branch.
+effect, the workflow rebinds every trusted identity input from immutable
+workflow expressions at step scope and neutralizes `BASH_ENV`. It loads the
+combined guard and both child guards from the workflow-dispatch commit with Git
+replacement objects disabled, then rechecks the immutable HEAD and applicable
+tag branch. Mutable checkout copies of those guards cannot authorize a side
+effect. The source guard also rejects assume-unchanged and skip-worktree index
+flags that could conceal tracked drift.
 After a step intentionally creates or downloads untracked artifacts, the guard
 still rejects every tracked or staged source change while permitting those
 untracked outputs. Live guards re-fetch the named remote tag and require its
@@ -84,6 +90,12 @@ source and remote-tag comparison immediately before creation and binds its
 target fallback to the validated commit. A missing, deleted, lightweight,
 unsigned, unverifiable, retargeted, mismatched, or tracked-dirty source fails
 closed. Dry runs emit no tag identity and do not fetch or require a tag.
+
+The signature-verification keyring must contain exactly one primary key: the
+configured release fingerprint. Legitimate signing subkeys for that primary
+remain supported. Machine-readable `VALIDSIG` evidence must identify the
+configured primary as the actual signer's primary; an additional bundled
+primary or a tag signed by that second signer fails closed.
 
 Native Cargo builds and both dry-run and live `cargo publish` calls use
 `--locked`; publish commands do not permit `--allow-dirty`. `wasm-pack`

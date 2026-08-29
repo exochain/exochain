@@ -56,8 +56,13 @@ a tag, GitHub Release, registry publication, deployment, or v0.3.0 close.
 - Extends release guards to reject duplicate YAML keys, mutable tag/ref
   recomputation, signed-tag deletion or retargeting between jobs,
   source/version skew, dirty Cargo publication, missing checkout permissions,
-  and lockfile drift. Source and live tag identity are rechecked at the final
-  safe point before every release artifact or publication side effect.
+  hidden index flags, and lockfile drift. Every final boundary rebinds trusted
+  inputs at step scope, neutralizes shell-startup injection, and executes guard
+  blobs from the immutable dispatch commit with Git replacement objects
+  disabled. The signing keyring admits exactly the configured primary and its
+  subkeys, and the actual tag signer's primary fingerprint must match it.
+  Source and live tag identity are rechecked at the final safe point before
+  every release artifact or publication side effect.
 
 ## [0.2.4] - 2026-08-17
 

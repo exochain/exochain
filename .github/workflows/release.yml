@@ -74,6 +74,7 @@ jobs:
       - name: Validate release version
         id: validate
         env:
+          BASH_ENV: /dev/null
           RELEASE_VERSION_INPUT: ${{ inputs.version }}
           EXPECTED_COMMIT_SHA: ${{ github.sha }}
           TRUSTED_RELEASE_REF: ${{ github.sha }}
@@ -143,6 +144,7 @@ jobs:
 
       - name: Verify checked-out release source
         env:
+          BASH_ENV: /dev/null
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
         run: bash tools/verify_release_source.sh
@@ -150,6 +152,7 @@ jobs:
       - name: Require signed tag for non-dry-run release
         id: verify-tag
         env:
+          BASH_ENV: /dev/null
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
@@ -180,12 +183,6 @@ jobs:
           trap 'rm -rf "$GNUPGHOME"' EXIT
           printf '%s\n' "$EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC" | gpg --batch --import
 
-          imported_fingerprint="$(gpg --batch --with-colons --fingerprint "$signing_key_fingerprint" | awk -F: '/^fpr:/ { print toupper($10); exit }')"
-          if [ "$imported_fingerprint" != "$signing_key_fingerprint" ]; then
-            echo "Imported release signing public key does not match EXOCHAIN_RELEASE_SIGNING_FINGERPRINT." >&2
-            exit 1
-          fi
-
           git fetch --tags --force
           if ! git rev-parse --verify --quiet "refs/tags/${RELEASE_TAG}" >/dev/null; then
             echo "Release tag ${RELEASE_TAG} does not exist." >&2
@@ -196,7 +193,7 @@ jobs:
             echo "Release tag ${RELEASE_TAG} must be an annotated signed tag, got ${tag_type}." >&2
             exit 1
           fi
-          git tag -v "${RELEASE_TAG}"
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_tag_signer.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
           tag_object_sha="$(git rev-parse "refs/tags/${RELEASE_TAG}")"
           peeled_commit="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
           if [ "$peeled_commit" != "$EXPECTED_COMMIT_SHA" ] || [ "$peeled_commit" != "$GITHUB_SHA" ]; then
@@ -215,13 +212,6 @@ jobs:
     needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
     permissions:
       contents: read
-    env:
-      DRY_RUN: ${{ inputs.dry_run }}
-      RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
-      EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
-      EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
-      EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
-      TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
     strategy:
       matrix:
         target:
@@ -234,11 +224,13 @@ jobs:
           fetch-depth: 0
       - name: Verify checked-out release source
         env:
+          BASH_ENV: /dev/null
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
         run: bash tools/verify_release_source.sh
       - name: Verify current remote release tag identity
         env:
+          BASH_ENV: /dev/null
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
           EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
@@ -258,20 +250,42 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Reverify source and tag immediately before release build
-        run: bash tools/verify_release_side_effect.sh
+        env:
+          BASH_ENV: /dev/null
+          RELEASE_SOURCE_CLEAN_MODE: all
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Build release
         run: bash tools/ci_cargo_retry.sh cargo build --workspace --release --locked --target ${{ matrix.target }}
         env:
+          BASH_ENV: /dev/null
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Reverify source and tag immediately before artifact packaging
         env:
+          BASH_ENV: /dev/null
           RELEASE_SOURCE_CLEAN_MODE: tracked
-        run: bash tools/verify_release_side_effect.sh
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Package artifacts
         env:
+          BASH_ENV: /dev/null
           RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
         run: |
           mkdir -p dist
@@ -281,8 +295,17 @@ jobs:
 
       - name: Reverify source and tag immediately before artifact upload
         env:
+          BASH_ENV: /dev/null
           RELEASE_SOURCE_CLEAN_MODE: tracked
-        run: bash tools/verify_release_side_effect.sh
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Upload artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -312,13 +335,6 @@ jobs:
       contents: read      # checkout and exact remote-tag revalidation
       attestations: write  # write SLSA attestations to repo
       id-token: write      # GitHub OIDC token for keyless Sigstore signing
-    env:
-      DRY_RUN: ${{ inputs.dry_run }}
-      RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
-      EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
-      EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
-      EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
-      TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -327,11 +343,13 @@ jobs:
           fetch-depth: 0
       - name: Verify checked-out release source
         env:
+          BASH_ENV: /dev/null
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
         run: bash tools/verify_release_source.sh
       - name: Verify current remote release tag identity
         env:
+          BASH_ENV: /dev/null
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
           EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
@@ -350,10 +368,21 @@ jobs:
 
       - name: Reverify source and tag immediately before archive collection
         env:
+          BASH_ENV: /dev/null
           RELEASE_SOURCE_CLEAN_MODE: tracked
-        run: bash tools/verify_release_side_effect.sh
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Collect release archives
+        env:
+          BASH_ENV: /dev/null
         run: |
           mkdir -p release-archives
           find artifacts -name '*.tar.gz' -exec cp {} release-archives/ \;
@@ -366,11 +395,21 @@ jobs:
 
       - name: Reverify source and tag immediately before SBOM generation
         env:
+          BASH_ENV: /dev/null
           RELEASE_SOURCE_CLEAN_MODE: tracked
-        run: bash tools/verify_release_side_effect.sh
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Generate CycloneDX SBOM
         env:
+          BASH_ENV: /dev/null
           RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
         run: |
           set -euo pipefail
@@ -392,8 +431,17 @@ jobs:
 
       - name: Reverify source and tag immediately before SBOM upload
         env:
+          BASH_ENV: /dev/null
           RELEASE_SOURCE_CLEAN_MODE: tracked
-        run: bash tools/verify_release_side_effect.sh
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -405,8 +453,17 @@ jobs:
       # ── SLSA provenance attestation ──────────────────────────────────────
       - name: Reverify source and tag immediately before provenance attestation
         env:
+          BASH_ENV: /dev/null
           RELEASE_SOURCE_CLEAN_MODE: tracked
-        run: bash tools/verify_release_side_effect.sh
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Attest build provenance (SLSA Level 2)
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
@@ -423,13 +480,6 @@ jobs:
     if: ${{ !inputs.dry_run }}
     permissions:
       contents: read
-    env:
-      DRY_RUN: ${{ inputs.dry_run }}
-      RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
-      EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
-      EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
-      EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
-      TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -437,11 +487,13 @@ jobs:
           fetch-depth: 0
       - name: Verify checked-out release source
         env:
+          BASH_ENV: /dev/null
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
         run: bash tools/verify_release_source.sh
       - name: Verify current remote release tag identity
         env:
+          BASH_ENV: /dev/null
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
           EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
@@ -459,8 +511,16 @@ jobs:
 
       - name: Publish crates in dependency order
         env:
+          BASH_ENV: /dev/null
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
+          RELEASE_SOURCE_CLEAN_MODE: all
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
         run: |
           set -euo pipefail
           crate_version_published() {
@@ -499,7 +559,7 @@ jobs:
             local retry_seconds
 
             while [ "$attempt" -le "$max_attempts" ]; do
-              bash tools/verify_release_side_effect.sh
+              GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
               if output="$(cargo publish -p "$crate" --locked 2>&1)"; then
                 status=0
               else
@@ -581,7 +641,7 @@ jobs:
               continue
             fi
             echo "Dry-running $crate..."
-            bash tools/verify_release_side_effect.sh
+            GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
             cargo publish -p "$crate" --dry-run --locked
             if crate_version_published "$crate"; then
               echo "${crate} ${RELEASE_VERSION} became available after dry-run; skipping publish."
@@ -603,13 +663,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    env:
-      DRY_RUN: ${{ inputs.dry_run }}
-      RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
-      EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
-      EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
-      EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
-      TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -617,11 +670,13 @@ jobs:
           fetch-depth: 0
       - name: Verify checked-out release source
         env:
+          BASH_ENV: /dev/null
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
         run: bash tools/verify_release_source.sh
       - name: Verify current remote release tag identity
         env:
+          BASH_ENV: /dev/null
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
           EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
@@ -641,6 +696,7 @@ jobs:
       - name: Verify npm registry authentication
         if: ${{ !inputs.dry_run }}
         env:
+          BASH_ENV: /dev/null
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
@@ -656,17 +712,41 @@ jobs:
         run: bash tools/ci_cargo_retry.sh cargo install wasm-pack --version 0.14.0 --locked
 
       - name: Reverify source and tag immediately before WASM build
-        run: bash tools/verify_release_side_effect.sh
+        env:
+          BASH_ENV: /dev/null
+          RELEASE_SOURCE_CLEAN_MODE: all
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Build scoped WASM npm package
+        env:
+          BASH_ENV: /dev/null
         run: bash tools/ci_cargo_retry.sh wasm-pack build crates/exochain-wasm --target nodejs --scope exochain --out-dir ../../.release-output/exochain-wasm -- --locked
 
       - name: Reverify source and tag immediately before WASM package preparation
         env:
+          BASH_ENV: /dev/null
           RELEASE_SOURCE_CLEAN_MODE: tracked
-        run: bash tools/verify_release_side_effect.sh
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Prepare scoped WASM npm package
+        env:
+          BASH_ENV: /dev/null
         run: |
           cp LICENSE .release-output/exochain-wasm/LICENSE
           node tools/prepare_wasm_npm_package.mjs .release-output/exochain-wasm
@@ -692,18 +772,37 @@ jobs:
 
       - name: Reverify source and tag immediately before WASM dry-pack
         env:
+          BASH_ENV: /dev/null
           RELEASE_SOURCE_CLEAN_MODE: tracked
-        run: bash tools/verify_release_side_effect.sh
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Dry-pack WASM npm package
+        env:
+          BASH_ENV: /dev/null
         run: npm pack --dry-run
         working-directory: .release-output/exochain-wasm
 
       - name: Publish WASM npm package
         if: ${{ !inputs.dry_run }}
         env:
+          BASH_ENV: /dev/null
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
+          RELEASE_SOURCE_CLEAN_MODE: tracked
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
         run: |
           set -euo pipefail
           npm_package_version_published() {
@@ -731,7 +830,7 @@ jobs:
             exit 0
           fi
 
-          RELEASE_SOURCE_CLEAN_MODE=tracked bash "$GITHUB_WORKSPACE/tools/verify_release_side_effect.sh"
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
           npm publish --access public --provenance
         working-directory: .release-output/exochain-wasm
 
@@ -745,13 +844,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    env:
-      DRY_RUN: ${{ inputs.dry_run }}
-      RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
-      EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
-      EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
-      EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
-      TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -759,11 +851,13 @@ jobs:
           fetch-depth: 0
       - name: Verify checked-out release source
         env:
+          BASH_ENV: /dev/null
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
         run: bash tools/verify_release_source.sh
       - name: Verify current remote release tag identity
         env:
+          BASH_ENV: /dev/null
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
           EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
@@ -778,6 +872,7 @@ jobs:
       - name: Verify npm registry authentication
         if: ${{ !inputs.dry_run }}
         env:
+          BASH_ENV: /dev/null
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
@@ -794,9 +889,22 @@ jobs:
         working-directory: packages/exochain-llm-proxy
 
       - name: Reverify source and tag immediately before LYNK coverage
-        run: bash tools/verify_release_side_effect.sh
+        env:
+          BASH_ENV: /dev/null
+          RELEASE_SOURCE_CLEAN_MODE: all
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Run LYNK package coverage gate
+        env:
+          BASH_ENV: /dev/null
         run: npm run test:coverage
         working-directory: packages/exochain-llm-proxy
 
@@ -827,28 +935,64 @@ jobs:
         working-directory: packages/exochain-llm-proxy
 
       - name: Reverify source and tag immediately before LYNK build
-        run: bash tools/verify_release_side_effect.sh
+        env:
+          BASH_ENV: /dev/null
+          RELEASE_SOURCE_CLEAN_MODE: all
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Build LYNK npm package
+        env:
+          BASH_ENV: /dev/null
         run: npm run build
         working-directory: packages/exochain-llm-proxy
 
       - name: Verify LYNK npm package artifacts
+        env:
+          BASH_ENV: /dev/null
         run: node scripts/check-package-artifacts.mjs
         working-directory: packages/exochain-llm-proxy
 
       - name: Reverify source and tag immediately before LYNK dry-pack
-        run: bash tools/verify_release_side_effect.sh
+        env:
+          BASH_ENV: /dev/null
+          RELEASE_SOURCE_CLEAN_MODE: all
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Dry-pack LYNK npm package
+        env:
+          BASH_ENV: /dev/null
         run: npm pack --dry-run
         working-directory: packages/exochain-llm-proxy
 
       - name: Publish LYNK npm package
         if: ${{ !inputs.dry_run }}
         env:
+          BASH_ENV: /dev/null
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
+          RELEASE_SOURCE_CLEAN_MODE: all
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
         run: |
           set -euo pipefail
           npm_package_version_published() {
@@ -876,7 +1020,7 @@ jobs:
             exit 0
           fi
 
-          bash "$GITHUB_WORKSPACE/tools/verify_release_side_effect.sh"
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
           npm publish --access public --provenance
         working-directory: packages/exochain-llm-proxy
 
@@ -890,13 +1034,6 @@ jobs:
     if: ${{ !inputs.dry_run }}
     permissions:
       contents: write
-    env:
-      DRY_RUN: ${{ inputs.dry_run }}
-      RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
-      EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
-      EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
-      EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
-      TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -905,11 +1042,13 @@ jobs:
 
       - name: Verify checked-out release source
         env:
+          BASH_ENV: /dev/null
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
         run: bash tools/verify_release_source.sh
       - name: Verify current remote release tag identity
         env:
+          BASH_ENV: /dev/null
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
           EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
@@ -924,8 +1063,17 @@ jobs:
 
       - name: Reverify source and tag immediately before release creation
         env:
+          BASH_ENV: /dev/null
           RELEASE_SOURCE_CLEAN_MODE: tracked
-        run: bash tools/verify_release_side_effect.sh
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: |
+          set -euo pipefail
+          GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
 
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
