@@ -354,7 +354,7 @@ mod tests {
     fn root_bundle_rejects_relabelled_signature_when_signer_metadata_was_unsigned() {
         let config = test_config();
         let mut rng = StdRng::seed_from_u64(700);
-        let dkg = run_complete_dkg(&config, &mut rng).expect("dkg");
+        let mut dkg = run_complete_dkg(&config, &mut rng).expect("dkg");
         let delegation = issuer_delegation();
         let transcript_hash = Hash256::digest(b"transcript");
         let legacy_payload = legacy_unbound_root_artifact_payload(
@@ -367,13 +367,8 @@ mod tests {
         let actual_signers = [1, 2, 3, 4, 5, 6, 8]
             .into_iter()
             .map(|identifier| {
-                (
-                    identifier,
-                    dkg.key_packages
-                        .get(&identifier)
-                        .expect("key package")
-                        .clone(),
-                )
+                let package = dkg.key_packages.remove(&identifier).expect("key package");
+                (identifier, package)
             })
             .collect();
         let mut root_signature = raw_threshold_signature_without_signer_policy(

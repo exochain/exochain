@@ -1049,11 +1049,14 @@ mod tests {
     }
 
     fn participant_output(
-        dkg: &crate::RootDkgOutput,
+        dkg: &mut crate::RootDkgOutput,
         identifier: u16,
     ) -> crate::RootParticipantDkgOutput {
         crate::RootParticipantDkgOutput {
-            key_package: dkg.key_packages[&identifier].clone(),
+            key_package: dkg
+                .key_packages
+                .remove(&identifier)
+                .expect("participant key package"),
             public_key_package: dkg.public_key_package.clone(),
         }
     }
@@ -1106,7 +1109,7 @@ mod tests {
 
     fn final_key_confirmation(
         config: &GenesisCeremonyConfig,
-        dkg: &crate::RootDkgOutput,
+        dkg: &mut crate::RootDkgOutput,
         identifier: u16,
         dkg_transcript_hash: Hash256,
     ) -> FinalKeyConfirmation {
@@ -1298,32 +1301,32 @@ mod tests {
     fn final_key_confirmation_builder_rejects_misbound_key_material() {
         let (config, _) = config_with_secrets();
         let mut rng = StdRng::seed_from_u64(7_001);
-        let dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
+        let mut dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
         let dkg_transcript_hash = Hash256::digest(b"dkg transcript");
 
-        let mut unrostered = participant_output(&dkg, 1);
+        let mut unrostered = participant_output(&mut dkg, 1);
         unrostered.key_package.frost_identifier = 99;
         assert!(
             build_final_key_confirmation(&config, &unrostered, dkg_transcript_hash).is_err(),
             "builder must reject a certifier id outside the ratified roster"
         );
 
-        let mut mismatched = participant_output(&dkg, 1);
-        mismatched.key_package.key_package = dkg.key_packages[&2].key_package.clone();
+        let mut mismatched = participant_output(&mut dkg, 2);
+        mismatched.key_package.frost_identifier = 1;
         assert!(
             build_final_key_confirmation(&config, &mismatched, dkg_transcript_hash).is_err(),
             "builder must bind the public confirmation to the certifier key package"
         );
 
-        let mut missing_share = participant_output(&dkg, 1);
-        missing_share.public_key_package.verifying_shares.remove(&1);
+        let mut missing_share = participant_output(&mut dkg, 3);
+        missing_share.public_key_package.verifying_shares.remove(&3);
         assert!(
             build_final_key_confirmation(&config, &missing_share, dkg_transcript_hash).is_err(),
             "builder must reject public key package metadata that omits a rostered share"
         );
         let missing_share_error = certifier_verifying_share_hash(
             &missing_share.public_key_package,
-            1,
+            3,
             RootError::PortalRejected {
                 reason: "unit missing share".to_owned(),
             },
@@ -1401,10 +1404,10 @@ mod tests {
     fn final_key_confirmation_semantics_reject_every_bound_field() {
         let (config, secrets) = config_with_secrets();
         let mut rng = StdRng::seed_from_u64(7_002);
-        let dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
+        let mut dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
         let mut store = PortalStore::new(config.clone());
         let dkg_transcript_hash = submit_complete_dkg_transcript(&mut store, &config, &secrets);
-        let valid = final_key_confirmation(&config, &dkg, 1, dkg_transcript_hash);
+        let valid = final_key_confirmation(&config, &mut dkg, 1, dkg_transcript_hash);
         let envelope = final_key_confirmation_envelope(&config, &secrets, 1, &valid);
 
         let mut bad = valid.clone();
@@ -1494,11 +1497,11 @@ mod tests {
     fn final_key_confirmation_rejects_accepted_set_drift() {
         let (config, secrets) = config_with_secrets();
         let mut rng = StdRng::seed_from_u64(7_003);
-        let dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
+        let mut dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
         let mut store = PortalStore::new(config.clone());
         let dkg_transcript_hash = submit_complete_dkg_transcript(&mut store, &config, &secrets);
-        let valid_one = final_key_confirmation(&config, &dkg, 1, dkg_transcript_hash);
-        let valid_two = final_key_confirmation(&config, &dkg, 2, dkg_transcript_hash);
+        let valid_one = final_key_confirmation(&config, &mut dkg, 1, dkg_transcript_hash);
+        let valid_two = final_key_confirmation(&config, &mut dkg, 2, dkg_transcript_hash);
         let envelope_two = final_key_confirmation_envelope(&config, &secrets, 2, &valid_two);
         let transcript_store = store.clone();
 
