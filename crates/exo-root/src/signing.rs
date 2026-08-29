@@ -12,7 +12,9 @@ use zeroize::Zeroizing;
 
 use crate::{
     GenesisCeremonyConfig, Result, RootError, RootKeyPackage, RootPublicKeyPackage,
-    dkg::{deserialize_frost, serialize_frost},
+    dkg::{
+        deserialize_frost, deserialize_zeroizing_bytes, serialize_frost, serialize_frost_secret,
+    },
 };
 
 /// Serialized threshold signature over a root artifact.
@@ -184,6 +186,7 @@ pub struct RootSigningNonces {
     /// the signing package.
     pub commitment_hash: Hash256,
     /// Serialized secret signing nonces (retained by the signer; never shared).
+    #[serde(deserialize_with = "deserialize_zeroizing_bytes")]
     pub nonces: Zeroizing<Vec<u8>>,
 }
 
@@ -293,7 +296,7 @@ where
         ceremony_id: config.ceremony_id.clone(),
         artifact_hash: Hash256::digest(artifact),
         commitment_hash: commitment_hash(commitment_bytes.as_slice()),
-        nonces: Zeroizing::new(serialize_frost(&nonces)?),
+        nonces: serialize_frost_secret(&nonces)?,
     };
     Ok((commitment, signing_nonces))
 }
@@ -527,6 +530,21 @@ mod tests {
     }
 
     #[test]
+    fn secret_signing_nonce_deserializer_rejects_partial_json_and_cbor() {
+        let malformed = serde_json::json!({
+            "frost_identifier": 7,
+            "ceremony_id": "root-secret-malformed-v1",
+            "artifact_hash": Hash256::digest(b"artifact"),
+            "commitment_hash": Hash256::digest(b"commitment"),
+            "nonces": [1, 2, "bad"]
+        });
+        let json = serde_json::to_vec(&malformed).expect("malformed JSON fixture");
+        assert!(serde_json::from_slice::<RootSigningNonces>(&json).is_err());
+        let encoded = cbor_bytes(&malformed);
+        assert!(ciborium::from_reader::<RootSigningNonces, _>(encoded.as_slice()).is_err());
+    }
+
+    #[test]
     fn public_signing_artifacts_keep_debug_and_wire_round_trips() {
         let commitment = RootSigningCommitment {
             frost_identifier: 7,
@@ -648,18 +666,18 @@ mod tests {
     fn threshold_sign_covers_success_and_share_mismatch_paths() {
         let config = test_config();
         let mut rng = StdRng::seed_from_u64(71);
-        let dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
-        let selected: BTreeMap<u16, _> = dkg
-            .key_packages
-            .iter()
-            .take(7)
-            .map(|(identifier, share)| (*identifier, share.clone()))
+        let mut dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
+        let selected: BTreeMap<u16, _> = (1..=7)
+            .map(|identifier| {
+                let share = dkg.key_packages.remove(&identifier).expect("key package");
+                (identifier, share)
+            })
             .collect();
         let message = b"unit root signing artifact";
         let signature = threshold_sign(
             &config,
             &dkg.public_key_package,
-            selected.clone(),
+            selected,
             message,
             &mut rng,
         )
@@ -672,13 +690,23 @@ mod tests {
         )
         .expect("signature verifies");
 
-        let mut mismatched = selected;
+        let mut second_rng = StdRng::seed_from_u64(71);
+        let mut second_dkg = crate::run_complete_dkg(&config, &mut second_rng).expect("second dkg");
+        let mut mismatched: BTreeMap<u16, _> = (1..=7)
+            .map(|identifier| {
+                let share = second_dkg
+                    .key_packages
+                    .remove(&identifier)
+                    .expect("key package");
+                (identifier, share)
+            })
+            .collect();
         let mut share = mismatched.remove(&1).expect("share one");
         share.frost_identifier = 2;
         mismatched.insert(1, share);
         let error = threshold_sign(
             &config,
-            &dkg.public_key_package,
+            &second_dkg.public_key_package,
             mismatched,
             message,
             &mut rng,
@@ -728,7 +756,7 @@ mod tests {
             .key_packages
             .iter()
             .take(7)
-            .map(|(id, kp)| (*id, kp.clone()))
+            .map(|(id, kp)| (*id, kp))
             .collect();
 
         // Round one: each signer commits locally; only commitments are shared.
@@ -800,7 +828,13 @@ mod tests {
         let dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
 
         // sign_commit rejects an unrostered key package.
-        let mut stranger = dkg.key_packages[&1].clone();
+        let mut stranger_rng = StdRng::seed_from_u64(123);
+        let mut stranger_dkg =
+            crate::run_complete_dkg(&config, &mut stranger_rng).expect("stranger dkg");
+        let mut stranger = stranger_dkg
+            .key_packages
+            .remove(&1)
+            .expect("key package one");
         stranger.frost_identifier = 99;
         assert!(matches!(
             sign_commit(&config, &stranger, b"msg", &mut rng).expect_err("unrostered commit"),

@@ -14,6 +14,7 @@ use exo_root::{
     threshold_sign, unseal_share, verify_root_bundle, verify_root_signature,
 };
 use rand::{SeedableRng, rngs::StdRng};
+use zeroize::Zeroizing;
 
 fn did(index: u16) -> Did {
     Did::new(&format!("did:exo:certifier-{index:02}")).expect("valid did")
@@ -159,16 +160,36 @@ fn submit_complete_dkg_transcript(
     store.dkg_transcript_hash().expect("dkg transcript hash")
 }
 
-fn participant_output(dkg: &RootDkgOutput, identifier: u16) -> RootParticipantDkgOutput {
+fn take_key_packages(
+    dkg: &mut RootDkgOutput,
+    count: usize,
+) -> BTreeMap<u16, exo_root::RootKeyPackage> {
+    let identifiers: Vec<u16> = dkg.key_packages.keys().take(count).copied().collect();
+    identifiers
+        .into_iter()
+        .map(|identifier| {
+            let package = dkg
+                .key_packages
+                .remove(&identifier)
+                .expect("selected key package");
+            (identifier, package)
+        })
+        .collect()
+}
+
+fn participant_output(dkg: &mut RootDkgOutput, identifier: u16) -> RootParticipantDkgOutput {
     RootParticipantDkgOutput {
-        key_package: dkg.key_packages[&identifier].clone(),
+        key_package: dkg
+            .key_packages
+            .remove(&identifier)
+            .expect("participant key package"),
         public_key_package: dkg.public_key_package.clone(),
     }
 }
 
 fn final_key_confirmation_payload(
     config: &GenesisCeremonyConfig,
-    dkg: &RootDkgOutput,
+    dkg: &mut RootDkgOutput,
     identifier: u16,
     dkg_transcript_hash: Hash256,
 ) -> Vec<u8> {
@@ -185,7 +206,7 @@ fn submit_final_key_confirmations(
     store: &mut PortalStore,
     config: &GenesisCeremonyConfig,
     signing_secrets: &BTreeMap<Did, SecretKey>,
-    dkg: &RootDkgOutput,
+    dkg: &mut RootDkgOutput,
     dkg_transcript_hash: Hash256,
     count: u16,
 ) {
@@ -205,7 +226,7 @@ fn submit_final_key_confirmation(
     store: &mut PortalStore,
     config: &GenesisCeremonyConfig,
     signing_secrets: &BTreeMap<Did, SecretKey>,
-    dkg: &RootDkgOutput,
+    dkg: &mut RootDkgOutput,
     dkg_transcript_hash: Hash256,
     identifier: u16,
 ) {
@@ -319,14 +340,9 @@ fn ceremony_config_rejects_all_roster_policy_malformed_inputs() {
 fn frost_dkg_signs_with_7_of_13_and_rejects_6_of_13() {
     let (config, _, _) = config();
     let mut rng = StdRng::seed_from_u64(42);
-    let dkg = run_complete_dkg(&config, &mut rng).expect("dkg");
+    let mut dkg = run_complete_dkg(&config, &mut rng).expect("dkg");
 
-    let selected: BTreeMap<u16, _> = dkg
-        .key_packages
-        .iter()
-        .take(7)
-        .map(|(id, share)| (*id, share.clone()))
-        .collect();
+    let selected = take_key_packages(&mut dkg, 7);
     let message = b"exo root artifact";
     let signature = threshold_sign(
         &config,
@@ -352,12 +368,9 @@ fn frost_dkg_signs_with_7_of_13_and_rejects_6_of_13() {
         "a well-formed root signature must bind exactly to its artifact bytes"
     );
 
-    let too_few: BTreeMap<u16, _> = dkg
-        .key_packages
-        .iter()
-        .take(6)
-        .map(|(id, share)| (*id, share.clone()))
-        .collect();
+    let mut too_few_rng = StdRng::seed_from_u64(42);
+    let mut too_few_dkg = run_complete_dkg(&config, &mut too_few_rng).expect("second dkg");
+    let too_few = take_key_packages(&mut too_few_dkg, 6);
     assert!(
         threshold_sign(&config, &dkg.public_key_package, too_few, message, &mut rng).is_err(),
         "6 signers must not satisfy a 7-of-13 root threshold"
@@ -368,28 +381,26 @@ fn frost_dkg_signs_with_7_of_13_and_rejects_6_of_13() {
 fn threshold_signing_rejects_malformed_public_key_package_and_signer_set() {
     let (config, _, _) = config();
     let mut rng = StdRng::seed_from_u64(43);
-    let dkg = run_complete_dkg(&config, &mut rng).expect("dkg");
-    let selected: BTreeMap<u16, _> = dkg
-        .key_packages
-        .iter()
-        .take(7)
-        .map(|(id, share)| (*id, share.clone()))
-        .collect();
+    let mut dkg = run_complete_dkg(&config, &mut rng).expect("dkg");
 
     let mut malformed_public = dkg.public_key_package.clone();
     malformed_public.public_key_package = b"not a public package".to_vec();
+    let malformed_public_shares = take_key_packages(&mut dkg, 7);
     assert!(
         threshold_sign(
             &config,
             &malformed_public,
-            selected.clone(),
+            malformed_public_shares,
             b"artifact",
             &mut rng
         )
         .is_err()
     );
 
-    let mut nonrostered = selected.clone();
+    let mut nonrostered_rng = StdRng::seed_from_u64(43);
+    let mut nonrostered_dkg =
+        run_complete_dkg(&config, &mut nonrostered_rng).expect("nonrostered dkg");
+    let mut nonrostered = take_key_packages(&mut nonrostered_dkg, 7);
     let replacement = nonrostered.remove(&1).expect("share");
     nonrostered.insert(99, replacement);
     assert!(
@@ -403,7 +414,10 @@ fn threshold_signing_rejects_malformed_public_key_package_and_signer_set() {
         .is_err()
     );
 
-    let mut mismatched = selected.clone();
+    let mut mismatched_rng = StdRng::seed_from_u64(43);
+    let mut mismatched_dkg =
+        run_complete_dkg(&config, &mut mismatched_rng).expect("mismatched dkg");
+    let mut mismatched = take_key_packages(&mut mismatched_dkg, 7);
     let mut share = mismatched.remove(&1).expect("share");
     share.frost_identifier = 2;
     mismatched.insert(1, share);
@@ -418,9 +432,10 @@ fn threshold_signing_rejects_malformed_public_key_package_and_signer_set() {
         .is_err()
     );
 
-    let mut malformed_share = selected;
-    malformed_share.get_mut(&1).expect("share").key_package =
-        b"not a key package".to_vec().into();
+    let mut malformed_rng = StdRng::seed_from_u64(43);
+    let mut malformed_dkg = run_complete_dkg(&config, &mut malformed_rng).expect("malformed dkg");
+    let mut malformed_share = take_key_packages(&mut malformed_dkg, 7);
+    malformed_share.get_mut(&1).expect("share").key_package = b"not a key package".to_vec().into();
     assert!(
         threshold_sign(
             &config,
@@ -432,18 +447,13 @@ fn threshold_signing_rejects_malformed_public_key_package_and_signer_set() {
         .is_err()
     );
 
-    let mut internal_mismatch: BTreeMap<u16, _> = dkg
-        .key_packages
-        .iter()
-        .take(7)
-        .map(|(id, share)| (*id, share.clone()))
-        .collect();
-    internal_mismatch.get_mut(&1).expect("share 1").key_package = dkg
-        .key_packages
-        .get(&2)
-        .expect("share 2")
-        .key_package
-        .clone();
+    let mut internal_rng = StdRng::seed_from_u64(43);
+    let mut internal_dkg =
+        run_complete_dkg(&config, &mut internal_rng).expect("internal mismatch dkg");
+    let mut replacement = internal_dkg.key_packages.remove(&2).expect("share 2");
+    let mut internal_mismatch = take_key_packages(&mut internal_dkg, 7);
+    internal_mismatch.get_mut(&1).expect("share 1").key_package =
+        std::mem::take(&mut replacement.key_package);
     assert!(
         threshold_sign(
             &config,
@@ -472,13 +482,8 @@ fn threshold_signing_rejects_foreign_valid_dkg_share_set() {
     let mut first_rng = StdRng::seed_from_u64(4301);
     let first_dkg = run_complete_dkg(&config, &mut first_rng).expect("first dkg");
     let mut second_rng = StdRng::seed_from_u64(4302);
-    let second_dkg = run_complete_dkg(&config, &mut second_rng).expect("second dkg");
-    let foreign_shares: BTreeMap<u16, _> = second_dkg
-        .key_packages
-        .iter()
-        .take(7)
-        .map(|(id, share)| (*id, share.clone()))
-        .collect();
+    let mut second_dkg = run_complete_dkg(&config, &mut second_rng).expect("second dkg");
+    let foreign_shares = take_key_packages(&mut second_dkg, 7);
 
     assert!(
         threshold_sign(
@@ -519,7 +524,7 @@ fn dkg_round_wrappers_complete_all_thirteen_and_reject_missing_peer_packages() {
     );
 
     let mut round2_outputs = BTreeMap::new();
-    let mut round2_by_recipient: BTreeMap<u16, BTreeMap<u16, Vec<u8>>> = BTreeMap::new();
+    let mut round2_by_recipient: BTreeMap<u16, BTreeMap<u16, Zeroizing<Vec<u8>>>> = BTreeMap::new();
     for (identifier, round1_output) in &round1_outputs {
         let peer_round1 = round1_public
             .iter()
@@ -597,7 +602,7 @@ fn dkg_round_wrappers_reject_valid_but_misbound_peer_packages() {
     );
 
     let mut round2_outputs = BTreeMap::new();
-    let mut round2_by_recipient: BTreeMap<u16, BTreeMap<u16, Vec<u8>>> = BTreeMap::new();
+    let mut round2_by_recipient: BTreeMap<u16, BTreeMap<u16, Zeroizing<Vec<u8>>>> = BTreeMap::new();
     for (identifier, round1_output) in &round1_outputs {
         let participant_peer_round1 = round1_public
             .iter()
@@ -739,7 +744,7 @@ fn dkg_round_wrappers_reject_malformed_or_misaddressed_packages() {
     );
 
     let mut malformed_round2 = round2.round2_packages.clone();
-    malformed_round2.insert(2, b"not a round2 package".to_vec());
+    malformed_round2.insert(2, Zeroizing::new(b"not a round2 package".to_vec()));
     assert!(
         dkg_finalize_participant(
             &config,
@@ -784,7 +789,7 @@ fn dkg_round_wrappers_reject_malformed_or_misaddressed_packages() {
 fn root_bundle_verification_rejects_tampered_delegation() {
     let (config, _, _) = config();
     let mut rng = StdRng::seed_from_u64(99);
-    let dkg = run_complete_dkg(&config, &mut rng).expect("dkg");
+    let mut dkg = run_complete_dkg(&config, &mut rng).expect("dkg");
     let delegation = RootIssuerDelegation {
         issuer_did: Did::new("did:exo:avc-issuer").expect("valid did"),
         issuer_public_key: PublicKey::from_bytes([0x44; 32]),
@@ -794,14 +799,11 @@ fn root_bundle_verification_rejects_tampered_delegation() {
         purpose: "Delegate operational AVC issuing authority".into(),
     };
     let transcript_hash = Hash256::digest(b"transcript");
+    let signing_packages = take_key_packages(&mut dkg, 7);
     let root_signature = threshold_sign(
         &config,
         &dkg.public_key_package,
-        dkg.key_packages
-            .iter()
-            .take(7)
-            .map(|(k, v)| (*k, v.clone()))
-            .collect(),
+        signing_packages,
         &delegation
             .root_artifact_payload(&config, &dkg.public_key_package, transcript_hash)
             .expect("payload"),
@@ -829,7 +831,7 @@ fn root_bundle_rejects_public_key_package_metadata_mismatch() {
     let mut first_rng = StdRng::seed_from_u64(301);
     let mut second_rng = StdRng::seed_from_u64(302);
     let first_dkg = run_complete_dkg(&config, &mut first_rng).expect("first dkg");
-    let second_dkg = run_complete_dkg(&config, &mut second_rng).expect("second dkg");
+    let mut second_dkg = run_complete_dkg(&config, &mut second_rng).expect("second dkg");
     let mut mixed_public = second_dkg.public_key_package.clone();
     mixed_public.public_key_package = first_dkg.public_key_package.public_key_package;
     let delegation = RootIssuerDelegation {
@@ -845,15 +847,11 @@ fn root_bundle_rejects_public_key_package_metadata_mismatch() {
         .root_artifact_payload(&config, &mixed_public, transcript_hash)
         .expect("payload");
     let mut signing_rng = StdRng::seed_from_u64(303);
+    let signing_packages = take_key_packages(&mut second_dkg, 7);
     let root_signature = threshold_sign(
         &config,
         &second_dkg.public_key_package,
-        second_dkg
-            .key_packages
-            .iter()
-            .take(7)
-            .map(|(k, v)| (*k, v.clone()))
-            .collect(),
+        signing_packages,
         &payload,
         &mut signing_rng,
     )
@@ -906,7 +904,7 @@ fn root_artifact_payload_rejects_unbounded_delegation() {
 fn root_bundle_verification_rejects_tampered_config_transcript_signature_and_id() {
     let (config, _, _) = config();
     let mut rng = StdRng::seed_from_u64(100);
-    let dkg = run_complete_dkg(&config, &mut rng).expect("dkg");
+    let mut dkg = run_complete_dkg(&config, &mut rng).expect("dkg");
     let delegation = RootIssuerDelegation {
         issuer_did: Did::new("did:exo:avc-issuer").expect("valid did"),
         issuer_public_key: PublicKey::from_bytes([0x55; 32]),
@@ -919,14 +917,11 @@ fn root_bundle_verification_rejects_tampered_config_transcript_signature_and_id(
     let payload = delegation
         .root_artifact_payload(&config, &dkg.public_key_package, transcript_hash)
         .expect("payload");
+    let signing_packages = take_key_packages(&mut dkg, 7);
     let root_signature = threshold_sign(
         &config,
         &dkg.public_key_package,
-        dkg.key_packages
-            .iter()
-            .take(7)
-            .map(|(k, v)| (*k, v.clone()))
-            .collect(),
+        signing_packages,
         &payload,
         &mut rng,
     )
@@ -1314,6 +1309,9 @@ fn final_key_confirmation_gates_root_signing_and_final_transcript_hash() {
     let (config, signing_secrets, _) = config();
     let mut rng = StdRng::seed_from_u64(2126);
     let dkg = run_complete_dkg(&config, &mut rng).expect("dkg");
+    let mut confirmation_rng = StdRng::seed_from_u64(2126);
+    let mut confirmation_dkg =
+        run_complete_dkg(&config, &mut confirmation_rng).expect("confirmation dkg");
     let mut store = PortalStore::new(config.clone());
     let dkg_transcript_hash =
         submit_complete_dkg_transcript(&mut store, &config, &signing_secrets, &mut rng);
@@ -1340,7 +1338,7 @@ fn final_key_confirmation_gates_root_signing_and_final_transcript_hash() {
         &mut store,
         &config,
         &signing_secrets,
-        &dkg,
+        &mut confirmation_dkg,
         dkg_transcript_hash,
         12,
     );
@@ -1364,7 +1362,7 @@ fn final_key_confirmation_gates_root_signing_and_final_transcript_hash() {
         &mut store,
         &config,
         &signing_secrets,
-        &dkg,
+        &mut confirmation_dkg,
         dkg_transcript_hash,
         13,
     );
@@ -1476,13 +1474,19 @@ fn final_key_confirmation_gates_root_signing_and_final_transcript_hash() {
 fn final_key_confirmation_rejects_sender_hash_and_duplicate_mismatches() {
     let (config, signing_secrets, _) = config();
     let mut rng = StdRng::seed_from_u64(2226);
-    let dkg = run_complete_dkg(&config, &mut rng).expect("dkg");
+    let mut dkg = run_complete_dkg(&config, &mut rng).expect("dkg");
+    let mut accepted_rng = StdRng::seed_from_u64(2226);
+    let mut accepted_dkg =
+        run_complete_dkg(&config, &mut accepted_rng).expect("accepted confirmation dkg");
+    let mut duplicate_rng = StdRng::seed_from_u64(2226);
+    let mut duplicate_dkg =
+        run_complete_dkg(&config, &mut duplicate_rng).expect("duplicate confirmation dkg");
     let mut store = PortalStore::new(config.clone());
     let dkg_transcript_hash =
         submit_complete_dkg_transcript(&mut store, &config, &signing_secrets, &mut rng);
 
     // Payload certifier DID/FROST id must match the signed envelope sender.
-    let id1_payload = final_key_confirmation_payload(&config, &dkg, 1, dkg_transcript_hash);
+    let id1_payload = final_key_confirmation_payload(&config, &mut dkg, 1, dkg_transcript_hash);
     assert!(
         store
             .submit(sign_envelope(
@@ -1502,7 +1506,7 @@ fn final_key_confirmation_rejects_sender_hash_and_duplicate_mismatches() {
         &mut store,
         &config,
         &signing_secrets,
-        &dkg,
+        &mut accepted_dkg,
         dkg_transcript_hash,
         1,
     );
@@ -1516,15 +1520,23 @@ fn final_key_confirmation_rejects_sender_hash_and_duplicate_mismatches() {
                 CeremonyPayloadKind::FinalKeyConfirmation,
                 None,
                 5_101,
-                final_key_confirmation_payload(&config, &dkg, 1, dkg_transcript_hash),
+                final_key_confirmation_payload(
+                    &config,
+                    &mut duplicate_dkg,
+                    1,
+                    dkg_transcript_hash,
+                ),
             ))
             .is_err(),
         "at most one final key confirmation is accepted per certifier"
     );
 
-    let mut tampered =
-        build_final_key_confirmation(&config, &participant_output(&dkg, 2), dkg_transcript_hash)
-            .expect("confirmation");
+    let mut tampered = build_final_key_confirmation(
+        &config,
+        &participant_output(&mut dkg, 2),
+        dkg_transcript_hash,
+    )
+    .expect("confirmation");
     tampered.root_public_key_hash = Hash256::digest(b"wrong root key hash");
     assert!(
         store
