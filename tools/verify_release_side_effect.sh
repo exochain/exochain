@@ -17,7 +17,16 @@
 
 set -euo pipefail
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+github_sha="${GITHUB_SHA:-}"
+if ! [[ "$github_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "GITHUB_SHA must be a full lowercase 40-character commit SHA." >&2
+  exit 1
+fi
 
-bash "$script_dir/verify_release_source.sh"
-bash "$script_dir/verify_release_tag.sh"
+# This wrapper and both child guards are loaded from the immutable workflow
+# dispatch commit. A build tool or npm lifecycle script may mutate checkout
+# files, but it cannot replace the guard code executed at a release boundary.
+GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_source.sh" | \
+  GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash
+GIT_NO_REPLACE_OBJECTS=1 git show "${GITHUB_SHA}:tools/verify_release_tag.sh" | \
+  GIT_NO_REPLACE_OBJECTS=1 BASH_ENV=/dev/null bash

@@ -44,6 +44,15 @@ if [ "$head_sha" != "$expected_commit_sha" ] \
   fail "identity mismatch: HEAD=${head_sha}, expected=${expected_commit_sha}, dispatch=${dispatch_sha}, trusted_ref=${trusted_release_ref}"
 fi
 
+# `git status` deliberately honors assume-unchanged and skip-worktree index
+# flags. Release jobs never need either optimization, so reject them before
+# assessing cleanliness; otherwise a lifecycle script could hide a tracked
+# mutation from the final source boundary.
+hidden_index_paths="$(git ls-files -v | awk '$1 ~ /^[a-zS]$/ { print substr($0, 3) }')"
+if [ -n "$hidden_index_paths" ]; then
+  fail "tracked paths must not use assume-unchanged or skip-worktree flags: ${hidden_index_paths//$'\n'/, }"
+fi
+
 case "$source_clean_mode" in
   all)
     if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
