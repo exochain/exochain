@@ -44,7 +44,7 @@ hkdf = { workspace = true }
 sha2 = { workspace = true }
 x25519-dalek = { workspace = true }
 argon2 = { workspace = true }
-zeroize = { workspace = true }
+zeroize = { workspace = true, features = ["serde"] }
 rand = { workspace = true }
 
 [dev-dependencies]

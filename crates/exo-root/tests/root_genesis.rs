@@ -419,7 +419,8 @@ fn threshold_signing_rejects_malformed_public_key_package_and_signer_set() {
     );
 
     let mut malformed_share = selected;
-    malformed_share.get_mut(&1).expect("share").key_package = b"not a key package".to_vec();
+    malformed_share.get_mut(&1).expect("share").key_package =
+        b"not a key package".to_vec().into();
     assert!(
         threshold_sign(
             &config,
