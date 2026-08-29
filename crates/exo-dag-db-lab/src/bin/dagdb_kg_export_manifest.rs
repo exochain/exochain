@@ -4,7 +4,9 @@ use std::{
     path::PathBuf,
 };
 
-use exo_dag_db_lab::kg_markdown_manifest::build_manifest;
+use exo_dag_db_lab::kg_markdown_manifest::{
+    MAX_JSON_FILE_BYTES, build_manifest, serialize_pretty_json_bounded,
+};
 
 fn main() {
     if let Err(error) = run() {
@@ -16,9 +18,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let args = parse_args(env::args().skip(1).collect())?;
     let manifest = build_manifest(&args.root)?;
-    let encoded = serde_json::to_string_pretty(&manifest)
-        .map_err(|error| format!("serialize manifest: {error}"))?
-        + "\n";
+    let encoded = serialize_pretty_json_bounded(&manifest, MAX_JSON_FILE_BYTES, "manifest output")?;
 
     if let Some(output) = args.output {
         if let Some(parent) = output.parent() {
@@ -28,7 +28,7 @@ fn run() -> Result<(), String> {
         fs::write(&output, encoded).map_err(|error| format!("write output: {error}"))?;
     } else {
         io::stdout()
-            .write_all(encoded.as_bytes())
+            .write_all(&encoded)
             .map_err(|error| format!("write stdout: {error}"))?;
     }
     Ok(())
