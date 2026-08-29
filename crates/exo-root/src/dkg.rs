@@ -585,41 +585,39 @@ where
         round1_outputs.insert(certifier.frost_identifier, output);
     }
 
-    let mut round2_outputs = BTreeMap::new();
+    let mut round2_secrets = BTreeMap::new();
     let mut round2_by_recipient: BTreeMap<u16, BTreeMap<u16, Zeroizing<Vec<u8>>>> = BTreeMap::new();
-    for (identifier, round1_output) in &round1_outputs {
-        let peer_round1 = peer_packages_except(&round1_public, *identifier);
+    for (identifier, round1_output) in round1_outputs {
+        let peer_round1 = peer_packages_except(&round1_public, identifier);
         let secret = &round1_output.round1_secret_package;
-        let round2 = dkg_round2(config, *identifier, secret, peer_round1)?;
-        for (recipient, package) in &round2.round2_packages {
-            let recipient_packages = round2_by_recipient.entry(*recipient).or_default();
-            recipient_packages.insert(*identifier, package.clone());
+        let round2 = dkg_round2(config, identifier, secret, peer_round1)?;
+        for (recipient, package) in round2.round2_packages {
+            let recipient_packages = round2_by_recipient.entry(recipient).or_default();
+            recipient_packages.insert(identifier, package);
         }
-        round2_outputs.insert(*identifier, round2);
+        round2_secrets.insert(identifier, round2.round2_secret_package);
     }
 
     let mut key_packages = BTreeMap::new();
     let finish = dkg_finalize_participant;
     let first_identifier = config.certifiers[0].frost_identifier;
-    let output = &round2_outputs[&first_identifier];
-    let fr1 = peer_packages_except(&round1_public, first_identifier);
-    let fs = &output.round2_secret_package;
-    let fr2 = round2_by_recipient[&first_identifier].clone();
-    let first_participant = finish(config, first_identifier, fs, fr1, fr2)?;
-    let public_key_package = first_participant.public_key_package;
-    key_packages.insert(first_identifier, first_participant.key_package);
-
-    for (identifier, round2_output) in round2_outputs
-        .iter()
-        .filter(|(identifier, _)| **identifier != first_identifier)
-    {
-        let identifier = *identifier;
+    let mut public_key_package = None;
+    for (identifier, round2_secret) in round2_secrets {
         let peer_round1 = peer_packages_except(&round1_public, identifier);
-        let secret = &round2_output.round2_secret_package;
-        let round2 = round2_by_recipient[&identifier].clone();
-        let participant = finish(config, identifier, secret, peer_round1, round2)?;
+        let round2 = round2_by_recipient
+            .remove(&identifier)
+            .ok_or_else(|| RootError::Frost {
+                detail: format!("missing recipient-bound round-two packages for {identifier}"),
+            })?;
+        let participant = finish(config, identifier, &round2_secret, peer_round1, round2)?;
+        if identifier == first_identifier {
+            public_key_package = Some(participant.public_key_package);
+        }
         key_packages.insert(identifier, participant.key_package);
     }
+    let public_key_package = public_key_package.ok_or_else(|| RootError::Frost {
+        detail: "missing first participant public key package".to_owned(),
+    })?;
 
     Ok(RootDkgOutput {
         key_packages,
@@ -908,6 +906,31 @@ mod tests {
                 .count(),
             1,
             "signing nonces must use the shared visitor"
+        );
+        let complete_dkg = dkg_source
+            .split("pub fn run_complete_dkg")
+            .nth(1)
+            .expect("complete DKG implementation")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("complete DKG ends before tests");
+        for forbidden in [
+            "recipient_packages.insert(*identifier, package.clone())",
+            "round2_by_recipient[&first_identifier].clone()",
+            "round2_by_recipient[&identifier].clone()",
+        ] {
+            assert!(
+                !complete_dkg.contains(forbidden),
+                "complete DKG must move each recipient secret exactly once: {forbidden}"
+            );
+        }
+        assert!(
+            complete_dkg.contains("for (recipient, package) in round2.round2_packages"),
+            "complete DKG must consume outbound recipient packages"
+        );
+        assert!(
+            complete_dkg.contains("round2_by_recipient\n            .remove(&identifier)"),
+            "complete DKG must remove each recipient map for finalization"
         );
     }
 
