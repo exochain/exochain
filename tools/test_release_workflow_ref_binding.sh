@@ -25,9 +25,15 @@ fail() {
 workflow=".github/workflows/release.yml"
 source_guard="tools/verify_release_source.sh"
 tag_guard="tools/verify_release_tag.sh"
+side_effect_guard="tools/verify_release_side_effect.sh"
 [[ -f "$workflow" ]] || fail "$workflow is missing"
 [[ -f "$source_guard" ]] || fail "$source_guard is missing"
 [[ -f "$tag_guard" ]] || fail "$tag_guard is missing"
+[[ -f "$side_effect_guard" ]] || fail "$side_effect_guard is missing"
+grep -F 'bash "$script_dir/verify_release_source.sh"' "$side_effect_guard" >/dev/null \
+  || fail "$side_effect_guard must verify immutable source identity and cleanliness first"
+grep -F 'bash "$script_dir/verify_release_tag.sh"' "$side_effect_guard" >/dev/null \
+  || fail "$side_effect_guard must verify the exact current remote tag after source identity"
 
 # Parse the workflow as YAML and reject duplicate mapping keys. YAML parsers
 # otherwise commonly accept the last duplicate silently, which can replace a
@@ -58,7 +64,75 @@ def assert_unique_mapping_keys(node, source, path = "$")
 end
 
 workflow_path = ARGV.fetch(0)
-assert_unique_mapping_keys(Psych.parse_file(workflow_path), workflow_path)
+workflow_document = Psych.parse_file(workflow_path)
+assert_unique_mapping_keys(workflow_document, workflow_path)
+
+def mapping_value(mapping, key_name)
+  return nil unless mapping.is_a?(Psych::Nodes::Mapping)
+
+  mapping.children.each_slice(2) do |key, value|
+    return value if key.is_a?(Psych::Nodes::Scalar) && key.value == key_name
+  end
+  nil
+end
+
+def scalar_mapping(mapping)
+  raise "expected a YAML mapping" unless mapping.is_a?(Psych::Nodes::Mapping)
+
+  mapping.children.each_slice(2).to_h do |key, value|
+    raise "expected scalar mapping key" unless key.is_a?(Psych::Nodes::Scalar)
+    raise "expected scalar mapping value for #{key.value}" unless value.is_a?(Psych::Nodes::Scalar)
+    [key.value, value.value]
+  end
+end
+
+root = workflow_document.root
+jobs = mapping_value(root, "jobs")
+raise "#{workflow_path}: jobs mapping is missing" unless jobs.is_a?(Psych::Nodes::Mapping)
+workflow_permissions = mapping_value(root, "permissions")
+unless workflow_permissions && scalar_mapping(workflow_permissions) == { "contents" => "read" }
+  raise "#{workflow_path}: workflow default permissions must be exactly contents: read"
+end
+
+expected_permissions = {
+  "validate-release-inputs" => { "contents" => "read" },
+  "verify-signed-tag" => { "contents" => "read" },
+  "release-build" => { "contents" => "read" },
+  "sbom-and-attest" => {
+    "contents" => "read",
+    "attestations" => "write",
+    "id-token" => "write"
+  },
+  "publish" => { "contents" => "read" },
+  "publish-wasm-npm" => { "contents" => "read", "id-token" => "write" },
+  "publish-llm-proxy-npm" => { "contents" => "read", "id-token" => "write" },
+  "github-release" => { "contents" => "write" }
+}
+
+jobs.children.each_slice(2) do |job_key, job|
+  next unless job_key.is_a?(Psych::Nodes::Scalar) && job.is_a?(Psych::Nodes::Mapping)
+
+  job_name = job_key.value
+  steps = mapping_value(job, "steps")
+  has_checkout = steps.is_a?(Psych::Nodes::Sequence) && steps.children.any? do |step|
+    uses = mapping_value(step, "uses")
+    uses.is_a?(Psych::Nodes::Scalar) && uses.value.start_with?("actions/checkout@")
+  end
+  permissions = mapping_value(job, "permissions")
+
+  if has_checkout
+    raise "#{workflow_path}: #{job_name} checkout job needs an explicit least-privilege permissions block" unless permissions
+    actual = scalar_mapping(permissions)
+    expected = expected_permissions.fetch(job_name) do
+      raise "#{workflow_path}: no reviewed least-privilege permission set for checkout job #{job_name}"
+    end
+    unless actual == expected
+      raise "#{workflow_path}: #{job_name} permissions #{actual.inspect} must equal #{expected.inspect}"
+    end
+  elsif permissions
+    raise "#{workflow_path}: unexpected unreviewed permissions block on #{job_name}" unless expected_permissions.key?(job_name)
+  end
+end
 
 fixture = Psych.parse_stream("jobs:\n  publish:\n    steps:\n      - run: guarded\n        run: unguarded\n")
 begin
@@ -137,6 +211,18 @@ run_tag_guard() {
 
 run_tag_guard false "$fixture_tag_object" "$fixture_tag_commit" >/dev/null \
   || fail "tag guard must accept the exact remote annotated-tag object and peeled commit"
+(
+  cd "$fixture_dir"
+  RELEASE_SOURCE_CLEAN_MODE=all \
+    DRY_RUN=false \
+    RELEASE_TAG="$release_tag" \
+    EXPECTED_TAG_OBJECT_SHA="$fixture_tag_object" \
+    EXPECTED_TAG_COMMIT_SHA="$fixture_tag_commit" \
+    EXPECTED_COMMIT_SHA="$fixture_sha" \
+    GITHUB_SHA="$fixture_sha" \
+    TRUSTED_RELEASE_REF="$fixture_sha" \
+    bash "$repo_root/$side_effect_guard"
+) >/dev/null || fail "combined side-effect guard must accept one exact clean signed-source boundary"
 git -C "$fixture_dir" tag -f -a "$release_tag" -m "retargeted object" "$fixture_sha" >/dev/null
 git -C "$fixture_dir" push -q --force origin "refs/tags/$release_tag"
 if run_tag_guard false "$fixture_tag_object" "$fixture_tag_commit" >/dev/null 2>&1; then
@@ -162,6 +248,36 @@ fi
 printf 'untracked\n' > "$fixture_dir/untracked.txt"
 if run_source_guard "$fixture_sha" "$fixture_sha" "$fixture_sha" >/dev/null 2>&1; then
   fail "source guard must reject an untracked dirty checkout"
+fi
+(
+  cd "$fixture_dir"
+  RELEASE_SOURCE_CLEAN_MODE=tracked \
+    EXPECTED_COMMIT_SHA="$fixture_sha" \
+    GITHUB_SHA="$fixture_sha" \
+    TRUSTED_RELEASE_REF="$fixture_sha" \
+    bash "$repo_root/$source_guard"
+) >/dev/null || fail "tracked-source mode must permit intentionally generated untracked artifacts"
+printf 'mutated\n' >> "$fixture_dir/tracked.txt"
+if (
+  cd "$fixture_dir"
+  RELEASE_SOURCE_CLEAN_MODE=tracked \
+    EXPECTED_COMMIT_SHA="$fixture_sha" \
+    GITHUB_SHA="$fixture_sha" \
+    TRUSTED_RELEASE_REF="$fixture_sha" \
+    bash "$repo_root/$source_guard"
+) >/dev/null 2>&1; then
+  fail "tracked-source mode must reject a modified tracked source file"
+fi
+git -C "$fixture_dir" restore tracked.txt
+if (
+  cd "$fixture_dir"
+  RELEASE_SOURCE_CLEAN_MODE=invalid \
+    EXPECTED_COMMIT_SHA="$fixture_sha" \
+    GITHUB_SHA="$fixture_sha" \
+    TRUSTED_RELEASE_REF="$fixture_sha" \
+    bash "$repo_root/$source_guard"
+) >/dev/null 2>&1; then
+  fail "source guard must reject an unknown cleanliness mode"
 fi
 
 job_block() {
@@ -214,12 +330,88 @@ for job in release-build sbom-and-attest publish publish-wasm-npm publish-llm-pr
   fi
 done
 
+assert_side_effect_guard_count() {
+  local job="$1"
+  local expected_count="$2"
+  local block
+  local actual_count
+  block=$(job_block "$job")
+  actual_count=$(grep -cF 'verify_release_side_effect.sh' <<<"$block" || true)
+  if [ "$actual_count" -ne "$expected_count" ]; then
+    fail "job $job must run the final side-effect guard $expected_count times, got $actual_count"
+  fi
+}
+
+assert_guard_immediately_before_step() {
+  local job="$1"
+  local guard_name="$2"
+  local side_effect_name="$3"
+  local block
+  local guard_line
+  local side_effect_line
+  local between
+  block=$(job_block "$job")
+  guard_line=$(grep -nF "name: $guard_name" <<<"$block" | cut -d: -f1)
+  side_effect_line=$(grep -nF "name: $side_effect_name" <<<"$block" | cut -d: -f1)
+  [[ -n "$guard_line" ]] || fail "job $job is missing boundary step $guard_name"
+  [[ -n "$side_effect_line" ]] || fail "job $job is missing side-effect step $side_effect_name"
+  if [ "$guard_line" -ge "$side_effect_line" ]; then
+    fail "job $job must run $guard_name before $side_effect_name"
+  fi
+  between=$(sed -n "$((guard_line + 1)),$((side_effect_line - 1))p" <<<"$block")
+  grep -F 'verify_release_side_effect.sh' <<<"$between" >/dev/null \
+    || fail "job $job boundary $guard_name must execute the shared final side-effect guard"
+  if grep -E '^[[:space:]]+- (name:|uses:)' <<<"$between" >/dev/null; then
+    fail "job $job must run no other step between $guard_name and $side_effect_name"
+  fi
+}
+
+assert_side_effect_guard_count release-build 3
+assert_guard_immediately_before_step release-build \
+  "Reverify source and tag immediately before release build" "Build release"
+assert_guard_immediately_before_step release-build \
+  "Reverify source and tag immediately before artifact packaging" "Package artifacts"
+assert_guard_immediately_before_step release-build \
+  "Reverify source and tag immediately before artifact upload" "Upload artifacts"
+
+assert_side_effect_guard_count sbom-and-attest 4
+assert_guard_immediately_before_step sbom-and-attest \
+  "Reverify source and tag immediately before archive collection" "Collect release archives"
+assert_guard_immediately_before_step sbom-and-attest \
+  "Reverify source and tag immediately before SBOM generation" "Generate CycloneDX SBOM"
+assert_guard_immediately_before_step sbom-and-attest \
+  "Reverify source and tag immediately before SBOM upload" "Upload SBOM artifacts"
+assert_guard_immediately_before_step sbom-and-attest \
+  "Reverify source and tag immediately before provenance attestation" "Attest build provenance (SLSA Level 2)"
+
+assert_side_effect_guard_count publish 2
+
+assert_side_effect_guard_count publish-wasm-npm 4
+assert_guard_immediately_before_step publish-wasm-npm \
+  "Reverify source and tag immediately before WASM build" "Build scoped WASM npm package"
+assert_guard_immediately_before_step publish-wasm-npm \
+  "Reverify source and tag immediately before WASM package preparation" "Prepare scoped WASM npm package"
+assert_guard_immediately_before_step publish-wasm-npm \
+  "Reverify source and tag immediately before WASM dry-pack" "Dry-pack WASM npm package"
+
+assert_side_effect_guard_count publish-llm-proxy-npm 4
+assert_guard_immediately_before_step publish-llm-proxy-npm \
+  "Reverify source and tag immediately before LYNK coverage" "Run LYNK package coverage gate"
+assert_guard_immediately_before_step publish-llm-proxy-npm \
+  "Reverify source and tag immediately before LYNK build" "Build LYNK npm package"
+assert_guard_immediately_before_step publish-llm-proxy-npm \
+  "Reverify source and tag immediately before LYNK dry-pack" "Dry-pack LYNK npm package"
+
+assert_side_effect_guard_count github-release 1
+assert_guard_immediately_before_step github-release \
+  "Reverify source and tag immediately before release creation" "Create release"
+
 github_release_block=$(job_block "github-release")
-github_tag_verify_count=$(grep -cF 'run: bash tools/verify_release_tag.sh' <<<"$github_release_block")
-if [ "$github_tag_verify_count" -ne 2 ]; then
-  fail "github-release must revalidate the remote tag both after checkout and immediately before release creation"
+github_initial_tag_verify_count=$(grep -cF 'run: bash tools/verify_release_tag.sh' <<<"$github_release_block")
+if [ "$github_initial_tag_verify_count" -ne 1 ]; then
+  fail "github-release must validate the remote tag after checkout before running job work"
 fi
-last_tag_verify_line=$(grep -nF 'run: bash tools/verify_release_tag.sh' <<<"$github_release_block" | tail -n 1 | cut -d: -f1)
+last_tag_verify_line=$(grep -nF 'verify_release_side_effect.sh' <<<"$github_release_block" | tail -n 1 | cut -d: -f1)
 create_release_step_line=$(grep -nF 'name: Create release' <<<"$github_release_block" | head -n 1 | cut -d: -f1)
 if [ "$last_tag_verify_line" -ge "$create_release_step_line" ]; then
   fail "github-release tag revalidation must run immediately before the release-creation action"

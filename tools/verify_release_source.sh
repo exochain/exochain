@@ -25,6 +25,7 @@ fail() {
 expected_commit_sha="${EXPECTED_COMMIT_SHA:-}"
 dispatch_sha="${GITHUB_SHA:-}"
 trusted_release_ref="${TRUSTED_RELEASE_REF:-}"
+source_clean_mode="${RELEASE_SOURCE_CLEAN_MODE:-all}"
 
 for entry in \
   "EXPECTED_COMMIT_SHA:$expected_commit_sha" \
@@ -43,8 +44,20 @@ if [ "$head_sha" != "$expected_commit_sha" ] \
   fail "identity mismatch: HEAD=${head_sha}, expected=${expected_commit_sha}, dispatch=${dispatch_sha}, trusted_ref=${trusted_release_ref}"
 fi
 
-if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
-  fail "checkout must be clean"
-fi
+case "$source_clean_mode" in
+  all)
+    if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
+      fail "checkout must be clean, including untracked files"
+    fi
+    ;;
+  tracked)
+    if [ -n "$(git status --porcelain=v1 --untracked-files=no)" ]; then
+      fail "tracked release source must be clean"
+    fi
+    ;;
+  *)
+    fail "RELEASE_SOURCE_CLEAN_MODE must be all or tracked"
+    ;;
+esac
 
-printf 'Verified immutable release source %s\n' "$head_sha"
+printf 'Verified immutable release source %s with %s cleanliness\n' "$head_sha" "$source_clean_mode"

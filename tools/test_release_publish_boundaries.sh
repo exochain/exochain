@@ -71,8 +71,41 @@ grep -F 'try again after' <<<"$publish_block" >/dev/null \
   || fail "publish job must parse crates.io retry-after evidence"
 grep -F 'sleep "$retry_seconds"' <<<"$publish_block" >/dev/null \
   || fail "publish job must wait before retrying crates.io rate-limited publishes"
-grep -F 'cargo publish -p "$crate" --locked --allow-dirty' <<<"$publish_block" >/dev/null \
+grep -F 'cargo publish -p "$crate" --locked' <<<"$publish_block" >/dev/null \
   || fail "publish job must publish every crate without refreshing the lockfile"
+grep -F 'cargo publish -p "$crate" --dry-run --locked' <<<"$publish_block" >/dev/null \
+  || fail "publish job must dry-run every crate without refreshing the lockfile"
+if grep -F -- '--allow-dirty' <<<"$publish_block" >/dev/null; then
+  fail "signed-source-bound cargo publication must not bypass Cargo's dirty-source rejection"
+fi
+
+live_guard_line=$(grep -nF 'bash tools/verify_release_side_effect.sh' <<<"$publish_block" | head -n 1 | cut -d: -f1)
+live_publish_line=$(grep -nF 'cargo publish -p "$crate" --locked' <<<"$publish_block" | head -n 1 | cut -d: -f1)
+[[ -n "$live_guard_line" ]] || fail "each live cargo publish retry must reverify source and tag identity"
+if [ "$live_guard_line" -ge "$live_publish_line" ]; then
+  fail "live cargo publish must reverify source and tag before every attempt"
+fi
+live_between=""
+if [ "$live_publish_line" -gt "$((live_guard_line + 1))" ]; then
+  live_between=$(sed -n "$((live_guard_line + 1)),$((live_publish_line - 1))p" <<<"$publish_block")
+fi
+if grep -E 'cargo (publish|package)' <<<"$live_between" >/dev/null; then
+  fail "no cargo artifact side effect may occur between live revalidation and publish"
+fi
+
+dry_guard_line=$(grep -nF 'bash tools/verify_release_side_effect.sh' <<<"$publish_block" | tail -n 1 | cut -d: -f1)
+dry_publish_line=$(grep -nF 'cargo publish -p "$crate" --dry-run --locked' <<<"$publish_block" | head -n 1 | cut -d: -f1)
+[[ -n "$dry_guard_line" ]] || fail "each cargo publish dry-run must reverify source and tag identity"
+if [ "$dry_guard_line" -ge "$dry_publish_line" ]; then
+  fail "cargo publish dry-run must reverify source and tag before packaging"
+fi
+dry_between=""
+if [ "$dry_publish_line" -gt "$((dry_guard_line + 1))" ]; then
+  dry_between=$(sed -n "$((dry_guard_line + 1)),$((dry_publish_line - 1))p" <<<"$publish_block")
+fi
+if grep -E 'cargo (publish|package)' <<<"$dry_between" >/dev/null; then
+  fail "no cargo artifact side effect may occur between dry-run revalidation and packaging"
+fi
 grep -F 'NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}' <<<"$wasm_publish_block" >/dev/null \
   || fail "publish-wasm-npm job must use the npm automation token"
 grep -F 'name: Verify npm registry authentication' <<<"$wasm_publish_block" >/dev/null \
@@ -92,6 +125,8 @@ grep -F '@exochain/exochain-wasm ${RELEASE_VERSION} is already published; skippi
   || fail "publish-wasm-npm must skip already-published WASM npm package versions"
 grep -F 'npm publish --access public --provenance' <<<"$wasm_publish_block" >/dev/null \
   || fail "publish-wasm-npm must publish the public package with npm provenance"
+grep -F 'RELEASE_SOURCE_CLEAN_MODE=tracked bash "$GITHUB_WORKSPACE/tools/verify_release_side_effect.sh"' <<<"$wasm_publish_block" >/dev/null \
+  || fail "publish-wasm-npm must reverify tracked source and live tag immediately before npm publish"
 grep -F 'npm pack --dry-run' <<<"$wasm_publish_block" >/dev/null \
   || fail "publish-wasm-npm must dry-pack before publish"
 grep -F 'manifest.version !== process.env.RELEASE_VERSION' <<<"$wasm_publish_block" >/dev/null \
@@ -106,8 +141,12 @@ grep -F 'npm whoami --registry=https://registry.npmjs.org' <<<"$llm_proxy_publis
   || fail "publish-llm-proxy-npm must verify npm token identity before publishing"
 grep -F 'npm run test:coverage' <<<"$llm_proxy_publish_block" >/dev/null \
   || fail "publish-llm-proxy-npm must run the LYNK package coverage gate"
-grep -F 'npm run pack:dry-run' <<<"$llm_proxy_publish_block" >/dev/null \
-  || fail "publish-llm-proxy-npm must dry-pack before publish"
+grep -F 'npm run build' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must build the package after a final identity check"
+grep -F 'node scripts/check-package-artifacts.mjs' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must verify built package artifacts"
+grep -F 'npm pack --dry-run' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must dry-pack after a separate final identity check"
 grep -F 'npm_package_version_published()' <<<"$llm_proxy_publish_block" >/dev/null \
   || fail "publish-llm-proxy-npm must support resumable npm package publication checks"
 grep -F 'npm view "@exochain/llm-proxy@${RELEASE_VERSION}" version --registry=https://registry.npmjs.org' <<<"$llm_proxy_publish_block" >/dev/null \
@@ -116,8 +155,36 @@ grep -F '@exochain/llm-proxy ${RELEASE_VERSION} is already published; skipping n
   || fail "publish-llm-proxy-npm must skip already-published LYNK npm package versions"
 grep -F 'npm publish --access public --provenance' <<<"$llm_proxy_publish_block" >/dev/null \
   || fail "publish-llm-proxy-npm must publish the public package with npm provenance"
+grep -F 'bash "$GITHUB_WORKSPACE/tools/verify_release_side_effect.sh"' <<<"$llm_proxy_publish_block" >/dev/null \
+  || fail "publish-llm-proxy-npm must reverify source and live tag immediately before npm publish"
 grep -F 'manifest.version !== process.env.RELEASE_VERSION' <<<"$llm_proxy_publish_block" >/dev/null \
   || fail "publish-llm-proxy-npm must bind package version to the validated release version"
+
+assert_inline_guard_before_publish() {
+  local job="$1"
+  local block="$2"
+  local guard_pattern="$3"
+  local guard_line
+  local publish_line
+  local between
+  guard_line=$(grep -nF "$guard_pattern" <<<"$block" | tail -n 1 | cut -d: -f1)
+  publish_line=$(grep -nF 'npm publish --access public --provenance' <<<"$block" | tail -n 1 | cut -d: -f1)
+  if [ "$guard_line" -ge "$publish_line" ]; then
+    fail "$job must reverify source and tag before npm publish"
+  fi
+  between=""
+  if [ "$publish_line" -gt "$((guard_line + 1))" ]; then
+    between=$(sed -n "$((guard_line + 1)),$((publish_line - 1))p" <<<"$block")
+  fi
+  if grep -E '^[[:space:]]*(npm|npx|cargo|wasm-pack)[[:space:]]' <<<"$between" >/dev/null; then
+    fail "$job must perform no package side effect between final revalidation and npm publish"
+  fi
+}
+
+assert_inline_guard_before_publish publish-wasm-npm "$wasm_publish_block" \
+  'RELEASE_SOURCE_CLEAN_MODE=tracked bash "$GITHUB_WORKSPACE/tools/verify_release_side_effect.sh"'
+assert_inline_guard_before_publish publish-llm-proxy-npm "$llm_proxy_publish_block" \
+  'bash "$GITHUB_WORKSPACE/tools/verify_release_side_effect.sh"'
 
 if grep -E 'cargo publish.*\|\|' <<<"$publish_block" >/dev/null; then
   fail "cargo publish failures must fail the publish job"

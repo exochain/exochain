@@ -55,7 +55,9 @@ a tag, GitHub Release, registry publication, deployment, or v0.3.0 close.
   same clean checked-out commit.
 - Extends release guards to reject duplicate YAML keys, mutable tag/ref
   recomputation, signed-tag deletion or retargeting between jobs,
-  source/version skew, and lockfile drift.
+  source/version skew, dirty Cargo publication, missing checkout permissions,
+  and lockfile drift. Source and live tag identity are rechecked at the final
+  safe point before every release artifact or publication side effect.
 
 ## [0.2.4] - 2026-08-17
 
