@@ -71,7 +71,9 @@ mod zerodentity;
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
+    io::Read,
     net::IpAddr,
+    path::Path,
     sync::{Arc, Mutex},
 };
 
@@ -1706,13 +1708,43 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     }
 }
 
+fn read_bounded_file(path: &Path, max_bytes: usize, label: &str) -> anyhow::Result<Vec<u8>> {
+    let file = std::fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    if metadata.len() > u64::try_from(max_bytes)? {
+        anyhow::bail!("{label} file size exceeds {max_bytes} bytes");
+    }
+    read_at_most(file, max_bytes, label)
+}
+
+fn read_at_most(reader: impl Read, max_bytes: usize, label: &str) -> anyhow::Result<Vec<u8>> {
+    let limit_plus_one = max_bytes
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("{label} byte limit overflow"))?;
+    let mut bounded = reader.take(u64::try_from(limit_plus_one)?);
+    let mut bytes = Vec::new();
+    bounded.read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        anyhow::bail!("{label} exceeds {max_bytes} bytes");
+    }
+    Ok(bytes)
+}
+
+fn read_evidence_pack(path: &Path) -> anyhow::Result<Vec<u8>> {
+    read_bounded_file(
+        path,
+        exo_pdp::MAX_EVIDENCE_PACK_JSON_BYTES,
+        "evidence pack JSON",
+    )
+}
+
 fn run_pdp(command: cli::PdpCommand) -> anyhow::Result<()> {
     match command {
         cli::PdpCommand::Verify {
             pack,
             service_public_key,
         } => {
-            let bytes = std::fs::read(&pack)?;
+            let bytes = read_evidence_pack(&pack)?;
             let pack = exo_pdp::EvidencePack::from_json(&bytes)?;
             let expected_key = exo_pdp::pack::parse_public_key_hex(&service_public_key)?;
             pack.verify_with_key(&expected_key)?;
@@ -1729,7 +1761,7 @@ fn run_pdp(command: cli::PdpCommand) -> anyhow::Result<()> {
             Ok(())
         }
         cli::PdpCommand::Inspect { pack } => {
-            let bytes = std::fs::read(&pack)?;
+            let bytes = read_evidence_pack(&pack)?;
             let pack = exo_pdp::EvidencePack::from_json(&bytes)?;
             println!("unverified:           true");
             println!("spec:                 {}", pack.spec);
@@ -1749,10 +1781,62 @@ fn run_pdp(command: cli::PdpCommand) -> anyhow::Result<()> {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
+    use std::io::{Cursor, Write};
+
     use super::*;
 
     fn local_node_did() -> Did {
         Did::new("did:exo:local").unwrap()
+    }
+
+    #[test]
+    fn evidence_pack_stream_reader_checks_limit_plus_one_authoritatively() {
+        assert_eq!(
+            read_at_most(Cursor::new(vec![0_u8; 16]), 16, "fixture")
+                .expect("exact stream limit")
+                .len(),
+            16
+        );
+        let error = read_at_most(Cursor::new(vec![0_u8; 17]), 16, "fixture")
+            .expect_err("stream limit plus one");
+        assert!(error.to_string().contains("exceeds"));
+    }
+
+    #[test]
+    fn oversized_evidence_pack_is_rejected_by_verify_and_inspect_commands() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let path = fixture.path().join("evidence-pack.json");
+        let keypair = exo_core::crypto::KeyPair::generate();
+        let pack = exo_pdp::EvidencePack::from_log(&exo_pdp::EvidenceLog::new(), &keypair)
+            .expect("signed evidence pack");
+        let mut json = pack.to_json().expect("evidence JSON");
+        json.resize(16_777_216, b' ');
+        std::fs::write(&path, json).expect("exact-limit evidence pack");
+        let public_key = hex::encode(keypair.public_key().as_bytes());
+
+        run_pdp(cli::PdpCommand::Verify {
+            pack: path.clone(),
+            service_public_key: public_key.clone(),
+        })
+        .expect("verify exact-limit evidence pack");
+        run_pdp(cli::PdpCommand::Inspect { pack: path.clone() })
+            .expect("inspect exact-limit evidence pack");
+
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open evidence pack")
+            .write_all(b" ")
+            .expect("append limit plus one");
+        let verify_error = run_pdp(cli::PdpCommand::Verify {
+            pack: path.clone(),
+            service_public_key: public_key,
+        })
+        .expect_err("verify command must reject limit plus one");
+        assert!(verify_error.to_string().contains("exceeds"));
+        let inspect_error = run_pdp(cli::PdpCommand::Inspect { pack: path })
+            .expect_err("inspect command must reject limit plus one");
+        assert!(inspect_error.to_string().contains("exceeds"));
     }
 
     #[test]
