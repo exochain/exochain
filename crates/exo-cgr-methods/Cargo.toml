@@ -17,7 +17,7 @@
 [package]
 name = "exochain-cgr-methods"
 description = "Embedded RISC Zero guest ELF and image id for CGR combinator reduction"
-version = "0.2.4"
+version = "0.2.6"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"

@@ -19,6 +19,7 @@ set -euo pipefail
 
 python3 - <<'PY'
 import json
+import os
 import pathlib
 import re
 import sys
@@ -68,6 +69,124 @@ def pep440_version(version: str) -> str:
 cargo = tomllib.loads(read("Cargo.toml"))
 expected = cargo["workspace"]["package"]["version"]
 expected_python = pep440_version(expected)
+requested = os.environ.get("RELEASE_VERSION_EXPECTED")
+if requested is not None and expected != requested:
+    fail(f"workspace version is {expected}, expected validated release input {requested}")
+
+
+def resolved_package_version(manifest_path: pathlib.Path, manifest: dict) -> str:
+    version = manifest["package"].get("version")
+    if isinstance(version, str):
+        return version
+    if isinstance(version, dict) and version.get("workspace") is True:
+        return expected
+    fail(f"{manifest_path} must define a direct version or inherit workspace.package.version")
+
+
+repo_root = pathlib.Path.cwd().resolve()
+workspace_members = cargo["workspace"]["members"]
+release_manifests = [repo_root / member / "Cargo.toml" for member in workspace_members]
+release_manifests.extend(
+    [
+        repo_root / "crates/exo-cgr-methods/Cargo.toml",
+        repo_root / "crates/exo-cgr-methods/guest/Cargo.toml",
+        repo_root / "crates/exo-cgr-prover/Cargo.toml",
+    ]
+)
+
+for manifest_path in release_manifests:
+    if not manifest_path.is_file():
+        fail(f"release manifest is missing: {manifest_path.relative_to(repo_root)}")
+    manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+    actual = resolved_package_version(manifest_path, manifest)
+    if actual != expected:
+        fail(f"{manifest_path.relative_to(repo_root)} package version is {actual}, expected {expected}")
+
+for inherited_manifest in [
+    repo_root / "crates/exo-core/Cargo.toml",
+    repo_root / "crates/exo-dag-db-api/Cargo.toml",
+]:
+    manifest = tomllib.loads(inherited_manifest.read_text(encoding="utf-8"))
+    if manifest["package"].get("version") != {"workspace": True}:
+        fail(f"{inherited_manifest.relative_to(repo_root)} must inherit workspace version")
+
+fuzz_manifest_path = repo_root / "fuzz/Cargo.toml"
+fuzz_manifest = tomllib.loads(fuzz_manifest_path.read_text(encoding="utf-8"))
+if fuzz_manifest["package"].get("version") != "0.0.0":
+    fail("fuzz/Cargo.toml package version must remain 0.0.0")
+
+all_manifests = [*release_manifests, fuzz_manifest_path]
+dependency_table_names = {"dependencies", "dev-dependencies", "build-dependencies"}
+first_party_pin_count = 0
+
+
+def verify_dependency_tables(manifest_path: pathlib.Path, value: object) -> None:
+    global first_party_pin_count
+    if not isinstance(value, dict):
+        return
+    for key, child in value.items():
+        if key in dependency_table_names and isinstance(child, dict):
+            for dependency, specification in child.items():
+                if not isinstance(specification, dict) or "path" not in specification:
+                    continue
+                target_manifest = (manifest_path.parent / specification["path"] / "Cargo.toml").resolve()
+                try:
+                    target_manifest.relative_to(repo_root)
+                except ValueError:
+                    continue
+                if not target_manifest.is_file():
+                    fail(
+                        f"{manifest_path.relative_to(repo_root)} dependency {dependency} "
+                        f"points to missing manifest {target_manifest}"
+                    )
+                target = tomllib.loads(target_manifest.read_text(encoding="utf-8"))
+                target_name = target["package"].get("name")
+                if isinstance(target_name, str) and target_name.startswith("exochain-"):
+                    if "version" not in specification:
+                        if (
+                            manifest_path == repo_root / "crates/exo-cgr-prover/Cargo.toml"
+                            and target_name == "exochain-cgr-methods"
+                        ):
+                            continue
+                        fail(
+                            f"{manifest_path.relative_to(repo_root)} dependency {dependency} "
+                            f"must retain an exact first-party version pin"
+                        )
+                    required = f"={expected}"
+                    if specification.get("version") != required:
+                        fail(
+                            f"{manifest_path.relative_to(repo_root)} dependency {dependency} "
+                            f"must pin {target_name} at {required}"
+                        )
+                    first_party_pin_count += 1
+        elif isinstance(child, dict):
+            verify_dependency_tables(manifest_path, child)
+
+
+for manifest_path in all_manifests:
+    verify_dependency_tables(
+        manifest_path,
+        tomllib.loads(manifest_path.read_text(encoding="utf-8")),
+    )
+
+if first_party_pin_count != 158:
+    fail(f"found {first_party_pin_count} exact first-party dependency pins, expected 158")
+
+expected_lock_counts = {
+    "Cargo.lock": 32,
+    "crates/exo-cgr-methods/guest/Cargo.lock": 16,
+    "fuzz/Cargo.lock": 5,
+}
+for lock_path, expected_count in expected_lock_counts.items():
+    lock = tomllib.loads(read(lock_path))
+    owned = [package for package in lock["package"] if package["name"].startswith("exochain-")]
+    if len(owned) != expected_count:
+        fail(f"{lock_path} has {len(owned)} first-party packages, expected {expected_count}")
+    for package in owned:
+        if package["version"] != expected:
+            fail(
+                f"{lock_path} package {package['name']} is {package['version']}, expected {expected}"
+            )
 
 checks = {
     "packages/exochain-wasm/wasm/package.json": json_version(
@@ -113,6 +232,31 @@ checks = {
         "packages/exochain-sdk/dist/index.d.ts",
         r'PROTOCOL_VERSION\s*=\s*"([^"]+)"',
         "PROTOCOL_VERSION",
+    ),
+    "crates/exochain-sdk/src/lib.rs protocol test": regex_value(
+        "crates/exochain-sdk/src/lib.rs",
+        r'assert_eq!\(PROTOCOL_VERSION,\s*"([^"]+)"\)',
+        "protocol version test literal",
+    ),
+    "packages/exochain-sdk/test/index.test.ts protocol test": regex_value(
+        "packages/exochain-sdk/test/index.test.ts",
+        r"strictEqual\(PROTOCOL_VERSION,\s*'([^']+)'\)",
+        "protocol version test literal",
+    ),
+    "packages/exochain-sdk/dist-test/src/index.js PROTOCOL_VERSION": regex_value(
+        "packages/exochain-sdk/dist-test/src/index.js",
+        r"PROTOCOL_VERSION\s*=\s*'([^']+)'",
+        "PROTOCOL_VERSION",
+    ),
+    "packages/exochain-sdk/dist-test/test/index.test.js protocol test": regex_value(
+        "packages/exochain-sdk/dist-test/test/index.test.js",
+        r"strictEqual\(PROTOCOL_VERSION,\s*'([^']+)'\)",
+        "protocol version test literal",
+    ),
+    "packages/exochain-py/tests/test_crypto.py protocol test": regex_value(
+        "packages/exochain-py/tests/test_crypto.py",
+        r'assert\s+PROTOCOL_VERSION\s*==\s*"([^"]+)"',
+        "protocol version test literal",
     ),
 }
 

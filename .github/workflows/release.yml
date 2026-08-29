@@ -59,11 +59,19 @@ jobs:
     outputs:
       version: ${{ steps.validate.outputs.version }}
       tag: ${{ steps.validate.outputs.tag }}
+      commit_sha: ${{ steps.validate.outputs.commit_sha }}
+      trusted_ref: ${{ steps.validate.outputs.trusted_ref }}
     steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
       - name: Validate release version
         id: validate
         env:
           RELEASE_VERSION_INPUT: ${{ inputs.version }}
+          EXPECTED_COMMIT_SHA: ${{ github.sha }}
+          TRUSTED_RELEASE_REF: ${{ github.sha }}
         run: |
           set -euo pipefail
           version="$RELEASE_VERSION_INPUT"
@@ -71,8 +79,13 @@ jobs:
             echo "Invalid release version: expected major.minor.patch with optional prerelease suffix." >&2
             exit 1
           fi
+          bash tools/verify_release_source.sh
+          head_sha="$(git rev-parse HEAD)"
+          RELEASE_VERSION_EXPECTED="$version" bash tools/test_release_version_alignment.sh
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
           printf 'tag=v%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'commit_sha=%s\n' "$head_sha" >> "$GITHUB_OUTPUT"
+          printf 'trusted_ref=%s\n' "$head_sha" >> "$GITHUB_OUTPUT"
 
   # -----------------------------------------------------------------------
   # Release environment gate
@@ -86,7 +99,9 @@ jobs:
       - name: Environment gate passed
         env:
           RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
-        run: printf 'Release %s passed the configured release environment gate.\n' "$RELEASE_VERSION"
+          RELEASE_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: printf 'Release %s at commit %s passed the configured release environment gate with trusted source %s.\n' "$RELEASE_VERSION" "$RELEASE_COMMIT_SHA" "$TRUSTED_RELEASE_REF"
 
   # Independent second approval. GitHub required-reviewers on one environment
   # are one-of; a second environment with a distinct reviewer is two-of.
@@ -99,7 +114,9 @@ jobs:
       - name: Second environment gate passed
         env:
           RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
-        run: printf 'Release %s passed the second release environment gate.\n' "$RELEASE_VERSION"
+          RELEASE_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: printf 'Release %s at commit %s passed the second release environment gate with trusted source %s.\n' "$RELEASE_VERSION" "$RELEASE_COMMIT_SHA" "$TRUSTED_RELEASE_REF"
 
   # -----------------------------------------------------------------------
   # Signed tag gate for real releases
@@ -108,20 +125,34 @@ jobs:
     name: "Verify Signed Release Tag"
     runs-on: ubuntu-latest
     needs: [approve, approve-second, validate-release-inputs]
+    outputs:
+      tag_object_sha: ${{ steps.verify-tag.outputs.tag_object_sha }}
+      tag_commit_sha: ${{ steps.verify-tag.outputs.tag_commit_sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
           fetch-depth: 0
 
+      - name: Verify checked-out release source
+        env:
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: bash tools/verify_release_source.sh
+
       - name: Require signed tag for non-dry-run release
+        id: verify-tag
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC: ${{ vars.EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC }}
           EXOCHAIN_RELEASE_SIGNING_FINGERPRINT: ${{ vars.EXOCHAIN_RELEASE_SIGNING_FINGERPRINT }}
         run: |
           set -euo pipefail
           if [ "$DRY_RUN" = "true" ]; then
+            printf 'tag_object_sha=\n' >> "$GITHUB_OUTPUT"
+            printf 'tag_commit_sha=\n' >> "$GITHUB_OUTPUT"
             echo "Dry run: signed tag requirement is skipped."
             exit 0
           fi
@@ -149,8 +180,24 @@ jobs:
           fi
 
           git fetch --tags --force
-          git rev-parse "refs/tags/${RELEASE_TAG}" >/dev/null
+          if ! git rev-parse --verify --quiet "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "Release tag ${RELEASE_TAG} does not exist." >&2
+            exit 1
+          fi
+          tag_type="$(git cat-file -t "refs/tags/${RELEASE_TAG}")"
+          if [ "$tag_type" != "tag" ]; then
+            echo "Release tag ${RELEASE_TAG} must be an annotated signed tag, got ${tag_type}." >&2
+            exit 1
+          fi
           git tag -v "${RELEASE_TAG}"
+          tag_object_sha="$(git rev-parse "refs/tags/${RELEASE_TAG}")"
+          peeled_commit="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+          if [ "$peeled_commit" != "$EXPECTED_COMMIT_SHA" ] || [ "$peeled_commit" != "$GITHUB_SHA" ]; then
+            echo "Signed release tag ${RELEASE_TAG} resolves to ${peeled_commit}, expected ${EXPECTED_COMMIT_SHA} at dispatch ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+          printf 'tag_object_sha=%s\n' "$tag_object_sha" >> "$GITHUB_OUTPUT"
+          printf 'tag_commit_sha=%s\n' "$peeled_commit" >> "$GITHUB_OUTPUT"
 
   # -----------------------------------------------------------------------
   # Build release artifacts
@@ -165,22 +212,23 @@ jobs:
           - x86_64-unknown-linux-gnu
           - aarch64-unknown-linux-gnu
     steps:
-      - name: Resolve release source ref
-        id: release-ref
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+      - name: Verify checked-out release source
+        env:
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: bash tools/verify_release_source.sh
+      - name: Verify current remote release tag identity
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
-        run: |
-          set -euo pipefail
-          if [ "$DRY_RUN" = "true" ]; then
-            printf 'ref=%s\n' "${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          else
-            printf 'ref=refs/tags/%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ steps.release-ref.outputs.ref }}
-          fetch-depth: 0
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+        run: bash tools/verify_release_tag.sh
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: stable
@@ -194,7 +242,7 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Build release
-        run: bash tools/ci_cargo_retry.sh cargo build --workspace --release --target ${{ matrix.target }}
+        run: bash tools/ci_cargo_retry.sh cargo build --workspace --release --locked --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
@@ -229,29 +277,30 @@ jobs:
   sbom-and-attest:
     name: "SBOM + SLSA Attestation"
     runs-on: ubuntu-latest
-    needs: [release-build, validate-release-inputs]
+    needs: [release-build, verify-signed-tag, validate-release-inputs]
     if: ${{ !inputs.dry_run }}
     permissions:
       attestations: write  # write SLSA attestations to repo
       id-token: write      # GitHub OIDC token for keyless Sigstore signing
 
     steps:
-      - name: Resolve release source ref
-        id: release-ref
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+      - name: Verify checked-out release source
+        env:
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: bash tools/verify_release_source.sh
+      - name: Verify current remote release tag identity
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
-        run: |
-          set -euo pipefail
-          if [ "$DRY_RUN" = "true" ]; then
-            printf 'ref=%s\n' "${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          else
-            printf 'ref=refs/tags/%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ steps.release-ref.outputs.ref }}
-          fetch-depth: 0
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+        run: bash tools/verify_release_tag.sh
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: stable
@@ -278,7 +327,9 @@ jobs:
           RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
         run: |
           set -euo pipefail
+          cargo metadata --no-deps --format-version 1 --locked >/dev/null
           cargo cyclonedx -f json --all
+          git diff --exit-code -- Cargo.lock
           mkdir -p sbom
           sbom_count=0
           while IFS= read -r -d '' f; do
@@ -311,25 +362,26 @@ jobs:
   publish:
     name: "Publish to crates.io"
     runs-on: ubuntu-latest
-    needs: [release-build, sbom-and-attest, validate-release-inputs]
+    needs: [release-build, sbom-and-attest, verify-signed-tag, validate-release-inputs]
     if: ${{ !inputs.dry_run }}
     steps:
-      - name: Resolve release source ref
-        id: release-ref
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+      - name: Verify checked-out release source
+        env:
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: bash tools/verify_release_source.sh
+      - name: Verify current remote release tag identity
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
-        run: |
-          set -euo pipefail
-          if [ "$DRY_RUN" = "true" ]; then
-            printf 'ref=%s\n' "${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          else
-            printf 'ref=refs/tags/%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ steps.release-ref.outputs.ref }}
-          fetch-depth: 0
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+        run: bash tools/verify_release_tag.sh
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: stable
@@ -382,7 +434,7 @@ jobs:
 
             while [ "$attempt" -le "$max_attempts" ]; do
               set +e
-              output="$(cargo publish -p "$crate" --allow-dirty 2>&1)"
+              output="$(cargo publish -p "$crate" --locked --allow-dirty 2>&1)"
               status=$?
               set -e
               printf '%s\n' "$output"
@@ -461,7 +513,7 @@ jobs:
               continue
             fi
             echo "Dry-running $crate..."
-            cargo publish -p "$crate" --dry-run --allow-dirty
+            cargo publish -p "$crate" --dry-run --locked --allow-dirty
             if crate_version_published "$crate"; then
               echo "${crate} ${RELEASE_VERSION} became available after dry-run; skipping publish."
               continue
@@ -480,24 +532,26 @@ jobs:
     runs-on: ubuntu-latest
     needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
     permissions:
+      contents: read
       id-token: write
     steps:
-      - name: Resolve release source ref
-        id: release-ref
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+      - name: Verify checked-out release source
+        env:
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: bash tools/verify_release_source.sh
+      - name: Verify current remote release tag identity
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
-        run: |
-          set -euo pipefail
-          if [ "$DRY_RUN" = "true" ]; then
-            printf 'ref=%s\n' "${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          else
-            printf 'ref=refs/tags/%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ steps.release-ref.outputs.ref }}
-          fetch-depth: 0
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+        run: bash tools/verify_release_tag.sh
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: stable
@@ -526,7 +580,7 @@ jobs:
         run: bash tools/ci_cargo_retry.sh cargo install wasm-pack --version 0.14.0 --locked
 
       - name: Build scoped WASM npm package
-        run: bash tools/ci_cargo_retry.sh wasm-pack build crates/exochain-wasm --target nodejs --scope exochain --out-dir ../../packages/exochain-wasm/wasm
+        run: bash tools/ci_cargo_retry.sh wasm-pack build crates/exochain-wasm --target nodejs --scope exochain --out-dir ../../packages/exochain-wasm/wasm -- --locked
 
       - name: Prepare scoped WASM npm package
         run: |
@@ -599,24 +653,26 @@ jobs:
     runs-on: ubuntu-latest
     needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
     permissions:
+      contents: read
       id-token: write
     steps:
-      - name: Resolve release source ref
-        id: release-ref
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+      - name: Verify checked-out release source
+        env:
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: bash tools/verify_release_source.sh
+      - name: Verify current remote release tag identity
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
-        run: |
-          set -euo pipefail
-          if [ "$DRY_RUN" = "true" ]; then
-            printf 'ref=%s\n' "${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          else
-            printf 'ref=refs/tags/%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ steps.release-ref.outputs.ref }}
-          fetch-depth: 0
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+        run: bash tools/verify_release_tag.sh
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
@@ -715,22 +771,49 @@ jobs:
   github-release:
     name: "Create GitHub Release"
     runs-on: ubuntu-latest
-    needs: [release-build, sbom-and-attest, publish, publish-wasm-npm, publish-llm-proxy-npm, validate-release-inputs]
+    needs: [release-build, sbom-and-attest, publish, publish-wasm-npm, publish-llm-proxy-npm, verify-signed-tag, validate-release-inputs]
     if: ${{ !inputs.dry_run }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+
+      - name: Verify checked-out release source
+        env:
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: bash tools/verify_release_source.sh
+      - name: Verify current remote release tag identity
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+        run: bash tools/verify_release_tag.sh
 
       - name: Download all artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           path: artifacts
 
+      - name: Reverify remote tag immediately before release creation
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+        run: bash tools/verify_release_tag.sh
+
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ needs.validate-release-inputs.outputs.tag }}
+          target_commitish: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           name: "EXOCHAIN ${{ needs.validate-release-inputs.outputs.tag }}"
           body: |
             ## EXOCHAIN ${{ needs.validate-release-inputs.outputs.tag }}

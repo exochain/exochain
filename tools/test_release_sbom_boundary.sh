@@ -46,6 +46,10 @@ grep -F 'bash tools/ci_cargo_retry.sh cargo install cargo-cyclonedx --version 0.
   || fail "release SBOM job must pin cargo-cyclonedx 0.5.9"
 grep -F 'cargo cyclonedx -f json --all' <<<"$sbom_block" >/dev/null \
   || fail "release SBOM job must use cargo-cyclonedx 0.5.9 compatible --all workspace generation"
+grep -F 'cargo metadata --no-deps --format-version 1 --locked >/dev/null' <<<"$sbom_block" >/dev/null \
+  || fail "release SBOM job must prove the workspace lock is current before cargo-cyclonedx"
+grep -F 'git diff --exit-code -- Cargo.lock' <<<"$sbom_block" >/dev/null \
+  || fail "release SBOM job must reject any lockfile mutation before upload or attestation"
 
 if grep -F 'cargo cyclonedx -f json --workspace' <<<"$sbom_block" >/dev/null; then
   fail "cargo-cyclonedx 0.5.9 does not support --workspace in the release SBOM job"
