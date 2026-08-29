@@ -2325,6 +2325,7 @@ dependencies = [
  "exochain-economy",
  "exochain-gatekeeper",
  "exochain-identity",
+ "percent-encoding",
  "reqwest",
  "serde",
  "serde_json",
