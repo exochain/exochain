@@ -22,6 +22,66 @@ fail() {
   exit 1
 }
 
+release_workspace="${GITHUB_WORKSPACE:-}"
+if [[ "$release_workspace" != /* ]] || [ ! -d "$release_workspace" ]; then
+  fail "GITHUB_WORKSPACE must name the absolute release checkout directory"
+fi
+release_workspace="$(cd "$release_workspace" && pwd -P)"
+
+# Git's repository, index, object, replacement, and config environment is
+# process-global. A previous lifecycle step can persist these names through
+# GITHUB_ENV, so remove them before resolving or inspecting the checkout.
+scrub_git_environment() {
+  unset \
+    GIT_DIR \
+    GIT_WORK_TREE \
+    GIT_INDEX_FILE \
+    GIT_COMMON_DIR \
+    GIT_OBJECT_DIRECTORY \
+    GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    GIT_CONFIG \
+    GIT_CONFIG_GLOBAL \
+    GIT_CONFIG_SYSTEM \
+    GIT_CONFIG_NOSYSTEM \
+    GIT_CONFIG_COUNT \
+    GIT_CONFIG_PARAMETERS \
+    GIT_CEILING_DIRECTORIES \
+    GIT_DISCOVERY_ACROSS_FILESYSTEM \
+    GIT_IMPLICIT_WORK_TREE \
+    GIT_PREFIX \
+    GIT_INTERNAL_SUPER_PREFIX \
+    GIT_NAMESPACE \
+    GIT_REPLACE_REF_BASE \
+    GIT_NO_REPLACE_OBJECTS \
+    GIT_SHALLOW_FILE \
+    GIT_GRAFT_FILE \
+    GIT_QUARANTINE_PATH \
+    GIT_EXEC_PATH \
+    GIT_EXTERNAL_DIFF \
+    GIT_DIFF_OPTS \
+    GIT_ATTR_SOURCE
+}
+
+scrub_git_environment
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
+
+trusted_git() (
+  scrub_git_environment
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
+  command -p git \
+    -c core.fsmonitor=false \
+    -c core.untrackedCache=false \
+    -c core.ignoreStat=false \
+    -C "$release_workspace" \
+    "$@"
+)
+
+git_toplevel="$(trusted_git rev-parse --show-toplevel)"
+git_toplevel="$(cd "$git_toplevel" && pwd -P)"
+if [ "$git_toplevel" != "$release_workspace" ]; then
+  fail "GITHUB_WORKSPACE must be the root of the inspected Git checkout"
+fi
+
 expected_commit_sha="${EXPECTED_COMMIT_SHA:-}"
 dispatch_sha="${GITHUB_SHA:-}"
 trusted_release_ref="${TRUSTED_RELEASE_REF:-}"
@@ -37,7 +97,7 @@ for entry in \
     || fail "$name must be a full lowercase 40-character commit SHA"
 done
 
-head_sha="$(git rev-parse --verify 'HEAD^{commit}')"
+head_sha="$(trusted_git rev-parse --verify 'HEAD^{commit}')"
 if [ "$head_sha" != "$expected_commit_sha" ] \
   || [ "$head_sha" != "$dispatch_sha" ] \
   || [ "$trusted_release_ref" != "$expected_commit_sha" ]; then
@@ -48,19 +108,19 @@ fi
 # flags. Release jobs never need either optimization, so reject them before
 # assessing cleanliness; otherwise a lifecycle script could hide a tracked
 # mutation from the final source boundary.
-hidden_index_paths="$(git ls-files -v | awk '$1 ~ /^[a-zS]$/ { print substr($0, 3) }')"
+hidden_index_paths="$(trusted_git ls-files -v | command -p awk '$1 ~ /^[a-zS]$/ { print substr($0, 3) }')"
 if [ -n "$hidden_index_paths" ]; then
   fail "tracked paths must not use assume-unchanged or skip-worktree flags: ${hidden_index_paths//$'\n'/, }"
 fi
 
 case "$source_clean_mode" in
   all)
-    if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
+    if [ -n "$(trusted_git status --porcelain=v1 --untracked-files=all)" ]; then
       fail "checkout must be clean, including untracked files"
     fi
     ;;
   tracked)
-    if [ -n "$(git status --porcelain=v1 --untracked-files=no)" ]; then
+    if [ -n "$(trusted_git status --porcelain=v1 --untracked-files=no)" ]; then
       fail "tracked release source must be clean"
     fi
     ;;
