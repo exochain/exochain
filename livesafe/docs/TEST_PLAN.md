@@ -6,6 +6,44 @@
 npm run quality
 ```
 
+### Adjacent Overflow And Dependency Security Slice
+
+This 2026-08-28 slice is classified as a LiveSafe adjacent-surface change. It
+does not change EXOCHAIN core, authorize constitutional trust claims, alter the
+LiveSafe `0.1.0`/`1.0.0` versions, or change `public_claims_allowed: false`.
+
+Arithmetic regressions must prove:
+
+1. a help-session created at `i64::MAX` receives a saturated expiry;
+2. both seven-day summary windows use saturating subtraction and inclusive
+   addition at `i64::MIN`;
+3. generated-feedback, topic, question, outcome, and display totals saturate
+   instead of differing between debug and release builds;
+4. a collection count wider than `u32` converts to `u32::MAX` without
+   truncating to a smaller count;
+5. a new upvote at `u32::MAX` is rejected without changing the feedback item or
+   creating activity; and
+6. dispatch cooldown subtraction saturates when timestamps are at opposite
+   integer bounds.
+
+Dependency acceptance requires all four package-lock audits to report no
+vulnerabilities, `shell-quote >=1.9.0`, `postcss >=8.5.23`,
+`nanoid >=3.3.18`, and `body-parser >=1.20.6`, plus client/responder manifest
+ranges `postcss ^8.5.23` and `react-router-dom ^7.18.0`. Both production UI
+builds must pass without changing current route, navigation, or blocker source
+behavior.
+
+```bash
+cargo test --manifest-path Cargo.toml overflow -- --nocapture
+cargo test --manifest-path Cargo.toml
+cargo clippy --manifest-path Cargo.toml --all-targets -- -D warnings
+npm run audit:deps
+npm test
+npm --prefix client run build
+npm --prefix responder run build
+npm run quality
+```
+
 Focused validation for the current EXOCHAIN-client transport redaction,
 invitation-delivery, trustee-validation redaction, invitation-response
 redaction, invitation-send response redaction, workflow-response redaction,

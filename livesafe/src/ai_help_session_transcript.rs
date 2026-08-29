@@ -52,7 +52,7 @@ pub struct HelpSessionTranscriptView {
 }
 
 pub fn default_help_session_expires_at(created_at: i64) -> i64 {
-    created_at + (DEFAULT_HELP_SESSION_TTL_HOURS * MS_PER_HOUR)
+    created_at.saturating_add(DEFAULT_HELP_SESSION_TTL_HOURS * MS_PER_HOUR)
 }
 
 pub fn find_help_session_transcript(

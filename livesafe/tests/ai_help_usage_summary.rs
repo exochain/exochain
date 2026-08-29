@@ -151,3 +151,54 @@ fn usage_summary_normalizes_question_keys_and_orders_ties_deterministically() {
         ]
     );
 }
+
+#[test]
+fn usage_summary_saturates_timestamp_and_feedback_overflow() {
+    let timestamp_floor = summarize_help_usage(&[], i64::MIN);
+    assert_eq!(timestamp_floor.window_started_at, i64::MIN + 1);
+    assert_eq!(timestamp_floor.window_ended_at, i64::MIN);
+
+    let summary = summarize_help_usage(
+        &[
+            session(
+                "session:max-feedback",
+                0,
+                HelpAiSessionOutcome::Unanswered,
+                &["trust-state"],
+                "What does trust state mean?",
+                u32::MAX,
+            ),
+            session(
+                "session:one-more-feedback",
+                1,
+                HelpAiSessionOutcome::ConfusionDetected,
+                &["trust-state"],
+                "What does trust state mean?",
+                1,
+            ),
+        ],
+        1,
+    );
+
+    assert_eq!(summary.generated_feedback_count, u32::MAX);
+    assert_eq!(summary.total_sessions, 2);
+    assert_eq!(
+        summary.outcome_counts,
+        BTreeMap::from([
+            (HelpAiSessionOutcome::Unanswered, 1),
+            (HelpAiSessionOutcome::ConfusionDetected, 1),
+        ])
+    );
+    assert_eq!(
+        summary.topic_counts,
+        vec![TopicUsageCount {
+            topic_id: "trust-state".into(),
+            count: 2,
+        }]
+    );
+    assert_eq!(
+        summary.top_questions,
+        vec![("what does trust state mean".into(), 2)]
+    );
+    assert_eq!(summary.unresolved_topics, vec!["trust-state".to_string()]);
+}

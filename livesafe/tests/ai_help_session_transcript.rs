@@ -1,6 +1,7 @@
 use livesafe::ai_help_session_transcript::{
     HelpMessageRole, HelpSessionMessageRecord, HelpSessionRecord, HelpSessionSummaryView,
-    HelpSessionTranscriptView, find_help_session_transcript, list_recent_help_sessions,
+    HelpSessionTranscriptView, default_help_session_expires_at, find_help_session_transcript,
+    list_recent_help_sessions,
 };
 use livesafe::ai_help_topics::HelpAiSessionOutcome;
 
@@ -202,4 +203,10 @@ fn recent_session_index_filters_expired_entries_and_orders_ties_consistently() {
             },
         ]
     );
+}
+
+#[test]
+fn default_session_expiry_saturates_on_timestamp_overflow() {
+    assert_eq!(default_help_session_expires_at(i64::MAX), i64::MAX);
+    assert_eq!(default_help_session_expires_at(0), 7 * 24 * 60 * 60 * 1_000);
 }

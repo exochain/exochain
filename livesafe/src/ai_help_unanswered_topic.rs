@@ -30,7 +30,7 @@ pub fn summarize_unanswered_topics(
     sessions: &[HelpTopicUnansweredCounterRecord],
     now: i64,
 ) -> HelpTopicUnansweredSummary {
-    let window_started_at = now - SEVEN_DAY_WINDOW_MS + 1;
+    let window_started_at = now.saturating_sub(SEVEN_DAY_WINDOW_MS).saturating_add(1);
     let mut topic_counts = BTreeMap::<String, (u32, u32)>::new();
 
     for session in sessions {
@@ -53,8 +53,8 @@ pub fn summarize_unanswered_topics(
 
         for topic_id in unique_topics {
             let counts = topic_counts.entry(topic_id).or_insert((0, 0));
-            counts.0 += unanswered_delta;
-            counts.1 += confusion_delta;
+            counts.0 = saturating_count_add(counts.0, unanswered_delta);
+            counts.1 = saturating_count_add(counts.1, confusion_delta);
         }
     }
 
@@ -65,7 +65,7 @@ pub fn summarize_unanswered_topics(
                 topic_id,
                 unanswered_count,
                 confusion_count,
-                total_count: unanswered_count + confusion_count,
+                total_count: saturating_count_add(unanswered_count, confusion_count),
             },
         )
         .collect::<Vec<_>>();
@@ -83,5 +83,17 @@ pub fn summarize_unanswered_topics(
         window_started_at,
         window_ended_at: now,
         topic_counts,
+    }
+}
+
+fn saturating_count_add(left: u32, right: u32) -> u32 {
+    left.saturating_add(right)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn unanswered_display_count_overflow_saturates_at_u32_max() {
+        assert_eq!(super::saturating_count_add(u32::MAX, 1), u32::MAX);
     }
 }

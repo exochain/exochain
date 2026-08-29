@@ -606,7 +606,7 @@ describe("LiveSafe context control documents", () => {
       "| Classification | selector state awaiting integration-map re-rank |",
     );
     expect(content).toContain(
-      "The completed-slice inventory is now current through Medical-record deletion-acknowledgement redaction.",
+      "The completed-slice inventory includes the 2026-08-28 adjacent overflow and dependency remediation.",
     );
     expect(content).toContain(
       "promote the next smallest source-backed executable gap before any bounded truth pass.",
@@ -630,7 +630,7 @@ describe("LiveSafe context control documents", () => {
     expect(content).toContain("Medical-record parse-error redaction");
     expect(content).toContain("## Next Slice Queue");
     expect(content).toContain(
-      "The completed-slice inventory is now current through Medical-record deletion-acknowledgement redaction.",
+      "The completed-slice inventory includes the 2026-08-28 adjacent overflow and dependency remediation.",
     );
     expect(content).toContain(
       "Re-rank `docs/context/LIVESAFE_TO_EXOCHAIN_INTEGRATION_MAP.md` for any remaining smaller adjacent auth, authenticated write, or response boundary gap before allowing a truth pass.",
@@ -647,6 +647,12 @@ describe("LiveSafe context control documents", () => {
 
     expect(content).toContain(
       "Focused validation for the current EXOCHAIN-client transport redaction,",
+    );
+    expect(content).toContain(
+      "### Adjacent Overflow And Dependency Security Slice",
+    );
+    expect(content).toContain(
+      "`postcss ^8.5.23` and `react-router-dom ^7.18.0`",
     );
     expect(content).toContain(
       "npm test -- tests/exochain-client.test.ts tests/pace-invitation-delivery.test.ts tests/pace-trustee-validation.test.ts tests/pace-request-resend-redaction.test.ts tests/pace-create-response-redaction.test.ts tests/pace-create-response-route-redaction.test.ts tests/pace-send-response-redaction.test.ts tests/pace-send-route-redaction.test.ts tests/pace-invitation-response-redaction.test.ts tests/pace-invitation-response-route.test.ts tests/pace-workflow-response-redaction.test.ts tests/pace-workflow-route-redaction.test.ts tests/pace-workflow-initiation-redaction.test.ts tests/pace-workflow-initiation-route-redaction.test.ts tests/pace-acceptance-response-redaction.test.ts tests/pace-acceptance-route-redaction.test.ts tests/pace-vss-status-redaction.test.ts tests/pace-vss-status-route-redaction.test.ts tests/pace-trustee-directory-redaction.test.ts tests/pace-trustee-directory-route-redaction.test.ts tests/trustee-vss-summary.test.ts tests/trustee-vss-route-redaction.test.ts tests/trustee-vss-ui-redaction.test.ts tests/scan-expanded-access-redaction.test.ts tests/scan-expanded-access-route-redaction.test.ts tests/scan-expanded-data-response-redaction.test.ts tests/scan-agency-redaction.test.ts tests/scan-agency-route-redaction.test.ts tests/scan-history-response-redaction.test.ts tests/scan-history-route-redaction.test.ts tests/scan-history-ui-redaction.test.ts tests/scan-access-response-redaction.test.ts tests/scan-access-route-redaction.test.ts tests/scan-emergency-subset-response-redaction.test.ts tests/scan-emergency-subset-route-redaction.test.ts tests/record-extracted-data.test.ts",
@@ -1248,6 +1254,9 @@ describe("LiveSafe context control documents", () => {
     expect(content).toContain("# LiveSafe Implementation Slice Map");
     expect(content).toContain("## Source Basis");
     expect(content).toContain("## Completed Slices");
+    expect(content).toContain(
+      "LiveSafe adjacent overflow and dependency remediation (2026-08-28)",
+    );
     expect(content).toContain("Genesis trust contract");
     expect(content).toContain("tests/genesis-trust.test.ts");
     expect(content).toContain("EXOCHAIN boundary evaluator contract");
@@ -1531,7 +1540,7 @@ describe("LiveSafe context control documents", () => {
       "| Classification | selector state awaiting integration-map re-rank |",
     );
     expect(content).toContain(
-      "The completed-slice inventory is now current through Medical-record deletion-acknowledgement redaction.",
+      "The completed-slice inventory includes the 2026-08-28 adjacent overflow and dependency remediation.",
     );
     expect(content).toContain(
       "promote the next smallest source-backed executable gap before any bounded truth pass.",

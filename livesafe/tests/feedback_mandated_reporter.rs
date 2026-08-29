@@ -345,3 +345,49 @@ fn unanswered_threshold_creates_doc_gap_and_dispatch_stays_rate_limited_and_reda
     assert!(rate_limited.allowed, "{rate_limited:?}");
     assert_eq!(rate_limited.dispatch, AgentDispatchDecision::RateLimited);
 }
+
+#[test]
+fn exhausted_upvote_fails_closed_without_mutation_on_overflow() {
+    let mut exhausted = feedback_item(FeedbackStatus::Backlog);
+    exhausted.upvotes = u32::MAX;
+
+    let result = register_upvote(
+        exhausted.clone(),
+        UpvoteInput {
+            voter: "user:new-synthetic-voter".into(),
+            voted_at: i64::MAX,
+        },
+    );
+
+    assert!(!result.allowed);
+    assert_eq!(
+        result.reasons,
+        vec!["Feedback upvote count is exhausted.".to_string()]
+    );
+    assert_eq!(result.updated_item, exhausted);
+    assert!(result.activity.is_none());
+}
+
+#[test]
+fn dispatch_cooldown_saturates_timestamp_overflow() {
+    let mut item = feedback_item(FeedbackStatus::Planning);
+    item.last_dispatch_at = Some(i64::MAX);
+
+    let result = evaluate_status_transition(
+        item,
+        StatusChangeInput {
+            new_status: FeedbackStatus::Development,
+            author: "triage:synthetic".into(),
+            note: Some("Clock-regression control.".into()),
+            changed_at: i64::MIN,
+        },
+        AgentDispatchConfig {
+            enabled: true,
+            trigger_statuses: vec![FeedbackStatus::Development],
+            dispatch_cooldown_ms: 1,
+        },
+    );
+
+    assert!(result.allowed, "{result:?}");
+    assert_eq!(result.dispatch, AgentDispatchDecision::RateLimited);
+}
