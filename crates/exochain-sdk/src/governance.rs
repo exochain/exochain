@@ -597,6 +597,52 @@ mod tests {
     }
 
     #[test]
+    fn decision_id_matches_cbor_text_length_boundary_vectors() {
+        const VECTORS: &[(usize, &str)] = &[
+            (
+                0,
+                "0a400b4d15d70e56088d1138dc233df9882be32d62a54c69ee7ef0a5dc121d81",
+            ),
+            (
+                23,
+                "8c812e872cfc8cdea78aa2d395e176b11e8f7c680dbaa7e0bad7a58430262ba1",
+            ),
+            (
+                24,
+                "27affb4c9f114538bad5203ac2761ffadacc535c33e25ff2762e8043ba5942c5",
+            ),
+            (
+                255,
+                "24ddff9f6fdbeaea835a8d50aa9f2f16a8650bd7f7aea3b4b323dda7fbbd249c",
+            ),
+            (
+                256,
+                "a8a1247de117fa9b5049eb9dc8a48894798df8126c186b1d919951beb7f13730",
+            ),
+            (
+                65_535,
+                "6e79ec72edce29ff75a8ca91c04d5e91e84983de2fe29e25395c254057937cd5",
+            ),
+            (
+                65_536,
+                "34397f6a475fe08dced0957006954f9725bfa478bd35c67abe411f5dc0553434",
+            ),
+        ];
+
+        for &(description_len, expected) in VECTORS {
+            let decision = DecisionBuilder::new(
+                "Boundary",
+                "x".repeat(description_len),
+                did("did:exo:alice"),
+            )
+            .build()
+            .expect("boundary fixture builds");
+            assert_eq!(decision.decision_id, expected, "length {description_len}");
+            assert_lowercase_hash256(&decision.decision_id);
+        }
+    }
+
+    #[test]
     fn decision_serde_preserves_legacy_decision_id() {
         const LEGACY_DECISION_ID: &str = "0123456789abcdef";
         let wire = r#"{
