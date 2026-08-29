@@ -36,7 +36,7 @@ if (!/^\[workspace\.package\][\s\S]*^publish = true$/m.test(workspaceToml)) {
 }
 
 const metadata = JSON.parse(
-  execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
+  execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1", "--locked"], {
     encoding: "utf8",
     maxBuffer: 20 * 1024 * 1024,
   }),

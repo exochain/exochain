@@ -35,14 +35,16 @@ MAJOR.MINOR.PATCH
 The workspace version is set in `Cargo.toml`:
 ```toml
 [workspace.package]
-version = "0.2.4"
+version = "0.2.6"
 ```
 
-This repository state is the unpublished `0.2.4` release candidate: PDP
-decides, AVC records, x402 adapts; crates.io `ml-dsa` consumers can build.
-The latest published release remains `v0.2.3`. Workspace version alignment
-is not evidence of a tag, GitHub Release, registry publication, deployment,
-or live runtime activation.
+This repository state is the intended, unpublished `0.2.6` security-remediation
+release candidate. The latest published release remains `v0.2.4`. Read-only
+provider checks at `2026-08-29T03:44:56Z` found no `v0.2.5` remote tag or
+GitHub Release, HTTP 404 for `0.2.5` across all 32 publishable Rust packages,
+and npm E404 for both versioned npm packages; `0.2.4` provider controls were
+reachable. Workspace version alignment is not evidence of a tag, GitHub
+Release, registry publication, deployment, or live runtime activation.
 
 ## Release Process
 
@@ -50,7 +52,7 @@ See `.github/workflows/release.yml` for the automated release workflow:
 
 1. The full CI workflow, including the numbered constitutional gates and required aggregator, must pass.
 2. Every dispatch traverses two independent GitHub environments (`release` and `release-second`) with distinct required reviewers. One environment is one-of; two environments are two-of. Repository settings, not workflow source, determine the reviewer lists.
-3. Non-dry-run releases must have an existing, verifiable signed `v<version>` tag before artifacts build or publish.
+3. Every release checkout is the validated workflow-dispatch commit and must remain clean. A non-dry-run release additionally requires an existing annotated, cryptographically verified signed `v<version>` tag whose peeled commit equals the workflow-dispatch commit and checked-out `HEAD`. The signed-tag gate records the immutable tag-object ID and peeled commit; every downstream live job re-fetches the named remote tag and compares both values, and the GitHub Release job repeats that check immediately before creation.
 4. Native artifacts are built for `x86_64-linux-gnu` and `aarch64-linux-gnu`.
 5. Non-dry-run releases generate CycloneDX workspace SBOMs and GitHub SLSA build attestations via OIDC/Sigstore.
 6. Non-dry-run releases publish crates in dependency order and publish the versioned npm packages after their dry-pack gates pass.
@@ -91,9 +93,9 @@ Create and verify the signed release tag only after the key is configured:
 
 ```bash
 git fetch origin main --tags
-git tag -s v0.2.3 "$(git rev-parse origin/main)" -m "EXOCHAIN v0.2.3"
-git tag -v v0.2.3
-git push origin v0.2.3
+git tag -s v0.2.6 "$(git rev-parse origin/main)" -m "EXOCHAIN v0.2.6"
+git tag -v v0.2.6
+git push origin v0.2.6
 ```
 
 ### Dry Run
@@ -106,8 +108,8 @@ npm publication, and does not create a GitHub Release.
 
 ```bash
 # Quick local validation (does not replicate the full release pipeline):
-cargo build --workspace --release
-cargo test --workspace
+cargo build --workspace --release --locked
+cargo test --workspace --locked
 ```
 
 ### DualControl Configuration

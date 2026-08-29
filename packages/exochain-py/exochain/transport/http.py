@@ -25,7 +25,7 @@ import httpx
 
 from ..errors import TransportError
 
-_DEFAULT_USER_AGENT = "exochain-py/0.2.4"
+_DEFAULT_USER_AGENT = "exochain-py/0.2.6"
 
 
 class HttpTransport:

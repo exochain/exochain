@@ -71,8 +71,8 @@ grep -F 'try again after' <<<"$publish_block" >/dev/null \
   || fail "publish job must parse crates.io retry-after evidence"
 grep -F 'sleep "$retry_seconds"' <<<"$publish_block" >/dev/null \
   || fail "publish job must wait before retrying crates.io rate-limited publishes"
-grep -F 'cargo publish -p "$crate" --allow-dirty' <<<"$publish_block" >/dev/null \
-  || fail "publish job must publish every crate in the dependency-ordered loop"
+grep -F 'cargo publish -p "$crate" --locked --allow-dirty' <<<"$publish_block" >/dev/null \
+  || fail "publish job must publish every crate without refreshing the lockfile"
 grep -F 'NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}' <<<"$wasm_publish_block" >/dev/null \
   || fail "publish-wasm-npm job must use the npm automation token"
 grep -F 'name: Verify npm registry authentication' <<<"$wasm_publish_block" >/dev/null \
