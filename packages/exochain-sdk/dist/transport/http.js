@@ -81,7 +81,7 @@ export class HttpTransport {
             if (serialized !== undefined) {
                 init.body = serialized;
             }
-            res = await this.#fetch(url, init);
+            res = await awaitWithAbort(this.#fetch(url, init), signal);
         }
         catch (err) {
             cancel();
@@ -89,7 +89,7 @@ export class HttpTransport {
         }
         let text;
         try {
-            text = await readBoundedResponseText(res);
+            text = await readBoundedResponseText(res, signal);
         }
         catch (err) {
             if (err instanceof TransportError)
@@ -120,7 +120,7 @@ export class HttpTransport {
         }
     }
 }
-async function readBoundedResponseText(response) {
+async function readBoundedResponseText(response, signal) {
     const contentLength = response.headers.get('content-length');
     let initialCapacity = 0;
     if (contentLength !== null && /^[0-9]+$/.test(contentLength)) {
@@ -136,33 +136,60 @@ async function readBoundedResponseText(response) {
     const reader = response.body.getReader();
     let bytes = new Uint8Array(initialCapacity);
     let totalBytes = 0;
-    while (true) {
-        const next = await reader.read();
-        if (next.done)
-            break;
-        const chunkLength = intrinsicUint8ArrayByteLength(next.value);
-        if (chunkLength === undefined) {
-            void reader.cancel().catch(() => undefined);
-            throw new TransportError('response body contained a non-byte chunk', {
-                status: response.status,
-            });
+    try {
+        while (true) {
+            const next = await awaitWithAbort(reader.read(), signal);
+            if (next.done)
+                break;
+            const chunkLength = intrinsicUint8ArrayByteLength(next.value);
+            if (chunkLength === undefined) {
+                throw new TransportError('response body contained a non-byte chunk', {
+                    status: response.status,
+                });
+            }
+            const nextTotal = totalBytes + chunkLength;
+            if (nextTotal > MAX_HTTP_RESPONSE_BYTES) {
+                throw oversizedResponseError(response.status);
+            }
+            if (nextTotal > bytes.byteLength) {
+                const doubledCapacity = Math.max(8192, bytes.byteLength * 2);
+                const nextCapacity = Math.min(MAX_HTTP_RESPONSE_BYTES, Math.max(nextTotal, doubledCapacity));
+                const grown = new Uint8Array(nextCapacity);
+                grown.set(bytes.subarray(0, totalBytes));
+                bytes = grown;
+            }
+            bytes.set(next.value, totalBytes);
+            totalBytes = nextTotal;
         }
-        const nextTotal = totalBytes + chunkLength;
-        if (nextTotal > MAX_HTTP_RESPONSE_BYTES) {
-            void reader.cancel().catch(() => undefined);
-            throw oversizedResponseError(response.status);
-        }
-        if (nextTotal > bytes.byteLength) {
-            const doubledCapacity = Math.max(8192, bytes.byteLength * 2);
-            const nextCapacity = Math.min(MAX_HTTP_RESPONSE_BYTES, Math.max(nextTotal, doubledCapacity));
-            const grown = new Uint8Array(nextCapacity);
-            grown.set(bytes.subarray(0, totalBytes));
-            bytes = grown;
-        }
-        bytes.set(next.value, totalBytes);
-        totalBytes = nextTotal;
+    }
+    catch (error) {
+        void reader.cancel(error).catch(() => undefined);
+        throw error;
     }
     return new TextDecoder().decode(bytes.subarray(0, totalBytes));
+}
+/** Await an operation against the same deadline even when it ignores `signal`. */
+function awaitWithAbort(operation, signal) {
+    if (signal.aborted) {
+        return Promise.reject(abortReason(signal));
+    }
+    return new Promise((resolve, reject) => {
+        const onAbort = () => {
+            signal.removeEventListener('abort', onAbort);
+            reject(abortReason(signal));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        operation.then((value) => {
+            signal.removeEventListener('abort', onAbort);
+            resolve(value);
+        }, (error) => {
+            signal.removeEventListener('abort', onAbort);
+            reject(error);
+        });
+    });
+}
+function abortReason(signal) {
+    return signal.reason === undefined ? new Error('request aborted') : signal.reason;
 }
 function intrinsicUint8ArrayByteLength(value) {
     if (TYPED_ARRAY_BYTE_LENGTH_GETTER === undefined)

@@ -224,4 +224,38 @@ test('HTTP transport keeps the configured timeout active while reading the body'
     const error = await captureTransportError(() => transport.get('/stalled-body'));
     strictEqual(error.message, 'network error: request timed out');
 });
+test('HTTP transport enforces its timeout when injected fetch ignores abort', async () => {
+    const ignoresAbort = (async () => new Promise(() => undefined));
+    const transport = new HttpTransport('https://gateway.example', {
+        fetch: ignoresAbort,
+        timeout: 5,
+    });
+    const outcome = await Promise.race([
+        captureTransportError(() => transport.get('/ignores-abort')),
+        new Promise((resolve) => setTimeout(() => resolve('still pending'), 75)),
+    ]);
+    if (outcome === 'still pending') {
+        throw new Error('request remained pending after the configured timeout');
+    }
+    strictEqual(outcome.message, 'network error: request timed out');
+});
+test('HTTP transport enforces its timeout when the body reader ignores abort', async () => {
+    const ignoresAbort = (async () => new Response(new ReadableStream({
+        start() {
+            // Intentionally remain open and ignore the request signal.
+        },
+    }), { status: 200 }));
+    const transport = new HttpTransport('https://gateway.example', {
+        fetch: ignoresAbort,
+        timeout: 5,
+    });
+    const outcome = await Promise.race([
+        captureTransportError(() => transport.get('/body-ignores-abort')),
+        new Promise((resolve) => setTimeout(() => resolve('still pending'), 75)),
+    ]);
+    if (outcome === 'still pending') {
+        throw new Error('response body remained pending after the configured timeout');
+    }
+    strictEqual(outcome.message, 'network error: request timed out');
+});
 //# sourceMappingURL=http_transport.test.js.map
