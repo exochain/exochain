@@ -14,6 +14,7 @@ export const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const MAX_CONFIGURED_RESPONSE_BYTES = 64 * 1024 * 1024;
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 export const MAX_CONFIGURED_REQUEST_TIMEOUT_MS = 300000;
+const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "byteLength")?.get;
 export async function fetchBoundedResponse(config, input, init, label) {
     const maxResponseBytes = configuredPositiveInteger("maxResponseBytes", config.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES, MAX_CONFIGURED_RESPONSE_BYTES);
     const requestTimeoutMs = configuredPositiveInteger("requestTimeoutMs", config.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS, MAX_CONFIGURED_REQUEST_TIMEOUT_MS);
@@ -77,15 +78,16 @@ async function readBoundedBody(response, maxBytes, signal, label, timeoutMs) {
             const { done, value } = await awaitWithAbort(reader.read(), signal, label, timeoutMs);
             if (done)
                 break;
-            if (!(value instanceof Uint8Array)) {
+            const chunkLength = intrinsicUint8ArrayByteLength(value);
+            if (chunkLength === undefined) {
                 throw new LynkValidationError(`${label} returned a non-byte response chunk`);
             }
-            if (value.byteLength > maxBytes - total) {
+            if (chunkLength > maxBytes - total) {
                 void reader.cancel().catch(() => undefined);
                 throw new LynkValidationError(`${label} exceeds ${maxBytes} bytes`);
             }
-            chunks.push(value);
-            total += value.byteLength;
+            chunks.push(new Uint8Array(value));
+            total += chunkLength;
         }
     }
     catch (error) {
@@ -99,6 +101,20 @@ async function readBoundedBody(response, maxBytes, signal, label, timeoutMs) {
         offset += chunk.byteLength;
     }
     return body;
+}
+function intrinsicUint8ArrayByteLength(value) {
+    if (TYPED_ARRAY_BYTE_LENGTH_GETTER === undefined) {
+        return undefined;
+    }
+    try {
+        const byteLength = Reflect.apply(TYPED_ARRAY_BYTE_LENGTH_GETTER, value, []);
+        return typeof byteLength === "number" && Number.isSafeInteger(byteLength) && byteLength >= 0
+            ? byteLength
+            : undefined;
+    }
+    catch {
+        return undefined;
+    }
 }
 function awaitWithAbort(operation, signal, label, timeoutMs) {
     if (signal.aborted) {

@@ -18,6 +18,11 @@ export const MAX_CONFIGURED_RESPONSE_BYTES = 64 * 1024 * 1024;
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 export const MAX_CONFIGURED_REQUEST_TIMEOUT_MS = 300_000;
 
+const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype) as object,
+  "byteLength",
+)?.get;
+
 export interface BoundedHttpResponse {
   readonly response: Response;
   readonly body: Uint8Array;
@@ -135,15 +140,16 @@ async function readBoundedBody(
         timeoutMs,
       );
       if (done) break;
-      if (!(value instanceof Uint8Array)) {
+      const chunkLength = intrinsicUint8ArrayByteLength(value);
+      if (chunkLength === undefined) {
         throw new LynkValidationError(`${label} returned a non-byte response chunk`);
       }
-      if (value.byteLength > maxBytes - total) {
+      if (chunkLength > maxBytes - total) {
         void reader.cancel().catch(() => undefined);
         throw new LynkValidationError(`${label} exceeds ${maxBytes} bytes`);
       }
-      chunks.push(value);
-      total += value.byteLength;
+      chunks.push(new Uint8Array(value));
+      total += chunkLength;
     }
   } catch (error) {
     void reader.cancel().catch(() => undefined);
@@ -157,6 +163,20 @@ async function readBoundedBody(
     offset += chunk.byteLength;
   }
   return body;
+}
+
+function intrinsicUint8ArrayByteLength(value: unknown): number | undefined {
+  if (TYPED_ARRAY_BYTE_LENGTH_GETTER === undefined) {
+    return undefined;
+  }
+  try {
+    const byteLength = Reflect.apply(TYPED_ARRAY_BYTE_LENGTH_GETTER, value, []) as unknown;
+    return typeof byteLength === "number" && Number.isSafeInteger(byteLength) && byteLength >= 0
+      ? byteLength
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function awaitWithAbort<T>(
