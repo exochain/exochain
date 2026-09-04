@@ -94,10 +94,13 @@ if grep -F -- '--out-dir ../../packages/exochain-wasm/wasm' "$release_workflow" 
   fail "release workflow must not overwrite the tracked WASM package fixture"
 fi
 authenticated_npm_block="$(sed -n '/^run_authenticated_npm() {/,/^}/p' "$publisher")"
-grep -F 'NODE_AUTH_TOKEN="$NODE_AUTH_TOKEN"' <<<"$authenticated_npm_block" >/dev/null \
+publish_command_block="$(grep -A1 -F 'run_authenticated_npm publish "$RELEASE_NPM_TARBALL"' "$publisher")"
+grep -F '/usr/bin/env -i \' <<<"$authenticated_npm_block" >/dev/null \
+  && grep -F 'NODE_AUTH_TOKEN="$NODE_AUTH_TOKEN"' <<<"$authenticated_npm_block" >/dev/null \
   && grep -F '"$node_path" "$npm_cli_path" "$@"' <<<"$authenticated_npm_block" >/dev/null \
-  && grep -F 'run_authenticated_npm publish "$RELEASE_NPM_TARBALL"' "$publisher" >/dev/null \
-  && grep -F -- '--access public --provenance --ignore-scripts' "$publisher" >/dev/null \
+  && grep -F 'run_authenticated_npm publish "$RELEASE_NPM_TARBALL"' <<<"$publish_command_block" >/dev/null \
+  && grep -F -- '--access public --provenance --ignore-scripts --registry=https://registry.npmjs.org' \
+    <<<"$publish_command_block" >/dev/null \
   || fail "release workflow must publish npm package with provenance"
 grep -F 'NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}' <<<"$publish_block" >/dev/null \
   || fail "release workflow must use the npm token for authenticated npm release steps"
