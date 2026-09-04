@@ -113,6 +113,19 @@ struct ZeroizingByteAccumulator {
 #[derive(Clone, Copy, Debug)]
 struct SecretBufferError(&'static str);
 
+fn next_secret_capacity(current_capacity: usize) -> std::result::Result<usize, SecretBufferError> {
+    let next_capacity = current_capacity
+        .checked_mul(2)
+        .unwrap_or(MAX_SECRET_CAPACITY)
+        .clamp(1, MAX_SECRET_CAPACITY);
+    if next_capacity <= current_capacity {
+        return Err(SecretBufferError(
+            "root secret bytes exceed supported capacity",
+        ));
+    }
+    Ok(next_capacity)
+}
+
 impl ZeroizingByteAccumulator {
     fn with_size_hint(size_hint: usize) -> std::result::Result<Self, SecretBufferError> {
         let initial_capacity = size_hint.min(MAX_INITIAL_SECRET_CAPACITY);
@@ -138,15 +151,7 @@ impl ZeroizingByteAccumulator {
 
     fn grow(&mut self) -> std::result::Result<(), SecretBufferError> {
         let current_capacity = self.bytes.len();
-        let next_capacity = current_capacity
-            .checked_mul(2)
-            .unwrap_or(MAX_SECRET_CAPACITY)
-            .clamp(1, MAX_SECRET_CAPACITY);
-        if next_capacity <= current_capacity {
-            return Err(SecretBufferError(
-                "root secret bytes exceed supported capacity",
-            ));
-        }
+        let next_capacity = next_secret_capacity(current_capacity)?;
         let mut replacement = Zeroizing::new(Vec::new());
         replacement
             .try_reserve_exact(next_capacity)
@@ -254,33 +259,33 @@ impl<'de> Deserialize<'de> for ZeroizingBytes {
     }
 }
 
+struct ZeroizingByteMapVisitor;
+
+impl<'de> Visitor<'de> for ZeroizingByteMapVisitor {
+    type Value = BTreeMap<u16, Zeroizing<Vec<u8>>>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a map of recipient-bound root secret byte sequences")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut packages = BTreeMap::new();
+        while let Some((identifier, package)) = map.next_entry::<u16, ZeroizingBytes>()? {
+            packages.insert(identifier, package.0);
+        }
+        Ok(packages)
+    }
+}
+
 fn deserialize_zeroizing_byte_map<'de, D>(
     deserializer: D,
 ) -> std::result::Result<BTreeMap<u16, Zeroizing<Vec<u8>>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    struct ZeroizingByteMapVisitor;
-
-    impl<'de> Visitor<'de> for ZeroizingByteMapVisitor {
-        type Value = BTreeMap<u16, Zeroizing<Vec<u8>>>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            formatter.write_str("a map of recipient-bound root secret byte sequences")
-        }
-
-        fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
-        where
-            A: MapAccess<'de>,
-        {
-            let mut packages = BTreeMap::new();
-            while let Some((identifier, package)) = map.next_entry::<u16, ZeroizingBytes>()? {
-                packages.insert(identifier, package.0);
-            }
-            Ok(packages)
-        }
-    }
-
     deserializer.deserialize_map(ZeroizingByteMapVisitor)
 }
 
@@ -566,6 +571,25 @@ fn deserialize_round2_packages(
     Ok(result)
 }
 
+type RecipientRound2Packages = BTreeMap<u16, Zeroizing<Vec<u8>>>;
+
+fn require_recipient_round2_packages(
+    round2_packages: Option<RecipientRound2Packages>,
+    identifier: u16,
+) -> Result<RecipientRound2Packages> {
+    round2_packages.ok_or_else(|| RootError::Frost {
+        detail: format!("missing recipient-bound round-two packages for {identifier}"),
+    })
+}
+
+fn require_first_public_key_package(
+    public_key_package: Option<RootPublicKeyPackage>,
+) -> Result<RootPublicKeyPackage> {
+    public_key_package.ok_or_else(|| RootError::Frost {
+        detail: "missing first participant public key package".to_owned(),
+    })
+}
+
 /// Run the all-roster DKG ceremony locally.
 ///
 /// Production ceremonies should exchange these packages through the portal and
@@ -586,7 +610,7 @@ where
     }
 
     let mut round2_secrets = BTreeMap::new();
-    let mut round2_by_recipient: BTreeMap<u16, BTreeMap<u16, Zeroizing<Vec<u8>>>> = BTreeMap::new();
+    let mut round2_by_recipient: BTreeMap<u16, RecipientRound2Packages> = BTreeMap::new();
     for (identifier, round1_output) in round1_outputs {
         let peer_round1 = peer_packages_except(&round1_public, identifier);
         let secret = &round1_output.round1_secret_package;
@@ -604,20 +628,15 @@ where
     let mut public_key_package = None;
     for (identifier, round2_secret) in round2_secrets {
         let peer_round1 = peer_packages_except(&round1_public, identifier);
-        let round2 = round2_by_recipient
-            .remove(&identifier)
-            .ok_or_else(|| RootError::Frost {
-                detail: format!("missing recipient-bound round-two packages for {identifier}"),
-            })?;
+        let round2 =
+            require_recipient_round2_packages(round2_by_recipient.remove(&identifier), identifier)?;
         let participant = finish(config, identifier, &round2_secret, peer_round1, round2)?;
         if identifier == first_identifier {
             public_key_package = Some(participant.public_key_package);
         }
         key_packages.insert(identifier, participant.key_package);
     }
-    let public_key_package = public_key_package.ok_or_else(|| RootError::Frost {
-        detail: "missing first participant public key package".to_owned(),
-    })?;
+    let public_key_package = require_first_public_key_package(public_key_package)?;
 
     Ok(RootDkgOutput {
         key_packages,
@@ -832,6 +851,16 @@ mod tests {
     }
 
     #[test]
+    fn secret_byte_capacity_guard_rejects_terminal_capacity() {
+        let error = next_secret_capacity(MAX_SECRET_CAPACITY)
+            .expect_err("the bounded secret buffer must never grow past its terminal capacity");
+        assert_eq!(
+            error.0, "root secret bytes exceed supported capacity",
+            "capacity exhaustion must remain a typed, diagnostic failure"
+        );
+    }
+
+    #[test]
     fn secret_byte_writer_wipes_before_growth_and_on_serialization_error() {
         fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
         assert_zeroize_on_drop::<ZeroizingByteAccumulator>();
@@ -842,6 +871,9 @@ mod tests {
             .collect();
         let mut writer = ZeroizingByteWriter::new();
         writer.write_all(&fixture).expect("forced-growth write");
+        writer
+            .flush()
+            .expect("the unbuffered writer flushes safely");
         assert_eq!(
             writer.accumulator.bytes.len(),
             writer.accumulator.bytes.capacity()
@@ -929,7 +961,7 @@ mod tests {
             "complete DKG must consume outbound recipient packages"
         );
         assert!(
-            complete_dkg.contains("round2_by_recipient\n            .remove(&identifier)"),
+            complete_dkg.contains("round2_by_recipient.remove(&identifier)"),
             "complete DKG must remove each recipient map for finalization"
         );
     }
@@ -984,6 +1016,53 @@ mod tests {
         );
         assert!(
             ciborium::from_reader::<RootDkgRound2Output, _>(round2_map_cbor.as_slice()).is_err()
+        );
+    }
+
+    #[test]
+    fn secret_dkg_deserializer_round_trips_recipient_packages() {
+        let fixture = RootDkgRound2Output {
+            frost_identifier: 7,
+            round2_secret_package: Zeroizing::new(vec![1, 2, 3]),
+            round2_packages: BTreeMap::from([
+                (8, Zeroizing::new(vec![4, 5, 6])),
+                (9, Zeroizing::new(vec![7, 8, 9])),
+            ]),
+        };
+
+        let json = serde_json::to_vec(&fixture).expect("round-two JSON fixture");
+        let json_round_trip = serde_json::from_slice::<RootDkgRound2Output>(&json)
+            .expect("round-two JSON secret map");
+        assert_eq!(json_round_trip, fixture);
+
+        let cbor = cbor_bytes(&fixture);
+        let cbor_round_trip = ciborium::from_reader::<RootDkgRound2Output, _>(cbor.as_slice())
+            .expect("round-two CBOR secret map");
+        assert_eq!(cbor_round_trip, fixture);
+    }
+
+    #[test]
+    fn secret_dkg_deserializer_reports_expected_container_shapes() {
+        let byte_sequence_error = serde_json::from_str::<RootKeyPackage>(
+            r#"{"frost_identifier":7,"key_package":"not-a-sequence"}"#,
+        )
+        .expect_err("a root key secret must be encoded as a byte sequence");
+        assert!(
+            byte_sequence_error
+                .to_string()
+                .contains("a sequence of root secret bytes"),
+            "unexpected byte-sequence diagnostic: {byte_sequence_error}"
+        );
+
+        let recipient_map_error = serde_json::from_str::<RootDkgRound2Output>(
+            r#"{"frost_identifier":7,"round2_secret_package":[1,2,3],"round2_packages":[]}"#,
+        )
+        .expect_err("recipient-bound secrets must be encoded as a map");
+        assert!(
+            recipient_map_error
+                .to_string()
+                .contains("a map of recipient-bound root secret byte sequences"),
+            "unexpected recipient-map diagnostic: {recipient_map_error}"
         );
     }
 
@@ -1097,6 +1176,27 @@ mod tests {
         assert_eq!(peers.get(&1).expect("peer one"), b"one");
         assert_eq!(peers.get(&3).expect("peer three"), b"three");
         assert!(!peers.contains_key(&2));
+    }
+
+    #[test]
+    fn complete_dkg_fail_closed_helpers_reject_missing_assembly_state() {
+        let recipient_error = require_recipient_round2_packages(None, 7)
+            .expect_err("a missing recipient package set must abort local DKG assembly");
+        assert_eq!(
+            recipient_error,
+            RootError::Frost {
+                detail: "missing recipient-bound round-two packages for 7".to_owned()
+            }
+        );
+
+        let public_error = require_first_public_key_package(None)
+            .expect_err("a missing first-participant public package must abort assembly");
+        assert_eq!(
+            public_error,
+            RootError::Frost {
+                detail: "missing first participant public key package".to_owned()
+            }
+        );
     }
 
     #[test]

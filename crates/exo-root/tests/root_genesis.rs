@@ -450,19 +450,25 @@ fn threshold_signing_rejects_malformed_public_key_package_and_signer_set() {
     let mut internal_rng = StdRng::seed_from_u64(43);
     let mut internal_dkg =
         run_complete_dkg(&config, &mut internal_rng).expect("internal mismatch dkg");
-    let mut replacement = internal_dkg.key_packages.remove(&2).expect("share 2");
     let mut internal_mismatch = take_key_packages(&mut internal_dkg, 7);
-    internal_mismatch.get_mut(&1).expect("share 1").key_package =
-        std::mem::take(&mut replacement.key_package);
+    let mut share_one = internal_mismatch.remove(&1).expect("share 1");
+    let mut share_two = internal_mismatch.remove(&2).expect("share 2");
+    std::mem::swap(&mut share_one.key_package, &mut share_two.key_package);
+    internal_mismatch.insert(1, share_one);
+    internal_mismatch.insert(2, share_two);
+    let internal_error = threshold_sign(
+        &config,
+        &dkg.public_key_package,
+        internal_mismatch,
+        b"artifact",
+        &mut rng,
+    )
+    .expect_err("serialized key packages must match their declared identifiers");
     assert!(
-        threshold_sign(
-            &config,
-            &dkg.public_key_package,
-            internal_mismatch,
-            b"artifact",
-            &mut rng
-        )
-        .is_err()
+        internal_error
+            .to_string()
+            .contains("deserialized key package identifier mismatch"),
+        "unexpected internal identifier mismatch error: {internal_error}"
     );
 
     assert!(verify_root_signature(b"not a key", b"artifact", b"signature").is_err());
