@@ -90,7 +90,8 @@ grep -F 'validate_crates_io_response' "$crate_publisher" >/dev/null \
   || fail "every exact-checksum acceptance path must require an already-claimed approved namespace"
 grep -F 'status 429 Too Many Requests' "$crate_publisher" >/dev/null \
   && grep -F 'try again after' "$crate_publisher" >/dev/null \
-  && grep -F '/bin/sleep "$retry_seconds"' "$crate_publisher" >/dev/null \
+  && grep -F 'release_retry_sleep "$retry_seconds"' "$crate_publisher" >/dev/null \
+  && grep -F '/bin/sleep "$1"' "$crate_publisher" >/dev/null \
   || fail "crate publication needs bounded rate-limit retry behavior"
 grep -F '"$trusted_cargo" publish' "$crate_publisher" >/dev/null \
   && grep -F -- '--no-verify' "$crate_publisher" >/dev/null \
@@ -101,8 +102,9 @@ if grep -F -- '--allow-dirty' "$crate_publisher" >/dev/null \
   fail "crate publication must not bypass dirty-source protection"
 fi
 
-# After the first possible registry mutation, the helper may use only captured
-# in-memory facts and bounded registry responses—never Git or a helper reload.
+# The publisher must keep immutable helper bodies in memory, but it must rerun
+# the live source and signed-tag bindings immediately before every irreversible
+# registry attempt, including attempts after a retry delay.
 package_line="$(grep -nF 'release_cargo package' tools/preflight_release_crates.sh | tail -n 1 | cut -d: -f1)"
 preflight_tail="$(sed -n "${package_line},\$p" tools/preflight_release_crates.sh)"
 if grep -E 'trusted_git|run_exact_guard|verify_(release|cargo_config)|GITHUB_SHA.*tools/' <<<"$preflight_tail" >/dev/null; then
@@ -110,8 +112,15 @@ if grep -E 'trusted_git|run_exact_guard|verify_(release|cargo_config)|GITHUB_SHA
 fi
 publish_line="$(grep -nF '"$trusted_cargo" publish' "$crate_publisher" | cut -d: -f1)"
 crate_tail="$(sed -n "${publish_line},\$p" "$crate_publisher")"
-if grep -E '(/usr/bin/)?git|GITHUB_SHA|RELEASE_(SOURCE|TAG_GUARD|CARGO_CONFIG|PREFLIGHT_MANIFEST|REPRODUCED_MANIFEST)' <<<"$crate_tail" >/dev/null; then
-  fail "crate publisher reads Git, a guard, or a downloaded trust input after publication starts"
+grep -F 'verify_live_release_binding' "$crate_publisher" >/dev/null \
+  && grep -F 'source_guard_program' "$crate_publisher" >/dev/null \
+  && grep -F 'tag_guard_program' "$crate_publisher" >/dev/null \
+  || fail "crate publisher must retain immutable source and tag guard programs"
+publish_attempt_block="$(sed -n '/while \[ "$attempt" -le "$max_attempts" \]; do/,/if output="$(release_cargo_publish/p' "$crate_publisher")"
+grep -F 'verify_live_release_binding' <<<"$publish_attempt_block" >/dev/null \
+  || fail "every crate publication attempt must rerun live source and tag binding"
+if grep -E 'RELEASE_(SOURCE|TAG_GUARD|CARGO_CONFIG|PREFLIGHT_MANIFEST|REPRODUCED_MANIFEST)' <<<"$crate_tail" >/dev/null; then
+  fail "crate publisher must use captured guard bodies, not mutable release guard inputs"
 fi
 
 check_npm_publisher_job() {

@@ -45,6 +45,10 @@ declare -F retry_seconds_until_epoch >/dev/null \
   || fail "crates.io Retry-After calculation is missing"
 declare -F retry_seconds_within_budget >/dev/null \
   || fail "cumulative crates.io retry budget is missing"
+declare -F verify_live_release_binding >/dev/null \
+  || fail "per-attempt release source and tag binding guard is missing"
+declare -F release_retry_sleep >/dev/null \
+  || fail "testable bounded retry sleep boundary is missing"
 
 release_version=0.2.6
 RELEASE_VERSION="$release_version"
@@ -289,6 +293,8 @@ original_publish_definition="$(declare -f release_cargo_publish)"
 original_poll_definition="$(declare -f poll_for_expected_checksum)"
 original_query_definition="$(declare -f query_crate_version)"
 original_owner_definition="$(declare -f verify_crate_ownership)"
+original_binding_definition="$(declare -f verify_live_release_binding)"
+verify_live_release_binding() { return 0; }
 verify_crate_ownership() { return 0; }
 release_cargo_publish() { return 0; }
 publish_poll_calls=0
@@ -437,6 +443,49 @@ fi
 eval "$original_publish_definition"
 eval "$original_query_definition"
 eval "$original_owner_definition"
+
+# Every irreversible Cargo invocation must be immediately preceded by the
+# captured source and signed-tag guards. This remains true after a bounded 429
+# retry delay, when either the checkout or the remote tag could have changed.
+original_retry_sleep_definition="$(declare -f release_retry_sleep)"
+release_event_log="$test_root/release-attempt-events"
+: > "$release_event_log"
+verify_crate_ownership() {
+  printf 'owner\n' >> "$release_event_log"
+}
+verify_live_release_binding() {
+  printf 'binding\n' >> "$release_event_log"
+}
+retry_publish_count_file="$test_root/retry-publish-count"
+printf '0\n' > "$retry_publish_count_file"
+release_cargo_publish() {
+  local retry_publish_attempts
+  read -r retry_publish_attempts < "$retry_publish_count_file"
+  retry_publish_attempts=$((retry_publish_attempts + 1))
+  printf '%s\n' "$retry_publish_attempts" > "$retry_publish_count_file"
+  printf 'publish\n' >> "$release_event_log"
+  if [ "$retry_publish_attempts" -eq 1 ]; then
+    printf 'status 429 Too Many Requests\n'
+    return 7
+  fi
+  return 0
+}
+query_crate_version() { return 1; }
+poll_for_expected_checksum() { return 0; }
+release_retry_sleep() { return 0; }
+crates_io_retry_seconds_slept=0
+publish_crate_with_retry exochain-core "$archive_hash" >/dev/null
+[ "$(/bin/cat "$retry_publish_count_file")" -eq 2 ] \
+  || fail "429 retry fixture did not execute exactly two publication attempts"
+[ "$(tr '\n' ' ' < "$release_event_log")" = \
+    "owner binding publish owner binding publish " ] \
+  || fail "source and tag binding did not immediately guard every publication attempt"
+eval "$original_publish_definition"
+eval "$original_poll_definition"
+eval "$original_query_definition"
+eval "$original_owner_definition"
+eval "$original_binding_definition"
+eval "$original_retry_sleep_definition"
 
 # A successful publish is not complete until the exact checksum is visible.
 # The visibility poll must bind that observation to the then-current owners.
