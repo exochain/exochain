@@ -27,6 +27,28 @@ use exo_root::{
 
 fn assert_clone<T: Clone>() {}
 
+fn move_key_package_bytes(value: RootKeyPackage) -> Vec<u8> {
+    value.key_package
+}
+
+fn destructure_round1(value: RootDkgRound1Output) -> (u16, Vec<u8>, Vec<u8>) {
+    let RootDkgRound1Output {
+        frost_identifier,
+        round1_secret_package,
+        round1_package,
+    } = value;
+    (frost_identifier, round1_secret_package, round1_package)
+}
+
+fn destructure_round2(value: RootDkgRound2Output) -> (u16, Vec<u8>, BTreeMap<u16, Vec<u8>>) {
+    let RootDkgRound2Output {
+        frost_identifier,
+        round2_secret_package,
+        round2_packages,
+    } = value;
+    (frost_identifier, round2_secret_package, round2_packages)
+}
+
 type LegacyFinalizeFn = fn(
     &GenesisCeremonyConfig,
     u16,
@@ -88,6 +110,71 @@ fn legacy_vec_struct_literals_and_clone_bounds_still_compile() {
     assert_eq!(round1.clone(), round1);
     assert_eq!(round2.clone(), round2);
     assert_eq!(participant.clone(), participant);
+}
+
+#[test]
+fn legacy_public_fields_remain_directly_movable_and_destructurable() {
+    assert_eq!(
+        move_key_package_bytes(RootKeyPackage {
+            frost_identifier: 1,
+            key_package: vec![1, 2, 3],
+        }),
+        vec![1, 2, 3]
+    );
+
+    assert_eq!(
+        destructure_round1(RootDkgRound1Output {
+            frost_identifier: 2,
+            round1_secret_package: vec![4, 5, 6],
+            round1_package: vec![7, 8, 9],
+        }),
+        (2, vec![4, 5, 6], vec![7, 8, 9])
+    );
+
+    assert_eq!(
+        destructure_round2(RootDkgRound2Output {
+            frost_identifier: 3,
+            round2_secret_package: vec![10, 11, 12],
+            round2_packages: BTreeMap::from([(4, vec![13, 14, 15])]),
+        }),
+        (3, vec![10, 11, 12], BTreeMap::from([(4, vec![13, 14, 15])]))
+    );
+}
+
+#[test]
+fn legacy_wire_shape_is_unchanged_while_debug_redacts_nested_secrets() {
+    let key_package = RootKeyPackage {
+        frost_identifier: 1,
+        key_package: vec![222, 173, 190, 239],
+    };
+    let serialized_key_package = serde_json::to_string(&key_package);
+    assert!(
+        serialized_key_package.is_ok(),
+        "legacy key-package serialization failed: {serialized_key_package:?}"
+    );
+    assert_eq!(
+        serialized_key_package.unwrap_or_default(),
+        r#"{"frost_identifier":1,"key_package":[222,173,190,239]}"#
+    );
+
+    let public_key_package = RootPublicKeyPackage {
+        public_key_package: vec![1],
+        root_public_key: vec![2],
+        verifying_shares: BTreeMap::from([(1, vec![3])]),
+    };
+    let dkg = RootDkgOutput {
+        key_packages: BTreeMap::from([(1, key_package.clone())]),
+        public_key_package: public_key_package.clone(),
+    };
+    let participant = RootParticipantDkgOutput {
+        key_package,
+        public_key_package,
+    };
+
+    for rendered in [format!("{dkg:?}"), format!("{participant:?}")] {
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(!rendered.contains("[222, 173, 190, 239]"));
+    }
 }
 
 // The body need not execute: compiling it proves the 0.2.5 caller-owned map

@@ -28,11 +28,10 @@ pub struct RootPublicKeyPackage {
 
 /// Serialized FROST key package held by one certifier.
 ///
-/// The byte field retains its original [`Vec`] shape for patch-release source
-/// compatibility, while this owner wipes the vector's full capacity on drop.
-/// Consequently, callers can borrow the field or clone this owner, but cannot
-/// directly move the field out of it; that is the ownership tradeoff required
-/// to preserve both the legacy field type and automatic zeroization.
+/// The byte field retains its original [`Vec`] shape and caller-owned move
+/// semantics for patch-release source compatibility. Debug output is redacted;
+/// callers that retain this legacy carrier can invoke [`Zeroize::zeroize`]
+/// explicitly when the bytes are no longer needed.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "ZeroizingRootKeyPackage")]
 pub struct RootKeyPackage {
@@ -69,14 +68,6 @@ impl Zeroize for RootKeyPackage {
     }
 }
 
-impl Drop for RootKeyPackage {
-    fn drop(&mut self) {
-        self.zeroize();
-    }
-}
-
-impl zeroize::ZeroizeOnDrop for RootKeyPackage {}
-
 #[derive(Deserialize)]
 struct ZeroizingRootKeyPackage {
     frost_identifier: u16,
@@ -92,8 +83,9 @@ impl From<ZeroizingRootKeyPackage> for RootKeyPackage {
 
 /// Complete in-memory DKG result for tests and offline ceremony tooling.
 ///
-/// Cloning this value duplicates private key-package material. Each owned copy
-/// still wipes that material on drop, so callers should keep copies short-lived.
+/// Cloning this value duplicates private key-package material. Callers should
+/// keep copies short-lived and explicitly zeroize legacy private byte carriers
+/// when they are no longer needed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RootDkgOutput {
     /// Certifier key packages by FROST identifier.
@@ -104,9 +96,9 @@ pub struct RootDkgOutput {
 
 /// Serialized output from one certifier's DKG round one.
 ///
-/// The fields retain their original [`Vec`] shapes. This owner wipes the
-/// private round-one vector on drop, which means fields must be borrowed rather
-/// than moved directly out of the value.
+/// The fields retain their original [`Vec`] shapes and caller-owned move
+/// semantics for patch-release source compatibility. Debug output redacts the
+/// private round-one bytes, which can also be explicitly zeroized in place.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "ZeroizingRootDkgRound1Output")]
 pub struct RootDkgRound1Output {
@@ -140,14 +132,6 @@ impl Zeroize for RootDkgRound1Output {
     }
 }
 
-impl Drop for RootDkgRound1Output {
-    fn drop(&mut self) {
-        self.zeroize();
-    }
-}
-
-impl zeroize::ZeroizeOnDrop for RootDkgRound1Output {}
-
 #[derive(Deserialize)]
 struct ZeroizingRootDkgRound1Output {
     frost_identifier: u16,
@@ -179,9 +163,10 @@ impl fmt::Debug for RootDkgRound1Output {
 
 /// Serialized output from one certifier's DKG round two.
 ///
-/// The fields retain their original [`Vec`] and [`BTreeMap`] shapes. This owner
-/// wipes every private vector on drop, which means fields must be borrowed
-/// rather than moved directly out of the value.
+/// The fields retain their original [`Vec`] and [`BTreeMap`] shapes and
+/// caller-owned move semantics for patch-release source compatibility. Debug
+/// output redacts both private fields, which can also be explicitly zeroized in
+/// place.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "ZeroizingRootDkgRound2Output")]
 pub struct RootDkgRound2Output {
@@ -232,14 +217,6 @@ impl Zeroize for RootDkgRound2Output {
         self.round2_packages.clear();
     }
 }
-
-impl Drop for RootDkgRound2Output {
-    fn drop(&mut self) {
-        self.zeroize();
-    }
-}
-
-impl zeroize::ZeroizeOnDrop for RootDkgRound2Output {}
 
 #[derive(Deserialize)]
 struct ZeroizingRootDkgRound2Output {
@@ -469,8 +446,9 @@ fn zeroizing_byte_map(mut packages: BTreeMap<u16, Vec<u8>>) -> BTreeMap<u16, Zer
 
 /// Final DKG material derived by one certifier.
 ///
-/// Cloning this value duplicates its private key package. Each owned copy still
-/// wipes that package on drop, so callers should keep copies short-lived.
+/// Cloning this value duplicates its private key package. Callers should keep
+/// copies short-lived and explicitly zeroize legacy private byte carriers when
+/// they are no longer needed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RootParticipantDkgOutput {
     /// Owner's FROST key package.
@@ -950,10 +928,10 @@ mod tests {
         bytes
     }
 
-    fn assert_zeroizing_carrier<T: zeroize::Zeroize + zeroize::ZeroizeOnDrop>(_: &T) {}
+    fn assert_explicitly_zeroizable<T: zeroize::Zeroize>(_: &T) {}
 
     #[test]
-    fn secret_dkg_byte_carriers_zeroize_on_drop() {
+    fn legacy_secret_dkg_byte_carriers_support_explicit_zeroize() {
         let mut key_package = RootKeyPackage {
             frost_identifier: 7,
             key_package: vec![0xde, 0xad, 0xbe, 0xef],
@@ -969,9 +947,9 @@ mod tests {
             round2_packages: BTreeMap::from([(8, vec![4, 5, 6])]),
         };
 
-        assert_zeroizing_carrier(&key_package);
-        assert_zeroizing_carrier(&round1);
-        assert_zeroizing_carrier(&round2);
+        assert_explicitly_zeroizable(&key_package);
+        assert_explicitly_zeroizable(&round1);
+        assert_explicitly_zeroizable(&round2);
 
         key_package.zeroize();
         round1.zeroize();
@@ -1036,7 +1014,7 @@ mod tests {
             !rendered.contains(&format!("{recipient_secret:?}")),
             "recipient-bound round-two package leaked through Debug: {rendered}"
         );
-        assert_zeroizing_carrier(&output);
+        assert_explicitly_zeroizable(&output);
     }
 
     #[test]
@@ -1055,7 +1033,7 @@ mod tests {
         assert_eq!(accumulator.bytes.len(), accumulator.bytes.capacity());
         let finished = accumulator.finish();
         assert_eq!(finished.len(), bytes_to_add);
-        assert_zeroizing_carrier(&finished);
+        assert_explicitly_zeroizable(&finished);
     }
 
     #[test]
