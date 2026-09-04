@@ -2119,6 +2119,7 @@ jobs:
   publish:
     name: "Publish Exact crates.io Candidates"
     runs-on: ubuntu-24.04
+    environment: release
     needs:
       - reproduce-crates
       - prepare-wasm-npm
@@ -4114,6 +4115,7 @@ jobs:
   publish-wasm-npm:
     name: "Publish Exact WASM npm Package"
     runs-on: ubuntu-24.04
+    environment: release
     needs:
       - publish
       - prepare-wasm-npm
@@ -4349,6 +4351,7 @@ jobs:
   publish-llm-proxy-npm:
     name: "Publish Exact LYNK npm Package"
     runs-on: ubuntu-24.04
+    environment: release
     needs:
       - publish-wasm-npm
       - publish
@@ -4585,6 +4588,7 @@ jobs:
   publish-sdk-npm:
     name: "Publish Exact TypeScript SDK npm Package"
     runs-on: ubuntu-24.04
+    environment: release
     needs:
       - publish-llm-proxy-npm
       - publish
