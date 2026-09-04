@@ -1199,11 +1199,12 @@ mod tests {
             frost_identifier: 7,
             key_package: vec![0xde, 0xad, 0xbe, 0xef],
         };
-        let key_json = serde_json::to_vec(&key_fixture).expect("key-package JSON fixture");
+        let key_json =
+            Zeroizing::new(serde_json::to_vec(&key_fixture).expect("key-package JSON fixture"));
         let mut key_json_round_trip = serde_json::from_slice::<RootKeyPackage>(&key_json)
             .expect("key-package JSON secret bytes");
         assert_eq!(key_json_round_trip, key_fixture);
-        let key_cbor = cbor_bytes(&key_fixture);
+        let key_cbor = Zeroizing::new(cbor_bytes(&key_fixture));
         let mut key_cbor_round_trip =
             ciborium::from_reader::<RootKeyPackage, _>(key_cbor.as_slice())
                 .expect("key-package CBOR secret bytes");
@@ -1214,12 +1215,13 @@ mod tests {
             round1_secret_package: vec![0xca, 0xfe, 0xba, 0xbe],
             round1_package: vec![1, 2, 3],
         };
-        let round1_json = serde_json::to_vec(&round1_fixture).expect("round-one JSON fixture");
+        let round1_json =
+            Zeroizing::new(serde_json::to_vec(&round1_fixture).expect("round-one JSON fixture"));
         let mut round1_json_round_trip =
             serde_json::from_slice::<RootDkgRound1Output>(&round1_json)
                 .expect("round-one JSON secret bytes");
         assert_eq!(round1_json_round_trip, round1_fixture);
-        let round1_cbor = cbor_bytes(&round1_fixture);
+        let round1_cbor = Zeroizing::new(cbor_bytes(&round1_fixture));
         let mut round1_cbor_round_trip =
             ciborium::from_reader::<RootDkgRound1Output, _>(round1_cbor.as_slice())
                 .expect("round-one CBOR secret bytes");
@@ -1231,12 +1233,13 @@ mod tests {
             round2_packages: BTreeMap::from([(8, vec![4, 5, 6]), (9, vec![7, 8, 9])]),
         };
 
-        let json = serde_json::to_vec(&round2_fixture).expect("round-two JSON fixture");
+        let json =
+            Zeroizing::new(serde_json::to_vec(&round2_fixture).expect("round-two JSON fixture"));
         let mut json_round_trip = serde_json::from_slice::<RootDkgRound2Output>(&json)
             .expect("round-two JSON secret map");
         assert_eq!(json_round_trip, round2_fixture);
 
-        let cbor = cbor_bytes(&round2_fixture);
+        let cbor = Zeroizing::new(cbor_bytes(&round2_fixture));
         let mut cbor_round_trip = ciborium::from_reader::<RootDkgRound2Output, _>(cbor.as_slice())
             .expect("round-two CBOR secret map");
         assert_eq!(cbor_round_trip, round2_fixture);
