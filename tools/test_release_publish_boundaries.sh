@@ -30,20 +30,94 @@ reproduce_block="$(job_block reproduce-crates)"
 publish_block="$(job_block publish)"
 wasm_block="$(job_block publish-wasm-npm)"
 llm_block="$(job_block publish-llm-proxy-npm)"
+sdk_block="$(job_block publish-sdk-npm)"
 github_block="$(job_block github-release)"
 for specification in \
   "reproduce-crates:$reproduce_block" "publish:$publish_block" \
   "publish-wasm-npm:$wasm_block" "publish-llm-proxy-npm:$llm_block" \
+  "publish-sdk-npm:$sdk_block" \
   "github-release:$github_block"; do
   [ -n "${specification#*:}" ] || fail "job ${specification%%:*} is missing"
 done
 
-for block in "$reproduce_block" "$publish_block" "$wasm_block" "$llm_block" "$github_block"; do
+for block in "$reproduce_block" "$publish_block" "$wasm_block" "$llm_block" "$sdk_block" "$github_block"; do
   grep -F 'if: ${{ !inputs.dry_run }}' <<<"$block" >/dev/null \
     || fail "every mutating release job must be skipped during dry runs"
   grep -F 'runs-on: ubuntu-24.04' <<<"$block" >/dev/null \
     || fail "every release publisher must use the explicit runner image"
 done
+
+# Registry credentials must cross an external authorization boundary on the
+# exact jobs that consume them. A protected gate elsewhere in a branch-defined
+# DAG cannot protect repository secrets from a modified workflow_dispatch ref.
+registry_secret_jobs="$(
+  ruby -ryaml - "$workflow" <<'RUBY'
+workflow_path = ARGV.fetch(0)
+document = YAML.safe_load(File.binread(workflow_path), aliases: true)
+abort 'release workflow must decode to a mapping' unless document.is_a?(Hash)
+jobs = document['jobs']
+abort 'release workflow jobs mapping is missing' unless jobs.is_a?(Hash)
+
+allowed_secret = /\A\$\{\{\s*secrets\.(CARGO_REGISTRY_TOKEN|NPM_TOKEN)\s*\}\}\z/
+reject_secret_outside_jobs = lambda do |value|
+  case value
+  when Hash
+    value.each do |key, nested|
+      abort 'release workflow must not expose secrets outside jobs' \
+        if key.to_s.casecmp('secrets').zero?
+      reject_secret_outside_jobs.call(nested)
+    end
+  when Array
+    value.each { |nested| reject_secret_outside_jobs.call(nested) }
+  when String
+    abort 'release workflow must not expose secrets outside jobs' \
+      if value.downcase.include?('secrets')
+  end
+end
+document.each do |key, value|
+  next if key.to_s == 'jobs'
+  reject_secret_outside_jobs.call(value)
+end
+
+secret_jobs = []
+inspect_value = lambda do |value, job_id|
+  case value
+  when Hash
+    value.each do |key, nested|
+      if key.to_s.casecmp('secrets').zero?
+        abort "#{job_id} must not inherit or remap the secrets context"
+      end
+      inspect_value.call(nested, job_id)
+    end
+  when Array
+    value.each { |nested| inspect_value.call(nested, job_id) }
+  when String
+    if value.downcase.include?('secrets')
+      match = allowed_secret.match(value)
+      abort "#{job_id} must use an explicit allowlisted registry secret" unless match
+      secret_jobs << job_id
+    end
+  end
+end
+
+jobs.each do |job_id, job|
+  job_id = job_id.to_s
+  abort 'release job identifier is invalid' unless job_id.match?(/\A[A-Za-z_][A-Za-z0-9_-]*\z/)
+  abort "#{job_id} must decode to a mapping" unless job.is_a?(Hash)
+  before = secret_jobs.length
+  inspect_value.call(job, job_id)
+  next if secret_jobs.length == before
+
+  abort "#{job_id} must consume registry authority only behind the protected release environment" \
+    unless job['environment'] == 'release'
+end
+
+abort 'release workflow must identify its registry credential consumers' if secret_jobs.empty?
+puts secret_jobs.uniq.sort
+RUBY
+)" || fail "registry credential consumers must be explicit and environment protected"
+[ -n "$registry_secret_jobs" ] \
+  || fail "release workflow must identify its registry credential consumers"
 
 # The credential-free reproduction job packages the exact candidates first;
 # the fresh publisher receives only both sealed archive sets, their manifests,
