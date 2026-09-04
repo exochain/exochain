@@ -72,7 +72,13 @@ canonical_one="$test_root/canonical-one"
 canonical_two="$test_root/canonical-two"
 digest_one="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_one")"
 digest_two="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_two")"
-expected_digest=4625d65eee8bb844f4dfb87cc97da797afdbc8c41a4ee0a892d3b83325d2e32c
+# Reviewed at release-candidate commit 31e63d678a after the bounded-response
+# remediation made `http` a direct exochain-sdk dependency. Relative to the
+# original 0dab5f93 corpus, the canonical delta is exactly the new
+# registry+https://github.com/rust-lang/crates.io-index#http@1.4.0 edge in the
+# SDK graph and the node graph that embeds it; the component inventory is
+# unchanged.
+expected_digest=c32ded88539e109b4b0596649411c1596c9fcaa71524067a00417183270bc48c
 [ "$digest_one" = "$expected_digest" ] && [ "$digest_two" = "$expected_digest" ] \
   || fail "exact cargo-cyclonedx 0.5.9 corpus did not produce the reviewed canonical digest"
 /usr/bin/diff -ru "$canonical_one" "$canonical_two" >/dev/null \
