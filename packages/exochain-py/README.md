@@ -118,6 +118,11 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+`ExochainClient` and `HttpTransport` keep `timeout` as the `httpx` per-phase
+configuration and separately accept `total_timeout` as a positive finite number
+of seconds for the complete request, including response headers and streamed
+body consumption. Both default to 30 seconds.
+
 ## API reference
 
 | Domain       | Symbol(s)                                               |

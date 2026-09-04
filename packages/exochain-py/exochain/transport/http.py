@@ -18,7 +18,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import math
 from collections.abc import AsyncIterator
 from types import TracebackType
 from typing import Any
@@ -31,6 +33,8 @@ _DEFAULT_USER_AGENT = "exochain-py/0.2.6"
 _DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024
 _RESPONSE_READ_CHUNK_BYTES = 64 * 1024
 _INVALID_RESPONSE_LIMIT = "max_response_bytes must be a positive built-in int"
+_INVALID_TOTAL_TIMEOUT = "total_timeout must be a positive finite built-in int or float"
+_TOTAL_TIMEOUT_EXCEEDED = "total request deadline exceeded"
 _MALFORMED_CONTENT_LENGTH = "response Content-Length is malformed"
 _UNSUPPORTED_CONTENT_ENCODING = "response Content-Encoding must be identity"
 
@@ -58,7 +62,10 @@ class HttpTransport:
 
     ``timeout`` accepts either a plain float (seconds, applied to every phase)
     or a fully-configured ``httpx.Timeout`` for per-phase control (connect,
-    read, write, pool). (A-061)
+    read, write, pool). ``total_timeout`` is a separate positive finite number
+    of seconds for the aggregate request deadline, from response acquisition
+    through complete response-body consumption. Both default to 30 seconds.
+    (A-061)
 
     Response bodies are streamed and capped at ``max_response_bytes`` before
     JSON decoding. The default one-MiB boundary is finite for both successful
@@ -72,8 +79,17 @@ class HttpTransport:
         *,
         api_key: str | None = None,
         timeout: float | httpx.Timeout = 30.0,
+        total_timeout: float | int = 30.0,
         max_response_bytes: int = _DEFAULT_MAX_RESPONSE_BYTES,
     ) -> None:
+        if type(total_timeout) not in (int, float):
+            raise ValueError(_INVALID_TOTAL_TIMEOUT)
+        try:
+            normalized_total_timeout = float(total_timeout)
+        except OverflowError as exc:
+            raise ValueError(_INVALID_TOTAL_TIMEOUT) from exc
+        if not math.isfinite(normalized_total_timeout) or normalized_total_timeout <= 0:
+            raise ValueError(_INVALID_TOTAL_TIMEOUT)
         if type(max_response_bytes) is not int or max_response_bytes <= 0:
             raise ValueError(_INVALID_RESPONSE_LIMIT)
 
@@ -83,6 +99,7 @@ class HttpTransport:
         }
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        self._total_timeout = normalized_total_timeout
         self._max_response_bytes = max_response_bytes
         self._client: httpx.AsyncClient = httpx.AsyncClient(
             base_url=base_url,
@@ -110,21 +127,24 @@ class HttpTransport:
         body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
-            async with self._client.stream(method, path, json=body) as response:
-                response_body = await self._read_response_body(response)
-                try:
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as exc:
-                    response_encoding = response.encoding or "utf-8"
+            async with asyncio.timeout(self._total_timeout):
+                async with self._client.stream(method, path, json=body) as response:
+                    response_body = await self._read_response_body(response)
                     try:
-                        error_body = bytes.decode(response_body, response_encoding, "replace")
-                    except (LookupError, UnicodeError):
-                        error_body = bytes.decode(response_body, "utf-8", "replace")
-                    raise TransportError(
-                        f"{method} {path} failed: {exc}",
-                        status=response.status_code,
-                        body=error_body,
-                    ) from exc
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError as exc:
+                        response_encoding = response.encoding or "utf-8"
+                        try:
+                            error_body = bytes.decode(response_body, response_encoding, "replace")
+                        except (LookupError, UnicodeError):
+                            error_body = bytes.decode(response_body, "utf-8", "replace")
+                        raise TransportError(
+                            f"{method} {path} failed: {exc}",
+                            status=response.status_code,
+                            body=error_body,
+                        ) from exc
+        except TimeoutError as exc:
+            raise TransportError(f"{method} {path} failed: {_TOTAL_TIMEOUT_EXCEEDED}") from exc
         except httpx.HTTPError as exc:
             raise TransportError(f"{method} {path} failed: {exc}") from exc
 
