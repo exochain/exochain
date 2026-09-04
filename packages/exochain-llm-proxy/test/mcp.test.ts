@@ -119,6 +119,27 @@ test("tools call failure emits failure receipt without raw server error", async 
   assert.equal(receipts.length, 1);
 });
 
+test("oversized MCP error body is rejected before failure receipt emission", async () => {
+  const receipts: ReceiptIntent[] = [];
+  const config = baseConfig(fakeFetch(receipts, () => new Response("123456789", { status: 500 })));
+  config.maxResponseBytes = 8;
+  const proxy = createReceiptedMcpProxy(config, { serverUrl: "https://mcp.test" });
+
+  await assert.rejects(
+    () =>
+      proxy.callTool(
+        { name: "search", arguments: { query: "placeholder" } },
+        { idempotencyKey: "idem-mcp-oversized", createdAt: stamp },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof LynkValidationError);
+      assert.equal(error.message, "MCP tools/call response exceeds 8 bytes");
+      return true;
+    },
+  );
+  assert.equal(receipts.length, 0);
+});
+
 test("malformed MCP response is rejected as untrusted", async () => {
   const proxy = createReceiptedMcpProxy(
     baseConfig(fakeFetch([], () => jsonResponse({ jsonrpc: "2.0", id: "bad", result: "raw" }))),

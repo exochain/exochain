@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   LynkConfigurationError,
+  LynkValidationError,
   ReceiptEmissionError,
   buildLlmUsageReceiptIntent,
   hashProviderPayload,
@@ -152,6 +153,21 @@ test("emitUsageReceipt exposes status code without leaking response body", async
       assert.ok(error instanceof ReceiptEmissionError);
       assert.equal(error.statusCode, 503);
       assert.equal(error.message.includes("secret receipt body"), false);
+      return true;
+    },
+  );
+});
+
+test("emitUsageReceipt rejects an oversized gateway error body before parsing", async () => {
+  const cfg = config(async () => new Response("123456789", { status: 503 }));
+  cfg.maxResponseBytes = 8;
+  const intent = await buildLlmUsageReceiptIntent(cfg, usageContext());
+
+  await assert.rejects(
+    () => emitUsageReceipt(cfg, intent),
+    (error: unknown) => {
+      assert.ok(error instanceof LynkValidationError);
+      assert.equal(error.message, "EXOCHAIN receipt response exceeds 8 bytes");
       return true;
     },
   );

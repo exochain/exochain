@@ -160,6 +160,10 @@ export interface LlmProxyConfig {
   custodyPolicyHash: string;
   storageMode: StorageMode;
   requireCompleteUsage?: boolean;
+  /** Maximum decoded bytes accepted from any provider or receipt response. */
+  maxResponseBytes?: number;
+  /** Total request deadline, including streamed response-body collection. */
+  requestTimeoutMs?: number;
   validation: unknown;
   subjectSignature: string;
   adapterSignature: string | ((envelope: LlmUsageEvidenceEnvelope) => Promise<string> | string);

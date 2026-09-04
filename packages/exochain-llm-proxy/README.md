@@ -96,6 +96,13 @@ Required configuration:
 - `adapterSignature`: fixed signature string or signing callback over the LYNK
   evidence envelope.
 
+Optional transport controls:
+
+- `maxResponseBytes`: decoded response-body cap shared by OpenAI, MCP, and
+  receipt calls. Defaults to 8 MiB and cannot exceed 64 MiB.
+- `requestTimeoutMs`: total deadline through response-body collection.
+  Defaults to 30 seconds and cannot exceed 5 minutes.
+
 `external_payload_ref` also requires injected customer KMS and object-store
 clients. The package stores only hashed opaque references in evidence.
 

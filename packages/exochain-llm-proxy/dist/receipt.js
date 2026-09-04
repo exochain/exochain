@@ -9,7 +9,9 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-import { assertNoForbiddenReceiptMaterial, LynkConfigurationError } from "./evidence.js";
+import { assertNoForbiddenReceiptMaterial } from "./evidence.js";
+import { fetchBoundedResponse, parseBoundedJson } from "./http.js";
+export { resolveFetch } from "./http.js";
 export class ReceiptEmissionError extends Error {
     statusCode;
     idempotencyKeyHash;
@@ -31,30 +33,21 @@ export function receiptPendingFromError(error) {
 }
 export async function emitUsageReceipt(config, receiptIntent) {
     assertNoForbiddenReceiptMaterial(receiptIntent);
-    const fetchImpl = resolveFetch(config.fetch);
     const endpoint = `${config.gatewayUrl.replace(/\/+$/, "")}/api/v1/avc/llm-usage/receipts/emit`;
-    const response = await fetchImpl(endpoint, {
+    const bounded = await fetchBoundedResponse(config, endpoint, {
         method: "POST",
         headers: {
             "content-type": "application/json",
         },
         body: JSON.stringify(receiptIntent),
-    });
+    }, "EXOCHAIN receipt response");
+    const { response } = bounded;
     if (!response.ok) {
         throw new ReceiptEmissionError("EXOCHAIN LYNK receipt emission failed", receiptIntent.llm_usage_evidence.evidence.idempotency_key_hash, receiptIntent, response.status);
     }
-    return (await response.json());
+    return parseBoundedJson(bounded, "EXOCHAIN receipt response");
 }
 export async function resolveReceiptPending(config, pending) {
     return emitUsageReceipt(config, pending.receiptIntent);
-}
-export function resolveFetch(fetchImpl) {
-    if (fetchImpl) {
-        return fetchImpl;
-    }
-    if (globalThis.fetch) {
-        return globalThis.fetch.bind(globalThis);
-    }
-    throw new LynkConfigurationError("LYNK proxy requires fetch");
 }
 //# sourceMappingURL=receipt.js.map
