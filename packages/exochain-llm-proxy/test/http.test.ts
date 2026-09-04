@@ -59,6 +59,20 @@ function streamedResponse(
   );
 }
 
+class LyingUint8Array extends Uint8Array {
+  override get byteLength(): number {
+    return 0;
+  }
+
+  override get length(): number {
+    return 0;
+  }
+
+  override [Symbol.iterator]() {
+    return new Uint8Array()[Symbol.iterator]();
+  }
+}
+
 test("bounded fetch accepts the exact byte limit despite a dishonest low Content-Length", async () => {
   const fetchImpl: FetchLike = async () =>
     streamedResponse(["1234", "5678"], { headers: { "content-length": "1" } });
@@ -249,6 +263,59 @@ test("bounded fetch rejects a non-byte stream chunk", async () => {
     },
   );
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
+});
+
+test("bounded fetch measures Uint8Array subclasses by their intrinsic byte length", async () => {
+  const chunk = new LyingUint8Array(9);
+  chunk.fill(65);
+  const response = {
+    headers: new Headers(),
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(chunk);
+        controller.close();
+      },
+    }),
+  } as unknown as Response;
+
+  await assert.rejects(
+    () =>
+      fetchBoundedResponse(
+        policy(async () => response),
+        "https://provider.test",
+        { method: "GET" },
+        "provider response",
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof LynkValidationError);
+      assert.equal(error.message, "provider response exceeds 8 bytes");
+      return true;
+    },
+  );
+});
+
+test("bounded fetch copies exact-limit Uint8Array subclasses through intrinsic bytes", async () => {
+  const chunk = new LyingUint8Array(8);
+  chunk.fill(65);
+  const response = {
+    headers: new Headers(),
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(chunk);
+        controller.close();
+      },
+    }),
+  } as unknown as Response;
+
+  const result = await fetchBoundedResponse(
+    policy(async () => response),
+    "https://provider.test",
+    { method: "GET" },
+    "provider response",
+  );
+
+  assert.equal(result.body.byteLength, 8);
+  assert.equal(result.text, "AAAAAAAA");
 });
 
 test("bounded fetch normalizes a fetch rejection caused by its deadline", async () => {
