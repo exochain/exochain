@@ -46,7 +46,11 @@ def _encode_path_segment(value: str) -> str:
 
 
 class ExochainClient:
-    """A typed, async client for an EXOCHAIN fabric endpoint."""
+    """A typed, async client for an EXOCHAIN fabric endpoint.
+
+    ``timeout`` controls the underlying HTTP phases; ``total_timeout`` is the
+    independent aggregate deadline through complete response-body consumption.
+    """
 
     def __init__(
         self,
@@ -54,11 +58,13 @@ class ExochainClient:
         *,
         api_key: str | None = None,
         timeout: float | httpx.Timeout = 30.0,
+        total_timeout: float | int = 30.0,
     ) -> None:
         self._transport: HttpTransport = HttpTransport(
             base_url,
             api_key=api_key,
             timeout=timeout,
+            total_timeout=total_timeout,
         )
 
     @classmethod

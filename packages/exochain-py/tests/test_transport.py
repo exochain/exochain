@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import httpx
@@ -40,6 +41,23 @@ class _ChunkStream(httpx.AsyncByteStream):
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         for chunk in self._chunks:
+            self.read_count += 1
+            yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _SlowDripStream(httpx.AsyncByteStream):
+    def __init__(self, delay: float, *chunks: bytes) -> None:
+        self._delay = delay
+        self._chunks = chunks
+        self.read_count = 0
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            await asyncio.sleep(self._delay)
             self.read_count += 1
             yield chunk
 
@@ -119,6 +137,128 @@ def test_http_transport_rejects_non_positive_or_non_builtin_limits(
         )
 
     assert str(exc_info.value) == "max_response_bytes must be a positive built-in int"
+
+
+@pytest.mark.parametrize(
+    "invalid_total_timeout",
+    [
+        0,
+        -1,
+        True,
+        False,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        "30",
+        _HostileLimit(30),
+    ],
+)
+def test_http_transport_rejects_invalid_total_timeouts(
+    invalid_total_timeout: object,
+) -> None:
+    """Only positive finite built-in numbers may control the aggregate deadline."""
+    with pytest.raises(ValueError) as exc_info:
+        HttpTransport(  # type: ignore[arg-type]
+            "https://fabric.example",
+            total_timeout=invalid_total_timeout,
+        )
+
+    assert str(exc_info.value) == (
+        "total_timeout must be a positive finite built-in int or float"
+    )
+
+
+@pytest.mark.asyncio
+async def test_http_transport_total_timeout_stops_slow_drip_and_closes_response() -> None:
+    """A progressing body cannot outlive the aggregate deadline or retain its stream."""
+    chunks = (b'{"', b'value', b'":"', b'slow-drip', b'"}')
+    stream = _SlowDripStream(0.02, *chunks)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream)
+
+    transport = HttpTransport(
+        "https://fabric.example",
+        timeout=httpx.Timeout(0.5),
+        total_timeout=0.05,
+        max_response_bytes=64,
+    )
+    await _install_mock_client(
+        transport,
+        httpx.MockTransport(handler),
+        timeout=httpx.Timeout(0.5),
+    )
+
+    try:
+        with pytest.raises(TransportError) as exc_info:
+            await transport.get("/health")
+
+        assert str(exc_info.value) == "GET /health failed: total request deadline exceeded"
+        assert exc_info.value.status is None
+        assert exc_info.value.body is None
+        assert 0 < stream.read_count < len(chunks)
+        assert stream.closed
+    finally:
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_http_transport_total_timeout_covers_response_headers() -> None:
+    """The aggregate deadline starts before waiting for response headers."""
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.20)
+        return httpx.Response(200, json={})
+
+    transport = HttpTransport(
+        "https://fabric.example",
+        timeout=httpx.Timeout(0.5),
+        total_timeout=0.03,
+    )
+    await _install_mock_client(
+        transport,
+        httpx.MockTransport(handler),
+        timeout=httpx.Timeout(0.5),
+    )
+
+    try:
+        with pytest.raises(TransportError) as exc_info:
+            await transport.get("/health")
+
+        assert str(exc_info.value) == "GET /health failed: total request deadline exceeded"
+        assert exc_info.value.status is None
+        assert exc_info.value.body is None
+    finally:
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_http_transport_allows_slow_response_within_total_timeout() -> None:
+    """A valid progressing body remains compatible when it finishes inside the deadline."""
+    chunks = (b'{"', b'value', b'":"', b'ok', b'"}')
+    stream = _SlowDripStream(0.005, *chunks)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream)
+
+    transport = HttpTransport(
+        "https://fabric.example",
+        timeout=httpx.Timeout(0.5),
+        total_timeout=1,
+        max_response_bytes=64,
+    )
+    await _install_mock_client(
+        transport,
+        httpx.MockTransport(handler),
+        timeout=httpx.Timeout(0.5),
+    )
+
+    try:
+        assert await transport.get("/health") == {"value": "ok"}
+        assert stream.read_count == len(chunks)
+        assert stream.closed
+    finally:
+        await transport.close()
 
 
 @pytest.mark.asyncio
@@ -483,6 +623,34 @@ async def test_client_accepts_configured_httpx_timeout() -> None:
     )
     assert isinstance(client.transport, HttpTransport)
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_client_exposes_configured_total_timeout() -> None:
+    """The high-level client forwards its aggregate deadline to the transport."""
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.20)
+        return httpx.Response(200, json={})
+
+    client = ExochainClient(
+        "https://fabric.example",
+        timeout=httpx.Timeout(0.5),
+        total_timeout=0.03,
+    )
+    await _install_mock_client(
+        client.transport,
+        httpx.MockTransport(handler),
+        timeout=httpx.Timeout(0.5),
+    )
+
+    try:
+        with pytest.raises(TransportError) as exc_info:
+            await client.health()
+
+        assert str(exc_info.value) == "GET /health failed: total request deadline exceeded"
+    finally:
+        await client.close()
 
 
 @pytest.mark.asyncio
