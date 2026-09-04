@@ -50,6 +50,9 @@ or source-of-truth code.
   timestamp, governance, and WASM ingress.
 - Fixed external errors, fallible persistence decoding, encoded SDK targets, and
   collision-resistant decision identifiers across Rust, TypeScript, and Python.
+  For title, description, and proposer strings accepted by all three SDKs, Rust,
+  TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the same canonical
+  CBOR v2 decision frame.
 - Adjacent LiveSafe overflow and dependency remediation in a separate commit and
   validation lane.
 
