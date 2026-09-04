@@ -6,11 +6,13 @@ import {
   type LlmProxyConfig,
   type ObjectStoreLike,
 } from "../src/index.js";
+import type { ReceiptAuthority } from "./receipt-authority.js";
 
 export const exampleExternalPayloadConfig = (
   fetchImpl: FetchLike,
   kms: KmsLike,
   objectStore: ObjectStoreLike,
+  authority: ReceiptAuthority,
 ): LlmProxyConfig => ({
   mode: "production",
   gatewayUrl: "https://exochain.example",
@@ -20,9 +22,7 @@ export const exampleExternalPayloadConfig = (
   adapterDid: "did:exo:lynk-adapter",
   custodyPolicyHash: hashProviderPayload("customer-custody-policy-v1"),
   storageMode: "external_payload_ref",
-  validation: { action: "llm.usage.receipt.emit" },
-  subjectSignature: "subject-signature-placeholder",
-  adapterSignature: "adapter-signature-placeholder",
+  ...authority,
   fetch: fetchImpl,
   kms,
   objectStore,
@@ -32,9 +32,10 @@ export async function runExternalPayloadRefExample(
   fetchImpl: FetchLike,
   kms: KmsLike,
   objectStore: ObjectStoreLike,
+  authority: ReceiptAuthority,
 ): Promise<unknown> {
   const client = createReceiptedOpenAIClient(
-    exampleExternalPayloadConfig(fetchImpl, kms, objectStore),
+    exampleExternalPayloadConfig(fetchImpl, kms, objectStore, authority),
     {
       openAIBaseUrl: "https://api.openai.com",
       apiKey: process.env.OPENAI_API_KEY,

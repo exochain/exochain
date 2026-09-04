@@ -22,6 +22,11 @@ import {
   type ObjectStoreLike,
   type ReceiptIntent,
 } from "../src/index.js";
+import {
+  committedReceiptResponse,
+  TEST_VALIDATOR_DID,
+  TEST_VALIDATOR_PUBLIC_KEY,
+} from "./receipt-fixture.js";
 
 const stamp = { physical_ms: 1_700_000, logical: 0 };
 
@@ -44,11 +49,13 @@ function baseConfig(
     namespace: "default",
     actorDid: "did:exo:agent",
     adapterDid: "did:exo:adapter",
+    trustedValidatorDid: TEST_VALIDATOR_DID,
+    trustedValidatorPublicKey: TEST_VALIDATOR_PUBLIC_KEY,
     custodyPolicyHash: hashProviderPayload("policy"),
     storageMode: "external_payload_ref",
     validation: { credential: "fixture", action: "llm.usage.receipt.emit" },
-    subjectSignature: "subject-signature",
-    adapterSignature: "adapter-signature",
+    subjectSignature: "a".repeat(128),
+    adapterSignature: "b".repeat(128),
     fetch: fetchImpl,
     kms,
     objectStore,
@@ -60,8 +67,9 @@ function fakeFetch(receipts: ReceiptIntent[], receiptStatus = 200): FetchLike {
     const url = String(input);
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     if (url.endsWith("/api/v1/avc/llm-usage/receipts/emit")) {
-      receipts.push(body as ReceiptIntent);
-      return jsonResponse({ receipt_hash: "receipt-object" }, receiptStatus);
+      const receiptIntent = body as ReceiptIntent;
+      receipts.push(receiptIntent);
+      return jsonResponse(committedReceiptResponse(receiptIntent), receiptStatus);
     }
     return jsonResponse({
       id: "resp-object",

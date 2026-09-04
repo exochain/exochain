@@ -12,7 +12,7 @@
 
 import { buildLlmUsageReceiptIntent, maybeStoreExternalPayloads } from "./evidence.js";
 import { releaseWithReceipt } from "./delivery.js";
-import { emitUsageReceipt } from "./receipt.js";
+import { emitUsageReceipt, requireProductionValidatorTrust } from "./receipt.js";
 import { hashProviderPayload, LynkValidationError } from "./evidence.js";
 import type {
   LlmProxyConfig,
@@ -43,6 +43,7 @@ export function createReceiptedOpenAIClient(
   openAI: OpenAIProxyOptions,
 ): ReceiptedOpenAIClient {
   assertProductionDevelopmentFlag(config);
+  requireProductionValidatorTrust(config);
   return {
     responses: {
       create: (body, options) =>

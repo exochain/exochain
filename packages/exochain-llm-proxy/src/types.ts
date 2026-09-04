@@ -85,6 +85,12 @@ export interface ReceiptEmissionResult {
   exochain_finality_hash?: string;
   exochain_finality_height?: number;
   exochain_finality_receipt_hash?: string;
+  lynk_response_attestation?: {
+    domain: string;
+    schema_version: number;
+    validator_did: string;
+    signature: { Ed25519: number[] };
+  };
 }
 
 export interface ReceiptPending {
@@ -155,7 +161,13 @@ export interface LlmProxyConfig {
   namespace: string;
   actorDid: string;
   adapterDid: string;
+  /** Trusted DID that must authenticate every committed LYNK receipt response. */
+  trustedValidatorDid?: string;
+  /** Canonical lowercase hex for that validator's pinned 32-byte Ed25519 public key. */
+  trustedValidatorPublicKey?: string;
+  /** Canonical lowercase hex for the adapter's 32-byte Ed25519 public key. */
   adapterPublicKey?: string;
+  /** Canonical lowercase hex for the subject's 32-byte Ed25519 public key. */
   subjectPublicKey?: string;
   custodyPolicyHash: string;
   storageMode: StorageMode;
@@ -165,7 +177,12 @@ export interface LlmProxyConfig {
   /** Total request deadline, including streamed response-body collection. */
   requestTimeoutMs?: number;
   validation: unknown;
+  /** Canonical lowercase hex for the 64-byte signature over the AVC action payload. */
   subjectSignature: string;
+  /**
+   * Canonical lowercase hex for the 64-byte signature over Rust's canonical
+   * LYNK evidence-signature payload, or a callback that returns that value.
+   */
   adapterSignature: string | ((envelope: LlmUsageEvidenceEnvelope) => Promise<string> | string);
   fetch?: FetchLike;
   objectStore?: ObjectStoreLike;

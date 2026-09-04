@@ -25,6 +25,11 @@ import {
   usageFromChatCompletions,
   usageFromResponses,
 } from "../src/index.js";
+import {
+  committedReceiptResponse,
+  TEST_VALIDATOR_DID,
+  TEST_VALIDATOR_PUBLIC_KEY,
+} from "./receipt-fixture.js";
 
 const stamp = { physical_ms: 1_700_000, logical: 0 };
 
@@ -36,11 +41,13 @@ function baseConfig(fetchImpl: FetchLike): LlmProxyConfig {
     namespace: "default",
     actorDid: "did:exo:agent",
     adapterDid: "did:exo:adapter",
+    trustedValidatorDid: TEST_VALIDATOR_DID,
+    trustedValidatorPublicKey: TEST_VALIDATOR_PUBLIC_KEY,
     custodyPolicyHash: hashProviderPayload("policy"),
     storageMode: "receipt_minimized",
     validation: { credential: "fixture", action: "llm.usage.receipt.emit" },
-    subjectSignature: "subject-signature",
-    adapterSignature: "adapter-signature",
+    subjectSignature: "a".repeat(128),
+    adapterSignature: "b".repeat(128),
     fetch: fetchImpl,
   };
 }
@@ -68,8 +75,9 @@ function fakeFetch(
     const url = String(input);
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     if (url.endsWith("/api/v1/avc/llm-usage/receipts/emit")) {
-      receiptBodies.push(body as ReceiptIntent);
-      return jsonResponse({ receipt_hash: "receipt-1", receipt: { ok: true } }, receiptStatus);
+      const receiptIntent = body as ReceiptIntent;
+      receiptBodies.push(receiptIntent);
+      return jsonResponse(committedReceiptResponse(receiptIntent), receiptStatus);
     }
     return provider(url, body);
   };
@@ -180,8 +188,9 @@ test("OpenAI proxy alias omits bearer header when no API key is configured", asy
     const url = String(input);
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     if (url.endsWith("/api/v1/avc/llm-usage/receipts/emit")) {
-      receipts.push(body as ReceiptIntent);
-      return jsonResponse({ receipt_hash: "receipt-alias" });
+      const receiptIntent = body as ReceiptIntent;
+      receipts.push(receiptIntent);
+      return jsonResponse(committedReceiptResponse(receiptIntent));
     }
     providerHeaders = init?.headers;
     assert.equal(url, "https://openai.test/v1/responses");
