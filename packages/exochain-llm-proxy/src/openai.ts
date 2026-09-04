@@ -23,7 +23,7 @@ import type {
   ReceiptedResult,
   UsageContext,
 } from "./types.js";
-import { resolveFetch } from "./receipt.js";
+import { fetchBoundedResponse, parseBoundedJson, type BoundedHttpResponse } from "./http.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -79,23 +79,28 @@ async function callOpenAIEndpoint(
   body: JsonRecord,
   options: PerCallReceiptOptions,
 ): Promise<ReceiptedResult<unknown>> {
-  const fetchImpl = resolveFetch(config.fetch);
-  const response = await fetchImpl(`${openAI.openAIBaseUrl.replace(/\/+$/, "")}${path}`, {
-    method: "POST",
-    headers: openAI.apiKey
-      ? {
-          "content-type": "application/json",
-          authorization: `Bearer ${openAI.apiKey}`,
-        }
-      : {
-          "content-type": "application/json",
-        },
-    body: JSON.stringify(body),
-  });
+  const bounded = await fetchBoundedResponse(
+    config,
+    `${openAI.openAIBaseUrl.replace(/\/+$/, "")}${path}`,
+    {
+      method: "POST",
+      headers: openAI.apiKey
+        ? {
+            "content-type": "application/json",
+            authorization: `Bearer ${openAI.apiKey}`,
+          }
+        : {
+            "content-type": "application/json",
+          },
+      body: JSON.stringify(body),
+    },
+    "OpenAI provider response",
+  );
+  const { response } = bounded;
   if (!response.ok) {
     return emitProviderFailureReceipt(config, endpointName, body, response.status, options);
   }
-  const responsePayload = await parseOpenAIResponse(response, body);
+  const responsePayload = parseOpenAIResponse(bounded, body);
   const usage =
     endpointName === "responses"
       ? usageFromResponses(responsePayload)
@@ -130,12 +135,15 @@ async function emitProviderFailureReceipt(
   };
 }
 
-async function parseOpenAIResponse(response: Response, requestBody: JsonRecord): Promise<unknown> {
+function parseOpenAIResponse(response: BoundedHttpResponse, requestBody: JsonRecord): unknown {
   if (requestBody.stream === true) {
-    const text = await response.text();
-    return parseSseStream(text);
+    try {
+      return parseSseStream(response.text);
+    } catch {
+      throw new LynkValidationError("OpenAI streaming response was not valid SSE JSON");
+    }
   }
-  return response.json();
+  return parseBoundedJson(response, "OpenAI provider response");
 }
 
 export function parseSseStream(text: string): JsonRecord {

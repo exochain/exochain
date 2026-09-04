@@ -10,14 +10,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { assertNoForbiddenReceiptMaterial, LynkConfigurationError } from "./evidence.js";
+import { assertNoForbiddenReceiptMaterial } from "./evidence.js";
 import type {
-  FetchLike,
   LlmProxyConfig,
   ReceiptEmissionResult,
   ReceiptIntent,
   ReceiptPending,
 } from "./types.js";
+import { fetchBoundedResponse, parseBoundedJson } from "./http.js";
+export { resolveFetch } from "./http.js";
 
 export class ReceiptEmissionError extends Error {
   readonly statusCode?: number;
@@ -46,15 +47,20 @@ export async function emitUsageReceipt(
   receiptIntent: ReceiptIntent,
 ): Promise<ReceiptEmissionResult> {
   assertNoForbiddenReceiptMaterial(receiptIntent);
-  const fetchImpl = resolveFetch(config.fetch);
   const endpoint = `${config.gatewayUrl.replace(/\/+$/, "")}/api/v1/avc/llm-usage/receipts/emit`;
-  const response = await fetchImpl(endpoint, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
+  const bounded = await fetchBoundedResponse(
+    config,
+    endpoint,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(receiptIntent),
     },
-    body: JSON.stringify(receiptIntent),
-  });
+    "EXOCHAIN receipt response",
+  );
+  const { response } = bounded;
   if (!response.ok) {
     throw new ReceiptEmissionError(
       "EXOCHAIN LYNK receipt emission failed",
@@ -63,7 +69,7 @@ export async function emitUsageReceipt(
       response.status,
     );
   }
-  return (await response.json()) as ReceiptEmissionResult;
+  return parseBoundedJson(bounded, "EXOCHAIN receipt response") as ReceiptEmissionResult;
 }
 
 export async function resolveReceiptPending(
@@ -71,14 +77,4 @@ export async function resolveReceiptPending(
   pending: ReceiptPending,
 ): Promise<ReceiptEmissionResult> {
   return emitUsageReceipt(config, pending.receiptIntent);
-}
-
-export function resolveFetch(fetchImpl?: FetchLike): FetchLike {
-  if (fetchImpl) {
-    return fetchImpl;
-  }
-  if (globalThis.fetch) {
-    return globalThis.fetch.bind(globalThis) as FetchLike;
-  }
-  throw new LynkConfigurationError("LYNK proxy requires fetch");
 }

@@ -13,7 +13,7 @@ import { buildLlmUsageReceiptIntent, maybeStoreExternalPayloads } from "./eviden
 import { releaseWithReceipt } from "./delivery.js";
 import { emitUsageReceipt } from "./receipt.js";
 import { hashProviderPayload, LynkValidationError } from "./evidence.js";
-import { resolveFetch } from "./receipt.js";
+import { fetchBoundedResponse, parseBoundedJson } from "./http.js";
 export function createReceiptedOpenAIClient(config, openAI) {
     assertProductionDevelopmentFlag(config);
     return {
@@ -31,8 +31,7 @@ export function createReceiptedOpenAIProxy(config, openAI) {
     return createReceiptedOpenAIClient(config, openAI);
 }
 async function callOpenAIEndpoint(config, openAI, endpointName, path, body, options) {
-    const fetchImpl = resolveFetch(config.fetch);
-    const response = await fetchImpl(`${openAI.openAIBaseUrl.replace(/\/+$/, "")}${path}`, {
+    const bounded = await fetchBoundedResponse(config, `${openAI.openAIBaseUrl.replace(/\/+$/, "")}${path}`, {
         method: "POST",
         headers: openAI.apiKey
             ? {
@@ -43,11 +42,12 @@ async function callOpenAIEndpoint(config, openAI, endpointName, path, body, opti
                 "content-type": "application/json",
             },
         body: JSON.stringify(body),
-    });
+    }, "OpenAI provider response");
+    const { response } = bounded;
     if (!response.ok) {
         return emitProviderFailureReceipt(config, endpointName, body, response.status, options);
     }
-    const responsePayload = await parseOpenAIResponse(response, body);
+    const responsePayload = parseOpenAIResponse(bounded, body);
     const usage = endpointName === "responses"
         ? usageFromResponses(responsePayload)
         : usageFromChatCompletions(responsePayload);
@@ -73,12 +73,16 @@ async function emitProviderFailureReceipt(config, endpointName, body, providerSt
         receiptIntent,
     };
 }
-async function parseOpenAIResponse(response, requestBody) {
+function parseOpenAIResponse(response, requestBody) {
     if (requestBody.stream === true) {
-        const text = await response.text();
-        return parseSseStream(text);
+        try {
+            return parseSseStream(response.text);
+        }
+        catch {
+            throw new LynkValidationError("OpenAI streaming response was not valid SSE JSON");
+        }
     }
-    return response.json();
+    return parseBoundedJson(response, "OpenAI provider response");
 }
 export function parseSseStream(text) {
     const events = [];

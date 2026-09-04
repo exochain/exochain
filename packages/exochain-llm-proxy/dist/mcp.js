@@ -11,7 +11,8 @@
  */
 import { buildLlmUsageReceiptIntent, hashProviderPayload, LynkConfigurationError, LynkValidationError, maybeStoreExternalPayloads, } from "./evidence.js";
 import { releaseWithReceipt } from "./delivery.js";
-import { emitUsageReceipt, resolveFetch } from "./receipt.js";
+import { emitUsageReceipt } from "./receipt.js";
+import { fetchBoundedResponse, parseBoundedJson } from "./http.js";
 export function createReceiptedMcpProxy(config, mcp) {
     if (!mcp.serverUrl || mcp.serverUrl.trim() === "") {
         throw new LynkConfigurationError("MCP LYNK proxy requires serverUrl");
@@ -33,14 +34,15 @@ async function callMcpTool(config, serverUrl, call, options) {
             arguments: call.arguments ?? {},
         },
     };
-    const response = await resolveFetch(config.fetch)(serverUrl, {
+    const bounded = await fetchBoundedResponse(config, serverUrl, {
         method: "POST",
         headers: {
             "content-type": "application/json",
         },
         body: JSON.stringify(requestPayload),
-    });
-    const responsePayload = (await response.json());
+    }, "MCP tools/call response");
+    const { response } = bounded;
+    const responsePayload = parseBoundedJson(bounded, "MCP tools/call response");
     if (!response.ok || (isRecord(responsePayload) && responsePayload.error !== undefined)) {
         return emitMcpFailureReceipt(config, call, requestPayload, response.status, options);
     }

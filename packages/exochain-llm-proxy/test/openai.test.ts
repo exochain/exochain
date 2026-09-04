@@ -227,6 +227,34 @@ test("provider failure emits failure receipt intent without provider body leak",
   assert.equal(receipts.length, 1);
 });
 
+test("oversized OpenAI error and SSE bodies are rejected before receipt emission", async () => {
+  for (const [body, status, stream, idempotencyKey] of [
+    ["123456789", 429, false, "idem-oversized-error"],
+    ["data: 123456789\n\n", 200, true, "idem-oversized-sse"],
+  ] as const) {
+    const receipts: ReceiptIntent[] = [];
+    const config = baseConfig(fakeFetch(receipts, () => new Response(body, { status })));
+    config.maxResponseBytes = 8;
+    const client = createReceiptedOpenAIClient(config, {
+      openAIBaseUrl: "https://openai.test",
+    });
+
+    await assert.rejects(
+      () =>
+        client.responses.create(
+          { model: "gpt-4.1-mini", input: "placeholder", stream },
+          { idempotencyKey, createdAt: stamp },
+        ),
+      (error: unknown) => {
+        assert.ok(error instanceof LynkValidationError);
+        assert.equal(error.message, "OpenAI provider response exceeds 8 bytes");
+        return true;
+      },
+    );
+    assert.equal(receipts.length, 0);
+  }
+});
+
 test("provider success plus receipt failure withholds output as receipt pending", async () => {
   const receipts: ReceiptIntent[] = [];
   const client = createReceiptedOpenAIClient(
@@ -376,7 +404,11 @@ test("malformed streaming SSE is rejected before receipt emission", async () => 
         { model: "gpt-4.1-mini", input: "placeholder", stream: true },
         { idempotencyKey: "idem-9", createdAt: stamp },
       ),
-    SyntaxError,
+    (error: unknown) => {
+      assert.ok(error instanceof LynkValidationError);
+      assert.equal(error.message, "OpenAI streaming response was not valid SSE JSON");
+      return true;
+    },
   );
   assert.equal(receipts.length, 0);
 });
