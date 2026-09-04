@@ -393,10 +393,8 @@ verify_prepublication_npm_authority() {
       "$package_registry_url")" || fail "npm package namespace lookup failed"
   case "$status" in
     404)
-      case "$package_name" in
-        @exochain/exochain-wasm|@exochain/llm-proxy|@exochain/sdk) ;;
-        *) fail "npm first publication is not approved for this package" ;;
-      esac
+      [ "$profile" = sdk ] && [ "$package_name" = @exochain/sdk ] \
+        || fail "npm first publication is approved only for the exact SDK package"
       ;;
     200) fail "npm owner ls could not prove authority over an existing package" ;;
     *) fail "npm package namespace returned unexpected HTTP status $status" ;;
