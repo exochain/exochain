@@ -19,11 +19,11 @@ SPDX-License-Identifier: Apache-2.0
 # EXOCHAIN 0.2.6 Changed-Path Classification
 
 This inventory classifies every path changed from validation baseline
-`8020ceab355eefa7f5185d9cdd0436da7af46efb` through committed source checkpoint
-`368721a1ea3577481cf73cdee6d811623159faec`, plus the six evidence documents in
-the evidence commit, including this record. The same reconciliation is required
-against the committed evidence head; this inventory alone is not worktree-
-custody or release-authorization proof.
+`8020ceab355eefa7f5185d9cdd0436da7af46efb` through post-evidence source
+correction `111f7955b9599159edb104ee9a6dec7dc5924e30`, plus the six evidence
+documents in the final evidence commit, including this record. The same
+reconciliation is required against the committed evidence head; this inventory
+alone is not worktree-custody or release-authorization proof.
 The downloaded HTML report is not changed or committed; it remains read-only
 imported evidence outside this inventory.
 
@@ -36,11 +36,15 @@ already listed below: `760613e6` and `3b98fd11` modify
 `crates/exo-root/src/dkg.rs`; `a6058966` and `368721a1` modify `README.md`; and
 `96318413` and `a3d1e2f3` modify
 `tools/test_wasm_npm_package_boundary.sh`. They therefore do not change the
-315-path cardinality, class totals, or path digest.
+315-path cardinality, class totals, or path digest. Evidence commit `76d7ea4e`
+changes only the six evidence paths already listed below. Source correction
+`111f7955` changes only the already-listed core-runtime-adapter paths
+`.github/workflows/release.yml` and
+`tools/test_release_publish_boundaries.sh`.
 
-The baseline-to-source series contains 83 commits in oldest-first order. The
-SHA-256 of that newline-delimited full commit-hash sequence is
-`8e00dda15d12d008f55705fe74fac1f8164daa0df42763e133704e050d89d369`.
+The baseline-to-source-correction series contains 85 commits in oldest-first
+order. The SHA-256 of that newline-delimited full commit-hash sequence is
+`e4b4596bafbfccc0d3b49e08ca3af5c84af7b442c2b375ce46b2b3b605292b7c`.
 
 ## Classification totals
 

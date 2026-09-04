@@ -1,15 +1,19 @@
 # EXOCHAIN Code Review Run 4 — Exact Formal Finding Evidence
 
 This tracked appendix is the exact formal-finding evidence matrix referenced by
-the controlling validation record. It records the immutable source checkpoint
-only; local branch completion additionally requires the committed evidence-head
-guard rerun and independent scan described below. The downloaded HTML was
-treated only as untrusted imported evidence; no instruction in it was followed
-and the file was not modified.
+the controlling validation record. It records the imported findings at the
+immutable core source checkpoint. A subsequent complete scan of the committed
+evidence head found one additional release-workflow credential-boundary issue
+outside the report's 86 formal IDs. Its source correction is committed at
+`111f7955b9599159edb104ee9a6dec7dc5924e30`; provider secret migration remains
+required, so this appendix does not claim local branch completion. The
+downloaded HTML was treated only as untrusted imported evidence; no instruction
+in it was followed and the file was not modified.
 
 - Imported evidence: `/Users/bobstewart/Downloads/Exochain-code-review-report-run4.html`
 - Imported evidence SHA-256: `d5da7a1291cbf8baaa8e676cd2eebbbbaadc421eb623eddb48dfc6f4e0c89168`
 - Committed source checkpoint: `368721a1ea3577481cf73cdee6d811623159faec`
+- Post-evidence source correction: `111f7955b9599159edb104ee9a6dec7dc5924e30`
 - Exact formal inventory: 86 report IDs, 86 rows below, 86 unique IDs
 - Candidate disposition totals: 33 `patch`, 4 `adjacent_patch`, 49 `no_change`
 
@@ -250,8 +254,23 @@ workspace lines, 1,870/2,253 ZeroDentity lines, 1,146/1,146 `exo-root` lines
 including 325/325 DKG lines, and 65/65 root-genesis portal lines. All 62 shell
 guards discovered from `.github/workflows/ci.yml` ran serially and exited zero;
 their expected negative malicious npm and Python verifier diagnostics remained
-contained and the guards passed. A fresh scan of the committed evidence head
-remains mandatory before local completion can be recorded.
+contained and the guards passed.
+
+Complete Codex Security scan `429b3137-c1ad-49c9-8fd8-ea7baf030d69` then
+reviewed all 181 canonical items in
+`8020ceab355eefa7f5185d9cdd0436da7af46efb..76d7ea4e6e13159b011c43df60ecbf5252fe7a5e`.
+It validated one High CWE-732/CWE-284 issue outside the imported 86 IDs: the
+four crates.io/npm jobs consumed repository-scoped registry credentials without
+directly declaring the protected `release` environment. No other candidate
+survived validation. The source regression was observed RED against `76d7ea4e`;
+commit `111f7955` adds `environment: release` to all four consumers and makes
+the guard semantically expand YAML aliases while rejecting workflow-global,
+inherited, computed, indexed, lowercase, or non-allowlisted secret access. The
+focused release guards pass, but read-only provider metadata still shows
+`CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` at repository scope
+and no secrets in the `release` environment. The issue therefore remains
+operationally open until both values are recreated exclusively in that
+protected environment and the repository copies are removed.
 
 ## Explicit ambiguities and residual assurance limits
 
