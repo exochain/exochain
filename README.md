@@ -130,7 +130,7 @@ Layer 1: CGR Kernel         (Rust, 32 crates)
          SNARK/STARK/ZKML skeletons, 6,619 listed workspace tests
 
 Layer 2: WASM Bridge        (packages/exochain-wasm/)
-         166 verified WASM exports covered by 175 bridge checks — Rust -> WebAssembly -> JavaScript
+         167 verified WASM exports covered by 183 bridge checks — Rust -> WebAssembly -> JavaScript
 
 Layer 3: CommandBase.ai     (command-base/)
          Adjacent cockpit adapter for cognitiveplane.ai
