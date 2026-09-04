@@ -32,8 +32,12 @@ validate_npm_registry_response() {
   local expected_version="$3"
   local expected_integrity="$4"
   local node_binary="$5"
+  local expected_maintainer_name="$6"
+  local expected_maintainer_email="$7"
   /usr/bin/env -i \
     EXPECTED_INTEGRITY="$expected_integrity" \
+    EXPECTED_MAINTAINER_EMAIL="$expected_maintainer_email" \
+    EXPECTED_MAINTAINER_NAME="$expected_maintainer_name" \
     EXPECTED_NAME="$expected_name" \
     EXPECTED_VERSION="$expected_version" \
     "$node_binary" - "$response_file" <<'NODE'
@@ -137,7 +141,21 @@ try {
   const value = JSON.parse(text);
   if (value?.name !== process.env.EXPECTED_NAME
       || value?.version !== process.env.EXPECTED_VERSION
-      || value?.dist?.integrity !== process.env.EXPECTED_INTEGRITY) reject();
+      || value?.dist?.integrity !== process.env.EXPECTED_INTEGRITY
+      || JSON.stringify(value?.maintainers) !== JSON.stringify([{
+        name: process.env.EXPECTED_MAINTAINER_NAME,
+        email: process.env.EXPECTED_MAINTAINER_EMAIL,
+      }])
+      || JSON.stringify(value?._npmUser) !== JSON.stringify({
+        name: process.env.EXPECTED_MAINTAINER_NAME,
+        email: process.env.EXPECTED_MAINTAINER_EMAIL,
+      })
+      || !Array.isArray(value?.dist?.signatures)
+      || value.dist.signatures.length === 0
+      || value.dist.signatures.some((entry) => typeof entry?.keyid !== 'string' || typeof entry?.sig !== 'string')
+      || value?.dist?.attestations?.provenance?.predicateType !== 'https://slsa.dev/provenance/v1'
+      || typeof value?.dist?.attestations?.url !== 'string'
+      || !value.dist.attestations.url.startsWith('https://registry.npmjs.org/-/npm/v1/attestations/')) reject();
 } catch { reject(); }
 finally { if (descriptor !== undefined) fs.closeSync(descriptor); }
 NODE
@@ -147,6 +165,11 @@ for required_name in \
   EXPECTED_COMMIT_SHA \
   EXPECTED_TAG_COMMIT_SHA \
   EXPECTED_TAG_OBJECT_SHA \
+  GITHUB_EVENT_NAME \
+  GITHUB_REF \
+  GITHUB_REPOSITORY \
+  GITHUB_SERVER_URL \
+  GITHUB_WORKFLOW_REF \
   GITHUB_SHA \
   GITHUB_WORKSPACE \
   NODE_AUTH_TOKEN \
@@ -160,6 +183,7 @@ for required_name in \
   RELEASE_TRUSTED_PYTHON_ROOT \
   RELEASE_TRUSTED_PYTHON_VERSION \
   RELEASE_VERSION \
+  RUNNER_ENVIRONMENT \
   TRUSTED_RELEASE_REF \
   TRUSTED_RELEASE_PATH \
   TRUSTED_RELEASE_TOOL_IDENTITY; do
@@ -170,7 +194,8 @@ profile="${1:-}"
 case "$profile" in
   wasm) package_name='@exochain/exochain-wasm' ;;
   llm) package_name='@exochain/llm-proxy' ;;
-  *) fail "profile must be wasm or llm" ;;
+  sdk) package_name='@exochain/sdk' ;;
+  *) fail "profile must be wasm, llm, or sdk" ;;
 esac
 [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
   || fail "RELEASE_VERSION must be an exact semantic version"
@@ -178,6 +203,18 @@ esac
   || fail "EXPECTED_COMMIT_SHA must be a full lowercase commit SHA"
 [ "$EXPECTED_COMMIT_SHA" = "$GITHUB_SHA" ] \
   || fail "dispatch commit does not match the expected commit"
+[ "$GITHUB_REPOSITORY" = exochain/exochain ] \
+  || fail "npm publication is restricted to exochain/exochain"
+[ "$GITHUB_SERVER_URL" = https://github.com ] \
+  || fail "npm trusted publication requires github.com"
+[ "$RUNNER_ENVIRONMENT" = github-hosted ] \
+  || fail "npm trusted publication requires a GitHub-hosted runner"
+[ "$GITHUB_EVENT_NAME" = workflow_dispatch ] \
+  || fail "npm publication requires the reviewed workflow_dispatch trigger"
+[[ "$GITHUB_REF" =~ ^refs/(heads|tags)/[0-9A-Za-z._/-]+$ ]] && [[ "$GITHUB_REF" != *..* ]] \
+  || fail "GITHUB_REF must be an exact safe GitHub ref"
+[ "$GITHUB_WORKFLOW_REF" = "exochain/exochain/.github/workflows/release.yml@$GITHUB_REF" ] \
+  || fail "npm OIDC workflow identity must be exochain/exochain release.yml at GITHUB_REF"
 [[ "$RELEASE_EXPECTED_TARBALL_SHA256" =~ ^[0-9a-f]{64}$ ]] \
   || fail "RELEASE_EXPECTED_TARBALL_SHA256 must be a lowercase SHA-256"
 
@@ -225,22 +262,27 @@ publish_root="$(/usr/bin/mktemp -d "$RELEASE_TEMP_ROOT/exochain-npm-publish.XXXX
 trap '/bin/rm -rf -- "${publish_root:-}"' EXIT
 extract_root="$publish_root/extracted"
 home_root="$publish_root/home"
+audit_root="$publish_root/audit"
 registry_response="$publish_root/registry.json"
+audit_response="$publish_root/audit.json"
+registry_verifier="$publish_root/verify_registry_attestation.mjs"
+expected_npm_actor=bob-stewart
+expected_maintainer_name=bob-stewart
+expected_maintainer_email=stewart@exochain.com
 /bin/mkdir -m 700 "$home_root"
 publisher_user_config="$home_root/user.npmrc"
 publisher_global_config="$home_root/global.npmrc"
 
-/usr/bin/git --no-replace-objects -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false \
-  -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_npm_release_tarball.py" \
-  > "$publish_root/verify_tarball.py"
-/usr/bin/env -i "$python_path" -I -B "$publish_root/verify_tarball.py" \
+for helper in verify_npm_release_tarball.py verify_npm_release_package.mjs verify_npm_registry_attestation.mjs; do
+  /usr/bin/git --no-replace-objects -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false \
+    -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/${helper}" > "$publish_root/$helper"
+  /bin/chmod 500 "$publish_root/$helper"
+done
+/usr/bin/env -i "$python_path" -I -B "$publish_root/verify_npm_release_tarball.py" \
   "$RELEASE_NPM_TARBALL" "$extract_root"
-/usr/bin/git --no-replace-objects -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false \
-  -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_npm_release_package.mjs" \
-  > "$publish_root/verify_package.mjs"
 /usr/bin/env -i \
   RELEASE_EXPECTED_VERSION="$RELEASE_VERSION" \
-  "$node_path" "$publish_root/verify_package.mjs" "$profile" "$extract_root/package"
+  "$node_path" "$publish_root/verify_npm_release_package.mjs" "$profile" "$extract_root/package"
 
 expected_integrity="$($node_path - "$RELEASE_NPM_TARBALL" <<'NODE'
 const fs = require('node:fs');
@@ -252,8 +294,86 @@ NODE
 case "$profile" in
   wasm) registry_path='%40exochain%2Fexochain-wasm' ;;
   llm) registry_path='%40exochain%2Fllm-proxy' ;;
+  sdk) registry_path='%40exochain%2Fsdk' ;;
 esac
 registry_url="https://registry.npmjs.org/${registry_path}/${RELEASE_VERSION}"
+
+printf '%s\n' \
+  'registry=https://registry.npmjs.org/' \
+  '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' \
+  'ignore-scripts=true' \
+  > "$publisher_user_config"
+: > "$publisher_global_config"
+/bin/chmod 600 "$publisher_user_config" "$publisher_global_config"
+[ "$publisher_user_config" != "$publisher_global_config" ] \
+  || fail "publisher user and global npm config paths must differ"
+
+run_authenticated_npm() {
+  /usr/bin/env -i \
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN="${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" \
+    ACTIONS_ID_TOKEN_REQUEST_URL="${ACTIONS_ID_TOKEN_REQUEST_URL:-}" \
+    GITHUB_ACTIONS="${GITHUB_ACTIONS:-true}" \
+    GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
+    GITHUB_REF="$GITHUB_REF" \
+    GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+    GITHUB_REPOSITORY_ID="${GITHUB_REPOSITORY_ID:-}" \
+    GITHUB_REPOSITORY_OWNER_ID="${GITHUB_REPOSITORY_OWNER_ID:-}" \
+    GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-}" \
+    GITHUB_RUN_ID="${GITHUB_RUN_ID:-}" \
+    GITHUB_SERVER_URL="${GITHUB_SERVER_URL:-}" \
+    GITHUB_SHA="$GITHUB_SHA" \
+    GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" \
+    HOME="$home_root" \
+    NODE_AUTH_TOKEN="$NODE_AUTH_TOKEN" \
+    NPM_CONFIG_CACHE="$home_root/cache" \
+    NPM_CONFIG_GLOBALCONFIG="$publisher_global_config" \
+    NPM_CONFIG_IGNORE_SCRIPTS=true \
+    NPM_CONFIG_REGISTRY=https://registry.npmjs.org \
+    NPM_CONFIG_USERCONFIG="$publisher_user_config" \
+    PATH="$TRUSTED_RELEASE_PATH" \
+    RUNNER_ENVIRONMENT="${RUNNER_ENVIRONMENT:-github-hosted}" \
+    "$node_path" "$npm_cli_path" "$@"
+}
+
+verify_release_binding() {
+  /usr/bin/git --no-replace-objects -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false \
+    -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | \
+    /usr/bin/env -i \
+      BASH_ENV=/dev/null \
+      DRY_RUN=false \
+      EXPECTED_COMMIT_SHA="$EXPECTED_COMMIT_SHA" \
+      EXPECTED_TAG_COMMIT_SHA="$EXPECTED_TAG_COMMIT_SHA" \
+      EXPECTED_TAG_OBJECT_SHA="$EXPECTED_TAG_OBJECT_SHA" \
+      GIT_CONFIG_GLOBAL=/dev/null \
+      GIT_CONFIG_NOSYSTEM=1 \
+      GIT_NO_REPLACE_OBJECTS=1 \
+      GITHUB_ACTIONS="${GITHUB_ACTIONS:-true}" \
+      GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+      GITHUB_SERVER_URL="${GITHUB_SERVER_URL:-}" \
+      GITHUB_SHA="$GITHUB_SHA" \
+      GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+      RELEASE_GITHUB_TOKEN="$RELEASE_GITHUB_TOKEN" \
+      RELEASE_SOURCE_CLEAN_MODE=all \
+      RELEASE_TAG="$RELEASE_TAG" \
+      TRUSTED_RELEASE_REF="$TRUSTED_RELEASE_REF" \
+      /bin/bash --noprofile --norc -p
+}
+
+verify_credentialed_npm_actor() {
+  local actual_actor
+  actual_actor="$(run_authenticated_npm whoami --registry=https://registry.npmjs.org)" \
+    || fail "npm whoami rejected the configured release credential"
+  [ "$actual_actor" = "$expected_npm_actor" ] \
+    || fail "npm release credential belongs to an unauthorized actor"
+}
+
+verify_exact_npm_owners() {
+  local actual_owners
+  actual_owners="$(run_authenticated_npm owner ls "$package_name" --registry=https://registry.npmjs.org)" \
+    || fail "npm owner ls could not prove package authority"
+  [ "$actual_owners" = "$expected_maintainer_name <$expected_maintainer_email>" ] \
+    || fail "npm package owners differ from the exact canonical maintainer policy"
+}
 
 registry_has_exact_tarball() {
   local status
@@ -267,89 +387,89 @@ registry_has_exact_tarball() {
     200) ;;
     *) fail "npm registry returned unexpected HTTP status $status" ;;
   esac
-  if validate_npm_registry_response \
-      "$registry_response" "$package_name" "$RELEASE_VERSION" \
-      "$expected_integrity" "$node_path"
-  then
-    return 0
-  fi
-  fail "published npm version does not match the exact preflight tarball"
+  validate_npm_registry_response \
+    "$registry_response" "$package_name" "$RELEASE_VERSION" "$expected_integrity" \
+    "$node_path" "$expected_maintainer_name" "$expected_maintainer_email" \
+    || fail "published npm version does not match the exact release identity"
+  /usr/bin/env -i "$node_path" "$registry_verifier" registry \
+    "$registry_response" "$package_name" "$RELEASE_VERSION" "$expected_integrity" \
+    "$expected_maintainer_name" "$expected_maintainer_email"
 }
 
+verify_registry_signature_and_provenance() {
+  /bin/rm -rf -- "$audit_root"
+  /bin/mkdir -m 700 "$audit_root"
+  /usr/bin/env -i "$node_path" - "$audit_root/package.json" "$package_name" "$RELEASE_VERSION" <<'NODE'
+const fs = require('node:fs');
+const [output, name, version] = process.argv.slice(2);
+fs.writeFileSync(output, JSON.stringify({
+  name: 'exochain-release-registry-proof',
+  version: '0.0.0',
+  private: true,
+  dependencies: { [name]: version },
+}), { flag: 'wx', mode: 0o600 });
+NODE
+  (
+    cd "$audit_root"
+    run_authenticated_npm install --ignore-scripts --no-audit --no-fund --save-exact \
+      --registry=https://registry.npmjs.org >/dev/null || exit 1
+    run_authenticated_npm audit signatures --json --include-attestations > "$audit_response" \
+      || exit 1
+  ) || return 1
+  local audit_sha256
+  audit_sha256="$(/usr/bin/sha256sum "$audit_response" | /usr/bin/cut -d ' ' -f 1)"
+  [[ "$audit_sha256" =~ ^[0-9a-f]{64}$ ]] || return 1
+  /usr/bin/env -i "$node_path" "$registry_verifier" audit \
+    "$audit_response" "$package_name" "$RELEASE_VERSION" "$expected_integrity" \
+    "$EXPECTED_COMMIT_SHA" "$GITHUB_REF" || return 1
+  [ "$(/usr/bin/sha256sum "$audit_response" | /usr/bin/cut -d ' ' -f 1)" = "$audit_sha256" ] \
+    || return 1
+}
+
+verify_registry_acceptance() {
+  registry_has_exact_tarball \
+    || fail "the exact npm version disappeared during acceptance verification"
+  verify_exact_npm_owners
+  local provenance_verified=false
+  for provenance_attempt in 1 2 3 4 5 6; do
+    if verify_registry_signature_and_provenance; then
+      provenance_verified=true
+      break
+    fi
+    [ "$provenance_attempt" -lt 6 ] && /bin/sleep 10
+  done
+  [ "$provenance_verified" = true ] \
+    || fail "npm audit signatures rejected the registry signature or exact release provenance"
+}
+
+verify_credentialed_npm_actor
+publish_needed=true
 if registry_has_exact_tarball; then
-  printf '%s@%s already exists with the exact preflight integrity; skipping.\n' \
-    "$package_name" "$RELEASE_VERSION"
-  exit 0
+  publish_needed=false
 fi
 
-# Rebind and re-evaluate both immutable source and live remote-tag identity at
-# the last safe point before the registry mutation. The guard itself, and its
-# child guards, are loaded from the exact dispatch commit.
-/usr/bin/git --no-replace-objects -c core.fsmonitor=false -c core.untrackedCache=false -c core.ignoreStat=false \
-  -C "$GITHUB_WORKSPACE" show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | \
-  /usr/bin/env -i \
-    BASH_ENV=/dev/null \
-    DRY_RUN=false \
-    EXPECTED_COMMIT_SHA="$EXPECTED_COMMIT_SHA" \
-    EXPECTED_TAG_COMMIT_SHA="$EXPECTED_TAG_COMMIT_SHA" \
-    EXPECTED_TAG_OBJECT_SHA="$EXPECTED_TAG_OBJECT_SHA" \
-    GIT_CONFIG_GLOBAL=/dev/null \
-    GIT_CONFIG_NOSYSTEM=1 \
-    GIT_NO_REPLACE_OBJECTS=1 \
-    GITHUB_ACTIONS="${GITHUB_ACTIONS:-true}" \
-    GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-}" \
-    GITHUB_SERVER_URL="${GITHUB_SERVER_URL:-}" \
-    GITHUB_SHA="$GITHUB_SHA" \
-    GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-    RELEASE_GITHUB_TOKEN="$RELEASE_GITHUB_TOKEN" \
-    RELEASE_SOURCE_CLEAN_MODE=all \
-    RELEASE_TAG="$RELEASE_TAG" \
-    TRUSTED_RELEASE_REF="$TRUSTED_RELEASE_REF" \
-    /bin/bash --noprofile --norc -p
-
-printf '%s\n' \
-  'registry=https://registry.npmjs.org/' \
-  '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' \
-  'ignore-scripts=true' \
-  > "$publisher_user_config"
-: > "$publisher_global_config"
-/bin/chmod 600 "$publisher_user_config" "$publisher_global_config"
-[ "$publisher_user_config" != "$publisher_global_config" ] \
-  || fail "publisher user and global npm config paths must differ"
-
-cd /
-/usr/bin/env -i \
-  ACTIONS_ID_TOKEN_REQUEST_TOKEN="${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" \
-  ACTIONS_ID_TOKEN_REQUEST_URL="${ACTIONS_ID_TOKEN_REQUEST_URL:-}" \
-  GITHUB_ACTIONS="${GITHUB_ACTIONS:-true}" \
-  GITHUB_EVENT_NAME="${GITHUB_EVENT_NAME:-workflow_dispatch}" \
-  GITHUB_REF="${GITHUB_REF:-}" \
-  GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-}" \
-  GITHUB_REPOSITORY_ID="${GITHUB_REPOSITORY_ID:-}" \
-  GITHUB_REPOSITORY_OWNER_ID="${GITHUB_REPOSITORY_OWNER_ID:-}" \
-  GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-}" \
-  GITHUB_RUN_ID="${GITHUB_RUN_ID:-}" \
-  GITHUB_SERVER_URL="${GITHUB_SERVER_URL:-}" \
-  GITHUB_SHA="$GITHUB_SHA" \
-  GITHUB_WORKFLOW_REF="${GITHUB_WORKFLOW_REF:-}" \
-  HOME="$home_root" \
-  NODE_AUTH_TOKEN="$NODE_AUTH_TOKEN" \
-  NPM_CONFIG_CACHE="$home_root/cache" \
-  NPM_CONFIG_GLOBALCONFIG="$publisher_global_config" \
-  NPM_CONFIG_IGNORE_SCRIPTS=true \
-  NPM_CONFIG_REGISTRY=https://registry.npmjs.org \
-  NPM_CONFIG_USERCONFIG="$publisher_user_config" \
-  PATH="$TRUSTED_RELEASE_PATH" \
-  RUNNER_ENVIRONMENT="${RUNNER_ENVIRONMENT:-github-hosted}" \
-  "$node_path" "$npm_cli_path" publish "$RELEASE_NPM_TARBALL" \
+if [ "$publish_needed" = true ]; then
+  # Final source/tag proof immediately before the only registry mutation.
+  verify_release_binding
+  cd /
+  run_authenticated_npm publish "$RELEASE_NPM_TARBALL" \
     --access public --provenance --ignore-scripts --registry=https://registry.npmjs.org
+  published_visible=false
+  for registry_attempt in 1 2 3 4 5 6; do
+    if registry_has_exact_tarball; then
+      published_visible=true
+      break
+    fi
+    [ "$registry_attempt" -lt 6 ] && /bin/sleep 10
+  done
+  [ "$published_visible" = true ] \
+    || fail "published npm version did not reach the registry with exact preflight integrity"
+fi
 
-for registry_attempt in 1 2 3 4 5 6; do
-  if registry_has_exact_tarball; then
-    printf 'Verified %s@%s registry integrity after publication.\n' \
-      "$package_name" "$RELEASE_VERSION"
-    exit 0
-  fi
-  [ "$registry_attempt" -lt 6 ] && /bin/sleep 10
-done
-fail "published npm version did not reach the registry with exact preflight integrity"
+# Both an existing exact version and a newly published version converge here.
+# Acceptance requires authenticated actor/owner proof, registry signature and
+# provenance verification, exact source identity, and one last live tag rebind.
+verify_registry_acceptance
+verify_release_binding
+printf 'Verified %s@%s exact npm artifact, owners, signature, provenance, source, and tag.\n' \
+  "$package_name" "$RELEASE_VERSION"

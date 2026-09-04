@@ -21,8 +21,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
+import os
 import re
+import stat
 import sys
 import tarfile
 from pathlib import Path, PurePosixPath
@@ -33,12 +36,53 @@ def fail(message: str) -> NoReturn:
     raise SystemExit(f"crate release archive verification failed: {message}")
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+MAX_ARCHIVE_BYTES = 10 * 1024 * 1024
+
+
+def stable_stat(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def read_regular_file_once(path: Path) -> bytes:
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not isinstance(nofollow, int) or nofollow == 0:
+        fail("archive cannot be opened safely because O_NOFOLLOW is unavailable")
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        fail(f"archive cannot be securely opened: {error}")
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            fail("archive must be one regular file")
+        if before.st_nlink != 1:
+            fail("archive must be non-hardlinked")
+        if before.st_size <= 0 or before.st_size > MAX_ARCHIVE_BYTES:
+            fail("archive size is outside the accepted range")
+        chunks: list[bytes] = []
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                fail("archive was truncated while it was read")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            fail("archive grew while it was read")
+        after = os.fstat(descriptor)
+        if stable_stat(before) != stable_stat(after):
+            fail("archive changed while it was read")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
 
 
 def main() -> int:
@@ -60,15 +104,11 @@ def main() -> int:
     if not re.fullmatch(r"[0-9a-f]{40}", args.commit):
         fail("commit must be a full lowercase SHA-1 object name")
 
-    if args.archive.is_symlink():
-        fail("archive must not be a symbolic link")
-    archive = args.archive.resolve(strict=True)
-    if not archive.is_file():
-        fail("archive must be a real regular file")
     expected_name = f"{args.crate}-{args.version}.crate"
-    if archive.name != expected_name:
+    if args.archive.name != expected_name:
         fail(f"archive name must be {expected_name}")
     expected_prefix = f"{args.crate}-{args.version}"
+    archive_bytes = read_regular_file_once(args.archive)
 
     records: list[bytes] = []
     seen_paths: set[str] = set()
@@ -77,7 +117,7 @@ def main() -> int:
     total_file_bytes = 0
     found_manifest = False
     try:
-        with tarfile.open(archive, mode="r:gz") as package:
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as package:
             members = package.getmembers()
             if not members:
                 fail("archive is empty")
@@ -85,6 +125,12 @@ def main() -> int:
                 fail("archive contains too many filesystem entries")
             for member in members:
                 member_path = PurePosixPath(member.name)
+                canonical_member_name = str(member_path)
+                canonical_spelling = (
+                    member.name in {canonical_member_name, f"{canonical_member_name}/"}
+                    if member.isdir()
+                    else member.name == canonical_member_name
+                )
                 if (
                     not member.name
                     or member.name.startswith("/")
@@ -92,11 +138,12 @@ def main() -> int:
                     or "\x00" in member.name
                     or member_path.parts[0] != expected_prefix
                     or any(part in {"", ".", ".."} for part in member_path.parts)
+                    or not canonical_spelling
                 ):
                     fail(f"archive contains unsafe path {member.name!r}")
-                if member.name in seen_paths:
+                if canonical_member_name in seen_paths:
                     fail(f"archive contains duplicate path {member.name!r}")
-                seen_paths.add(member.name)
+                seen_paths.add(canonical_member_name)
 
                 if member.isdir():
                     records.append(f"d\t{member.mode:o}\t{member.name}\0".encode())
@@ -159,9 +206,12 @@ def main() -> int:
     if vcs_info["git"].get("dirty") not in {None, False}:
         fail("archive VCS metadata reports dirty release source")
     path_in_vcs = vcs_info.get("path_in_vcs")
+    vcs_relative_path = PurePosixPath(path_in_vcs) if isinstance(path_in_vcs, str) else None
     if not isinstance(path_in_vcs, str) or not path_in_vcs \
-            or PurePosixPath(path_in_vcs).is_absolute() \
-            or ".." in PurePosixPath(path_in_vcs).parts:
+            or vcs_relative_path is None \
+            or path_in_vcs != str(vcs_relative_path) \
+            or vcs_relative_path.is_absolute() \
+            or any(part in {"", ".", ".."} for part in vcs_relative_path.parts):
         fail("archive VCS path must be a safe repository-relative path")
 
     normalized_path = f"{expected_prefix}/Cargo.toml"
@@ -222,7 +272,12 @@ def main() -> int:
     member_manifest_sha256 = hashlib.sha256(b"".join(records)).hexdigest()
     print(
         "\t".join(
-            [args.crate, args.version, sha256_file(archive), member_manifest_sha256]
+            [
+                args.crate,
+                args.version,
+                hashlib.sha256(archive_bytes).hexdigest(),
+                member_manifest_sha256,
+            ]
         )
     )
     return 0

@@ -6,14 +6,12 @@ set -euo pipefail
 
 readonly MAX_CRATES_IO_RETRY_SLEEP_SECONDS=900
 crates_io_retry_seconds_slept=0
-trusted_cargo=
-trusted_rustc=
-trusted_rustdoc=
 trusted_node=
 trusted_python=
 owner_checker_program=
 source_guard_program=
 tag_guard_program=
+sealed_crate_publisher_program=
 release_github_token=
 expected_checksum_crates=()
 expected_checksum_values=()
@@ -34,45 +32,36 @@ initialize_release_publication() {
 
   for required_name in \
     GITHUB_WORKSPACE GITHUB_SHA RUNNER_TEMP TRUSTED_RELEASE_PATH \
-    RELEASE_TRUSTED_CARGO_HOME RELEASE_TRUSTED_RUSTUP_HOME \
-    RELEASE_TRUSTED_RUST_TOOLCHAIN \
-    RELEASE_CARGO_HOME RELEASE_TOOL_HOME RELEASE_TARGET_DIR \
+    RELEASE_TOOL_HOME RELEASE_CRATE_ARCHIVE_DIR \
     RELEASE_PREFLIGHT_MANIFEST RELEASE_REPRODUCED_MANIFEST RELEASE_VERSION \
     EXPECTED_COMMIT_SHA TRUSTED_RELEASE_REF RELEASE_TAG \
     EXPECTED_TAG_OBJECT_SHA EXPECTED_TAG_COMMIT_SHA RELEASE_GITHUB_TOKEN \
     RELEASE_PYTHON RELEASE_TRUSTED_PYTHON_ROOT RELEASE_TRUSTED_PYTHON_VERSION \
     RELEASE_TRUSTED_NODE_ROOT RELEASE_TRUSTED_NODE_VERSION \
     EXOCHAIN_CRATES_IO_ALLOWED_OWNERS RELEASE_SOURCE_GUARD_PROGRAM \
-    RELEASE_TAG_GUARD_PROGRAM RELEASE_CARGO_CONFIG_GUARD_PROGRAM \
-    RELEASE_OWNER_CHECK_PROGRAM GITHUB_ACTIONS GITHUB_SERVER_URL \
+    RELEASE_TAG_GUARD_PROGRAM RELEASE_OWNER_CHECK_PROGRAM \
+    RELEASE_SEALED_CRATE_PUBLISHER_PROGRAM GITHUB_ACTIONS GITHUB_SERVER_URL \
     GITHUB_REPOSITORY; do
     [ -n "${!required_name:-}" ] || fail "$required_name is required"
   done
   for generated_path in \
-    "$RELEASE_CARGO_HOME" "$RELEASE_TOOL_HOME" "$RELEASE_TARGET_DIR" \
+    "$RELEASE_TOOL_HOME" "$RELEASE_CRATE_ARCHIVE_DIR" \
     "$RELEASE_PREFLIGHT_MANIFEST" "$RELEASE_REPRODUCED_MANIFEST"; do
     case "$generated_path" in
       "$RUNNER_TEMP"/*) ;;
       *) fail "generated and downloaded release paths must be beneath RUNNER_TEMP" ;;
     esac
   done
-  for clean_directory in \
-    "$RELEASE_CARGO_HOME" "$RELEASE_TOOL_HOME" "$RELEASE_TARGET_DIR"; do
-    /bin/rm -rf -- "$clean_directory"
-    /bin/mkdir -m 700 -p -- "$clean_directory"
-  done
+  /bin/rm -rf -- "$RELEASE_TOOL_HOME"
+  /bin/mkdir -m 700 -p -- "$RELEASE_TOOL_HOME"
+  [ -d "$RELEASE_CRATE_ARCHIVE_DIR" ] && [ ! -L "$RELEASE_CRATE_ARCHIVE_DIR" ] \
+    || fail "sealed crate archive directory must be one real directory"
 
   trusted_tool_view="${TRUSTED_RELEASE_PATH%%:*}"
   case "$trusted_tool_view" in
     "$RUNNER_TEMP"/*) ;;
     *) fail "trusted release tool view must be beneath RUNNER_TEMP" ;;
   esac
-  trusted_cargo="$(/usr/bin/realpath "$trusted_tool_view/cargo")"
-  trusted_rustc="$(/usr/bin/realpath "$trusted_tool_view/rustc")"
-  trusted_rustdoc="$(/usr/bin/realpath "$trusted_tool_view/rustdoc")"
-  [ -x "$trusted_cargo" ] && [ -x "$trusted_rustc" ] && [ -x "$trusted_rustdoc" ] \
-    || fail "trusted release tool view lacks Cargo, rustc, or rustdoc"
-
   trusted_python="$(/usr/bin/realpath "$RELEASE_PYTHON")"
   trusted_python_root="$(cd "$RELEASE_TRUSTED_PYTHON_ROOT" && pwd -P)"
   case "$trusted_python" in
@@ -98,26 +87,34 @@ initialize_release_publication() {
   owner_checker_program="$RELEASE_OWNER_CHECK_PROGRAM"
   source_guard_program="$RELEASE_SOURCE_GUARD_PROGRAM"
   tag_guard_program="$RELEASE_TAG_GUARD_PROGRAM"
+  sealed_crate_publisher_program="$RELEASE_SEALED_CRATE_PUBLISHER_PROGRAM"
   release_github_token="$RELEASE_GITHUB_TOKEN"
   verify_live_release_binding
-  printf '%s' "$RELEASE_CARGO_CONFIG_GUARD_PROGRAM" | /usr/bin/env -i \
-    GITHUB_WORKSPACE="$GITHUB_WORKSPACE" /bin/bash --noprofile --norc -p
   unset RELEASE_SOURCE_GUARD_PROGRAM RELEASE_TAG_GUARD_PROGRAM \
-    RELEASE_CARGO_CONFIG_GUARD_PROGRAM RELEASE_OWNER_CHECK_PROGRAM \
+    RELEASE_OWNER_CHECK_PROGRAM RELEASE_SEALED_CRATE_PUBLISHER_PROGRAM \
     RELEASE_GITHUB_TOKEN
 
-  validate_release_manifests \
-    "$RELEASE_PREFLIGHT_MANIFEST" \
-    "$RELEASE_REPRODUCED_MANIFEST" \
-    "$RELEASE_VERSION"
-
-  # Capture every already-validated checksum in parent-shell memory before the
-  # first irreversible registry operation. Later attempts never reopen a
-  # downloaded manifest that a detached process could replace.
+  # Capture every validated checksum in parent-shell memory before the first
+  # irreversible registry operation. Later attempts never reopen a downloaded
+  # manifest that a detached process could replace.
   local captured_crate
   local captured_version
   local captured_archive_checksum
   local captured_member_checksum
+  local captured_manifest_rows
+  if ! captured_manifest_rows="$(
+    validate_release_manifests \
+      "$RELEASE_PREFLIGHT_MANIFEST" \
+      "$RELEASE_REPRODUCED_MANIFEST" \
+      "$RELEASE_VERSION"
+  )"; then
+    fail "release manifests could not be securely captured"
+  fi
+
+  # The validator emits the exact bytes it securely opened and compared. Do
+  # not reopen either downloaded path after validation: a detached process
+  # could otherwise replace both the manifest and its paired archive between
+  # the check and this in-memory capture.
   while IFS=$'\t' read -r captured_crate captured_version \
       captured_archive_checksum captured_member_checksum; do
     [ -n "$captured_crate" ] \
@@ -131,10 +128,13 @@ initialize_release_publication() {
       || fail "publisher checksum capture differs from the validated release"
     expected_checksum_crates+=("$captured_crate")
     expected_checksum_values+=("$captured_archive_checksum")
-  done < "$RELEASE_PREFLIGHT_MANIFEST"
+  done <<< "$captured_manifest_rows"
   [ "${#expected_checksum_crates[@]}" -eq "${#CRATES[@]}" ] \
     || fail "publisher checksum capture is incomplete"
   readonly -a expected_checksum_crates expected_checksum_values
+  validate_sealed_archive_inventory \
+    "$RELEASE_CRATE_ARCHIVE_DIR" "$RELEASE_VERSION" "${CRATES[@]}"
+  captured_manifest_rows=
   unset RELEASE_PREFLIGHT_MANIFEST RELEASE_REPRODUCED_MANIFEST
 
   unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
@@ -196,19 +196,42 @@ if len(expected_crates) != 32 or len(set(expected_crates)) != 32:
 
 
 def read_manifest(path: str, label: str) -> bytes:
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        reject(f"{label} manifest cannot be opened without symlink protection")
+    flags |= nofollow
     try:
-        metadata = os.lstat(path)
+        descriptor = os.open(path, flags)
     except OSError as error:
         reject(f"{label} manifest is unavailable: {error}")
-    if not stat.S_ISREG(metadata.st_mode):
-        reject(f"{label} manifest must be a regular non-symlink file")
-    if metadata.st_size <= 0 or metadata.st_size > 16 * 1024:
-        reject(f"{label} manifest has an invalid size")
     try:
-        with open(path, "rb") as handle:
-            data = handle.read()
-    except OSError as error:
-        reject(f"{label} manifest is unreadable: {error}")
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            reject(f"{label} manifest must be one regular file")
+        if before.st_nlink != 1:
+            reject(f"{label} manifest must be non-hardlinked")
+        if before.st_size <= 0 or before.st_size > 16 * 1024:
+            reject(f"{label} manifest has an invalid size")
+        remaining = before.st_size
+        chunks = []
+        while remaining:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                reject(f"{label} manifest was truncated while it was read")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            reject(f"{label} manifest grew while it was read")
+        after = os.fstat(descriptor)
+        stable_fields = (
+            "st_dev", "st_ino", "st_nlink", "st_size", "st_mtime_ns", "st_ctime_ns"
+        )
+        if any(getattr(before, field) != getattr(after, field) for field in stable_fields):
+            reject(f"{label} manifest changed while it was read")
+        data = b"".join(chunks)
+    finally:
+        os.close(descriptor)
     if not data.endswith(b"\n") or b"\r" in data:
         reject(f"{label} manifest must end with one complete row")
     lines = data[:-1].split(b"\n")
@@ -239,6 +262,51 @@ preflight = read_manifest(preflight_path, "token-free preflight")
 reproduced = read_manifest(reproduced_path, "publisher reproduction")
 if preflight != reproduced:
     reject("fresh publisher packages differ from token-free preflight archives")
+sys.stdout.buffer.write(preflight)
+PY
+}
+
+validate_sealed_archive_inventory() {
+  local archive_directory="$1"
+  local expected_version="$2"
+  shift 2
+  /usr/bin/env -i "$trusted_python" -I -B - \
+    "$archive_directory" "$expected_version" "$@" <<'PY'
+import os
+import stat
+import sys
+
+
+def reject(message: str) -> None:
+    raise SystemExit(f"crate publication failed: {message}")
+
+
+directory, version, *crates = sys.argv[1:]
+expected = sorted(f"{crate}-{version}.crate" for crate in crates)
+try:
+    directory_metadata = os.lstat(directory)
+except OSError as error:
+    reject(f"sealed crate archive directory is unavailable: {error}")
+if not stat.S_ISDIR(directory_metadata.st_mode):
+    reject("sealed crate archive path must be one non-symlink directory")
+try:
+    entries = list(os.scandir(directory))
+except OSError as error:
+    reject(f"sealed crate archive directory is unreadable: {error}")
+actual = sorted(entry.name for entry in entries)
+if actual != expected:
+    reject("sealed crate archive inventory is missing or contains an unexpected entry")
+for entry in entries:
+    try:
+        metadata = entry.stat(follow_symlinks=False)
+    except OSError as error:
+        reject(f"sealed crate archive entry is unavailable: {error}")
+    if not stat.S_ISREG(metadata.st_mode) or entry.is_symlink():
+        reject(f"sealed crate archive entry must be regular: {entry.name!r}")
+    if metadata.st_nlink != 1:
+        reject(f"sealed crate archive entry must be non-hardlinked: {entry.name!r}")
+    if metadata.st_size <= 0 or metadata.st_size > 10 * 1024 * 1024:
+        reject(f"sealed crate archive entry has an invalid size: {entry.name!r}")
 PY
 }
 
@@ -283,14 +351,41 @@ if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", expected_version) is None:
     reject("expected crate version is invalid")
 if re.fullmatch(r"[0-9a-f]{64}", expected_checksum) is None:
     reject("expected archive checksum is invalid")
+nofollow = getattr(os, "O_NOFOLLOW", 0)
+if not isinstance(nofollow, int) or nofollow == 0:
+    reject("crates.io response cannot be opened safely because O_NOFOLLOW is unavailable")
+flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow
 try:
-    metadata = os.lstat(response_path)
+    descriptor = os.open(response_path, flags)
 except OSError as error:
-    reject(f"crates.io response is unavailable: {error}")
-if not stat.S_ISREG(metadata.st_mode):
-    reject("crates.io response must be a regular non-symlink file")
-if metadata.st_size <= 0 or metadata.st_size > 1024 * 1024:
-    reject("crates.io response has an invalid size")
+    reject(f"crates.io response cannot be securely opened: {error}")
+try:
+    before = os.fstat(descriptor)
+    if not stat.S_ISREG(before.st_mode):
+        reject("crates.io response must be one regular file")
+    if before.st_nlink != 1:
+        reject("crates.io response must be non-hardlinked")
+    if before.st_size <= 0 or before.st_size > 1024 * 1024:
+        reject("crates.io response has an invalid size")
+    chunks = []
+    remaining = before.st_size
+    while remaining:
+        chunk = os.read(descriptor, min(1024 * 1024, remaining))
+        if not chunk:
+            reject("crates.io response was truncated while it was read")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    if os.read(descriptor, 1):
+        reject("crates.io response grew while it was read")
+    after = os.fstat(descriptor)
+    stable_fields = ("st_dev", "st_ino", "st_nlink", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if tuple(getattr(before, field) for field in stable_fields) != tuple(
+        getattr(after, field) for field in stable_fields
+    ):
+        reject("crates.io response changed while it was read")
+    response_bytes = b"".join(chunks)
+finally:
+    os.close(descriptor)
 
 
 def unique_object(pairs):
@@ -307,12 +402,11 @@ def invalid_constant(value: str):
 
 
 try:
-    with open(response_path, "r", encoding="utf-8") as handle:
-        response = json.load(
-            handle,
-            object_pairs_hook=unique_object,
-            parse_constant=invalid_constant,
-        )
+    response = json.loads(
+        response_bytes,
+        object_pairs_hook=unique_object,
+        parse_constant=invalid_constant,
+    )
 except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
     reject(f"crates.io response is malformed: {error}")
 if not isinstance(response, dict) or not isinstance(response.get("version"), dict):
@@ -420,6 +514,7 @@ poll_for_expected_checksum() {
     if query_crate_version "$crate" "$expected_checksum"; then
       verify_crate_ownership "$crate" require-claimed \
         || fail "crates.io ownership changed after observing $crate"
+      verify_live_release_binding
       return 0
     else
       query_status=$?
@@ -459,36 +554,20 @@ verify_crate_ownership() {
     "$trusted_node" --input-type=module - >/dev/null
 }
 
-release_cargo_publish() (
-  # An absolute manifest path does not prevent Cargo from discovering project
-  # configuration relative to its invocation directory. Run from the verified
-  # config-free filesystem root and name every compiler entry point explicitly.
-  cd /
-  /usr/bin/env -i \
-    PATH="$TRUSTED_RELEASE_PATH" \
-    HOME="$RELEASE_TOOL_HOME" \
-    CARGO_HOME="$RELEASE_CARGO_HOME" \
-    RUSTUP_HOME="$RELEASE_TRUSTED_RUSTUP_HOME" \
-    RUSTUP_TOOLCHAIN="$RELEASE_TRUSTED_RUST_TOOLCHAIN" \
-    RUSTC="$trusted_rustc" \
-    RUSTDOC="$trusted_rustdoc" \
-    RUSTC_WRAPPER= \
-    RUSTC_WORKSPACE_WRAPPER= \
-    CARGO_TARGET_DIR="$RELEASE_TARGET_DIR" \
-    CARGO_TERM_COLOR=always \
-    CARGO_NET_RETRY=10 \
-    CARGO_HTTP_TIMEOUT=120 \
-    CARGO_HTTP_MULTIPLEXING=false \
+release_sealed_crate_publish() (
+  local crate="$1"
+  local expected_checksum="$2"
+  local archive="$RELEASE_CRATE_ARCHIVE_DIR/${crate}-${RELEASE_VERSION}.crate"
+
+  # The captured helper reads and validates the sealed archive completely into
+  # memory before it opens a TLS connection. The irreversible path never reads
+  # GITHUB_WORKSPACE and therefore cannot repackage post-guard mutations.
+  printf '%s' "$sealed_crate_publisher_program" | /usr/bin/env -i \
     CARGO_REGISTRY_TOKEN="$cargo_registry_token" \
-    CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
-    CARGO_REGISTRY_DEFAULT=crates-io \
-    TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8 \
-    "$trusted_cargo" publish \
-      --manifest-path "$GITHUB_WORKSPACE/Cargo.toml" \
-      -p "$1" \
-      --no-verify \
-      --locked \
-      --registry crates-io
+    LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONHASHSEED=0 TZ=UTC \
+    "$trusted_python" -I -B - \
+      "$archive" "$crate" "$RELEASE_VERSION" \
+      "$expected_checksum" "$EXPECTED_COMMIT_SHA"
 )
 
 bounded_retry_seconds() {
@@ -543,9 +622,6 @@ publish_crate_with_retry() {
   local max_attempts=6
   local output
   local status
-  local retry_after
-  local retry_epoch
-  local now_epoch
   local retry_seconds
   local published_status
 
@@ -557,9 +633,10 @@ publish_crate_with_retry() {
       || fail "crates.io ownership changed before publishing $crate"
     # Revalidate the exact checked-out source and immutable signed remote tag
     # after all retry delays and immediately before handing the registry token
-    # to Cargo. The guard bodies were captured from the approved commit.
+    # to the sealed-archive uploader. The guard bodies were captured from the
+    # approved commit.
     verify_live_release_binding
-    if output="$(release_cargo_publish "$crate" 2>&1)"; then
+    if output="$(release_sealed_crate_publish "$crate" "$expected_checksum" 2>&1)"; then
       status=0
     else
       status=$?
@@ -570,29 +647,21 @@ publish_crate_with_retry() {
       return
     fi
 
-    if query_crate_version "$crate" "$expected_checksum"; then
-      verify_crate_ownership "$crate" require-claimed \
-        || fail "crates.io ownership changed after recovering published $crate"
-      echo "${crate} ${RELEASE_VERSION} has the exact preflight checksum; continuing after status ${status}."
-      return 0
-    else
-      published_status=$?
-      [ "$published_status" -eq 1 ] || return "$published_status"
-    fi
-    if /usr/bin/grep -F 'status 429 Too Many Requests' <<<"$output" >/dev/null; then
+    if [ "$status" -eq 75 ] \
+        && /usr/bin/grep -F 'status 429 ' <<<"$output" >/dev/null; then
+      if query_crate_version "$crate" "$expected_checksum"; then
+        verify_crate_ownership "$crate" require-claimed \
+          || fail "crates.io ownership changed after recovering published $crate"
+        verify_live_release_binding
+        echo "${crate} ${RELEASE_VERSION} has the exact preflight checksum; continuing after status ${status}."
+        return 0
+      else
+        published_status=$?
+        [ "$published_status" -eq 1 ] || return "$published_status"
+      fi
       [ "$attempt" -lt "$max_attempts" ] \
         || fail "failed to publish ${crate} after ${max_attempts} attempts"
-      retry_after="$(
-        /usr/bin/sed -nE 's/.*try again after (.* GMT) and see.*/\1/p' <<<"$output" \
-          | /usr/bin/tail -n 1
-      )"
-      if [ -n "$retry_after" ]; then
-        retry_epoch="$(/usr/bin/date -u -d "$retry_after" +%s)"
-        now_epoch="$(/usr/bin/date -u +%s)"
-        retry_seconds="$(retry_seconds_until_epoch "$retry_epoch" "$now_epoch")"
-      else
-        retry_seconds=$((attempt * 120))
-      fi
+      retry_seconds=$((attempt * 120))
       if ! retry_seconds="$(
         retry_seconds_within_budget \
           "$retry_seconds" "$crates_io_retry_seconds_slept"
@@ -606,6 +675,19 @@ publish_crate_with_retry() {
       release_retry_sleep "$retry_seconds"
       attempt=$((attempt + 1))
       continue
+    fi
+
+    # Once the uploader begins its PUT, a lost TLS response, registry 5xx, or
+    # malformed success response cannot prove whether crates.io committed the
+    # immutable version. Poll the exact checksum to convergence and never send
+    # a second PUT for an outcome-unknown attempt. A later workflow rerun is
+    # safely resumable through the same checksum check.
+    if poll_for_expected_checksum "$crate" "$expected_checksum"; then
+      echo "${crate} ${RELEASE_VERSION} has the exact preflight checksum; continuing after status ${status}."
+      return 0
+    else
+      published_status=$?
+      [ "$published_status" -eq 1 ] || return "$published_status"
     fi
     return "$status"
   done
@@ -659,6 +741,7 @@ main() {
     if query_crate_version "$crate" "$expected_checksum"; then
       verify_crate_ownership "$crate" require-claimed \
         || fail "crates.io ownership changed after observing published $crate"
+      verify_live_release_binding
       echo "${crate} ${RELEASE_VERSION} is already published with the exact preflight checksum; skipping."
       continue
     else
@@ -669,6 +752,7 @@ main() {
   done
   source_guard_program=
   tag_guard_program=
+  sealed_crate_publisher_program=
   release_github_token=
   owner_checker_program=
   cargo_registry_token=

@@ -207,8 +207,8 @@ function parseStrictJson(bytes) {
 }
 
 const [profile, requestedPackageDir] = process.argv.slice(2);
-if (!['wasm', 'llm', 'llm-source'].includes(profile) || !requestedPackageDir) {
-  fail('usage: verify_npm_release_package.mjs <wasm|llm|llm-source> <package-directory>');
+if (!['wasm', 'llm', 'llm-source', 'sdk', 'sdk-source'].includes(profile) || !requestedPackageDir) {
+  fail('usage: verify_npm_release_package.mjs <wasm|llm|llm-source|sdk|sdk-source> <package-directory>');
 }
 
 let packageDir;
@@ -252,8 +252,9 @@ if (Object.hasOwn(manifest, 'publishConfig')) {
   fail('publishConfig is forbidden because the workflow binds publication policy');
 }
 
-const profilePolicy = profile === 'wasm'
-  ? {
+let profilePolicy;
+if (profile === 'wasm') {
+  profilePolicy = {
       name: '@exochain/exochain-wasm',
       files: [
         'LICENSE',
@@ -262,15 +263,35 @@ const profilePolicy = profile === 'wasm'
         'exochain_wasm_bg.wasm',
       ],
       forbidAllScripts: true,
-    }
-  : {
+      strictRootInventory: true,
+    };
+} else if (profile === 'llm' || profile === 'llm-source') {
+  profilePolicy = {
       name: '@exochain/llm-proxy',
       files: ['LICENSE', 'dist', 'README.md', 'AGENTS.md', 'examples', 'snippets'],
       forbidAllScripts: false,
       strictRootInventory: profile === 'llm',
     };
-if (profile === 'wasm') {
-  profilePolicy.strictRootInventory = true;
+} else {
+  const sdkModules = [
+    'authority/chain', 'authority/index', 'client', 'consent/bailment',
+    'consent/index', 'crypto/hash', 'crypto/index', 'errors',
+    'governance/decision', 'governance/index', 'governance/vote',
+    'identity/did', 'identity/index', 'identity/keypair', 'index',
+    'transport/http', 'transport/index', 'types', 'validation',
+  ];
+  profilePolicy = {
+    name: '@exochain/sdk',
+    files: ['LICENSE', 'dist', 'README.md'],
+    forbidAllScripts: false,
+    strictRootInventory: profile === 'sdk',
+    exactDistFiles: sdkModules.flatMap((moduleName) => [
+      `dist/${moduleName}.d.ts`,
+      `dist/${moduleName}.d.ts.map`,
+      `dist/${moduleName}.js`,
+      `dist/${moduleName}.js.map`,
+    ]).sort(),
+  };
 }
 
 if (manifest.name !== profilePolicy.name) {
@@ -283,6 +304,32 @@ const actualFiles = [...manifest.files].sort();
 const expectedFiles = [...profilePolicy.files].sort();
 if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
   fail(`package files must equal the reviewed ${profile} release allowlist`);
+}
+
+if (profile === 'sdk' || profile === 'sdk-source') {
+  const expectedExports = {
+    '.': { types: './dist/index.d.ts', import: './dist/index.js' },
+    './identity': { types: './dist/identity/index.d.ts', import: './dist/identity/index.js' },
+    './consent': { types: './dist/consent/index.d.ts', import: './dist/consent/index.js' },
+    './governance': { types: './dist/governance/index.d.ts', import: './dist/governance/index.js' },
+    './authority': { types: './dist/authority/index.d.ts', import: './dist/authority/index.js' },
+    './crypto': { types: './dist/crypto/index.d.ts', import: './dist/crypto/index.js' },
+  };
+  if (manifest.main !== './dist/index.js'
+      || manifest.types !== './dist/index.d.ts'
+      || JSON.stringify(manifest.exports) !== JSON.stringify(expectedExports)) {
+    fail('SDK main, types, and exports must equal the reviewed public entrypoint contract');
+  }
+  for (const target of [manifest.main, manifest.types, ...Object.values(expectedExports)
+    .flatMap((entry) => [entry.import, entry.types])]) {
+    if (!/^\.\/dist\/[A-Za-z0-9_./-]+$/u.test(target)) {
+      fail(`SDK entrypoint target is unsafe: ${target}`);
+    }
+    const targetPath = path.join(packageDir, target.slice(2));
+    if (!fs.existsSync(targetPath) || !fs.lstatSync(targetPath).isFile()) {
+      fail(`SDK entrypoint target is not a real built file: ${target}`);
+    }
+  }
 }
 
 const scripts = manifest.scripts ?? {};
@@ -385,6 +432,33 @@ for (const stagedEntry of profilePolicy.files) {
     fail(`reviewed staged package path is missing: ${stagedEntry}`);
   }
   inspectStagedPath(stagedPath);
+}
+
+if (profilePolicy.exactDistFiles) {
+  const distRoot = path.join(packageDir, 'dist');
+  const actualDistFiles = [];
+  let totalDistBytes = 0;
+  function collectDistFiles(candidatePath) {
+    const stat = fs.lstatSync(candidatePath);
+    if (stat.isSymbolicLink()) fail(`SDK dist path is a symbolic link: ${candidatePath}`);
+    if (stat.isDirectory()) {
+      for (const child of fs.readdirSync(candidatePath)) collectDistFiles(path.join(candidatePath, child));
+      return;
+    }
+    if (!stat.isFile()) fail(`SDK dist path is not a regular file: ${candidatePath}`);
+    const bytes = readRegularFile(candidatePath, MAX_FILE_BYTES, `SDK built file ${candidatePath}`);
+    if (bytes.length < 64) fail(`SDK built file is a placeholder: ${candidatePath}`);
+    totalDistBytes += bytes.length;
+    actualDistFiles.push(path.relative(packageDir, candidatePath));
+  }
+  collectDistFiles(distRoot);
+  actualDistFiles.sort();
+  if (JSON.stringify(actualDistFiles) !== JSON.stringify(profilePolicy.exactDistFiles)) {
+    fail('SDK dist inventory differs from the exact reviewed build output');
+  }
+  if (totalDistBytes < 8 * 1024) {
+    fail('SDK built output is below the meaningful implementation threshold');
+  }
 }
 
 recordPackageFile(packageJsonPath);

@@ -29,9 +29,13 @@ tag_guard="tools/verify_release_tag.sh"
 side_effect_guard="tools/verify_release_side_effect.sh"
 tool_path_resolver="tools/resolve_release_tool_path.sh"
 npm_package_guard="tools/verify_npm_release_package.mjs"
+npm_registry_guard="tools/verify_npm_registry_attestation.mjs"
+python_package_guard="tools/verify_python_release_package.py"
+python_requirements_lock="tools/python-release-requirements.lock"
 cargo_config_guard="tools/verify_release_cargo_config.sh"
 crate_preflight="tools/preflight_release_crates.sh"
 crate_publisher="tools/publish_release_crates.sh"
+sealed_crate_publisher="tools/publish_sealed_crate.py"
 npm_tarball_guard="tools/verify_npm_release_tarball.py"
 capture_helper="tools/capture_release_helper.sh"
 [[ -f "$workflow" ]] || fail "$workflow is missing"
@@ -41,9 +45,13 @@ capture_helper="tools/capture_release_helper.sh"
 [[ -f "$side_effect_guard" ]] || fail "$side_effect_guard is missing"
 [[ -f "$tool_path_resolver" ]] || fail "$tool_path_resolver is missing"
 [[ -f "$npm_package_guard" ]] || fail "$npm_package_guard is missing"
+[[ -f "$npm_registry_guard" ]] || fail "$npm_registry_guard is missing"
+[[ -f "$python_package_guard" ]] || fail "$python_package_guard is missing"
+[[ -f "$python_requirements_lock" ]] || fail "$python_requirements_lock is missing"
 [[ -f "$cargo_config_guard" ]] || fail "$cargo_config_guard is missing"
 [[ -f "$crate_preflight" ]] || fail "$crate_preflight is missing"
 [[ -f "$crate_publisher" ]] || fail "$crate_publisher is missing"
+[[ -f "$sealed_crate_publisher" ]] || fail "$sealed_crate_publisher is missing"
 [[ -f "$npm_tarball_guard" ]] || fail "$npm_tarball_guard is missing"
 [[ -f "$capture_helper" ]] || fail "$capture_helper is missing"
 grep -F 'GIT_NO_REPLACE_OBJECTS=1' "$capture_helper" >/dev/null \
@@ -54,6 +62,7 @@ for focused_guard in \
   test_capture_release_helper.sh \
   test_publish_release_crates_registry_validation.sh \
   test_publish_release_npm_registry_validation.sh \
+  test_release_sdk_python_lifecycle_boundary.sh \
   test_release_llm_lifecycle_boundary.sh \
   test_release_npm_config_boundary.sh \
   test_stage_llm_release_package.sh \
@@ -61,6 +70,9 @@ for focused_guard in \
   test_transport_release_file_set.sh \
   test_transport_wasm_release_output.sh \
   test_verify_npm_release_tarball.sh \
+  test_verify_npm_registry_attestation.sh \
+  test_verify_python_release_package.sh \
+  test_verify_sdk_npm_release_package.sh \
   test_verify_release_sbom.sh; do
   grep -F "bash tools/$focused_guard" "$ci_workflow" >/dev/null \
     || fail "CI must execute tools/$focused_guard"
@@ -109,6 +121,13 @@ grep -F 'Cargo configuration above GITHUB_WORKSPACE is forbidden' "$cargo_config
   || fail "$cargo_config_guard must reject untrusted Cargo configuration above the checkout"
 grep -F 'publishConfig is forbidden' "$npm_package_guard" >/dev/null \
   || fail "$npm_package_guard must reject package-local publication overrides"
+grep -F 'verify_npm_registry_attestation.mjs' tools/publish_release_npm_package.sh >/dev/null \
+  && grep -F 'show "${GITHUB_SHA}:tools/${helper}"' tools/publish_release_npm_package.sh >/dev/null \
+  || fail "npm provenance verifier must be loaded from the immutable dispatch commit"
+grep -F 'show "${GITHUB_SHA}:tools/verify_python_release_package.py"' "$workflow" >/dev/null \
+  || fail "Python artifact verifier must be loaded from the immutable dispatch commit"
+grep -F 'show "${GITHUB_SHA}:tools/python-release-requirements.lock"' "$workflow" >/dev/null \
+  || fail "Python dependency lock must be loaded from the immutable dispatch commit"
 grep -F 'ls-tree -r -t -z --full-tree "$expected_commit_sha"' "$source_guard" >/dev/null \
   || fail "$source_guard must derive a NUL-safe manifest from the immutable commit tree"
 grep -F 'hash-object --no-filters' "$source_guard" >/dev/null \
@@ -207,8 +226,12 @@ expected_permissions = {
   "prepare-wasm-npm" => { "contents" => "read" },
   "test-llm-proxy-npm" => { "contents" => "read" },
   "prepare-llm-proxy-npm" => { "contents" => "read" },
+  "prepare-sdk-npm" => { "contents" => "read" },
+  "prepare-python-package" => { "contents" => "read" },
   "publish-wasm-npm" => { "contents" => "read", "id-token" => "write" },
   "publish-llm-proxy-npm" => { "contents" => "read", "id-token" => "write" },
+  "publish-sdk-npm" => { "contents" => "read", "id-token" => "write" },
+  "publish-python-package" => { "contents" => "read", "id-token" => "write" },
   "github-release" => { "contents" => "write" }
 }
 
@@ -788,7 +811,7 @@ real_rustdoc="$(rustup which rustdoc)"
 )
 [ ! -e "$cargo_wrapper_marker" ] \
   || fail "config-free Cargo release invocation must not execute the workspace rustc-wrapper or expose the token"
-for hardened_cargo_script in "$crate_preflight" "$crate_publisher"; do
+for hardened_cargo_script in "$crate_preflight"; do
   grep -F 'cd /' "$hardened_cargo_script" >/dev/null \
     || fail "$hardened_cargo_script must invoke Cargo from the verified config-free root"
   grep -F 'RUSTC="$trusted_rustc"' "$hardened_cargo_script" >/dev/null \
@@ -800,6 +823,13 @@ for hardened_cargo_script in "$crate_preflight" "$crate_publisher"; do
   grep -F -- '--manifest-path "$GITHUB_WORKSPACE/Cargo.toml"' "$hardened_cargo_script" >/dev/null \
     || fail "$hardened_cargo_script must use the absolute immutable workspace manifest"
 done
+grep -F 'release_sealed_crate_publish "$crate" "$expected_checksum"' "$crate_publisher" >/dev/null \
+  && grep -F 'RELEASE_CRATE_ARCHIVE_DIR' "$crate_publisher" >/dev/null \
+  && grep -F 'sealed_crate_publisher_program' "$crate_publisher" >/dev/null \
+  || fail "$crate_publisher must upload the exact captured archive without invoking Cargo"
+if grep -F '"$trusted_cargo" publish' "$crate_publisher" >/dev/null; then
+  fail "$crate_publisher must never repackage live workspace source"
+fi
 
 # `tracked` mode intentionally permits generated artifacts. It therefore must
 # be paired with a package policy guard before npm is allowed to inspect a
@@ -1270,15 +1300,19 @@ expected_needs = {
   "attest-release" => %w[package-release validate-sbom verify-signed-tag validate-release-inputs],
   "preflight-crates" => %w[package-release verify-signed-tag validate-release-inputs],
   "reproduce-crates" => %w[preflight-crates verify-signed-tag validate-release-inputs],
-  "publish" => %w[reproduce-crates prepare-wasm-npm prepare-llm-proxy-npm attest-release verify-signed-tag validate-release-inputs],
+  "publish" => %w[reproduce-crates prepare-wasm-npm prepare-llm-proxy-npm prepare-sdk-npm prepare-python-package attest-release verify-signed-tag validate-release-inputs],
   "install-wasm-pack" => %w[approve approve-second verify-signed-tag validate-release-inputs],
   "build-wasm-npm" => %w[install-wasm-pack verify-signed-tag validate-release-inputs],
   "prepare-wasm-npm" => %w[build-wasm-npm verify-signed-tag validate-release-inputs],
   "test-llm-proxy-npm" => %w[approve approve-second verify-signed-tag validate-release-inputs],
   "prepare-llm-proxy-npm" => %w[test-llm-proxy-npm verify-signed-tag validate-release-inputs],
+  "prepare-sdk-npm" => %w[approve approve-second verify-signed-tag validate-release-inputs],
+  "prepare-python-package" => %w[approve approve-second verify-signed-tag validate-release-inputs],
   "publish-wasm-npm" => %w[publish prepare-wasm-npm prepare-llm-proxy-npm verify-signed-tag validate-release-inputs],
   "publish-llm-proxy-npm" => %w[publish-wasm-npm publish prepare-wasm-npm prepare-llm-proxy-npm verify-signed-tag validate-release-inputs],
-  "github-release" => %w[package-release validate-sbom attest-release publish publish-wasm-npm publish-llm-proxy-npm verify-signed-tag validate-release-inputs]
+  "publish-sdk-npm" => %w[publish-llm-proxy-npm publish prepare-sdk-npm prepare-python-package verify-signed-tag validate-release-inputs],
+  "publish-python-package" => %w[publish-sdk-npm prepare-python-package verify-signed-tag validate-release-inputs],
+  "github-release" => %w[package-release validate-sbom attest-release publish publish-wasm-npm publish-llm-proxy-npm publish-sdk-npm publish-python-package verify-signed-tag validate-release-inputs]
 }
 
 expected_job_names = ["ci", *expected_needs.keys]
@@ -1353,6 +1387,15 @@ guard_pairs = {
   "prepare-llm-proxy-npm" => [
     ["Reverify source and tag immediately before immutable LYNK packaging", "Reconstruct and pack exact LYNK npm package"]
   ],
+  "prepare-sdk-npm" => [
+    ["Rebind source and tag immediately before SDK lifecycle", "npm ci, npm test, npm run build, and npm pack exact SDK"]
+  ],
+  "prepare-python-package" => [
+    ["Rebind source and tag immediately before Python lifecycle", "Run pytest, ruff, mypy, and python -m build from exact source"]
+  ],
+  "publish-python-package" => [
+    ["Rebind exact source and tag immediately before PyPI mutation", "Publish exact Python artifacts with PyPI Trusted Publishing"]
+  ],
   "github-release" => [
     ["Reverify source and tag immediately before release creation", "Create release"]
   ]
@@ -1362,8 +1405,10 @@ guard_pairs.each do |job_name, pairs|
   steps = Array(jobs.fetch(job_name)["steps"])
   runs = steps.map { |step| step["run"].to_s }.join("\n")
   actual_guard_count = runs.scan("verify_release_side_effect.sh").length
-  unless actual_guard_count == pairs.length
-    raise "#{workflow_path}: #{job_name} has #{actual_guard_count} immutable side-effect guards, expected #{pairs.length}"
+  final_guard_count = job_name == "publish-python-package" ? 1 : 0
+  expected_guard_count = pairs.length + final_guard_count
+  unless actual_guard_count == expected_guard_count
+    raise "#{workflow_path}: #{job_name} has #{actual_guard_count} immutable side-effect guards, expected #{expected_guard_count}"
   end
   pairs.each do |guard_name, effect_name|
     guard_index = steps.index { |step| step["name"] == guard_name }
@@ -1396,6 +1441,19 @@ guard_pairs.each do |job_name, pairs|
       end
     end
   end
+  if job_name == "publish-python-package"
+    final_guard_name = "Final source and tag rebind after PyPI acceptance"
+    final_guard_index = steps.index { |step| step["name"] == final_guard_name }
+    raise "#{workflow_path}: #{job_name} is missing #{final_guard_name.inspect}" unless final_guard_index
+    unless final_guard_index == steps.length - 1
+      raise "#{workflow_path}: #{final_guard_name.inspect} must be the final publish job step"
+    end
+    final_run = steps.fetch(final_guard_index).fetch("run", "")
+    %w[/usr/bin/env\ -i /usr/bin/git\ --no-replace-objects verify_release_side_effect.sh /bin/bash\ --noprofile\ --norc\ -p].each do |fragment|
+      decoded = fragment.gsub("\\ ", " ")
+      raise "#{workflow_path}: #{final_guard_name.inspect} lacks #{decoded.inspect}" unless final_run.include?(decoded)
+    end
+  end
 end
 
 lifecycle_boundaries = {
@@ -1404,7 +1462,9 @@ lifecycle_boundaries = {
   "build-wasm-npm" => ["Build and transport WASM output with isolated wasm-pack bytes", '"$wasm_pack_path" build'],
   "prepare-wasm-npm" => ["Validate output and pack exact WASM npm package", '"$npm_path" pack'],
   "test-llm-proxy-npm" => ["Install, test, and build LYNK package from captured source", '"$npm_path" ci --ignore-scripts'],
-  "prepare-llm-proxy-npm" => ["Reconstruct and pack exact LYNK npm package", '"$npm_path" pack']
+  "prepare-llm-proxy-npm" => ["Reconstruct and pack exact LYNK npm package", '"$npm_path" pack'],
+  "prepare-sdk-npm" => ["npm ci, npm test, npm run build, and npm pack exact SDK", '"$npm_path" ci --ignore-scripts'],
+  "prepare-python-package" => ["Run pytest, ruff, mypy, and python -m build from exact source", '"$tool_python" -I -B -m pytest']
 }
 lifecycle_boundaries.each do |job_name, (lifecycle_step_name, lifecycle_marker)|
   steps = Array(jobs.fetch(job_name)["steps"])
@@ -1445,7 +1505,7 @@ lifecycle_boundaries.each do |job_name, (lifecycle_step_name, lifecycle_marker)|
 end
 RUBY
 
-for trusted_tool_job in release-build generate-sbom preflight-crates publish build-wasm-npm prepare-wasm-npm test-llm-proxy-npm prepare-llm-proxy-npm publish-wasm-npm publish-llm-proxy-npm; do
+for trusted_tool_job in release-build generate-sbom preflight-crates publish build-wasm-npm prepare-wasm-npm test-llm-proxy-npm prepare-llm-proxy-npm prepare-sdk-npm publish-wasm-npm publish-llm-proxy-npm publish-sdk-npm; do
   trusted_tool_block=$(job_block "$trusted_tool_job")
   grep -F 'tools/resolve_release_tool_path.sh' <<<"$trusted_tool_block" >/dev/null \
     || fail "job $trusted_tool_job must load its trusted PATH resolver from the immutable dispatch commit"
@@ -1461,14 +1521,14 @@ for trusted_tool_job in release-build generate-sbom preflight-crates publish bui
 done
 
 node_pin_count=$(grep -cF 'node-version: 22.14.0' "$workflow" || true)
-[ "$node_pin_count" -eq 8 ] \
-  || fail "all eight Node.js release jobs must pin exact Node.js 22.14.0, got $node_pin_count"
+[ "$node_pin_count" -eq 10 ] \
+  || fail "all ten Node.js release jobs must pin exact Node.js 22.14.0, got $node_pin_count"
 rust_pin_count=$(grep -cF 'toolchain: 1.97.1' "$workflow" || true)
-[ "$rust_pin_count" -eq 9 ] \
-  || fail "all nine Rust release jobs must pin exact Rust 1.97.1, got $rust_pin_count"
+[ "$rust_pin_count" -eq 8 ] \
+  || fail "all eight Rust-consuming release jobs must pin exact Rust 1.97.1, got $rust_pin_count"
 python_pin_count=$(grep -cF 'python-version: 3.13.7' "$workflow" || true)
-[ "$python_pin_count" -eq 16 ] \
-  || fail "all sixteen Python release jobs must pin exact Python 3.13.7, got $python_pin_count"
+[ "$python_pin_count" -eq 20 ] \
+  || fail "all twenty Python release jobs must pin exact Python 3.13.7, got $python_pin_count"
 if grep -F 'ubuntu-latest' "$workflow" >/dev/null; then
   fail "release jobs must use the explicit ubuntu-24.04 runner image"
 fi
@@ -1535,8 +1595,8 @@ grep -F 'metadata --manifest-path "$GITHUB_WORKSPACE/Cargo.toml"' "$workflow" >/
   || fail "SBOM generation must bracket tooling with locked workspace metadata"
 [ "$(grep -cF 'tools/publish_release_crates.sh' "$workflow" || true)" -eq 1 ] \
   || fail "workflow must expose exactly one live Cargo publication route"
-[ "$(grep -cF 'tools/publish_release_npm_package.sh' "$workflow" || true)" -eq 2 ] \
-  || fail "workflow must expose exactly two serialized npm publication routes"
+[ "$(grep -cF 'tools/publish_release_npm_package.sh' "$workflow" || true)" -eq 3 ] \
+  || fail "workflow must expose exactly three serialized npm publication routes"
 [ "$(grep -cF 'actions/attest-build-provenance@' "$workflow" || true)" -eq 1 ] \
   || fail "workflow must expose exactly one provenance attestation route"
 [ "$(grep -cF 'softprops/action-gh-release@' "$workflow" || true)" -eq 1 ] \

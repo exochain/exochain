@@ -24,6 +24,14 @@ publisher_prefix="$test_root/publisher-functions.sh"
 # shellcheck source=/dev/null
 source "$publisher_prefix"
 
+if /usr/bin/grep -F 'done < "$RELEASE_PREFLIGHT_MANIFEST"' "$publisher" >/dev/null; then
+  fail "publisher reopens the preflight manifest after validation"
+fi
+if /usr/bin/grep -F 'metadata = os.lstat(response_path)' "$publisher" >/dev/null \
+    || /usr/bin/grep -F 'with open(response_path' "$publisher" >/dev/null; then
+  fail "crates.io response validator separates pathname metadata from the opened bytes"
+fi
+
 trusted_python="${PYTHON:-$(command -v python3)}"
 trusted_python="$($trusted_python -c 'import os,sys; print(os.path.realpath(sys.executable))')"
 [ -f "$trusted_python" ] && [ -x "$trusted_python" ] && [ ! -L "$trusted_python" ] \
@@ -33,6 +41,8 @@ trusted_python="$($trusted_python -c 'import os,sys; print(os.path.realpath(sys.
 
 declare -F validate_release_manifests >/dev/null \
   || fail "manifest validator is missing"
+declare -F validate_sealed_archive_inventory >/dev/null \
+  || fail "sealed archive inventory validator is missing"
 declare -F validate_crates_io_response >/dev/null \
   || fail "crates.io response validator is missing"
 declare -F poll_for_expected_checksum >/dev/null \
@@ -49,6 +59,8 @@ declare -F verify_live_release_binding >/dev/null \
   || fail "per-attempt release source and tag binding guard is missing"
 declare -F release_retry_sleep >/dev/null \
   || fail "testable bounded retry sleep boundary is missing"
+declare -F release_sealed_crate_publish >/dev/null \
+  || fail "sealed archive publication boundary is missing"
 
 release_version=0.2.6
 RELEASE_VERSION="$release_version"
@@ -128,7 +140,27 @@ valid_reproduced="$test_root/valid-reproduced.tsv"
 write_manifest "$valid_preflight"
 /bin/cp "$valid_preflight" "$valid_reproduced"
 validate_release_manifests \
-  "$valid_preflight" "$valid_reproduced" "$release_version"
+  "$valid_preflight" "$valid_reproduced" "$release_version" \
+  > "$test_root/captured-valid-manifest.tsv"
+/usr/bin/cmp -s "$valid_preflight" "$test_root/captured-valid-manifest.tsv" \
+  || fail "manifest validator did not emit the exact securely-read rows"
+
+# The publisher must consume only the validator's in-memory output. Replacing
+# either downloaded path after validation cannot change the checksums that will
+# be handed to the irreversible uploader.
+captured_manifest_rows="$(
+  validate_release_manifests \
+    "$valid_preflight" "$valid_reproduced" "$release_version"
+)"
+write_manifest "$valid_preflight" bad-archive-hash
+write_manifest "$valid_reproduced" bad-archive-hash
+captured_first_hash="$(
+  printf '%s\n' "$captured_manifest_rows" | /usr/bin/awk -F '\t' 'NR == 1 { print $3 }'
+)"
+[ "$captured_first_hash" = "$(printf '%064x' 1)" ] \
+  || fail "post-validation manifest replacement changed captured publisher checksums"
+write_manifest "$valid_preflight"
+/bin/cp "$valid_preflight" "$valid_reproduced"
 
 for invalid_mode in \
   wrong-order duplicate wrong-version bad-archive-hash bad-member-hash \
@@ -164,6 +196,29 @@ if validate_release_manifests \
     "$symlink_manifest" "$symlink_manifest" "$release_version" \
     >/dev/null 2>&1; then
   fail "symbolic-link manifests were accepted"
+fi
+
+valid_archive_directory="$test_root/sealed-archives"
+/bin/mkdir "$valid_archive_directory"
+for crate in "${CRATES[@]}"; do
+  printf 'sealed fixture\n' > "$valid_archive_directory/${crate}-${release_version}.crate"
+done
+validate_sealed_archive_inventory \
+  "$valid_archive_directory" "$release_version" "${CRATES[@]}"
+printf 'unexpected\n' > "$valid_archive_directory/unexpected.crate"
+if validate_sealed_archive_inventory \
+    "$valid_archive_directory" "$release_version" "${CRATES[@]}" \
+    >/dev/null 2>&1; then
+  fail "an unexpected sealed archive was accepted"
+fi
+/bin/rm "$valid_archive_directory/unexpected.crate"
+/bin/rm "$valid_archive_directory/exochain-core-${release_version}.crate"
+/bin/ln -s "exochain-api-${release_version}.crate" \
+  "$valid_archive_directory/exochain-core-${release_version}.crate"
+if validate_sealed_archive_inventory \
+    "$valid_archive_directory" "$release_version" "${CRATES[@]}" \
+    >/dev/null 2>&1; then
+  fail "a symbolic-link sealed archive was accepted"
 fi
 
 RELEASE_PREFLIGHT_MANIFEST="$valid_preflight"
@@ -252,7 +307,9 @@ eval "$original_request_definition"
 
 original_query_definition="$(declare -f query_crate_version)"
 poll_owner_definition="$(declare -f verify_crate_ownership)"
+poll_binding_definition="$(declare -f verify_live_release_binding)"
 verify_crate_ownership() { return 0; }
+verify_live_release_binding() { return 0; }
 query_attempts=0
 query_crate_version() {
   query_attempts=$((query_attempts + 1))
@@ -288,15 +345,16 @@ fi
   || fail "checksum polling retried a fatal response"
 eval "$original_query_definition"
 eval "$poll_owner_definition"
+eval "$poll_binding_definition"
 
-original_publish_definition="$(declare -f release_cargo_publish)"
+original_publish_definition="$(declare -f release_sealed_crate_publish)"
 original_poll_definition="$(declare -f poll_for_expected_checksum)"
 original_query_definition="$(declare -f query_crate_version)"
 original_owner_definition="$(declare -f verify_crate_ownership)"
 original_binding_definition="$(declare -f verify_live_release_binding)"
 verify_live_release_binding() { return 0; }
 verify_crate_ownership() { return 0; }
-release_cargo_publish() { return 0; }
+release_sealed_crate_publish() { return 0; }
 publish_poll_calls=0
 poll_for_expected_checksum() {
   publish_poll_calls=$((publish_poll_calls + 1))
@@ -306,16 +364,23 @@ publish_crate_with_retry exochain-core "$archive_hash"
 [ "$publish_poll_calls" -eq 1 ] \
   || fail "successful upload did not require exact-checksum visibility"
 
-release_cargo_publish() { return 7; }
+release_sealed_crate_publish() { return 7; }
 recovery_query_calls=0
 query_crate_version() {
   [ "$1" = exochain-core ] && [ "$2" = "$archive_hash" ] || return 2
   recovery_query_calls=$((recovery_query_calls + 1))
-  return 0
+  [ "$recovery_query_calls" -ge 3 ] && return 0
+  return 1
+}
+recovery_poll_calls=0
+poll_for_expected_checksum() {
+  recovery_poll_calls=$((recovery_poll_calls + 1))
+  query_crate_version "$1" "$2" || query_crate_version "$1" "$2" \
+    || query_crate_version "$1" "$2"
 }
 publish_crate_with_retry exochain-core "$archive_hash" >/dev/null
-[ "$recovery_query_calls" -eq 1 ] \
-  || fail "failed upload recovery did not require the exact preflight checksum"
+[ "$recovery_poll_calls" -eq 1 ] && [ "$recovery_query_calls" -eq 3 ] \
+  || fail "failed upload recovery did not poll to the delayed exact preflight checksum"
 eval "$original_publish_definition"
 eval "$original_poll_definition"
 eval "$original_query_definition"
@@ -323,10 +388,10 @@ eval "$original_owner_definition"
 
 # A token-free preflight can be approved and then ownership can drift before
 # the credentialed publisher runs. The live, per-attempt check must stop the
-# operation before Cargo is invoked at all.
+# operation before the sealed archive uploader is invoked at all.
 publish_marker="$test_root/cargo-publish-ran"
 verify_crate_ownership() { return 9; }
-release_cargo_publish() {
+release_sealed_crate_publish() {
   : > "$publish_marker"
   return 0
 }
@@ -334,7 +399,7 @@ if (publish_crate_with_retry exochain-core "$archive_hash") >/dev/null 2>&1; the
   fail "publisher-time owner drift was accepted"
 fi
 [ ! -e "$publish_marker" ] \
-  || fail "Cargo was invoked after publisher-time owner drift"
+  || fail "sealed archive uploader ran after publisher-time owner drift"
 eval "$original_publish_definition"
 eval "$original_owner_definition"
 
@@ -398,7 +463,7 @@ fi
 [ "$(/bin/cat "$ownership_count_file")" -eq 2 ] \
   || fail "initial exact-checksum path did not recheck ownership after its query"
 [ ! -e "$takeover_publish_marker" ] \
-  || fail "initial exact-checksum takeover reached Cargo publication"
+  || fail "initial exact-checksum takeover reached sealed archive publication"
 CRATES=("${original_crates[@]}")
 eval "$original_initialize_definition"
 eval "$original_checksum_definition"
@@ -406,7 +471,7 @@ eval "$original_query_definition"
 eval "$original_publish_retry_definition"
 eval "$original_owner_definition"
 
-# The failed-Cargo recovery path also observes an exact public checksum. A
+# The failed-upload recovery path also observes an exact public checksum. A
 # namespace takeover between the pre-attempt owner check and that observation
 # must not be accepted as successful recovery.
 ownership_count_file="$test_root/recovery-ownership-count"
@@ -424,7 +489,7 @@ verify_crate_ownership() {
   return 9 # Simulated 404/unclaimed result after recovery sees exact bytes.
 }
 recovery_publish_marker="$test_root/recovery-cargo-publish-ran"
-release_cargo_publish() {
+release_sealed_crate_publish() {
   : > "$recovery_publish_marker"
   return 7
 }
@@ -444,7 +509,7 @@ eval "$original_publish_definition"
 eval "$original_query_definition"
 eval "$original_owner_definition"
 
-# Every irreversible Cargo invocation must be immediately preceded by the
+# Every irreversible sealed archive upload must be immediately preceded by the
 # captured source and signed-tag guards. This remains true after a bounded 429
 # retry delay, when either the checkout or the remote tag could have changed.
 original_retry_sleep_definition="$(declare -f release_retry_sleep)"
@@ -458,7 +523,7 @@ verify_live_release_binding() {
 }
 retry_publish_count_file="$test_root/retry-publish-count"
 printf '0\n' > "$retry_publish_count_file"
-release_cargo_publish() {
+release_sealed_crate_publish() {
   local retry_publish_attempts
   read -r retry_publish_attempts < "$retry_publish_count_file"
   retry_publish_attempts=$((retry_publish_attempts + 1))
@@ -466,7 +531,7 @@ release_cargo_publish() {
   printf 'publish\n' >> "$release_event_log"
   if [ "$retry_publish_attempts" -eq 1 ]; then
     printf 'status 429 Too Many Requests\n'
-    return 7
+    return 75
   fi
   return 0
 }

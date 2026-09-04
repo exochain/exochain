@@ -11,8 +11,9 @@ fail() {
 
 workflow=.github/workflows/release.yml
 crate_publisher=tools/publish_release_crates.sh
+sealed_crate_publisher=tools/publish_sealed_crate.py
 npm_publisher=tools/publish_release_npm_package.sh
-for file in "$workflow" "$crate_publisher" "$npm_publisher"; do
+for file in "$workflow" "$crate_publisher" "$sealed_crate_publisher" "$npm_publisher"; do
   [ -f "$file" ] || fail "$file is missing"
 done
 
@@ -45,10 +46,12 @@ for block in "$reproduce_block" "$publish_block" "$wasm_block" "$llm_block" "$gi
 done
 
 # The credential-free reproduction job packages the exact candidates first;
-# the fresh publisher receives only both manifests and credentials afterward.
+# the fresh publisher receives only both sealed archive sets, their manifests,
+# and credentials afterward.
 grep -F 'needs: [preflight-crates, verify-signed-tag, validate-release-inputs]' <<<"$reproduce_block" >/dev/null \
   && grep -F 'show "${GITHUB_SHA}:tools/preflight_release_crates.sh"' <<<"$reproduce_block" >/dev/null \
   && grep -F 'name: crate-reproduction-${{ needs.validate-release-inputs.outputs.version }}' <<<"$reproduce_block" >/dev/null \
+  && grep -F '${{ runner.temp }}/exochain-crate-reproduction-output/package/*.crate' <<<"$reproduce_block" >/dev/null \
   || fail "crate candidates must be independently reproduced without credentials"
 if grep -F 'CARGO_REGISTRY_TOKEN' <<<"$reproduce_block" >/dev/null; then
   fail "crate reproduction must not receive a registry credential"
@@ -62,17 +65,19 @@ grep -F 'CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}' <<<"$publish
   || fail "fresh crate publisher must bind its token and explicit owner allowlist"
 for capture in \
   'capture_release_helper tools/publish_release_crates.sh publisher_program' \
+  'capture_release_helper tools/publish_sealed_crate.py sealed_crate_publisher_program' \
   'capture_release_helper tools/check_cratesio_namespace_ownership.mjs owner_checker_program' \
   'capture_release_helper tools/verify_release_source.sh source_guard_program' \
-  'capture_release_helper tools/verify_release_tag.sh tag_guard_program' \
-  'capture_release_helper tools/verify_release_cargo_config.sh cargo_config_program'; do
+  'capture_release_helper tools/verify_release_tag.sh tag_guard_program'; do
   grep -F "$capture" <<<"$publish_block" >/dev/null \
     || fail "fresh crate publisher is missing immutable capture: $capture"
 done
 grep -F 'RELEASE_OWNER_CHECK_PROGRAM="$owner_checker_program"' <<<"$publish_block" >/dev/null \
   && grep -F 'RELEASE_SOURCE_GUARD_PROGRAM="$source_guard_program"' <<<"$publish_block" >/dev/null \
   && grep -F 'RELEASE_TAG_GUARD_PROGRAM="$tag_guard_program"' <<<"$publish_block" >/dev/null \
-  || fail "captured publisher guards must enter the isolated publication process"
+  && grep -F 'RELEASE_SEALED_CRATE_PUBLISHER_PROGRAM="$sealed_crate_publisher_program"' <<<"$publish_block" >/dev/null \
+  && grep -F 'RELEASE_CRATE_ARCHIVE_DIR="$RELEASE_CRATE_ARCHIVE_DIR"' <<<"$publish_block" >/dev/null \
+  || fail "captured publisher guards and sealed archive uploader must enter the isolated publication process"
 
 # Resumption is checksum-bound, not version-only; every irreversible attempt
 # gets a live strict owner check, including attempts after retry sleeps.
@@ -88,15 +93,16 @@ grep -F 'validate_crates_io_response' "$crate_publisher" >/dev/null \
   || fail "publisher must check ownership before mutation and after every exact-checksum observation"
 [ "$(grep -cF 'verify_crate_ownership "$crate" require-claimed' "$crate_publisher")" -eq 3 ] \
   || fail "every exact-checksum acceptance path must require an already-claimed approved namespace"
-grep -F 'status 429 Too Many Requests' "$crate_publisher" >/dev/null \
-  && grep -F 'try again after' "$crate_publisher" >/dev/null \
+grep -F "status 429 ' <<<\"\$output\"" "$crate_publisher" >/dev/null \
   && grep -F 'release_retry_sleep "$retry_seconds"' "$crate_publisher" >/dev/null \
   && grep -F '/bin/sleep "$1"' "$crate_publisher" >/dev/null \
   || fail "crate publication needs bounded rate-limit retry behavior"
-grep -F '"$trusted_cargo" publish' "$crate_publisher" >/dev/null \
-  && grep -F -- '--no-verify' "$crate_publisher" >/dev/null \
-  && grep -F -- '--locked' "$crate_publisher" >/dev/null \
-  || fail "crate publisher must publish exact locked candidates without build-script verification"
+grep -F 'release_sealed_crate_publish "$crate" "$expected_checksum"' "$crate_publisher" >/dev/null \
+  && grep -F 'body=sealed.request_body' "$sealed_crate_publisher" >/dev/null \
+  || fail "crate publisher must transmit only the exact sealed candidate bytes"
+if grep -F '"$trusted_cargo" publish' "$crate_publisher" >/dev/null; then
+  fail "credentialed crate publisher must not repackage live workspace source"
+fi
 if grep -F -- '--allow-dirty' "$crate_publisher" >/dev/null \
   || grep -F -- '--allow-dirty' <<<"$publish_block" >/dev/null; then
   fail "crate publication must not bypass dirty-source protection"
@@ -110,13 +116,13 @@ preflight_tail="$(sed -n "${package_line},\$p" tools/preflight_release_crates.sh
 if grep -E 'trusted_git|run_exact_guard|verify_(release|cargo_config)|GITHUB_SHA.*tools/' <<<"$preflight_tail" >/dev/null; then
   fail "crate preflight reloads Git or a trust guard after Cargo packaging starts"
 fi
-publish_line="$(grep -nF '"$trusted_cargo" publish' "$crate_publisher" | cut -d: -f1)"
+publish_line="$(grep -nF 'release_sealed_crate_publish "$crate" "$expected_checksum"' "$crate_publisher" | tail -n 1 | cut -d: -f1)"
 crate_tail="$(sed -n "${publish_line},\$p" "$crate_publisher")"
 grep -F 'verify_live_release_binding' "$crate_publisher" >/dev/null \
   && grep -F 'source_guard_program' "$crate_publisher" >/dev/null \
   && grep -F 'tag_guard_program' "$crate_publisher" >/dev/null \
   || fail "crate publisher must retain immutable source and tag guard programs"
-publish_attempt_block="$(sed -n '/while \[ "$attempt" -le "$max_attempts" \]; do/,/if output="$(release_cargo_publish/p' "$crate_publisher")"
+publish_attempt_block="$(sed -n '/while \[ "$attempt" -le "$max_attempts" \]; do/,/if output="$(release_sealed_crate_publish/p' "$crate_publisher")"
 grep -F 'verify_live_release_binding' <<<"$publish_attempt_block" >/dev/null \
   || fail "every crate publication attempt must rerun live source and tag binding"
 if grep -E 'RELEASE_(SOURCE|TAG_GUARD|CARGO_CONFIG|PREFLIGHT_MANIFEST|REPRODUCED_MANIFEST)' <<<"$crate_tail" >/dev/null; then
@@ -149,13 +155,16 @@ grep -F 'registry_has_exact_tarball()' "$npm_publisher" >/dev/null \
   && grep -F 'validate_npm_registry_response' "$npm_publisher" >/dev/null \
   && grep -F 'value?.dist?.integrity !== process.env.EXPECTED_INTEGRITY' "$npm_publisher" >/dev/null \
   || fail "npm resumption must compare strict registry integrity to the exact tarball"
-grep -F '"$node_path" "$npm_cli_path" publish "$RELEASE_NPM_TARBALL"' "$npm_publisher" >/dev/null \
+grep -F 'run_authenticated_npm publish "$RELEASE_NPM_TARBALL"' "$npm_publisher" >/dev/null \
   && grep -F -- '--access public --provenance --ignore-scripts' "$npm_publisher" >/dev/null \
   || fail "npm publisher must publish only the prepared tarball with provenance and no scripts"
-npm_publish_line="$(grep -nF '"$node_path" "$npm_cli_path" publish' "$npm_publisher" | cut -d: -f1)"
+npm_publish_line="$(grep -nF 'run_authenticated_npm publish "$RELEASE_NPM_TARBALL"' "$npm_publisher" | cut -d: -f1)"
 npm_tail="$(sed -n "${npm_publish_line},\$p" "$npm_publisher")"
-if grep -E '(/usr/bin/)?git|GITHUB_SHA|verify_release|RELEASE_GITHUB_TOKEN' <<<"$npm_tail" >/dev/null; then
-  fail "npm publisher reads Git or a release guard after npm publish starts"
+grep -F 'verify_registry_acceptance' <<<"$npm_tail" >/dev/null \
+  && [ "$(grep -cF 'verify_release_binding' <<<"$npm_tail" || true)" -ge 1 ] \
+  || fail "npm acceptance must finish with exact registry proof and a final source/tag rebind"
+if grep -E 'npm (ci|pack)|run_authenticated_npm (ci|pack)' <<<"$npm_tail" >/dev/null; then
+  fail "npm publisher must not rebuild or repackage after registry mutation starts"
 fi
 
 for dependency in publish publish-wasm-npm publish-llm-proxy-npm attest-release validate-sbom; do
