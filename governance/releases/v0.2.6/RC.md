@@ -23,15 +23,18 @@ release controls; it does not create or claim a git tag, GitHub Release,
 registry publication, deployment, production runtime verification, Article 26
 certification, or v0.3.0 closure.
 
-Status: source and release-control implementation is committed at
+Status: core source and release-control implementation is committed at
 `368721a1ea3577481cf73cdee6d811623159faec`. Exact-head core and feature-matrix
 gates, coverage thresholds, all 62 CI-derived shell guards, and the separate
-LiveSafe quality/build/image gates passed at that checkpoint. Local candidate
-completion additionally requires the committed evidence-head content-sensitive
-guard rerun and independent scan. Unless a command is tied below to an immutable
-checkpoint, the controls described here are candidate acceptance requirements
-rather than completion claims. Provider CI, Windows runtime evidence, tag,
-publication, deployment, and runtime readback remain unproven.
+LiveSafe quality/build/image gates passed at that checkpoint. Complete scan
+`429b3137-c1ad-49c9-8fd8-ea7baf030d69` of evidence head `76d7ea4e` found one
+additional High release-credential boundary outside the imported report.
+Source correction `111f7955b9599159edb104ee9a6dec7dc5924e30` is committed
+and its focused guards pass. Local candidate completion is blocked until
+`CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` are moved exclusively from repository
+scope into the protected `release` environment and exact-head gates and final
+review are rerun. Provider CI, Windows runtime evidence, tag, publication,
+deployment, and runtime readback remain unproven.
 
 ## Evidence boundary
 
@@ -41,8 +44,11 @@ publication, deployment, and runtime readback remain unproven.
 | Report SHA-256 | `d5da7a1291cbf8baaa8e676cd2eebbbbaadc421eb623eddb48dfc6f4e0c89168` |
 | Source validation baseline | `8020ceab355eefa7f5185d9cdd0436da7af46efb` |
 | Committed implementation checkpoint | `368721a1ea3577481cf73cdee6d811623159faec` |
-| Formal findings | 86 candidate dispositions exactly reconciled against the committed implementation checkpoint; source-checkpoint gates passed; committed evidence-head scan required for local completion |
-| Design observations | 52 candidate dispositions exactly reconciled against the committed implementation checkpoint; ten share concrete remediation boundaries; source-checkpoint gates passed; committed evidence-head scan required for local completion |
+| Evidence head reviewed | `76d7ea4e6e13159b011c43df60ecbf5252fe7a5e`; complete scan found one additional High CI/CD finding |
+| Post-evidence source correction | `111f7955b9599159edb104ee9a6dec7dc5924e30` |
+| Formal findings | 86 candidate dispositions exactly reconciled against the committed implementation checkpoint; source-checkpoint gates passed |
+| Design observations | 52 candidate dispositions exactly reconciled against the committed implementation checkpoint; ten share concrete remediation boundaries; source-checkpoint gates passed |
+| Open provider control | Registry tokens remain repository-scoped; protected `release` environment currently contains no secrets |
 | Candidate version | `0.2.6` across owned release surfaces |
 | Adjacent surface | LiveSafe remains separate, proprietary, and unable to make public constitutional claims |
 | Test plan | `governance/releases/v0.2.6/TEST-PLAN.md` |
@@ -106,6 +112,18 @@ canonical items and 315/315 paths. This is preliminary evidence only because
 later commits are outside its range. A fresh scan must cover the committed
 evidence head.
 
+Complete scan `429b3137-c1ad-49c9-8fd8-ea7baf030d69` covered the baseline
+through committed evidence head `76d7ea4e` and validated one High
+CWE-732/CWE-284 release-credential finding. The four crates.io/npm jobs used
+repository-scoped registry tokens without directly crossing the protected
+environment. Commit `111f7955` adds `environment: release` to each consumer
+and a semantic regression guard; the guard rejects the sealed vulnerable head
+and the related focused release suite passes on the correction. Live provider
+metadata still shows both tokens at repository scope and none in `release`, so
+the attack remains possible from a branch that removes the source declaration.
+No claim of finding closure is made until exclusive environment-secret custody
+is verified.
+
 Exact-head tarpaulin passed at the source checkpoint with 90.86% workspace
 coverage (47,746/52,547), 83.00% ZeroDentity coverage (1,870/2,253), 100%
 `exo-root` coverage (1,146/1,146, including 325/325 DKG lines), and 100%
@@ -145,6 +163,10 @@ diagnostics only inside their guards; both guards contained them and passed.
   the exact `@exochain/sdk` package may use a registry-proven 404 as a scoped
   first-publication exception; the established WASM and LLM proxy packages
   fail closed if owner authority cannot be proven.
+- Every crates.io/npm registry-secret consumer directly declares
+  `environment: release`; the secrets themselves must exist only at that
+  protected environment scope so branch-authored workflow changes cannot
+  bypass approval.
 
 ## Release identity invariant
 
@@ -272,10 +294,11 @@ npm --prefix packages/exochain-sdk test
 python3 -m pytest packages/exochain-py/tests
 ```
 
-The post-evidence content-sensitive guard rerun, post-evidence scan, provider
-CI, and platform-specific gates in the final test plan remain mandatory before
-release authorization. Windows ACL runtime evidence must come from its Windows
-CI lane; cross-compilation is not runtime proof.
+The post-correction exact-head content-sensitive guard rerun, final independent
+scan, exclusive environment-secret provider readback, provider CI, and
+platform-specific gates in the final test plan remain mandatory before release
+authorization. Windows ACL runtime evidence must come from its Windows CI lane;
+cross-compilation is not runtime proof.
 
 ## Rollback and disablement
 

@@ -13,9 +13,11 @@ the repository.
 The exact candidate reconciliation appendices below were subsequently
 revalidated against committed implementation checkpoint
 `368721a1ea3577481cf73cdee6d811623159faec`. That checkpoint is source
-evidence, not release authorization; the mandatory whole-branch gates,
-independent final review, provider CI, tag, publication, deployment, and
-runtime readback remain separate.
+evidence, not release authorization. Post-evidence source correction
+`111f7955b9599159edb104ee9a6dec7dc5924e30` addresses a separately discovered
+release-workflow issue; its provider secret migration remains open. Mandatory
+whole-branch gates, provider CI, tag, publication, deployment, and runtime
+readback remain separate.
 
 The report contains 86 formal findings and 52 separately labeled design
 observations. The design observations state that they are not concrete
@@ -304,10 +306,38 @@ coverage (1,870/2,253), 100% `exo-root` coverage (1,146/1,146, including
 325/325 DKG lines), and 100% root-genesis portal coverage (65/65). All 62 shell
 guards discovered from `.github/workflows/ci.yml` ran serially and exited zero.
 Expected negative diagnostics from malicious npm and Python verifier fixtures
-remained contained inside their guards, which passed. A fresh security scan
-of the committed evidence head is required for local completion and is reported
-separately because this source-checkpoint record necessarily predates that
-commit.
+remained contained inside their guards, which passed.
+
+## Post-evidence independent security review
+
+Complete Codex Security scan `429b3137-c1ad-49c9-8fd8-ea7baf030d69` covered
+all 181 canonical review items in the exact range
+`8020ceab355eefa7f5185d9cdd0436da7af46efb..76d7ea4e6e13159b011c43df60ecbf5252fe7a5e`.
+It reported one High CWE-732/CWE-284 finding outside the imported report's 86
+formal IDs and 52 design IDs. Manual branch dispatch could reach four
+crates.io/npm credential consumers that depended on separate approval jobs but
+did not themselves declare `environment: release`. No additional source
+candidate survived validation.
+
+The strengthened release guard was RED against sealed vulnerable revision
+`76d7ea4e`: it rejected `publish` for consuming registry authority without the
+protected environment. Source commit `111f7955` adds the environment directly
+to `publish`, `publish-wasm-npm`, `publish-llm-proxy-npm`, and
+`publish-sdk-npm`. The guard dynamically discovers registry-secret jobs,
+semantically expands quoted YAML job IDs and aliases, rejects workflow-global,
+inherited, computed, indexed, lowercase, or non-allowlisted secret access, and
+is GREEN on the corrected source. The release publish, dry-run,
+workflow-ref, SDK/Python, WASM, LYNK, pinned-action, and signed-tag guards all
+pass.
+
+Source correction is not provider closure. Read-only GitHub metadata on
+2026-09-04 shows `CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` still at repository
+scope, zero secrets in environment `release`, required-reviewer protection with
+self-review denied, and no deployment branch policy. Because a modified branch
+can remove its own `environment` declaration, both tokens must be recreated in
+`release` and then removed from repository scope before this finding is closed.
+The values are opaque and were neither read nor changed during branch
+preparation.
 
 ## Completion Evidence Required
 
@@ -323,3 +353,5 @@ commit.
    on its own versions and keeps `public_claims_allowed: false`.
 6. This branch makes no claim that 0.2.6 is tagged, published, deployed, or
    runtime-verified. Those are separate release operations.
+7. Provider readback proves `CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` exist only
+   as protected `release` environment secrets and not as repository secrets.

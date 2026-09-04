@@ -33,6 +33,10 @@ constitutional certification.
   `8020ceab355eefa7f5185d9cdd0436da7af46efb`
 - Committed implementation checkpoint:
   `368721a1ea3577481cf73cdee6d811623159faec`
+- Reviewed evidence head:
+  `76d7ea4e6e13159b011c43df60ecbf5252fe7a5e`
+- Post-evidence source correction:
+  `111f7955b9599159edb104ee9a6dec7dc5924e30`
 - Formal inventory: exactly 86 unique findings.
 - Formal finding classifications: 32 EXOCHAIN core, 50 core runtime adapter,
   and four adjacent surface.
@@ -80,6 +84,7 @@ source changes, and were removed before the evidence commit.
 | Repository guards | Every shell guard discovered from the final CI workflow exits 0, without a copied inventory |
 | SDKs and packages | Rust/TypeScript/Python SDK, WASM bridge/package, LLM proxy, and package dry-runs pass |
 | Supply chain | Exactly 32 reviewed CycloneDX package SBOMs; sealed Cargo publication matches pinned Cargo protocol; npm/PyPI and both SDK lanes prove exact artifact and provenance/lifecycle contracts |
+| Registry-secret custody | Every registry-secret consumer directly declares protected environment `release`; `CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` exist only in that environment and are absent from repository scope |
 | Adjacent LiveSafe | All four npm audits, context lint, typecheck, Vitest, Rust fmt/Clippy/tests pass |
 | Independent review | Whole diff plus evidence files reviewed; every confirmed finding at every severity is fixed or explicitly accepted by the user |
 | Platform | Windows private-file runtime test passes in `windows-latest` CI; local cross-check is supporting evidence only |
@@ -480,6 +485,28 @@ virtual environments for package testing. Provider status is separate from
 local execution: the exact candidate SHA must pass both `All Constitutional
 Gates` and the LiveSafe workflow before release authorization.
 
+The registry credentials require a separate provider-custody proof. Never put
+their values in this repository, a command transcript, or review evidence. The
+user must enter each value directly into GitHub environment `release`, verify
+the environment copies exist, and only then remove the repository copies. The
+following read-only checks must show both names in the first result and neither
+name in the second:
+
+```bash
+gh secret list --repo EXOCHAIN/exochain --env release --json name \
+  --jq 'map(.name) | sort'
+gh secret list --repo EXOCHAIN/exochain --json name \
+  --jq 'map(.name) | map(select(. == "CARGO_REGISTRY_TOKEN" or . == "NPM_TOKEN")) | sort'
+gh api repos/EXOCHAIN/exochain/environments/release \
+  --jq '{can_admins_bypass, protection_rules: [.protection_rules[] | {type, prevent_self_review}], deployment_branch_policy}'
+```
+
+The first output must be
+`["CARGO_REGISTRY_TOKEN","NPM_TOKEN"]`, the second `[]`, and provider
+protection must continue to deny admin bypass and self-review. An unreadable
+organization-secret scope is recorded as unverified rather than inferred
+empty.
+
 ## Pre-review execution checkpoint
 
 The pre-review pass established that the gate design is executable before the
@@ -602,13 +629,22 @@ controls below.
   serially at `368721a1` and exited zero. Malicious npm and Python verifier
   fixtures produced expected negative diagnostics inside their respective
   guards; the failures were contained and both guards passed.
+- Complete post-evidence Codex Security scan
+  `429b3137-c1ad-49c9-8fd8-ea7baf030d69` reviewed 181/181 canonical items in
+  the baseline-to-`76d7ea4e` range and found one additional High release-
+  credential boundary outside the imported report. Commit `111f7955` applies
+  the source correction. Its release publish guard is RED on `76d7ea4e` and
+  GREEN on `111f7955`; the dry-run, workflow-ref, SDK/Python, WASM, LYNK,
+  pinned-action, and signed-tag guards also pass. Provider migration remains
+  outstanding because both tokens are repository-scoped and `release` has no
+  secrets.
 
 The source-checkpoint coverage and complete CI-derived guard corpus are
 recorded as passing. After the six evidence files are committed under the
 source-custody allowlist, all content-sensitive guards must run again and a
 fresh independent scan must cover
 the complete range from `8020ceab355eefa7f5185d9cdd0436da7af46efb`
-through the resulting committed evidence head. Provider
-`All Constitutional Gates`, the LiveSafe workflow, Windows ACL runtime lane,
-tag, publication, deployment, and runtime readback remain separate and
-unproven.
+through the resulting committed evidence head. Provider registry-secret
+migration/readback, `All Constitutional Gates`, the LiveSafe workflow, Windows
+ACL runtime lane, tag, publication, deployment, and runtime readback remain
+separate and unproven.
