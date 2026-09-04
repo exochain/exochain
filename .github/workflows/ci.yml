@@ -77,6 +77,28 @@ jobs:
         run: cargo test --workspace --release
 
   # -----------------------------------------------------------------------
+  # Python SDK release assurance
+  # -----------------------------------------------------------------------
+  python-sdk:
+    name: "Python SDK — CPython 3.11"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        with:
+          python-version: "3.11.14"
+          cache: ""
+      - name: Install Python SDK test and static-analysis dependencies
+        run: python -m pip install --disable-pip-version-check -e 'packages/exochain-py[dev]'
+      - name: Run Python SDK security and regression tests
+        run: python -m pytest packages/exochain-py/tests
+      - name: Ruff Python SDK
+        run: python -m ruff check packages/exochain-py
+      - name: Mypy Python SDK
+        run: python -m mypy --config-file packages/exochain-py/pyproject.toml packages/exochain-py/exochain
+
+  # -----------------------------------------------------------------------
   # Gate 3: Coverage (scoped 90%+ line coverage required)
   # -----------------------------------------------------------------------
   coverage:
@@ -282,6 +304,8 @@ jobs:
         run: bash tools/test_gap_stub_ci_guard.sh
       - name: GitHub Actions pinned to immutable SHAs
         run: bash tools/test_github_actions_pinned.sh
+      - name: Python SDK hosted-CI boundary
+        run: bash tools/test_python_sdk_ci_boundary.sh
       - name: GitHub issue workflow trust boundary
         run: bash tools/test_github_issue_workflow_boundaries.sh
       - name: CI tool installer supply-chain hardening
@@ -923,6 +947,7 @@ jobs:
     needs:
       - build
       - test
+      - python-sdk
       - coverage
       - lint
       - format
