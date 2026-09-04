@@ -65,6 +65,21 @@ class _SlowDripStream(httpx.AsyncByteStream):
         self.closed = True
 
 
+class _BlockingStream(httpx.AsyncByteStream):
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self._release = asyncio.Event()
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        self.started.set()
+        await self._release.wait()
+        yield b"{}"
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 class _FalseyLyingBytes(bytes):
     def __buffer__(self, _flags: int) -> memoryview:
         return memoryview(b"")
@@ -228,6 +243,76 @@ async def test_http_transport_total_timeout_covers_response_headers() -> None:
         assert str(exc_info.value) == "GET /health failed: total request deadline exceeded"
         assert exc_info.value.status is None
         assert exc_info.value.body is None
+    finally:
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_http_transport_caller_cancellation_propagates_and_closes_response() -> None:
+    """Caller cancellation remains cancellation and releases an acquired response."""
+    stream = _BlockingStream()
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream)
+
+    transport = HttpTransport(
+        "https://fabric.example",
+        timeout=httpx.Timeout(0.5),
+        total_timeout=30,
+    )
+    await _install_mock_client(
+        transport,
+        httpx.MockTransport(handler),
+        timeout=httpx.Timeout(0.5),
+    )
+    request_task = asyncio.create_task(transport.get("/health"))
+
+    try:
+        await asyncio.wait_for(stream.started.wait(), timeout=1.0)
+        request_task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await request_task
+
+        assert stream.closed
+    finally:
+        request_task.cancel()
+        await asyncio.gather(request_task, return_exceptions=True)
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_http_transport_httpx_timeout_exception_maps_to_transport_error() -> None:
+    """A phase timeout retains its httpx cause and is not relabeled as the total deadline."""
+    timeout_error = httpx.ReadTimeout(
+        "upstream read phase timed out",
+        request=httpx.Request("GET", "https://fabric.example/health"),
+    )
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise timeout_error
+
+    transport = HttpTransport(
+        "https://fabric.example",
+        timeout=httpx.Timeout(0.5),
+        total_timeout=1,
+    )
+    await _install_mock_client(
+        transport,
+        httpx.MockTransport(handler),
+        timeout=httpx.Timeout(0.5),
+    )
+
+    try:
+        with pytest.raises(TransportError) as exc_info:
+            await transport.get("/health")
+
+        assert str(exc_info.value) == "GET /health failed: upstream read phase timed out"
+        assert exc_info.value.status is None
+        assert exc_info.value.body is None
+        assert exc_info.value.__cause__ is timeout_error
+        assert str(timeout_error) == "upstream read phase timed out"
+        assert "total request deadline exceeded" not in str(exc_info.value)
     finally:
         await transport.close()
 
