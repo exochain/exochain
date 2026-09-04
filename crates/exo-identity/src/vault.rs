@@ -39,6 +39,9 @@ use crate::error::IdentityError;
 /// Size of the XChaCha20-Poly1305 nonce in bytes.
 pub const VAULT_NONCE_SIZE: usize = 24;
 
+/// Bytes added to every vault ciphertext by the nonce and Poly1305 tag.
+pub const VAULT_CIPHERTEXT_OVERHEAD: usize = VAULT_NONCE_SIZE + TAG_SIZE;
+
 /// Size of the XChaCha20-Poly1305 nonce in bytes.
 const NONCE_SIZE: usize = VAULT_NONCE_SIZE;
 

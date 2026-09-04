@@ -38,7 +38,14 @@ const ENVELOPE_SIGNING_SCHEMA_VERSION_KDF_VERSIONED: u16 = 2;
 pub const KDF_VERSION_LEGACY_UNSALTED: u16 = 1;
 /// Current KDF: X25519 ECDH expanded with transcript-salted HKDF.
 pub const KDF_VERSION_TRANSCRIPT_SALTED: u16 = 2;
+/// Maximum serialized ciphertext length accepted by an encrypted envelope.
 pub const MAX_ENVELOPE_CIPHERTEXT_LEN: usize = 16 * 1024 * 1024;
+/// Maximum plaintext length that can encrypt into an accepted envelope.
+pub const MAX_ENVELOPE_PLAINTEXT_LEN: usize =
+    MAX_ENVELOPE_CIPHERTEXT_LEN - exo_identity::vault::VAULT_CIPHERTEXT_OVERHEAD;
+/// Fixed error used when plaintext cannot fit in a round-trippable envelope.
+pub const ENVELOPE_PLAINTEXT_LIMIT_ERROR: &str =
+    "message plaintext exceeds maximum supported length";
 
 #[derive(Serialize)]
 struct EnvelopeSigningPayloadV1<'a> {

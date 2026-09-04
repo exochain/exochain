@@ -29,6 +29,7 @@ const MAX_CLAIM_NONCE_BYTES: usize = 64;
 const MAX_CLAIM_NONCE_HEX_LEN: usize = MAX_CLAIM_NONCE_BYTES * 2;
 const CLAIM_NONCE_LIMIT_ERROR: &str =
     "claim nonce hex must not exceed 128 characters (64 decoded bytes)";
+const WASM_MESSAGE_PLAINTEXT_LIMIT_ERROR: &str = exo_messaging::ENVELOPE_PLAINTEXT_LIMIT_ERROR;
 
 #[derive(Deserialize)]
 struct WasmAuthorizedTrustee {
@@ -141,6 +142,7 @@ pub fn wasm_prepare_encrypted_message(
     release_on_death: bool,
     release_delay_hours: u32,
 ) -> Result<JsValue, JsValue> {
+    validate_wasm_message_plaintext(plaintext).map_err(JsValue::from_str)?;
     let content_type: exo_messaging::ContentType = from_json_str(content_type_json)?;
 
     let sender = exo_core::Did::new(sender_did)
@@ -182,6 +184,13 @@ pub fn wasm_prepare_encrypted_message(
         "envelope": envelope,
         "signing_payload_hex": hex::encode(signing_payload),
     }))
+}
+
+fn validate_wasm_message_plaintext(plaintext: &str) -> Result<(), &'static str> {
+    if plaintext.len() > exo_messaging::MAX_ENVELOPE_PLAINTEXT_LEN {
+        return Err(WASM_MESSAGE_PLAINTEXT_LIMIT_ERROR);
+    }
+    Ok(())
 }
 
 fn parse_x25519_keypair_hex(
@@ -491,6 +500,48 @@ pub fn wasm_death_verification_confirm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wasm_plaintext_bound_accepts_exact_limit_and_rejects_one_byte_over() {
+        let exact = "a".repeat(exo_messaging::MAX_ENVELOPE_PLAINTEXT_LEN);
+        validate_wasm_message_plaintext(&exact).expect("exact maximum plaintext is accepted");
+
+        let oversized = "a".repeat(exo_messaging::MAX_ENVELOPE_PLAINTEXT_LEN + 1);
+        assert_eq!(
+            validate_wasm_message_plaintext(&oversized)
+                .expect_err("one byte over maximum plaintext must be rejected"),
+            WASM_MESSAGE_PLAINTEXT_LIMIT_ERROR
+        );
+    }
+
+    #[test]
+    fn wasm_prepare_checks_plaintext_before_parsing_or_cryptography() {
+        let source = include_str!("messaging_bindings.rs");
+        let production = source.split("\n#[cfg(test)]").next().unwrap_or(source);
+        let prepare = production
+            .split("pub fn wasm_prepare_encrypted_message")
+            .nth(1)
+            .expect("WASM encrypted-message constructor")
+            .split("fn parse_x25519_keypair_hex")
+            .next()
+            .expect("WASM encrypted-message constructor body");
+        let bound_check = prepare
+            .find("validate_wasm_message_plaintext(plaintext)")
+            .expect("WASM plaintext validation call");
+
+        for operation in [
+            "from_json_str(content_type_json)",
+            "Did::new(sender_did)",
+            "parse_x25519_keypair_hex",
+            "prepare_envelope_for_signing_with_ephemeral",
+        ] {
+            let operation_index = prepare.find(operation).expect("bounded operation");
+            assert!(
+                bound_check < operation_index,
+                "WASM plaintext bound must be checked before {operation}"
+            );
+        }
+    }
 
     #[test]
     fn claim_nonce_decoder_accepts_64_bytes_and_rejects_65_before_decode() {

@@ -28,7 +28,10 @@ use sha2::Sha256;
 use uuid::Uuid;
 
 use crate::{
-    envelope::{ContentType, EncryptedEnvelope, KDF_VERSION_TRANSCRIPT_SALTED},
+    envelope::{
+        ContentType, ENVELOPE_PLAINTEXT_LIMIT_ERROR, EncryptedEnvelope,
+        KDF_VERSION_TRANSCRIPT_SALTED, MAX_ENVELOPE_PLAINTEXT_LEN,
+    },
     error::MessagingError,
     kex::{self, X25519KeyPair, X25519PublicKey},
 };
@@ -206,6 +209,7 @@ pub fn prepare_envelope_for_signing_with_ephemeral(
     release_on_death: bool,
     release_delay_hours: u32,
 ) -> Result<EncryptedEnvelope, MessagingError> {
+    validate_plaintext_len(plaintext.len())?;
     metadata.validate()?;
 
     // 1. ECDH: derive shared symmetric key using caller-supplied ephemeral key.
@@ -249,6 +253,15 @@ pub fn prepare_envelope_for_signing_with_ephemeral(
     };
 
     Ok(envelope)
+}
+
+fn validate_plaintext_len(plaintext_len: usize) -> Result<(), MessagingError> {
+    if plaintext_len > MAX_ENVELOPE_PLAINTEXT_LEN {
+        return Err(MessagingError::InvalidEnvelope(
+            ENVELOPE_PLAINTEXT_LIMIT_ERROR.to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn caller_supplied_ephemeral_required() -> MessagingError {
@@ -470,6 +483,66 @@ mod tests {
     }
 
     #[test]
+    fn maximum_plaintext_produces_a_round_trippable_envelope() {
+        let sender_did = Did::new("did:exo:alice").unwrap();
+        let recipient_did = Did::new("did:exo:bob").unwrap();
+        let recipient_kp = x25519_keypair(0x29);
+        let ephemeral_kp = x25519_keypair(0x39);
+        let plaintext = vec![0xab; crate::envelope::MAX_ENVELOPE_PLAINTEXT_LEN];
+
+        let envelope = prepare_envelope_for_signing_with_ephemeral(
+            &plaintext,
+            ContentType::Attachment,
+            &sender_did,
+            &recipient_did,
+            &recipient_kp.public,
+            &ephemeral_kp,
+            metadata(),
+            false,
+            0,
+        )
+        .expect("maximum plaintext must produce an envelope");
+
+        assert_eq!(
+            envelope.ciphertext.len(),
+            crate::envelope::MAX_ENVELOPE_CIPHERTEXT_LEN
+        );
+
+        let mut encoded = Vec::new();
+        ciborium::ser::into_writer(&envelope, &mut encoded).expect("serialize maximum envelope");
+        let decoded: EncryptedEnvelope =
+            ciborium::de::from_reader(encoded.as_slice()).expect("deserialize maximum envelope");
+        assert_eq!(decoded.ciphertext, envelope.ciphertext);
+    }
+
+    #[test]
+    fn plaintext_one_byte_over_round_trip_limit_fails_closed() {
+        let sender_did = Did::new("did:exo:alice").unwrap();
+        let recipient_did = Did::new("did:exo:bob").unwrap();
+        let recipient_kp = x25519_keypair(0x2a);
+        let ephemeral_kp = x25519_keypair(0x3a);
+        let plaintext = vec![0xab; crate::envelope::MAX_ENVELOPE_PLAINTEXT_LEN + 1];
+
+        let result = prepare_envelope_for_signing_with_ephemeral(
+            &plaintext,
+            ContentType::Attachment,
+            &sender_did,
+            &recipient_did,
+            &recipient_kp.public,
+            &ephemeral_kp,
+            metadata(),
+            false,
+            0,
+        );
+
+        assert!(matches!(
+            result,
+            Err(MessagingError::InvalidEnvelope(reason))
+                if reason == crate::envelope::ENVELOPE_PLAINTEXT_LIMIT_ERROR
+        ));
+    }
+
+    #[test]
     fn attach_verified_signature_accepts_external_signature() {
         let sender_did = Did::new("did:exo:alice").unwrap();
         let recipient_did = Did::new("did:exo:bob").unwrap();
@@ -659,6 +732,37 @@ mod tests {
             !production.contains(".encrypt("),
             "compose must not call the implicit vault encryption entrypoint"
         );
+    }
+
+    #[test]
+    fn compose_checks_plaintext_bound_before_key_derivation_or_encryption() {
+        let source = include_str!("compose.rs");
+        let production = source
+            .split("// ===========================================================================")
+            .next()
+            .expect("production section");
+        let prepare = production
+            .split("pub fn prepare_envelope_for_signing_with_ephemeral")
+            .nth(1)
+            .expect("ephemeral compose constructor")
+            .split("fn caller_supplied_ephemeral_required")
+            .next()
+            .expect("ephemeral compose constructor body");
+        let bound_check = prepare
+            .find("validate_plaintext_len(plaintext.len())")
+            .expect("plaintext validation call");
+
+        for operation in [
+            "kex::derive_shared_key",
+            "derive_vault_nonce",
+            "encrypt_with_nonce",
+        ] {
+            let operation_index = prepare.find(operation).expect("bounded operation");
+            assert!(
+                bound_check < operation_index,
+                "plaintext bound must be checked before {operation}"
+            );
+        }
     }
 
     #[test]
