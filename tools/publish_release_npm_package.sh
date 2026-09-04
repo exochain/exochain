@@ -264,6 +264,7 @@ extract_root="$publish_root/extracted"
 home_root="$publish_root/home"
 audit_root="$publish_root/audit"
 registry_response="$publish_root/registry.json"
+package_registry_response="$publish_root/package-registry.json"
 audit_response="$publish_root/audit.json"
 registry_verifier="$publish_root/verify_registry_attestation.mjs"
 expected_npm_actor=bob-stewart
@@ -297,6 +298,7 @@ case "$profile" in
   sdk) registry_path='%40exochain%2Fsdk' ;;
 esac
 registry_url="https://registry.npmjs.org/${registry_path}/${RELEASE_VERSION}"
+package_registry_url="https://registry.npmjs.org/${registry_path}"
 
 printf '%s\n' \
   'registry=https://registry.npmjs.org/' \
@@ -375,6 +377,32 @@ verify_exact_npm_owners() {
     || fail "npm package owners differ from the exact canonical maintainer policy"
 }
 
+verify_prepublication_npm_authority() {
+  local actual_owners
+  if actual_owners="$(run_authenticated_npm owner ls "$package_name" --registry=https://registry.npmjs.org)"; then
+    [ "$actual_owners" = "$expected_maintainer_name <$expected_maintainer_email>" ] \
+      || fail "npm package owners differ from the exact canonical maintainer policy"
+    return
+  fi
+
+  local status
+  status="$(/usr/bin/env -i \
+    /usr/bin/curl -q --silent --show-error --output "$package_registry_response" \
+      --write-out '%{http_code}' --proto '=https' --tlsv1.2 \
+      --connect-timeout 15 --max-time 60 --max-filesize 1048576 \
+      "$package_registry_url")" || fail "npm package namespace lookup failed"
+  case "$status" in
+    404)
+      case "$package_name" in
+        @exochain/exochain-wasm|@exochain/llm-proxy|@exochain/sdk) ;;
+        *) fail "npm first publication is not approved for this package" ;;
+      esac
+      ;;
+    200) fail "npm owner ls could not prove authority over an existing package" ;;
+    *) fail "npm package namespace returned unexpected HTTP status $status" ;;
+  esac
+}
+
 registry_has_exact_tarball() {
   local status
   status="$(/usr/bin/env -i \
@@ -449,8 +477,9 @@ if registry_has_exact_tarball; then
 fi
 
 if [ "$publish_needed" = true ]; then
-  # Final source/tag proof immediately before the only registry mutation.
+  # Final source/tag and namespace-owner proof before the only registry mutation.
   verify_release_binding
+  verify_prepublication_npm_authority
   cd /
   run_authenticated_npm publish "$RELEASE_NPM_TARBALL" \
     --access public --provenance --ignore-scripts --registry=https://registry.npmjs.org
