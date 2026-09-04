@@ -247,7 +247,7 @@ pub use transport::{
 /// failure) without ever swallowing an error.
 #[cfg(feature = "http-client")]
 mod transport {
-    use std::fmt;
+    use std::{fmt, time::Duration};
 
     use reqwest::{
         Client, StatusCode,
@@ -269,6 +269,8 @@ mod transport {
 
     /// Maximum accepted DAG DB HTTP response body size in bytes.
     pub const MAX_DAGDB_RESPONSE_BYTES: usize = 1_048_576;
+    /// Finite total deadline applied by [`DagDbHttpClient::new`] to headers and body.
+    const DEFAULT_DAGDB_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
     const OVERSIZED_RESPONSE_MESSAGE: &str = "response body exceeds the 1048576-byte limit";
 
     /// Gateway header carrying the requesting tenant id.
@@ -988,7 +990,7 @@ mod transport {
     impl DagDbHttpClient {
         /// Build a client against `base_url` (gateway origin, e.g.
         /// `https://gateway.example.com`) using the supplied auth config and a
-        /// default-configured `reqwest::Client`.
+        /// `reqwest::Client` with a finite 30-second total request deadline.
         ///
         /// # Errors
         /// Returns [`DagDbClientError::Transport`] if the underlying
@@ -997,9 +999,7 @@ mod transport {
             base_url: impl Into<String>,
             auth: DagDbAuthConfig,
         ) -> Result<Self, DagDbClientError> {
-            let http = Client::builder()
-                .build()
-                .map_err(DagDbClientError::from_reqwest)?;
+            let http = build_http_client(DEFAULT_DAGDB_HTTP_TIMEOUT)?;
             Ok(Self::with_client(base_url, auth, http))
         }
 
@@ -1508,9 +1508,11 @@ mod transport {
         /// Assemble the gateway auth headers for `action` and optional
         /// per-request signature headers.
         ///
-        /// Callers wanting a per-request deadline should build the
-        /// `reqwest::Client` with [`reqwest::ClientBuilder::timeout`] and pass
-        /// it to [`DagDbHttpClient::with_client`]; an elapsed deadline maps to
+        /// [`DagDbHttpClient::new`] applies a finite total deadline. Callers
+        /// requiring a different deadline can build the `reqwest::Client` with
+        /// [`reqwest::ClientBuilder::timeout`] and pass it to
+        /// [`DagDbHttpClient::with_client`]. An elapsed deadline while waiting
+        /// for headers or collecting the body maps to
         /// [`DagDbClientError::Timeout`].
         fn auth_headers(
             &self,
@@ -1551,6 +1553,16 @@ mod transport {
         }
     }
 
+    /// Build the HTTP client used by the default constructor. Keeping the
+    /// deadline in this shared path lets tests exercise the exact production
+    /// configuration with a shorter duration.
+    pub(super) fn build_http_client(timeout: Duration) -> Result<Client, DagDbClientError> {
+        Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(DagDbClientError::from_reqwest)
+    }
+
     /// Collect one response incrementally while enforcing the byte limit from
     /// actual chunks. Content-Length is only an early-rejection optimization;
     /// it is never trusted as the accounting boundary.
@@ -1578,6 +1590,9 @@ mod transport {
             let chunk = match response.chunk().await {
                 Ok(Some(chunk)) => chunk,
                 Ok(None) => break,
+                Err(error) if error.is_timeout() => {
+                    return Err(DagDbClientError::Timeout(error));
+                }
                 Err(error) if status.is_success() => {
                     return Err(DagDbClientError::Decode(error));
                 }
@@ -1911,7 +1926,7 @@ mod transport_tests {
         DagDbWritebackRequest,
         transport::{
             BearerToken, DagDbAuthConfig, DagDbClientError, DagDbHttpClient, DagDbSignatureHeaders,
-            MAX_DAGDB_RESPONSE_BYTES, read_bounded_response_body,
+            MAX_DAGDB_RESPONSE_BYTES, build_http_client, read_bounded_response_body,
         },
     };
 
@@ -2004,6 +2019,28 @@ mod transport_tests {
             tokio::spawn(async move {
                 let _conn = listener.accept().await;
                 // Hold the connection open without responding.
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            });
+            format!("http://{addr}")
+        }
+
+        /// Spawn a server that returns successful headers and one body byte,
+        /// then leaves the remainder open so the response-body deadline fires.
+        async fn spawn_stalled_body() -> String {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind stalled-body server");
+            let addr = listener.local_addr().expect("stalled-body addr");
+            tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.expect("accept connection");
+                let _request = read_request(&mut stream).await;
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 128\r\nConnection: close\r\n\r\n{",
+                    )
+                    .await
+                    .expect("write partial response");
+                stream.flush().await.expect("flush partial response");
                 tokio::time::sleep(Duration::from_secs(30)).await;
             });
             format!("http://{addr}")
@@ -3085,6 +3122,25 @@ mod transport_tests {
         assert!(!transport.contains("response.bytes().await"));
     }
 
+    #[test]
+    fn default_http_client_wires_a_finite_total_request_deadline() {
+        let source = include_str!("dagdb.rs");
+        let transport = source
+            .split("mod transport {")
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("#[cfg(all(test, feature = \"http-client\"))]")
+                    .next()
+            })
+            .expect("transport production source");
+
+        assert!(transport.contains("const DEFAULT_DAGDB_HTTP_TIMEOUT: Duration"));
+        assert!(transport.contains("build_http_client(DEFAULT_DAGDB_HTTP_TIMEOUT)"));
+        assert!(transport.contains("Client::builder()"));
+        assert!(transport.contains(".timeout(timeout)"));
+    }
+
     // (c') A non-2xx body that is NOT a valid envelope maps to UnexpectedStatus
     // carrying the raw body, never swallowed.
     #[tokio::test]
@@ -3119,6 +3175,23 @@ mod transport_tests {
             .route_with_signatures(route_request(), route_signatures())
             .await
             .expect_err("timeout is an error");
+        assert!(
+            matches!(err, DagDbClientError::Timeout(_)),
+            "expected Timeout, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn response_body_timeout_uses_the_same_timeout_variant() {
+        let base_url = TestServer::spawn_stalled_body().await;
+        let http = build_http_client(Duration::from_millis(150))
+            .expect("client with finite total timeout");
+        let client = DagDbHttpClient::with_client(&base_url, auth(), http);
+
+        let err = client
+            .route_with_signatures(route_request(), route_signatures())
+            .await
+            .expect_err("stalled response body must time out");
         assert!(
             matches!(err, DagDbClientError::Timeout(_)),
             "expected Timeout, got {err:?}"
