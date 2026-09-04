@@ -230,7 +230,7 @@ fn append_bool_query(path: &mut String, name: &str, value: Option<bool>) {
 #[cfg(feature = "http-client")]
 pub use transport::{
     BearerToken, DagDbAuthConfig, DagDbClientError, DagDbHttpClient, DagDbServerError,
-    DagDbSignatureHeaders,
+    DagDbSignatureHeaders, MAX_DAGDB_RESPONSE_BYTES,
 };
 
 /// Real async HTTP transport for the DAG DB REST surface.
@@ -266,6 +266,10 @@ mod transport {
         DagDbRouteResponse, DagDbTrustCheckRequest, DagDbTrustCheckResponse, DagDbValidateRequest,
         DagDbValidateResponse, DagDbWritebackRequest, DagDbWritebackResponse,
     };
+
+    /// Maximum accepted DAG DB HTTP response body size in bytes.
+    pub const MAX_DAGDB_RESPONSE_BYTES: usize = 1_048_576;
+    const OVERSIZED_RESPONSE_MESSAGE: &str = "response body exceeds the 1048576-byte limit";
 
     /// Gateway header carrying the requesting tenant id.
     const TENANT_HEADER: &str = "x-exo-tenant-id";
@@ -888,13 +892,14 @@ mod transport {
         Server(DagDbServerError),
 
         /// The gateway returned a non-2xx status whose body was not a valid
-        /// [`DagDbErrorEnvelope`]. Carries the status and the raw body so the
-        /// failure is still actionable.
-        #[error("DAG DB gateway returned {status} with unparseable error body: {body}")]
+        /// [`DagDbErrorEnvelope`], or a response body exceeded the fixed SDK
+        /// limit. The body is either the bounded raw text or a stable limit
+        /// marker, so attacker-controlled responses cannot grow the error.
+        #[error("DAG DB gateway returned {status} with unusable response body: {body}")]
         UnexpectedStatus {
             /// HTTP status code returned.
             status: u16,
-            /// Raw response body (truncated by the gateway, surfaced verbatim).
+            /// Bounded raw response body, or a stable response-limit marker.
             body: String,
         },
 
@@ -1459,8 +1464,13 @@ mod transport {
                 .await
                 .map_err(DagDbClientError::from_reqwest)?;
             let status = response.status();
+            let body = read_bounded_response_body(response).await?;
             if status.is_success() {
-                let decoded: Resp = response.json().await.map_err(DagDbClientError::Decode)?;
+                let bounded_response: reqwest::Response = http::Response::new(body).into();
+                let decoded: Resp = bounded_response
+                    .json()
+                    .await
+                    .map_err(DagDbClientError::Decode)?;
                 let actual = schema_of(&decoded);
                 if actual != expected {
                     return Err(DagDbClientError::SchemaVersionMismatch {
@@ -1470,24 +1480,16 @@ mod transport {
                 }
                 Ok(decoded)
             } else {
-                Err(self.map_error(status, response).await)
+                Err(self.map_error(status, &body))
             }
         }
 
         /// Parse a non-2xx response into the governed error variant, falling
         /// back to [`DagDbClientError::UnexpectedStatus`] with the raw body when
         /// the envelope does not parse.
-        async fn map_error(
-            &self,
-            status: StatusCode,
-            response: reqwest::Response,
-        ) -> DagDbClientError {
+        fn map_error(&self, status: StatusCode, body: &[u8]) -> DagDbClientError {
             let code = status.as_u16();
-            let body = match response.text().await {
-                Ok(body) => body,
-                Err(err) => return DagDbClientError::from_reqwest(err),
-            };
-            match serde_json::from_str::<DagDbErrorEnvelope>(&body) {
+            match serde_json::from_slice::<DagDbErrorEnvelope>(body) {
                 Ok(envelope) => DagDbClientError::Server(DagDbServerError {
                     status: code,
                     error_code: envelope.error_code,
@@ -1496,7 +1498,10 @@ mod transport {
                     validation_report_id: envelope.validation_report_id,
                     requires_council_review: envelope.requires_council_review,
                 }),
-                Err(_) => DagDbClientError::UnexpectedStatus { status: code, body },
+                Err(_) => DagDbClientError::UnexpectedStatus {
+                    status: code,
+                    body: String::from_utf8_lossy(body).into_owned(),
+                },
             }
         }
 
@@ -1537,6 +1542,57 @@ mod transport {
             }
             Ok(headers)
         }
+    }
+
+    fn oversized_response_error(status: StatusCode) -> DagDbClientError {
+        DagDbClientError::UnexpectedStatus {
+            status: status.as_u16(),
+            body: OVERSIZED_RESPONSE_MESSAGE.to_owned(),
+        }
+    }
+
+    /// Collect one response incrementally while enforcing the byte limit from
+    /// actual chunks. Content-Length is only an early-rejection optimization;
+    /// it is never trusted as the accounting boundary.
+    pub(super) async fn read_bounded_response_body(
+        mut response: reqwest::Response,
+    ) -> Result<Vec<u8>, DagDbClientError> {
+        let status = response.status();
+        let max_bytes = u64::try_from(MAX_DAGDB_RESPONSE_BYTES)
+            .map_err(|_| oversized_response_error(status))?;
+        if response
+            .content_length()
+            .is_some_and(|content_length| content_length > max_bytes)
+        {
+            return Err(oversized_response_error(status));
+        }
+
+        let initial_capacity = response
+            .content_length()
+            .and_then(|content_length| usize::try_from(content_length).ok())
+            .map_or(0, |content_length| {
+                content_length.min(MAX_DAGDB_RESPONSE_BYTES)
+            });
+        let mut body = Vec::with_capacity(initial_capacity);
+        loop {
+            let chunk = match response.chunk().await {
+                Ok(Some(chunk)) => chunk,
+                Ok(None) => break,
+                Err(error) if status.is_success() => {
+                    return Err(DagDbClientError::Decode(error));
+                }
+                Err(error) => return Err(DagDbClientError::from_reqwest(error)),
+            };
+            let next_length = body
+                .len()
+                .checked_add(chunk.len())
+                .ok_or_else(|| oversized_response_error(status))?;
+            if next_length > MAX_DAGDB_RESPONSE_BYTES {
+                return Err(oversized_response_error(status));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(body)
     }
 
     fn trim_trailing_slash(mut base: String) -> String {
@@ -1855,6 +1911,7 @@ mod transport_tests {
         DagDbWritebackRequest,
         transport::{
             BearerToken, DagDbAuthConfig, DagDbClientError, DagDbHttpClient, DagDbSignatureHeaders,
+            MAX_DAGDB_RESPONSE_BYTES, read_bounded_response_body,
         },
     };
 
@@ -1910,6 +1967,28 @@ mod transport_tests {
                     .await
                     .expect("write response");
                 stream.flush().await.expect("flush response");
+                let _ = tx.send(request);
+            });
+            Self { base_url, captured }
+        }
+
+        /// Spawn a server with a raw response so chunked and dishonest metadata
+        /// boundaries can be exercised without a third-party mock server.
+        async fn spawn_raw(response: Vec<u8>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind raw test server");
+            let addr = listener.local_addr().expect("raw server addr");
+            let base_url = format!("http://{addr}");
+            let (tx, captured) = oneshot::channel();
+            tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.expect("accept connection");
+                let request = read_request(&mut stream).await;
+                stream
+                    .write_all(&response)
+                    .await
+                    .expect("write raw response");
+                stream.flush().await.expect("flush raw response");
                 let _ = tx.send(request);
             });
             Self { base_url, captured }
@@ -2145,6 +2224,39 @@ mod transport_tests {
             .and_then(|s| s.get(name))
             .expect("fixture exists")
             .to_string()
+    }
+
+    fn padded_route_response(byte_length: usize) -> String {
+        let body = fixture_response("responses", "route");
+        assert!(
+            body.len() <= byte_length,
+            "fixture exceeds requested byte length"
+        );
+        format!("{body}{}", " ".repeat(byte_length - body.len()))
+    }
+
+    fn chunked_json_response(status_line: &str, chunks: &[&[u8]]) -> Vec<u8> {
+        let mut response = format!(
+            "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+        )
+        .into_bytes();
+        for chunk in chunks {
+            response.extend_from_slice(format!("{:x}\r\n", chunk.len()).as_bytes());
+            response.extend_from_slice(chunk);
+            response.extend_from_slice(b"\r\n");
+        }
+        response.extend_from_slice(b"0\r\n\r\n");
+        response
+    }
+
+    fn assert_response_too_large(err: DagDbClientError, expected_status: u16) {
+        match err {
+            DagDbClientError::UnexpectedStatus { status, body } => {
+                assert_eq!(status, expected_status);
+                assert_eq!(body, "response body exceeds the 1048576-byte limit");
+            }
+            other => panic!("expected bounded oversized response error, got {other:?}"),
+        }
     }
 
     fn assert_local_signature_error(err: DagDbClientError, method: &str) {
@@ -2809,6 +2921,94 @@ mod transport_tests {
     }
 
     #[tokio::test]
+    async fn success_body_at_exact_response_limit_deserializes() {
+        let body = padded_route_response(MAX_DAGDB_RESPONSE_BYTES);
+        let server = TestServer::spawn("200 OK", body).await;
+        let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
+
+        let response = client
+            .route_with_signatures(route_request(), route_signatures())
+            .await
+            .expect("exact-limit response maps to DTO");
+
+        assert_eq!(response.schema_version, "dagdb_route_response_v1");
+    }
+
+    #[tokio::test]
+    async fn chunked_body_without_content_length_at_limit_plus_one_is_rejected() {
+        let body = padded_route_response(MAX_DAGDB_RESPONSE_BYTES + 1);
+        let split = MAX_DAGDB_RESPONSE_BYTES;
+        let raw = chunked_json_response(
+            "200 OK",
+            &[&body.as_bytes()[..split], &body.as_bytes()[split..]],
+        );
+        let server = TestServer::spawn_raw(raw).await;
+        let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
+
+        let err = client
+            .route_with_signatures(route_request(), route_signatures())
+            .await
+            .expect_err("limit-plus-one chunked response must fail");
+
+        assert_response_too_large(err, 200);
+    }
+
+    #[tokio::test]
+    async fn chunked_body_without_content_length_within_limit_deserializes() {
+        let body = fixture_response("responses", "route");
+        let split = body.len() / 2;
+        let raw = chunked_json_response(
+            "200 OK",
+            &[&body.as_bytes()[..split], &body.as_bytes()[split..]],
+        );
+        let server = TestServer::spawn_raw(raw).await;
+        let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
+
+        let response = client
+            .route_with_signatures(route_request(), route_signatures())
+            .await
+            .expect("bounded chunked response maps to DTO");
+
+        assert_eq!(response.schema_version, "dagdb_route_response_v1");
+    }
+
+    #[tokio::test]
+    async fn dishonest_small_content_length_cannot_bypass_streamed_accounting() {
+        let body = padded_route_response(MAX_DAGDB_RESPONSE_BYTES + 1).into_bytes();
+        let mut raw_response = http::Response::new(reqwest::Body::from(body));
+        raw_response.headers_mut().insert(
+            reqwest::header::CONTENT_LENGTH,
+            reqwest::header::HeaderValue::from_static("1"),
+        );
+        let response: reqwest::Response = raw_response.into();
+
+        let err = read_bounded_response_body(response)
+            .await
+            .expect_err("dishonest Content-Length must not bypass actual byte accounting");
+
+        assert_response_too_large(err, 200);
+    }
+
+    #[tokio::test]
+    async fn dishonest_large_content_length_is_rejected_before_small_body_is_trusted() {
+        let body = fixture_response("responses", "route");
+        let raw = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            MAX_DAGDB_RESPONSE_BYTES + 1
+        )
+        .into_bytes();
+        let server = TestServer::spawn_raw(raw).await;
+        let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
+
+        let err = client
+            .route_with_signatures(route_request(), route_signatures())
+            .await
+            .expect_err("oversized Content-Length must fail closed");
+
+        assert_response_too_large(err, 200);
+    }
+
+    #[tokio::test]
     async fn malformed_success_body_maps_to_decode_error() {
         let server = TestServer::spawn("200 OK", "{\"schema_version\":").await;
         let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
@@ -2848,6 +3048,41 @@ mod transport_tests {
             }
             other => panic!("expected Server error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn oversized_error_body_uses_the_same_bounded_stable_error() {
+        let body = padded_route_response(MAX_DAGDB_RESPONSE_BYTES + 1);
+        let raw = chunked_json_response("502 Bad Gateway", &[body.as_bytes()]);
+        let server = TestServer::spawn_raw(raw).await;
+        let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
+
+        let err = client
+            .route_with_signatures(route_request(), route_signatures())
+            .await
+            .expect_err("oversized non-2xx body must fail before parsing");
+
+        assert_response_too_large(err, 502);
+    }
+
+    #[test]
+    fn http_client_collects_bounded_bytes_before_json_deserialization() {
+        assert_eq!(MAX_DAGDB_RESPONSE_BYTES, 1_048_576);
+        let source = include_str!("dagdb.rs");
+        let transport = source
+            .split("mod transport {")
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("#[cfg(all(test, feature = \"http-client\"))]")
+                    .next()
+            })
+            .expect("transport production source");
+
+        assert!(transport.contains("read_bounded_response_body(response).await"));
+        assert!(!transport.contains("response.json().await"));
+        assert!(!transport.contains("response.text().await"));
+        assert!(!transport.contains("response.bytes().await"));
     }
 
     // (c') A non-2xx body that is NOT a valid envelope maps to UnexpectedStatus

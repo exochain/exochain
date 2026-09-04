@@ -2378,6 +2378,7 @@ dependencies = [
  "exochain-economy",
  "exochain-gatekeeper",
  "exochain-identity",
+ "http",
  "percent-encoding",
  "reqwest",
  "serde",

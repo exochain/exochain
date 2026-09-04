@@ -63,5 +63,5 @@ export {
   hexToBytes,
 } from './crypto/hash.js';
 
-export { HttpTransport } from './transport/http.js';
+export { HttpTransport, MAX_HTTP_RESPONSE_BYTES } from './transport/http.js';
 export type { HttpTransportOptions } from './transport/http.js';

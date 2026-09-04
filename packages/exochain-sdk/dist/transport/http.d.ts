@@ -1,5 +1,7 @@
 import type { HealthResponse } from '../types.js';
 import { type JsonObject } from '../validation.js';
+/** Maximum accepted HTTP response body size, measured in wire-decoded bytes. */
+export declare const MAX_HTTP_RESPONSE_BYTES = 1048576;
 /** Options for {@link HttpTransport}. */
 export interface HttpTransportOptions {
     /** Optional API key sent as `Authorization: Bearer <apiKey>`. */

@@ -30,6 +30,6 @@ export { Vote, VoteChoice, isVoteChoice } from './governance/vote.js';
 export { AuthorityChainBuilder } from './authority/chain.js';
 export type { ChainLink, ValidatedChain } from './authority/chain.js';
 export { blake3, blake3Hex, blake3Hash, sha256, sha256Hex, sha256Hash, bytesToHex, hexToBytes, } from './crypto/hash.js';
-export { HttpTransport } from './transport/http.js';
+export { HttpTransport, MAX_HTTP_RESPONSE_BYTES } from './transport/http.js';
 export type { HttpTransportOptions } from './transport/http.js';
 //# sourceMappingURL=index.d.ts.map
