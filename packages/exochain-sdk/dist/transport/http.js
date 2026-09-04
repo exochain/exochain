@@ -25,6 +25,7 @@ import { assertJsonObject, validateHealthResponse, } from '../validation.js';
 /** Maximum accepted HTTP response body size, measured in wire-decoded bytes. */
 export const MAX_HTTP_RESPONSE_BYTES = 1048576;
 const OVERSIZED_RESPONSE_MESSAGE = 'response body exceeds the 1048576-byte limit';
+const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'byteLength')?.get;
 /** Small fetch wrapper that serializes and deserializes JSON bodies. */
 export class HttpTransport {
     #baseUrl;
@@ -139,7 +140,14 @@ async function readBoundedResponseText(response) {
         const next = await reader.read();
         if (next.done)
             break;
-        const nextTotal = totalBytes + next.value.byteLength;
+        const chunkLength = intrinsicUint8ArrayByteLength(next.value);
+        if (chunkLength === undefined) {
+            void reader.cancel().catch(() => undefined);
+            throw new TransportError('response body contained a non-byte chunk', {
+                status: response.status,
+            });
+        }
+        const nextTotal = totalBytes + chunkLength;
         if (nextTotal > MAX_HTTP_RESPONSE_BYTES) {
             void reader.cancel().catch(() => undefined);
             throw oversizedResponseError(response.status);
@@ -155,6 +163,21 @@ async function readBoundedResponseText(response) {
         totalBytes = nextTotal;
     }
     return new TextDecoder().decode(bytes.subarray(0, totalBytes));
+}
+function intrinsicUint8ArrayByteLength(value) {
+    if (TYPED_ARRAY_BYTE_LENGTH_GETTER === undefined)
+        return undefined;
+    try {
+        const byteLength = Reflect.apply(TYPED_ARRAY_BYTE_LENGTH_GETTER, value, []);
+        return typeof byteLength === 'number' &&
+            Number.isSafeInteger(byteLength) &&
+            byteLength >= 0
+            ? byteLength
+            : undefined;
+    }
+    catch {
+        return undefined;
+    }
 }
 function cancelResponseBody(body) {
     if (body !== null)

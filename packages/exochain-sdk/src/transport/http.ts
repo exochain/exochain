@@ -34,6 +34,10 @@ import {
 export const MAX_HTTP_RESPONSE_BYTES = 1_048_576;
 const OVERSIZED_RESPONSE_MESSAGE =
   'response body exceeds the 1048576-byte limit';
+const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype) as object,
+  'byteLength',
+)?.get;
 
 /** Options for {@link HttpTransport}. */
 export interface HttpTransportOptions {
@@ -163,7 +167,14 @@ async function readBoundedResponseText(response: Response): Promise<string> {
     const next = await reader.read();
     if (next.done) break;
 
-    const nextTotal = totalBytes + next.value.byteLength;
+    const chunkLength = intrinsicUint8ArrayByteLength(next.value);
+    if (chunkLength === undefined) {
+      void reader.cancel().catch(() => undefined);
+      throw new TransportError('response body contained a non-byte chunk', {
+        status: response.status,
+      });
+    }
+    const nextTotal = totalBytes + chunkLength;
     if (nextTotal > MAX_HTTP_RESPONSE_BYTES) {
       void reader.cancel().catch(() => undefined);
       throw oversizedResponseError(response.status);
@@ -182,6 +193,20 @@ async function readBoundedResponseText(response: Response): Promise<string> {
     totalBytes = nextTotal;
   }
   return new TextDecoder().decode(bytes.subarray(0, totalBytes));
+}
+
+function intrinsicUint8ArrayByteLength(value: unknown): number | undefined {
+  if (TYPED_ARRAY_BYTE_LENGTH_GETTER === undefined) return undefined;
+  try {
+    const byteLength = Reflect.apply(TYPED_ARRAY_BYTE_LENGTH_GETTER, value, []) as unknown;
+    return typeof byteLength === 'number' &&
+      Number.isSafeInteger(byteLength) &&
+      byteLength >= 0
+      ? byteLength
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function cancelResponseBody(body: ReadableStream<Uint8Array> | null): void {
