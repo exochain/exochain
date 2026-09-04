@@ -33,14 +33,14 @@ export function validateDid(s) {
         throw new IdentityError('DID must be a string');
     }
     if (!s.startsWith('did:exo:')) {
-        throw new IdentityError(`DID must start with "did:exo:" (got "${s}")`);
+        throw new IdentityError('DID must start with "did:exo:"');
     }
     const method = s.slice('did:exo:'.length);
     if (method.length === 0) {
         throw new IdentityError('DID method-specific identifier is empty');
     }
     if (!METHOD_SPECIFIC.test(method)) {
-        throw new IdentityError(`DID method-specific identifier contains invalid characters: "${method}"`);
+        throw new IdentityError('DID method-specific identifier contains invalid characters');
     }
     return s;
 }

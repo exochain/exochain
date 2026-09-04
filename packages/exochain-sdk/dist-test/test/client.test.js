@@ -173,6 +173,29 @@ test('identity.resolve rejects forged branded DIDs before fetch', async () => {
         strictEqual(transport.inputs.length, 0, `identity.resolve must reject ${invalidDid} before fetch`);
     }
 });
+test('identity.resolve keeps a large malicious DID out of fetch and its error', async () => {
+    const marker = 'attacker-controlled-secret';
+    const maliciousDid = `did:exo:${'a'.repeat(65536)}/${marker}`;
+    const transport = jsonFetch({});
+    const client = new ExochainClient({
+        baseUrl: 'https://gateway.example',
+        fetch: transport.fetch,
+    });
+    let error;
+    try {
+        await client.identity.resolve(maliciousDid);
+    }
+    catch (cause) {
+        error = cause;
+    }
+    if (!(error instanceof IdentityError)) {
+        throw new Error('identity.resolve must reject with IdentityError');
+    }
+    strictEqual(error.message.length < 80, true, 'DID validation error must remain bounded');
+    strictEqual(error.message.includes(marker), false, 'DID validation error must not echo input');
+    strictEqual(error.message, 'DID method-specific identifier contains invalid characters');
+    strictEqual(transport.inputs.length, 0);
+});
 test('identity.resolve preserves a validated DID on the wire', async () => {
     const transport = jsonFetch({});
     const client = new ExochainClient({

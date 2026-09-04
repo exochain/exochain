@@ -127,6 +127,35 @@ test('validateDid rejects bad input', () => {
   throws(() => validateDid('did:exo:bad chars!'), IdentityError);
 });
 
+test('validateDid errors are fixed-size and do not reflect attacker input', () => {
+  const marker = 'attacker-controlled-secret';
+  const cases = [
+    {
+      input: marker.repeat(4_096),
+      message: 'DID must start with "did:exo:"',
+    },
+    {
+      input: `did:exo:${'a'.repeat(65_536)}/${marker}`,
+      message: 'DID method-specific identifier contains invalid characters',
+    },
+  ];
+
+  for (const { input, message } of cases) {
+    let error: unknown;
+    try {
+      validateDid(input);
+    } catch (cause) {
+      error = cause;
+    }
+    if (!(error instanceof IdentityError)) {
+      throw new Error('validateDid must throw IdentityError');
+    }
+    ok(error.message.length < 80, 'DID validation error must remain bounded');
+    ok(!error.message.includes(marker), 'DID validation error must not echo input');
+    strictEqual(error.message, message);
+  }
+});
+
 test('isDid type-guard returns boolean', () => {
   ok(isDid('did:exo:alice'));
   ok(!isDid('nope'));
