@@ -109,14 +109,15 @@ DID: did:exo:a1b2c3d4e5f60789
 
 ---
 
-## Hashing difference you must know
+## Hashing contracts you must know
 
-Python DID derivation uses **BLAKE3** and matches the Rust and TypeScript SDK fixture vectors for the same Ed25519 public key. The Python SDK still uses **SHA-256** for client-side content-addressed proposal IDs and decision IDs, while Rust uses **BLAKE3** for those IDs. For cross-language interop:
+Python DID derivation uses **BLAKE3** and matches the Rust and TypeScript SDK fixture vectors for the same Ed25519 public key. Rust, TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the same canonical CBOR v2 decision frame. The shared frame is `["exochain:decision-id:v2", title, description, proposer]`, and identical input strings produce the same 64-character lowercase hex decision ID in all three SDKs. Python bailment proposal IDs remain full SHA-256 over their existing frame; that separate identifier contract is unchanged. For cross-language interop:
 
 - Use `Identity.generate` or `derive_did` for local DIDs.
-- Trust proposal, decision, and receipt IDs returned by the gateway when a canonical Rust fabric ID is required.
+- Local governance decision builders agree across Rust, TypeScript, and Python.
+- Trust other proposal and receipt IDs returned by the gateway when a canonical fabric identifier is required.
 
-See [`packages/exochain-py/exochain/crypto/hash.py`](../../packages/exochain-py/exochain/crypto/hash.py) and [`packages/exochain-py/exochain/consent/bailment.py`](../../packages/exochain-py/exochain/consent/bailment.py) for the exact canonicalization.
+See [`packages/exochain-py/exochain/governance/decision.py`](../../packages/exochain-py/exochain/governance/decision.py), [`packages/exochain-py/exochain/crypto/hash.py`](../../packages/exochain-py/exochain/crypto/hash.py), and [`packages/exochain-py/exochain/consent/bailment.py`](../../packages/exochain-py/exochain/consent/bailment.py) for the exact canonicalization.
 
 ---
 
