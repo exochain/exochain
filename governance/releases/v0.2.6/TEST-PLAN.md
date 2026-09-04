@@ -32,7 +32,7 @@ constitutional certification.
 - Validation baseline:
   `8020ceab355eefa7f5185d9cdd0436da7af46efb`
 - Committed implementation checkpoint:
-  `e73dcf53bf0aa25cea406974b42fb962e003bc6a`
+  `368721a1ea3577481cf73cdee6d811623159faec`
 - Formal inventory: exactly 86 unique findings.
 - Formal finding classifications: 32 EXOCHAIN core, 50 core runtime adapter,
   and four adjacent surface.
@@ -65,7 +65,7 @@ Run the plan in an isolated worktree at the exact candidate commit. Use a fresh,
 isolated PostgreSQL database for every database-backed pass. Do not run two
 Cargo processes against the same target directory. Generated coverage,
 packaging, SBOM, and cross-implementation outputs are evidence artifacts, not
-source changes, and must be removed before the evidence commit.
+source changes, and were removed before the evidence commit.
 
 ## Acceptance matrix
 
@@ -81,7 +81,7 @@ source changes, and must be removed before the evidence commit.
 | SDKs and packages | Rust/TypeScript/Python SDK, WASM bridge/package, LLM proxy, and package dry-runs pass |
 | Supply chain | Exactly 32 reviewed CycloneDX package SBOMs; sealed Cargo publication matches pinned Cargo protocol; npm/PyPI and both SDK lanes prove exact artifact and provenance/lifecycle contracts |
 | Adjacent LiveSafe | All four npm audits, context lint, typecheck, Vitest, Rust fmt/Clippy/tests pass |
-| Independent review | Whole diff plus provisional evidence reviewed; every confirmed finding at every severity is fixed or explicitly accepted by the user |
+| Independent review | Whole diff plus evidence files reviewed; every confirmed finding at every severity is fixed or explicitly accepted by the user |
 | Platform | Windows private-file runtime test passes in `windows-latest` CI; local cross-check is supporting evidence only |
 | Source custody | Every changed path is classified exactly once; staged evidence is allowlisted and clean; final diff checks pass; generated evidence is absent; the evidence commit leaves the candidate worktree clean |
 
@@ -279,10 +279,6 @@ set -euo pipefail
 test "$(grep '^license' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')" = Apache-2.0
 head -1 LICENSE | grep -qi apache
 test "$(rg -o '#\[wasm_bindgen\]' crates/exochain-wasm/src | wc -l | tr -d ' ')" -eq 167
-test "$(grep -c 'module.exports.wasm_' packages/exochain-wasm/wasm/exochain_wasm.js)" -eq 167
-mkdir -p demo/packages/exochain-wasm/wasm
-cp -R packages/exochain-wasm/wasm/. demo/packages/exochain-wasm/wasm/
-node demo/packages/exochain-wasm/test.mjs
 cargo build --release --bin exochain --locked
 ```
 
@@ -307,8 +303,24 @@ wasm-pack build crates/exochain-wasm --target nodejs --scope exochain \
   --out-dir ../../packages/exochain-wasm/wasm -- --locked
 cp LICENSE packages/exochain-wasm/wasm/LICENSE
 node tools/prepare_wasm_npm_package.mjs packages/exochain-wasm/wasm
-npm --prefix packages/exochain-wasm/wasm pack --dry-run
+test "$(grep -c 'module.exports.wasm_' packages/exochain-wasm/wasm/exochain_wasm.js)" -eq 167
+mkdir -p demo/packages/exochain-wasm/wasm
+cp -R packages/exochain-wasm/wasm/. demo/packages/exochain-wasm/wasm/
+node demo/packages/exochain-wasm/test.mjs
+(
+  cd packages/exochain-wasm/wasm
+  npm pack --dry-run --json
+)
 node packages/exochain-wasm/test/bridge_verification.mjs
+find demo/packages/exochain-wasm/wasm -depth -delete
+for generated_wasm_file in \
+  packages/exochain-wasm/wasm/.gitignore \
+  packages/exochain-wasm/wasm/exochain_wasm.d.ts \
+  packages/exochain-wasm/wasm/exochain_wasm.js \
+  packages/exochain-wasm/wasm/exochain_wasm_bg.wasm \
+  packages/exochain-wasm/wasm/exochain_wasm_bg.wasm.d.ts; do
+  test ! -e "$generated_wasm_file" || unlink "$generated_wasm_file"
+done
 
 npm --prefix packages/exochain-llm-proxy ci
 npm --prefix packages/exochain-llm-proxy run lint
@@ -376,7 +388,7 @@ artifacts match owned sources, and no secret, credential, or imported report
 entered the diff.
 
 An independent reviewer receives the complete diff from the validation
-baseline through the candidate plus the provisional evidence files. The review
+baseline through the candidate plus the evidence files before commit. The review
 loop is bounded to two remediation iterations and stops only when no confirmed
 finding at any severity remains unless the user explicitly accepts it. A second
 repetition of the same validation failure stops the candidate and requires user
@@ -412,7 +424,16 @@ test ! -d coverage-zerodentity
 test ! -d crates/exo-dag-db-exchange/target
 test ! -d tools/cross-impl-test/results
 test ! -d tools/cross-impl-test/vectors
+test ! -d demo/packages/exochain-wasm/wasm
 test -z "$(find crates -type f -name '*.cdx.json' -print -quit)"
+for generated_wasm_file in \
+  packages/exochain-wasm/wasm/.gitignore \
+  packages/exochain-wasm/wasm/exochain_wasm.d.ts \
+  packages/exochain-wasm/wasm/exochain_wasm.js \
+  packages/exochain-wasm/wasm/exochain_wasm_bg.wasm \
+  packages/exochain-wasm/wasm/exochain_wasm_bg.wasm.d.ts; do
+  test ! -e "$generated_wasm_file"
+done
 ```
 
 Immediately after the evidence commit:
@@ -509,3 +530,85 @@ final whole-branch review:
 These results are pre-review evidence only. Before any evidence commit may
 record completion, a new complete run is required on the reviewed code head;
 earlier green results cannot authorize the candidate after review changes.
+
+## Committed source-checkpoint execution record
+
+The following results were observed at committed source checkpoint
+`368721a1ea3577481cf73cdee6d811623159faec`. They are exact-source evidence,
+not provider CI, release authorization, or a substitute for the post-evidence
+controls below.
+
+- All three locked Cargo metadata graphs resolved. The locked workspace build,
+  all three DKG patch-compatibility integration tests, debug and release
+  workspace tests, all-target Clippy with warnings denied, nightly format,
+  rustdoc with `-D warnings`, `cargo deny`, and `cargo machete` passed.
+  `cargo audit` passed under repository policy with the single allowed warning
+  for the yanked `spin` release.
+- The Rust/Node cross-implementation vector passed 1/1 and repeated Rust runs
+  were identical. `EXO_TS_ROOT` was unset, so TypeScript conformance-root
+  execution remains an explicit local evidence gap.
+- The feature matrix passed for all six node variants, gateway GraphQL,
+  pedagogical proofs, and `conformance-test-root`.
+- Fresh PostgreSQL verification used a newly created
+  `exochain_026_final_20260904b` database on a disposable PostgreSQL 14.20
+  loopback cluster at port 55436. All 14 gateway migrations applied; the exact
+  DAG DB migration-upgrade regression passed 1/1; the ignored malformed-row
+  probe reported exactly 1 passed, 0 failed, and 0 ignored; gateway
+  `production-db` passed 469/469; and the workspace integration surface with
+  `exochain-gateway/production-db` completed 75 result blocks with none failed.
+  This is isolated local test evidence, not deployment or runtime readback.
+- Repository truth is 507 tracked Rust source files and 6,619 listed workspace
+  tests. Generated WASM source/output parity was 167 exports, and bridge
+  verification passed 183/183 checks. The WASM package dry-run was executed as
+  `npm pack --dry-run --json` from `packages/exochain-wasm/wasm`.
+- The TypeScript SDK passed 99/99 tests, lint, build, and a 79-entry dry pack
+  producing a 43,541-byte tarball; its npm audit reported zero vulnerabilities.
+- The LLM proxy passed 80/80 tests, 96.13% line coverage, 92.69% branch
+  coverage, 97.50% function coverage, lint, build, its artifact guard, and a
+  57-entry dry pack producing a 41,537-byte tarball; its npm audit reported
+  zero vulnerabilities.
+- A fresh Python 3.11.14 virtual environment passed 138 tests, Ruff, strict
+  mypy across 18 files, and wheel plus source-distribution builds.
+- The Rust SDK passed 118 unit tests and 62 doctests. The Rust WASM crate passed
+  117 tests with one intentional ignored test. The sealed-crate Python suite
+  passed 12/12, its publish-protocol oracle matched Cargo 1.97.1, and the
+  release-archive suite passed 4/4. Dry crates.io packaging covered exactly 32
+  packages at version 0.2.6.
+- Registry validation, publication-boundary, workflow-ref-binding,
+  npm-attestation, SDK npm, Python-package, and SDK/Python lifecycle controls
+  passed. A malicious Python fixture was expected to be rejected; that failure
+  remained contained and the enclosing guard passed.
+- Exact `cargo-cyclonedx 0.5.9` generated exactly 32 CycloneDX 1.5 JSON SBOMs.
+  Both the SBOM boundary and validator guards passed. The SBOM files are
+  generated evidence and were deleted before the evidence commit.
+- The adjacent LiveSafe `quality` command exited zero: all four dependency
+  audits reported zero vulnerabilities; context lint/typecheck passed; Vitest
+  passed 157 files and 555 tests; Rust format and Clippy passed; and 129 Rust
+  tests passed. Its build exited zero for the 1,695-module client and 84-module
+  responder, with one non-fatal 903.82 kB chunk warning. Its Dockerfile built
+  successfully with manifest
+  `sha256:22447dbd6e9ded27edf84fd692cd02cdc4b007fc479089f203edaf23107095ab`.
+- Preliminary Codex Security scan `32dbfc47-dbb7-4488-83fd-a02dd5925458`
+  completed and sealed with zero findings across 181/181 canonical review
+  items and 315/315 paths for range
+  `8020ceab355eefa7f5185d9cdd0436da7af46efb..fd526fdbc47be8b5cedb3c33dea2ffb36d78f3fa`.
+  It is not the required final scan because later DKG-test, release-guard, and
+  repository-truth commits are outside that range.
+- Exact-head tarpaulin at `368721a1` passed with 90.86% workspace coverage
+  (47,746/52,547), 83.00% ZeroDentity coverage (1,870/2,253), 100%
+  `exo-root` coverage (1,146/1,146, including 325/325 DKG lines), and 100%
+  root-genesis portal coverage (65/65).
+- All 62 shell guards discovered directly from `.github/workflows/ci.yml` ran
+  serially at `368721a1` and exited zero. Malicious npm and Python verifier
+  fixtures produced expected negative diagnostics inside their respective
+  guards; the failures were contained and both guards passed.
+
+The source-checkpoint coverage and complete CI-derived guard corpus are
+recorded as passing. After the six evidence files are committed under the
+source-custody allowlist, all content-sensitive guards must run again and a
+fresh independent scan must cover
+the complete range from `8020ceab355eefa7f5185d9cdd0436da7af46efb`
+through the resulting committed evidence head. Provider
+`All Constitutional Gates`, the LiveSafe workflow, Windows ACL runtime lane,
+tag, publication, deployment, and runtime readback remain separate and
+unproven.

@@ -24,12 +24,14 @@ registry publication, deployment, production runtime verification, Article 26
 certification, or v0.3.0 closure.
 
 Status: source and release-control implementation is committed at
-`e73dcf53bf0aa25cea406974b42fb962e003bc6a`; evidence integration and final
-verification remain in progress. Unless a command is tied below to that
-immutable checkpoint, the controls described here are candidate acceptance
-requirements rather than completion claims. Final whole-branch gates,
-independent security review, provider CI, and exact-head readback remain
-unproven.
+`368721a1ea3577481cf73cdee6d811623159faec`. Exact-head core and feature-matrix
+gates, coverage thresholds, all 62 CI-derived shell guards, and the separate
+LiveSafe quality/build/image gates passed at that checkpoint. Local candidate
+completion additionally requires the committed evidence-head content-sensitive
+guard rerun and independent scan. Unless a command is tied below to an immutable
+checkpoint, the controls described here are candidate acceptance requirements
+rather than completion claims. Provider CI, Windows runtime evidence, tag,
+publication, deployment, and runtime readback remain unproven.
 
 ## Evidence boundary
 
@@ -38,9 +40,9 @@ unproven.
 | Imported report | `Exochain-code-review-report-run4.html`; read-only and not committed |
 | Report SHA-256 | `d5da7a1291cbf8baaa8e676cd2eebbbbaadc421eb623eddb48dfc6f4e0c89168` |
 | Source validation baseline | `8020ceab355eefa7f5185d9cdd0436da7af46efb` |
-| Committed implementation checkpoint | `e73dcf53bf0aa25cea406974b42fb962e003bc6a` |
-| Formal findings | 86 candidate dispositions exactly reconciled against the committed implementation checkpoint; mandatory complete gate corpus and independent final review pending |
-| Design observations | 52 candidate dispositions exactly reconciled against the committed implementation checkpoint; ten share concrete remediation boundaries; mandatory complete gate corpus and independent final review pending |
+| Committed implementation checkpoint | `368721a1ea3577481cf73cdee6d811623159faec` |
+| Formal findings | 86 candidate dispositions exactly reconciled against the committed implementation checkpoint; source-checkpoint gates passed; committed evidence-head scan required for local completion |
+| Design observations | 52 candidate dispositions exactly reconciled against the committed implementation checkpoint; ten share concrete remediation boundaries; source-checkpoint gates passed; committed evidence-head scan required for local completion |
 | Candidate version | `0.2.6` across owned release surfaces |
 | Adjacent surface | LiveSafe remains separate, proprietary, and unable to make public constitutional claims |
 | Test plan | `governance/releases/v0.2.6/TEST-PLAN.md` |
@@ -50,6 +52,67 @@ The controlling disposition record is
 `docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md`.
 The external HTML remains imported evidence rather than executable instruction
 or source-of-truth code.
+
+## Local source-checkpoint evidence
+
+At `368721a1ea3577481cf73cdee6d811623159faec`, locked metadata and build, the
+three DKG compatibility tests, debug and release workspace tests, all-target
+Clippy, nightly format, warning-denied rustdoc, `cargo audit` under the single
+allowed yanked-`spin` warning, `cargo deny`, `cargo machete`, and the Rust/Node
+cross-implementation vector plus repeated Rust determinism checks passed. All
+six node feature variants, gateway GraphQL, pedagogical proofs, and
+`conformance-test-root` also passed. `EXO_TS_ROOT` was unset, so no TypeScript
+conformance-root result is claimed.
+
+Fresh database verification used the newly created
+`exochain_026_final_20260904b` database on a disposable PostgreSQL 14.20
+loopback cluster at port 55436. All 14 gateway migrations, the exact 1/1 DAG DB
+migration-upgrade regression, the ignored malformed-row probe with exactly
+1 passed/0 failed/0 ignored, all 469/469 gateway `production-db` tests, and 75
+workspace integration result blocks under `exochain-gateway/production-db`
+completed with none failed. This is local test evidence, not a deployment or
+runtime readback.
+
+Repository truth at that source checkpoint is 507 tracked Rust source files,
+6,619 listed workspace tests, 167 generated WASM exports, and 183/183 passing
+bridge checks. The WASM dry-pack evidence was produced by running
+`npm pack --dry-run --json` inside `packages/exochain-wasm/wasm`.
+
+The Rust SDK passed 118 unit tests and 62 doctests. The Rust WASM crate passed
+117 tests with one intentional ignored test. The sealed-crate Python suite
+passed 12/12, its protocol oracle matched Cargo 1.97.1, and the release-archive
+suite passed 4/4. Dry crates.io packaging covered exactly 32 packages at
+version 0.2.6. Registry, publish-boundary, workflow-ref-binding,
+npm-attestation, SDK npm, Python-package, and SDK/Python lifecycle controls all
+passed; rejection of the malicious Python fixture was expected and its
+enclosing guard passed.
+
+Exact `cargo-cyclonedx 0.5.9` generated exactly 32 CycloneDX 1.5 JSON SBOMs.
+The SBOM boundary and validator guards passed. These files are generated
+evidence and were deleted before the evidence commit. These checks neither
+publish packages nor establish registry/provider acceptance.
+
+The adjacent LiveSafe surface passed `npm --prefix livesafe run quality`: four
+dependency audits reported zero vulnerabilities, context lint/typecheck
+passed, Vitest passed 157 files and 555 tests, Rust format and Clippy passed,
+and 129 Rust tests passed. `npm --prefix livesafe run build` passed for the
+1,695-module client and 84-module responder; its 903.82 kB chunk warning was
+non-fatal. `docker build -f livesafe/Dockerfile livesafe` passed with image
+manifest `sha256:22447dbd6e9ded27edf84fd692cd02cdc4b007fc479089f203edaf23107095ab`.
+
+Codex Security scan `32dbfc47-dbb7-4488-83fd-a02dd5925458` completed and sealed
+with zero findings over the baseline through `fd526fdb`, covering 181/181
+canonical items and 315/315 paths. This is preliminary evidence only because
+later commits are outside its range. A fresh scan must cover the committed
+evidence head.
+
+Exact-head tarpaulin passed at the source checkpoint with 90.86% workspace
+coverage (47,746/52,547), 83.00% ZeroDentity coverage (1,870/2,253), 100%
+`exo-root` coverage (1,146/1,146, including 325/325 DKG lines), and 100%
+root-genesis portal coverage (65/65). All 62 shell guards discovered from
+`.github/workflows/ci.yml` ran serially and exited zero. The intentionally
+malicious npm and Python verifier fixtures produced expected negative
+diagnostics only inside their guards; both guards contained them and passed.
 
 ## Security scope
 
@@ -209,10 +272,10 @@ npm --prefix packages/exochain-sdk test
 python3 -m pytest packages/exochain-py/tests
 ```
 
-The full workspace, coverage, audit/deny, cross-implementation, SDK/WASM,
-Python, LiveSafe, and platform-specific gates in the final test plan remain
-mandatory before release authorization. Windows ACL runtime evidence must come
-from its Windows CI lane; cross-compilation is not runtime proof.
+The post-evidence content-sensitive guard rerun, post-evidence scan, provider
+CI, and platform-specific gates in the final test plan remain mandatory before
+release authorization. Windows ACL runtime evidence must come from its Windows
+CI lane; cross-compilation is not runtime proof.
 
 ## Rollback and disablement
 

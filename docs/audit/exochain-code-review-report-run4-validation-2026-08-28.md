@@ -12,7 +12,7 @@ the repository.
 
 The exact candidate reconciliation appendices below were subsequently
 revalidated against committed implementation checkpoint
-`e73dcf53bf0aa25cea406974b42fb962e003bc6a`. That checkpoint is source
+`368721a1ea3577481cf73cdee6d811623159faec`. That checkpoint is source
 evidence, not release authorization; the mandatory whole-branch gates,
 independent final review, provider CI, tag, publication, deployment, and
 runtime readback remain separate.
@@ -218,6 +218,19 @@ publication (`fc86b0b1`). Commit `2e286e21` additionally requires exact npm
 owner authority immediately before publication; corrective commit `e73dcf53`
 restricts the registry-proven 404 first-publication exception to the exact
 `@exochain/sdk` package and denies it to the two established npm packages.
+Test-only commits `760613e6` and `3b98fd11` extend FORMAL-9688 and
+design-9692 coverage across every patch-compatible DKG secret carrier and keep
+the serialized JSON/CBOR fixtures in zeroizing buffers. Release-guard commits
+`96318413` and `a3d1e2f3` make the WASM npm provenance guard follow the actual
+isolated publisher, require an empty-environment launch with the npm token and
+pinned Node/npm entrypoints, and bind the exact registry/provenance flags to
+the publish call. These commits change tests rather than report-cited
+production boundaries.
+
+Repository-truth commits `a6058966` and `368721a1` record the observed 507
+tracked Rust source files, 6,619 listed workspace tests, 167 generated WASM
+exports, and 183 passing bridge checks. These documentation corrections do not
+alter either imported-report inventory.
 These controls are mapped to overlapping report rows where applicable and
 otherwise remain separately identified release-boundary findings. Their
 focused checks are recorded in the appendices and test plan; they do not turn
@@ -241,6 +254,60 @@ lowercase 64-hex paths byte-for-byte, and replaces every invalid Rust path ID
 with one fixed bounded non-hex segment for gateway rejection. It also prevents
 TypeScript DID diagnostics from echoing unbounded caller input. The exact
 regression evidence is recorded in the formal appendix.
+
+At source checkpoint `368721a1ea3577481cf73cdee6d811623159faec`, locked
+metadata and build, the three DKG patch-compatibility tests, debug and release
+workspace tests, all-target Clippy, nightly format, rustdoc with warnings
+denied, `cargo audit` under the repository's single allowed yanked-`spin`
+warning, `cargo deny`, `cargo machete`, and the Rust/Node cross-implementation
+vector plus repeated Rust determinism checks all passed. The feature matrix
+also passed for all six node `unaudited-*` variants, gateway GraphQL,
+pedagogical proofs, and `conformance-test-root`. `EXO_TS_ROOT` was unset, so no
+TypeScript conformance-root claim is made.
+
+A newly created `exochain_026_final_20260904b` database on a disposable
+PostgreSQL 14.20 loopback cluster at port 55436 passed all 14 gateway
+migrations, the exact 1/1 DAG DB migration-upgrade regression, the ignored
+malformed-row probe with exactly 1 passed/0 failed/0 ignored, all 469/469
+gateway `production-db` tests, and the workspace integration surface with
+`exochain-gateway/production-db` across 75 result blocks with none failed. This
+is isolated local test evidence, not deployment or runtime readback.
+
+Exact-head SDK and supply-chain verification also passed: the Rust SDK ran 118
+unit tests and 62 doctests; the Rust WASM crate ran 117 tests with one
+intentional ignored test; the sealed-crate Python suite passed 12/12; its
+protocol oracle matched Cargo 1.97.1; and the release-archive suite passed 4/4.
+Crates.io dry packaging covered exactly 32 packages at version 0.2.6. The
+registry, publish-boundary, workflow-ref-binding, npm-attestation, SDK npm,
+Python-package, and SDK/Python lifecycle controls all passed. A malicious
+Python fixture was expected to be rejected, and its enclosing guard passed.
+Exact `cargo-cyclonedx 0.5.9` generated exactly 32 CycloneDX 1.5 JSON SBOMs;
+both the SBOM boundary and validator guards passed. Those SBOMs are generated
+evidence and were deleted before the evidence commit. None of these dry
+checks authorizes or performs publication.
+
+The adjacent LiveSafe source at that same checkpoint passed
+`npm --prefix livesafe run quality` (four zero-vulnerability dependency
+audits, context lint/typecheck, 157 Vitest files and 555 tests, Rust format and
+Clippy, and 129 Rust tests), `npm --prefix livesafe run build` (client 1,695
+modules and responder 84 modules, with a non-fatal 903.82 kB chunk warning),
+and `docker build -f livesafe/Dockerfile livesafe`. The image manifest was
+`sha256:22447dbd6e9ded27edf84fd692cd02cdc4b007fc479089f203edaf23107095ab`.
+
+Codex Security scan `32dbfc47-dbb7-4488-83fd-a02dd5925458` was sealed complete
+with zero findings over `8020ceab355eefa7f5185d9cdd0436da7af46efb..fd526fdbc47be8b5cedb3c33dea2ffb36d78f3fa`
+after reviewing 181/181 canonical items and 315/315 paths. It is explicitly
+preliminary because later DKG-test, repository-truth, and release-guard commits
+are outside that range. At source checkpoint `368721a1`, exact-head tarpaulin
+passed at 90.86% workspace coverage (47,746/52,547), 83.00% ZeroDentity
+coverage (1,870/2,253), 100% `exo-root` coverage (1,146/1,146, including
+325/325 DKG lines), and 100% root-genesis portal coverage (65/65). All 62 shell
+guards discovered from `.github/workflows/ci.yml` ran serially and exited zero.
+Expected negative diagnostics from malicious npm and Python verifier fixtures
+remained contained inside their guards, which passed. A fresh security scan
+of the committed evidence head is required for local completion and is reported
+separately because this source-checkpoint record necessarily predates that
+commit.
 
 ## Completion Evidence Required
 
