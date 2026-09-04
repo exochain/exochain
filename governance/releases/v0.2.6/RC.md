@@ -23,6 +23,14 @@ release controls; it does not create or claim a git tag, GitHub Release,
 registry publication, deployment, production runtime verification, Article 26
 certification, or v0.3.0 closure.
 
+Status: source and release-control implementation is committed at
+`e73dcf53bf0aa25cea406974b42fb962e003bc6a`; evidence integration and final
+verification remain in progress. Unless a command is tied below to that
+immutable checkpoint, the controls described here are candidate acceptance
+requirements rather than completion claims. Final whole-branch gates,
+independent security review, provider CI, and exact-head readback remain
+unproven.
+
 ## Evidence boundary
 
 | Item | Candidate record |
@@ -30,10 +38,13 @@ certification, or v0.3.0 closure.
 | Imported report | `Exochain-code-review-report-run4.html`; read-only and not committed |
 | Report SHA-256 | `d5da7a1291cbf8baaa8e676cd2eebbbbaadc421eb623eddb48dfc6f4e0c89168` |
 | Source validation baseline | `8020ceab355eefa7f5185d9cdd0436da7af46efb` |
-| Formal findings | 86 independently dispositioned in the validation record |
-| Design observations | 52 separately dispositioned; ten share concrete remediation boundaries |
+| Committed implementation checkpoint | `e73dcf53bf0aa25cea406974b42fb962e003bc6a` |
+| Formal findings | 86 candidate dispositions exactly reconciled against the committed implementation checkpoint; mandatory complete gate corpus and independent final review pending |
+| Design observations | 52 candidate dispositions exactly reconciled against the committed implementation checkpoint; ten share concrete remediation boundaries; mandatory complete gate corpus and independent final review pending |
 | Candidate version | `0.2.6` across owned release surfaces |
 | Adjacent surface | LiveSafe remains separate, proprietary, and unable to make public constitutional claims |
+| Test plan | `governance/releases/v0.2.6/TEST-PLAN.md` |
+| Changed-path classification | `governance/releases/v0.2.6/PATH-CLASSIFICATION.md` |
 
 The controlling disposition record is
 `docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md`.
@@ -48,13 +59,29 @@ or source-of-truth code.
   custody boundaries.
 - Pre-allocation byte, item, depth, and work limits at owned CLI, persistence,
   timestamp, governance, and WASM ingress.
-- Fixed external errors, fallible persistence decoding, encoded SDK targets, and
-  collision-resistant decision identifiers across Rust, TypeScript, and Python.
+- Fixed external errors, fallible persistence decoding, validated and bounded
+  SDK targets, and collision-resistant decision identifiers across Rust,
+  TypeScript, and Python. Canonical Rust lookup IDs retain their shipped path
+  bytes and public builder signatures; invalid values become one fixed safe
+  segment, while TypeScript rejects invalid hash/DID path inputs before fetch
+  without reflecting them in diagnostics.
   For title, description, and proposer strings accepted by all three SDKs, Rust,
   TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the same canonical
   CBOR v2 decision frame.
 - Adjacent LiveSafe overflow and dependency remediation in a separate commit and
   validation lane.
+- LYNK receipt responses cryptographically bind the exact submitted validation,
+  subject/adapter authorization material, LLM usage evidence, receipt, and
+  EXOCHAIN finality tuple to the configured validator identity; unknown nested
+  request fields and replay under changed authorization inputs fail closed.
+- Release publication consumes sealed, independently reproduced Cargo archives;
+  npm and PyPI resumptions require exact artifact bytes plus repository/workflow/
+  commit provenance; SDK npm and Python lifecycle lanes are explicit rather than
+  inferred from the WASM or LYNK package lanes. Immediately before a needed npm
+  publication, the publisher must also prove the exact canonical owner. Only
+  the exact `@exochain/sdk` package may use a registry-proven 404 as a scoped
+  first-publication exception; the established WASM and LLM proxy packages
+  fail closed if owner authority cannot be proven.
 
 ## Release identity invariant
 
@@ -100,9 +127,13 @@ remain supported. Machine-readable `VALIDSIG` evidence must identify the
 configured primary as the actual signer's primary; an additional bundled
 primary or a tag signed by that second signer fails closed.
 
-Native Cargo builds and both dry-run and live `cargo publish` calls use
-`--locked`; publish commands do not permit `--allow-dirty`. `wasm-pack`
-receives `--locked` through its Cargo options. The
+Native Cargo builds and preflight `cargo publish --dry-run` calls use `--locked`
+and do not permit `--allow-dirty`. Live crate publication does not reconstruct
+or repackage source: it sends only the exact preflight `.crate` bytes through a
+captured, no-redirect, bounded-response uploader whose metadata/framing is
+checked against the pinned Cargo 1.97.1 protocol. Each retry revalidates the
+sealed archive hash and metadata without reopening repository manifests.
+`wasm-pack` receives `--locked` through its Cargo options. The
 pinned `cargo-cyclonedx` 0.5.9 CLI does not expose Cargo's `--locked` option,
 so its job first runs locked metadata and rejects any `Cargo.lock` mutation
 before SBOM upload or attestation.
@@ -131,12 +162,19 @@ Read-only checks completed at `2026-08-29T03:44:56Z`:
 | npm LLM proxy | `@exochain/llm-proxy@0.2.5` returned E404 |
 | Provider controls | `exochain-core@0.2.4` returned HTTP 200; both npm packages resolved at `0.2.4` |
 
-The controlling providers therefore confirm that `0.2.5` was not published.
-The latest published release remains `v0.2.4` (GitHub published
-`2026-08-18T17:15:29Z`; the annotated remote tag peels to
-`9ad6068a73a3ae7963b736b0e4b7790970adf754`).
+At the recorded timestamp, those provider observations supported the conclusion
+that `0.2.5` had not been published and that `v0.2.4` was the latest published
+release (GitHub published `2026-08-18T17:15:29Z`; the annotated remote tag
+peeled to `9ad6068a73a3ae7963b736b0e4b7790970adf754`). This is historical evidence,
+not a current provider readback or release authorization.
 
 ## Candidate test plan
+
+The complete executable acceptance contract, thresholds, evidence separation,
+and Windows-only closure requirement are in
+`governance/releases/v0.2.6/TEST-PLAN.md`. The exact per-path classification and
+LiveSafe intake record are in
+`governance/releases/v0.2.6/PATH-CLASSIFICATION.md`.
 
 Source preparation requires all of the following before the candidate commit is
 accepted:
@@ -154,8 +192,19 @@ bash tools/test_release_sbom_boundary.sh
 bash tools/test_release_dry_run_boundaries.sh
 bash tools/test_release_publish_boundaries.sh
 bash tools/test_cratesio_release_packaging.sh
-bash tools/test_wasm_npm_package_boundary.sh
 node tools/verify_cratesio_release_packaging.mjs
+bash tools/test_publish_release_crates_registry_validation.sh
+bash tools/test_publish_release_npm_registry_validation.sh
+python3 tools/test_publish_sealed_crate.py
+python3 tools/test_publish_sealed_crate_cargo_parity.py
+python3 tools/test_verify_crate_release_archive.py
+bash tools/test_verify_npm_registry_attestation.sh
+bash tools/test_verify_sdk_npm_release_package.sh
+bash tools/test_verify_python_release_package.sh
+bash tools/test_release_sdk_python_lifecycle_boundary.sh
+bash tools/test_python_sdk_ci_boundary.sh
+bash tools/test_verify_release_sbom.sh
+bash tools/test_wasm_npm_package_boundary.sh
 npm --prefix packages/exochain-sdk test
 python3 -m pytest packages/exochain-py/tests
 ```

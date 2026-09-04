@@ -10,9 +10,25 @@ Validated against `origin/main` at
 not executable instructions or source-of-truth code. It is not committed into
 the repository.
 
+The exact candidate reconciliation appendices below were subsequently
+revalidated against committed implementation checkpoint
+`e73dcf53bf0aa25cea406974b42fb962e003bc6a`. That checkpoint is source
+evidence, not release authorization; the mandatory whole-branch gates,
+independent final review, provider CI, tag, publication, deployment, and
+runtime readback remain separate.
+
 The report contains 86 formal findings and 52 separately labeled design
 observations. The design observations state that they are not concrete
 vulnerabilities. This record therefore dispositions the two sets separately.
+The mechanically reconciled, per-item source/test/commit evidence is retained
+in the tracked formal and design appendices:
+
+- `docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md`
+- `docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md`
+
+The exact baseline-to-candidate path inventory and required core/adapter/
+adjacent/vendor classification are in
+`governance/releases/v0.2.6/PATH-CLASSIFICATION.md`.
 
 ## Validation and Closure Standard
 
@@ -41,6 +57,13 @@ carried forward when those conditions are absent.
 
 ## Formal Finding Dispositions (86/86)
 
+Candidate totals are 33 `patch`, four `adjacent_patch`, and 49 `no_change`. The
+table below is the concise disposition index; the formal appendix carries all
+86 rows in original report order with per-finding classification, reproduction
+semantics, exact owned symbol/runtime, focused regression or source guard, and
+immutable patch commit. Its sorted numeric ID-set SHA-256 is
+`264fa18b138ce4a2935180336c0a14317f5dc08eca6ea5230db49b9c037aec80`.
+
 | ID | Disposition | Current-source result or patch boundary |
 | --- | --- | --- |
 | 9679 | patch | The default build refuses the pedagogical SNARK, but the published opt-in verifier accepts forgeable public hash chains. Keep the types and make legacy verification refuse even when the feature is enabled. |
@@ -55,7 +78,7 @@ carried forward when those conditions are absent.
 | 9566 | no_change | Quote hashes and quotes are public DTO material; no unknown secret can be recovered through equality timing. |
 | 9567 | patch | Basis-point helpers saturate the multiplication before division and return incorrect extreme-value allocations. Use exact quotient/remainder arithmetic across sibling helpers. |
 | 9572 | no_change | The synthetic testing signature is an unkeyed hash over public fields and is accepted only for simulated testing attestations. |
-| 9575 | patch | Exported `Credential` serialization emits API keys and bearer tokens in plaintext even though `Debug` is redacted. Remove sensitive serialization capability. |
+| 9575 | patch | Exported `Credential` serialization emitted API keys and bearer tokens in plaintext even though `Debug` was redacted. Preserve public DID-signature serialization compatibility, but make both secret variants fail closed with one fixed non-reflective error. |
 | 9581 | no_change | Audit sequence increment already uses `checked_add` and fails closed on exhaustion. |
 | 9582 | no_change | The registry lock is cloned inside `spawn_blocking`; no asynchronous suspension occurs while the standard lock is held. |
 | 9586 | no_change | The authenticated vote transaction needs the exclusive table lock to serialize the global audit hash chain; all waits under the lock are database operations in the same transaction. |
@@ -83,7 +106,7 @@ carried forward when those conditions are absent.
 | 9650 | no_change | The shared SQLite store mutex serializes the worker/runtime creation path; the claimed concurrent thread fan-out is absent. |
 | 9648 | patch | Database row decoding uses panicking `Row::get`; replace with typed `try_get` failures even though schema constraints defeat the claimed remote crash. |
 | 9654 | no_change | Signal hashes are limited to the finite claim-type enum and the route inherits the 1 MiB body cap. |
-| 9655 | no_change | `VerifyOtpResponse` does not derive `Debug`; the token is intentionally serialized only to its authenticated client. |
+| 9655 | patch | `VerifyOtpResponse` and `IdentitySession` derived `Debug` over bearer session tokens. Replace both with explicit redacted `Debug` implementations and keep authenticated serialization behavior unchanged. |
 | 9657 | no_change | The OTP is fixed at six public-format digits, attempts are bounded, and no production HTTP caller was found. |
 | 9661 | patch | `int_ln_milli` shifts attacker-influenced `u64` values before widening and can overflow. Compute intermediates in `u128` with checked conversion. |
 | 9662 | no_change | The deterministic service key is default-off, feature-scoped, and cannot replace the subject signature/session consent checks. |
@@ -91,7 +114,7 @@ carried forward when those conditions are absent.
 | 9674 | patch | PDP CLI verification and inspection read third-party evidence packs without a pre-allocation file-size bound. |
 | 9675 | patch | The public PDP service API returns a plain copy of its long-lived signing secret. Remove raw-key extraction. |
 | 9682 | no_change | Zero field size is rejected before modulo and the error is propagated; the existing generation regression covers the reported panic. |
-| 9688 | patch | Public root DKG secret artifacts derive `Debug` over serialized secret byte vectors. Redact and zeroize the secret carriers. |
+| 9688 | patch | Public root DKG secret artifacts derive `Debug` over serialized secret byte vectors. Redact `Debug` without changing the patch-release public `Vec` fields, direct-move/destructure behavior, `Clone`, function signatures, or wire layout; retain explicit zeroization and zeroizing internal transient buffers without claiming automatic drop-time wiping for legacy carriers. |
 | 9694 | no_change | ECDH is HKDF input keying material, caller context is a valid non-secret salt, fixed info supplies protocol separation, and swapping would break existing ciphertexts. |
 | 9695 | patch | Public root signing nonces derive `Debug` over secret nonce bytes. |
 | 9696 | patch | Root signing nonces drop as ordinary vectors without zeroization. |
@@ -132,6 +155,12 @@ carried forward when those conditions are absent.
 
 ## Design Observations (52/52)
 
+Candidate totals are ten `patch` and 42 `no_change`. The design appendix carries
+all 52 rows in original report order with per-observation classification,
+reproduction semantics, exact owned symbol/runtime, focused regression or
+source guard, and immutable patch commit. Its sorted numeric ID-set SHA-256 is
+`4735fd41ff8e84f85a5502a83635f0b00673a9f754ea3098039199e41b3637f6`.
+
 These ten observations overlap a concrete boundary and are included in the
 patch tasks:
 
@@ -146,7 +175,7 @@ patch tasks:
 | 9608 | Prevent direct construction/mutation from bypassing DGCL state transitions. |
 | 9625 | Replace identity-key existence check plus read with one race-aware open path. |
 | 9643 | Map root-portal internal errors to fixed external responses while retaining internal diagnostics. |
-| 9692 | Reviewed with the root-secret task; sealed salt/nonce/ciphertext remain public transport artifacts, while plaintext nonce/share carriers are redacted and zeroized. |
+| 9692 | Reviewed with the root-secret task; sealed salt/nonce/ciphertext remain public transport artifacts. Legacy public DKG plaintext carriers are `Debug`-redacted and explicitly zeroizable while preserving caller-owned move semantics; signing nonces and private CLI share/passphrase carriers remain zeroizing-on-drop. |
 
 The remaining 42 observations have no current concrete vulnerability and need
 no production source change:
@@ -162,13 +191,56 @@ signature/hash/ciphertext material rather than a secret; local/default-off
 tooling without an attacker-controlled sink; a standard lock used without an
 asynchronous suspension; or an API-design caution without a current caller.
 
-## Additional Release-Boundary Finding
+## Additional Release-Boundary Findings
 
-The 0.2.6 release audit found one owned release blocker not stated in the HTML:
+The 0.2.6 release audit found an owned release blocker not stated in the HTML:
 the release workflow can test the dispatch SHA and later publish a version tag
 without proving that the signed tag commit, dispatch SHA, workspace version,
-and published source are identical. The 0.2.6 task must make this binding
-fail-closed and extend the existing workflow source guards.
+and published source are identical. Committed checkpoint `fc86b0b1` makes this
+binding fail closed and extends the workflow source guards; final acceptance
+still requires the complete test plan on the reviewed evidence commit and
+exact-head provider CI.
+
+The release-source review also found mutable third-party GitHub Action tags,
+insufficiently isolated publication helper capture, and an SBOM reviewed-corpus
+digest that no longer described the post-remediation Cargo dependency graph.
+The branch pins the affected actions to immutable commits, binds every release
+side effect to immutable checked source and tag identity, and updates the SBOM
+digest only after a deterministic semantic graph comparison.
+
+Later independent review found and committed additional owned hardening outside
+the imported report's 86 formal IDs: compatibility-preserving gateway secret
+serialization (`47eb4e2e`), bounded WASM Shamir work (`33964847`), bounded
+messaging plaintext (`dbabe80e`), patch-compatible DKG custody (`e8d04a94` and
+`65527ba7`), same-origin Python bearer transport (`bcaa6c1f`), exact-request
+LYNK receipt attestations (`f3845873`), and sealed package provenance and
+publication (`fc86b0b1`). Commit `2e286e21` additionally requires exact npm
+owner authority immediately before publication; corrective commit `e73dcf53`
+restricts the registry-proven 404 first-publication exception to the exact
+`@exochain/sdk` package and denies it to the two established npm packages.
+These controls are mapped to overlapping report rows where applicable and
+otherwise remain separately identified release-boundary findings. Their
+focused checks are recorded in the appendices and test plan; they do not turn
+the candidate into a completed or authorized release.
+
+The adjacent LiveSafe dependency pass found three moderate advisories in the
+server's transitive `qs` parser (`GHSA-x5fp-wj9c-mxmx` and
+`GHSA-4mjr-xmp4-gh2g`; one advisory affects more than one vulnerable range).
+The server-local lock now resolves the Express/body-parser graph to
+`qs@6.16.0`; focused parser controls, a real Express compatibility smoke test,
+and the full adjacent test suite preserve expected behavior.
+
+An independent pre-evidence review found that percent-encoding alone did not
+contain exact dot segments because the URL parser normalized both literal and
+encoded `.`/`..` before transport. This is a sibling case within formal finding
+9702, not a new report ID. Commit `0d9e1c69` added strict Rust/TypeScript lookup
+validation; compatibility review then found that its Rust return-type and error
+enum changes were not permissible in a patch release. Corrective commit
+`fc794d20` restores the shipped Rust builder signatures, preserves canonical
+lowercase 64-hex paths byte-for-byte, and replaces every invalid Rust path ID
+with one fixed bounded non-hex segment for gateway rejection. It also prevents
+TypeScript DID diagnostics from echoing unbounded caller input. The exact
+regression evidence is recorded in the formal appendix.
 
 ## Completion Evidence Required
 
