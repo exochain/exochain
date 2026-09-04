@@ -108,15 +108,15 @@ DID: did:exo:a1b2c3d4e5f60789
 
 ## Hashing contracts you must know
 
-**DID derivation uses BLAKE3 across Rust, TypeScript, and Python. Rust and TypeScript `DecisionBuilder` use full BLAKE3 over the same canonical CBOR v2 decision frame.**
+**DID derivation uses BLAKE3 across Rust, TypeScript, and Python.** Rust, TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the same canonical CBOR v2 decision frame.
 
 The shared decision frame is `["exochain:decision-id:v2", title, description, proposer]`. The result is a 64-character lowercase hex ID that matches the Rust SDK for the same strings.
 
-This decision-ID contract does not change other local identifiers. TypeScript and Python bailment proposal IDs retain full SHA-256 over their existing frames; Rust bailment proposal IDs retain their existing 16-hex BLAKE3 prefix. Python decision IDs retain their existing 16-hex SHA-256 prefix and are not part of the CBOR v2 contract.
+This decision-ID contract does not change other local identifiers. TypeScript and Python bailment proposal IDs retain full SHA-256 over their existing frames; Rust bailment proposal IDs retain their existing 16-hex BLAKE3 prefix.
 
 For cross-language interop in production:
 
-- **For local governance decisions**, Rust and TypeScript builders produce the same CBOR v2 ID.
+- **For local governance decisions**, Rust, TypeScript, and Python builders produce the same CBOR v2 ID.
 - **For other content IDs**, prefer the canonical identifier returned by the gateway instead of assuming the local algorithms match.
 - **For local DID derivation**, use `Identity.generate`, `Identity.fromKeypair`, or `deriveDid`; all use BLAKE3.
 

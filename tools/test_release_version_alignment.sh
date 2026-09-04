@@ -284,5 +284,39 @@ for source, actual in python_package_checks.items():
     if actual != expected_python:
         fail(f"{source} is {actual}, expected Python package version {expected_python}")
 
+decision_id_contract_docs = [
+    "packages/README.md",
+    "packages/exochain-sdk/README.md",
+    "docs/guides/sdk-quickstart-python.md",
+    "docs/guides/sdk-quickstart-typescript.md",
+]
+decision_id_contract = (
+    "Rust, TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the "
+    "same canonical CBOR v2 decision frame."
+)
+stale_python_decision_id_claims = (
+    "Python decision IDs are unchanged",
+    "Python decision IDs remain the first 16 hex characters",
+    "Python decision IDs retain their existing 16-hex SHA-256 prefix",
+    "Rust and TypeScript `DecisionBuilder` agree on decision IDs",
+    "Rust and TypeScript `DecisionBuilder` now derive the same 64-hex decision ID",
+)
+
+for documentation_path in decision_id_contract_docs:
+    documentation = read(documentation_path)
+    normalized_documentation = " ".join(documentation.split())
+    if decision_id_contract not in normalized_documentation:
+        fail(
+            f"{documentation_path} must state the three-SDK canonical decision-ID contract"
+        )
+    for stale_claim in stale_python_decision_id_claims:
+        if stale_claim in normalized_documentation:
+            fail(f"{documentation_path} retains stale decision-ID text: {stale_claim}")
+
+for documentation_path in ["CHANGELOG.md", "governance/releases/v0.2.6/RC.md"]:
+    documentation = read(documentation_path)
+    if "decision identifiers across Rust, TypeScript, and Python" not in documentation:
+        fail(f"{documentation_path} omits Python from the aligned decision-ID contract")
+
 print(f"release version alignment test passed: {expected}")
 PY

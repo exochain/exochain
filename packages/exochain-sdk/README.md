@@ -257,18 +257,16 @@ const identity = await Identity.fromResolvedKeypair({
 });
 ```
 
-Rust and TypeScript `DecisionBuilder` now derive the same 64-hex decision ID:
-full BLAKE3 over the canonical CBOR array
+Rust, TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the same
+canonical CBOR v2 decision frame. The frame is the CBOR array
 `["exochain:decision-id:v2", title, description, proposer]`.
 
 That decision-ID change does not alter other client-derived IDs. Rust bailment
 proposal IDs remain the first 16 hex characters of BLAKE3 over their existing
 frame. TypeScript and Python bailment proposal IDs remain full SHA-256 over
-their existing frames. Python decision IDs remain the first 16 hex characters
-of SHA-256 over its existing title/description/proposer frame. Chain
-identifiers are also unchanged. Treat IDs outside the documented Rust/TypeScript
-decision fixture as language- and version-specific unless the gateway returns
-the canonical identifier.
+their existing frames. Chain identifiers are also unchanged. Treat IDs outside
+the documented three-SDK decision fixture as language- and version-specific
+unless the gateway returns the canonical identifier.
 
 ## Errors
 

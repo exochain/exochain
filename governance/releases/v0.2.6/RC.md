@@ -49,7 +49,7 @@ or source-of-truth code.
 - Pre-allocation byte, item, depth, and work limits at owned CLI, persistence,
   timestamp, governance, and WASM ingress.
 - Fixed external errors, fallible persistence decoding, encoded SDK targets, and
-  collision-resistant cross-implementation decision identifiers.
+  collision-resistant decision identifiers across Rust, TypeScript, and Python.
 - Adjacent LiveSafe overflow and dependency remediation in a separate commit and
   validation lane.
 
