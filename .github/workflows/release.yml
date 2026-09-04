@@ -327,7 +327,7 @@ jobs:
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           RELEASE_GITHUB_TOKEN: ${{ github.token }}
         run: /bin/bash --noprofile --norc -p tools/verify_release_tag.sh
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         env:
           LD_PRELOAD: ""
           LD_AUDIT: ""
@@ -763,7 +763,7 @@ jobs:
     outputs:
       archive_sha256: ${{ steps.seal-tool.outputs.archive_sha256 }}
     steps:
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         env:
           LD_PRELOAD: ""
           LD_AUDIT: ""
@@ -1011,7 +1011,7 @@ jobs:
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           RELEASE_GITHUB_TOKEN: ${{ github.token }}
         run: /bin/bash --noprofile --norc -p tools/verify_release_tag.sh
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         env:
           LD_PRELOAD: ""
           LD_AUDIT: ""
@@ -1319,7 +1319,7 @@ jobs:
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           RELEASE_GITHUB_TOKEN: ${{ github.token }}
         run: /bin/bash --noprofile --norc -p tools/verify_release_tag.sh
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         env:
           LD_PRELOAD: ""
           LD_AUDIT: ""
@@ -1662,7 +1662,7 @@ jobs:
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           RELEASE_GITHUB_TOKEN: ${{ github.token }}
         run: /bin/bash --noprofile --norc -p tools/verify_release_tag.sh
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         env:
           LD_PRELOAD: ""
           LD_AUDIT: ""
@@ -1955,7 +1955,7 @@ jobs:
         with:
           name: crate-preflight-${{ needs.validate-release-inputs.outputs.version }}
           path: ${{ runner.temp }}/crate-preflight
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         env:
           LD_PRELOAD: ""
           LD_AUDIT: ""
@@ -2195,7 +2195,7 @@ jobs:
         with:
           name: crate-reproduction-${{ needs.validate-release-inputs.outputs.version }}
           path: ${{ runner.temp }}/crate-reproduction
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         env:
           LD_PRELOAD: ""
           LD_AUDIT: ""
@@ -2329,7 +2329,7 @@ jobs:
     outputs:
       archive_sha256: ${{ steps.seal-tool.outputs.archive_sha256 }}
     steps:
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         env:
           LD_PRELOAD: ""
           LD_AUDIT: ""
@@ -2564,7 +2564,7 @@ jobs:
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           RELEASE_GITHUB_TOKEN: ${{ github.token }}
         run: /bin/bash --noprofile --norc -p tools/verify_release_tag.sh
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         env:
           LD_PRELOAD: ""
           LD_AUDIT: ""
