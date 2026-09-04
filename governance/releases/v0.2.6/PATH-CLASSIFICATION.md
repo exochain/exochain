@@ -20,10 +20,14 @@ SPDX-License-Identifier: Apache-2.0
 
 This inventory classifies every path changed from validation baseline
 `8020ceab355eefa7f5185d9cdd0436da7af46efb` through post-evidence source
-correction `111f7955b9599159edb104ee9a6dec7dc5924e30`, plus the six evidence
-documents in the final evidence commit, including this record. The same
-reconciliation is required against the committed evidence head; this inventory
-alone is not worktree-custody or release-authorization proof.
+corrections `111f7955b9599159edb104ee9a6dec7dc5924e30` and
+`b5dcb89bf88a243196213a1a2b7c4f1ed1c2b888`, including the six evidence
+documents first committed at clean evidence head
+`7038be2df92d79a0161f8479f956d8ec44cc8414`. That evidence head's 315-path
+set, digest, classifications, and six-document custody check passed before the
+later parser correction. The immutable final handoff head and its repeated
+custody result must be recorded after this self-referential document is
+committed; this inventory alone is not release-authorization proof.
 The downloaded HTML report is not changed or committed; it remains read-only
 imported evidence outside this inventory.
 
@@ -36,15 +40,15 @@ already listed below: `760613e6` and `3b98fd11` modify
 `crates/exo-root/src/dkg.rs`; `a6058966` and `368721a1` modify `README.md`; and
 `96318413` and `a3d1e2f3` modify
 `tools/test_wasm_npm_package_boundary.sh`. They therefore do not change the
-315-path cardinality, class totals, or path digest. Evidence commit `76d7ea4e`
-changes only the six evidence paths already listed below. Source correction
-`111f7955` changes only the already-listed core-runtime-adapter paths
-`.github/workflows/release.yml` and
+315-path cardinality, class totals, or path digest. Evidence commits `76d7ea4e`
+and `7038be2d` change only the six evidence paths already listed below. Source
+corrections `111f7955` and `b5dcb89b` change only the already-listed
+core-runtime-adapter paths `.github/workflows/release.yml` and
 `tools/test_release_publish_boundaries.sh`.
 
-The baseline-to-source-correction series contains 85 commits in oldest-first
+The baseline-to-source-correction series contains 87 commits in oldest-first
 order. The SHA-256 of that newline-delimited full commit-hash sequence is
-`e4b4596bafbfccc0d3b49e08ca3af5c84af7b442c2b375ce46b2b3b605292b7c`.
+`d6edd284fb3eec0c45880d7801f9e63906fbe6451717eae0b5833c74a4c9724a`.
 
 ## Classification totals
 

@@ -27,14 +27,18 @@ Status: core source and release-control implementation is committed at
 `368721a1ea3577481cf73cdee6d811623159faec`. Exact-head core and feature-matrix
 gates, coverage thresholds, all 62 CI-derived shell guards, and the separate
 LiveSafe quality/build/image gates passed at that checkpoint. Complete scan
-`429b3137-c1ad-49c9-8fd8-ea7baf030d69` of evidence head `76d7ea4e` found one
+`429b3137-c1ad-49c9-8fd8-ea7baf030d69` of source head `76d7ea4e` found one
 additional High release-credential boundary outside the imported report.
-Source correction `111f7955b9599159edb104ee9a6dec7dc5924e30` is committed
-and its focused guards pass. Local candidate completion is blocked until
+Initial correction `111f7955b9599159edb104ee9a6dec7dc5924e30` binds every
+credential consumer to `release`; follow-up correction
+`b5dcb89bf88a243196213a1a2b7c4f1ed1c2b888` closes a YAML 1.1/1.2 parser-
+differential bypass in that regression guard. Its focused guard and
+`actionlint` checks pass. Candidate completion remains blocked until
 `CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` are moved exclusively from repository
-scope into the protected `release` environment and exact-head gates and final
-review are rerun. Provider CI, Windows runtime evidence, tag, publication,
-deployment, and runtime readback remain unproven.
+scope into the protected `release` environment, organization-scope exposure
+is authoritatively ruled out, and exact-head gates and final review are rerun.
+Provider CI, Windows runtime evidence, tag, publication, deployment, and
+runtime readback remain unproven.
 
 ## Evidence boundary
 
@@ -44,11 +48,13 @@ deployment, and runtime readback remain unproven.
 | Report SHA-256 | `d5da7a1291cbf8baaa8e676cd2eebbbbaadc421eb623eddb48dfc6f4e0c89168` |
 | Source validation baseline | `8020ceab355eefa7f5185d9cdd0436da7af46efb` |
 | Committed implementation checkpoint | `368721a1ea3577481cf73cdee6d811623159faec` |
-| Evidence head reviewed | `76d7ea4e6e13159b011c43df60ecbf5252fe7a5e`; complete scan found one additional High CI/CD finding |
-| Post-evidence source correction | `111f7955b9599159edb104ee9a6dec7dc5924e30` |
+| Scan-reviewed source head | `76d7ea4e6e13159b011c43df60ecbf5252fe7a5e`; complete scan found one additional High CI/CD finding |
+| Protected-environment binding | `111f7955b9599159edb104ee9a6dec7dc5924e30` |
+| YAML parser-differential correction | `b5dcb89bf88a243196213a1a2b7c4f1ed1c2b888` |
+| Clean evidence checkpoint | `7038be2df92d79a0161f8479f956d8ec44cc8414`; six-document custody and mechanical reconciliation passed before `b5dcb89b` |
 | Formal findings | 86 candidate dispositions exactly reconciled against the committed implementation checkpoint; source-checkpoint gates passed |
 | Design observations | 52 candidate dispositions exactly reconciled against the committed implementation checkpoint; ten share concrete remediation boundaries; source-checkpoint gates passed |
-| Open provider control | Registry tokens remain repository-scoped; protected `release` environment currently contains no secrets |
+| Open provider control | Registry tokens remain repository-scoped; protected `release` currently contains no secrets; organization Actions-secret exposure is unreadable and therefore not cleared |
 | Candidate version | `0.2.6` across owned release surfaces |
 | Adjacent surface | LiveSafe remains separate, proprietary, and unable to make public constitutional claims |
 | Test plan | `governance/releases/v0.2.6/TEST-PLAN.md` |
@@ -113,16 +119,23 @@ later commits are outside its range. A fresh scan must cover the committed
 evidence head.
 
 Complete scan `429b3137-c1ad-49c9-8fd8-ea7baf030d69` covered the baseline
-through committed evidence head `76d7ea4e` and validated one High
+through source head `76d7ea4e` and validated one High
 CWE-732/CWE-284 release-credential finding. The four crates.io/npm jobs used
 repository-scoped registry tokens without directly crossing the protected
 environment. Commit `111f7955` adds `environment: release` to each consumer
-and a semantic regression guard; the guard rejects the sealed vulnerable head
-and the related focused release suite passes on the correction. Live provider
-metadata still shows both tokens at repository scope and none in `release`, so
-the attack remains possible from a branch that removes the source declaration.
-No claim of finding closure is made until exclusive environment-secret custody
-is verified.
+and a semantic regression guard; the guard rejects the scan-reviewed vulnerable
+source head. Independent review then produced two `actionlint`-valid fixtures
+that the guard at `111f7955` incorrectly accepted because Psych collapsed YAML
+1.1 keys that GitHub treats as distinct. Commit `b5dcb89b` quotes the legitimate
+top-level `on` key and audits the lossless YAML AST before decoding, rejecting
+ambiguous or duplicate mapping keys, aliases, anchors, merge keys, and explicit
+tags. Both collision forms are retained as negative regression fixtures and the
+focused release guard plus `actionlint` pass. Live provider metadata still
+shows both tokens at repository scope and none in `release`, while organization
+Actions-secret scope is unreadable. The attack therefore remains possible from
+a branch that removes the source declaration. No claim of finding closure is
+made until exclusive environment-secret custody and authoritative absence of
+organization-scope exposure are verified.
 
 Exact-head tarpaulin passed at the source checkpoint with 90.86% workspace
 coverage (47,746/52,547), 83.00% ZeroDentity coverage (1,870/2,253), 100%
@@ -303,9 +316,12 @@ cross-compilation is not runtime proof.
 ## Rollback and disablement
 
 Before publication, rollback is branch-only: decline or abandon the candidate;
-no registry, deployment, or runtime state exists to undo. Release environments
-remain the publication stop gate, and their approvals or credentials can be
-disabled without changing candidate source.
+no registry, deployment, or runtime state exists to undo. While either token
+remains repository- or organization-scoped, the fail-closed stop is to revoke
+that credential or disable the release workflow; the `release` environment is
+not an effective credential gate against a branch that removes its declaration.
+Only after exclusive protected-environment custody is verified may its approval
+and credential controls be treated as the publication stop gate.
 
 After a separately authorized publication, a defective Rust package version is
 yanked crate-by-crate, both npm versions are deprecated, and the GitHub Release
