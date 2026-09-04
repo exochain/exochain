@@ -22,10 +22,21 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::serde_bridge::*;
 
 const MAX_WASM_SHAMIR_SHARES: usize = u8::MAX as usize;
+const MAX_WASM_SHAMIR_SECRET_BYTES: usize = 4_096;
+const MAX_WASM_SHAMIR_ENTROPY_BYTES: usize = 4_096;
+const MAX_WASM_SHAMIR_SHARE_DATA_BYTES: usize = 262_144;
+const MAX_WASM_SHAMIR_RESPONSE_BYTES: usize = 1_044_482;
+const MAX_WASM_SHAMIR_GF_WORK_UNITS: usize = 1_048_576;
+const MAX_WASM_SHAMIR_HASH_WORK_BYTES: usize = 16_777_216;
+const SHAMIR_COEFFICIENT_FIXED_HASH_BYTES: usize = 128;
 const SHAMIR_SPLIT_RESPONSE_ERROR: &str = "Shamir split error: response serialization failed";
+const SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR: &str =
+    "Shamir split error: WASM resource limit exceeded";
 const SHAMIR_RECONSTRUCT_ERROR: &str = "Shamir reconstruct error: invalid shares";
 const SHAMIR_RECONSTRUCT_RESPONSE_ERROR: &str =
     "Shamir reconstruct error: response serialization failed";
+const SHAMIR_RECONSTRUCT_RESOURCE_LIMIT_ERROR: &str =
+    "Shamir reconstruct error: WASM resource limit exceeded";
 
 #[derive(serde::Serialize)]
 struct ShamirSecretResponse<'a> {
@@ -79,6 +90,9 @@ fn serialize_shamir_shares_response<T, E>(
     let Some(json_upper_bound) = json_upper_bound else {
         return Err(SHAMIR_SPLIT_RESPONSE_ERROR);
     };
+    if json_upper_bound > MAX_WASM_SHAMIR_RESPONSE_BYTES {
+        return Err(SHAMIR_SPLIT_RESPONSE_ERROR);
+    }
     let mut serialized = Zeroizing::new(Vec::new());
     if serialized.try_reserve_exact(json_upper_bound).is_err() {
         serialized.zeroize();
@@ -115,6 +129,77 @@ fn serialize_shamir_shares_response<T, E>(
 fn shamir_shares_to_js_value(shares: &[exo_identity::shamir::Share]) -> Result<JsValue, JsValue> {
     serialize_shamir_shares_response(shares, |json| js_sys::JSON::parse(json).map_err(|_| ()))
         .map_err(JsValue::from_str)
+}
+
+fn validate_shamir_split_budget(
+    secret_len: usize,
+    entropy_len: usize,
+    threshold: u8,
+    shares: u8,
+) -> Result<(), &'static str> {
+    if secret_len > MAX_WASM_SHAMIR_SECRET_BYTES
+        || entropy_len > MAX_WASM_SHAMIR_ENTROPY_BYTES
+    {
+        return Err(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR);
+    }
+
+    let threshold = usize::from(threshold);
+    let shares = usize::from(shares);
+    let response_bytes = secret_len
+        .checked_mul(4)
+        .and_then(|data_bytes| data_bytes.checked_add(256))
+        .and_then(|per_share| per_share.checked_mul(shares))
+        .and_then(|all_shares| all_shares.checked_add(2))
+        .ok_or(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR)?;
+    let gf_work = secret_len
+        .checked_mul(threshold)
+        .and_then(|work| work.checked_mul(shares))
+        .ok_or(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR)?;
+    let coefficient_count = secret_len
+        .checked_mul(threshold.saturating_sub(1))
+        .ok_or(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR)?;
+    let hash_bytes_per_coefficient = secret_len
+        .checked_add(entropy_len)
+        .and_then(|bytes| bytes.checked_add(SHAMIR_COEFFICIENT_FIXED_HASH_BYTES))
+        .ok_or(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR)?;
+    let hash_work = coefficient_count
+        .checked_mul(hash_bytes_per_coefficient)
+        .ok_or(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR)?;
+
+    if response_bytes > MAX_WASM_SHAMIR_RESPONSE_BYTES
+        || gf_work > MAX_WASM_SHAMIR_GF_WORK_UNITS
+        || hash_work > MAX_WASM_SHAMIR_HASH_WORK_BYTES
+    {
+        return Err(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR);
+    }
+    Ok(())
+}
+
+fn validate_shamir_reconstruct_budget(
+    share_count: usize,
+    max_share_len: usize,
+    total_share_bytes: usize,
+    threshold: u8,
+) -> Result<(), &'static str> {
+    if max_share_len > MAX_WASM_SHAMIR_SECRET_BYTES
+        || total_share_bytes > MAX_WASM_SHAMIR_SHARE_DATA_BYTES
+    {
+        return Err(SHAMIR_RECONSTRUCT_RESOURCE_LIMIT_ERROR);
+    }
+
+    let interpolation_points = share_count
+        .checked_add(1)
+        .ok_or(SHAMIR_RECONSTRUCT_RESOURCE_LIMIT_ERROR)?;
+    let threshold = usize::from(threshold);
+    let gf_work = max_share_len
+        .checked_mul(interpolation_points)
+        .and_then(|work| work.checked_mul(threshold))
+        .and_then(|work| work.checked_mul(threshold))
+        .ok_or(SHAMIR_RECONSTRUCT_RESOURCE_LIMIT_ERROR)?;
+    if gf_work > MAX_WASM_SHAMIR_GF_WORK_UNITS {
+        return Err(SHAMIR_RECONSTRUCT_RESOURCE_LIMIT_ERROR);
+    }
+    Ok(())
 }
 
 fn reconstruct_shamir_secret_json(
@@ -235,6 +320,8 @@ fn parse_timestamp(
 /// Split a secret using Shamir's Secret Sharing
 #[wasm_bindgen]
 pub fn wasm_shamir_split(secret: &[u8], threshold: u8, shares: u8) -> Result<JsValue, JsValue> {
+    validate_shamir_split_budget(secret.len(), 0, threshold, shares)
+        .map_err(JsValue::from_str)?;
     let config = exo_identity::shamir::ShamirConfig { threshold, shares };
     let result = exo_identity::shamir::split(secret, &config)
         .map_err(|e| JsValue::from_str(&format!("Shamir split error: {e}")))?;
@@ -249,6 +336,8 @@ pub fn wasm_shamir_split_with_entropy(
     shares: u8,
     entropy: &[u8],
 ) -> Result<JsValue, JsValue> {
+    validate_shamir_split_budget(secret.len(), entropy.len(), threshold, shares)
+        .map_err(JsValue::from_str)?;
     let config = exo_identity::shamir::ShamirConfig { threshold, shares };
     let result = exo_identity::shamir::split_with_entropy(secret, &config, entropy)
         .map_err(|e| JsValue::from_str(&format!("Shamir split error: {e}")))?;
@@ -268,6 +357,24 @@ pub fn wasm_shamir_reconstruct(
 ) -> Result<JsValue, JsValue> {
     let shares: Vec<exo_identity::shamir::Share> =
         from_json_bounded_vec(shares_json, "Shamir shares", MAX_WASM_SHAMIR_SHARES)?;
+    let total_share_bytes = shares.iter().try_fold(0usize, |total, share| {
+        total.checked_add(share.data.len())
+    });
+    let Some(total_share_bytes) = total_share_bytes else {
+        return Err(JsValue::from_str(SHAMIR_RECONSTRUCT_RESOURCE_LIMIT_ERROR));
+    };
+    let max_share_len = shares
+        .iter()
+        .map(|share| share.data.len())
+        .max()
+        .unwrap_or(0);
+    validate_shamir_reconstruct_budget(
+        shares.len(),
+        max_share_len,
+        total_share_bytes,
+        threshold,
+    )
+    .map_err(JsValue::from_str)?;
     let config = exo_identity::shamir::ShamirConfig {
         threshold,
         shares: total_shares,
@@ -486,6 +593,142 @@ mod tests {
                 && response_helper.contains("try_reserve_exact"),
             "the JSON writer must have zeroizing ownership before its first allocation"
         );
+    }
+
+    #[test]
+    fn identity_shamir_split_budget_accepts_exact_limits_and_rejects_limit_plus_one() {
+        assert_eq!(
+            validate_shamir_split_budget(MAX_WASM_SHAMIR_SECRET_BYTES, 0, 1, 1),
+            Ok(())
+        );
+        assert_eq!(
+            validate_shamir_split_budget(MAX_WASM_SHAMIR_SECRET_BYTES + 1, 0, 1, 1),
+            Err(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR)
+        );
+        assert_eq!(
+            validate_shamir_split_budget(128, 1_792, 65, 65),
+            Ok(())
+        );
+        assert_eq!(
+            validate_shamir_split_budget(128, 1_793, 65, 65),
+            Err(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR)
+        );
+        assert_eq!(validate_shamir_split_budget(64, 32, 128, 128), Ok(()));
+        assert_eq!(
+            validate_shamir_split_budget(65, 32, 128, 128),
+            Err(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR)
+        );
+        assert_eq!(validate_shamir_split_budget(960, 0, 1, 255), Ok(()));
+        assert_eq!(
+            validate_shamir_split_budget(961, 0, 1, 255),
+            Err(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR)
+        );
+        assert_eq!(
+            validate_shamir_split_budget(1, MAX_WASM_SHAMIR_ENTROPY_BYTES, 2, 2),
+            Ok(())
+        );
+        assert_eq!(
+            validate_shamir_split_budget(1, MAX_WASM_SHAMIR_ENTROPY_BYTES + 1, 2, 2),
+            Err(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR)
+        );
+    }
+
+    #[test]
+    fn identity_shamir_reconstruct_budget_accepts_exact_work_and_rejects_limit_plus_one() {
+        assert_eq!(
+            validate_shamir_reconstruct_budget(31, 128, 31 * 128, 16),
+            Ok(())
+        );
+        assert_eq!(
+            validate_shamir_reconstruct_budget(31, 129, 31 * 129, 16),
+            Err(SHAMIR_RECONSTRUCT_RESOURCE_LIMIT_ERROR)
+        );
+        assert_eq!(
+            validate_shamir_reconstruct_budget(
+                1,
+                MAX_WASM_SHAMIR_SECRET_BYTES,
+                MAX_WASM_SHAMIR_SECRET_BYTES,
+                1,
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate_shamir_reconstruct_budget(
+                1,
+                MAX_WASM_SHAMIR_SECRET_BYTES + 1,
+                MAX_WASM_SHAMIR_SECRET_BYTES + 1,
+                1,
+            ),
+            Err(SHAMIR_RECONSTRUCT_RESOURCE_LIMIT_ERROR)
+        );
+        assert_eq!(
+            validate_shamir_reconstruct_budget(
+                64,
+                4_096,
+                MAX_WASM_SHAMIR_SHARE_DATA_BYTES,
+                1,
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate_shamir_reconstruct_budget(
+                64,
+                4_096,
+                MAX_WASM_SHAMIR_SHARE_DATA_BYTES + 1,
+                1,
+            ),
+            Err(SHAMIR_RECONSTRUCT_RESOURCE_LIMIT_ERROR)
+        );
+    }
+
+    #[test]
+    fn identity_shamir_exports_check_resource_budgets_before_core_work() {
+        let source = include_str!("identity_bindings.rs");
+        let basic_split = source
+            .split("pub fn wasm_shamir_split(")
+            .nth(1)
+            .expect("basic Shamir split export exists")
+            .split("pub fn wasm_shamir_split_with_entropy(")
+            .next()
+            .expect("basic split ends before entropy split");
+        let entropy_split = source
+            .split("pub fn wasm_shamir_split_with_entropy(")
+            .nth(1)
+            .expect("entropy Shamir split export exists")
+            .split("pub fn wasm_shamir_reconstruct(")
+            .next()
+            .expect("entropy split ends before reconstruction");
+        let reconstruct = source
+            .split("pub fn wasm_shamir_reconstruct(")
+            .nth(1)
+            .expect("Shamir reconstruct export exists")
+            .split("pub fn wasm_pace_resolve(")
+            .next()
+            .expect("reconstruction ends before PACE export");
+
+        let basic_budget = basic_split
+            .find("validate_shamir_split_budget")
+            .expect("basic split budget check");
+        let basic_core = basic_split
+            .find("exo_identity::shamir::split(")
+            .expect("basic split core call");
+        assert!(basic_budget < basic_core);
+
+        let entropy_budget = entropy_split
+            .find("validate_shamir_split_budget")
+            .expect("entropy split budget check");
+        let entropy_core = entropy_split
+            .find("exo_identity::shamir::split_with_entropy(")
+            .expect("entropy split core call");
+        assert!(entropy_budget < entropy_core);
+
+        let reconstruct_budget = reconstruct
+            .find("validate_shamir_reconstruct_budget")
+            .expect("reconstruct budget check");
+        let reconstruct_core = reconstruct
+            .find("reconstruct_shamir_secret_json")
+            .expect("reconstruct core wrapper call");
+        assert!(reconstruct_budget < reconstruct_core);
     }
 
     #[test]
