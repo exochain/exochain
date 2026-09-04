@@ -249,7 +249,7 @@ pub struct SubmitClaimResponse {
     pub challenge_ttl_ms: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct VerifyOtpRequest {
     pub challenge_id: String,
     pub code: String,
@@ -259,12 +259,42 @@ pub struct VerifyOtpRequest {
     pub bootstrap_signature: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+impl std::fmt::Debug for VerifyOtpRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VerifyOtpRequest")
+            .field("challenge_id", &self.challenge_id)
+            .field("code", &"<redacted>")
+            .field("public_key", &self.public_key.as_ref().map(|_| "<present>"))
+            .field(
+                "bootstrap_signature",
+                &self.bootstrap_signature.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+#[derive(Serialize)]
 pub struct VerifyOtpResponse {
     pub verified: bool,
     pub session_token: Option<String>,
     pub attempts_remaining: Option<u32>,
     pub message: String,
+}
+
+impl std::fmt::Debug for VerifyOtpResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VerifyOtpResponse")
+            .field("verified", &self.verified)
+            .field(
+                "session_token",
+                &self.session_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("attempts_remaining", &self.attempts_remaining)
+            .field("message", &self.message)
+            .finish()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1142,6 +1172,30 @@ mod tests {
 
     use super::*;
     use crate::zerodentity::types::{ClaimType, PolarAxes, ZerodentityScore};
+
+    #[test]
+    fn verify_otp_http_debug_redacts_code_signature_and_session_token() {
+        let request = VerifyOtpRequest {
+            challenge_id: "challenge-visible".to_owned(),
+            code: "867530".to_owned(),
+            public_key: Some("public-key-visible".to_owned()),
+            bootstrap_signature: Some("bootstrap-signature-secret".to_owned()),
+        };
+        let request_debug = format!("{request:?}");
+        assert!(request_debug.contains("challenge-visible"));
+        assert!(!request_debug.contains("867530"));
+        assert!(!request_debug.contains("bootstrap-signature-secret"));
+
+        let response = VerifyOtpResponse {
+            verified: true,
+            session_token: Some("session-token-secret".to_owned()),
+            attempts_remaining: Some(2),
+            message: "verified".to_owned(),
+        };
+        let response_debug = format!("{response:?}");
+        assert!(response_debug.contains("verified"));
+        assert!(!response_debug.contains("session-token-secret"));
+    }
 
     #[test]
     fn parse_claim_type_biometric_liveness() {
