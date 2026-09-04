@@ -60,6 +60,7 @@ blake3 = { workspace = true }
 # the same version + feature set already used by exo-node (rustls, no default
 # OpenSSL); zeroize redacts the bearer token from Debug output.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+http = { version = "=1.4.0", optional = true }
 zeroize = { workspace = true, optional = true }
 
 [features]
@@ -67,7 +68,7 @@ default = []
 # Real async HTTP client (`DagDbHttpClient`) for calling a live DAG DB gateway.
 # Off by default: consumers who only need the request-spec builder pay no HTTP
 # dependency cost.
-http-client = ["dep:reqwest", "dep:zeroize"]
+http-client = ["dep:http", "dep:reqwest", "dep:zeroize"]
 
 [dev-dependencies]
 # Async test runtime + a minimal in-process TCP server stand in for a live
