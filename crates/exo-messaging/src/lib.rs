@@ -38,7 +38,10 @@ pub use compose::{
     prepare_envelope_for_signing, prepare_envelope_for_signing_with_ephemeral,
     sign_prepared_envelope,
 };
-pub use envelope::{ContentType, EncryptedEnvelope};
+pub use envelope::{
+    ContentType, ENVELOPE_PLAINTEXT_LIMIT_ERROR, EncryptedEnvelope, MAX_ENVELOPE_CIPHERTEXT_LEN,
+    MAX_ENVELOPE_PLAINTEXT_LEN,
+};
 pub use error::MessagingError;
 pub use kex::{X25519KeyPair, X25519PublicKey, X25519SecretKey};
 pub use open::unlock;
