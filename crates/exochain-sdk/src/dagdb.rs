@@ -32,6 +32,23 @@ fn encode_query_component(value: &str) -> PercentEncode<'_> {
     utf8_percent_encode(value, QUERY_COMPONENT_ENCODE_SET)
 }
 
+const INVALID_LOOKUP_ID_SEGMENT: &str = "_";
+
+fn lookup_path_segment(value: &str) -> &str {
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| b"0123456789abcdef".contains(&byte))
+    {
+        value
+    } else {
+        // Never place attacker-controlled invalid material in a URL. The fixed,
+        // single-segment sentinel is deliberately not hexadecimal, so the
+        // gateway's canonical 32-byte hash validation rejects it fail-closed.
+        INVALID_LOOKUP_ID_SEGMENT
+    }
+}
+
 /// HTTP verb for an SDK-prepared DAG DB request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DagDbHttpMethod {
@@ -50,30 +67,6 @@ pub struct DagDbRequestSpec<T> {
     pub path: String,
     /// JSON body for mutation routes; lookup routes carry `None`.
     pub body: Option<T>,
-}
-
-/// Failures produced while converting a typed DAG DB request into an HTTP spec.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-pub enum DagDbRequestError {
-    /// A lookup identifier was not the canonical lowercase hex encoding of 32 bytes.
-    #[error(
-        "DAG DB lookup identifier `{field}` must be a canonical lowercase 64-character hexadecimal value (32 bytes)"
-    )]
-    InvalidLookupId {
-        /// DTO field containing the invalid identifier.
-        field: &'static str,
-        /// Shared DAG DB parser error retained for diagnostic error chaining.
-        #[source]
-        source: exo_dag_db_core::DagDbError,
-    },
-}
-
-fn parse_lookup_id(
-    field: &'static str,
-    value: &str,
-) -> Result<exo_core::Hash256, DagDbRequestError> {
-    exo_dag_db_core::hash::parse_hash256_hex(field, value)
-        .map_err(|source| DagDbRequestError::InvalidLookupId { field, source })
 }
 
 /// Lightweight helpers for constructing every DAG DB REST call.
@@ -166,8 +159,8 @@ impl DagDbClient {
     pub fn receipt_lookup(
         &self,
         request: DagDbReceiptLookupRequest,
-    ) -> Result<DagDbRequestSpec<DagDbReceiptLookupRequest>, DagDbRequestError> {
-        let receipt_hash = parse_lookup_id("receipt_hash", &request.receipt_hash)?;
+    ) -> DagDbRequestSpec<DagDbReceiptLookupRequest> {
+        let receipt_hash = lookup_path_segment(&request.receipt_hash);
         let mut path = format!(
             "{}/receipts/{}?tenant_id={}&namespace={}",
             self.prefix,
@@ -176,15 +169,15 @@ impl DagDbClient {
             encode_query_component(&request.namespace)
         );
         append_bool_query(&mut path, "include_body", request.include_body);
-        Ok(self.get(path))
+        self.get(path)
     }
 
     /// Build a `GET /api/v1/dag-db/catalog/:catalog_id` request spec.
     pub fn catalog_lookup(
         &self,
         request: DagDbCatalogLookupRequest,
-    ) -> Result<DagDbRequestSpec<DagDbCatalogLookupRequest>, DagDbRequestError> {
-        let catalog_id = parse_lookup_id("catalog_id", &request.catalog_id)?;
+    ) -> DagDbRequestSpec<DagDbCatalogLookupRequest> {
+        let catalog_id = lookup_path_segment(&request.catalog_id);
         let mut path = format!(
             "{}/catalog/{}?tenant_id={}&namespace={}",
             self.prefix,
@@ -194,15 +187,15 @@ impl DagDbClient {
         );
         append_bool_query(&mut path, "include_children", request.include_children);
         append_bool_query(&mut path, "include_routes", request.include_routes);
-        Ok(self.get(path))
+        self.get(path)
     }
 
     /// Build a `GET /api/v1/dag-db/routes/:route_id` request spec.
     pub fn route_lookup(
         &self,
         request: DagDbRouteLookupRequest,
-    ) -> Result<DagDbRequestSpec<DagDbRouteLookupRequest>, DagDbRequestError> {
-        let route_id = parse_lookup_id("route_id", &request.route_id)?;
+    ) -> DagDbRequestSpec<DagDbRouteLookupRequest> {
+        let route_id = lookup_path_segment(&request.route_id);
         let mut path = format!(
             "{}/routes/{}?tenant_id={}&namespace={}",
             self.prefix,
@@ -216,7 +209,7 @@ impl DagDbClient {
             request.include_memory_refs,
         );
         append_bool_query(&mut path, "include_validation", request.include_validation);
-        Ok(self.get(path))
+        self.get(path)
     }
 
     fn post<T>(&self, suffix: &str, request: T) -> DagDbRequestSpec<T> {
@@ -280,9 +273,9 @@ mod transport {
         DagDbCouncilDecisionResponse, DagDbErrorEnvelope, DagDbExportRequest, DagDbExportResponse,
         DagDbHttpMethod, DagDbImportRequest, DagDbImportResponse, DagDbIntakeRequest,
         DagDbIntakeResponse, DagDbReceiptLookupRequest, DagDbReceiptLookupResponse,
-        DagDbRequestError, DagDbRequestSpec, DagDbRouteLookupRequest, DagDbRouteLookupResponse,
-        DagDbRouteRequest, DagDbRouteResponse, DagDbTrustCheckRequest, DagDbTrustCheckResponse,
-        DagDbValidateRequest, DagDbValidateResponse, DagDbWritebackRequest, DagDbWritebackResponse,
+        DagDbRequestSpec, DagDbRouteLookupRequest, DagDbRouteLookupResponse, DagDbRouteRequest,
+        DagDbRouteResponse, DagDbTrustCheckRequest, DagDbTrustCheckResponse, DagDbValidateRequest,
+        DagDbValidateResponse, DagDbWritebackRequest, DagDbWritebackResponse,
     };
 
     /// Maximum accepted DAG DB HTTP response body size in bytes.
@@ -898,10 +891,6 @@ mod transport {
     /// `schema_version` matches the expected per-DTO constant.
     #[derive(Debug, thiserror::Error)]
     pub enum DagDbClientError {
-        /// The typed request could not be converted into a safe HTTP request spec.
-        #[error(transparent)]
-        Request(#[from] DagDbRequestError),
-
         /// The request never produced an HTTP response (DNS/connect/TLS) or the
         /// connection failed mid-flight.
         #[error("DAG DB transport error: {0}")]
@@ -1376,7 +1365,7 @@ mod transport {
         ) -> Result<DagDbReceiptLookupResponse, DagDbClientError> {
             self.ensure_request_scope(&request.tenant_id, &request.namespace)?;
             self.send(
-                self.specs.receipt_lookup(request)?,
+                self.specs.receipt_lookup(request),
                 "dagdb:receipt_lookup",
                 exo_dag_db_api::DAGDB_RECEIPT_LOOKUP_RESPONSE_SCHEMA_VERSION,
                 |r: &DagDbReceiptLookupResponse| r.schema_version.as_str(),
@@ -1393,7 +1382,7 @@ mod transport {
         ) -> Result<DagDbCatalogLookupResponse, DagDbClientError> {
             self.ensure_request_scope(&request.tenant_id, &request.namespace)?;
             self.send(
-                self.specs.catalog_lookup(request)?,
+                self.specs.catalog_lookup(request),
                 "dagdb:catalog_lookup",
                 exo_dag_db_api::DAGDB_CATALOG_LOOKUP_RESPONSE_SCHEMA_VERSION,
                 |r: &DagDbCatalogLookupResponse| r.schema_version.as_str(),
@@ -1410,7 +1399,7 @@ mod transport {
         ) -> Result<DagDbRouteLookupResponse, DagDbClientError> {
             self.ensure_request_scope(&request.tenant_id, &request.namespace)?;
             self.send(
-                self.specs.route_lookup(request)?,
+                self.specs.route_lookup(request),
                 "dagdb:route_lookup",
                 exo_dag_db_api::DAGDB_ROUTE_LOOKUP_RESPONSE_SCHEMA_VERSION,
                 |r: &DagDbRouteLookupResponse| r.schema_version.as_str(),
@@ -1768,37 +1757,45 @@ mod tests {
             "/api/v1/dag-db/council/decision",
         );
         assert_get(
-            client
-                .receipt_lookup(fixture(&fixtures, "requests", "receipt_lookup"))
-                .expect("fixture receipt hash is canonical"),
+            client.receipt_lookup(fixture(&fixtures, "requests", "receipt_lookup")),
             "/api/v1/dag-db/receipts/",
         );
         assert_get(
-            client
-                .catalog_lookup(fixture(&fixtures, "requests", "catalog_lookup"))
-                .expect("fixture catalog id is canonical"),
+            client.catalog_lookup(fixture(&fixtures, "requests", "catalog_lookup")),
             "/api/v1/dag-db/catalog/",
         );
         assert_get(
-            client
-                .route_lookup(fixture(&fixtures, "requests", "route_lookup"))
-                .expect("fixture route id is canonical"),
+            client.route_lookup(fixture(&fixtures, "requests", "route_lookup")),
             "/api/v1/dag-db/routes/",
         );
+    }
+
+    #[test]
+    fn dagdb_lookup_builders_preserve_shipped_direct_return_types() {
+        let _: fn(
+            &DagDbClient,
+            DagDbReceiptLookupRequest,
+        ) -> DagDbRequestSpec<DagDbReceiptLookupRequest> = DagDbClient::receipt_lookup;
+        let _: fn(
+            &DagDbClient,
+            DagDbCatalogLookupRequest,
+        ) -> DagDbRequestSpec<DagDbCatalogLookupRequest> = DagDbClient::catalog_lookup;
+        let _: fn(
+            &DagDbClient,
+            DagDbRouteLookupRequest,
+        ) -> DagDbRequestSpec<DagDbRouteLookupRequest> = DagDbClient::route_lookup;
     }
 
     #[test]
     fn dagdb_lookup_request_specs_preserve_valid_ids_and_encode_query_components() {
         let client = DagDbClient::new();
 
-        let receipt = client
-            .receipt_lookup(DagDbReceiptLookupRequest {
-                receipt_hash: VALID_RECEIPT_HASH.to_owned(),
-                tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
-                namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
-                include_body: Some(true),
-            })
-            .expect("canonical receipt hash");
+        let receipt = client.receipt_lookup(DagDbReceiptLookupRequest {
+            receipt_hash: VALID_RECEIPT_HASH.to_owned(),
+            tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+            namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+            include_body: Some(true),
+        });
         assert_eq!(
             receipt.path,
             format!(
@@ -1808,15 +1805,13 @@ mod tests {
             )
         );
 
-        let catalog = client
-            .catalog_lookup(DagDbCatalogLookupRequest {
-                catalog_id: VALID_CATALOG_ID.to_owned(),
-                tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
-                namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
-                include_children: Some(true),
-                include_routes: Some(false),
-            })
-            .expect("canonical catalog id");
+        let catalog = client.catalog_lookup(DagDbCatalogLookupRequest {
+            catalog_id: VALID_CATALOG_ID.to_owned(),
+            tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+            namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+            include_children: Some(true),
+            include_routes: Some(false),
+        });
         assert_eq!(
             catalog.path,
             format!(
@@ -1826,15 +1821,13 @@ mod tests {
             )
         );
 
-        let route = client
-            .route_lookup(DagDbRouteLookupRequest {
-                route_id: VALID_ROUTE_ID.to_owned(),
-                tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
-                namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
-                include_memory_refs: Some(false),
-                include_validation: Some(true),
-            })
-            .expect("canonical route id");
+        let route = client.route_lookup(DagDbRouteLookupRequest {
+            route_id: VALID_ROUTE_ID.to_owned(),
+            tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+            namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+            include_memory_refs: Some(false),
+            include_validation: Some(true),
+        });
         assert_eq!(
             route.path,
             format!(
@@ -1846,65 +1839,61 @@ mod tests {
     }
 
     #[test]
-    fn dagdb_lookup_request_specs_reject_noncanonical_ids() {
-        fn assert_invalid<T>(
-            result: Result<DagDbRequestSpec<T>, DagDbRequestError>,
-            expected_field: &'static str,
-        ) {
-            let error = match result {
-                Ok(_) => panic!("noncanonical {expected_field} unexpectedly produced a path"),
-                Err(error) => error,
-            };
-            assert!(
-                matches!(
-                    error,
-                    DagDbRequestError::InvalidLookupId { field, .. } if field == expected_field
-                ),
-                "error must identify invalid field `{expected_field}`"
-            );
-        }
-
+    fn dagdb_lookup_request_specs_keep_untrusted_ids_in_one_safe_segment() {
         let client = DagDbClient::new();
         let invalid_ids = [
-            ".".to_owned(),
-            "..".to_owned(),
-            "%2E".to_owned(),
-            "%2E%2E".to_owned(),
-            "a".repeat(63),
-            "a".repeat(65),
-            "g".repeat(64),
-            "A".repeat(64),
+            (String::new(), "_".to_owned()),
+            (".".to_owned(), "_".to_owned()),
+            ("..".to_owned(), "_".to_owned()),
+            ("%2E".to_owned(), "_".to_owned()),
+            ("%2E%2E".to_owned(), "_".to_owned()),
+            ("/?&=#".to_owned(), "_".to_owned()),
+            ("\\\n 雪".to_owned(), "_".to_owned()),
+            ("a".repeat(63), "_".to_owned()),
+            ("a".repeat(65), "_".to_owned()),
+            ("g".repeat(64), "_".to_owned()),
+            ("A".repeat(64), "_".to_owned()),
+            (
+                format!("{}/attacker-controlled-secret", "a".repeat(65_536)),
+                "_".to_owned(),
+            ),
         ];
 
-        for invalid_id in invalid_ids {
-            assert_invalid(
-                client.receipt_lookup(DagDbReceiptLookupRequest {
-                    receipt_hash: invalid_id.clone(),
-                    tenant_id: "tenant-a".to_owned(),
-                    namespace: "primary".to_owned(),
-                    include_body: None,
-                }),
-                "receipt_hash",
+        for (invalid_id, safe_id) in invalid_ids {
+            assert_eq!(
+                client
+                    .receipt_lookup(DagDbReceiptLookupRequest {
+                        receipt_hash: invalid_id.clone(),
+                        tenant_id: "tenant-a".to_owned(),
+                        namespace: "primary".to_owned(),
+                        include_body: None,
+                    })
+                    .path,
+                format!("/api/v1/dag-db/receipts/{safe_id}?tenant_id=tenant-a&namespace=primary")
             );
-            assert_invalid(
-                client.catalog_lookup(DagDbCatalogLookupRequest {
-                    catalog_id: invalid_id.clone(),
-                    tenant_id: "tenant-a".to_owned(),
-                    namespace: "primary".to_owned(),
-                    include_children: None,
-                    include_routes: None,
-                }),
-                "catalog_id",
+            assert_eq!(
+                client
+                    .catalog_lookup(DagDbCatalogLookupRequest {
+                        catalog_id: invalid_id.clone(),
+                        tenant_id: "tenant-a".to_owned(),
+                        namespace: "primary".to_owned(),
+                        include_children: None,
+                        include_routes: None,
+                    })
+                    .path,
+                format!("/api/v1/dag-db/catalog/{safe_id}?tenant_id=tenant-a&namespace=primary")
             );
-            assert_invalid(
-                client.route_lookup(DagDbRouteLookupRequest {
-                    route_id: invalid_id,
-                    tenant_id: "tenant-a".to_owned(),
-                    namespace: "primary".to_owned(),
-                    include_memory_refs: None,
-                    include_validation: None,
-                }),
-                "route_id",
+            assert_eq!(
+                client
+                    .route_lookup(DagDbRouteLookupRequest {
+                        route_id: invalid_id,
+                        tenant_id: "tenant-a".to_owned(),
+                        namespace: "primary".to_owned(),
+                        include_memory_refs: None,
+                        include_validation: None,
+                    })
+                    .path,
+                format!("/api/v1/dag-db/routes/{safe_id}?tenant_id=tenant-a&namespace=primary")
             );
         }
     }
@@ -2836,68 +2825,82 @@ mod transport_tests {
     }
 
     #[tokio::test]
-    async fn dagdb_lookup_http_rejects_noncanonical_ids_before_sending() {
-        async fn assert_rejected_before_sending<T>(
-            server: TestServer,
-            result: Result<T, DagDbClientError>,
-            field: &str,
-        ) {
-            let error = match result {
-                Ok(_) => panic!("noncanonical {field} unexpectedly reached the gateway"),
-                Err(error) => error,
-            };
-            let message = error.to_string();
-            assert!(
-                message.contains(field),
-                "error `{message}` must identify invalid field `{field}`"
-            );
-            assert!(
-                message.contains("canonical lowercase 64-character hexadecimal"),
-                "error `{message}` must state the canonical lookup-ID contract"
-            );
-            assert!(
-                tokio::time::timeout(Duration::from_millis(25), server.captured())
+    async fn dagdb_lookup_http_keeps_invalid_ids_on_the_intended_collection_route() {
+        fn invalid_hash_response() -> String {
+            serde_json::json!({
+                "error_code": "invalid_request_shape",
+                "message": "lookup identifier must be a 64-character hex hash",
+                "receipt_hash": null,
+                "validation_report_id": null,
+                "requires_council_review": false
+            })
+            .to_string()
+        }
+
+        macro_rules! assert_rejected_target {
+            ($method:ident, $request:expr, $collection:literal, $safe_id:expr) => {{
+                let server = TestServer::spawn("400 Bad Request", invalid_hash_response()).await;
+                let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
+
+                let error = client
+                    .$method($request)
                     .await
-                    .is_err(),
-                "invalid {field} must fail before an HTTP request is sent"
-            );
+                    .expect_err("gateway must reject the invalid lookup hash");
+                match error {
+                    DagDbClientError::Server(server_error) => {
+                        assert_eq!(server_error.status, 400);
+                        assert_eq!(server_error.error_code, "invalid_request_shape");
+                    }
+                    other => panic!("expected gateway hash rejection, got {other:?}"),
+                }
+
+                let captured = server.captured().await;
+                assert_eq!(
+                    captured.request_line,
+                    format!(
+                        "GET /api/v1/dag-db/{}/{encoded}?tenant_id=tenant-a&namespace=primary HTTP/1.1",
+                        $collection,
+                        encoded = $safe_id,
+                    ),
+                    "invalid lookup material must remain one segment under its intended collection"
+                );
+            }};
         }
 
         let invalid_ids = [
-            ".".to_owned(),
-            "..".to_owned(),
-            "%2E".to_owned(),
-            "%2E%2E".to_owned(),
-            "a".repeat(63),
-            "a".repeat(65),
-            "g".repeat(64),
-            "A".repeat(64),
+            (String::new(), "_".to_owned()),
+            (".".to_owned(), "_".to_owned()),
+            ("..".to_owned(), "_".to_owned()),
+            ("%2E".to_owned(), "_".to_owned()),
+            ("%2E%2E".to_owned(), "_".to_owned()),
+            ("/?&=#".to_owned(), "_".to_owned()),
+            ("a".repeat(63), "_".to_owned()),
+            ("a".repeat(65), "_".to_owned()),
+            ("g".repeat(64), "_".to_owned()),
+            ("A".repeat(64), "_".to_owned()),
+            (
+                format!("{}/attacker-controlled-secret", "a".repeat(65_536)),
+                "_".to_owned(),
+            ),
         ];
 
-        for invalid_id in invalid_ids {
-            let server =
-                TestServer::spawn("200 OK", fixture_response("responses", "receipt_lookup")).await;
-            let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
-            let mut request = receipt_lookup_request();
-            request.receipt_hash = invalid_id.clone();
-            let result = client.receipt_lookup(request).await;
-            assert_rejected_before_sending(server, result, "receipt_hash").await;
+        for (invalid_id, safe_id) in invalid_ids {
+            let mut receipt = receipt_lookup_request();
+            receipt.receipt_hash = invalid_id.clone();
+            receipt.include_body = None;
+            assert_rejected_target!(receipt_lookup, receipt, "receipts", &safe_id);
 
-            let server =
-                TestServer::spawn("200 OK", fixture_response("responses", "catalog_lookup")).await;
-            let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
-            let mut request = catalog_lookup_request();
-            request.catalog_id = invalid_id.clone();
-            let result = client.catalog_lookup(request).await;
-            assert_rejected_before_sending(server, result, "catalog_id").await;
+            let mut catalog = catalog_lookup_request();
+            catalog.catalog_id = invalid_id.clone();
+            catalog.include_children = None;
+            catalog.include_routes = None;
+            assert_rejected_target!(catalog_lookup, catalog, "catalog", &safe_id);
 
-            let server =
-                TestServer::spawn("200 OK", fixture_response("responses", "route_lookup")).await;
-            let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
-            let mut request = route_lookup_request();
-            request.route_id = invalid_id;
-            let result = client.route_lookup(request).await;
-            assert_rejected_before_sending(server, result, "route_id").await;
+            let mut route = route_lookup_request();
+            route.route_id = invalid_id;
+            route.include_memory_refs = None;
+            route.include_validation = None;
+            assert_rejected_target!(route_lookup, route, "routes", &safe_id);
         }
     }
 

@@ -2375,7 +2375,6 @@ dependencies = [
  "exochain-avc",
  "exochain-core",
  "exochain-dag-db-api",
- "exochain-dag-db-core",
  "exochain-economy",
  "exochain-gatekeeper",
  "exochain-identity",
