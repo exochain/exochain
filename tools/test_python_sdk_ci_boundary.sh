@@ -35,13 +35,31 @@ def fail(message: str) -> None:
 
 workflow_path = Path(".github/workflows/ci.yml")
 pyproject_path = Path("packages/exochain-py/pyproject.toml")
+requirements_lock_path = Path("tools/python-release-requirements.lock")
 if not workflow_path.is_file():
     fail(f"{workflow_path} is missing")
 if not pyproject_path.is_file():
     fail(f"{pyproject_path} is missing")
+if not requirements_lock_path.is_file():
+    fail(f"{requirements_lock_path} is missing")
 
 workflow = workflow_path.read_text(encoding="utf-8")
 pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+requirements_lock = requirements_lock_path.read_text(encoding="utf-8")
+
+if re.search(r"(?im)^\s*(?:--(?:extra-)?index-url|--find-links|--trusted-host|-e\s|[^#\n]+\s@\s|git\+)", requirements_lock):
+    fail("the Python release lock must not contain alternate indexes, URLs, editables, or VCS inputs")
+requirement_starts = list(
+    re.finditer(r"(?m)^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s\\]+)\s*\\\s*$", requirements_lock)
+)
+if not requirement_starts:
+    fail("the Python release lock contains no exact requirements")
+for index, match in enumerate(requirement_starts):
+    end = requirement_starts[index + 1].start() if index + 1 < len(requirement_starts) else len(requirements_lock)
+    block = requirements_lock[match.start() : end]
+    hashes = re.findall(r"--hash=sha256:([0-9a-f]{64})(?:\s|\\|$)", block)
+    if not hashes:
+        fail(f"locked requirement {match.group(1)}=={match.group(2)} has no SHA-256 artifact hash")
 
 
 def job_block(name: str) -> str:
@@ -67,9 +85,10 @@ required_python_job_patterns = {
     "an Ubuntu hosted runner": r'^    runs-on:\s+ubuntu-latest\s*$',
     "a pinned checkout action": r'^      - uses:\s+actions/checkout@[0-9a-f]{40}\s*$',
     "a pinned setup-python action": r'^      - uses:\s+actions/setup-python@[0-9a-f]{40}\s*$',
-    "the Python SDK development dependencies": (
-        r"^        run:\s+python -m pip install --disable-pip-version-check "
-        r"-e 'packages/exochain-py\[dev\]'\s*$"
+    "the exact hash-locked Python SDK toolchain": (
+        r'^        run:\s+"python -m pip --isolated install --disable-pip-version-check '
+        r'--require-hashes --only-binary=:all: --index-url=https://pypi\.org/simple '
+        r'-r tools/python-release-requirements\.lock"\s*$'
     ),
     "the complete Python SDK test suite": (
         r'^        run:\s+python -m pytest packages/exochain-py/tests\s*$'
@@ -101,7 +120,11 @@ classifiers = pyproject.get("project", {}).get("classifiers", [])
 if "Programming Language :: Python :: 3.11" not in classifiers:
     fail("CPython 3.11 must remain a declared supported Python SDK runtime")
 
-install_command = "python -m pip install --disable-pip-version-check -e 'packages/exochain-py[dev]'"
+install_command = (
+    "python -m pip --isolated install --disable-pip-version-check --require-hashes "
+    "--only-binary=:all: --index-url=https://pypi.org/simple "
+    "-r tools/python-release-requirements.lock"
+)
 ordered_markers = [
     "actions/setup-python@",
     install_command,
@@ -114,7 +137,7 @@ ordered_markers = [
 ]
 positions = [python_job.find(marker) for marker in ordered_markers]
 if any(position < 0 for position in positions):
-    fail("jobs.python-sdk must install the dev extra before all test and static checks")
+    fail("jobs.python-sdk must install the hash-locked toolchain before all checks")
 if positions != sorted(positions):
     fail("jobs.python-sdk must set up Python and install dependencies before its checks")
 

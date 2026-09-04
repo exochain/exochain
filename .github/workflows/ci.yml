@@ -90,7 +90,9 @@ jobs:
           python-version: "3.11.14"
           cache: ""
       - name: Install Python SDK test and static-analysis dependencies
-        run: python -m pip install --disable-pip-version-check -e 'packages/exochain-py[dev]'
+        run: "python -m pip --isolated install --disable-pip-version-check --require-hashes --only-binary=:all: --index-url=https://pypi.org/simple -r tools/python-release-requirements.lock"
+      - name: Python release archive and provenance verifier boundary
+        run: bash tools/test_verify_python_release_package.sh
       - name: Run Python SDK security and regression tests
         run: python -m pytest packages/exochain-py/tests
       - name: Ruff Python SDK
@@ -338,8 +340,16 @@ jobs:
         run: bash tools/test_capture_release_helper.sh
       - name: crates.io publisher registry and ownership boundary
         run: bash tools/test_publish_release_crates_registry_validation.sh
+      - name: Sealed crates.io upload protocol boundary
+        run: python3 tools/test_publish_sealed_crate.py
       - name: npm publisher registry response boundary
         run: bash tools/test_publish_release_npm_registry_validation.sh
+      - name: npm registry signature and provenance boundary
+        run: bash tools/test_verify_npm_registry_attestation.sh
+      - name: TypeScript SDK exact package boundary
+        run: bash tools/test_verify_sdk_npm_release_package.sh
+      - name: TypeScript SDK and Python release lifecycle boundary
+        run: bash tools/test_release_sdk_python_lifecycle_boundary.sh
       - name: LYNK release staging boundary
         run: bash tools/test_stage_llm_release_package.sh
       - name: LYNK tested-build lifecycle boundary
@@ -417,6 +427,16 @@ jobs:
         with:
           python-version: 3.13.7
           cache: ""
+      - name: Sealed crate uploader and archive verifier boundary
+        env:
+          PYTHON: ${{ steps.setup-python.outputs.python-path }}
+        run: |
+          "$PYTHON" -B tools/test_publish_sealed_crate.py
+          "$PYTHON" -B tools/test_verify_crate_release_archive.py
+      - name: Cargo 1.97.1 sealed publication protocol parity
+        env:
+          PYTHON: ${{ steps.setup-python.outputs.python-path }}
+        run: '"$PYTHON" -B tools/test_publish_sealed_crate_cargo_parity.py'
       - name: Install cargo-cyclonedx
         run: bash tools/ci_cargo_retry.sh cargo install cargo-cyclonedx --version 0.5.9 --locked
       - name: Generate CycloneDX SBOM (validation only)

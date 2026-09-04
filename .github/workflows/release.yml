@@ -1804,8 +1804,8 @@ jobs:
           RELEASE_TRUSTED_NODE_VERSION: 22.14.0
           RELEASE_CARGO_HOME: ${{ runner.temp }}/exochain-crate-preflight-cargo-home
           RELEASE_TOOL_HOME: ${{ runner.temp }}/exochain-crate-preflight-home
-          RELEASE_TARGET_DIR: ${{ runner.temp }}/exochain-crate-preflight-target
-          RELEASE_CRATE_MANIFEST: ${{ runner.temp }}/exochain-crate-preflight.tsv
+          RELEASE_TARGET_DIR: ${{ runner.temp }}/exochain-crate-preflight-output
+          RELEASE_CRATE_MANIFEST: ${{ runner.temp }}/exochain-crate-preflight-output/exochain-crate-preflight.tsv
           RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
@@ -1860,7 +1860,7 @@ jobs:
               TRUSTED_RELEASE_PATH="$fresh_path" \
               TRUSTED_RELEASE_REF="$TRUSTED_RELEASE_REF" \
               /bin/bash --noprofile --norc -p
-      - name: Upload exact crate preflight manifest
+      - name: Upload exact crate preflight archives and manifest
         env:
           LD_PRELOAD: ""
           LD_AUDIT: ""
@@ -1875,8 +1875,11 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: crate-preflight-${{ needs.validate-release-inputs.outputs.version }}
-          path: ${{ runner.temp }}/exochain-crate-preflight.tsv
+          path: |
+            ${{ runner.temp }}/exochain-crate-preflight-output/exochain-crate-preflight.tsv
+            ${{ runner.temp }}/exochain-crate-preflight-output/package/*.crate
           if-no-files-found: error
+          compression-level: 0
           retention-days: 30
 
   # -----------------------------------------------------------------------
@@ -1939,7 +1942,7 @@ jobs:
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           RELEASE_GITHUB_TOKEN: ${{ github.token }}
         run: /bin/bash --noprofile --norc -p tools/verify_release_tag.sh
-      - name: Download token-free crate preflight manifest
+      - name: Download token-free crate preflight archives and manifest
         env:
           LD_PRELOAD: ""
           LD_AUDIT: ""
@@ -2028,8 +2031,8 @@ jobs:
           RELEASE_TRUSTED_RUST_TOOLCHAIN: 1.97.1
           RELEASE_CARGO_HOME: ${{ runner.temp }}/exochain-crate-reproduce-cargo-home
           RELEASE_TOOL_HOME: ${{ runner.temp }}/exochain-crate-reproduce-home
-          RELEASE_TARGET_DIR: ${{ runner.temp }}/exochain-crate-reproduce-target
-          RELEASE_CRATE_MANIFEST: ${{ runner.temp }}/exochain-crate-reproduced.tsv
+          RELEASE_TARGET_DIR: ${{ runner.temp }}/exochain-crate-reproduction-output
+          RELEASE_CRATE_MANIFEST: ${{ runner.temp }}/exochain-crate-reproduction-output/exochain-crate-reproduced.tsv
           RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
@@ -2076,8 +2079,17 @@ jobs:
               RELEASE_VERSION="$RELEASE_VERSION" RUNNER_TEMP="$RUNNER_TEMP" \
               TRUSTED_RELEASE_PATH="$fresh_path" TRUSTED_RELEASE_REF="$TRUSTED_RELEASE_REF" \
               /bin/bash --noprofile --norc -p
-          /usr/bin/cmp -s "$RUNNER_TEMP/crate-preflight/exochain-crate-preflight.tsv" "$RELEASE_CRATE_MANIFEST"             || { echo "Reproduced crate archives differ from token-free preflight." >&2; exit 1; }
-      - name: Upload independently reproduced crate manifest
+          /usr/bin/cmp -s \
+            "$RUNNER_TEMP/crate-preflight/exochain-crate-preflight.tsv" \
+            "$RELEASE_CRATE_MANIFEST" \
+            || { echo "Reproduced crate manifest differs from token-free preflight." >&2; exit 1; }
+          while IFS=$'\t' read -r crate version _archive_hash _member_hash; do
+            /usr/bin/cmp -s \
+              "$RUNNER_TEMP/crate-preflight/package/${crate}-${version}.crate" \
+              "$RELEASE_TARGET_DIR/package/${crate}-${version}.crate" \
+              || { echo "Reproduced ${crate} archive differs from token-free preflight." >&2; exit 1; }
+          done < "$RELEASE_CRATE_MANIFEST"
+      - name: Upload independently reproduced crate archives and manifest
         env:
           LD_PRELOAD: ""
           LD_AUDIT: ""
@@ -2092,8 +2104,11 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: crate-reproduction-${{ needs.validate-release-inputs.outputs.version }}
-          path: ${{ runner.temp }}/exochain-crate-reproduced.tsv
+          path: |
+            ${{ runner.temp }}/exochain-crate-reproduction-output/exochain-crate-reproduced.tsv
+            ${{ runner.temp }}/exochain-crate-reproduction-output/package/*.crate
           if-no-files-found: error
+          compression-level: 0
           retention-days: 7
 
   # -----------------------------------------------------------------------
@@ -2108,6 +2123,8 @@ jobs:
       - reproduce-crates
       - prepare-wasm-npm
       - prepare-llm-proxy-npm
+      - prepare-sdk-npm
+      - prepare-python-package
       - attest-release
       - verify-signed-tag
       - validate-release-inputs
@@ -2179,7 +2196,7 @@ jobs:
         with:
           name: crate-preflight-${{ needs.validate-release-inputs.outputs.version }}
           path: ${{ runner.temp }}/crate-preflight
-      - name: Download independent crate reproduction manifest
+      - name: Download independent crate reproduction archives and manifest
         env:
           LD_PRELOAD: ""
           LD_AUDIT: ""
@@ -2195,20 +2212,6 @@ jobs:
         with:
           name: crate-reproduction-${{ needs.validate-release-inputs.outputs.version }}
           path: ${{ runner.temp }}/crate-reproduction
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
-        env:
-          LD_PRELOAD: ""
-          LD_AUDIT: ""
-          LD_LIBRARY_PATH: ""
-          GLIBC_TUNABLES: ""
-          GCONV_PATH: ""
-          LOCPATH: ""
-          NODE_OPTIONS: ""
-          NODE_PATH: ""
-          NODE_EXTRA_CA_CERTS: ""
-          OPENSSL_CONF: ""
-        with:
-          toolchain: 1.97.1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         env:
           LD_PRELOAD: ""
@@ -2248,17 +2251,13 @@ jobs:
           GLIBC_TUNABLES: ""
           GCONV_PATH: ""
           LOCPATH: ""
-          RELEASE_TRUSTED_CARGO_HOME: /home/runner/.cargo
-          RELEASE_TRUSTED_RUSTUP_HOME: /home/runner/.rustup
-          RELEASE_TRUSTED_RUST_TOOLCHAIN: 1.97.1
           RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
           RELEASE_TRUSTED_NODE_VERSION: 22.14.0
           RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
           RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
           RELEASE_TRUSTED_PYTHON_VERSION: 3.13.7
-          RELEASE_CARGO_HOME: ${{ runner.temp }}/exochain-crate-publish-cargo-home
+          RELEASE_CRATE_ARCHIVE_DIR: ${{ runner.temp }}/crate-preflight/package
           RELEASE_TOOL_HOME: ${{ runner.temp }}/exochain-crate-publish-home
-          RELEASE_TARGET_DIR: ${{ runner.temp }}/exochain-crate-publish-target
           RELEASE_PREFLIGHT_MANIFEST: ${{ runner.temp }}/crate-preflight/exochain-crate-preflight.tsv
           RELEASE_REPRODUCED_MANIFEST: ${{ runner.temp }}/crate-reproduction/exochain-crate-reproduced.tsv
           RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
@@ -2276,19 +2275,16 @@ jobs:
           source "$GITHUB_WORKSPACE/tools/capture_release_helper.sh"
           capture_release_helper tools/resolve_release_tool_path.sh resolver_program
           capture_release_helper tools/publish_release_crates.sh publisher_program
+          capture_release_helper tools/publish_sealed_crate.py sealed_crate_publisher_program
           capture_release_helper tools/check_cratesio_namespace_ownership.mjs owner_checker_program
           capture_release_helper tools/verify_release_source.sh source_guard_program
           capture_release_helper tools/verify_release_tag.sh tag_guard_program
-          capture_release_helper tools/verify_release_cargo_config.sh cargo_config_program
           live_path="$(/usr/bin/env -i \
             RUNNER_TEMP="$RUNNER_TEMP" \
-            RELEASE_TRUSTED_CARGO_HOME="$RELEASE_TRUSTED_CARGO_HOME" \
-            RELEASE_TRUSTED_RUSTUP_HOME="$RELEASE_TRUSTED_RUSTUP_HOME" \
-            RELEASE_TRUSTED_RUST_TOOLCHAIN="$RELEASE_TRUSTED_RUST_TOOLCHAIN" \
             RELEASE_TRUSTED_NODE_ROOT="$RELEASE_TRUSTED_NODE_ROOT" \
             RELEASE_TRUSTED_NODE_VERSION="$RELEASE_TRUSTED_NODE_VERSION" \
             /bin/bash --noprofile --norc -p -s -- \
-              cargo node bash tar git curl <<<"$resolver_program")"
+              node bash tar git curl <<<"$resolver_program")"
           printf '%s' "$publisher_program" | /usr/bin/env -i \
             BASH_ENV=/dev/null \
             CARGO_REGISTRY_TOKEN="$CARGO_REGISTRY_TOKEN" \
@@ -2299,24 +2295,21 @@ jobs:
             GITHUB_ACTIONS="$GITHUB_ACTIONS" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
             GITHUB_SERVER_URL="$GITHUB_SERVER_URL" GITHUB_SHA="$GITHUB_SHA" \
             GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-            RELEASE_CARGO_CONFIG_GUARD_PROGRAM="$cargo_config_program" \
-            RELEASE_CARGO_HOME="$RELEASE_CARGO_HOME" \
+            RELEASE_CRATE_ARCHIVE_DIR="$RELEASE_CRATE_ARCHIVE_DIR" \
             RELEASE_GITHUB_TOKEN="$RELEASE_GITHUB_TOKEN" \
             RELEASE_OWNER_CHECK_PROGRAM="$owner_checker_program" \
             RELEASE_PREFLIGHT_MANIFEST="$RELEASE_PREFLIGHT_MANIFEST" \
             RELEASE_PYTHON="$RELEASE_PYTHON" \
             RELEASE_REPRODUCED_MANIFEST="$RELEASE_REPRODUCED_MANIFEST" \
+            RELEASE_SEALED_CRATE_PUBLISHER_PROGRAM="$sealed_crate_publisher_program" \
             RELEASE_SOURCE_GUARD_PROGRAM="$source_guard_program" \
             RELEASE_TAG="$RELEASE_TAG" RELEASE_TAG_GUARD_PROGRAM="$tag_guard_program" \
-            RELEASE_TARGET_DIR="$RELEASE_TARGET_DIR" RELEASE_TEMP_ROOT="$RUNNER_TEMP" \
+            RELEASE_TEMP_ROOT="$RUNNER_TEMP" \
             RELEASE_TOOL_HOME="$RELEASE_TOOL_HOME" \
-            RELEASE_TRUSTED_CARGO_HOME="$RELEASE_TRUSTED_CARGO_HOME" \
             RELEASE_TRUSTED_NODE_ROOT="$RELEASE_TRUSTED_NODE_ROOT" \
             RELEASE_TRUSTED_NODE_VERSION="$RELEASE_TRUSTED_NODE_VERSION" \
             RELEASE_TRUSTED_PYTHON_ROOT="$RELEASE_TRUSTED_PYTHON_ROOT" \
             RELEASE_TRUSTED_PYTHON_VERSION="$RELEASE_TRUSTED_PYTHON_VERSION" \
-            RELEASE_TRUSTED_RUSTUP_HOME="$RELEASE_TRUSTED_RUSTUP_HOME" \
-            RELEASE_TRUSTED_RUST_TOOLCHAIN="$RELEASE_TRUSTED_RUST_TOOLCHAIN" \
             RELEASE_VERSION="$RELEASE_VERSION" RUNNER_TEMP="$RUNNER_TEMP" \
             TRUSTED_RELEASE_PATH="$live_path" TRUSTED_RELEASE_REF="$TRUSTED_RELEASE_REF" \
             /bin/bash --noprofile --norc -p
@@ -3652,6 +3645,470 @@ jobs:
           path: ${{ runner.temp }}/exochain-llm-pack/${{ steps.pack-llm.outputs.tarball_name }}
           if-no-files-found: error
           retention-days: 30
+
+  # Build, test, lint, and pack the public TypeScript SDK without registry
+  # credentials. The source is reconstructed from the dispatch commit before
+  # any package lifecycle code runs, and the packed bytes are bound to a
+  # strict reviewed file manifest.
+  prepare-sdk-npm:
+    name: "Prepare exact TypeScript SDK npm package"
+    runs-on: ubuntu-24.04
+    needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
+    permissions:
+      contents: read
+    outputs:
+      tarball_name: ${{ steps.pack-sdk.outputs.tarball_name }}
+      tarball_sha256: ${{ steps.pack-sdk.outputs.tarball_sha256 }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact SDK release source
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: /bin/bash --noprofile --norc -p tools/verify_release_source.sh
+      - name: Verify current remote SDK release tag
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+        run: /bin/bash --noprofile --norc -p tools/verify_release_tag.sh
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+        with:
+          node-version: 22.14.0
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        id: setup-python
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          python-version: 3.13.7
+          cache: ""
+      - name: Rebind source and tag immediately before SDK lifecycle
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          RELEASE_SOURCE_CLEAN_MODE: all
+          RELEASE_ALLOWED_UNTRACKED_PATHS: ""
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | \
+            BASH_ENV=/dev/null /bin/bash --noprofile --norc -p
+      - name: npm ci, npm test, npm run build, and npm pack exact SDK
+        id: pack-sdk
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
+          RELEASE_TEMP_ROOT: ${{ runner.temp }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+          RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
+          RELEASE_TRUSTED_NODE_VERSION: 22.14.0
+        run: |
+          set -euo pipefail
+          source_root="$RELEASE_TEMP_ROOT/exochain-sdk-source"
+          package_dir="$source_root/packages/exochain-sdk"
+          pack_dir="$RELEASE_TEMP_ROOT/exochain-sdk-pack"
+          extract_dir="$RELEASE_TEMP_ROOT/exochain-sdk-extract"
+          npm_home="$RELEASE_TEMP_ROOT/exochain-sdk-npm-home"
+          package_manifest="$RELEASE_TEMP_ROOT/exochain-sdk-package.manifest"
+          for directory in "$source_root" "$pack_dir" "$extract_dir" "$npm_home"; do
+            case "$directory" in "$RELEASE_TEMP_ROOT"/*) ;; *) exit 1 ;; esac
+            /bin/rm -rf -- "$directory"
+            /bin/mkdir -m 700 -p "$directory"
+          done
+          /bin/rm -f -- "$package_manifest"
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" archive \
+              --format=tar "$GITHUB_SHA" \
+              packages/exochain-sdk tests/fixtures/did-derivation.json | \
+            /usr/bin/env -i TAR_OPTIONS= /usr/bin/tar -xf - -C "$source_root"
+          [ -d "$package_dir" ] && [ ! -L "$package_dir" ]
+
+          source "$GITHUB_WORKSPACE/tools/capture_release_helper.sh"
+          capture_release_helper tools/resolve_release_tool_path.sh resolver_program
+          capture_release_helper tools/verify_npm_release_package.mjs verify_program
+          capture_release_helper tools/verify_npm_release_tarball.py tarball_program
+          tool_identity="$(/usr/bin/env -i \
+            RUNNER_TEMP="$RUNNER_TEMP" \
+            RELEASE_TRUSTED_NODE_ROOT="$RELEASE_TRUSTED_NODE_ROOT" \
+            RELEASE_TRUSTED_NODE_VERSION="$RELEASE_TRUSTED_NODE_VERSION" \
+            /bin/bash --noprofile --norc -p -s -- --identity node npm bash tar <<<"$resolver_program")"
+          trusted_path="$(/usr/bin/env -i \
+            RUNNER_TEMP="$RUNNER_TEMP" \
+            RELEASE_TRUSTED_NODE_ROOT="$RELEASE_TRUSTED_NODE_ROOT" \
+            RELEASE_TRUSTED_NODE_VERSION="$RELEASE_TRUSTED_NODE_VERSION" \
+            /bin/bash --noprofile --norc -p -s -- node npm bash tar <<<"$resolver_program")"
+          [ "$(/bin/cat "${trusted_path%%:*}/.release-tool-identity")" = "$tool_identity" ]
+          node_path="$(/usr/bin/realpath "${trusted_path%%:*}/node")"
+          npm_path="$(/usr/bin/realpath "${trusted_path%%:*}/npm")"
+          python_path="$(/usr/bin/realpath "$RELEASE_PYTHON")"
+          python_root="$(cd "$RELEASE_TRUSTED_PYTHON_ROOT" && pwd -P)"
+          case "$python_path" in "$python_root"/*) ;; *) exit 1 ;; esac
+          [ -f "$python_path" ] && [ -x "$python_path" ] && [ ! -L "$python_path" ]
+          [ "$($python_path -I -B -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')" = 3.13.7 ]
+          [ "$($node_path --version)" = v22.14.0 ]
+          [ "$($npm_path --version)" = 10.9.2 ]
+          : > "$npm_home/user.npmrc"
+          : > "$npm_home/global.npmrc"
+          /bin/chmod 600 "$npm_home/user.npmrc" "$npm_home/global.npmrc"
+          printf '%s' "$verify_program" | /usr/bin/env -i \
+            PATH="$trusted_path" HOME="$npm_home" RELEASE_EXPECTED_VERSION="$RELEASE_VERSION" \
+            "$node_path" --input-type=module - sdk-source "$package_dir"
+
+          /bin/rm -rf -- "$package_dir/dist" "$package_dir/dist-test"
+          cd "$package_dir"
+          for command in ci test lint; do
+            if [ "$command" = ci ]; then
+              /usr/bin/env -i PATH="$trusted_path" HOME="$npm_home" \
+                NPM_CONFIG_CACHE="$npm_home/cache" \
+                NPM_CONFIG_USERCONFIG="$npm_home/user.npmrc" \
+                NPM_CONFIG_GLOBALCONFIG="$npm_home/global.npmrc" \
+                NPM_CONFIG_REGISTRY=https://registry.npmjs.org \
+                NPM_CONFIG_IGNORE_SCRIPTS=true NPM_CONFIG_SCRIPT_SHELL=/bin/bash \
+                TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+                "$npm_path" ci --ignore-scripts --registry=https://registry.npmjs.org
+            else
+              /usr/bin/env -i PATH="$trusted_path" HOME="$npm_home" \
+                NPM_CONFIG_CACHE="$npm_home/cache" \
+                NPM_CONFIG_USERCONFIG="$npm_home/user.npmrc" \
+                NPM_CONFIG_GLOBALCONFIG="$npm_home/global.npmrc" \
+                NPM_CONFIG_REGISTRY=https://registry.npmjs.org \
+                NPM_CONFIG_IGNORE_SCRIPTS=true NPM_CONFIG_SCRIPT_SHELL=/bin/bash \
+                TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+                "$npm_path" run "$command"
+            fi
+          done
+          /bin/rm -rf -- "$package_dir/dist" "$package_dir/dist-test"
+          /usr/bin/env -i PATH="$trusted_path" HOME="$npm_home" \
+            NPM_CONFIG_CACHE="$npm_home/cache" \
+            NPM_CONFIG_USERCONFIG="$npm_home/user.npmrc" \
+            NPM_CONFIG_GLOBALCONFIG="$npm_home/global.npmrc" \
+            NPM_CONFIG_REGISTRY=https://registry.npmjs.org \
+            NPM_CONFIG_IGNORE_SCRIPTS=true NPM_CONFIG_SCRIPT_SHELL=/bin/bash \
+            TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+            "$npm_path" run build
+          printf '%s' "$verify_program" | /usr/bin/env -i \
+            PATH="$trusted_path" HOME="$npm_home" RELEASE_EXPECTED_VERSION="$RELEASE_VERSION" \
+            RELEASE_PACKAGE_MANIFEST_OUTPUT="$package_manifest" \
+            "$node_path" --input-type=module - sdk-source "$package_dir"
+          cd /
+          pack_json="$(/usr/bin/env -i PATH="$trusted_path" HOME="$npm_home" \
+            NPM_CONFIG_CACHE="$npm_home/cache" \
+            NPM_CONFIG_USERCONFIG="$npm_home/user.npmrc" \
+            NPM_CONFIG_GLOBALCONFIG="$npm_home/global.npmrc" \
+            NPM_CONFIG_REGISTRY=https://registry.npmjs.org NPM_CONFIG_IGNORE_SCRIPTS=true \
+            "$npm_path" pack "$package_dir" --json --pack-destination "$pack_dir" \
+              --ignore-scripts --registry=https://registry.npmjs.org)"
+          tarball_name="$(printf '%s' "$pack_json" | "$node_path" \
+            -e 'const fs=require("node:fs");const p=JSON.parse(fs.readFileSync(0,"utf8"));if(!Array.isArray(p)||p.length!==1||typeof p[0].filename!=="string")process.exit(1);process.stdout.write(p[0].filename)')"
+          [ "$tarball_name" = "exochain-sdk-$RELEASE_VERSION.tgz" ]
+          release_tarball="$pack_dir/$tarball_name"
+          /usr/bin/env -i "$python_path" -I -B -c "$tarball_program" \
+            "$release_tarball" "$extract_dir"
+          printf '%s' "$verify_program" | /usr/bin/env -i \
+            PATH="$trusted_path" HOME="$npm_home" RELEASE_EXPECTED_VERSION="$RELEASE_VERSION" \
+            RELEASE_EXPECTED_PACKAGE_MANIFEST="$package_manifest" \
+            "$node_path" --input-type=module - sdk "$extract_dir/package"
+          tarball_sha256="$(/usr/bin/sha256sum "$release_tarball" | /usr/bin/cut -d ' ' -f 1)"
+          printf 'tarball_name=%s\n' "$tarball_name" >> "$GITHUB_OUTPUT"
+          printf 'tarball_sha256=%s\n' "$tarball_sha256" >> "$GITHUB_OUTPUT"
+      - name: Upload exact token-free TypeScript SDK tarball
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exochain-sdk-npm-${{ needs.validate-release-inputs.outputs.version }}
+          path: ${{ runner.temp }}/exochain-sdk-pack/${{ steps.pack-sdk.outputs.tarball_name }}
+          if-no-files-found: error
+          retention-days: 30
+
+  # Build and validate both Python distribution formats before any PyPI OIDC
+  # authority exists. The manifest is the exact digest contract consumed by
+  # the later fresh publisher runner.
+  prepare-python-package:
+    name: "Prepare exact Python SDK distributions"
+    runs-on: ubuntu-24.04
+    needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
+    permissions:
+      contents: read
+    outputs:
+      manifest_sha256: ${{ steps.package-python.outputs.manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact Python release source
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: /bin/bash --noprofile --norc -p tools/verify_release_source.sh
+      - name: Verify current remote Python release tag
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+        run: /bin/bash --noprofile --norc -p tools/verify_release_tag.sh
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        id: setup-python
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          python-version: 3.13.7
+          cache: ""
+      - name: Rebind source and tag immediately before Python lifecycle
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          RELEASE_SOURCE_CLEAN_MODE: all
+          RELEASE_ALLOWED_UNTRACKED_PATHS: ""
+          DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | \
+            BASH_ENV=/dev/null /bin/bash --noprofile --norc -p
+      - name: Run pytest, ruff, mypy, and python -m build from exact source
+        id: package-python
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+          RELEASE_TEMP_ROOT: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          test_source_root="$RELEASE_TEMP_ROOT/exochain-python-test-source"
+          build_source_root="$RELEASE_TEMP_ROOT/exochain-python-build-source"
+          test_package_dir="$test_source_root/packages/exochain-py"
+          build_package_dir="$build_source_root/packages/exochain-py"
+          artifact_root="$RELEASE_TEMP_ROOT/exochain-python-release"
+          dist_dir="$artifact_root/dist"
+          manifest="$artifact_root/artifact-manifest.tsv"
+          tool_root="$RELEASE_TEMP_ROOT/exochain-python-tools"
+          python_home="$RELEASE_TEMP_ROOT/exochain-python-home"
+          sealed_source="$RELEASE_TEMP_ROOT/exochain-python-source.tar"
+          locked_requirements="$RELEASE_TEMP_ROOT/exochain-python-release-requirements.lock"
+          /bin/rm -rf -- "$test_source_root" "$build_source_root" "$artifact_root" \
+            "$tool_root" "$python_home"
+          /bin/rm -f -- "$sealed_source" "$locked_requirements"
+          /bin/mkdir -m 700 -p "$test_source_root" "$artifact_root" "$python_home"
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" archive \
+              --format=tar --output="$sealed_source" "$GITHUB_SHA" \
+                packages/exochain-py tests/fixtures/did-derivation.json
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/python-release-requirements.lock" > "$locked_requirements"
+          /bin/chmod 400 "$sealed_source" "$locked_requirements"
+          source_archive_sha256="$(/usr/bin/sha256sum "$sealed_source" | /usr/bin/cut -d ' ' -f 1)"
+          requirements_sha256="$(/usr/bin/sha256sum "$locked_requirements" | /usr/bin/cut -d ' ' -f 1)"
+          [[ "$source_archive_sha256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$requirements_sha256" =~ ^[0-9a-f]{64}$ ]]
+          /usr/bin/env -i TAR_OPTIONS= /usr/bin/tar -xf "$sealed_source" -C "$test_source_root"
+          source "$GITHUB_WORKSPACE/tools/capture_release_helper.sh"
+          capture_release_helper tools/verify_python_release_package.py verifier_program
+          python_path="$(/usr/bin/realpath "$RELEASE_PYTHON")"
+          python_root="$(cd "$RELEASE_TRUSTED_PYTHON_ROOT" && pwd -P)"
+          case "$python_path" in "$python_root"/*) ;; *) exit 1 ;; esac
+          [ -f "$python_path" ] && [ -x "$python_path" ] && [ ! -L "$python_path" ]
+          [ "$($python_path -I -B -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')" = 3.13.7 ]
+          source_date_epoch="$(/usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" show -s --format=%ct "$GITHUB_SHA")"
+          /usr/bin/env -i HOME="$python_home" PIP_CONFIG_FILE=/dev/null \
+            "$python_path" -I -B -m venv "$tool_root"
+          tool_python="$tool_root/bin/python"
+          [ -f "$tool_python" ] && [ -x "$tool_python" ]
+          /usr/bin/env -i HOME="$python_home" PIP_CONFIG_FILE=/dev/null \
+            "$tool_python" -I -B -m pip --isolated install --disable-pip-version-check --no-compile \
+              --require-hashes --only-binary=:all: --index-url=https://pypi.org/simple \
+              -r "$locked_requirements"
+          (
+            cd "$test_package_dir"
+            /usr/bin/env -i HOME="$python_home" TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+              "$tool_python" -I -B -m pytest tests
+            /usr/bin/env -i HOME="$python_home" TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+              "$tool_python" -I -B -m ruff check .
+            /usr/bin/env -i HOME="$python_home" TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+              "$tool_python" -I -B -m mypy --config-file pyproject.toml exochain
+          )
+
+          # Tests and their locked dependencies never become the publishable
+          # source. Recheck the sealed bytes, then reconstruct a fresh build
+          # tree from that pre-test archive after all mutable checks finish.
+          [ "$(/usr/bin/sha256sum "$sealed_source" | /usr/bin/cut -d ' ' -f 1)" = "$source_archive_sha256" ]
+          [ "$(/usr/bin/sha256sum "$locked_requirements" | /usr/bin/cut -d ' ' -f 1)" = "$requirements_sha256" ]
+          /bin/mkdir -m 700 -p "$build_source_root"
+          /usr/bin/env -i TAR_OPTIONS= /usr/bin/tar -xf "$sealed_source" -C "$build_source_root"
+          [ -d "$build_package_dir" ] && [ ! -L "$build_package_dir" ]
+          /usr/bin/env -i PATH="$tool_root/bin:/usr/bin:/bin" HOME="$python_home" \
+            SOURCE_DATE_EPOCH="$source_date_epoch" TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+            "$tool_python" -I -B -m build --no-isolation --outdir "$dist_dir" "$build_package_dir"
+          /usr/bin/env -i "$tool_python" -I -B -c "$verifier_program" \
+            artifacts "$dist_dir" exochain "$RELEASE_VERSION" --write-manifest "$manifest"
+          manifest_sha256="$(/usr/bin/sha256sum "$manifest" | /usr/bin/cut -d ' ' -f 1)"
+          printf 'manifest_sha256=%s\n' "$manifest_sha256" >> "$GITHUB_OUTPUT"
+      - name: Upload exact token-free Python distributions
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exochain-python-${{ needs.validate-release-inputs.outputs.version }}
+          path: ${{ runner.temp }}/exochain-python-release
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
   # Registry credentials and OIDC are introduced only on fresh runners after
   # both npm tarballs and every crate archive completed token-free preflight.
   publish-wasm-npm:
@@ -4125,10 +4582,533 @@ jobs:
               TRUSTED_RELEASE_TOOL_IDENTITY="$TRUSTED_RELEASE_TOOL_IDENTITY" \
               /bin/bash --noprofile --norc -p -s -- llm
 
+  publish-sdk-npm:
+    name: "Publish Exact TypeScript SDK npm Package"
+    runs-on: ubuntu-24.04
+    needs:
+      - publish-llm-proxy-npm
+      - publish
+      - prepare-sdk-npm
+      - prepare-python-package
+      - verify-signed-tag
+      - validate-release-inputs
+    if: ${{ !inputs.dry_run }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify fresh SDK publisher source
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: /bin/bash --noprofile --norc -p tools/verify_release_source.sh
+      - name: Verify fresh SDK publisher remote tag
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          DRY_RUN: false
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+        run: /bin/bash --noprofile --norc -p tools/verify_release_tag.sh
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+        with:
+          node-version: 22.14.0
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        id: setup-python
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          python-version: 3.13.7
+          cache: ""
+      - name: Download exact token-free SDK tarball
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: exochain-sdk-npm-${{ needs.validate-release-inputs.outputs.version }}
+          path: ${{ runner.temp }}/exochain-sdk-publish-artifact
+      - name: Publish SDK with digest binding and final verify_release_side_effect.sh rebind
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          DRY_RUN: false
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
+          RELEASE_NPM_TARBALL: ${{ runner.temp }}/exochain-sdk-publish-artifact/${{ needs.prepare-sdk-npm.outputs.tarball_name }}
+          RELEASE_EXPECTED_TARBALL_SHA256: ${{ needs.prepare-sdk-npm.outputs.tarball_sha256 }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TEMP_ROOT: ${{ runner.temp }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+          RELEASE_TRUSTED_PYTHON_VERSION: 3.13.7
+          RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
+          RELEASE_TRUSTED_NODE_VERSION: 22.14.0
+          RELEASE_TRUSTED_NPM_VERSION: 10.9.2
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_ACTIONS: "true"
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          GITHUB_REPOSITORY_OWNER_ID: ${{ github.repository_owner_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          set -euo pipefail
+          resolver="$RUNNER_TEMP/exochain-sdk-publisher-resolver.sh"
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/resolve_release_tool_path.sh" > "$resolver"
+          trusted_identity="$(/usr/bin/env -i \
+            RUNNER_TEMP="$RUNNER_TEMP" \
+            RELEASE_TRUSTED_NODE_ROOT="$RELEASE_TRUSTED_NODE_ROOT" \
+            RELEASE_TRUSTED_NODE_VERSION="$RELEASE_TRUSTED_NODE_VERSION" \
+            /bin/bash --noprofile --norc -p "$resolver" --identity node npm bash tar git curl)"
+          trusted_path="$(/usr/bin/env -i \
+            RUNNER_TEMP="$RUNNER_TEMP" \
+            RELEASE_TRUSTED_NODE_ROOT="$RELEASE_TRUSTED_NODE_ROOT" \
+            RELEASE_TRUSTED_NODE_VERSION="$RELEASE_TRUSTED_NODE_VERSION" \
+            /bin/bash --noprofile --norc -p "$resolver" node npm bash tar git curl)"
+          [ "$(/bin/cat "${trusted_path%%:*}/.release-tool-identity")" = "$trusted_identity" ]
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/publish_release_npm_package.sh" | \
+            /usr/bin/env -i \
+              ACTIONS_ID_TOKEN_REQUEST_TOKEN="$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              ACTIONS_ID_TOKEN_REQUEST_URL="$ACTIONS_ID_TOKEN_REQUEST_URL" \
+              DRY_RUN=false EXPECTED_COMMIT_SHA="$EXPECTED_COMMIT_SHA" \
+              EXPECTED_TAG_COMMIT_SHA="$EXPECTED_TAG_COMMIT_SHA" \
+              EXPECTED_TAG_OBJECT_SHA="$EXPECTED_TAG_OBJECT_SHA" \
+              GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+              GITHUB_ACTIONS="$GITHUB_ACTIONS" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
+              GITHUB_REF="$GITHUB_REF" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+              GITHUB_REPOSITORY_ID="$GITHUB_REPOSITORY_ID" \
+              GITHUB_REPOSITORY_OWNER_ID="$GITHUB_REPOSITORY_OWNER_ID" \
+              GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+              GITHUB_SERVER_URL="$GITHUB_SERVER_URL" GITHUB_SHA="$GITHUB_SHA" \
+              GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+              NODE_AUTH_TOKEN="$NODE_AUTH_TOKEN" \
+              RELEASE_EXPECTED_TARBALL_SHA256="$RELEASE_EXPECTED_TARBALL_SHA256" \
+              RELEASE_GITHUB_TOKEN="$RELEASE_GITHUB_TOKEN" RELEASE_NPM_TARBALL="$RELEASE_NPM_TARBALL" \
+              RELEASE_PYTHON="$RELEASE_PYTHON" RELEASE_TAG="$RELEASE_TAG" \
+              RELEASE_TEMP_ROOT="$RELEASE_TEMP_ROOT" \
+              RELEASE_TRUSTED_PYTHON_ROOT="$RELEASE_TRUSTED_PYTHON_ROOT" \
+              RELEASE_TRUSTED_PYTHON_VERSION="$RELEASE_TRUSTED_PYTHON_VERSION" \
+              RELEASE_TRUSTED_NPM_VERSION="$RELEASE_TRUSTED_NPM_VERSION" \
+              RELEASE_VERSION="$RELEASE_VERSION" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \
+              TRUSTED_RELEASE_PATH="$trusted_path" TRUSTED_RELEASE_REF="$TRUSTED_RELEASE_REF" \
+              TRUSTED_RELEASE_TOOL_IDENTITY="$trusted_identity" \
+              /bin/bash --noprofile --norc -p -s -- sdk
+
+  publish-python-package:
+    name: "Publish Exact Python SDK Distributions"
+    runs-on: ubuntu-24.04
+    environment: release
+    needs:
+      - publish-sdk-npm
+      - prepare-python-package
+      - verify-signed-tag
+      - validate-release-inputs
+    if: ${{ !inputs.dry_run }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify fresh Python publisher source
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+        run: /bin/bash --noprofile --norc -p tools/verify_release_source.sh
+      - name: Verify fresh Python publisher remote tag
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          DRY_RUN: false
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+        run: /bin/bash --noprofile --norc -p tools/verify_release_tag.sh
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        id: setup-python
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          python-version: 3.13.7
+          cache: ""
+      - name: Download exact token-free Python distributions
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: exochain-python-${{ needs.validate-release-inputs.outputs.version }}
+          path: python-release-artifact
+      - name: Verify digest contract and inspect current PyPI state
+        id: pypi-preflight
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
+          RELEASE_EXPECTED_MANIFEST_SHA256: ${{ needs.prepare-python-package.outputs.manifest_sha256 }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+        run: |
+          set -euo pipefail
+          artifact_root="$GITHUB_WORKSPACE/python-release-artifact"
+          manifest="$artifact_root/artifact-manifest.tsv"
+          trusted_manifest="$RUNNER_TEMP/exochain-python-release-manifest.tsv"
+          verifier="$RUNNER_TEMP/exochain-python-release-verifier.py"
+          registry_response="$RUNNER_TEMP/exochain-pypi-preflight.json"
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/verify_python_release_package.py" > "$verifier"
+          /bin/chmod 500 "$verifier"
+          python_path="$(/usr/bin/realpath "$RELEASE_PYTHON")"
+          python_root="$(cd "$RELEASE_TRUSTED_PYTHON_ROOT" && pwd -P)"
+          case "$python_path" in "$python_root"/*) ;; *) exit 1 ;; esac
+          [ -f "$python_path" ] && [ -x "$python_path" ] && [ ! -L "$python_path" ]
+          [ "$($python_path -I -B -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')" = 3.13.7 ]
+          [[ "$RELEASE_EXPECTED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [ "$(/usr/bin/sha256sum "$manifest" | /usr/bin/cut -d ' ' -f 1)" = "$RELEASE_EXPECTED_MANIFEST_SHA256" ]
+          /usr/bin/install -m 400 "$manifest" "$trusted_manifest"
+          [ "$(/usr/bin/sha256sum "$trusted_manifest" | /usr/bin/cut -d ' ' -f 1)" = "$RELEASE_EXPECTED_MANIFEST_SHA256" ]
+          /usr/bin/env -i "$python_path" -I -B "$verifier" artifacts \
+            "$artifact_root/dist" exochain "$RELEASE_VERSION" --expect-manifest "$trusted_manifest"
+          status="$(/usr/bin/curl -q --silent --show-error --output "$registry_response" \
+            --write-out '%{http_code}' --proto '=https' --tlsv1.2 \
+            --connect-timeout 15 --max-time 60 --max-filesize 1048576 \
+            "https://pypi.org/pypi/exochain/$RELEASE_VERSION/json")"
+          case "$status" in
+            404) printf 'publish_needed=true\n' >> "$GITHUB_OUTPUT" ;;
+            200)
+              /usr/bin/env -i "$python_path" -I -B "$verifier" registry-response \
+                "$registry_response" exochain "$RELEASE_VERSION" "$trusted_manifest"
+              printf 'publish_needed=false\n' >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "PyPI returned unexpected HTTP status $status" >&2; exit 1 ;;
+          esac
+      - name: Rebind exact source and tag immediately before PyPI mutation
+        if: ${{ steps.pypi-preflight.outputs.publish_needed == 'true' }}
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          RELEASE_SOURCE_CLEAN_MODE: tracked
+          RELEASE_ALLOWED_UNTRACKED_PATHS: python-release-artifact
+          DRY_RUN: false
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | \
+            BASH_ENV=/dev/null /bin/bash --noprofile --norc -p
+      - name: Publish exact Python artifacts with PyPI Trusted Publishing
+        if: ${{ steps.pypi-preflight.outputs.publish_needed == 'true' }}
+        env:
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+        with:
+          packages-dir: python-release-artifact/dist/
+          attestations: true
+          skip-existing: false
+          print-hash: true
+      - name: Strict PyPI digest and PEP 740 provenance readback
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          RELEASE_VERSION: ${{ needs.validate-release-inputs.outputs.version }}
+          RELEASE_EXPECTED_MANIFEST_SHA256: ${{ needs.prepare-python-package.outputs.manifest_sha256 }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          EXPECTED_WORKFLOW_REF: ${{ github.ref }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+        run: |
+          set -euo pipefail
+          # These immutable inputs were copied from GITHUB_SHA before use.
+          artifact_root="$GITHUB_WORKSPACE/python-release-artifact"
+          dist_dir="$artifact_root/dist"
+          manifest="$RUNNER_TEMP/exochain-python-release-manifest.tsv"
+          verifier="$RUNNER_TEMP/exochain-python-release-verifier.py"
+          requirements="$RUNNER_TEMP/exochain-python-release-requirements.lock"
+          registry_response="$RUNNER_TEMP/exochain-pypi-readback.json"
+          provenance_root="$RUNNER_TEMP/exochain-pypi-provenance"
+          tool_root="$RUNNER_TEMP/exochain-pypi-attestation-tools"
+          tool_home="$RUNNER_TEMP/exochain-pypi-attestation-home"
+          python_path="$(/usr/bin/realpath "$RELEASE_PYTHON")"
+          python_root="$(cd "$RELEASE_TRUSTED_PYTHON_ROOT" && pwd -P)"
+          case "$python_path" in "$python_root"/*) ;; *) exit 1 ;; esac
+          [ -f "$python_path" ] && [ -x "$python_path" ] && [ ! -L "$python_path" ]
+          [ "$($python_path -I -B -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')" = 3.13.7 ]
+          [[ "$RELEASE_EXPECTED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [ "$(/usr/bin/sha256sum "$manifest" | /usr/bin/cut -d ' ' -f 1)" = "$RELEASE_EXPECTED_MANIFEST_SHA256" ]
+          [[ "$EXPECTED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_WORKFLOW_REF" =~ ^refs/(heads|tags)/[0-9A-Za-z._/-]+$ ]]
+          [[ "$EXPECTED_WORKFLOW_REF" != *..* ]]
+          /bin/rm -rf -- "$provenance_root" "$tool_root" "$tool_home"
+          /bin/rm -f -- "$requirements" "$verifier"
+          /bin/mkdir -m 700 -p "$provenance_root" "$tool_home"
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/verify_python_release_package.py" > "$verifier"
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/python-release-requirements.lock" > "$requirements"
+          /bin/chmod 400 "$requirements"
+          /bin/chmod 500 "$verifier"
+          requirements_sha256="$(/usr/bin/sha256sum "$requirements" | /usr/bin/cut -d ' ' -f 1)"
+          [[ "$requirements_sha256" =~ ^[0-9a-f]{64}$ ]]
+          /usr/bin/env -i HOME="$tool_home" PIP_CONFIG_FILE=/dev/null \
+            "$python_path" -I -B -m venv "$tool_root"
+          tool_python="$tool_root/bin/python"
+          /usr/bin/env -i HOME="$tool_home" PIP_CONFIG_FILE=/dev/null \
+            "$tool_python" -I -B -m pip --isolated install --disable-pip-version-check --no-compile \
+              --require-hashes --only-binary=:all: --index-url=https://pypi.org/simple \
+              -r "$requirements"
+          [ "$(/usr/bin/sha256sum "$requirements" | /usr/bin/cut -d ' ' -f 1)" = "$requirements_sha256" ]
+          attestation_cli="$tool_root/bin/pypi-attestations"
+          [ -f "$attestation_cli" ] && [ -x "$attestation_cli" ] && [ ! -L "$attestation_cli" ]
+          [ "$($attestation_cli --version)" = 'pypi-attestations 0.0.30' ]
+          # Rehash both local artifacts after the publisher action/tool setup.
+          /usr/bin/env -i "$tool_python" -I -B "$verifier" artifacts \
+            "$dist_dir" exochain "$RELEASE_VERSION" --expect-manifest "$manifest"
+          registry_verified=false
+          for attempt in 1 2 3 4 5 6; do
+            /bin/rm -f -- "$registry_response"
+            status="$(/usr/bin/curl -q --silent --show-error --output "$registry_response" \
+              --write-out '%{http_code}' --proto '=https' --tlsv1.2 \
+              --connect-timeout 15 --max-time 60 --max-filesize 1048576 \
+              "https://pypi.org/pypi/exochain/$RELEASE_VERSION/json")"
+            if [ "$status" = 200 ]; then
+              /usr/bin/env -i "$tool_python" -I -B "$verifier" registry-response \
+                "$registry_response" exochain "$RELEASE_VERSION" "$manifest"
+              provenance_available=true
+              while IFS=$'\t' read -r filename digest size; do
+                [[ "$filename" =~ ^exochain-${RELEASE_VERSION//./\.}(-py3-none-any\.whl|\.tar\.gz)$ ]]
+                [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+                [[ "$size" =~ ^[1-9][0-9]*$ ]]
+                artifact="$dist_dir/$filename"
+                provenance="$provenance_root/$filename.provenance.json"
+                provenance_status="$(/usr/bin/curl -q --silent --show-error --output "$provenance" \
+                  --write-out '%{http_code}' --proto '=https' --tlsv1.2 \
+                  --connect-timeout 15 --max-time 60 --max-filesize 8388608 \
+                  --header 'Accept: application/vnd.pypi.integrity.v1+json' \
+                  "https://pypi.org/integrity/exochain/$RELEASE_VERSION/$filename/provenance")"
+                case "$provenance_status" in
+                  200) ;;
+                  404) provenance_available=false; break ;;
+                  *) echo "PyPI provenance returned unexpected HTTP status $provenance_status" >&2; exit 1 ;;
+                esac
+                [ "$(/usr/bin/sha256sum "$artifact" | /usr/bin/cut -d ' ' -f 1)" = "$digest" ]
+                provenance_sha256="$(/usr/bin/sha256sum "$provenance" | /usr/bin/cut -d ' ' -f 1)"
+                [[ "$provenance_sha256" =~ ^[0-9a-f]{64}$ ]]
+                /usr/bin/env -i HOME="$tool_home" \
+                  "$attestation_cli" verify pypi \
+                    --repository https://github.com/exochain/exochain \
+                    --provenance-file "$provenance" "$artifact"
+                /usr/bin/env -i "$tool_python" -I -B "$verifier" provenance \
+                  "$provenance" "$artifact" exochain/exochain release.yml release \
+                  "$EXPECTED_WORKFLOW_REF" "$EXPECTED_COMMIT_SHA"
+                [ "$(/usr/bin/sha256sum "$artifact" | /usr/bin/cut -d ' ' -f 1)" = "$digest" ]
+                [ "$(/usr/bin/sha256sum "$provenance" | /usr/bin/cut -d ' ' -f 1)" = "$provenance_sha256" ]
+              done < "$manifest"
+              if [ "$provenance_available" = true ]; then
+                registry_verified=true
+                break
+              fi
+            fi
+            [ "$attempt" -lt 6 ] && /bin/sleep 10
+          done
+          [ "$registry_verified" = true ] \
+            || { echo "PyPI did not expose exact artifacts with complete PEP 740 provenance" >&2; exit 1; }
+          [ "$(/usr/bin/sha256sum "$manifest" | /usr/bin/cut -d ' ' -f 1)" = "$RELEASE_EXPECTED_MANIFEST_SHA256" ]
+          printf 'Verified exochain %s exact PyPI artifacts and PEP 740 provenance.\n' "$RELEASE_VERSION"
+      - name: Final source and tag rebind after PyPI acceptance
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          RELEASE_SOURCE_CLEAN_MODE: tracked
+          RELEASE_ALLOWED_UNTRACKED_PATHS: python-release-artifact
+          DRY_RUN: false
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/verify_release_side_effect.sh" | \
+            BASH_ENV=/dev/null /bin/bash --noprofile --norc -p
+
   github-release:
     name: "Create GitHub Release"
     runs-on: ubuntu-24.04
-    needs: [package-release, validate-sbom, attest-release, publish, publish-wasm-npm, publish-llm-proxy-npm, verify-signed-tag, validate-release-inputs]
+    needs: [package-release, validate-sbom, attest-release, publish, publish-wasm-npm, publish-llm-proxy-npm, publish-sdk-npm, publish-python-package, verify-signed-tag, validate-release-inputs]
     if: ${{ !inputs.dry_run }}
     permissions:
       contents: write

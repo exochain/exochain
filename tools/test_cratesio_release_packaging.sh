@@ -31,6 +31,14 @@ ci_workflow=".github/workflows/ci.yml"
   || fail "tools/check_cratesio_namespace_ownership.mjs is missing"
 [[ -f tools/verify_cratesio_release_packaging.mjs ]] \
   || fail "tools/verify_cratesio_release_packaging.mjs is missing"
+[[ -f tools/publish_sealed_crate.py ]] \
+  || fail "tools/publish_sealed_crate.py is missing"
+[[ -f tools/test_publish_sealed_crate.py ]] \
+  || fail "tools/test_publish_sealed_crate.py is missing"
+[[ -f tools/test_publish_sealed_crate_cargo_parity.py ]] \
+  || fail "tools/test_publish_sealed_crate_cargo_parity.py is missing"
+[[ -f tools/test_verify_crate_release_archive.py ]] \
+  || fail "tools/test_verify_crate_release_archive.py is missing"
 
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
@@ -280,15 +288,35 @@ grep -F 'release_cargo package' tools/preflight_release_crates.sh >/dev/null \
   && grep -F -- '--no-verify' tools/preflight_release_crates.sh >/dev/null \
   && grep -F -- '--locked' tools/preflight_release_crates.sh >/dev/null \
   || fail "token-free preflight must package the exact locked workspace without running build scripts"
-grep -F 'release_cargo_publish "$crate"' tools/publish_release_crates.sh >/dev/null \
-  && grep -F -- '--no-verify' tools/publish_release_crates.sh >/dev/null \
-  && grep -F -- '--locked' tools/publish_release_crates.sh >/dev/null \
-  || fail "live publisher must publish exact locked candidates without re-running build scripts"
+grep -F 'release_sealed_crate_publish "$crate" "$expected_checksum"' \
+    tools/publish_release_crates.sh >/dev/null \
+  && grep -F 'RELEASE_CRATE_ARCHIVE_DIR' tools/publish_release_crates.sh >/dev/null \
+  && grep -F 'sealed_crate_publisher_program' tools/publish_release_crates.sh >/dev/null \
+  || fail "live publisher must upload only the independently reproduced sealed archives"
+if grep -F '"$trusted_cargo" publish' tools/publish_release_crates.sh >/dev/null; then
+  fail "live publisher must not repackage mutable workspace source with Cargo"
+fi
 if grep -F -- '--allow-dirty' "$workflow" tools/preflight_release_crates.sh tools/publish_release_crates.sh >/dev/null; then
   fail "release workflow must not bypass Cargo's dirty-source rejection"
 fi
 grep -F 'bash tools/test_cratesio_release_packaging.sh' "$ci_workflow" >/dev/null \
   || fail "CI repo hygiene must run the crates.io release packaging guard"
+grep -F 'python3 tools/test_publish_sealed_crate.py' "$ci_workflow" >/dev/null \
+  || fail "CI repo hygiene must run the sealed crate uploader regression tests"
+grep -F 'tools/test_publish_sealed_crate_cargo_parity.py' "$ci_workflow" >/dev/null \
+  && grep -F 'tools/test_verify_crate_release_archive.py' "$ci_workflow" >/dev/null \
+  && grep -F 'toolchain: 1.97.1' "$ci_workflow" >/dev/null \
+  || fail "exact Cargo parity and archive snapshot regressions must run under pinned CI"
+[ "$(grep -cF 'package/*.crate' "$workflow" || true)" -eq 2 ] \
+  && [ "$(grep -cF 'compression-level: 0' "$workflow" || true)" -ge 2 ] \
+  || fail "both token-free crate reproductions must transport exact uncompressed archives"
+grep -F 'capture_release_helper tools/publish_sealed_crate.py sealed_crate_publisher_program' \
+    "$workflow" >/dev/null \
+  && grep -F 'RELEASE_CRATE_ARCHIVE_DIR="$RELEASE_CRATE_ARCHIVE_DIR"' \
+    "$workflow" >/dev/null \
+  && grep -F 'RELEASE_SEALED_CRATE_PUBLISHER_PROGRAM="$sealed_crate_publisher_program"' \
+    "$workflow" >/dev/null \
+  || fail "credentialed crate publication must consume the captured sealed uploader and archive set"
 
 if grep -E '^[[:space:]]+exo-(core|node|identity|consent|authority|dag|proofs|gatekeeper|governance|escalation|legal|tenant|api|gateway)[[:space:]]*$' "$workflow" >/dev/null; then
   fail "release publish loop must use final exochain-* package names, not legacy exo-* names"
