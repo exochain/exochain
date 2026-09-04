@@ -72,7 +72,7 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=
 trusted_git() (
   scrub_git_environment
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
-  /usr/bin/git \
+  /usr/bin/git --no-replace-objects \
     -c core.fsmonitor=false \
     -c core.untrackedCache=false \
     -c core.ignoreStat=false \
@@ -98,8 +98,19 @@ for entry in \
   name="${entry%%:*}"
   value="${entry#*:}"
   [[ "$value" =~ ^[0-9a-f]{40}$ ]] \
-    || fail "$name must be a full lowercase 40-character commit SHA"
+      || fail "$name must be a full lowercase 40-character commit SHA"
 done
+
+# Git normally trusts the bytes stored beneath an object filename. In
+# particular, a corrupt loose object can supersede the reviewed packed blob and
+# `git show <commit>:<path>` can return those bytes without recomputing the
+# object ID. Verify the complete dispatch commit graph before trusting any tree
+# metadata or loading any helper from it. This check must run before lifecycle
+# execution; no post-lifecycle decision may depend on the mutable object store.
+if ! trusted_git fsck --strict --no-reflogs --no-progress --no-dangling \
+    "$expected_commit_sha" >/dev/null; then
+  fail "release commit object graph failed strict integrity verification"
+fi
 
 head_sha="$(trusted_git rev-parse --verify 'HEAD^{commit}')"
 if [ "$head_sha" != "$expected_commit_sha" ] \
@@ -138,6 +149,8 @@ case "$manifest_parent/" in
 esac
 
 source_manifest="$(/usr/bin/mktemp "$manifest_parent/exochain-release-source.XXXXXX")"
+expected_index_manifest="$(/usr/bin/mktemp "$manifest_parent/exochain-release-expected-index.XXXXXX")"
+actual_index_manifest="$(/usr/bin/mktemp "$manifest_parent/exochain-release-actual-index.XXXXXX")"
 untracked_manifest=""
 cleanup_source_manifests() {
   if [ -n "$source_manifest" ]; then
@@ -146,6 +159,7 @@ cleanup_source_manifests() {
   if [ -n "$untracked_manifest" ]; then
     /bin/rm -f -- "$untracked_manifest"
   fi
+  /bin/rm -f -- "$expected_index_manifest" "$actual_index_manifest"
 }
 trap cleanup_source_manifests EXIT
 
@@ -203,6 +217,7 @@ while IFS= read -r -d '' manifest_entry; do
       if [ "$tracked_mode" = "100755" ] && [ "$actual_execute_bits" -ne 73 ]; then
         fail "tracked executable mode differs from immutable commit: $tracked_path"
       fi
+      printf '%s %s 0\t%s\0' "$tracked_mode" "$tracked_object" "$tracked_path" >> "$expected_index_manifest"
       ;;
     120000:blob)
       if [ ! -L "$worktree_path" ]; then
@@ -212,6 +227,7 @@ while IFS= read -r -d '' manifest_entry; do
       if [ "$actual_object" != "$tracked_object" ]; then
         fail "tracked symlink target differs from immutable commit: $tracked_path"
       fi
+      printf '%s %s 0\t%s\0' "$tracked_mode" "$tracked_object" "$tracked_path" >> "$expected_index_manifest"
       ;;
     160000:commit)
       fail "release source cannot contain Git submodules: $tracked_path"
@@ -226,24 +242,51 @@ if [ "$manifest_entry_count" -eq 0 ]; then
   fail "immutable release commit tree must not be empty"
 fi
 
-# The raw worktree comparison above is independent of the index. Compare the
-# index tree separately, without refreshing it from stat data, so staged path
-# additions, removals, and content changes also fail closed.
-expected_tree="$(trusted_git rev-parse --verify "${expected_commit_sha}^{tree}")"
-index_tree="$(trusted_git write-tree)"
-if [ "$index_tree" != "$expected_tree" ]; then
-  fail "release index must exactly match the immutable commit tree"
+# The raw worktree comparison above is independent of the index. Compare a
+# NUL-safe stage-0 index manifest separately, without refreshing it from stat
+# data. This rejects staged changes, unmerged stages, extra paths, and
+# intent-to-add entries (which `write-tree` and `ls-files --others` can both
+# omit) before untracked-output allowlisting.
+trusted_git ls-files --stage -z > "$actual_index_manifest"
+if ! /usr/bin/cmp -s "$expected_index_manifest" "$actual_index_manifest"; then
+  fail "release index entries must exactly match the immutable commit manifest at stage zero"
 fi
 
-if [ "$source_clean_mode" = "all" ]; then
-  untracked_manifest="$(/usr/bin/mktemp "$manifest_parent/exochain-release-untracked.XXXXXX")"
-  # Honor only committed, per-directory .gitignore files. Do not allow
-  # .git/info/exclude or core.excludesFile from local configuration to hide a
-  # lifecycle-created input from the all-source boundary.
-  trusted_git ls-files --others --exclude-per-directory=.gitignore -z > "$untracked_manifest"
-  if [ -s "$untracked_manifest" ]; then
-    fail "checkout must be clean, including nonignored untracked files"
-  fi
+untracked_manifest="$(/usr/bin/mktemp "$manifest_parent/exochain-release-untracked.XXXXXX")"
+# Deliberately supply no exclude source: neither an untracked nested
+# .gitignore, .git/info/exclude, nor repository/global configuration may hide a
+# lifecycle-created path from the release boundary.
+trusted_git ls-files --others -z > "$untracked_manifest"
+if [ "$source_clean_mode" = "all" ] && [ -s "$untracked_manifest" ]; then
+  fail "checkout must be clean, including ignored and nonignored untracked files"
+fi
+
+if [ "$source_clean_mode" = "tracked" ] && [ -s "$untracked_manifest" ]; then
+  allowed_untracked_paths=()
+  while IFS= read -r allowed_path || [ -n "$allowed_path" ]; do
+    [ -n "$allowed_path" ] || continue
+    case "/$allowed_path/" in
+      //*|*/./*|*/../*|*:*|*$'\n'*) fail "RELEASE_ALLOWED_UNTRACKED_PATHS contains an unsafe path" ;;
+    esac
+    if [[ "$allowed_path" == /* ]] || [ -L "$release_workspace/$allowed_path" ] \
+      || { [ ! -e "$release_workspace/$allowed_path" ] && [ ! -L "$release_workspace/$allowed_path" ]; }; then
+      fail "allowed generated path must exist beneath GITHUB_WORKSPACE without a symlink root: $allowed_path"
+    fi
+    allowed_untracked_paths+=("$allowed_path")
+  done <<< "${RELEASE_ALLOWED_UNTRACKED_PATHS:-}"
+
+  while IFS= read -r -d '' untracked_path; do
+    path_allowed=false
+    for allowed_path in "${allowed_untracked_paths[@]:-}"; do
+      if [ "$untracked_path" = "$allowed_path" ] || [[ "$untracked_path" == "$allowed_path/"* ]]; then
+        path_allowed=true
+        break
+      fi
+    done
+    if [ "$path_allowed" != "true" ]; then
+      fail "untracked path is outside the explicit generated-output allowlist: $untracked_path"
+    fi
+  done < "$untracked_manifest"
 fi
 
 printf 'Verified immutable release source %s with %s cleanliness\n' "$head_sha" "$source_clean_mode"

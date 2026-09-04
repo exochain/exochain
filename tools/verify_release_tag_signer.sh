@@ -51,7 +51,7 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=
 trusted_git() (
   scrub_git_environment
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1
-  /usr/bin/git \
+  /usr/bin/git --no-replace-objects \
     -c core.fsmonitor=false \
     -c core.untrackedCache=false \
     -c core.ignoreStat=false \
