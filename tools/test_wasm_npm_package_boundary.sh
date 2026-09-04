@@ -27,8 +27,11 @@ release_workflow=".github/workflows/release.yml"
 package_json="packages/exochain-wasm/wasm/package.json"
 package_license="packages/exochain-wasm/wasm/LICENSE"
 prep_script="tools/prepare_wasm_npm_package.mjs"
+publisher="tools/publish_release_npm_package.sh"
+transport="tools/transport_wasm_release_output.py"
 
-for file in "$ci_workflow" "$release_workflow" "$package_json" "$package_license" "$prep_script"; do
+for file in "$ci_workflow" "$release_workflow" "$package_json" "$package_license" \
+  "$prep_script" "$publisher" "$transport"; do
   [[ -f "$file" ]] || fail "$file is missing"
 done
 
@@ -39,33 +42,69 @@ grep -F 'node tools/prepare_wasm_npm_package.mjs packages/exochain-wasm/wasm' "$
 grep -F 'npm pack --dry-run' "$ci_workflow" >/dev/null \
   || fail "CI WASM build must dry-pack the npm package"
 
-grep -F 'wasm-pack build crates/exochain-wasm --target nodejs --scope exochain --out-dir ../../.release-output/exochain-wasm -- --locked' "$release_workflow" >/dev/null \
-  || fail "release workflow must stage the scoped @exochain package outside tracked source without refreshing Cargo.lock"
-grep -F 'node tools/prepare_wasm_npm_package.mjs .release-output/exochain-wasm' "$release_workflow" >/dev/null \
-  || fail "release workflow must normalize only the staged WASM package"
+job_block() {
+  local job="$1"
+  awk -v job="  ${job}:" '
+    $0 == job { capture = 1; print; next }
+    capture && $0 ~ /^  [A-Za-z0-9_-]+:$/ { exit }
+    capture { print }
+  ' "$release_workflow"
+}
+
+install_block="$(job_block install-wasm-pack)"
+build_block="$(job_block build-wasm-npm)"
+prepare_block="$(job_block prepare-wasm-npm)"
+publish_block="$(job_block publish-wasm-npm)"
+for specification in \
+  "install-wasm-pack:$install_block" "build-wasm-npm:$build_block" \
+  "prepare-wasm-npm:$prepare_block" "publish-wasm-npm:$publish_block"; do
+  [ -n "${specification#*:}" ] || fail "release job ${specification%%:*} is missing"
+done
+
+grep -F 'permissions: {}' <<<"$install_block" >/dev/null \
+  && grep -F '"$cargo_path" install wasm-pack --version 0.14.0 --locked' <<<"$install_block" >/dev/null \
+  && grep -F 'archive_sha256: ${{ steps.seal-tool.outputs.archive_sha256 }}' <<<"$install_block" >/dev/null \
+  || fail "wasm-pack must be installed without repository authority and transported by independent digest"
+if grep -F 'actions/checkout@' <<<"$install_block" >/dev/null \
+  || grep -F 'github.token' <<<"$install_block" >/dev/null; then
+  fail "wasm-pack installer must not receive repository source or token"
+fi
+
+grep -F 'RELEASE_EXPECTED_TOOL_SHA256: ${{ needs.install-wasm-pack.outputs.archive_sha256 }}' <<<"$build_block" >/dev/null \
+  && grep -F -- '--profile wasm-pack --version 0.14.0' <<<"$build_block" >/dev/null \
+  && grep -F -- '--expected-sha256 "$RELEASE_EXPECTED_TOOL_SHA256"' <<<"$build_block" >/dev/null \
+  || fail "WASM build must execute strict-extracted isolated wasm-pack bytes"
+grep -F '"$wasm_pack_path" build "$GITHUB_WORKSPACE/crates/exochain-wasm"' <<<"$build_block" >/dev/null \
+  && grep -F -- '--target nodejs --scope exochain' <<<"$build_block" >/dev/null \
+  && grep -F -- '--out-dir "$RELEASE_WASM_PACKAGE_DIR" -- --locked' <<<"$build_block" >/dev/null \
+  || fail "release workflow must build locked scoped WASM output outside tracked source"
+grep -F 'transport_sha256: ${{ steps.transport-wasm.outputs.transport_sha256 }}' <<<"$build_block" >/dev/null \
+  && grep -F 'transport_wasm_release_output.py' <<<"$build_block" >/dev/null \
+  || fail "WASM lifecycle output must cross jobs only as strict untrusted transport"
+
+grep -F 'needs: [build-wasm-npm, verify-signed-tag, validate-release-inputs]' <<<"$prepare_block" >/dev/null \
+  && grep -F 'RELEASE_WASM_TRANSPORT_SHA256: ${{ needs.build-wasm-npm.outputs.transport_sha256 }}' <<<"$prepare_block" >/dev/null \
+  && grep -F -- '--expected-sha256 "$RELEASE_WASM_TRANSPORT_SHA256"' <<<"$prepare_block" >/dev/null \
+  || fail "fresh WASM packager must bind lifecycle transport to its independent digest"
+grep -F '"${GITHUB_SHA}:packages/exochain-wasm/wasm/package.json"' <<<"$prepare_block" >/dev/null \
+  && grep -F 'tools/verify_npm_release_package.mjs:$verify_script' <<<"$prepare_block" >/dev/null \
+  && grep -F 'tools/verify_npm_release_tarball.py:$tarball_guard' <<<"$prepare_block" >/dev/null \
+  || fail "fresh WASM packager must load immutable package validators"
 if grep -F -- '--out-dir ../../packages/exochain-wasm/wasm' "$release_workflow" >/dev/null; then
   fail "release workflow must not overwrite the tracked WASM package fixture"
 fi
-grep -F 'npm publish --access public --provenance' "$release_workflow" >/dev/null \
+grep -F '"$node_path" "$npm_cli_path" publish "$RELEASE_NPM_TARBALL"' "$publisher" >/dev/null \
+  && grep -F -- '--access public --provenance --ignore-scripts' "$publisher" >/dev/null \
   || fail "release workflow must publish npm package with provenance"
-grep -F 'NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}' "$release_workflow" >/dev/null \
+grep -F 'NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}' <<<"$publish_block" >/dev/null \
   || fail "release workflow must use the npm token for authenticated npm release steps"
-grep -F 'name: Verify npm registry authentication' "$release_workflow" >/dev/null \
-  || fail "release workflow must verify npm registry authentication before building the package"
-grep -F 'npm ping --registry=https://registry.npmjs.org' "$release_workflow" >/dev/null \
-  || fail "release workflow must verify npm registry reachability before publishing"
-grep -F 'npm whoami --registry=https://registry.npmjs.org' "$release_workflow" >/dev/null \
-  || fail "release workflow must verify the npm token identity before publishing"
-if grep -F 'npm org ls exochain' "$release_workflow" >/dev/null; then
-  fail "release workflow must not use npm org membership endpoints as publish preflight"
-fi
-grep -F 'npm_package_version_published()' "$release_workflow" >/dev/null \
-  || fail "release workflow must support resumable npm package publication checks"
-grep -F 'npm view "@exochain/exochain-wasm@${RELEASE_VERSION}" version --registry=https://registry.npmjs.org' "$release_workflow" >/dev/null \
-  || fail "release workflow must check whether the WASM npm package version is already published"
-grep -F '@exochain/exochain-wasm ${RELEASE_VERSION} is already published; skipping npm publish.' "$release_workflow" >/dev/null \
-  || fail "release workflow must skip already-published WASM npm package versions"
-grep -F 'id-token: write' "$release_workflow" >/dev/null \
+grep -F 'RELEASE_EXPECTED_TARBALL_SHA256: ${{ needs.prepare-wasm-npm.outputs.tarball_sha256 }}' <<<"$publish_block" >/dev/null \
+  && grep -F 'show "${GITHUB_SHA}:tools/publish_release_npm_package.sh"' <<<"$publish_block" >/dev/null \
+  || fail "fresh WASM publisher must bind and execute the exact token-free tarball"
+grep -F 'registry_has_exact_tarball()' "$publisher" >/dev/null \
+  && grep -F 'validate_npm_registry_response' "$publisher" >/dev/null \
+  || fail "npm publisher must resume only when registry integrity matches the exact tarball"
+grep -F 'id-token: write' <<<"$publish_block" >/dev/null \
   || fail "release workflow must grant OIDC for npm provenance"
 
 node - "$package_json" <<'NODE'

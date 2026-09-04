@@ -32,32 +32,259 @@ ci_workflow=".github/workflows/ci.yml"
 [[ -f tools/verify_cratesio_release_packaging.mjs ]] \
   || fail "tools/verify_cratesio_release_packaging.mjs is missing"
 
-node tools/verify_cratesio_release_packaging.mjs
-
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
 owner_guard_output="$fixture_dir/owner-guard.out"
+node_path="$(command -v node)"
+[ -x "$node_path" ] || fail "Node.js is unavailable"
+
+expect_owner_guard_failure() {
+  local case_name="$1"
+  local expected_message="$2"
+  shift 2
+  if "$@" >"$owner_guard_output" 2>&1; then
+    fail "crates.io namespace guard accepted $case_name"
+  fi
+  grep -F "$expected_message" "$owner_guard_output" >/dev/null \
+    || fail "crates.io namespace guard did not explain $case_name"
+}
+
+printf '{"users":[{"login":"exochain"}]}\n' > "$fixture_dir/exochain-core.json"
+expect_owner_guard_failure \
+  "a missing repository owner allowlist" \
+  "EXOCHAIN_CRATES_IO_ALLOWED_OWNERS must be explicitly configured" \
+  env -u EXOCHAIN_CRATES_IO_ALLOWED_OWNERS \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    node tools/check_cratesio_namespace_ownership.mjs
+expect_owner_guard_failure \
+  "an empty repository owner allowlist" \
+  "EXOCHAIN_CRATES_IO_ALLOWED_OWNERS must be explicitly configured" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS= \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    node tools/check_cratesio_namespace_ownership.mjs
+
 printf '{"users":[{"login":"unapproved-owner"}]}\n' > "$fixture_dir/exochain-core.json"
-if EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+expect_owner_guard_failure \
+  "a package owned only by an unapproved account" \
+  "unapproved crates.io owner" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    node tools/check_cratesio_namespace_ownership.mjs
+
+printf '{"users":[{"login":"exochain"},{"login":"attacker"}]}\n' \
+  > "$fixture_dir/exochain-core.json"
+expect_owner_guard_failure \
+  "mixed approved and unapproved owners" \
+  "unapproved crates.io owner" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    node tools/check_cratesio_namespace_ownership.mjs
+
+printf '{}\n' > "$fixture_dir/exochain-core.json"
+expect_owner_guard_failure \
+  "an owner response without a users array" \
+  "malformed crates.io owner response" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    node tools/check_cratesio_namespace_ownership.mjs
+
+printf '{"users":[]}\n' > "$fixture_dir/exochain-core.json"
+expect_owner_guard_failure \
+  "an empty owner response" \
+  "empty crates.io owner response" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    node tools/check_cratesio_namespace_ownership.mjs
+
+printf '{"users":[{"login":""}]}\n' > "$fixture_dir/exochain-core.json"
+expect_owner_guard_failure \
+  "a malformed owner record" \
+  "malformed crates.io owner record" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    node tools/check_cratesio_namespace_ownership.mjs
+
+printf '{"users":[{"login":"exochain"},{"login":"exochain-foundation"}]}\n' \
+  > "$fixture_dir/exochain-core.json"
+EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain,exochain-foundation \
   EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
-  node tools/check_cratesio_namespace_ownership.mjs >"$owner_guard_output" 2>&1; then
-  fail "crates.io namespace guard must reject packages owned by non-EXOCHAIN accounts"
+  node tools/check_cratesio_namespace_ownership.mjs >/dev/null
+
+printf '{"users":[{"login":"attacker"}],"users":[{"login":"exochain"}]}\n' \
+  > "$fixture_dir/exochain-core.json"
+expect_owner_guard_failure \
+  "duplicate users keys hiding an unapproved owner" \
+  "duplicate object key" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    EXOCHAIN_CRATES_IO_EXACT_TARGET=exochain-core \
+    "$node_path" tools/check_cratesio_namespace_ownership.mjs
+
+printf '{"u\\u0073ers":[{"login":"attacker"}],"users":[{"login":"exochain"}]}\n' \
+  > "$fixture_dir/exochain-core.json"
+expect_owner_guard_failure \
+  "escaped duplicate users keys hiding an unapproved owner" \
+  "duplicate object key" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    EXOCHAIN_CRATES_IO_EXACT_TARGET=exochain-core \
+    "$node_path" tools/check_cratesio_namespace_ownership.mjs
+
+/bin/rm -f "$fixture_dir/exochain-core.json"
+/usr/bin/mkfifo "$fixture_dir/exochain-core.json"
+expect_owner_guard_failure \
+  "a FIFO owner fixture" \
+  "must be one regular" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    EXOCHAIN_CRATES_IO_EXACT_TARGET=exochain-core \
+    "$node_path" tools/check_cratesio_namespace_ownership.mjs
+/bin/rm -f "$fixture_dir/exochain-core.json"
+
+printf '{"users":[{"login":"exochain"}]}\n' > "$fixture_dir/owner-target.json"
+/bin/ln -s "$fixture_dir/owner-target.json" "$fixture_dir/exochain-core.json"
+expect_owner_guard_failure \
+  "a symbolic-link owner fixture" \
+  "cannot be securely opened" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    EXOCHAIN_CRATES_IO_EXACT_TARGET=exochain-core \
+    "$node_path" tools/check_cratesio_namespace_ownership.mjs
+/bin/rm -f "$fixture_dir/exochain-core.json"
+
+/bin/ln "$fixture_dir/owner-target.json" "$fixture_dir/exochain-core.json"
+expect_owner_guard_failure \
+  "a hard-linked owner fixture" \
+  "non-hardlinked" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    EXOCHAIN_CRATES_IO_EXACT_TARGET=exochain-core \
+    "$node_path" tools/check_cratesio_namespace_ownership.mjs
+/bin/rm -f "$fixture_dir/exochain-core.json" "$fixture_dir/owner-target.json"
+
+/usr/bin/python3 - "$fixture_dir/exochain-core.json" <<'PY'
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_bytes(b" " * (1024 * 1024 + 1))
+PY
+expect_owner_guard_failure \
+  "an oversized owner fixture" \
+  "size is outside the accepted range" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    EXOCHAIN_CRATES_IO_EXACT_TARGET=exochain-core \
+    "$node_path" tools/check_cratesio_namespace_ownership.mjs
+
+# Exercise the descriptor-level before/after stability check with a valid,
+# near-limit JSON document whose trailing whitespace is changed continuously.
+active_writer_fixture="$fixture_dir/exochain-core.json"
+/usr/bin/python3 - "$active_writer_fixture" <<'PY'
+from pathlib import Path
+import sys
+
+payload = b'{"users":[{"login":"exochain"}]}\n'
+target = 1024 * 1024 - 1
+Path(sys.argv[1]).write_bytes(payload + b" " * (target - len(payload)))
+PY
+writer_ready="$fixture_dir/owner-writer-ready"
+writer_stop="$fixture_dir/owner-writer-stop"
+/usr/bin/python3 - "$active_writer_fixture" "$writer_ready" "$writer_stop" <<'PY' &
+from pathlib import Path
+import sys
+
+path, ready, stop = map(Path, sys.argv[1:])
+with path.open("r+b", buffering=0) as handle:
+    offset = path.stat().st_size - 1
+    ready.touch()
+    toggle = False
+    while not stop.exists():
+        handle.seek(offset)
+        handle.write(b"\t" if toggle else b" ")
+        toggle = not toggle
+PY
+writer_pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  [ -e "$writer_ready" ] && break
+  /bin/sleep 0.1
+done
+[ -e "$writer_ready" ] || fail "active owner-fixture writer did not start"
+if env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    EXOCHAIN_CRATES_IO_EXACT_TARGET=exochain-core \
+    "$node_path" tools/check_cratesio_namespace_ownership.mjs \
+    >"$owner_guard_output" 2>&1; then
+  : > "$writer_stop"
+  wait "$writer_pid" || true
+  fail "crates.io namespace guard accepted an actively modified owner fixture"
 fi
-grep -F 'not an approved EXOCHAIN owner' "$owner_guard_output" >/dev/null \
-  || fail "crates.io namespace guard rejection must explain the non-EXOCHAIN owner"
+: > "$writer_stop"
+wait "$writer_pid" || true
+grep -F 'changed while it was read' "$owner_guard_output" >/dev/null \
+  || fail "active owner-fixture rejection did not come from the stable-read boundary"
+/bin/rm -f -- "$writer_ready" "$writer_stop"
 
 printf '{"users":[{"login":"exochain"}]}\n' > "$fixture_dir/exochain-core.json"
 EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
   EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
-  node tools/check_cratesio_namespace_ownership.mjs >/dev/null
+  EXOCHAIN_CRATES_IO_EXACT_TARGET=exochain-core \
+  PATH=/nonexistent \
+  "$node_path" tools/check_cratesio_namespace_ownership.mjs >/dev/null \
+  || fail "exact-target owner validation unexpectedly invoked Cargo"
+expect_owner_guard_failure \
+  "a target outside the exact release inventory" \
+  "not one of the exact 32 release crates" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    EXOCHAIN_CRATES_IO_EXACT_TARGET=attacker-crate \
+    "$node_path" tools/check_cratesio_namespace_ownership.mjs
 
-grep -F 'node tools/check_cratesio_namespace_ownership.mjs' "$workflow" >/dev/null \
-  || fail "release workflow must run the crates.io namespace ownership guard before publishing"
+/bin/rm -f "$fixture_dir/exochain-core.json"
+EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+  EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+  EXOCHAIN_CRATES_IO_EXACT_TARGET=exochain-core \
+  "$node_path" tools/check_cratesio_namespace_ownership.mjs >/dev/null \
+  || fail "pre-publication ownership validation must permit an unclaimed namespace"
+expect_owner_guard_failure \
+  "an unclaimed namespace after an exact checksum observation" \
+  "must already be claimed by an approved crates.io owner" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    EXOCHAIN_CRATES_IO_EXACT_TARGET=exochain-core \
+    EXOCHAIN_CRATES_IO_REQUIRE_CLAIMED=true \
+    "$node_path" tools/check_cratesio_namespace_ownership.mjs
+expect_owner_guard_failure \
+  "a malformed require-claimed mode" \
+  "must be exactly true when set" \
+  env EXOCHAIN_CRATES_IO_ALLOWED_OWNERS=exochain \
+    EXOCHAIN_CRATES_IO_FIXTURE_DIR="$fixture_dir" \
+    EXOCHAIN_CRATES_IO_EXACT_TARGET=exochain-core \
+    EXOCHAIN_CRATES_IO_REQUIRE_CLAIMED=false \
+    "$node_path" tools/check_cratesio_namespace_ownership.mjs
+
+grep -F 'redirect: "error"' tools/check_cratesio_namespace_ownership.mjs >/dev/null \
+  && grep -F 'AbortSignal.timeout(FETCH_TIMEOUT_MS)' tools/check_cratesio_namespace_ownership.mjs >/dev/null \
+  && grep -F 'total > MAX_RESPONSE_BYTES' tools/check_cratesio_namespace_ownership.mjs >/dev/null \
+  || fail "live crates.io owner requests must reject redirects, time out, and cap streamed bytes"
+
+node tools/verify_cratesio_release_packaging.mjs
+
+grep -F '${GITHUB_SHA}:tools/check_cratesio_namespace_ownership.mjs' "$workflow" >/dev/null \
+  || fail "release workflow must load the crates.io namespace ownership guard from the immutable commit"
 grep -F '/owners' tools/check_cratesio_namespace_ownership.mjs >/dev/null \
   || fail "crates.io namespace guard must inspect crates.io owner records, not only crate metadata"
-grep -F 'cargo publish -p "$crate" --dry-run --locked' "$workflow" >/dev/null \
-  || fail "release workflow must dry-run every crate without refreshing the lockfile"
-if grep -F -- '--allow-dirty' "$workflow" >/dev/null; then
+grep -F 'EXOCHAIN_CRATES_IO_ALLOWED_OWNERS: ${{ vars.EXOCHAIN_CRATES_IO_ALLOWED_OWNERS }}' "$workflow" >/dev/null \
+  || fail "release workflow must bind the crates.io owner allowlist to an explicit repository variable"
+grep -F 'release_cargo package' tools/preflight_release_crates.sh >/dev/null \
+  && grep -F -- '--workspace' tools/preflight_release_crates.sh >/dev/null \
+  && grep -F -- '--no-verify' tools/preflight_release_crates.sh >/dev/null \
+  && grep -F -- '--locked' tools/preflight_release_crates.sh >/dev/null \
+  || fail "token-free preflight must package the exact locked workspace without running build scripts"
+grep -F 'release_cargo_publish "$crate"' tools/publish_release_crates.sh >/dev/null \
+  && grep -F -- '--no-verify' tools/publish_release_crates.sh >/dev/null \
+  && grep -F -- '--locked' tools/publish_release_crates.sh >/dev/null \
+  || fail "live publisher must publish exact locked candidates without re-running build scripts"
+if grep -F -- '--allow-dirty' "$workflow" tools/preflight_release_crates.sh tools/publish_release_crates.sh >/dev/null; then
   fail "release workflow must not bypass Cargo's dirty-source rejection"
 fi
 grep -F 'bash tools/test_cratesio_release_packaging.sh' "$ci_workflow" >/dev/null \

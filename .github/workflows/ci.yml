@@ -310,6 +310,26 @@ jobs:
         run: bash tools/test_cratesio_release_packaging.sh
       - name: WASM npm package boundary
         run: bash tools/test_wasm_npm_package_boundary.sh
+      - name: Immutable release helper capture boundary
+        run: bash tools/test_capture_release_helper.sh
+      - name: crates.io publisher registry and ownership boundary
+        run: bash tools/test_publish_release_crates_registry_validation.sh
+      - name: npm publisher registry response boundary
+        run: bash tools/test_publish_release_npm_registry_validation.sh
+      - name: LYNK release staging boundary
+        run: bash tools/test_stage_llm_release_package.sh
+      - name: LYNK tested-build lifecycle boundary
+        run: bash tools/test_release_llm_lifecycle_boundary.sh
+      - name: Native release output transport boundary
+        run: bash tools/test_transport_release_build_output.sh
+      - name: WASM release output transport boundary
+        run: bash tools/test_transport_wasm_release_output.sh
+      - name: Exact release file-set transport boundary
+        run: bash tools/test_transport_release_file_set.sh
+      - name: npm release tarball parser boundary
+        run: bash tools/test_verify_npm_release_tarball.sh
+      - name: npm 10.9.2 configuration boundary
+        run: bash tools/test_release_npm_config_boundary.sh
       - name: Repo truth and public claims
         run: bash tools/test_repo_truth.sh
       - name: Sybil CLI secret boundary
@@ -360,27 +380,36 @@ jobs:
   # -----------------------------------------------------------------------
   sbom:
     name: "Gate 10 — SBOM Dry-Run"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
-          toolchain: stable
+          toolchain: 1.97.1
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        id: setup-python
+        with:
+          python-version: 3.13.7
+          cache: ""
       - name: Install cargo-cyclonedx
         run: bash tools/ci_cargo_retry.sh cargo install cargo-cyclonedx --version 0.5.9 --locked
       - name: Generate CycloneDX SBOM (validation only)
-        run: cargo cyclonedx --manifest-path Cargo.toml --format json
+        run: SOURCE_DATE_EPOCH=0 cargo cyclonedx --manifest-path Cargo.toml -f json --all --target all --spec-version 1.5
       - name: Validate SBOM output
         run: |
-          SBOM_COUNT=$(find . -name '*.cdx.json' -o -name '*bom*.json' | head -20 | wc -l)
-          if [ "$SBOM_COUNT" -eq 0 ]; then
-            echo "::error::SBOM generation produced no output files"
+          SBOM_COUNT=$(find crates -type f -name '*.cdx.json' | wc -l)
+          if [ "$SBOM_COUNT" -ne 32 ]; then
+            echo "::error::SBOM generation produced $SBOM_COUNT files, expected 32"
             exit 1
           fi
           echo "✓ CycloneDX SBOM generated successfully ($SBOM_COUNT files):"
-          find . -name '*.cdx.json' -o -name '*bom*.json' | head -20
+          find crates -type f -name '*.cdx.json' | sort
+      - name: Canonical release SBOM semantic boundary
+        env:
+          PYTHON: ${{ steps.setup-python.outputs.python-path }}
+        run: bash tools/test_verify_release_sbom.sh
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
