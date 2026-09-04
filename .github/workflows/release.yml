@@ -22,7 +22,7 @@
 # Produces deterministic release artifacts with CycloneDX SBOMs and SLSA attestations.
 
 name: EXOCHAIN Release
-on:
+"on":
   workflow_dispatch:
     inputs:
       version:
