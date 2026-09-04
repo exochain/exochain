@@ -954,9 +954,8 @@ mod tests {
 
     fn round1_package_bytes(config: &GenesisCeremonyConfig, frost_identifier: u16) -> Vec<u8> {
         let mut rng = StdRng::seed_from_u64(u64::from(frost_identifier));
-        crate::dkg_round1(config, frost_identifier, &mut rng)
-            .expect("round one")
-            .round1_package
+        let mut output = crate::dkg_round1(config, frost_identifier, &mut rng).expect("round one");
+        std::mem::take(&mut output.round1_package)
     }
 
     fn certifier(index: u16) -> (CertifierContact, exo_core::SecretKey) {

@@ -27,13 +27,19 @@ pub struct RootPublicKeyPackage {
 }
 
 /// Serialized FROST key package held by one certifier.
-#[derive(PartialEq, Eq, Serialize, Deserialize)]
+///
+/// The byte field retains its original [`Vec`] shape for patch-release source
+/// compatibility, while this owner wipes the vector's full capacity on drop.
+/// Consequently, callers can borrow the field or clone this owner, but cannot
+/// directly move the field out of it; that is the ownership tradeoff required
+/// to preserve both the legacy field type and automatic zeroization.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ZeroizingRootKeyPackage")]
 pub struct RootKeyPackage {
     /// Owner's FROST identifier.
     pub frost_identifier: u16,
     /// Serialized FROST key package.
-    #[serde(deserialize_with = "deserialize_zeroizing_bytes")]
-    pub key_package: Zeroizing<Vec<u8>>,
+    pub key_package: Vec<u8>,
 }
 
 impl fmt::Debug for RootKeyPackage {
@@ -46,8 +52,49 @@ impl fmt::Debug for RootKeyPackage {
     }
 }
 
+impl RootKeyPackage {
+    fn from_zeroizing(frost_identifier: u16, mut key_package: Zeroizing<Vec<u8>>) -> Self {
+        let mut output = Self {
+            frost_identifier,
+            key_package: Vec::new(),
+        };
+        output.key_package = std::mem::take(&mut *key_package);
+        output
+    }
+}
+
+impl Zeroize for RootKeyPackage {
+    fn zeroize(&mut self) {
+        self.key_package.zeroize();
+    }
+}
+
+impl Drop for RootKeyPackage {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl zeroize::ZeroizeOnDrop for RootKeyPackage {}
+
+#[derive(Deserialize)]
+struct ZeroizingRootKeyPackage {
+    frost_identifier: u16,
+    #[serde(deserialize_with = "deserialize_zeroizing_bytes")]
+    key_package: Zeroizing<Vec<u8>>,
+}
+
+impl From<ZeroizingRootKeyPackage> for RootKeyPackage {
+    fn from(value: ZeroizingRootKeyPackage) -> Self {
+        Self::from_zeroizing(value.frost_identifier, value.key_package)
+    }
+}
+
 /// Complete in-memory DKG result for tests and offline ceremony tooling.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Cloning this value duplicates private key-package material. Each owned copy
+/// still wipes that material on drop, so callers should keep copies short-lived.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RootDkgOutput {
     /// Certifier key packages by FROST identifier.
     pub key_packages: BTreeMap<u16, RootKeyPackage>,
@@ -56,15 +103,67 @@ pub struct RootDkgOutput {
 }
 
 /// Serialized output from one certifier's DKG round one.
-#[derive(PartialEq, Eq, Serialize, Deserialize)]
+///
+/// The fields retain their original [`Vec`] shapes. This owner wipes the
+/// private round-one vector on drop, which means fields must be borrowed rather
+/// than moved directly out of the value.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ZeroizingRootDkgRound1Output")]
 pub struct RootDkgRound1Output {
     /// Owner's FROST identifier.
     pub frost_identifier: u16,
     /// Private round-one state retained by the certifier.
-    #[serde(deserialize_with = "deserialize_zeroizing_bytes")]
-    pub round1_secret_package: Zeroizing<Vec<u8>>,
+    pub round1_secret_package: Vec<u8>,
     /// Public round-one package broadcast to every other certifier.
     pub round1_package: Vec<u8>,
+}
+
+impl RootDkgRound1Output {
+    fn from_zeroizing(
+        frost_identifier: u16,
+        mut round1_secret_package: Zeroizing<Vec<u8>>,
+        round1_package: Vec<u8>,
+    ) -> Self {
+        let mut output = Self {
+            frost_identifier,
+            round1_secret_package: Vec::new(),
+            round1_package,
+        };
+        output.round1_secret_package = std::mem::take(&mut *round1_secret_package);
+        output
+    }
+}
+
+impl Zeroize for RootDkgRound1Output {
+    fn zeroize(&mut self) {
+        self.round1_secret_package.zeroize();
+    }
+}
+
+impl Drop for RootDkgRound1Output {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl zeroize::ZeroizeOnDrop for RootDkgRound1Output {}
+
+#[derive(Deserialize)]
+struct ZeroizingRootDkgRound1Output {
+    frost_identifier: u16,
+    #[serde(deserialize_with = "deserialize_zeroizing_bytes")]
+    round1_secret_package: Zeroizing<Vec<u8>>,
+    round1_package: Vec<u8>,
+}
+
+impl From<ZeroizingRootDkgRound1Output> for RootDkgRound1Output {
+    fn from(value: ZeroizingRootDkgRound1Output) -> Self {
+        Self::from_zeroizing(
+            value.frost_identifier,
+            value.round1_secret_package,
+            value.round1_package,
+        )
+    }
 }
 
 impl fmt::Debug for RootDkgRound1Output {
@@ -79,16 +178,86 @@ impl fmt::Debug for RootDkgRound1Output {
 }
 
 /// Serialized output from one certifier's DKG round two.
-#[derive(PartialEq, Eq, Serialize, Deserialize)]
+///
+/// The fields retain their original [`Vec`] and [`BTreeMap`] shapes. This owner
+/// wipes every private vector on drop, which means fields must be borrowed
+/// rather than moved directly out of the value.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ZeroizingRootDkgRound2Output")]
 pub struct RootDkgRound2Output {
     /// Owner's FROST identifier.
     pub frost_identifier: u16,
     /// Private round-two state retained by the certifier.
-    #[serde(deserialize_with = "deserialize_zeroizing_bytes")]
-    pub round2_secret_package: Zeroizing<Vec<u8>>,
+    pub round2_secret_package: Vec<u8>,
     /// Recipient-bound round-two packages by recipient FROST identifier.
+    pub round2_packages: BTreeMap<u16, Vec<u8>>,
+}
+
+type RecipientRound2Packages = BTreeMap<u16, Zeroizing<Vec<u8>>>;
+type ZeroizingRound2Parts = (Zeroizing<Vec<u8>>, RecipientRound2Packages);
+
+impl RootDkgRound2Output {
+    fn from_zeroizing(
+        frost_identifier: u16,
+        mut round2_secret_package: Zeroizing<Vec<u8>>,
+        mut round2_packages: BTreeMap<u16, Zeroizing<Vec<u8>>>,
+    ) -> Self {
+        let mut output = Self {
+            frost_identifier,
+            round2_secret_package: Vec::new(),
+            round2_packages: BTreeMap::new(),
+        };
+        output.round2_secret_package = std::mem::take(&mut *round2_secret_package);
+        while let Some((identifier, mut package)) = round2_packages.pop_first() {
+            output
+                .round2_packages
+                .insert(identifier, std::mem::take(&mut *package));
+        }
+        output
+    }
+
+    fn take_zeroizing_parts(&mut self) -> ZeroizingRound2Parts {
+        let secret_package = Zeroizing::new(std::mem::take(&mut self.round2_secret_package));
+        let packages = zeroizing_byte_map(std::mem::take(&mut self.round2_packages));
+        (secret_package, packages)
+    }
+}
+
+impl Zeroize for RootDkgRound2Output {
+    fn zeroize(&mut self) {
+        self.round2_secret_package.zeroize();
+        for package in self.round2_packages.values_mut() {
+            package.zeroize();
+        }
+        self.round2_packages.clear();
+    }
+}
+
+impl Drop for RootDkgRound2Output {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl zeroize::ZeroizeOnDrop for RootDkgRound2Output {}
+
+#[derive(Deserialize)]
+struct ZeroizingRootDkgRound2Output {
+    frost_identifier: u16,
+    #[serde(deserialize_with = "deserialize_zeroizing_bytes")]
+    round2_secret_package: Zeroizing<Vec<u8>>,
     #[serde(deserialize_with = "deserialize_zeroizing_byte_map")]
-    pub round2_packages: BTreeMap<u16, Zeroizing<Vec<u8>>>,
+    round2_packages: BTreeMap<u16, Zeroizing<Vec<u8>>>,
+}
+
+impl From<ZeroizingRootDkgRound2Output> for RootDkgRound2Output {
+    fn from(value: ZeroizingRootDkgRound2Output) -> Self {
+        Self::from_zeroizing(
+            value.frost_identifier,
+            value.round2_secret_package,
+            value.round2_packages,
+        )
+    }
 }
 
 impl fmt::Debug for RootDkgRound2Output {
@@ -289,8 +458,20 @@ where
     deserializer.deserialize_map(ZeroizingByteMapVisitor)
 }
 
+fn zeroizing_byte_map(mut packages: BTreeMap<u16, Vec<u8>>) -> BTreeMap<u16, Zeroizing<Vec<u8>>> {
+    let mut zeroizing_packages = BTreeMap::new();
+    while let Some((identifier, package)) = packages.pop_first() {
+        let package = Zeroizing::new(package);
+        zeroizing_packages.insert(identifier, package);
+    }
+    zeroizing_packages
+}
+
 /// Final DKG material derived by one certifier.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Cloning this value duplicates its private key package. Each owned copy still
+/// wipes that package on drop, so callers should keep copies short-lived.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RootParticipantDkgOutput {
     /// Owner's FROST key package.
     pub key_package: RootKeyPackage,
@@ -442,11 +623,10 @@ where
     let threshold = config.threshold;
     let round1 = frost_dkg_round1(identifier, max_signers, threshold, rng)?;
     let (secret_package, package) = round1;
-    let output = RootDkgRound1Output {
-        frost_identifier: frost_identifier_value,
-        round1_secret_package: serialize_frost_secret(&secret_package)?,
-        round1_package: serialize_frost(&package)?,
-    };
+    let secret_package = serialize_frost_secret(&secret_package)?;
+    let public_package = serialize_frost(&package)?;
+    let output =
+        RootDkgRound1Output::from_zeroizing(frost_identifier_value, secret_package, public_package);
     Ok(output)
 }
 
@@ -476,16 +656,40 @@ pub fn dkg_round2(
         let recipient_value = identifier_value(config, recipient)?;
         round2_packages.insert(recipient_value, serialize_frost_secret(&package)?);
     }
-    Ok(RootDkgRound2Output {
-        frost_identifier: frost_identifier_value,
-        round2_secret_package: serialize_frost_secret(&round2_secret_package)?,
+    let round2_secret_package = serialize_frost_secret(&round2_secret_package)?;
+    Ok(RootDkgRound2Output::from_zeroizing(
+        frost_identifier_value,
+        round2_secret_package,
         round2_packages,
-    })
+    ))
 }
 
 /// Finalize one participant's DKG state after all peer round-one and round-two
 /// packages have been authenticated and collected.
 pub fn dkg_finalize_participant(
+    config: &GenesisCeremonyConfig,
+    frost_identifier_value: u16,
+    round2_secret_package: &[u8],
+    round1_packages: BTreeMap<u16, Vec<u8>>,
+    round2_packages: BTreeMap<u16, Vec<u8>>,
+) -> Result<RootParticipantDkgOutput> {
+    let round2_packages = zeroizing_byte_map(round2_packages);
+    dkg_finalize_participant_zeroizing(
+        config,
+        frost_identifier_value,
+        round2_secret_package,
+        round1_packages,
+        round2_packages,
+    )
+}
+
+/// Finalize one participant while retaining zeroizing ownership of decoded
+/// recipient-bound round-two packages.
+///
+/// Ceremony tooling that already decodes private packages into [`Zeroizing`]
+/// buffers should use this entry point. Existing callers with ordinary byte
+/// vectors remain supported by [`dkg_finalize_participant`].
+pub fn dkg_finalize_participant_zeroizing(
     config: &GenesisCeremonyConfig,
     frost_identifier_value: u16,
     round2_secret_package: &[u8],
@@ -513,10 +717,10 @@ pub fn dkg_finalize_participant(
     let (key_package, public_key_package) =
         frost::keys::dkg::part3(&secret_package, &inbound_round1, &inbound_round2)
             .map_err(frost_error)?;
-    let key_package = RootKeyPackage {
-        frost_identifier: frost_identifier_value,
-        key_package: serialize_frost_secret(&key_package)?,
-    };
+    let key_package = RootKeyPackage::from_zeroizing(
+        frost_identifier_value,
+        serialize_frost_secret(&key_package)?,
+    );
     Ok(RootParticipantDkgOutput {
         key_package,
         public_key_package: serialize_public_key_package(config, &public_key_package)?,
@@ -571,8 +775,6 @@ fn deserialize_round2_packages(
     Ok(result)
 }
 
-type RecipientRound2Packages = BTreeMap<u16, Zeroizing<Vec<u8>>>;
-
 fn require_recipient_round2_packages(
     round2_packages: Option<RecipientRound2Packages>,
     identifier: u16,
@@ -614,16 +816,17 @@ where
     for (identifier, round1_output) in round1_outputs {
         let peer_round1 = peer_packages_except(&round1_public, identifier);
         let secret = &round1_output.round1_secret_package;
-        let round2 = dkg_round2(config, identifier, secret, peer_round1)?;
-        for (recipient, package) in round2.round2_packages {
+        let mut round2 = dkg_round2(config, identifier, secret, peer_round1)?;
+        let (round2_secret, round2_packages) = round2.take_zeroizing_parts();
+        for (recipient, package) in round2_packages {
             let recipient_packages = round2_by_recipient.entry(recipient).or_default();
             recipient_packages.insert(identifier, package);
         }
-        round2_secrets.insert(identifier, round2.round2_secret_package);
+        round2_secrets.insert(identifier, round2_secret);
     }
 
     let mut key_packages = BTreeMap::new();
-    let finish = dkg_finalize_participant;
+    let finish = dkg_finalize_participant_zeroizing;
     let first_identifier = config.certifiers[0].frost_identifier;
     let mut public_key_package = None;
     for (identifier, round2_secret) in round2_secrets {
@@ -751,25 +954,32 @@ mod tests {
 
     #[test]
     fn secret_dkg_byte_carriers_zeroize_on_drop() {
-        let key_package = RootKeyPackage {
+        let mut key_package = RootKeyPackage {
             frost_identifier: 7,
-            key_package: Zeroizing::new(vec![0xde, 0xad, 0xbe, 0xef]),
+            key_package: vec![0xde, 0xad, 0xbe, 0xef],
         };
-        let round1 = RootDkgRound1Output {
+        let mut round1 = RootDkgRound1Output {
             frost_identifier: 7,
-            round1_secret_package: Zeroizing::new(vec![0xca, 0xfe, 0xba, 0xbe]),
+            round1_secret_package: vec![0xca, 0xfe, 0xba, 0xbe],
             round1_package: vec![1, 2, 3],
         };
-        let round2 = RootDkgRound2Output {
+        let mut round2 = RootDkgRound2Output {
             frost_identifier: 7,
-            round2_secret_package: Zeroizing::new(vec![0x12, 0x34, 0x56, 0x78]),
-            round2_packages: BTreeMap::from([(8, Zeroizing::new(vec![4, 5, 6]))]),
+            round2_secret_package: vec![0x12, 0x34, 0x56, 0x78],
+            round2_packages: BTreeMap::from([(8, vec![4, 5, 6])]),
         };
 
-        assert_zeroizing_carrier(&key_package.key_package);
-        assert_zeroizing_carrier(&round1.round1_secret_package);
-        assert_zeroizing_carrier(&round2.round2_secret_package);
-        assert_zeroizing_carrier(round2.round2_packages.get(&8).expect("recipient package"));
+        assert_zeroizing_carrier(&key_package);
+        assert_zeroizing_carrier(&round1);
+        assert_zeroizing_carrier(&round2);
+
+        key_package.zeroize();
+        round1.zeroize();
+        round2.zeroize();
+        assert!(key_package.key_package.is_empty());
+        assert!(round1.round1_secret_package.is_empty());
+        assert!(round2.round2_secret_package.is_empty());
+        assert!(round2.round2_packages.is_empty());
     }
 
     #[test]
@@ -779,17 +989,17 @@ mod tests {
         let round2_secret = vec![0x12, 0x34, 0x56, 0x78];
         let key_package = RootKeyPackage {
             frost_identifier: 7,
-            key_package: Zeroizing::new(key_secret.clone()),
+            key_package: key_secret.clone(),
         };
         let round1 = RootDkgRound1Output {
             frost_identifier: 7,
-            round1_secret_package: Zeroizing::new(round1_secret.clone()),
+            round1_secret_package: round1_secret.clone(),
             round1_package: vec![1, 2, 3],
         };
         let round2 = RootDkgRound2Output {
             frost_identifier: 7,
-            round2_secret_package: Zeroizing::new(round2_secret.clone()),
-            round2_packages: BTreeMap::from([(8, Zeroizing::new(vec![4, 5, 6]))]),
+            round2_secret_package: round2_secret.clone(),
+            round2_packages: BTreeMap::from([(8, vec![4, 5, 6])]),
         };
 
         for (rendered, secret) in [
@@ -813,8 +1023,8 @@ mod tests {
         let recipient_secret = vec![0x99, 0x88, 0x77, 0x66];
         let output = RootDkgRound2Output {
             frost_identifier: 7,
-            round2_secret_package: Zeroizing::new(vec![0x12, 0x34, 0x56, 0x78]),
-            round2_packages: BTreeMap::from([(8, Zeroizing::new(recipient_secret.clone()))]),
+            round2_secret_package: vec![0x12, 0x34, 0x56, 0x78],
+            round2_packages: BTreeMap::from([(8, recipient_secret.clone())]),
         };
 
         let rendered = format!("{output:?}");
@@ -826,9 +1036,7 @@ mod tests {
             !rendered.contains(&format!("{recipient_secret:?}")),
             "recipient-bound round-two package leaked through Debug: {rendered}"
         );
-        for package in output.round2_packages.values() {
-            assert_zeroizing_carrier(package);
-        }
+        assert_zeroizing_carrier(&output);
     }
 
     #[test]
@@ -899,21 +1107,9 @@ mod tests {
     }
 
     #[test]
-    fn secret_carriers_cannot_regain_clone_or_derived_secret_deserialization() {
+    fn complete_dkg_moves_internal_zeroizing_secret_packages_without_clone() {
         let dkg_source = include_str!("dkg.rs");
         let signing_source = include_str!("signing.rs");
-        for declaration in [
-            "pub struct RootKeyPackage",
-            "pub struct RootDkgOutput",
-            "pub struct RootDkgRound1Output",
-            "pub struct RootDkgRound2Output",
-            "pub struct RootParticipantDkgOutput",
-        ] {
-            assert!(
-                !derive_before(dkg_source, declaration).contains("Clone"),
-                "{declaration} must not regain secret duplication through Clone"
-            );
-        }
         assert!(
             !derive_before(signing_source, "pub struct RootSigningNonces").contains("Clone"),
             "RootSigningNonces must not regain secret duplication through Clone"
@@ -957,7 +1153,7 @@ mod tests {
             );
         }
         assert!(
-            complete_dkg.contains("for (recipient, package) in round2.round2_packages"),
+            complete_dkg.contains("for (recipient, package) in round2_packages"),
             "complete DKG must consume outbound recipient packages"
         );
         assert!(
@@ -1023,11 +1219,8 @@ mod tests {
     fn secret_dkg_deserializer_round_trips_recipient_packages() {
         let fixture = RootDkgRound2Output {
             frost_identifier: 7,
-            round2_secret_package: Zeroizing::new(vec![1, 2, 3]),
-            round2_packages: BTreeMap::from([
-                (8, Zeroizing::new(vec![4, 5, 6])),
-                (9, Zeroizing::new(vec![7, 8, 9])),
-            ]),
+            round2_secret_package: vec![1, 2, 3],
+            round2_packages: BTreeMap::from([(8, vec![4, 5, 6]), (9, vec![7, 8, 9])]),
         };
 
         let json = serde_json::to_vec(&fixture).expect("round-two JSON fixture");
@@ -1071,7 +1264,7 @@ mod tests {
         let key_secret = vec![0xde, 0xad, 0xbe, 0xef];
         let key_package = RootKeyPackage {
             frost_identifier: 7,
-            key_package: Zeroizing::new(key_secret.clone()),
+            key_package: key_secret.clone(),
         };
         let legacy_key = LegacyRootKeyPackage {
             frost_identifier: 7,
@@ -1087,7 +1280,7 @@ mod tests {
         let round1_public = vec![1, 2, 3];
         let round1 = RootDkgRound1Output {
             frost_identifier: 7,
-            round1_secret_package: Zeroizing::new(round1_secret.clone()),
+            round1_secret_package: round1_secret.clone(),
             round1_package: round1_public.clone(),
         };
         let legacy_round1 = LegacyRound1Output {
@@ -1105,11 +1298,8 @@ mod tests {
         let round2_public = BTreeMap::from([(8, vec![4, 5, 6])]);
         let round2 = RootDkgRound2Output {
             frost_identifier: 7,
-            round2_secret_package: Zeroizing::new(round2_secret.clone()),
-            round2_packages: round2_public
-                .iter()
-                .map(|(identifier, package)| (*identifier, Zeroizing::new(package.clone())))
-                .collect(),
+            round2_secret_package: round2_secret.clone(),
+            round2_packages: round2_public.clone(),
         };
         let legacy_round2 = LegacyRound2Output {
             frost_identifier: 7,

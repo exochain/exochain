@@ -14,7 +14,6 @@ use exo_root::{
     threshold_sign, unseal_share, verify_root_bundle, verify_root_signature,
 };
 use rand::{SeedableRng, rngs::StdRng};
-use zeroize::Zeroizing;
 
 fn did(index: u16) -> Did {
     Did::new(&format!("did:exo:certifier-{index:02}")).expect("valid did")
@@ -116,9 +115,9 @@ fn submit_complete_dkg_transcript(
     rng: &mut StdRng,
 ) -> Hash256 {
     for certifier in &config.certifiers {
-        let round1 = dkg_round1(config, certifier.frost_identifier, rng)
-            .expect("round one")
-            .round1_package;
+        let mut round1_output =
+            dkg_round1(config, certifier.frost_identifier, rng).expect("round one");
+        let round1 = std::mem::take(&mut round1_output.round1_package);
         store
             .submit(sign_envelope(
                 config,
@@ -435,7 +434,7 @@ fn threshold_signing_rejects_malformed_public_key_package_and_signer_set() {
     let mut malformed_rng = StdRng::seed_from_u64(43);
     let mut malformed_dkg = run_complete_dkg(&config, &mut malformed_rng).expect("malformed dkg");
     let mut malformed_share = take_key_packages(&mut malformed_dkg, 7);
-    malformed_share.get_mut(&1).expect("share").key_package = b"not a key package".to_vec().into();
+    malformed_share.get_mut(&1).expect("share").key_package = b"not a key package".to_vec();
     assert!(
         threshold_sign(
             &config,
@@ -530,7 +529,7 @@ fn dkg_round_wrappers_complete_all_thirteen_and_reject_missing_peer_packages() {
     );
 
     let mut round2_outputs = BTreeMap::new();
-    let mut round2_by_recipient: BTreeMap<u16, BTreeMap<u16, Zeroizing<Vec<u8>>>> = BTreeMap::new();
+    let mut round2_by_recipient: BTreeMap<u16, BTreeMap<u16, Vec<u8>>> = BTreeMap::new();
     for (identifier, round1_output) in &round1_outputs {
         let peer_round1 = round1_public
             .iter()
@@ -608,7 +607,7 @@ fn dkg_round_wrappers_reject_valid_but_misbound_peer_packages() {
     );
 
     let mut round2_outputs = BTreeMap::new();
-    let mut round2_by_recipient: BTreeMap<u16, BTreeMap<u16, Zeroizing<Vec<u8>>>> = BTreeMap::new();
+    let mut round2_by_recipient: BTreeMap<u16, BTreeMap<u16, Vec<u8>>> = BTreeMap::new();
     for (identifier, round1_output) in &round1_outputs {
         let participant_peer_round1 = round1_public
             .iter()
@@ -750,7 +749,7 @@ fn dkg_round_wrappers_reject_malformed_or_misaddressed_packages() {
     );
 
     let mut malformed_round2 = round2.round2_packages.clone();
-    malformed_round2.insert(2, Zeroizing::new(b"not a round2 package".to_vec()));
+    malformed_round2.insert(2, b"not a round2 package".to_vec());
     assert!(
         dkg_finalize_participant(
             &config,
@@ -776,7 +775,7 @@ fn dkg_round_wrappers_reject_malformed_or_misaddressed_packages() {
         .is_err()
     );
 
-    let mut nonrostered_round2 = round2.round2_packages;
+    let mut nonrostered_round2 = round2.round2_packages.clone();
     nonrostered_round2.remove(&2);
     nonrostered_round2.insert(99, self_round2.remove(&1).expect("round2 package"));
     assert!(
@@ -1212,9 +1211,8 @@ fn portal_rejects_wrong_ceremony_bad_recipient_self_target_and_bad_broadcasts() 
 fn portal_schema_validates_dkg_kinds_and_keeps_unratified_kinds_disabled() {
     let (config, signing_secrets, _) = config();
     let mut rng = StdRng::seed_from_u64(2026);
-    let round1_package = dkg_round1(&config, 1, &mut rng)
-        .expect("round one")
-        .round1_package;
+    let mut round1_output = dkg_round1(&config, 1, &mut rng).expect("round one");
+    let round1_package = std::mem::take(&mut round1_output.round1_package);
     let mut store = PortalStore::new(config.clone());
 
     store
