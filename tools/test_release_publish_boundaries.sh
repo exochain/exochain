@@ -53,7 +53,155 @@ done
 registry_secret_jobs="$(
   ruby -ryaml - "$workflow" <<'RUBY'
 workflow_path = ARGV.fetch(0)
-document = YAML.safe_load(File.binread(workflow_path), aliases: true)
+workflow_source = File.binread(workflow_path)
+
+class WorkflowYamlPolicyError < StandardError; end
+
+# Psych implements YAML 1.1 scalar resolution while GitHub Actions uses YAML
+# 1.2-like workflow keys. Audit the lossless AST before materializing a Hash so
+# ambiguous or duplicate keys cannot overwrite a secret-bearing entry. Anchors,
+# aliases, merge keys, and explicit tags are unnecessary in this security-
+# critical workflow and are rejected to keep one parser interpretation.
+audit_yaml_node = nil
+audit_yaml_node = lambda do |node, path|
+  case node
+  when Psych::Nodes::Alias
+    raise WorkflowYamlPolicyError, "#{path}: YAML aliases are not allowed"
+  when Psych::Nodes::Mapping
+    if node.anchor || node.tag
+      raise WorkflowYamlPolicyError, "#{path}: anchored or tagged mappings are not allowed"
+    end
+    unless node.children.length.even?
+      raise WorkflowYamlPolicyError, "#{path}: malformed YAML mapping"
+    end
+
+    keys = {}
+    node.children.each_slice(2) do |key, value|
+      unless key.is_a?(Psych::Nodes::Scalar)
+        raise WorkflowYamlPolicyError, "#{path}: mapping keys must be scalar strings"
+      end
+      raw_key = key.value
+      raise WorkflowYamlPolicyError, "#{path}: YAML merge keys are not allowed" if raw_key == '<<'
+      if key.anchor || key.tag
+        raise WorkflowYamlPolicyError, "#{path}: anchored or tagged mapping keys are not allowed"
+      end
+      if keys.key?(raw_key)
+        raise WorkflowYamlPolicyError, "#{path}: duplicate YAML mapping key #{raw_key.inspect}"
+      end
+      keys[raw_key] = true
+
+      if key.plain
+        begin
+          decoded_key = YAML.safe_load(raw_key, aliases: false)
+        rescue Psych::Exception, TypeError
+          decoded_key = nil
+        end
+        unless decoded_key.is_a?(String) && decoded_key == raw_key
+          raise WorkflowYamlPolicyError,
+                "#{path}: ambiguous YAML mapping key #{raw_key.inspect} must be quoted"
+        end
+      end
+
+      audit_yaml_node.call(value, "#{path}/#{raw_key}")
+    end
+  when Psych::Nodes::Sequence
+    if node.anchor || node.tag
+      raise WorkflowYamlPolicyError, "#{path}: anchored or tagged sequences are not allowed"
+    end
+    node.children.each_with_index do |child, index|
+      audit_yaml_node.call(child, "#{path}/#{index}")
+    end
+  when Psych::Nodes::Scalar
+    if node.anchor || node.tag
+      raise WorkflowYamlPolicyError, "#{path}: anchored or tagged scalars are not allowed"
+    end
+  else
+    children = node.respond_to?(:children) ? node.children : nil
+    Array(children).each { |child| audit_yaml_node.call(child, path) }
+  end
+end
+
+audit_mapping_semantics = lambda do |source|
+  stream = Psych.parse_stream(source)
+  raise WorkflowYamlPolicyError, 'workflow must contain exactly one YAML document' \
+    unless stream.children.length == 1
+  audit_yaml_node.call(stream, '$')
+end
+
+invalid_yaml_fixtures = {
+  'job identifier coercion' => [<<~YAML, 'ambiguous YAML mapping key'],
+    jobs:
+      yes:
+        env:
+          TOKEN: ${{ secrets.NPM_TOKEN }}
+      on:
+        environment: release
+        env:
+          TOKEN: ${{ secrets.NPM_TOKEN }}
+  YAML
+  'nested mapping coercion' => [<<~YAML, 'ambiguous YAML mapping key'],
+    jobs:
+      rogue:
+        env:
+          yes: ${{ secrets.NPM_TOKEN }}
+          on: harmless
+  YAML
+  'numeric mapping-key coercion' => [<<~YAML, 'ambiguous YAML mapping key'],
+    jobs:
+      01: {}
+  YAML
+  'null mapping-key coercion' => [<<~YAML, 'ambiguous YAML mapping key'],
+    jobs:
+      null: {}
+  YAML
+  'styled duplicate mapping keys' => [<<~YAML, 'duplicate YAML mapping key'],
+    jobs:
+      rogue:
+        env:
+          TOKEN: secret
+          "TOKEN": harmless
+  YAML
+  'anchored mapping' => [<<~YAML, 'anchored or tagged mappings'],
+    jobs: &jobs_anchor {}
+  YAML
+  'alias value' => [<<~YAML, 'YAML aliases are not allowed'],
+    jobs: *jobs_anchor
+  YAML
+  'merge mapping key' => [<<~YAML, 'YAML merge keys are not allowed'],
+    jobs:
+      rogue:
+        <<: {}
+  YAML
+  'explicit mapping tag' => [<<~YAML, 'anchored or tagged mappings'],
+    jobs: !!map {}
+  YAML
+  'complex mapping key' => [<<~YAML, 'mapping keys must be scalar strings'],
+    jobs:
+      ? [rogue, alternate]
+      : {}
+  YAML
+  'multiple YAML documents' => [<<~YAML, 'exactly one YAML document'],
+    jobs: {}
+    ---
+    jobs: {}
+  YAML
+}
+invalid_yaml_fixtures.each do |name, (fixture, expected_error)|
+  begin
+    audit_mapping_semantics.call(fixture)
+  rescue WorkflowYamlPolicyError => error
+    next if error.message.include?(expected_error)
+    raise WorkflowYamlPolicyError, "#{name} fixture failed for the wrong reason: #{error.message}"
+  end
+  raise WorkflowYamlPolicyError, "#{name} fixture was not rejected"
+end
+
+begin
+  audit_mapping_semantics.call(workflow_source)
+  document = YAML.safe_load(workflow_source, aliases: false)
+rescue Psych::Exception, WorkflowYamlPolicyError => error
+  abort "release workflow YAML policy rejected input: #{error.message}"
+end
 abort 'release workflow must decode to a mapping' unless document.is_a?(Hash)
 jobs = document['jobs']
 abort 'release workflow jobs mapping is missing' unless jobs.is_a?(Hash)
