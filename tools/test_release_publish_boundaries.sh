@@ -158,6 +158,15 @@ grep -F 'registry_has_exact_tarball()' "$npm_publisher" >/dev/null \
 grep -F 'run_authenticated_npm publish "$RELEASE_NPM_TARBALL"' "$npm_publisher" >/dev/null \
   && grep -F -- '--access public --provenance --ignore-scripts' "$npm_publisher" >/dev/null \
   || fail "npm publisher must publish only the prepared tarball with provenance and no scripts"
+npm_mutation_block="$(sed -n '/if \[ "$publish_needed" = true \]; then/,/run_authenticated_npm publish "$RELEASE_NPM_TARBALL"/p' "$npm_publisher")"
+grep -F 'verify_prepublication_npm_authority' <<<"$npm_mutation_block" >/dev/null \
+  || fail "npm publisher must prove exact owner authority immediately before publication"
+npm_authority_function="$(sed -n '/^verify_prepublication_npm_authority() {/,/^}/p' "$npm_publisher")"
+grep -F 'run_authenticated_npm owner ls "$package_name"' <<<"$npm_authority_function" >/dev/null \
+  && grep -F 'package_registry_url' <<<"$npm_authority_function" >/dev/null \
+  && grep -F '404)' <<<"$npm_authority_function" >/dev/null \
+  && grep -F '@exochain/exochain-wasm|@exochain/llm-proxy|@exochain/sdk)' <<<"$npm_authority_function" >/dev/null \
+  || fail "npm first-publication authority exception must be authenticated, registry-proven, and package-scoped"
 npm_publish_line="$(grep -nF 'run_authenticated_npm publish "$RELEASE_NPM_TARBALL"' "$npm_publisher" | cut -d: -f1)"
 npm_tail="$(sed -n "${npm_publish_line},\$p" "$npm_publisher")"
 grep -F 'verify_registry_acceptance' <<<"$npm_tail" >/dev/null \
