@@ -19,13 +19,47 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from hashlib import sha256
 
+from blake3 import blake3
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..errors import GovernanceError
 from ..types import Did, QuorumResult
 from .vote import Vote, VoteChoice
+
+_DECISION_ID_DOMAIN = "exochain:decision-id:v2"
+_CBOR_TEXT_INLINE_MAX = 23
+_CBOR_UINT8_MAX = 0xFF
+_CBOR_UINT16_MAX = 0xFFFF
+_CBOR_UINT32_MAX = 0xFFFFFFFF
+
+
+def _encode_canonical_cbor_text(value: str) -> bytes:
+    """Encode one Unicode string as a preferred-serialization CBOR text item."""
+    try:
+        encoded = str.encode(value, "utf-8", "strict")
+    except UnicodeEncodeError as exc:
+        raise GovernanceError("decision ID text must be well-formed Unicode") from exc
+
+    byte_length = len(encoded)
+    if byte_length <= _CBOR_TEXT_INLINE_MAX:
+        header = bytes((0x60 | byte_length,))
+    elif byte_length <= _CBOR_UINT8_MAX:
+        header = bytes((0x78, byte_length))
+    elif byte_length <= _CBOR_UINT16_MAX:
+        header = b"\x79" + byte_length.to_bytes(2, "big")
+    elif byte_length <= _CBOR_UINT32_MAX:
+        header = b"\x7a" + byte_length.to_bytes(4, "big")
+    else:
+        raise GovernanceError("decision ID text exceeds the supported CBOR length")
+    return header + encoded
+
+
+def _decision_id_for(title: str, description: str, proposer: Did) -> str:
+    """Hash the versioned canonical-CBOR decision frame with full BLAKE3."""
+    frame = (_DECISION_ID_DOMAIN, title, description, proposer)
+    canonical = b"\x84" + b"".join(_encode_canonical_cbor_text(value) for value in frame)
+    return blake3(canonical).hexdigest()
 
 
 class DecisionStatus(StrEnum):
@@ -43,7 +77,7 @@ class Decision(BaseModel):
 
     Decisions are mutable only via :meth:`cast_vote` (which rejects duplicate
     voters) and by setting :attr:`status`. The :attr:`decision_id` is a
-    deterministic 16-hex-char prefix of SHA-256 over title/description/proposer.
+    full BLAKE3 digest over a versioned canonical-CBOR frame.
     """
 
     model_config = ConfigDict(validate_assignment=True)
@@ -109,9 +143,7 @@ class DecisionBuilder:
         if not isinstance(self._description, str):
             raise GovernanceError("description must be a string")
 
-        payload = f"{self._title}\x00{self._description}\x00{self._proposer}"
-        digest = sha256(payload.encode("utf-8")).hexdigest()
-        decision_id = digest[:16]
+        decision_id = _decision_id_for(self._title, self._description, self._proposer)
 
         return Decision(
             decision_id=decision_id,

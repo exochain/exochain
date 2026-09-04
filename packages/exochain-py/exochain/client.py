@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from types import TracebackType
 from typing import Any
+from urllib.parse import quote_from_bytes
 
 import httpx
 from pydantic import ValidationError
@@ -32,6 +33,16 @@ from pydantic import ValidationError
 from .errors import KernelError, TransportError
 from .transport.http import HttpTransport
 from .types import ExochainDiscoveryResponse, TrustReceipt
+
+
+def _encode_path_segment(value: str) -> str:
+    """Percent-encode an untrusted identifier as exactly one URL path segment."""
+    encoded = str.encode(value, "utf-8", "strict")
+    if encoded == b".":
+        return "%2E"
+    if encoded == b"..":
+        return "%2E%2E"
+    return quote_from_bytes(encoded, safe="-._~")
 
 
 class ExochainClient:
@@ -91,7 +102,7 @@ class ExochainClient:
 
     async def resolve_did(self, did: str) -> dict[str, Any]:
         """Resolve a DID document from the fabric."""
-        return await self._transport.get(f"/identity/{did}")
+        return await self._transport.get(f"/identity/{_encode_path_segment(did)}")
 
     # ---- Consent --------------------------------------------------------
 
@@ -108,7 +119,7 @@ class ExochainClient:
     async def cast_vote(self, decision_id: str, vote: dict[str, Any]) -> dict[str, Any]:
         """Cast a vote on an existing governance decision."""
         return await self._transport.post(
-            f"/governance/decisions/{decision_id}/votes", vote
+            f"/governance/decisions/{_encode_path_segment(decision_id)}/votes", vote
         )
 
     # ---- Lifecycle ------------------------------------------------------
