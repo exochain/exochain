@@ -30,8 +30,7 @@ const MAX_WASM_SHAMIR_GF_WORK_UNITS: usize = 1_048_576;
 const MAX_WASM_SHAMIR_HASH_WORK_BYTES: usize = 16_777_216;
 const SHAMIR_COEFFICIENT_FIXED_HASH_BYTES: usize = 128;
 const SHAMIR_SPLIT_RESPONSE_ERROR: &str = "Shamir split error: response serialization failed";
-const SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR: &str =
-    "Shamir split error: WASM resource limit exceeded";
+const SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR: &str = "Shamir split error: WASM resource limit exceeded";
 const SHAMIR_RECONSTRUCT_ERROR: &str = "Shamir reconstruct error: invalid shares";
 const SHAMIR_RECONSTRUCT_RESPONSE_ERROR: &str =
     "Shamir reconstruct error: response serialization failed";
@@ -137,9 +136,7 @@ fn validate_shamir_split_budget(
     threshold: u8,
     shares: u8,
 ) -> Result<(), &'static str> {
-    if secret_len > MAX_WASM_SHAMIR_SECRET_BYTES
-        || entropy_len > MAX_WASM_SHAMIR_ENTROPY_BYTES
-    {
+    if secret_len > MAX_WASM_SHAMIR_SECRET_BYTES || entropy_len > MAX_WASM_SHAMIR_ENTROPY_BYTES {
         return Err(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR);
     }
 
@@ -320,8 +317,7 @@ fn parse_timestamp(
 /// Split a secret using Shamir's Secret Sharing
 #[wasm_bindgen]
 pub fn wasm_shamir_split(secret: &[u8], threshold: u8, shares: u8) -> Result<JsValue, JsValue> {
-    validate_shamir_split_budget(secret.len(), 0, threshold, shares)
-        .map_err(JsValue::from_str)?;
+    validate_shamir_split_budget(secret.len(), 0, threshold, shares).map_err(JsValue::from_str)?;
     let config = exo_identity::shamir::ShamirConfig { threshold, shares };
     let result = exo_identity::shamir::split(secret, &config)
         .map_err(|e| JsValue::from_str(&format!("Shamir split error: {e}")))?;
@@ -357,9 +353,9 @@ pub fn wasm_shamir_reconstruct(
 ) -> Result<JsValue, JsValue> {
     let shares: Vec<exo_identity::shamir::Share> =
         from_json_bounded_vec(shares_json, "Shamir shares", MAX_WASM_SHAMIR_SHARES)?;
-    let total_share_bytes = shares.iter().try_fold(0usize, |total, share| {
-        total.checked_add(share.data.len())
-    });
+    let total_share_bytes = shares
+        .iter()
+        .try_fold(0usize, |total, share| total.checked_add(share.data.len()));
     let Some(total_share_bytes) = total_share_bytes else {
         return Err(JsValue::from_str(SHAMIR_RECONSTRUCT_RESOURCE_LIMIT_ERROR));
     };
@@ -368,13 +364,8 @@ pub fn wasm_shamir_reconstruct(
         .map(|share| share.data.len())
         .max()
         .unwrap_or(0);
-    validate_shamir_reconstruct_budget(
-        shares.len(),
-        max_share_len,
-        total_share_bytes,
-        threshold,
-    )
-    .map_err(JsValue::from_str)?;
+    validate_shamir_reconstruct_budget(shares.len(), max_share_len, total_share_bytes, threshold)
+        .map_err(JsValue::from_str)?;
     let config = exo_identity::shamir::ShamirConfig {
         threshold,
         shares: total_shares,
@@ -605,10 +596,7 @@ mod tests {
             validate_shamir_split_budget(MAX_WASM_SHAMIR_SECRET_BYTES + 1, 0, 1, 1),
             Err(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR)
         );
-        assert_eq!(
-            validate_shamir_split_budget(128, 1_792, 65, 65),
-            Ok(())
-        );
+        assert_eq!(validate_shamir_split_budget(128, 1_792, 65, 65), Ok(()));
         assert_eq!(
             validate_shamir_split_budget(128, 1_793, 65, 65),
             Err(SHAMIR_SPLIT_RESOURCE_LIMIT_ERROR)
@@ -662,21 +650,11 @@ mod tests {
             Err(SHAMIR_RECONSTRUCT_RESOURCE_LIMIT_ERROR)
         );
         assert_eq!(
-            validate_shamir_reconstruct_budget(
-                64,
-                4_096,
-                MAX_WASM_SHAMIR_SHARE_DATA_BYTES,
-                1,
-            ),
+            validate_shamir_reconstruct_budget(64, 4_096, MAX_WASM_SHAMIR_SHARE_DATA_BYTES, 1,),
             Ok(())
         );
         assert_eq!(
-            validate_shamir_reconstruct_budget(
-                64,
-                4_096,
-                MAX_WASM_SHAMIR_SHARE_DATA_BYTES + 1,
-                1,
-            ),
+            validate_shamir_reconstruct_budget(64, 4_096, MAX_WASM_SHAMIR_SHARE_DATA_BYTES + 1, 1,),
             Err(SHAMIR_RECONSTRUCT_RESOURCE_LIMIT_ERROR)
         );
     }
