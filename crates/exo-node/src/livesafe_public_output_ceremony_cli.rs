@@ -99,15 +99,11 @@ async fn run_register(args: LivesafePublicOutputCeremonyRegisterArgs) -> anyhow:
         LIVESAFE_CEREMONY_HTTP_TIMEOUT,
         "LiveSafe ceremony HTTP client",
     )?;
-    let response = client
-        .post(url)
-        .bearer_auth(bearer.as_str())
-        .json(&package.issue_request)
-        .send()
-        .await?;
-    let status = response.status();
-    let body = crate::read_bounded_http_body(
-        response,
+    let (status, body) = crate::send_bounded_http_request(
+        client
+            .post(url)
+            .bearer_auth(bearer.as_str())
+            .json(&package.issue_request),
         LIVESAFE_CEREMONY_HTTP_RESPONSE_MAX_BYTES,
         "LiveSafe ceremony registration response",
     )

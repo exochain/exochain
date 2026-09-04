@@ -768,10 +768,8 @@ async fn run_submit_envelope(args: GenesisSubmitEnvelopeArgs) -> anyhow::Result<
     let url = portal_envelopes_url(&args.portal_url);
     let client =
         crate::bounded_http_client(ROOT_GENESIS_HTTP_TIMEOUT, "root genesis portal HTTP client")?;
-    let response = client.post(url).json(&envelope).send().await?;
-    let status = response.status();
-    let body_bytes = crate::read_bounded_http_body(
-        response,
+    let (status, body_bytes) = crate::send_bounded_http_request(
+        client.post(url).json(&envelope),
         ROOT_GENESIS_HTTP_RESPONSE_MAX_BYTES,
         "root genesis portal response",
     )
@@ -798,10 +796,8 @@ async fn run_pull_envelopes(args: GenesisPullEnvelopesArgs) -> anyhow::Result<()
     }
     let client =
         crate::bounded_http_client(ROOT_GENESIS_HTTP_TIMEOUT, "root genesis portal HTTP client")?;
-    let response = client.get(url).query(&params).send().await?;
-    let status = response.status();
-    let body = crate::read_bounded_http_body(
-        response,
+    let (status, body) = crate::send_bounded_http_request(
+        client.get(url).query(&params),
         ROOT_GENESIS_HTTP_RESPONSE_MAX_BYTES,
         "root genesis portal response",
     )

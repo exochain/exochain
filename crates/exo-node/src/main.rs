@@ -1710,12 +1710,19 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 }
 
 fn read_bounded_file(path: &Path, max_bytes: usize, label: &str) -> anyhow::Result<Vec<u8>> {
-    let file = std::fs::File::open(path)?;
-    let metadata = file.metadata()?;
+    let file = std::fs::File::open(path)
+        .map_err(|error| anyhow::anyhow!("{label} open failed for {}: {error}", path.display()))?;
+    let metadata = file.metadata().map_err(|error| {
+        anyhow::anyhow!("{label} metadata failed for {}: {error}", path.display())
+    })?;
     if metadata.len() > u64::try_from(max_bytes)? {
-        anyhow::bail!("{label} file size exceeds {max_bytes} bytes");
+        anyhow::bail!(
+            "{label} file {} size exceeds {max_bytes} bytes",
+            path.display()
+        );
     }
     read_at_most(file, max_bytes, label)
+        .map_err(|error| anyhow::anyhow!("{label} read failed for {}: {error}", path.display()))
 }
 
 fn read_at_most(reader: impl Read, max_bytes: usize, label: &str) -> anyhow::Result<Vec<u8>> {
@@ -1736,6 +1743,23 @@ fn bounded_http_client(timeout: Duration, label: &str) -> anyhow::Result<reqwest
         .timeout(timeout)
         .build()
         .map_err(|error| anyhow::anyhow!("{label} construction failed: {error}"))
+}
+
+async fn send_bounded_http_request(
+    request: reqwest::RequestBuilder,
+    max_bytes: usize,
+    label: &str,
+) -> anyhow::Result<(reqwest::StatusCode, Vec<u8>)> {
+    let response = request.send().await.map_err(|error| {
+        if error.is_timeout() {
+            anyhow::anyhow!("{label} request failed: request timed out")
+        } else {
+            anyhow::anyhow!("{label} request failed: {error}")
+        }
+    })?;
+    let status = response.status();
+    let body = read_bounded_http_body(response, max_bytes, label).await?;
+    Ok((status, body))
 }
 
 async fn read_bounded_http_body(
@@ -1947,23 +1971,51 @@ mod tests {
             .split("#[cfg(test)]")
             .next()
             .expect("root genesis production source");
-        assert!(root_genesis.contains("bounded_http_client"));
-        assert!(root_genesis.contains("read_bounded_http_body"));
+        assert_eq!(root_genesis.matches("bounded_http_client(").count(), 2);
+        assert_eq!(
+            root_genesis.matches("send_bounded_http_request(").count(),
+            2
+        );
         assert!(root_genesis.contains("read_bounded_file"));
-        assert!(!root_genesis.contains("response.text().await"));
-        assert!(!root_genesis.contains("let bytes = fs::read(path)?"));
+        assert_eq!(root_genesis.matches(".bytes()").count(), 1);
 
         let livesafe = include_str!("livesafe_public_output_ceremony_cli.rs")
             .split("#[cfg(test)]")
             .next()
             .expect("LiveSafe ceremony production source");
-        assert!(livesafe.contains("bounded_http_client"));
-        assert!(livesafe.contains("read_bounded_http_body"));
+        assert_eq!(livesafe.matches("bounded_http_client(").count(), 1);
+        assert_eq!(livesafe.matches("send_bounded_http_request(").count(), 1);
         assert!(livesafe.contains("read_bounded_file"));
         assert!(livesafe.contains("read_private_file"));
-        assert!(!livesafe.contains("response.text().await"));
-        assert!(!livesafe.contains("fs::read_to_string"));
-        assert!(!livesafe.contains("fs::read(path)"));
+        assert_eq!(livesafe.matches(".bytes()").count(), 0);
+
+        for source in [root_genesis, livesafe] {
+            for forbidden in [
+                ".send()",
+                ".text()",
+                ".bytes_stream()",
+                ".copy_to(",
+                "reqwest::",
+                "fs::read",
+                "File::open(",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "ceremony adapter contains direct I/O token {forbidden}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_file_open_errors_identify_the_input_and_path() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let missing = directory.path().join("missing-ceremony-input.json");
+        let error = read_bounded_file(&missing, 8, "LiveSafe ceremony JSON input")
+            .expect_err("missing ceremony input must fail");
+        let message = error.to_string();
+        assert!(message.contains("LiveSafe ceremony JSON input"));
+        assert!(message.contains(&missing.display().to_string()));
     }
 
     #[test]
