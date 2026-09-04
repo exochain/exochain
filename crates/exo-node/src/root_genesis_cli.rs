@@ -9,7 +9,7 @@ use exo_root::{
     RootKeyPackage, RootParticipantDkgOutput, RootPublicKeyPackage, RootSignature,
     RootSigningNonces, RootSigningPackage, RootTrustBundle, aggregate_signature,
     assemble_root_bundle, build_final_key_confirmation, build_signing_package,
-    decrypt_pairwise_payload, dkg_finalize_participant, dkg_round1, dkg_round2,
+    decrypt_pairwise_payload, dkg_finalize_participant_zeroizing, dkg_round1, dkg_round2,
     encode_final_key_confirmation_payload, encrypt_pairwise_payload, seal_share, sign_commit,
     sign_share, threshold_sign, unseal_share, verify_root_bundle,
 };
@@ -552,7 +552,7 @@ fn run_round2(args: GenesisIoArgs) -> anyhow::Result<()> {
 fn run_finalize_dkg(args: GenesisIoArgs) -> anyhow::Result<()> {
     let input: FinalizeDkgCommandInput = read_private_json(&required_input(&args)?)?;
     let round2_secret = decode_secret_hex_zeroizing(&input.round2_secret_package_hex)?;
-    let output = dkg_finalize_participant(
+    let output = dkg_finalize_participant_zeroizing(
         &input.config,
         input.frost_identifier,
         round2_secret.as_slice(),
@@ -1452,9 +1452,9 @@ mod tests {
     /// A schema-valid round-one package payload (the portal now decodes these to a
     /// concrete FROST type, so placeholder bytes no longer pass).
     fn valid_round1_package(config: &GenesisCeremonyConfig) -> Vec<u8> {
-        exo_root::dkg_round1(config, 1, &mut rand::rngs::OsRng)
-            .expect("round one")
-            .round1_package
+        let mut output =
+            exo_root::dkg_round1(config, 1, &mut rand::rngs::OsRng).expect("round one");
+        std::mem::take(&mut output.round1_package)
     }
 
     fn signed_test_envelope(
@@ -2180,9 +2180,9 @@ mod tests {
         let mut envelopes = Vec::new();
         let mut store = PortalStore::new(config.clone());
         for certifier in &config.certifiers {
-            let round1 = dkg_round1(&config, certifier.frost_identifier, &mut rng)
-                .expect("round one")
-                .round1_package;
+            let mut round1_output =
+                dkg_round1(&config, certifier.frost_identifier, &mut rng).expect("round one");
+            let round1 = std::mem::take(&mut round1_output.round1_package);
             let envelope = signed_test_envelope(
                 &config,
                 certifier.frost_identifier,

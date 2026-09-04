@@ -16,8 +16,8 @@ pub use ceremony::{
 };
 pub use dkg::{
     RootDkgOutput, RootDkgRound1Output, RootDkgRound2Output, RootKeyPackage,
-    RootParticipantDkgOutput, RootPublicKeyPackage, dkg_finalize_participant, dkg_round1,
-    dkg_round2, run_complete_dkg,
+    RootParticipantDkgOutput, RootPublicKeyPackage, dkg_finalize_participant,
+    dkg_finalize_participant_zeroizing, dkg_round1, dkg_round2, run_complete_dkg,
 };
 pub use error::{Result, RootError};
 pub use portal::{

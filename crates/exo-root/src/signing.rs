@@ -730,7 +730,7 @@ mod tests {
                     identifier,
                     RootKeyPackage {
                         frost_identifier: identifier,
-                        key_package: Vec::new().into(),
+                        key_package: Vec::new(),
                     },
                 )
             })
@@ -913,7 +913,7 @@ mod tests {
         let config = test_config();
         let key_package = RootKeyPackage {
             frost_identifier: 1,
-            key_package: Vec::new().into(),
+            key_package: Vec::new(),
         };
         let foreign_nonces = RootSigningNonces {
             frost_identifier: 2,
@@ -944,7 +944,7 @@ mod tests {
         let config = test_config();
         let key_package = RootKeyPackage {
             frost_identifier: 1,
-            key_package: Vec::new().into(),
+            key_package: Vec::new(),
         };
         let foreign_nonces = RootSigningNonces {
             frost_identifier: 1,
