@@ -38,6 +38,7 @@ workspace = true
 # `pub use` surface and dependency graph)
 exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.6" }
 exo-dag-db-api = { package = "exochain-dag-db-api", path = "../exo-dag-db-api", version = "=0.2.6" }
+exo-dag-db-core = { package = "exochain-dag-db-core", path = "../exo-dag-db-core", version = "=0.2.6" }
 exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.6" }
 exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.6" }
 exo-avc = { package = "exochain-avc", path = "../exo-avc", version = "=0.2.6" }

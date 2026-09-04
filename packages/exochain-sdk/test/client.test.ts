@@ -17,9 +17,9 @@
 import { test } from 'node:test';
 import { rejects, strictEqual } from 'node:assert/strict';
 import { ExochainClient } from '../src/client.js';
-import { TransportError } from '../src/errors.js';
+import { IdentityError, TransportError } from '../src/errors.js';
 import { validateDid } from '../src/identity/did.js';
-import type { Hash256 } from '../src/types.js';
+import type { Did, Hash256 } from '../src/types.js';
 
 const HASH_64 = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' as Hash256;
 
@@ -44,6 +44,43 @@ function jsonFetch(body: unknown, status = 200): RecordedFetch {
   }) as typeof fetch;
   return { inputs, calls, fetch: fetchImpl };
 }
+
+const HASH_PATH_CALLS: ReadonlyArray<{
+  readonly context: string;
+  readonly path: string;
+  readonly invoke: (client: ExochainClient, id: Hash256) => Promise<unknown>;
+}> = [
+  {
+    context: 'consent.getBailment proposalId',
+    path: `/consent/bailment/${HASH_64}`,
+    invoke: (client, id) => client.consent.getBailment(id),
+  },
+  {
+    context: 'governance.castVote decisionId',
+    path: `/governance/decision/${HASH_64}/vote`,
+    invoke: (client, id) => client.governance.castVote(id, {}),
+  },
+  {
+    context: 'governance.getDecision decisionId',
+    path: `/governance/decision/${HASH_64}`,
+    invoke: (client, id) => client.governance.getDecision(id),
+  },
+  {
+    context: 'authority.getChain chainId',
+    path: `/authority/chain/${HASH_64}`,
+    invoke: (client, id) => client.authority.getChain(id),
+  },
+  {
+    context: 'economy.getMission id',
+    path: `/api/v1/economy/missions/${HASH_64}`,
+    invoke: (client, id) => client.economy.getMission(id),
+  },
+  {
+    context: 'economy.getLegacyReceipt id',
+    path: `/api/v1/economy/legacy-receipts/${HASH_64}`,
+    invoke: (client, id) => client.economy.getLegacyReceipt(id),
+  },
+];
 
 test('health rejects malformed gateway payloads instead of trusting casts', async () => {
   const transport = jsonFetch({ status: 'ok', version: '0.1.0', uptime: 'not-a-number' });
@@ -156,6 +193,38 @@ test('identity.register rejects malformed DID response payloads', async () => {
   );
 });
 
+test('identity.resolve rejects forged branded DIDs before fetch', async () => {
+  for (const invalidDid of ['.', '..', '%2E', '%2E%2E', 'not-a-did']) {
+    const transport = jsonFetch({});
+    const client = new ExochainClient({
+      baseUrl: 'https://gateway.example',
+      fetch: transport.fetch,
+    });
+
+    await rejects(() => client.identity.resolve(invalidDid as Did), IdentityError);
+    strictEqual(
+      transport.inputs.length,
+      0,
+      `identity.resolve must reject ${invalidDid} before fetch`,
+    );
+  }
+});
+
+test('identity.resolve preserves a validated DID on the wire', async () => {
+  const transport = jsonFetch({});
+  const client = new ExochainClient({
+    baseUrl: 'https://gateway.example',
+    fetch: transport.fetch,
+  });
+
+  await client.identity.resolve(validateDid('did:exo:alice.node'));
+
+  strictEqual(
+    String(transport.inputs[0]),
+    'https://gateway.example/identity/did/did%3Aexo%3Aalice.node',
+  );
+});
+
 test('mutating calls reject non-object request bodies before fetch', async () => {
   const transport = jsonFetch({ proposalId: HASH_64 });
   const client = new ExochainClient({
@@ -168,6 +237,55 @@ test('mutating calls reject non-object request bodies before fetch', async () =>
     TransportError,
   );
   strictEqual(transport.calls.length, 0);
+});
+
+test('public hash-ID paths reject noncanonical runtime values before fetch', async () => {
+  const invalidIds = [
+    '.',
+    '..',
+    '%2E',
+    '%2E%2E',
+    'a'.repeat(63),
+    'a'.repeat(65),
+    'g'.repeat(64),
+    'A'.repeat(64),
+  ];
+  for (const call of HASH_PATH_CALLS) {
+    for (const invalidId of invalidIds) {
+      const transport = jsonFetch({});
+      const client = new ExochainClient({
+        baseUrl: 'https://gateway.example',
+        fetch: transport.fetch,
+      });
+
+      await rejects(
+        () => call.invoke(client, invalidId as Hash256),
+        (error: unknown) =>
+          error instanceof TransportError &&
+          error.message.includes(call.context) &&
+          error.message.includes('64-character lowercase hex hash'),
+      );
+      strictEqual(
+        transport.inputs.length,
+        0,
+        `${call.context} must reject ${invalidId} before fetch`,
+      );
+    }
+  }
+});
+
+test('public hash-ID paths preserve canonical IDs on the wire', async () => {
+  for (const call of HASH_PATH_CALLS) {
+    const transport = jsonFetch({ decisionId: HASH_64, status: 'proposed' });
+    const client = new ExochainClient({
+      baseUrl: 'https://gateway.example',
+      fetch: transport.fetch,
+    });
+
+    await call.invoke(client, HASH_64);
+
+    strictEqual(String(transport.inputs[0]), `https://gateway.example${call.path}`);
+  }
 });
 
 test('governance.createDecision rejects malformed hash responses', async () => {
