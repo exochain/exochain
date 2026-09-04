@@ -17,10 +17,11 @@
 //! Cross-platform custody boundary for node-private files.
 //!
 //! Every operation verifies an integrity-protecting parent and an owner-only,
-//! regular, single-link file. Publication and deletion ultimately use paths;
-//! Windows verification is entirely path-based. This module revalidates
-//! immediately around those operations but does not claim handle-bound race
-//! resistance from the standard-library APIs.
+//! regular, single-link file. Windows creation denies all handle sharing until
+//! inherited ACLs have been replaced, verified, and the private bytes synced.
+//! Publication and deletion ultimately use paths; this module revalidates
+//! immediately around those operations but does not claim general handle-bound
+//! race resistance from the standard-library APIs.
 
 use std::{
     ffi::OsString,
@@ -627,6 +628,11 @@ fn open_private_create_new(path: &Path) -> anyhow::Result<File> {
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(0);
     }
     let file = options.open(path).map_err(|error| {
         anyhow::Error::new(error).context(format!(
@@ -1304,6 +1310,40 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn private_file_windows_creation_is_exclusive_until_acl_hardening_completes() {
+        let source = include_str!("private_file.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production private-file source");
+        let creation = source
+            .split("fn open_private_create_new")
+            .nth(1)
+            .expect("private create implementation")
+            .split("fn sync_parent")
+            .next()
+            .expect("private create implementation boundary");
+
+        let exclusive = creation
+            .find("options.share_mode(0)")
+            .expect("Windows private creation must deny concurrent opens");
+        let open = creation
+            .find("options.open(path)")
+            .expect("private create open");
+        let restrict = creation
+            .find("restrict_created_windows_file_with")
+            .expect("Windows ACL hardening");
+
+        assert!(
+            exclusive < open,
+            "exclusive sharing must be set before create"
+        );
+        assert!(
+            open < restrict,
+            "ACL hardening must follow the exclusive create"
+        );
+    }
+
     #[cfg(windows)]
     mod windows {
         use std::{fs::OpenOptions, process::Command};
@@ -1396,6 +1436,49 @@ mod tests {
                 !path.exists(),
                 "failed pre-write ACL hardening must not leave a retry-blocking artifact"
             );
+        }
+
+        #[test]
+        fn private_file_windows_exclusive_create_blocks_pre_hardening_read_handles() {
+            use std::{io::Write as _, os::windows::fs::OpenOptionsExt as _};
+
+            const ERROR_SHARING_VIOLATION: i32 = 32;
+
+            let directory = tempfile::tempdir().expect("temporary directory");
+            harden_parent(directory.path());
+            let inherited = Command::new("icacls")
+                .arg(directory.path())
+                .args(["/grant", "*S-1-1-0:(OI)(CI)(RX)"])
+                .status()
+                .expect("grant inherited Everyone read");
+            assert!(inherited.success());
+
+            let path = directory.path().join("identity.key");
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true).share_mode(0);
+            let mut file = options.open(&path).expect("exclusive private create");
+
+            let read_error = OpenOptions::new()
+                .read(true)
+                .open(&path)
+                .expect_err("exclusive create must reject a pre-hardening read handle");
+            assert_eq!(
+                read_error.raw_os_error(),
+                Some(ERROR_SHARING_VIOLATION),
+                "concurrent private-file reads must fail with a sharing violation"
+            );
+
+            file = restrict_created_windows_file_with(&path, file, |target| {
+                super::super::restrict_windows_file(target)
+            })
+            .expect("ACL hardening must work while the exclusive handle is retained");
+            file.write_all(b"private key").expect("write private key");
+            file.sync_all().expect("sync private key");
+            drop(file);
+
+            let sid = current_windows_sid().expect("current SID");
+            assert!(windows_file_is_owner_only(&path, &sid).expect("inspect hardened DACL"));
+            assert_eq!(fs::read(&path).expect("read private key"), b"private key");
         }
 
         #[test]
