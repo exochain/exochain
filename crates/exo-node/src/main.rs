@@ -75,6 +75,7 @@ use std::{
     net::IpAddr,
     path::Path,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use clap::Parser;
@@ -1730,6 +1731,59 @@ fn read_at_most(reader: impl Read, max_bytes: usize, label: &str) -> anyhow::Res
     Ok(bytes)
 }
 
+fn bounded_http_client(timeout: Duration, label: &str) -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|error| anyhow::anyhow!("{label} construction failed: {error}"))
+}
+
+async fn read_bounded_http_body(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+    label: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let max_bytes_u64 = u64::try_from(max_bytes)?;
+    if response
+        .content_length()
+        .is_some_and(|content_length| content_length > max_bytes_u64)
+    {
+        anyhow::bail!("{label} Content-Length exceeds {max_bytes} bytes");
+    }
+
+    let limit_plus_one = max_bytes
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("{label} byte limit overflow"))?;
+    let initial_capacity = response
+        .content_length()
+        .and_then(|content_length| usize::try_from(content_length).ok())
+        .map_or(0, |content_length| content_length.min(max_bytes));
+    let mut body = Vec::new();
+    body.try_reserve_exact(initial_capacity)
+        .map_err(|error| anyhow::anyhow!("{label} allocation failed: {error}"))?;
+
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        if error.is_timeout() {
+            anyhow::anyhow!("{label} body read failed: request timed out")
+        } else {
+            anyhow::anyhow!("{label} body read failed: {error}")
+        }
+    })? {
+        let remaining = limit_plus_one
+            .checked_sub(body.len())
+            .ok_or_else(|| anyhow::anyhow!("{label} byte accounting underflow"))?;
+        let accepted = chunk.len().min(remaining);
+        body.try_reserve_exact(accepted)
+            .map_err(|error| anyhow::anyhow!("{label} allocation failed: {error}"))?;
+        body.extend_from_slice(&chunk[..accepted]);
+        if body.len() > max_bytes {
+            anyhow::bail!("{label} exceeds {max_bytes} bytes");
+        }
+    }
+
+    Ok(body)
+}
+
 fn read_evidence_pack(path: &Path) -> anyhow::Result<Vec<u8>> {
     read_bounded_file(
         path,
@@ -1781,12 +1835,135 @@ fn run_pdp(command: cli::PdpCommand) -> anyhow::Result<()> {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
-    use std::io::{Cursor, Write};
+    use std::{
+        io::{Cursor, Write},
+        time::Duration,
+    };
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
 
     fn local_node_did() -> Did {
         Did::new("did:exo:local").unwrap()
+    }
+
+    async fn response_from_raw_http(raw: Vec<u8>) -> reqwest::Response {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind raw response listener");
+        let address = listener.local_addr().expect("raw response address");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await.expect("read request");
+            stream.write_all(&raw).await.expect("write raw response");
+            stream.shutdown().await.expect("close raw response");
+        });
+        reqwest::Client::new()
+            .get(format!("http://{address}/fixture"))
+            .send()
+            .await
+            .expect("receive raw response")
+    }
+
+    #[tokio::test]
+    async fn bounded_http_reader_accepts_exact_limit_and_rejects_chunked_limit_plus_one() {
+        let exact = response_from_raw_http(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n8\r\n12345678\r\n0\r\n\r\n"
+                .to_vec(),
+        )
+        .await;
+        assert_eq!(
+            read_bounded_http_body(exact, 8, "fixture response")
+                .await
+                .expect("exact response limit"),
+            b"12345678"
+        );
+
+        let oversized = response_from_raw_http(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n8\r\n12345678\r\n1\r\n9\r\n0\r\n\r\n"
+                .to_vec(),
+        )
+        .await;
+        let error = read_bounded_http_body(oversized, 8, "fixture response")
+            .await
+            .expect_err("chunked response limit plus one");
+        assert_eq!(error.to_string(), "fixture response exceeds 8 bytes");
+    }
+
+    #[tokio::test]
+    async fn bounded_http_reader_rejects_declared_oversize_before_collecting_body() {
+        let response = response_from_raw_http(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\n123456789".to_vec(),
+        )
+        .await;
+        let error = read_bounded_http_body(response, 8, "fixture response")
+            .await
+            .expect_err("oversized content length");
+        assert_eq!(
+            error.to_string(),
+            "fixture response Content-Length exceeds 8 bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_http_client_times_out_a_slow_response_body() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind slow response listener");
+        let address = listener.local_addr().expect("slow response address");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept slow request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await.expect("read slow request");
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n")
+                .await
+                .expect("write partial slow response");
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+        let client = bounded_http_client(Duration::from_millis(25), "fixture client")
+            .expect("build bounded client");
+        let response = client
+            .get(format!("http://{address}/fixture"))
+            .send()
+            .await
+            .expect("receive response headers");
+        let error = read_bounded_http_body(response, 8, "fixture response")
+            .await
+            .expect_err("slow body must time out");
+        assert!(
+            error
+                .to_string()
+                .contains("fixture response body read failed")
+        );
+        assert!(error.to_string().contains("timed out"));
+    }
+
+    #[test]
+    fn security_ceremony_adapters_use_bounded_network_and_file_readers() {
+        let root_genesis = include_str!("root_genesis_cli.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("root genesis production source");
+        assert!(root_genesis.contains("bounded_http_client"));
+        assert!(root_genesis.contains("read_bounded_http_body"));
+        assert!(root_genesis.contains("read_bounded_file"));
+        assert!(!root_genesis.contains("response.text().await"));
+        assert!(!root_genesis.contains("let bytes = fs::read(path)?"));
+
+        let livesafe = include_str!("livesafe_public_output_ceremony_cli.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("LiveSafe ceremony production source");
+        assert!(livesafe.contains("bounded_http_client"));
+        assert!(livesafe.contains("read_bounded_http_body"));
+        assert!(livesafe.contains("read_bounded_file"));
+        assert!(livesafe.contains("read_private_file"));
+        assert!(!livesafe.contains("response.text().await"));
+        assert!(!livesafe.contains("fs::read_to_string"));
+        assert!(!livesafe.contains("fs::read(path)"));
     }
 
     #[test]

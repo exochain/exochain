@@ -1,6 +1,6 @@
 //! Root genesis CLI command implementation.
 
-use std::{collections::BTreeMap, fmt, fs, io::Write, net::SocketAddr, path::Path};
+use std::{collections::BTreeMap, fmt, fs, io::Write, net::SocketAddr, path::Path, time::Duration};
 
 use exo_core::{Did, Hash256, SecretKey, Timestamp, crypto::KeyPair};
 use exo_root::{
@@ -31,6 +31,9 @@ use crate::{
 
 /// Portal HTTP path that accepts signed ceremony envelopes.
 const PORTAL_ENVELOPES_PATH: &str = "/api/v1/root-genesis/portal/envelopes";
+const ROOT_GENESIS_HTTP_RESPONSE_MAX_BYTES: usize = 16 * 1024 * 1024;
+const ROOT_GENESIS_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+const ROOT_GENESIS_JSON_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct PrivateCertifierMaterial {
@@ -763,13 +766,17 @@ async fn run_submit_envelope(args: GenesisSubmitEnvelopeArgs) -> anyhow::Result<
     };
     let envelope: CeremonyEnvelope = read_json(&required_input(&io)?)?;
     let url = portal_envelopes_url(&args.portal_url);
-    let response = reqwest::Client::new()
-        .post(url)
-        .json(&envelope)
-        .send()
-        .await?;
+    let client =
+        crate::bounded_http_client(ROOT_GENESIS_HTTP_TIMEOUT, "root genesis portal HTTP client")?;
+    let response = client.post(url).json(&envelope).send().await?;
     let status = response.status();
-    let body = response.text().await?;
+    let body_bytes = crate::read_bounded_http_body(
+        response,
+        ROOT_GENESIS_HTTP_RESPONSE_MAX_BYTES,
+        "root genesis portal response",
+    )
+    .await?;
+    let body = String::from_utf8_lossy(&body_bytes);
     println!("{body}");
     if !status.is_success() {
         anyhow::bail!("portal rejected envelope: HTTP {status}");
@@ -789,17 +796,23 @@ async fn run_pull_envelopes(args: GenesisPullEnvelopesArgs) -> anyhow::Result<()
     if let Some(recipient) = &args.recipient_did {
         params.push(("recipient_did", recipient.clone()));
     }
-    let response = reqwest::Client::new()
-        .get(url)
-        .query(&params)
-        .send()
-        .await?;
+    let client =
+        crate::bounded_http_client(ROOT_GENESIS_HTTP_TIMEOUT, "root genesis portal HTTP client")?;
+    let response = client.get(url).query(&params).send().await?;
     let status = response.status();
-    let body = response.text().await?;
+    let body = crate::read_bounded_http_body(
+        response,
+        ROOT_GENESIS_HTTP_RESPONSE_MAX_BYTES,
+        "root genesis portal response",
+    )
+    .await?;
     if !status.is_success() {
-        anyhow::bail!("portal pull failed: HTTP {status}: {body}");
+        anyhow::bail!(
+            "portal pull failed: HTTP {status}: {}",
+            String::from_utf8_lossy(&body)
+        );
     }
-    let envelopes: Vec<CeremonyEnvelope> = serde_json::from_str(&body)?;
+    let envelopes: Vec<CeremonyEnvelope> = serde_json::from_slice(&body)?;
     let io = GenesisIoArgs {
         input: None,
         output: args.output.clone(),
@@ -942,7 +955,8 @@ fn parse_hash_hex(value: &str) -> anyhow::Result<Hash256> {
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &std::path::Path) -> anyhow::Result<T> {
-    let bytes = fs::read(path)?;
+    let bytes =
+        crate::read_bounded_file(path, ROOT_GENESIS_JSON_MAX_BYTES, "root genesis JSON input")?;
     let value = serde_json::from_slice(&bytes)?;
     Ok(value)
 }
