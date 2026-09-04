@@ -165,8 +165,12 @@ npm_authority_function="$(sed -n '/^verify_prepublication_npm_authority() {/,/^}
 grep -F 'run_authenticated_npm owner ls "$package_name"' <<<"$npm_authority_function" >/dev/null \
   && grep -F 'package_registry_url' <<<"$npm_authority_function" >/dev/null \
   && grep -F '404)' <<<"$npm_authority_function" >/dev/null \
-  && grep -F '@exochain/exochain-wasm|@exochain/llm-proxy|@exochain/sdk)' <<<"$npm_authority_function" >/dev/null \
+  && grep -F '[ "$profile" = sdk ]' <<<"$npm_authority_function" >/dev/null \
+  && grep -F '[ "$package_name" = @exochain/sdk ]' <<<"$npm_authority_function" >/dev/null \
   || fail "npm first-publication authority exception must be authenticated, registry-proven, and package-scoped"
+if grep -F '@exochain/exochain-wasm|@exochain/llm-proxy|@exochain/sdk)' <<<"$npm_authority_function" >/dev/null; then
+  fail "established npm packages must not share the SDK first-publication exception"
+fi
 npm_publish_line="$(grep -nF 'run_authenticated_npm publish "$RELEASE_NPM_TARBALL"' "$npm_publisher" | cut -d: -f1)"
 npm_tail="$(sed -n "${npm_publish_line},\$p" "$npm_publisher")"
 grep -F 'verify_registry_acceptance' <<<"$npm_tail" >/dev/null \
