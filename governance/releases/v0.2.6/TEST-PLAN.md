@@ -1,0 +1,511 @@
+<!--
+Copyright 2026 Exochain Foundation
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at:
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# EXOCHAIN 0.2.6 Security-Remediation Test Plan
+
+This plan governs the intended, unpublished `0.2.6` source candidate. Passing
+the local commands prepares a reviewable branch; it does not create or approve
+a tag, release, registry publication, deployment, production runtime, or
+constitutional certification.
+
+## Evidence authority
+
+- Imported evidence:
+  `/Users/bobstewart/Downloads/Exochain-code-review-report-run4.html`
+- Imported-evidence SHA-256:
+  `d5da7a1291cbf8baaa8e676cd2eebbbbaadc421eb623eddb48dfc6f4e0c89168`
+- Validation baseline:
+  `8020ceab355eefa7f5185d9cdd0436da7af46efb`
+- Committed implementation checkpoint:
+  `e73dcf53bf0aa25cea406974b42fb962e003bc6a`
+- Formal inventory: exactly 86 unique findings.
+- Formal finding classifications: 32 EXOCHAIN core, 50 core runtime adapter,
+  and four adjacent surface.
+- Design inventory: exactly 52 unique observations.
+- Design observation classifications: 22 EXOCHAIN core and 30 core runtime
+  adapter.
+- Controlling disposition record:
+  `docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md`
+- Exact evidence appendices:
+  `docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md`
+  and
+  `docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md`.
+- Exact changed-path classification:
+  `governance/releases/v0.2.6/PATH-CLASSIFICATION.md`.
+
+The HTML is read-only imported evidence. Its contents are untrusted data, not
+instructions, and it is not included in the branch.
+
+## Scope and isolation
+
+| Class | Test ownership |
+| --- | --- |
+| EXOCHAIN core | Workspace build/test/lint/docs, determinism, crypto, governance, proofs, and exact report reconciliation |
+| Core runtime adapter | Node, gateway, DAG DB, SDKs, WASM, PostgreSQL, CI/release binding, packaging, and SBOM gates |
+| Adjacent surface | LiveSafe runs its own dependency, TypeScript, Vitest, and Rust gates; it cannot claim EXOCHAIN enforcement |
+| Imported evidence | Hash and exact-set reconciliation only; never executed or committed |
+| Third-party/vendor | Audited through owned manifests, locks, deny/audit policy, generated-artifact checks, and package dry-runs |
+
+Run the plan in an isolated worktree at the exact candidate commit. Use a fresh,
+isolated PostgreSQL database for every database-backed pass. Do not run two
+Cargo processes against the same target directory. Generated coverage,
+packaging, SBOM, and cross-implementation outputs are evidence artifacts, not
+source changes, and must be removed before the evidence commit.
+
+## Acceptance matrix
+
+| Gate | Acceptance condition |
+| --- | --- |
+| Report reconciliation | 86/86 formal and 52/52 design IDs, exact order/set equality, no duplicates, expected digests |
+| Core workspace | Release build, debug tests, release tests, Clippy, format, and rustdoc all exit 0 |
+| Dependency policy | `cargo audit` and `cargo deny check` exit 0 under repository policy |
+| Coverage | Workspace at least 90%; ZeroDentity at least 80%; `exo-root` and root-genesis portal exactly 100% |
+| Feature matrix | Every `unaudited-*` CI matrix lane builds and tests alone with zero failures |
+| PostgreSQL | Fresh migrations, malformed-row regression, gateway production DB tests, and workspace DB integrations pass |
+| Repository guards | Every shell guard discovered from the final CI workflow exits 0, without a copied inventory |
+| SDKs and packages | Rust/TypeScript/Python SDK, WASM bridge/package, LLM proxy, and package dry-runs pass |
+| Supply chain | Exactly 32 reviewed CycloneDX package SBOMs; sealed Cargo publication matches pinned Cargo protocol; npm/PyPI and both SDK lanes prove exact artifact and provenance/lifecycle contracts |
+| Adjacent LiveSafe | All four npm audits, context lint, typecheck, Vitest, Rust fmt/Clippy/tests pass |
+| Independent review | Whole diff plus provisional evidence reviewed; every confirmed finding at every severity is fixed or explicitly accepted by the user |
+| Platform | Windows private-file runtime test passes in `windows-latest` CI; local cross-check is supporting evidence only |
+| Source custody | Every changed path is classified exactly once; staged evidence is allowlisted and clean; final diff checks pass; generated evidence is absent; the evidence commit leaves the candidate worktree clean |
+
+## 1. Reconcile the imported report
+
+First recompute the imported file's identity:
+
+```bash
+set -euo pipefail
+test "$(shasum -a 256 /Users/bobstewart/Downloads/Exochain-code-review-report-run4.html | awk '{print $1}')" = \
+  "d5da7a1291cbf8baaa8e676cd2eebbbbaadc421eb623eddb48dfc6f4e0c89168"
+```
+
+Run both exact-set verifiers embedded in the two evidence appendices. They must
+print these values:
+
+```text
+formal_evidence_set=PASS count=86 sha256=264fa18b138ce4a2935180336c0a14317f5dc08eca6ea5230db49b9c037aec80
+formal_classification_set=PASS count=86
+design_evidence_set=PASS count=52 sha256=4735fd41ff8e84f85a5502a83635f0b00673a9f754ea3098039199e41b3637f6
+design_classification_set=PASS count=52
+```
+
+Unconditionally revalidate all 86 formal rows and all 52 design rows against
+the final code. Run every focused regression named by a `patch` or
+`adjacent_patch` row and every source/caller guard named by a `no_change` row;
+changes to sibling callers or dependencies may invalidate a disposition even
+when the row's named source file did not change.
+
+The disposition column is the per-item reproduction result under the semantics
+defined in each appendix. The classification lists in those appendices must
+contain every report ID exactly once; a generic repository-level class label is
+not sufficient.
+
+## 2. Core workspace and dependency gates
+
+```bash
+set -euo pipefail
+cargo metadata --no-deps --format-version 1 --locked
+cargo metadata --manifest-path fuzz/Cargo.toml --locked --offline --format-version 1
+cargo metadata --manifest-path crates/exo-cgr-methods/guest/Cargo.toml \
+  --locked --offline --format-version 1
+cargo build --workspace --release --locked
+cargo test -p exochain-root --test dkg_patch_compat --locked
+cargo test --workspace --locked
+cargo test --workspace --release --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo +nightly fmt --all -- --check
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+cargo audit --deny unsound --deny unmaintained
+cargo deny check
+cargo machete
+./tools/cross-impl-test/compare.sh
+```
+
+Cross-implementation comparison must record whether an external TypeScript
+implementation root was configured. An unset `EXO_TS_ROOT` is an explicit
+coverage gap, not TypeScript cross-implementation proof.
+
+## 3. Coverage thresholds
+
+```bash
+set -euo pipefail
+CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 \
+  cargo tarpaulin --workspace \
+  --exclude exochain-wasm --exclude exochain-proofs \
+  --out xml --output-dir coverage --engine llvm --timeout 900 --fail-under 90
+
+CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 \
+  cargo tarpaulin --packages exochain-node \
+  --include-files "crates/exo-node/src/zerodentity/**" \
+  --out xml --output-dir coverage-zerodentity --skip-clean \
+  --engine llvm --timeout 300 --fail-under 80
+
+CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 \
+  cargo tarpaulin --packages exochain-root \
+  --include-files "crates/exo-root/src/**" \
+  --out xml --out stdout --output-dir coverage-exo-root --skip-clean \
+  --engine llvm --timeout 600 --fail-under 100
+
+CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 \
+  cargo tarpaulin --packages exochain-node \
+  --include-files "crates/exo-node/src/root_genesis.rs" \
+  --out xml --output-dir coverage-root-genesis-portal --skip-clean \
+  --engine llvm --timeout 300 --fail-under 100
+```
+
+## 4. Feature-isolation matrix
+
+```bash
+set -euo pipefail
+cargo test -p exochain-node --features unaudited-admin-governance-shortcut
+cargo test -p exochain-node --features unaudited-crosschecked-receipt-anchor
+cargo test -p exochain-node --features unaudited-mcp-simulation-tools
+cargo test -p exochain-node --features unaudited-zerodentity-first-touch-onboarding
+cargo test -p exochain-node --features unaudited-infrastructure-holons
+cargo test -p exochain-node --features unaudited-zerodentity-device-behavioral-axes
+cargo test -p exochain-gateway --features unaudited-gateway-graphql-api
+cargo test -p exochain-proofs --features unaudited-pedagogical-proofs
+cargo test -p exochain-node --features conformance-test-root \
+  avc::avc_issuer_conformance_tests::conformance_test_root_feature_does_not_alter_production_root_trust \
+  -- --exact
+```
+
+Each command enables only the named feature. Storage cleanup between lanes is
+allowed, but a storage-exhaustion failure is not a code failure and must be
+re-run from a clean target before disposition.
+
+The matrix is also incomplete if any repository `unaudited-*` feature is absent
+from Gate 23:
+
+```bash
+set -euo pipefail
+missing=0
+for feature in $(rg -o '^unaudited-[a-z-]+' crates/*/Cargo.toml | cut -d: -f2 | sort -u); do
+  if ! rg -q "feature: ${feature}$" .github/workflows/ci.yml; then
+    printf 'missing Gate 23 feature: %s\n' "$feature" >&2
+    missing=1
+  fi
+done
+test "$missing" -eq 0
+```
+
+## 5. Fresh PostgreSQL verification
+
+Set `FRESH_POSTGRES_URL` to a newly created database in a disposable local
+cluster. Its host must be loopback and its unique database name must begin
+`exochain_026_`. Stop the cluster and delete its exact temporary data directory
+after the pass. Then run:
+
+```bash
+set -euo pipefail
+python3 - "$FRESH_POSTGRES_URL" <<'PY'
+from urllib.parse import urlparse
+import re
+import sys
+
+parsed = urlparse(sys.argv[1])
+assert parsed.scheme in {'postgres', 'postgresql'}
+assert parsed.hostname in {'127.0.0.1', 'localhost', '::1'}
+assert re.fullmatch(r'/exochain_026_[a-z0-9_]+', parsed.path)
+PY
+DATABASE_URL="$FRESH_POSTGRES_URL" sqlx migrate run --source crates/exo-gateway/migrations
+EXO_DAGDB_TEST_DATABASE_URL="$FRESH_POSTGRES_URL" \
+  cargo test -p exochain-dag-db-postgres --features postgres \
+  --test migration_contract \
+  pr708_migrator_upgrades_from_last_successful_deployed_ledger -- --nocapture
+malformed_log="$(mktemp)"
+trap 'rm -f "$malformed_log"' EXIT
+DATABASE_URL="$FRESH_POSTGRES_URL" \
+  cargo test -p exochain-node --bin exochain \
+    store::store_postgres::tests::postgres_malformed_rows_return_typed_errors \
+    -- --exact --ignored --nocapture --test-threads=1 2>&1 | tee "$malformed_log"
+grep -Eq 'test result: ok\. 1 passed; 0 failed; 0 ignored;' "$malformed_log"
+DATABASE_URL="$FRESH_POSTGRES_URL" \
+  cargo test -p exochain-gateway --lib --features production-db -- --test-threads=1
+DATABASE_URL="$FRESH_POSTGRES_URL" \
+  cargo test --workspace --test '*' --features exochain-gateway/production-db
+rm -f "$malformed_log"
+trap - EXIT
+```
+
+The malformed-row command must report exactly
+`1 passed; 0 failed; 0 ignored`; a missing database or zero-match filter fails
+the gate.
+
+## 6. CI-derived shell guards
+
+```bash
+set -euo pipefail
+ci_guard_list="$(mktemp)"
+trap 'rm -f "$ci_guard_list"' EXIT
+rg -o 'tools/(test_[a-z0-9_]+|check_[a-z0-9_]+)\.sh' \
+  .github/workflows/ci.yml | sort -u > "$ci_guard_list"
+test -s "$ci_guard_list"
+while IFS= read -r guard; do
+  printf 'RUN %s\n' "$guard"
+  bash "$guard"
+done < "$ci_guard_list"
+rm -f "$ci_guard_list"
+trap - EXIT
+```
+
+The discovered guard count and every printed path become part of the final
+execution record. Run the guard corpus without a concurrent Cargo process.
+
+Also reproduce CI's inline repository and runtime checks:
+
+```bash
+set -euo pipefail
+! git ls-files --error-unmatch node_modules/ >/dev/null 2>&1
+! git ls-files --error-unmatch '**/__pycache__/' >/dev/null 2>&1
+! git ls-files --error-unmatch 'web/dist/' 'demo/web/dist/' >/dev/null 2>&1
+! git ls-files '*.env' '.env*' | grep -v '\.example$' | grep -q .
+test "$(grep '^license' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')" = Apache-2.0
+head -1 LICENSE | grep -qi apache
+test "$(rg -o '#\[wasm_bindgen\]' crates/exochain-wasm/src | wc -l | tr -d ' ')" -eq 167
+test "$(grep -c 'module.exports.wasm_' packages/exochain-wasm/wasm/exochain_wasm.js)" -eq 167
+mkdir -p demo/packages/exochain-wasm/wasm
+cp -R packages/exochain-wasm/wasm/. demo/packages/exochain-wasm/wasm/
+node demo/packages/exochain-wasm/test.mjs
+cargo build --release --bin exochain --locked
+```
+
+The Linux x86-64, Linux ARM64, and macOS ARM64 binary lanes, and the complete
+`All Constitutional Gates` job, must pass in GitHub at the exact candidate SHA.
+Local native compilation is supporting evidence, not cross-platform proof.
+
+## 7. SDK, WASM, Python, proxy, and supply-chain gates
+
+```bash
+set -euo pipefail
+cargo test -p exochain-sdk --all-features --locked
+npm --prefix packages/exochain-sdk ci
+npm --prefix packages/exochain-sdk run lint
+npm --prefix packages/exochain-sdk test
+npm --prefix packages/exochain-sdk run build
+npm --prefix packages/exochain-sdk pack --dry-run
+
+cargo test -p exochain-wasm --locked
+rustup target add wasm32-unknown-unknown
+wasm-pack build crates/exochain-wasm --target nodejs --scope exochain \
+  --out-dir ../../packages/exochain-wasm/wasm -- --locked
+cp LICENSE packages/exochain-wasm/wasm/LICENSE
+node tools/prepare_wasm_npm_package.mjs packages/exochain-wasm/wasm
+npm --prefix packages/exochain-wasm/wasm pack --dry-run
+node packages/exochain-wasm/test/bridge_verification.mjs
+
+npm --prefix packages/exochain-llm-proxy ci
+npm --prefix packages/exochain-llm-proxy run lint
+npm --prefix packages/exochain-llm-proxy run test:coverage
+npm --prefix packages/exochain-llm-proxy run build
+npm --prefix packages/exochain-llm-proxy run pack:dry-run
+
+python3 -m pip install -e 'packages/exochain-py[dev]' build
+python3 -m pytest packages/exochain-py/tests
+python3 -m ruff check packages/exochain-py
+python3 -m mypy --config-file packages/exochain-py/pyproject.toml \
+  packages/exochain-py/exochain
+python_dist="$(mktemp -d)"
+python3 -m build --outdir "$python_dist" packages/exochain-py
+/usr/bin/find "$python_dist" -depth -delete
+
+python3 tools/test_publish_sealed_crate.py
+python3 tools/test_publish_sealed_crate_cargo_parity.py
+python3 tools/test_verify_crate_release_archive.py
+bash tools/test_cratesio_release_packaging.sh
+bash tools/test_publish_release_crates_registry_validation.sh
+bash tools/test_publish_release_npm_registry_validation.sh
+bash tools/test_release_publish_boundaries.sh
+bash tools/test_release_workflow_ref_binding.sh
+bash tools/test_verify_npm_registry_attestation.sh
+bash tools/test_verify_sdk_npm_release_package.sh
+bash tools/test_verify_python_release_package.sh
+bash tools/test_release_sdk_python_lifecycle_boundary.sh
+
+test "$(cargo cyclonedx --version)" = "cargo-cyclonedx-cyclonedx 0.5.9"
+SOURCE_DATE_EPOCH=0 cargo cyclonedx --manifest-path Cargo.toml \
+  -f json --all --target all --spec-version 1.5
+test "$(find crates -type f -name '*.cdx.json' | wc -l | tr -d ' ')" -eq 32
+bash tools/test_release_sbom_boundary.sh
+bash tools/test_verify_release_sbom.sh
+```
+
+## 8. Adjacent LiveSafe gate
+
+```bash
+set -euo pipefail
+npm --prefix livesafe ci
+npm --prefix livesafe/server ci
+npm --prefix livesafe/client ci
+npm --prefix livesafe/responder ci
+npm --prefix livesafe run quality
+npm --prefix livesafe run build
+docker build -f livesafe/Dockerfile livesafe
+```
+
+The audit phase must report zero vulnerabilities for the root, client,
+responder, and server lockfiles. Registry timeouts are infrastructure failures
+and require a successful retry; they are never converted to a pass.
+
+## 9. Bypass review and source custody
+
+Search every sibling ingress for mutation routers, raw secret getters,
+unchecked aggregation, URL/path normalization, unbounded file/network reads,
+direct DGCL state construction, truncated decision identifiers, unpinned
+workflow actions, release checks that consume mutable source, registry retries
+that reopen mutable inputs, and resume paths that accept matching bytes without
+matching provenance. Confirm that LYNK response attestations bind the complete
+submitted authorization request and finality tuple, generated TypeScript/WASM
+artifacts match owned sources, and no secret, credential, or imported report
+entered the diff.
+
+An independent reviewer receives the complete diff from the validation
+baseline through the candidate plus the provisional evidence files. The review
+loop is bounded to two remediation iterations and stops only when no confirmed
+finding at any severity remains unless the user explicitly accepts it. A second
+repetition of the same validation failure stops the candidate and requires user
+direction.
+
+Immediately before the evidence commit:
+
+```bash
+set -euo pipefail
+git diff --check 8020ceab355eefa7f5185d9cdd0436da7af46efb
+git status --short
+git add -- \
+  docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md \
+  docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md \
+  docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md \
+  governance/releases/v0.2.6/RC.md \
+  governance/releases/v0.2.6/TEST-PLAN.md \
+  governance/releases/v0.2.6/PATH-CLASSIFICATION.md
+git diff --cached --check
+git diff --cached --name-only | sort -u > /tmp/exochain-026-evidence-actual.txt
+printf '%s\n' \
+  docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md \
+  docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md \
+  docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md \
+  governance/releases/v0.2.6/PATH-CLASSIFICATION.md \
+  governance/releases/v0.2.6/RC.md \
+  governance/releases/v0.2.6/TEST-PLAN.md > /tmp/exochain-026-evidence-expected.txt
+diff -u /tmp/exochain-026-evidence-expected.txt /tmp/exochain-026-evidence-actual.txt
+test ! -d coverage
+test ! -d coverage-exo-root
+test ! -d coverage-root-genesis-portal
+test ! -d coverage-zerodentity
+test ! -d crates/exo-dag-db-exchange/target
+test ! -d tools/cross-impl-test/results
+test ! -d tools/cross-impl-test/vectors
+test -z "$(find crates -type f -name '*.cdx.json' -print -quit)"
+```
+
+Immediately after the evidence commit:
+
+```bash
+set -euo pipefail
+git status --short
+git show --stat --oneline --decorate HEAD
+printf '%s\n' \
+  docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md \
+  docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md \
+  docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md \
+  governance/releases/v0.2.6/PATH-CLASSIFICATION.md \
+  governance/releases/v0.2.6/RC.md \
+  governance/releases/v0.2.6/TEST-PLAN.md > /tmp/exochain-026-evidence-expected.txt
+git diff-tree --no-commit-id --name-only -r HEAD | sort -u \
+  > /tmp/exochain-026-evidence-actual.txt
+diff -u /tmp/exochain-026-evidence-expected.txt /tmp/exochain-026-evidence-actual.txt
+```
+
+The status must be empty. Re-run all content-sensitive report, path-inventory,
+documentation, repository-truth, workflow, packaging, and source-custody guards
+against this committed HEAD, then perform an independent final-diff review. The
+full provider CI suite remains the exact-head release-authorization proof.
+Nothing is pushed, tagged, published, deployed, or merged as part of this plan.
+
+## 10. Platform closure
+
+The local macOS pass can compile-check the Windows target, but only the
+`private-file-windows` job on GitHub `windows-latest` supplies runtime ACL
+evidence. Therefore the local branch may be described as a prepared source
+candidate; it must not be described as release-authorized until that exact CI
+job passes for the exact pushed head.
+
+## 11. Toolchain and provider closure
+
+Record `rustc --version`, `cargo --version`, `node --version`, `npm --version`,
+`python3 --version`, `wasm-pack --version`, and `cargo cyclonedx --version` with
+the local results. A different local version is recorded as such and never
+promoted to exact CI parity. Release lanes require Rust `1.97.1`, Node
+`22.14.0`, and Python `3.13.7`; the minimum-supported Python lane requires
+`3.11.14`; WASM CI requires Node 20 and `wasm-pack 0.14.0`. Use isolated Python
+virtual environments for package testing. Provider status is separate from
+local execution: the exact candidate SHA must pass both `All Constitutional
+Gates` and the LiveSafe workflow before release authorization.
+
+## Pre-review execution checkpoint
+
+The pre-review pass established that the gate design is executable before the
+final whole-branch review:
+
+- Core build, debug/release tests, Clippy, format, rustdoc, audit, and deny
+  passed at `31e63d678a`.
+- All eight feature-isolation lanes and all 58 CI-derived shell guards passed at
+  `a3d51b2f6f`; the repository-truth guard's isolated rerun removed the only
+  target-directory race.
+- Workspace coverage passed at 90.86% (`47572/52359`), ZeroDentity at 83.00%
+  (`1870/2253`), `exo-root` at 100% (`1087/1087`), and root-genesis portal at
+  100% (`65/65`) at `a3d51b2f6f`.
+- Fresh PostgreSQL migration, malformed-row, gateway, and workspace integration
+  lanes passed before the review-only SDK and LiveSafe dependency commits.
+- TypeScript SDK, LLM proxy, Python, WASM packaging, reviewed SBOM, and direct
+  LiveSafe package gates passed at their recorded implementation checkpoints.
+- `8ac31398f4` reduced the LiveSafe server audit from three moderate advisories
+  to zero and passed 555 Vitest tests plus focused exploit/control tests.
+- `0d9e1c6928` added Rust/TypeScript lookup validation; review then found a Rust
+  patch-version source-compatibility regression and unbounded TypeScript DID
+  diagnostics. `fc794d200c` restored the shipped direct Rust builder signatures,
+  maps all invalid lookup IDs to one fixed bounded safe segment, preserves valid
+  canonical paths byte-for-byte, and makes DID diagnostics fixed and
+  non-reflective. Focused SDK, node/MCP, TypeScript, lint, docs, and packaging
+  checks passed at that correction.
+- At `fc86b0b18e`, the exact report-set and classification checks passed; the
+  report-overlap reruns passed for root-trust isolation (2 tests across default
+  and `conformance-test-root`), timestamp response bounds (2), AVC blocking
+  access (1), gateway credentials (14), messaging (72), WASM Shamir (9), WASM
+  messaging (5), and DKG patch compatibility (3).
+- At the same checkpoint, the sealed Cargo uploader unit suite passed (12), its
+  Cargo 1.97.1 protocol oracle matched, the crate-archive verifier suite passed
+  (4), and the npm registry attestation, SDK npm package, Python package,
+  SDK/Python lifecycle, crates.io packaging, Cargo/npm registry, Python CI,
+  publication-boundary, and workflow-ref-binding guards all passed.
+- At `e73dcf53bf`, all report-set, classification, report-cited-path, and
+  changed-path inventory checks passed again. The report-overlap focused suite
+  also passed again: root-trust isolation (2 tests across default and
+  `conformance-test-root`), timestamp response bounds (2), AVC blocking access
+  (1), gateway credentials (14), messaging (72), WASM Shamir (9), WASM
+  messaging (5), and DKG patch compatibility (3). The release publication
+  boundary guard passed with the newly added exact npm-owner prepublication
+  check and the first-publication exception restricted to `@exochain/sdk`.
+  Commits `2e286e21` and `e73dcf53` change only two already-classified
+  release-adapter paths and no report-cited source path.
+
+These results are pre-review evidence only. Before any evidence commit may
+record completion, a new complete run is required on the reviewed code head;
+earlier green results cannot authorize the candidate after review changes.
