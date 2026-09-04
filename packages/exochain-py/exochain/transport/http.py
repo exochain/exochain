@@ -37,6 +37,10 @@ _INVALID_TOTAL_TIMEOUT = "total_timeout must be a positive finite built-in int o
 _TOTAL_TIMEOUT_EXCEEDED = "total request deadline exceeded"
 _MALFORMED_CONTENT_LENGTH = "response Content-Length is malformed"
 _UNSUPPORTED_CONTENT_ENCODING = "response Content-Encoding must be identity"
+_INVALID_BASE_URL = (
+    "base_url must be an absolute HTTP(S) URL without credentials, query, or fragment"
+)
+_INVALID_REQUEST_TARGET = "request target must be an origin-relative gateway path"
 
 
 class _BuiltinBytesAsyncStream(httpx.AsyncByteStream):
@@ -93,16 +97,35 @@ class HttpTransport:
         if type(max_response_bytes) is not int or max_response_bytes <= 0:
             raise ValueError(_INVALID_RESPONSE_LIMIT)
 
+        if type(base_url) is not str:
+            raise ValueError(_INVALID_BASE_URL)
+        try:
+            normalized_base_url = httpx.URL(base_url)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(_INVALID_BASE_URL) from exc
+        if (
+            normalized_base_url.scheme not in ("http", "https")
+            or normalized_base_url.host == ""
+            or normalized_base_url.userinfo != b""
+            or normalized_base_url.query != b""
+            or normalized_base_url.fragment != ""
+        ):
+            raise ValueError(_INVALID_BASE_URL)
+
         headers: dict[str, str] = {
             "Accept-Encoding": "identity",
             "User-Agent": _DEFAULT_USER_AGENT,
         }
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
+        self._authorization_header = f"Bearer {api_key}" if api_key else None
+        self._base_origin = (
+            normalized_base_url.scheme,
+            normalized_base_url.host,
+            normalized_base_url.port,
+        )
         self._total_timeout = normalized_total_timeout
         self._max_response_bytes = max_response_bytes
         self._client: httpx.AsyncClient = httpx.AsyncClient(
-            base_url=base_url,
+            base_url=normalized_base_url,
             headers=headers,
             timeout=timeout,
         )
@@ -126,9 +149,20 @@ class HttpTransport:
         *,
         body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        request_url = self._resolve_request_url(path)
+        request_headers = (
+            {"Authorization": self._authorization_header}
+            if self._authorization_header is not None
+            else None
+        )
         try:
             async with asyncio.timeout(self._total_timeout):
-                async with self._client.stream(method, path, json=body) as response:
+                async with self._client.stream(
+                    method,
+                    request_url,
+                    json=body,
+                    headers=request_headers,
+                ) as response:
                     response_body = await self._read_response_body(response)
                     try:
                         response.raise_for_status()
@@ -152,6 +186,31 @@ class HttpTransport:
         if not isinstance(data, dict):
             raise TransportError(f"{method} {path} did not return a JSON object")
         return data
+
+    def _resolve_request_url(self, path: str) -> httpx.URL:
+        if (
+            type(path) is not str
+            or not path.startswith("/")
+            or path.startswith("//")
+            or "#" in path
+        ):
+            raise TransportError(_INVALID_REQUEST_TARGET)
+        try:
+            parsed = httpx.URL(path)
+            resolved = self._client.base_url.join(path[1:])
+        except (TypeError, ValueError) as exc:
+            raise TransportError(_INVALID_REQUEST_TARGET) from exc
+        if (
+            parsed.is_absolute_url
+            or parsed.host != ""
+            or parsed.userinfo != b""
+            or parsed.fragment != ""
+            or (resolved.scheme, resolved.host, resolved.port) != self._base_origin
+            or resolved.userinfo != b""
+            or resolved.fragment != ""
+        ):
+            raise TransportError(_INVALID_REQUEST_TARGET)
+        return resolved
 
     async def _read_response_body(self, response: httpx.Response) -> bytes:
         content_encoding = response.headers.get("content-encoding")

@@ -155,6 +155,28 @@ def test_http_transport_rejects_non_positive_or_non_builtin_limits(
 
 
 @pytest.mark.parametrize(
+    "base_url",
+    [
+        "",
+        "fabric.example",
+        "ftp://fabric.example",
+        "https://user:password@fabric.example",
+        "https://fabric.example/api?tenant=other",
+        "https://fabric.example/api#fragment",
+        _FalseyPathSegment("https://fabric.example"),
+    ],
+)
+def test_http_transport_rejects_ambiguous_or_credentialed_base_urls(base_url: str) -> None:
+    """The configured credential origin is explicit and cannot carry URL credentials."""
+    with pytest.raises(ValueError) as exc_info:
+        HttpTransport(base_url)
+
+    assert str(exc_info.value) == (
+        "base_url must be an absolute HTTP(S) URL without credentials, query, or fragment"
+    )
+
+
+@pytest.mark.parametrize(
     "invalid_total_timeout",
     [
         0,
@@ -640,6 +662,76 @@ async def test_http_transport_preserves_status_and_body() -> None:
     assert exc_info.value.body == "maintenance"
 
     await transport.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["GET", "POST"])
+@pytest.mark.parametrize(
+    "request_target",
+    [
+        "https://attacker.example/capture",
+        "http://fabric.example/downgrade",
+        "//attacker.example/capture",
+        "relative/path",
+        "?admin=true",
+        "/health#attacker-fragment",
+    ],
+)
+async def test_http_transport_rejects_non_origin_relative_targets_before_auth(
+    method: str,
+    request_target: str,
+) -> None:
+    """Advanced transport calls cannot redirect a gateway bearer token off origin."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={})
+
+    transport = HttpTransport("https://fabric.example/api/", api_key="super-secret")
+    original_backend = transport._client._transport
+    await original_backend.aclose()
+    transport._client._transport = httpx.MockTransport(handler)
+
+    try:
+        with pytest.raises(TransportError) as exc_info:
+            if method == "GET":
+                await transport.get(request_target)
+            else:
+                await transport.post(request_target, {"operation": "probe"})
+
+        assert str(exc_info.value) == "request target must be an origin-relative gateway path"
+        assert exc_info.value.status is None
+        assert exc_info.value.body is None
+        assert requests == []
+        assert "super-secret" not in str(exc_info.value)
+        assert "attacker.example" not in str(exc_info.value)
+    finally:
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_http_transport_attaches_auth_only_after_same_origin_resolution() -> None:
+    """A valid rooted path resolves to the configured origin before bearer attachment."""
+    observed: httpx.Request | None = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal observed
+        observed = request
+        return httpx.Response(200, json={})
+
+    transport = HttpTransport("https://fabric.example/api/", api_key="gateway-secret")
+    original_backend = transport._client._transport
+    await original_backend.aclose()
+    transport._client._transport = httpx.MockTransport(handler)
+
+    try:
+        assert await transport.get("/health?deep=1") == {}
+        assert observed is not None
+        assert observed.url == httpx.URL("https://fabric.example/api/health?deep=1")
+        assert observed.headers["Authorization"] == "Bearer gateway-secret"
+    finally:
+        await transport.close()
 
 
 @pytest.mark.asyncio
