@@ -12,6 +12,9 @@ trusted_rustdoc=
 trusted_node=
 trusted_python=
 owner_checker_program=
+source_guard_program=
+tag_guard_program=
+release_github_token=
 expected_checksum_crates=()
 expected_checksum_values=()
 
@@ -93,23 +96,10 @@ initialize_release_publication() {
     || fail "release Node.js version differs from the pinned runtime"
 
   owner_checker_program="$RELEASE_OWNER_CHECK_PROGRAM"
-  printf '%s' "$RELEASE_SOURCE_GUARD_PROGRAM" | /usr/bin/env -i \
-    EXPECTED_COMMIT_SHA="$EXPECTED_COMMIT_SHA" \
-    GITHUB_SHA="$GITHUB_SHA" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-    RUNNER_TEMP="$RUNNER_TEMP" \
-    TRUSTED_RELEASE_REF="$TRUSTED_RELEASE_REF" \
-    /bin/bash --noprofile --norc -p
-  printf '%s' "$RELEASE_TAG_GUARD_PROGRAM" | /usr/bin/env -i \
-    DRY_RUN=false RELEASE_TAG="$RELEASE_TAG" \
-    EXPECTED_TAG_OBJECT_SHA="$EXPECTED_TAG_OBJECT_SHA" \
-    EXPECTED_TAG_COMMIT_SHA="$EXPECTED_TAG_COMMIT_SHA" \
-    EXPECTED_COMMIT_SHA="$EXPECTED_COMMIT_SHA" \
-    GITHUB_SHA="$GITHUB_SHA" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
-    GITHUB_ACTIONS="$GITHUB_ACTIONS" \
-    GITHUB_SERVER_URL="$GITHUB_SERVER_URL" \
-    GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
-    RELEASE_GITHUB_TOKEN="$RELEASE_GITHUB_TOKEN" \
-    /bin/bash --noprofile --norc -p
+  source_guard_program="$RELEASE_SOURCE_GUARD_PROGRAM"
+  tag_guard_program="$RELEASE_TAG_GUARD_PROGRAM"
+  release_github_token="$RELEASE_GITHUB_TOKEN"
+  verify_live_release_binding
   printf '%s' "$RELEASE_CARGO_CONFIG_GUARD_PROGRAM" | /usr/bin/env -i \
     GITHUB_WORKSPACE="$GITHUB_WORKSPACE" /bin/bash --noprofile --norc -p
   unset RELEASE_SOURCE_GUARD_PROGRAM RELEASE_TAG_GUARD_PROGRAM \
@@ -156,6 +146,29 @@ initialize_release_publication() {
     GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_ATTR_SOURCE
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
     GIT_NO_REPLACE_OBJECTS=1
+}
+
+verify_live_release_binding() {
+  [ -n "$source_guard_program" ] && [ -n "$tag_guard_program" ] \
+    && [ -n "$release_github_token" ] \
+    || fail "captured release binding inputs are unavailable"
+  printf '%s' "$source_guard_program" | /usr/bin/env -i \
+    EXPECTED_COMMIT_SHA="$EXPECTED_COMMIT_SHA" \
+    GITHUB_SHA="$GITHUB_SHA" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+    RUNNER_TEMP="$RUNNER_TEMP" \
+    TRUSTED_RELEASE_REF="$TRUSTED_RELEASE_REF" \
+    /bin/bash --noprofile --norc -p
+  printf '%s' "$tag_guard_program" | /usr/bin/env -i \
+    DRY_RUN=false RELEASE_TAG="$RELEASE_TAG" \
+    EXPECTED_TAG_OBJECT_SHA="$EXPECTED_TAG_OBJECT_SHA" \
+    EXPECTED_TAG_COMMIT_SHA="$EXPECTED_TAG_COMMIT_SHA" \
+    EXPECTED_COMMIT_SHA="$EXPECTED_COMMIT_SHA" \
+    GITHUB_SHA="$GITHUB_SHA" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+    GITHUB_ACTIONS="$GITHUB_ACTIONS" \
+    GITHUB_SERVER_URL="$GITHUB_SERVER_URL" \
+    GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+    RELEASE_GITHUB_TOKEN="$release_github_token" \
+    /bin/bash --noprofile --norc -p
 }
 
 validate_release_manifests() {
@@ -519,6 +532,10 @@ retry_seconds_within_budget() {
   printf '%s\n' "$bounded"
 }
 
+release_retry_sleep() {
+  /bin/sleep "$1"
+}
+
 publish_crate_with_retry() {
   local crate="$1"
   local expected_checksum="$2"
@@ -538,6 +555,10 @@ publish_crate_with_retry() {
     # the first attempt after a bounded rate-limit sleep.
     verify_crate_ownership "$crate" \
       || fail "crates.io ownership changed before publishing $crate"
+    # Revalidate the exact checked-out source and immutable signed remote tag
+    # after all retry delays and immediately before handing the registry token
+    # to Cargo. The guard bodies were captured from the approved commit.
+    verify_live_release_binding
     if output="$(release_cargo_publish "$crate" 2>&1)"; then
       status=0
     else
@@ -582,7 +603,7 @@ publish_crate_with_retry() {
         crates_io_retry_seconds_slept + retry_seconds
       ))
       echo "crates.io rate limit for ${crate}; sleeping ${retry_seconds}s."
-      /bin/sleep "$retry_seconds"
+      release_retry_sleep "$retry_seconds"
       attempt=$((attempt + 1))
       continue
     fi
@@ -646,6 +667,11 @@ main() {
     fi
     publish_crate_with_retry "$crate" "$expected_checksum"
   done
+  source_guard_program=
+  tag_guard_program=
+  release_github_token=
+  owner_checker_program=
+  cargo_registry_token=
   printf 'Published or verified %s dependency-ordered crates\n' "${#CRATES[@]}"
 }
 
