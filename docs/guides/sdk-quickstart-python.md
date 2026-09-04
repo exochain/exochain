@@ -35,7 +35,7 @@ The Python SDK is a Pydantic v2 + asyncio port of the canonical Rust SDK. Same f
 
 - [Installation](#installation)
 - [Runtime requirements](#runtime-requirements)
-- [Hashing difference you must know](#hashing-difference-you-must-know)
+- [Hashing contracts you must know](#hashing-contracts-you-must-know)
 - [Domain 1: Identity](#domain-1-identity)
 - [Domain 2: Consent (bailments)](#domain-2-consent-bailments)
 - [Domain 3: Governance (decisions + voting)](#domain-3-governance-decisions--voting)
@@ -111,10 +111,10 @@ DID: did:exo:a1b2c3d4e5f60789
 
 ## Hashing contracts you must know
 
-Python DID derivation uses **BLAKE3** and matches the Rust and TypeScript SDK fixture vectors for the same Ed25519 public key. Rust, TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the same canonical CBOR v2 decision frame. The shared frame is `["exochain:decision-id:v2", title, description, proposer]`, and identical input strings produce the same 64-character lowercase hex decision ID in all three SDKs. Python bailment proposal IDs remain full SHA-256 over their existing frame; that separate identifier contract is unchanged. For cross-language interop:
+Python DID derivation uses **BLAKE3** and matches the Rust and TypeScript SDK fixture vectors for the same Ed25519 public key. For title, description, and proposer strings accepted by all three SDKs, Rust, TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the same canonical CBOR v2 decision frame. The shared frame is `["exochain:decision-id:v2", title, description, proposer]`, and those shared inputs produce the same 64-character lowercase hex decision ID in all three SDKs. Python bailment proposal IDs remain full SHA-256 over their existing frame; that separate identifier contract is unchanged. For cross-language interop:
 
 - Use `Identity.generate` or `derive_did` for local DIDs.
-- Local governance decision builders agree across Rust, TypeScript, and Python.
+- For inputs accepted by all three SDKs, local governance decision builders agree across Rust, TypeScript, and Python.
 - Trust other proposal and receipt IDs returned by the gateway when a canonical fabric identifier is required.
 
 See [`packages/exochain-py/exochain/governance/decision.py`](../../packages/exochain-py/exochain/governance/decision.py), [`packages/exochain-py/exochain/crypto/hash.py`](../../packages/exochain-py/exochain/crypto/hash.py), and [`packages/exochain-py/exochain/consent/bailment.py`](../../packages/exochain-py/exochain/consent/bailment.py) for the exact canonicalization.

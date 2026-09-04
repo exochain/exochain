@@ -42,7 +42,10 @@ a tag, GitHub Release, registry publication, deployment, or v0.3.0 close.
   coordination work, and primitive WASM inputs before allocation.
 - Redacts external internal-error responses, replaces panicking database row
   decoding, percent-encodes SDK request components, and aligns collision-resistant
-  decision identifiers across Rust, TypeScript, and Python.
+  decision identifiers across Rust, TypeScript, and Python. For title,
+  description, and proposer strings accepted by all three SDKs, Rust, TypeScript,
+  and Python `DecisionBuilder` use full BLAKE3 over the same canonical CBOR v2
+  decision frame.
 - Keeps LiveSafe remediation in its adjacent, proprietary validation lane with
   `public_claims_allowed: false` unchanged.
 

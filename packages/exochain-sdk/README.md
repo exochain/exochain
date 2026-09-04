@@ -257,8 +257,9 @@ const identity = await Identity.fromResolvedKeypair({
 });
 ```
 
-Rust, TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the same
-canonical CBOR v2 decision frame. The frame is the CBOR array
+For title, description, and proposer strings accepted by all three SDKs, Rust,
+TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the same canonical
+CBOR v2 decision frame. The frame is the CBOR array
 `["exochain:decision-id:v2", title, description, proposer]`.
 
 That decision-ID change does not alter other client-derived IDs. Rust bailment

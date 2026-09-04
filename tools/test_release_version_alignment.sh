@@ -26,13 +26,42 @@ import sys
 import tomllib
 
 
+contradiction_fixture_document = os.environ.get(
+    "EXOCHAIN_RELEASE_ALIGNMENT_CONTRADICTION_FIXTURE_DOCUMENT"
+)
+contradiction_fixture_kind = os.environ.get(
+    "EXOCHAIN_RELEASE_ALIGNMENT_CONTRADICTION_FIXTURE_KIND", "prior-python-sha256"
+)
+contradiction_fixture_claims = {
+    "prior-python-sha256": (
+        "The Python SDK still uses **SHA-256** for client-side content-addressed "
+        "proposal IDs and decision IDs."
+    ),
+    "python-identifier-sha256": (
+        "Python's decision identifier algorithm is still SHA256."
+    ),
+    "two-sdk-decision-digest": (
+        "Only Rust and TypeScript governance builders share the same BLAKE3 "
+        "decision digest."
+    ),
+}
+if (
+    contradiction_fixture_document is not None
+    and contradiction_fixture_kind not in contradiction_fixture_claims
+):
+    raise SystemExit("unknown contradiction fixture kind")
+
+
 def fail(message: str) -> None:
     print(f"release version alignment test failed: {message}", file=sys.stderr)
     raise SystemExit(1)
 
 
 def read(path: str) -> str:
-    return pathlib.Path(path).read_text(encoding="utf-8")
+    contents = pathlib.Path(path).read_text(encoding="utf-8")
+    if path == contradiction_fixture_document:
+        contents += f"\n\n{contradiction_fixture_claims[contradiction_fixture_kind]}\n"
+    return contents
 
 
 def json_version(path: str, key_path: tuple[str, ...] = ("version",)) -> str:
@@ -285,22 +314,41 @@ for source, actual in python_package_checks.items():
         fail(f"{source} is {actual}, expected Python package version {expected_python}")
 
 decision_id_contract_docs = [
+    "CHANGELOG.md",
+    "governance/releases/v0.2.6/RC.md",
     "packages/README.md",
     "packages/exochain-sdk/README.md",
     "docs/guides/sdk-quickstart-python.md",
     "docs/guides/sdk-quickstart-typescript.md",
 ]
 decision_id_contract = (
+    "For title, description, and proposer strings accepted by all three SDKs, "
     "Rust, TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the "
     "same canonical CBOR v2 decision frame."
 )
-stale_python_decision_id_claims = (
-    "Python decision IDs are unchanged",
-    "Python decision IDs remain the first 16 hex characters",
-    "Python decision IDs retain their existing 16-hex SHA-256 prefix",
-    "Rust and TypeScript `DecisionBuilder` agree on decision IDs",
-    "Rust and TypeScript `DecisionBuilder` now derive the same 64-hex decision ID",
+stale_decision_id_claims = (
+    "python decision ids are unchanged",
+    "python decision ids remain the first 16 hex characters",
+    "python decision ids retain their existing 16 hex sha 256 prefix",
+    "rust and typescript decisionbuilder agree on decision ids",
+    "rust and typescript decisionbuilder now derive the same 64 hex decision id",
 )
+legacy_decision_id_terms = re.compile(
+    r"\b(?:sha ?256|first (?:16|sixteen)|(?:16|sixteen) hex|truncat\w*|prefix)\b"
+)
+two_sdk_parity_terms = re.compile(
+    r"\b(?:agree|align\w*|both|contract|derive|same|share|use)\b"
+)
+python_exclusion_terms = re.compile(r"\b(?:excluded|not part|outside)\b")
+
+
+def normalized_claim_clauses(documentation: str) -> list[str]:
+    flattened = " ".join(documentation.split())
+    return [
+        re.sub(r"[^a-z0-9]+", " ", clause.casefold()).strip()
+        for clause in re.split(r"[.!?;]+|\b(?:but|whereas|while)\b", flattened, flags=re.I)
+        if clause.strip()
+    ]
 
 for documentation_path in decision_id_contract_docs:
     documentation = read(documentation_path)
@@ -309,14 +357,71 @@ for documentation_path in decision_id_contract_docs:
         fail(
             f"{documentation_path} must state the three-SDK canonical decision-ID contract"
         )
-    for stale_claim in stale_python_decision_id_claims:
-        if stale_claim in normalized_documentation:
-            fail(f"{documentation_path} retains stale decision-ID text: {stale_claim}")
-
-for documentation_path in ["CHANGELOG.md", "governance/releases/v0.2.6/RC.md"]:
-    documentation = read(documentation_path)
-    if "decision identifiers across Rust, TypeScript, and Python" not in documentation:
-        fail(f"{documentation_path} omits Python from the aligned decision-ID contract")
+    for claim in normalized_claim_clauses(documentation):
+        for stale_claim in stale_decision_id_claims:
+            if stale_claim in claim:
+                fail(f"{documentation_path} retains stale decision-ID text: {stale_claim}")
+        mentions_decision_identity = (
+            re.search(r"\bdecision (?:digests?|hash(?:es)?|ids?|identifiers?)\b", claim)
+            is not None
+        )
+        mentions_decision_builder = "decisionbuilder" in claim
+        if mentions_decision_identity and legacy_decision_id_terms.search(claim):
+            fail(f"{documentation_path} retains contradictory decision-ID claim")
+        if (
+            (mentions_decision_identity or mentions_decision_builder)
+            and "python" in claim
+            and python_exclusion_terms.search(claim)
+        ):
+            fail(f"{documentation_path} retains contradictory decision-ID claim")
+        if (
+            (mentions_decision_identity or mentions_decision_builder)
+            and "rust" in claim
+            and "typescript" in claim
+            and "python" not in claim
+            and two_sdk_parity_terms.search(claim)
+        ):
+            fail(
+                f"{documentation_path} retains a two-SDK-only decision-ID claim"
+            )
 
 print(f"release version alignment test passed: {expected}")
 PY
+
+if [[ -z "${EXOCHAIN_RELEASE_ALIGNMENT_CONTRADICTION_FIXTURE_DOCUMENT:-}" ]]; then
+  contradiction_contract_docs=(
+    "CHANGELOG.md"
+    "docs/guides/sdk-quickstart-python.md"
+    "docs/guides/sdk-quickstart-typescript.md"
+    "governance/releases/v0.2.6/RC.md"
+    "packages/README.md"
+    "packages/exochain-sdk/README.md"
+  )
+  contradiction_fixture_kinds=(
+    "prior-python-sha256"
+    "python-identifier-sha256"
+    "two-sdk-decision-digest"
+  )
+
+  for fixture_kind in "${contradiction_fixture_kinds[@]}"; do
+    for documentation_path in "${contradiction_contract_docs[@]}"; do
+      if contradiction_output="$({
+        EXOCHAIN_RELEASE_ALIGNMENT_CONTRADICTION_FIXTURE_DOCUMENT="$documentation_path" \
+          EXOCHAIN_RELEASE_ALIGNMENT_CONTRADICTION_FIXTURE_KIND="$fixture_kind" \
+          bash "$0"
+      } 2>&1)"; then
+        printf '%s\n' \
+          "release version alignment test failed: $fixture_kind contradiction-injection case unexpectedly passed for $documentation_path" \
+          >&2
+        exit 1
+      fi
+      if [[ "$contradiction_output" != *"decision-ID claim"* ]]; then
+        printf '%s\n%s\n' \
+          "release version alignment test failed: $fixture_kind contradiction-injection case failed for the wrong reason in $documentation_path" \
+          "$contradiction_output" \
+          >&2
+        exit 1
+      fi
+    done
+  done
+fi
