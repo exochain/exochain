@@ -4,8 +4,12 @@ import {
   type FetchLike,
   type LlmProxyConfig,
 } from "../src/index.js";
+import type { ReceiptAuthority } from "./receipt-authority.js";
 
-export const exampleResponsesConfig = (fetchImpl: FetchLike): LlmProxyConfig => ({
+export const exampleResponsesConfig = (
+  fetchImpl: FetchLike,
+  authority: ReceiptAuthority,
+): LlmProxyConfig => ({
   mode: "production",
   gatewayUrl: "https://exochain.example",
   tenantId: "tenant-alpha",
@@ -14,14 +18,15 @@ export const exampleResponsesConfig = (fetchImpl: FetchLike): LlmProxyConfig => 
   adapterDid: "did:exo:lynk-adapter",
   custodyPolicyHash: hashProviderPayload("customer-custody-policy-v1"),
   storageMode: "receipt_minimized",
-  validation: { action: "llm.usage.receipt.emit" },
-  subjectSignature: "subject-signature-placeholder",
-  adapterSignature: "adapter-signature-placeholder",
+  ...authority,
   fetch: fetchImpl,
 });
 
-export async function runOpenAIResponsesExample(fetchImpl: FetchLike): Promise<unknown> {
-  const client = createReceiptedOpenAIClient(exampleResponsesConfig(fetchImpl), {
+export async function runOpenAIResponsesExample(
+  fetchImpl: FetchLike,
+  authority: ReceiptAuthority,
+): Promise<unknown> {
+  const client = createReceiptedOpenAIClient(exampleResponsesConfig(fetchImpl, authority), {
     openAIBaseUrl: "https://api.openai.com",
     apiKey: process.env.OPENAI_API_KEY,
   });

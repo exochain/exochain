@@ -217,6 +217,8 @@ const AVC_ROOT_BUNDLE_RECEIPT_SCHEMA_VERSION: &str = "dagdb_root_bundle_verifica
 const AVC_ROOT_BUNDLE_RECEIPT_VERIFIER_VERSION: &str = "exo-node-avc-root-trust-loader-v1";
 const AVC_EXOCHAIN_FINALITY_DAG_DOMAIN: &str = "exo.avc.receipt.exochain_finality.v1";
 const AVC_EXOCHAIN_FINALITY_ACTION_TYPE: &str = "avc.receipt.exochain_finality";
+pub const LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN: &str =
+    "exo.avc.lynk.receipt_response.attestation.v1";
 const DEFAULT_AVC_RECEIPT_LIST_LIMIT: u32 = 50;
 const MAX_AVC_RECEIPT_LIST_LIMIT: u32 = 500;
 const WASM_PACKAGE_NAME: &str = "@exochain/exochain-wasm";
@@ -2180,7 +2182,7 @@ pub struct EmitReceiptRequest {
     pub subject_public_key: Option<PublicKey>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LlmUsageReceiptEmitRequest {
     pub validation: AvcValidationRequest,
@@ -2197,7 +2199,17 @@ pub struct LlmUsageReceiptEmitRequest {
     pub adapter_public_key: Option<PublicKey>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LynkReceiptResponseAttestation {
+    pub domain: String,
+    pub schema_version: u16,
+    pub validator_did: Did,
+    pub signature: Signature,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EmitReceiptResponse {
     pub receipt_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2208,6 +2220,8 @@ pub struct EmitReceiptResponse {
     pub exochain_finality_receipt_hash: Option<String>,
     pub receipt: AvcTrustReceipt,
     pub validation: AvcValidationResult,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lynk_response_attestation: Option<LynkReceiptResponseAttestation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2460,6 +2474,7 @@ fn emit_receipt_response(
         exochain_finality_receipt_hash: None,
         receipt,
         validation,
+        lynk_response_attestation: None,
     }
 }
 
@@ -2473,6 +2488,145 @@ fn attach_exochain_finality(
         response.exochain_finality_receipt_hash =
             Some(format!("{}", commitment.finality_receipt_hash));
     }
+}
+
+fn sorted_json_cbor_value(value: &serde_json::Value) -> anyhow::Result<ciborium::value::Value> {
+    use ciborium::value::Value;
+
+    match value {
+        serde_json::Value::Null => Ok(Value::Null),
+        serde_json::Value::Bool(value) => Ok(Value::Bool(*value)),
+        serde_json::Value::Number(value) => {
+            if let Some(value) = value.as_u64() {
+                Ok(Value::Integer(value.into()))
+            } else if let Some(value) = value.as_i64() {
+                Ok(Value::Integer(value.into()))
+            } else {
+                anyhow::bail!("LYNK response attestation rejects non-integer JSON numbers")
+            }
+        }
+        serde_json::Value::String(value) => Ok(Value::Text(value.clone())),
+        serde_json::Value::Array(values) => values
+            .iter()
+            .map(sorted_json_cbor_value)
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map(Value::Array),
+        serde_json::Value::Object(values) => {
+            let mut entries = values.iter().collect::<Vec<_>>();
+            entries.sort_by_key(|(key, _)| *key);
+            entries
+                .into_iter()
+                .map(|(key, value)| Ok((Value::Text(key.clone()), sorted_json_cbor_value(value)?)))
+                .collect::<anyhow::Result<Vec<_>>>()
+                .map(Value::Map)
+        }
+    }
+}
+
+fn lynk_receipt_response_attestation_payload(
+    response: &EmitReceiptResponse,
+    receipt_request: &serde_json::Value,
+    validator_did: &Did,
+) -> anyhow::Result<Vec<u8>> {
+    let finality_hash = response
+        .exochain_finality_hash
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("LYNK response attestation requires finality hash"))?;
+    let finality_height = response
+        .exochain_finality_height
+        .ok_or_else(|| anyhow::anyhow!("LYNK response attestation requires finality height"))?;
+    let finality_receipt_hash = response
+        .exochain_finality_receipt_hash
+        .as_deref()
+        .ok_or_else(|| {
+            anyhow::anyhow!("LYNK response attestation requires finality receipt hash")
+        })?;
+    if response.receipt.decision != AvcDecision::Allow
+        || response.validation.decision != AvcDecision::Allow
+    {
+        anyhow::bail!("LYNK response attestation requires an Allow decision");
+    }
+    if response.receipt.validator_did != *validator_did {
+        anyhow::bail!("LYNK response validator DID does not match the attesting validator");
+    }
+
+    let payload = serde_json::json!({
+        "decision": "Allow",
+        "domain": LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN,
+        "exochain_finality": {
+            "hash": finality_hash,
+            "height": finality_height,
+            "receipt_hash": finality_receipt_hash,
+        },
+        "receipt_request": receipt_request,
+        "receipt": &response.receipt,
+        "receipt_hash": &response.receipt_hash,
+        "schema_version": AVC_SCHEMA_VERSION,
+        "validation": &response.validation,
+        "validator_did": validator_did,
+    });
+    let value = sorted_json_cbor_value(&payload)?;
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(&value, &mut bytes)
+        .map_err(|error| anyhow::anyhow!("LYNK response attestation CBOR failed: {error}"))?;
+    Ok(bytes)
+}
+
+fn attach_lynk_receipt_response_attestation(
+    response: &mut EmitReceiptResponse,
+    receipt_request: &serde_json::Value,
+    validator_did: &Did,
+    receipt_signer: &AvcReceiptSigner,
+) -> anyhow::Result<()> {
+    if response.exochain_finality_hash.is_none()
+        && response.exochain_finality_height.is_none()
+        && response.exochain_finality_receipt_hash.is_none()
+    {
+        return Ok(());
+    }
+    let payload =
+        lynk_receipt_response_attestation_payload(response, receipt_request, validator_did)?;
+    response.lynk_response_attestation = Some(LynkReceiptResponseAttestation {
+        domain: LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN.to_owned(),
+        schema_version: AVC_SCHEMA_VERSION,
+        validator_did: validator_did.clone(),
+        signature: (receipt_signer)(&payload),
+    });
+    Ok(())
+}
+
+fn reject_unknown_lynk_request_fields(
+    submitted: &serde_json::Value,
+    typed_shape: &serde_json::Value,
+    path: &str,
+) -> ApiResult<()> {
+    match (submitted, typed_shape) {
+        (serde_json::Value::Object(submitted), serde_json::Value::Object(typed_shape)) => {
+            for (key, value) in submitted {
+                let expected = typed_shape.get(key).ok_or_else(|| {
+                    tracing::warn!("rejected unknown LYNK request field");
+                    (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "LYNK receipt request contains an unknown field".into(),
+                    )
+                })?;
+                reject_unknown_lynk_request_fields(value, expected, &format!("{path}.{key}"))?;
+            }
+        }
+        (serde_json::Value::Array(submitted), serde_json::Value::Array(typed_shape)) => {
+            if submitted.len() != typed_shape.len() {
+                return Err((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "LYNK receipt request contains an invalid array".into(),
+                ));
+            }
+            for (index, (value, expected)) in submitted.iter().zip(typed_shape).enumerate() {
+                reject_unknown_lynk_request_fields(value, expected, &format!("{path}[{index}]"))?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn avc_protocol_info() -> AvcProtocolInfo {
@@ -2981,8 +3135,28 @@ async fn handle_emit_receipt(
 
 async fn handle_llm_usage_emit_receipt(
     State(state): State<Arc<AvcApiState>>,
-    Json(payload): Json<LlmUsageReceiptEmitRequest>,
+    Json(submitted_receipt_request): Json<serde_json::Value>,
 ) -> ApiResult<Json<EmitReceiptResponse>> {
+    let payload: LlmUsageReceiptEmitRequest =
+        serde_json::from_value(submitted_receipt_request.clone()).map_err(|_error| {
+            tracing::warn!("rejected malformed LYNK receipt request");
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "LYNK receipt request is malformed".into(),
+            )
+        })?;
+    let typed_request_shape = serde_json::to_value(&payload).map_err(|_error| {
+        tracing::error!("could not normalize parsed LYNK receipt request");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "LYNK receipt request normalization failed".into(),
+        )
+    })?;
+    reject_unknown_lynk_request_fields(
+        &submitted_receipt_request,
+        &typed_request_shape,
+        "request",
+    )?;
     let validator_did = state.validator_did.clone();
     let receipt_signer = Arc::clone(&state.receipt_signer);
     let envelope = payload.llm_usage_evidence.clone();
@@ -3106,6 +3280,13 @@ async fn handle_llm_usage_emit_receipt(
     )
     .map_err(exochain_finality_error)?;
     attach_exochain_finality(&mut response, finality);
+    attach_lynk_receipt_response_attestation(
+        &mut response,
+        &submitted_receipt_request,
+        &state.validator_did,
+        &state.receipt_signer,
+    )
+    .map_err(exochain_finality_error)?;
     Ok(Json(response))
 }
 
@@ -4046,6 +4227,87 @@ mod tests {
 
     fn test_hash(byte: u8) -> Hash256 {
         Hash256::from_bytes([byte; 32])
+    }
+
+    #[test]
+    fn typescript_lynk_wire_fixture_deserializes_into_the_route_dto() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../fixtures/lynk/typescript_receipt_emit_request_v1.json"
+        ))
+        .expect("TypeScript LYNK request fixture must be valid JSON");
+        let parsed: LlmUsageReceiptEmitRequest = serde_json::from_value(fixture.clone())
+            .expect("TypeScript LYNK request fixture must deserialize into the Rust route DTO");
+
+        assert_eq!(
+            parsed.llm_usage_evidence.evidence.action_id,
+            Hash256::from_bytes([2; 32])
+        );
+        assert_eq!(
+            parsed
+                .validation
+                .action
+                .as_ref()
+                .map(|action| action.action_id),
+            Some(parsed.llm_usage_evidence.evidence.action_id)
+        );
+        assert_eq!(parsed.subject_signature.algorithm(), "Ed25519");
+        assert_eq!(parsed.adapter_signature.algorithm(), "Ed25519");
+        assert_eq!(
+            parsed.subject_public_key.map(|key| *key.as_bytes()),
+            Some([13; 32])
+        );
+        assert_eq!(
+            parsed.adapter_public_key.map(|key| *key.as_bytes()),
+            Some([14; 32])
+        );
+        assert_eq!(
+            serde_json::to_value(parsed).expect("Rust route DTO must serialize"),
+            fixture,
+            "the shared TypeScript fixture must use Rust's canonical JSON representation"
+        );
+    }
+
+    #[test]
+    fn rust_lynk_response_fixture_round_trips_with_nested_serde_types() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../fixtures/lynk/rust_receipt_emit_response_v1.json"
+        ))
+        .expect("Rust LYNK response fixture must be valid JSON");
+        let parsed: EmitReceiptResponse = serde_json::from_value(fixture.clone())
+            .expect("Rust LYNK response fixture must deserialize into the route response DTO");
+
+        assert_eq!(parsed.receipt.receipt_id, Hash256::from_bytes([16; 32]));
+        assert_eq!(parsed.receipt.signature.algorithm(), "Ed25519");
+        assert_eq!(
+            parsed.receipt.timestamp_provenance,
+            Some(AvcReceiptTimestampProvenance::LocalHybridLogicalClock)
+        );
+        let request: serde_json::Value = serde_json::from_str(include_str!(
+            "../fixtures/lynk/typescript_receipt_emit_request_v1.json"
+        ))
+        .expect("TypeScript LYNK request fixture must deserialize");
+        let attestation = parsed
+            .lynk_response_attestation
+            .as_ref()
+            .expect("Rust response fixture must carry the LYNK response attestation");
+        assert_eq!(attestation.domain, LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN);
+        assert_eq!(attestation.schema_version, AVC_SCHEMA_VERSION);
+        assert_eq!(attestation.validator_did, validator_did());
+        let payload =
+            lynk_receipt_response_attestation_payload(&parsed, &request, &validator_did())
+                .expect("shared response attestation payload must serialize");
+        let expected_signature = validator_keypair().sign(&payload);
+        assert_eq!(attestation.signature, expected_signature);
+        assert!(crypto::verify(
+            &payload,
+            &attestation.signature,
+            validator_keypair().public_key(),
+        ));
+        assert_eq!(
+            serde_json::to_value(parsed).expect("Rust response DTO must serialize"),
+            fixture,
+            "the shared response fixture must be Rust's canonical JSON representation"
+        );
     }
 
     fn lynk_encrypted_payload_ref() -> EncryptedPayloadRef {
@@ -5762,8 +6024,113 @@ mod tests {
             parsed.receipt.timestamp_provenance,
             Some(AvcReceiptTimestampProvenance::ExternalTimestampAuthority)
         );
+        assert!(
+            parsed.lynk_response_attestation.is_none(),
+            "a response without EXOCHAIN finality must not claim an authenticated finality tuple"
+        );
         assert!(parsed.receipt.verify_id().unwrap());
         assert_eq!(state.registry.lock().unwrap().receipt_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_response_attestation_binds_receipt_evidence_and_finality() {
+        let dir = tempfile::tempdir().unwrap();
+        let finality_store = Arc::new(Mutex::new(
+            crate::store::SqliteDagStore::open(dir.path()).unwrap(),
+        ));
+        let state = fresh_state_with_finality_store(finality_store);
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+
+        let response = post_lynk_emit_request(avc_router(Arc::clone(&state)), &request).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut parsed: EmitReceiptResponse =
+            serde_json::from_slice(&read_body(response).await).unwrap();
+        let attestation = parsed
+            .lynk_response_attestation
+            .clone()
+            .expect("finalized LYNK response must carry a response attestation");
+        assert_eq!(attestation.domain, LYNK_RECEIPT_RESPONSE_ATTESTATION_DOMAIN);
+        assert_eq!(attestation.schema_version, AVC_SCHEMA_VERSION);
+        assert_eq!(attestation.validator_did, validator_did());
+        let request_value = serde_json::to_value(&request).unwrap();
+        let payload =
+            lynk_receipt_response_attestation_payload(&parsed, &request_value, &validator_did())
+                .unwrap();
+        assert!(crypto::verify(
+            &payload,
+            &attestation.signature,
+            validator_keypair().public_key(),
+        ));
+
+        let original_height = parsed.exochain_finality_height;
+        parsed.exochain_finality_height = original_height.and_then(|height| height.checked_add(1));
+        let mutated_finality_payload =
+            lynk_receipt_response_attestation_payload(&parsed, &request_value, &validator_did())
+                .unwrap();
+        assert!(!crypto::verify(
+            &mutated_finality_payload,
+            &attestation.signature,
+            validator_keypair().public_key(),
+        ));
+
+        parsed.exochain_finality_height = original_height;
+        let mut request_mutations = Vec::new();
+        let mut changed_validation = request_value.clone();
+        changed_validation["validation"]["now"]["logical"] = serde_json::json!(1);
+        request_mutations.push(("validation", changed_validation));
+        let mut changed_subject_signature = request_value.clone();
+        changed_subject_signature["subject_signature"]["Ed25519"][0] = serde_json::json!(0xA1);
+        request_mutations.push(("subject signature", changed_subject_signature));
+        let mut changed_subject_key = request_value.clone();
+        changed_subject_key["subject_public_key"] = serde_json::json!(vec![0xA2_u8; 32]);
+        request_mutations.push(("subject public key", changed_subject_key));
+        let mut changed_evidence = request_value.clone();
+        changed_evidence["llm_usage_evidence"]["evidence"]["prompt_hash"][0] =
+            serde_json::json!(0xA3);
+        request_mutations.push(("LLM evidence", changed_evidence));
+        let mut changed_adapter_signature = request_value.clone();
+        changed_adapter_signature["adapter_signature"]["Ed25519"][0] = serde_json::json!(0xA4);
+        request_mutations.push(("adapter signature", changed_adapter_signature));
+        let mut changed_adapter_key = request_value.clone();
+        changed_adapter_key["adapter_public_key"] = serde_json::json!(vec![0xA5_u8; 32]);
+        request_mutations.push(("adapter public key", changed_adapter_key));
+        for (label, changed_request) in request_mutations {
+            let changed_payload = lynk_receipt_response_attestation_payload(
+                &parsed,
+                &changed_request,
+                &validator_did(),
+            )
+            .unwrap();
+            assert!(
+                !crypto::verify(
+                    &changed_payload,
+                    &attestation.signature,
+                    validator_keypair().public_key(),
+                ),
+                "attestation must reject mutated {label}"
+            );
+        }
+
+        parsed.receipt.action_commitment_hash = Some(test_hash(0xA6));
+        let forged_receipt_payload =
+            lynk_receipt_response_attestation_payload(&parsed, &request_value, &validator_did())
+                .unwrap();
+        assert!(!crypto::verify(
+            &forged_receipt_payload,
+            &attestation.signature,
+            validator_keypair().public_key(),
+        ));
     }
 
     #[tokio::test]
@@ -6105,6 +6472,29 @@ mod tests {
             );
             assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
         }
+    }
+
+    #[tokio::test]
+    async fn avc_llm_usage_receipts_emit_rejects_unknown_nested_authorization_fields() {
+        let state = fresh_state();
+        let credential = lynk_credential();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .put_credential(credential.clone())
+            .unwrap();
+        let request = lynk_emit_request_for_evidence(
+            credential,
+            lynk_usage_evidence(LlmUsageCustodyMode::ReceiptMinimized),
+        );
+        let mut body = serde_json::to_value(&request).unwrap();
+        body["validation"]["credential"]["authorization_override"] = serde_json::Value::Bool(true);
+
+        let response = post_lynk_emit_json(avc_router(Arc::clone(&state)), body).await;
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(state.registry.lock().unwrap().receipt_count(), 0);
     }
 
     #[tokio::test]
@@ -9495,6 +9885,40 @@ mod tests {
         assert!(
             production.contains("ConcurrencyLimitLayer::new(MAX_AVC_API_CONCURRENT_REQUESTS)"),
             "AVC router must apply local request admission control"
+        );
+    }
+
+    #[test]
+    fn lynk_request_rejection_logs_never_interpolate_untrusted_values_or_keys() {
+        let source = include_str!("avc.rs");
+        let production = source
+            .split("\n// ---------------------------------------------------------------------------\n// Tests")
+            .next()
+            .unwrap();
+        let unknown_field_guard = production
+            .split("fn reject_unknown_lynk_request_fields(")
+            .nth(1)
+            .and_then(|section| section.split("fn avc_protocol_info(").next())
+            .expect("LYNK unknown-field guard must be present");
+        let receipt_handler = production
+            .split("async fn handle_llm_usage_emit_receipt(")
+            .nth(1)
+            .and_then(|section| section.split("let typed_request_shape").next())
+            .expect("LYNK receipt handler must be present");
+
+        assert!(
+            !unknown_field_guard.contains("field = %format!"),
+            "unknown attacker-controlled JSON keys must not be copied into logs"
+        );
+        assert!(
+            !receipt_handler.contains("tracing::warn!(%error"),
+            "serde errors can echo attacker-controlled scalar values and must not enter logs"
+        );
+        assert!(
+            unknown_field_guard.contains("tracing::warn!(\"rejected unknown LYNK request field\")")
+                && receipt_handler
+                    .contains("tracing::warn!(\"rejected malformed LYNK receipt request\")"),
+            "LYNK request rejection must retain stable operator-visible warning classes"
         );
     }
 

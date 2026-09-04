@@ -88,13 +88,46 @@ Required configuration:
 - `tenantId` and `namespace`: scoped custody context.
 - `actorDid`: the AVC subject actor for the model/tool action.
 - `adapterDid`: the LYNK adapter DID signing evidence.
+- `trustedValidatorDid`: the independently configured EXOCHAIN validator DID
+  authorized to attest committed LYNK responses.
+- `trustedValidatorPublicKey`: the pinned 32-byte Ed25519 public key for that
+  validator as 64 lowercase hex characters. Never take this key from the
+  receipt response.
 - `custodyPolicyHash`: hash of the active custody policy.
 - `storageMode`: `receipt_minimized`, `external_payload_ref`, or
   `dagdb_custody`.
-- `validation`: AVC validation request for `llm.usage.receipt.emit`.
-- `subjectSignature`: signature over the canonical AVC action.
-- `adapterSignature`: fixed signature string or signing callback over the LYNK
-  evidence envelope.
+- `validation`: the complete AVC `AvcValidationRequest` for
+  `llm.usage.receipt.emit`, including its credential and derived action.
+- `subjectSignature`: 128 lowercase hex characters containing the 64-byte
+  Ed25519 signature over the canonical AVC action-signature payload.
+- `adapterSignature`: the same canonical Ed25519 hex format, either as a fixed
+  value or returned by a signing callback for the LYNK evidence envelope.
+- `subjectPublicKey` and `adapterPublicKey`, when supplied: 64 lowercase hex
+  characters containing the corresponding 32-byte Ed25519 public key.
+
+The public `ReceiptIntent` remains printable and retry-safe: hashes, public
+keys, and top-level signatures are lowercase hex strings. Immediately before
+HTTP emission, `encodeReceiptIntentForWire` creates a separate request using
+Rust serde's exact representation: every `Hash256` and public key is a byte
+array, and each signature is a bounded tagged value such as
+`{"Ed25519":[...64 bytes...]}`. A failed emission retains the original logical
+intent, so retry storage never depends on the transport-only representation.
+
+Signature generation is a cryptographic contract, not JSON signing. The
+subject signer must sign the bytes produced by
+`exo_avc::avc_action_signature_payload`; the adapter signer must sign the bytes
+produced by `exo_avc::llm_usage_evidence_signature_payload`. Both Rust helpers
+use the protocol's domain-separated canonical CBOR payload. The callback
+receives the logical envelope so an injected signer can select the correct key,
+but signing `JSON.stringify(envelope)` does not produce a valid signature.
+
+A successful node response releases output only when it contains committed
+finality fields, the exact nested Rust receipt shape, and a canonical response
+attestation signed by the pinned validator key. The signature binds the entire
+returned receipt and validation record, the submitted LYNK evidence envelope,
+the Allow decision, and the EXOCHAIN finality tuple. Unknown response fields,
+mutated commitments, cross-request replay, missing finality, and untrusted
+validator keys all fail closed before provider output is released.
 
 Optional transport controls:
 

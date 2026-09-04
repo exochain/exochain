@@ -1,0 +1,100 @@
+{
+  "validation": {
+    "credential": {
+      "schema_version": 1,
+      "issuer_did": "did:exo:issuer",
+      "principal_did": "did:exo:principal",
+      "subject_did": "did:exo:agent",
+      "holder_did": null,
+      "subject_kind": {
+        "AiAgent": {
+          "model_id": "gpt-4.1-mini",
+          "agent_version": null
+        }
+      },
+      "created_at": { "physical_ms": 1600000, "logical": 0 },
+      "expires_at": { "physical_ms": 1800000, "logical": 0 },
+      "delegated_intent": {
+        "intent_id": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        "purpose": "EXOCHAIN LYNK Protocol usage receipts",
+        "allowed_objectives": ["llm.usage.receipt.emit"],
+        "prohibited_objectives": [],
+        "autonomy_level": "ExecuteWithinBounds",
+        "delegation_allowed": false
+      },
+      "authority_scope": {
+        "permissions": ["Execute"],
+        "tools": ["exo.avc.lynk.llm_usage.evidence.v1"],
+        "data_classes": ["Internal"],
+        "counterparties": [],
+        "jurisdictions": []
+      },
+      "constraints": {
+        "max_budget_minor_units": null,
+        "currency_code": null,
+        "max_action_risk_bp": null,
+        "human_approval_required": false,
+        "approval_threshold_bp": null,
+        "max_delegation_depth": 0,
+        "allowed_time_window": null,
+        "forbidden_actions": [],
+        "emergency_stop_refs": []
+      },
+      "authority_chain": null,
+      "consent_refs": [],
+      "policy_refs": [],
+      "parent_avc_id": null,
+      "signature": {
+        "Ed25519": [12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12]
+      }
+    },
+    "action": {
+      "action_id": [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+      "actor_did": "did:exo:agent",
+      "requested_permission": "Execute",
+      "tool": "exo.avc.lynk.llm_usage.evidence.v1",
+      "target_did": null,
+      "data_class": "Internal",
+      "estimated_budget_minor_units": null,
+      "estimated_risk_bp": null,
+      "human_approval": null,
+      "requires_human_approval": false,
+      "action_name": "llm.usage.receipt.emit"
+    },
+    "now": { "physical_ms": 1700000, "logical": 0 }
+  },
+  "subject_signature": {
+    "Ed25519": [10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+  },
+  "subject_public_key": [13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13],
+  "llm_usage_evidence": {
+    "schema_version": 1,
+    "adapter_did": "did:exo:adapter",
+    "issued_at": { "physical_ms": 1700000, "logical": 0 },
+    "evidence": {
+      "schema_version": 1,
+      "tenant_id": "tenant-alpha",
+      "namespace": "default",
+      "actor_did": "did:exo:agent",
+      "provider": "openai",
+      "provider_endpoint": "responses",
+      "model_id": "gpt-4.1-mini",
+      "idempotency_key_hash": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      "action_id": [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+      "prompt_hash": [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "total_tokens": 2,
+        "usage_complete": true
+      },
+      "custody_mode": "receipt_minimized",
+      "custody_policy_hash": [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4],
+      "created_at": { "physical_ms": 1700000, "logical": 0 }
+    }
+  },
+  "adapter_signature": {
+    "Ed25519": [11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11]
+  },
+  "adapter_public_key": [14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14]
+}

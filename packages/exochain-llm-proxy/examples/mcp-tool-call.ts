@@ -4,8 +4,12 @@ import {
   type FetchLike,
   type LlmProxyConfig,
 } from "../src/index.js";
+import type { ReceiptAuthority } from "./receipt-authority.js";
 
-export const exampleMcpConfig = (fetchImpl: FetchLike): LlmProxyConfig => ({
+export const exampleMcpConfig = (
+  fetchImpl: FetchLike,
+  authority: ReceiptAuthority,
+): LlmProxyConfig => ({
   mode: "production",
   gatewayUrl: "https://exochain.example",
   tenantId: "tenant-alpha",
@@ -14,14 +18,15 @@ export const exampleMcpConfig = (fetchImpl: FetchLike): LlmProxyConfig => ({
   adapterDid: "did:exo:lynk-adapter",
   custodyPolicyHash: hashProviderPayload("customer-custody-policy-v1"),
   storageMode: "receipt_minimized",
-  validation: { action: "llm.usage.receipt.emit" },
-  subjectSignature: "subject-signature-placeholder",
-  adapterSignature: "adapter-signature-placeholder",
+  ...authority,
   fetch: fetchImpl,
 });
 
-export async function runMcpToolCallExample(fetchImpl: FetchLike): Promise<unknown> {
-  const proxy = createReceiptedMcpProxy(exampleMcpConfig(fetchImpl), {
+export async function runMcpToolCallExample(
+  fetchImpl: FetchLike,
+  authority: ReceiptAuthority,
+): Promise<unknown> {
+  const proxy = createReceiptedMcpProxy(exampleMcpConfig(fetchImpl, authority), {
     serverUrl: "https://mcp.example",
   });
 

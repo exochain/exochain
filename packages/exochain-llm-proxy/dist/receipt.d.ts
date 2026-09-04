@@ -8,5 +8,6 @@ export declare class ReceiptEmissionError extends Error {
 }
 export declare function receiptPendingFromError(error: ReceiptEmissionError): ReceiptPending;
 export declare function emitUsageReceipt(config: LlmProxyConfig, receiptIntent: ReceiptIntent): Promise<ReceiptEmissionResult>;
+export declare function requireProductionValidatorTrust(config: LlmProxyConfig): void;
 export declare function resolveReceiptPending(config: LlmProxyConfig, pending: ReceiptPending): Promise<ReceiptEmissionResult>;
 //# sourceMappingURL=receipt.d.ts.map
