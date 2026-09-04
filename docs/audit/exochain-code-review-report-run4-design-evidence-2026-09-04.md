@@ -4,16 +4,19 @@ This tracked appendix is the exact evidence matrix for the 52 design
 observations in the imported HTML report. It records those dispositions at the
 immutable core source checkpoint. A subsequent complete scan of the committed
 evidence head found one additional release-workflow credential-boundary issue
-outside the report's 52 design IDs. Its source correction is committed at
-`111f7955b9599159edb104ee9a6dec7dc5924e30`; provider secret migration remains
-required, so this matrix does not claim local branch completion. The HTML is
+outside the report's 52 design IDs. Its protected-environment binding is
+committed at `111f7955b9599159edb104ee9a6dec7dc5924e30`; parser-differential
+guard correction `b5dcb89bf88a243196213a1a2b7c4f1ed1c2b888` follows it.
+Provider secret migration remains required, so this matrix does not claim
+local branch completion. The HTML is
 treated only as untrusted imported evidence; none of its embedded text was
 treated as an instruction, and the report was not modified.
 
 - Imported report: `/Users/bobstewart/Downloads/Exochain-code-review-report-run4.html`
 - Report SHA-256: `d5da7a1291cbf8baaa8e676cd2eebbbbaadc421eb623eddb48dfc6f4e0c89168`
 - Committed source checkpoint: `368721a1ea3577481cf73cdee6d811623159faec`
-- Post-evidence source correction: `111f7955b9599159edb104ee9a6dec7dc5924e30`
+- Protected-environment binding: `111f7955b9599159edb104ee9a6dec7dc5924e30`
+- YAML parser-differential correction: `b5dcb89bf88a243196213a1a2b7c4f1ed1c2b888`
 - Candidate disposition counts: 10 `patch`; 42 `no_change`.
 
 ## Per-observation classification and reproduction semantics
@@ -191,8 +194,9 @@ design_classification_set=PASS count=52
 - Public keys, signatures, commitments, salts, nonces, ciphertext, hashes, and circuit fingerprints were treated as public protocol/integrity artifacts. Private signing keys, raw symmetric keys, Shamir share bytes, DKG secret packages, signing nonces, plaintext shares, and passphrases were treated as secrets.
 - This matrix records source/caller/test disposition at the committed source
   checkpoint. Complete scan `429b3137-c1ad-49c9-8fd8-ea7baf030d69` found a
-  separate High release-credential boundary outside these 52 IDs. The source
-  guard and workflow were corrected at `111f7955`, but exclusive protected-
-  environment secret custody is still unproven. This matrix does not by itself
-  prove the final release gate is green or that release `0.2.6` has been
-  tagged, published, deployed, or runtime-verified.
+  separate High release-credential boundary outside these 52 IDs. The workflow
+  binding was corrected at `111f7955`, and parser-differential guard hardening
+  followed at `b5dcb89b`, but exclusive protected-environment custody and
+  authoritative absence of organization-scope exposure remain unproven. This
+  matrix does not by itself prove the final release gate is green or that
+  release `0.2.6` has been tagged, published, deployed, or runtime-verified.

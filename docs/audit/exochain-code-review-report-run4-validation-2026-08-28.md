@@ -13,11 +13,13 @@ the repository.
 The exact candidate reconciliation appendices below were subsequently
 revalidated against committed implementation checkpoint
 `368721a1ea3577481cf73cdee6d811623159faec`. That checkpoint is source
-evidence, not release authorization. Post-evidence source correction
-`111f7955b9599159edb104ee9a6dec7dc5924e30` addresses a separately discovered
-release-workflow issue; its provider secret migration remains open. Mandatory
-whole-branch gates, provider CI, tag, publication, deployment, and runtime
-readback remain separate.
+evidence, not release authorization. Post-evidence source corrections
+`111f7955b9599159edb104ee9a6dec7dc5924e30` and
+`b5dcb89bf88a243196213a1a2b7c4f1ed1c2b888` address a separately discovered
+release-workflow credential boundary and its YAML parser-differential guard
+bypass; provider secret migration remains open. Mandatory whole-branch gates,
+provider CI, tag, publication, deployment, and runtime readback remain
+separate.
 
 The report contains 86 formal findings and 52 separately labeled design
 observations. The design observations state that they are not concrete
@@ -319,23 +321,30 @@ crates.io/npm credential consumers that depended on separate approval jobs but
 did not themselves declare `environment: release`. No additional source
 candidate survived validation.
 
-The strengthened release guard was RED against sealed vulnerable revision
-`76d7ea4e`: it rejected `publish` for consuming registry authority without the
-protected environment. Source commit `111f7955` adds the environment directly
-to `publish`, `publish-wasm-npm`, `publish-llm-proxy-npm`, and
-`publish-sdk-npm`. The guard dynamically discovers registry-secret jobs,
-semantically expands quoted YAML job IDs and aliases, rejects workflow-global,
-inherited, computed, indexed, lowercase, or non-allowlisted secret access, and
-is GREEN on the corrected source. The release publish, dry-run,
-workflow-ref, SDK/Python, WASM, LYNK, pinned-action, and signed-tag guards all
-pass.
+The strengthened release guard was RED against scan-reviewed vulnerable source
+revision `76d7ea4e`: it rejected `publish` for consuming registry authority
+without the protected environment. Source commit `111f7955` adds the
+environment directly to `publish`, `publish-wasm-npm`,
+`publish-llm-proxy-npm`, and `publish-sdk-npm`. Independent review then found
+that the guard and `actionlint` accepted two malicious fixtures whose
+`yes`/`on` keys have distinct GitHub meanings but collapse under Psych YAML
+1.1, hiding unprotected secret use at both job and nested-mapping levels.
+Commit `b5dcb89b` quotes the legitimate top-level `on`, audits the lossless AST
+before decoding, and rejects ambiguous or duplicate mapping keys, anchors,
+aliases, merge keys, and explicit tags. Its embedded collision regressions,
+focused release guard, and `actionlint` check pass. The release dry-run,
+workflow-ref, SDK/Python, WASM, LYNK, pinned-action, and signed-tag guards also
+pass at their recorded checkpoints; the complete corpus must be rerun on the
+immutable handoff head.
 
 Source correction is not provider closure. Read-only GitHub metadata on
 2026-09-04 shows `CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` still at repository
 scope, zero secrets in environment `release`, required-reviewer protection with
-self-review denied, and no deployment branch policy. Because a modified branch
-can remove its own `environment` declaration, both tokens must be recreated in
-`release` and then removed from repository scope before this finding is closed.
+self-review denied, and no deployment branch policy. Organization Actions-
+secret listing returns HTTP 404 and is therefore unverified, not empty. Because
+a modified branch can remove its own `environment` declaration, both tokens
+must be recreated in `release`, removed from repository scope, and proved
+absent from organization Actions-secret scope before this finding is closed.
 The values are opaque and were neither read nor changed during branch
 preparation.
 
@@ -354,4 +363,5 @@ preparation.
 6. This branch makes no claim that 0.2.6 is tagged, published, deployed, or
    runtime-verified. Those are separate release operations.
 7. Provider readback proves `CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` exist only
-   as protected `release` environment secrets and not as repository secrets.
+   as protected `release` environment secrets and not as repository or
+   organization Actions secrets; unreadable scope fails the closure gate.
