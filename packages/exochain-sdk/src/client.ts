@@ -21,6 +21,7 @@
  */
 
 import { HttpTransport } from './transport/http.js';
+import { validateDid } from './identity/did.js';
 import type {
   AutomatedSettlementRequest,
   EconomyObjectResponse,
@@ -37,9 +38,14 @@ import {
   validateDidResponse,
   validateEconomyObjectResponse,
   validateExochainDiscoveryResponse,
+  validateHash256,
   validateHashResponse,
   type JsonObject,
 } from './validation.js';
+
+function encodeHash256PathSegment(value: Hash256, context: string): string {
+  return encodeURIComponent(validateHash256(value, context));
+}
 
 /** Options for constructing an {@link ExochainClient}. */
 export interface ExochainClientOptions {
@@ -62,7 +68,7 @@ export class IdentityApi {
 
   /** Resolve a DID to its DID document via `GET /identity/did/{did}`. */
   public async resolve(did: Did): Promise<unknown> {
-    return this.#http.get(`/identity/did/${encodeURIComponent(did)}`);
+    return this.#http.get(`/identity/did/${encodeURIComponent(validateDid(did))}`);
   }
 
   /** Register a DID document via `POST /identity/did`. */
@@ -93,7 +99,8 @@ export class ConsentApi {
 
   /** Fetch a bailment proposal by its content-addressed ID. */
   public async getBailment(proposalId: Hash256): Promise<unknown> {
-    return this.#http.get(`/consent/bailment/${encodeURIComponent(proposalId)}`);
+    const id = encodeHash256PathSegment(proposalId, 'consent.getBailment proposalId');
+    return this.#http.get(`/consent/bailment/${id}`);
   }
 }
 
@@ -115,15 +122,17 @@ export class GovernanceApi {
 
   /** Cast a vote on an existing decision. */
   public async castVote(decisionId: Hash256, body: JsonObject): Promise<void> {
-    await this.#http.post(`/governance/decision/${encodeURIComponent(decisionId)}/vote`, body);
+    const id = encodeHash256PathSegment(decisionId, 'governance.castVote decisionId');
+    await this.#http.post(`/governance/decision/${id}/vote`, body);
   }
 
   /** Fetch a decision's current state (including tallied quorum). */
   public async getDecision(
     decisionId: Hash256,
   ): Promise<{ decisionId: Hash256; status: string; quorum?: QuorumResult }> {
+    const id = encodeHash256PathSegment(decisionId, 'governance.getDecision decisionId');
     return validateDecisionState(
-      await this.#http.get(`/governance/decision/${encodeURIComponent(decisionId)}`),
+      await this.#http.get(`/governance/decision/${id}`),
     );
   }
 }
@@ -146,7 +155,8 @@ export class AuthorityApi {
 
   /** Fetch an authority chain by id. */
   public async getChain(chainId: Hash256): Promise<unknown> {
-    return this.#http.get(`/authority/chain/${encodeURIComponent(chainId)}`);
+    const id = encodeHash256PathSegment(chainId, 'authority.getChain chainId');
+    return this.#http.get(`/authority/chain/${id}`);
   }
 }
 
@@ -183,8 +193,9 @@ export class EconomyApi {
   }
 
   public async getMission<T extends JsonObject = JsonObject>(id: Hash256): Promise<T> {
+    const missionId = encodeHash256PathSegment(id, 'economy.getMission id');
     return this.#getObject<T>(
-      `/api/v1/economy/missions/${encodeURIComponent(id)}`,
+      `/api/v1/economy/missions/${missionId}`,
       'economy.getMission',
     );
   }
@@ -210,8 +221,9 @@ export class EconomyApi {
   }
 
   public async getLegacyReceipt<T extends JsonObject = JsonObject>(id: Hash256): Promise<T> {
+    const receiptId = encodeHash256PathSegment(id, 'economy.getLegacyReceipt id');
     return this.#getObject<T>(
-      `/api/v1/economy/legacy-receipts/${encodeURIComponent(id)}`,
+      `/api/v1/economy/legacy-receipts/${receiptId}`,
       'economy.getLegacyReceipt',
     );
   }

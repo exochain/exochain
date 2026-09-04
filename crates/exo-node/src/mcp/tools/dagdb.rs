@@ -39,9 +39,9 @@ use std::{future::Future, thread};
 use exochain_sdk::dagdb::{
     BearerToken, DagDbAuthConfig, DagDbCatalogLookupRequest, DagDbClientError,
     DagDbContextPacketRequest, DagDbCouncilDecisionRequest, DagDbExportRequest, DagDbHttpClient,
-    DagDbImportRequest, DagDbIntakeRequest, DagDbReceiptLookupRequest, DagDbRouteLookupRequest,
-    DagDbRouteRequest, DagDbSignatureHeaders, DagDbTrustCheckRequest, DagDbValidateRequest,
-    DagDbWritebackRequest,
+    DagDbImportRequest, DagDbIntakeRequest, DagDbReceiptLookupRequest, DagDbRequestError,
+    DagDbRouteLookupRequest, DagDbRouteRequest, DagDbSignatureHeaders, DagDbTrustCheckRequest,
+    DagDbValidateRequest, DagDbWritebackRequest,
 };
 use serde_json::{Value, json};
 
@@ -1088,6 +1088,10 @@ fn runtime_bridge_error_response(tool_name: &str, error: DagDbRuntimeBridgeError
 #[cfg(feature = "dagdb-gateway-proxy")]
 fn client_error_response(tool_name: &str, error: DagDbClientError) -> ToolResult {
     let fields = match error {
+        DagDbClientError::Request(DagDbRequestError::InvalidLookupId { field, .. }) => json!({
+            "error_kind": "request",
+            "field": field,
+        }),
         DagDbClientError::Transport(error) => json!({
             "error_kind": "transport",
             "detail": error.to_string(),
@@ -3225,6 +3229,32 @@ mod tests {
                 .as_str()
                 .is_some_and(|error| !error.is_empty()),
             "decode failure should include a structured decode_error: {body}"
+        );
+    }
+
+    #[cfg(feature = "dagdb-gateway-proxy")]
+    #[test]
+    fn invalid_lookup_id_maps_to_typed_mcp_error_without_echoing_input() {
+        let mut request: DagDbReceiptLookupRequest =
+            serde_json::from_value(request_fixture("receipt_lookup"))
+                .expect("receipt lookup fixture parses");
+        let invalid_id = "%2E%2E";
+        request.receipt_hash = invalid_id.to_owned();
+        let request_error = exochain_sdk::dagdb::DagDbClient::new()
+            .receipt_lookup(request)
+            .expect_err("noncanonical lookup id must fail");
+
+        let result = client_error_response(DAGDB_RECEIPT_LOOKUP_TOOL, request_error.into());
+
+        assert!(result.is_error);
+        let body = result_json(&result);
+        assert_eq!(body["tool_status"], DAGDB_GATEWAY_REQUEST_FAILED);
+        assert_eq!(body["error_kind"], "request");
+        assert_eq!(body["field"], "receipt_hash");
+        assert_eq!(body["success_claimed"], false);
+        assert!(
+            !body.to_string().contains(invalid_id),
+            "invalid lookup id must not be echoed: {body}"
         );
     }
 

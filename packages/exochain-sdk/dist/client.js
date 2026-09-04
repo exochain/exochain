@@ -19,7 +19,11 @@
  * authority) wraps the shared {@link HttpTransport}.
  */
 import { HttpTransport } from './transport/http.js';
-import { assertJsonObject, validateDecisionState, validateDidResponse, validateEconomyObjectResponse, validateExochainDiscoveryResponse, validateHashResponse, } from './validation.js';
+import { validateDid } from './identity/did.js';
+import { assertJsonObject, validateDecisionState, validateDidResponse, validateEconomyObjectResponse, validateExochainDiscoveryResponse, validateHash256, validateHashResponse, } from './validation.js';
+function encodeHash256PathSegment(value, context) {
+    return encodeURIComponent(validateHash256(value, context));
+}
 // -----------------------------------------------------------------------------
 // Domain API surfaces
 // -----------------------------------------------------------------------------
@@ -31,7 +35,7 @@ export class IdentityApi {
     }
     /** Resolve a DID to its DID document via `GET /identity/did/{did}`. */
     async resolve(did) {
-        return this.#http.get(`/identity/did/${encodeURIComponent(did)}`);
+        return this.#http.get(`/identity/did/${encodeURIComponent(validateDid(did))}`);
     }
     /** Register a DID document via `POST /identity/did`. */
     async register(document) {
@@ -51,7 +55,8 @@ export class ConsentApi {
     }
     /** Fetch a bailment proposal by its content-addressed ID. */
     async getBailment(proposalId) {
-        return this.#http.get(`/consent/bailment/${encodeURIComponent(proposalId)}`);
+        const id = encodeHash256PathSegment(proposalId, 'consent.getBailment proposalId');
+        return this.#http.get(`/consent/bailment/${id}`);
     }
 }
 /** Governance gateway calls. */
@@ -66,11 +71,13 @@ export class GovernanceApi {
     }
     /** Cast a vote on an existing decision. */
     async castVote(decisionId, body) {
-        await this.#http.post(`/governance/decision/${encodeURIComponent(decisionId)}/vote`, body);
+        const id = encodeHash256PathSegment(decisionId, 'governance.castVote decisionId');
+        await this.#http.post(`/governance/decision/${id}/vote`, body);
     }
     /** Fetch a decision's current state (including tallied quorum). */
     async getDecision(decisionId) {
-        return validateDecisionState(await this.#http.get(`/governance/decision/${encodeURIComponent(decisionId)}`));
+        const id = encodeHash256PathSegment(decisionId, 'governance.getDecision decisionId');
+        return validateDecisionState(await this.#http.get(`/governance/decision/${id}`));
     }
 }
 /** Authority chain gateway calls. */
@@ -85,7 +92,8 @@ export class AuthorityApi {
     }
     /** Fetch an authority chain by id. */
     async getChain(chainId) {
-        return this.#http.get(`/authority/chain/${encodeURIComponent(chainId)}`);
+        const id = encodeHash256PathSegment(chainId, 'authority.getChain chainId');
+        return this.#http.get(`/authority/chain/${id}`);
     }
 }
 /** HonorGood and mission-economics calls. EXOCHAIN remains settlement authority. */
@@ -105,7 +113,8 @@ export class EconomyApi {
         return this.#postObject('/api/v1/economy/missions', body, 'economy.createMission');
     }
     async getMission(id) {
-        return this.#getObject(`/api/v1/economy/missions/${encodeURIComponent(id)}`, 'economy.getMission');
+        const missionId = encodeHash256PathSegment(id, 'economy.getMission id');
+        return this.#getObject(`/api/v1/economy/missions/${missionId}`, 'economy.getMission');
     }
     async createContributionReceipt(body) {
         return this.#postObject('/api/v1/economy/contribution-receipts', body, 'economy.createContributionReceipt');
@@ -114,7 +123,8 @@ export class EconomyApi {
         return this.#postObject('/api/v1/economy/legacy-receipts', body, 'economy.createLegacyReceipt');
     }
     async getLegacyReceipt(id) {
-        return this.#getObject(`/api/v1/economy/legacy-receipts/${encodeURIComponent(id)}`, 'economy.getLegacyReceipt');
+        const receiptId = encodeHash256PathSegment(id, 'economy.getLegacyReceipt id');
+        return this.#getObject(`/api/v1/economy/legacy-receipts/${receiptId}`, 'economy.getLegacyReceipt');
     }
     async createRuleset(body) {
         return this.#postObject('/api/v1/economy/rulesets', body, 'economy.createRuleset');
