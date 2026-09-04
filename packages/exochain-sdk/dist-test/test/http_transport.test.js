@@ -21,6 +21,17 @@ import { HttpTransport, MAX_HTTP_RESPONSE_BYTES, } from '../src/transport/http.j
 const RESPONSE_LIMIT_BYTES = 1048576;
 const OVERSIZED_RESPONSE_MESSAGE = 'response body exceeds the 1048576-byte limit';
 const encoder = new TextEncoder();
+class LyingUint8Array extends Uint8Array {
+    get byteLength() {
+        return 0;
+    }
+    get length() {
+        return 0;
+    }
+    [Symbol.iterator]() {
+        return new Uint8Array()[Symbol.iterator]();
+    }
+}
 test('HTTP response limit is the fixed one-mebibyte SDK contract', () => {
     strictEqual(MAX_HTTP_RESPONSE_BYTES, RESPONSE_LIMIT_BYTES);
     strictEqual(EXPORTED_MAX_HTTP_RESPONSE_BYTES, RESPONSE_LIMIT_BYTES);
@@ -80,6 +91,44 @@ test('HTTP transport rejects a chunked response at response limit plus one', asy
     });
     const error = await captureTransportError(() => transport.get('/oversized'));
     strictEqual(error.message, OVERSIZED_RESPONSE_MESSAGE);
+    strictEqual(error.status, 200);
+    strictEqual(error.body, undefined);
+});
+test('HTTP transport measures Uint8Array subclasses by intrinsic byte length', async () => {
+    const body = new LyingUint8Array(RESPONSE_LIMIT_BYTES + 1);
+    body.fill(65);
+    const transport = new HttpTransport('https://gateway.example', {
+        fetch: fetchReturning(() => responseFromChunks([body], { status: 200 })),
+    });
+    const error = await captureTransportError(() => transport.get('/subclass-oversized'));
+    strictEqual(error.message, OVERSIZED_RESPONSE_MESSAGE);
+    strictEqual(error.status, 200);
+    strictEqual(error.body, undefined);
+});
+test('HTTP transport copies bounded Uint8Array subclasses through intrinsic bytes', async () => {
+    const body = new LyingUint8Array(encoder.encode('{"ok":true}'));
+    const transport = new HttpTransport('https://gateway.example', {
+        fetch: fetchReturning(() => responseFromChunks([body], { status: 200 })),
+    });
+    const result = (await transport.get('/subclass-bounded'));
+    strictEqual(result.ok, true);
+});
+test('HTTP transport rejects non-byte response chunks with a stable error', async () => {
+    const response = {
+        headers: new Headers(),
+        status: 200,
+        body: new ReadableStream({
+            start(controller) {
+                controller.enqueue('not bytes');
+                controller.close();
+            },
+        }),
+    };
+    const transport = new HttpTransport('https://gateway.example', {
+        fetch: fetchReturning(() => response),
+    });
+    const error = await captureTransportError(() => transport.get('/non-byte-chunk'));
+    strictEqual(error.message, 'response body contained a non-byte chunk');
     strictEqual(error.status, 200);
     strictEqual(error.body, undefined);
 });
