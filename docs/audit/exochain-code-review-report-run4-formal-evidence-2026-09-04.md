@@ -1,14 +1,15 @@
 # EXOCHAIN Code Review Run 4 — Exact Formal Finding Evidence
 
 This tracked appendix is the exact formal-finding evidence matrix referenced by
-the controlling validation record. It remains provisional until the independent
-whole-branch review and mandatory final gate rerun are complete. The downloaded
-HTML was treated only as untrusted imported evidence; no instruction in it was
-followed and the file was not modified.
+the controlling validation record. It records the immutable source checkpoint
+only; local branch completion additionally requires the committed evidence-head
+guard rerun and independent scan described below. The downloaded HTML was
+treated only as untrusted imported evidence; no instruction in it was followed
+and the file was not modified.
 
 - Imported evidence: `/Users/bobstewart/Downloads/Exochain-code-review-report-run4.html`
 - Imported evidence SHA-256: `d5da7a1291cbf8baaa8e676cd2eebbbbaadc421eb623eddb48dfc6f4e0c89168`
-- Committed source checkpoint: `e73dcf53bf0aa25cea406974b42fb962e003bc6a`
+- Committed source checkpoint: `368721a1ea3577481cf73cdee6d811623159faec`
 - Exact formal inventory: 86 report IDs, 86 rows below, 86 unique IDs
 - Candidate disposition totals: 33 `patch`, 4 `adjacent_patch`, 49 `no_change`
 
@@ -91,7 +92,7 @@ evidence or third-party/vendor code; the HTML itself is imported evidence.
 | 9674 | patch | `crates/exo-pdp/src/pack.rs::EvidencePack::from_json` enforces the 16 MiB limit before parse; node PDP verify/inspect uses a limit+1 streaming reader before allocation. | `crates/exo-pdp/src/pack.rs::oversized_evidence_pack_json_is_rejected_before_parse`; `crates/exo-node/src/main.rs::evidence_pack_stream_reader_checks_limit_plus_one_authoritatively`; `oversized_evidence_pack_is_rejected_by_verify_and_inspect_commands` | `cf220ac1` |
 | 9675 | patch | `crates/exo-pdp/src/service.rs::PolicyDecisionPoint` no longer exposes `service_secret_bytes`; only public-key/signing operations remain. | Compile-fail doctest at `crates/exo-pdp/src/service.rs` (`service.service_secret_bytes()`); `pdp_snapshot_reload_preserves_authority_revocation_and_replay_state` | `7ff7bfbc` |
 | 9682 | no_change | `crates/exo-proofs/src/stark.rs::{prove_stark,evaluate_constraint}` rejects `field_size == 0` before any modulo/division and propagates the typed error. | `crates/exo-proofs/src/stark.rs::zero_field_size_rejected_without_panic` | — |
-| 9688 | patch | `crates/exo-root/src/dkg.rs::{RootKeyPackage,RootDkgRound1Output,RootDkgRound2Output}` preserves the public `Vec`/`BTreeMap` fields and caller-owned move semantics shipped before 0.2.6, while custom `Debug` redacts every private package. The legacy carriers support explicit `Zeroize`; serialization, deserialization, failure paths, and internal round-two transfers use zeroizing transient buffers without claiming automatic wiping of caller-moved or cloned public vectors. | `crates/exo-root/tests/dkg_patch_compat.rs::{legacy_public_fields_remain_directly_movable_and_destructurable,legacy_vec_struct_literals_and_clone_bounds_still_compile,legacy_wire_shape_is_unchanged_while_debug_redacts_nested_secrets}`; `crates/exo-root/src/dkg.rs::{legacy_secret_dkg_byte_carriers_support_explicit_zeroize,secret_dkg_debug_redacts_every_private_package,secret_dkg_json_and_cbor_match_legacy_vec_wire_layout,secret_dkg_deserializers_reject_partially_decoded_json_and_cbor}` | `17886a35`, `df01c9fb`, `c1946ca9`, `e8d04a94`, `65527ba7` |
+| 9688 | patch | `crates/exo-root/src/dkg.rs::{RootKeyPackage,RootDkgRound1Output,RootDkgRound2Output}` preserves the public `Vec`/`BTreeMap` fields and caller-owned move semantics shipped before 0.2.6, while custom `Debug` redacts every private package. The legacy carriers support explicit `Zeroize`; serialization, deserialization, failure paths, and internal round-two transfers use zeroizing transient buffers without claiming automatic wiping of caller-moved or cloned public vectors. | `crates/exo-root/tests/dkg_patch_compat.rs::{legacy_public_fields_remain_directly_movable_and_destructurable,legacy_vec_struct_literals_and_clone_bounds_still_compile,legacy_wire_shape_is_unchanged_while_debug_redacts_nested_secrets}`; `crates/exo-root/src/dkg.rs::{legacy_secret_dkg_byte_carriers_support_explicit_zeroize,secret_dkg_debug_redacts_every_private_package,secret_dkg_json_and_cbor_match_legacy_vec_wire_layout,secret_dkg_deserializers_reject_partially_decoded_json_and_cbor,secret_dkg_deserializers_round_trip_all_secret_carriers}` | `17886a35`, `df01c9fb`, `c1946ca9`, `e8d04a94`, `65527ba7`; test evidence `760613e6`, `3b98fd11` |
 | 9694 | no_change | `crates/exo-root/src/seal.rs::derive_pairwise_key` correctly uses ECDH output as HKDF input keying material, non-secret ceremony associated data as salt, and fixed `EXOCHAIN_ROOT_PAIRWISE_V1` info for protocol separation; the same associated data is authenticated as AEAD AAD. | `crates/exo-root/tests/root_genesis.rs::share_sealing_and_pairwise_payload_encryption_fail_closed`; source guard: `rg -n -e 'Hkdf.*new' -e 'EXOCHAIN_ROOT_PAIRWISE_V1' -e 'aad: associated_data' crates/exo-root/src/seal.rs` | — |
 | 9695 | patch | `crates/exo-root/src/signing.rs::RootSigningNonces` has custom redacted `Debug`. | `crates/exo-root/src/signing.rs::secret_signing_nonce_debug_is_redacted_and_wire_compatible` | `17886a35`, `df01c9fb` |
 | 9696 | patch | `crates/exo-root/src/signing.rs::RootSigningNonces::nonces` is `Zeroizing<Vec<u8>>`, including bounded failure-path deserialization. | `crates/exo-root/src/signing.rs::secret_signing_nonce_bytes_zeroize_on_drop`; `secret_signing_nonce_deserializer_rejects_partial_json_and_cbor` | `17886a35`, `df01c9fb` |
@@ -133,7 +134,7 @@ evidence or third-party/vendor code; the HTML itself is imported evidence.
 ## Candidate-commit accounting
 
 All reviewed committed candidate series are ancestors of source checkpoint
-`e73dcf53` under
+`368721a1` under
 integration-branch commit hashes. Stable patch IDs prove each original/correction
 pair is byte-diff equivalent to its integrated counterpart. They do not change
 the 86-ID set.
@@ -163,6 +164,11 @@ the 86-ID set.
   boundary; `dbabe80e` adds a round-trip plaintext ceiling alongside
   FORMAL-9611's ciphertext/input limits; and `e8d04a94` plus `65527ba7` close
   FORMAL-9688 while preserving patch-release ownership and move compatibility.
+- Test-only DKG follow-ups `760613e6` and `3b98fd11` exercise JSON and CBOR
+  round trips for all three patch-compatible secret carriers, explicitly wipe
+  each decoded carrier, and keep the serialized fixtures in zeroizing buffers.
+  They strengthen FORMAL-9688 evidence without changing its implementation
+  boundary, disposition, or report ID.
 - Release supply-chain commit `fc86b0b1` changes no report-cited production
   source. It replaces mutable publish-time reconstruction with sealed exact-byte
   Cargo archives, strengthens npm/PyPI provenance verification, and adds the
@@ -172,7 +178,14 @@ the 86-ID set.
   the exact npm-owner prepublication gate and its source guard. Corrective
   follow-up `e73dcf53` restricts the registry-proven 404 first-publication
   exception to the exact `@exochain/sdk` package and denies that exception to
-  the established WASM and LLM proxy packages.
+  the established WASM and LLM proxy packages. Test-only corrections
+  `96318413` and `a3d1e2f3` make the WASM npm package guard recognize the
+  isolated publisher and bind its empty-environment token injection, pinned
+  Node/npm entrypoints, tarball, registry, and provenance flags to the exact
+  publish call.
+- Repository-truth commits `a6058966` and `368721a1` update only the
+  already-classified `README.md`: 507 tracked Rust files, 6,619 listed
+  workspace tests, 167 generated WASM exports, and 183 passing bridge checks.
 
 Focused implementation-checkpoint reruns first observed on `08826d47`:
 
@@ -200,8 +213,45 @@ Focused reconciliation reruns against committed checkpoint `e73dcf53`:
   WASM Shamir group passed (9 tests); the focused WASM messaging group passed
   (5 tests); and the `dkg_patch_compat` integration target passed (3 tests).
 
-These are focused exact-checkpoint checks only. They do not replace the
-mandatory complete final gate corpus and independent security scan.
+Later DKG test evidence at `3b98fd11` covered all 325/325 DKG source lines,
+achieved 1,146/1,146 covered `exo-root` lines, retained 65/65 root-genesis
+portal coverage, and preserved the three patch-compatibility integration
+tests. At source checkpoint `368721a1`, the locked build, debug/release
+workspace tests, all-target Clippy, nightly format, warning-denied rustdoc,
+audit/deny/machete, Rust/Node vector, repeated Rust determinism checks, and the
+complete feature matrix passed. `EXO_TS_ROOT` was unset, so no TypeScript
+conformance-root result is claimed.
+
+Fresh PostgreSQL verification at that checkpoint used the newly created
+`exochain_026_final_20260904b` database on a disposable PostgreSQL 14.20
+loopback cluster at port 55436. All 14 gateway migrations applied; the DAG DB
+migration-upgrade regression passed 1/1; FORMAL-9648's ignored malformed-row
+probe reported exactly 1 passed/0 failed/0 ignored; gateway `production-db`
+passed 469/469; and the workspace integration surface with
+`exochain-gateway/production-db` completed 75 result blocks with none failed.
+This is local database-test evidence, not deployment or runtime readback.
+
+Exact-head release-adapter evidence also passed: 118 Rust SDK unit tests and 62
+doctests; 117 Rust WASM tests with one intentional ignored test; 12/12
+sealed-crate Python tests; Cargo 1.97.1 publish-protocol parity; 4/4 release
+archive tests; and dry crates.io packaging for exactly 32 packages at 0.2.6.
+Registry, publish-boundary, workflow-ref-binding, npm-attestation, SDK npm,
+Python-package, and SDK/Python lifecycle controls passed. The malicious Python
+fixture rejection was expected and its enclosing guard passed. Exact
+`cargo-cyclonedx 0.5.9` produced 32 CycloneDX 1.5 JSON SBOMs, and both the SBOM
+boundary and validator guards passed. The generated SBOMs were removed
+before the evidence commit. This is verification evidence, not publication.
+
+Codex Security scan `32dbfc47-dbb7-4488-83fd-a02dd5925458` reported zero
+findings over baseline through `fd526fdb`, but remains preliminary because the
+later test, guard, and repository-truth commits were outside its range. At
+source checkpoint `368721a1`, exact-head coverage passed at 47,746/52,547
+workspace lines, 1,870/2,253 ZeroDentity lines, 1,146/1,146 `exo-root` lines
+including 325/325 DKG lines, and 65/65 root-genesis portal lines. All 62 shell
+guards discovered from `.github/workflows/ci.yml` ran serially and exited zero;
+their expected negative malicious npm and Python verifier diagnostics remained
+contained and the guards passed. A fresh scan of the committed evidence head
+remains mandatory before local completion can be recorded.
 
 ## Explicit ambiguities and residual assurance limits
 

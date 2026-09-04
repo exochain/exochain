@@ -20,10 +20,10 @@ SPDX-License-Identifier: Apache-2.0
 
 This inventory classifies every path changed from validation baseline
 `8020ceab355eefa7f5185d9cdd0436da7af46efb` through committed source checkpoint
-`e73dcf53bf0aa25cea406974b42fb962e003bc6a`, plus the six provisional evidence
-documents in the current worktree, including this record. The same reconciliation
-must be rerun after the evidence commit; this inventory is not a claim that the
-candidate worktree is already clean.
+`368721a1ea3577481cf73cdee6d811623159faec`, plus the six evidence documents in
+the evidence commit, including this record. The same reconciliation is required
+against the committed evidence head; this inventory alone is not worktree-
+custody or release-authorization proof.
 The downloaded HTML report is not changed or committed; it remains read-only
 imported evidence outside this inventory.
 
@@ -31,7 +31,16 @@ Checkpoints `2e286e21` and `e73dcf53` change only the already-listed
 `tools/publish_release_npm_package.sh` and
 `tools/test_release_publish_boundaries.sh` core-runtime-adapter paths, so they
 do not change the inventory cardinality or digest from the preceding source
-checkpoint.
+checkpoint. Later test and repository-truth commits also stay within paths
+already listed below: `760613e6` and `3b98fd11` modify
+`crates/exo-root/src/dkg.rs`; `a6058966` and `368721a1` modify `README.md`; and
+`96318413` and `a3d1e2f3` modify
+`tools/test_wasm_npm_package_boundary.sh`. They therefore do not change the
+315-path cardinality, class totals, or path digest.
+
+The baseline-to-source series contains 83 commits in oldest-first order. The
+SHA-256 of that newline-delimited full commit-hash sequence is
+`8e00dda15d12d008f55705fe74fac1f8164daa0df42763e133704e050d89d369`.
 
 ## Classification totals
 

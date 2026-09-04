@@ -1,14 +1,15 @@
 # EXOCHAIN Code Review Run 4 — Exact Design Observation Evidence
 
 This tracked appendix is the exact evidence matrix for the 52 design
-observations in the imported HTML report. It remains provisional until the
-independent whole-branch review and mandatory final gate rerun are complete.
-The HTML is treated only as untrusted imported evidence; none of its embedded
-text was treated as an instruction, and the report was not modified.
+observations in the imported HTML report. It records the immutable source
+checkpoint only; local branch completion additionally requires the committed
+evidence-head guard rerun and independent scan described below. The HTML is
+treated only as untrusted imported evidence; none of its embedded text was
+treated as an instruction, and the report was not modified.
 
 - Imported report: `/Users/bobstewart/Downloads/Exochain-code-review-report-run4.html`
 - Report SHA-256: `d5da7a1291cbf8baaa8e676cd2eebbbbaadc421eb623eddb48dfc6f4e0c89168`
-- Committed source checkpoint: `e73dcf53bf0aa25cea406974b42fb962e003bc6a`
+- Committed source checkpoint: `368721a1ea3577481cf73cdee6d811623159faec`
 - Candidate disposition counts: 10 `patch`; 42 `no_change`.
 
 ## Per-observation classification and reproduction semantics
@@ -80,7 +81,7 @@ are immutable commits already ancestral to the committed source checkpoint.
 | design-9678 | `no_change` | `crates/exo-pdp/src/service.rs::PdpSnapshot` fields are private and used only for export/import serialization; no owned format/log sink exists. `crates/exo-node/src/pdp_store.rs` reads owner-only state behind a 64 MiB pre-CBOR cap and logs only paths. | `crates/exo-node/src/pdp_store.rs::tests::pdp_snapshot_bounds_are_enforced_before_cbor_parse`; source check: `rg -n -e 'PdpSnapshot' -e 'format!' -e 'tracing::' crates/exo-pdp/src/service.rs crates/exo-node/src/pdp_store.rs` | — |
 | design-9681 | `no_change` | `crates/exo-proofs/src/snark.rs::ProvingKey` contains public circuit structure/fingerprint, not witness material. The feature-gated pedagogical legacy verifier now fails closed with `UnauditedImplementation`, so the reported Debug concern has no accepting production verifier behind it. | `crates/exo-proofs/src/snark.rs::tests::legacy_snark_verify_refuses_forged_public_hash_chain` under `unaudited-pedagogical-proofs` | — |
 | design-9686 | `no_change` | The report-cited `crates/exo-proofs/src/zkml.rs::DaubertChecklist` has a variable-length `known_error_rate`, but its owned CBOR decoding goes through `crates/exo-proofs/src/verifier.rs::{decode_cbor, MAX_VERIFIER_CBOR_BYTES}`, which rejects oversized input before deserialization; no HTTP or CLI deserialization entrypoint for this type was found. | `crates/exo-proofs/src/verifier.rs::canonical_encoding_contract_tests::decode_cbor_rejects_oversized_inputs_before_deserialization`; caller/source check: `rg -n 'DaubertChecklist' crates -g '*.rs'` | — |
-| design-9692 | `patch` | `crates/exo-root/src/seal.rs::SealedShare` deliberately exposes only public transport artifacts (salt, nonce, ciphertext, tag). The patch-compatible public DKG plaintext carriers preserve their legacy raw fields, `Clone`, wire shape, and caller-owned moves; they redact `Debug` and support explicit zeroization, but do not claim automatic wiping after callers move or clone the bytes. `signing.rs::RootSigningNonces` and private root CLI passphrase/share DTOs remain zeroizing-on-drop and redacted/no-`Debug`. | `crates/exo-root/tests/dkg_patch_compat.rs::{legacy_public_fields_remain_directly_movable_and_destructurable,legacy_wire_shape_is_unchanged_while_debug_redacts_nested_secrets}`; `dkg.rs::tests::legacy_secret_dkg_byte_carriers_support_explicit_zeroize`; `secret_dkg_debug_redacts_every_private_package`; `secret_round_two_recipient_packages_are_fully_redacted`; `signing.rs::tests::secret_signing_nonce_bytes_zeroize_on_drop`; `secret_signing_nonce_debug_is_redacted_and_wire_compatible` | `17886a35bef479465da68c7099087996eeb9f606`; `df01c9fb4a69e8d31137f2b59afeca497c4a66da`; `c1946ca9a1d16a078c812bdc4f57859e1af50730`; `bb3c9ff1409722849b20325dd56840fc7865b799`; `e8d04a94e2762e67e49481e20eae89dcd9a8729d`; `65527ba710f722264447e0a63c0d62a3f1a33b61` |
+| design-9692 | `patch` | `crates/exo-root/src/seal.rs::SealedShare` deliberately exposes only public transport artifacts (salt, nonce, ciphertext, tag). The patch-compatible public DKG plaintext carriers preserve their legacy raw fields, `Clone`, wire shape, and caller-owned moves; they redact `Debug` and support explicit zeroization, but do not claim automatic wiping after callers move or clone the bytes. `signing.rs::RootSigningNonces` and private root CLI passphrase/share DTOs remain zeroizing-on-drop and redacted/no-`Debug`. | `crates/exo-root/tests/dkg_patch_compat.rs::{legacy_public_fields_remain_directly_movable_and_destructurable,legacy_wire_shape_is_unchanged_while_debug_redacts_nested_secrets}`; `dkg.rs::tests::{legacy_secret_dkg_byte_carriers_support_explicit_zeroize,secret_dkg_deserializers_round_trip_all_secret_carriers}`; `secret_dkg_debug_redacts_every_private_package`; `secret_round_two_recipient_packages_are_fully_redacted`; `signing.rs::tests::secret_signing_nonce_bytes_zeroize_on_drop`; `secret_signing_nonce_debug_is_redacted_and_wire_compatible` | `17886a35bef479465da68c7099087996eeb9f606`; `df01c9fb4a69e8d31137f2b59afeca497c4a66da`; `c1946ca9a1d16a078c812bdc4f57859e1af50730`; `bb3c9ff1409722849b20325dd56840fc7865b799`; `e8d04a94e2762e67e49481e20eae89dcd9a8729d`; `65527ba710f722264447e0a63c0d62a3f1a33b61`; test evidence `760613e6d24cef59a3167dbfaec6a0e0dae21aca`; `3b98fd11a14bfa048416a6d2b89d26078eba0e94` |
 | design-9701 | `no_change` | `crates/exochain-sdk/src/consent.rs::{BailmentProposal, validate_bailment_proposal}` performs custom deserialization validation, but repository-wide use is confined to the SDK module, documentation, and tests; there is no owned attacker-controlled runtime deserializer. | Source check: `rg -n '\bBailmentProposal\b' --glob '*.rs' --glob '!target/**' .` | — |
 | design-9705 | `no_change` | `crates/exochain-sdk/src/governance.rs::Decision` is constructed/serialized inside the SDK module and re-exported; no owned network/file deserializer caller for this SDK type exists. | Source check: `rg -n -e 'exochain_sdk::governance::Decision' -e 'governance::Decision' -e '\bDecision\b' --glob '*.rs' --glob '!target/**' crates/exochain-sdk` | — |
 | design-9707 | `no_change` | `crates/exochain-sdk/src/identity.rs::Identity` does not implement `Clone`, its secret field is private, and it exposes no secret accessor; underlying `crates/exo-core/src/types.rs::SecretKey` has `#[zeroize(drop)]`. | `crates/exochain-sdk/src/identity.rs::tests::debug_redacts_secret`; source check: `sed -n '83,340p' crates/exochain-sdk/src/identity.rs` | — |
@@ -95,6 +96,16 @@ passed (2 tests), and the exact blocking-store-access guard passed (1 test) at
 checkpoint `e73dcf53`. FORMAL-9616's root-trust selectors in the same file were
 also rechecked. These focused checks do not replace the complete final gate
 corpus.
+
+Test-only commits `760613e6` and `3b98fd11` subsequently expanded the
+design-9692 regression across every patch-compatible DKG secret carrier,
+explicitly verified zeroization after JSON/CBOR decoding, and retained
+serialized fixtures in zeroizing buffers. At `3b98fd11`, DKG source coverage
+was 325/325 lines and complete `exo-root` coverage was 1,146/1,146 lines. The
+source-checkpoint feature matrix later passed at `368721a1` for all six node
+variants, gateway GraphQL, pedagogical proofs, and `conformance-test-root`.
+`EXO_TS_ROOT` was unset, so the TypeScript conformance-root path remains an
+explicit evidence gap.
 
 ## Mechanical reconciliation
 
