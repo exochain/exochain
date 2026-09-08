@@ -19,6 +19,8 @@
 //! Every operation verifies an integrity-protecting parent and an owner-only,
 //! regular, single-link file. Windows creation denies all handle sharing until
 //! inherited ACLs have been replaced, verified, and the private bytes synced.
+//! macOS checks native ACLs on admission, rejects nonowner file inheritance
+//! before creation, and clears the exact new empty file's ACL before writing.
 //! Publication and deletion ultimately use paths; this module revalidates
 //! immediately around those operations but does not claim general handle-bound
 //! race resistance from the standard-library APIs.
@@ -175,6 +177,126 @@ fn verify_private_parent(path: &Path) -> anyhow::Result<()> {
         || metadata.mode() & 0o022 != 0
     {
         anyhow::bail!("private parent directory rejected: {}", parent.display());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        verify_macos_acl(parent, MacosAclUse::Parent)?;
+        if private_identity(&metadata) != private_identity(&fs::symlink_metadata(parent)?) {
+            anyhow::bail!(
+                "private parent changed during ACL inspection: {}",
+                parent.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+enum MacosAclUse {
+    Parent,
+    Create,
+    File,
+}
+
+#[cfg(target_os = "macos")]
+fn current_macos_user() -> anyhow::Result<&'static str> {
+    static USER: OnceLock<String> = OnceLock::new();
+    if let Some(user) = USER.get() {
+        return Ok(user);
+    }
+    let output = Command::new("/usr/bin/id")
+        .arg("-un")
+        .env_clear()
+        .env("LC_ALL", "C")
+        .output()?;
+    if !output.status.success() || output.stdout.len() > 1024 || !output.stderr.is_empty() {
+        anyhow::bail!("macOS private-file owner name unavailable");
+    }
+    let text = std::str::from_utf8(&output.stdout)?;
+    let user = text.strip_suffix('\n').unwrap_or(text);
+    // exacl renders unresolved principals as numeric IDs or UUIDs. Never
+    // confuse those fallback representations with a matching account name.
+    if user.is_empty()
+        || user.contains(['\r', '\n', '\0'])
+        || user.bytes().all(|byte| byte.is_ascii_digit())
+        || uuid::Uuid::parse_str(user).is_ok()
+    {
+        anyhow::bail!("macOS private-file owner name unavailable or ambiguous");
+    }
+    let _ = USER.set(user.to_owned());
+    USER.get()
+        .map(String::as_str)
+        .ok_or_else(|| anyhow::anyhow!("macOS private-file owner name unavailable"))
+}
+
+#[cfg(target_os = "macos")]
+fn validate_macos_acl(
+    entries: &[exacl::AclEntry],
+    purpose: MacosAclUse,
+    owner: &str,
+) -> anyhow::Result<()> {
+    use exacl::{AclEntryKind, Flag, Perm};
+
+    let mutating = Perm::WRITE
+        | Perm::APPEND
+        | Perm::DELETE
+        | Perm::DELETE_CHILD
+        | Perm::WRITEATTR
+        | Perm::WRITEEXTATTR
+        | Perm::WRITESECURITY
+        | Perm::CHOWN;
+    for entry in entries {
+        if entry.kind == AclEntryKind::Unknown
+            || entry.name.is_empty()
+            || entry.perms.bits() & !Perm::all().bits() != 0
+            || entry.flags.bits() & !Flag::all().bits() != 0
+        {
+            anyhow::bail!("macOS private-file ACL contains an unsupported entry");
+        }
+        if !entry.allow || (entry.kind == AclEntryKind::User && entry.name == owner) {
+            continue;
+        }
+        let forbidden = match purpose {
+            MacosAclUse::File => !entry.perms.is_empty(),
+            MacosAclUse::Parent => {
+                !entry.flags.contains(Flag::ONLY_INHERIT) && entry.perms.intersects(mutating)
+            }
+            MacosAclUse::Create => {
+                (!entry.flags.contains(Flag::ONLY_INHERIT) && entry.perms.intersects(mutating))
+                    || (entry.flags.contains(Flag::FILE_INHERIT) && !entry.perms.is_empty())
+            }
+        };
+        if forbidden {
+            anyhow::bail!("macOS private-file ACL grants nonowner access");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn verify_macos_acl(path: &Path, purpose: MacosAclUse) -> anyhow::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let before = fs::symlink_metadata(path)?;
+    let invalid_type_or_mode = match purpose {
+        MacosAclUse::File => !before.is_file() || !matches!(before.mode() & 0o777, 0o400 | 0o600),
+        MacosAclUse::Parent | MacosAclUse::Create => !before.is_dir() || before.mode() & 0o022 != 0,
+    };
+    if before.file_type().is_symlink()
+        || before.uid() != current_unix_uid()?
+        || invalid_type_or_mode
+    {
+        anyhow::bail!("macOS private-file ACL target rejected: {}", path.display());
+    }
+    let entries = exacl::getfacl(path, exacl::AclOption::SYMLINK_ACL)?;
+    validate_macos_acl(&entries, purpose, current_macos_user()?)
+        .map_err(|error| error.context(format!("private ACL rejected: {}", path.display())))?;
+    if private_identity(&before) != private_identity(&fs::symlink_metadata(path)?) {
+        anyhow::bail!(
+            "private ACL target changed during inspection: {}",
+            path.display()
+        );
     }
     Ok(())
 }
@@ -438,6 +560,16 @@ fn inspect_private_file_with_links(
     {
         anyhow::bail!("private file rejected: {}", path.display());
     }
+    #[cfg(target_os = "macos")]
+    {
+        verify_macos_acl(path, MacosAclUse::File)?;
+        if private_identity(&metadata) != private_identity(&fs::symlink_metadata(path)?) {
+            anyhow::bail!(
+                "private file changed during ACL inspection: {}",
+                path.display()
+            );
+        }
+    }
     Ok(private_identity(&metadata))
 }
 
@@ -620,8 +752,76 @@ where
     Ok(file)
 }
 
+#[cfg(target_os = "macos")]
+fn verify_created_empty_macos_file(
+    path: &Path,
+    file: &File,
+    created: &PrivateFileIdentity,
+) -> anyhow::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    verify_private_parent(path)?;
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.uid() != current_unix_uid()?
+        || !matches!(metadata.mode() & 0o777, 0o400 | 0o600)
+        || metadata.nlink() != 1
+        || metadata.len() != 0
+        || private_identity(&metadata) != *created
+        || opened_identity(path, file)? != *created
+    {
+        anyhow::bail!(
+            "created empty private file changed during ACL initialization: {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn restrict_macos_file(path: &Path) -> anyhow::Result<()> {
+    exacl::setfacl(&[path], &[], exacl::AclOption::SYMLINK_ACL)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn restrict_created_macos_file_with<F>(path: &Path, file: File, restrict: F) -> anyhow::Result<File>
+where
+    F: FnOnce(&Path) -> anyhow::Result<()>,
+{
+    let created = opened_identity(path, &file)?;
+    let result = (|| {
+        verify_created_empty_macos_file(path, &file, &created)?;
+        restrict(path)?;
+        verify_macos_acl(path, MacosAclUse::File)?;
+        verify_created_empty_macos_file(path, &file, &created)
+    })();
+    if let Err(error) = result {
+        // The ordinary private-file inspector rejects failed ACL state. This
+        // cleanup instead proves exact, owned, single-link, empty-file identity
+        // using the still-open handle before removing anything.
+        let cleanup = (|| {
+            verify_created_empty_macos_file(path, &file, &created)?;
+            fs::remove_file(path)?;
+            sync_parent(path)
+        })();
+        return match cleanup {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(anyhow::anyhow!(
+                "private ACL initialization failed: {error}; exact empty-file cleanup failed: {cleanup_error}"
+            )),
+        };
+    }
+    Ok(file)
+}
+
 fn open_private_create_new(path: &Path) -> anyhow::Result<File> {
     verify_private_parent(path)?;
+    // Removing inheritance after creation cannot revoke an already-open
+    // descriptor. Require inheritance-safe parent ACLs before creating a file.
+    #[cfg(target_os = "macos")]
+    verify_macos_acl(parent_path(path), MacosAclUse::Create)?;
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -642,6 +842,8 @@ fn open_private_create_new(path: &Path) -> anyhow::Result<File> {
     })?;
     #[cfg(windows)]
     let file = restrict_created_windows_file_with(path, file, restrict_windows_file)?;
+    #[cfg(target_os = "macos")]
+    let file = restrict_created_macos_file_with(path, file, restrict_macos_file)?;
     Ok(file)
 }
 
@@ -977,6 +1179,271 @@ mod tests {
 
     #[cfg(unix)]
     fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+
+    #[test]
+    fn private_file_macos_acl_checks_precede_file_admission_and_secret_write() {
+        // A missing native ACL check, or moving it after the first write, must
+        // fail this guard without constructing a permissive filesystem ACL.
+        let source = include_str!("private_file.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+        let parent = source
+            .split("fn verify_private_parent(path: &Path)")
+            .nth(1)
+            .expect("Unix parent check")
+            .split("const FILE_ATTRIBUTE_REPARSE_POINT")
+            .next()
+            .expect("parent check end");
+        assert!(
+            parent.contains("verify_macos_acl(parent, MacosAclUse::Parent)?"),
+            "macOS parent integrity must include native ACL checks"
+        );
+        let inspect = source
+            .split("fn inspect_private_file_with_links(")
+            .nth(1)
+            .expect("Unix file check")
+            .split("fn inspect_private_file(")
+            .next()
+            .expect("file check end");
+        assert!(inspect.contains("verify_macos_acl(path, MacosAclUse::File)?"));
+        let create = source
+            .split("fn open_private_create_new(")
+            .nth(1)
+            .expect("private create")
+            .split("fn sync_parent(")
+            .next()
+            .expect("create end");
+        assert!(create.contains("verify_macos_acl(parent_path(path), MacosAclUse::Create)?"));
+        assert!(create.find("MacosAclUse::Create") < create.find("options.open(path)"));
+        assert!(
+            create.contains("restrict_created_macos_file_with(path, file, restrict_macos_file)?")
+        );
+        assert!(create.find("restrict_created_macos_file_with") < create.find("Ok(file)"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_private_file_read_only_creation_keeps_write_handle_and_cleanup() {
+        use std::{fs::OpenOptions, io::Write, os::unix::fs::OpenOptionsExt};
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("read-only-private-file");
+        // Creating 0400 directly exercises the same retained write-handle
+        // state as mode(0600) filtered by a restrictive owner-write umask.
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o400)
+            .open(&path)
+            .expect("owner-read-only creation");
+        let mut file =
+            super::restrict_created_macos_file_with(&path, file, super::restrict_macos_file)
+                .expect("safe read-only file remains admissible");
+        file.write_all(b"benign read-only marker")
+            .expect("retained creation handle");
+        file.sync_all().expect("sync marker");
+        drop(file);
+        assert_eq!(mode(&path), 0o400);
+        assert_eq!(
+            read_private_file(&path, 64, "private read")
+                .expect("owner read")
+                .as_slice(),
+            b"benign read-only marker"
+        );
+        super::remove_private_file(&path).expect("normal private retirement");
+
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o400)
+            .open(&path)
+            .expect("read-only empty file");
+        let error = super::restrict_created_macos_file_with(&path, file, |_| {
+            Err(anyhow::anyhow!("injected read-only initialization failure"))
+        })
+        .expect_err("injected initialization failure");
+        assert!(
+            error
+                .to_string()
+                .contains("injected read-only initialization failure")
+        );
+        assert!(
+            !path.exists(),
+            "unchanged 0400 empty file must be cleaned up"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_acl_policy_distinguishes_existing_inputs_from_creation() {
+        use exacl::{AclEntry, Flag, Perm};
+
+        use super::MacosAclUse::{Create, File, Parent};
+
+        // Abstract policy cases only: no nonowner grants are installed on disk.
+        // Existing safe inputs may live under a read-only shared parent; only
+        // creation requires that parent's file inheritance to be private.
+        let cases = [
+            (
+                AclEntry::allow_user("owner-account", Perm::READ, Flag::FILE_INHERIT),
+                File,
+                true,
+            ),
+            (
+                AclEntry::allow_user("owner-account", Perm::WRITE, Flag::FILE_INHERIT),
+                Create,
+                true,
+            ),
+            (
+                AclEntry::deny_group("other-group", Perm::READ, Flag::FILE_INHERIT),
+                Create,
+                true,
+            ),
+            (
+                AclEntry::allow_user("other-account", Perm::READ, None),
+                Parent,
+                true,
+            ),
+            (
+                AclEntry::allow_user("other-account", Perm::READ, None),
+                Create,
+                true,
+            ),
+            (
+                AclEntry::allow_user("other-account", Perm::READ, None),
+                File,
+                false,
+            ),
+            (
+                AclEntry::allow_group("owner-account", Perm::READ, None),
+                File,
+                false,
+            ),
+            (
+                AclEntry::allow_user("other-account", Perm::WRITE, None),
+                Parent,
+                false,
+            ),
+            (
+                AclEntry::allow_user("other-account", Perm::WRITESECURITY, None),
+                Create,
+                false,
+            ),
+            (
+                AclEntry::allow_user("other-account", Perm::READ, Flag::FILE_INHERIT),
+                Parent,
+                true,
+            ),
+            (
+                AclEntry::allow_user("other-account", Perm::READ, Flag::FILE_INHERIT),
+                Create,
+                false,
+            ),
+            (
+                AclEntry::allow_user(
+                    "other-account",
+                    Perm::WRITE,
+                    Flag::FILE_INHERIT | Flag::ONLY_INHERIT,
+                ),
+                Parent,
+                true,
+            ),
+            (
+                AclEntry::allow_user(
+                    "other-account",
+                    Perm::WRITE,
+                    Flag::FILE_INHERIT | Flag::ONLY_INHERIT,
+                ),
+                Create,
+                false,
+            ),
+        ];
+        for (entry, purpose, allowed) in cases {
+            assert_eq!(
+                super::validate_macos_acl(&[entry], purpose, "owner-account").is_ok(),
+                allowed
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_private_file_preserves_safe_owner_and_deny_acl_on_read() {
+        use exacl::{AclEntry, AclOption, Perm};
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("private-input");
+        write_private_create_new(&path, b"benign custody marker").expect("private create");
+        let entries = [
+            AclEntry::allow_user(
+                super::current_macos_user().expect("owner"),
+                Perm::READ,
+                None,
+            ),
+            AclEntry::deny_group("everyone", Perm::EXECUTE, None),
+        ];
+        exacl::setfacl(&[&path], &entries, AclOption::SYMLINK_ACL).expect("safe ACL");
+        set_mode(&path, 0o400);
+        let before = exacl::getfacl(&path, AclOption::SYMLINK_ACL).expect("ACL before read");
+        assert_eq!(
+            read_private_file(&path, 64, "private read")
+                .expect("owner read")
+                .as_slice(),
+            b"benign custody marker"
+        );
+        assert_eq!(
+            exacl::getfacl(&path, AclOption::SYMLINK_ACL).expect("ACL after read"),
+            before
+        );
+        assert_eq!(mode(&path), 0o400);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_acl_initialization_error_cleans_only_the_unchanged_empty_file() {
+        use std::{fs::OpenOptions, os::unix::fs::OpenOptionsExt};
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("new-private-file");
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .expect("exclusive empty file");
+        let error = super::restrict_created_macos_file_with(&path, file, |_| {
+            Err(anyhow::anyhow!("injected ACL initialization failure"))
+        })
+        .expect_err("injected initialization failure");
+        assert!(
+            error
+                .to_string()
+                .contains("injected ACL initialization failure")
+        );
+        assert!(!path.exists());
+
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .expect("new empty file");
+        let error = super::restrict_created_macos_file_with(&path, file, |path| {
+            fs::write(path, b"diagnostic marker")?;
+            Err(anyhow::anyhow!("injected late initialization failure"))
+        })
+        .expect_err("changed state must not be removed");
+        assert!(
+            error
+                .to_string()
+                .contains("exact empty-file cleanup failed")
+        );
+        assert_eq!(
+            fs::read(&path).expect("retained changed file"),
+            b"diagnostic marker"
+        );
+    }
 
     #[cfg(unix)]
     #[derive(Debug)]

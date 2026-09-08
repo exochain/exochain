@@ -1808,6 +1808,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "exacl"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22be12de19decddab85d09f251ec8363f060ccb22ec9c81bc157c0c8433946d8"
+dependencies = [
+ "bitflags 2.10.0",
+ "log",
+ "scopeguard",
+ "uuid",
+]
+
+[[package]]
 name = "exochain-api"
 version = "0.2.6"
 dependencies = [
@@ -2258,6 +2270,7 @@ dependencies = [
  "der 0.8.0",
  "directories",
  "ed25519-dalek",
+ "exacl",
  "exochain-api",
  "exochain-authority",
  "exochain-avc",
