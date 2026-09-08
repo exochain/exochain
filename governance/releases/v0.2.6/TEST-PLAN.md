@@ -419,8 +419,9 @@ seven-file allowlist: `EXOCHAIN-FABRIC-PLATFORM.md`,
 `Initiatives/fix-mcp-cgr-proof-verification-stub.md`,
 `docs/guides/crosschecked-anchor-authority-owner-runbook.md`, and
 `governance/releases/v0.2.6/{ISSUE-DISPOSITION,PATH-CLASSIFICATION,RC,TEST-PLAN}.md`.
-That list is not the current batch. The current September 8 documentation and
-guard batch contains exactly these eight paths:
+That list is not the next batch. The September 8 documentation and guard batch
+committed at `afaee653a523845bb9663534446a0b48fb9fba36` contained exactly
+these eight paths:
 
 - `EXOCHAIN-FABRIC-PLATFORM.md`
 - `docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md`
@@ -804,3 +805,91 @@ on the prior observations in §11 and was not freshly checked for this
 checkpoint. Preserve the exclusive protected-environment gate and publisher
 prerequisites. No tag, publication, deployment, runtime-readback, or release
 authorization is established by this checkpoint.
+
+## 2026-09-08 DER dependency resolution plan and evidence
+
+The complete locked/offline workspace release build and all-workflow
+`actionlint 1.7.12` check passed at clean head
+`afaee653a523845bb9663534446a0b48fb9fba36`. The subsequent two-file dependency
+commit is `6932a180efb5c7e421072b618af876f86048be22`:
+`crates/exo-node/Cargo.toml` is a core runtime adapter, and `Cargo.lock` is
+third-party/vendor resolution inseparable from that adapter. Only DER changes
+version, from 0.8.0 to 0.8.2. No implementation, trust anchor, required feature,
+MSRV, dependency exception, or duplicate-warning cap changed.
+
+Verification order for this update:
+
+1. Resolve a fresh disposable `publish = false` Cargo fixture containing the
+   exact current node `der` dependency table, with no existing lockfile, using
+   `cargo generate-lockfile --manifest-path <fixture>/Cargo.toml --offline`
+   after refreshing public registry metadata. The original exact 0.8.0 table
+   failed specifically as yanked (RED); the matching 0.8.2 table passed (GREEN).
+   This checks dependency resolution, not a vulnerability reproduction.
+2. `cargo check -p exochain-node --bin exochain --locked` passed. This normal
+   configured registry fetch obtained the pinned package; later checks used
+   `--offline` and did not change the lockfile.
+3. Run `cargo test -p exochain-node --bin exochain --locked --offline`
+   with each exact `avc_rfc3161::tests::` filter below and `-- --exact`.
+   All three reported exactly one passing test:
+   `request_generation_uses_sha256_deterministic_nonce_certs_and_exact_imprint`,
+   `nonce_hex_matches_der_roundtrip_for_leading_zero_nonce`, and
+   `verifier_records_direct_signer_pin_as_signer_trust_anchor`.
+   The separate `macos_` filter also passed all five selected tests.
+4. Node all-target Clippy with `--locked --offline -- -D warnings`, nightly
+   formatting, `tools/test_security_critical_dependencies_pinned.sh`, audit
+   with `--deny unsound --deny unmaintained`, and locked Cargo Deny passed.
+   Existing advisory exceptions remain unchanged. Only the known `spin 0.9.8`
+   yank warning remains; `block 0.1.6` retains its future-incompatibility notice.
+5. The full locked/offline workspace release build for updated source
+   `6932a180` passed in 4m 46s. Workspace all-target Clippy passed in 50.88s,
+   and warning-denied workspace rustdoc passed in 22.12s. A subsequent
+   same-head rerun passed the release build, workspace Clippy, and rustdoc
+   again (0.82s, 0.62s, and 0.37s with cached outputs). The remaining
+   final-head workspace tests,
+   platform, package, database, coverage, and provider gates are still required
+   before release approval. Do not substitute a build or focused tests for them.
+
+For check/tests/Clippy, use the low-storage settings recorded in the preceding
+checkpoint. The release build uses `CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2`
+without changing the configured release profile. The upstream DER changes
+include nesting and SET behavior adjustments; the three legitimate controls
+are scoped interoperability evidence, not exhaustive parser verification.
+
+The workspace verification commands for item 5 were:
+
+```bash
+export CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_BUILD_JOBS=2
+cargo build --workspace --release --locked --offline
+cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --locked --offline
+```
+
+The build/test debug settings do not modify the release profile. Each command
+exited 0; the existing `block 0.1.6` future-incompatibility notice persisted.
+
+Supplementary check `bash tools/test_dependency_hygiene.sh` failed with 31
+duplicate warnings against its cap of 24. Both pre-update and updated full
+lockfiles have the same 47 duplicate package names; the target-filtered
+warning count is a different measure. Cargo Deny itself passed under its
+configured warning policy. The helper is retained in May 9 manual audit/grant
+claim records but is not directly invoked by current CI or release workflows.
+Keep this observed failure separate from the successful policy gate and do not
+raise the cap or undertake unrelated dependency migrations without reviewing
+that manual claim's scope. It supplies no green hygiene or current grant claim.
+
+Observed terminal excerpt (exit 1):
+
+```text
+advisories ok, bans ok, licenses ok, sources ok
+duplicate dependency warning count 31 exceeds cap 24
+```
+
+This follow-up evidence batch consists only of `RC.md` and `TEST-PLAN.md`;
+it is separate from the committed dependency change. A subsequent successful
+names-only provider readback confirmed both registry tokens remain at repository
+scope and the protected `release` environment secret collection is empty. The
+repository owner is type `User`, and current permissions lack administration
+and maintain. Exclusive credential custody therefore remains unsatisfied, not
+merely unchecked; do not recover encrypted values or substitute workflow source
+for custodian action. Native CI, registry operations, publication, and deployed
+runtime remain unproven.

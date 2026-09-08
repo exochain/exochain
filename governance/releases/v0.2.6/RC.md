@@ -449,3 +449,51 @@ content-sensitive guard, independent-review, required native platform CI, and
 provider gates remain outstanding for the final candidate. Earlier green
 results retain their historical scope. This checkpoint makes no tag,
 publication, deployment, runtime-readback, or release-authorization claim.
+
+## 2026-09-08 DER resolution follow-up
+
+The complete locked/offline workspace release build passed at clean evidence
+head `afaee653a523845bb9663534446a0b48fb9fba36`; all GitHub workflow files
+also passed `actionlint 1.7.12`. The 86 formal and 52 design ID sets, order,
+dispositions, and imported report hash were rechecked without change.
+
+A refreshed dependency audit then exposed the node's exact `der = 0.8.0` pin
+as yanked. RustCrypto attributes that yank to its minimum-version CI check,
+not a published EXOCHAIN vulnerability. A fresh Cargo fixture carrying the
+actual direct dependency and no lockfile failed resolution specifically because
+0.8.0 was yanked. Commit `6932a180efb5c7e421072b618af876f86048be22`
+updates that exact pin to non-yanked 0.8.2 and its lockfile resolution only;
+all other package versions remain unchanged. The same fresh-resolution check
+then passed. See the [maintainer changelog](https://github.com/RustCrypto/formats/blob/master/der/CHANGELOG.md).
+
+Node type-check, three existing benign RFC 3161 controls, the five macOS
+checks, node all-target Clippy, formatting, and the exact-pin guard passed.
+Audit and deny passed under unchanged repository policy; the DER yank warning
+is gone, while the previously documented `spin 0.9.8` warning remains.
+Independent source review found no concrete unintended dependency change or
+source-visible compatibility regression. The full locked/offline workspace
+release build for DER-updated source `6932a180` passed in 4m 46s. This is a
+separate result from the earlier pre-DER build, not a full test-suite pass.
+
+The same source then passed workspace all-target Clippy with warnings denied
+in 50.88s and warning-denied workspace rustdoc in 22.12s. A subsequent
+locked/offline readback at `6932a180` reran the full release build, workspace
+Clippy, and rustdoc successfully (0.82s, 0.62s, and 0.37s respectively, with
+cached outputs). The known `block 0.1.6` future-incompatibility notice remained;
+these commands did not execute workspace tests or establish coverage.
+
+The supplementary `tools/test_dependency_hygiene.sh` check failed: 31 duplicate
+warnings exceed its retained cap of 24. The complete lockfile duplicate-name
+set is unchanged by the DER update. Its cap and unrelated dependencies were
+not modified. This manual claim/hygiene check is distinct from the successful
+Cargo Deny policy gate; the failure is not evidence of a new vulnerability or
+permission to weaken policy. Test-plan follow-up records the remaining scope.
+
+Names-only provider readback still lists `CARGO_REGISTRY_TOKEN` and `NPM_TOKEN`
+at repository scope, with an empty `release` environment secret collection.
+Repository ownership is `User`; the current account has push/triage/pull, but
+not administration or maintain permission. No secret value was read or changed.
+An authorized custodian must establish exclusive protected-environment custody
+from the approved credential source; encrypted repository secrets must not be
+recovered through a workflow. Full final-head verification, native CI evidence,
+authorized registry cleanup, and publication also remain outstanding.
