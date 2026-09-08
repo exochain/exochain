@@ -1176,7 +1176,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "986e7713348fbe5322df18082d73a0ad53a2946dbb7a02452cf3622b83b91e7c"
 dependencies = [
  "const-oid 0.10.2",
- "der 0.8.0",
+ "der 0.8.2",
  "spki 0.8.0-rc.4",
  "x509-cert",
 ]
@@ -1503,9 +1503,9 @@ dependencies = [
 
 [[package]]
 name = "der"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71fd89660b2dc699704064e59e9dba0147b903e85319429e131620d022be411b"
+checksum = "a878c850e9e421b20262e9b41f9c860e4785fa07541c266b62ff9d1ef998a80a"
 dependencies = [
  "const-oid 0.10.2",
  "der_derive",
@@ -2267,7 +2267,7 @@ dependencies = [
  "clap",
  "cms",
  "const-oid 0.10.2",
- "der 0.8.0",
+ "der 0.8.2",
  "directories",
  "ed25519-dalek",
  "exacl",
@@ -5621,7 +5621,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8baeff88f34ed0691978ec34440140e1572b68c7dd4a495fd14a3dc1944daa80"
 dependencies = [
  "base64ct",
- "der 0.8.0",
+ "der 0.8.2",
 ]
 
 [[package]]
@@ -7219,7 +7219,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e21aad3a769f25f3d2d0cbf30ea8b50a1d602354bd6ab687fad112821608ba6"
 dependencies = [
  "const-oid 0.10.2",
- "der 0.8.0",
+ "der 0.8.2",
  "spki 0.8.0-rc.4",
  "tls_codec",
 ]
