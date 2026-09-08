@@ -782,7 +782,10 @@ printf '%s\n' \
   git config user.email release-test@example.invalid
   git add .
   git commit -qm fixture
-  CARGO_REGISTRY_TOKEN=do-not-disclose \
+  # A warm target may cache compiler information and skip this wrapper entirely.
+  # Force the control's compiler probe, not a rebuild or a production behavior.
+  CARGO_CACHE_RUSTC_INFO=0 \
+    CARGO_REGISTRY_TOKEN=do-not-disclose \
     CARGO_WRAPPER_MARKER="$cargo_wrapper_marker" \
     cargo publish --dry-run --no-verify --locked >/dev/null
 )
