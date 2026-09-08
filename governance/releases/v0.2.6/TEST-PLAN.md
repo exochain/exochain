@@ -893,3 +893,94 @@ and maintain. Exclusive credential custody therefore remains unsatisfied, not
 merely unchecked; do not recover encrypted values or substitute workflow source
 for custodian action. Native CI, registry operations, publication, and deployed
 runtime remain unproven.
+
+## 2026-09-08 packaging and spin follow-up
+
+At clean checkpoint `cb618c448d540f55642923d19ea284307ade3e54`, both
+`@exochain/sdk` and `@exochain/llm-proxy` passed their `lint` and `build`
+scripts, followed by `npm pack --dry-run --ignore-scripts --json`. The dry-pack
+inventories contained 79 and 57 entries respectively; the proxy's ordinary
+`scripts/check-package-artifacts.mjs` also passed. Regeneration left every
+tracked artifact unchanged. These are compilation and inventory checks, not
+the npm tests, coverage, registry provenance, or publication gates.
+
+The same clean checkpoint assembled all 32 workspace Rust archives with
+`cargo package --workspace --no-verify --locked --offline --registry crates-io`
+in an isolated temporary target directory, without registry tokens. Their exact
+filename set matched locked workspace metadata, and every archive's
+`.cargo_vcs_info.json` recorded that checkpoint and no dirty source. No archive
+was extracted into the checkout, built, signed, or published. These archives
+predate the spin update below and must not be used as its release artifacts.
+
+`cargo machete` 0.9.2 and locked/offline metadata for the workspace, fuzz, and
+CGR guest graphs passed. The inspected static subset also passed:
+`tools/test_github_actions_pinned.sh`,
+`tools/test_security_critical_dependencies_pinned.sh`,
+`tools/test_cross_platform_target_cache_boundary.sh`,
+`tools/test_wasm_npm_package_boundary.sh`, and
+`CARGO_NET_OFFLINE=true node tools/verify_cratesio_release_packaging.mjs`.
+This is not the entire CI guard corpus or measured coverage.
+
+On native host `aarch64-apple-darwin`,
+`CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo test --release --locked --offline -p exochain-node --bin exochain macos_ -- --nocapture`
+passed all five selected tests after a 7m 00s build. The normal host target was
+used without an explicit `--target` argument to reuse its release cache; this
+supports native release-profile behavior but does not replace exact-target
+GitHub CI. No permissive ACL or disclosure reproduction was constructed.
+
+The root lock still selected yanked `spin 0.9.8`. Published `spin 0.9.9` is
+non-yanked and carries an upstream soundness fix. Its MSRV, normal dependency
+requirements, and feature definitions match 0.9.8. Actual consumers `flume
+0.11.1`, `lazy_static 1.5.0`, and `multer 3.1.0` all permit 0.9.9 through their
+existing ranges; fresh consumer resolution was therefore not blocked by this
+yank. EXOCHAIN exploitability of the upstream defect was not established.
+
+Commit `7108cd0cb96e48099dd8001fd4c029cb9876655a` changes only root
+`Cargo.lock` (third-party/vendor): spin's version and checksum. No manifest,
+feature, other package version, or policy exception changes. The committed
+diff matches the independently reviewed diff SHA-256
+`4c73d51f1698d26ec19ae2d224cc3b5dc2fc2a771f3031ed285f60728d430ddc`.
+Verification order:
+
+1. Before editing, the registry-aware command
+   `cargo audit --no-fetch --json --deny unsound --deny unmaintained --deny yanked`
+   exited 1 with the sole yank warning naming `spin 0.9.8` (RED). An earlier
+   `CARGO_NET_OFFLINE=true` probe returned no yank metadata and is not accepted
+   as registry-state evidence.
+2. `cargo update -p spin@0.9.8 --precise 0.9.9 --offline` changed only the two
+   expected lock values. The same registry-aware audit then exited 0 with
+   `warnings: {}` and zero unsuppressed vulnerabilities (GREEN), under the
+   unchanged existing advisory exceptions.
+3. Locked metadata, full Cargo Deny, the exact-pin guard, nightly formatting,
+   and workspace all-target Clippy with warnings denied passed. Clippy took
+   21.11s. Independent read-only review found no concrete unintended graph
+   change or source-visible compatibility regression.
+4. The updated graph's native release-profile macOS tests passed all five
+   selected tests after a 5m 16s build. The full workspace release build then
+   passed in 5m 31s, followed by warning-denied rustdoc in 9.05s. These ran
+   against the unchanged reviewed lockfile bytes; the two-value dependency
+   diff was committed while the remaining build finished. The existing
+   `block 0.1.6` future-incompatibility notice persists.
+5. Locked/offline Cargo metadata with `--filter-platform` for
+   `aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`,
+   `aarch64-unknown-linux-gnu`, and `x86_64-pc-windows-msvc` resolved exactly
+   one `spin 0.9.9` node in each graph. All four have the same feature set:
+   `barrier`, `default`, `lazy`, `lock_api`, `lock_api_crate`, `mutex`, `once`,
+   `rwlock`, and `spin_mutex`. This is target-filtered resolution evidence,
+   not native compilation or runtime evidence on all four platforms.
+6. At source head `7108cd0c`, the following existing RFC 3161 controls each
+   passed with 1 passed, 0 failed, and 0 ignored in the native node release
+   binary. Each used
+   `cargo test --release --locked --offline -p exochain-node --bin exochain avc_rfc3161::tests::<name> -- --exact`:
+   `request_generation_uses_sha256_deterministic_nonce_certs_and_exact_imprint`,
+   `nonce_hex_matches_der_roundtrip_for_leading_zero_nonce`, and
+   `verifier_records_direct_signer_pin_as_signer_trust_anchor`.
+   The environment set `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0`,
+   `CARGO_PROFILE_TEST_DEBUG=0`, and `CARGO_BUILD_JOBS=2`; no source or fixture
+   was changed. This is legitimate-behavior compatibility evidence, not the
+   full RFC 3161 suite or a vulnerability reproduction.
+
+The earlier supplementary duplicate-warning failure remains unresolved; this
+update does not raise its cap or supply a green manual hygiene claim. Exclusive
+provider credential custody, complete test/coverage/feature/database gates,
+exact-head native CI, authorized registry cleanup, and publication remain open.

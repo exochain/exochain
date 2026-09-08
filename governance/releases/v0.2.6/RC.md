@@ -497,3 +497,35 @@ An authorized custodian must establish exclusive protected-environment custody
 from the approved credential source; encrypted repository secrets must not be
 recovered through a workflow. Full final-head verification, native CI evidence,
 authorized registry cleanup, and publication also remain outstanding.
+
+## 2026-09-08 spin and package checkpoint
+
+Commit `7108cd0cb96e48099dd8001fd4c029cb9876655a` removes the remaining
+root-lock yank warning by updating `spin 0.9.8` to compatible `0.9.9`.
+Only its version and checksum change; no dependency ranges, feature settings,
+other package versions, or policy exceptions change. Published 0.9.9 includes
+an upstream soundness fix; EXOCHAIN exploitability was not reproduced or
+established. The three actual consumers allow this patch version, and the CGR
+guest lock already selected it. Registry-aware audit with `--deny yanked`
+failed before the update and passed afterward with no warnings and zero
+unsuppressed vulnerabilities under the unchanged advisory policy.
+
+Independent source review found no concrete graph or compatibility regression.
+Workspace all-target Clippy, full Cargo Deny, exact-pin and formatting checks,
+all five benign native macOS release-profile tests, the full workspace release
+build, and warning-denied rustdoc passed for the reviewed dependency graph.
+Three existing RFC 3161 release-profile compatibility controls also passed:
+deterministic request generation, canonical nonce round-trip, and direct signer
+trust-anchor recording. These are legitimate-behavior checks, not a complete
+RFC 3161 test-suite or security-validation result.
+Target-filtered metadata resolves the same spin version/features for macOS
+ARM64, both Linux targets, and Windows x86-64; this does not prove native CI.
+The existing `block 0.1.6` future-incompatibility notice remains.
+
+Before this lock update, clean checkpoint `cb618c44` passed ordinary build and
+dry-pack checks for both TypeScript packages and assembled exactly 32 Rust
+archives with matching clean source identities. Those archives are historical,
+not release artifacts for the updated graph. `TEST-PLAN.md` records exact
+commands, scope, and the required remaining gates. Neither the package checks
+nor this dependency mitigation supplies complete tests, coverage, native CI,
+exclusive provider credential custody, registry cleanup, or release approval.
