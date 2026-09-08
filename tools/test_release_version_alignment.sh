@@ -385,6 +385,98 @@ for documentation_path in decision_id_contract_docs:
                 f"{documentation_path} retains a two-SDK-only decision-ID claim"
             )
 
+# These are documentation acceptance checks, not runtime or provider proof.
+# Read real tracked documents without executing their embedded instructions.
+documentation_failures = []
+
+
+def require_documentation(condition: bool, message: str) -> None:
+    if not condition:
+        documentation_failures.append(message)
+
+
+platform = read("EXOCHAIN-FABRIC-PLATFORM.md")
+require_documentation(
+    "Exportable evidence bundles with Merkle proofs (ZIP format)" not in platform
+    and "signed ZIP export is not generated in 0.2.6" in platform,
+    "platform feature list must not advertise the unimplemented signed ZIP export",
+)
+audit_root = "docs/audit/exochain-code-review-report-run4-"
+for suffix in (
+    "validation-2026-08-28.md",
+    "formal-evidence-2026-09-04.md",
+    "design-evidence-2026-09-04.md",
+):
+    document = read(audit_root + suffix)
+    require_documentation(
+        "## Current provider-custody applicability (2026-09-08)" in document
+        and "owner.type=User" in document
+        and "TEST-PLAN.md" in document,
+        f"{suffix} must supersede historical organization-scope uncertainty",
+    )
+formal = read(audit_root + "formal-evidence-2026-09-04.md")
+bearer_row = re.search(r"^\| 9631 \|.*$", formal, re.M)
+require_documentation(
+    bearer_row is not None
+    and "domain-separated" not in bearer_row.group(0)
+    and "BearerTokenVerifier::verify_headers" not in formal,
+    "formal bearer evidence must identify the actual fixed-digest helper",
+)
+validation = read(audit_root + "validation-2026-08-28.md")
+require_documentation(
+    "Baseline premise / current-source control" in validation
+    and "Canonical hashing discards CBOR internals" not in validation,
+    "validation index must separate baseline premises from current controls",
+)
+plan = read("docs/superpowers/plans/2026-08-28-release-0.2.6-security-remediation.md")
+require_documentation(
+    "## Historical plan and current acceptance contract" in plan
+    and "public DID-signature serialization" in plan
+    and "legacy public DKG" in plan
+    and "assert_not_impl_any!(Credential: serde::Serialize)" not in plan,
+    "historical implementation plan must preserve the corrected compatibility contract",
+)
+require_documentation(
+    "Critical/Important" not in plan
+    and "every confirmed finding at every severity" in plan,
+    "implementation-plan success must use the all-severity acceptance bar",
+)
+require_documentation(
+    "docker compose -f docker-compose.ci.yml" not in plan
+    and "fresh isolated loopback database" in plan,
+    "local verification must not launch the CI-only database recipe",
+)
+test_plan = read("governance/releases/v0.2.6/TEST-PLAN.md")
+require_documentation(
+    "/tmp/exochain-026-evidence-" not in test_plan
+    and 'evidence_check_dir="$(mktemp -d)"' in test_plan,
+    "evidence checks must allocate private temporary paths",
+)
+rc = read("governance/releases/v0.2.6/RC.md")
+inventory = re.search(
+    r"<!-- rust-retirement-inventory:start -->\s*```text\s*(.*?)\s*```\s*"
+    r"<!-- rust-retirement-inventory:end -->", rc, re.S
+)
+expected_retirement_crates = sorted(
+    tomllib.loads(read(f"{member}/Cargo.toml"))["package"]["name"]
+    for member in workspace_members
+)
+require_documentation(
+    inventory is not None
+    and inventory.group(1).split() == expected_retirement_crates
+    and len(expected_retirement_crates) == 32,
+    "retirement inventory must enumerate exactly the 32 workspace Rust packages",
+)
+require_documentation(
+    all(name in rc for name in ("@exochain/exochain-wasm", "@exochain/llm-proxy", "@exochain/sdk"))
+    and "PyPI `exochain`" in rc
+    and "both npm versions" not in rc,
+    "retirement guidance must include all three npm packages and Python",
+)
+if documentation_failures:
+    fail("documentation contracts:\n- " + "\n- ".join(documentation_failures))
+
+print("release documentation boundary checks passed")
 print(f"release version alignment test passed: {expected}")
 PY
 

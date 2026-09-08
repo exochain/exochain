@@ -93,7 +93,7 @@ source changes, and were removed before the evidence commit.
 | Registry-secret custody | Every registry-secret consumer directly declares protected environment `release`; both registry tokens exist only in that environment and are absent from repository scope and any applicable inherited organization scope; current repository ownership determines applicability |
 | Adjacent LiveSafe | All four npm audits, context lint, typecheck, Vitest, Rust fmt/Clippy/tests pass |
 | Independent review | Whole diff plus evidence files reviewed; every confirmed finding at every severity is fixed or explicitly accepted by the user |
-| Platform | Windows private-file runtime test passes in `windows-latest` CI; local cross-check is supporting evidence only |
+| Platform | Native macOS release-profile `macos_` tests pass in the required cross-platform CI lane and Windows private-file runtime tests pass in `windows-latest` CI, both for the exact pushed head; local checks are supporting evidence only |
 | Source custody | Every changed path is classified exactly once; staged evidence is allowlisted and clean; final diff checks pass; generated evidence is absent; the evidence commit leaves the candidate worktree clean |
 
 ## 1. Reconcile the imported report
@@ -279,6 +279,13 @@ trap - EXIT
 The discovered guard count and every printed path become part of the final
 execution record. Run the guard corpus without a concurrent Cargo process.
 
+`tools/test_release_version_alignment.sh` also checks the release documentation
+contracts: no implemented-ZIP claim, current provider-scope applicability,
+accurate bearer wording, superseded historical instructions, private evidence
+temporary paths, and the complete package-retirement inventory. These are benign
+source checks; they do not execute document commands or prove runtime behavior,
+provider custody, test coverage, or publication.
+
 Also reproduce CI's inline repository and runtime checks:
 
 ```bash
@@ -407,18 +414,40 @@ direction.
 
 The following six-document staging recipe describes the original evidence
 commit at `7038be2d`. Do not reuse its exact allowlist for a different batch.
-For the September 8 issue/documentation amendment, the exact seven-file
-allowlist is `EXOCHAIN-FABRIC-PLATFORM.md`,
+The earlier September 8 issue/documentation amendment had a historical
+seven-file allowlist: `EXOCHAIN-FABRIC-PLATFORM.md`,
 `Initiatives/fix-mcp-cgr-proof-verification-stub.md`,
 `docs/guides/crosschecked-anchor-authority-owner-runbook.md`, and
 `governance/releases/v0.2.6/{ISSUE-DISPOSITION,PATH-CLASSIFICATION,RC,TEST-PLAN}.md`.
-Expand that list literally, require exact staged and committed path-set equality,
-and repeat the same generated-output and clean-worktree checks below.
+That list is not the current batch. The current September 8 documentation and
+guard batch contains exactly these eight paths:
+
+- `EXOCHAIN-FABRIC-PLATFORM.md`
+- `docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md`
+- `docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md`
+- `docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md`
+- `docs/superpowers/plans/2026-08-28-release-0.2.6-security-remediation.md`
+- `governance/releases/v0.2.6/RC.md`
+- `governance/releases/v0.2.6/TEST-PLAN.md`
+- `tools/test_release_version_alignment.sh`
+
+The helper and macOS source corrections are separate commit batches. Require
+exact staged and committed path-set equality for the selected batch, preserving
+any unrelated dirty changes. Repeat the applicable generated-output and final
+clean-worktree checks below. Do not infer staging authority from a broad glob
+or either historical allowlist.
 
 Original evidence-commit staging recipe:
 
+The path allowlist remains historical, but the temporary-file handling below is
+corrected: each invocation allocates a private directory instead of reusing
+predictable names in a shared temporary directory. Use the applicable exact
+allowlist for a new batch; do not execute this historical staging batch as-is.
+
 ```bash
 set -euo pipefail
+evidence_check_dir="$(mktemp -d)"
+trap 'rm -f -- "$evidence_check_dir/actual.txt" "$evidence_check_dir/expected.txt"; rmdir -- "$evidence_check_dir"' EXIT
 git diff --check 8020ceab355eefa7f5185d9cdd0436da7af46efb
 git status --short
 git add -- \
@@ -429,15 +458,15 @@ git add -- \
   governance/releases/v0.2.6/TEST-PLAN.md \
   governance/releases/v0.2.6/PATH-CLASSIFICATION.md
 git diff --cached --check
-git diff --cached --name-only | sort -u > /tmp/exochain-026-evidence-actual.txt
+git diff --cached --name-only | sort -u > "$evidence_check_dir/actual.txt"
 printf '%s\n' \
   docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md \
   docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md \
   docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md \
   governance/releases/v0.2.6/PATH-CLASSIFICATION.md \
   governance/releases/v0.2.6/RC.md \
-  governance/releases/v0.2.6/TEST-PLAN.md > /tmp/exochain-026-evidence-expected.txt
-diff -u /tmp/exochain-026-evidence-expected.txt /tmp/exochain-026-evidence-actual.txt
+  governance/releases/v0.2.6/TEST-PLAN.md > "$evidence_check_dir/expected.txt"
+diff -u "$evidence_check_dir/expected.txt" "$evidence_check_dir/actual.txt"
 test ! -d coverage
 test ! -d coverage-exo-root
 test ! -d coverage-root-genesis-portal
@@ -461,6 +490,8 @@ Immediately after the evidence commit:
 
 ```bash
 set -euo pipefail
+evidence_check_dir="$(mktemp -d)"
+trap 'rm -f -- "$evidence_check_dir/actual.txt" "$evidence_check_dir/expected.txt"; rmdir -- "$evidence_check_dir"' EXIT
 git status --short
 git show --stat --oneline --decorate HEAD
 printf '%s\n' \
@@ -469,10 +500,10 @@ printf '%s\n' \
   docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md \
   governance/releases/v0.2.6/PATH-CLASSIFICATION.md \
   governance/releases/v0.2.6/RC.md \
-  governance/releases/v0.2.6/TEST-PLAN.md > /tmp/exochain-026-evidence-expected.txt
+  governance/releases/v0.2.6/TEST-PLAN.md > "$evidence_check_dir/expected.txt"
 git diff-tree --no-commit-id --name-only -r HEAD | sort -u \
-  > /tmp/exochain-026-evidence-actual.txt
-diff -u /tmp/exochain-026-evidence-expected.txt /tmp/exochain-026-evidence-actual.txt
+  > "$evidence_check_dir/actual.txt"
+diff -u "$evidence_check_dir/expected.txt" "$evidence_check_dir/actual.txt"
 ```
 
 The status must be empty. Re-run all content-sensitive report, path-inventory,
@@ -483,11 +514,29 @@ Nothing is pushed, tagged, published, deployed, or merged as part of this plan.
 
 ## 10. Platform closure
 
-The local macOS pass can compile-check the Windows target, but only the
-`private-file-windows` job on GitHub `windows-latest` supplies runtime ACL
-evidence. Therefore the local branch may be described as a prepared source
-candidate; it must not be described as release-authorized until that exact CI
-job passes for the exact pushed head.
+The macOS ACL mitigation requires native runtime evidence for the exact pushed
+head. In `.github/workflows/ci.yml`, the required `cross-platform` job's
+`macos-latest` / `aarch64-apple-darwin` lane must pass the
+`Verify macOS private-file custody` step with `CARGO_INCREMENTAL=0`:
+
+```bash
+cargo test --release --locked -p exochain-node --bin exochain --target aarch64-apple-darwin macos_
+```
+
+Retain the CI job URL, exact source SHA, native runner/target, and test result
+showing the selected tests executed. A build-only pass, cross-compilation,
+zero matching tests, or a local focused pass does not satisfy this native CI
+gate. The macOS tests cover policy classification, safe existing-file ACL
+preservation, creation ordering, legitimate mode `0400` creation, and bounded
+initialization-error cleanup. Their benign controls do not establish actual
+disclosure reproduction.
+
+The local macOS pass can also compile-check the Windows target, but only the
+`private-file-windows` job on GitHub `windows-latest` supplies the required
+Windows runtime ACL evidence. Keep that independent Windows requirement.
+The local branch may be described as a prepared source candidate; release
+authorization requires both native platform lanes for the exact pushed head,
+alongside the remaining gates in this plan.
 
 ## 11. Toolchain and provider closure
 
@@ -711,3 +760,47 @@ registry-secret migration/readback, applicable ownership/inheritance checks
 under §11, `All Constitutional Gates`, the LiveSafe workflow, Windows ACL
 runtime lane, tag, publication, deployment, and runtime readback remain
 separate and unproven.
+
+## 2026-09-08 helper and macOS ACL execution checkpoint
+
+The committed helper correction is
+`5955eff80ec72f65e1378f5317ebd092508110e6`: the sealed LYNK inventory contains
+exactly 44 build outputs and the npm publisher uses the corrected verifier
+basename. The macOS native ACL mitigation and required release-profile
+`macos_` CI step are committed at
+`25a6db81c46977244d7165f6ed9cc5bf4f677369`. The eight documentation/guard paths
+in §9 form a separate evidence batch.
+
+Immutable diff scan `67080c5e-352d-4f06-9325-7f36d376a08e` completed for
+`8020ceab355eefa7f5185d9cdd0436da7af46efb..4495eb049ad66de30d6d83cb3d71456a9be79799`
+with two findings: High provider credential scope and Low conditional macOS
+ACL enforcement. Its canonical coverage remains partial with retained
+deferrals. The completed run is neither a clean scan nor full coverage, and
+it excludes the later helper and macOS corrections. Preserve its sealed
+artifacts and require review of the final immutable candidate range.
+
+Recorded mitigation-review evidence includes source-guard RED/GREEN and a
+benign RED/GREEN check for the legitimate mode `0400` creation regression.
+Fresh checks immediately before commit `25a6db81` all passed: node
+`cargo check`; five `macos_` tests with 1,461 tests filtered out; five
+individually selected legitimate private-file lifecycle controls, each reporting
+one passing test; node all-target Clippy with `-D warnings`; nightly format;
+`cargo deny --locked --offline check licenses`; `actionlint 1.7.12` against
+`.github/workflows/ci.yml`; and diff whitespace checks. The tests ran in the
+actual node target with `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0`,
+`CARGO_PROFILE_TEST_DEBUG=0`, and `CARGO_BUILD_JOBS=2`. Clippy used the same
+settings; `cargo check` omitted `CARGO_PROFILE_TEST_DEBUG`. Three benign
+release-helper modes passed at `5955eff8`; their source is unchanged at
+`25a6db81`.
+The `block 0.1.6` future-incompatibility notice remains recorded. No exploit
+reproductions or adversarial fixtures were executed in this patch verification;
+benign substitutes do not establish actual disclosure reproduction.
+
+These results establish scoped source-change verification only. Full
+exact-head workspace, coverage, feature, fresh-database, SDK/package,
+content-sensitive guard, independent-review, required native platform CI, and
+provider evidence remain outstanding. Provider custody is unresolved based
+on the prior observations in §11 and was not freshly checked for this
+checkpoint. Preserve the exclusive protected-environment gate and publisher
+prerequisites. No tag, publication, deployment, runtime-readback, or release
+authorization is established by this checkpoint.

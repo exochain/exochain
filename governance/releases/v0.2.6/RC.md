@@ -43,6 +43,10 @@ uncertainty, not the still-open repository-secret custody finding.
 Provider CI, Windows runtime evidence, tag, publication, deployment, and
 runtime readback remain unproven.
 
+The dated 2026-09-08 checkpoint below records the later helper correction and
+macOS ACL mitigation work. Earlier checkpoint results retain their original
+source ranges and do not establish validation of these later changes.
+
 ## Evidence boundary
 
 | Item | Candidate record |
@@ -274,7 +278,7 @@ not a current provider readback or release authorization.
 ## Candidate test plan
 
 The complete executable acceptance contract, thresholds, evidence separation,
-and Windows-only closure requirement are in
+and native macOS and Windows closure requirements are in
 `governance/releases/v0.2.6/TEST-PLAN.md`. The exact per-path classification and
 LiveSafe intake record are in
 `governance/releases/v0.2.6/PATH-CLASSIFICATION.md`.
@@ -315,8 +319,8 @@ python3 -m pytest packages/exochain-py/tests
 The post-correction exact-head content-sensitive guard rerun, final independent
 scan, exclusive environment-secret provider readback, provider CI, and
 platform-specific gates in the final test plan remain mandatory before release
-authorization. Windows ACL runtime evidence must come from its Windows CI lane;
-cross-compilation is not runtime proof.
+authorization. Native macOS and Windows ACL runtime evidence must come from
+their required CI lanes; cross-compilation is not runtime proof.
 
 ## Rollback and disablement
 
@@ -328,11 +332,120 @@ not an effective credential gate against a branch that removes its declaration.
 Only after exclusive protected-environment custody is verified may its approval
 and credential controls be treated as the publication stop gate.
 
-After a separately authorized publication, a defective Rust package version is
-yanked crate-by-crate, both npm versions are deprecated, and the GitHub Release
-is marked accordingly while the signed tag is retained for audit provenance.
-Any deployment rolls back to its last independently verified release; no
-deployment is part of this candidate preparation.
+After a separately authorized publication, an authorized maintainer must resolve
+the exact affected package/version set from the reviewed release inventory and
+successful registry readback before retirement. Do not invent publication for an
+absent version. A whole-release retirement covers the following inventory;
+partial retirement must identify its exact subset and reason.
+
+| Registry or artifact | Complete 0.2.6 retirement scope and readback |
+| --- | --- |
+| crates.io | All 32 Rust packages listed below, each at `0.2.6`: yank each affected published version and verify its `yanked` flag independently. |
+| npm | `@exochain/exochain-wasm@0.2.6`, `@exochain/llm-proxy@0.2.6`, and `@exochain/sdk@0.2.6`: deprecate each affected published version with the retirement reason and verify its metadata. |
+| Python | PyPI `exochain` at `0.2.6`: yank the affected release files with the retirement reason and verify every file's yanked status. |
+| GitHub | Mark the release and its package-retirement notice consistently; retain the signed tag and provenance artifacts for audit. |
+| Deployment | Roll back only an actually deployed version to its last independently verified release; verify the resulting runtime separately. |
+
+The exact 32-package Rust inventory is checked against the workspace manifests
+by `tools/test_release_version_alignment.sh`; excluded CGR and fuzz packages are
+not silently added to a registry-retirement batch.
+
+<!-- rust-retirement-inventory:start -->
+```text
+exochain-api
+exochain-authority
+exochain-avc
+exochain-catapult
+exochain-consensus
+exochain-consent
+exochain-core
+exochain-dag
+exochain-dag-db-api
+exochain-dag-db-core
+exochain-dag-db-domain
+exochain-dag-db-exchange
+exochain-dag-db-graph
+exochain-dag-db-lab
+exochain-dag-db-postgres
+exochain-dag-db-retrieval
+exochain-decision-forum
+exochain-economy
+exochain-escalation
+exochain-gatekeeper
+exochain-gateway
+exochain-governance
+exochain-identity
+exochain-legal
+exochain-messaging
+exochain-node
+exochain-pdp
+exochain-proofs
+exochain-root
+exochain-sdk
+exochain-tenant
+exochain-wasm
+```
+<!-- rust-retirement-inventory:end -->
+
+This is a retirement procedure, not evidence that any 0.2.6 package has been
+published or that any retirement, deployment or rollback has occurred. Each
+provider mutation requires separate authorization and current readback.
 
 Do not describe this candidate as court-ready, Article 26 certified,
 production-cryptography reviewed, deployed, or a v0.3.0 close.
+
+## 2026-09-08 helper and macOS ACL checkpoint
+
+Commit `5955eff80ec72f65e1378f5317ebd092508110e6` corrects the sealed LYNK
+distribution inventory to exactly 44 build outputs, including the existing
+attestation, HTTP, and wire modules, and corrects the npm publisher's copied
+verifier basename to `verify_npm_registry_attestation.mjs`. These are committed
+release-adapter source changes; they do not establish registry acceptance or
+publication.
+
+Completed immutable diff scan `67080c5e-352d-4f06-9325-7f36d376a08e` covers
+`8020ceab355eefa7f5185d9cdd0436da7af46efb..4495eb049ad66de30d6d83cb3d71456a9be79799`.
+It records two findings: High provider credential scope and Low conditional
+macOS ACL enforcement. The canonical scan record has partial coverage with
+retained deferrals; completion of the scan run is not complete review coverage
+or a clean scan. Later helper and macOS changes are outside that immutable
+range. Its sealed artifacts remain unchanged.
+
+The macOS mitigation is committed at
+`25a6db81c46977244d7165f6ed9cc5bf4f677369`. The shared private-file adapter
+checks native ACLs on files and parents, validates creation permissions before
+creating a file, and restricts the new empty file before returning a handle for
+secret writes. The reviewed
+correction preserves the existing write handle for legitimate mode `0400`
+creation and limits initialization-error cleanup to the unchanged empty file.
+The workflow change adds release-profile `macos_` tests to the required
+`cross-platform` lane; the native CI requirement is recorded in test-plan §10.
+
+Scoped verification recorded during mitigation work includes source-guard
+RED/GREEN evidence and a benign RED/GREEN regression for legitimate mode
+`0400` creation. Fresh checks immediately before commit `25a6db81` passed:
+node `cargo check`, five `macos_` tests with 1,461 tests filtered out, five
+individually selected legitimate private-file lifecycle controls with one test
+passing per run, owning-crate all-target Clippy with warnings denied, nightly
+format, locked/offline `cargo deny` license checks, `actionlint 1.7.12`, and
+diff whitespace checks. The tests ran in the actual node target. Three benign
+release-helper modes passed at `5955eff8`; helper source is unchanged at
+`25a6db81`.
+The `block 0.1.6` future-incompatibility notice remains recorded. These are
+focused patch results, not a full run on a final immutable candidate head.
+No exploit reproductions or adversarial fixtures were executed in this patch
+verification. Benign controls and source guards do not establish actual
+disclosure reproduction.
+
+Provider custody remains unresolved based on the previously recorded
+observations; it was not freshly checked for this checkpoint. Both tokens were
+last observed at repository scope, with neither installed in protected
+environment `release`. The successful User-owner metadata resolves organization
+inheritance applicability only. The §11 protected-environment custody and
+publisher prerequisites remain mandatory.
+
+Full exact-head workspace, coverage, feature, fresh-database, SDK/package,
+content-sensitive guard, independent-review, required native platform CI, and
+provider gates remain outstanding for the final candidate. Earlier green
+results retain their historical scope. This checkpoint makes no tag,
+publication, deployment, runtime-readback, or release-authorization claim.
