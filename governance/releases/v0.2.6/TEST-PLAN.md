@@ -1055,3 +1055,74 @@ Complete regression revalidation, coverage, feature/database/package gates,
 native exact-head CI, final review, exclusive provider-secret custody,
 registry cleanup, and signed/approved publication remain required. The narrow
 checks above cannot be used to waive any of them.
+
+## 2026-09-08 executed workspace and database checkpoint
+
+Source: `8fc4e1e5fa0556e37cfddf300754d6d21299b438`, clean before each batch,
+on native macOS ARM64. Cargo commands ran serially in the retained worktree
+target with `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0`,
+`CARGO_PROFILE_TEST_DEBUG=0`, and `CARGO_BUILD_JOBS=2`. Neither registry
+publishing token was available to the test commands.
+
+| Executed gate | Observed terminal result |
+| --- | --- |
+| `cargo test --workspace --locked --offline -- --test-threads=2` | Exit 0; 146 result blocks; 6,618 reported passes; 0 failures; 6 ignored |
+| `cargo test --workspace --release --locked --offline -- --test-threads=2` | Exit 0; 146 result blocks; 6,617 reported passes; 0 failures; 6 ignored |
+| `cargo build --workspace --release --locked --offline` | Exit 0; 29.85s |
+| `cargo clippy --workspace --all-targets --locked --offline -- -D warnings` | Exit 0; 0.63s |
+| `cargo +nightly fmt --all -- --check` | Exit 0 |
+| `RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --locked --offline` | Exit 0; 0.39s |
+| Locked/offline workspace, fuzz, and CGR guest metadata commands from section 2 | All exited 0 |
+| `cargo test --release --locked --offline -p exochain-root --test dkg_patch_compat -- --test-threads=2` | Exit 0; 3 passed; 0 failed; 0 ignored |
+| `cargo deny --offline check` | Exit 0; advisories, bans, licenses, sources passed |
+| `cargo machete` | Exit 0; no unused dependencies found |
+| `cargo audit --json --deny unsound --deny unmaintained --deny yanked` | Exit 0; 0 unsuppressed vulnerabilities; empty warnings, unchanged advisory policy |
+
+The audit refreshed advisory/registry metadata; it was not run with Cargo
+offline mode. Its advisory database commit was
+`bf25f6575a93a35f30796c65c0ed91bee7fa19fd` with 1,242 entries. The future-Rust
+compatibility notice for `block 0.1.6` remains. The supplementary 31-versus-24
+duplicate-warning helper was not rerun or claimed passing.
+
+The workspace tests had no database configured. Their six ignores were the
+two live Microsoft timestamp-authority checks, the separately required
+PostgreSQL malformed-row check, real Groth16 receipt fixture check,
+production-backend feature check, and deterministic WASM vector emission.
+Only the malformed-row ignore was explicitly exercised in the database batch
+below. Debug and release differ because `dagdb.rs` and
+`dagdb_writeback_sign.rs` have three `debug_assertions`-only tests and two
+`not(debug_assertions)`-only tests; all five applicable cases passed. Test
+counts include doctests and do not establish the coverage thresholds.
+
+The section 5 batch used PostgreSQL 14.20, SQLx CLI 0.8.6, and a newly
+initialized private database `exochain_026_exochain026postgreshfljki`, bound
+only to `127.0.0.1:55436`. The URL validator and all 14 gateway migrations
+passed. Existing commands from section 5 were executed with `--locked
+--offline` and the resource controls above:
+
+- The migration-upgrade regression used `EXO_DAGDB_TEST_DATABASE_URL`, exact
+  selection, and one test thread: 1 passed, 0 failed, 0 ignored.
+- The required ignored malformed-row regression used `DATABASE_URL`, exact
+  selection, `--ignored --nocapture`, and one test thread: 1 passed, 0 failed,
+  0 ignored; its required success pattern was verified.
+- Gateway `--lib --features production-db` used `DATABASE_URL` and one test
+  thread: 469 passed, 0 failed, 0 ignored.
+- Workspace `--test '*' --features exochain-gateway/production-db` used
+  `DATABASE_URL` and two test threads: 75 result blocks, 585 reported passes,
+  0 failures, 1 ignored. It did not also set `EXO_DAGDB_TEST_DATABASE_URL`;
+  therefore it is not evidence that every database-conditional integration
+  case exercised PostgreSQL.
+
+The database batch exited zero, stopped its exact temporary server, and a
+separate status check confirmed no server running. Only that disposable
+cluster's data directory was removed. Four generated exchange report files
+from each full workspace unit-test run were inspected and removed separately;
+the worktree returned clean. No production database, secret value, source
+file, or expected test value was changed.
+
+Both exact evidence-inventory verifiers also passed: 86 formal findings and
+52 design observations, with the expected digests and classification sets.
+Final per-finding review, coverage, complete feature/CI-guard/package/adjacent
+gates, exact-head native CI, final independent review, exclusive provider
+custody, registry cleanup, approvals, and publication remain required. These
+local successes do not supply any of those unexecuted gates.
