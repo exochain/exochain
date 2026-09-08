@@ -64,6 +64,7 @@ source ranges and do not establish validation of these later changes.
 | Open provider control | On 2026-09-08 both registry tokens remain repository-scoped and protected `release` contains no secrets; successful User-owner metadata rules out inherited organization scope; the crates.io owner allowlist was set to `bob-stewart` and read back after all 32 owners were verified |
 | GitHub issue intake | `ISSUE-DISPOSITION.md` records all eight reviewed issues, verified closures, 0.2.6 work, and subsequent-release scope |
 | Candidate version | `0.2.6` across owned release surfaces |
+| Latest local workspace and database checkpoint | `8fc4e1e5fa0556e37cfddf300754d6d21299b438`; debug/release tests, fresh local PostgreSQL batch, build/lint/docs and dependency-policy refresh passed; remaining gates are listed below |
 | Adjacent surface | LiveSafe remains separate, proprietary, and unable to make public constitutional claims |
 | Test plan | `governance/releases/v0.2.6/TEST-PLAN.md` |
 | Changed-path classification | `governance/releases/v0.2.6/PATH-CLASSIFICATION.md` |
@@ -554,3 +555,45 @@ limitations does not complete its fleet-capacity request. Broader issue closure
 requires explicit acceptance of the narrowed scope. These local checks and
 scope recommendations do not establish complete tests, coverage, exact-head
 native CI, provider custody, release approval, or publication.
+
+## 2026-09-08 full workspace and fresh-database checkpoint
+
+At clean source `8fc4e1e5fa0556e37cfddf300754d6d21299b438`, both complete
+locked/offline workspace test commands exited zero. Debug reported 6,618
+passes and release reported 6,617; each had 146 result blocks, zero failures,
+and six explicit ignores. Three debug-only versus two release-only gateway
+tests explain the one-pass difference. These are reported test results,
+including doctests, not measured code coverage. No expected value or source
+was changed to obtain the passes.
+
+A fresh private PostgreSQL 14.20 loopback cluster passed all 14 gateway
+migrations, the exact migration-upgrade regression (1/1), the explicitly
+enabled malformed-row regression (1/1), and the gateway `production-db`
+library suite (469/469). The workspace integration command produced 75 result
+blocks, 585 reported passes, zero failures, and one ignore. That command used
+`DATABASE_URL`; the separate migration-upgrade regression used
+`EXO_DAGDB_TEST_DATABASE_URL`. The aggregate does not imply that every
+database-conditional integration case ran against PostgreSQL. The exact
+temporary server was stopped and its disposable data removed.
+
+The same source passed release build, workspace all-target Clippy with
+warnings denied, nightly formatting, warning-denied rustdoc, locked metadata
+for the workspace/fuzz/CGR guest graphs, all three DKG compatibility tests,
+Cargo Deny, and cargo-machete. Registry-aware audit with yanked, unsound, and
+unmaintained dependencies denied returned zero unsuppressed vulnerabilities
+and no warnings under unchanged policy. The `block 0.1.6` future-Rust
+compatibility notice and the previously failed supplementary duplicate-warning
+hygiene check are not resolved by these passes.
+
+Both evidence inventories were independently reconciled again: 86 formal
+findings and 52 design observations, including exact IDs, order, uniqueness,
+classifications, disposition tallies, and expected digests. Inventory equality
+does not replace final per-finding source/regression review.
+
+Verification reused the retained target directory, ran Cargo serially with
+two build workers, and disabled incremental compilation and dev/test debug
+symbols. Only known generated test reports were removed; the worktree was
+clean after each batch. Final coverage, feature isolation, complete CI guards,
+SDK/package/adjacent gates, required native CI, independent final review,
+exclusive provider-secret custody, authorized registry cleanup, approvals, and
+publication remain outstanding. No release or runtime claim is made.
