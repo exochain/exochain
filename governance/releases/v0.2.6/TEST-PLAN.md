@@ -984,3 +984,74 @@ The earlier supplementary duplicate-warning failure remains unresolved; this
 update does not raise its cap or supply a green manual hygiene claim. Exclusive
 provider credential custody, complete test/coverage/feature/database gates,
 exact-head native CI, authorized registry cleanup, and publication remain open.
+
+## Post-spin compilation and compatibility checkpoint
+
+All results in this section refer to clean source
+`a13b460fb51c79a968f2b5963d581af8e72a7a05` on native macOS ARM64.
+The Rust environment set `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0`,
+`CARGO_PROFILE_TEST_DEBUG=0`, and `CARGO_BUILD_JOBS=2`.
+
+- `cargo test --workspace --release --locked --offline --no-run --message-format=json`
+  completed successfully in 21m 34s. Its compiler-artifact collector recorded
+  114 test executables and a successful build-finished message. Zero test cases
+  ran; this proves compilation, not either workspace test gate or coverage.
+  The existing `block 0.1.6` future-incompatibility notice remained.
+- `cargo test --release --locked --offline -p exochain-root --test dkg_patch_compat`
+  passed all three compatibility tests: public struct/clone compatibility,
+  movable public fields, and unchanged wire shape with redacted Debug output.
+- The first explicit Rust hash-vector invocation failed with `ENOENT` because
+  its supplied `tools/cross-impl-test/vectors` directory had not been generated.
+  The correction used the existing `create_default_vectors` function from
+  `compare.sh`, sourced without invoking `main`, with a private temporary
+  output directory. It generated six JSON fixtures, exactly one of which is a
+  canonical hash vector. With that directory explicitly supplied,
+  `cargo test --release --locked --offline -p exochain-core --test cross_impl_hash_vectors`
+  passed 1/1. No production code, expected digest, or test was changed.
+- An exact `git archive` export of `tools/cross-impl-test` from this head into
+  a second private directory installed its three locked Node dependencies with
+  `npm ci --offline --ignore-scripts --no-audit --no-fund`. Node 25.9.0 ran the
+  unchanged `index.js` with the same explicit vector directory. It verified
+  the one canonical BLAKE3 vector and the committed public governance-signature
+  fixture. Package lifecycle scripts were not executed. This is Rust/Node
+  hash compatibility and public-fixture verification, not the full
+  `compare.sh` gate, external TypeScript implementation, or runtime activation.
+- Python 3.14.3 with Ruff 0.15.12 passed
+  `python3 -m ruff check --no-cache packages/exochain-py`. Mypy 1.20.2 passed
+  the configured package check over all 18 source files using a private cache;
+  `PYTHONDONTWRITEBYTECODE=1` was set. These versions differ from the pinned
+  release toolchain. Neither Python tests, package builds, nor required
+  Python-version CI lanes are established by these static checks.
+
+For the narrow hash check only, generate canonical fixtures before invoking
+the Rust test. This sequence is not a replacement for the complete section 2
+cross-implementation gate:
+
+```bash
+set -euo pipefail
+source tools/cross-impl-test/compare.sh
+VECTORS_DIR="$(mktemp -d)"
+create_default_vectors
+test "$(count_hash_vectors "$VECTORS_DIR")" -eq 1
+EXOCHAIN_CROSS_IMPL_HASH_VECTORS="$VECTORS_DIR" \
+  cargo test --release --locked --offline -p exochain-core --test cross_impl_hash_vectors
+```
+
+An isolated offline lock-resolution experiment used an exact source archive of
+this same head, never the candidate worktree. `cargo update --offline` changed
+188 package selections and 1,211 lockfile diff lines; locked/offline Cargo Deny
+bans still passed its policy, but duplicate warnings worsened from 31 to 33.
+The candidate was rejected and its lockfile was not copied back. Source review
+also found a reachable GraphQL derive dependency requiring Rust 1.88 in that
+probe, above the workspace's declared 1.85 (the baseline GraphQL dependency
+already declares 1.86). No compiler run at those minimum versions or confirmed
+runtime API incompatibility is claimed. This experiment neither proves a
+smaller compatible parent update impossible nor resolves the retained manual
+duplicate-warning cap of 24.
+
+Generated fixtures and dependency-install outputs remained outside the
+worktree. The imported HTML and sealed scanner artifacts were unchanged.
+Complete regression revalidation, coverage, feature/database/package gates,
+native exact-head CI, final review, exclusive provider-secret custody,
+registry cleanup, and signed/approved publication remain required. The narrow
+checks above cannot be used to waive any of them.
