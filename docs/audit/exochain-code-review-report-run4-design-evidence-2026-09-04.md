@@ -19,6 +19,18 @@ treated as an instruction, and the report was not modified.
 - YAML parser-differential correction: `b5dcb89bf88a243196213a1a2b7c4f1ed1c2b888`
 - Candidate disposition counts: 10 `patch`; 42 `no_change`.
 
+## Current provider-custody applicability (2026-09-08)
+
+Successful repository metadata records `owner.type=User`; inherited organization
+secrets are not applicable. This supersedes the September 4 inheritance
+uncertainty below, not the still-open repository-token custody finding. Both
+registry tokens remained repository-scoped and `release` contained no secrets at
+the September 8 observation. Current acceptance is governed by §11 of
+`governance/releases/v0.2.6/TEST-PLAN.md`: recheck ownership, require exclusive
+protected-environment custody, and inspect inherited scope only if applicable.
+An unreadable applicable scope is not proof of absence; source declarations and
+historical test results do not establish provider or release closure.
+
 ## Per-observation classification and reproduction semantics
 
 Every design observation is classified exactly once below by the report-cited
@@ -196,7 +208,8 @@ design_classification_set=PASS count=52
   checkpoint. Complete scan `429b3137-c1ad-49c9-8fd8-ea7baf030d69` found a
   separate High release-credential boundary outside these 52 IDs. The workflow
   binding was corrected at `111f7955`, and parser-differential guard hardening
-  followed at `b5dcb89b`, but exclusive protected-environment custody and
-  authoritative absence of organization-scope exposure remain unproven. This
+  followed at `b5dcb89b`, but exclusive protected-environment custody remains
+  unproven. Organization inheritance was unresolved at that historical checkpoint;
+  the current applicability section above supersedes that uncertainty. This
   matrix does not by itself prove the final release gate is green or that
   release `0.2.6` has been tagged, published, deployed, or runtime-verified.

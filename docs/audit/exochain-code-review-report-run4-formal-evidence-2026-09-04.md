@@ -20,6 +20,18 @@ in it was followed and the file was not modified.
 - Exact formal inventory: 86 report IDs, 86 rows below, 86 unique IDs
 - Candidate disposition totals: 33 `patch`, 4 `adjacent_patch`, 49 `no_change`
 
+## Current provider-custody applicability (2026-09-08)
+
+Successful repository metadata records `owner.type=User`; inherited organization
+secrets are not applicable. This supersedes the September 4 inheritance
+uncertainty below, not the still-open repository-token custody finding. Both
+registry tokens remained repository-scoped and `release` contained no secrets at
+the September 8 observation. Current acceptance is governed by §11 of
+`governance/releases/v0.2.6/TEST-PLAN.md`: recheck ownership, require exclusive
+protected-environment custody, and inspect inherited scope only if applicable.
+An unreadable applicable scope is not proof of absence; source declarations and
+historical test results do not establish provider or release closure.
+
 `FORMAL-9655` is deliberately corrected from the tracked validation document's
 earlier `no_change` disposition. The reported derived `Debug` implementations
 were still present at `be1c0744`; the issue was reproduced, regression-tested,
@@ -80,7 +92,7 @@ evidence or third-party/vendor code; the HTML itself is imported evidence.
 | 9620 | no_change | `crates/exo-node/src/crosschecked_anchor_http.rs::CrossCheckedAnchorVerifier::verifies` hashes the candidate into a fixed domain-separated verifier and uses constant-time fixed-byte equality; derived equality is not called for authorization and the plaintext candidate is wiped. | `crates/exo-node/tests/crosschecked_anchor_http.rs::runtime_auth_retains_only_a_fixed_size_domain_separated_verifier` | — |
 | 9624 | patch | `crates/exo-node/src/private_file.rs` is the shared owner-only, no-follow, type/link/parent-integrity checked boundary used by `crates/exo-node/src/identity.rs::load_or_create`; Windows ACL creation fails closed. | `crates/exo-node/src/identity.rs::private_file_identity_rejects_permissive_and_symlink_keys_before_decode`; `private_file_identity_requires_integrity_protecting_parent`; Windows test `crates/exo-node/src/private_file.rs::private_file_windows_removes_inherited_everyone_and_rejects_extra_allow` | `bb3c9ff1`, `ec99d6c5` |
 | 9629 | no_change | `crates/exo-node/src/mcp/handler.rs::{append_mcp_audit_record,next_mcp_audit_timestamp,record_mcp_prompt_render}` handles every production `Mutex::lock` poison as typed `McpError::Internal`; audit/prompt collections have explicit capacities. | Source guard: `sed -n '520,660p' crates/exo-node/src/mcp/handler.rs` shows exhaustive `Ok/Err` matches; `handler_audit_capacity_does_not_deny_allowed_tool_calls`; `handler_prompt_render_log_capacity_does_not_deny_prompt_renders` | — |
-| 9631 | patch | `crates/exo-node/src/auth.rs::BearerTokenVerifier` hashes all presented tokens to fixed-size domain-separated digests before comparison; `crates/exo-node/src/mcp/mod.rs::SseState::authorize` preserves missing/malformed/wrong HTTP outcomes. | `crates/exo-node/src/auth.rs::bearer_tokens_are_compared_as_fixed_size_digests`; `crates/exo-node/src/mcp/mod.rs::mcp_authorization_preserves_missing_malformed_and_wrong_outcomes` | `0cc5d62d` |
+| 9631 | patch | `crates/exo-node/src/auth.rs::BearerTokenVerifier` hashes presented tokens to fixed-size BLAKE3 digests before constant-time comparison; this helper does not add a domain separator. `crates/exo-node/src/mcp/mod.rs::SseState::authorize` preserves missing/malformed/wrong HTTP outcomes. | `crates/exo-node/src/auth.rs::bearer_tokens_are_compared_as_fixed_size_digests`; `crates/exo-node/src/mcp/mod.rs::mcp_authorization_preserves_missing_malformed_and_wrong_outcomes` | `0cc5d62d` |
 | 9632 | no_change | The report-cited `crates/exo-node/src/mcp/tools/authority.rs::parse_roles` receives `actor_roles` only after `crates/exo-node/src/mcp/handler.rs::McpServer::handle_message` rejects messages above `MAX_JSON_RPC_MESSAGE_BYTES` (64 KiB) before JSON parsing. The SSE router independently applies the same `DefaultBodyLimit`. | `crates/exo-node/src/mcp/handler.rs::handler_rejects_oversized_json_rpc_message_before_parsing`; `crates/exo-node/src/mcp/mod.rs::sse_message_rejects_oversized_body_before_handler` | — |
 | 9633 | no_change | The same 64 KiB pre-parse handler and transport limits bound `crates/exo-node/src/mcp/tools/authority.rs::parse_consent_records` before vector materialization. | `crates/exo-node/src/mcp/handler.rs::handler_rejects_oversized_json_rpc_message_before_parsing`; `crates/exo-node/src/mcp/mod.rs::sse_message_rejects_oversized_body_before_handler` | — |
 | 9634 | no_change | The same 64 KiB pre-parse handler and transport limits bound `crates/exo-node/src/mcp/tools/ledger.rs::execute_submit_event` and its `payload_hex` before hex decoding. | `crates/exo-node/src/mcp/handler.rs::handler_rejects_oversized_json_rpc_message_before_parsing`; `crates/exo-node/src/mcp/mod.rs::sse_message_rejects_oversized_body_before_handler` | — |
@@ -126,7 +138,7 @@ evidence or third-party/vendor code; the HTML itself is imported evidence.
 | 9590 | no_change | `crates/exo-governance/src/constitution.rs::{enter_custom_expr_deserialize_depth,Expr::evaluate_expr_at_depth}` defines root at depth zero, accepts exactly 64 nested edges, and rejects the 65th consistently in deserialization and evaluation. | `crates/exo-governance/src/constitution.rs::test_custom_expr_rejects_excessive_depth`; `custom_expr_deserialization_rejects_excessive_depth` | — |
 | 9606 | no_change | `crates/exo-legal/src/dgcl144.rs::verify_safe_harbor` intentionally requires `approvals * 2 > total` for documented strict majority; exactly 50 percent therefore fails. | `crates/exo-legal/src/dgcl144.rs::board_approval_fails_insufficient_votes`; `board_approval_full_workflow`; source guard: `rg -n -e 'approvals \* 2 >' -e 'approvals \* 2 <=' crates/exo-legal/src/dgcl144.rs` | — |
 | 9614 | no_change | `crates/exo-messaging/src/kex.rs::validate_x25519_public_key` uses a fixed public scalar solely as a low-order validation probe; `x25519_shared_secret` independently rejects an all-zero actual shared secret. | `crates/exo-messaging/src/kex.rs::x25519_public_key_rejects_all_zero_hex`; `x25519_public_key_deserialization_rejects_all_zero_bytes`; source guard: `rg -n -e 'all-zero shared secret' -e 'validate_x25519_public_key' crates/exo-messaging/src/kex.rs` | — |
-| 9615 | no_change | `crates/exo-node/src/auth.rs::BearerTokenVerifier::verify_headers` computes fixed-size digests and evaluates both admin and scoped verifier checks for every wrong token; success discloses only that the caller already possessed a valid credential. | `crates/exo-node/src/auth.rs::bearer_tokens_are_compared_as_fixed_size_digests`; `post_with_wrong_token_forbidden` | `0cc5d62d` (current guard shared with FORMAL-9631) |
+| 9615 | no_change | `crates/exo-node/src/auth.rs::BearerAuth::verify_headers` applies the canonical header parser and fixed-size verifier. The separate `verify_admin_or_livesafe_public_output_bearer` checks the optional scoped verifier after an admin mismatch only on the exact LiveSafe route; success discloses that the caller already possessed an accepted credential. | `crates/exo-node/src/auth.rs::bearer_tokens_are_compared_as_fixed_size_digests`; `post_with_wrong_token_forbidden` | `0cc5d62d` (current guard shared with FORMAL-9631) |
 | 9628 | no_change | `crates/exo-node/src/mcp/handler.rs::McpServer::dispatch` reflects an unknown method only after the 64 KiB pre-parse cap; JSON serialization escapes it, the transport is bearer-authenticated/local, and it is not logged. | `crates/exo-node/src/mcp/handler.rs::handler_unknown_method`; `handler_rejects_oversized_json_rpc_message_before_parsing` | — |
 | 9630 | no_change | `crates/exo-node/src/mcp/middleware.rs::parse_invocation_context` may retain detailed internal typed errors, but `crates/exo-node/src/mcp/handler.rs::handle_tools_call` logs those details and returns a fixed public constitutional-enforcement response. | `crates/exo-node/src/mcp/handler.rs::handler_internal_errors_do_not_echo_internal_details_to_clients`; `handler_constitutional_enforcement_errors_do_not_echo_internal_details` | — |
 | 9638 | patch | `crates/exo-node/src/pdp_store.rs::save` delegates stale-temp recovery to `crates/exo-node/src/private_file.rs::write_private_replace`, which removes only the exact owned regular temp after revalidation while preserving exclusive creation and synchronization. | `crates/exo-node/src/pdp_store.rs::stale_pdp_temp_owned_regular_file_recovers_without_weakening_create_new`; `crates/exo-node/src/private_file.rs::private_file_replace_recovers_only_exact_owned_regular_stale_temp` | `bb3c9ff1` |
@@ -272,11 +284,12 @@ secret access. Independent review then proved that its guard accepted
 `actionlint`-valid `yes`/`on` mapping-key collisions under Psych YAML 1.1.
 Commit `b5dcb89b` audits the lossless AST before decoding and rejects ambiguous
 or duplicate keys, anchors, aliases, merges, tags, and complex keys; focused
-guards pass. Read-only provider metadata still shows `CARGO_REGISTRY_TOKEN`
+guards pass. September 4 read-only provider metadata showed `CARGO_REGISTRY_TOKEN`
 and `NPM_TOKEN` at repository scope and no secrets in `release`; organization
-Actions-secret scope is unreadable. The issue remains operationally open until
-both values are recreated exclusively in the protected environment, repository
-copies are removed, and organization exposure is authoritatively ruled out.
+Actions-secret applicability was unresolved then. The current applicability
+section above supersedes that uncertainty. The issue remains operationally open
+until both values are installed exclusively in the protected environment,
+repository copies are removed, and any applicable inherited scope is checked.
 
 ## Explicit ambiguities and residual assurance limits
 

@@ -428,7 +428,7 @@ Merit Fabric
 
 Evidence & Audit
 
-- Exportable evidence bundles with Merkle proofs (ZIP format)
+- Evidence bundles with Merkle proofs; signed ZIP export is not generated in 0.2.6 (see §19.6)
 - PII-redacted audit trails
 - Dispute resolution data packages
 - Chain-of-custody metadata

@@ -34,6 +34,18 @@ The exact baseline-to-candidate path inventory and required core/adapter/
 adjacent/vendor classification are in
 `governance/releases/v0.2.6/PATH-CLASSIFICATION.md`.
 
+## Current provider-custody applicability (2026-09-08)
+
+Successful repository metadata records `owner.type=User`; inherited organization
+secrets are not applicable. This supersedes the September 4 inheritance
+uncertainty below, not the still-open repository-token custody finding. Both
+registry tokens remained repository-scoped and `release` contained no secrets at
+the September 8 observation. Current acceptance is governed by §11 of
+`governance/releases/v0.2.6/TEST-PLAN.md`: recheck ownership, require exclusive
+protected-environment custody, and inspect inherited scope only if applicable.
+An unreadable applicable scope is not proof of absence; source declarations and
+historical test results do not establish provider or release closure.
+
 ## Validation and Closure Standard
 
 A report item requires a production patch only when current source proves a
@@ -68,7 +80,13 @@ semantics, exact owned symbol/runtime, focused regression or source guard, and
 immutable patch commit. Its sorted numeric ID-set SHA-256 is
 `264fa18b138ce4a2935180336c0a14317f5dc08eca6ea5230db49b9c037aec80`.
 
-| ID | Disposition | Current-source result or patch boundary |
+In this index, a `patch` row describes the baseline premise and intended change
+unless it explicitly names the implemented control. A `no_change` row summarizes
+the controlling source-checkpoint result. Neither is a fresh final-head test
+result; the exact formal appendix records the implemented control and its
+immutable evidence separately.
+
+| ID | Disposition | Baseline premise / current-source control |
 | --- | --- | --- |
 | 9679 | patch | The default build refuses the pedagogical SNARK, but the published opt-in verifier accepts forgeable public hash chains. Keep the types and make legacy verification refuse even when the feature is enabled. |
 | 9616 | no_change | Conformance root substitution requires both an explicit feature and environment switch; malformed constants are rejected before trust registration. Preserve the fail-closed tests. |
@@ -110,7 +128,7 @@ immutable patch commit. Its sorted numeric ID-set SHA-256 is
 | 9650 | no_change | The shared SQLite store mutex serializes the worker/runtime creation path; the claimed concurrent thread fan-out is absent. |
 | 9648 | patch | Database row decoding uses panicking `Row::get`; replace with typed `try_get` failures even though schema constraints defeat the claimed remote crash. |
 | 9654 | no_change | Signal hashes are limited to the finite claim-type enum and the route inherits the 1 MiB body cap. |
-| 9655 | patch | `VerifyOtpResponse` and `IdentitySession` derived `Debug` over bearer session tokens. Replace both with explicit redacted `Debug` implementations and keep authenticated serialization behavior unchanged. |
+| 9655 | patch | `VerifyOtpRequest` and `VerifyOtpResponse` derived `Debug` over OTP code, bootstrap signature, or session token material. The implemented custom `Debug` redacts those fields while preserving wire serialization behavior. |
 | 9657 | no_change | The OTP is fixed at six public-format digits, attempts are bounded, and no production HTTP caller was found. |
 | 9661 | patch | `int_ln_milli` shifts attacker-influenced `u64` values before widening and can overflow. Compute intermediates in `u128` with checked conversion. |
 | 9662 | no_change | The deterministic service key is default-off, feature-scoped, and cannot replace the subject signature/session consent checks. |
@@ -140,12 +158,12 @@ immutable patch commit. Its sorted numeric ID-set SHA-256 is
 | 9538 | no_change | Currency-without-cost is signed incomplete usage metadata and no owned authorization consumer treats it as a priced operation; changing it is a compatibility/product decision, not a security fix. |
 | 9573 | no_change | This duplicates the public simulated-attestation hash comparison in 9548/9572. |
 | 9583 | no_change | Positive-hour validation precedes conversion and timestamp arithmetic is checked. |
-| 9584 | no_change | Canonical hashing discards CBOR internals from the external error response; GraphQL is default-off. |
+| 9584 | no_change | The internal CBOR serialization message remains. Closure rests on closed infallibly serializable inputs and default-off GraphQL, not an implemented redaction of that message; a new fallible serializer or caller reopens the disposition. |
 | 9587 | no_change | SQL details remain internal and the caller receives a fixed response; the cited vote route is not shipped. |
 | 9590 | no_change | Root-at-depth-zero semantics are consistent; tests accept exactly 64 nested edges and reject 65. |
 | 9606 | no_change | Exact 50 percent correctly fails the documented strict-majority requirement. |
 | 9614 | no_change | The fixed X25519 scalar is public low-order-point validation material; actual ECDH separately rejects an all-zero shared secret. |
-| 9615 | no_change | Every wrong token performs both checks; a successful response reveals only the credential already presented. |
+| 9615 | no_change | On the exact LiveSafe scoped route, an admin mismatch is followed by the optional scoped verifier; ordinary admin routes use only the canonical admin verifier. Success reveals possession of an accepted credential. |
 | 9628 | no_change | Method reflection is 64 KiB bounded, JSON escaped, bearer-authenticated or local, and not logged. |
 | 9630 | no_change | Adjudication parsing details are logged internally; the response is a fixed enforcement error. |
 | 9638 | patch | A stale fixed PDP temporary file blocks every later save. Recover only the owned regular temporary and retain exclusive creation, synchronization, and fail-closed persistence. |
@@ -341,10 +359,11 @@ Source correction is not provider closure. Read-only GitHub metadata on
 2026-09-04 shows `CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` still at repository
 scope, zero secrets in environment `release`, required-reviewer protection with
 self-review denied, and no deployment branch policy. Organization Actions-
-secret listing returns HTTP 404 and is therefore unverified, not empty. Because
+secret listing returned HTTP 404 at that checkpoint and did not establish an
+empty collection; the current applicability section supersedes that uncertainty. Because
 a modified branch can remove its own `environment` declaration, both tokens
-must be recreated in `release`, removed from repository scope, and proved
-absent from organization Actions-secret scope before this finding is closed.
+must be installed in `release`, removed from repository scope, and proved
+absent from any applicable inherited scope before this finding is closed.
 The values are opaque and were neither read nor changed during branch
 preparation.
 
@@ -362,6 +381,8 @@ preparation.
    on its own versions and keeps `public_claims_allowed: false`.
 6. This branch makes no claim that 0.2.6 is tagged, published, deployed, or
    runtime-verified. Those are separate release operations.
-7. Provider readback proves `CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` exist only
-   as protected `release` environment secrets and not as repository or
-   organization Actions secrets; unreadable scope fails the closure gate.
+7. Provider readback under `TEST-PLAN.md` §11 proves `CARGO_REGISTRY_TOKEN` and
+   `NPM_TOKEN` exist only as protected `release` environment secrets, not as
+   repository or applicable inherited organization secrets. Successful User-owner
+   metadata makes inheritance not applicable; an unreadable applicable scope
+   fails the closure gate.
