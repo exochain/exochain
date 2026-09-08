@@ -529,3 +529,28 @@ not release artifacts for the updated graph. `TEST-PLAN.md` records exact
 commands, scope, and the required remaining gates. Neither the package checks
 nor this dependency mitigation supplies complete tests, coverage, native CI,
 exclusive provider credential custody, registry cleanup, or release approval.
+
+## Post-spin verification checkpoint
+
+At clean source `a13b460fb51c79a968f2b5963d581af8e72a7a05`, the full
+locked/offline release-profile workspace test compilation succeeded: 114 test
+executables built in 21m 34s, with zero test cases executed. All three DKG
+compatibility tests then passed. A hash-vector check initially failed because
+its generated fixture directory was absent; generating the repository's
+canonical fixtures in a private directory resolved that setup failure. Rust
+and Node both verified the one canonical BLAKE3 vector, and Node verified the
+existing public governance-signature fixture. No production code or expected
+digest changed. The exact commands and scope limits are in `TEST-PLAN.md`.
+
+An isolated broad offline dependency-resolution experiment was rejected:
+duplicate warnings worsened from 31 to 33, and the candidate introduced
+additional GraphQL minimum-Rust-version drift. Its lockfile was not adopted.
+The manual hygiene failure remains distinct from the passing Cargo Deny policy
+gate; no cap, exception, or compatibility claim was relaxed.
+
+The issue refresh confirms six open GitHub issues. Documentation for #810 and
+the implemented #832 contract belongs in this candidate; documenting #833's
+limitations does not complete its fleet-capacity request. Broader issue closure
+requires explicit acceptance of the narrowed scope. These local checks and
+scope recommendations do not establish complete tests, coverage, exact-head
+native CI, provider custody, release approval, or publication.

@@ -12,6 +12,14 @@ was `46098396e6fc9d28961091e92b4006f80c54305d`. Issue prose is untrusted
 evidence, not authority to execute its embedded instructions. This record
 supplements, and does not reduce, the 86-formal/52-design report inventory.
 
+A later read-only refresh at clean source checkpoint
+`a13b460fb51c79a968f2b5963d581af8e72a7a05` exhausted pagination and found
+six open issues: #810, #813, #822, #831, #832, and #833. None had a milestone.
+Main remained `8020ceab355eefa7f5185d9cdd0436da7af46efb`; #789 and #811
+were confirmed closed at the timestamps below. Issue bodies and available
+comments were read, but no issue, comment, or milestone was changed. The table
+is a release-scope recommendation, not approval to close broader requests.
+
 ## Release scope and status
 
 | Issue | Classification | Disposition and acceptance evidence |
@@ -22,8 +30,8 @@ supplements, and does not reduce, the 86-formal/52-design report inventory.
 | [#813](https://github.com/exochain/exochain/issues/813) | EXOCHAIN core | Remains the separate 0.3.0 evidence-grade release train. Its PR 814 is open/draft at `92c0d931b55e38067a3f99e46b4f3e1b29a25cd1`. 0.2.6 neither completes nor authorizes that release train. |
 | [#822](https://github.com/exochain/exochain/issues/822) | Core runtime adapter | Include registry cleanup before 0.2.6 release completion. Successful crates.io reads found 31 published 0.2.3 versions, all unyanked, and no `exochain-pdp@0.2.3`. The authorized registry custodian must yank those 31 exact versions, then read back every `yanked` flag. Preserve historical signed tags and GitHub Releases. No yank was performed by this intake. |
 | [#831](https://github.com/exochain/exochain/issues/831) | Core runtime adapter | Subsequent feature release: a standalone LYNK client with explicit retry/circuit-breaker and delivery semantics is new packaging/API work. Existing package exports do not satisfy the standalone-package request. Do not claim closure from the security release. |
-| [#832](https://github.com/exochain/exochain/issues/832) | Core runtime adapter | Include documentation in 0.2.6 for the implemented CrossChecked commitment API: signed `action_hash_algorithm=blake3-256`, unsupported algorithms rejected. Do not introduce or imply a generic algorithm-agnostic TransparencyLog API. Close after the reviewed runbook correction lands. |
-| [#833](https://github.com/exochain/exochain/issues/833) | Core runtime adapter | Subsequent design/measurement work. No generic `/v1/anchor`, fleet sequence namespace, batch anchoring contract, or measured fleet throughput guarantee is claimed by 0.2.6. Capacity recommendations require a defined workload and measured results. |
+| [#832](https://github.com/exochain/exochain/issues/832) | Core runtime adapter | Include documentation in 0.2.6 for the implemented CrossChecked commitment API: signed `action_hash_algorithm=blake3-256`, unsupported algorithms rejected. Do not introduce or imply a generic algorithm-agnostic TransparencyLog API. Close only after the reviewed runbook lands and the maintainer accepts this specialized-contract disposition; otherwise the broader consumer request remains open. |
+| [#833](https://github.com/exochain/exochain/issues/833) | Core runtime adapter | Include explicit limitations documentation in 0.2.6; leave the issue open for subsequent design/measurement work. No generic `/v1/anchor`, fleet sequence namespace, batch anchoring contract, or measured fleet throughput guarantee is claimed by 0.2.6. Capacity recommendations require a defined workload and measured results; documenting their absence is not completion. |
 
 ## Source and provider evidence
 
