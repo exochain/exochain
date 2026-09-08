@@ -635,7 +635,8 @@ jobs:
   # Gate 16: Cross-platform binary build
   #
   # Verifies the exochain binary compiles on all target platforms.
-  # Does not run tests (that is Gate 14-15's job) — only build verification.
+  # macOS also exercises native private-file custody; Gates 14-15 cover the
+  # broader node integration tests.
   # -----------------------------------------------------------------------
   cross-platform:
     name: "Gate 16 — Cross-Platform Build (${{ matrix.target }})"
@@ -665,6 +666,11 @@ jobs:
         run: echo "CARGO_TARGET_DIR=target/gate16-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}" >> "$GITHUB_ENV"
       - name: Build exochain binary
         run: bash tools/ci_cargo_retry.sh cargo build --release --bin exochain --target ${{ matrix.target }}
+      - name: Verify macOS private-file custody
+        if: runner.os == 'macOS'
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: cargo test --release --locked -p exochain-node --bin exochain --target ${{ matrix.target }} macos_
       - name: Upload binary artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
