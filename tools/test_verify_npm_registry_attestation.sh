@@ -9,11 +9,72 @@ fail() {
   exit 1
 }
 
+case "${1:-}" in
+  '') benign_only=false ;;
+  --benign-only) benign_only=true ;;
+  *) fail "usage: $0 [--benign-only]" ;;
+esac
+[ "$#" -le 1 ] || fail "usage: $0 [--benign-only]"
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-verifier="$repo_root/tools/verify_npm_registry_attestation.mjs"
-[[ -f "$verifier" ]] || fail "$verifier is missing"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/exochain-npm-attestation-test.XXXXXX")"
 trap '/bin/rm -rf -- "$test_root"' EXIT
+
+# Read literal publisher data without sourcing or executing its credentialed path.
+# Materialize the declared helpers, then invoke the exact declared verifier path.
+verifier="$(node - "$repo_root" "$test_root" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const [repoRoot, testRoot] = process.argv.slice(2);
+const publisher = fs.readFileSync(path.join(repoRoot, 'tools/publish_release_npm_package.sh'), 'utf8');
+const assignments = [...publisher.matchAll(/^registry_verifier="\$publish_root\/([A-Za-z0-9._-]+)"$/gm)];
+const materializers = [...publisher.matchAll(/^for helper in ([A-Za-z0-9._ -]+); do$/gm)];
+if (assignments.length !== 1 || materializers.length !== 1) {
+  throw new Error('publisher must declare one literal verifier path and helper materialization list');
+}
+const publishRoot = path.join(testRoot, 'publisher-helpers');
+fs.mkdirSync(publishRoot, { mode: 0o700 });
+for (const helper of materializers[0][1].split(' ')) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(helper)) {
+    throw new Error('publisher helper must be a simple owned filename');
+  }
+  fs.copyFileSync(path.join(repoRoot, 'tools', helper), path.join(publishRoot, helper), fs.constants.COPYFILE_EXCL);
+}
+process.stdout.write(path.join(publishRoot, assignments[0][1]));
+NODE
+)"
+[[ -f "$verifier" ]] || fail "publisher verifier was not materialized: ${verifier##*/}"
+
+node - "$test_root" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const root = process.argv[2];
+const integrity = `sha512-${Buffer.alloc(64, 7).toString('base64')}`;
+const registry = {
+  name: '@exochain/sdk', version: '0.2.6',
+  maintainers: [{ name: 'bob-stewart', email: 'stewart@exochain.com' }],
+  _npmUser: { name: 'bob-stewart', email: 'stewart@exochain.com' },
+  dist: {
+    integrity,
+    tarball: 'https://registry.npmjs.org/@exochain/sdk/-/sdk-0.2.6.tgz',
+    signatures: [{ keyid: 'SHA256:test', sig: 'test' }],
+    attestations: {
+      url: 'https://registry.npmjs.org/-/npm/v1/attestations/%40exochain%2Fsdk@0.2.6',
+      provenance: { predicateType: 'https://slsa.dev/provenance/v1' },
+    },
+  },
+};
+fs.writeFileSync(path.join(root, 'registry.json'), JSON.stringify(registry));
+fs.writeFileSync(path.join(root, 'expected-integrity'), integrity);
+NODE
+integrity="$(<"$test_root/expected-integrity")"
+node "$verifier" registry "$test_root/registry.json" '@exochain/sdk' 0.2.6 \
+  "$integrity" bob-stewart stewart@exochain.com >/dev/null \
+  || fail "materialized publisher verifier rejected the exact registry identity"
+if [ "$benign_only" = true ]; then
+  printf 'npm publisher benign verifier materialization and registry-identity test passed\n'
+  exit 0
+fi
 
 openssl_config="$test_root/openssl.cnf"
 cat > "$openssl_config" <<'EOF'
@@ -103,30 +164,9 @@ const audit = {
     ],
   }],
 };
-const registry = {
-  name,
-  version,
-  maintainers: [{ name: 'bob-stewart', email: 'stewart@exochain.com' }],
-  _npmUser: { name: 'bob-stewart', email: 'stewart@exochain.com' },
-  dist: {
-    integrity,
-    tarball: 'https://registry.npmjs.org/@exochain/sdk/-/sdk-0.2.6.tgz',
-    signatures: [{ keyid: 'SHA256:test', sig: 'test' }],
-    attestations: {
-      url: 'https://registry.npmjs.org/-/npm/v1/attestations/%40exochain%2Fsdk@0.2.6',
-      provenance: { predicateType: provenanceType },
-    },
-  },
-};
 fs.writeFileSync(path.join(root, 'audit.json'), JSON.stringify(audit));
-fs.writeFileSync(path.join(root, 'registry.json'), JSON.stringify(registry));
-fs.writeFileSync(path.join(root, 'expected-integrity'), integrity);
 NODE
 
-integrity="$(<"$test_root/expected-integrity")"
-node "$verifier" registry "$test_root/registry.json" '@exochain/sdk' 0.2.6 \
-  "$integrity" bob-stewart stewart@exochain.com >/dev/null \
-  || fail "exact registry identity was rejected"
 node "$verifier" audit "$test_root/audit.json" '@exochain/sdk' 0.2.6 \
   "$integrity" "$(printf '1%.0s' {1..40})" refs/tags/v0.2.6 >/dev/null \
   || fail "exact registry signature and provenance proof was rejected"
