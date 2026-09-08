@@ -35,10 +35,13 @@ initiative is tracked as **GAP-REGISTRY.md row VCG-004**.
 
 Hash-only calls remain unconditionally fail-closed. When `combinator`,
 `input`, and a sealed `trace` are supplied, the tool verifies by
-deterministic combinator replay against the sealed BLAKE3 trace hash.
-That is CGR completeness as specified in §19.6.1 (replay, not a SNARK).
+deterministic combinator replay, with `proof_hash` required to match the sealed
+BLAKE3 `trace_hash`. This verifies reduction consistency, not the complete
+archive and kernel-signature design in platform specification §19.6.
 
-Production SNARK/STARK/ZKML verification remains GAP-REGISTRY.md row
-VCG-001 and is not claimed by this tool. Wiring this tool to the
-pedagogical `exo-proofs` verifiers is still an explicit non-closure
-for VCG-001.
+When `envelope` and `receipt_hex` are supplied together, the tool additionally
+calls `ProofEnvelope::verify`. The RISC Zero backend requires the
+`risc0-verifier` feature; disabling it fails closed. This optional verification
+path does not establish signed-archive delivery, authenticated kernel
+adjudication, or independent cryptographic review. VCG-001 production-review
+status remains separate; the pedagogical proof backends do not close it.

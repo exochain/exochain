@@ -35,8 +35,11 @@ credential consumer to `release`; follow-up correction
 differential bypass in that regression guard. Its focused guard and
 `actionlint` checks pass. Candidate completion remains blocked until
 `CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` are moved exclusively from repository
-scope into the protected `release` environment, organization-scope exposure
-is authoritatively ruled out, and exact-head gates and final review are rerun.
+scope into the protected `release` environment, publisher prerequisites are
+verified, and exact-head gates and final review are rerun. Successful repository
+metadata on 2026-09-08 identifies `exochain` as a User owner, so inherited
+organization secrets are not applicable. This resolves the earlier inheritance
+uncertainty, not the still-open repository-secret custody finding.
 Provider CI, Windows runtime evidence, tag, publication, deployment, and
 runtime readback remain unproven.
 
@@ -54,7 +57,8 @@ runtime readback remain unproven.
 | Clean evidence checkpoint | `7038be2df92d79a0161f8479f956d8ec44cc8414`; six-document custody and mechanical reconciliation passed before `b5dcb89b` |
 | Formal findings | 86 candidate dispositions exactly reconciled against the committed implementation checkpoint; source-checkpoint gates passed |
 | Design observations | 52 candidate dispositions exactly reconciled against the committed implementation checkpoint; ten share concrete remediation boundaries; source-checkpoint gates passed |
-| Open provider control | Registry tokens remain repository-scoped; protected `release` currently contains no secrets; organization Actions-secret exposure is unreadable and therefore not cleared |
+| Open provider control | On 2026-09-08 both registry tokens remain repository-scoped and protected `release` contains no secrets; successful User-owner metadata rules out inherited organization scope; the crates.io owner allowlist was set to `bob-stewart` and read back after all 32 owners were verified |
+| GitHub issue intake | `ISSUE-DISPOSITION.md` records all eight reviewed issues, verified closures, 0.2.6 work, and subsequent-release scope |
 | Candidate version | `0.2.6` across owned release surfaces |
 | Adjacent surface | LiveSafe remains separate, proprietary, and unable to make public constitutional claims |
 | Test plan | `governance/releases/v0.2.6/TEST-PLAN.md` |
@@ -131,11 +135,12 @@ top-level `on` key and audits the lossless YAML AST before decoding, rejecting
 ambiguous or duplicate mapping keys, aliases, anchors, merge keys, and explicit
 tags. Both collision forms are retained as negative regression fixtures and the
 focused release guard plus `actionlint` pass. Live provider metadata still
-shows both tokens at repository scope and none in `release`, while organization
-Actions-secret scope is unreadable. The attack therefore remains possible from
-a branch that removes the source declaration. No claim of finding closure is
-made until exclusive environment-secret custody and authoritative absence of
-organization-scope exposure are verified.
+showed both tokens at repository scope and none in `release`, while organization
+Actions-secret applicability was unresolved at that checkpoint. The 2026-09-08
+owner metadata resolves inheritance as not applicable, but the token placement
+is unchanged. Source declarations alone therefore do not establish exclusive
+approval-gated custody. No claim of finding closure is made until the §11
+provider checks in `TEST-PLAN.md` prove exclusive environment-secret custody.
 
 Exact-head tarpaulin passed at the source checkpoint with 90.86% workspace
 coverage (47,746/52,547), 83.00% ZeroDentity coverage (1,870/2,253), 100%

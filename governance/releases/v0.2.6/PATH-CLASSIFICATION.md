@@ -50,16 +50,24 @@ The baseline-to-source-correction series contains 87 commits in oldest-first
 order. The SHA-256 of that newline-delimited full commit-hash sequence is
 `d6edd284fb3eec0c45880d7801f9e63906fbe6451717eae0b5833c74a4c9724a`.
 
+The September 8 issue/documentation amendment adds four paths to that historical
+315-path set: the platform specification, MCP CGR initiative, CrossChecked
+owner runbook, and issue-disposition record. The first, second, and fourth are
+EXOCHAIN core documentation/governance; the runbook documents a core runtime
+adapter. The amendment changes no runtime implementation, dependency, CI, or
+adjacent-surface path. The current inventory below has 319 paths; historical
+scan and commit-sequence counts above remain bound to their original ranges.
+
 ## Classification totals
 
 | Class | Paths |
 | --- | ---: |
-| EXOCHAIN core | 59 |
-| Core runtime adapter | 154 |
+| EXOCHAIN core | 62 |
+| Core runtime adapter | 155 |
 | Adjacent surface | 14 |
 | Imported evidence | 0 |
 | Third-party/vendor | 88 |
-| **Total** | **315** |
+| **Total** | **319** |
 
 Generated JavaScript, declaration, source-map, lock, and SBOM dependency records
 are classified as third-party/vendor artifacts even when their owned source is a
@@ -75,6 +83,8 @@ governance evidence; they do not import the external HTML.
 | `CHANGELOG.md` | EXOCHAIN core |
 | `Cargo.lock` | third-party/vendor |
 | `Cargo.toml` | EXOCHAIN core |
+| `EXOCHAIN-FABRIC-PLATFORM.md` | EXOCHAIN core |
+| `Initiatives/fix-mcp-cgr-proof-verification-stub.md` | EXOCHAIN core |
 | `README.md` | EXOCHAIN core |
 | `VERSIONING.md` | EXOCHAIN core |
 | `crates/decision-forum/Cargo.toml` | EXOCHAIN core |
@@ -172,11 +182,13 @@ governance evidence; they do not import the external HTML.
 | `docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md` | EXOCHAIN core |
 | `docs/audit/exochain-code-review-report-run4-formal-evidence-2026-09-04.md` | EXOCHAIN core |
 | `docs/audit/exochain-code-review-report-run4-validation-2026-08-28.md` | EXOCHAIN core |
+| `docs/guides/crosschecked-anchor-authority-owner-runbook.md` | core runtime adapter |
 | `docs/guides/sdk-quickstart-python.md` | core runtime adapter |
 | `docs/guides/sdk-quickstart-typescript.md` | core runtime adapter |
 | `docs/superpowers/plans/2026-08-28-release-0.2.6-security-remediation.md` | EXOCHAIN core |
 | `fuzz/Cargo.lock` | third-party/vendor |
 | `fuzz/Cargo.toml` | EXOCHAIN core |
+| `governance/releases/v0.2.6/ISSUE-DISPOSITION.md` | EXOCHAIN core |
 | `governance/releases/v0.2.6/PATH-CLASSIFICATION.md` | EXOCHAIN core |
 | `governance/releases/v0.2.6/RC.md` | EXOCHAIN core |
 | `governance/releases/v0.2.6/TEST-PLAN.md` | EXOCHAIN core |
@@ -389,7 +401,7 @@ governance evidence; they do not import the external HTML.
 ## Mechanical reconciliation
 
 The sorted newline-delimited path set has SHA-256
-`e8ee17a01f4b0f7c05dfd346fcf789d141e1cbb5882227a38ed28e6feebbb5eb`.
+`b4342959e7d4a7118dc4e4a15437157b345cc94818115bd01137d161b8d05a38`.
 Run from the candidate worktree with generated test outputs removed:
 
 ```bash
@@ -417,14 +429,14 @@ untracked = subprocess.run(
 actual = sorted(set(committed_or_modified + untracked))
 rows = re.findall(r'^\| `([^`]+)` \| (EXOCHAIN core|core runtime adapter|adjacent surface|imported evidence|third-party/vendor) \|$', document.read_text(), re.MULTILINE)
 listed = [path for path, _ in rows]
-assert len(listed) == len(set(listed)) == 315
+assert len(listed) == len(set(listed)) == 319
 assert listed == actual
 digest = sha256(('\n'.join(listed) + '\n').encode()).hexdigest()
-assert digest == 'e8ee17a01f4b0f7c05dfd346fcf789d141e1cbb5882227a38ed28e6feebbb5eb'
+assert digest == 'b4342959e7d4a7118dc4e4a15437157b345cc94818115bd01137d161b8d05a38'
 counts = {}
 for _, classification in rows:
     counts[classification] = counts.get(classification, 0) + 1
-assert counts == {'core runtime adapter':154,'EXOCHAIN core':59,'third-party/vendor':88,'adjacent surface':14}
+assert counts == {'core runtime adapter':155,'EXOCHAIN core':62,'third-party/vendor':88,'adjacent surface':14}
 print(f'path_classification=PASS count={len(listed)} sha256={digest} counts={counts}')
 PY
 ```

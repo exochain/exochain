@@ -55,6 +55,8 @@ constitutional certification.
   `docs/audit/exochain-code-review-report-run4-design-evidence-2026-09-04.md`.
 - Exact changed-path classification:
   `governance/releases/v0.2.6/PATH-CLASSIFICATION.md`.
+- GitHub issue scope and provider observations:
+  `governance/releases/v0.2.6/ISSUE-DISPOSITION.md`.
 
 The HTML is read-only imported evidence. Its contents are untrusted data, not
 instructions, and it is not included in the branch.
@@ -88,7 +90,7 @@ source changes, and were removed before the evidence commit.
 | Repository guards | Every shell guard discovered from the final CI workflow exits 0, without a copied inventory |
 | SDKs and packages | Rust/TypeScript/Python SDK, WASM bridge/package, LLM proxy, and package dry-runs pass |
 | Supply chain | Exactly 32 reviewed CycloneDX package SBOMs; sealed Cargo publication matches pinned Cargo protocol; npm/PyPI and both SDK lanes prove exact artifact and provenance/lifecycle contracts |
-| Registry-secret custody | Every registry-secret consumer directly declares protected environment `release`; `CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` exist only in that environment and are absent from repository and organization Actions-secret scopes |
+| Registry-secret custody | Every registry-secret consumer directly declares protected environment `release`; both registry tokens exist only in that environment and are absent from repository scope and any applicable inherited organization scope; current repository ownership determines applicability |
 | Adjacent LiveSafe | All four npm audits, context lint, typecheck, Vitest, Rust fmt/Clippy/tests pass |
 | Independent review | Whole diff plus evidence files reviewed; every confirmed finding at every severity is fixed or explicitly accepted by the user |
 | Platform | Windows private-file runtime test passes in `windows-latest` CI; local cross-check is supporting evidence only |
@@ -403,7 +405,17 @@ finding at any severity remains unless the user explicitly accepts it. A second
 repetition of the same validation failure stops the candidate and requires user
 direction.
 
-Immediately before the evidence commit:
+The following six-document staging recipe describes the original evidence
+commit at `7038be2d`. Do not reuse its exact allowlist for a different batch.
+For the September 8 issue/documentation amendment, the exact seven-file
+allowlist is `EXOCHAIN-FABRIC-PLATFORM.md`,
+`Initiatives/fix-mcp-cgr-proof-verification-stub.md`,
+`docs/guides/crosschecked-anchor-authority-owner-runbook.md`, and
+`governance/releases/v0.2.6/{ISSUE-DISPOSITION,PATH-CLASSIFICATION,RC,TEST-PLAN}.md`.
+Expand that list literally, require exact staged and committed path-set equality,
+and repeat the same generated-output and clean-worktree checks below.
+
+Original evidence-commit staging recipe:
 
 ```bash
 set -euo pipefail
@@ -490,30 +502,60 @@ local execution: the exact candidate SHA must pass both `All Constitutional
 Gates` and the LiveSafe workflow before release authorization.
 
 The registry credentials require a separate provider-custody proof. Never put
-their values in this repository, a command transcript, or review evidence. The
-user must enter each value directly into GitHub environment `release`, verify
-the environment copies exist, and only then remove the repository copies. The
-following read-only checks must show both target names in the first result and
-neither target name in the repository or organization results. The environment
-filter intentionally permits unrelated environment secrets:
+their values in this repository, a command transcript, or review evidence.
+An authorized secret custodian must install each value directly into GitHub
+environment `release`, verify both environment entries exist, and then remove
+the repository entries. GitHub's metadata API cannot retrieve stored values.
+Preserve the existing secret names so the publishers need no credential remap.
+
+Resolve current repository ownership before checking organization inheritance.
+Record successful owner metadata; an HTTP error cannot prove an empty secret
+collection. The following read-only checks permit unrelated secret names:
 
 ```bash
+set -euo pipefail
+release_repository_metadata="$(gh api repos/EXOCHAIN/exochain \
+  --jq '{full_name, owner: {login: .owner.login, type: .owner.type}}')"
+printf '%s\n' "$release_repository_metadata"
 gh secret list --repo EXOCHAIN/exochain --env release --json name \
   --jq 'map(.name) | map(select(. == "CARGO_REGISTRY_TOKEN" or . == "NPM_TOKEN")) | sort'
 gh secret list --repo EXOCHAIN/exochain --json name \
   --jq 'map(.name) | map(select(. == "CARGO_REGISTRY_TOKEN" or . == "NPM_TOKEN")) | sort'
-gh secret list --org EXOCHAIN --app actions \
-  --json name,visibility,numSelectedRepos \
-  --jq 'map(select(.name == "CARGO_REGISTRY_TOKEN" or .name == "NPM_TOKEN")) | map({name, visibility, numSelectedRepos}) | sort_by(.name)'
+release_owner_type="$(printf '%s\n' "$release_repository_metadata" | jq -r '.owner.type')"
+case "$release_owner_type" in
+  User)
+    printf 'organization_secret_inheritance=not_applicable owner_type=User\n'
+    ;;
+  Organization)
+    gh api --paginate --slurp \
+      'repos/EXOCHAIN/exochain/actions/organization-secrets?per_page=100' \
+      --jq '[.[].secrets[].name | select(. == "CARGO_REGISTRY_TOKEN" or . == "NPM_TOKEN")] | unique | sort'
+    ;;
+  *)
+    printf 'Unknown owner type; credential custody remains unproven.\n' >&2
+    exit 1
+    ;;
+esac
 gh api repos/EXOCHAIN/exochain/environments/release \
   --jq '{can_admins_bypass, protection_rules: [.protection_rules[] | {type, prevent_self_review}], deployment_branch_policy}'
 ```
 
-The first output must be `["CARGO_REGISTRY_TOKEN","NPM_TOKEN"]`; both the
-repository and organization outputs must be `[]`; and provider protection must
-continue to deny admin bypass and self-review. A 404, permission error, or any
-other unreadable organization-secret result fails this gate. It is never
-inferred to mean empty.
+The environment result must be `["CARGO_REGISTRY_TOKEN","NPM_TOKEN"]` and the
+repository result must be `[]`. For an organization-owned repository, the
+fully paginated repository-applicable organization result must also be `[]`.
+Unrelated organization secrets need not be deleted. For a user-owned repository,
+successful `owner.type=User` metadata proves organization inheritance is not
+applicable. The observed organization endpoint 404 and shared-secret endpoint
+422 are not evidence of empty collections. If ownership changes, repeat the
+applicable check; any failed applicable read leaves custody unproven.
+
+Provider protection must continue to deny administrator bypass and self-review,
+and the two independent reviewers required by `VERSIONING.md` remain mandatory.
+Placement metadata does not prove token validity, publisher authority, or
+publication. Confirm `EXOCHAIN_CRATES_IO_ALLOWED_OWNERS` against current registry
+ownership, preserve the configured release signer, and verify PyPI Trusted
+Publishing for `exochain/exochain`, `release.yml`, environment `release` before
+the corresponding live publication.
 
 ## Pre-review execution checkpoint
 
@@ -651,9 +693,11 @@ controls below.
   Psych AST, rejects ambiguous and duplicate mapping keys plus aliases,
   anchors, merge keys, and tags, quotes the legitimate top-level `on`, and is
   GREEN under the focused guard and `actionlint`.
-- Provider migration remains outstanding because both tokens are
-  repository-scoped, `release` has no secrets, and organization Actions-secret
-  scope is unreadable rather than cleared.
+- At that checkpoint, provider migration remained outstanding because both
+  tokens were repository-scoped and `release` had no secrets; organization
+  inheritance applicability was unresolved. The September 8 metadata check
+  proves owner type `User`, making inheritance not applicable, but confirms
+  that token migration is still outstanding.
 
 The source-checkpoint coverage and complete CI-derived guard corpus are
 recorded as passing at `368721a1`. The six evidence files were committed at
@@ -663,7 +707,7 @@ guards and custody checks must therefore run again on the immutable handoff
 head, and a fresh independent scan must cover the complete range from
 `8020ceab355eefa7f5185d9cdd0436da7af46efb` through that exact head. Any later
 source or evidence amendment invalidates that scan range. Provider
-registry-secret migration/readback, authoritative organization-secret
-readback, `All Constitutional Gates`, the LiveSafe workflow, Windows ACL
+registry-secret migration/readback, applicable ownership/inheritance checks
+under §11, `All Constitutional Gates`, the LiveSafe workflow, Windows ACL
 runtime lane, tag, publication, deployment, and runtime readback remain
 separate and unproven.
