@@ -38,7 +38,10 @@ SBOM_PROFILE = "raw-sbom"
 LLM_DIST_PROFILE = "llm-dist"
 LLM_DIST_FILES = tuple(
     f"{stem}{suffix}"
-    for stem in ("cli", "delivery", "evidence", "index", "mcp", "openai", "receipt", "types")
+    for stem in (
+        "attestation", "cli", "delivery", "evidence", "http", "index",
+        "mcp", "openai", "receipt", "types", "wire",
+    )
     for suffix in (".d.ts", ".d.ts.map", ".js", ".js.map")
 )
 SBOM_NAME = re.compile(r"exochain-[a-z0-9-]+\.cdx\.json")
@@ -79,7 +82,7 @@ def validate_names(profile: str, names: list[str]) -> tuple[str, ...]:
         if any(SBOM_NAME.fullmatch(name) is None for name in names):
             fail("raw SBOM transport contains an invalid file name")
     elif names != sorted(LLM_DIST_FILES):
-        fail("LYNK dist transport must contain exactly the 32 reviewed build outputs")
+        fail(f"LYNK dist transport must contain exactly the {len(LLM_DIST_FILES)} reviewed build outputs")
     return tuple(names)
 
 

@@ -9,6 +9,13 @@ fail() {
   exit 1
 }
 
+case "${1:-}" in
+  '') benign_only=false ;;
+  --benign-only) benign_only=true ;;
+  *) fail "usage: $0 [--benign-only]" ;;
+esac
+[ "$#" -le 1 ] || fail "usage: $0 [--benign-only]"
+
 workflow=.github/workflows/release.yml
 transport=tools/transport_release_file_set.py
 [ -f "$workflow" ] || fail "$workflow is missing"
@@ -48,6 +55,11 @@ if job.find(clean_token, second_clean + len(clean_token)) != -1:
     raise SystemExit("unexpected third LYNK cleanup obscures the lifecycle boundary")
 PY
 
+if [ "$benign_only" = true ]; then
+  printf 'LYNK lifecycle static ordering guard passed\n'
+  exit 0
+fi
+
 fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/exochain-llm-clean-build.XXXXXX")"
 trap '/bin/rm -rf -- "$fixture_root"' EXIT
 stale_dist="$fixture_root/stale-dist"
@@ -55,7 +67,12 @@ clean_dist="$fixture_root/clean-dist"
 mkdir -p "$stale_dist" "$clean_dist"
 
 suffixes=(.d.ts .d.ts.map .js .js.map)
-stems=(cli delivery evidence index mcp openai receipt types)
+stems=()
+for source in packages/exochain-llm-proxy/src/*.ts; do
+  [ -f "$source" ] && [ ! -L "$source" ] || fail "LYNK source must be a regular file"
+  stem="${source##*/}"
+  stems+=("${stem%.ts}")
+done
 for stem in "${stems[@]}"; do
   for suffix in "${suffixes[@]}"; do
     printf 'reviewed-%s%s\n' "$stem" "$suffix" > "$stale_dist/$stem$suffix"
@@ -63,9 +80,10 @@ for stem in "${stems[@]}"; do
 done
 
 # Control: a compiler that no longer emits cli outputs leaves the four stale
-# allowed filenames behind. The exact 32-file profile alone accepts that tree,
+# allowed filenames behind. The exact current profile alone accepts that tree,
 # which reproduces why cleaning immediately before the final build is required.
-for stem in delivery evidence index mcp openai receipt types; do
+for stem in "${stems[@]}"; do
+  [ "$stem" = cli ] && continue
   for suffix in "${suffixes[@]}"; do
     printf 'fresh-%s%s\n' "$stem" "$suffix" > "$stale_dist/$stem$suffix"
   done
@@ -82,7 +100,8 @@ printf 'ATTACKER-STALE-CLI\n' > "$stale_dist/cli.js"
 # same compiler output is incomplete and therefore cannot become transport.
 /bin/rm -rf -- "$clean_dist"
 /bin/mkdir -m 700 "$clean_dist"
-for stem in delivery evidence index mcp openai receipt types; do
+for stem in "${stems[@]}"; do
+  [ "$stem" = cli ] && continue
   for suffix in "${suffixes[@]}"; do
     printf 'fresh-%s%s\n' "$stem" "$suffix" > "$clean_dist/$stem$suffix"
   done

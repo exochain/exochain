@@ -9,6 +9,13 @@ fail() {
   exit 1
 }
 
+case "${1:-}" in
+  '') benign_only=false ;;
+  --benign-only) benign_only=true ;;
+  *) fail "usage: $0 [--benign-only]" ;;
+esac
+[ "$#" -le 1 ] || fail "usage: $0 [--benign-only]"
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 transport="$repo_root/tools/transport_release_file_set.py"
 python_path="${PYTHON:-$(command -v python3)}"
@@ -30,12 +37,24 @@ expect_rejected() {
 
 llm_input="$test_root/llm-input"
 /bin/mkdir "$llm_input"
-for stem in cli delivery evidence index mcp openai receipt types; do
-  for suffix in .d.ts .d.ts.map .js .js.map; do
-    printf '%s%s\n' "$stem" "$suffix" > "$llm_input/$stem$suffix"
-    /bin/chmod 644 "$llm_input/$stem$suffix"
-  done
-done
+# Exercise the actual shipped package, independently of the transport allowlist.
+run_transport_source="$repo_root/packages/exochain-llm-proxy/dist"
+/usr/bin/env -i "$python_path" -I -B - "$run_transport_source" "$llm_input" <<'PY'
+from pathlib import Path
+import shutil
+import stat
+import sys
+
+source, destination = map(Path, sys.argv[1:])
+entries = sorted(source.iterdir())
+if len(entries) != 44:
+    raise SystemExit("current LYNK package must contain exactly 44 build outputs")
+for entry in entries:
+    if not stat.S_ISREG(entry.lstat().st_mode):
+        raise SystemExit(f"current LYNK output is not a regular file: {entry.name}")
+    shutil.copyfile(entry, destination / entry.name)
+    (destination / entry.name).chmod(0o644)
+PY
 archive="$test_root/llm.tar"
 inventory="$test_root/llm.inventory"
 digest="$(run_transport create --profile llm-dist --version 0.2.6 \
@@ -55,6 +74,11 @@ second_digest="$(run_transport create --profile llm-dist --version 0.2.6 \
   && /usr/bin/cmp -s "$archive" "$second_archive" \
   && /usr/bin/cmp -s "$inventory" "$second_inventory" \
   || fail "identical inputs did not produce deterministic transport bytes"
+
+if [ "$benign_only" = true ]; then
+  printf 'release file-set benign current-package round-trip test passed (44 files)\n'
+  exit 0
+fi
 
 expect_rejected wrong-independent-digest run_transport extract \
   --profile llm-dist --version 0.2.6 --archive "$archive" --inventory "$inventory" \
