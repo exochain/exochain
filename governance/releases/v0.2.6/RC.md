@@ -662,3 +662,41 @@ The subsequent focused LLVM anchor integration run at clean `f59ede255b0fa55d876
 passed all 21 tests, including all 100 concurrent writers. This supports the
 sibling-test scheduling correction locally; it is neither a full-workspace
 coverage result nor native Linux CI closure. Details are in `TEST-PLAN.md`.
+
+## PR #835 Native Environment Follow-Through
+
+LiveSafe CI run `34300522718` completed successfully for PR merge
+`e722bbf7baf1a34da1822c8ee6024d78257d0669` (head
+`d521be1e8bb402d2290ca3815a996d87f8592d57`). Its four audits, quality tests,
+TypeScript checks, both UI builds, and Docker image build all passed. The
+image-build result is not an image publication or deployment claim.
+
+The same-head native Windows jobs each failed six of eight tests with an
+ACL subprocess exit code of 1 and stderr present. The inspected launch chain
+inherits PowerShell 7 module paths through Cargo into Windows PowerShell,
+matching Microsoft's documented module-autoload compatibility problem. The
+small correction removes `PSModulePath` only from the two private-file child
+commands, preserving the parent environment and every ACL enforcement check.
+The existing source guard was observed failing before the correction and
+passing afterward; all 19 local private-file tests pass. The exact Windows
+exception remains unproven, and native Windows CI must confirm the correction.
+See `TEST-PLAN.md` for source evidence, classification, and acceptance commands.
+
+The corrected local source passed the release build, all 6,620 executed debug
+workspace tests (zero failures, six unchanged documented ignores), Clippy,
+formatting, rustdoc, and repository truth. Independent source review found no
+actionable defect but requires exact native Windows evidence. Windows CI can
+now start without waiting for the unrelated Linux build; structural comparison
+proved that only this scheduling edge changed, while `all-gates` still requires
+both jobs and the existing CI boundary guards pass.
+
+The cross-implementation command exited zero with 1/1 canonical Rust/Node
+hash vectors and identical normalized summaries from two full Rust runs.
+External TypeScript comparison was not available because `EXO_TS_ROOT` and
+the companion checkout were absent; no evidence is claimed for that surface.
+Generated test reports and vectors are retained outside the branch.
+
+This correction does not authorize use of a different GitHub account or any
+provider-credential extraction. Protected credential custody, independent
+release review, all required exact-head CI, publisher authority, signed tag,
+human approvals, registry cleanup, and publication remain distinct gates.
