@@ -700,3 +700,39 @@ This correction does not authorize use of a different GitHub account or any
 provider-credential extraction. Protected credential custody, independent
 release review, all required exact-head CI, publisher authority, signed tag,
 human approvals, registry cleanup, and publication remain distinct gates.
+
+## Windows Owner Initialization and Explicit Coverage Backend
+
+Source commit `ab940c8ee87a58a63150b6ab1749627ce9fcc4a8` explicitly
+initializes new private-file ownership and passes a true null backup argument
+to `File.Replace`. Strict owner/DACL admission, exclusive creation, literal
+path transport, and exact cleanup comparisons remain. Independent candidate
+review identified a post-initialization cleanup regression; the correction
+records only a successful owner initialization in the expected identity.
+The existing native test now covers both initial-owner states, cleanup/retry
+after initialization, and rejection of an unacknowledged owner change. These
+native assertions still require Windows execution; local source guards alone
+do not close that gate.
+
+CI commit `45c0c95fad7c5ac5743b8aa0ebbd36f106b79c7a` corrects a
+confirmed backend-selection defect in the pinned Tarpaulin configuration.
+Linux had used its default Ptrace engine despite the CLI LLVM argument. The
+existing config now explicitly selects `Llvm`, and each coverage job checks
+the effective instrumentation flags before running. Independent review and
+parsed-workflow comparison found no other workflow change. All four scopes,
+selectors and 90/80/100/100% thresholds remain unchanged. No DKG source change
+is included; previous Linux coverage results are not a measurement of LLVM.
+
+Both new source guards were observed failing before their corrections and
+passing afterward. All 19 local private-file tests pass, as do the exact
+PowerShell publication programs in four benign controls (16 assertions) on
+the installed macOS runtime. The final source also passed release build,
+full debug workspace tests, all-target warning-denied Clippy, nightly format,
+warning-denied rustdoc, repository truth, and effective coverage-engine policy.
+The executable test count is unchanged; full results are in `TEST-PLAN.md`.
+
+LiveSafe CI also passed at `0a29af75` in run `34303782587`. That does not
+close the native Windows failures at the same head, nor does any local result
+replace required CI on this corrected head. The path inventory is now 326
+classified files, adding two core coverage-policy paths; no dependency or
+adjacent application changes are part of this follow-through.
