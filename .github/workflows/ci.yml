@@ -142,6 +142,8 @@ jobs:
         # for the default workspace coverage gate.
         # The largest LLVM-instrumented test binaries can run close to
         # five minutes; keep runner variance out of the coverage claim.
+        # Serialize sibling test functions under instrumentation. Individual
+        # concurrency tests still start their full internal worker sets.
         run: |
           cargo tarpaulin \
             --workspace \
@@ -151,7 +153,8 @@ jobs:
             --output-dir coverage \
             --engine llvm \
             --timeout 900 \
-            --fail-under 90
+            --fail-under 90 \
+            -- --test-threads=1
       - name: Upload coverage report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -671,6 +674,13 @@ jobs:
         env:
           CARGO_INCREMENTAL: "0"
         run: cargo test --release --locked -p exochain-node --bin exochain --target ${{ matrix.target }} macos_
+      - name: Verify native macOS repository inventory
+        if: runner.os == 'macOS'
+        env:
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG: "0"
+        run: bash tools/test_repo_truth.sh
       - name: Upload binary artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -701,6 +711,7 @@ jobs:
         run: |
           cargo tarpaulin \
             --packages exochain-node \
+            --bin exochain \
             --include-files "crates/exo-node/src/zerodentity/**" \
             --out xml \
             --output-dir coverage-zerodentity \
@@ -768,6 +779,7 @@ jobs:
         run: |
           cargo tarpaulin \
             --packages exochain-node \
+            --bin exochain \
             --include-files "crates/exo-node/src/root_genesis.rs" \
             --out xml \
             --output-dir coverage-root-genesis-portal \
