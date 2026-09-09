@@ -1174,3 +1174,13 @@ exited zero. ANSI-normalized test logs contain 146 result blocks: 6,620 passed,
 zero failed, six ignored. The native macOS list is 6,626, including the same
 six documented ignores; this is not native Linux/Windows or final coverage
 evidence. Only four known generated exchange reports were removed afterward.
+
+At clean `f59ede255b0fa55d876d2e469b7ed72cf05f86b3`, the focused LLVM
+anchor command above completed with all 21 integration tests passing, zero
+failures/ignores, and the unchanged 100-concurrent-writer test passing. The
+test binary took 5.43 seconds on native macOS. Its integration-only execution
+reported 4.12% (1,770/42,938 lines) against Tarpaulin's broad discovered source
+set; that percentage is not Gate 3 evidence. The diagnostic imposed no
+coverage threshold and does not replace the complete 90% provider gate.
+The worktree remained clean after the command, with no test or production
+SQLite timeout change.

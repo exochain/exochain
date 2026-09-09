@@ -657,3 +657,8 @@ warning-denied rustdoc, and the native macOS repository-truth guard. The guard
 confirmed the new macOS inventory row, 6,626 listed. Linux inventory and Windows
 runtime execution remain provider requirements. Test-result totals were
 calculated after removing terminal color escapes from the retained logs.
+
+The subsequent focused LLVM anchor integration run at clean `f59ede255b0fa55d876d2e469b7ed72cf05f86b3`
+passed all 21 tests, including all 100 concurrent writers. This supports the
+sibling-test scheduling correction locally; it is neither a full-workspace
+coverage result nor native Linux CI closure. Details are in `TEST-PLAN.md`.
