@@ -1184,3 +1184,81 @@ set; that percentage is not Gate 3 evidence. The diagnostic imposed no
 coverage threshold and does not replace the complete 90% provider gate.
 The worktree remained clean after the command, with no test or production
 SQLite timeout change.
+
+## Windows PowerShell Child-Environment Correction
+
+At `d521be1e8bb402d2290ca3815a996d87f8592d57`, both native Windows
+jobs failed: push job `102308840895` and PR job `102308871710`. The latter
+checked out merge `e722bbf7baf1a34da1822c8ee6024d78257d0669` into baseline
+`8020ceab355eefa7f5185d9cdd0436da7af46efb`. Each reported two passing and
+six failing runtime tests. ACL process diagnostics consistently reported exit
+code 1 with stderr, without the CLIXML header or progress marker. This rules
+out the previously considered successful-process progress-output case; raw
+stderr and private paths were not exposed by the diagnostic.
+
+The runner invokes Cargo under PowerShell 7, and the Rust node invokes legacy
+`powershell.exe` through that intermediate process. The child previously
+inherited `PSModulePath`. Microsoft documents that this exact launch chain
+can make Windows PowerShell load incompatible PowerShell 7 modules, breaking
+autoloaded commands such as `Get-Acl`; its prescribed correction is removing
+`PSModulePath` from the child environment so native defaults are reconstructed.
+See [PowerShell module-path construction](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath?view=powershell-7.6).
+This is a source-supported failure mechanism, not a claim that the hidden
+native exception has been identified.
+
+The bounded correction removes that one inherited variable only for the two
+existing private-file PowerShell children. It changes neither the parent
+environment nor the CI shell. Publication uses the same native environment
+as ACL inspection; it continues to invoke the existing static .NET methods.
+Exclusive sharing, environment-bound literal paths, owner/ACE validation,
+nonzero/stderr rejection, and the eight Windows runtime tests are unchanged.
+The affected Rust path is an already-classified core runtime adapter; this
+record and `RC.md` are already-classified core governance evidence.
+
+Regression and acceptance plan:
+
+1. Add child-environment assertions to the existing portable source guard.
+   Against unchanged production code, the exact guard fails on the missing
+   ACL child `env_remove`. After the correction, all 19 native macOS/portable
+   private-file tests pass with zero failures or ignored tests.
+2. Run the normal pre-push release build, workspace tests, all-target Clippy,
+   nightly formatting, warning-denied rustdoc, repository truth, and
+   cross-implementation comparison using the retained target and two workers.
+3. Require all eight native Windows tests to pass on the corrected PR merge,
+   together with the full required CI. Local source guards do not establish
+   Windows runtime success. If native rejection persists, inspect a fixed,
+   non-secret failure category at the failing ACL stage before changing policy.
+
+The existing test is extended rather than adding a counted test, so the
+Linux/macOS inventories and 324-path classification digest remain unchanged.
+
+The pre-push batch passed release build, debug workspace tests (146 result
+blocks: 6,620 passes, zero failures, six unchanged documented ignores),
+all-target Clippy, nightly formatting, warning-denied rustdoc, and native
+repository truth. Independent review of the frozen Rust patch
+`d09ac8160900d199f4d4ffc8f4f03e70e0be027a7fa01427707ba3a8ac8d8bb0`
+found no actionable defect and explicitly withheld native/runtime clearance.
+
+Windows CI no longer waits for the unrelated Linux release build: it consumes
+no Linux artifact/output and builds its own target. `all-gates` still requires
+both jobs. A YAML structural assertion failed before removal of that scheduling
+edge and passed afterward; parsed-workflow comparison proved that deleting
+only this `needs: build` was the sole semantic change. Existing reusable-CI,
+supply-chain, Python-CI, and cross-platform cache guards all passed. The CI
+path is an already-classified core runtime adapter; no gate, test, threshold,
+required-check name, or release dependency was removed.
+
+Repeat the scheduling assertion independently of the Windows runtime tests:
+
+```bash
+ruby -ryaml -e 'jobs = YAML.load_file(".github/workflows/ci.yml").fetch("jobs"); abort "Windows runtime unnecessarily waits on another job" if jobs.fetch("private-file-windows").key?("needs"); abort "Required gates missing" unless %w[build private-file-windows].all? { |name| jobs.fetch("all-gates").fetch("needs").include?(name) }; puts "Windows independent scheduling and aggregate gates verified"'
+```
+
+The cross-implementation script also exited zero: the canonical Rust/Node
+hash vector passed 1/1, and two full Rust executions produced identical
+normalized test summaries. Its local harness install audited four packages
+with zero vulnerabilities. `EXO_TS_ROOT` was unset, and neither the normal
+`/Users/bobstewart/dev/exo` sibling nor the worktree-default companion checkout
+existed. External TypeScript comparison therefore remains an explicit coverage
+gap; the script's successful exit is not evidence for that absent implementation.
+Generated vectors and result reports are retained outside the source worktree.
