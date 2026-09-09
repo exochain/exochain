@@ -597,3 +597,63 @@ clean after each batch. Final coverage, feature isolation, complete CI guards,
 SDK/package/adjacent gates, required native CI, independent final review,
 exclusive provider-secret custody, authorized registry cleanup, approvals, and
 publication remain outstanding. No release or runtime claim is made.
+
+## PR #835 CI And Dependency Corrections
+
+The first provider run, `34289808327`, tested PR merge commit
+`3137aefd28ad19ccf4f34a267c8f666ef4ff2498` (head
+`d13ab6b1347b976e1958d681c9778b9fd2b94d1e` into baseline
+`8020ceab355eefa7f5185d9cdd0436da7af46efb`). Its red gates were inspected
+individually; no local check is substituted for that native PR-merge evidence.
+
+- Repository truth: Linux listed 6,620 tests while native macOS listed 6,624
+  because four ACL cases are macOS-only. README and its guard now require
+  platform-specific rows, reject global/duplicate/stale claims, and validate
+  the macOS row in the native macOS CI lane. Two new portable tests increase
+  the candidate rows to 6,622 Linux and 6,626 macOS; each platform must confirm
+  its own final inventory.
+- Gates 17/19 ran unrelated integration executables despite their module-only
+  reporting scope. Both now select `--bin exochain`; the 80%/100% thresholds
+  remain unchanged and all integration tests remain in Gates 2/3.
+- Gate 3 failed on SQLite busy handling in the 100-writer anchor test before
+  coverage was calculated. Its test harness now uses `--test-threads=1` to
+  avoid sibling-test contention during instrumentation. The test still starts
+  all 100 internal workers; production SQLite policy and the full 90% gate
+  are unchanged. New provider execution must establish that this suffices.
+- Gate 18 reported five uncovered lines. A real no-size-hint deserialization
+  test plus equivalent DKG return/construction expressions passed local
+  Tarpaulin 0.35.4/LLVM coverage at 1,149/1,149 lines, 100.00%, without an
+  exclusion or threshold change. Direct matching LLVM inspection confirmed
+  the last intermediate miss had no executable region; the output validation
+  now uses `Result::map`, preserving zeroizing ownership and error propagation.
+- Windows ACL subprocess rejection now reports only bounded exit-code and
+  stderr-kind booleans, never private paths or raw stderr. Nonzero exit or any
+  stderr still rejects, and exclusive handles, literal paths, and ACL parsing
+  are unchanged. Its portable diagnostics/source guards pass locally; the
+  underlying Windows runtime failure remains unresolved until native CI.
+
+User-approved npm audits identified additional dependency advisories. The
+isolated adjacent LiveSafe correction raises Vitest to 4.1.11, Multer to 2.3.0,
+and Nodemailer to 9.1.1. The two upload parsers also explicitly limit array
+indices to zero; their expected fields are flat. Four clean installs passed.
+After the guard was added, all four audits reported zero vulnerabilities,
+158 JavaScript test files/561 tests passed, LiveSafe's Rust checks passed, and
+both production UI builds passed. A local Docker version query stalled and
+only that query was terminated; Docker services were untouched. Image-build
+acceptance therefore requires the LiveSafe CI job. No deployment is claimed.
+
+The corrected path inventory has 324 paths with digest and intake in
+`PATH-CLASSIFICATION.md`. A fresh names-only provider check still found both
+registry tokens at repository scope and none in the protected `release`
+environment; the configured account has push but not admin authority. This
+does not authorize bypassing the custody gate. Exact new-head CI, independent
+release review, exclusive protected credentials, publisher authority, signed
+tag, protected approvals, registry cleanup, and publication remain required.
+
+The final local pre-push batch for this correction set passed release build,
+full debug workspace tests (6,620 passes, zero failures, six documented ignores
+in 146 result blocks), all-target warning-denied Clippy, nightly formatting,
+warning-denied rustdoc, and the native macOS repository-truth guard. The guard
+confirmed the new macOS inventory row, 6,626 listed. Linux inventory and Windows
+runtime execution remain provider requirements. Test-result totals were
+calculated after removing terminal color escapes from the retained logs.
