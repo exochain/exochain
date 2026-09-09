@@ -1357,3 +1357,50 @@ or publication token. These local macOS results do not establish native Windows
 runtime acceptance or the Linux coverage percentages. No additional Windows
 cross-target build tree was created. The previous cross-implementation evidence
 and absent external TypeScript limitation retain their recorded checkpoint.
+
+## Native Windows Parent-Admission Localization
+
+At candidate `32e7c3adb1c8831b601a0a7f45dce3f550e6b1f1`, native
+Windows push job `102325113237` and PR job `102325121195` each failed four
+of eight tests. The inspected push log establishes that exclusive creation,
+literal-path publication, SID parsing, and ACL parsing pass. Three remaining
+tests directly report parent rejection; the fourth reports a retained empty
+file after forced hardening failure. Its cleanup error was previously omitted
+from the assertion, so a common cleanup cause is not yet proven. LiveSafe run
+`34306815851` passed on this candidate.
+
+The existing test helper now reads file attributes and the ACL after its
+permission-setting commands, then invokes the actual parent-admission check.
+Failure diagnostics contain only directory/symlink booleans, attribute bits,
+an owner-match boolean, nonowner Allow-ACE counts, inherited-entry counts,
+and their aggregate rights bits. No raw SID or ACL is printed. The cleanup
+assertion includes its existing bounded error. All production code and fixture
+permission-setting commands remain unchanged.
+
+Acceptance plan:
+
+1. Review the test-only diff for Windows API/types, sensitive output, and
+   unchanged production behavior. Independent read-only review found no
+   actionable defect; this is not native execution evidence.
+2. Run the required local release build, workspace tests, Clippy, formatting,
+   rustdoc, repository-truth and effective coverage-engine checks before push.
+3. Require the exact pushed Windows job to compile and execute all eight tests.
+   If parent admission still fails, retain its bounded diagnostic and identify
+   the observed predicate before changing permissions. Do not infer an
+   explicit nonowner grant merely from `icacls /inheritance:r` behavior.
+4. Any resulting production correction needs its own observed regression,
+   focused validation and independent candidate review. Do not weaken owner,
+   DACL, reparse-point, exclusive-handle or cleanup-identity checks to obtain
+   a green test. All required exact-head release gates remain mandatory.
+
+The diagnostic candidate passed all seven local commands listed in the previous
+section. Workspace results remain 146 blocks, 6,620 passed, zero failed, and six
+unchanged documented ignores. The entire production prefix of `private_file.rs`
+is byte-identical to `32e7c3ad` (SHA-256
+`27dc76ce54e79d31274d1e781884c2dda8f53adcaa1778c3511ab82467a20dbe`).
+The retained gate batch is `/private/tmp/exochain-026-parent-diag-gates.DanJhb`;
+its workspace-test log SHA-256 is
+`ea8b1b65727a5805773a522c0cc05bbe2b607639531831a996b13633bd87638a`.
+Two Cargo workers and the existing target were used; no new cross-target tree
+or dependency inventory upload was needed. These macOS gates do not compile
+the Windows-only diagnostic; the next native run remains controlling.

@@ -736,3 +736,21 @@ close the native Windows failures at the same head, nor does any local result
 replace required CI on this corrected head. The path inventory is now 326
 classified files, adding two core coverage-policy paths; no dependency or
 adjacent application changes are part of this follow-through.
+
+## Native Windows Parent-Admission Diagnostic
+
+At `32e7c3adb1c8831b601a0a7f45dce3f550e6b1f1`, LiveSafe CI run
+`34306815851` passed. Both native Windows jobs (`102325113237` for the push
+and `102325121195` for the PR) failed four of eight tests. Exclusive creation
+and static literal-path publication now pass. The remaining failures report
+parent-directory rejection or the downstream cleanup assertion; the exact
+parent predicate is not yet established.
+
+The next change is test-only: the Windows parent fixture invokes the production
+admission check and reports bounded aggregate metadata, owner-match status,
+and nonowner Allow-ACE counts/rights. It prints no raw SIDs or ACL text. The
+cleanup assertion also retains its existing error. No production permission
+rule or fixture permission-setting command changes. Independent read-only
+review found no actionable diagnostic defect; native compilation and execution
+remain required. This is investigation evidence, not a Windows remediation or
+release-readiness claim. The 326-path classification is unchanged.
