@@ -403,10 +403,87 @@ fn inspect_windows_acl(path: &Path) -> anyhow::Result<WindowsAcl> {
         ])
         .env(WINDOWS_ACL_TARGET_ENV, path)
         .output()?;
-    if !output.status.success() || !output.stderr.is_empty() {
-        anyhow::bail!("Windows ACL inspection rejected: {}", path.display());
+    if let Some(failure) = classify_windows_acl_process(
+        output.status.success(),
+        output.status.code(),
+        &output.stderr,
+    ) {
+        anyhow::bail!("Windows ACL inspection rejected ({failure})");
     }
     parse_windows_acl(&output.stdout)
+}
+
+#[cfg(any(test, windows))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowsAclProcessFailure {
+    ExitNonzero {
+        code: Option<i32>,
+        stderr_present: bool,
+        stderr_clixml_header: bool,
+        stderr_progress_marker: bool,
+    },
+    StderrOnSuccess {
+        stderr_clixml_header: bool,
+        stderr_progress_marker: bool,
+    },
+}
+
+#[cfg(any(test, windows))]
+impl std::fmt::Display for WindowsAclProcessFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ExitNonzero {
+                code,
+                stderr_present,
+                stderr_clixml_header,
+                stderr_progress_marker,
+            } => {
+                formatter.write_str("exit_nonzero(code=")?;
+                match code {
+                    Some(code) => write!(formatter, "{code}"),
+                    None => formatter.write_str("unavailable"),
+                }?;
+                write!(
+                    formatter,
+                    ",stderr_present={stderr_present},stderr_clixml_header={stderr_clixml_header},stderr_progress_marker={stderr_progress_marker})"
+                )
+            }
+            Self::StderrOnSuccess {
+                stderr_clixml_header,
+                stderr_progress_marker,
+            } => write!(
+                formatter,
+                "stderr_on_success(stderr_clixml_header={stderr_clixml_header},stderr_progress_marker={stderr_progress_marker})"
+            ),
+        }
+    }
+}
+
+#[cfg(any(test, windows))]
+fn classify_windows_acl_process(
+    status_success: bool,
+    status_code: Option<i32>,
+    stderr: &[u8],
+) -> Option<WindowsAclProcessFailure> {
+    let stderr_present = !stderr.is_empty();
+    let stderr_clixml_header = stderr.starts_with(b"#< CLIXML");
+    let progress_marker = b"S=\"progress\"";
+    let stderr_progress_marker = stderr
+        .windows(progress_marker.len())
+        .any(|window| window == progress_marker);
+
+    if !status_success {
+        return Some(WindowsAclProcessFailure::ExitNonzero {
+            code: status_code,
+            stderr_present,
+            stderr_clixml_header,
+            stderr_progress_marker,
+        });
+    }
+    stderr_present.then_some(WindowsAclProcessFailure::StderrOnSuccess {
+        stderr_clixml_header,
+        stderr_progress_marker,
+    })
 }
 
 #[cfg(windows)]
@@ -1753,6 +1830,8 @@ mod tests {
             .expect("Windows ACL inspection boundary");
         assert!(!acl_inspection.contains(".arg(path)"));
         assert!(acl_inspection.contains(".env(WINDOWS_ACL_TARGET_ENV, path)"));
+        assert!(!acl_inspection.contains("path.display()"));
+        assert!(source.contains("$acl = Get-Acl -LiteralPath $Target"));
 
         let publication = source
             .split("fn run_windows_publish")
@@ -1775,6 +1854,55 @@ mod tests {
         assert!(source.contains(
             "[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_PUBLISH_DESTINATION','Process')"
         ));
+    }
+
+    #[test]
+    fn private_file_windows_acl_process_diagnostics_are_bounded_and_sanitized() {
+        use super::{WindowsAclProcessFailure, classify_windows_acl_process};
+
+        assert_eq!(classify_windows_acl_process(true, Some(0), b""), None);
+
+        let stderr = b"#< CLIXML\r\n<Objs><Obj S=\"progress\">PRIVATE_ACL_MARKER</Obj></Objs>";
+        let stderr_on_success = classify_windows_acl_process(true, Some(0), stderr)
+            .expect("stderr must fail closed even when the process exits successfully");
+        assert_eq!(
+            stderr_on_success,
+            WindowsAclProcessFailure::StderrOnSuccess {
+                stderr_clixml_header: true,
+                stderr_progress_marker: true,
+            }
+        );
+
+        let exit_without_stderr = classify_windows_acl_process(false, Some(7), b"")
+            .expect("a nonzero exit without stderr must fail closed");
+        assert_eq!(
+            exit_without_stderr,
+            WindowsAclProcessFailure::ExitNonzero {
+                code: Some(7),
+                stderr_present: false,
+                stderr_clixml_header: false,
+                stderr_progress_marker: false,
+            }
+        );
+
+        let exit_with_stderr = classify_windows_acl_process(false, None, stderr)
+            .expect("a nonzero exit with stderr must fail closed");
+        assert_eq!(
+            exit_with_stderr,
+            WindowsAclProcessFailure::ExitNonzero {
+                code: None,
+                stderr_present: true,
+                stderr_clixml_header: true,
+                stderr_progress_marker: true,
+            }
+        );
+
+        for failure in [stderr_on_success, exit_without_stderr, exit_with_stderr] {
+            let rendered = failure.to_string();
+            assert!(rendered.len() < 128, "diagnostic must remain bounded");
+            assert!(!rendered.contains("PRIVATE_ACL_MARKER"));
+            assert!(!rendered.contains("<Objs>"));
+        }
     }
 
     #[test]
