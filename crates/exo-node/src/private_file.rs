@@ -1999,7 +1999,10 @@ mod tests {
 
     #[cfg(windows)]
     mod windows {
-        use std::{fs::OpenOptions, os::windows::fs::MetadataExt as _, process::Command};
+        use std::{
+            collections::BTreeSet, fs::OpenOptions, os::windows::fs::MetadataExt as _,
+            process::Command,
+        };
 
         use super::*;
         use crate::private_file::{
@@ -2035,6 +2038,29 @@ mod tests {
                 .expect("harden test parent");
             assert!(status.success());
             set_test_owner(path, &sid);
+            // Inheritance removal does not remove explicit grants supplied by
+            // the runner. Establish a controlled fixture without changing the
+            // production parent-admission policy or any existing deny entry.
+            let before = inspect_windows_acl(path).expect("test parent before grant removal");
+            let nonowner_grants: BTreeSet<_> = before
+                .entries
+                .iter()
+                .filter(|entry| entry.allow && entry.sid != sid)
+                .map(|entry| entry.sid.as_str())
+                .collect();
+            for nonowner_sid in nonowner_grants {
+                let removal = Command::new("icacls")
+                    .arg(path)
+                    .arg("/remove:g")
+                    .arg(format!("*{nonowner_sid}"))
+                    .output()
+                    .expect("remove test parent's nonowner grant");
+                assert!(
+                    removal.status.success(),
+                    "test parent grant removal failed: {:?}",
+                    removal.status.code(),
+                );
+            }
             let metadata = fs::symlink_metadata(path).expect("test parent metadata");
             let acl = inspect_windows_acl(path).expect("test parent ACL readback");
             let nonowner_allows: Vec<_> = acl
@@ -2059,6 +2085,10 @@ mod tests {
                 nonowner_allows.len(),
                 inherited_nonowner_allows,
                 nonowner_rights,
+            );
+            assert!(
+                nonowner_allows.is_empty(),
+                "controlled test parent must have no nonowner grants"
             );
         }
 
@@ -2338,6 +2368,51 @@ mod tests {
 
         #[test]
         fn private_file_windows_removes_inherited_everyone_and_rejects_extra_allow() {
+            // Prove grant-only fixture normalization independently of runner
+            // defaults. The denial affects only creating children in this
+            // separate empty fixture, not ACL edits or the runtime test below.
+            {
+                let fixture = tempfile::tempdir().expect("fixture normalization directory");
+                for (operation, rights) in
+                    [("/grant:r", "*S-1-1-0:(F)"), ("/deny", "*S-1-1-0:(WD)")]
+                {
+                    let output = Command::new("icacls")
+                        .arg(fixture.path())
+                        .args([operation, rights])
+                        .output()
+                        .expect("establish explicit fixture grant and denial");
+                    assert!(output.status.success());
+                }
+                let before = inspect_windows_acl(fixture.path()).expect("explicit fixture ACL");
+                assert!(
+                    before
+                        .entries
+                        .iter()
+                        .any(|entry| entry.sid == "S-1-1-0" && entry.allow),
+                    "explicit Everyone grant must exist before normalization"
+                );
+                assert!(
+                    before.entries.iter().any(|entry| entry.sid == "S-1-1-0"
+                        && !entry.allow
+                        && entry.rights & 0x0002 != 0),
+                    "explicit Everyone write-data denial must exist before normalization"
+                );
+                harden_parent(fixture.path());
+                let after = inspect_windows_acl(fixture.path()).expect("normalized fixture ACL");
+                assert!(
+                    !after
+                        .entries
+                        .iter()
+                        .any(|entry| entry.sid == "S-1-1-0" && entry.allow),
+                    "normalization must remove the explicit nonowner grant"
+                );
+                assert!(
+                    after.entries.iter().any(|entry| entry.sid == "S-1-1-0"
+                        && !entry.allow
+                        && entry.rights & 0x0002 != 0),
+                    "normalization must preserve the explicit denial"
+                );
+            }
             let directory = tempfile::tempdir().expect("temporary directory");
             harden_parent(directory.path());
             let path = directory.path().join("pdp.key");
