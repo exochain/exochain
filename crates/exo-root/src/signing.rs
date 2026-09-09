@@ -59,6 +59,29 @@ pub fn threshold_sign<R>(
 where
     R: frost::rand_core::RngCore + frost::rand_core::CryptoRng,
 {
+    let shares = shares
+        .into_iter()
+        .map(|(identifier, share)| (identifier, Zeroizing::new(share)))
+        .collect();
+    threshold_sign_zeroizing(config, public_key_package, shares, message, rng)
+}
+
+/// Sign from already guarded private key packages, retaining drop cleanup on
+/// every validation or signing error and after successful signing.
+///
+/// Private ceremony tooling should deserialize map values into [`Zeroizing`]
+/// before calling this entry point. The legacy [`threshold_sign`] entry point
+/// keeps its caller-owned map signature and guards all shares before delegating.
+pub fn threshold_sign_zeroizing<R>(
+    config: &GenesisCeremonyConfig,
+    public_key_package: &RootPublicKeyPackage,
+    shares: BTreeMap<u16, Zeroizing<RootKeyPackage>>,
+    message: &[u8],
+    rng: &mut R,
+) -> Result<RootSignature>
+where
+    R: frost::rand_core::RngCore + frost::rand_core::CryptoRng,
+{
     config.validate()?;
     if shares.len() < usize::from(config.threshold) {
         let supplied = shares
@@ -674,6 +697,12 @@ mod tests {
             })
             .collect();
         let message = b"unit root signing artifact";
+        let guarded = selected
+            .clone()
+            .into_iter()
+            .map(|(identifier, share)| (identifier, Zeroizing::new(share)))
+            .collect();
+        let mut guarded_rng = rng.clone();
         let signature = threshold_sign(
             &config,
             &dkg.public_key_package,
@@ -682,6 +711,18 @@ mod tests {
             &mut rng,
         )
         .expect("signature");
+        let guarded_signature = threshold_sign_zeroizing(
+            &config,
+            &dkg.public_key_package,
+            guarded,
+            message,
+            &mut guarded_rng,
+        )
+        .expect("guarded signature");
+        assert_eq!(
+            guarded_signature, signature,
+            "guarded entrypoint preserves exact signature"
+        );
 
         verify_root_signature(
             &dkg.public_key_package.root_public_key,

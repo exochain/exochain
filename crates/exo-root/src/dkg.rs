@@ -87,11 +87,32 @@ impl From<ZeroizingRootKeyPackage> for RootKeyPackage {
 /// keep copies short-lived and explicitly zeroize legacy private byte carriers
 /// when they are no longer needed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ZeroizingRootDkgOutput")]
 pub struct RootDkgOutput {
     /// Certifier key packages by FROST identifier.
     pub key_packages: BTreeMap<u16, RootKeyPackage>,
     /// Public key package common to all certifiers.
     pub public_key_package: RootPublicKeyPackage,
+}
+
+// Guard every decoded map value until all entries and public metadata parse.
+#[derive(Deserialize)]
+struct ZeroizingRootDkgOutput {
+    key_packages: BTreeMap<u16, ZeroizingRootKeyPackage>,
+    public_key_package: RootPublicKeyPackage,
+}
+
+impl From<ZeroizingRootDkgOutput> for RootDkgOutput {
+    fn from(value: ZeroizingRootDkgOutput) -> Self {
+        Self {
+            key_packages: value
+                .key_packages
+                .into_iter()
+                .map(|(identifier, package)| (identifier, package.into()))
+                .collect(),
+            public_key_package: value.public_key_package,
+        }
+    }
 }
 
 /// Serialized output from one certifier's DKG round one.
@@ -450,11 +471,33 @@ fn zeroizing_byte_map(mut packages: BTreeMap<u16, Vec<u8>>) -> BTreeMap<u16, Zer
 /// copies short-lived and explicitly zeroize legacy private byte carriers when
 /// they are no longer needed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ZeroizingRootParticipantDkgOutput")]
 pub struct RootParticipantDkgOutput {
     /// Owner's FROST key package.
     pub key_package: RootKeyPackage,
     /// Public root key package derived by the participant.
     pub public_key_package: RootPublicKeyPackage,
+}
+
+impl Zeroize for RootParticipantDkgOutput {
+    fn zeroize(&mut self) {
+        self.key_package.zeroize();
+    }
+}
+
+#[derive(Deserialize)]
+struct ZeroizingRootParticipantDkgOutput {
+    key_package: ZeroizingRootKeyPackage,
+    public_key_package: RootPublicKeyPackage,
+}
+
+impl From<ZeroizingRootParticipantDkgOutput> for RootParticipantDkgOutput {
+    fn from(value: ZeroizingRootParticipantDkgOutput) -> Self {
+        Self {
+            key_package: value.key_package.into(),
+            public_key_package: value.public_key_package,
+        }
+    }
 }
 
 pub(crate) fn frost_identifier(identifier: u16) -> Result<frost::Identifier> {
@@ -697,13 +740,11 @@ pub fn dkg_finalize_participant_zeroizing(
     let (key_package, public_key_package) =
         frost::keys::dkg::part3(&secret_package, &inbound_round1, &inbound_round2)
             .map_err(frost_error)?;
-    let key_package = RootKeyPackage::from_zeroizing(
-        frost_identifier_value,
-        serialize_frost_secret(&key_package)?,
-    );
+    let key_package = serialize_frost_secret(&key_package)?;
+    let public_key_package = serialize_public_key_package(config, &public_key_package)?;
     Ok(RootParticipantDkgOutput {
-        key_package,
-        public_key_package: serialize_public_key_package(config, &public_key_package)?,
+        key_package: RootKeyPackage::from_zeroizing(frost_identifier_value, key_package),
+        public_key_package,
     })
 }
 
@@ -783,10 +824,10 @@ where
 {
     config.validate()?;
 
-    let mut round1_outputs = BTreeMap::new();
+    let mut round1_outputs: BTreeMap<u16, Zeroizing<RootDkgRound1Output>> = BTreeMap::new();
     let mut round1_public = BTreeMap::new();
     for certifier in &config.certifiers {
-        let output = dkg_round1(config, certifier.frost_identifier, rng)?;
+        let output = Zeroizing::new(dkg_round1(config, certifier.frost_identifier, rng)?);
         round1_public.insert(certifier.frost_identifier, output.round1_package.clone());
         round1_outputs.insert(certifier.frost_identifier, output);
     }
@@ -805,7 +846,7 @@ where
         round2_secrets.insert(identifier, round2_secret);
     }
 
-    let mut key_packages = BTreeMap::new();
+    let mut key_packages: BTreeMap<u16, Zeroizing<RootKeyPackage>> = BTreeMap::new();
     let first_identifier = config.certifiers[0].frost_identifier;
     let mut public_key_package = None;
     for (identifier, round2_secret) in round2_secrets {
@@ -819,13 +860,26 @@ where
             peer_round1,
             round2,
         )?;
+        let key_package = Zeroizing::new(participant.key_package);
         if identifier == first_identifier {
             public_key_package = Some(participant.public_key_package);
         }
-        key_packages.insert(identifier, participant.key_package);
+        key_packages.insert(identifier, key_package);
     }
 
-    require_first_public_key_package(public_key_package).map(|public_key_package| RootDkgOutput {
+    let public_key_package = require_first_public_key_package(public_key_package)?;
+    // Only a successful public handoff releases legacy caller-owned vectors.
+    let key_packages = key_packages
+        .into_iter()
+        .map(|(identifier, mut package)| {
+            let key_package = RootKeyPackage {
+                frost_identifier: package.frost_identifier,
+                key_package: std::mem::take(&mut package.key_package),
+            };
+            (identifier, key_package)
+        })
+        .collect();
+    Ok(RootDkgOutput {
         key_packages,
         public_key_package,
     })
@@ -991,6 +1045,23 @@ mod tests {
         assert!(round1.round1_secret_package.is_empty());
         assert!(round2.round2_secret_package.is_empty());
         assert!(round2.round2_packages.is_empty());
+        let public_key_package = RootPublicKeyPackage {
+            public_key_package: vec![1],
+            root_public_key: vec![2],
+            verifying_shares: BTreeMap::from([(7, vec![3])]),
+        };
+        let mut participant = RootParticipantDkgOutput {
+            key_package: RootKeyPackage {
+                frost_identifier: 7,
+                key_package: vec![4, 5, 6],
+            },
+            public_key_package: public_key_package.clone(),
+        };
+        assert_explicitly_zeroizable(&participant);
+        participant.zeroize();
+        assert!(participant.key_package.key_package.is_empty());
+        assert_eq!(participant.key_package.frost_identifier, 7);
+        assert_eq!(participant.public_key_package, public_key_package);
     }
 
     #[test]
@@ -1133,8 +1204,42 @@ mod tests {
 
     #[test]
     fn complete_dkg_moves_internal_zeroizing_secret_packages_without_clone() {
-        let dkg_source = include_str!("dkg.rs");
-        let signing_source = include_str!("signing.rs");
+        let dkg_source = include_str!("dkg.rs").split("#[cfg(test)]").next().unwrap();
+        let signing_source = include_str!("signing.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        for (declaration, intermediate) in [
+            ("pub struct RootDkgOutput", "ZeroizingRootDkgOutput"),
+            (
+                "pub struct RootParticipantDkgOutput",
+                "ZeroizingRootParticipantDkgOutput",
+            ),
+        ] {
+            assert!(
+                derive_before(dkg_source, declaration)
+                    .contains(&format!("#[serde(from = \"{intermediate}\")]")),
+                "{declaration} must guard private fields before later composite decoding fails"
+            );
+        }
+        // These private deserializer fields retain drop guards even if a
+        // subsequent map entry or public-metadata field fails to deserialize.
+        assert!(dkg_source.contains("key_packages: BTreeMap<u16, ZeroizingRootKeyPackage>"));
+        assert!(dkg_source.contains("key_package: ZeroizingRootKeyPackage"));
+        let signing_production = signing_source.split("#[cfg(test)]").next().unwrap();
+        let legacy_signing = signing_production
+            .split("pub fn threshold_sign<R>")
+            .nth(1)
+            .unwrap()
+            .split("pub fn threshold_sign_zeroizing<R>")
+            .next()
+            .unwrap();
+        assert!(legacy_signing.contains("Zeroizing::new(share)"));
+        assert!(legacy_signing.contains("threshold_sign_zeroizing("));
+        assert!(
+            !legacy_signing.contains('?'),
+            "all consumed legacy shares must be guarded before any fallible signing work"
+        );
         assert!(
             !derive_before(signing_source, "pub struct RootSigningNonces").contains("Clone"),
             "RootSigningNonces must not regain secret duplication through Clone"
@@ -1167,6 +1272,27 @@ mod tests {
             .split("#[cfg(test)]")
             .next()
             .expect("complete DKG ends before tests");
+        assert!(complete_dkg.contains("BTreeMap<u16, Zeroizing<RootDkgRound1Output>>"));
+        assert!(complete_dkg.contains("BTreeMap<u16, Zeroizing<RootKeyPackage>>"));
+        let public_ready = complete_dkg
+            .find("require_first_public_key_package(public_key_package)?")
+            .expect("public result validated before releasing guarded private map");
+        let private_handoff = complete_dkg
+            .find("let key_packages = key_packages")
+            .expect("final legacy private-map handoff");
+        assert!(public_ready < private_handoff);
+        let finalize = dkg_source
+            .split("pub fn dkg_finalize_participant_zeroizing")
+            .nth(1)
+            .unwrap()
+            .split("fn deserialize_round1_packages")
+            .next()
+            .unwrap();
+        assert!(
+            finalize.find("serialize_public_key_package(").unwrap()
+                < finalize.find("RootKeyPackage::from_zeroizing(").unwrap(),
+            "serialized private key must stay guarded through fallible public serialization"
+        );
         for forbidden in [
             "recipient_packages.insert(*identifier, package.clone())",
             "round2_by_recipient[&first_identifier].clone()",
@@ -1189,6 +1315,80 @@ mod tests {
 
     #[test]
     fn secret_dkg_deserializers_reject_partially_decoded_json_and_cbor() {
+        #[derive(Serialize)]
+        struct LateInvalidParticipant {
+            key_package: RootKeyPackage,
+            public_key_package: bool,
+        }
+        #[derive(Serialize)]
+        struct LateInvalidDkg {
+            key_packages: BTreeMap<u16, RootKeyPackage>,
+            public_key_package: bool,
+        }
+        #[derive(Serialize)]
+        struct LateInvalidDkgMap {
+            key_packages: BTreeMap<u16, MalformedKeyPackage>,
+            public_key_package: bool,
+        }
+        let key_fixture = RootKeyPackage {
+            frost_identifier: 7,
+            key_package: vec![1, 2, 3],
+        };
+        let participant = LateInvalidParticipant {
+            key_package: key_fixture.clone(),
+            public_key_package: false,
+        };
+        let dkg = LateInvalidDkg {
+            key_packages: BTreeMap::from([(7, key_fixture)]),
+            public_key_package: false,
+        };
+        assert!(
+            serde_json::from_slice::<RootParticipantDkgOutput>(
+                &serde_json::to_vec(&participant).expect("late invalid participant JSON")
+            )
+            .is_err()
+        );
+        assert!(
+            ciborium::from_reader::<RootParticipantDkgOutput, _>(
+                cbor_bytes(&participant).as_slice()
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_slice::<RootDkgOutput>(
+                &serde_json::to_vec(&dkg).expect("late invalid DKG JSON")
+            )
+            .is_err()
+        );
+        assert!(ciborium::from_reader::<RootDkgOutput, _>(cbor_bytes(&dkg).as_slice()).is_err());
+        let partial_map = LateInvalidDkgMap {
+            key_packages: BTreeMap::from([
+                (
+                    7,
+                    MalformedKeyPackage {
+                        frost_identifier: 7,
+                        key_package: vec![serde_json::json!(1), serde_json::json!(2)],
+                    },
+                ),
+                (
+                    8,
+                    MalformedKeyPackage {
+                        frost_identifier: 8,
+                        key_package: vec![serde_json::json!(3), serde_json::json!("invalid")],
+                    },
+                ),
+            ]),
+            public_key_package: false,
+        };
+        assert!(
+            serde_json::from_slice::<RootDkgOutput>(
+                &serde_json::to_vec(&partial_map).expect("partial map JSON")
+            )
+            .is_err()
+        );
+        assert!(
+            ciborium::from_reader::<RootDkgOutput, _>(cbor_bytes(&partial_map).as_slice()).is_err()
+        );
         let invalid_bytes = vec![
             serde_json::json!(1),
             serde_json::json!(2),
@@ -1246,6 +1446,46 @@ mod tests {
             frost_identifier: 7,
             key_package: vec![0xde, 0xad, 0xbe, 0xef],
         };
+        let public_key_package = RootPublicKeyPackage {
+            public_key_package: vec![1],
+            root_public_key: vec![2],
+            verifying_shares: BTreeMap::from([(7, vec![3])]),
+        };
+        let participant = RootParticipantDkgOutput {
+            key_package: key_fixture.clone(),
+            public_key_package: public_key_package.clone(),
+        };
+        let participant_json = serde_json::to_vec(&participant).expect("participant JSON");
+        let participant_cbor = cbor_bytes(&participant);
+        let guarded: Zeroizing<RootParticipantDkgOutput> =
+            serde_json::from_slice(&participant_json).expect("guarded participant JSON");
+        assert_eq!(*guarded, participant);
+        assert_eq!(
+            serde_json::to_vec(&guarded).expect("guarded JSON"),
+            participant_json
+        );
+        assert_eq!(cbor_bytes(&guarded), participant_cbor);
+        let guarded_cbor: Zeroizing<RootParticipantDkgOutput> =
+            ciborium::from_reader(participant_cbor.as_slice()).expect("guarded participant CBOR");
+        assert_eq!(*guarded_cbor, participant);
+        let dkg = RootDkgOutput {
+            key_packages: BTreeMap::from([(7, key_fixture.clone())]),
+            public_key_package,
+        };
+        assert_eq!(
+            serde_json::from_slice::<RootDkgOutput>(
+                &serde_json::to_vec(&dkg).expect("complete DKG JSON")
+            )
+            .expect("complete DKG JSON round trip"),
+            dkg
+        );
+        assert_eq!(
+            ciborium::from_reader::<RootDkgOutput, _>(cbor_bytes(&dkg).as_slice())
+                .expect("complete DKG CBOR round trip"),
+            dkg
+        );
+        fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+        assert_zeroize_on_drop(&guarded);
         let key_json =
             Zeroizing::new(serde_json::to_vec(&key_fixture).expect("key-package JSON fixture"));
         let mut key_json_round_trip = serde_json::from_slice::<RootKeyPackage>(&key_json)

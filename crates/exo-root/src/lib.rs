@@ -33,5 +33,5 @@ pub use seal::{
 pub use signing::{
     RootSignature, RootSignatureShareOutput, RootSigningCommitment, RootSigningNonces,
     RootSigningPackage, aggregate_signature, build_signing_package, sign_commit, sign_share,
-    threshold_sign, verify_root_signature,
+    threshold_sign, threshold_sign_zeroizing, verify_root_signature,
 };
