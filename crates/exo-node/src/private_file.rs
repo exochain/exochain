@@ -401,6 +401,9 @@ fn inspect_windows_acl(path: &Path) -> anyhow::Result<WindowsAcl> {
             "-Command",
             WINDOWS_ACL_PROGRAM,
         ])
+        // A PowerShell 7 parent can pass incompatible module paths through
+        // the node. Let Windows PowerShell reconstruct its native defaults.
+        .env_remove("PSModulePath")
         .env(WINDOWS_ACL_TARGET_ENV, path)
         .output()?;
     if let Some(failure) = classify_windows_acl_process(
@@ -1113,6 +1116,8 @@ fn run_windows_publish(program: &str, temp: &Path, destination: &Path) -> anyhow
             "-Command",
             program,
         ])
+        // Keep the same native module environment as ACL inspection.
+        .env_remove("PSModulePath")
         .env(WINDOWS_PUBLISH_SOURCE_ENV, temp)
         .env(WINDOWS_PUBLISH_DESTINATION_ENV, destination)
         .status()?;
@@ -1830,6 +1835,10 @@ mod tests {
             .expect("Windows ACL inspection boundary");
         assert!(!acl_inspection.contains(".arg(path)"));
         assert!(acl_inspection.contains(".env(WINDOWS_ACL_TARGET_ENV, path)"));
+        assert!(
+            acl_inspection.contains(".env_remove(\"PSModulePath\")"),
+            "Windows PowerShell must reconstruct its module path instead of inheriting PowerShell 7 modules through the node"
+        );
         assert!(!acl_inspection.contains("path.display()"));
         assert!(source.contains("$acl = Get-Acl -LiteralPath $Target"));
 
@@ -1844,6 +1853,10 @@ mod tests {
         assert!(!publication.contains(".arg(destination)"));
         assert!(publication.contains(".env(WINDOWS_PUBLISH_SOURCE_ENV, temp)"));
         assert!(publication.contains(".env(WINDOWS_PUBLISH_DESTINATION_ENV, destination)"));
+        assert!(
+            publication.contains(".env_remove(\"PSModulePath\")"),
+            "private-file PowerShell children must use the same native module-path boundary"
+        );
 
         assert!(source.contains(
             "[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_ACL_TARGET','Process')"
