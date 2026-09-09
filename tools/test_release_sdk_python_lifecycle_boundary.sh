@@ -43,6 +43,7 @@ grep -F 'show "${GITHUB_SHA}:tools/verify_release_side_effect.sh"' "$npm_publish
 
 ruby - "$workflow" "$ci_workflow" <<'RUBY'
 require "psych"
+require "shellwords"
 
 def value(mapping, key)
   return nil unless mapping.is_a?(Psych::Nodes::Mapping)
@@ -124,6 +125,17 @@ sdk_text = value(prepare_sdk, "steps").children.map { |step| step_run(step) }.jo
   raise "SDK token-free lane is missing #{needle}" unless sdk_text.include?(needle)
 end
 raise "SDK lane does not publish a SHA-256 output" unless sdk_text.include?("tarball_sha256")
+
+sdk_pack_step = value(prepare_sdk, "steps").children.find do |step|
+  step_run(step).include?('"$npm_path" pack')
+end
+raise "SDK package step is missing" unless sdk_pack_step
+sdk_pack_run = step_run(sdk_pack_step)
+sdk_directory_loop = sdk_pack_run.match(/^for directory in ([^\n]+); do$/)
+raise "SDK package directory initialization is missing" unless sdk_directory_loop
+sdk_created_directories = Shellwords.split(sdk_directory_loop[1])
+raise "SDK tarball verifier requires extract_dir to remain absent during directory initialization" \
+  unless sdk_created_directories == %w[$source_root $pack_dir $npm_home]
 
 python_text = value(prepare_python, "steps").children.map { |step| step_run(step) }.join("\n")
 %w[-m\ pytest -m\ ruff -m\ mypy -m\ build verify_python_release_package.py].each do |needle|

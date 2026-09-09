@@ -3787,7 +3787,7 @@ jobs:
           extract_dir="$RELEASE_TEMP_ROOT/exochain-sdk-extract"
           npm_home="$RELEASE_TEMP_ROOT/exochain-sdk-npm-home"
           package_manifest="$RELEASE_TEMP_ROOT/exochain-sdk-package.manifest"
-          for directory in "$source_root" "$pack_dir" "$extract_dir" "$npm_home"; do
+          for directory in "$source_root" "$pack_dir" "$npm_home"; do
             case "$directory" in "$RELEASE_TEMP_ROOT"/*) ;; *) exit 1 ;; esac
             /bin/rm -rf -- "$directory"
             /bin/mkdir -m 700 -p "$directory"
