@@ -768,7 +768,7 @@ pub(crate) fn read_private_file(
 }
 
 #[cfg(windows)]
-fn restrict_windows_file(path: &Path) -> anyhow::Result<()> {
+fn restrict_windows_file(path: &Path, initialized_owner: &mut String) -> anyhow::Result<()> {
     let sid = current_windows_sid()?;
     let grant = format!("*{sid}:(F)");
     let status = Command::new("icacls")
@@ -776,7 +776,28 @@ fn restrict_windows_file(path: &Path) -> anyhow::Result<()> {
         .args(["/inheritance:r", "/grant:r"])
         .arg(grant)
         .status()?;
-    if !status.success() || !windows_file_is_owner_only(path, &sid)? {
+    if !status.success() {
+        anyhow::bail!("private Windows ACL restriction failed: {}", path.display());
+    }
+    // Windows takes new-object ownership from the token's default owner,
+    // which need not be the current user. Establish the exact owner required
+    // by admission while the newly created empty file is still exclusive.
+    let status = Command::new("icacls")
+        .arg(path)
+        .arg("/setowner")
+        .arg(format!("*{sid}"))
+        .status()?;
+    if !status.success() {
+        anyhow::bail!(
+            "private Windows owner initialization failed: {}",
+            path.display()
+        );
+    }
+    // A later validation failure must compare cleanup against this acknowledged
+    // initialization, not the token's previous default owner. All other identity
+    // fields and unacknowledged owner changes remain subject to exact equality.
+    initialized_owner.clone_from(&sid);
+    if !windows_file_is_owner_only(path, &sid)? {
         anyhow::bail!("private Windows ACL restriction failed: {}", path.display());
     }
     Ok(())
@@ -810,10 +831,10 @@ fn restrict_created_windows_file_with<F>(
     restrict: F,
 ) -> anyhow::Result<File>
 where
-    F: FnOnce(&Path) -> anyhow::Result<()>,
+    F: FnOnce(&Path, &mut String) -> anyhow::Result<()>,
 {
-    let created = opened_identity(path, &file)?;
-    if let Err(error) = restrict(path) {
+    let mut created = opened_identity(path, &file)?;
+    if let Err(error) = restrict(path, &mut created.owner_sid) {
         let opened_after_error = opened_identity(path, &file);
         drop(file);
         let cleanup = opened_after_error.and_then(|opened| {
@@ -1101,7 +1122,7 @@ const WINDOWS_PUBLISH_SOURCE_ENV: &str = "EXOCHAIN_PRIVATE_FILE_PUBLISH_SOURCE";
 const WINDOWS_PUBLISH_DESTINATION_ENV: &str = "EXOCHAIN_PRIVATE_FILE_PUBLISH_DESTINATION";
 
 #[cfg(windows)]
-const WINDOWS_REPLACE_PROGRAM: &str = "$ErrorActionPreference='Stop'; $Source=[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_PUBLISH_SOURCE','Process'); $Destination=[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_PUBLISH_DESTINATION','Process'); if ([String]::IsNullOrEmpty($Source) -or [String]::IsNullOrEmpty($Destination)) { throw 'private publication path unavailable' }; [System.IO.File]::Replace($Source,$Destination,$null,$true)";
+const WINDOWS_REPLACE_PROGRAM: &str = "$ErrorActionPreference='Stop'; $Source=[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_PUBLISH_SOURCE','Process'); $Destination=[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_PUBLISH_DESTINATION','Process'); if ([String]::IsNullOrEmpty($Source) -or [String]::IsNullOrEmpty($Destination)) { throw 'private publication path unavailable' }; [System.IO.File]::Replace($Source,$Destination,[System.Management.Automation.Language.NullString]::Value,$true)";
 
 #[cfg(windows)]
 const WINDOWS_MOVE_PROGRAM: &str = "$ErrorActionPreference='Stop'; $Source=[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_PUBLISH_SOURCE','Process'); $Destination=[Environment]::GetEnvironmentVariable('EXOCHAIN_PRIVATE_FILE_PUBLISH_DESTINATION','Process'); if ([String]::IsNullOrEmpty($Source) -or [String]::IsNullOrEmpty($Destination)) { throw 'private publication path unavailable' }; [System.IO.File]::Move($Source,$Destination)";
@@ -1841,6 +1862,10 @@ mod tests {
         );
         assert!(!acl_inspection.contains("path.display()"));
         assert!(source.contains("$acl = Get-Acl -LiteralPath $Target"));
+        assert!(source.contains(
+            "[System.IO.File]::Replace($Source,$Destination,[System.Management.Automation.Language.NullString]::Value,$true)"
+        ));
+        assert!(!source.contains("::Replace($Source,$Destination,$null,$true)"));
 
         let publication = source
             .split("fn run_windows_publish")
@@ -1950,6 +1975,26 @@ mod tests {
             open < restrict,
             "ACL hardening must follow the exclusive create"
         );
+
+        let restriction = source
+            .split("fn restrict_windows_file")
+            .nth(1)
+            .expect("Windows restriction implementation")
+            .split("fn cleanup_created_empty_windows_file")
+            .next()
+            .expect("Windows restriction boundary");
+        let dacl = restriction.find("/grant:r").expect("DACL restriction");
+        let owner = restriction
+            .find("/setowner")
+            .expect("creation must explicitly establish the current user as owner");
+        let verify = restriction
+            .find("windows_file_is_owner_only")
+            .expect("strict owner/DACL readback");
+        assert!(dacl < owner && owner < verify);
+        let acknowledged = restriction
+            .find("initialized_owner.clone_from(&sid)")
+            .expect("successful owner initialization must update the cleanup identity");
+        assert!(owner < acknowledged && acknowledged < verify);
     }
 
     #[cfg(windows)]
@@ -1963,6 +2008,22 @@ mod tests {
             run_windows_publish, windows_file_is_owner_only,
         };
 
+        fn set_test_owner(path: &Path, sid: &str) {
+            let status = Command::new("icacls")
+                .arg(path)
+                .arg("/setowner")
+                .arg(format!("*{sid}"))
+                .status()
+                .expect("set test owner");
+            assert!(status.success());
+            assert_eq!(
+                inspect_windows_acl(path)
+                    .expect("test owner readback")
+                    .owner_sid,
+                sid
+            );
+        }
+
         fn harden_parent(path: &Path) {
             let sid = current_windows_sid().expect("current SID");
             let grant = format!("*{sid}:(OI)(CI)(F)");
@@ -1973,6 +2034,7 @@ mod tests {
                 .status()
                 .expect("harden test parent");
             assert!(status.success());
+            set_test_owner(path, &sid);
         }
 
         fn harden_file(path: &Path) {
@@ -1985,6 +2047,7 @@ mod tests {
                 .status()
                 .expect("harden test file");
             assert!(status.success());
+            set_test_owner(path, &sid);
         }
 
         fn write_injection_probe(directory: &Path, helper_name: &str, sentinel_name: &str) {
@@ -2034,7 +2097,7 @@ mod tests {
                 .open(&path)
                 .expect("create empty private candidate");
 
-            let error = restrict_created_windows_file_with(&path, file, |_| {
+            let error = restrict_created_windows_file_with(&path, file, |_, _| {
                 anyhow::bail!("forced ACL restriction failure")
             })
             .expect_err("forced restriction failure");
@@ -2044,6 +2107,66 @@ mod tests {
                 !path.exists(),
                 "failed pre-write ACL hardening must not leave a retry-blocking artifact"
             );
+
+            // The native CI account must be able to establish both owner states.
+            // Explicit fixtures avoid depending on that account's default owner.
+            let sid = current_windows_sid().expect("current SID");
+            const ADMINISTRATORS_SID: &str = "S-1-5-32-544";
+            assert_ne!(sid, ADMINISTRATORS_SID);
+            for (name, initial_owner) in [
+                ("same-owner.key", sid.as_str()),
+                ("changed-owner.key", ADMINISTRATORS_SID),
+            ] {
+                use std::os::windows::fs::OpenOptionsExt as _;
+
+                let path = directory.path().join(name);
+                let file = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .share_mode(0)
+                    .open(&path)
+                    .expect("exclusive empty fixture");
+                set_test_owner(&path, initial_owner);
+                let error =
+                    restrict_created_windows_file_with(&path, file, |target, initialized_owner| {
+                        super::super::restrict_windows_file(target, initialized_owner)?;
+                        anyhow::bail!("forced post-initialization failure")
+                    })
+                    .expect_err("failure after owner initialization");
+                assert!(
+                    error
+                        .to_string()
+                        .contains("forced post-initialization failure")
+                );
+                assert!(
+                    !path.exists(),
+                    "acknowledged initialization must remain removable"
+                );
+                write_private_create_new(&path, b"retry succeeds").expect("retry private creation");
+                assert_eq!(
+                    fs::read(&path).expect("read retried file"),
+                    b"retry succeeds"
+                );
+            }
+
+            let foreign = directory.path().join("unacknowledged-owner.key");
+            let file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&foreign)
+                .expect("empty owner-change fixture");
+            set_test_owner(&foreign, ADMINISTRATORS_SID);
+            let error = restrict_created_windows_file_with(&foreign, file, |target, _| {
+                set_test_owner(target, &sid);
+                anyhow::bail!("unacknowledged owner change")
+            })
+            .expect_err("unexpected owner change must not authorize cleanup");
+            assert!(error.to_string().contains("changed before ACL cleanup"));
+            assert!(
+                foreign.exists(),
+                "uncertain cleanup target must be preserved"
+            );
+            assert_eq!(fs::metadata(&foreign).expect("preserved fixture").len(), 0);
         }
 
         #[test]
@@ -2076,8 +2199,8 @@ mod tests {
                 "concurrent private-file reads must fail with a sharing violation"
             );
 
-            file = restrict_created_windows_file_with(&path, file, |target| {
-                super::super::restrict_windows_file(target)
+            file = restrict_created_windows_file_with(&path, file, |target, initialized_owner| {
+                super::super::restrict_windows_file(target, initialized_owner)
             })
             .expect("ACL hardening must work while the exclusive handle is retained");
             file.write_all(b"private key").expect("write private key");
