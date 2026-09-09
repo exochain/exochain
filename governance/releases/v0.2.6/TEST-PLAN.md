@@ -1126,3 +1126,51 @@ Final per-finding review, coverage, complete feature/CI-guard/package/adjacent
 gates, exact-head native CI, final independent review, exclusive provider
 custody, registry cleanup, approvals, and publication remain required. These
 local successes do not supply any of those unexecuted gates.
+
+## PR #835 Correction Verification
+
+The initial CI result is bound to PR merge `3137aefd28ad19ccf4f34a267c8f666ef4ff2498`
+(head `d13ab6b1347b976e1958d681c9778b9fd2b94d1e`, baseline
+`8020ceab355eefa7f5185d9cdd0436da7af46efb`), not an isolated branch execution.
+Repeat provider gates on the new PR head/base after these corrections.
+
+| Correction | Local verification and required provider result |
+| --- | --- |
+| Platform-specific test inventory | `bash tools/test_repo_truth.sh` exercises wrong-platform, stale-count, global-row, and duplicate-row negative controls; native Linux and macOS must independently validate their README rows |
+| Module coverage target selection | Coverage-policy and YAML checks pass; Gates 17/19 must pass at unchanged 80%/100% with `--bin exochain`; Gates 2/3 still execute all integration targets |
+| Coverage scheduling | Gate 3 now passes `-- --test-threads=1` to the test harness; the 100-writer test itself is unchanged. Validate its whole integration target under LLVM, then require the full workspace gate to report and satisfy 90% |
+| DKG coverage and ownership | Full root crate tests passed (56 unit, 3 compatibility, 20 integration). The final local LLVM/Tarpaulin run covered 1,149/1,149 lines, 100%; native Gate 18 must independently pass with its own denominator |
+| Windows diagnostics | The new portable classifier and existing native macOS private-file tests pass (19 selected tests). Only exit-code/fixed booleans are rendered. The eight native Windows runtime tests remain required; a diagnostic improvement is not a runtime fix |
+| LiveSafe dependencies and parser | Four clean installs passed. After both parsers gained the explicit limit, all four audits returned zero vulnerabilities, 158 JavaScript files/561 tests passed, Rust format/Clippy/tests passed, and both UI builds passed. CI must additionally build its Docker image |
+
+Commands for the corrected coverage boundaries (use separate output directories
+to retain the prior report, and serialize Cargo with two build workers locally):
+
+```bash
+cargo tarpaulin --packages exochain-root \
+  --include-files 'crates/exo-root/src/**' --out xml --out stdout \
+  --output-dir coverage-exo-root --skip-clean --engine llvm \
+  --timeout 600 --fail-under 100
+cargo tarpaulin --packages exochain-node \
+  --test crosschecked_anchor_persistence --out stdout --skip-clean \
+  --engine llvm --timeout 900 -- --test-threads=1
+```
+
+The second command is a focused instrumentation diagnostic, not a replacement
+for Gate 3's full workspace scope or 90% requirement. The LiveSafe regression
+uses harmless small in-memory fields, not a resource-exhaustion payload or live
+target, and includes the flat-field positive control. The full source remains
+subject to the pre-push release-build, workspace-test, Clippy, format, rustdoc,
+repository-truth, and category-isolation checks. No new threshold, coverage
+exclusion, ignored test, synthetic production implementation, or secret scope
+was introduced by this correction set.
+
+The completed local pre-push batch used locked/offline Cargo, the retained
+target, two build workers, no incremental/dev/test debug symbols, and no
+database or publishing-token environment variables. Release workspace build,
+full debug workspace tests, all-target Clippy with warnings denied, nightly
+formatting, warning-denied rustdoc, and the native repository-truth guard all
+exited zero. ANSI-normalized test logs contain 146 result blocks: 6,620 passed,
+zero failed, six ignored. The native macOS list is 6,626, including the same
+six documented ignores; this is not native Linux/Windows or final coverage
+evidence. Only four known generated exchange reports were removed afterward.

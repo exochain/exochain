@@ -55,19 +55,26 @@ The September 8 issue/documentation amendment adds four paths to that historical
 owner runbook, and issue-disposition record. The first, second, and fourth are
 EXOCHAIN core documentation/governance; the runbook documents a core runtime
 adapter. The amendment changes no runtime implementation, dependency, CI, or
-adjacent-surface path. The current inventory below has 319 paths; historical
-scan and commit-sequence counts above remain bound to their original ranges.
+adjacent-surface path. That checkpoint contained 319 paths; historical scan
+and commit-sequence counts above remain bound to their original ranges.
+
+The subsequent PR #835 CI/dependency corrections add five paths: the core
+repository-truth guard and four adjacent LiveSafe paths (the root manifest,
+two existing upload routers, and their small parser/source regression test).
+The current inventory below has 324 paths. DKG coverage, Windows diagnostics,
+CI selectors, README, locks, and evidence updates remain in already-listed
+paths. The isolated adjacent commit does not alter core or adapter behavior.
 
 ## Classification totals
 
 | Class | Paths |
 | --- | ---: |
-| EXOCHAIN core | 62 |
+| EXOCHAIN core | 63 |
 | Core runtime adapter | 155 |
-| Adjacent surface | 14 |
+| Adjacent surface | 18 |
 | Imported evidence | 0 |
 | Third-party/vendor | 88 |
-| **Total** | **319** |
+| **Total** | **324** |
 
 Generated JavaScript, declaration, source-map, lock, and SBOM dependency records
 are classified as third-party/vendor artifacts even when their owned source is a
@@ -197,10 +204,13 @@ governance evidence; they do not import the external HTML.
 | `livesafe/docs/TEST_PLAN.md` | adjacent surface |
 | `livesafe/docs/context/LIVESAFE_IMPLEMENTATION_SLICE_MAP.md` | adjacent surface |
 | `livesafe/package-lock.json` | third-party/vendor |
+| `livesafe/package.json` | adjacent surface |
 | `livesafe/responder/package-lock.json` | third-party/vendor |
 | `livesafe/responder/package.json` | adjacent surface |
 | `livesafe/server/package-lock.json` | third-party/vendor |
 | `livesafe/server/package.json` | adjacent surface |
+| `livesafe/server/routes/credentials.js` | adjacent surface |
+| `livesafe/server/routes/records.js` | adjacent surface |
 | `livesafe/src/ai_help_session_transcript.rs` | adjacent surface |
 | `livesafe/src/ai_help_unanswered_topic.rs` | adjacent surface |
 | `livesafe/src/ai_help_usage_summary.rs` | adjacent surface |
@@ -210,6 +220,7 @@ governance evidence; they do not import the external HTML.
 | `livesafe/tests/ai_help_usage_summary.rs` | adjacent surface |
 | `livesafe/tests/context-docs.test.ts` | adjacent surface |
 | `livesafe/tests/feedback_mandated_reporter.rs` | adjacent surface |
+| `livesafe/tests/upload-field-limits.test.ts` | adjacent surface |
 | `packages/README.md` | core runtime adapter |
 | `packages/exochain-llm-proxy/README.md` | core runtime adapter |
 | `packages/exochain-llm-proxy/dist/attestation.d.ts` | third-party/vendor |
@@ -371,6 +382,7 @@ governance evidence; they do not import the external HTML.
 | `tools/test_release_version_alignment.sh` | core runtime adapter |
 | `tools/test_release_version_input_boundary.sh` | core runtime adapter |
 | `tools/test_release_workflow_ref_binding.sh` | core runtime adapter |
+| `tools/test_repo_truth.sh` | EXOCHAIN core |
 | `tools/test_stage_llm_release_package.sh` | core runtime adapter |
 | `tools/test_transport_release_build_output.sh` | core runtime adapter |
 | `tools/test_transport_release_file_set.sh` | core runtime adapter |
@@ -401,7 +413,7 @@ governance evidence; they do not import the external HTML.
 ## Mechanical reconciliation
 
 The sorted newline-delimited path set has SHA-256
-`b4342959e7d4a7118dc4e4a15437157b345cc94818115bd01137d161b8d05a38`.
+`b950547c05af9ea4cac05c71b789a2d90cffbee75e60a03e6175794694f2035c`.
 Run from the candidate worktree with generated test outputs removed:
 
 ```bash
@@ -429,14 +441,14 @@ untracked = subprocess.run(
 actual = sorted(set(committed_or_modified + untracked))
 rows = re.findall(r'^\| `([^`]+)` \| (EXOCHAIN core|core runtime adapter|adjacent surface|imported evidence|third-party/vendor) \|$', document.read_text(), re.MULTILINE)
 listed = [path for path, _ in rows]
-assert len(listed) == len(set(listed)) == 319
+assert len(listed) == len(set(listed)) == 324
 assert listed == actual
 digest = sha256(('\n'.join(listed) + '\n').encode()).hexdigest()
-assert digest == 'b4342959e7d4a7118dc4e4a15437157b345cc94818115bd01137d161b8d05a38'
+assert digest == 'b950547c05af9ea4cac05c71b789a2d90cffbee75e60a03e6175794694f2035c'
 counts = {}
 for _, classification in rows:
     counts[classification] = counts.get(classification, 0) + 1
-assert counts == {'core runtime adapter':155,'EXOCHAIN core':62,'third-party/vendor':88,'adjacent surface':14}
+assert counts == {'core runtime adapter':155,'EXOCHAIN core':63,'third-party/vendor':88,'adjacent surface':18}
 print(f'path_classification=PASS count={len(listed)} sha256={digest} counts={counts}')
 PY
 ```
@@ -450,10 +462,10 @@ that boundary.
 | Intake field | 0.2.6 remediation disposition |
 | --- | --- |
 | Owner and accountable maintainer | `bob-stewart` |
-| Deployment status | Production-shaped Railway surface; the changed arithmetic/dependency slice is adjacent code and is not deployed by this branch |
+| Deployment status | `prototype`, as recorded in `livesafe/config/surface-intake.json` and `livesafe/docs/EXOCHAIN_APP_BOUNDARY.md`; the changed arithmetic/dependency slice is adjacent code and is not deployed by this branch |
 | Constitutional trust claims | Not allowed; `public_claims_allowed: false` remains unchanged |
 | Core state/signature/credential access | None from the changed files; they do not read or write EXOCHAIN state, signatures, credentials, consent, authority, governance, or provenance |
-| Exact trust boundary | Separate proprietary subtree excluded from the Rust workspace; this slice cannot mint or simulate EXOCHAIN outcomes |
+| Exact trust boundary | Separate proprietary subtree excluded from the Rust workspace; this slice cannot mint or simulate EXOCHAIN outcomes. The upload-limit correction is confined to LiveSafe's local multipart parser before the existing records/credential handlers; it changes no EXOCHAIN adapter call, JWT validation, custody policy, or response contract |
 | Test command and CI | Four clean `npm ci` installs, `npm run quality`, `npm run build`, Docker build, and the `LiveSafe CI` workflow |
 | Secrets and runtime configuration | No secret is added; deployed values remain in Railway secret storage and must not share EXOCHAIN signing/bootstrap scopes |
 | Rollback/disablement | Revert the isolated LiveSafe commits or decline this candidate; no deployment is performed by the branch |
