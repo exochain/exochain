@@ -26,7 +26,9 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 
 ## Repo Status
 
-> Run `bash tools/repo_truth.sh` to regenerate these numbers from source.
+> Run `bash tools/repo_truth.sh` to regenerate native repository facts from source.
+> Capture each workspace test inventory on its named platform; one native run
+> does not measure the other platform.
 >
 > The crate count includes `exo-root`, `exo-catapult`, `exo-consensus`,
 > `exo-messaging`, `exochain-sdk`, `exo-avc`, `exo-economy`, and `exo-pdp`.
@@ -35,7 +37,8 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 |--------|-------|--------|
 | Rust crates | 32 | `cargo metadata --no-deps --format-version 1` |
 | Rust source files | 507 | `git ls-files 'crates/**/*.rs'` |
-| Workspace tests | 6,624 listed | `cargo test --workspace -- --list` |
+| Workspace tests (Linux) | 6,622 listed | `cargo test --workspace -- --list` (default debug features) |
+| Workspace tests (macOS) | 6,626 listed | `cargo test --workspace -- --list` (default debug features) |
 | CI quality gates | 23 | `.github/workflows/ci.yml` numbered gates; required aggregator is separate |
 | Latest published release | `v0.2.4` (GitHub Release published 2026-08-18; release crates plus `@exochain/exochain-wasm` and `@exochain/llm-proxy` resolve the same version) | `gh release list`; crates.io version API; `npm view @exochain/exochain-wasm version`; `npm view @exochain/llm-proxy version` |
 | License | Apache-2.0 for EXOCHAIN core primitives; commercial terms for Decision Forum, LegalDyne, CyberMedica, LiveSafe, and CrossChecked products | `governance/commercial-product-licensing.json`; product license files where present |
@@ -43,7 +46,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 
 ### What is verified today
 
-- **6,624 workspace tests are listed** by `cargo test --workspace -- --list`; CI Gate 2 runs them in debug and release modes
+- **Workspace test inventories are platform-specific**: the table above records `cargo test --workspace -- --list` on Linux and macOS. macOS includes additional ACL-specific tests. CI Gate 2 runs debug and release modes; platform- and profile-gated cases can differ.
 - **Build succeeds** for all library crates, binaries, tests, and benchmarks
 - **Clippy clean** under `-D warnings` for all workspace targets
 - **Format clean** under `cargo +nightly fmt --all -- --check`
@@ -127,7 +130,7 @@ Layer 1: CGR Kernel         (Rust, 32 crates)
          Constitutional governance runtime — deterministic, no floats,
          production Ed25519/BLAKE3 cryptography, RISC Zero execution-receipt
          verify (not production-reviewed), plus unaudited pedagogical
-         SNARK/STARK/ZKML skeletons, 6,624 listed workspace tests
+         SNARK/STARK/ZKML skeletons, platform-specific listed workspace tests
 
 Layer 2: WASM Bridge        (packages/exochain-wasm/)
          167 verified WASM exports covered by 183 bridge checks — Rust -> WebAssembly -> JavaScript

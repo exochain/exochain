@@ -27,6 +27,30 @@ fail() {
   exit 1
 }
 
+check_readme_test_inventory() {
+  local readme_file="$1"
+  local platform="$2"
+  local listed="$3"
+  local display
+  case "$platform" in Linux|macOS) ;; *) return 1 ;; esac
+  case "$listed" in ''|*[!0-9]*) return 1 ;; esac
+  display=$(python3 -c 'import sys; print(f"{int(sys.argv[1]):,} listed")' "$listed")
+  awk -F'|' -v metric="Workspace tests ($platform)" -v expected="$display" '
+    /^\|/ {
+      label = $2
+      value = $3
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", label)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      if (label ~ /^Workspace tests/ && label != "Workspace tests (Linux)" && label != "Workspace tests (macOS)") invalid = 1
+      if (label == metric) {
+        rows++
+        if (value != expected) invalid = 1
+      }
+    }
+    END { exit (rows != 1 || invalid) }
+  ' "$readme_file"
+}
+
 if grep -n -- 'grep -oP' tools/repo_truth.sh >/tmp/repo_truth_portability.txt; then
   cat /tmp/repo_truth_portability.txt >&2
   fail "tools/repo_truth.sh must not use grep -P; macOS grep does not support it"
@@ -42,6 +66,38 @@ fake_err_file=$(mktemp)
 fake_json_file=$(mktemp)
 fake_bin_dir=$(mktemp -d)
 trap 'rm -f "$err_file" "$json_file" "$fake_err_file" "$fake_json_file" /tmp/repo_truth_portability.txt; rm -rf "$fake_bin_dir"' EXIT
+
+# Exercise the real claim validator with independently specified native counts.
+# A global count, swapped platforms, stale count, or duplicate row must fail.
+inventory_fixture="$fake_bin_dir/README.md"
+printf '%s\n' '| Workspace tests (Linux) | 6,620 listed | cargo |' \
+  '| Workspace tests (macOS) | 6,624 listed | cargo |' >"$inventory_fixture"
+check_readme_test_inventory "$inventory_fixture" Linux 6620 \
+  || fail "Linux inventory fixture rejected"
+check_readme_test_inventory "$inventory_fixture" macOS 6624 \
+  || fail "macOS inventory fixture rejected"
+if check_readme_test_inventory "$inventory_fixture" Linux 6624 \
+  || check_readme_test_inventory "$inventory_fixture" macOS 6620 \
+  || check_readme_test_inventory "$inventory_fixture" Linux 6619 \
+  || check_readme_test_inventory "$inventory_fixture" Windows 6620; then
+  fail "inventory validator accepted a wrong platform or count"
+fi
+printf '%s\n' '| Workspace tests | 6,624 listed | cargo |' >>"$inventory_fixture"
+if check_readme_test_inventory "$inventory_fixture" Linux 6620 \
+  || check_readme_test_inventory "$inventory_fixture" macOS 6624; then
+  fail "inventory validator accepted a global count alongside scoped rows"
+fi
+printf '%s\n' '| Workspace tests (Linux) | 6,620 listed | cargo |' \
+  '| Workspace tests (macOS) | 6,624 listed | cargo |' >"$inventory_fixture"
+printf '%s\n' '| Workspace tests (Linux) | 6,620 listed | cargo |' >>"$inventory_fixture"
+if check_readme_test_inventory "$inventory_fixture" Linux 6620; then
+  fail "inventory validator accepted duplicate platform rows"
+fi
+printf '%s\n' '| Workspace tests | 6,624 listed | cargo |' >"$inventory_fixture"
+if check_readme_test_inventory "$inventory_fixture" Linux 6620 \
+  || check_readme_test_inventory "$inventory_fixture" macOS 6624; then
+  fail "inventory validator accepted an unscoped global count"
+fi
 
 if ! bash tools/repo_truth.sh --json --skip-tests >"$json_file" 2>"$err_file"; then
   cat "$err_file" >&2
@@ -155,18 +211,21 @@ README_VERACITY_GATE="${README_VERACITY_GATE:-on}"
 if [ "$README_VERACITY_GATE" = "on" ]; then
   grep -F "| Rust crates | $expected_crates |" README.md >/dev/null || fail "README crate count is not repo-truth derived"
   grep -F "| Rust source files | $expected_rs_files |" README.md >/dev/null || fail "README Rust source file count is not repo-truth derived"
-  readme_tests_listed=$(awk -F'|' '/Workspace tests/ { gsub(/[^0-9]/, "", $3); print $3; exit }' README.md)
-  [ "$readme_tests_listed" = "$expected_tests_listed" ] \
-    || fail "README workspace test count $readme_tests_listed != listed test count $expected_tests_listed"
+  case "$(uname -s)" in
+    Linux) inventory_platform=Linux ;;
+    Darwin) inventory_platform=macOS ;;
+    *) fail "README workspace test inventory is not defined for this host" ;;
+  esac
+  check_readme_test_inventory README.md "$inventory_platform" "$expected_tests_listed" \
+    || fail "README $inventory_platform workspace test inventory does not match $expected_tests_listed listed tests"
   grep -F "| CI quality gates | $expected_gates |" README.md >/dev/null || fail "README CI gate count is not repo-truth derived"
 
-  expected_tests_display=$(python3 -c 'import sys; print(f"{int(sys.argv[1]):,}")' "$expected_tests_listed")
-  grep -F "**$expected_tests_display workspace tests are listed**" README.md >/dev/null \
-    || fail "README verified-today test count is not repo-truth derived"
+  grep -F '**Workspace test inventories are platform-specific**' README.md >/dev/null \
+    || fail "README must scope its listed test inventories to their platforms"
   grep -F "(Rust, $expected_crates crates)" README.md >/dev/null \
     || fail "README architecture crate count is not repo-truth derived"
-  grep -F "$expected_tests_display listed workspace tests" README.md >/dev/null \
-    || fail "README architecture test count is not repo-truth derived"
+  grep -F 'platform-specific listed workspace tests' README.md >/dev/null \
+    || fail "README architecture must refer to platform-specific test inventories"
   grep -F "CI pipeline ($expected_gates numbered quality gates plus required aggregator)" README.md >/dev/null \
     || fail "README repository-structure gate count is not repo-truth derived"
   grep -F "**$expected_gates numbered CI quality gates** plus the required \"All Constitutional Gates\" aggregator are defined; workflow runs report their status, while merge enforcement depends on current GitHub ruleset or branch-protection settings" README.md >/dev/null \
