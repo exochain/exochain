@@ -1999,7 +1999,7 @@ mod tests {
 
     #[cfg(windows)]
     mod windows {
-        use std::{fs::OpenOptions, process::Command};
+        use std::{fs::OpenOptions, os::windows::fs::MetadataExt as _, process::Command};
 
         use super::*;
         use crate::private_file::{
@@ -2035,6 +2035,31 @@ mod tests {
                 .expect("harden test parent");
             assert!(status.success());
             set_test_owner(path, &sid);
+            let metadata = fs::symlink_metadata(path).expect("test parent metadata");
+            let acl = inspect_windows_acl(path).expect("test parent ACL readback");
+            let nonowner_allows: Vec<_> = acl
+                .entries
+                .iter()
+                .filter(|entry| entry.allow && entry.sid != sid)
+                .collect();
+            let nonowner_rights = nonowner_allows
+                .iter()
+                .fold(0_i64, |rights, entry| rights | entry.rights);
+            let inherited_nonowner_allows = nonowner_allows
+                .iter()
+                .filter(|entry| entry.inherited)
+                .count();
+            assert!(
+                super::super::verify_private_parent(&path.join("fixture-parent-check")).is_ok(),
+                "test parent admission failed: directory={} symlink={} attributes={:#x} owner_matches={} nonowner_allows={} inherited_nonowner_allows={} nonowner_rights={:#x}",
+                metadata.is_dir(),
+                metadata.file_type().is_symlink(),
+                metadata.file_attributes(),
+                acl.owner_sid == sid,
+                nonowner_allows.len(),
+                inherited_nonowner_allows,
+                nonowner_rights,
+            );
         }
 
         fn harden_file(path: &Path) {
@@ -2105,7 +2130,7 @@ mod tests {
             assert!(error.to_string().contains("forced ACL restriction failure"));
             assert!(
                 !path.exists(),
-                "failed pre-write ACL hardening must not leave a retry-blocking artifact"
+                "failed pre-write ACL hardening must not leave a retry-blocking artifact: {error}"
             );
 
             // The native CI account must be able to establish both owner states.
