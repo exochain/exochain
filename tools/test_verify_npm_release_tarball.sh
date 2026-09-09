@@ -57,6 +57,18 @@ PYTHON_SHADOW
   "$fixture_root/valid-output/package/package.json" \
   || fail "valid npm tarball must extract exact regular-file bytes"
 
+precreated_output="$fixture_root/precreated-output"
+mkdir -m 700 "$precreated_output"
+if /usr/bin/env -i /usr/bin/python3 -I -B "$helper_dir/guard.py" \
+  "$valid_archive" "$precreated_output" > "$fixture_root/precreated-output.log" 2>&1; then
+  fail "npm tarball guard must reject even an empty precreated destination"
+fi
+grep -F 'output directory must be a fresh absolute path' \
+  "$fixture_root/precreated-output.log" >/dev/null \
+  || fail "precreated destination must fail at fresh-path admission"
+[ -z "$(/bin/ls -A "$precreated_output")" ] \
+  || fail "rejected precreated destination must remain empty"
+
 /bin/cp "$valid_archive" "$raw_trailer_archive"
 printf 'attacker-raw-trailer' >> "$raw_trailer_archive"
 if /usr/bin/env -i /usr/bin/python3 -I -B "$helper_dir/guard.py" \
