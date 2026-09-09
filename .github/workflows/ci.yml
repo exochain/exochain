@@ -963,7 +963,8 @@ jobs:
   private-file-windows:
     name: "Private file custody — Windows runtime"
     runs-on: windows-latest
-    needs: build
+    # Windows builds independently; all-gates still requires this job and the
+    # Linux release build before merge or release can succeed.
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
