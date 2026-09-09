@@ -23,6 +23,41 @@ use crate::serde_bridge::*;
 const MAX_WASM_LEGAL_AUDIT_ACTIONS: usize = 4_096;
 const MAX_WASM_EDISCOVERY_CORPUS_ITEMS: usize = 4_096;
 const MAX_WASM_RETENTION_RECORDS: usize = 4_096;
+const FAIRNESS_EVIDENCE_HASH_VALIDATION_ERROR: &str =
+    "evidence hash must be exactly 64 ASCII hex characters";
+const TERMS_HASH_VALIDATION_ERROR: &str = "terms hash must be exactly 64 ASCII hex characters";
+
+fn parse_fairness_evidence_hash_hex(
+    evidence_hash_hex: &str,
+) -> Result<exo_core::Hash256, &'static str> {
+    if evidence_hash_hex.len() != 64 || !evidence_hash_hex.is_ascii() {
+        return Err(FAIRNESS_EVIDENCE_HASH_VALIDATION_ERROR);
+    }
+    let mut hash_bytes = [0_u8; 32];
+    hex::decode_to_slice(evidence_hash_hex, &mut hash_bytes)
+        .map_err(|_| FAIRNESS_EVIDENCE_HASH_VALIDATION_ERROR)?;
+    Ok(exo_core::Hash256::from_bytes(hash_bytes))
+}
+
+fn parse_terms_hash_hex(terms_hash_hex: &str) -> Result<exo_core::Hash256, &'static str> {
+    if terms_hash_hex.len() != 64 || !terms_hash_hex.is_ascii() {
+        return Err(TERMS_HASH_VALIDATION_ERROR);
+    }
+    let mut hash_bytes = [0_u8; 32];
+    hex::decode_to_slice(terms_hash_hex, &mut hash_bytes)
+        .map_err(|_| TERMS_HASH_VALIDATION_ERROR)?;
+    Ok(exo_core::Hash256::from_bytes(hash_bytes))
+}
+
+fn validate_safe_harbor_text_input(label: &str, value: &str) -> Result<(), String> {
+    if value.len() > exo_legal::dgcl144::MAX_SAFE_HARBOR_TEXT_BYTES {
+        return Err(format!(
+            "{label} may contain at most {} bytes",
+            exo_legal::dgcl144::MAX_SAFE_HARBOR_TEXT_BYTES
+        ));
+    }
+    Ok(())
+}
 
 /// Create a new piece of evidence with chain of custody
 #[wasm_bindgen]
@@ -178,6 +213,8 @@ pub fn wasm_initiate_safe_harbor(
     path_json: &str,
     now_ms: u64,
 ) -> Result<JsValue, JsValue> {
+    validate_safe_harbor_text_input("interest description", interest_description)
+        .map_err(|error| JsValue::from_str(&error))?;
     let id: uuid::Uuid = transaction_id
         .parse()
         .map_err(|e| JsValue::from_str(&format!("UUID error: {e}")))?;
@@ -185,12 +222,7 @@ pub fn wasm_initiate_safe_harbor(
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
     let counterparty = exo_core::Did::new(counterparty_did)
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
-    let hash_bytes =
-        hex::decode(terms_hash_hex).map_err(|e| JsValue::from_str(&format!("hex: {e}")))?;
-    let arr: [u8; 32] = hash_bytes
-        .try_into()
-        .map_err(|_| JsValue::from_str("terms hash must be 32 bytes"))?;
-    let terms_hash = exo_core::Hash256::from_bytes(arr);
+    let terms_hash = parse_terms_hash_hex(terms_hash_hex).map_err(JsValue::from_str)?;
     let path: exo_legal::dgcl144::SafeHarborPath = from_json_str(path_json)?;
     let now = exo_core::types::Timestamp::new(now_ms, 0);
     let txn = exo_legal::dgcl144::initiate_safe_harbor(
@@ -214,6 +246,8 @@ pub fn wasm_complete_disclosure(
     material_facts: &str,
     now_ms: u64,
 ) -> Result<JsValue, JsValue> {
+    validate_safe_harbor_text_input("material facts", material_facts)
+        .map_err(|error| JsValue::from_str(&error))?;
     let mut txn: exo_legal::dgcl144::InterestedTransaction = from_json_str(txn_json)?;
     let disclosed_by = exo_core::Did::new(disclosed_by_did)
         .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
@@ -240,12 +274,133 @@ pub fn wasm_record_disinterested_vote(
     to_js_value(&txn)
 }
 
+/// Record independent fairness evidence for a FairnessProof safe harbor path.
+#[wasm_bindgen]
+pub fn wasm_record_fairness_evidence(
+    txn_json: &str,
+    evaluator_did: &str,
+    methodology: &str,
+    conclusion: &str,
+    evidence_hash_hex: &str,
+    now_ms: u64,
+) -> Result<JsValue, JsValue> {
+    validate_safe_harbor_text_input("methodology", methodology)
+        .map_err(|error| JsValue::from_str(&error))?;
+    validate_safe_harbor_text_input("conclusion", conclusion)
+        .map_err(|error| JsValue::from_str(&error))?;
+    let mut txn: exo_legal::dgcl144::InterestedTransaction = from_json_str(txn_json)?;
+    let evaluator = exo_core::Did::new(evaluator_did)
+        .map_err(|e| JsValue::from_str(&format!("DID error: {e}")))?;
+    let evidence_hash =
+        parse_fairness_evidence_hash_hex(evidence_hash_hex).map_err(JsValue::from_str)?;
+    let now = exo_core::types::Timestamp::new(now_ms, 0);
+    exo_legal::dgcl144::record_fairness_evidence(
+        &mut txn,
+        &evaluator,
+        methodology,
+        conclusion,
+        evidence_hash,
+        now,
+    )
+    .map_err(|e| JsValue::from_str(&format!("Fairness evidence error: {e}")))?;
+    to_js_value(&txn)
+}
+
 /// Verify that a safe harbor transaction meets all §144 requirements.
 #[wasm_bindgen]
 pub fn wasm_verify_safe_harbor(txn_json: &str) -> Result<JsValue, JsValue> {
     let mut txn: exo_legal::dgcl144::InterestedTransaction = from_json_str(txn_json)?;
     match exo_legal::dgcl144::verify_safe_harbor(&mut txn) {
-        Ok(()) => to_js_value(&serde_json::json!({"ok": true})),
-        Err(e) => to_js_value(&serde_json::json!({"ok": false, "error": e.to_string()})),
+        Ok(()) => to_js_value(&serde_json::json!({"ok": true, "transaction": txn})),
+        Err(e) => to_js_value(
+            &serde_json::json!({"ok": false, "error": e.to_string(), "transaction": txn}),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fairness_evidence_hash_is_bounded_before_stack_decoding() {
+        let source = include_str!("legal_bindings.rs");
+        let production = source.split("\n#[cfg(test)]").next().unwrap_or(source);
+
+        assert!(
+            production.contains("hex::decode_to_slice"),
+            "fairness evidence hashes must decode directly into a fixed stack buffer"
+        );
+        assert!(
+            !production.contains("hex::decode(evidence_hash_hex)"),
+            "the direct fairness hash input must not be decoded into an allocating Vec"
+        );
+        assert!(
+            production.contains("evidence hash must be exactly 64 ASCII hex characters"),
+            "all malformed fairness hash inputs must return a fixed client-safe validation message"
+        );
+    }
+
+    #[test]
+    fn fairness_evidence_hash_validation_is_fixed_and_accepts_exact_hex() {
+        let valid = "ab".repeat(32);
+        assert_eq!(
+            parse_fairness_evidence_hash_hex(&valid).unwrap(),
+            exo_core::Hash256::from_bytes([0xab; 32])
+        );
+
+        for malformed in [
+            "a".repeat(63),
+            "a".repeat(65),
+            "g".repeat(64),
+            "é".repeat(32),
+            "a".repeat(1_000_000),
+        ] {
+            assert_eq!(
+                parse_fairness_evidence_hash_hex(&malformed),
+                Err(FAIRNESS_EVIDENCE_HASH_VALIDATION_ERROR)
+            );
+        }
+    }
+
+    #[test]
+    fn terms_hash_is_bounded_before_stack_decoding() {
+        let source = include_str!("legal_bindings.rs");
+        let production = source.split("\n#[cfg(test)]").next().unwrap_or(source);
+
+        assert!(
+            production.contains("parse_terms_hash_hex(terms_hash_hex)"),
+            "the direct terms hash input must use the bounded parser"
+        );
+        assert!(
+            !production.contains("hex::decode(terms_hash_hex)"),
+            "the direct terms hash input must not be decoded into an allocating Vec"
+        );
+        assert!(
+            production.contains("terms hash must be exactly 64 ASCII hex characters"),
+            "all malformed terms hash inputs must return a fixed validation message"
+        );
+    }
+
+    #[test]
+    fn terms_hash_validation_is_fixed_and_accepts_exact_hex() {
+        let valid = "cd".repeat(32);
+        assert_eq!(
+            parse_terms_hash_hex(&valid).unwrap(),
+            exo_core::Hash256::from_bytes([0xcd; 32])
+        );
+
+        for malformed in [
+            "a".repeat(63),
+            "a".repeat(65),
+            "g".repeat(64),
+            "é".repeat(32),
+            "a".repeat(1_000_000),
+        ] {
+            assert_eq!(
+                parse_terms_hash_hex(&malformed),
+                Err(TERMS_HASH_VALIDATION_ERROR)
+            );
+        }
     }
 }

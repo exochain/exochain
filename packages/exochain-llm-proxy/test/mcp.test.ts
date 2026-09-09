@@ -24,6 +24,11 @@ import {
   type ObjectStoreLike,
   type ReceiptIntent,
 } from "../src/index.js";
+import {
+  committedReceiptResponse,
+  TEST_VALIDATOR_DID,
+  TEST_VALIDATOR_PUBLIC_KEY,
+} from "./receipt-fixture.js";
 
 const stamp = { physical_ms: 1_700_000, logical: 0 };
 
@@ -35,11 +40,13 @@ function baseConfig(fetchImpl: FetchLike): LlmProxyConfig {
     namespace: "default",
     actorDid: "did:exo:agent",
     adapterDid: "did:exo:adapter",
+    trustedValidatorDid: TEST_VALIDATOR_DID,
+    trustedValidatorPublicKey: TEST_VALIDATOR_PUBLIC_KEY,
     custodyPolicyHash: hashProviderPayload("policy"),
     storageMode: "receipt_minimized",
     validation: { credential: "fixture", action: "llm.usage.receipt.emit" },
-    subjectSignature: "subject-signature",
-    adapterSignature: "adapter-signature",
+    subjectSignature: "a".repeat(128),
+    adapterSignature: "b".repeat(128),
     fetch: fetchImpl,
   };
 }
@@ -60,8 +67,9 @@ function fakeFetch(
     const url = String(input);
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     if (url.endsWith("/api/v1/avc/llm-usage/receipts/emit")) {
-      receiptBodies.push(body as ReceiptIntent);
-      return jsonResponse({ receipt_hash: "receipt-mcp" }, receiptStatus);
+      const receiptIntent = body as ReceiptIntent;
+      receiptBodies.push(receiptIntent);
+      return jsonResponse(committedReceiptResponse(receiptIntent), receiptStatus);
     }
     return mcp(url, body);
   };
@@ -91,8 +99,8 @@ test("tools call success emits receipt and hashes arguments plus result", async 
   assert.equal(result.status, "receipted");
   assert.equal(receipts.length, 1);
   assert.equal(receipts[0]?.llm_usage_evidence.evidence.provider, "mcp");
-  assert.equal(receipts[0]?.llm_usage_evidence.evidence.tool_call_hash?.length, 64);
-  assert.equal(receipts[0]?.llm_usage_evidence.evidence.tool_result_hash?.length, 64);
+  assert.equal(receipts[0]?.llm_usage_evidence.evidence.tool_call_hash?.length, 32);
+  assert.equal(receipts[0]?.llm_usage_evidence.evidence.tool_result_hash?.length, 32);
   const serialized = stableStringify(receipts[0]);
   assert.equal(serialized.includes("secret-tool-argument"), false);
   assert.equal(serialized.includes("secret-tool-result"), false);
@@ -117,6 +125,27 @@ test("tools call failure emits failure receipt without raw server error", async 
   assert.equal(result.status, "provider_error");
   assert.equal(stableStringify(result.receiptIntent).includes("secret-error"), false);
   assert.equal(receipts.length, 1);
+});
+
+test("oversized MCP error body is rejected before failure receipt emission", async () => {
+  const receipts: ReceiptIntent[] = [];
+  const config = baseConfig(fakeFetch(receipts, () => new Response("123456789", { status: 500 })));
+  config.maxResponseBytes = 8;
+  const proxy = createReceiptedMcpProxy(config, { serverUrl: "https://mcp.test" });
+
+  await assert.rejects(
+    () =>
+      proxy.callTool(
+        { name: "search", arguments: { query: "placeholder" } },
+        { idempotencyKey: "idem-mcp-oversized", createdAt: stamp },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof LynkValidationError);
+      assert.equal(error.message, "MCP tools/call response exceeds 8 bytes");
+      return true;
+    },
+  );
+  assert.equal(receipts.length, 0);
 });
 
 test("malformed MCP response is rejected as untrusted", async () => {
@@ -154,6 +183,60 @@ test("MCP rejects non-object and invalid jsonrpc tool results", async () => {
       LynkValidationError,
     );
   }
+});
+
+test("MCP success is bound to the exact JSON-RPC request id", async () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ["missing", { jsonrpc: "2.0", result: { content: [] } }],
+    ["null", { jsonrpc: "2.0", id: null, result: { content: [] } }],
+    ["numeric", { jsonrpc: "2.0", id: 7, result: { content: [] } }],
+    ["mismatched", { jsonrpc: "2.0", id: "different-request", result: { content: [] } }],
+    ["missing-version", { id: "expected-request", result: { content: [] } }],
+  ];
+
+  for (const [name, payload] of cases) {
+    const receipts: ReceiptIntent[] = [];
+    const proxy = createReceiptedMcpProxy(
+      baseConfig(fakeFetch(receipts, () => jsonResponse(payload))),
+      { serverUrl: "https://mcp.test" },
+    );
+
+    await assert.rejects(
+      () =>
+        proxy.callTool(
+          { name: "search", arguments: { query: "placeholder" } },
+          { idempotencyKey: "expected-request", createdAt: stamp },
+        ),
+      LynkValidationError,
+      `${name} response id must not be accepted`,
+    );
+    assert.equal(receipts.length, 0);
+  }
+});
+
+test("MCP response containing both result and error never releases result", async () => {
+  const receipts: ReceiptIntent[] = [];
+  const proxy = createReceiptedMcpProxy(
+    baseConfig(
+      fakeFetch(receipts, () =>
+        jsonResponse({
+          jsonrpc: "2.0",
+          id: "idem-mcp-ambiguous",
+          result: { content: [{ type: "text", text: "must-not-release" }] },
+          error: { code: -32603, message: "ambiguous" },
+        }),
+      ),
+    ),
+    { serverUrl: "https://mcp.test" },
+  );
+
+  const result = await proxy.callTool(
+    { name: "search", arguments: { query: "placeholder" } },
+    { idempotencyKey: "idem-mcp-ambiguous", createdAt: stamp },
+  );
+
+  assert.equal(result.status, "provider_error");
+  assert.equal("output" in result, false);
 });
 
 test("missing MCP server config fails before provider call", async () => {

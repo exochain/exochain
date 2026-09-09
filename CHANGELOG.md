@@ -25,6 +25,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-08-28 (release candidate; unpublished)
+
+Security-remediation candidate for code-review run 4. This source state is not
+a tag, GitHub Release, registry publication, deployment, or v0.3.0 close.
+
+### Security / Correctness
+
+- Refuses unaudited proof verification and bare mutation authorization paths;
+  preserves constitutional fail-closed enforcement at core and adapter ingress.
+- Uses checked deterministic arithmetic for financial, metering, reconciliation,
+  timestamp, and state-machine boundaries.
+- Removes raw secret extraction and serialization, zeroizes transient secret
+  carriers, and uses one fail-closed cross-platform private-file boundary.
+- Bounds imported evidence, local snapshots, external timestamp responses,
+  coordination work, and primitive WASM inputs before allocation.
+- Redacts external internal-error responses, replaces panicking database row
+  decoding, percent-encodes SDK request components, and aligns collision-resistant
+  decision identifiers across Rust, TypeScript, and Python. For title,
+  description, and proposer strings accepted by all three SDKs, Rust, TypeScript,
+  and Python `DecisionBuilder` use full BLAKE3 over the same canonical CBOR v2
+  decision frame.
+- Keeps LiveSafe remediation in its adjacent, proprietary validation lane with
+  `public_claims_allowed: false` unchanged.
+
+### Release / CI
+
+- Aligns the 32 publishable Rust crates, standalone CGR packages, 158 exact
+  first-party dependency pins, Rust locks, SDKs, WASM, and LLM proxy at `0.2.6`.
+- Binds dry-run artifacts to the workflow-dispatch commit. Live publication also
+  requires an annotated signed `v0.2.6` tag whose verified peeled commit is that
+  same clean checked-out commit.
+- Extends release guards to reject duplicate YAML keys, mutable tag/ref
+  recomputation, signed-tag deletion or retargeting between jobs,
+  source/version skew, dirty Cargo publication, missing checkout permissions,
+  hidden index flags, and lockfile drift. Every final boundary rebinds trusted
+  inputs at step scope, neutralizes shell-startup injection, and executes guard
+  blobs from the immutable dispatch commit with Git replacement objects
+  disabled. Release shells run in privileged, profile-free mode and the guards
+  reject inherited shell functions. They also scrub persisted Git repository,
+  index, object, and configuration controls, resolve Git from the system
+  utility path, anchor source inspection to `GITHUB_WORKSPACE`, and disable
+  fsmonitor and untracked-cache shortcuts. Live tag identity is queried from a
+  fresh directory outside the checkout, using an empty inherited environment,
+  disabled global/system Git configuration, the validated GitHub repository
+  endpoint, and the exact tag-object and peeled-commit refs; checkout remotes
+  and local URL rewrites are never consulted. The signing keyring admits
+  exactly the configured primary and its subkeys, and the actual tag signer's
+  primary fingerprint must match it. Source and live tag identity are rechecked
+  at the final safe point before every release artifact or publication side
+  effect.
+
 ## [0.2.4] - 2026-08-17
 
 Release candidate for the authorization stack. Not an evidence-grade /

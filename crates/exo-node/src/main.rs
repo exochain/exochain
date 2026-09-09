@@ -55,6 +55,7 @@ mod metrics;
 mod network;
 mod passport;
 mod pdp_store;
+mod private_file;
 mod provenance;
 mod reactor;
 mod receipt_dashboard;
@@ -70,8 +71,11 @@ mod zerodentity;
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
+    io::Read,
     net::IpAddr,
+    path::Path,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use clap::Parser;
@@ -1167,11 +1171,9 @@ async fn start_node(
         token_path = %token_path.display(),
         "Admin bearer token generated and written to restrictive file; token material omitted from logs"
     );
-    let bearer_auth = auth::BearerAuth {
-        token: Arc::new(admin_token),
-    };
+    let bearer_auth = auth::BearerAuth::from_bearer(admin_token.as_str());
     let mut scoped_bearer_auth = livesafe_public_output_scoped_bearer_from_config(
-        bearer_auth.token.as_str(),
+        admin_token.as_str(),
         optional_scoped_bearer_from_env(
             EXOCHAIN_LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_BEARER_ENV,
         )?,
@@ -1184,9 +1186,11 @@ async fn start_node(
         );
     }
 
-    let crosschecked_anchor_router = match crosschecked_anchor_startup_config_from_environment(
-        bearer_auth.token.as_str(),
-    )? {
+    let crosschecked_anchor_config =
+        crosschecked_anchor_startup_config_from_environment(admin_token.as_str())?;
+    drop(admin_token);
+
+    let crosschecked_anchor_router = match crosschecked_anchor_config {
         Some(config) => {
             let persistence_dir = data_dir.join("crosschecked_anchor");
             std::fs::create_dir_all(&persistence_dir).map_err(|error| {
@@ -1434,10 +1438,18 @@ async fn start_node(
         }
     });
     let request_persist_dir = data_dir.to_path_buf();
-    let pdp_router = exo_pdp::http::pdp_router_with_persistence(shared_pdp, move |pdp| {
-        pdp_store::save(&request_persist_dir, pdp)
-            .map_err(|error| exo_pdp::PdpError::Persistence(error.to_string()))
+    let pdp_bearer_auth = bearer_auth.clone();
+    let pdp_authorizer = exo_pdp::http::PdpMutationAuthorizer::new(move |headers| {
+        pdp_bearer_auth.verify_headers(headers).is_ok()
     });
+    let pdp_router = exo_pdp::http::pdp_router_with_authorized_persistence(
+        shared_pdp,
+        pdp_authorizer,
+        move |pdp| {
+            pdp_store::save(&request_persist_dir, pdp)
+                .map_err(|error| exo_pdp::PdpError::Persistence(error.to_string()))
+        },
+    );
 
     let mut extra_router = metrics_router
         .merge(governance_router)
@@ -1697,13 +1709,120 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     }
 }
 
+fn read_bounded_file(path: &Path, max_bytes: usize, label: &str) -> anyhow::Result<Vec<u8>> {
+    let file = std::fs::File::open(path)
+        .map_err(|error| anyhow::anyhow!("{label} open failed for {}: {error}", path.display()))?;
+    let metadata = file.metadata().map_err(|error| {
+        anyhow::anyhow!("{label} metadata failed for {}: {error}", path.display())
+    })?;
+    if metadata.len() > u64::try_from(max_bytes)? {
+        anyhow::bail!(
+            "{label} file {} size exceeds {max_bytes} bytes",
+            path.display()
+        );
+    }
+    read_at_most(file, max_bytes, label)
+        .map_err(|error| anyhow::anyhow!("{label} read failed for {}: {error}", path.display()))
+}
+
+fn read_at_most(reader: impl Read, max_bytes: usize, label: &str) -> anyhow::Result<Vec<u8>> {
+    let limit_plus_one = max_bytes
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("{label} byte limit overflow"))?;
+    let mut bounded = reader.take(u64::try_from(limit_plus_one)?);
+    let mut bytes = Vec::new();
+    bounded.read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        anyhow::bail!("{label} exceeds {max_bytes} bytes");
+    }
+    Ok(bytes)
+}
+
+fn bounded_http_client(timeout: Duration, label: &str) -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|error| anyhow::anyhow!("{label} construction failed: {error}"))
+}
+
+async fn send_bounded_http_request(
+    request: reqwest::RequestBuilder,
+    max_bytes: usize,
+    label: &str,
+) -> anyhow::Result<(reqwest::StatusCode, Vec<u8>)> {
+    let response = request.send().await.map_err(|error| {
+        if error.is_timeout() {
+            anyhow::anyhow!("{label} request failed: request timed out")
+        } else {
+            anyhow::anyhow!("{label} request failed: {error}")
+        }
+    })?;
+    let status = response.status();
+    let body = read_bounded_http_body(response, max_bytes, label).await?;
+    Ok((status, body))
+}
+
+async fn read_bounded_http_body(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+    label: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let max_bytes_u64 = u64::try_from(max_bytes)?;
+    if response
+        .content_length()
+        .is_some_and(|content_length| content_length > max_bytes_u64)
+    {
+        anyhow::bail!("{label} Content-Length exceeds {max_bytes} bytes");
+    }
+
+    let limit_plus_one = max_bytes
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("{label} byte limit overflow"))?;
+    let initial_capacity = response
+        .content_length()
+        .and_then(|content_length| usize::try_from(content_length).ok())
+        .map_or(0, |content_length| content_length.min(max_bytes));
+    let mut body = Vec::new();
+    body.try_reserve_exact(initial_capacity)
+        .map_err(|error| anyhow::anyhow!("{label} allocation failed: {error}"))?;
+
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        if error.is_timeout() {
+            anyhow::anyhow!("{label} body read failed: request timed out")
+        } else {
+            anyhow::anyhow!("{label} body read failed: {error}")
+        }
+    })? {
+        let remaining = limit_plus_one
+            .checked_sub(body.len())
+            .ok_or_else(|| anyhow::anyhow!("{label} byte accounting underflow"))?;
+        let accepted = chunk.len().min(remaining);
+        body.try_reserve_exact(accepted)
+            .map_err(|error| anyhow::anyhow!("{label} allocation failed: {error}"))?;
+        body.extend_from_slice(&chunk[..accepted]);
+        if body.len() > max_bytes {
+            anyhow::bail!("{label} exceeds {max_bytes} bytes");
+        }
+    }
+
+    Ok(body)
+}
+
+fn read_evidence_pack(path: &Path) -> anyhow::Result<Vec<u8>> {
+    read_bounded_file(
+        path,
+        exo_pdp::MAX_EVIDENCE_PACK_JSON_BYTES,
+        "evidence pack JSON",
+    )
+}
+
 fn run_pdp(command: cli::PdpCommand) -> anyhow::Result<()> {
     match command {
         cli::PdpCommand::Verify {
             pack,
             service_public_key,
         } => {
-            let bytes = std::fs::read(&pack)?;
+            let bytes = read_evidence_pack(&pack)?;
             let pack = exo_pdp::EvidencePack::from_json(&bytes)?;
             let expected_key = exo_pdp::pack::parse_public_key_hex(&service_public_key)?;
             pack.verify_with_key(&expected_key)?;
@@ -1720,7 +1839,7 @@ fn run_pdp(command: cli::PdpCommand) -> anyhow::Result<()> {
             Ok(())
         }
         cli::PdpCommand::Inspect { pack } => {
-            let bytes = std::fs::read(&pack)?;
+            let bytes = read_evidence_pack(&pack)?;
             let pack = exo_pdp::EvidencePack::from_json(&bytes)?;
             println!("unverified:           true");
             println!("spec:                 {}", pack.spec);
@@ -1740,10 +1859,213 @@ fn run_pdp(command: cli::PdpCommand) -> anyhow::Result<()> {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
+    use std::{
+        io::{Cursor, Write},
+        time::Duration,
+    };
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     use super::*;
 
     fn local_node_did() -> Did {
         Did::new("did:exo:local").unwrap()
+    }
+
+    async fn response_from_raw_http(raw: Vec<u8>) -> reqwest::Response {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind raw response listener");
+        let address = listener.local_addr().expect("raw response address");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await.expect("read request");
+            stream.write_all(&raw).await.expect("write raw response");
+            stream.shutdown().await.expect("close raw response");
+        });
+        reqwest::Client::new()
+            .get(format!("http://{address}/fixture"))
+            .send()
+            .await
+            .expect("receive raw response")
+    }
+
+    #[tokio::test]
+    async fn bounded_http_reader_accepts_exact_limit_and_rejects_chunked_limit_plus_one() {
+        let exact = response_from_raw_http(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n8\r\n12345678\r\n0\r\n\r\n"
+                .to_vec(),
+        )
+        .await;
+        assert_eq!(
+            read_bounded_http_body(exact, 8, "fixture response")
+                .await
+                .expect("exact response limit"),
+            b"12345678"
+        );
+
+        let oversized = response_from_raw_http(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n8\r\n12345678\r\n1\r\n9\r\n0\r\n\r\n"
+                .to_vec(),
+        )
+        .await;
+        let error = read_bounded_http_body(oversized, 8, "fixture response")
+            .await
+            .expect_err("chunked response limit plus one");
+        assert_eq!(error.to_string(), "fixture response exceeds 8 bytes");
+    }
+
+    #[tokio::test]
+    async fn bounded_http_reader_rejects_declared_oversize_before_collecting_body() {
+        let response = response_from_raw_http(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\n123456789".to_vec(),
+        )
+        .await;
+        let error = read_bounded_http_body(response, 8, "fixture response")
+            .await
+            .expect_err("oversized content length");
+        assert_eq!(
+            error.to_string(),
+            "fixture response Content-Length exceeds 8 bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_http_client_times_out_a_slow_response_body() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind slow response listener");
+        let address = listener.local_addr().expect("slow response address");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept slow request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await.expect("read slow request");
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n")
+                .await
+                .expect("write partial slow response");
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+        let client = bounded_http_client(Duration::from_millis(25), "fixture client")
+            .expect("build bounded client");
+        let response = client
+            .get(format!("http://{address}/fixture"))
+            .send()
+            .await
+            .expect("receive response headers");
+        let error = read_bounded_http_body(response, 8, "fixture response")
+            .await
+            .expect_err("slow body must time out");
+        assert!(
+            error
+                .to_string()
+                .contains("fixture response body read failed")
+        );
+        assert!(error.to_string().contains("timed out"));
+    }
+
+    #[test]
+    fn security_ceremony_adapters_use_bounded_network_and_file_readers() {
+        let root_genesis = include_str!("root_genesis_cli.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("root genesis production source");
+        assert_eq!(root_genesis.matches("bounded_http_client(").count(), 2);
+        assert_eq!(
+            root_genesis.matches("send_bounded_http_request(").count(),
+            2
+        );
+        assert!(root_genesis.contains("read_bounded_file"));
+        assert_eq!(root_genesis.matches(".bytes()").count(), 1);
+
+        let livesafe = include_str!("livesafe_public_output_ceremony_cli.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("LiveSafe ceremony production source");
+        assert_eq!(livesafe.matches("bounded_http_client(").count(), 1);
+        assert_eq!(livesafe.matches("send_bounded_http_request(").count(), 1);
+        assert!(livesafe.contains("read_bounded_file"));
+        assert!(livesafe.contains("read_private_file"));
+        assert_eq!(livesafe.matches(".bytes()").count(), 0);
+
+        for source in [root_genesis, livesafe] {
+            for forbidden in [
+                ".send()",
+                ".text()",
+                ".bytes_stream()",
+                ".copy_to(",
+                "reqwest::",
+                "fs::read",
+                "File::open(",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "ceremony adapter contains direct I/O token {forbidden}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_file_open_errors_identify_the_input_and_path() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let missing = directory.path().join("missing-ceremony-input.json");
+        let error = read_bounded_file(&missing, 8, "LiveSafe ceremony JSON input")
+            .expect_err("missing ceremony input must fail");
+        let message = error.to_string();
+        assert!(message.contains("LiveSafe ceremony JSON input"));
+        assert!(message.contains(&missing.display().to_string()));
+    }
+
+    #[test]
+    fn evidence_pack_stream_reader_checks_limit_plus_one_authoritatively() {
+        assert_eq!(
+            read_at_most(Cursor::new(vec![0_u8; 16]), 16, "fixture")
+                .expect("exact stream limit")
+                .len(),
+            16
+        );
+        let error = read_at_most(Cursor::new(vec![0_u8; 17]), 16, "fixture")
+            .expect_err("stream limit plus one");
+        assert!(error.to_string().contains("exceeds"));
+    }
+
+    #[test]
+    fn oversized_evidence_pack_is_rejected_by_verify_and_inspect_commands() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let path = fixture.path().join("evidence-pack.json");
+        let keypair = exo_core::crypto::KeyPair::generate();
+        let pack = exo_pdp::EvidencePack::from_log(&exo_pdp::EvidenceLog::new(), &keypair)
+            .expect("signed evidence pack");
+        let mut json = pack.to_json().expect("evidence JSON");
+        json.resize(16_777_216, b' ');
+        std::fs::write(&path, json).expect("exact-limit evidence pack");
+        let public_key = hex::encode(keypair.public_key().as_bytes());
+
+        run_pdp(cli::PdpCommand::Verify {
+            pack: path.clone(),
+            service_public_key: public_key.clone(),
+        })
+        .expect("verify exact-limit evidence pack");
+        run_pdp(cli::PdpCommand::Inspect { pack: path.clone() })
+            .expect("inspect exact-limit evidence pack");
+
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open evidence pack")
+            .write_all(b" ")
+            .expect("append limit plus one");
+        let verify_error = run_pdp(cli::PdpCommand::Verify {
+            pack: path.clone(),
+            service_public_key: public_key,
+        })
+        .expect_err("verify command must reject limit plus one");
+        assert!(verify_error.to_string().contains("exceeds"));
+        let inspect_error = run_pdp(cli::PdpCommand::Inspect { pack: path })
+            .expect_err("inspect command must reject limit plus one");
+        assert!(inspect_error.to_string().contains("exceeds"));
     }
 
     #[test]
@@ -2127,7 +2449,7 @@ mod tests {
         );
         assert!(
             production.contains("spawn_critical(\"PDP state persistence\"")
-                && production.contains("pdp_router_with_persistence"),
+                && production.contains("pdp_router_with_authorized_persistence"),
             "PDP state must be synchronously durable and supervised"
         );
     }

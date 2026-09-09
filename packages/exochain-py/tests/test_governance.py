@@ -48,7 +48,8 @@ def test_builder_creates_decision() -> None:
     assert d.proposer == PROPOSER
     assert d.status == DecisionStatus.PROPOSED
     assert d.votes == []
-    assert len(d.decision_id) == 16
+    assert len(d.decision_id) == 64
+    assert all(character in "0123456789abcdef" for character in d.decision_id)
 
 
 def test_decision_id_is_deterministic() -> None:
@@ -56,6 +57,69 @@ def test_decision_id_is_deterministic() -> None:
     a = DecisionBuilder("t", "d", PROPOSER).build()
     b = DecisionBuilder("t", "d", PROPOSER).build()
     assert a.decision_id == b.decision_id
+
+
+def test_decision_id_frames_delimiter_collision_inputs() -> None:
+    """NUL-containing fields cannot alias a different title/description split."""
+    a = DecisionBuilder("a", "b\0c", "did:exo:alice").build()
+    b = DecisionBuilder("a\0b", "c", "did:exo:alice").build()
+
+    assert a.decision_id != b.decision_id
+    assert len(a.decision_id) == 64
+    assert len(b.decision_id) == 64
+
+
+def test_decision_id_matches_literal_unicode_cross_language_fixture() -> None:
+    """Python emits the same canonical-CBOR/BLAKE3 ID as the Rust and TypeScript SDKs."""
+    decision = DecisionBuilder("Budget 🛡️", "Allocate 10 EXO", "did:exo:alice").build()
+
+    assert (
+        decision.decision_id == "ea4c36142a07f33ee7d008831c2417d502efbcfa1573a46b6d4ee6a51ccbaf53"
+    )
+
+
+@pytest.mark.parametrize(
+    ("description_length", "expected"),
+    [
+        (0, "0a400b4d15d70e56088d1138dc233df9882be32d62a54c69ee7ef0a5dc121d81"),
+        (23, "8c812e872cfc8cdea78aa2d395e176b11e8f7c680dbaa7e0bad7a58430262ba1"),
+        (24, "27affb4c9f114538bad5203ac2761ffadacc535c33e25ff2762e8043ba5942c5"),
+        (255, "24ddff9f6fdbeaea835a8d50aa9f2f16a8650bd7f7aea3b4b323dda7fbbd249c"),
+        (256, "a8a1247de117fa9b5049eb9dc8a48894798df8126c186b1d919951beb7f13730"),
+        (65_535, "6e79ec72edce29ff75a8ca91c04d5e91e84983de2fe29e25395c254057937cd5"),
+        (65_536, "34397f6a475fe08dced0957006954f9725bfa478bd35c67abe411f5dc0553434"),
+    ],
+)
+def test_decision_id_matches_cbor_text_length_boundary_vectors(
+    description_length: int, expected: str
+) -> None:
+    """Canonical CBOR length headers match the committed Rust/TypeScript vectors."""
+    decision = DecisionBuilder("Boundary", "x" * description_length, "did:exo:alice").build()
+
+    assert decision.decision_id == expected
+
+
+def test_decision_id_rejects_ill_formed_unicode() -> None:
+    """An isolated surrogate cannot alias Unicode replacement text during hashing."""
+    with pytest.raises(GovernanceError, match="well-formed Unicode"):
+        DecisionBuilder("\ud800", "d", "did:exo:alice").build()
+
+
+def test_decision_id_hashes_str_subclass_contents_without_dispatching_encode() -> None:
+    """A str subclass cannot substitute bytes that differ from its stored text value."""
+
+    class AliasedEncoding(str):
+        def encode(self, *_args: object, **_kwargs: object) -> bytes:
+            return b"same-attacker-bytes"
+
+    first = DecisionBuilder(AliasedEncoding("first title"), "d", "did:exo:alice").build()
+    second = DecisionBuilder(AliasedEncoding("second title"), "d", "did:exo:alice").build()
+    canonical_first = DecisionBuilder("first title", "d", "did:exo:alice").build()
+
+    assert first.title == "first title"
+    assert second.title == "second title"
+    assert first.decision_id == canonical_first.decision_id
+    assert first.decision_id != second.decision_id
 
 
 def test_builder_rejects_empty_title() -> None:

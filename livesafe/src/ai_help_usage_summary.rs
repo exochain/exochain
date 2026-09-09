@@ -32,7 +32,7 @@ pub struct HelpUsageSummary {
 }
 
 pub fn summarize_help_usage(sessions: &[HelpUsageSessionRecord], now: i64) -> HelpUsageSummary {
-    let window_started_at = now - SEVEN_DAY_WINDOW_MS + 1;
+    let window_started_at = seven_day_window_start(now);
     let mut outcome_counts = BTreeMap::<HelpAiSessionOutcome, u32>::new();
     let mut topic_counts = BTreeMap::<String, u32>::new();
     let mut question_counts = BTreeMap::<String, u32>::new();
@@ -44,17 +44,21 @@ pub fn summarize_help_usage(sessions: &[HelpUsageSessionRecord], now: i64) -> He
             continue;
         }
 
-        total_sessions += 1;
-        generated_feedback_count += session.generated_feedback_count;
-        *outcome_counts.entry(session.outcome).or_default() += 1;
+        total_sessions = total_sessions.saturating_add(1);
+        generated_feedback_count =
+            generated_feedback_count.saturating_add(session.generated_feedback_count);
+        let outcome_count = outcome_counts.entry(session.outcome).or_default();
+        *outcome_count = saturating_count_add(*outcome_count, 1);
 
         let normalized_question = normalize_question(&session.normalized_question);
         if !normalized_question.is_empty() {
-            *question_counts.entry(normalized_question).or_default() += 1;
+            let question_count = question_counts.entry(normalized_question).or_default();
+            *question_count = saturating_count_add(*question_count, 1);
         }
 
         for topic_id in &session.cited_topic_ids {
-            *topic_counts.entry(topic_id.clone()).or_default() += 1;
+            let topic_count = topic_counts.entry(topic_id.clone()).or_default();
+            *topic_count = saturating_count_add(*topic_count, 1);
         }
     }
 
@@ -108,8 +112,8 @@ fn topic_counts_for_outcomes(
     topic_id: &str,
     outcomes: &[HelpAiSessionOutcome],
 ) -> u32 {
-    let window_started_at = now - SEVEN_DAY_WINDOW_MS + 1;
-    sessions
+    let window_started_at = seven_day_window_start(now);
+    let count = sessions
         .iter()
         .filter(|session| session.created_at >= window_started_at && session.created_at <= now)
         .filter(|session| outcomes.contains(&session.outcome))
@@ -119,7 +123,20 @@ fn topic_counts_for_outcomes(
                 .iter()
                 .any(|entry| entry == topic_id)
         })
-        .count() as u32
+        .count();
+    summary_count(count)
+}
+
+fn seven_day_window_start(now: i64) -> i64 {
+    now.saturating_sub(SEVEN_DAY_WINDOW_MS).saturating_add(1)
+}
+
+fn summary_count(count: usize) -> u32 {
+    u32::try_from(count).unwrap_or(u32::MAX)
+}
+
+fn saturating_count_add(left: u32, right: u32) -> u32 {
+    left.saturating_add(right)
 }
 
 fn normalize_question(input: &str) -> String {
@@ -129,4 +146,21 @@ fn normalize_question(input: &str) -> String {
         .map(|term| term.to_ascii_lowercase())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn map_counter_overflow_saturates_at_u32_max() {
+        assert_eq!(super::saturating_count_add(u32::MAX, 1), u32::MAX);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn collection_count_overflow_saturates_at_u32_max() {
+        let first_unrepresentable =
+            usize::try_from(u64::from(u32::MAX) + 1).expect("64-bit usize represents u32::MAX + 1");
+
+        assert_eq!(super::summary_count(first_unrepresentable), u32::MAX);
+    }
 }

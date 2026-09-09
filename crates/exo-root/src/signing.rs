@@ -1,14 +1,20 @@
 //! Threshold root signing helpers.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 use exo_core::Hash256;
 use frost_ristretto255 as frost;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use crate::{
     GenesisCeremonyConfig, Result, RootError, RootKeyPackage, RootPublicKeyPackage,
-    dkg::{deserialize_frost, serialize_frost},
+    dkg::{
+        deserialize_frost, deserialize_zeroizing_bytes, serialize_frost, serialize_frost_secret,
+    },
 };
 
 /// Serialized threshold signature over a root artifact.
@@ -47,6 +53,29 @@ pub fn threshold_sign<R>(
     config: &GenesisCeremonyConfig,
     public_key_package: &RootPublicKeyPackage,
     shares: BTreeMap<u16, RootKeyPackage>,
+    message: &[u8],
+    rng: &mut R,
+) -> Result<RootSignature>
+where
+    R: frost::rand_core::RngCore + frost::rand_core::CryptoRng,
+{
+    let shares = shares
+        .into_iter()
+        .map(|(identifier, share)| (identifier, Zeroizing::new(share)))
+        .collect();
+    threshold_sign_zeroizing(config, public_key_package, shares, message, rng)
+}
+
+/// Sign from already guarded private key packages, retaining drop cleanup on
+/// every validation or signing error and after successful signing.
+///
+/// Private ceremony tooling should deserialize map values into [`Zeroizing`]
+/// before calling this entry point. The legacy [`threshold_sign`] entry point
+/// keeps its caller-owned map signature and guards all shares before delegating.
+pub fn threshold_sign_zeroizing<R>(
+    config: &GenesisCeremonyConfig,
+    public_key_package: &RootPublicKeyPackage,
+    shares: BTreeMap<u16, Zeroizing<RootKeyPackage>>,
     message: &[u8],
     rng: &mut R,
 ) -> Result<RootSignature>
@@ -162,7 +191,7 @@ pub struct RootSigningCommitment {
 /// secret key share. It derives `Serialize`/`Deserialize` only so a signer can
 /// persist it to a `0600` local file between `sign_commit` and `sign_share`; the
 /// distinct type name keeps it from being confused with relay-safe data.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 pub struct RootSigningNonces {
     /// Owner's FROST identifier.
     pub frost_identifier: u16,
@@ -180,7 +209,21 @@ pub struct RootSigningNonces {
     /// the signing package.
     pub commitment_hash: Hash256,
     /// Serialized secret signing nonces (retained by the signer; never shared).
-    pub nonces: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_zeroizing_bytes")]
+    pub nonces: Zeroizing<Vec<u8>>,
+}
+
+impl fmt::Debug for RootSigningNonces {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RootSigningNonces")
+            .field("frost_identifier", &self.frost_identifier)
+            .field("ceremony_id", &self.ceremony_id)
+            .field("artifact_hash", &self.artifact_hash)
+            .field("commitment_hash", &self.commitment_hash)
+            .field("nonces", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// blake3 of a signer's serialized public commitment, used to bind nonces to the
@@ -276,7 +319,7 @@ where
         ceremony_id: config.ceremony_id.clone(),
         artifact_hash: Hash256::digest(artifact),
         commitment_hash: commitment_hash(commitment_bytes.as_slice()),
-        nonces: serialize_frost(&nonces)?,
+        nonces: serialize_frost_secret(&nonces)?,
     };
     Ok((commitment, signing_nonces))
 }
@@ -437,9 +480,128 @@ pub fn aggregate_signature(
 mod tests {
     use exo_core::{Did, Hash256, PublicKey, Timestamp};
     use rand::{SeedableRng, rngs::StdRng};
+    use serde::Serialize;
 
     use super::*;
     use crate::CertifierContact;
+
+    #[derive(Serialize)]
+    struct LegacySigningNonces<'a> {
+        frost_identifier: u16,
+        ceremony_id: &'a String,
+        artifact_hash: Hash256,
+        commitment_hash: Hash256,
+        nonces: &'a Vec<u8>,
+    }
+
+    fn cbor_bytes(value: &impl Serialize) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        ciborium::into_writer(value, &mut bytes).expect("CBOR encoding");
+        bytes
+    }
+
+    fn assert_zeroizing_carrier<T: zeroize::Zeroize + zeroize::ZeroizeOnDrop>(_: &T) {}
+
+    #[test]
+    fn secret_signing_nonce_bytes_zeroize_on_drop() {
+        let nonces = RootSigningNonces {
+            frost_identifier: 7,
+            ceremony_id: "root-secret-zeroize-v1".to_owned(),
+            artifact_hash: Hash256::digest(b"artifact"),
+            commitment_hash: Hash256::digest(b"commitment"),
+            nonces: Zeroizing::new(vec![0xde, 0xad, 0xfa, 0xce]),
+        };
+
+        assert_zeroizing_carrier(&nonces.nonces);
+    }
+
+    #[test]
+    fn secret_signing_nonce_debug_is_redacted_and_wire_compatible() {
+        let secret = vec![0xde, 0xad, 0xfa, 0xce];
+        let ceremony_id = "root-secret-wire-v1".to_owned();
+        let artifact_hash = Hash256::digest(b"artifact");
+        let commitment_hash = Hash256::digest(b"commitment");
+        let nonces = RootSigningNonces {
+            frost_identifier: 7,
+            ceremony_id: ceremony_id.clone(),
+            artifact_hash,
+            commitment_hash,
+            nonces: Zeroizing::new(secret.clone()),
+        };
+        let rendered = format!("{nonces:?}");
+        assert!(
+            rendered.contains("[REDACTED]"),
+            "signing nonce debug output must visibly redact: {rendered}"
+        );
+        assert!(
+            !rendered.contains(&format!("{secret:?}")),
+            "signing nonce debug output exposed fixture bytes: {rendered}"
+        );
+
+        let legacy = LegacySigningNonces {
+            frost_identifier: 7,
+            ceremony_id: &ceremony_id,
+            artifact_hash,
+            commitment_hash,
+            nonces: &secret,
+        };
+        assert_eq!(
+            serde_json::to_vec(&nonces).expect("nonce JSON"),
+            serde_json::to_vec(&legacy).expect("legacy nonce JSON")
+        );
+        assert_eq!(cbor_bytes(&nonces), cbor_bytes(&legacy));
+    }
+
+    #[test]
+    fn secret_signing_nonce_deserializer_rejects_partial_json_and_cbor() {
+        let malformed = serde_json::json!({
+            "frost_identifier": 7,
+            "ceremony_id": "root-secret-malformed-v1",
+            "artifact_hash": Hash256::digest(b"artifact"),
+            "commitment_hash": Hash256::digest(b"commitment"),
+            "nonces": [1, 2, "bad"]
+        });
+        let json = serde_json::to_vec(&malformed).expect("malformed JSON fixture");
+        assert!(serde_json::from_slice::<RootSigningNonces>(&json).is_err());
+        let encoded = cbor_bytes(&malformed);
+        assert!(ciborium::from_reader::<RootSigningNonces, _>(encoded.as_slice()).is_err());
+    }
+
+    #[test]
+    fn public_signing_artifacts_keep_debug_and_wire_round_trips() {
+        let commitment = RootSigningCommitment {
+            frost_identifier: 7,
+            commitments: vec![1, 2, 3, 4],
+        };
+        let share = RootSignatureShareOutput {
+            frost_identifier: 7,
+            signature_share: vec![5, 6, 7, 8],
+        };
+        let commitment_json = serde_json::to_vec(&commitment).expect("commitment JSON");
+        let share_json = serde_json::to_vec(&share).expect("share JSON");
+        assert!(format!("{commitment:?}").contains("commitments"));
+        assert!(format!("{share:?}").contains("signature_share"));
+        assert_eq!(
+            serde_json::from_slice::<RootSigningCommitment>(&commitment_json)
+                .expect("commitment JSON round trip"),
+            commitment
+        );
+        assert_eq!(
+            serde_json::from_slice::<RootSignatureShareOutput>(&share_json)
+                .expect("share JSON round trip"),
+            share
+        );
+        assert_eq!(
+            ciborium::from_reader::<RootSigningCommitment, _>(cbor_bytes(&commitment).as_slice())
+                .expect("commitment CBOR round trip"),
+            commitment
+        );
+        assert_eq!(
+            ciborium::from_reader::<RootSignatureShareOutput, _>(cbor_bytes(&share).as_slice())
+                .expect("share CBOR round trip"),
+            share
+        );
+    }
 
     fn test_config() -> GenesisCeremonyConfig {
         let certifiers = (1..=13)
@@ -527,22 +689,40 @@ mod tests {
     fn threshold_sign_covers_success_and_share_mismatch_paths() {
         let config = test_config();
         let mut rng = StdRng::seed_from_u64(71);
-        let dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
-        let selected: BTreeMap<u16, _> = dkg
-            .key_packages
-            .iter()
-            .take(7)
-            .map(|(identifier, share)| (*identifier, share.clone()))
+        let mut dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
+        let selected: BTreeMap<u16, _> = (1..=7)
+            .map(|identifier| {
+                let share = dkg.key_packages.remove(&identifier).expect("key package");
+                (identifier, share)
+            })
             .collect();
         let message = b"unit root signing artifact";
+        let guarded = selected
+            .clone()
+            .into_iter()
+            .map(|(identifier, share)| (identifier, Zeroizing::new(share)))
+            .collect();
+        let mut guarded_rng = rng.clone();
         let signature = threshold_sign(
             &config,
             &dkg.public_key_package,
-            selected.clone(),
+            selected,
             message,
             &mut rng,
         )
         .expect("signature");
+        let guarded_signature = threshold_sign_zeroizing(
+            &config,
+            &dkg.public_key_package,
+            guarded,
+            message,
+            &mut guarded_rng,
+        )
+        .expect("guarded signature");
+        assert_eq!(
+            guarded_signature, signature,
+            "guarded entrypoint preserves exact signature"
+        );
 
         verify_root_signature(
             &dkg.public_key_package.root_public_key,
@@ -551,13 +731,23 @@ mod tests {
         )
         .expect("signature verifies");
 
-        let mut mismatched = selected;
+        let mut second_rng = StdRng::seed_from_u64(71);
+        let mut second_dkg = crate::run_complete_dkg(&config, &mut second_rng).expect("second dkg");
+        let mut mismatched: BTreeMap<u16, _> = (1..=7)
+            .map(|identifier| {
+                let share = second_dkg
+                    .key_packages
+                    .remove(&identifier)
+                    .expect("key package");
+                (identifier, share)
+            })
+            .collect();
         let mut share = mismatched.remove(&1).expect("share one");
         share.frost_identifier = 2;
         mismatched.insert(1, share);
         let error = threshold_sign(
             &config,
-            &dkg.public_key_package,
+            &second_dkg.public_key_package,
             mismatched,
             message,
             &mut rng,
@@ -607,7 +797,7 @@ mod tests {
             .key_packages
             .iter()
             .take(7)
-            .map(|(id, kp)| (*id, kp.clone()))
+            .map(|(id, kp)| (*id, kp))
             .collect();
 
         // Round one: each signer commits locally; only commitments are shared.
@@ -679,7 +869,13 @@ mod tests {
         let dkg = crate::run_complete_dkg(&config, &mut rng).expect("dkg");
 
         // sign_commit rejects an unrostered key package.
-        let mut stranger = dkg.key_packages[&1].clone();
+        let mut stranger_rng = StdRng::seed_from_u64(123);
+        let mut stranger_dkg =
+            crate::run_complete_dkg(&config, &mut stranger_rng).expect("stranger dkg");
+        let mut stranger = stranger_dkg
+            .key_packages
+            .remove(&1)
+            .expect("key package one");
         stranger.frost_identifier = 99;
         assert!(matches!(
             sign_commit(&config, &stranger, b"msg", &mut rng).expect_err("unrostered commit"),
@@ -765,7 +961,7 @@ mod tests {
             ceremony_id: config.ceremony_id.clone(),
             artifact_hash: Hash256::digest(b"artifact"),
             commitment_hash: Hash256::digest(b"unrelated commitment"),
-            nonces: Vec::new(),
+            nonces: Vec::new().into(),
         };
         let empty_package = RootSigningPackage {
             signing_package: Vec::new(),
@@ -796,7 +992,7 @@ mod tests {
             ceremony_id: "some-other-ceremony".to_owned(),
             artifact_hash: Hash256::digest(b"artifact"),
             commitment_hash: Hash256::digest(b"unrelated commitment"),
-            nonces: Vec::new(),
+            nonces: Vec::new().into(),
         };
         let empty_package = RootSigningPackage {
             signing_package: Vec::new(),

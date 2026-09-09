@@ -676,7 +676,8 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+  // Record metadata uses flat fields; never permit large indexed arrays.
+  limits: { fileSize: 50 * 1024 * 1024, fieldArrayIndexLimit: 0 }, // 50MB limit
   fileFilter: (req, file, cb) => {
     const allowedTypes = [
       'application/pdf',

@@ -20,7 +20,11 @@
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Serialize,
+    de::{SeqAccess, Visitor},
+};
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::error::IdentityError;
 
@@ -87,8 +91,70 @@ impl ShamirConfig {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Share {
     pub index: u8,
-    pub data: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_share_data")]
+    pub data: Zeroizing<Vec<u8>>,
     pub commitment: [u8; 32],
+}
+
+fn grow_zeroizing_share_data<E>(bytes: &mut Zeroizing<Vec<u8>>) -> Result<(), E>
+where
+    E: serde::de::Error,
+{
+    const MAX_CAPACITY: usize = usize::MAX / 2;
+
+    let current_capacity = bytes.capacity();
+    let next_capacity = current_capacity
+        .checked_mul(2)
+        .unwrap_or(MAX_CAPACITY)
+        .clamp(1, MAX_CAPACITY);
+    if next_capacity <= current_capacity {
+        return Err(E::custom("Shamir share data exceeds supported capacity"));
+    }
+
+    let mut replacement = Zeroizing::new(Vec::new());
+    replacement
+        .try_reserve_exact(next_capacity)
+        .map_err(|_| E::custom("unable to allocate Shamir share data"))?;
+    replacement.extend_from_slice(bytes.as_slice());
+    bytes.zeroize();
+    *bytes = replacement;
+    Ok(())
+}
+
+fn deserialize_share_data<'de, D>(deserializer: D) -> Result<Zeroizing<Vec<u8>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct ShareDataVisitor;
+
+    impl<'de> Visitor<'de> for ShareDataVisitor {
+        type Value = Zeroizing<Vec<u8>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a sequence of Shamir share bytes")
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            const MAX_INITIAL_CAPACITY: usize = 4096;
+            let initial_capacity = sequence.size_hint().unwrap_or(0).min(MAX_INITIAL_CAPACITY);
+            let mut bytes = Zeroizing::new(Vec::new());
+            bytes.try_reserve_exact(initial_capacity).map_err(|_| {
+                <A::Error as serde::de::Error>::custom("unable to allocate Shamir share data")
+            })?;
+            while let Some(byte) = sequence.next_element::<u8>()? {
+                if bytes.len() == bytes.capacity() {
+                    grow_zeroizing_share_data::<A::Error>(&mut bytes)?;
+                }
+                bytes.push(byte);
+            }
+            Ok(bytes)
+        }
+    }
+
+    deserializer.deserialize_seq(ShareDataVisitor)
 }
 
 impl fmt::Debug for Share {
@@ -130,39 +196,55 @@ pub fn split_with_entropy(
     let k: usize = config.threshold.into();
     let n: usize = config.shares.into();
 
-    let mut shares: Vec<Share> = (1..=n)
-        .map(|i| {
-            let index = u8::try_from(i).map_err(|_| IdentityError::InvalidShamirConfig {
-                threshold: config.threshold,
-                shares: config.shares,
-            })?;
-            Ok(Share {
-                index,
-                data: Vec::with_capacity(secret.len()),
-                commitment,
-            })
-        })
-        .collect::<Result<Vec<_>, IdentityError>>()?;
+    let mut shares: Vec<Share> = Vec::with_capacity(n);
+    for i in 1..=n {
+        let index = match u8::try_from(i) {
+            Ok(index) => index,
+            Err(_) => {
+                for share in &mut shares {
+                    share.data.zeroize();
+                }
+                return Err(IdentityError::InvalidShamirConfig {
+                    threshold: config.threshold,
+                    shares: config.shares,
+                });
+            }
+        };
+        shares.push(Share {
+            index,
+            data: Zeroizing::new(Vec::with_capacity(secret.len())),
+            commitment,
+        });
+    }
 
     for (byte_idx, &secret_byte) in secret.iter().enumerate() {
-        let mut coeffs = vec![0u8; k];
+        let mut coeffs = Zeroizing::new(vec![0u8; k]);
         coeffs[0] = secret_byte;
-        for (coeff_idx, coeff) in coeffs.iter_mut().enumerate().skip(1) {
-            *coeff = derive_shamir_coefficient(
+        for coeff_idx in 1..k {
+            coeffs[coeff_idx] = match derive_shamir_coefficient(
                 entropy,
                 secret,
                 &commitment,
                 config,
                 byte_idx,
                 coeff_idx,
-            )?;
+            ) {
+                Ok(coefficient) => coefficient,
+                Err(error) => {
+                    coeffs.zeroize();
+                    for share in &mut shares {
+                        share.data.zeroize();
+                    }
+                    return Err(error);
+                }
+            };
         }
 
         for share in shares.iter_mut() {
             let x = share.index;
             let mut y: u8 = 0;
             let mut x_pow: u8 = 1;
-            for &c in &coeffs {
+            for &c in coeffs.iter() {
                 y ^= gf256_mul(c, x_pow);
                 x_pow = gf256_mul(x_pow, x);
             }
@@ -297,8 +379,11 @@ fn interpolate_byte_at(shares: &[Share], byte_idx: usize, x: u8) -> u8 {
     value
 }
 
-/// Reconstruct a secret from at least `config.threshold` shares using Lagrange interpolation.
-pub fn reconstruct(shares: &[Share], config: &ShamirConfig) -> Result<Vec<u8>, IdentityError> {
+/// Reconstruct a secret into zeroizing storage from at least `config.threshold` shares.
+pub fn reconstruct_zeroizing(
+    shares: &[Share],
+    config: &ShamirConfig,
+) -> Result<Zeroizing<Vec<u8>>, IdentityError> {
     config.validate()?;
 
     let k: usize = config.threshold.into();
@@ -312,7 +397,7 @@ pub fn reconstruct(shares: &[Share], config: &ShamirConfig) -> Result<Vec<u8>, I
 
     let (expected_commitment, secret_len) = validate_shares(shares, config)?;
     let used = &shares[..k];
-    let mut secret = vec![0u8; secret_len];
+    let mut secret = Zeroizing::new(vec![0u8; secret_len]);
 
     for (byte_idx, out_byte) in secret.iter_mut().enumerate().take(secret_len) {
         *out_byte = interpolate_byte_at(used, byte_idx, 0);
@@ -320,6 +405,7 @@ pub fn reconstruct(shares: &[Share], config: &ShamirConfig) -> Result<Vec<u8>, I
 
     let reconstructed_commitment: [u8; 32] = *blake3::hash(&secret).as_bytes();
     if reconstructed_commitment != expected_commitment {
+        secret.zeroize();
         return Err(IdentityError::ReconstructedSecretCommitmentMismatch {
             expected: expected_commitment,
             got: reconstructed_commitment,
@@ -330,6 +416,7 @@ pub fn reconstruct(shares: &[Share], config: &ShamirConfig) -> Result<Vec<u8>, I
         for (byte_idx, &got) in share.data.iter().enumerate() {
             let expected = interpolate_byte_at(used, byte_idx, share.index);
             if expected != got {
+                secret.zeroize();
                 return Err(IdentityError::InvalidShareValue {
                     index: share.index,
                     byte_index: byte_idx,
@@ -343,12 +430,175 @@ pub fn reconstruct(shares: &[Share], config: &ShamirConfig) -> Result<Vec<u8>, I
     Ok(secret)
 }
 
+/// Reconstruct a secret into a caller-owned byte vector.
+///
+/// This compatibility boundary creates exactly one returned copy from the
+/// canonical zeroizing reconstruction buffer. Callers own the returned secret
+/// and are responsible for wiping it as soon as it is no longer needed. New
+/// secret-handling code should prefer [`reconstruct_zeroizing`].
+pub fn reconstruct(shares: &[Share], config: &ShamirConfig) -> Result<Vec<u8>, IdentityError> {
+    let secret = reconstruct_zeroizing(shares, config)?;
+    Ok(secret.to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const TEST_SHAMIR_ENTROPY: &[u8] = b"exo-identity-test-shamir-entropy-v1";
     const OTHER_TEST_SHAMIR_ENTROPY: &[u8] = b"exo-identity-test-shamir-entropy-v2";
+
+    #[test]
+    fn shamir_share_data_uses_a_zeroizing_carrier() {
+        let config = ShamirConfig {
+            threshold: 2,
+            shares: 3,
+        };
+        let shares = split_with_entropy(b"carrier", &config, TEST_SHAMIR_ENTROPY)
+            .expect("split with explicit entropy");
+
+        assert!(
+            std::any::type_name_of_val(&shares[0].data).contains("zeroize::Zeroizing"),
+            "share data must be held by a zeroizing carrier"
+        );
+    }
+
+    #[test]
+    fn shamir_share_json_wire_format_remains_byte_compatible() {
+        #[derive(Serialize)]
+        struct LegacyShareWire {
+            index: u8,
+            data: Vec<u8>,
+            commitment: [u8; 32],
+        }
+
+        let share = Share {
+            index: 7,
+            data: Zeroizing::new(vec![1, 2, 255]),
+            commitment: [3; 32],
+        };
+        let legacy = LegacyShareWire {
+            index: 7,
+            data: vec![1, 2, 255],
+            commitment: [3; 32],
+        };
+
+        assert_eq!(
+            serde_json::to_string(&share).expect("serialize share"),
+            r#"{"index":7,"data":[1,2,255],"commitment":[3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3]}"#
+        );
+
+        let mut share_cbor = Vec::new();
+        ciborium::into_writer(&share, &mut share_cbor).expect("serialize zeroizing share");
+        let mut legacy_cbor = Vec::new();
+        ciborium::into_writer(&legacy, &mut legacy_cbor).expect("serialize legacy share wire");
+        assert_eq!(share_cbor, legacy_cbor);
+
+        let restored_json: Share = serde_json::from_str(
+            r#"{"index":7,"data":[1,2,255],"commitment":[3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3]}"#,
+        )
+        .expect("deserialize legacy JSON share wire");
+        let restored_cbor: Share = ciborium::from_reader(legacy_cbor.as_slice())
+            .expect("deserialize legacy CBOR share wire");
+        assert_eq!(restored_json, share);
+        assert_eq!(restored_cbor, share);
+    }
+
+    #[test]
+    fn shamir_share_deserializer_rejects_mid_array_json_type_error() {
+        let malformed = r#"{"index":1,"data":[17,34,"not-a-byte"]}"#;
+
+        let result: Result<Share, _> = serde_json::from_str(malformed);
+
+        assert!(
+            result.is_err(),
+            "mid-array JSON type errors must fail closed"
+        );
+    }
+
+    #[test]
+    fn shamir_share_deserializer_rejects_mid_array_cbor_type_error() {
+        #[derive(serde::Serialize)]
+        struct MalformedShareWire<'a> {
+            index: u8,
+            data: Vec<MalformedByte<'a>>,
+        }
+
+        #[derive(serde::Serialize)]
+        #[serde(untagged)]
+        enum MalformedByte<'a> {
+            Byte(u8),
+            Text(&'a str),
+        }
+
+        let malformed = MalformedShareWire {
+            index: 1,
+            data: vec![
+                MalformedByte::Byte(17),
+                MalformedByte::Byte(34),
+                MalformedByte::Text("not-a-byte"),
+            ],
+        };
+        let mut encoded = Vec::new();
+        ciborium::into_writer(&malformed, &mut encoded).expect("encode malformed CBOR fixture");
+
+        let result: Result<Share, _> = ciborium::from_reader(encoded.as_slice());
+
+        assert!(
+            result.is_err(),
+            "mid-array CBOR type errors must fail closed"
+        );
+    }
+
+    #[test]
+    fn shamir_share_deserializer_accumulates_inside_zeroizing_storage() {
+        let source = include_str!("shamir.rs");
+        let deserializer = source
+            .split("fn grow_zeroizing_share_data")
+            .nth(1)
+            .expect("Share data must use a dedicated deserializer")
+            .split("impl fmt::Debug for Share")
+            .next()
+            .expect("Share data deserializer ends before Debug implementation");
+
+        assert!(
+            deserializer.contains("Zeroizing::new(Vec::new())"),
+            "the sequence accumulator must be zeroizing before the first byte is read"
+        );
+        assert!(
+            deserializer.contains("try_reserve_exact"),
+            "share-data allocations must fail through the typed deserialization error path"
+        );
+        assert!(
+            deserializer.contains("next_element::<u8>()"),
+            "share bytes must be read directly into the zeroizing accumulator"
+        );
+        assert!(
+            deserializer.contains("bytes.zeroize()"),
+            "capacity growth must wipe the replaced allocation before it is released"
+        );
+    }
+
+    #[test]
+    fn shamir_split_reconstruct_control_recovers_exact_secret() {
+        let config = ShamirConfig {
+            threshold: 2,
+            shares: 3,
+        };
+        let shares = split_with_entropy(b"lifecycle", &config, TEST_SHAMIR_ENTROPY)
+            .expect("split with explicit entropy");
+        let zeroizing = reconstruct_zeroizing(&shares[..2], &config)
+            .expect("reconstruct threshold shares into zeroizing storage");
+        let compatible =
+            reconstruct(&shares[..2], &config).expect("reconstruct through compatibility API");
+
+        assert!(
+            std::any::type_name_of_val(&zeroizing).contains("zeroize::Zeroizing"),
+            "canonical reconstructed secrets must use a zeroizing carrier"
+        );
+        assert_eq!(zeroizing.as_slice(), b"lifecycle");
+        assert_eq!(compatible.as_slice(), zeroizing.as_slice());
+    }
 
     #[test]
     fn gf256_mul_identity() {
@@ -482,7 +732,7 @@ mod tests {
     fn share_debug_redacts_secret_share_data() {
         let share = Share {
             index: 1,
-            data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            data: Zeroizing::new(vec![0xDE, 0xAD, 0xBE, 0xEF]),
             commitment: [0x42; 32],
         };
 
@@ -600,12 +850,12 @@ mod tests {
         let shares = vec![
             Share {
                 index: 0,
-                data: vec![1],
+                data: Zeroizing::new(vec![1]),
                 commitment: [0; 32],
             },
             Share {
                 index: 1,
-                data: vec![2],
+                data: Zeroizing::new(vec![2]),
                 commitment: [0; 32],
             },
         ];
@@ -622,12 +872,12 @@ mod tests {
         let shares = vec![
             Share {
                 index: 1,
-                data: vec![1],
+                data: Zeroizing::new(vec![1]),
                 commitment: [0; 32],
             },
             Share {
                 index: 1,
-                data: vec![2],
+                data: Zeroizing::new(vec![2]),
                 commitment: [0; 32],
             },
         ];
@@ -741,12 +991,12 @@ mod tests {
         let shares = vec![
             Share {
                 index: 1,
-                data: vec![1],
+                data: Zeroizing::new(vec![1]),
                 commitment: [0; 32],
             },
             Share {
                 index: 4,
-                data: vec![2],
+                data: Zeroizing::new(vec![2]),
                 commitment: [0; 32],
             },
         ];
@@ -770,12 +1020,12 @@ mod tests {
         let shares = vec![
             Share {
                 index: 1,
-                data: vec![1, 2],
+                data: Zeroizing::new(vec![1, 2]),
                 commitment: [0; 32],
             },
             Share {
                 index: 2,
-                data: vec![3],
+                data: Zeroizing::new(vec![3]),
                 commitment: [0; 32],
             },
         ];

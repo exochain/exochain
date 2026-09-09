@@ -32,7 +32,7 @@
  * a target gateway on init and warn when the server reports a different
  * major/minor so users can distinguish protocol skew from transport errors.
  */
-export const PROTOCOL_VERSION = '0.2.4';
+export const PROTOCOL_VERSION = '0.2.6';
 
 export * from './types.js';
 export * from './errors.js';
@@ -63,5 +63,5 @@ export {
   hexToBytes,
 } from './crypto/hash.js';
 
-export { HttpTransport } from './transport/http.js';
+export { HttpTransport, MAX_HTTP_RESPONSE_BYTES } from './transport/http.js';
 export type { HttpTransportOptions } from './transport/http.js';

@@ -36,7 +36,7 @@ if (!/^\[workspace\.package\][\s\S]*^publish = true$/m.test(workspaceToml)) {
 }
 
 const metadata = JSON.parse(
-  execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
+  execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1", "--locked"], {
     encoding: "utf8",
     maxBuffer: 20 * 1024 * 1024,
   }),
@@ -175,22 +175,47 @@ for (const pkg of packages) {
   }
 }
 
-const releaseWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/release.yml"), "utf8");
-const releaseCrateBlock = releaseWorkflow.match(/CRATES=\(\n([\s\S]*?)\n[ \t]*\)/)?.[1];
-if (!releaseCrateBlock) {
-  failures.push("release publish loop must declare a CRATES bash array");
+function readReleaseCrateInventory(relativePath, label) {
+  const source = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
+  const crateBlock = source.match(/^CRATES=\(\r?\n([\s\S]*?)^\)$/m)?.[1];
+  if (!crateBlock) {
+    failures.push(`${label} must declare a literal CRATES bash array`);
+    return [];
+  }
+  const names = crateBlock
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (names.some((name) => !/^[a-z0-9_-]+$/.test(name))) {
+    failures.push(`${label} CRATES array contains a non-literal package name`);
+  }
+  return names;
 }
-const releasePackageNames = releaseCrateBlock
-  ? releaseCrateBlock
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-  : [];
+
+const preflightPackageNames = readReleaseCrateInventory(
+  "tools/preflight_release_crates.sh",
+  "token-free crate preflight",
+);
+const publisherPackageNames = readReleaseCrateInventory(
+  "tools/publish_release_crates.sh",
+  "crate publisher",
+);
+if (
+  preflightPackageNames.length !== publisherPackageNames.length
+  || preflightPackageNames.some((name, index) => name !== publisherPackageNames[index])
+) {
+  failures.push("token-free preflight and publisher CRATES arrays must match exactly in dependency order");
+}
+const releasePackageNames = preflightPackageNames;
 const releasePackageIndexes = new Map(releasePackageNames.map((name, index) => [name, index]));
 
+if (releasePackageNames.length !== 32 || releasePackageIndexes.size !== 32) {
+  failures.push("release helpers must declare exactly 32 unique crates");
+}
+
 for (const pkg of packages.filter((pkg) => pkg.manifest_path.includes("/crates/"))) {
-  if (!releaseWorkflow.includes(`            ${pkg.name}`)) {
-    failures.push(`release publish loop must include ${pkg.name}`);
+  if (!releasePackageIndexes.has(pkg.name)) {
+    failures.push(`release helper inventory must include ${pkg.name}`);
   }
 }
 
@@ -200,7 +225,7 @@ for (const crateName of releasePackageNames) {
   }
 }
 if (releasePackageIndexes.size !== releasePackageNames.length) {
-  failures.push("release publish loop must not contain duplicate packages");
+  failures.push("release helper inventory must not contain duplicate packages");
 }
 
 for (const pkg of packages.filter((pkg) => pkg.manifest_path.includes("/crates/"))) {
@@ -222,7 +247,7 @@ for (const pkg of packages.filter((pkg) => pkg.manifest_path.includes("/crates/"
     }
     const dependencyIndex = releasePackageIndexes.get(targetPackage);
     if (dependencyIndex !== undefined && dependencyIndex > packageIndex) {
-      failures.push(`release publish loop must publish ${targetPackage} before ${pkg.name}`);
+      failures.push(`release helpers must publish ${targetPackage} before ${pkg.name}`);
     }
   }
 }

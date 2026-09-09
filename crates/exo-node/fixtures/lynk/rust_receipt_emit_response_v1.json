@@ -1,0 +1,56 @@
+{
+  "receipt_hash": "1010101010101010101010101010101010101010101010101010101010101010",
+  "exochain_finality_hash": "7070707070707070707070707070707070707070707070707070707070707070",
+  "exochain_finality_height": 1,
+  "exochain_finality_receipt_hash": "8080808080808080808080808080808080808080808080808080808080808080",
+  "receipt": {
+    "schema_version": 1,
+    "receipt_id": [16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16],
+    "credential_id": [32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32],
+    "action_id": [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+    "action_commitment_hash": [48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48],
+    "action_descriptor": {
+      "schema_version": 1,
+      "action_id": [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+      "actor_did": "did:exo:agent",
+      "requested_permission": "Execute",
+      "tool": "exo.avc.lynk.llm_usage.evidence.v1",
+      "target_did": null,
+      "data_class": "Internal",
+      "estimated_budget_minor_units": null,
+      "estimated_risk_bp": null,
+      "requires_human_approval": false,
+      "human_approval_present": false,
+      "action_name": "llm.usage.receipt.emit"
+    },
+    "action_descriptor_hash": [64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64],
+    "llm_usage_evidence_hash": [80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80],
+    "previous_receipt_hash": null,
+    "timestamp_provenance": "LocalHybridLogicalClock",
+    "external_timestamp_proof": null,
+    "validator_did": "did:exo:validator",
+    "decision": "Allow",
+    "reason_codes": ["Valid"],
+    "created_at": { "physical_ms": 1700001, "logical": 0 },
+    "validation_hash": [96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96],
+    "signature": {
+      "Ed25519": [112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112, 112]
+    }
+  },
+  "validation": {
+    "credential_id": [32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32],
+    "decision": "Allow",
+    "reason_codes": ["Valid"],
+    "normalized_holder_did": "did:exo:agent",
+    "valid_until": { "physical_ms": 1800000, "logical": 0 },
+    "receipt": null
+  },
+  "lynk_response_attestation": {
+    "domain": "exo.avc.lynk.receipt_response.attestation.v1",
+    "schema_version": 1,
+    "validator_did": "did:exo:validator",
+    "signature": {
+      "Ed25519": [104, 135, 250, 222, 228, 160, 86, 190, 29, 139, 83, 179, 225, 110, 122, 252, 72, 214, 163, 221, 113, 242, 239, 105, 113, 233, 8, 52, 99, 121, 255, 211, 112, 216, 224, 207, 176, 195, 43, 91, 64, 208, 50, 243, 92, 148, 41, 83, 31, 133, 228, 52, 85, 79, 228, 46, 224, 192, 80, 227, 134, 200, 6, 15]
+    }
+  }
+}

@@ -77,6 +77,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "ambient-authority"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9d4ee0d472d1cd2e28c97dfa124b3d8d992e10eb0a035f33f5d12e3a177ba3b"
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -978,6 +984,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "cap-fs-ext"
+version = "4.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56ff379b70af8e08307a8f65e7040c7301cb4a572538ade16b4984f0da77847f"
+dependencies = [
+ "cap-primitives",
+ "cap-std",
+ "io-lifetimes 3.0.1",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "cap-primitives"
+version = "4.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b5f74729fd2f44701d1a8eb47e906cdb3ccd9ec0f02baad85a744b791940b18"
+dependencies = [
+ "ambient-authority",
+ "fs-set-times",
+ "io-extras",
+ "io-lifetimes 3.0.1",
+ "ipnet",
+ "maybe-owned",
+ "rustix",
+ "rustix-linux-procfs",
+ "windows-sys 0.61.2",
+ "winx",
+]
+
+[[package]]
+name = "cap-std"
+version = "4.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1ec78e242cfa2cfe276807ac2ecc00315a6c97786977414bcd1c3963b6c91b8"
+dependencies = [
+ "cap-primitives",
+ "io-extras",
+ "io-lifetimes 3.0.1",
+ "rustix",
+]
+
+[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1128,7 +1176,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "986e7713348fbe5322df18082d73a0ad53a2946dbb7a02452cf3622b83b91e7c"
 dependencies = [
  "const-oid 0.10.2",
- "der 0.8.0",
+ "der 0.8.2",
  "spki 0.8.0-rc.4",
  "x509-cert",
 ]
@@ -1455,9 +1503,9 @@ dependencies = [
 
 [[package]]
 name = "der"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71fd89660b2dc699704064e59e9dba0147b903e85319429e131620d022be411b"
+checksum = "a878c850e9e421b20262e9b41f9c860e4785fa07541c266b62ff9d1ef998a80a"
 dependencies = [
  "const-oid 0.10.2",
  "der_derive",
@@ -1760,8 +1808,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "exacl"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22be12de19decddab85d09f251ec8363f060ccb22ec9c81bc157c0c8433946d8"
+dependencies = [
+ "bitflags 2.10.0",
+ "log",
+ "scopeguard",
+ "uuid",
+]
+
+[[package]]
 name = "exochain-api"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "blake3",
  "ciborium",
@@ -1778,7 +1838,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-authority"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "blake3",
  "ciborium",
@@ -1791,7 +1851,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-avc"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "ciborium",
  "exochain-authority",
@@ -1803,7 +1863,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-catapult"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "ciborium",
  "exochain-authority",
@@ -1819,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-consensus"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "exochain-core",
  "exochain-decision-forum",
@@ -1831,7 +1891,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-consent"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "blake3",
  "ciborium",
@@ -1842,7 +1902,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-core"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "blake3",
  "chrono",
@@ -1863,7 +1923,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "async-trait",
  "blake3",
@@ -1881,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-api"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "serde",
  "serde_json",
@@ -1889,7 +1949,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-core"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -1901,7 +1961,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-domain"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "ciborium",
  "exochain-authority",
@@ -1920,7 +1980,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-exchange"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "exochain-authority",
  "exochain-avc",
@@ -1939,7 +1999,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-graph"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -1952,8 +2012,10 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-lab"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
+ "cap-fs-ext",
+ "cap-std",
  "criterion",
  "exochain-core",
  "exochain-dag-db-api",
@@ -1963,17 +2025,19 @@ dependencies = [
  "exochain-dag-db-graph",
  "exochain-dag-db-postgres",
  "exochain-dag-db-retrieval",
+ "same-file",
  "serde",
  "serde_json",
  "sha2",
  "sqlx",
+ "tempfile",
  "thiserror 2.0.17",
  "tokio",
 ]
 
 [[package]]
 name = "exochain-dag-db-postgres"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "exochain-core",
  "exochain-dag",
@@ -1993,7 +2057,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-retrieval"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "exochain-core",
  "exochain-dag-db-api",
@@ -2008,7 +2072,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-decision-forum"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "blake3",
  "exochain-authority",
@@ -2026,7 +2090,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-economy"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -2036,7 +2100,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-escalation"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -2050,7 +2114,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-gatekeeper"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2075,7 +2139,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-gateway"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",
@@ -2106,6 +2170,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sqlx",
+ "static_assertions",
  "thiserror 2.0.17",
  "tokio",
  "tower",
@@ -2118,7 +2183,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-governance"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2134,7 +2199,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-identity"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "blake3",
  "bs58",
@@ -2154,7 +2219,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-legal"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2171,7 +2236,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-messaging"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -2189,7 +2254,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-node"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2202,9 +2267,10 @@ dependencies = [
  "clap",
  "cms",
  "const-oid 0.10.2",
- "der 0.8.0",
+ "der 0.8.2",
  "directories",
  "ed25519-dalek",
+ "exacl",
  "exochain-api",
  "exochain-authority",
  "exochain-avc",
@@ -2248,6 +2314,7 @@ dependencies = [
  "sha2",
  "sqlx",
  "static_assertions",
+ "subtle",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
@@ -2263,7 +2330,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-pdp"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "axum 0.7.9",
  "ciborium",
@@ -2274,11 +2341,13 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.17",
  "tokio",
+ "tower",
+ "tracing",
 ]
 
 [[package]]
 name = "exochain-proofs"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2292,7 +2361,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-root"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -2312,15 +2381,18 @@ dependencies = [
 
 [[package]]
 name = "exochain-sdk"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "blake3",
+ "ciborium",
  "exochain-avc",
  "exochain-core",
  "exochain-dag-db-api",
  "exochain-economy",
  "exochain-gatekeeper",
  "exochain-identity",
+ "http",
+ "percent-encoding",
  "reqwest",
  "serde",
  "serde_json",
@@ -2331,7 +2403,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-tenant"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "blake3",
  "exochain-core",
@@ -2344,7 +2416,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-wasm"
-version = "0.2.4"
+version = "0.2.6"
 dependencies = [
  "ed25519-dalek",
  "exochain-api",
@@ -2572,6 +2644,17 @@ checksum = "73fde052dbfc920003cfd2c8e2c6e6d4cc7c1091538c3a24226cec0665ab08c0"
 dependencies = [
  "autocfg",
  "tokio",
+]
+
+[[package]]
+name = "fs-set-times"
+version = "0.20.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94e7099f6313ecacbe1256e8ff9d617b75d1bcb16a6fddef94866d225a01a14a"
+dependencies = [
+ "io-lifetimes 2.0.4",
+ "rustix",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3232,6 +3315,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-extras"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20fd6de4ccfcc187e38bc21cfa543cb5a302cb86a8b114eb7f0bf0dc9f8ac00f"
+dependencies = [
+ "io-lifetimes 3.0.1",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "io-lifetimes"
+version = "2.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06432fb54d3be7964ecd3649233cddf80db2832f47fec34c01f65b3d9d774983"
+
+[[package]]
+name = "io-lifetimes"
+version = "3.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f0fb0570afe1fed943c5c3d4102d5358592d8625fda6a0007fdbe65a92fba96"
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3759,6 +3864,12 @@ name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
+
+[[package]]
+name = "maybe-owned"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4facc753ae494aeb6e3c22f839b158aebd4f9270f55cd3c79906c45476c47ab4"
 
 [[package]]
 name = "md-5"
@@ -5156,6 +5267,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustix-linux-procfs"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fc84bf7e9aa16c4f2c758f27412dc9841341e16aa682d9c7ac308fe3ee12056"
+dependencies = [
+ "once_cell",
+ "rustix",
+]
+
+[[package]]
 name = "rustls"
 version = "0.23.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5476,9 +5597,9 @@ dependencies = [
 
 [[package]]
 name = "spin"
-version = "0.9.8"
+version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
 dependencies = [
  "lock_api",
 ]
@@ -5500,7 +5621,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8baeff88f34ed0691978ec34440140e1572b68c7dd4a495fd14a3dc1944daa80"
 dependencies = [
  "base64ct",
- "der 0.8.0",
+ "der 0.8.2",
 ]
 
 [[package]]
@@ -6970,6 +7091,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "winx"
+version = "0.36.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f3fd376f71958b862e7afb20cfe5a22830e1963462f3a17f49d82a6c1d1f42d"
+dependencies = [
+ "bitflags 2.10.0",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "wit-bindgen"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7088,7 +7219,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e21aad3a769f25f3d2d0cbf30ea8b50a1d602354bd6ab687fad112821608ba6"
 dependencies = [
  "const-oid 0.10.2",
- "der 0.8.0",
+ "der 0.8.2",
  "spki 0.8.0-rc.4",
  "tls_codec",
 ]

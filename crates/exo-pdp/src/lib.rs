@@ -42,7 +42,8 @@ pub use error::{PdpError, Result};
 pub use evidence::{Decision, EvidenceDraft, EvidenceEntry, EvidenceLog};
 pub use mandate::{Caveat, Mandate, MandateAdapter, MandateKind, ProposedAction, WireMandate};
 pub use pack::{
-    ART26_RETENTION_DAYS, Article26Record, EVIDENCE_PACK_SPEC, EvidencePack, MS_PER_DAY,
+    ART26_RETENTION_DAYS, Article26Record, EVIDENCE_PACK_SPEC, EvidencePack,
+    MAX_EVIDENCE_PACK_JSON_BYTES, MS_PER_DAY,
 };
 pub use policy::{DecisionRequest, PolicyVerdict};
 pub use reservation::{Reservation, ReservationBook, ReservationState};

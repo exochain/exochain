@@ -44,8 +44,14 @@ grep -F 'version: ${{ steps.validate.outputs.version }}' <<<"$validate_block" >/
   || fail "validated release version must be exposed as a job output"
 grep -F 'tag: ${{ steps.validate.outputs.tag }}' <<<"$validate_block" >/dev/null \
   || fail "validated release tag must be exposed as a job output"
+grep -F 'commit_sha: ${{ steps.validate.outputs.commit_sha }}' <<<"$validate_block" >/dev/null \
+  || fail "validated release commit SHA must be exposed as a job output"
+grep -F 'trusted_ref: ${{ steps.validate.outputs.trusted_ref }}' <<<"$validate_block" >/dev/null \
+  || fail "validated immutable checkout ref must be exposed as a job output"
 grep -F 'id: validate' <<<"$validate_block" >/dev/null \
   || fail "validation job must have a stable validate step id"
+grep -F 'ref: ${{ github.sha }}' <<<"$validate_block" >/dev/null \
+  || fail "validation job must check out the workflow dispatch SHA"
 grep -F 'RELEASE_VERSION_INPUT: ${{ inputs.version }}' <<<"$validate_block" >/dev/null \
   || fail "raw dispatch version may only enter the validation step through an environment variable"
 grep -E '\^\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\(-\[0-9A-Za-z\]' <<<"$validate_block" >/dev/null \
@@ -54,6 +60,20 @@ grep -F 'printf '\''version=%s\n'\'' "$version" >> "$GITHUB_OUTPUT"' <<<"$valida
   || fail "validation step must write the sanitized version to GITHUB_OUTPUT"
 grep -F 'printf '\''tag=v%s\n'\'' "$version" >> "$GITHUB_OUTPUT"' <<<"$validate_block" >/dev/null \
   || fail "validation step must derive the release tag from the sanitized version"
+grep -F 'head_sha="$(git rev-parse HEAD)"' <<<"$validate_block" >/dev/null \
+  || fail "validation step must resolve checked-out HEAD"
+grep -F 'EXPECTED_COMMIT_SHA: ${{ github.sha }}' <<<"$validate_block" >/dev/null \
+  || fail "validation step must pass the workflow SHA as its expected commit"
+grep -F 'TRUSTED_RELEASE_REF: ${{ github.sha }}' <<<"$validate_block" >/dev/null \
+  || fail "validation step must pass the workflow SHA as its trusted ref"
+grep -F '/bin/bash --noprofile --norc -p tools/verify_release_source.sh' <<<"$validate_block" >/dev/null \
+  || fail "validation step must execute the shared source-identity guard"
+grep -F 'RELEASE_VERSION_EXPECTED="$version" bash tools/test_release_version_alignment.sh' <<<"$validate_block" >/dev/null \
+  || fail "validation step must bind every release manifest to the sanitized input version"
+grep -F 'printf '\''commit_sha=%s\n'\'' "$head_sha" >> "$GITHUB_OUTPUT"' <<<"$validate_block" >/dev/null \
+  || fail "validation step must emit the verified checkout commit"
+grep -F 'printf '\''trusted_ref=%s\n'\'' "$head_sha" >> "$GITHUB_OUTPUT"' <<<"$validate_block" >/dev/null \
+  || fail "validation step must emit an immutable commit SHA as the trusted ref"
 
 raw_version_refs=$(grep -nF '${{ inputs.version }}' "$workflow" || true)
 raw_version_count=$(printf '%s\n' "$raw_version_refs" | sed '/^$/d' | wc -l | tr -d ' ')
@@ -71,11 +91,24 @@ grep -F '${{ needs.validate-release-inputs.outputs.version }}' "$workflow" >/dev
 grep -F '${{ needs.validate-release-inputs.outputs.tag }}' "$workflow" >/dev/null \
   || fail "release jobs must consume the sanitized tag output"
 
-for job in approve verify-signed-tag release-build sbom-and-attest publish publish-wasm-npm github-release; do
+for job in \
+  approve approve-second verify-signed-tag release-build package-release \
+  install-cargo-cyclonedx generate-sbom validate-sbom attest-release \
+  preflight-crates reproduce-crates publish install-wasm-pack build-wasm-npm \
+  prepare-wasm-npm test-llm-proxy-npm prepare-llm-proxy-npm \
+  publish-wasm-npm publish-llm-proxy-npm github-release; do
   block=$(job_block "$job")
   [[ -n "$block" ]] || fail "job $job is missing"
   grep -F 'validate-release-inputs' <<<"$block" >/dev/null \
     || fail "job $job must depend on the release input validation job"
+done
+
+for job in approve approve-second; do
+  block=$(job_block "$job")
+  grep -F 'RELEASE_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}' <<<"$block" >/dev/null \
+    || fail "job $job must consume the validated commit SHA"
+  grep -F 'TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}' <<<"$block" >/dev/null \
+    || fail "job $job must consume the validated trusted ref"
 done
 
 grep -F 'bash tools/test_release_version_input_boundary.sh' "$ci_workflow" >/dev/null \

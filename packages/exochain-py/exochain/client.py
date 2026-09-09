@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from types import TracebackType
 from typing import Any
+from urllib.parse import quote_from_bytes
 
 import httpx
 from pydantic import ValidationError
@@ -34,8 +35,22 @@ from .transport.http import HttpTransport
 from .types import ExochainDiscoveryResponse, TrustReceipt
 
 
+def _encode_path_segment(value: str) -> str:
+    """Percent-encode an untrusted identifier as exactly one URL path segment."""
+    encoded = str.encode(value, "utf-8", "strict")
+    if encoded == b".":
+        return "%2E"
+    if encoded == b"..":
+        return "%2E%2E"
+    return quote_from_bytes(encoded, safe="-._~")
+
+
 class ExochainClient:
-    """A typed, async client for an EXOCHAIN fabric endpoint."""
+    """A typed, async client for an EXOCHAIN fabric endpoint.
+
+    ``timeout`` controls the underlying HTTP phases; ``total_timeout`` is the
+    independent aggregate deadline through complete response-body consumption.
+    """
 
     def __init__(
         self,
@@ -43,11 +58,13 @@ class ExochainClient:
         *,
         api_key: str | None = None,
         timeout: float | httpx.Timeout = 30.0,
+        total_timeout: float | int = 30.0,
     ) -> None:
         self._transport: HttpTransport = HttpTransport(
             base_url,
             api_key=api_key,
             timeout=timeout,
+            total_timeout=total_timeout,
         )
 
     @classmethod
@@ -91,7 +108,7 @@ class ExochainClient:
 
     async def resolve_did(self, did: str) -> dict[str, Any]:
         """Resolve a DID document from the fabric."""
-        return await self._transport.get(f"/identity/{did}")
+        return await self._transport.get(f"/identity/{_encode_path_segment(did)}")
 
     # ---- Consent --------------------------------------------------------
 
@@ -108,7 +125,7 @@ class ExochainClient:
     async def cast_vote(self, decision_id: str, vote: dict[str, Any]) -> dict[str, Any]:
         """Cast a vote on an existing governance decision."""
         return await self._transport.post(
-            f"/governance/decisions/{decision_id}/votes", vote
+            f"/governance/decisions/{_encode_path_segment(decision_id)}/votes", vote
         )
 
     # ---- Lifecycle ------------------------------------------------------

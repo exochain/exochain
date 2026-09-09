@@ -16,8 +16,8 @@ pub use ceremony::{
 };
 pub use dkg::{
     RootDkgOutput, RootDkgRound1Output, RootDkgRound2Output, RootKeyPackage,
-    RootParticipantDkgOutput, RootPublicKeyPackage, dkg_finalize_participant, dkg_round1,
-    dkg_round2, run_complete_dkg,
+    RootParticipantDkgOutput, RootPublicKeyPackage, dkg_finalize_participant,
+    dkg_finalize_participant_zeroizing, dkg_round1, dkg_round2, run_complete_dkg,
 };
 pub use error::{Result, RootError};
 pub use portal::{
@@ -33,5 +33,5 @@ pub use seal::{
 pub use signing::{
     RootSignature, RootSignatureShareOutput, RootSigningCommitment, RootSigningNonces,
     RootSigningPackage, aggregate_signature, build_signing_package, sign_commit, sign_share,
-    threshold_sign, verify_root_signature,
+    threshold_sign, threshold_sign_zeroizing, verify_root_signature,
 };

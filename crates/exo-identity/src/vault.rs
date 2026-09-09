@@ -39,6 +39,9 @@ use crate::error::IdentityError;
 /// Size of the XChaCha20-Poly1305 nonce in bytes.
 pub const VAULT_NONCE_SIZE: usize = 24;
 
+/// Bytes added to every vault ciphertext by the nonce and Poly1305 tag.
+pub const VAULT_CIPHERTEXT_OVERHEAD: usize = VAULT_NONCE_SIZE + TAG_SIZE;
+
 /// Size of the XChaCha20-Poly1305 nonce in bytes.
 const NONCE_SIZE: usize = VAULT_NONCE_SIZE;
 
@@ -55,6 +58,15 @@ const VAULT_HKDF_SALT_DOMAIN: &[u8] = b"exo.identity.vault.hkdf.salt.v1";
 ///
 /// Wraps a 256-bit symmetric key derived from an Ed25519 secret key via
 /// HKDF-SHA256.  The key material is zeroized on drop.
+///
+/// Raw key extraction is intentionally unavailable:
+///
+/// ```compile_fail
+/// use exo_identity::vault::VaultEncryptor;
+///
+/// let encryptor = VaultEncryptor::from_key([0x42; 32]);
+/// let _raw_key = encryptor.key_bytes();
+/// ```
 pub struct VaultEncryptor {
     key: [u8; 32],
 }
@@ -137,12 +149,6 @@ impl VaultEncryptor {
                 },
             )
             .map_err(|_| IdentityError::VaultDecryptionFailed)
-    }
-
-    /// Return a reference to the raw key bytes (for testing/inspection).
-    #[must_use]
-    pub fn key_bytes(&self) -> &[u8; 32] {
-        &self.key
     }
 
     /// Encrypt with an explicit caller-supplied nonce.
@@ -385,8 +391,13 @@ mod tests {
 
         let enc1 = VaultEncryptor::derive_key(&sk, context).expect("derive_key");
         let enc2 = VaultEncryptor::derive_key(&sk, context).expect("derive_key");
+        let ciphertext = encrypt_for_test(&enc1, b"reload control", b"did:exo:reload", 7);
 
-        assert_eq!(enc1.key_bytes(), enc2.key_bytes());
+        assert_eq!(
+            enc2.decrypt(&ciphertext, b"did:exo:reload")
+                .expect("reloaded derived key decrypts"),
+            b"reload control"
+        );
     }
 
     #[test]
@@ -395,8 +406,15 @@ mod tests {
 
         let enc1 = VaultEncryptor::derive_key(&sk, b"context-alpha").expect("derive_key");
         let enc2 = VaultEncryptor::derive_key(&sk, b"context-beta").expect("derive_key");
+        let ciphertext = encrypt_for_test(&enc1, b"context bound", b"did:exo:context", 8);
 
-        assert_ne!(enc1.key_bytes(), enc2.key_bytes());
+        assert!(
+            matches!(
+                enc2.decrypt(&ciphertext, b"did:exo:context"),
+                Err(IdentityError::VaultDecryptionFailed)
+            ),
+            "different derivation contexts must not produce interchangeable vault keys"
+        );
     }
 
     #[test]
@@ -411,9 +429,13 @@ mod tests {
             .expand(context, &mut unsalted)
             .expect("unsalted HKDF expansion");
 
-        assert_ne!(
-            enc.key_bytes(),
-            &unsalted,
+        let unsalted_enc = VaultEncryptor::from_key(unsalted);
+        let ciphertext = encrypt_for_test(&enc, b"salt bound", b"did:exo:salt", 9);
+        assert!(
+            matches!(
+                unsalted_enc.decrypt(&ciphertext, b"did:exo:salt"),
+                Err(IdentityError::VaultDecryptionFailed)
+            ),
             "vault key derivation must not match HKDF extraction with an absent salt"
         );
 
@@ -453,20 +475,18 @@ mod tests {
 
     #[test]
     fn zeroize_on_drop() {
-        // Verify that VaultEncryptor implements the Zeroize trait via Drop.
-        // We construct, read the key, drop, and verify via a copy of the pointer
-        // that the type system enforces Zeroize.
+        // Verify that the underlying key storage supports explicit zeroization
+        // and that dropping a live encryptor remains a supported lifecycle.
         fn assert_zeroize_impl<T: Zeroize>() {}
         assert_zeroize_impl::<[u8; 32]>(); // underlying storage implements Zeroize
 
-        // Functional check: create an encryptor, do work, drop it.
         let enc = test_encryptor();
-        let key_copy = *enc.key_bytes();
-        // Key was non-zero before drop
-        assert_ne!(key_copy, [0u8; 32]);
-        // After drop the struct's Drop impl calls zeroize.
-        // We can't safely read freed memory, but we verify the Drop impl
-        // compiles and the Zeroize trait is used on [u8; 32].
+        let ciphertext = encrypt_for_test(&enc, b"drop lifecycle", b"did:exo:drop", 10);
+        assert_eq!(
+            enc.decrypt(&ciphertext, b"did:exo:drop")
+                .expect("encryptor is usable before drop"),
+            b"drop lifecycle"
+        );
         drop(enc);
     }
 }

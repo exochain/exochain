@@ -727,9 +727,217 @@ test('wasm_record_disinterested_vote', () => {
   );
 });
 
-test('wasm_verify_safe_harbor', () => {
+test('wasm_verify_safe_harbor returns a BoardApproval Verified transaction', () => {
+  if (!disclosedTxn) throw new Error('skipped -- no disclosed txn from setup');
+  const voted = wasm.wasm_record_disinterested_vote(
+    JSON.stringify(disclosedTxn),
+    TEST_DID_3,
+    true,
+    NOW_MS
+  );
+  const verification = wasm.wasm_verify_safe_harbor(JSON.stringify(voted));
+  if (verification.ok !== true || verification.transaction?.status !== 'Verified') {
+    throw new Error('successful BoardApproval verification must return the Verified snapshot');
+  }
+  return verification;
+});
+
+test('wasm_verify_safe_harbor returns the Failed transaction after insufficient votes', () => {
+  if (!disclosedTxn) throw new Error('skipped -- no disclosed txn from setup');
+  const voted = wasm.wasm_record_disinterested_vote(
+    JSON.stringify(disclosedTxn),
+    TEST_DID_3,
+    false,
+    NOW_MS
+  );
+  const verification = wasm.wasm_verify_safe_harbor(JSON.stringify(voted));
+  if (verification.ok !== false || !verification.error) {
+    throw new Error('insufficient votes must preserve the compatible ok/error response');
+  }
+  if (!verification.transaction?.status?.Failed?.reason?.includes('insufficient approval')) {
+    throw new Error('insufficient votes must return the terminal Failed snapshot');
+  }
+  return verification;
+});
+
+test('wasm_record_fairness_evidence records and verifies a FairnessProof safe harbor', () => {
+  const methodology = 'DCF analysis plus comparable transactions';
+  const conclusion = 'Transaction price is within fair market range';
+  const fairnessTxn = wasm.wasm_initiate_safe_harbor(
+    UUID_4,
+    TEST_DID,
+    TEST_DID_2,
+    'Board member is counterparty',
+    NONZERO_32_HEX,
+    JSON.stringify('FairnessProof'),
+    NOW_MS
+  );
+  const fairnessDisclosedTxn = wasm.wasm_complete_disclosure(
+    JSON.stringify(fairnessTxn),
+    TEST_DID,
+    'All material facts disclosed',
+    NOW_MS
+  );
+  const fairnessEvidenceTxn = wasm.wasm_record_fairness_evidence(
+    JSON.stringify(fairnessDisclosedTxn),
+    TEST_DID_3,
+    methodology,
+    conclusion,
+    NONZERO_32_HEX,
+    NOW_MS
+  );
+
+  if (fairnessEvidenceTxn.status !== 'DisclosureMade') {
+    throw new Error('recording fairness evidence must preserve DisclosureMade status');
+  }
+  const recorded = fairnessEvidenceTxn.fairness_evidence;
+  if (!recorded) {
+    throw new Error('FairnessProof path must retain the recorded fairness evidence');
+  }
+  if (recorded.evaluator !== TEST_DID_3 || recorded.methodology !== methodology || recorded.conclusion !== conclusion) {
+    throw new Error('recorded fairness evidence must preserve evaluator, methodology, and conclusion');
+  }
+  if (hashHex(recorded.evidence_hash) !== NONZERO_32_HEX) {
+    throw new Error('recorded fairness evidence must preserve the nonzero evidence hash');
+  }
+
+  const verification = wasm.wasm_verify_safe_harbor(JSON.stringify(fairnessEvidenceTxn));
+  if (verification.ok !== true) {
+    throw new Error(`FairnessProof safe harbor must verify: ${verification.error || 'unknown error'}`);
+  }
+  if (verification.transaction?.status !== 'Verified') {
+    throw new Error('FairnessProof verification must return the Verified snapshot');
+  }
+  return { fairnessEvidenceTxn, verification };
+});
+
+test('wasm_initiate_safe_harbor enforces exact and plus-one prose limits', () => {
+  const exact = 'x'.repeat(65_536);
+  const accepted = wasm.wasm_initiate_safe_harbor(
+    UUID_4,
+    TEST_DID,
+    TEST_DID_2,
+    exact,
+    NONZERO_32_HEX,
+    JSON.stringify('BoardApproval'),
+    NOW_MS
+  );
+  if (accepted.interest_description.length !== 65_536) {
+    throw new Error('exact-limit interest description must round-trip');
+  }
+  return expectErrorContains(
+    'over-limit interest description',
+    () => wasm.wasm_initiate_safe_harbor(
+      UUID_4,
+      TEST_DID,
+      TEST_DID_2,
+      'x'.repeat(65_537),
+      NONZERO_32_HEX,
+      JSON.stringify('BoardApproval'),
+      NOW_MS
+    ),
+    'interest description may contain at most 65536 bytes'
+  );
+});
+
+test('wasm_complete_disclosure enforces exact and plus-one prose limits', () => {
   if (!shTxn) throw new Error('skipped -- no safe harbor txn from setup');
-  return wasm.wasm_verify_safe_harbor(JSON.stringify(shTxn));
+  const accepted = wasm.wasm_complete_disclosure(
+    JSON.stringify(shTxn),
+    TEST_DID,
+    'x'.repeat(65_536),
+    NOW_MS
+  );
+  if (accepted.disclosure?.material_facts.length !== 65_536) {
+    throw new Error('exact-limit material facts must round-trip');
+  }
+  return expectErrorContains(
+    'over-limit material facts',
+    () => wasm.wasm_complete_disclosure(
+      JSON.stringify(shTxn),
+      TEST_DID,
+      'x'.repeat(65_537),
+      NOW_MS
+    ),
+    'material facts may contain at most 65536 bytes'
+  );
+});
+
+for (const field of ['methodology', 'conclusion']) {
+  test(`wasm_record_fairness_evidence enforces exact and plus-one ${field} limits`, () => {
+    const fairnessTxn = wasm.wasm_initiate_safe_harbor(
+      UUID_4,
+      TEST_DID,
+      TEST_DID_2,
+      'Board member is counterparty',
+      NONZERO_32_HEX,
+      JSON.stringify('FairnessProof'),
+      NOW_MS
+    );
+    const disclosed = wasm.wasm_complete_disclosure(
+      JSON.stringify(fairnessTxn),
+      TEST_DID,
+      'All material facts disclosed',
+      NOW_MS
+    );
+    const exact = 'x'.repeat(65_536);
+    const methodology = field === 'methodology' ? exact : 'DCF analysis';
+    const conclusion = field === 'conclusion' ? exact : 'fair market range';
+    const accepted = wasm.wasm_record_fairness_evidence(
+      JSON.stringify(disclosed),
+      TEST_DID_3,
+      methodology,
+      conclusion,
+      NONZERO_32_HEX,
+      NOW_MS
+    );
+    if (accepted.fairness_evidence?.[field].length !== 65_536) {
+      throw new Error(`exact-limit ${field} must round-trip`);
+    }
+    return expectErrorContains(
+      `over-limit ${field}`,
+      () => wasm.wasm_record_fairness_evidence(
+        JSON.stringify(disclosed),
+        TEST_DID_3,
+        field === 'methodology' ? 'x'.repeat(65_537) : 'DCF analysis',
+        field === 'conclusion' ? 'x'.repeat(65_537) : 'fair market range',
+        NONZERO_32_HEX,
+        NOW_MS
+      ),
+      `${field} may contain at most 65536 bytes`
+    );
+  });
+}
+
+test('wasm_initiate_safe_harbor rejects non-exact terms hash input', () =>
+  expectErrorContains(
+    'over-limit terms hash',
+    () => wasm.wasm_initiate_safe_harbor(
+      UUID_4,
+      TEST_DID,
+      TEST_DID_2,
+      'Board member is counterparty',
+      'a'.repeat(65),
+      JSON.stringify('BoardApproval'),
+      NOW_MS
+    ),
+    'terms hash must be exactly 64 ASCII hex characters'
+  ));
+
+test('wasm_record_fairness_evidence rejects the BoardApproval path', () => {
+  if (!disclosedTxn) throw new Error('skipped -- no disclosed BoardApproval txn from setup');
+  return expectErrorContains(
+    'wasm_record_fairness_evidence wrong path',
+    () => wasm.wasm_record_fairness_evidence(
+      JSON.stringify(disclosedTxn),
+      TEST_DID_3,
+      'DCF analysis',
+      'Transaction price is within fair market range',
+      NONZERO_32_HEX,
+      NOW_MS
+    ),
+    'fairness evidence is only valid for the FairnessProof path'
+  );
 });
 
 // =========================================================================

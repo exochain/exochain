@@ -22,6 +22,10 @@
  */
 import { TransportError } from '../errors.js';
 import { assertJsonObject, validateHealthResponse, } from '../validation.js';
+/** Maximum accepted HTTP response body size, measured in wire-decoded bytes. */
+export const MAX_HTTP_RESPONSE_BYTES = 1048576;
+const OVERSIZED_RESPONSE_MESSAGE = 'response body exceeds the 1048576-byte limit';
+const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'byteLength')?.get;
 /** Small fetch wrapper that serializes and deserializes JSON bodies. */
 export class HttpTransport {
     #baseUrl;
@@ -77,14 +81,24 @@ export class HttpTransport {
             if (serialized !== undefined) {
                 init.body = serialized;
             }
-            res = await this.#fetch(url, init);
+            res = await awaitWithAbort(this.#fetch(url, init), signal);
         }
         catch (err) {
             cancel();
             throw new TransportError(`network error: ${stringifyError(err)}`, { cause: err });
         }
-        cancel();
-        const text = await res.text();
+        let text;
+        try {
+            text = await readBoundedResponseText(res, signal);
+        }
+        catch (err) {
+            if (err instanceof TransportError)
+                throw err;
+            throw new TransportError(`network error: ${stringifyError(err)}`, { cause: err });
+        }
+        finally {
+            cancel();
+        }
         if (!res.ok) {
             throw new TransportError(`HTTP ${res.status} ${res.statusText} for ${method} ${path}`, {
                 status: res.status,
@@ -105,6 +119,99 @@ export class HttpTransport {
             });
         }
     }
+}
+async function readBoundedResponseText(response, signal) {
+    const contentLength = response.headers.get('content-length');
+    let initialCapacity = 0;
+    if (contentLength !== null && /^[0-9]+$/.test(contentLength)) {
+        const declaredLength = BigInt(contentLength);
+        if (declaredLength > BigInt(MAX_HTTP_RESPONSE_BYTES)) {
+            cancelResponseBody(response.body);
+            throw oversizedResponseError(response.status);
+        }
+        initialCapacity = Number(declaredLength);
+    }
+    if (response.body === null)
+        return '';
+    const reader = response.body.getReader();
+    let bytes = new Uint8Array(initialCapacity);
+    let totalBytes = 0;
+    try {
+        while (true) {
+            const next = await awaitWithAbort(reader.read(), signal);
+            if (next.done)
+                break;
+            const chunkLength = intrinsicUint8ArrayByteLength(next.value);
+            if (chunkLength === undefined) {
+                throw new TransportError('response body contained a non-byte chunk', {
+                    status: response.status,
+                });
+            }
+            const nextTotal = totalBytes + chunkLength;
+            if (nextTotal > MAX_HTTP_RESPONSE_BYTES) {
+                throw oversizedResponseError(response.status);
+            }
+            if (nextTotal > bytes.byteLength) {
+                const doubledCapacity = Math.max(8192, bytes.byteLength * 2);
+                const nextCapacity = Math.min(MAX_HTTP_RESPONSE_BYTES, Math.max(nextTotal, doubledCapacity));
+                const grown = new Uint8Array(nextCapacity);
+                grown.set(bytes.subarray(0, totalBytes));
+                bytes = grown;
+            }
+            bytes.set(next.value, totalBytes);
+            totalBytes = nextTotal;
+        }
+    }
+    catch (error) {
+        void reader.cancel(error).catch(() => undefined);
+        throw error;
+    }
+    return new TextDecoder().decode(bytes.subarray(0, totalBytes));
+}
+/** Await an operation against the same deadline even when it ignores `signal`. */
+function awaitWithAbort(operation, signal) {
+    if (signal.aborted) {
+        return Promise.reject(abortReason(signal));
+    }
+    return new Promise((resolve, reject) => {
+        const onAbort = () => {
+            signal.removeEventListener('abort', onAbort);
+            reject(abortReason(signal));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        operation.then((value) => {
+            signal.removeEventListener('abort', onAbort);
+            resolve(value);
+        }, (error) => {
+            signal.removeEventListener('abort', onAbort);
+            reject(error);
+        });
+    });
+}
+function abortReason(signal) {
+    return signal.reason === undefined ? new Error('request aborted') : signal.reason;
+}
+function intrinsicUint8ArrayByteLength(value) {
+    if (TYPED_ARRAY_BYTE_LENGTH_GETTER === undefined)
+        return undefined;
+    try {
+        const byteLength = Reflect.apply(TYPED_ARRAY_BYTE_LENGTH_GETTER, value, []);
+        return typeof byteLength === 'number' &&
+            Number.isSafeInteger(byteLength) &&
+            byteLength >= 0
+            ? byteLength
+            : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+function cancelResponseBody(body) {
+    if (body !== null)
+        void body.cancel().catch(() => undefined);
+}
+function oversizedResponseError(status) {
+    return new TransportError(OVERSIZED_RESPONSE_MESSAGE, { status });
 }
 function stringifyError(err) {
     if (err instanceof Error)

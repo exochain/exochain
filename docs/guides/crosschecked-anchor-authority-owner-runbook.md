@@ -13,6 +13,29 @@ the group public key and epoch already pinned in the registry. The protocol
 object, FROST artifact, lifecycle state, and first-application time commit in
 one SQLite transaction. The normal commitment route remains commitment-only.
 
+## Commitment hash contract
+
+The commitment API is `POST /api/v1/anchors/crosschecked`, with authenticated
+readback at `GET /api/v1/anchors/crosschecked/:action_hash`. POST requests use
+canonical CBOR with `Content-Type: application/cbor`. Protocol version 1 requires
+`source_code = "crosschecked"`, `receipt_format = "action_receipt_v3"`,
+`action_hash_algorithm = "blake3-256"`, and `signature_algorithm = "ed25519"`.
+`action_hash` is a nonzero 32-byte commitment. The algorithm identifier is part
+of the signed request payload, and unsupported identifiers are rejected.
+
+These requirements are enforced by `CrossCheckedAnchorRequestV1` and
+`validate_request_static_fields` in `crates/exo-api/src/crosschecked_anchor.rs`.
+The route neither negotiates hash algorithms nor converts a SHA-256 digest into
+a BLAKE3 commitment. A local log may have its own integrity scheme, but anchoring
+its bytes alone does not prove that log's chain or make its digest interchangeable
+with the required CrossChecked action commitment. Consumers must construct the
+commitment required by this versioned contract; changing accepted algorithms
+requires a separately specified and reviewed protocol change.
+
+This is the specialized CrossChecked commitment contract. EXOCHAIN 0.2.6 has no
+generic `TransparencyLog` or `/v1/anchor` API, shared fleet sequence namespace,
+batch-anchor endpoint, or measured fleet-throughput guarantee.
+
 ## Safety boundary
 
 - Run this only on the owner-controlled EXOCHAIN node host.

@@ -30,7 +30,7 @@
  * a target gateway on init and warn when the server reports a different
  * major/minor so users can distinguish protocol skew from transport errors.
  */
-export const PROTOCOL_VERSION = '0.2.4';
+export const PROTOCOL_VERSION = '0.2.6';
 export * from './types.js';
 export * from './errors.js';
 export * from './client.js';
@@ -41,5 +41,5 @@ export { Decision, DecisionBuilder } from './governance/decision.js';
 export { Vote, VoteChoice, isVoteChoice } from './governance/vote.js';
 export { AuthorityChainBuilder } from './authority/chain.js';
 export { blake3, blake3Hex, blake3Hash, sha256, sha256Hex, sha256Hash, bytesToHex, hexToBytes, } from './crypto/hash.js';
-export { HttpTransport } from './transport/http.js';
+export { HttpTransport, MAX_HTTP_RESPONSE_BYTES } from './transport/http.js';
 //# sourceMappingURL=index.js.map

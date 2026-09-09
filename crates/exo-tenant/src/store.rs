@@ -163,11 +163,33 @@ impl TenantStore {
     /// total — computed directly from durably recorded `TenantData::byte_len`
     /// values, not from any externally reported counter — so callers can
     /// reconcile a meter's self-reported usage against genuine stored state.
+    /// The compatibility total saturates at `u64::MAX`; checked callers
+    /// should use [`Self::try_total_bytes`].
     #[must_use]
     pub fn total_bytes(&self, tenant_id: &Uuid) -> u64 {
-        self.data
-            .get(tenant_id)
-            .map_or(0, |m| m.values().map(|item| item.byte_len).sum())
+        self.data.get(tenant_id).map_or(0, |m| {
+            m.values()
+                .map(|item| item.byte_len)
+                .fold(0, u64::saturating_add)
+        })
+    }
+
+    /// Return the checked sum of actual recorded byte lengths for a tenant.
+    ///
+    /// # Errors
+    /// Returns [`TenantError::UsageTotalOverflow`] when the mathematical
+    /// total cannot be represented as a `u64`.
+    pub fn try_total_bytes(&self, tenant_id: &Uuid) -> Result<u64> {
+        self.data.get(tenant_id).map_or(Ok(0), |items| {
+            items.values().try_fold(0u64, |total, item| {
+                total
+                    .checked_add(item.byte_len)
+                    .ok_or(TenantError::UsageTotalOverflow {
+                        tenant_id: *tenant_id,
+                        field: "store_total_bytes",
+                    })
+            })
+        })
     }
 
     /// Return the actual recorded byte length of a single stored item, or
@@ -179,7 +201,7 @@ impl TenantStore {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn uuid(byte: u8) -> Uuid {
@@ -202,6 +224,16 @@ mod tests {
             Did::new("did:exo:owner").unwrap(),
             &vec![0u8; len],
         )
+    }
+
+    pub(crate) fn store_with_byte_lengths(tenant_id: Uuid, byte_lengths: [u64; 2]) -> TenantStore {
+        let mut store = TenantStore::new();
+        for (offset, byte_len) in byte_lengths.into_iter().enumerate() {
+            let mut item = td_sized(tenant_id, uuid(100 + offset as u8), 1);
+            item.byte_len = byte_len;
+            store.put(tenant_id, item).expect("persist test item");
+        }
+        store
     }
 
     #[test]
@@ -348,6 +380,28 @@ mod tests {
     fn total_bytes_is_zero_for_unknown_tenant() {
         let s = TenantStore::new();
         assert_eq!(s.total_bytes(&Uuid::nil()), 0);
+    }
+
+    #[test]
+    fn total_bytes_overflow_saturates_for_compatibility() {
+        let tenant = uuid(1);
+        let store = store_with_byte_lengths(tenant, [u64::MAX, 1]);
+
+        assert_eq!(store.total_bytes(&tenant), u64::MAX);
+    }
+
+    #[test]
+    fn try_total_bytes_overflow_returns_contextual_error() {
+        let tenant = uuid(1);
+        let store = store_with_byte_lengths(tenant, [u64::MAX, 1]);
+
+        assert!(matches!(
+            store.try_total_bytes(&tenant),
+            Err(TenantError::UsageTotalOverflow {
+                tenant_id,
+                field: "store_total_bytes",
+            }) if tenant_id == tenant
+        ));
     }
 
     #[test]

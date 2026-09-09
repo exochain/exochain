@@ -1,9 +1,17 @@
 //! FROST DKG wrappers for root genesis.
 
-use std::{collections::BTreeMap, fmt::Display};
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Display},
+    io::Write,
+};
 
 use frost_ristretto255 as frost;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{
+    Deserialize, Serialize,
+    de::{DeserializeOwned, MapAccess, SeqAccess, Visitor},
+};
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{GenesisCeremonyConfig, Result, RootError};
 
@@ -19,7 +27,13 @@ pub struct RootPublicKeyPackage {
 }
 
 /// Serialized FROST key package held by one certifier.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// The byte field retains its original [`Vec`] shape and caller-owned move
+/// semantics for patch-release source compatibility. Debug output is redacted;
+/// callers that retain this legacy carrier can invoke [`Zeroize::zeroize`]
+/// explicitly when the bytes are no longer needed.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ZeroizingRootKeyPackage")]
 pub struct RootKeyPackage {
     /// Owner's FROST identifier.
     pub frost_identifier: u16,
@@ -27,8 +41,53 @@ pub struct RootKeyPackage {
     pub key_package: Vec<u8>,
 }
 
+impl fmt::Debug for RootKeyPackage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RootKeyPackage")
+            .field("frost_identifier", &self.frost_identifier)
+            .field("key_package", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl RootKeyPackage {
+    fn from_zeroizing(frost_identifier: u16, mut key_package: Zeroizing<Vec<u8>>) -> Self {
+        let mut output = Self {
+            frost_identifier,
+            key_package: Vec::new(),
+        };
+        output.key_package = std::mem::take(&mut *key_package);
+        output
+    }
+}
+
+impl Zeroize for RootKeyPackage {
+    fn zeroize(&mut self) {
+        self.key_package.zeroize();
+    }
+}
+
+#[derive(Deserialize)]
+struct ZeroizingRootKeyPackage {
+    frost_identifier: u16,
+    #[serde(deserialize_with = "deserialize_zeroizing_bytes")]
+    key_package: Zeroizing<Vec<u8>>,
+}
+
+impl From<ZeroizingRootKeyPackage> for RootKeyPackage {
+    fn from(value: ZeroizingRootKeyPackage) -> Self {
+        Self::from_zeroizing(value.frost_identifier, value.key_package)
+    }
+}
+
 /// Complete in-memory DKG result for tests and offline ceremony tooling.
+///
+/// Cloning this value duplicates private key-package material. Callers should
+/// keep copies short-lived and explicitly zeroize legacy private byte carriers
+/// when they are no longer needed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ZeroizingRootDkgOutput")]
 pub struct RootDkgOutput {
     /// Certifier key packages by FROST identifier.
     pub key_packages: BTreeMap<u16, RootKeyPackage>,
@@ -36,8 +95,33 @@ pub struct RootDkgOutput {
     pub public_key_package: RootPublicKeyPackage,
 }
 
+// Guard every decoded map value until all entries and public metadata parse.
+#[derive(Deserialize)]
+struct ZeroizingRootDkgOutput {
+    key_packages: BTreeMap<u16, ZeroizingRootKeyPackage>,
+    public_key_package: RootPublicKeyPackage,
+}
+
+impl From<ZeroizingRootDkgOutput> for RootDkgOutput {
+    fn from(value: ZeroizingRootDkgOutput) -> Self {
+        Self {
+            key_packages: value
+                .key_packages
+                .into_iter()
+                .map(|(identifier, package)| (identifier, package.into()))
+                .collect(),
+            public_key_package: value.public_key_package,
+        }
+    }
+}
+
 /// Serialized output from one certifier's DKG round one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// The fields retain their original [`Vec`] shapes and caller-owned move
+/// semantics for patch-release source compatibility. Debug output redacts the
+/// private round-one bytes, which can also be explicitly zeroized in place.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ZeroizingRootDkgRound1Output")]
 pub struct RootDkgRound1Output {
     /// Owner's FROST identifier.
     pub frost_identifier: u16,
@@ -47,8 +131,65 @@ pub struct RootDkgRound1Output {
     pub round1_package: Vec<u8>,
 }
 
+impl RootDkgRound1Output {
+    fn from_zeroizing(
+        frost_identifier: u16,
+        mut round1_secret_package: Zeroizing<Vec<u8>>,
+        round1_package: Vec<u8>,
+    ) -> Self {
+        let mut output = Self {
+            frost_identifier,
+            round1_secret_package: Vec::new(),
+            round1_package,
+        };
+        output.round1_secret_package = std::mem::take(&mut *round1_secret_package);
+        output
+    }
+}
+
+impl Zeroize for RootDkgRound1Output {
+    fn zeroize(&mut self) {
+        self.round1_secret_package.zeroize();
+    }
+}
+
+#[derive(Deserialize)]
+struct ZeroizingRootDkgRound1Output {
+    frost_identifier: u16,
+    #[serde(deserialize_with = "deserialize_zeroizing_bytes")]
+    round1_secret_package: Zeroizing<Vec<u8>>,
+    round1_package: Vec<u8>,
+}
+
+impl From<ZeroizingRootDkgRound1Output> for RootDkgRound1Output {
+    fn from(value: ZeroizingRootDkgRound1Output) -> Self {
+        Self::from_zeroizing(
+            value.frost_identifier,
+            value.round1_secret_package,
+            value.round1_package,
+        )
+    }
+}
+
+impl fmt::Debug for RootDkgRound1Output {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RootDkgRound1Output")
+            .field("frost_identifier", &self.frost_identifier)
+            .field("round1_secret_package", &"[REDACTED]")
+            .field("round1_package", &self.round1_package)
+            .finish()
+    }
+}
+
 /// Serialized output from one certifier's DKG round two.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// The fields retain their original [`Vec`] and [`BTreeMap`] shapes and
+/// caller-owned move semantics for patch-release source compatibility. Debug
+/// output redacts both private fields, which can also be explicitly zeroized in
+/// place.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ZeroizingRootDkgRound2Output")]
 pub struct RootDkgRound2Output {
     /// Owner's FROST identifier.
     pub frost_identifier: u16,
@@ -58,13 +199,305 @@ pub struct RootDkgRound2Output {
     pub round2_packages: BTreeMap<u16, Vec<u8>>,
 }
 
+type RecipientRound2Packages = BTreeMap<u16, Zeroizing<Vec<u8>>>;
+type ZeroizingRound2Parts = (Zeroizing<Vec<u8>>, RecipientRound2Packages);
+
+impl RootDkgRound2Output {
+    fn from_zeroizing(
+        frost_identifier: u16,
+        mut round2_secret_package: Zeroizing<Vec<u8>>,
+        mut round2_packages: BTreeMap<u16, Zeroizing<Vec<u8>>>,
+    ) -> Self {
+        let mut output = Self {
+            frost_identifier,
+            round2_secret_package: Vec::new(),
+            round2_packages: BTreeMap::new(),
+        };
+        output.round2_secret_package = std::mem::take(&mut *round2_secret_package);
+        while let Some((identifier, mut package)) = round2_packages.pop_first() {
+            output
+                .round2_packages
+                .insert(identifier, std::mem::take(&mut *package));
+        }
+        output
+    }
+
+    fn take_zeroizing_parts(&mut self) -> ZeroizingRound2Parts {
+        let secret_package = Zeroizing::new(std::mem::take(&mut self.round2_secret_package));
+        let packages = zeroizing_byte_map(std::mem::take(&mut self.round2_packages));
+        (secret_package, packages)
+    }
+}
+
+impl Zeroize for RootDkgRound2Output {
+    fn zeroize(&mut self) {
+        self.round2_secret_package.zeroize();
+        for package in self.round2_packages.values_mut() {
+            package.zeroize();
+        }
+        self.round2_packages.clear();
+    }
+}
+
+#[derive(Deserialize)]
+struct ZeroizingRootDkgRound2Output {
+    frost_identifier: u16,
+    #[serde(deserialize_with = "deserialize_zeroizing_bytes")]
+    round2_secret_package: Zeroizing<Vec<u8>>,
+    #[serde(deserialize_with = "deserialize_zeroizing_byte_map")]
+    round2_packages: BTreeMap<u16, Zeroizing<Vec<u8>>>,
+}
+
+impl From<ZeroizingRootDkgRound2Output> for RootDkgRound2Output {
+    fn from(value: ZeroizingRootDkgRound2Output) -> Self {
+        Self::from_zeroizing(
+            value.frost_identifier,
+            value.round2_secret_package,
+            value.round2_packages,
+        )
+    }
+}
+
+impl fmt::Debug for RootDkgRound2Output {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RootDkgRound2Output")
+            .field("frost_identifier", &self.frost_identifier)
+            .field("round2_secret_package", &"[REDACTED]")
+            .field("round2_packages", &"[REDACTED]")
+            .finish()
+    }
+}
+
+const MAX_INITIAL_SECRET_CAPACITY: usize = 4096;
+const MAX_SECRET_CAPACITY: usize = usize::MAX / 2;
+
+struct ZeroizingByteAccumulator {
+    bytes: Zeroizing<Vec<u8>>,
+    logical_len: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SecretBufferError(&'static str);
+
+fn next_secret_capacity(current_capacity: usize) -> std::result::Result<usize, SecretBufferError> {
+    let next_capacity = current_capacity
+        .checked_mul(2)
+        .unwrap_or(MAX_SECRET_CAPACITY)
+        .clamp(1, MAX_SECRET_CAPACITY);
+    if next_capacity <= current_capacity {
+        return Err(SecretBufferError(
+            "root secret bytes exceed supported capacity",
+        ));
+    }
+    Ok(next_capacity)
+}
+
+impl ZeroizingByteAccumulator {
+    fn with_size_hint(size_hint: usize) -> std::result::Result<Self, SecretBufferError> {
+        let initial_capacity = size_hint.min(MAX_INITIAL_SECRET_CAPACITY);
+        let mut bytes = Zeroizing::new(Vec::new());
+        bytes
+            .try_reserve_exact(initial_capacity)
+            .map_err(|_| SecretBufferError("unable to allocate root secret bytes"))?;
+        bytes.resize(initial_capacity, 0);
+        Ok(Self {
+            bytes,
+            logical_len: 0,
+        })
+    }
+
+    fn push(&mut self, byte: u8) -> std::result::Result<(), SecretBufferError> {
+        if self.logical_len == self.bytes.len() {
+            self.grow()?;
+        }
+        self.bytes[self.logical_len] = byte;
+        self.logical_len += 1;
+        Ok(())
+    }
+
+    fn grow(&mut self) -> std::result::Result<(), SecretBufferError> {
+        let current_capacity = self.bytes.len();
+        let next_capacity = next_secret_capacity(current_capacity)?;
+        let mut replacement = Zeroizing::new(Vec::new());
+        replacement
+            .try_reserve_exact(next_capacity)
+            .map_err(|_| SecretBufferError("unable to allocate root secret bytes"))?;
+        replacement.resize(next_capacity, 0);
+        replacement[..self.logical_len].copy_from_slice(&self.bytes[..self.logical_len]);
+        self.bytes.zeroize();
+        self.bytes = replacement;
+        Ok(())
+    }
+
+    fn finish(mut self) -> Zeroizing<Vec<u8>> {
+        self.bytes.truncate(self.logical_len);
+        std::mem::take(&mut self.bytes)
+    }
+}
+
+impl Drop for ZeroizingByteAccumulator {
+    fn drop(&mut self) {
+        self.bytes.zeroize();
+        self.logical_len.zeroize();
+    }
+}
+
+impl zeroize::ZeroizeOnDrop for ZeroizingByteAccumulator {}
+
+struct ZeroizingByteWriter {
+    accumulator: ZeroizingByteAccumulator,
+}
+
+impl ZeroizingByteWriter {
+    fn new() -> Self {
+        Self {
+            accumulator: ZeroizingByteAccumulator {
+                bytes: Zeroizing::new(Vec::new()),
+                logical_len: 0,
+            },
+        }
+    }
+
+    fn finish(self) -> Zeroizing<Vec<u8>> {
+        self.accumulator.finish()
+    }
+}
+
+impl Write for ZeroizingByteWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        for byte in buffer {
+            self.accumulator
+                .push(*byte)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::OutOfMemory, error.0))?;
+        }
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl zeroize::ZeroizeOnDrop for ZeroizingByteWriter {}
+
+struct ZeroizingBytesVisitor;
+
+impl<'de> Visitor<'de> for ZeroizingBytesVisitor {
+    type Value = Zeroizing<Vec<u8>>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a sequence of root secret bytes")
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut accumulator =
+            ZeroizingByteAccumulator::with_size_hint(sequence.size_hint().unwrap_or(0))
+                .map_err(|error| <A::Error as serde::de::Error>::custom(error.0))?;
+        while let Some(byte) = sequence.next_element::<u8>()? {
+            accumulator
+                .push(byte)
+                .map_err(|error| <A::Error as serde::de::Error>::custom(error.0))?;
+        }
+        Ok(accumulator.finish())
+    }
+}
+
+pub(crate) fn deserialize_zeroizing_bytes<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Zeroizing<Vec<u8>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserializer.deserialize_seq(ZeroizingBytesVisitor)
+}
+
+struct ZeroizingBytes(Zeroizing<Vec<u8>>);
+
+impl<'de> Deserialize<'de> for ZeroizingBytes {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserialize_zeroizing_bytes(deserializer).map(Self)
+    }
+}
+
+struct ZeroizingByteMapVisitor;
+
+impl<'de> Visitor<'de> for ZeroizingByteMapVisitor {
+    type Value = BTreeMap<u16, Zeroizing<Vec<u8>>>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a map of recipient-bound root secret byte sequences")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut packages = BTreeMap::new();
+        while let Some((identifier, package)) = map.next_entry::<u16, ZeroizingBytes>()? {
+            packages.insert(identifier, package.0);
+        }
+        Ok(packages)
+    }
+}
+
+fn deserialize_zeroizing_byte_map<'de, D>(
+    deserializer: D,
+) -> std::result::Result<BTreeMap<u16, Zeroizing<Vec<u8>>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserializer.deserialize_map(ZeroizingByteMapVisitor)
+}
+
+fn zeroizing_byte_map(mut packages: BTreeMap<u16, Vec<u8>>) -> BTreeMap<u16, Zeroizing<Vec<u8>>> {
+    let mut zeroizing_packages = BTreeMap::new();
+    while let Some((identifier, package)) = packages.pop_first() {
+        let package = Zeroizing::new(package);
+        zeroizing_packages.insert(identifier, package);
+    }
+    zeroizing_packages
+}
+
 /// Final DKG material derived by one certifier.
+///
+/// Cloning this value duplicates its private key package. Callers should keep
+/// copies short-lived and explicitly zeroize legacy private byte carriers when
+/// they are no longer needed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ZeroizingRootParticipantDkgOutput")]
 pub struct RootParticipantDkgOutput {
     /// Owner's FROST key package.
     pub key_package: RootKeyPackage,
     /// Public root key package derived by the participant.
     pub public_key_package: RootPublicKeyPackage,
+}
+
+impl Zeroize for RootParticipantDkgOutput {
+    fn zeroize(&mut self) {
+        self.key_package.zeroize();
+    }
+}
+
+#[derive(Deserialize)]
+struct ZeroizingRootParticipantDkgOutput {
+    key_package: ZeroizingRootKeyPackage,
+    public_key_package: RootPublicKeyPackage,
+}
+
+impl From<ZeroizingRootParticipantDkgOutput> for RootParticipantDkgOutput {
+    fn from(value: ZeroizingRootParticipantDkgOutput) -> Self {
+        Self {
+            key_package: value.key_package.into(),
+            public_key_package: value.public_key_package,
+        }
+    }
 }
 
 pub(crate) fn frost_identifier(identifier: u16) -> Result<frost::Identifier> {
@@ -100,6 +533,12 @@ pub(crate) fn serialize_frost<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     ciborium::into_writer(value, &mut bytes).map_err(frost_encoding_error)?;
     Ok(bytes)
+}
+
+pub(crate) fn serialize_frost_secret<T: Serialize>(value: &T) -> Result<Zeroizing<Vec<u8>>> {
+    let mut writer = ZeroizingByteWriter::new();
+    ciborium::into_writer(value, &mut writer).map_err(frost_encoding_error)?;
+    Ok(writer.finish())
 }
 
 pub(crate) fn deserialize_frost<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
@@ -205,12 +644,13 @@ where
     let threshold = config.threshold;
     let round1 = frost_dkg_round1(identifier, max_signers, threshold, rng)?;
     let (secret_package, package) = round1;
-    let output = RootDkgRound1Output {
-        frost_identifier: frost_identifier_value,
-        round1_secret_package: serialize_frost(&secret_package)?,
-        round1_package: serialize_frost(&package)?,
-    };
-    Ok(output)
+    let secret_package = serialize_frost_secret(&secret_package)?;
+    let public_package = serialize_frost(&package)?;
+    Ok(RootDkgRound1Output::from_zeroizing(
+        frost_identifier_value,
+        secret_package,
+        public_package,
+    ))
 }
 
 /// Execute DKG round two for one certifier after all other round-one packages
@@ -237,13 +677,14 @@ pub fn dkg_round2(
     let mut round2_packages = BTreeMap::new();
     for (recipient, package) in outbound {
         let recipient_value = identifier_value(config, recipient)?;
-        round2_packages.insert(recipient_value, serialize_frost(&package)?);
+        round2_packages.insert(recipient_value, serialize_frost_secret(&package)?);
     }
-    Ok(RootDkgRound2Output {
-        frost_identifier: frost_identifier_value,
-        round2_secret_package: serialize_frost(&round2_secret_package)?,
+    let round2_secret_package = serialize_frost_secret(&round2_secret_package)?;
+    Ok(RootDkgRound2Output::from_zeroizing(
+        frost_identifier_value,
+        round2_secret_package,
         round2_packages,
-    })
+    ))
 }
 
 /// Finalize one participant's DKG state after all peer round-one and round-two
@@ -254,6 +695,29 @@ pub fn dkg_finalize_participant(
     round2_secret_package: &[u8],
     round1_packages: BTreeMap<u16, Vec<u8>>,
     round2_packages: BTreeMap<u16, Vec<u8>>,
+) -> Result<RootParticipantDkgOutput> {
+    let round2_packages = zeroizing_byte_map(round2_packages);
+    dkg_finalize_participant_zeroizing(
+        config,
+        frost_identifier_value,
+        round2_secret_package,
+        round1_packages,
+        round2_packages,
+    )
+}
+
+/// Finalize one participant while retaining zeroizing ownership of decoded
+/// recipient-bound round-two packages.
+///
+/// Ceremony tooling that already decodes private packages into [`Zeroizing`]
+/// buffers should use this entry point. Existing callers with ordinary byte
+/// vectors remain supported by [`dkg_finalize_participant`].
+pub fn dkg_finalize_participant_zeroizing(
+    config: &GenesisCeremonyConfig,
+    frost_identifier_value: u16,
+    round2_secret_package: &[u8],
+    round1_packages: BTreeMap<u16, Vec<u8>>,
+    round2_packages: BTreeMap<u16, Zeroizing<Vec<u8>>>,
 ) -> Result<RootParticipantDkgOutput> {
     config.validate()?;
     if round1_packages.len() != usize::from(config.max_signers - 1) {
@@ -276,13 +740,11 @@ pub fn dkg_finalize_participant(
     let (key_package, public_key_package) =
         frost::keys::dkg::part3(&secret_package, &inbound_round1, &inbound_round2)
             .map_err(frost_error)?;
-    let key_package = RootKeyPackage {
-        frost_identifier: frost_identifier_value,
-        key_package: serialize_frost(&key_package)?,
-    };
+    let key_package = serialize_frost_secret(&key_package)?;
+    let public_key_package = serialize_public_key_package(config, &public_key_package)?;
     Ok(RootParticipantDkgOutput {
-        key_package,
-        public_key_package: serialize_public_key_package(config, &public_key_package)?,
+        key_package: RootKeyPackage::from_zeroizing(frost_identifier_value, key_package),
+        public_key_package,
     })
 }
 
@@ -313,7 +775,7 @@ fn deserialize_round1_packages(
 fn deserialize_round2_packages(
     config: &GenesisCeremonyConfig,
     participant_identifier: frost::Identifier,
-    packages: BTreeMap<u16, Vec<u8>>,
+    packages: BTreeMap<u16, Zeroizing<Vec<u8>>>,
 ) -> Result<BTreeMap<frost::Identifier, frost::keys::dkg::round2::Package>> {
     let mut result = BTreeMap::new();
     for (sender, package_bytes) in packages {
@@ -334,6 +796,23 @@ fn deserialize_round2_packages(
     Ok(result)
 }
 
+fn require_recipient_round2_packages(
+    round2_packages: Option<RecipientRound2Packages>,
+    identifier: u16,
+) -> Result<RecipientRound2Packages> {
+    round2_packages.ok_or_else(|| RootError::Frost {
+        detail: format!("missing recipient-bound round-two packages for {identifier}"),
+    })
+}
+
+fn require_first_public_key_package(
+    public_key_package: Option<RootPublicKeyPackage>,
+) -> Result<RootPublicKeyPackage> {
+    public_key_package.ok_or_else(|| RootError::Frost {
+        detail: "missing first participant public key package".to_owned(),
+    })
+}
+
 /// Run the all-roster DKG ceremony locally.
 ///
 /// Production ceremonies should exchange these packages through the portal and
@@ -345,50 +824,61 @@ where
 {
     config.validate()?;
 
-    let mut round1_outputs = BTreeMap::new();
+    let mut round1_outputs: BTreeMap<u16, Zeroizing<RootDkgRound1Output>> = BTreeMap::new();
     let mut round1_public = BTreeMap::new();
     for certifier in &config.certifiers {
-        let output = dkg_round1(config, certifier.frost_identifier, rng)?;
+        let output = Zeroizing::new(dkg_round1(config, certifier.frost_identifier, rng)?);
         round1_public.insert(certifier.frost_identifier, output.round1_package.clone());
         round1_outputs.insert(certifier.frost_identifier, output);
     }
 
-    let mut round2_outputs = BTreeMap::new();
-    let mut round2_by_recipient: BTreeMap<u16, BTreeMap<u16, Vec<u8>>> = BTreeMap::new();
-    for (identifier, round1_output) in &round1_outputs {
-        let peer_round1 = peer_packages_except(&round1_public, *identifier);
-        let secret = &round1_output.round1_secret_package;
-        let round2 = dkg_round2(config, *identifier, secret, peer_round1)?;
-        for (recipient, package) in &round2.round2_packages {
-            let recipient_packages = round2_by_recipient.entry(*recipient).or_default();
-            recipient_packages.insert(*identifier, package.clone());
-        }
-        round2_outputs.insert(*identifier, round2);
-    }
-
-    let mut key_packages = BTreeMap::new();
-    let finish = dkg_finalize_participant;
-    let first_identifier = config.certifiers[0].frost_identifier;
-    let output = &round2_outputs[&first_identifier];
-    let fr1 = peer_packages_except(&round1_public, first_identifier);
-    let fs = &output.round2_secret_package;
-    let fr2 = round2_by_recipient[&first_identifier].clone();
-    let first_participant = finish(config, first_identifier, fs, fr1, fr2)?;
-    let public_key_package = first_participant.public_key_package;
-    key_packages.insert(first_identifier, first_participant.key_package);
-
-    for (identifier, round2_output) in round2_outputs
-        .iter()
-        .filter(|(identifier, _)| **identifier != first_identifier)
-    {
-        let identifier = *identifier;
+    let mut round2_secrets = BTreeMap::new();
+    let mut round2_by_recipient: BTreeMap<u16, RecipientRound2Packages> = BTreeMap::new();
+    for (identifier, round1_output) in round1_outputs {
         let peer_round1 = peer_packages_except(&round1_public, identifier);
-        let secret = &round2_output.round2_secret_package;
-        let round2 = round2_by_recipient[&identifier].clone();
-        let participant = finish(config, identifier, secret, peer_round1, round2)?;
-        key_packages.insert(identifier, participant.key_package);
+        let secret = &round1_output.round1_secret_package;
+        let mut round2 = dkg_round2(config, identifier, secret, peer_round1)?;
+        let (round2_secret, round2_packages) = round2.take_zeroizing_parts();
+        for (recipient, package) in round2_packages {
+            let recipient_packages = round2_by_recipient.entry(recipient).or_default();
+            recipient_packages.insert(identifier, package);
+        }
+        round2_secrets.insert(identifier, round2_secret);
     }
 
+    let mut key_packages: BTreeMap<u16, Zeroizing<RootKeyPackage>> = BTreeMap::new();
+    let first_identifier = config.certifiers[0].frost_identifier;
+    let mut public_key_package = None;
+    for (identifier, round2_secret) in round2_secrets {
+        let peer_round1 = peer_packages_except(&round1_public, identifier);
+        let recipient_packages = round2_by_recipient.remove(&identifier);
+        let round2 = require_recipient_round2_packages(recipient_packages, identifier)?;
+        let participant = dkg_finalize_participant_zeroizing(
+            config,
+            identifier,
+            &round2_secret,
+            peer_round1,
+            round2,
+        )?;
+        let key_package = Zeroizing::new(participant.key_package);
+        if identifier == first_identifier {
+            public_key_package = Some(participant.public_key_package);
+        }
+        key_packages.insert(identifier, key_package);
+    }
+
+    let public_key_package = require_first_public_key_package(public_key_package)?;
+    // Only a successful public handoff releases legacy caller-owned vectors.
+    let key_packages = key_packages
+        .into_iter()
+        .map(|(identifier, mut package)| {
+            let key_package = RootKeyPackage {
+                frost_identifier: package.frost_identifier,
+                key_package: std::mem::take(&mut package.key_package),
+            };
+            (identifier, key_package)
+        })
+        .collect();
     Ok(RootDkgOutput {
         key_packages,
         public_key_package,
@@ -399,6 +889,7 @@ where
 mod tests {
     use exo_core::{Did, Hash256, PublicKey, Timestamp};
     use rand::{SeedableRng, rngs::StdRng};
+    use serde::{Serialize, ser::SerializeSeq};
 
     use super::*;
     use crate::CertifierContact;
@@ -426,6 +917,724 @@ mod tests {
             certifiers,
             signing_set: (1..=7).collect(),
         }
+    }
+
+    #[derive(Serialize)]
+    struct LegacyRootKeyPackage<'a> {
+        frost_identifier: u16,
+        key_package: &'a Vec<u8>,
+    }
+
+    #[derive(Serialize)]
+    struct LegacyRound1Output<'a> {
+        frost_identifier: u16,
+        round1_secret_package: &'a Vec<u8>,
+        round1_package: &'a Vec<u8>,
+    }
+
+    #[derive(Serialize)]
+    struct LegacyRound2Output<'a> {
+        frost_identifier: u16,
+        round2_secret_package: &'a Vec<u8>,
+        round2_packages: &'a BTreeMap<u16, Vec<u8>>,
+    }
+
+    #[derive(Serialize)]
+    struct MalformedKeyPackage {
+        frost_identifier: u16,
+        key_package: Vec<serde_json::Value>,
+    }
+
+    #[derive(Serialize)]
+    struct MalformedRound1Output {
+        frost_identifier: u16,
+        round1_secret_package: Vec<serde_json::Value>,
+        round1_package: Vec<u8>,
+    }
+
+    #[derive(Serialize)]
+    struct MalformedRound2SecretOutput {
+        frost_identifier: u16,
+        round2_secret_package: Vec<serde_json::Value>,
+        round2_packages: BTreeMap<u16, Vec<u8>>,
+    }
+
+    #[derive(Serialize)]
+    struct MalformedRound2MapOutput {
+        frost_identifier: u16,
+        round2_secret_package: Vec<u8>,
+        round2_packages: BTreeMap<u16, Vec<serde_json::Value>>,
+    }
+
+    struct FailingSecretSerialize;
+
+    impl Serialize for FailingSecretSerialize {
+        fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut sequence = serializer.serialize_seq(Some(4))?;
+            sequence.serialize_element(&0xdeu8)?;
+            sequence.serialize_element(&0xadu8)?;
+            Err(<S::Error as serde::ser::Error>::custom(
+                "forced secret serialization failure",
+            ))
+        }
+    }
+
+    struct NoSizeHintByteSequence {
+        bytes: std::vec::IntoIter<u8>,
+    }
+
+    impl<'de> serde::de::SeqAccess<'de> for NoSizeHintByteSequence {
+        type Error = serde::de::value::Error;
+
+        fn next_element_seed<T>(
+            &mut self,
+            seed: T,
+        ) -> std::result::Result<Option<T::Value>, Self::Error>
+        where
+            T: serde::de::DeserializeSeed<'de>,
+        {
+            match self.bytes.next() {
+                Some(byte) => seed
+                    .deserialize(serde::de::value::U8Deserializer::new(byte))
+                    .map(Some),
+                None => Ok(None),
+            }
+        }
+
+        fn size_hint(&self) -> Option<usize> {
+            None
+        }
+    }
+
+    fn cbor_bytes(value: &impl Serialize) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        ciborium::into_writer(value, &mut bytes).expect("CBOR encoding");
+        bytes
+    }
+
+    fn assert_explicitly_zeroizable<T: zeroize::Zeroize>(_: &T) {}
+
+    #[test]
+    fn legacy_secret_dkg_byte_carriers_support_explicit_zeroize() {
+        let mut key_package = RootKeyPackage {
+            frost_identifier: 7,
+            key_package: vec![0xde, 0xad, 0xbe, 0xef],
+        };
+        let mut round1 = RootDkgRound1Output {
+            frost_identifier: 7,
+            round1_secret_package: vec![0xca, 0xfe, 0xba, 0xbe],
+            round1_package: vec![1, 2, 3],
+        };
+        let mut round2 = RootDkgRound2Output {
+            frost_identifier: 7,
+            round2_secret_package: vec![0x12, 0x34, 0x56, 0x78],
+            round2_packages: BTreeMap::from([(8, vec![4, 5, 6])]),
+        };
+
+        assert_explicitly_zeroizable(&key_package);
+        assert_explicitly_zeroizable(&round1);
+        assert_explicitly_zeroizable(&round2);
+
+        key_package.zeroize();
+        round1.zeroize();
+        round2.zeroize();
+        assert!(key_package.key_package.is_empty());
+        assert!(round1.round1_secret_package.is_empty());
+        assert!(round2.round2_secret_package.is_empty());
+        assert!(round2.round2_packages.is_empty());
+        let public_key_package = RootPublicKeyPackage {
+            public_key_package: vec![1],
+            root_public_key: vec![2],
+            verifying_shares: BTreeMap::from([(7, vec![3])]),
+        };
+        let mut participant = RootParticipantDkgOutput {
+            key_package: RootKeyPackage {
+                frost_identifier: 7,
+                key_package: vec![4, 5, 6],
+            },
+            public_key_package: public_key_package.clone(),
+        };
+        assert_explicitly_zeroizable(&participant);
+        participant.zeroize();
+        assert!(participant.key_package.key_package.is_empty());
+        assert_eq!(participant.key_package.frost_identifier, 7);
+        assert_eq!(participant.public_key_package, public_key_package);
+    }
+
+    #[test]
+    fn secret_dkg_debug_redacts_every_private_package() {
+        let key_secret = vec![0xde, 0xad, 0xbe, 0xef];
+        let round1_secret = vec![0xca, 0xfe, 0xba, 0xbe];
+        let round2_secret = vec![0x12, 0x34, 0x56, 0x78];
+        let key_package = RootKeyPackage {
+            frost_identifier: 7,
+            key_package: key_secret.clone(),
+        };
+        let round1 = RootDkgRound1Output {
+            frost_identifier: 7,
+            round1_secret_package: round1_secret.clone(),
+            round1_package: vec![1, 2, 3],
+        };
+        let round2 = RootDkgRound2Output {
+            frost_identifier: 7,
+            round2_secret_package: round2_secret.clone(),
+            round2_packages: BTreeMap::from([(8, vec![4, 5, 6])]),
+        };
+
+        for (rendered, secret) in [
+            (format!("{key_package:?}"), format!("{key_secret:?}")),
+            (format!("{round1:?}"), format!("{round1_secret:?}")),
+            (format!("{round2:?}"), format!("{round2_secret:?}")),
+        ] {
+            assert!(
+                rendered.contains("[REDACTED]"),
+                "secret-bearing DKG debug output must visibly redact: {rendered}"
+            );
+            assert!(
+                !rendered.contains(&secret),
+                "secret-bearing DKG debug output exposed fixture bytes: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn secret_round_two_recipient_packages_are_fully_redacted() {
+        let recipient_secret = vec![0x99, 0x88, 0x77, 0x66];
+        let output = RootDkgRound2Output {
+            frost_identifier: 7,
+            round2_secret_package: vec![0x12, 0x34, 0x56, 0x78],
+            round2_packages: BTreeMap::from([(8, recipient_secret.clone())]),
+        };
+
+        let rendered = format!("{output:?}");
+        assert!(
+            rendered.matches("[REDACTED]").count() >= 2,
+            "both round-two secret fields must be visibly redacted: {rendered}"
+        );
+        assert!(
+            !rendered.contains(&format!("{recipient_secret:?}")),
+            "recipient-bound round-two package leaked through Debug: {rendered}"
+        );
+        assert_explicitly_zeroizable(&output);
+    }
+
+    #[test]
+    fn secret_byte_deserializer_clamps_hints_and_grows_from_fully_initialized_storage() {
+        let mut accumulator = ZeroizingByteAccumulator::with_size_hint(usize::MAX)
+            .expect("bounded initial allocation");
+        assert_eq!(accumulator.bytes.len(), accumulator.bytes.capacity());
+        assert!(accumulator.bytes.capacity() <= 4096);
+
+        let bytes_to_add = accumulator.bytes.capacity() + 1;
+        for index in 0..bytes_to_add {
+            accumulator
+                .push(u8::try_from(index % 251).expect("fixture byte"))
+                .expect("zeroizing growth");
+        }
+        assert_eq!(accumulator.bytes.len(), accumulator.bytes.capacity());
+        let finished = accumulator.finish();
+        assert_eq!(finished.len(), bytes_to_add);
+        assert_explicitly_zeroizable(&finished);
+    }
+
+    #[test]
+    fn secret_byte_deserializer_accepts_sequences_without_size_hints() {
+        let sequence = NoSizeHintByteSequence {
+            bytes: vec![0xde, 0xad, 0xbe, 0xef].into_iter(),
+        };
+        let deserializer = serde::de::value::SeqAccessDeserializer::new(sequence);
+
+        let mut decoded =
+            deserialize_zeroizing_bytes(deserializer).expect("sequence without a size hint");
+        assert_eq!(decoded.as_slice(), &[0xde, 0xad, 0xbe, 0xef]);
+        decoded.zeroize();
+        assert!(decoded.is_empty());
+    }
+
+    #[test]
+    fn secret_byte_capacity_guard_rejects_terminal_capacity() {
+        let error = next_secret_capacity(MAX_SECRET_CAPACITY)
+            .expect_err("the bounded secret buffer must never grow past its terminal capacity");
+        assert_eq!(
+            error.0, "root secret bytes exceed supported capacity",
+            "capacity exhaustion must remain a typed, diagnostic failure"
+        );
+    }
+
+    #[test]
+    fn secret_byte_writer_wipes_before_growth_and_on_serialization_error() {
+        fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+        assert_zeroize_on_drop::<ZeroizingByteAccumulator>();
+        assert_zeroize_on_drop::<ZeroizingByteWriter>();
+
+        let fixture: Vec<u8> = (0..=u16::try_from(MAX_INITIAL_SECRET_CAPACITY).unwrap_or(u16::MAX))
+            .map(|index| u8::try_from(index % 251).expect("fixture byte"))
+            .collect();
+        let mut writer = ZeroizingByteWriter::new();
+        writer.write_all(&fixture).expect("forced-growth write");
+        writer
+            .flush()
+            .expect("the unbuffered writer flushes safely");
+        assert_eq!(
+            writer.accumulator.bytes.len(),
+            writer.accumulator.bytes.capacity()
+        );
+        assert_eq!(writer.finish().as_slice(), fixture.as_slice());
+
+        let error = serialize_frost_secret(&FailingSecretSerialize)
+            .expect_err("serialization error must not release a secret buffer");
+        assert!(
+            error
+                .to_string()
+                .contains("forced secret serialization failure")
+        );
+    }
+
+    fn derive_before<'a>(source: &'a str, declaration: &str) -> &'a str {
+        let declaration_offset = source
+            .find(declaration)
+            .expect("secret carrier declaration");
+        let prefix = &source[..declaration_offset];
+        let derive_offset = prefix.rfind("#[derive(").expect("secret carrier derive");
+        &prefix[derive_offset..]
+    }
+
+    #[test]
+    fn complete_dkg_moves_internal_zeroizing_secret_packages_without_clone() {
+        let dkg_source = include_str!("dkg.rs").split("#[cfg(test)]").next().unwrap();
+        let signing_source = include_str!("signing.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        for (declaration, intermediate) in [
+            ("pub struct RootDkgOutput", "ZeroizingRootDkgOutput"),
+            (
+                "pub struct RootParticipantDkgOutput",
+                "ZeroizingRootParticipantDkgOutput",
+            ),
+        ] {
+            assert!(
+                derive_before(dkg_source, declaration)
+                    .contains(&format!("#[serde(from = \"{intermediate}\")]")),
+                "{declaration} must guard private fields before later composite decoding fails"
+            );
+        }
+        // These private deserializer fields retain drop guards even if a
+        // subsequent map entry or public-metadata field fails to deserialize.
+        assert!(dkg_source.contains("key_packages: BTreeMap<u16, ZeroizingRootKeyPackage>"));
+        assert!(dkg_source.contains("key_package: ZeroizingRootKeyPackage"));
+        let signing_production = signing_source.split("#[cfg(test)]").next().unwrap();
+        let legacy_signing = signing_production
+            .split("pub fn threshold_sign<R>")
+            .nth(1)
+            .unwrap()
+            .split("pub fn threshold_sign_zeroizing<R>")
+            .next()
+            .unwrap();
+        assert!(legacy_signing.contains("Zeroizing::new(share)"));
+        assert!(legacy_signing.contains("threshold_sign_zeroizing("));
+        assert!(
+            !legacy_signing.contains('?'),
+            "all consumed legacy shares must be guarded before any fallible signing work"
+        );
+        assert!(
+            !derive_before(signing_source, "pub struct RootSigningNonces").contains("Clone"),
+            "RootSigningNonces must not regain secret duplication through Clone"
+        );
+        assert_eq!(
+            dkg_source
+                .matches("#[serde(deserialize_with = \"deserialize_zeroizing_bytes\")]")
+                .count(),
+            3,
+            "all three direct DKG secret-byte fields must use the shared visitor"
+        );
+        assert_eq!(
+            dkg_source
+                .matches("#[serde(deserialize_with = \"deserialize_zeroizing_byte_map\")]")
+                .count(),
+            1,
+            "the recipient-bound round-two map must use the shared byte visitor"
+        );
+        assert_eq!(
+            signing_source
+                .matches("#[serde(deserialize_with = \"deserialize_zeroizing_bytes\")]")
+                .count(),
+            1,
+            "signing nonces must use the shared visitor"
+        );
+        let complete_dkg = dkg_source
+            .split("pub fn run_complete_dkg")
+            .nth(1)
+            .expect("complete DKG implementation")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("complete DKG ends before tests");
+        assert!(complete_dkg.contains("BTreeMap<u16, Zeroizing<RootDkgRound1Output>>"));
+        assert!(complete_dkg.contains("BTreeMap<u16, Zeroizing<RootKeyPackage>>"));
+        let public_ready = complete_dkg
+            .find("require_first_public_key_package(public_key_package)?")
+            .expect("public result validated before releasing guarded private map");
+        let private_handoff = complete_dkg
+            .find("let key_packages = key_packages")
+            .expect("final legacy private-map handoff");
+        assert!(public_ready < private_handoff);
+        let finalize = dkg_source
+            .split("pub fn dkg_finalize_participant_zeroizing")
+            .nth(1)
+            .unwrap()
+            .split("fn deserialize_round1_packages")
+            .next()
+            .unwrap();
+        assert!(
+            finalize.find("serialize_public_key_package(").unwrap()
+                < finalize.find("RootKeyPackage::from_zeroizing(").unwrap(),
+            "serialized private key must stay guarded through fallible public serialization"
+        );
+        for forbidden in [
+            "recipient_packages.insert(*identifier, package.clone())",
+            "round2_by_recipient[&first_identifier].clone()",
+            "round2_by_recipient[&identifier].clone()",
+        ] {
+            assert!(
+                !complete_dkg.contains(forbidden),
+                "complete DKG must move each recipient secret exactly once: {forbidden}"
+            );
+        }
+        assert!(
+            complete_dkg.contains("for (recipient, package) in round2_packages"),
+            "complete DKG must consume outbound recipient packages"
+        );
+        assert!(
+            complete_dkg.contains("round2_by_recipient.remove(&identifier)"),
+            "complete DKG must remove each recipient map for finalization"
+        );
+    }
+
+    #[test]
+    fn secret_dkg_deserializers_reject_partially_decoded_json_and_cbor() {
+        #[derive(Serialize)]
+        struct LateInvalidParticipant {
+            key_package: RootKeyPackage,
+            public_key_package: bool,
+        }
+        #[derive(Serialize)]
+        struct LateInvalidDkg {
+            key_packages: BTreeMap<u16, RootKeyPackage>,
+            public_key_package: bool,
+        }
+        #[derive(Serialize)]
+        struct LateInvalidDkgMap {
+            key_packages: BTreeMap<u16, MalformedKeyPackage>,
+            public_key_package: bool,
+        }
+        let key_fixture = RootKeyPackage {
+            frost_identifier: 7,
+            key_package: vec![1, 2, 3],
+        };
+        let participant = LateInvalidParticipant {
+            key_package: key_fixture.clone(),
+            public_key_package: false,
+        };
+        let dkg = LateInvalidDkg {
+            key_packages: BTreeMap::from([(7, key_fixture)]),
+            public_key_package: false,
+        };
+        assert!(
+            serde_json::from_slice::<RootParticipantDkgOutput>(
+                &serde_json::to_vec(&participant).expect("late invalid participant JSON")
+            )
+            .is_err()
+        );
+        assert!(
+            ciborium::from_reader::<RootParticipantDkgOutput, _>(
+                cbor_bytes(&participant).as_slice()
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_slice::<RootDkgOutput>(
+                &serde_json::to_vec(&dkg).expect("late invalid DKG JSON")
+            )
+            .is_err()
+        );
+        assert!(ciborium::from_reader::<RootDkgOutput, _>(cbor_bytes(&dkg).as_slice()).is_err());
+        let partial_map = LateInvalidDkgMap {
+            key_packages: BTreeMap::from([
+                (
+                    7,
+                    MalformedKeyPackage {
+                        frost_identifier: 7,
+                        key_package: vec![serde_json::json!(1), serde_json::json!(2)],
+                    },
+                ),
+                (
+                    8,
+                    MalformedKeyPackage {
+                        frost_identifier: 8,
+                        key_package: vec![serde_json::json!(3), serde_json::json!("invalid")],
+                    },
+                ),
+            ]),
+            public_key_package: false,
+        };
+        assert!(
+            serde_json::from_slice::<RootDkgOutput>(
+                &serde_json::to_vec(&partial_map).expect("partial map JSON")
+            )
+            .is_err()
+        );
+        assert!(
+            ciborium::from_reader::<RootDkgOutput, _>(cbor_bytes(&partial_map).as_slice()).is_err()
+        );
+        let invalid_bytes = vec![
+            serde_json::json!(1),
+            serde_json::json!(2),
+            serde_json::json!("bad"),
+            serde_json::json!(3),
+        ];
+        let key = MalformedKeyPackage {
+            frost_identifier: 7,
+            key_package: invalid_bytes.clone(),
+        };
+        let round1 = MalformedRound1Output {
+            frost_identifier: 7,
+            round1_secret_package: invalid_bytes.clone(),
+            round1_package: vec![3],
+        };
+        let round2_secret = MalformedRound2SecretOutput {
+            frost_identifier: 7,
+            round2_secret_package: invalid_bytes.clone(),
+            round2_packages: BTreeMap::from([(8, vec![3])]),
+        };
+        let round2_map = MalformedRound2MapOutput {
+            frost_identifier: 7,
+            round2_secret_package: vec![1, 2, 3],
+            round2_packages: BTreeMap::from([(8, invalid_bytes)]),
+        };
+
+        let key_json = serde_json::to_vec(&key).expect("key malformed JSON fixture");
+        let round1_json = serde_json::to_vec(&round1).expect("round-one malformed JSON fixture");
+        let round2_secret_json =
+            serde_json::to_vec(&round2_secret).expect("round-two secret malformed JSON fixture");
+        let round2_map_json =
+            serde_json::to_vec(&round2_map).expect("round-two map malformed JSON fixture");
+        assert!(serde_json::from_slice::<RootKeyPackage>(&key_json).is_err());
+        assert!(serde_json::from_slice::<RootDkgRound1Output>(&round1_json).is_err());
+        assert!(serde_json::from_slice::<RootDkgRound2Output>(&round2_secret_json).is_err());
+        assert!(serde_json::from_slice::<RootDkgRound2Output>(&round2_map_json).is_err());
+
+        let key_cbor = cbor_bytes(&key);
+        let round1_cbor = cbor_bytes(&round1);
+        let round2_secret_cbor = cbor_bytes(&round2_secret);
+        let round2_map_cbor = cbor_bytes(&round2_map);
+        assert!(ciborium::from_reader::<RootKeyPackage, _>(key_cbor.as_slice()).is_err());
+        assert!(ciborium::from_reader::<RootDkgRound1Output, _>(round1_cbor.as_slice()).is_err());
+        assert!(
+            ciborium::from_reader::<RootDkgRound2Output, _>(round2_secret_cbor.as_slice()).is_err()
+        );
+        assert!(
+            ciborium::from_reader::<RootDkgRound2Output, _>(round2_map_cbor.as_slice()).is_err()
+        );
+    }
+
+    #[test]
+    fn secret_dkg_deserializers_round_trip_all_secret_carriers() {
+        let mut key_fixture = RootKeyPackage {
+            frost_identifier: 7,
+            key_package: vec![0xde, 0xad, 0xbe, 0xef],
+        };
+        let public_key_package = RootPublicKeyPackage {
+            public_key_package: vec![1],
+            root_public_key: vec![2],
+            verifying_shares: BTreeMap::from([(7, vec![3])]),
+        };
+        let participant = RootParticipantDkgOutput {
+            key_package: key_fixture.clone(),
+            public_key_package: public_key_package.clone(),
+        };
+        let participant_json = serde_json::to_vec(&participant).expect("participant JSON");
+        let participant_cbor = cbor_bytes(&participant);
+        let guarded: Zeroizing<RootParticipantDkgOutput> =
+            serde_json::from_slice(&participant_json).expect("guarded participant JSON");
+        assert_eq!(*guarded, participant);
+        assert_eq!(
+            serde_json::to_vec(&guarded).expect("guarded JSON"),
+            participant_json
+        );
+        assert_eq!(cbor_bytes(&guarded), participant_cbor);
+        let guarded_cbor: Zeroizing<RootParticipantDkgOutput> =
+            ciborium::from_reader(participant_cbor.as_slice()).expect("guarded participant CBOR");
+        assert_eq!(*guarded_cbor, participant);
+        let dkg = RootDkgOutput {
+            key_packages: BTreeMap::from([(7, key_fixture.clone())]),
+            public_key_package,
+        };
+        assert_eq!(
+            serde_json::from_slice::<RootDkgOutput>(
+                &serde_json::to_vec(&dkg).expect("complete DKG JSON")
+            )
+            .expect("complete DKG JSON round trip"),
+            dkg
+        );
+        assert_eq!(
+            ciborium::from_reader::<RootDkgOutput, _>(cbor_bytes(&dkg).as_slice())
+                .expect("complete DKG CBOR round trip"),
+            dkg
+        );
+        fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+        assert_zeroize_on_drop(&guarded);
+        let key_json =
+            Zeroizing::new(serde_json::to_vec(&key_fixture).expect("key-package JSON fixture"));
+        let mut key_json_round_trip = serde_json::from_slice::<RootKeyPackage>(&key_json)
+            .expect("key-package JSON secret bytes");
+        assert_eq!(key_json_round_trip, key_fixture);
+        let key_cbor = Zeroizing::new(cbor_bytes(&key_fixture));
+        let mut key_cbor_round_trip =
+            ciborium::from_reader::<RootKeyPackage, _>(key_cbor.as_slice())
+                .expect("key-package CBOR secret bytes");
+        assert_eq!(key_cbor_round_trip, key_fixture);
+
+        let mut round1_fixture = RootDkgRound1Output {
+            frost_identifier: 7,
+            round1_secret_package: vec![0xca, 0xfe, 0xba, 0xbe],
+            round1_package: vec![1, 2, 3],
+        };
+        let round1_json =
+            Zeroizing::new(serde_json::to_vec(&round1_fixture).expect("round-one JSON fixture"));
+        let mut round1_json_round_trip =
+            serde_json::from_slice::<RootDkgRound1Output>(&round1_json)
+                .expect("round-one JSON secret bytes");
+        assert_eq!(round1_json_round_trip, round1_fixture);
+        let round1_cbor = Zeroizing::new(cbor_bytes(&round1_fixture));
+        let mut round1_cbor_round_trip =
+            ciborium::from_reader::<RootDkgRound1Output, _>(round1_cbor.as_slice())
+                .expect("round-one CBOR secret bytes");
+        assert_eq!(round1_cbor_round_trip, round1_fixture);
+
+        let mut round2_fixture = RootDkgRound2Output {
+            frost_identifier: 7,
+            round2_secret_package: vec![1, 2, 3],
+            round2_packages: BTreeMap::from([(8, vec![4, 5, 6]), (9, vec![7, 8, 9])]),
+        };
+
+        let json =
+            Zeroizing::new(serde_json::to_vec(&round2_fixture).expect("round-two JSON fixture"));
+        let mut json_round_trip = serde_json::from_slice::<RootDkgRound2Output>(&json)
+            .expect("round-two JSON secret map");
+        assert_eq!(json_round_trip, round2_fixture);
+
+        let cbor = Zeroizing::new(cbor_bytes(&round2_fixture));
+        let mut cbor_round_trip = ciborium::from_reader::<RootDkgRound2Output, _>(cbor.as_slice())
+            .expect("round-two CBOR secret map");
+        assert_eq!(cbor_round_trip, round2_fixture);
+
+        for secret_carrier in [
+            &mut key_fixture,
+            &mut key_json_round_trip,
+            &mut key_cbor_round_trip,
+        ] {
+            secret_carrier.zeroize();
+            assert!(secret_carrier.key_package.is_empty());
+        }
+        for secret_carrier in [
+            &mut round1_fixture,
+            &mut round1_json_round_trip,
+            &mut round1_cbor_round_trip,
+        ] {
+            secret_carrier.zeroize();
+            assert!(secret_carrier.round1_secret_package.is_empty());
+        }
+        for secret_carrier in [
+            &mut round2_fixture,
+            &mut json_round_trip,
+            &mut cbor_round_trip,
+        ] {
+            secret_carrier.zeroize();
+            assert!(secret_carrier.round2_secret_package.is_empty());
+            assert!(secret_carrier.round2_packages.is_empty());
+        }
+    }
+
+    #[test]
+    fn secret_dkg_deserializer_reports_expected_container_shapes() {
+        let byte_sequence_error = serde_json::from_str::<RootKeyPackage>(
+            r#"{"frost_identifier":7,"key_package":"not-a-sequence"}"#,
+        )
+        .expect_err("a root key secret must be encoded as a byte sequence");
+        assert!(
+            byte_sequence_error
+                .to_string()
+                .contains("a sequence of root secret bytes"),
+            "unexpected byte-sequence diagnostic: {byte_sequence_error}"
+        );
+
+        let recipient_map_error = serde_json::from_str::<RootDkgRound2Output>(
+            r#"{"frost_identifier":7,"round2_secret_package":[1,2,3],"round2_packages":[]}"#,
+        )
+        .expect_err("recipient-bound secrets must be encoded as a map");
+        assert!(
+            recipient_map_error
+                .to_string()
+                .contains("a map of recipient-bound root secret byte sequences"),
+            "unexpected recipient-map diagnostic: {recipient_map_error}"
+        );
+    }
+
+    #[test]
+    fn secret_dkg_json_and_cbor_match_legacy_vec_wire_layout() {
+        let key_secret = vec![0xde, 0xad, 0xbe, 0xef];
+        let key_package = RootKeyPackage {
+            frost_identifier: 7,
+            key_package: key_secret.clone(),
+        };
+        let legacy_key = LegacyRootKeyPackage {
+            frost_identifier: 7,
+            key_package: &key_secret,
+        };
+        assert_eq!(
+            serde_json::to_vec(&key_package).expect("key JSON"),
+            serde_json::to_vec(&legacy_key).expect("legacy key JSON")
+        );
+        assert_eq!(cbor_bytes(&key_package), cbor_bytes(&legacy_key));
+
+        let round1_secret = vec![0xca, 0xfe, 0xba, 0xbe];
+        let round1_public = vec![1, 2, 3];
+        let round1 = RootDkgRound1Output {
+            frost_identifier: 7,
+            round1_secret_package: round1_secret.clone(),
+            round1_package: round1_public.clone(),
+        };
+        let legacy_round1 = LegacyRound1Output {
+            frost_identifier: 7,
+            round1_secret_package: &round1_secret,
+            round1_package: &round1_public,
+        };
+        assert_eq!(
+            serde_json::to_vec(&round1).expect("round-one JSON"),
+            serde_json::to_vec(&legacy_round1).expect("legacy round-one JSON")
+        );
+        assert_eq!(cbor_bytes(&round1), cbor_bytes(&legacy_round1));
+
+        let round2_secret = vec![0x12, 0x34, 0x56, 0x78];
+        let round2_public = BTreeMap::from([(8, vec![4, 5, 6])]);
+        let round2 = RootDkgRound2Output {
+            frost_identifier: 7,
+            round2_secret_package: round2_secret.clone(),
+            round2_packages: round2_public.clone(),
+        };
+        let legacy_round2 = LegacyRound2Output {
+            frost_identifier: 7,
+            round2_secret_package: &round2_secret,
+            round2_packages: &round2_public,
+        };
+        assert_eq!(
+            serde_json::to_vec(&round2).expect("round-two JSON"),
+            serde_json::to_vec(&legacy_round2).expect("legacy round-two JSON")
+        );
+        assert_eq!(cbor_bytes(&round2), cbor_bytes(&legacy_round2));
     }
 
     #[test]
@@ -484,6 +1693,27 @@ mod tests {
     }
 
     #[test]
+    fn complete_dkg_fail_closed_helpers_reject_missing_assembly_state() {
+        let recipient_error = require_recipient_round2_packages(None, 7)
+            .expect_err("a missing recipient package set must abort local DKG assembly");
+        assert_eq!(
+            recipient_error,
+            RootError::Frost {
+                detail: "missing recipient-bound round-two packages for 7".to_owned()
+            }
+        );
+
+        let public_error = require_first_public_key_package(None)
+            .expect_err("a missing first-participant public package must abort assembly");
+        assert_eq!(
+            public_error,
+            RootError::Frost {
+                detail: "missing first participant public key package".to_owned()
+            }
+        );
+    }
+
+    #[test]
     fn round_one_and_complete_dkg_success_paths_are_diagnostic() {
         let config = test_config();
         let mut rng = StdRng::seed_from_u64(11);
@@ -530,15 +1760,15 @@ mod tests {
         assert!(deserialize_round1_packages(&config, participant, malformed_round1).is_err());
 
         let mut nonrostered_round2 = BTreeMap::new();
-        nonrostered_round2.insert(14, Vec::new());
+        nonrostered_round2.insert(14, Zeroizing::new(Vec::new()));
         assert!(deserialize_round2_packages(&config, participant, nonrostered_round2).is_err());
 
         let mut self_round2 = BTreeMap::new();
-        self_round2.insert(1, Vec::new());
+        self_round2.insert(1, Zeroizing::new(Vec::new()));
         assert!(deserialize_round2_packages(&config, participant, self_round2).is_err());
 
         let mut malformed_round2 = BTreeMap::new();
-        malformed_round2.insert(2, b"not a round-two package".to_vec());
+        malformed_round2.insert(2, Zeroizing::new(b"not a round-two package".to_vec()));
         assert!(deserialize_round2_packages(&config, participant, malformed_round2).is_err());
     }
 

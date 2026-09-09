@@ -49,6 +49,9 @@
 # "exclude_files" (with underscores) — tarpaulin follows CLI flag naming.
 
 [default]
+# Tarpaulin 0.35.4 does not merge CLI --engine into a loaded config.
+# Pin the intended backend here so Linux cannot silently use ptrace.
+engine = "Llvm"
 exclude-files = [
     "crates/*/tests/*.rs",
     "crates/exo-dag-db-postgres/src/idempotency.rs",

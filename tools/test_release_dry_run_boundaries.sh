@@ -44,28 +44,41 @@ assert_non_dry_run_job() {
     || fail "job $job must be skipped for dry-run releases"
 }
 
-for job in sbom-and-attest github-release; do
+for job in generate-sbom attest-release github-release; do
   block=$(job_block "$job")
   [[ -n "$block" ]] || fail "job $job is missing"
   assert_non_dry_run_job "$job" "$block"
 done
 
-sbom_block=$(job_block "sbom-and-attest")
+sbom_block=$(job_block "generate-sbom")
+attest_block=$(job_block "attest-release")
 github_release_block=$(job_block "github-release")
 wasm_publish_block=$(job_block "publish-wasm-npm")
+wasm_prepare_block=$(job_block "prepare-wasm-npm")
+verify_tag_block=$(job_block "verify-signed-tag")
 
-grep -F 'attestations: write' <<<"$sbom_block" >/dev/null \
-  || fail "sbom-and-attest must remain the only attestation-writing job"
-grep -F 'actions/attest-build-provenance@' <<<"$sbom_block" >/dev/null \
-  || fail "sbom-and-attest must remain the SLSA attestation job"
+if grep -F 'attestations: write' <<<"$sbom_block" >/dev/null; then
+  fail "token-free SBOM generation must not receive attestation authority"
+fi
+grep -F 'attestations: write' <<<"$attest_block" >/dev/null \
+  || fail "attest-release must remain the only attestation-writing job"
+grep -F 'actions/attest-build-provenance@' <<<"$attest_block" >/dev/null \
+  || fail "attest-release must remain the SLSA attestation job"
 grep -F 'contents: write' <<<"$github_release_block" >/dev/null \
   || fail "github-release must retain release publishing permission for real releases"
 grep -F 'softprops/action-gh-release@' <<<"$github_release_block" >/dev/null \
   || fail "github-release must remain the GitHub Release job for real releases"
-grep -F 'npm pack --dry-run' <<<"$wasm_publish_block" >/dev/null \
-  || fail "publish-wasm-npm must dry-pack the WASM package"
+grep -F '"$npm_path" pack' <<<"$wasm_prepare_block" >/dev/null \
+  || fail "dry-run releases must still create and validate the exact token-free WASM tarball"
+if grep -F 'if: ${{ !inputs.dry_run }}' <<<"$wasm_prepare_block" >/dev/null; then
+  fail "token-free WASM package preparation must still run during a dry run"
+fi
 grep -F 'if: ${{ !inputs.dry_run }}' <<<"$wasm_publish_block" >/dev/null \
   || fail "publish-wasm-npm must guard npm publish for dry-run releases"
+grep -F 'printf '\''tag_object_sha=\n'\'' >> "$GITHUB_OUTPUT"' <<<"$verify_tag_block" >/dev/null \
+  || fail "dry-run verification must emit no signed-tag object identity"
+grep -F 'printf '\''tag_commit_sha=\n'\'' >> "$GITHUB_OUTPUT"' <<<"$verify_tag_block" >/dev/null \
+  || fail "dry-run verification must emit no signed-tag commit identity"
 
 if grep -F 'draft: ${{ inputs.dry_run }}' "$workflow" >/dev/null; then
   fail "dry-run releases must not create draft GitHub Releases"

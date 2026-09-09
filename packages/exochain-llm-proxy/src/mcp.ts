@@ -18,7 +18,8 @@ import {
   maybeStoreExternalPayloads,
 } from "./evidence.js";
 import { releaseWithReceipt } from "./delivery.js";
-import { emitUsageReceipt, resolveFetch } from "./receipt.js";
+import { emitUsageReceipt, requireProductionValidatorTrust } from "./receipt.js";
+import { fetchBoundedResponse, parseBoundedJson } from "./http.js";
 import type {
   LlmProxyConfig,
   McpProxyOptions,
@@ -40,6 +41,7 @@ export function createReceiptedMcpProxy(
   config: LlmProxyConfig,
   mcp: McpProxyOptions,
 ): ReceiptedMcpProxy {
+  requireProductionValidatorTrust(config);
   if (!mcp.serverUrl || mcp.serverUrl.trim() === "") {
     throw new LynkConfigurationError("MCP LYNK proxy requires serverUrl");
   }
@@ -66,18 +68,24 @@ async function callMcpTool(
       arguments: call.arguments ?? {},
     },
   };
-  const response = await resolveFetch(config.fetch)(serverUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
+  const bounded = await fetchBoundedResponse(
+    config,
+    serverUrl,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(requestPayload),
     },
-    body: JSON.stringify(requestPayload),
-  });
-  const responsePayload = (await response.json()) as unknown;
+    "MCP tools/call response",
+  );
+  const { response } = bounded;
+  const responsePayload = parseBoundedJson(bounded, "MCP tools/call response");
   if (!response.ok || (isRecord(responsePayload) && responsePayload.error !== undefined)) {
     return emitMcpFailureReceipt(config, call, requestPayload, response.status, options);
   }
-  if (!isValidMcpToolResult(responsePayload)) {
+  if (!isValidMcpToolResult(responsePayload, requestPayload.id)) {
     throw new LynkValidationError("MCP tools/call response was malformed or untrusted");
   }
   const encryptedPayloadRefs = await maybeStoreExternalPayloads(config, [
@@ -146,11 +154,16 @@ function mcpUsageContext(
   };
 }
 
-function isValidMcpToolResult(payload: unknown): payload is JsonRecord {
+function isValidMcpToolResult(payload: unknown, expectedId: string): payload is JsonRecord {
   if (!isRecord(payload)) {
     return false;
   }
-  if (payload.jsonrpc !== undefined && payload.jsonrpc !== "2.0") {
+  if (
+    payload.jsonrpc !== "2.0"
+    || !Object.prototype.hasOwnProperty.call(payload, "id")
+    || payload.id !== expectedId
+    || Object.prototype.hasOwnProperty.call(payload, "error")
+  ) {
     return false;
   }
   const result = payload.result;

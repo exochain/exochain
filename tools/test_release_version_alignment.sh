@@ -19,10 +19,37 @@ set -euo pipefail
 
 python3 - <<'PY'
 import json
+import os
 import pathlib
 import re
 import sys
 import tomllib
+
+
+contradiction_fixture_document = os.environ.get(
+    "EXOCHAIN_RELEASE_ALIGNMENT_CONTRADICTION_FIXTURE_DOCUMENT"
+)
+contradiction_fixture_kind = os.environ.get(
+    "EXOCHAIN_RELEASE_ALIGNMENT_CONTRADICTION_FIXTURE_KIND", "prior-python-sha256"
+)
+contradiction_fixture_claims = {
+    "prior-python-sha256": (
+        "The Python SDK still uses **SHA-256** for client-side content-addressed "
+        "proposal IDs and decision IDs."
+    ),
+    "python-identifier-sha256": (
+        "Python's decision identifier algorithm is still SHA256."
+    ),
+    "two-sdk-decision-digest": (
+        "Only Rust and TypeScript governance builders share the same BLAKE3 "
+        "decision digest."
+    ),
+}
+if (
+    contradiction_fixture_document is not None
+    and contradiction_fixture_kind not in contradiction_fixture_claims
+):
+    raise SystemExit("unknown contradiction fixture kind")
 
 
 def fail(message: str) -> None:
@@ -31,7 +58,10 @@ def fail(message: str) -> None:
 
 
 def read(path: str) -> str:
-    return pathlib.Path(path).read_text(encoding="utf-8")
+    contents = pathlib.Path(path).read_text(encoding="utf-8")
+    if path == contradiction_fixture_document:
+        contents += f"\n\n{contradiction_fixture_claims[contradiction_fixture_kind]}\n"
+    return contents
 
 
 def json_version(path: str, key_path: tuple[str, ...] = ("version",)) -> str:
@@ -68,6 +98,124 @@ def pep440_version(version: str) -> str:
 cargo = tomllib.loads(read("Cargo.toml"))
 expected = cargo["workspace"]["package"]["version"]
 expected_python = pep440_version(expected)
+requested = os.environ.get("RELEASE_VERSION_EXPECTED")
+if requested is not None and expected != requested:
+    fail(f"workspace version is {expected}, expected validated release input {requested}")
+
+
+def resolved_package_version(manifest_path: pathlib.Path, manifest: dict) -> str:
+    version = manifest["package"].get("version")
+    if isinstance(version, str):
+        return version
+    if isinstance(version, dict) and version.get("workspace") is True:
+        return expected
+    fail(f"{manifest_path} must define a direct version or inherit workspace.package.version")
+
+
+repo_root = pathlib.Path.cwd().resolve()
+workspace_members = cargo["workspace"]["members"]
+release_manifests = [repo_root / member / "Cargo.toml" for member in workspace_members]
+release_manifests.extend(
+    [
+        repo_root / "crates/exo-cgr-methods/Cargo.toml",
+        repo_root / "crates/exo-cgr-methods/guest/Cargo.toml",
+        repo_root / "crates/exo-cgr-prover/Cargo.toml",
+    ]
+)
+
+for manifest_path in release_manifests:
+    if not manifest_path.is_file():
+        fail(f"release manifest is missing: {manifest_path.relative_to(repo_root)}")
+    manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+    actual = resolved_package_version(manifest_path, manifest)
+    if actual != expected:
+        fail(f"{manifest_path.relative_to(repo_root)} package version is {actual}, expected {expected}")
+
+for inherited_manifest in [
+    repo_root / "crates/exo-core/Cargo.toml",
+    repo_root / "crates/exo-dag-db-api/Cargo.toml",
+]:
+    manifest = tomllib.loads(inherited_manifest.read_text(encoding="utf-8"))
+    if manifest["package"].get("version") != {"workspace": True}:
+        fail(f"{inherited_manifest.relative_to(repo_root)} must inherit workspace version")
+
+fuzz_manifest_path = repo_root / "fuzz/Cargo.toml"
+fuzz_manifest = tomllib.loads(fuzz_manifest_path.read_text(encoding="utf-8"))
+if fuzz_manifest["package"].get("version") != "0.0.0":
+    fail("fuzz/Cargo.toml package version must remain 0.0.0")
+
+all_manifests = [*release_manifests, fuzz_manifest_path]
+dependency_table_names = {"dependencies", "dev-dependencies", "build-dependencies"}
+first_party_pin_count = 0
+
+
+def verify_dependency_tables(manifest_path: pathlib.Path, value: object) -> None:
+    global first_party_pin_count
+    if not isinstance(value, dict):
+        return
+    for key, child in value.items():
+        if key in dependency_table_names and isinstance(child, dict):
+            for dependency, specification in child.items():
+                if not isinstance(specification, dict) or "path" not in specification:
+                    continue
+                target_manifest = (manifest_path.parent / specification["path"] / "Cargo.toml").resolve()
+                try:
+                    target_manifest.relative_to(repo_root)
+                except ValueError:
+                    continue
+                if not target_manifest.is_file():
+                    fail(
+                        f"{manifest_path.relative_to(repo_root)} dependency {dependency} "
+                        f"points to missing manifest {target_manifest}"
+                    )
+                target = tomllib.loads(target_manifest.read_text(encoding="utf-8"))
+                target_name = target["package"].get("name")
+                if isinstance(target_name, str) and target_name.startswith("exochain-"):
+                    if "version" not in specification:
+                        if (
+                            manifest_path == repo_root / "crates/exo-cgr-prover/Cargo.toml"
+                            and target_name == "exochain-cgr-methods"
+                        ):
+                            continue
+                        fail(
+                            f"{manifest_path.relative_to(repo_root)} dependency {dependency} "
+                            f"must retain an exact first-party version pin"
+                        )
+                    required = f"={expected}"
+                    if specification.get("version") != required:
+                        fail(
+                            f"{manifest_path.relative_to(repo_root)} dependency {dependency} "
+                            f"must pin {target_name} at {required}"
+                        )
+                    first_party_pin_count += 1
+        elif isinstance(child, dict):
+            verify_dependency_tables(manifest_path, child)
+
+
+for manifest_path in all_manifests:
+    verify_dependency_tables(
+        manifest_path,
+        tomllib.loads(manifest_path.read_text(encoding="utf-8")),
+    )
+
+if first_party_pin_count != 158:
+    fail(f"found {first_party_pin_count} exact first-party dependency pins, expected 158")
+
+expected_lock_counts = {
+    "Cargo.lock": 32,
+    "crates/exo-cgr-methods/guest/Cargo.lock": 16,
+    "fuzz/Cargo.lock": 5,
+}
+for lock_path, expected_count in expected_lock_counts.items():
+    lock = tomllib.loads(read(lock_path))
+    owned = [package for package in lock["package"] if package["name"].startswith("exochain-")]
+    if len(owned) != expected_count:
+        fail(f"{lock_path} has {len(owned)} first-party packages, expected {expected_count}")
+    for package in owned:
+        if package["version"] != expected:
+            fail(
+                f"{lock_path} package {package['name']} is {package['version']}, expected {expected}"
+            )
 
 checks = {
     "packages/exochain-wasm/wasm/package.json": json_version(
@@ -114,6 +262,31 @@ checks = {
         r'PROTOCOL_VERSION\s*=\s*"([^"]+)"',
         "PROTOCOL_VERSION",
     ),
+    "crates/exochain-sdk/src/lib.rs protocol test": regex_value(
+        "crates/exochain-sdk/src/lib.rs",
+        r'assert_eq!\(PROTOCOL_VERSION,\s*"([^"]+)"\)',
+        "protocol version test literal",
+    ),
+    "packages/exochain-sdk/test/index.test.ts protocol test": regex_value(
+        "packages/exochain-sdk/test/index.test.ts",
+        r"strictEqual\(PROTOCOL_VERSION,\s*'([^']+)'\)",
+        "protocol version test literal",
+    ),
+    "packages/exochain-sdk/dist-test/src/index.js PROTOCOL_VERSION": regex_value(
+        "packages/exochain-sdk/dist-test/src/index.js",
+        r"PROTOCOL_VERSION\s*=\s*'([^']+)'",
+        "PROTOCOL_VERSION",
+    ),
+    "packages/exochain-sdk/dist-test/test/index.test.js protocol test": regex_value(
+        "packages/exochain-sdk/dist-test/test/index.test.js",
+        r"strictEqual\(PROTOCOL_VERSION,\s*'([^']+)'\)",
+        "protocol version test literal",
+    ),
+    "packages/exochain-py/tests/test_crypto.py protocol test": regex_value(
+        "packages/exochain-py/tests/test_crypto.py",
+        r'assert\s+PROTOCOL_VERSION\s*==\s*"([^"]+)"',
+        "protocol version test literal",
+    ),
 }
 
 for source, actual in checks.items():
@@ -140,5 +313,207 @@ for source, actual in python_package_checks.items():
     if actual != expected_python:
         fail(f"{source} is {actual}, expected Python package version {expected_python}")
 
+decision_id_contract_docs = [
+    "CHANGELOG.md",
+    "governance/releases/v0.2.6/RC.md",
+    "packages/README.md",
+    "packages/exochain-sdk/README.md",
+    "docs/guides/sdk-quickstart-python.md",
+    "docs/guides/sdk-quickstart-typescript.md",
+]
+decision_id_contract = (
+    "For title, description, and proposer strings accepted by all three SDKs, "
+    "Rust, TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the "
+    "same canonical CBOR v2 decision frame."
+)
+stale_decision_id_claims = (
+    "python decision ids are unchanged",
+    "python decision ids remain the first 16 hex characters",
+    "python decision ids retain their existing 16 hex sha 256 prefix",
+    "rust and typescript decisionbuilder agree on decision ids",
+    "rust and typescript decisionbuilder now derive the same 64 hex decision id",
+)
+legacy_decision_id_terms = re.compile(
+    r"\b(?:sha ?256|first (?:16|sixteen)|(?:16|sixteen) hex|truncat\w*|prefix)\b"
+)
+two_sdk_parity_terms = re.compile(
+    r"\b(?:agree|align\w*|both|contract|derive|same|share|use)\b"
+)
+python_exclusion_terms = re.compile(r"\b(?:excluded|not part|outside)\b")
+
+
+def normalized_claim_clauses(documentation: str) -> list[str]:
+    flattened = " ".join(documentation.split())
+    return [
+        re.sub(r"[^a-z0-9]+", " ", clause.casefold()).strip()
+        for clause in re.split(r"[.!?;]+|\b(?:but|whereas|while)\b", flattened, flags=re.I)
+        if clause.strip()
+    ]
+
+for documentation_path in decision_id_contract_docs:
+    documentation = read(documentation_path)
+    normalized_documentation = " ".join(documentation.split())
+    if decision_id_contract not in normalized_documentation:
+        fail(
+            f"{documentation_path} must state the three-SDK canonical decision-ID contract"
+        )
+    for claim in normalized_claim_clauses(documentation):
+        for stale_claim in stale_decision_id_claims:
+            if stale_claim in claim:
+                fail(f"{documentation_path} retains stale decision-ID text: {stale_claim}")
+        mentions_decision_identity = (
+            re.search(r"\bdecision (?:digests?|hash(?:es)?|ids?|identifiers?)\b", claim)
+            is not None
+        )
+        mentions_decision_builder = "decisionbuilder" in claim
+        if mentions_decision_identity and legacy_decision_id_terms.search(claim):
+            fail(f"{documentation_path} retains contradictory decision-ID claim")
+        if (
+            (mentions_decision_identity or mentions_decision_builder)
+            and "python" in claim
+            and python_exclusion_terms.search(claim)
+        ):
+            fail(f"{documentation_path} retains contradictory decision-ID claim")
+        if (
+            (mentions_decision_identity or mentions_decision_builder)
+            and "rust" in claim
+            and "typescript" in claim
+            and "python" not in claim
+            and two_sdk_parity_terms.search(claim)
+        ):
+            fail(
+                f"{documentation_path} retains a two-SDK-only decision-ID claim"
+            )
+
+# These are documentation acceptance checks, not runtime or provider proof.
+# Read real tracked documents without executing their embedded instructions.
+documentation_failures = []
+
+
+def require_documentation(condition: bool, message: str) -> None:
+    if not condition:
+        documentation_failures.append(message)
+
+
+platform = read("EXOCHAIN-FABRIC-PLATFORM.md")
+require_documentation(
+    "Exportable evidence bundles with Merkle proofs (ZIP format)" not in platform
+    and "signed ZIP export is not generated in 0.2.6" in platform,
+    "platform feature list must not advertise the unimplemented signed ZIP export",
+)
+audit_root = "docs/audit/exochain-code-review-report-run4-"
+for suffix in (
+    "validation-2026-08-28.md",
+    "formal-evidence-2026-09-04.md",
+    "design-evidence-2026-09-04.md",
+):
+    document = read(audit_root + suffix)
+    require_documentation(
+        "## Current provider-custody applicability (2026-09-08)" in document
+        and "owner.type=User" in document
+        and "TEST-PLAN.md" in document,
+        f"{suffix} must supersede historical organization-scope uncertainty",
+    )
+formal = read(audit_root + "formal-evidence-2026-09-04.md")
+bearer_row = re.search(r"^\| 9631 \|.*$", formal, re.M)
+require_documentation(
+    bearer_row is not None
+    and "domain-separated" not in bearer_row.group(0)
+    and "BearerTokenVerifier::verify_headers" not in formal,
+    "formal bearer evidence must identify the actual fixed-digest helper",
+)
+validation = read(audit_root + "validation-2026-08-28.md")
+require_documentation(
+    "Baseline premise / current-source control" in validation
+    and "Canonical hashing discards CBOR internals" not in validation,
+    "validation index must separate baseline premises from current controls",
+)
+plan = read("docs/superpowers/plans/2026-08-28-release-0.2.6-security-remediation.md")
+require_documentation(
+    "## Historical plan and current acceptance contract" in plan
+    and "public DID-signature serialization" in plan
+    and "legacy public DKG" in plan
+    and "assert_not_impl_any!(Credential: serde::Serialize)" not in plan,
+    "historical implementation plan must preserve the corrected compatibility contract",
+)
+require_documentation(
+    "Critical/Important" not in plan
+    and "every confirmed finding at every severity" in plan,
+    "implementation-plan success must use the all-severity acceptance bar",
+)
+require_documentation(
+    "docker compose -f docker-compose.ci.yml" not in plan
+    and "fresh isolated loopback database" in plan,
+    "local verification must not launch the CI-only database recipe",
+)
+test_plan = read("governance/releases/v0.2.6/TEST-PLAN.md")
+require_documentation(
+    "/tmp/exochain-026-evidence-" not in test_plan
+    and 'evidence_check_dir="$(mktemp -d)"' in test_plan,
+    "evidence checks must allocate private temporary paths",
+)
+rc = read("governance/releases/v0.2.6/RC.md")
+inventory = re.search(
+    r"<!-- rust-retirement-inventory:start -->\s*```text\s*(.*?)\s*```\s*"
+    r"<!-- rust-retirement-inventory:end -->", rc, re.S
+)
+expected_retirement_crates = sorted(
+    tomllib.loads(read(f"{member}/Cargo.toml"))["package"]["name"]
+    for member in workspace_members
+)
+require_documentation(
+    inventory is not None
+    and inventory.group(1).split() == expected_retirement_crates
+    and len(expected_retirement_crates) == 32,
+    "retirement inventory must enumerate exactly the 32 workspace Rust packages",
+)
+require_documentation(
+    all(name in rc for name in ("@exochain/exochain-wasm", "@exochain/llm-proxy", "@exochain/sdk"))
+    and "PyPI `exochain`" in rc
+    and "both npm versions" not in rc,
+    "retirement guidance must include all three npm packages and Python",
+)
+if documentation_failures:
+    fail("documentation contracts:\n- " + "\n- ".join(documentation_failures))
+
+print("release documentation boundary checks passed")
 print(f"release version alignment test passed: {expected}")
 PY
+
+if [[ -z "${EXOCHAIN_RELEASE_ALIGNMENT_CONTRADICTION_FIXTURE_DOCUMENT:-}" ]]; then
+  contradiction_contract_docs=(
+    "CHANGELOG.md"
+    "docs/guides/sdk-quickstart-python.md"
+    "docs/guides/sdk-quickstart-typescript.md"
+    "governance/releases/v0.2.6/RC.md"
+    "packages/README.md"
+    "packages/exochain-sdk/README.md"
+  )
+  contradiction_fixture_kinds=(
+    "prior-python-sha256"
+    "python-identifier-sha256"
+    "two-sdk-decision-digest"
+  )
+
+  for fixture_kind in "${contradiction_fixture_kinds[@]}"; do
+    for documentation_path in "${contradiction_contract_docs[@]}"; do
+      if contradiction_output="$({
+        EXOCHAIN_RELEASE_ALIGNMENT_CONTRADICTION_FIXTURE_DOCUMENT="$documentation_path" \
+          EXOCHAIN_RELEASE_ALIGNMENT_CONTRADICTION_FIXTURE_KIND="$fixture_kind" \
+          bash "$0"
+      } 2>&1)"; then
+        printf '%s\n' \
+          "release version alignment test failed: $fixture_kind contradiction-injection case unexpectedly passed for $documentation_path" \
+          >&2
+        exit 1
+      fi
+      if [[ "$contradiction_output" != *"decision-ID claim"* ]]; then
+        printf '%s\n%s\n' \
+          "release version alignment test failed: $fixture_kind contradiction-injection case failed for the wrong reason in $documentation_path" \
+          "$contradiction_output" \
+          >&2
+        exit 1
+      fi
+    done
+  done
+fi

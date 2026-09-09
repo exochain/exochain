@@ -22,13 +22,18 @@
 
 #![allow(clippy::same_item_push)]
 
-use std::{io::Write, path::Path};
+use std::{
+    io::{ErrorKind, Write},
+    path::Path,
+};
 
 use exo_core::{
     crypto::KeyPair,
     types::{Did, PublicKey},
 };
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
+
+use crate::private_file::{PrivateFileReadError, read_private_file, write_private_create_new};
 
 /// A node's persistent identity.
 pub struct NodeIdentity {
@@ -74,65 +79,82 @@ pub fn did_from_public_key(public_key: &PublicKey) -> anyhow::Result<Did> {
 
 /// Load an existing identity from the data directory, or generate a new one.
 pub fn load_or_create(data_dir: &Path) -> anyhow::Result<NodeIdentity> {
+    std::fs::create_dir_all(data_dir)?;
     let key_path = data_dir.join("identity.key");
     let did_path = data_dir.join("identity.did");
 
-    if key_path.exists() {
-        // Reload existing identity.
-        let mut secret_bytes = std::fs::read(&key_path)?;
-        if secret_bytes.len() != 32 {
-            let actual_len = secret_bytes.len();
+    match read_private_file(&key_path, 32, "identity key custody rejected") {
+        Ok(mut secret_bytes) => {
+            // Reload existing identity.
+            if secret_bytes.len() != 32 {
+                let actual_len = secret_bytes.len();
+                secret_bytes.zeroize();
+                anyhow::bail!(
+                    "Corrupt identity key at {} — expected 32 bytes, got {}",
+                    key_path.display(),
+                    actual_len
+                );
+            }
+            let mut buf = Zeroizing::new([0u8; 32]);
+            buf.copy_from_slice(&secret_bytes);
             secret_bytes.zeroize();
-            anyhow::bail!(
-                "Corrupt identity key at {} — expected 32 bytes, got {}",
-                key_path.display(),
-                actual_len
-            );
-        }
-        let mut buf = [0u8; 32];
-        buf.copy_from_slice(&secret_bytes);
-        secret_bytes.zeroize();
-        let keypair_result = KeyPair::from_secret_bytes(buf);
-        buf.zeroize();
-        let keypair = keypair_result?;
+            let keypair = KeyPair::from_secret_bytes(std::mem::take(&mut *buf))?;
 
-        let did_str = std::fs::read_to_string(&did_path)?;
-        let did = Did::new(did_str.trim())?;
-        let derived_did = did_from_public_key(keypair.public_key())?;
-        if did != derived_did {
-            anyhow::bail!(
-                "identity.did does not match identity.key public key at {}; stored {}, derived {}",
-                did_path.display(),
+            let did_str = std::fs::read_to_string(&did_path)?;
+            let did = Did::new(did_str.trim())?;
+            let derived_did = did_from_public_key(keypair.public_key())?;
+            if did != derived_did {
+                anyhow::bail!(
+                    "identity.did does not match identity.key public key at {}; stored {}, derived {}",
+                    did_path.display(),
+                    did,
+                    derived_did
+                );
+            }
+
+            tracing::info!(did = %did, "Loaded existing identity");
+
+            Ok(NodeIdentity {
                 did,
-                derived_did
-            );
+                public_key: *keypair.public_key(),
+                keypair,
+            })
         }
+        Err(PrivateFileReadError::NotFound { .. }) => {
+            // Generate fresh identity.
+            let keypair = KeyPair::generate();
+            let public_key = *keypair.public_key();
 
-        tracing::info!(did = %did, "Loaded existing identity");
+            let did = did_from_public_key(&public_key)?;
 
-        Ok(NodeIdentity {
-            did,
-            public_key: *keypair.public_key(),
-            keypair,
-        })
-    } else {
-        // Generate fresh identity.
-        let keypair = KeyPair::generate();
-        let public_key = *keypair.public_key();
+            // Persist secret key (mode 0600).
+            match write_private_create_new(&key_path, keypair.secret_key().as_bytes()) {
+                Ok(()) => {}
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io_error| io_error.kind() == ErrorKind::AlreadyExists) =>
+                {
+                    return load_or_create(data_dir);
+                }
+                Err(error) => return Err(error),
+            }
+            let mut did_file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&did_path)?;
+            did_file.write_all(did.as_str().as_bytes())?;
+            did_file.sync_all()?;
 
-        let did = did_from_public_key(&public_key)?;
+            tracing::info!(did = %did, "Generated new node identity");
 
-        // Persist secret key (mode 0600).
-        write_secret(&key_path, keypair.secret_key().as_bytes())?;
-        std::fs::write(&did_path, did.as_str().as_bytes())?;
-
-        tracing::info!(did = %did, "Generated new node identity");
-
-        Ok(NodeIdentity {
-            did,
-            public_key,
-            keypair,
-        })
+            Ok(NodeIdentity {
+                did,
+                public_key,
+                keypair,
+            })
+        }
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -180,40 +202,6 @@ fn bs58_encode(data: &[u8]) -> String {
 
     encoded.reverse();
     encoded.into_iter().map(char::from).collect()
-}
-
-/// Write secret key bytes with restrictive permissions.
-fn write_secret(path: &Path, data: &[u8]) -> anyhow::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(|e| {
-                anyhow::anyhow!("failed to create secret key file {}: {e}", path.display())
-            })?;
-        file.write_all(data)?;
-        file.sync_all()?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .map_err(|e| {
-                anyhow::anyhow!("failed to create secret key file {}: {e}", path.display())
-            })?;
-        file.write_all(data)?;
-        file.sync_all()?;
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -279,7 +267,7 @@ mod tests {
     #[test]
     fn load_or_create_rejects_corrupt_secret_key() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("identity.key"), [7u8; 31]).unwrap();
+        write_private_create_new(&dir.path().join("identity.key"), &[7u8; 31]).unwrap();
         std::fs::write(dir.path().join("identity.did"), b"did:exo:corrupt").unwrap();
 
         let err = match load_or_create(dir.path()) {
@@ -292,13 +280,64 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn private_file_identity_rejects_permissive_and_symlink_keys_before_decode() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let permissive = tempfile::tempdir().unwrap();
+        let _identity = load_or_create(permissive.path()).unwrap();
+        let key_path = permissive.path().join("identity.key");
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let error = match load_or_create(permissive.path()) {
+            Ok(_) => panic!("permissive identity key must fail before decoding"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("identity.key"));
+
+        let source = tempfile::tempdir().unwrap();
+        let _identity = load_or_create(source.path()).unwrap();
+        let linked = tempfile::tempdir().unwrap();
+        symlink(
+            source.path().join("identity.key"),
+            linked.path().join("identity.key"),
+        )
+        .unwrap();
+        std::fs::copy(
+            source.path().join("identity.did"),
+            linked.path().join("identity.did"),
+        )
+        .unwrap();
+        let error = match load_or_create(linked.path()) {
+            Ok(_) => panic!("symlink identity key must fail before decoding"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("identity.key"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_file_identity_requires_integrity_protecting_parent() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
+
+        let error = match load_or_create(directory.path()) {
+            Ok(_) => panic!("identity creation in other-writable parent must fail closed"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("identity.key"));
+        assert!(!directory.path().join("identity.key").exists());
+    }
+
     #[test]
     fn write_secret_rejects_existing_file_without_overwriting() {
         let dir = tempfile::tempdir().unwrap();
         let key_path = dir.path().join("identity.key");
         std::fs::write(&key_path, [0xA5u8; 32]).unwrap();
 
-        let err = match write_secret(&key_path, &[0x5Au8; 32]) {
+        let err = match write_private_create_new(&key_path, &[0x5Au8; 32]) {
             Ok(()) => panic!("write_secret must not overwrite an existing secret path"),
             Err(err) => err,
         };
@@ -312,27 +351,34 @@ mod tests {
     }
 
     #[test]
-    fn write_secret_source_creates_file_with_restrictive_mode_before_write() {
-        let source = include_str!("identity.rs");
-        let write_secret_source = source
-            .split("fn write_secret")
-            .nth(1)
-            .unwrap()
-            .split("#[cfg(test)]")
-            .next()
-            .unwrap();
+    fn load_or_create_never_clobbers_existing_public_did_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let did_path = directory.path().join("identity.did");
+        std::fs::write(&did_path, b"did:exo:preexisting").unwrap();
+
+        assert!(load_or_create(directory.path()).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&did_path).unwrap(),
+            "did:exo:preexisting"
+        );
+    }
+
+    #[test]
+    fn write_secret_source_delegates_to_shared_private_file_boundary() {
+        let identity_source = include_str!("identity.rs");
+        let private_file_source = include_str!("private_file.rs");
 
         assert!(
-            !write_secret_source.contains("std::fs::write(path, data)"),
-            "secret key must not be written before restrictive permissions are applied"
+            identity_source.contains("write_private_create_new"),
+            "identity key creation must use the shared private-file boundary"
         );
         assert!(
-            write_secret_source.contains(".create_new(true)"),
+            private_file_source.contains(".create_new(true)"),
             "secret key creation must fail if an attacker races in an existing path"
         );
         #[cfg(unix)]
         assert!(
-            write_secret_source.contains(".mode(0o600)"),
+            private_file_source.contains("options.mode(0o600)"),
             "Unix secret key file must be created with mode 0600 before bytes are written"
         );
     }

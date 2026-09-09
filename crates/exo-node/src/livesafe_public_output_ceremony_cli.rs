@@ -1,16 +1,25 @@
 //! LiveSafe public-output AVC ceremony CLI implementation.
 
-use std::{fs, io::Write, path::Path};
+use std::{fs, io::Write, path::Path, time::Duration};
 
 use exo_authority::permission::Permission;
 use exo_core::{Did, Timestamp, crypto::KeyPair};
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::cli::{
-    AvcCommand, LivesafePublicOutputCeremonyCommand, LivesafePublicOutputCeremonyPrepareArgs,
-    LivesafePublicOutputCeremonyRegisterArgs,
+use crate::{
+    cli::{
+        AvcCommand, LivesafePublicOutputCeremonyCommand, LivesafePublicOutputCeremonyPrepareArgs,
+        LivesafePublicOutputCeremonyRegisterArgs,
+    },
+    private_file::read_private_file,
 };
+
+const LIVESAFE_CEREMONY_HTTP_RESPONSE_MAX_BYTES: usize = 1024 * 1024;
+const LIVESAFE_CEREMONY_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+const LIVESAFE_CEREMONY_JSON_MAX_BYTES: usize = 1024 * 1024;
+const LIVESAFE_ADMIN_BEARER_MAX_BYTES: u64 = 8 * 1024;
+const LIVESAFE_SIGNING_MATERIAL_MAX_BYTES: u64 = 64 * 1024;
 
 #[derive(Deserialize, Zeroize)]
 #[zeroize(drop)]
@@ -86,15 +95,20 @@ async fn run_register(args: LivesafePublicOutputCeremonyRegisterArgs) -> anyhow:
     let package: exo_avc::LivesafePublicOutputCredentialCeremonyOutput = read_json(&args.input)?;
     let bearer = read_admin_bearer(&args)?;
     let url = avc_issue_url(&args.node_url);
-    let response = reqwest::Client::new()
-        .post(url)
-        .bearer_auth(bearer.as_str())
-        .json(&package.issue_request)
-        .send()
-        .await?;
-    let status = response.status();
-    let body = response.text().await?;
-    let sanitized_body = redact_token(&body, bearer.as_str());
+    let client = crate::bounded_http_client(
+        LIVESAFE_CEREMONY_HTTP_TIMEOUT,
+        "LiveSafe ceremony HTTP client",
+    )?;
+    let (status, body) = crate::send_bounded_http_request(
+        client
+            .post(url)
+            .bearer_auth(bearer.as_str())
+            .json(&package.issue_request),
+        LIVESAFE_CEREMONY_HTTP_RESPONSE_MAX_BYTES,
+        "LiveSafe ceremony registration response",
+    )
+    .await?;
+    let sanitized_body = redact_token(&String::from_utf8_lossy(&body), bearer.as_str());
     let output = RegistrationCommandOutput {
         credential_id: package.credential_id,
         authorization_request: package.authorization_request,
@@ -134,17 +148,24 @@ fn read_admin_bearer(
     args: &LivesafePublicOutputCeremonyRegisterArgs,
 ) -> anyhow::Result<Zeroizing<String>> {
     let token = match (&args.admin_bearer_env, &args.admin_bearer_file) {
-        (Some(env_name), None) => Zeroizing::new(std::env::var(env_name).map_err(|error| {
-            anyhow::anyhow!("admin bearer env var {env_name} is unavailable: {error}")
-        })?),
+        (Some(env_name), None) => {
+            let value = Zeroizing::new(std::env::var(env_name).map_err(|error| {
+                anyhow::anyhow!("admin bearer env var {env_name} is unavailable: {error}")
+            })?);
+            if value.len() > usize::try_from(LIVESAFE_ADMIN_BEARER_MAX_BYTES)? {
+                anyhow::bail!("admin bearer env var exceeds the byte limit");
+            }
+            value
+        }
         (None, Some(path)) => {
-            let raw = fs::read_to_string(path).map_err(|error| {
-                anyhow::anyhow!(
-                    "admin bearer file {} is unavailable: {error}",
-                    path.display()
-                )
-            })?;
-            Zeroizing::new(raw)
+            let raw = read_private_file(
+                path,
+                LIVESAFE_ADMIN_BEARER_MAX_BYTES,
+                "admin bearer file rejected",
+            )?;
+            let text = std::str::from_utf8(raw.as_slice())
+                .map_err(|_| anyhow::anyhow!("admin bearer file is not valid UTF-8"))?;
+            Zeroizing::new(text.to_owned())
         }
         _ => anyhow::bail!("exactly one admin bearer source is required"),
     };
@@ -176,17 +197,21 @@ fn redact_token(text: &str, token: &str) -> String {
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> anyhow::Result<T> {
-    let bytes = fs::read(path)
-        .map_err(|error| anyhow::anyhow!("failed to read {}: {error}", path.display()))?;
+    let bytes = crate::read_bounded_file(
+        path,
+        LIVESAFE_CEREMONY_JSON_MAX_BYTES,
+        "LiveSafe ceremony JSON input",
+    )?;
     serde_json::from_slice(&bytes)
         .map_err(|error| anyhow::anyhow!("failed to parse JSON {}: {error}", path.display()))
 }
 
 fn read_signing_material(path: &Path) -> anyhow::Result<IssuerSigningMaterial> {
-    let bytes = Zeroizing::new(
-        fs::read(path)
-            .map_err(|error| anyhow::anyhow!("failed to read {}: {error}", path.display()))?,
-    );
+    let bytes = read_private_file(
+        path,
+        LIVESAFE_SIGNING_MATERIAL_MAX_BYTES,
+        "LiveSafe issuer signing material rejected",
+    )?;
     serde_json::from_slice(bytes.as_slice())
         .map_err(|error| anyhow::anyhow!("failed to parse JSON {}: {error}", path.display()))
 }

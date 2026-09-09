@@ -116,6 +116,15 @@ impl SharedPdp {
 }
 
 /// Runtime authority + receipt service.
+///
+/// The long-lived service signing key is non-extractable:
+///
+/// ```compile_fail
+/// use exo_pdp::PolicyDecisionPoint;
+///
+/// let service = PolicyDecisionPoint::ephemeral();
+/// let _raw_key = service.service_secret_bytes();
+/// ```
 pub struct PolicyDecisionPoint {
     service_key: KeyPair,
     pub(crate) keys: BTreeMap<Did, PublicKey>,
@@ -315,12 +324,6 @@ impl PolicyDecisionPoint {
         Ok(())
     }
 
-    /// Secret key bytes for durable service identity (never the money).
-    #[must_use]
-    pub fn service_secret_bytes(&self) -> [u8; 32] {
-        *self.service_key.secret_key().as_bytes()
-    }
-
     #[must_use]
     pub fn granted_by(&self, did: &Did) -> usize {
         self.delegations.granted_by(did)
@@ -457,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn signed_snapshot_preserves_authority_revocation_and_replay_state() {
+    fn pdp_snapshot_reload_preserves_authority_revocation_and_replay_state() {
         let service = KeyPair::generate();
         let service_secret = *service.secret_key().as_bytes();
         let alice = KeyPair::generate();

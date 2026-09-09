@@ -35,7 +35,7 @@ use std::{collections::BTreeMap, fmt};
 
 use exo_core::{Did, Hash256, Signature, Timestamp};
 use exo_identity::{did_verification::verify_did_signature, registry::DidRegistry};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::SerializeStructVariant};
 use zeroize::Zeroizing;
 
 use crate::error::{GatewayError, Result};
@@ -135,7 +135,7 @@ pub fn request_signing_payload(request: &Request) -> Result<Vec<u8>> {
 
 /// Supported authentication credential types.
 /// All credentials resolve to a DID — there is no identity outside the DID system.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub enum Credential {
     /// Direct DID signature authentication (strongest).
     /// The actor signs a challenge with their DID key.
@@ -151,6 +151,36 @@ pub enum Credential {
     /// Bearer token authentication (HTTP-friendly, DID-bound).
     /// A bearer token that maps to a DID in the session registry.
     BearerToken(Zeroizing<String>),
+}
+
+const CREDENTIAL_SECRET_SERIALIZATION_ERROR: &str =
+    "credential secret serialization is not permitted";
+
+impl Serialize for Credential {
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::DidSignature {
+                actor_did,
+                body_hash,
+                signature,
+                timestamp,
+            } => {
+                let mut state =
+                    serializer.serialize_struct_variant("Credential", 0, "DidSignature", 4)?;
+                state.serialize_field("actor_did", actor_did)?;
+                state.serialize_field("body_hash", body_hash)?;
+                state.serialize_field("signature", signature)?;
+                state.serialize_field("timestamp", timestamp)?;
+                state.end()
+            }
+            Self::ApiKey(_) | Self::BearerToken(_) => Err(serde::ser::Error::custom(
+                CREDENTIAL_SECRET_SERIALIZATION_ERROR,
+            )),
+        }
+    }
 }
 
 impl fmt::Debug for Credential {
@@ -535,6 +565,11 @@ mod tests {
     };
 
     use super::*;
+
+    static_assertions::assert_impl_all!(
+        Credential: serde::Serialize,
+        serde::de::DeserializeOwned
+    );
 
     fn req_ts() -> Timestamp {
         Timestamp::new(10_000, 0)
@@ -1129,6 +1164,75 @@ mod tests {
     // -----------------------------------------------------------------------
     // Credential / resolve_credential tests
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn credential_deserialization_remains_supported() {
+        let credential: Credential = serde_json::from_str(
+            r#"{"ApiKey":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}"#,
+        )
+        .expect("credential input must remain deserializable");
+
+        assert!(matches!(credential, Credential::ApiKey(_)));
+    }
+
+    #[test]
+    fn credential_did_signature_preserves_generic_serialize_compatibility() {
+        fn serialize_with_public_bound<T: serde::Serialize>(
+            value: &T,
+        ) -> serde_json::Result<String> {
+            serde_json::to_string(value)
+        }
+
+        let credential = Credential::DidSignature {
+            actor_did: "did:exo:alice".into(),
+            body_hash: Hash256::ZERO,
+            signature: Signature::Empty,
+            timestamp: Timestamp::new(10_000, 7),
+        };
+
+        let serialized = serialize_with_public_bound(&credential)
+            .expect("DID signature credentials must remain serializable");
+        let value: serde_json::Value = serde_json::from_str(&serialized).expect("valid JSON");
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "DidSignature": {
+                    "actor_did": "did:exo:alice",
+                    "body_hash": [
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0
+                    ],
+                    "signature": "Empty",
+                    "timestamp": {
+                        "physical_ms": 10_000,
+                        "logical": 7
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn credential_secret_variants_fail_serialization_without_reflection() {
+        const EXPECTED_ERROR: &str = "credential secret serialization is not permitted";
+        let api_key = "api-key-material-that-must-not-be-reflected";
+        let bearer = "bearer-token-material-that-must-not-be-reflected";
+
+        for (credential, secret) in [
+            (Credential::ApiKey(api_key.to_owned().into()), api_key),
+            (Credential::BearerToken(bearer.to_owned().into()), bearer),
+        ] {
+            let error = serde_json::to_string(&credential)
+                .expect_err("secret-bearing credentials must fail closed")
+                .to_string();
+
+            assert_eq!(error, EXPECTED_ERROR);
+            assert!(!error.contains(secret));
+        }
+    }
 
     #[test]
     fn credential_did_signature_valid() {

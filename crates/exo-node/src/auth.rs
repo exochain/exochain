@@ -30,11 +30,7 @@
 //! The CrossChecked commitment route and its exact readback route likewise
 //! accept only their dedicated scoped bearer; the admin bearer is rejected.
 
-use std::{
-    io::{ErrorKind, Write},
-    path::Path,
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 use axum::{
     body::Body,
@@ -43,22 +39,61 @@ use axum::{
     response::Response,
 };
 use exo_node::crosschecked_anchor_http::CrossCheckedBearerVerifier;
-use zeroize::{Zeroize, Zeroizing};
+use subtle::ConstantTimeEq;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 pub const LIVESAFE_PUBLIC_ADAPTER_OUTPUT_AUTHORIZATION_ROUTE: &str =
     "/api/v1/avc/livesafe/public-adapter-output-authorization";
 
-/// Shared bearer token state for the auth middleware.
+/// Fixed-size verifier retained instead of the configured bearer token.
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+pub(crate) struct BearerTokenVerifier {
+    digest: [u8; 32],
+}
+
+impl BearerTokenVerifier {
+    pub(crate) fn from_bearer(bearer: &str) -> Self {
+        Self {
+            digest: Self::digest(bearer),
+        }
+    }
+
+    fn digest(bearer: &str) -> [u8; 32] {
+        *blake3::hash(bearer.as_bytes()).as_bytes()
+    }
+
+    pub(crate) fn verifies(&self, bearer: &str) -> bool {
+        let mut candidate = Self::digest(bearer);
+        let matches = bool::from(candidate.ct_eq(&self.digest));
+        candidate.zeroize();
+        matches
+    }
+}
+
+/// Shared bearer-token verifier state for the auth middleware.
 #[derive(Clone)]
 pub struct BearerAuth {
-    /// The expected bearer token (hex-encoded 256-bit random value).
-    pub token: Arc<Zeroizing<String>>,
+    verifier: Arc<BearerTokenVerifier>,
+}
+
+impl BearerAuth {
+    /// Prehash a configured bearer once for subsequent fixed-size comparisons.
+    pub fn from_bearer(bearer: &str) -> Self {
+        Self {
+            verifier: Arc::new(BearerTokenVerifier::from_bearer(bearer)),
+        }
+    }
+
+    /// Apply the node's canonical bearer-header parser and verifier.
+    pub fn verify_headers(&self, headers: &HeaderMap) -> Result<(), StatusCode> {
+        verify_bearer_header(headers, self)
+    }
 }
 
 /// Optional route-scoped bearer tokens that never inherit admin authority.
 #[derive(Clone, Default)]
 pub struct ScopedBearerAuth {
-    livesafe_public_adapter_output_authorization: Option<Arc<Zeroizing<String>>>,
+    livesafe_public_adapter_output_authorization: Option<Arc<BearerTokenVerifier>>,
     crosschecked_anchor: Option<CrossCheckedBearerVerifier>,
 }
 
@@ -68,8 +103,9 @@ impl ScopedBearerAuth {
     }
 
     pub fn livesafe_public_adapter_output_authorization(token: Zeroizing<String>) -> Self {
+        let verifier = BearerTokenVerifier::from_bearer(token.as_str());
         Self {
-            livesafe_public_adapter_output_authorization: Some(Arc::new(token)),
+            livesafe_public_adapter_output_authorization: Some(Arc::new(verifier)),
             crosschecked_anchor: None,
         }
     }
@@ -116,52 +152,8 @@ where
 /// is applied atomically during open rather than by chmod after plaintext has
 /// already hit the filesystem. The final rename preserves restart behavior by
 /// replacing any prior token file.
-pub fn write_admin_token_file(path: &Path, token: &str) -> std::io::Result<()> {
-    let tmp_path = path.with_extension("tmp");
-    match std::fs::remove_file(&tmp_path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp_path)?;
-        file.write_all(token.as_bytes())?;
-        file.sync_all()?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)?;
-        file.write_all(token.as_bytes())?;
-        file.sync_all()?;
-    }
-
-    if let Err(error) = std::fs::rename(&tmp_path, path) {
-        return match std::fs::remove_file(&tmp_path) {
-            Ok(()) => Err(error),
-            Err(cleanup_error) if cleanup_error.kind() == ErrorKind::NotFound => Err(error),
-            Err(cleanup_error) => Err(std::io::Error::new(
-                cleanup_error.kind(),
-                format!(
-                    "failed to remove temporary admin token file {} after rename failure: {cleanup_error}; rename failure: {error}",
-                    tmp_path.display()
-                ),
-            )),
-        };
-    }
-
-    Ok(())
+pub fn write_admin_token_file(path: &Path, token: &str) -> anyhow::Result<()> {
+    crate::private_file::write_private_replace(path, token.as_bytes())
 }
 
 fn bearer_header_value(headers: &HeaderMap) -> Result<&str, StatusCode> {
@@ -179,7 +171,7 @@ fn bearer_header_value(headers: &HeaderMap) -> Result<&str, StatusCode> {
 
 fn verify_bearer_header(headers: &HeaderMap, auth: &BearerAuth) -> Result<(), StatusCode> {
     let provided = bearer_header_value(headers)?;
-    if constant_time_eq(provided.as_bytes(), auth.token.as_bytes()) {
+    if auth.verifier.verifies(provided) {
         Ok(())
     } else {
         Err(StatusCode::FORBIDDEN)
@@ -192,12 +184,12 @@ fn verify_admin_or_livesafe_public_output_bearer(
     scoped_auth: &ScopedBearerAuth,
 ) -> Result<(), StatusCode> {
     let provided = bearer_header_value(headers)?;
-    if constant_time_eq(provided.as_bytes(), auth.token.as_bytes()) {
+    if auth.verifier.verifies(provided) {
         return Ok(());
     }
 
-    if let Some(token) = &scoped_auth.livesafe_public_adapter_output_authorization {
-        if constant_time_eq(provided.as_bytes(), token.as_bytes()) {
+    if let Some(verifier) = &scoped_auth.livesafe_public_adapter_output_authorization {
+        if verifier.verifies(provided) {
             return Ok(());
         }
     }
@@ -418,30 +410,6 @@ pub async fn require_bearer_on_writes_with_scoped_bearers(
     Ok(next.run(request).await)
 }
 
-/// Constant-time byte-slice equality.
-///
-/// Returns `false` on length mismatch immediately (length is not a
-/// secret; the distinguishing side-channel we care about is content).
-/// For equal-length slices, performs a branchless XOR-accumulate over
-/// every byte so the total work is independent of where the first
-/// differing byte is located.
-///
-/// We inline this instead of pulling in `subtle` or `constant_time_eq`
-/// to avoid adding a dependency for one comparison. The implementation
-/// is the standard XOR-OR-fold and is sufficient against timing
-/// attacks on a bearer-token comparison.
-#[inline]
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -461,8 +429,42 @@ mod tests {
     use super::*;
 
     fn test_auth() -> BearerAuth {
-        BearerAuth {
-            token: Arc::new(Zeroizing::new("test-token-abc123".to_string())),
+        BearerAuth::from_bearer("test-token-abc123")
+    }
+
+    fn startup_drops_admin_token_before_first_await_after_configuration(startup: &str) -> bool {
+        let Some(configuration_start) = startup.find("let crosschecked_anchor_config =") else {
+            return false;
+        };
+        let Some(configuration_end_offset) = startup[configuration_start..].find(';') else {
+            return false;
+        };
+        let configuration_completion = configuration_start + configuration_end_offset + 1;
+        let post_configuration = &startup[configuration_completion..];
+        let Some(drop_offset) = post_configuration.find("drop(admin_token);") else {
+            return false;
+        };
+        let Some(first_await_offset) = post_configuration.find(".await") else {
+            return false;
+        };
+
+        drop_offset < first_await_offset
+    }
+
+    #[test]
+    fn bearer_tokens_are_compared_as_fixed_size_digests() {
+        let verifier = BearerTokenVerifier::from_bearer("expected-node-token");
+        let long = "x".repeat(4_096);
+        let cases = [
+            ("", false),
+            ("short", false),
+            ("expected-node-token", true),
+            (long.as_str(), false),
+        ];
+
+        for (provided, expected) in cases {
+            assert_eq!(BearerTokenVerifier::digest(provided).len(), 32);
+            assert_eq!(verifier.verifies(provided), expected);
         }
     }
 
@@ -1171,7 +1173,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("admin_token");
 
-        std::fs::write(&path, "old-token").unwrap();
+        write_admin_token_file(&path, "old-token").unwrap();
         write_admin_token_file(&path, "new-token").unwrap();
 
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "new-token");
@@ -1193,28 +1195,51 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "secret-token");
     }
 
+    #[cfg(unix)]
     #[test]
-    fn constant_time_eq_matches_equal() {
-        assert!(constant_time_eq(b"abcdef", b"abcdef"));
-        assert!(constant_time_eq(b"", b""));
-        assert!(constant_time_eq(&[0u8; 32], &[0u8; 32]));
+    fn private_file_admin_writer_refuses_permissive_destination_and_stale_temp() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let permissive_destination = tempfile::tempdir().unwrap();
+        let path = permissive_destination.path().join("admin_token");
+        std::fs::write(&path, "legacy-token").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(write_admin_token_file(&path, "new-token").is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "legacy-token");
+
+        let permissive_temp = tempfile::tempdir().unwrap();
+        let path = permissive_temp.path().join("admin_token");
+        let temp = crate::private_file::private_temp_path(&path);
+        std::fs::write(&temp, "attacker temp").unwrap();
+        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(write_admin_token_file(&path, "new-token").is_err());
+        assert_eq!(std::fs::read_to_string(&temp).unwrap(), "attacker temp");
+        assert!(!path.exists());
     }
 
     #[test]
-    fn constant_time_eq_rejects_different() {
-        assert!(!constant_time_eq(b"abcdef", b"abcdeg"));
-        assert!(!constant_time_eq(b"short", b"different-length"));
-        assert!(!constant_time_eq(b"", b"a"));
+    fn bearer_token_verifier_matches_equal() {
+        assert!(BearerTokenVerifier::from_bearer("abcdef").verifies("abcdef"));
+        assert!(BearerTokenVerifier::from_bearer("").verifies(""));
     }
 
     #[test]
-    fn constant_time_eq_distinguishes_byte_differences() {
+    fn bearer_token_verifier_rejects_different() {
+        let verifier = BearerTokenVerifier::from_bearer("abcdef");
+        assert!(!verifier.verifies("abcdeg"));
+        assert!(!verifier.verifies("different-length"));
+        assert!(!verifier.verifies(""));
+    }
+
+    #[test]
+    fn bearer_token_verifier_distinguishes_byte_differences() {
+        let verifier = BearerTokenVerifier::from_bearer("abcdef");
         // Difference at the first byte
-        assert!(!constant_time_eq(b"xbcdef", b"abcdef"));
+        assert!(!verifier.verifies("xbcdef"));
         // Difference at the last byte
-        assert!(!constant_time_eq(b"abcdex", b"abcdef"));
+        assert!(!verifier.verifies("abcdex"));
         // Multiple differences
-        assert!(!constant_time_eq(b"xxxxxx", b"abcdef"));
+        assert!(!verifier.verifies("xxxxxx"));
     }
 
     #[test]
@@ -1268,6 +1293,91 @@ mod tests {
         assert!(
             !production.contains("std::fs::write(&token_path, &admin_token)"),
             "startup must not write the admin token before restrictive permissions are set"
+        );
+    }
+
+    #[test]
+    fn startup_drops_raw_admin_token_after_final_configuration_use() {
+        let source = include_str!("main.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("tests marker present");
+        let startup = production
+            .split("async fn start_node(")
+            .nth(1)
+            .expect("start_node implementation present");
+        let crosschecked_configuration = startup
+            .find("let crosschecked_anchor_config =")
+            .expect("CrossChecked startup configuration local present");
+        let configuration_completion = crosschecked_configuration
+            + startup[crosschecked_configuration..]
+                .find(';')
+                .expect("CrossChecked startup configuration call completes")
+            + 1;
+        let configuration_statement =
+            &startup[crosschecked_configuration..configuration_completion];
+        let drop_position = configuration_completion
+            + startup[configuration_completion..]
+                .find("drop(admin_token);")
+                .expect("raw admin token explicitly dropped after startup configuration");
+        let crosschecked_router_match = startup
+            .find("let crosschecked_anchor_router = match crosschecked_anchor_config")
+            .expect("CrossChecked router construction uses the evaluated configuration");
+        let first_await_after_configuration = configuration_completion
+            + startup[configuration_completion..]
+                .find(".await")
+                .expect("startup contains an await after CrossChecked configuration");
+
+        assert!(
+            configuration_statement
+                .contains("crosschecked_anchor_startup_config_from_environment(")
+                && configuration_statement.contains("admin_token.as_str()"),
+            "CrossChecked configuration must consume the raw admin token in the evaluated local"
+        );
+        assert!(
+            configuration_completion < drop_position,
+            "raw admin token must be dropped only after CrossChecked configuration evaluation completes"
+        );
+        assert!(
+            drop_position < crosschecked_router_match,
+            "raw admin token must be dropped before CrossChecked router matching and construction"
+        );
+        assert!(
+            drop_position < first_await_after_configuration,
+            "raw admin token must be dropped before the first await after CrossChecked configuration"
+        );
+        assert!(
+            startup_drops_admin_token_before_first_await_after_configuration(startup),
+            "startup token-drop ordering predicate must accept the production sequence"
+        );
+        assert!(
+            crosschecked_router_match < first_await_after_configuration,
+            "CrossChecked router matching must precede the first await after configuration"
+        );
+        assert!(
+            startup[crosschecked_router_match..=first_await_after_configuration]
+                .contains("postgres_crosschecked_anchor_clock("),
+            "the first CrossChecked router await must be the PostgreSQL anchor clock"
+        );
+        assert!(
+            !startup[drop_position + "drop(admin_token);".len()..].contains("admin_token.as_str()"),
+            "startup must not use raw admin token material after explicitly dropping it"
+        );
+    }
+
+    #[test]
+    fn startup_token_drop_order_rejects_await_before_drop() {
+        let mutated_startup = r#"
+            let crosschecked_anchor_config =
+                crosschecked_anchor_startup_config_from_environment(admin_token.as_str())?;
+            readiness_probe().await?;
+            drop(admin_token);
+        "#;
+
+        assert!(
+            !startup_drops_admin_token_before_first_await_after_configuration(mutated_startup),
+            "an await inserted after CrossChecked configuration but before raw-token destruction must be rejected"
         );
     }
 

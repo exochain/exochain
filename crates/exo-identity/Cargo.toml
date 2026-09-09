@@ -33,7 +33,7 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.4" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.6" }
 serde = { workspace = true }
 ciborium = { workspace = true }
 blake3 = { workspace = true }
@@ -42,7 +42,7 @@ sha2 = { workspace = true }
 chacha20poly1305 = { workspace = true }
 hkdf = { workspace = true }
 getrandom = { workspace = true }
-zeroize = { workspace = true }
+zeroize = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 

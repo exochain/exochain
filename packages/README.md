@@ -71,10 +71,16 @@ They agree on local DID derivation and wire format:
   **BLAKE3(public_key_bytes)**.
 - JSON objects produced by one SDK deserialize cleanly in the others.
 
-They do not agree on every locally derived content ID: Rust uses BLAKE3 for
-bailment and decision IDs, while TypeScript and Python keep SHA-256 for those
-client-side IDs. Trust the gateway-returned IDs when a canonical Rust fabric
-identifier is required.
+For title, description, and proposer strings accepted by all three SDKs, Rust,
+TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the same canonical
+CBOR v2 decision frame. Those shared inputs produce the same 64-character
+lowercase hex decision ID.
+
+Other local content IDs are also unchanged. Rust bailment proposal IDs remain
+a 16-hex BLAKE3 prefix, while TypeScript and Python bailment proposal IDs
+remain full SHA-256. Trust gateway-returned identifiers when a canonical
+identifier is required outside the documented three-SDK decision-ID
+contract.
 
 ## Versioning
 

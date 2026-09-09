@@ -14,11 +14,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
-import { strictEqual, ok, rejects, throws } from 'node:assert/strict';
-import { DecisionBuilder } from '../src/governance/decision.js';
+import { strictEqual, notStrictEqual, ok, rejects, throws } from 'node:assert/strict';
+import { Decision, DecisionBuilder } from '../src/governance/decision.js';
 import { Vote, VoteChoice } from '../src/governance/vote.js';
 import { GovernanceError } from '../src/errors.js';
 const PROPOSER = 'did:exo:proposer';
+function assertLowercaseHash256(value) {
+    strictEqual(value.length, 64);
+    ok(/^[0-9a-f]{64}$/.test(value));
+}
 async function baseDecision() {
     return new DecisionBuilder({
         title: 'Fund proposal',
@@ -98,5 +102,72 @@ test('Decision IDs are deterministic for identical inputs', async () => {
     const a = await baseDecision();
     const b = await baseDecision();
     strictEqual(a.decisionId, b.decisionId);
+});
+test('Decision IDs frame delimiter-collision inputs', async () => {
+    const a = await new DecisionBuilder({
+        title: 'a',
+        description: 'b\0c',
+        proposer: PROPOSER,
+    }).build();
+    const b = await new DecisionBuilder({
+        title: 'a\0b',
+        description: 'c',
+        proposer: PROPOSER,
+    }).build();
+    notStrictEqual(a.decisionId, b.decisionId);
+    assertLowercaseHash256(a.decisionId);
+    assertLowercaseHash256(b.decisionId);
+});
+test('Decision ID matches the literal Unicode cross-language fixture', async () => {
+    const decision = await new DecisionBuilder({
+        title: 'Budget 🛡️',
+        description: 'Allocate 10 EXO',
+        proposer: 'did:exo:alice',
+    }).build();
+    strictEqual(decision.decisionId, 'ea4c36142a07f33ee7d008831c2417d502efbcfa1573a46b6d4ee6a51ccbaf53');
+    assertLowercaseHash256(decision.decisionId);
+});
+test('Decision ID matches CBOR text-length boundary vectors', async () => {
+    const vectors = [
+        [0, '0a400b4d15d70e56088d1138dc233df9882be32d62a54c69ee7ef0a5dc121d81'],
+        [23, '8c812e872cfc8cdea78aa2d395e176b11e8f7c680dbaa7e0bad7a58430262ba1'],
+        [24, '27affb4c9f114538bad5203ac2761ffadacc535c33e25ff2762e8043ba5942c5'],
+        [255, '24ddff9f6fdbeaea835a8d50aa9f2f16a8650bd7f7aea3b4b323dda7fbbd249c'],
+        [256, 'a8a1247de117fa9b5049eb9dc8a48894798df8126c186b1d919951beb7f13730'],
+        [65535, '6e79ec72edce29ff75a8ca91c04d5e91e84983de2fe29e25395c254057937cd5'],
+        [65536, '34397f6a475fe08dced0957006954f9725bfa478bd35c67abe411f5dc0553434'],
+    ];
+    for (const [descriptionLength, expected] of vectors) {
+        const decision = await new DecisionBuilder({
+            title: 'Boundary',
+            description: 'x'.repeat(descriptionLength),
+            proposer: 'did:exo:alice',
+        }).build();
+        strictEqual(decision.decisionId, expected, `length ${descriptionLength}`);
+        assertLowercaseHash256(decision.decisionId);
+    }
+});
+test('Decision constructor preserves a legacy SHA-256 decision ID', () => {
+    const legacyDecisionId = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+    const decision = new Decision({
+        decisionId: legacyDecisionId,
+        title: 'Legacy decision',
+        description: 'Stored before decision ID v2',
+        proposer: 'did:exo:alice',
+    });
+    strictEqual(decision.decisionId, legacyDecisionId);
+});
+test('Decision IDs reject ill-formed Unicode instead of aliasing replacement text', async () => {
+    const replacement = await new DecisionBuilder({
+        title: '\ufffd',
+        description: 'd',
+        proposer: 'did:exo:alice',
+    }).build();
+    assertLowercaseHash256(replacement.decisionId);
+    await rejects(new DecisionBuilder({
+        title: '\ud800',
+        description: 'd',
+        proposer: 'did:exo:alice',
+    }).build(), GovernanceError);
 });
 //# sourceMappingURL=governance.test.js.map

@@ -165,25 +165,35 @@ impl LatencyBreakdown {
         context_packet_tokens: u64,
     ) -> Self {
         let runner_factor = runner_factor(runner);
-        let catalog_lookup_ms =
-            1 + (corpus_count / 120) + (selected_ref_count / 32) + runner_factor;
-        let canonical_resolution_ms = (selected_ref_count / 16) + route_count + runner_factor;
-        let provenance_fetch_ms = (selected_ref_count / 24) + route_count;
-        let contradiction_fetch_ms = (selected_ref_count / 48) + (runner_factor / 4);
-        let routing_view_build_ms =
-            route_count.saturating_mul(2) + (selected_ref_count / 20) + runner_factor;
+        let catalog_lookup_ms = 1u64
+            .saturating_add(corpus_count / 120)
+            .saturating_add(selected_ref_count / 32)
+            .saturating_add(runner_factor);
+        let canonical_resolution_ms = (selected_ref_count / 16)
+            .saturating_add(route_count)
+            .saturating_add(runner_factor);
+        let provenance_fetch_ms = (selected_ref_count / 24).saturating_add(route_count);
+        let contradiction_fetch_ms = (selected_ref_count / 48).saturating_add(runner_factor / 4);
+        let routing_view_build_ms = route_count
+            .saturating_mul(2)
+            .saturating_add(selected_ref_count / 20)
+            .saturating_add(runner_factor);
         let validation_ms = match runner {
             BenchmarkRunnerName::NoMemory | BenchmarkRunnerName::LongContextDump => 0,
             BenchmarkRunnerName::FlatRag => 1,
-            BenchmarkRunnerName::DagDbRouting => 3 + (selected_ref_count / 24),
+            BenchmarkRunnerName::DagDbRouting => 3u64.saturating_add(selected_ref_count / 24),
             BenchmarkRunnerName::GovernedDagDbRouting
-            | BenchmarkRunnerName::GovernedDagDbOptimized => 5 + (selected_ref_count / 16),
+            | BenchmarkRunnerName::GovernedDagDbOptimized => {
+                5u64.saturating_add(selected_ref_count / 16)
+            }
         };
-        let context_packet_build_ms = 1 + (context_packet_tokens / 128) + (selected_ref_count / 32);
+        let context_packet_build_ms = 1u64
+            .saturating_add(context_packet_tokens / 128)
+            .saturating_add(selected_ref_count / 32);
         let writeback_ms = match runner {
             BenchmarkRunnerName::DagDbRouting
             | BenchmarkRunnerName::GovernedDagDbRouting
-            | BenchmarkRunnerName::GovernedDagDbOptimized => 2 + route_count,
+            | BenchmarkRunnerName::GovernedDagDbOptimized => 2u64.saturating_add(route_count),
             BenchmarkRunnerName::NoMemory
             | BenchmarkRunnerName::LongContextDump
             | BenchmarkRunnerName::FlatRag => 0,
@@ -243,16 +253,22 @@ impl LatencyBreakdown {
         let catalog_lookup_ms = base
             .catalog_lookup_ms
             .saturating_sub(base.catalog_lookup_ms.min(selected_ref_count / 8));
-        let canonical_resolution_ms = base
-            .canonical_resolution_ms
-            .saturating_sub(ratio.saturating_mul(base.canonical_resolution_ms) / 10_000);
+        let canonical_resolution_ms =
+            base.canonical_resolution_ms
+                .saturating_sub(mul_div_floor_saturating_u64(
+                    base.canonical_resolution_ms,
+                    ratio,
+                    10_000,
+                ));
         let provenance_fetch_ms = base
             .provenance_fetch_ms
             .saturating_sub(base.provenance_fetch_ms.min(route_count));
         let contradiction_fetch_ms = base.contradiction_fetch_ms;
         let routing_view_build_ms = base.routing_view_build_ms;
         let validation_ms = base.validation_ms;
-        let context_packet_build_ms = 1 + (context_packet_tokens / 256) + (selected_ref_count / 64);
+        let context_packet_build_ms = 1u64
+            .saturating_add(context_packet_tokens / 256)
+            .saturating_add(selected_ref_count / 64);
         let writeback_ms = if idempotency_read_reuse_hit {
             base.writeback_ms.saturating_sub(1)
         } else {
@@ -2160,6 +2176,11 @@ fn sum_u64(values: impl Iterator<Item = u64>) -> u64 {
     values.fold(0u64, u64::saturating_add)
 }
 
+fn mul_div_floor_saturating_u64(value: u64, numerator: u64, denominator: u64) -> u64 {
+    let quotient = u128::from(value) * u128::from(numerator) / u128::from(denominator);
+    u64::try_from(quotient).unwrap_or(u64::MAX)
+}
+
 fn median(values: &[u64]) -> u64 {
     if values.is_empty() {
         return 0;
@@ -2222,14 +2243,22 @@ fn reduction_bp_u32(observed: u32, baseline: u32) -> Option<u64> {
     if baseline == 0 || observed >= baseline {
         return None;
     }
-    Some(u64::from(baseline.saturating_sub(observed)).saturating_mul(10_000) / u64::from(baseline))
+    Some(mul_div_floor_saturating_u64(
+        u64::from(baseline.saturating_sub(observed)),
+        10_000,
+        u64::from(baseline),
+    ))
 }
 
 fn reduction_bp_u64(observed: u64, baseline: u64) -> Option<u64> {
     if baseline == 0 || observed >= baseline {
         return None;
     }
-    Some(baseline.saturating_sub(observed).saturating_mul(10_000) / baseline)
+    Some(mul_div_floor_saturating_u64(
+        baseline.saturating_sub(observed),
+        10_000,
+        baseline,
+    ))
 }
 
 fn u64_to_i64(value: u64) -> i64 {
@@ -2764,15 +2793,12 @@ fn optimized_mvp_gates(
         gate_floor_le(
             "optimized_latency_reduction_gate",
             optimized.deterministic_latency_ms_total,
-            governed
-                .deterministic_latency_ms_total
-                .saturating_mul(7_500)
-                / 10_000,
+            mul_div_floor_saturating_u64(governed.deterministic_latency_ms_total, 7_500, 10_000),
         ),
         gate_floor_le(
             "optimized_governance_overhead_reduction_gate",
             optimized.overhead_tokens_total.into(),
-            u64::from(governed.overhead_tokens_total).saturating_mul(7_500) / 10_000,
+            mul_div_floor_saturating_u64(u64::from(governed.overhead_tokens_total), 7_500, 10_000),
         ),
     ];
     gates.extend([
@@ -3017,9 +3043,11 @@ fn prompt_token_reduction_bp(governed_prompt_tokens: u32, long_context_prompt_to
     if long_context_prompt_tokens == 0 || governed_prompt_tokens >= long_context_prompt_tokens {
         return 0;
     }
-    u64::from(long_context_prompt_tokens.saturating_sub(governed_prompt_tokens))
-        .saturating_mul(10_000)
-        / u64::from(long_context_prompt_tokens)
+    mul_div_floor_saturating_u64(
+        u64::from(long_context_prompt_tokens.saturating_sub(governed_prompt_tokens)),
+        10_000,
+        u64::from(long_context_prompt_tokens),
+    )
 }
 
 fn report_metric(
@@ -3043,11 +3071,13 @@ fn scale_latency_overhead_vs_mvp_bp_from_metrics(
     {
         return 0;
     }
-    scale_optimized
-        .mean_per_task_latency_ms
-        .saturating_sub(mvp_optimized.mean_per_task_latency_ms)
-        .saturating_mul(10_000)
-        / mvp_optimized.mean_per_task_latency_ms
+    mul_div_floor_saturating_u64(
+        scale_optimized
+            .mean_per_task_latency_ms
+            .saturating_sub(mvp_optimized.mean_per_task_latency_ms),
+        10_000,
+        mvp_optimized.mean_per_task_latency_ms,
+    )
 }
 
 fn governance_overhead_reduction_bp(
@@ -3057,13 +3087,15 @@ fn governance_overhead_reduction_bp(
     if governed.overhead_tokens == 0 || optimized.overhead_tokens >= governed.overhead_tokens {
         return 0;
     }
-    u64::from(
-        governed
-            .overhead_tokens
-            .saturating_sub(optimized.overhead_tokens),
+    mul_div_floor_saturating_u64(
+        u64::from(
+            governed
+                .overhead_tokens
+                .saturating_sub(optimized.overhead_tokens),
+        ),
+        10_000,
+        u64::from(governed.overhead_tokens),
     )
-    .saturating_mul(10_000)
-        / u64::from(governed.overhead_tokens)
 }
 
 fn gate_floor_ge(
@@ -3551,6 +3583,35 @@ mod tests {
     }
 
     #[test]
+    fn latency_overflow_saturates_each_stage_and_total_deterministically() {
+        let latency = LatencyBreakdown::from_inputs(
+            u64::MAX,
+            BenchmarkRunnerName::GovernedDagDbRouting,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+        );
+
+        assert_eq!(latency.catalog_lookup_ms, 730_183_619_584_336_422);
+        assert_eq!(latency.canonical_resolution_ms, u64::MAX);
+        assert_eq!(latency.provenance_fetch_ms, u64::MAX);
+        assert_eq!(latency.contradiction_fetch_ms, 384_307_168_202_282_326);
+        assert_eq!(latency.routing_view_build_ms, u64::MAX);
+        assert_eq!(latency.validation_ms, 1_152_921_504_606_846_980);
+        assert_eq!(latency.context_packet_build_ms, 720_575_940_379_279_359);
+        assert_eq!(latency.writeback_ms, u64::MAX);
+        assert_eq!(latency.total_ms, u64::MAX);
+    }
+
+    #[test]
+    fn reduction_bp_u64_is_exact_for_near_maximum_inputs() {
+        assert_eq!(
+            reduction_bp_u64(9_223_372_036_854_775_807, u64::MAX),
+            Some(5_000)
+        );
+    }
+
+    #[test]
     fn phase2a_per_task_diagnostics_for_every_task() {
         let fixture = fixture();
         let bundle = build_phase2a_report_bundle(&fixture).expect("bundle");
@@ -3971,6 +4032,26 @@ mod tests {
     }
 
     #[test]
+    fn optimized_latency_reduction_is_exact_at_u64_max() {
+        let base = LatencyBreakdown {
+            catalog_lookup_ms: 0,
+            canonical_resolution_ms: u64::MAX,
+            provenance_fetch_ms: 0,
+            contradiction_fetch_ms: 0,
+            routing_view_build_ms: 0,
+            validation_ms: 0,
+            context_packet_build_ms: 0,
+            writeback_ms: 0,
+            total_ms: u64::MAX,
+        };
+
+        let optimized = LatencyBreakdown::optimized_from_stage_inputs(base, 0, 0, 0, 7_000, false);
+
+        assert_eq!(optimized.canonical_resolution_ms, 5_534_023_222_112_865_485);
+        assert_eq!(optimized.total_ms, 5_534_023_222_112_865_486);
+    }
+
+    #[test]
     fn optimized_scale_latency_overhead_uses_mean_per_task_basis() {
         let mvp = OptimizedRunnerMetrics {
             runner: BenchmarkRunnerName::GovernedDagDbOptimized,
@@ -4004,6 +4085,92 @@ mod tests {
         assert_eq!(
             scale_latency_overhead_vs_mvp_bp_from_metrics(&zero_mvp, &scale),
             0
+        );
+    }
+
+    #[test]
+    fn optimized_scale_latency_overhead_is_exact_for_near_maximum_inputs() {
+        let mvp = OptimizedRunnerMetrics {
+            runner: BenchmarkRunnerName::GovernedDagDbOptimized,
+            quality_score_bp: 10_000,
+            citation_accuracy_bp: 10_000,
+            unsupported_claim_rate_bp: 0,
+            prompt_tokens_total: 1,
+            overhead_tokens_total: 1,
+            net_savings_micro_exo_total: 1,
+            deterministic_latency_ms_total: u64::MAX / 2,
+            mean_per_task_latency_ms: u64::MAX / 2,
+            claim_allowed: true,
+        };
+        let scale = OptimizedRunnerMetrics {
+            deterministic_latency_ms_total: u64::MAX,
+            mean_per_task_latency_ms: u64::MAX,
+            ..mvp.clone()
+        };
+
+        assert_eq!(
+            scale_latency_overhead_vs_mvp_bp_from_metrics(&mvp, &scale),
+            10_000
+        );
+    }
+
+    #[test]
+    fn optimized_scale_latency_overhead_saturates_only_unrepresentable_final_result() {
+        let mvp = OptimizedRunnerMetrics {
+            runner: BenchmarkRunnerName::GovernedDagDbOptimized,
+            quality_score_bp: 10_000,
+            citation_accuracy_bp: 10_000,
+            unsupported_claim_rate_bp: 0,
+            prompt_tokens_total: 1,
+            overhead_tokens_total: 1,
+            net_savings_micro_exo_total: 1,
+            deterministic_latency_ms_total: 1,
+            mean_per_task_latency_ms: 1,
+            claim_allowed: true,
+        };
+        let scale = OptimizedRunnerMetrics {
+            deterministic_latency_ms_total: u64::MAX,
+            mean_per_task_latency_ms: u64::MAX,
+            ..mvp.clone()
+        };
+
+        assert_eq!(
+            scale_latency_overhead_vs_mvp_bp_from_metrics(&mvp, &scale),
+            u64::MAX
+        );
+    }
+
+    #[test]
+    fn optimized_reduction_gate_thresholds_are_exact_for_large_inputs() {
+        let optimized = OptimizedRunnerMetrics {
+            runner: BenchmarkRunnerName::GovernedDagDbOptimized,
+            quality_score_bp: 10_000,
+            citation_accuracy_bp: 10_000,
+            unsupported_claim_rate_bp: 0,
+            prompt_tokens_total: 0,
+            overhead_tokens_total: 0,
+            net_savings_micro_exo_total: 0,
+            deterministic_latency_ms_total: 0,
+            mean_per_task_latency_ms: 0,
+            claim_allowed: true,
+        };
+        let governed = OptimizedRunnerMetrics {
+            runner: BenchmarkRunnerName::GovernedDagDbRouting,
+            overhead_tokens_total: u32::MAX,
+            deterministic_latency_ms_total: u64::MAX,
+            ..optimized.clone()
+        };
+
+        let gates = optimized_mvp_gates(&[optimized, governed]).expect("large-input gates");
+
+        assert_eq!(
+            gate_by_name_optimized(&gates, "optimized_latency_reduction_gate").threshold_value,
+            13_835_058_055_282_163_711
+        );
+        assert_eq!(
+            gate_by_name_optimized(&gates, "optimized_governance_overhead_reduction_gate")
+                .threshold_value,
+            3_221_225_471
         );
     }
 

@@ -18,7 +18,7 @@
 
 use std::{
     fs,
-    io::{Read, Write},
+    io::Write,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -35,7 +35,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::cli::{CrossCheckedAnchorAuthorityAdminArgs, CrossCheckedAnchorAuthorityCommand};
+use crate::{
+    cli::{CrossCheckedAnchorAuthorityAdminArgs, CrossCheckedAnchorAuthorityCommand},
+    private_file::{read_private_file, write_private_create_new},
+};
 
 const OWNER_COMMAND_MAX_BYTES: u64 = 64 * 1024;
 const SIGNER_SECRET_MAX_BYTES: u64 = 4 * 1024;
@@ -573,78 +576,8 @@ fn read_private_json<T: for<'de> Deserialize<'de>>(
     max_bytes: u64,
     error_message: &'static str,
 ) -> anyhow::Result<T> {
-    let bytes = read_owner_only_file(path, max_bytes, error_message)?;
+    let bytes = read_private_file(path, max_bytes, error_message)?;
     serde_json::from_slice(bytes.as_slice()).map_err(|_| anyhow::anyhow!(error_message))
-}
-
-#[cfg(unix)]
-fn read_owner_only_file(
-    path: &Path,
-    max_bytes: u64,
-    error_message: &'static str,
-) -> anyhow::Result<Zeroizing<Vec<u8>>> {
-    use std::os::unix::fs::MetadataExt;
-
-    let before = fs::symlink_metadata(path).map_err(|_| anyhow::anyhow!(error_message))?;
-    let mode = before.mode() & 0o777;
-    if before.file_type().is_symlink()
-        || !before.is_file()
-        || !matches!(mode, 0o400 | 0o600)
-        || before.nlink() != 1
-        || before.len() == 0
-        || before.len() > max_bytes
-    {
-        anyhow::bail!(error_message);
-    }
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .open(path)
-        .map_err(|_| anyhow::anyhow!(error_message))?;
-    let opened = file
-        .metadata()
-        .map_err(|_| anyhow::anyhow!(error_message))?;
-    if opened.dev() != before.dev()
-        || opened.ino() != before.ino()
-        || opened.mode() != before.mode()
-        || opened.len() != before.len()
-        || opened.nlink() != 1
-        || !opened.is_file()
-    {
-        anyhow::bail!(error_message);
-    }
-    let capacity = usize::try_from(before.len()).map_err(|_| anyhow::anyhow!(error_message))?;
-    let mut bytes = Zeroizing::new(Vec::with_capacity(capacity));
-    let mut bounded_file = file.take(max_bytes + 1);
-    bounded_file
-        .read_to_end(&mut bytes)
-        .map_err(|_| anyhow::anyhow!(error_message))?;
-    let after = bounded_file
-        .get_ref()
-        .metadata()
-        .map_err(|_| anyhow::anyhow!(error_message))?;
-    let bytes_len = u64::try_from(bytes.len()).map_err(|_| anyhow::anyhow!(error_message))?;
-    if bytes.is_empty()
-        || bytes_len != before.len()
-        || after.dev() != before.dev()
-        || after.ino() != before.ino()
-        || after.mode() != before.mode()
-        || after.len() != before.len()
-        || after.nlink() != 1
-    {
-        anyhow::bail!(error_message);
-    }
-    Ok(bytes)
-}
-
-#[cfg(not(unix))]
-fn read_owner_only_file(
-    _path: &Path,
-    _max_bytes: u64,
-    error_message: &'static str,
-) -> anyhow::Result<Zeroizing<Vec<u8>>> {
-    Err(anyhow::anyhow!(
-        "{error_message}: owner-only permission verification unavailable"
-    ))
 }
 
 fn records_path(data_dir: &Path, must_exist: bool) -> anyhow::Result<PathBuf> {
@@ -730,31 +663,6 @@ fn write_optional_package(path: Option<&Path>, bytes: &[u8]) -> anyhow::Result<(
         write_private_create_new(path, bytes)?;
     }
     Ok(())
-}
-
-#[cfg(unix)]
-fn write_private_create_new(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let mut file = fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|_| anyhow::anyhow!("signed package output creation failed"))?;
-    file.set_permissions(fs::Permissions::from_mode(0o600))
-        .map_err(|_| anyhow::anyhow!("signed package output permission update failed"))?;
-    file.write_all(bytes)
-        .map_err(|_| anyhow::anyhow!("signed package output write failed"))?;
-    file.sync_all()
-        .map_err(|_| anyhow::anyhow!("signed package output sync failed"))?;
-    file.set_permissions(fs::Permissions::from_mode(0o600))
-        .map_err(|_| anyhow::anyhow!("signed package output permission update failed"))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn write_private_create_new(_path: &Path, _bytes: &[u8]) -> anyhow::Result<()> {
-    anyhow::bail!("signed package output permission enforcement unavailable")
 }
 
 fn write_redacted_summary(operation: &str, package_bytes: &[u8]) -> anyhow::Result<()> {

@@ -20,6 +20,34 @@ pub use exo_dag_db_api::{
     SafeMetadata, SafeMetadataDecision, SimilarityResult, SimilarityType, SourceType, SubjectKind,
     ValidationDecision, ValidationStatus,
 };
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, PercentEncode, utf8_percent_encode};
+
+const QUERY_COMPONENT_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+fn encode_query_component(value: &str) -> PercentEncode<'_> {
+    utf8_percent_encode(value, QUERY_COMPONENT_ENCODE_SET)
+}
+
+const INVALID_LOOKUP_ID_SEGMENT: &str = "_";
+
+fn lookup_path_segment(value: &str) -> &str {
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| b"0123456789abcdef".contains(&byte))
+    {
+        value
+    } else {
+        // Never place attacker-controlled invalid material in a URL. The fixed,
+        // single-segment sentinel is deliberately not hexadecimal, so the
+        // gateway's canonical 32-byte hash validation rejects it fail-closed.
+        INVALID_LOOKUP_ID_SEGMENT
+    }
+}
 
 /// HTTP verb for an SDK-prepared DAG DB request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,9 +160,13 @@ impl DagDbClient {
         &self,
         request: DagDbReceiptLookupRequest,
     ) -> DagDbRequestSpec<DagDbReceiptLookupRequest> {
+        let receipt_hash = lookup_path_segment(&request.receipt_hash);
         let mut path = format!(
             "{}/receipts/{}?tenant_id={}&namespace={}",
-            self.prefix, request.receipt_hash, request.tenant_id, request.namespace
+            self.prefix,
+            receipt_hash,
+            encode_query_component(&request.tenant_id),
+            encode_query_component(&request.namespace)
         );
         append_bool_query(&mut path, "include_body", request.include_body);
         self.get(path)
@@ -145,9 +177,13 @@ impl DagDbClient {
         &self,
         request: DagDbCatalogLookupRequest,
     ) -> DagDbRequestSpec<DagDbCatalogLookupRequest> {
+        let catalog_id = lookup_path_segment(&request.catalog_id);
         let mut path = format!(
             "{}/catalog/{}?tenant_id={}&namespace={}",
-            self.prefix, request.catalog_id, request.tenant_id, request.namespace
+            self.prefix,
+            catalog_id,
+            encode_query_component(&request.tenant_id),
+            encode_query_component(&request.namespace)
         );
         append_bool_query(&mut path, "include_children", request.include_children);
         append_bool_query(&mut path, "include_routes", request.include_routes);
@@ -159,9 +195,13 @@ impl DagDbClient {
         &self,
         request: DagDbRouteLookupRequest,
     ) -> DagDbRequestSpec<DagDbRouteLookupRequest> {
+        let route_id = lookup_path_segment(&request.route_id);
         let mut path = format!(
             "{}/routes/{}?tenant_id={}&namespace={}",
-            self.prefix, request.route_id, request.tenant_id, request.namespace
+            self.prefix,
+            route_id,
+            encode_query_component(&request.tenant_id),
+            encode_query_component(&request.namespace)
         );
         append_bool_query(
             &mut path,
@@ -201,7 +241,7 @@ fn append_bool_query(path: &mut String, name: &str, value: Option<bool>) {
 #[cfg(feature = "http-client")]
 pub use transport::{
     BearerToken, DagDbAuthConfig, DagDbClientError, DagDbHttpClient, DagDbServerError,
-    DagDbSignatureHeaders,
+    DagDbSignatureHeaders, MAX_DAGDB_RESPONSE_BYTES,
 };
 
 /// Real async HTTP transport for the DAG DB REST surface.
@@ -218,7 +258,7 @@ pub use transport::{
 /// failure) without ever swallowing an error.
 #[cfg(feature = "http-client")]
 mod transport {
-    use std::fmt;
+    use std::{fmt, time::Duration};
 
     use reqwest::{
         Client, StatusCode,
@@ -237,6 +277,12 @@ mod transport {
         DagDbRouteResponse, DagDbTrustCheckRequest, DagDbTrustCheckResponse, DagDbValidateRequest,
         DagDbValidateResponse, DagDbWritebackRequest, DagDbWritebackResponse,
     };
+
+    /// Maximum accepted DAG DB HTTP response body size in bytes.
+    pub const MAX_DAGDB_RESPONSE_BYTES: usize = 1_048_576;
+    /// Finite total deadline applied by [`DagDbHttpClient::new`] to headers and body.
+    const DEFAULT_DAGDB_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+    const OVERSIZED_RESPONSE_MESSAGE: &str = "response body exceeds the 1048576-byte limit";
 
     /// Gateway header carrying the requesting tenant id.
     const TENANT_HEADER: &str = "x-exo-tenant-id";
@@ -859,13 +905,14 @@ mod transport {
         Server(DagDbServerError),
 
         /// The gateway returned a non-2xx status whose body was not a valid
-        /// [`DagDbErrorEnvelope`]. Carries the status and the raw body so the
-        /// failure is still actionable.
-        #[error("DAG DB gateway returned {status} with unparseable error body: {body}")]
+        /// [`DagDbErrorEnvelope`], or a response body exceeded the fixed SDK
+        /// limit. The body is either the bounded raw text or a stable limit
+        /// marker, so attacker-controlled responses cannot grow the error.
+        #[error("DAG DB gateway returned {status} with unusable response body: {body}")]
         UnexpectedStatus {
             /// HTTP status code returned.
             status: u16,
-            /// Raw response body (truncated by the gateway, surfaced verbatim).
+            /// Bounded raw response body, or a stable response-limit marker.
             body: String,
         },
 
@@ -954,7 +1001,7 @@ mod transport {
     impl DagDbHttpClient {
         /// Build a client against `base_url` (gateway origin, e.g.
         /// `https://gateway.example.com`) using the supplied auth config and a
-        /// default-configured `reqwest::Client`.
+        /// `reqwest::Client` with a finite 30-second total request deadline.
         ///
         /// # Errors
         /// Returns [`DagDbClientError::Transport`] if the underlying
@@ -963,9 +1010,7 @@ mod transport {
             base_url: impl Into<String>,
             auth: DagDbAuthConfig,
         ) -> Result<Self, DagDbClientError> {
-            let http = Client::builder()
-                .build()
-                .map_err(DagDbClientError::from_reqwest)?;
+            let http = build_http_client(DEFAULT_DAGDB_HTTP_TIMEOUT)?;
             Ok(Self::with_client(base_url, auth, http))
         }
 
@@ -1430,8 +1475,13 @@ mod transport {
                 .await
                 .map_err(DagDbClientError::from_reqwest)?;
             let status = response.status();
+            let body = read_bounded_response_body(response).await?;
             if status.is_success() {
-                let decoded: Resp = response.json().await.map_err(DagDbClientError::Decode)?;
+                let bounded_response: reqwest::Response = http::Response::new(body).into();
+                let decoded: Resp = bounded_response
+                    .json()
+                    .await
+                    .map_err(DagDbClientError::Decode)?;
                 let actual = schema_of(&decoded);
                 if actual != expected {
                     return Err(DagDbClientError::SchemaVersionMismatch {
@@ -1441,24 +1491,16 @@ mod transport {
                 }
                 Ok(decoded)
             } else {
-                Err(self.map_error(status, response).await)
+                Err(self.map_error(status, &body))
             }
         }
 
         /// Parse a non-2xx response into the governed error variant, falling
         /// back to [`DagDbClientError::UnexpectedStatus`] with the raw body when
         /// the envelope does not parse.
-        async fn map_error(
-            &self,
-            status: StatusCode,
-            response: reqwest::Response,
-        ) -> DagDbClientError {
+        fn map_error(&self, status: StatusCode, body: &[u8]) -> DagDbClientError {
             let code = status.as_u16();
-            let body = match response.text().await {
-                Ok(body) => body,
-                Err(err) => return DagDbClientError::from_reqwest(err),
-            };
-            match serde_json::from_str::<DagDbErrorEnvelope>(&body) {
+            match serde_json::from_slice::<DagDbErrorEnvelope>(body) {
                 Ok(envelope) => DagDbClientError::Server(DagDbServerError {
                     status: code,
                     error_code: envelope.error_code,
@@ -1467,16 +1509,21 @@ mod transport {
                     validation_report_id: envelope.validation_report_id,
                     requires_council_review: envelope.requires_council_review,
                 }),
-                Err(_) => DagDbClientError::UnexpectedStatus { status: code, body },
+                Err(_) => DagDbClientError::UnexpectedStatus {
+                    status: code,
+                    body: String::from_utf8_lossy(body).into_owned(),
+                },
             }
         }
 
         /// Assemble the gateway auth headers for `action` and optional
         /// per-request signature headers.
         ///
-        /// Callers wanting a per-request deadline should build the
-        /// `reqwest::Client` with [`reqwest::ClientBuilder::timeout`] and pass
-        /// it to [`DagDbHttpClient::with_client`]; an elapsed deadline maps to
+        /// [`DagDbHttpClient::new`] applies a finite total deadline. Callers
+        /// requiring a different deadline can build the `reqwest::Client` with
+        /// [`reqwest::ClientBuilder::timeout`] and pass it to
+        /// [`DagDbHttpClient::with_client`]. An elapsed deadline while waiting
+        /// for headers or collecting the body maps to
         /// [`DagDbClientError::Timeout`].
         fn auth_headers(
             &self,
@@ -1508,6 +1555,70 @@ mod transport {
             }
             Ok(headers)
         }
+    }
+
+    fn oversized_response_error(status: StatusCode) -> DagDbClientError {
+        DagDbClientError::UnexpectedStatus {
+            status: status.as_u16(),
+            body: OVERSIZED_RESPONSE_MESSAGE.to_owned(),
+        }
+    }
+
+    /// Build the HTTP client used by the default constructor. Keeping the
+    /// deadline in this shared path lets tests exercise the exact production
+    /// configuration with a shorter duration.
+    pub(super) fn build_http_client(timeout: Duration) -> Result<Client, DagDbClientError> {
+        Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(DagDbClientError::from_reqwest)
+    }
+
+    /// Collect one response incrementally while enforcing the byte limit from
+    /// actual chunks. Content-Length is only an early-rejection optimization;
+    /// it is never trusted as the accounting boundary.
+    pub(super) async fn read_bounded_response_body(
+        mut response: reqwest::Response,
+    ) -> Result<Vec<u8>, DagDbClientError> {
+        let status = response.status();
+        let max_bytes = u64::try_from(MAX_DAGDB_RESPONSE_BYTES)
+            .map_err(|_| oversized_response_error(status))?;
+        if response
+            .content_length()
+            .is_some_and(|content_length| content_length > max_bytes)
+        {
+            return Err(oversized_response_error(status));
+        }
+
+        let initial_capacity = response
+            .content_length()
+            .and_then(|content_length| usize::try_from(content_length).ok())
+            .map_or(0, |content_length| {
+                content_length.min(MAX_DAGDB_RESPONSE_BYTES)
+            });
+        let mut body = Vec::with_capacity(initial_capacity);
+        loop {
+            let chunk = match response.chunk().await {
+                Ok(Some(chunk)) => chunk,
+                Ok(None) => break,
+                Err(error) if error.is_timeout() => {
+                    return Err(DagDbClientError::Timeout(error));
+                }
+                Err(error) if status.is_success() => {
+                    return Err(DagDbClientError::Decode(error));
+                }
+                Err(error) => return Err(DagDbClientError::from_reqwest(error)),
+            };
+            let next_length = body
+                .len()
+                .checked_add(chunk.len())
+                .ok_or_else(|| oversized_response_error(status))?;
+            if next_length > MAX_DAGDB_RESPONSE_BYTES {
+                return Err(oversized_response_error(status));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(body)
     }
 
     fn trim_trailing_slash(mut base: String) -> String {
@@ -1545,6 +1656,14 @@ mod tests {
     use serde::{Serialize, de::DeserializeOwned};
 
     use super::*;
+
+    const VALID_RECEIPT_HASH: &str =
+        "abababababababababababababababababababababababababababababababab";
+    const VALID_CATALOG_ID: &str =
+        "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+    const VALID_ROUTE_ID: &str = "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef";
+    const ADVERSARIAL_QUERY_COMPONENT: &str = "Az09-._~/?&=#% \n雪";
+    const ENCODED_ADVERSARIAL_QUERY_COMPONENT: &str = "Az09-._~%2F%3F%26%3D%23%25%20%0A%E9%9B%AA";
 
     #[test]
     fn dagdb_json_fixtures() {
@@ -1649,6 +1768,134 @@ mod tests {
             client.route_lookup(fixture(&fixtures, "requests", "route_lookup")),
             "/api/v1/dag-db/routes/",
         );
+    }
+
+    #[test]
+    fn dagdb_lookup_builders_preserve_shipped_direct_return_types() {
+        let _: fn(
+            &DagDbClient,
+            DagDbReceiptLookupRequest,
+        ) -> DagDbRequestSpec<DagDbReceiptLookupRequest> = DagDbClient::receipt_lookup;
+        let _: fn(
+            &DagDbClient,
+            DagDbCatalogLookupRequest,
+        ) -> DagDbRequestSpec<DagDbCatalogLookupRequest> = DagDbClient::catalog_lookup;
+        let _: fn(
+            &DagDbClient,
+            DagDbRouteLookupRequest,
+        ) -> DagDbRequestSpec<DagDbRouteLookupRequest> = DagDbClient::route_lookup;
+    }
+
+    #[test]
+    fn dagdb_lookup_request_specs_preserve_valid_ids_and_encode_query_components() {
+        let client = DagDbClient::new();
+
+        let receipt = client.receipt_lookup(DagDbReceiptLookupRequest {
+            receipt_hash: VALID_RECEIPT_HASH.to_owned(),
+            tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+            namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+            include_body: Some(true),
+        });
+        assert_eq!(
+            receipt.path,
+            format!(
+                "/api/v1/dag-db/receipts/{VALID_RECEIPT_HASH}?tenant_id={0}&namespace={0}\
+                 &include_body=true",
+                ENCODED_ADVERSARIAL_QUERY_COMPONENT
+            )
+        );
+
+        let catalog = client.catalog_lookup(DagDbCatalogLookupRequest {
+            catalog_id: VALID_CATALOG_ID.to_owned(),
+            tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+            namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+            include_children: Some(true),
+            include_routes: Some(false),
+        });
+        assert_eq!(
+            catalog.path,
+            format!(
+                "/api/v1/dag-db/catalog/{VALID_CATALOG_ID}?tenant_id={0}&namespace={0}\
+                 &include_children=true&include_routes=false",
+                ENCODED_ADVERSARIAL_QUERY_COMPONENT
+            )
+        );
+
+        let route = client.route_lookup(DagDbRouteLookupRequest {
+            route_id: VALID_ROUTE_ID.to_owned(),
+            tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+            namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+            include_memory_refs: Some(false),
+            include_validation: Some(true),
+        });
+        assert_eq!(
+            route.path,
+            format!(
+                "/api/v1/dag-db/routes/{VALID_ROUTE_ID}?tenant_id={0}&namespace={0}\
+                 &include_memory_refs=false&include_validation=true",
+                ENCODED_ADVERSARIAL_QUERY_COMPONENT
+            )
+        );
+    }
+
+    #[test]
+    fn dagdb_lookup_request_specs_keep_untrusted_ids_in_one_safe_segment() {
+        let client = DagDbClient::new();
+        let invalid_ids = [
+            (String::new(), "_".to_owned()),
+            (".".to_owned(), "_".to_owned()),
+            ("..".to_owned(), "_".to_owned()),
+            ("%2E".to_owned(), "_".to_owned()),
+            ("%2E%2E".to_owned(), "_".to_owned()),
+            ("/?&=#".to_owned(), "_".to_owned()),
+            ("\\\n 雪".to_owned(), "_".to_owned()),
+            ("a".repeat(63), "_".to_owned()),
+            ("a".repeat(65), "_".to_owned()),
+            ("g".repeat(64), "_".to_owned()),
+            ("A".repeat(64), "_".to_owned()),
+            (
+                format!("{}/attacker-controlled-secret", "a".repeat(65_536)),
+                "_".to_owned(),
+            ),
+        ];
+
+        for (invalid_id, safe_id) in invalid_ids {
+            assert_eq!(
+                client
+                    .receipt_lookup(DagDbReceiptLookupRequest {
+                        receipt_hash: invalid_id.clone(),
+                        tenant_id: "tenant-a".to_owned(),
+                        namespace: "primary".to_owned(),
+                        include_body: None,
+                    })
+                    .path,
+                format!("/api/v1/dag-db/receipts/{safe_id}?tenant_id=tenant-a&namespace=primary")
+            );
+            assert_eq!(
+                client
+                    .catalog_lookup(DagDbCatalogLookupRequest {
+                        catalog_id: invalid_id.clone(),
+                        tenant_id: "tenant-a".to_owned(),
+                        namespace: "primary".to_owned(),
+                        include_children: None,
+                        include_routes: None,
+                    })
+                    .path,
+                format!("/api/v1/dag-db/catalog/{safe_id}?tenant_id=tenant-a&namespace=primary")
+            );
+            assert_eq!(
+                client
+                    .route_lookup(DagDbRouteLookupRequest {
+                        route_id: invalid_id,
+                        tenant_id: "tenant-a".to_owned(),
+                        namespace: "primary".to_owned(),
+                        include_memory_refs: None,
+                        include_validation: None,
+                    })
+                    .path,
+                format!("/api/v1/dag-db/routes/{safe_id}?tenant_id=tenant-a&namespace=primary")
+            );
+        }
     }
 
     fn assert_fixture<T>(fixtures: &serde_json::Value, section: &str, name: &str)
@@ -1772,8 +2019,17 @@ mod transport_tests {
         DagDbWritebackRequest,
         transport::{
             BearerToken, DagDbAuthConfig, DagDbClientError, DagDbHttpClient, DagDbSignatureHeaders,
+            MAX_DAGDB_RESPONSE_BYTES, build_http_client, read_bounded_response_body,
         },
     };
+
+    const VALID_RECEIPT_HASH: &str =
+        "abababababababababababababababababababababababababababababababab";
+    const VALID_CATALOG_ID: &str =
+        "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+    const VALID_ROUTE_ID: &str = "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef";
+    const ADVERSARIAL_QUERY_COMPONENT: &str = "scope/?&=#% space";
+    const ENCODED_ADVERSARIAL_QUERY_COMPONENT: &str = "scope%2F%3F%26%3D%23%25%20space";
 
     /// The raw HTTP request a [`TestServer`] captured from the SDK.
     struct CapturedRequest {
@@ -1827,6 +2083,28 @@ mod transport_tests {
             Self { base_url, captured }
         }
 
+        /// Spawn a server with a raw response so chunked and dishonest metadata
+        /// boundaries can be exercised without a third-party mock server.
+        async fn spawn_raw(response: Vec<u8>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind raw test server");
+            let addr = listener.local_addr().expect("raw server addr");
+            let base_url = format!("http://{addr}");
+            let (tx, captured) = oneshot::channel();
+            tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.expect("accept connection");
+                let request = read_request(&mut stream).await;
+                stream
+                    .write_all(&response)
+                    .await
+                    .expect("write raw response");
+                stream.flush().await.expect("flush raw response");
+                let _ = tx.send(request);
+            });
+            Self { base_url, captured }
+        }
+
         /// Spawn a server that accepts a connection but never replies, so the
         /// client's timeout fires.
         async fn spawn_silent() -> String {
@@ -1837,6 +2115,28 @@ mod transport_tests {
             tokio::spawn(async move {
                 let _conn = listener.accept().await;
                 // Hold the connection open without responding.
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            });
+            format!("http://{addr}")
+        }
+
+        /// Spawn a server that returns successful headers and one body byte,
+        /// then leaves the remainder open so the response-body deadline fires.
+        async fn spawn_stalled_body() -> String {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind stalled-body server");
+            let addr = listener.local_addr().expect("stalled-body addr");
+            tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.expect("accept connection");
+                let _request = read_request(&mut stream).await;
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 128\r\nConnection: close\r\n\r\n{",
+                    )
+                    .await
+                    .expect("write partial response");
+                stream.flush().await.expect("flush partial response");
                 tokio::time::sleep(Duration::from_secs(30)).await;
             });
             format!("http://{addr}")
@@ -2057,6 +2357,39 @@ mod transport_tests {
             .and_then(|s| s.get(name))
             .expect("fixture exists")
             .to_string()
+    }
+
+    fn padded_route_response(byte_length: usize) -> String {
+        let body = fixture_response("responses", "route");
+        assert!(
+            body.len() <= byte_length,
+            "fixture exceeds requested byte length"
+        );
+        format!("{body}{}", " ".repeat(byte_length - body.len()))
+    }
+
+    fn chunked_json_response(status_line: &str, chunks: &[&[u8]]) -> Vec<u8> {
+        let mut response = format!(
+            "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+        )
+        .into_bytes();
+        for chunk in chunks {
+            response.extend_from_slice(format!("{:x}\r\n", chunk.len()).as_bytes());
+            response.extend_from_slice(chunk);
+            response.extend_from_slice(b"\r\n");
+        }
+        response.extend_from_slice(b"0\r\n\r\n");
+        response
+    }
+
+    fn assert_response_too_large(err: DagDbClientError, expected_status: u16) {
+        match err {
+            DagDbClientError::UnexpectedStatus { status, body } => {
+                assert_eq!(status, expected_status);
+                assert_eq!(body, "response body exceeds the 1048576-byte limit");
+            }
+            other => panic!("expected bounded oversized response error, got {other:?}"),
+        }
     }
 
     fn assert_local_signature_error(err: DagDbClientError, method: &str) {
@@ -2417,6 +2750,161 @@ mod transport_tests {
     }
 
     #[tokio::test]
+    async fn dagdb_lookup_http_targets_preserve_components_without_target_injection() {
+        macro_rules! assert_lookup_target {
+            ($method:ident, $request:expr, $fixture:literal, $collection:literal, $id:expr, $flags:literal) => {{
+                let body = fixture_response("responses", $fixture);
+                let server = TestServer::spawn("200 OK", body).await;
+                let auth = DagDbAuthConfig::new(
+                    "super-secret-token-value",
+                    ADVERSARIAL_QUERY_COMPONENT,
+                    ADVERSARIAL_QUERY_COMPONENT,
+                );
+                let client = DagDbHttpClient::new(&server.base_url, auth).expect("client");
+
+                let _ = client.$method($request).await.expect("lookup response");
+                let request = server.captured().await;
+                let expected = format!(
+                    "GET /api/v1/dag-db/{collection}/{id}\
+                     ?tenant_id={query}&namespace={query}{flags} HTTP/1.1",
+                    collection = $collection,
+                    id = $id,
+                    query = ENCODED_ADVERSARIAL_QUERY_COMPONENT,
+                    flags = $flags,
+                );
+                assert_eq!(request.request_line, expected);
+                assert_eq!(
+                    request.header("x-exo-tenant-id"),
+                    Some(ADVERSARIAL_QUERY_COMPONENT)
+                );
+                assert!(request.body.is_empty());
+            }};
+        }
+
+        assert_lookup_target!(
+            receipt_lookup,
+            DagDbReceiptLookupRequest {
+                receipt_hash: VALID_RECEIPT_HASH.to_owned(),
+                tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+                namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+                include_body: Some(true),
+            },
+            "receipt_lookup",
+            "receipts",
+            VALID_RECEIPT_HASH,
+            "&include_body=true"
+        );
+        assert_lookup_target!(
+            catalog_lookup,
+            DagDbCatalogLookupRequest {
+                catalog_id: VALID_CATALOG_ID.to_owned(),
+                tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+                namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+                include_children: Some(true),
+                include_routes: Some(false),
+            },
+            "catalog_lookup",
+            "catalog",
+            VALID_CATALOG_ID,
+            "&include_children=true&include_routes=false"
+        );
+        assert_lookup_target!(
+            route_lookup,
+            DagDbRouteLookupRequest {
+                route_id: VALID_ROUTE_ID.to_owned(),
+                tenant_id: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+                namespace: ADVERSARIAL_QUERY_COMPONENT.to_owned(),
+                include_memory_refs: Some(false),
+                include_validation: Some(true),
+            },
+            "route_lookup",
+            "routes",
+            VALID_ROUTE_ID,
+            "&include_memory_refs=false&include_validation=true"
+        );
+    }
+
+    #[tokio::test]
+    async fn dagdb_lookup_http_keeps_invalid_ids_on_the_intended_collection_route() {
+        fn invalid_hash_response() -> String {
+            serde_json::json!({
+                "error_code": "invalid_request_shape",
+                "message": "lookup identifier must be a 64-character hex hash",
+                "receipt_hash": null,
+                "validation_report_id": null,
+                "requires_council_review": false
+            })
+            .to_string()
+        }
+
+        macro_rules! assert_rejected_target {
+            ($method:ident, $request:expr, $collection:literal, $safe_id:expr) => {{
+                let server = TestServer::spawn("400 Bad Request", invalid_hash_response()).await;
+                let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
+
+                let error = client
+                    .$method($request)
+                    .await
+                    .expect_err("gateway must reject the invalid lookup hash");
+                match error {
+                    DagDbClientError::Server(server_error) => {
+                        assert_eq!(server_error.status, 400);
+                        assert_eq!(server_error.error_code, "invalid_request_shape");
+                    }
+                    other => panic!("expected gateway hash rejection, got {other:?}"),
+                }
+
+                let captured = server.captured().await;
+                assert_eq!(
+                    captured.request_line,
+                    format!(
+                        "GET /api/v1/dag-db/{}/{encoded}?tenant_id=tenant-a&namespace=primary HTTP/1.1",
+                        $collection,
+                        encoded = $safe_id,
+                    ),
+                    "invalid lookup material must remain one segment under its intended collection"
+                );
+            }};
+        }
+
+        let invalid_ids = [
+            (String::new(), "_".to_owned()),
+            (".".to_owned(), "_".to_owned()),
+            ("..".to_owned(), "_".to_owned()),
+            ("%2E".to_owned(), "_".to_owned()),
+            ("%2E%2E".to_owned(), "_".to_owned()),
+            ("/?&=#".to_owned(), "_".to_owned()),
+            ("a".repeat(63), "_".to_owned()),
+            ("a".repeat(65), "_".to_owned()),
+            ("g".repeat(64), "_".to_owned()),
+            ("A".repeat(64), "_".to_owned()),
+            (
+                format!("{}/attacker-controlled-secret", "a".repeat(65_536)),
+                "_".to_owned(),
+            ),
+        ];
+
+        for (invalid_id, safe_id) in invalid_ids {
+            let mut receipt = receipt_lookup_request();
+            receipt.receipt_hash = invalid_id.clone();
+            receipt.include_body = None;
+            assert_rejected_target!(receipt_lookup, receipt, "receipts", &safe_id);
+
+            let mut catalog = catalog_lookup_request();
+            catalog.catalog_id = invalid_id.clone();
+            catalog.include_children = None;
+            catalog.include_routes = None;
+            assert_rejected_target!(catalog_lookup, catalog, "catalog", &safe_id);
+
+            let mut route = route_lookup_request();
+            route.route_id = invalid_id;
+            route.include_memory_refs = None;
+            route.include_validation = None;
+            assert_rejected_target!(route_lookup, route, "routes", &safe_id);
+        }
+    }
+
+    #[tokio::test]
     async fn signed_writeback_attaches_all_gateway_signature_headers() {
         let body = fixture_response("responses", "writeback");
         let server = TestServer::spawn("200 OK", body).await;
@@ -2650,6 +3138,94 @@ mod transport_tests {
     }
 
     #[tokio::test]
+    async fn success_body_at_exact_response_limit_deserializes() {
+        let body = padded_route_response(MAX_DAGDB_RESPONSE_BYTES);
+        let server = TestServer::spawn("200 OK", body).await;
+        let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
+
+        let response = client
+            .route_with_signatures(route_request(), route_signatures())
+            .await
+            .expect("exact-limit response maps to DTO");
+
+        assert_eq!(response.schema_version, "dagdb_route_response_v1");
+    }
+
+    #[tokio::test]
+    async fn chunked_body_without_content_length_at_limit_plus_one_is_rejected() {
+        let body = padded_route_response(MAX_DAGDB_RESPONSE_BYTES + 1);
+        let split = MAX_DAGDB_RESPONSE_BYTES;
+        let raw = chunked_json_response(
+            "200 OK",
+            &[&body.as_bytes()[..split], &body.as_bytes()[split..]],
+        );
+        let server = TestServer::spawn_raw(raw).await;
+        let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
+
+        let err = client
+            .route_with_signatures(route_request(), route_signatures())
+            .await
+            .expect_err("limit-plus-one chunked response must fail");
+
+        assert_response_too_large(err, 200);
+    }
+
+    #[tokio::test]
+    async fn chunked_body_without_content_length_within_limit_deserializes() {
+        let body = fixture_response("responses", "route");
+        let split = body.len() / 2;
+        let raw = chunked_json_response(
+            "200 OK",
+            &[&body.as_bytes()[..split], &body.as_bytes()[split..]],
+        );
+        let server = TestServer::spawn_raw(raw).await;
+        let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
+
+        let response = client
+            .route_with_signatures(route_request(), route_signatures())
+            .await
+            .expect("bounded chunked response maps to DTO");
+
+        assert_eq!(response.schema_version, "dagdb_route_response_v1");
+    }
+
+    #[tokio::test]
+    async fn dishonest_small_content_length_cannot_bypass_streamed_accounting() {
+        let body = padded_route_response(MAX_DAGDB_RESPONSE_BYTES + 1).into_bytes();
+        let mut raw_response = http::Response::new(reqwest::Body::from(body));
+        raw_response.headers_mut().insert(
+            reqwest::header::CONTENT_LENGTH,
+            reqwest::header::HeaderValue::from_static("1"),
+        );
+        let response: reqwest::Response = raw_response.into();
+
+        let err = read_bounded_response_body(response)
+            .await
+            .expect_err("dishonest Content-Length must not bypass actual byte accounting");
+
+        assert_response_too_large(err, 200);
+    }
+
+    #[tokio::test]
+    async fn dishonest_large_content_length_is_rejected_before_small_body_is_trusted() {
+        let body = fixture_response("responses", "route");
+        let raw = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            MAX_DAGDB_RESPONSE_BYTES + 1
+        )
+        .into_bytes();
+        let server = TestServer::spawn_raw(raw).await;
+        let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
+
+        let err = client
+            .route_with_signatures(route_request(), route_signatures())
+            .await
+            .expect_err("oversized Content-Length must fail closed");
+
+        assert_response_too_large(err, 200);
+    }
+
+    #[tokio::test]
     async fn malformed_success_body_maps_to_decode_error() {
         let server = TestServer::spawn("200 OK", "{\"schema_version\":").await;
         let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
@@ -2691,6 +3267,60 @@ mod transport_tests {
         }
     }
 
+    #[tokio::test]
+    async fn oversized_error_body_uses_the_same_bounded_stable_error() {
+        let body = padded_route_response(MAX_DAGDB_RESPONSE_BYTES + 1);
+        let raw = chunked_json_response("502 Bad Gateway", &[body.as_bytes()]);
+        let server = TestServer::spawn_raw(raw).await;
+        let client = DagDbHttpClient::new(&server.base_url, auth()).expect("client");
+
+        let err = client
+            .route_with_signatures(route_request(), route_signatures())
+            .await
+            .expect_err("oversized non-2xx body must fail before parsing");
+
+        assert_response_too_large(err, 502);
+    }
+
+    #[test]
+    fn http_client_collects_bounded_bytes_before_json_deserialization() {
+        assert_eq!(MAX_DAGDB_RESPONSE_BYTES, 1_048_576);
+        let source = include_str!("dagdb.rs");
+        let transport = source
+            .split("mod transport {")
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("#[cfg(all(test, feature = \"http-client\"))]")
+                    .next()
+            })
+            .expect("transport production source");
+
+        assert!(transport.contains("read_bounded_response_body(response).await"));
+        assert!(!transport.contains("response.json().await"));
+        assert!(!transport.contains("response.text().await"));
+        assert!(!transport.contains("response.bytes().await"));
+    }
+
+    #[test]
+    fn default_http_client_wires_a_finite_total_request_deadline() {
+        let source = include_str!("dagdb.rs");
+        let transport = source
+            .split("mod transport {")
+            .nth(1)
+            .and_then(|section| {
+                section
+                    .split("#[cfg(all(test, feature = \"http-client\"))]")
+                    .next()
+            })
+            .expect("transport production source");
+
+        assert!(transport.contains("const DEFAULT_DAGDB_HTTP_TIMEOUT: Duration"));
+        assert!(transport.contains("build_http_client(DEFAULT_DAGDB_HTTP_TIMEOUT)"));
+        assert!(transport.contains("Client::builder()"));
+        assert!(transport.contains(".timeout(timeout)"));
+    }
+
     // (c') A non-2xx body that is NOT a valid envelope maps to UnexpectedStatus
     // carrying the raw body, never swallowed.
     #[tokio::test]
@@ -2725,6 +3355,23 @@ mod transport_tests {
             .route_with_signatures(route_request(), route_signatures())
             .await
             .expect_err("timeout is an error");
+        assert!(
+            matches!(err, DagDbClientError::Timeout(_)),
+            "expected Timeout, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn response_body_timeout_uses_the_same_timeout_variant() {
+        let base_url = TestServer::spawn_stalled_body().await;
+        let http = build_http_client(Duration::from_millis(150))
+            .expect("client with finite total timeout");
+        let client = DagDbHttpClient::with_client(&base_url, auth(), http);
+
+        let err = client
+            .route_with_signatures(route_request(), route_signatures())
+            .await
+            .expect_err("stalled response body must time out");
         assert!(
             matches!(err, DagDbClientError::Timeout(_)),
             "expected Timeout, got {err:?}"

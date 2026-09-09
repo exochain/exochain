@@ -40,6 +40,8 @@ struct ErrorResponse {
     error: String,
 }
 
+const INTERNAL_SERVER_ERROR_MESSAGE: &str = "internal server error";
+
 impl RootGenesisApiState {
     /// Create portal state for one ceremony configuration.
     #[must_use]
@@ -65,12 +67,10 @@ pub fn root_genesis_router(state: RootGenesisApiState) -> Router {
 async fn handle_portal_status(
     State(state): State<RootGenesisApiState>,
 ) -> Result<Json<PortalStatusResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let portal = state.portal.lock().map_err(|_| {
-        portal_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "portal store lock failed",
-        )
-    })?;
+    let portal = state
+        .portal
+        .lock()
+        .map_err(|_| internal_portal_error("read portal status"))?;
     Ok(Json(PortalStatusResponse {
         ceremony_id: state.config.ceremony_id,
         threshold: state.config.threshold,
@@ -83,12 +83,10 @@ async fn handle_portal_envelope(
     State(state): State<RootGenesisApiState>,
     Json(envelope): Json<CeremonyEnvelope>,
 ) -> Result<(StatusCode, Json<EnvelopeAcceptedResponse>), (StatusCode, Json<ErrorResponse>)> {
-    let mut portal = state.portal.lock().map_err(|_| {
-        portal_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "portal store lock failed",
-        )
-    })?;
+    let mut portal = state
+        .portal
+        .lock()
+        .map_err(|_| internal_portal_error("submit portal envelope"))?;
     match portal.submit(envelope) {
         Ok(envelope_id) => Ok((
             StatusCode::CREATED,
@@ -140,12 +138,10 @@ async fn handle_portal_envelopes_query(
         ),
         None => None,
     };
-    let portal = state.portal.lock().map_err(|_| {
-        portal_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "portal store lock failed",
-        )
-    })?;
+    let portal = state
+        .portal
+        .lock()
+        .map_err(|_| internal_portal_error("query portal envelopes"))?;
     Ok(Json(portal.query(phase, payload_kind, recipient.as_ref())))
 }
 
@@ -155,6 +151,14 @@ fn portal_error(status: StatusCode, message: &str) -> (StatusCode, Json<ErrorRes
         Json(ErrorResponse {
             error: message.to_owned(),
         }),
+    )
+}
+
+fn internal_portal_error(operation: &'static str) -> (StatusCode, Json<ErrorResponse>) {
+    tracing::error!(operation, "root genesis portal store lock poisoned");
+    portal_error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        INTERNAL_SERVER_ERROR_MESSAGE,
     )
 }
 
@@ -170,12 +174,13 @@ fn root_error_to_response(error: RootError) -> (StatusCode, Json<ErrorResponse>)
         }
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    (
-        status,
-        Json(ErrorResponse {
-            error: error.to_string(),
-        }),
-    )
+    let message = if status == StatusCode::INTERNAL_SERVER_ERROR {
+        tracing::error!(error = ?error, "root genesis portal request failed internally");
+        INTERNAL_SERVER_ERROR_MESSAGE.to_owned()
+    } else {
+        error.to_string()
+    };
+    (status, Json(ErrorResponse { error: message }))
 }
 
 #[cfg(test)]
@@ -323,6 +328,13 @@ mod tests {
         envelopes.len()
     }
 
+    async fn error_body(response: axum::response::Response) -> serde_json::Value {
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .expect("error body bytes");
+        serde_json::from_slice(&body).expect("error response JSON")
+    }
+
     #[tokio::test]
     async fn portal_query_returns_only_matching_envelopes() {
         let (config, secret) = config();
@@ -432,13 +444,19 @@ mod tests {
 
         let status = get_status(router.clone()).await;
         assert_eq!(status.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(error_body(status).await["error"], "internal server error");
 
         // Valid filters parse, then the poisoned store lock fails closed.
         let queried = get_envelopes(router.clone(), "phase=Round1").await;
         assert_eq!(queried.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(error_body(queried).await["error"], "internal server error");
 
         let submitted = post_envelope(router, &envelope(&config, &secret, 1, b"ct".to_vec())).await;
         assert_eq!(submitted.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            error_body(submitted).await["error"],
+            "internal server error"
+        );
     }
 
     #[tokio::test]
@@ -457,12 +475,53 @@ mod tests {
     }
 
     #[test]
-    fn portal_error_mapper_preserves_internal_error_status() {
+    fn root_error_mapper_redacts_internal_error_details() {
         let (status, Json(body)) = root_error_to_response(RootError::CanonicalEncoding {
-            detail: "encoder unavailable".to_owned(),
+            detail: "ROOT_SECRET_SENTINEL".to_owned(),
         });
 
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(body.error.contains("encoder unavailable"));
+        assert_eq!(body.error, "internal server error");
+        assert!(!body.error.contains("ROOT_SECRET_SENTINEL"));
+    }
+
+    #[test]
+    fn root_error_redaction_preserves_existing_client_error_contracts() {
+        let controls = [
+            (
+                RootError::SignatureRejected {
+                    reason: "bad signature".to_owned(),
+                },
+                StatusCode::UNAUTHORIZED,
+                "signature verification failed: bad signature",
+            ),
+            (
+                RootError::PortalRejected {
+                    reason: "sender sequence replay".to_owned(),
+                },
+                StatusCode::CONFLICT,
+                "portal envelope rejected: sender sequence replay",
+            ),
+            (
+                RootError::PortalRejected {
+                    reason: "payload exceeds portal limit".to_owned(),
+                },
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "portal envelope rejected: payload exceeds portal limit",
+            ),
+            (
+                RootError::PortalRejected {
+                    reason: "invalid phase".to_owned(),
+                },
+                StatusCode::BAD_REQUEST,
+                "portal envelope rejected: invalid phase",
+            ),
+        ];
+
+        for (error, expected_status, expected_message) in controls {
+            let (status, Json(body)) = root_error_to_response(error);
+            assert_eq!(status, expected_status);
+            assert_eq!(body.error, expected_message);
+        }
     }
 }

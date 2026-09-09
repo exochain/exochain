@@ -48,7 +48,7 @@ risc0-verifier = ["dep:risc0-zkvm"]
 unaudited-pedagogical-proofs = []
 
 [dependencies]
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.4" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.6" }
 serde = { workspace = true }
 blake3 = { workspace = true }
 sha2 = { workspace = true }

@@ -25,9 +25,9 @@ const MAX_WASM_CLEARANCE_REGISTRY_ENTRIES: usize = 512;
 const MAX_WASM_CONFLICT_DECLARATIONS: usize = 1_024;
 const MAX_WASM_AUDIT_ENTRIES: usize = 4_096;
 const MAX_WASM_DELIBERATION_PARTICIPANTS: usize = 1_024;
-const MAX_WASM_INDEPENDENCE_ACTORS: usize = 1_024;
+const MAX_WASM_INDEPENDENCE_ACTORS: usize = exo_governance::crosscheck::MAX_INDEPENDENCE_ACTORS;
 const MAX_WASM_REGISTRY_RELATIONSHIPS: usize = 4_096;
-const MAX_WASM_COORDINATION_ACTIONS: usize = 4_096;
+const MAX_WASM_COORDINATION_ACTIONS: usize = exo_governance::crosscheck::MAX_COORDINATION_ACTIONS;
 const MAX_WASM_PROPOSAL_BYTES: usize = 64 * 1_024;
 const MAX_WASM_CHALLENGE_EVIDENCE_BYTES: usize = 64 * 1_024;
 
@@ -417,7 +417,9 @@ pub fn wasm_verify_independence(
         attestation_roots,
         control_metadata,
     };
-    let result = exo_governance::crosscheck::verify_independence(&actors, &registry);
+    let result = exo_governance::crosscheck::try_verify_independence(&actors, &registry).map_err(
+        |error| governance_boundary_error(&format!("Independence verification error: {error}")),
+    )?;
     // IndependenceResult may not implement Serialize — manually flatten.
     let clusters: Vec<serde_json::Value> = result
         .clusters
@@ -449,7 +451,10 @@ pub fn wasm_detect_coordination(actions_json: &str) -> Result<JsValue, JsValue> 
         "coordination actions",
         MAX_WASM_COORDINATION_ACTIONS,
     )?;
-    let signals = exo_governance::crosscheck::detect_coordination(&actions);
+    let signals =
+        exo_governance::crosscheck::try_detect_coordination(&actions).map_err(|error| {
+            governance_boundary_error(&format!("Coordination detection error: {error}"))
+        })?;
     // CoordinationSignal may not implement Serialize — manually flatten.
     let json: Vec<serde_json::Value> = signals
         .iter()
@@ -663,6 +668,61 @@ mod tests {
             )
             .is_err(),
             "aggregate nested registry relationships must be bounded"
+        );
+    }
+
+    #[test]
+    fn wasm_coordination_export_propagates_core_pair_budget_failure() {
+        let actions: Vec<exo_governance::crosscheck::TimestampedAction> = (0..363)
+            .map(|index| {
+                let mut action_hash = [0_u8; 32];
+                action_hash[..8].copy_from_slice(
+                    &u64::try_from(index)
+                        .expect("test index fits u64")
+                        .to_be_bytes(),
+                );
+                exo_governance::crosscheck::TimestampedAction {
+                    actor: did(&format!("did:exo:coord-{index}")),
+                    action_hash,
+                    timestamp: exo_core::Timestamp::new(1_000, 0),
+                }
+            })
+            .collect();
+        let actions_json = serde_json::to_string(&actions).expect("serialize actions");
+
+        assert!(
+            wasm_detect_coordination(&actions_json).is_err(),
+            "the WASM adapter must propagate the core pair-work budget failure"
+        );
+    }
+
+    #[test]
+    fn wasm_independence_export_propagates_core_output_budget_failure() {
+        let actor_strings: Vec<String> = (0..95)
+            .map(|index| format!("did:exo:independent-{index}"))
+            .collect();
+        let registry_json = serde_json::to_string(&serde_json::json!({
+            "control_metadata": actor_strings
+                .iter()
+                .enumerate()
+                .map(|(index, actor)| {
+                    let group = if index < 91 {
+                        "large-control"
+                    } else if index < 93 {
+                        "pair-control-a"
+                    } else {
+                        "pair-control-b"
+                    };
+                    (actor, group)
+                })
+                .collect::<Vec<_>>()
+        }))
+        .expect("serialize registry");
+        let actors_json = serde_json::to_string(&actor_strings).expect("serialize actors");
+
+        assert!(
+            wasm_verify_independence(&actors_json, &registry_json).is_err(),
+            "the WASM adapter must propagate the core 4,097th suspicious-pair failure"
         );
     }
 

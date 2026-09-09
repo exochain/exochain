@@ -1,8 +1,87 @@
 # Test Plan
 
+## September 8 Dependency And Upload-Field Regression Gate
+
+This adjacent-surface correction raises the declared floors and lock entries to
+Vitest 4.1.11, Multer 2.3.0, and Nodemailer 9.1.1. Vitest and its refreshed Vite
+graph are development-only. Multer and Nodemailer are server runtime packages;
+the latter remains the existing optional SMTP invitation transport.
+
+The Multer array-index advisory additionally requires an application limit:
+both existing upload parsers set `fieldArrayIndexLimit: 0` because the current
+forms use flat metadata fields. Existing file-size limits, JWT-before-parser
+ordering, handlers, custody policy, and public error redaction remain unchanged.
+The five sibling upload ingress routes are `/upload` in records and
+`/insurance`, `/advance-directive`, `/government-id`, and `/poa` in credentials.
+
+`tests/upload-field-limits.test.ts` extracts the configured limit from each
+owned parser and exercises the installed Multer with small, in-memory fields.
+It proves index one is rejected before the continuation, flat fields succeed,
+and all five route declarations retain authentication before the parser.
+These are local parser and source-wiring tests, not live HTTP, database,
+deployment, or cryptographic-enforcement evidence.
+
+Before the configuration change, four rejection/configuration assertions
+failed and both flat-field controls passed. Acceptance requires all six to pass,
+four clean lockfile installs, zero vulnerabilities in all four audits, the full
+quality suite, both production UI builds, and the LiveSafe CI Docker build.
+
+```bash
+npm ci
+npm --prefix server ci
+npm --prefix client ci
+npm --prefix responder ci
+npm test -- tests/upload-field-limits.test.ts
+npm run quality
+npm run build
+```
+
+This changes no EXOCHAIN core file, adapter contract, or deployment definition.
+The existing LiveSafe intake in the release path-classification record applies:
+owner `bob-stewart`, recorded status `prototype`, no constitutional trust claims,
+no new or shared secret scope, and rollback by reverting this isolated slice.
+
 ## Current Gate
 
 ```bash
+npm run quality
+```
+
+### Adjacent Overflow And Dependency Security Slice
+
+This 2026-08-28 slice is classified as a LiveSafe adjacent-surface change. It
+does not change EXOCHAIN core, authorize constitutional trust claims, alter the
+LiveSafe `0.1.0`/`1.0.0` versions, or change `public_claims_allowed: false`.
+
+Arithmetic regressions must prove:
+
+1. a help-session created at `i64::MAX` receives a saturated expiry;
+2. both seven-day summary windows use saturating subtraction and inclusive
+   addition at `i64::MIN`;
+3. generated-feedback, topic, question, outcome, and display totals saturate
+   instead of differing between debug and release builds;
+4. a collection count wider than `u32` converts to `u32::MAX` without
+   truncating to a smaller count;
+5. a new upvote at `u32::MAX` is rejected without changing the feedback item or
+   creating activity; and
+6. dispatch cooldown subtraction saturates when timestamps are at opposite
+   integer bounds.
+
+Dependency acceptance requires all four package-lock audits to report no
+vulnerabilities, `shell-quote >=1.9.0`, `postcss >=8.5.23`,
+`nanoid >=3.3.18`, and `body-parser >=1.20.6`, plus client/responder manifest
+ranges `postcss ^8.5.23` and `react-router-dom ^7.18.0`. Both production UI
+builds must pass without changing current route, navigation, or blocker source
+behavior.
+
+```bash
+cargo test --manifest-path Cargo.toml overflow -- --nocapture
+cargo test --manifest-path Cargo.toml
+cargo clippy --manifest-path Cargo.toml --all-targets -- -D warnings
+npm run audit:deps
+npm test
+npm --prefix client run build
+npm --prefix responder run build
 npm run quality
 ```
 

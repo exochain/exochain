@@ -35,7 +35,7 @@ The TypeScript SDK is a pure-JS port of the canonical Rust SDK. It mirrors the s
 
 - [Installation](#installation)
 - [Runtime requirements](#runtime-requirements)
-- [Hashing difference you must know](#hashing-difference-you-must-know)
+- [Hashing contracts you must know](#hashing-contracts-you-must-know)
 - [Branded types: `Did`, `Hash256`](#branded-types-did-hash256)
 - [Domain 1: Identity](#domain-1-identity)
 - [Domain 2: Consent (bailments)](#domain-2-consent-bailments)
@@ -106,19 +106,21 @@ DID: did:exo:a1b2c3d4e5f60789
 
 ---
 
-## Hashing difference you must know
+## Hashing contracts you must know
 
-**DID derivation uses BLAKE3 across Rust, TypeScript, and Python. Client-side proposal and decision IDs remain SHA-256 in the TypeScript SDK.**
+**DID derivation uses BLAKE3 across Rust, TypeScript, and Python.** For title, description, and proposer strings accepted by all three SDKs, Rust, TypeScript, and Python `DecisionBuilder` use full BLAKE3 over the same canonical CBOR v2 decision frame.
 
-Why: a DID is actor identity and must be stable for the same Ed25519 public key in every first-party SDK. The SDK ships a small BLAKE3 implementation for that path. Existing content-addressed IDs produced client-side (proposal IDs, decision IDs) remain SHA-256 and do **not** match Rust-produced IDs byte-for-byte.
+The shared decision frame is `["exochain:decision-id:v2", title, description, proposer]`. For those shared inputs, the result is a 64-character lowercase hex ID that matches in all three SDKs.
+
+This decision-ID contract does not change other local identifiers. TypeScript and Python bailment proposal IDs retain full SHA-256 over their existing frames; Rust bailment proposal IDs retain their existing 16-hex BLAKE3 prefix.
 
 For cross-language interop in production:
 
-- **Prefer** producing canonical hashes server-side (Rust) and trusting the returned `Hash256` from the gateway.
+- **For local governance decisions**, inputs accepted by all three SDKs produce the same CBOR v2 ID.
+- **For other content IDs**, prefer the canonical identifier returned by the gateway instead of assuming the local algorithms match.
 - **For local DID derivation**, use `Identity.generate`, `Identity.fromKeypair`, or `deriveDid`; all use BLAKE3.
-- **For a TS-only app**, SHA-256 is fine — the SDK is internally consistent.
 
-The branded `Hash256` type is the same shape either way: a 64-character lowercase hex string.
+Within the TypeScript SDK, the branded `Hash256` type remains a 64-character lowercase hex string.
 
 See [`packages/exochain-sdk/src/crypto/hash.ts`](../../packages/exochain-sdk/src/crypto/hash.ts) for the full rationale in-source.
 

@@ -32,6 +32,8 @@ use crate::{
 
 /// Spec id written into every pack.
 pub const EVIDENCE_PACK_SPEC: &str = "exochain-evidence-pack-v1";
+/// Maximum accepted serialized evidence-pack JSON size.
+pub const MAX_EVIDENCE_PACK_JSON_BYTES: usize = 16_777_216;
 
 /// Article 26 minimum retention, in whole days.
 pub const ART26_RETENTION_DAYS: u64 = 180;
@@ -102,6 +104,11 @@ impl EvidencePack {
 
     /// Parse JSON bytes.
     pub fn from_json(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() > MAX_EVIDENCE_PACK_JSON_BYTES {
+            return Err(PdpError::BadRequest(format!(
+                "evidence pack JSON exceeds {MAX_EVIDENCE_PACK_JSON_BYTES} bytes"
+            )));
+        }
         serde_json::from_slice(bytes).map_err(|e| PdpError::BadRequest(e.to_string()))
     }
 
@@ -279,6 +286,19 @@ mod tests {
             EvidencePack::retention_until_ms(&parsed.entries[0]),
             1_000 + 180 * 86_400_000
         );
+    }
+
+    #[test]
+    fn oversized_evidence_pack_json_is_rejected_before_parse() {
+        let keypair = KeyPair::generate();
+        let pack = EvidencePack::from_log(&EvidenceLog::new(), &keypair).unwrap();
+        let mut json = pack.to_json().unwrap();
+        json.resize(16_777_216, b' ');
+        assert!(EvidencePack::from_json(&json).is_ok());
+
+        json.push(b' ');
+        let error = EvidencePack::from_json(&json).expect_err("16 MiB plus one must fail");
+        assert!(error.to_string().contains("exceeds"));
     }
 
     #[test]

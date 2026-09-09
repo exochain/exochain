@@ -13,5 +13,5 @@
 // limitations under the License.
 //
 // SPDX-License-Identifier: Apache-2.0
-export { HttpTransport } from './http.js';
+export { HttpTransport, MAX_HTTP_RESPONSE_BYTES } from './http.js';
 //# sourceMappingURL=index.js.map

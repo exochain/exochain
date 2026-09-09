@@ -70,6 +70,13 @@ coverage_exclusion_categories = {
 
 tarpaulin_text = Path("tarpaulin.toml").read_text()
 config = tomllib.loads(tarpaulin_text)
+if config.get("default", {}).get("engine") != "Llvm":
+    print(
+        "coverage policy test failed: the default config must explicitly select "
+        "the Llvm engine; the pinned tool does not merge the CLI engine setting",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 exclude_files = config.get("default", {}).get("exclude-files", [])
 excluded = set(exclude_files)
 
@@ -197,5 +204,17 @@ if grep -nE '90%[+[:space:]-]*line coverage|Coverage.*>=90|Coverage.*>= 90' READ
   fi
 fi
 rm -f /tmp/coverage-policy-claims.txt
+
+case "${1:-}" in
+  "") ;;
+  --check-engine)
+    [[ "$#" -eq 1 ]] || fail "--check-engine takes no additional arguments"
+    coverage_rustflags="$(cargo tarpaulin --print-rust-flags --engine llvm)"
+    printf '%s\n' "$coverage_rustflags"
+    [[ "$coverage_rustflags" == *-Cinstrument-coverage* ]] \
+      || fail "the effective coverage backend must enable LLVM instrumentation"
+    ;;
+  *) fail "unknown coverage policy argument: $1" ;;
+esac
 
 printf 'coverage policy test passed\n'

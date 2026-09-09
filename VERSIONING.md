@@ -35,14 +35,16 @@ MAJOR.MINOR.PATCH
 The workspace version is set in `Cargo.toml`:
 ```toml
 [workspace.package]
-version = "0.2.4"
+version = "0.2.6"
 ```
 
-This repository state is the unpublished `0.2.4` release candidate: PDP
-decides, AVC records, x402 adapts; crates.io `ml-dsa` consumers can build.
-The latest published release remains `v0.2.3`. Workspace version alignment
-is not evidence of a tag, GitHub Release, registry publication, deployment,
-or live runtime activation.
+This repository state is the intended, unpublished `0.2.6` security-remediation
+release candidate. The latest published release remains `v0.2.4`. Read-only
+provider checks at `2026-08-29T03:44:56Z` found no `v0.2.5` remote tag or
+GitHub Release, HTTP 404 for `0.2.5` across all 32 publishable Rust packages,
+and npm E404 for both versioned npm packages; `0.2.4` provider controls were
+reachable. Workspace version alignment is not evidence of a tag, GitHub
+Release, registry publication, deployment, or live runtime activation.
 
 ## Release Process
 
@@ -50,7 +52,7 @@ See `.github/workflows/release.yml` for the automated release workflow:
 
 1. The full CI workflow, including the numbered constitutional gates and required aggregator, must pass.
 2. Every dispatch traverses two independent GitHub environments (`release` and `release-second`) with distinct required reviewers. One environment is one-of; two environments are two-of. Repository settings, not workflow source, determine the reviewer lists.
-3. Non-dry-run releases must have an existing, verifiable signed `v<version>` tag before artifacts build or publish.
+3. Every release checkout is the validated workflow-dispatch commit and must initially be clean, including untracked files. Immediately before each artifact or publication side effect, the workflow rebinds every trusted value at step scope, runs a privileged profile-free Bash that cannot import functions, neutralizes `BASH_ENV`, rejects inherited shell-function definitions, scrubs inherited Git repository/index/object/configuration controls, loads the guard and both child verifiers from the immutable dispatch commit with system Git and replacement objects disabled, anchors source inspection to `GITHUB_WORKSPACE`, disables fsmonitor and untracked-cache shortcuts, and rechecks immutable `HEAD`; once expected build outputs exist, it still rejects staged or tracked-source drift and rejects index flags that could hide it. A non-dry-run release additionally requires an existing annotated, cryptographically verified signed `v<version>` tag whose peeled commit equals the workflow-dispatch commit and checked-out `HEAD`. The isolated signing keyring must contain exactly the configured primary key and its subkeys, and the machine-readable signature result must chain the actual signer to that primary. The signed-tag gate records the immutable tag-object ID and peeled commit; every live side-effect boundary queries the exact tag-object and peeled-commit refs at the validated GitHub repository endpoint from a fresh directory outside the checkout with an empty inherited environment and disabled global/system Git configuration, so a checkout remote or local URL rewrite cannot substitute another repository. Both immutable values are compared again, including before each retrying crate publication and the final GitHub Release creation step.
 4. Native artifacts are built for `x86_64-linux-gnu` and `aarch64-linux-gnu`.
 5. Non-dry-run releases generate CycloneDX workspace SBOMs and GitHub SLSA build attestations via OIDC/Sigstore.
 6. Non-dry-run releases publish crates in dependency order and publish the versioned npm packages after their dry-pack gates pass.
@@ -61,7 +63,10 @@ See `.github/workflows/release.yml` for the automated release workflow:
 Live releases require an approved OpenPGP signing key controlled by the release
 maintainer. The public key and full fingerprint must be configured as repository
 variables so the release workflow can import the key on the GitHub runner before
-executing `git tag -v`.
+verification. The exported bundle must contain exactly that configured primary
+key and its legitimate subkeys; additional primary keys are rejected. A tag may
+be signed by the configured primary or by one of its signing subkeys, but the
+reported signer primary fingerprint must equal the configured fingerprint.
 
 Create the signing key locally:
 
@@ -91,9 +96,9 @@ Create and verify the signed release tag only after the key is configured:
 
 ```bash
 git fetch origin main --tags
-git tag -s v0.2.3 "$(git rev-parse origin/main)" -m "EXOCHAIN v0.2.3"
-git tag -v v0.2.3
-git push origin v0.2.3
+git tag -s v0.2.6 "$(git rev-parse origin/main)" -m "EXOCHAIN v0.2.6"
+git tag -v v0.2.6
+git push origin v0.2.6
 ```
 
 ### Dry Run
@@ -106,8 +111,8 @@ npm publication, and does not create a GitHub Release.
 
 ```bash
 # Quick local validation (does not replicate the full release pipeline):
-cargo build --workspace --release
-cargo test --workspace
+cargo build --workspace --release --locked
+cargo test --workspace --locked
 ```
 
 ### DualControl Configuration

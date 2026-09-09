@@ -36,16 +36,18 @@ workspace = true
 # Core crates (only those actually `use`d today; see removed-deps
 # note in commit message when adding back — avoid drift between
 # `pub use` surface and dependency graph)
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.4" }
-exo-dag-db-api = { package = "exochain-dag-db-api", path = "../exo-dag-db-api", version = "=0.2.4" }
-exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.4" }
-exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.4" }
-exo-avc = { package = "exochain-avc", path = "../exo-avc", version = "=0.2.4" }
-exo-economy = { package = "exochain-economy", path = "../exo-economy", version = "=0.2.4" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.6" }
+exo-dag-db-api = { package = "exochain-dag-db-api", path = "../exo-dag-db-api", version = "=0.2.6" }
+exo-identity = { package = "exochain-identity", path = "../exo-identity", version = "=0.2.6" }
+exo-gatekeeper = { package = "exochain-gatekeeper", path = "../exo-gatekeeper", version = "=0.2.6" }
+exo-avc = { package = "exochain-avc", path = "../exo-avc", version = "=0.2.6" }
+exo-economy = { package = "exochain-economy", path = "../exo-economy", version = "=0.2.6" }
 
 # Serialization
+ciborium = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+percent-encoding = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
@@ -58,6 +60,7 @@ blake3 = { workspace = true }
 # the same version + feature set already used by exo-node (rustls, no default
 # OpenSSL); zeroize redacts the bearer token from Debug output.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+http = { version = "=1.4.0", optional = true }
 zeroize = { workspace = true, optional = true }
 
 [features]
@@ -65,7 +68,7 @@ default = []
 # Real async HTTP client (`DagDbHttpClient`) for calling a live DAG DB gateway.
 # Off by default: consumers who only need the request-spec builder pay no HTTP
 # dependency cost.
-http-client = ["dep:reqwest", "dep:zeroize"]
+http-client = ["dep:http", "dep:reqwest", "dep:zeroize"]
 
 [dev-dependencies]
 # Async test runtime + a minimal in-process TCP server stand in for a live

@@ -421,7 +421,16 @@ pub fn register_upvote(item: FeedbackItem, input: UpvoteInput) -> UpvoteResult {
         };
     }
 
-    updated_item.upvotes += 1;
+    let Some(upvotes) = updated_item.upvotes.checked_add(1) else {
+        return UpvoteResult {
+            allowed: false,
+            reasons: vec!["Feedback upvote count is exhausted.".into()],
+            updated_item,
+            activity: None,
+        };
+    };
+
+    updated_item.upvotes = upvotes;
     updated_item.updated_at = input.voted_at;
     updated_item.metadata.insert(
         INTERNAL_UPVOTE_VOTERS_KEY.into(),
@@ -640,7 +649,7 @@ fn maybe_dispatch(
     }
 
     if let Some(last_dispatch_at) = previous_item.last_dispatch_at
-        && input.changed_at - last_dispatch_at < config.dispatch_cooldown_ms
+        && input.changed_at.saturating_sub(last_dispatch_at) < config.dispatch_cooldown_ms
     {
         return AgentDispatchDecision::RateLimited;
     }
