@@ -74,6 +74,14 @@ remain within the already-listed core runtime adapter.
 
 ## Classification totals
 
+The September 9 final-review corrections remain entirely within this inventory:
+four root DKG/signing source/compatibility paths are EXOCHAIN core; the private
+CLI file and proxy HTTP source/test are core runtime adapters; the proxy's two
+normal generated HTTP artifacts retain their generated third-party/vendor
+classification. SDK packaging modifies three already-listed release adapter
+paths. These are separate commits by boundary; no adjacent surface or imported
+evidence is added. The 326-path digest remains unchanged.
+
 | Class | Paths |
 | --- | ---: |
 | EXOCHAIN core | 65 |
