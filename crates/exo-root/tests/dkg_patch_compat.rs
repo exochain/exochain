@@ -114,6 +114,30 @@ fn legacy_vec_struct_literals_and_clone_bounds_still_compile() {
 
 #[test]
 fn legacy_public_fields_remain_directly_movable_and_destructurable() {
+    let public_key_package = RootPublicKeyPackage {
+        public_key_package: vec![1],
+        root_public_key: vec![2],
+        verifying_shares: BTreeMap::from([(7, vec![3])]),
+    };
+    let RootParticipantDkgOutput {
+        key_package,
+        public_key_package,
+    } = RootParticipantDkgOutput {
+        key_package: RootKeyPackage {
+            frost_identifier: 7,
+            key_package: vec![4, 5, 6],
+        },
+        public_key_package,
+    };
+    let RootDkgOutput {
+        key_packages,
+        public_key_package,
+    } = RootDkgOutput {
+        key_packages: BTreeMap::from([(7, key_package)]),
+        public_key_package,
+    };
+    assert_eq!(key_packages[&7].key_package, vec![4, 5, 6]);
+    assert_eq!(public_key_package.root_public_key, vec![2]);
     assert_eq!(
         move_key_package_bytes(RootKeyPackage {
             frost_identifier: 1,
