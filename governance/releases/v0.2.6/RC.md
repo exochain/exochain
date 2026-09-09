@@ -766,3 +766,26 @@ and preserves deny entries. An isolated explicit Allow/Deny control is added
 inside an existing native test; the eight-test inventory and all original
 unsafe-permission controls remain. Native execution must establish success.
 LiveSafe run `34308705820` passed at this diagnostic head.
+
+At `4f5d294b3b780ba1c2d68a57496473773dbfd728`, native Windows PR job
+`102334585208` and push job `102334578146` each passed all eight tests, with
+zero failures or ignores. PR merge `136714837a5096d7c8c1ac110a7adbe883b16c85`
+binds that head to base `8020ceab355eefa7f5185d9cdd0436da7af46efb`.
+LiveSafe run `34310020346` also passed. Earlier `32e7c3ad` Linux LLVM
+coverage passed root crate 1,149/1,149 lines, portal 65/65 and 0dentity
+1,870/2,253; those results retain their earlier source identity.
+
+## SDK Packaging Directory Contract
+
+Independent review of the frozen `4f5d294b` release tooling identified an
+unconditional SDK preparation failure: its initialization loop creates
+`extract_dir`, but the tarball verifier requires an absent destination. The
+narrow workflow correction omits only that directory from the loop; the
+verifier remains its sole creator and continues rejecting stale destinations.
+A deterministic lifecycle assertion failed before the correction and passes
+afterward. The real tarball suite now explicitly checks rejection of an empty
+precreated directory alongside successful extraction to an absent directory.
+All three focused packaging checks and the full local gate batch passed.
+Independent review of the three-file correction found no actionable defect.
+The 326-path classification is unchanged; no credential, dependency, archive
+admission, artifact-manifest or publication-authority rule changed.

@@ -1454,3 +1454,49 @@ workspace-test log SHA-256:
 `4843035eede24a4f17ad9b349853807b22e452330de32726561d4e49a1ad647b`.
 The native Windows result remains pending. No additional dependency inventory,
 cross-target build directory, or production permission repair was introduced.
+
+Native acceptance subsequently passed at `4f5d294b`: PR Windows job
+`102334585208` executed eight tests in 44.27 seconds, and push Windows job
+`102334578146` executed eight in 78.85 seconds; neither failed nor ignored
+any test. Both logs retain every original negative control and the new
+grant/deny fixture control. PR merge was
+`136714837a5096d7c8c1ac110a7adbe883b16c85`. Logs are retained at
+`/private/tmp/exochain-026-windows-4f5d294b.c0Wlgu`; PR log SHA-256 is
+`166513a5aa3cb0f9c99861d26eee1d6f2e6528d5b241b47f952f85bf39937ba2` and
+push log SHA-256 is
+`ad3b1aeaf3747322955d204b2112cf915615fdfb3930cf9dfb9e860416ab39cb`.
+
+## SDK Tarball Destination Lifecycle
+
+Frozen-range release-tooling review at `4f5d294b` found that the SDK pack
+step initialized `extract_dir` before invoking `verify_npm_release_tarball.py`,
+whose admission requires a fresh absent absolute destination. No prior SDK
+operation needs that path to exist. The three changed release-contract paths
+remain classified as core runtime adapters in the existing inventory.
+
+Validation plan and observed results:
+
+1. The existing Psych-based lifecycle guard now locates the actual SDK packing
+   step and parses its directory-loop arguments with `Shellwords`. It requires
+   exactly the source, pack and npm-home directories, excluding extraction.
+   This failed at the pre-correction workflow with the specific fresh-path
+   contract error (`/private/tmp/exochain-026-sdk-directory-red.9YjOW8`).
+2. Remove only `extract_dir` from that initialization loop. The verifier still
+   owns creation and rejects a stale destination. The lifecycle guard passes.
+3. The tarball suite now passes a valid benign archive to an empty precreated
+   directory, requires its specific fresh-path refusal and checks that the
+   directory remains empty. Existing successful fresh-path byte comparison
+   and archive safety controls also pass. SDK package verification passes.
+4. Independent read-only review confirmed unchanged verifier admission, final
+   manifest verification, digest output and artifact upload binding.
+5. The final local batch passed release build, full workspace tests (146 result
+   blocks; 6,620 passed, zero failed, six unchanged documented ignores),
+   warning-denied all-target Clippy, nightly format, warning-denied rustdoc,
+   repository truth and effective LLVM policy. Retained directory:
+   `/private/tmp/exochain-026-sdk-directory-gates.MZMUN0`; test log SHA-256:
+   `2b89ee48dceead4b4ef9bd65b4ed18c1e3a11363c6201c8399020706a702c79b`.
+
+This local workflow-contract validation is not a live release dispatch or
+registry publication. Exact-head CI, the complete branch review, protected
+credential custody, signing/publisher configuration, human approvals and
+authorized registry cleanup remain separate gates.
