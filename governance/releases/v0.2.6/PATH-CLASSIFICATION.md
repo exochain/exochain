@@ -61,20 +61,27 @@ and commit-sequence counts above remain bound to their original ranges.
 The subsequent PR #835 CI/dependency corrections add five paths: the core
 repository-truth guard and four adjacent LiveSafe paths (the root manifest,
 two existing upload routers, and their small parser/source regression test).
-The current inventory below has 324 paths. DKG coverage, Windows diagnostics,
+That checkpoint contained 324 paths. DKG coverage, Windows diagnostics,
 CI selectors, README, locks, and evidence updates remain in already-listed
 paths. The isolated adjacent commit does not alter core or adapter behavior.
+
+The coverage-backend correction adds two EXOCHAIN core CI-policy paths:
+`tarpaulin.toml` and `tools/test_coverage_policy.sh`. The current inventory has
+326 paths. Its workflow change is inseparable from selecting and checking the
+configured engine before all four coverage gates; no scope, exclusion,
+threshold, or test selector is changed. Windows creation/publication corrections
+remain within the already-listed core runtime adapter.
 
 ## Classification totals
 
 | Class | Paths |
 | --- | ---: |
-| EXOCHAIN core | 63 |
+| EXOCHAIN core | 65 |
 | Core runtime adapter | 155 |
 | Adjacent surface | 18 |
 | Imported evidence | 0 |
 | Third-party/vendor | 88 |
-| **Total** | **324** |
+| **Total** | **326** |
 
 Generated JavaScript, declaration, source-map, lock, and SBOM dependency records
 are classified as third-party/vendor artifacts even when their owned source is a
@@ -352,6 +359,7 @@ governance evidence; they do not import the external HTML.
 | `packages/exochain-sdk/test/index.test.ts` | core runtime adapter |
 | `packages/exochain-wasm/test/bridge_verification.mjs` | core runtime adapter |
 | `packages/exochain-wasm/wasm/package.json` | third-party/vendor |
+| `tarpaulin.toml` | EXOCHAIN core |
 | `tools/capture_release_helper.sh` | core runtime adapter |
 | `tools/check_cratesio_namespace_ownership.mjs` | core runtime adapter |
 | `tools/llm_usage_receipt_smoke.mjs` | core runtime adapter |
@@ -364,6 +372,7 @@ governance evidence; they do not import the external HTML.
 | `tools/resolve_release_tool_path.sh` | core runtime adapter |
 | `tools/stage_llm_release_package.sh` | core runtime adapter |
 | `tools/test_capture_release_helper.sh` | core runtime adapter |
+| `tools/test_coverage_policy.sh` | EXOCHAIN core |
 | `tools/test_cratesio_release_packaging.sh` | core runtime adapter |
 | `tools/test_gateway_db_ci.sh` | core runtime adapter |
 | `tools/test_github_actions_pinned.sh` | core runtime adapter |
@@ -413,7 +422,7 @@ governance evidence; they do not import the external HTML.
 ## Mechanical reconciliation
 
 The sorted newline-delimited path set has SHA-256
-`b950547c05af9ea4cac05c71b789a2d90cffbee75e60a03e6175794694f2035c`.
+`798960302ca9cf1134fa8bd3d271bfb085d2d8520b77c468109f84b4d5038cc3`.
 Run from the candidate worktree with generated test outputs removed:
 
 ```bash
@@ -441,14 +450,14 @@ untracked = subprocess.run(
 actual = sorted(set(committed_or_modified + untracked))
 rows = re.findall(r'^\| `([^`]+)` \| (EXOCHAIN core|core runtime adapter|adjacent surface|imported evidence|third-party/vendor) \|$', document.read_text(), re.MULTILINE)
 listed = [path for path, _ in rows]
-assert len(listed) == len(set(listed)) == 324
+assert len(listed) == len(set(listed)) == 326
 assert listed == actual
 digest = sha256(('\n'.join(listed) + '\n').encode()).hexdigest()
-assert digest == 'b950547c05af9ea4cac05c71b789a2d90cffbee75e60a03e6175794694f2035c'
+assert digest == '798960302ca9cf1134fa8bd3d271bfb085d2d8520b77c468109f84b4d5038cc3'
 counts = {}
 for _, classification in rows:
     counts[classification] = counts.get(classification, 0) + 1
-assert counts == {'core runtime adapter':155,'EXOCHAIN core':63,'third-party/vendor':88,'adjacent surface':18}
+assert counts == {'core runtime adapter':155,'EXOCHAIN core':65,'third-party/vendor':88,'adjacent surface':18}
 print(f'path_classification=PASS count={len(listed)} sha256={digest} counts={counts}')
 PY
 ```

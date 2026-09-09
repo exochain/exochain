@@ -1262,3 +1262,98 @@ with zero vulnerabilities. `EXO_TS_ROOT` was unset, and neither the normal
 existed. External TypeScript comparison therefore remains an explicit coverage
 gap; the script's successful exit is not evidence for that absent implementation.
 Generated vectors and result reports are retained outside the source worktree.
+
+## Explicit Coverage Backend and Windows Owner/Publication Follow-Through
+
+At head `0a29af75e1f0ba121d5f0bf7de5f0a6a11e594d3`, LiveSafe CI run
+`34303782587` passed. Native Windows jobs `102316095682` and `102316103477`
+still failed six of eight tests, but ACL subprocess inspection now succeeds.
+The failures moved to parent/file ownership admission and an illegal-path
+`ArgumentException` from `File.Replace`.
+
+Windows acceptance plan:
+
+1. Preserve strict current-user owner/DACL admission. A successful DACL update
+   does not establish ownership: initialize the current-user owner explicitly
+   on the newly created empty file while its exclusive handle remains open.
+   Existing files and parent directories remain admission-only in production.
+2. Record only a successfully acknowledged owner initialization in the expected
+   cleanup identity. Keep exact attribute, length, and owner comparisons; a
+   foreign or unacknowledged change must still prevent removal. Independent
+   review identified that retaining the pre-initialization owner would strand
+   empty identity/PDP files if a later check failed, preventing creation retry.
+3. Extend the existing Windows cleanup test with current-user and differing-owner
+   fixtures, a failure after initialization, successful retry, and rejection of
+   an unacknowledged owner transition. The explicit Administrators-owner fixture
+   requires the elevated native Windows CI account; do not skip it or weaken
+   production checks when that test prerequisite is unavailable.
+4. Pass `[System.Management.Automation.Language.NullString]::Value` as the
+   no-backup argument to `File.Replace`, retaining the static command and
+   environment-bound source/destination paths. The exact candidate Replace/Move
+   programs passed 16 assertions across four benign filesystem controls under
+   PowerShell 7.5.4/.NET 9.0.10 on macOS: existing replacement, absent publication,
+   and both missing-source failures preserving destination contents. This is
+   binding evidence, not Windows PowerShell 5.1 or native ACL evidence.
+5. Run the source guards, focused private-file tests and required local gates,
+   then require all eight native Windows tests and all exact-head CI gates.
+
+Primary contracts: [new-object owner selection](https://learn.microsoft.com/en-us/windows/win32/secauthz/owner-of-a-new-object),
+[icacls ownership versus DACL operations](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/icacls),
+[NullString](https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.language.nullstring),
+and [File.Replace](https://learn.microsoft.com/en-us/dotnet/api/system.io.file.replace?view=netframework-4.8.1).
+The native log does not expose the actual default-owner SID; attributing that
+runner's initial ownership to Administrators remains an inference until the
+explicit native fixture proves the transition.
+
+The previous Linux Gate 18 result at `d521be1e` was 1,027/1,032 lines, 99.52%,
+despite all 79 tests passing. Its log names `process_handling::linux` and test
+durations of 1,185.47 and 924.87 seconds. Investigation found the controlling
+backend discrepancy: Tarpaulin 0.35.4 omits the engine in config/CLI merging,
+and its Linux default is Ptrace. The repository loaded a config with no engine,
+so CLI `--engine llvm` did not select LLVM. Upstream documents the merge fix
+in [0.36.0](https://github.com/xd009642/tarpaulin/blob/develop/CHANGELOG.md).
+The pinned [engine enum](https://github.com/xd009642/tarpaulin/blob/0.35.4/src/config/types.rs)
+and [config merge](https://github.com/xd009642/tarpaulin/blob/0.35.4/src/config/mod.rs)
+confirm the diagnosis and accept `engine = "Llvm"` in `[default]`.
+
+Coverage acceptance plan:
+
+1. The existing policy guard must fail without that explicit setting; RED was
+   observed before changing the config. The corrected guard must pass.
+2. Each of Gates 3/17/18/19 must run the canonical guard with `--check-engine`
+   after tool installation, logging the effective compiler flags and failing
+   unless `-Cinstrument-coverage` is present. Local config/flag checks pass;
+   independent review confirmed compatibility with the pinned tool.
+3. Preserve all selectors, existing exclusions, timeouts and 90/80/100/100%
+   thresholds. No DKG production/source-mapping change is part of this correction.
+   Require new native Linux results; the earlier local 100% result is not CI.
+
+The path inventory adds only the two core CI-policy paths documented in
+`PATH-CLASSIFICATION.md`; the workflow and private-file module remain classified
+runtime adapters. No adjacent application, dependency, or constitutional runtime
+semantics change is included in this correction set.
+
+Source commits `ab940c8ee87a58a63150b6ab1749627ce9fcc4a8` and
+`45c0c95fad7c5ac5743b8aa0ebbd36f106b79c7a` implement this plan.
+The cleanup-acknowledgment source assertion failed before its production
+correction; afterward the exact `private_file::tests` selection passed all
+19 local tests with no failure or ignore. The final pre-push batch passed:
+
+```text
+cargo build --locked --offline --workspace --release
+cargo test --locked --offline --workspace
+cargo clippy --locked --offline --workspace --all-targets -- -D warnings
+cargo +nightly fmt --all -- --check
+RUSTDOCFLAGS='-D warnings' cargo doc --locked --offline --workspace --no-deps
+bash tools/test_repo_truth.sh
+bash tools/test_coverage_policy.sh --check-engine
+```
+
+The workspace test log contains 146 result blocks: 6,620 passes, zero failures,
+and six unchanged documented ignores. Compiler flags include
+`-Cinstrument-coverage`. The batch retained the existing target, used two Cargo
+workers with incremental/debug artifacts disabled, and received no database
+or publication token. These local macOS results do not establish native Windows
+runtime acceptance or the Linux coverage percentages. No additional Windows
+cross-target build tree was created. The previous cross-implementation evidence
+and absent external TypeScript limitation retain their recorded checkpoint.
