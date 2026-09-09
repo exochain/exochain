@@ -1,5 +1,46 @@
 # Test Plan
 
+## September 8 Dependency And Upload-Field Regression Gate
+
+This adjacent-surface correction raises the declared floors and lock entries to
+Vitest 4.1.11, Multer 2.3.0, and Nodemailer 9.1.1. Vitest and its refreshed Vite
+graph are development-only. Multer and Nodemailer are server runtime packages;
+the latter remains the existing optional SMTP invitation transport.
+
+The Multer array-index advisory additionally requires an application limit:
+both existing upload parsers set `fieldArrayIndexLimit: 0` because the current
+forms use flat metadata fields. Existing file-size limits, JWT-before-parser
+ordering, handlers, custody policy, and public error redaction remain unchanged.
+The five sibling upload ingress routes are `/upload` in records and
+`/insurance`, `/advance-directive`, `/government-id`, and `/poa` in credentials.
+
+`tests/upload-field-limits.test.ts` extracts the configured limit from each
+owned parser and exercises the installed Multer with small, in-memory fields.
+It proves index one is rejected before the continuation, flat fields succeed,
+and all five route declarations retain authentication before the parser.
+These are local parser and source-wiring tests, not live HTTP, database,
+deployment, or cryptographic-enforcement evidence.
+
+Before the configuration change, four rejection/configuration assertions
+failed and both flat-field controls passed. Acceptance requires all six to pass,
+four clean lockfile installs, zero vulnerabilities in all four audits, the full
+quality suite, both production UI builds, and the LiveSafe CI Docker build.
+
+```bash
+npm ci
+npm --prefix server ci
+npm --prefix client ci
+npm --prefix responder ci
+npm test -- tests/upload-field-limits.test.ts
+npm run quality
+npm run build
+```
+
+This changes no EXOCHAIN core file, adapter contract, or deployment definition.
+The existing LiveSafe intake in the release path-classification record applies:
+owner `bob-stewart`, recorded status `prototype`, no constitutional trust claims,
+no new or shared secret scope, and rollback by reverting this isolated slice.
+
 ## Current Gate
 
 ```bash

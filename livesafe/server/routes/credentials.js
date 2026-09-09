@@ -161,7 +161,8 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit for card images
+  // Credential metadata uses flat fields; never permit large indexed arrays.
+  limits: { fileSize: 10 * 1024 * 1024, fieldArrayIndexLimit: 0 }, // 10MB limit for card images
   fileFilter: (req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
     const ext = file.originalname.toLowerCase().split('.').pop();
