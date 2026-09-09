@@ -603,9 +603,11 @@ where
     let (secret_package, package) = round1;
     let secret_package = serialize_frost_secret(&secret_package)?;
     let public_package = serialize_frost(&package)?;
-    let output =
-        RootDkgRound1Output::from_zeroizing(frost_identifier_value, secret_package, public_package);
-    Ok(output)
+    Ok(RootDkgRound1Output::from_zeroizing(
+        frost_identifier_value,
+        secret_package,
+        public_package,
+    ))
 }
 
 /// Execute DKG round two for one certifier after all other round-one packages
@@ -804,22 +806,26 @@ where
     }
 
     let mut key_packages = BTreeMap::new();
-    let finish = dkg_finalize_participant_zeroizing;
     let first_identifier = config.certifiers[0].frost_identifier;
     let mut public_key_package = None;
     for (identifier, round2_secret) in round2_secrets {
         let peer_round1 = peer_packages_except(&round1_public, identifier);
-        let round2 =
-            require_recipient_round2_packages(round2_by_recipient.remove(&identifier), identifier)?;
-        let participant = finish(config, identifier, &round2_secret, peer_round1, round2)?;
+        let recipient_packages = round2_by_recipient.remove(&identifier);
+        let round2 = require_recipient_round2_packages(recipient_packages, identifier)?;
+        let participant = dkg_finalize_participant_zeroizing(
+            config,
+            identifier,
+            &round2_secret,
+            peer_round1,
+            round2,
+        )?;
         if identifier == first_identifier {
             public_key_package = Some(participant.public_key_package);
         }
         key_packages.insert(identifier, participant.key_package);
     }
-    let public_key_package = require_first_public_key_package(public_key_package)?;
 
-    Ok(RootDkgOutput {
+    require_first_public_key_package(public_key_package).map(|public_key_package| RootDkgOutput {
         key_packages,
         public_key_package,
     })
@@ -919,6 +925,33 @@ mod tests {
             Err(<S::Error as serde::ser::Error>::custom(
                 "forced secret serialization failure",
             ))
+        }
+    }
+
+    struct NoSizeHintByteSequence {
+        bytes: std::vec::IntoIter<u8>,
+    }
+
+    impl<'de> serde::de::SeqAccess<'de> for NoSizeHintByteSequence {
+        type Error = serde::de::value::Error;
+
+        fn next_element_seed<T>(
+            &mut self,
+            seed: T,
+        ) -> std::result::Result<Option<T::Value>, Self::Error>
+        where
+            T: serde::de::DeserializeSeed<'de>,
+        {
+            match self.bytes.next() {
+                Some(byte) => seed
+                    .deserialize(serde::de::value::U8Deserializer::new(byte))
+                    .map(Some),
+                None => Ok(None),
+            }
+        }
+
+        fn size_hint(&self) -> Option<usize> {
+            None
         }
     }
 
@@ -1034,6 +1067,20 @@ mod tests {
         let finished = accumulator.finish();
         assert_eq!(finished.len(), bytes_to_add);
         assert_explicitly_zeroizable(&finished);
+    }
+
+    #[test]
+    fn secret_byte_deserializer_accepts_sequences_without_size_hints() {
+        let sequence = NoSizeHintByteSequence {
+            bytes: vec![0xde, 0xad, 0xbe, 0xef].into_iter(),
+        };
+        let deserializer = serde::de::value::SeqAccessDeserializer::new(sequence);
+
+        let mut decoded =
+            deserialize_zeroizing_bytes(deserializer).expect("sequence without a size hint");
+        assert_eq!(decoded.as_slice(), &[0xde, 0xad, 0xbe, 0xef]);
+        decoded.zeroize();
+        assert!(decoded.is_empty());
     }
 
     #[test]
