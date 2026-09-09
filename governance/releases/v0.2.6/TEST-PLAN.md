@@ -1404,3 +1404,53 @@ its workspace-test log SHA-256 is
 Two Cargo workers and the existing target were used; no new cross-target tree
 or dependency inventory upload was needed. These macOS gates do not compile
 the Windows-only diagnostic; the next native run remains controlling.
+
+## Controlled Windows Parent Fixtures
+
+Both native diagnostic logs at `ecdc1b34a91b5ace27594f8a12f9d9dac908cc47`
+report the same values for all six filesystem fixtures:
+`directory=true`, `symlink=false`, `attributes=0x10`, `owner_matches=true`,
+`nonowner_allows=2`, `inherited_nonowner_allows=0`, and
+`nonowner_rights=0x1f01ff`. Both jobs fail at the new parent-admission assertion
+before those runtime tests proceed; the two parser tests pass. This establishes
+retained explicit nonowner grants, not their identities or their creation source.
+The latter information is unnecessary to normalize a controlled test directory.
+
+The canonical `harden_parent` fixture now collects distinct nonowner Allow SIDs
+in a `BTreeSet` and removes their grants through separate literal `icacls`
+arguments. Every status is checked. A fresh ACL readback must show no nonowner
+Allow entry, and actual production parent admission must pass. No production
+code, `harden_file`, denial policy, or runtime permission check changes.
+Microsoft documents that inheritance removal affects inherited ACEs only and
+[`/remove:g` removes grants](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/icacls)
+for the specified SID while preserving denials.
+
+Acceptance plan:
+
+1. Retain the observed failing native diagnostics as the pre-correction result.
+   Independent read-only investigation confirmed the cause and checked all six
+   fixture callers before the correction.
+2. In a separate empty directory inside the existing inheritance test, establish
+   an explicit Everyone Allow plus a WRITE_DATA Deny. Prove both exist before
+   normalization; afterward the Allow must be absent and the Deny retained.
+   Discard that isolated fixture before the original runtime test uses its own
+   fresh directory. The fixed eight-test inventory does not change.
+3. Run focused local private-file tests, all required local gates, and an
+   independent read-only candidate review. Confirm production source identity.
+4. Require all eight exact-head native Windows tests to pass, including the
+   existing inherited-read, permissive-file, no-clobber, literal-path, exclusive
+   creation, and cleanup/owner-transition assertions. Fixture normalization must
+   not remove permissions deliberately added later by those tests. Local macOS
+   results cannot establish this Windows-only behavior.
+
+The frozen fixture correction passed independent read-only review with no
+actionable finding, all 19 local private-file tests, release build, full debug
+workspace tests (146 blocks; 6,620 passed, zero failed, six unchanged documented
+ignores), warning-denied all-target Clippy, nightly formatting, warning-denied
+rustdoc, repository truth and effective LLVM policy. The production-prefix
+SHA-256 remains `27dc76ce54e79d31274d1e781884c2dda8f53adcaa1778c3511ab82467a20dbe`.
+Retained gate directory: `/private/tmp/exochain-026-parent-fixture-gates.QJ4n17`;
+workspace-test log SHA-256:
+`4843035eede24a4f17ad9b349853807b22e452330de32726561d4e49a1ad647b`.
+The native Windows result remains pending. No additional dependency inventory,
+cross-target build directory, or production permission repair was introduced.

@@ -754,3 +754,15 @@ rule or fixture permission-setting command changes. Independent read-only
 review found no actionable diagnostic defect; native compilation and execution
 remain required. This is investigation evidence, not a Windows remediation or
 release-readiness claim. The 326-path classification is unchanged.
+
+The subsequent native diagnostic at `ecdc1b34a91b5ace27594f8a12f9d9dac908cc47`
+identified the parent failure in both push job `102330659787` and PR job
+`102330669881`: all six filesystem fixtures have the expected owner and normal
+directory attributes, but retain two explicit nonowner Allow entries with
+aggregate rights `0x1f01ff`. The actual production check correctly rejects them.
+The next fixture-only correction removes those observed nonowner grants using
+literal `icacls /remove:g` arguments, rechecks admission and zero nonowner grants,
+and preserves deny entries. An isolated explicit Allow/Deny control is added
+inside an existing native test; the eight-test inventory and all original
+unsafe-permission controls remain. Native execution must establish success.
+LiveSafe run `34308705820` passed at this diagnostic head.
