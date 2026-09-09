@@ -1500,3 +1500,98 @@ This local workflow-contract validation is not a live release dispatch or
 registry publication. Exact-head CI, the complete branch review, protected
 credential custody, signing/publisher configuration, human approvals and
 authorized registry cleanup remain separate gates.
+
+## Final-review Private DKG Ownership and Bounded Proxy Storage
+
+The prepatch read-only investigation confirmed the private ownership gaps at
+`4f5d294b` and checked the superseding public-API compatibility requirements.
+Every touched path is already classified in `PATH-CLASSIFICATION.md`. Core
+DKG/signing changes and the directly consuming CLI adapter are kept in separate
+commits; the independent proxy adapter and generated outputs form another.
+
+DKG acceptance and observed focused evidence:
+
+1. Extend the existing root ownership guard and private CLI carrier guard.
+   Before production edits each failed exactly once at the missing guarded
+   composite/private-field assertion. Retained logs are
+   `/private/tmp/exochain-026-dkg-ownership-red.log` and
+   `/private/tmp/exochain-026-cli-ownership-red.log`. These are deterministic
+   source regressions, not direct memory-erasure observations.
+2. Guard composite deserialization until all fields and map entries parse;
+   guard CLI keys and output DTOs; guard every owned signing share before
+   configuration/public-package validation; retain round-one and partial key
+   maps through the final fallible public-result check. Reuse existing
+   zeroizing serialization, FROST types and the one signing implementation.
+3. Require malformed late public fields and a later malformed map value to
+   reject in JSON and integer-keyed CBOR; require successful composite
+   round-trips, guarded wire parity and explicit private-only zeroization.
+   Test direct field moves/destructuring as an external consumer. Compare the
+   exact legacy and guarded signatures using identical cloned test RNG state.
+4. `cargo test -p exochain-root` passed 56 unit, three compatibility and 20
+   integration tests. `cargo test -p exochain-node root_genesis_cli --bin
+   exochain` passed all 39 selected tests. Their logs are
+   `/private/tmp/exochain-026-dkg-ownership-root-all.log` and
+   `/private/tmp/exochain-026-dkg-ownership-cli.log`.
+5. Independent review of the five-file corrected DKG/CLI diff and production
+   sibling consumers found no actionable remaining issue. It verified that
+   public Vec/map/Clone/move/Serialize contracts remain and that borrowed
+   FROST key/nonce owners already provide drop cleanup. No unsafe memory
+   inspection, network reproduction or public automatic-wipe claim was used.
+
+Proxy acceptance and observed focused evidence:
+
+1. The TypeScript AST guard rejects retained fragment collections. Before the
+   production edit, the focused HTTP suite passed 19 tests and failed only
+   that guard. Small benign fragmented/empty/mutable-input controls establish
+   behavior without an adversarial network or process-memory measurement.
+2. Reuse capped geometric contiguous storage, skip empty chunks, copy each
+   chunk before requesting the next, and preserve the original intrinsic
+   type checks, byte limits, cancellation and single deadline. Test a
+   256-byte many-fragment body and an 8,193-byte growth boundary.
+3. The focused suite passed 20/20 and the complete package suite passed 86/86.
+   Build, lint, coverage, package consistency and pack dry-run passed with
+   installed Node 25.9.0/npm 11.12.1 and no dependency installation. Aggregate
+   coverage was 96.14% lines, 92.71% branches and 97.50% functions. Release-
+   pinned Node 22.14.0/npm 10.9.2 validation remains an exact CI requirement.
+4. A different reviewer found no actionable defect in the four-file proxy
+   diff; main independently reran build, all 86 tests, lint and package
+   consistency successfully. These logs are retained in
+   `/private/tmp/exochain-026-final-ownership-gates.4F9ISh`.
+
+Require the full local workspace gates, unchanged coverage thresholds, final
+source/path custody and all required exact-head provider CI after these source
+changes. Prior-head evidence is supporting evidence only. The completed
+retained `32e7c3ad` workspace LLVM job `102327608389` measured 90.84%
+(47,781/52,598 lines); its log is
+`/private/tmp/exochain-026-workspace-coverage-32e7.WNj7LV/job.log`, SHA-256
+`8728f505c26b1faf64e35bcb5f75759c4f54c4753f8d1fd8e1e6cd758115faa8`.
+
+The final combined-source batch through `3b7b7e09` completed successfully:
+release build; full debug and release workspace tests; warning-denied
+all-target Clippy; nightly format; warning-denied rustdoc; repository truth;
+effective LLVM policy; the exact 100% root coverage gate; and all 62 guards
+derived from `.github/workflows/ci.yml`. The initial repository-truth invocation
+used a nonexistent script name after the Rust gates had passed; invoking the
+canonical `tools/test_repo_truth.sh` then passed. No code or gate was weakened.
+
+Debug and release each produced 146 result blocks: respectively 6,620 and
+6,619 passed, zero failed, and six unchanged documented ignores. Comparing
+test names accounts for the difference: three existing debug-only gateway/
+writeback tests are replaced by two release-only no-development-fallback
+tests. Root LLVM measured 1,170/1,170 lines with the same include scope and
+threshold. Effective instrumentation includes `-Cinstrument-coverage`.
+
+Retained gate directory: `/private/tmp/exochain-026-final-ownership-gates.4F9ISh`.
+SHA-256 records:
+
+| Evidence | SHA-256 |
+| --- | --- |
+| Debug workspace log | `d47ea82a83c9f190c485bc6a3a18cfb13853278b43a311d57ba84fc380901a32` |
+| Release workspace log | `95bb27f806da26979488f616bb31dac9bdb4e6650f3b9bc0de618dbce7cf3124` |
+| Root LLVM log | `6bba0ecf1b2e422aec8a84550e8f2e2d8fdd11b6e2bded3c7378e499f44ba0d6` |
+
+Two Cargo workers, disabled incremental/debug artifacts and the existing
+target were used serially. No database or publication token entered these
+commands. The four generated exchange report files were preserved outside
+the branch. The external HTML report remains unchanged at its recorded hash.
+Required exact-head provider CI and publication controls remain separate.

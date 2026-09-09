@@ -23,7 +23,37 @@ release controls; it does not create or claim a git tag, GitHub Release,
 registry publication, deployment, production runtime verification, Article 26
 certification, or v0.3.0 closure.
 
-Status: core source and release-control implementation is committed at
+## Current continuation: September 9
+
+The LiveSafe dependency-inventory approval has been fulfilled; its CI passed at
+`4f5d294b3b780ba1c2d68a57496473773dbfd728`. Native Windows also passed
+all eight tests on both the push and PR at that head. The retained earlier
+`32e7c3ad` Linux LLVM workspace coverage completed at 90.84%
+(47,781/52,598 lines), alongside passing root, portal and identity scopes.
+These provider results retain their exact source identities.
+
+Independent whole-branch review accounted for all 326 classified paths at
+`4f5d294b`. It found the SDK extraction-directory lifecycle defect, incomplete
+private DKG cleanup, and fragmentation-dependent retained buffer overhead in
+the LLM proxy. The SDK correction is committed at `f8943689`; the DKG and
+proxy corrections and their acceptance evidence are recorded below and in
+`TEST-PLAN.md`. Follow-through review found no remaining actionable defect in
+the corrected source. This was independent static review, not a new formal
+Codex Security scan or human approval.
+
+At the September 9 provider readback, both registry tokens still existed at
+repository scope and neither existed in protected `release`. Active
+`bob-stewart` has push but not admin authority. The already-configured distinct
+environment reviewers, no-self-review and no-admin-bypass protections remain
+intact. Different-account authorization, approved-source credential placement,
+publisher/signing prerequisites, final exact-head CI, human approval and
+authorized historical-version retirement remain open. The inventory-upload
+approval does not authorize another account or credential extraction. Exact
+tag and GitHub Release lookups still returned 404 at 05:04:30 UTC.
+
+## Historical implementation checkpoint
+
+Core source and release-control implementation was committed at
 `368721a1ea3577481cf73cdee6d811623159faec`. Exact-head core and feature-matrix
 gates, coverage thresholds, all 62 CI-derived shell guards, and the separate
 LiveSafe quality/build/image gates passed at that checkpoint. Complete scan
@@ -40,8 +70,9 @@ verified, and exact-head gates and final review are rerun. Successful repository
 metadata on 2026-09-08 identifies `exochain` as a User owner, so inherited
 organization secrets are not applicable. This resolves the earlier inheritance
 uncertainty, not the still-open repository-secret custody finding.
-Provider CI, Windows runtime evidence, tag, publication, deployment, and
-runtime readback remain unproven.
+At that historical checkpoint, provider CI, Windows runtime evidence, tag,
+publication, deployment and runtime readback were unproven. Later source-bound
+evidence is recorded separately below and in the current continuation above.
 
 The dated 2026-09-08 checkpoint below records the later helper correction and
 macOS ACL mitigation work. Earlier checkpoint results retain their original
@@ -789,3 +820,41 @@ All three focused packaging checks and the full local gate batch passed.
 Independent review of the three-file correction found no actionable defect.
 The 326-path classification is unchanged; no credential, dependency, archive
 admission, artifact-manifest or publication-authority rule changed.
+
+## Final-review DKG and response-buffer ownership corrections
+
+The DKG correction guards private CLI inputs and generated outputs, every
+consumed legacy signing share before fallible validation, and incomplete
+in-memory DKG maps until successful public handoff. Private composite serde
+intermediates also protect a decoded key when a later field or map entry fails.
+Serialized final private bytes remain guarded through public serialization.
+Public vectors/maps, `Clone`, direct moves and JSON/CBOR serialization remain
+compatible; `threshold_sign_zeroizing` is an additive entry point sharing the
+existing signing implementation. Legacy public carriers intentionally remain
+caller-owned and are not claimed to wipe automatically on drop. No cleanup
+claim covers process abort, forced termination or external caller copies.
+
+The LLM proxy now uses the SDK's capped geometric-buffer pattern instead of
+retaining an allocation for every fragment. Empty chunks allocate no retained
+storage. Intrinsic byte validation, mutable/subclass chunk copying, byte caps,
+cancellation and the one request deadline are preserved. Small local fragment
+controls and a deterministic structural guard establish the regression; no
+remote fragmentation, unbounded empty-chunk loop or process-memory observation
+is claimed. No dependency or adjacent application change is included.
+
+The core, CLI adapter and proxy adapter changes are independently reviewed and
+kept in separate commits. All nine source/test/generated paths were already
+classified; the 326-path inventory and its digest are unchanged.
+
+Those source commits are `8df63c2d8e8e852c40a0b454ca3a45167b04b054`
+(core), `b6600e76f03f780db60213701a10897eb6635eb4` (CLI), and
+`3b7b7e092e6d71b1b5d77e6753fd9b4d636b59fd` (proxy). The combined source
+passed release build, debug and release workspace tests, all-target Clippy,
+nightly format, warning-denied rustdoc, repository truth, effective LLVM
+policy, and all 62 guards derived from current CI. Debug had 6,620 passed and
+release 6,619 passed; both had zero failures and six unchanged documented
+ignores. Local root LLVM coverage passed 1,170/1,170 lines (100.00%). The
+profile-count difference is the existing conditional debug/release test set,
+not an omitted test. Independent documentation review and source/path custody
+also passed. These local results do not establish final provider CI,
+credential migration, release approval or publication.
