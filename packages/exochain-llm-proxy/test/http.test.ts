@@ -13,6 +13,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import ts from "typescript";
 import { LynkConfigurationError, LynkValidationError } from "../src/evidence.js";
 import { fetchBoundedResponse, parseBoundedJson } from "../src/http.js";
 import type { FetchLike, LlmProxyConfig } from "../src/types.js";
@@ -72,6 +73,122 @@ class LyingUint8Array extends Uint8Array {
     return new Uint8Array()[Symbol.iterator]();
   }
 }
+
+test("bounded reader does not retain a collection of per-fragment allocations", () => {
+  const source = ts.createSourceFile(
+    "http.ts",
+    readFileSync(new URL("../../src/http.ts", import.meta.url), "utf8"),
+    ts.ScriptTarget.ES2022,
+    true,
+  );
+  const reader = source.statements.find(
+    (node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === "readBoundedBody",
+  );
+  assert.ok(reader?.body, "the shared bounded reader must be inspected");
+  const fragmentCollections: string[] = [];
+  function inspect(node: ts.Node): void {
+    if (
+      ts.isArrayLiteralExpression(node)
+      || (ts.isNewExpression(node)
+        && ts.isIdentifier(node.expression)
+        && ["Array", "Map", "Set"].includes(node.expression.text))
+      || (ts.isCallExpression(node)
+        && ts.isPropertyAccessExpression(node.expression)
+        && node.expression.name.text === "push")
+    ) {
+      fragmentCollections.push(node.getText(source));
+    }
+    ts.forEachChild(node, inspect);
+  }
+  inspect(reader.body);
+  assert.deepEqual(
+    fragmentCollections,
+    [],
+    "payload-byte accounting must not retain an independently growing fragment collection",
+  );
+});
+
+test("bounded fetch preserves exact bytes across small and empty fragments", async () => {
+  const result = await fetchBoundedResponse(
+    policy(async () => streamedResponse(["", "0", "", "1", "2", "", "3", "4", "5", "", "6", "7", ""])),
+    "https://provider.test",
+    { method: "GET" },
+    "provider response",
+  );
+
+  assert.equal(result.text, "01234567");
+  assert.deepEqual([...result.body], [48, 49, 50, 51, 52, 53, 54, 55]);
+  assert.ok(result.body.buffer.byteLength <= 8, "backing capacity must stay inside the byte budget");
+});
+
+test("bounded fetch accepts an empty-fragment-only body without backing storage", async () => {
+  const result = await fetchBoundedResponse(
+    policy(async () => streamedResponse(["", "", ""])),
+    "https://provider.test",
+    { method: "GET" },
+    "provider response",
+  );
+
+  assert.equal(result.text, "");
+  assert.equal(result.body.byteLength, 0);
+  assert.equal(result.body.buffer.byteLength, 0);
+});
+
+test("bounded fetch preserves many benign one-byte fragments", async () => {
+  const text = "0123456789abcdef".repeat(16);
+  const result = await fetchBoundedResponse(
+    policy(async () => streamedResponse([...text].flatMap((byte) => ["", byte])), text.length),
+    "https://provider.test",
+    { method: "GET" },
+    "provider response",
+  );
+
+  assert.equal(result.text, text);
+  assert.deepEqual(result.body, new TextEncoder().encode(text));
+  assert.ok(result.body.buffer.byteLength <= text.length);
+});
+
+test("bounded fetch preserves earlier bytes when contiguous storage grows", async () => {
+  const chunks = ["a".repeat(4096), "b".repeat(4096), "c"];
+  const result = await fetchBoundedResponse(
+    policy(async () => streamedResponse(chunks), 9000),
+    "https://provider.test",
+    { method: "GET" },
+    "provider response",
+  );
+
+  assert.equal(result.text, chunks.join(""));
+  assert.deepEqual(result.body, new TextEncoder().encode(chunks.join("")));
+  assert.equal(result.body.byteLength, 8193);
+  assert.ok(result.body.buffer.byteLength <= 9000);
+});
+
+test("bounded fetch snapshots a reused mutable fragment before the next read", async () => {
+  const shared = new LyingUint8Array(1);
+  let index = 0;
+  const response = new Response(new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (index === 4) {
+        controller.close();
+        return;
+      }
+      shared[0] = 65 + index;
+      index += 1;
+      controller.enqueue(shared);
+    },
+  }, { highWaterMark: 0 }));
+  const result = await fetchBoundedResponse(
+    policy(async () => response),
+    "https://provider.test",
+    { method: "GET" },
+    "provider response",
+  );
+
+  shared.fill(90);
+  assert.equal(result.text, "ABCD");
+  assert.deepEqual([...result.body], [65, 66, 67, 68]);
+});
 
 test("bounded fetch accepts the exact byte limit despite a dishonest low Content-Length", async () => {
   const fetchImpl: FetchLike = async () =>

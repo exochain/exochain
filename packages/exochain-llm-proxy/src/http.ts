@@ -129,7 +129,7 @@ async function readBoundedBody(
   }
 
   const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
+  let body = new Uint8Array();
   let total = 0;
   try {
     for (;;) {
@@ -148,21 +148,26 @@ async function readBoundedBody(
         void reader.cancel().catch(() => undefined);
         throw new LynkValidationError(`${label} exceeds ${maxBytes} bytes`);
       }
-      chunks.push(new Uint8Array(value));
-      total += chunkLength;
+      if (chunkLength === 0) continue;
+      const nextTotal = total + chunkLength;
+      if (nextTotal > body.byteLength) {
+        const nextCapacity = Math.min(
+          maxBytes,
+          Math.max(nextTotal, Math.max(8192, body.byteLength * 2)),
+        );
+        const grown = new Uint8Array(nextCapacity);
+        grown.set(body.subarray(0, total));
+        body = grown;
+      }
+      body.set(value, total);
+      total = nextTotal;
     }
   } catch (error) {
     void reader.cancel().catch(() => undefined);
     throw error;
   }
 
-  const body = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
+  return body.subarray(0, total);
 }
 
 function intrinsicUint8ArrayByteLength(value: unknown): number | undefined {
