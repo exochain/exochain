@@ -11,7 +11,7 @@ use exo_root::{
     assemble_root_bundle, build_final_key_confirmation, build_signing_package,
     decrypt_pairwise_payload, dkg_finalize_participant_zeroizing, dkg_round1, dkg_round2,
     encode_final_key_confirmation_payload, encrypt_pairwise_payload, seal_share, sign_commit,
-    sign_share, threshold_sign, unseal_share, verify_root_bundle,
+    sign_share, threshold_sign_zeroizing, unseal_share, verify_root_bundle,
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize, de::Visitor};
@@ -231,7 +231,7 @@ struct FinalizeDkgCommandInput {
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct BuildFinalKeyConfirmationCommandInput {
     config: GenesisCeremonyConfig,
-    dkg_output: RootParticipantDkgOutput,
+    dkg_output: Zeroizing<RootParticipantDkgOutput>,
     dkg_transcript_hash_hex: String,
 }
 
@@ -239,7 +239,7 @@ struct BuildFinalKeyConfirmationCommandInput {
 struct SignRootArtifactCommandInput {
     config: GenesisCeremonyConfig,
     public_key_package: RootPublicKeyPackage,
-    key_packages: BTreeMap<u16, RootKeyPackage>,
+    key_packages: BTreeMap<u16, Zeroizing<RootKeyPackage>>,
     artifact_hex: String,
 }
 
@@ -379,7 +379,7 @@ struct PayloadBytesOutput {
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct SignCommitCommandInput {
     config: GenesisCeremonyConfig,
-    key_package: RootKeyPackage,
+    key_package: Zeroizing<RootKeyPackage>,
     /// Hex of the exact root artifact to be signed (from `emit-artifact-bytes`).
     /// The nonces are bound to this artifact and can sign no other message.
     artifact_hex: String,
@@ -395,7 +395,7 @@ struct BuildSigningPackageCommandInput {
 #[derive(PartialEq, Eq, Serialize, Deserialize)]
 struct SignShareCommandInput {
     config: GenesisCeremonyConfig,
-    key_package: RootKeyPackage,
+    key_package: Zeroizing<RootKeyPackage>,
     /// The coordinator's signing package (commitments + signer set).
     signing_package: RootSigningPackage,
     /// Hex of the root artifact this signer intends to sign; must equal the
@@ -533,32 +533,32 @@ fn run_round1(args: GenesisIoArgs) -> anyhow::Result<()> {
     let input: Round1CommandInput = read_json(&required_input(&args)?)?;
     input.config.validate()?;
     let mut rng = rand::rngs::OsRng;
-    let output = dkg_round1(&input.config, input.frost_identifier, &mut rng)?;
+    let output = Zeroizing::new(dkg_round1(&input.config, input.frost_identifier, &mut rng)?);
     write_secret_output(&args, &output)
 }
 
 fn run_round2(args: GenesisIoArgs) -> anyhow::Result<()> {
     let input: Round2CommandInput = read_private_json(&required_input(&args)?)?;
     let round1_secret = decode_secret_hex_zeroizing(&input.round1_secret_package_hex)?;
-    let output = dkg_round2(
+    let output = Zeroizing::new(dkg_round2(
         &input.config,
         input.frost_identifier,
         round1_secret.as_slice(),
         decode_package_map(input.round1_packages_hex)?,
-    )?;
+    )?);
     write_secret_output(&args, &output)
 }
 
 fn run_finalize_dkg(args: GenesisIoArgs) -> anyhow::Result<()> {
     let input: FinalizeDkgCommandInput = read_private_json(&required_input(&args)?)?;
     let round2_secret = decode_secret_hex_zeroizing(&input.round2_secret_package_hex)?;
-    let output = dkg_finalize_participant_zeroizing(
+    let output = Zeroizing::new(dkg_finalize_participant_zeroizing(
         &input.config,
         input.frost_identifier,
         round2_secret.as_slice(),
         decode_package_map(input.round1_packages_hex)?,
         decode_private_package_map(input.round2_packages_hex)?,
-    )?;
+    )?);
     write_secret_output(&args, &output)
 }
 
@@ -575,7 +575,7 @@ fn run_sign_root_artifact(args: GenesisIoArgs) -> anyhow::Result<()> {
     let input: SignRootArtifactCommandInput = read_private_json(&required_input(&args)?)?;
     let artifact = decode_hex(&input.artifact_hex)?;
     let mut rng = rand::rngs::OsRng;
-    let signature = threshold_sign(
+    let signature = threshold_sign_zeroizing(
         &input.config,
         &input.public_key_package,
         input.key_packages,
@@ -1255,6 +1255,56 @@ mod tests {
         assert!(escape_guard < serde_parse);
         assert!(source.contains("deserialize_zeroizing_fixed_32_hex"));
         assert!(source.contains("deserialize_zeroizing_hex"));
+        for (declaration, guarded_field) in [
+            (
+                "struct BuildFinalKeyConfirmationCommandInput",
+                "dkg_output: Zeroizing<RootParticipantDkgOutput>",
+            ),
+            (
+                "struct SignRootArtifactCommandInput",
+                "key_packages: BTreeMap<u16, Zeroizing<RootKeyPackage>>",
+            ),
+            (
+                "struct SignCommitCommandInput",
+                "key_package: Zeroizing<RootKeyPackage>",
+            ),
+            (
+                "struct SignShareCommandInput",
+                "key_package: Zeroizing<RootKeyPackage>",
+            ),
+        ] {
+            let fields = source
+                .split(declaration)
+                .nth(1)
+                .unwrap()
+                .split('}')
+                .next()
+                .unwrap();
+            assert!(
+                fields.contains(guarded_field),
+                "{declaration} must own drop-guarded keys"
+            );
+        }
+        for (command, operation) in [
+            ("fn run_round1(", "dkg_round1("),
+            ("fn run_round2(", "dkg_round2("),
+            (
+                "fn run_finalize_dkg(",
+                "dkg_finalize_participant_zeroizing(",
+            ),
+        ] {
+            let body = source
+                .split(command)
+                .nth(1)
+                .unwrap()
+                .split("\nfn ")
+                .next()
+                .unwrap();
+            assert!(
+                body.contains(&format!("let output = Zeroizing::new({operation}")),
+                "{command} must guard returned private material before output can fail"
+            );
+        }
     }
 
     #[test]
@@ -1431,7 +1481,7 @@ mod tests {
             .root_artifact_payload(&config, &dkg.public_key_package, transcript_hash)
             .expect("payload");
         let signing_packages = take_key_packages(&mut dkg, 7);
-        let root_signature = threshold_sign(
+        let root_signature = exo_root::threshold_sign(
             &config,
             &dkg.public_key_package,
             signing_packages,
@@ -2141,7 +2191,7 @@ mod tests {
             &input_path,
             &BuildFinalKeyConfirmationCommandInput {
                 config: config.clone(),
-                dkg_output: participant,
+                dkg_output: Zeroizing::new(participant),
                 dkg_transcript_hash_hex: hex::encode(transcript_hash.as_bytes()),
             },
         )
@@ -2545,7 +2595,10 @@ mod tests {
             &SignRootArtifactCommandInput {
                 config: config.clone(),
                 public_key_package: dkg.public_key_package.clone(),
-                key_packages: take_key_packages(&mut dkg, 7),
+                key_packages: take_key_packages(&mut dkg, 7)
+                    .into_iter()
+                    .map(|(identifier, package)| (identifier, Zeroizing::new(package)))
+                    .collect(),
                 artifact_hex: hex::encode(&artifact),
             },
         )
@@ -2611,7 +2664,7 @@ mod tests {
                 &in_path,
                 &SignCommitCommandInput {
                     config: config.clone(),
-                    key_package: take_key_package(&mut dkg, *id),
+                    key_package: Zeroizing::new(take_key_package(&mut dkg, *id)),
                     artifact_hex: artifact_hex.clone(),
                 },
             )
@@ -2684,7 +2737,7 @@ mod tests {
                 &in_path,
                 &SignShareCommandInput {
                     config: config.clone(),
-                    key_package: take_key_package(&mut share_dkg, *id),
+                    key_package: Zeroizing::new(take_key_package(&mut share_dkg, *id)),
                     signing_package: package.clone(),
                     artifact_hex: artifact_hex.clone(),
                 },
@@ -2760,7 +2813,7 @@ mod tests {
                 &in_path,
                 &SignCommitCommandInput {
                     config: config.clone(),
-                    key_package: take_key_package(&mut dkg, id),
+                    key_package: Zeroizing::new(take_key_package(&mut dkg, id)),
                     artifact_hex: artifact_hex.clone(),
                 },
             )
@@ -2802,7 +2855,7 @@ mod tests {
             &share_in,
             &SignShareCommandInput {
                 config,
-                key_package: take_key_package(&mut share_dkg, 1),
+                key_package: Zeroizing::new(take_key_package(&mut share_dkg, 1)),
                 signing_package: package,
                 artifact_hex,
             },
