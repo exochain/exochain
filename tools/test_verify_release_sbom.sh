@@ -72,13 +72,14 @@ canonical_one="$test_root/canonical-one"
 canonical_two="$test_root/canonical-two"
 digest_one="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_one")"
 digest_two="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_two")"
-# Independently reconciled against source graph 58a7f520af39 after reproducing
-# the prior 31e63d678a digest exactly. Of 32 canonical SBOMs, 21 are unchanged;
-# 11 replace spin 0.9.8 with 0.9.9. The node SBOM also replaces der 0.8.0 with
-# 0.8.2 and adds macOS exacl 0.12.0. Every changed component, checksum, and edge
-# matches Cargo.lock and the node manifest; no other graph or metadata changes.
-# Repeated validation remains byte-identical with the unchanged validator.
-expected_digest=a574ee15130b852710234a0fb8ea6282e6cce36d80229a7b6ab22caac54f90bf
+# Independently reconciled against source graph 83503ddb5b94 after reproducing
+# the prior a574ee15130b digest exactly. Of 32 canonical SBOMs, 22 are unchanged;
+# 10 replace Rustls 0.23.37 with 0.23.45 and WebPKI 0.103.13 with 0.103.15.
+# Those 10 also add the DAG DB PostgreSQL -> Rustls constraint edge. The DAG
+# postgres feature is disabled in this corpus. Every component/checksum/edge
+# matches the exact Cargo graph; no other field changes. Two independent
+# source archives produce byte-identical output with the unchanged validator.
+expected_digest=d085e1ae94fb41ba802c58ff6a0c40ddb67086e23f1a9649bb2645d4f7768319
 [ "$digest_one" = "$expected_digest" ] && [ "$digest_two" = "$expected_digest" ] \
   || fail "exact cargo-cyclonedx 0.5.9 corpus did not produce the reviewed canonical digest"
 /usr/bin/diff -ru "$canonical_one" "$canonical_two" >/dev/null \
