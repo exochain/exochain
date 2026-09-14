@@ -34,7 +34,7 @@ workspace = true
 
 [features]
 default = []
-postgres = ["dep:sqlx", "dep:serde_json"]
+postgres = ["dep:sqlx", "dep:serde_json", "dep:rustls"]
 
 [dependencies]
 exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.6" }
@@ -50,6 +50,7 @@ async-trait = { workspace = true }
 # harness. Split per target so the WASM build path stays clean.
 tokio = { version = "1", default-features = false, features = ["sync", "macros", "rt", "time"] }
 sqlx = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -66,4 +67,6 @@ name = "append_normative"
 harness = false
 
 [package.metadata.cargo-machete]
-ignored = ["uuid"]
+# Rustls constrains SQLx TLS for standalone consumers (RUSTSEC-2026-0285).
+# The dependency-policy guard verifies its version and postgres activation.
+ignored = ["uuid", "rustls"]
