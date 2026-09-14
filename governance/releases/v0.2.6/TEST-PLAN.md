@@ -1732,3 +1732,43 @@ Only the reviewed golden digest and its explanation change; the validator and
 all positive/negative corpus tests remain intact. Require the full guard to
 pass against the committed correction before pushing. This existing test
 path is classified as a core runtime adapter; this evidence is core governance.
+
+## 2026-09-14 identity lifecycle correction
+
+Fresh complete-range source inspection at `6a721236` found that historical
+verification methods could retain a rotated-out key in the authorization-key
+inventory. Independent patch review identified the related hybrid verifier and
+registry-admission lifecycle inconsistency. All three touched implementation
+paths are EXOCHAIN core; no adjacent surface, vendor code, dependency, or
+imported report changes with this correction.
+
+Five defensive regressions establish the required contract: sequential
+shared-key rotations retain a key only while a live sibling uses it;
+classical/hybrid retention requires active and unrevoked state; hybrid
+verification rejects inactive or revoked state; and registry admission rejects
+contradictory hybrid lifecycle fields without storing the document. Active
+unrevoked methods and consistent historical registry records remain accepted.
+The initial three inventory tests failed before correction, and the two hybrid
+tests independently failed before their correction. All five pass in the full
+identity suite, which passes 217 unit tests, 12 integration tests and one
+doctest. Identity all-target Clippy and workspace nightly formatting pass.
+
+RED logs are retained in `/private/tmp/exochain-026-key-lifecycle.IxQlsa`:
+`red.log` SHA-256
+`6c310279d16f26402e8b9dae2876e5ea2e348d0d763ed384dabf43118ca276c2`,
+and `hybrid-red.log` SHA-256
+`55b4e83495022b048c8381ad647fee30aaa2a2f9a76adc7f9b5dafae46c06f10`.
+These tests exercise ordinary library lifecycle behavior; no deployed exploit
+or registry misuse is claimed. An attempted delegated exploit-test generation
+was blocked by the security service and was not retried. Static assessment and
+these defensive regression results retain that distinction.
+
+Acceptance for the final committed head requires the workspace release build,
+debug/release tests, all-target Clippy, nightly formatting, warning-denied docs,
+root/guest audit, deny, machete, repository truth, fuzz and cross-implementation
+gates, plus the current CI-derived shell guards. Reuse the existing build cache
+with at most two workers. Record terminal results against that immutable head
+in the release checkpoint; do not amend source solely to narrate a running gate.
+Final review covers the complete baseline-to-head range, including both newly
+listed identity files. Hosted CI, protected approvals, signed tag, publisher
+binding and registry/deployment readback remain independent acceptance gates.
