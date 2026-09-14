@@ -1708,3 +1708,27 @@ and `build.log` has SHA-256
 `5725b3942856245366b02c8e91f4771605f255b094d45d27e6568a13a36c0f59`.
 The disposable source copy was removed after those logs were retained. The
 hosted release's exact Node 22.14.0/npm 10.9.2 remains a separate CI result.
+
+The first committed-head guard run at `83503ddb` detected the intentionally
+fixed SBOM corpus digest still describing the previous dependency graph. The
+guard archives `HEAD`, so a pre-commit run cannot validate an uncommitted
+dependency update. Independently regenerate both old and updated corpora
+before updating that expected value; never replace it merely with observed
+output. Exact cargo-cyclonedx 0.5.9 reproduced the prior `614863da` digest
+`a574ee15130b852710234a0fb8ea6282e6cce36d80229a7b6ab22caac54f90bf`.
+Two independent patched-source archives each produced
+`d085e1ae94fb41ba802c58ff6a0c40ddb67086e23f1a9649bb2645d4f7768319`.
+
+All 32 canonical documents were compared exhaustively: 22 are byte unchanged;
+10 replace only Rustls/WebPKI versions, references, package URLs and registry
+checksums, update the corresponding dependency references, and add the direct
+DAG DB PostgreSQL-to-Rustls constraint edge. The optional DAG PostgreSQL
+feature is disabled in this corpus and adds no edge. Root metadata, scopes,
+target records, timestamps, generator/schema bindings and every unrelated
+field remain unchanged. A separate parent comparison reproduced this result
+and all three digests. Exact source graphs and field-level evidence remain in
+`/private/tmp/exochain-rustls-sbom-reconcile.BBcy0O/reconciliation.json`.
+Only the reviewed golden digest and its explanation change; the validator and
+all positive/negative corpus tests remain intact. Require the full guard to
+pass against the committed correction before pushing. This existing test
+path is classified as a core runtime adapter; this evidence is core governance.
