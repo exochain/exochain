@@ -496,6 +496,13 @@ fn validate_registered_did_document(doc: &DidDocument) -> Result<(), IdentityErr
         }
     }
     for method in &doc.hybrid_verification_methods {
+        ensure_verification_method_lifecycle(
+            did,
+            "hybrid_verification_methods.revoked_at",
+            &method.id,
+            method.active,
+            method.revoked_at,
+        )?;
         ensure_byte_bound(
             did,
             "hybrid_verification_methods.id",
@@ -969,6 +976,43 @@ mod tests {
             "error should identify inactive revoked_at inconsistency: {err}"
         );
         assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn register_hybrid_lifecycle_requires_consistent_state() {
+        let (pk, _) = generate_keypair();
+        let (pq_pk, _) = generate_pq_keypair();
+        let did = make_did("hybrid-lifecycle");
+        for (active, revoked_at, accepted) in [
+            (true, None, true),
+            (false, Some(1500), true),
+            (false, None, false),
+            (true, Some(1500), false),
+        ] {
+            let mut doc = make_doc(did.clone(), pk);
+            let mut method = hybrid_verification_method(&did, pk, pq_pk.clone(), 1);
+            method.active = active;
+            method.revoked_at = revoked_at;
+            doc.hybrid_verification_methods.push(method);
+            let mut registry = LocalDidRegistry::new();
+
+            let result = registry.register(doc.clone());
+            assert_eq!(
+                result.is_ok(),
+                accepted,
+                "active={active}, revoked_at={revoked_at:?}"
+            );
+            if accepted {
+                assert_eq!(registry.resolve(&did), Some(&doc));
+            } else {
+                assert!(registry.resolve(&did).is_none());
+                assert!(matches!(
+                    result,
+                    Err(IdentityError::InvalidDidDocumentField { field, .. })
+                        if field == "hybrid_verification_methods.revoked_at"
+                ));
+            }
+        }
     }
 
     #[test]

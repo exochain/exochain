@@ -147,7 +147,7 @@ impl HybridVerificationMethod {
     /// Ed25519 and ML-DSA-65 components to pass with no short-circuit.
     #[must_use]
     pub fn verify(&self, message: &[u8], signature: &Signature) -> bool {
-        if !self.active {
+        if !self.active || self.revoked_at.is_some() {
             return false;
         }
         if !self.key_material_matches_multibase() {
@@ -572,6 +572,31 @@ mod tests {
             !method.verify(b"msg", &sig),
             "inactive hybrid method must always reject verification"
         );
+    }
+
+    #[test]
+    fn hybrid_method_lifecycle_requires_active_and_unrevoked() {
+        use exo_core::crypto::{generate_pq_keypair, sign_hybrid};
+
+        let (pk, sk) = generate_keypair();
+        let (pq_pk, pq_sk) = generate_pq_keypair();
+        let did = make_did("hybrid-lifecycle");
+        let signature = sign_hybrid(b"lifecycle", &sk, &pq_sk).expect("sign_hybrid");
+        for (active, revoked_at, accepted) in [
+            (true, None, true),
+            (false, Some(1500), false),
+            (false, None, false),
+            (true, Some(1500), false),
+        ] {
+            let mut method = make_hybrid_method(&did, pk, pq_pk.clone());
+            method.active = active;
+            method.revoked_at = revoked_at;
+            assert_eq!(
+                method.verify(b"lifecycle", &signature),
+                accepted,
+                "active={active}, revoked_at={revoked_at:?}"
+            );
+        }
     }
 
     #[test]
