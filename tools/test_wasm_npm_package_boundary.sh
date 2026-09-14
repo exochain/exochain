@@ -70,6 +70,126 @@ if grep -F 'actions/checkout@' <<<"$install_block" >/dev/null \
   fail "wasm-pack installer must not receive repository source or token"
 fi
 
+# Execute the real installer environment boundaries without downloading or
+# compiling the tools. Removing PATH loses the native linker; inheriting PATH
+# or Cargo settings lets ambient executables/configuration cross the boundary.
+"${PYTHON:-python3}" - "$release_workflow" <<'PY'
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import textwrap
+
+workflow = Path(sys.argv[1]).read_text()
+failures = []
+with tempfile.TemporaryDirectory(prefix="exochain-installer-environment-") as temporary:
+    fixture = Path(temporary)
+    probe = fixture / "cargo-environment-probe"
+    probe.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''\
+        import json
+        import os
+        import shutil
+        import subprocess
+        import sys
+
+        compiler = shutil.which("cc", path=os.environ.get("PATH", ""))
+        compiler_status = None
+        if compiler is not None:
+            compiler_status = subprocess.run(
+                [compiler, "--version"], stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=15, check=False,
+            ).returncode
+        print(json.dumps({
+            "arguments": sys.argv[1:], "environment": dict(os.environ),
+            "compiler": compiler, "compiler_status": compiler_status,
+        }))
+    '''))
+    probe.chmod(0o755)
+    poisoned_path = str(fixture / "untrusted-bin")
+    poison = {
+        "PATH": poisoned_path,
+        "RUSTFLAGS": "untrusted-rustflags",
+        "CARGO_ENCODED_RUSTFLAGS": "untrusted-encoded-rustflags",
+        "CARGO_BUILD_RUSTC_WRAPPER": "/untrusted/cargo-wrapper",
+        "CARGO_REGISTRIES_CRATES_IO_INDEX": "untrusted-registry",
+        "CARGO_REGISTRY_TOKEN": "synthetic-test-token",
+        "NODE_OPTIONS": "untrusted-node-options",
+        "PYTHONPATH": "/untrusted/python",
+        "BASH_ENV": "/untrusted/bash-env",
+    }
+    for package, version in (("wasm-pack", "0.14.0"), ("cargo-cyclonedx", "0.5.9")):
+        job_name = f"install-{package}"
+        match = re.search(
+            rf"^  {re.escape(job_name)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:|\Z)",
+            workflow, re.MULTILINE | re.DOTALL,
+        )
+        if match is None:
+            raise SystemExit(f"missing installer job {job_name}")
+        lines = match.group(1).splitlines()
+        commands = []
+        for index, line in enumerate(lines):
+            if line.strip() != "/usr/bin/env -i \\":
+                continue
+            end = index
+            while lines[end].endswith("\\"):
+                end += 1
+            command = textwrap.dedent("\n".join(lines[index:end + 1]))
+            if f'"$cargo_path" install {package} ' in command:
+                commands.append(command)
+        if len(commands) != 1:
+            raise SystemExit(f"expected one isolated Cargo install command for {package}")
+        environment = {
+            **poison,
+            "cargo_path": str(probe),
+            "rustc_path": "/trusted/rustc",
+            "rustdoc_path": "/trusted/rustdoc",
+            "RUSTC": "/untrusted/rustc",
+            "RUSTDOC": "/untrusted/rustdoc",
+            "RUSTC_WRAPPER": "/untrusted/rustc-wrapper",
+            "RUSTC_WORKSPACE_WRAPPER": "/untrusted/workspace-wrapper",
+            "HOME": "/untrusted/home",
+            "CARGO_HOME": "/untrusted/cargo-home",
+            "RELEASE_INSTALL_HOME": str(fixture / "home"),
+            "RELEASE_INSTALL_CARGO_HOME": str(fixture / "cargo-home"),
+            "RELEASE_INSTALL_ROOT": str(fixture / "install"),
+            "RELEASE_INSTALL_TARGET": str(fixture / "target"),
+        }
+        completed = subprocess.run(
+            ["/bin/bash", "--noprofile", "--norc", "-p", "-euc", commands[0]],
+            env=environment, cwd=fixture, text=True, capture_output=True,
+            timeout=30, check=True,
+        )
+        observed = json.loads(completed.stdout)
+        actual = observed["environment"]
+        expected = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": environment["RELEASE_INSTALL_HOME"],
+            "CARGO_HOME": environment["RELEASE_INSTALL_CARGO_HOME"],
+            "CARGO_INSTALL_ROOT": environment["RELEASE_INSTALL_ROOT"],
+            "CARGO_TARGET_DIR": environment["RELEASE_INSTALL_TARGET"],
+            "RUSTC": "/trusted/rustc", "RUSTDOC": "/trusted/rustdoc",
+            "RUSTC_WRAPPER": "", "RUSTC_WORKSPACE_WRAPPER": "",
+        }
+        for key, value in expected.items():
+            if actual.get(key) != value:
+                failures.append(f"{package}: {key} must be explicitly isolated (got {actual.get(key)!r})")
+        for key in poison.keys() - {"PATH"}:
+            if key in actual:
+                failures.append(f"{package}: inherited {key} crossed the installer boundary")
+        if observed["compiler"] not in ("/usr/bin/cc", "/bin/cc") or observed["compiler_status"] != 0:
+            failures.append(f"{package}: isolated installer cannot execute the system cc linker")
+        if observed["arguments"] != [
+            "install", package, "--version", version, "--locked", "--force",
+            "--root", environment["RELEASE_INSTALL_ROOT"],
+        ]:
+            failures.append(f"{package}: probe did not receive the pinned Cargo install invocation")
+if failures:
+    raise SystemExit("isolated Cargo installer environment regression:\n" + "\n".join(failures))
+print("isolated Cargo installers expose system cc without inheriting ambient settings")
+PY
+
 grep -F 'RELEASE_EXPECTED_TOOL_SHA256: ${{ needs.install-wasm-pack.outputs.archive_sha256 }}' <<<"$build_block" >/dev/null \
   && grep -F -- '--profile wasm-pack --version 0.14.0' <<<"$build_block" >/dev/null \
   && grep -F -- '--expected-sha256 "$RELEASE_EXPECTED_TOOL_SHA256"' <<<"$build_block" >/dev/null \
