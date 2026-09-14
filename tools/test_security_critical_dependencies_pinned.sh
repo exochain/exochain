@@ -24,6 +24,8 @@ manifest="Cargo.toml"
 python3 - <<'PY'
 import sys
 import tomllib
+import json
+import subprocess
 from pathlib import Path
 
 with open("Cargo.toml", "rb") as manifest:
@@ -93,6 +95,47 @@ if path_pin_violations:
     for violation in path_pin_violations:
         print(f"  - {violation}", file=sys.stderr)
     sys.exit(1)
+
+# RUSTSEC-2026-0285 affects Rustls 0.23.13 through 0.23.44. Check every
+# committed Cargo resolution, including the separately resolved zkVM guest,
+# so a safe root pin cannot hide a vulnerable sibling lockfile.
+for lock_path in (
+    Path("Cargo.lock"),
+    Path("fuzz/Cargo.lock"),
+    Path("livesafe/Cargo.lock"),
+    Path("crates/exo-cgr-methods/guest/Cargo.lock"),
+):
+    with lock_path.open("rb") as lock_file:
+        locked = tomllib.load(lock_file)
+    for package in locked["package"]:
+        if package["name"] != "rustls":
+            continue
+        version = package["version"]
+        release = version.split("-", 1)[0].split("+", 1)[0]
+        components = tuple(int(part) for part in release.split("."))
+        if len(components) != 3 or (0, 23, 13) <= components < (0, 23, 45):
+            print(
+                f"{lock_path}: rustls {version} violates RUSTSEC-2026-0285 policy; "
+                "resolve the patched dependency before release",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+# Ask Cargo to resolve workspace inheritance in the published package
+# contracts. A root lockfile alone cannot constrain downstream consumers.
+metadata = json.loads(subprocess.check_output(
+    ["cargo", "metadata", "--no-deps", "--format-version", "1", "--offline"],
+    text=True,
+))
+for name in ("exochain-dag", "exochain-dag-db-postgres"):
+    package = next(p for p in metadata["packages"] if p["name"] == name)
+    tls = [d for d in package["dependencies"] if d["name"] == "rustls"]
+    if len(tls) != 1 or tls[0]["req"] != "=0.23.45" or not tls[0]["optional"]:
+        raise SystemExit(f"{name}: standalone PostgreSQL consumers lack the patched Rustls constraint")
+    if "dep:rustls" not in package["features"]["postgres"]:
+        raise SystemExit(f"{name}: PostgreSQL does not activate the Rustls security constraint")
+    if package["features"]["default"] or tls[0]["uses_default_features"]:
+        raise SystemExit(f"{name}: TLS constraint must preserve the disabled-by-default adapter")
 PY
 
 require_exact_pin() {
@@ -122,5 +165,6 @@ require_exact_pin "hkdf" "0.12.4"
 require_exact_pin "rand" "0.8.6"
 require_exact_pin "zeroize" "1.8.2"
 require_exact_pin "ml-dsa" "0.1.0-rc.7"
+require_exact_pin "rustls" "0.23.45"
 
 echo "workspace dependency exact pin test passed"
