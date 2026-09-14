@@ -829,6 +829,7 @@ jobs:
           rustc_path="$(/home/runner/.cargo/bin/rustup which --toolchain 1.97.1 rustc)"
           rustdoc_path="$(/home/runner/.cargo/bin/rustup which --toolchain 1.97.1 rustdoc)"
           /usr/bin/env -i \
+            PATH=/usr/bin:/bin \
             HOME="$RELEASE_INSTALL_HOME" \
             CARGO_HOME="$RELEASE_INSTALL_CARGO_HOME" \
             CARGO_INSTALL_ROOT="$RELEASE_INSTALL_ROOT" \
@@ -2391,6 +2392,7 @@ jobs:
           rustc_path="$(/home/runner/.cargo/bin/rustup which --toolchain 1.97.1 rustc)"
           rustdoc_path="$(/home/runner/.cargo/bin/rustup which --toolchain 1.97.1 rustdoc)"
           /usr/bin/env -i \
+            PATH=/usr/bin:/bin \
             HOME="$RELEASE_INSTALL_HOME" CARGO_HOME="$RELEASE_INSTALL_CARGO_HOME" \
             CARGO_INSTALL_ROOT="$RELEASE_INSTALL_ROOT" CARGO_TARGET_DIR="$RELEASE_INSTALL_TARGET" \
             RUSTUP_HOME=/home/runner/.rustup RUSTUP_TOOLCHAIN=1.97.1 \
@@ -3248,7 +3250,8 @@ jobs:
             GIT_CONFIG_NOSYSTEM=1 \
             GIT_NO_REPLACE_OBJECTS=1 \
             /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" archive \
-              --format=tar "$GITHUB_SHA" packages/exochain-llm-proxy | \
+              --format=tar "$GITHUB_SHA" packages/exochain-llm-proxy \
+              crates/exo-node/fixtures/lynk | \
             /usr/bin/env -i TAR_OPTIONS= /usr/bin/tar -xf - \
               -C "$RELEASE_LLM_SOURCE_ROOT"
           [ -d "$RELEASE_LLM_PACKAGE_DIR" ] && [ ! -L "$RELEASE_LLM_PACKAGE_DIR" ]

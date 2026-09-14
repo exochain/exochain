@@ -32,7 +32,11 @@ python_path="$($python_path -c 'import os,sys; print(os.path.realpath(sys.execut
 # compilation, test lifecycle, a second clean boundary, final build, transport.
 "$python_path" -I -B - "$workflow" <<'PY'
 from pathlib import Path
+import json
+import subprocess
 import sys
+import tempfile
+import textwrap
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 start = text.index("  test-llm-proxy-npm:\n")
@@ -53,10 +57,56 @@ if not (verify < first_clean < install < test < second_clean < build < transport
     raise SystemExit("LYNK lifecycle clean/build/transport sequence is not fail-closed")
 if job.find(clean_token, second_clean + len(clean_token)) != -1:
     raise SystemExit("unexpected third LYNK cleanup obscures the lifecycle boundary")
+
+# Exercise the actual workflow archive pipeline. Omitting the shared Rust/TS
+# fixtures must fail here, before package coverage runs from the isolated tree.
+archive_git = job.index('/usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" archive')
+archive_start = job.rfind("          /usr/bin/env -i \\\n", 0, archive_git)
+archive_end = job.index('\n          [ -d "$RELEASE_LLM_PACKAGE_DIR" ]', archive_git)
+if archive_start < 0:
+    raise SystemExit("LYNK immutable source archive pipeline is missing")
+if archive_end >= verify:
+    raise SystemExit("LYNK source archive must precede source validation and lifecycle execution")
+archive_program = textwrap.dedent(job[archive_start:archive_end])
+repository = Path.cwd().resolve()
+git_env = {
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_NO_REPLACE_OBJECTS": "1",
+}
+git = ["/usr/bin/git", "--no-replace-objects", "-C", str(repository)]
+head = subprocess.check_output(git + ["rev-parse", "HEAD"], env=git_env, text=True).strip()
+fixture_paths = (
+    "crates/exo-node/fixtures/lynk/rust_receipt_emit_response_v1.json",
+    "crates/exo-node/fixtures/lynk/typescript_receipt_emit_request_v1.json",
+)
+expected = {
+    path: subprocess.check_output(git + ["show", f"{head}:{path}"], env=git_env)
+    for path in fixture_paths
+}
+with tempfile.TemporaryDirectory(prefix="exochain-llm-source-fixtures.") as source_root:
+    subprocess.run(
+        ["/bin/bash", "--noprofile", "--norc", "-p", "-c", "set -euo pipefail\n" + archive_program],
+        env={
+            **git_env,
+            "GITHUB_WORKSPACE": str(repository),
+            "GITHUB_SHA": head,
+            "RELEASE_LLM_SOURCE_ROOT": source_root,
+        },
+        check=True,
+    )
+    for path, committed_bytes in expected.items():
+        captured = Path(source_root, path)
+        if not captured.is_file() or captured.is_symlink():
+            raise SystemExit(f"LYNK captured source is missing required canonical fixture: {path}")
+        if captured.read_bytes() != committed_bytes:
+            raise SystemExit(f"LYNK captured fixture differs from the exact committed source: {path}")
+        with captured.open(encoding="utf-8") as fixture:
+            json.load(fixture)
 PY
 
 if [ "$benign_only" = true ]; then
-  printf 'LYNK lifecycle static ordering guard passed\n'
+  printf 'LYNK lifecycle ordering and captured fixture guards passed\n'
   exit 0
 fi
 
