@@ -23,7 +23,53 @@ release controls; it does not create or claim a git tag, GitHub Release,
 registry publication, deployment, production runtime verification, Article 26
 certification, or v0.3.0 closure.
 
-## Current continuation: September 9
+## Current continuation: September 14
+
+Protected credential placement is verified by names and timestamps only:
+`CARGO_REGISTRY_TOKEN` was updated in `release` at `2026-09-14T13:22:39Z`,
+and `NPM_TOKEN` at `2026-09-14T13:23:09Z`. The repository-scoped duplicates
+were removed after verification; the protected entries were not overwritten.
+The user authorized the `exochain` administrator account. Both distinct human
+environment gates retain no-self-review and no-administrator-bypass protection.
+Placement does not prove registry publishing authority.
+
+Candidate `614863da10fb752c33af86af637b5addaacafdce` passed its push/PR
+Constitutional CI and LiveSafe CI and received human PR approval. Its approved
+nonpublishing [release dry-run](https://github.com/exochain/exochain/actions/runs/34849984260)
+completed with 46 successful jobs and two failed jobs: the isolated wasm-pack
+installer could not find the system linker, and the LYNK source archive omitted
+its canonical cross-language fixtures. The corrections preserve isolation,
+version pins, package inventories and coverage thresholds. The focused
+regressions first reproduced each failure and then passed. Captured-source
+LYNK tests passed 86/86 with a clean build; exact hosted toolchain validation
+remains required. Commands and evidence are in `TEST-PLAN.md`.
+
+A current advisory refresh also identified September 14's
+`RUSTSEC-2026-0285`. The root and separately resolved guest locks now use
+patched Rustls 0.23.45. Optional exact constraints in the two PostgreSQL adapter
+manifests also protect independently resolved library consumers. All five
+native consumer probes accept the patched version and reject 0.23.37;
+PostgreSQL-disabled and browser-target boundaries remain unchanged. This is a
+dependency remediation, not a claim to have reproduced the upstream TLS
+protocol exploit locally. No advisory exception was added.
+
+The sealed complete-range static scan of `8020ceab..614863da`, scan
+`945cbb32-d13e-4054-b9f3-172c00c148b3`, accounted for all 326 then-changed
+paths with zero reportable or deferred findings. That result and the earlier
+candidate's CI/approvals remain historical; they do not cover the corrections
+in this continuation. The corrected 327-path candidate requires fresh
+complete-range final review and exact-head provider gates before publication.
+
+The configured signing key is available locally by metadata-only inspection;
+no tag is claimed. PyPI's authenticated Trusted Publisher binding still needs
+provider verification. The public registry inventory contained no intended
+0.2.6 publication at the September 14 13:33 UTC checkpoint. This release
+candidate remains unpublished and unmerged; signed tag, registry publication,
+GitHub Release, historical-version retirement and deployment/runtime evidence
+remain separate outcomes. The live provider checkpoint is maintained on
+[PR #835](https://github.com/exochain/exochain/pull/835#issuecomment-5664396129).
+
+## Historical continuation: September 9
 
 The LiveSafe dependency-inventory approval has been fulfilled; its CI passed at
 `4f5d294b3b780ba1c2d68a57496473773dbfd728`. Native Windows also passed
@@ -92,7 +138,7 @@ source ranges and do not establish validation of these later changes.
 | Clean evidence checkpoint | `7038be2df92d79a0161f8479f956d8ec44cc8414`; six-document custody and mechanical reconciliation passed before `b5dcb89b` |
 | Formal findings | 86 candidate dispositions exactly reconciled against the committed implementation checkpoint; source-checkpoint gates passed |
 | Design observations | 52 candidate dispositions exactly reconciled against the committed implementation checkpoint; ten share concrete remediation boundaries; source-checkpoint gates passed |
-| Open provider control | On 2026-09-08 both registry tokens remain repository-scoped and protected `release` contains no secrets; successful User-owner metadata rules out inherited organization scope; the crates.io owner allowlist was set to `bob-stewart` and read back after all 32 owners were verified |
+| Historical provider control | On 2026-09-08 both registry tokens were repository-scoped and protected `release` contained no secrets; September 14 placement closes that custody gap as recorded above. User-owner metadata rules out inherited organization scope; the crates.io owner allowlist is `bob-stewart`. Publisher authority remains separate. |
 | GitHub issue intake | `ISSUE-DISPOSITION.md` records all eight reviewed issues, verified closures, 0.2.6 work, and subsequent-release scope |
 | Candidate version | `0.2.6` across owned release surfaces |
 | Latest local workspace and database checkpoint | `8fc4e1e5fa0556e37cfddf300754d6d21299b438`; debug/release tests, fresh local PostgreSQL batch, build/lint/docs and dependency-policy refresh passed; remaining gates are listed below |

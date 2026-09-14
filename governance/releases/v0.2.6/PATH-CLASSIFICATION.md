@@ -80,16 +80,24 @@ CLI file and proxy HTTP source/test are core runtime adapters; the proxy's two
 normal generated HTTP artifacts retain their generated third-party/vendor
 classification. SDK packaging modifies three already-listed release adapter
 paths. These are separate commits by boundary; no adjacent surface or imported
-evidence is added. The 326-path digest remains unchanged.
+evidence is added. The 326-path digest remains unchanged at that September 9
+checkpoint.
+
+The September 14 release dry-run corrections modify already-listed release
+adapter paths. The new Rustls advisory correction updates the already-listed
+root manifest and root/guest lockfiles, and adds the existing
+`tools/test_security_critical_dependencies_pinned.sh` to the changed-path
+inventory as EXOCHAIN core CI policy. The current inventory therefore contains
+327 paths. No imported evidence or new adjacent surface is introduced.
 
 | Class | Paths |
 | --- | ---: |
-| EXOCHAIN core | 65 |
+| EXOCHAIN core | 66 |
 | Core runtime adapter | 155 |
 | Adjacent surface | 18 |
 | Imported evidence | 0 |
 | Third-party/vendor | 88 |
-| **Total** | **326** |
+| **Total** | **327** |
 
 Generated JavaScript, declaration, source-map, lock, and SBOM dependency records
 are classified as third-party/vendor artifacts even when their owned source is a
@@ -400,6 +408,7 @@ governance evidence; they do not import the external HTML.
 | `tools/test_release_version_input_boundary.sh` | core runtime adapter |
 | `tools/test_release_workflow_ref_binding.sh` | core runtime adapter |
 | `tools/test_repo_truth.sh` | EXOCHAIN core |
+| `tools/test_security_critical_dependencies_pinned.sh` | EXOCHAIN core |
 | `tools/test_stage_llm_release_package.sh` | core runtime adapter |
 | `tools/test_transport_release_build_output.sh` | core runtime adapter |
 | `tools/test_transport_release_file_set.sh` | core runtime adapter |
@@ -430,7 +439,7 @@ governance evidence; they do not import the external HTML.
 ## Mechanical reconciliation
 
 The sorted newline-delimited path set has SHA-256
-`798960302ca9cf1134fa8bd3d271bfb085d2d8520b77c468109f84b4d5038cc3`.
+`509c214ef79573532146c5923188943fc158453e16d2f8ecde37637c252453f4`.
 Run from the candidate worktree with generated test outputs removed:
 
 ```bash
@@ -458,14 +467,14 @@ untracked = subprocess.run(
 actual = sorted(set(committed_or_modified + untracked))
 rows = re.findall(r'^\| `([^`]+)` \| (EXOCHAIN core|core runtime adapter|adjacent surface|imported evidence|third-party/vendor) \|$', document.read_text(), re.MULTILINE)
 listed = [path for path, _ in rows]
-assert len(listed) == len(set(listed)) == 326
+assert len(listed) == len(set(listed)) == 327
 assert listed == actual
 digest = sha256(('\n'.join(listed) + '\n').encode()).hexdigest()
-assert digest == '798960302ca9cf1134fa8bd3d271bfb085d2d8520b77c468109f84b4d5038cc3'
+assert digest == '509c214ef79573532146c5923188943fc158453e16d2f8ecde37637c252453f4'
 counts = {}
 for _, classification in rows:
     counts[classification] = counts.get(classification, 0) + 1
-assert counts == {'core runtime adapter':155,'EXOCHAIN core':65,'third-party/vendor':88,'adjacent surface':18}
+assert counts == {'core runtime adapter':155,'EXOCHAIN core':66,'third-party/vendor':88,'adjacent surface':18}
 print(f'path_classification=PASS count={len(listed)} sha256={digest} counts={counts}')
 PY
 ```
