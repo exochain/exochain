@@ -1595,3 +1595,116 @@ target were used serially. No database or publication token entered these
 commands. The four generated exchange report files were preserved outside
 the branch. The external HTML report remains unchanged at its recorded hash.
 Required exact-head provider CI and publication controls remain separate.
+
+## September 14 release dry-run integration corrections
+
+Dry-run `34849984260` tested candidate `614863da10fb752c33af86af637b5addaacafdce`
+after both protected environment reviewers approved it. Forty-six jobs passed;
+the isolated wasm-pack installer failed because its empty environment omitted
+the system executable search path (`linker cc not found`). The LYNK package
+test job failed because the captured package-only archive omitted its canonical
+Rust/TypeScript wire fixtures (63 passed, 23 failed). These are release-runtime-
+adapter integration failures, not new findings in the original security report.
+
+The correction and acceptance plan is:
+
+1. Execute each actual isolated Cargo-install environment with a narrow command
+   probe. Before changing the workflow, require a failing result when the system
+   linker is unreachable. Afterward require real system-tool resolution while
+   inherited search paths, compiler overrides and credentials remain excluded.
+   Cover both wasm-pack and the sibling cargo-cyclonedx installer.
+2. Execute the workflow's actual immutable LYNK archive command against the
+   candidate Git object. Before changing it, require a failing result for the
+   missing canonical fixture. Afterward require both committed fixture files,
+   their exact Git bytes and valid JSON. Do not duplicate or synthesize fixtures.
+3. Supply only the literal system path `/usr/bin:/bin` to the two isolated
+   installers; retain their empty environment, absolute Rust tool paths,
+   version/lock pins, credential-free jobs and transport validation. Include
+   `crates/exo-node/fixtures/lynk` in the same pre-lifecycle Git archive as the
+   LYNK package. Do not expand any published package file inventory.
+4. Run the focused boundary guards, the captured-source LYNK coverage/build,
+   all CI-derived shell guards and normal workspace quality gates. Preserve
+   every coverage threshold, approval boundary and publication prerequisite.
+5. Commit the adapter correction separately from this governance evidence;
+   verify path custody and obtain exact-head CI plus final independent review
+   before live publication. The sealed scan of `614863da` remains historical
+   evidence and is not represented as covering a later commit.
+
+The workflow and both extended tests are already classified core runtime
+adapters in `PATH-CLASSIFICATION.md`; this test plan is EXOCHAIN core governance.
+No core Rust implementation, adjacent surface, dependency version, generated
+package output or imported report is changed by these corrections.
+
+## September 14 Rustls advisory intake and acceptance
+
+A fresh advisory-database fetch after the dry-run corrections found
+`RUSTSEC-2026-0285`, published on September 14. Both `cargo audit --deny
+unsound --deny unmaintained` and `cargo deny check` reject the root lock's
+Rustls 0.23.37. The separately resolved CGR guest lock contains 0.23.43.
+The [upstream advisory](https://github.com/rustls/rustls/security/advisories/GHSA-2mjx-qc3c-rqvc)
+identifies 0.23.13 through 0.23.44 as affected and 0.23.45 as patched. The
+handshake transcript remains authenticated; the reported failure is accepting
+peer handshake messages at the wrong encryption level, not a demonstrated
+network-attacker handshake forgery.
+
+The root dependency is shared by configured gateway TLS, outbound HTTP,
+Postgres TLS and node QUIC. The guest lock is a separately resolved build
+input, not proof of a network-exposed guest runtime. Update the exact root
+Rustls pin and both affected locks to 0.23.45, preserving selected features,
+provider, APIs and all unrelated dependency versions. Do not add an advisory
+ignore or vendor an upstream patch.
+
+Acceptance requires a RED dependency guard before the pin/lock update, GREEN
+guard and current advisory/deny checks afterward, a sibling-lock review,
+focused gateway/SDK/node compatibility tests and the full workspace gates.
+The existing pin-policy guard is extended to check the resolved Rustls version
+in every committed Cargo lock; root and guest failures must be independently
+accounted for. Keep this core dependency remediation separate from the release
+adapter integration commit and record exact post-update gate evidence.
+
+`Cargo.toml` and `tools/test_security_critical_dependencies_pinned.sh` are
+EXOCHAIN core dependency/CI policy; both Cargo locks are generated third-party/
+vendor records. No upstream source, adjacent runtime or consensus rule is edited.
+
+Independent patch review found that an external PostgreSQL-enabled library
+consumer could still resolve Rustls 0.23.37 because only gateway consumed the
+root exact pin. A standalone `exochain-dag[postgres]` Cargo resolver probe
+confirmed that resolution outside the workspace. The Cargo-metadata regression
+then failed on the missing inherited package constraint before its correction.
+Activate the optional exact Rustls dependency with the existing `postgres`
+feature in `exo-dag` and `exo-dag-db-postgres`. The latter also constrains native
+gatekeeper, SDK and lab consumers; node already inherits gateway's constraint.
+Keep both PostgreSQL adapters disabled by default and preserve the existing
+ring provider/features. Their explicit cargo-machete exceptions document a
+version-constraint dependency, whose activation and resolved version are tested;
+no runtime Rust implementation is added merely to simulate dependency usage.
+
+Validate independent consumers of DAG/PostgreSQL, DAG DB/PostgreSQL, native
+gatekeeper, SDK HTTP and lab/PostgreSQL: patched resolution must succeed and
+requesting 0.23.37 must fail. Also verify PostgreSQL-disabled and browser-target
+feature boundaries. These two existing manifest paths retain their inventory
+classifications (DAG core; DAG DB core runtime adapter) and belong with the
+shared dependency remediation because the downstream resolution constraint is
+necessary to validate the security fix independently of the root application.
+
+All five standalone native consumers resolved Rustls 0.23.45 successfully and
+rejected an explicit 0.23.37 requirement with Cargo exit 101 for the expected
+version conflict. DAG and DAG DB with PostgreSQL disabled resolved no Rustls;
+SDK targeting `wasm32-unknown-unknown`, with and without `http-client`, resolved
+no native TLS stack. Nine locked inverse dependency-tree checks corroborated
+the resolved paths. These were real offline Cargo resolutions outside the
+workspace, not fixture-generated results, and required neither network access
+nor compilation. Exact commands, exit statuses and output are retained at
+`/private/tmp/exo-rustls-consumers.O2PYKl/validation-log.json`, SHA-256
+`cc95b2ff40998a1472d0f7f4135c6e4d2e3315309a2304054176b03a4c1dd8cf`.
+
+The corrected LYNK captured-source run used Node 22.22.2/npm 10.9.7 with no
+dependency installation. All 86 tests passed with no failures or skips;
+coverage measured 96.14% lines, 92.71% branches and 97.50% functions. Removing
+the build output before a separate clean build also passed. Logs are retained
+under `/private/tmp/exochain-llm-captured-coverage.WxGUGG`: `test-coverage.log`
+has SHA-256 `07f049786e3ddc26480a307c55193652f5e3deca59ba84efb53c98bdc0a712e3`,
+and `build.log` has SHA-256
+`5725b3942856245366b02c8e91f4771605f255b094d45d27e6568a13a36c0f59`.
+The disposable source copy was removed after those logs were retained. The
+hosted release's exact Node 22.14.0/npm 10.9.2 remains a separate CI result.
