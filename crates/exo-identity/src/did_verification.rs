@@ -290,15 +290,18 @@ pub fn rotate_verification_key(
             .enumerate()
             .any(|(index, method)| {
                 index != old_method_idx
+                    && method.active
+                    && method.revoked_at.is_none()
                     && matches!(
                         decode_ed25519_multibase_public_key(&method.public_key_multibase),
                         Ok(public_key) if public_key == old_public_key
                     )
             })
-            || doc
-                .hybrid_verification_methods
-                .iter()
-                .any(|method| method.classical_public_key == old_public_key);
+            || doc.hybrid_verification_methods.iter().any(|method| {
+                method.active
+                    && method.revoked_at.is_none()
+                    && method.classical_public_key == old_public_key
+            });
 
     // Deactivate old key
     doc.verification_methods[old_method_idx].active = false;
@@ -576,6 +579,108 @@ mod tests {
         );
         let new_signature = sign(message, &new_sk);
         assert!(verify_did_signature(&doc, &new_method.id, message, &new_signature).is_ok());
+    }
+
+    #[test]
+    fn rotate_shared_key_retires_inventory_after_last_active_method() {
+        let (shared_pk, _) = generate_keypair();
+        let (first_pk, _) = generate_keypair();
+        let (second_pk, _) = generate_keypair();
+        let did = test_did();
+        let mut doc = make_doc_with_verification(did.clone(), shared_pk);
+        let first_id = doc.verification_methods[0].id.clone();
+        let mut sibling = doc.verification_methods[0].clone();
+        sibling.id = format!("{did}#key-2");
+        sibling.version = 2;
+        let second_id = sibling.id.clone();
+        doc.verification_methods.push(sibling.clone());
+
+        rotate_verification_key(&mut doc, &first_id, first_pk.as_bytes(), &did, 2000)
+            .expect("first shared-key method rotates");
+        assert_eq!(doc.public_keys, vec![shared_pk, first_pk]);
+        assert_eq!(doc.verification_methods[1], sibling);
+
+        rotate_verification_key(&mut doc, &second_id, second_pk.as_bytes(), &did, 3000)
+            .expect("last shared-key method rotates");
+        assert_eq!(doc.public_keys, vec![first_pk, second_pk]);
+        assert_eq!(doc.verification_methods.len(), 4);
+        assert!(!doc.verification_methods[0].active);
+        assert!(!doc.verification_methods[1].active);
+        assert_eq!(doc.verification_methods[0].revoked_at, Some(2000));
+        assert_eq!(doc.verification_methods[1].revoked_at, Some(3000));
+        assert_eq!(doc.verification_methods[2].version, 3);
+        assert_eq!(doc.verification_methods[3].version, 4);
+    }
+
+    #[test]
+    fn rotate_shared_key_classical_retention_requires_live_lifecycle() {
+        let (shared_pk, _) = generate_keypair();
+        let (new_pk, _) = generate_keypair();
+        let did = test_did();
+        for (active, revoked_at, keep_shared) in [
+            (true, None, true),
+            (false, Some(1500), false),
+            (false, None, false),
+            (true, Some(1500), false),
+        ] {
+            let mut doc = make_doc_with_verification(did.clone(), shared_pk);
+            let old_id = doc.verification_methods[0].id.clone();
+            let mut sibling = doc.verification_methods[0].clone();
+            sibling.id = format!("{did}#key-2");
+            sibling.version = 2;
+            sibling.active = active;
+            sibling.revoked_at = revoked_at;
+            doc.verification_methods.push(sibling.clone());
+
+            rotate_verification_key(&mut doc, &old_id, new_pk.as_bytes(), &did, 2000)
+                .expect("selected active method rotates");
+
+            assert_eq!(
+                doc.public_keys.contains(&shared_pk),
+                keep_shared,
+                "classical sibling active={active}, revoked_at={revoked_at:?}"
+            );
+            assert!(doc.public_keys.contains(&new_pk));
+            assert_eq!(doc.verification_methods[1], sibling);
+        }
+    }
+
+    #[test]
+    fn rotate_shared_key_hybrid_retention_requires_live_lifecycle() {
+        let (shared_pk, _) = generate_keypair();
+        let (pq_pk, _) = generate_pq_keypair();
+        let (new_pk, _) = generate_keypair();
+        let did = test_did();
+        for (active, revoked_at, keep_shared) in [
+            (true, None, true),
+            (false, Some(1500), false),
+            (false, None, false),
+            (true, Some(1500), false),
+        ] {
+            let mut doc = make_doc_with_verification(did.clone(), shared_pk);
+            let old_id = doc.verification_methods[0].id.clone();
+            let mut sibling = make_hybrid_method(
+                &did,
+                shared_pk,
+                pq_pk.clone(),
+                format!("{did}#hybrid-key-2"),
+                2,
+            );
+            sibling.active = active;
+            sibling.revoked_at = revoked_at;
+            doc.hybrid_verification_methods.push(sibling.clone());
+
+            rotate_verification_key(&mut doc, &old_id, new_pk.as_bytes(), &did, 2000)
+                .expect("selected active method rotates");
+
+            assert_eq!(
+                doc.public_keys.contains(&shared_pk),
+                keep_shared,
+                "hybrid sibling active={active}, revoked_at={revoked_at:?}"
+            );
+            assert!(doc.public_keys.contains(&new_pk));
+            assert_eq!(doc.hybrid_verification_methods, vec![sibling]);
+        }
     }
 
     #[test]
