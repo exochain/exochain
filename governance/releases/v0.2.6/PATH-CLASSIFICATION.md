@@ -87,17 +87,21 @@ The September 14 release dry-run corrections modify already-listed release
 adapter paths. The new Rustls advisory correction updates the already-listed
 root manifest and root/guest lockfiles, and adds the existing
 `tools/test_security_critical_dependencies_pinned.sh` to the changed-path
-inventory as EXOCHAIN core CI policy. The current inventory therefore contains
-327 paths. No imported evidence or new adjacent surface is introduced.
+inventory as EXOCHAIN core CI policy. That checkpoint contains 327 paths.
+The subsequent identity-lifecycle correction adds two existing EXOCHAIN core
+paths, `crates/exo-identity/src/did.rs` and `crates/exo-identity/src/registry.rs`,
+alongside the already-listed rotation implementation. The current inventory
+therefore contains 329 paths. No imported evidence or new adjacent surface is
+introduced.
 
 | Class | Paths |
 | --- | ---: |
-| EXOCHAIN core | 66 |
+| EXOCHAIN core | 68 |
 | Core runtime adapter | 155 |
 | Adjacent surface | 18 |
 | Imported evidence | 0 |
 | Third-party/vendor | 88 |
-| **Total** | **327** |
+| **Total** | **329** |
 
 Generated JavaScript, declaration, source-map, lock, and SBOM dependency records
 are classified as third-party/vendor artifacts even when their owned source is a
@@ -152,7 +156,9 @@ governance evidence; they do not import the external HTML.
 | `crates/exo-governance/Cargo.toml` | EXOCHAIN core |
 | `crates/exo-governance/src/crosscheck.rs` | EXOCHAIN core |
 | `crates/exo-identity/Cargo.toml` | EXOCHAIN core |
+| `crates/exo-identity/src/did.rs` | EXOCHAIN core |
 | `crates/exo-identity/src/did_verification.rs` | EXOCHAIN core |
+| `crates/exo-identity/src/registry.rs` | EXOCHAIN core |
 | `crates/exo-identity/src/shamir.rs` | EXOCHAIN core |
 | `crates/exo-identity/src/vault.rs` | EXOCHAIN core |
 | `crates/exo-legal/Cargo.toml` | EXOCHAIN core |
@@ -439,7 +445,7 @@ governance evidence; they do not import the external HTML.
 ## Mechanical reconciliation
 
 The sorted newline-delimited path set has SHA-256
-`509c214ef79573532146c5923188943fc158453e16d2f8ecde37637c252453f4`.
+`cbac249a195e4bb32ae90b06331acf95a682f4287f176ec790e952701ad1d575`.
 Run from the candidate worktree with generated test outputs removed:
 
 ```bash
@@ -467,14 +473,14 @@ untracked = subprocess.run(
 actual = sorted(set(committed_or_modified + untracked))
 rows = re.findall(r'^\| `([^`]+)` \| (EXOCHAIN core|core runtime adapter|adjacent surface|imported evidence|third-party/vendor) \|$', document.read_text(), re.MULTILINE)
 listed = [path for path, _ in rows]
-assert len(listed) == len(set(listed)) == 327
+assert len(listed) == len(set(listed)) == 329
 assert listed == actual
 digest = sha256(('\n'.join(listed) + '\n').encode()).hexdigest()
-assert digest == '509c214ef79573532146c5923188943fc158453e16d2f8ecde37637c252453f4'
+assert digest == 'cbac249a195e4bb32ae90b06331acf95a682f4287f176ec790e952701ad1d575'
 counts = {}
 for _, classification in rows:
     counts[classification] = counts.get(classification, 0) + 1
-assert counts == {'core runtime adapter':155,'EXOCHAIN core':66,'third-party/vendor':88,'adjacent surface':18}
+assert counts == {'core runtime adapter':155,'EXOCHAIN core':68,'third-party/vendor':88,'adjacent surface':18}
 print(f'path_classification=PASS count={len(listed)} sha256={digest} counts={counts}')
 PY
 ```
