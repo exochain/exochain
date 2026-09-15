@@ -1772,3 +1772,51 @@ in the release checkpoint; do not amend source solely to narrate a running gate.
 Final review covers the complete baseline-to-head range, including both newly
 listed identity files. Hosted CI, protected approvals, signed tag, publisher
 binding and registry/deployment readback remain independent acceptance gates.
+
+## September 15 isolated installer custody correction
+
+Dry-run `35021350677` tested `99ef56dd396f84a35164d8862664e46a28b0aa1d`.
+Both designated environment reviewers approved that run. Its wasm-pack job
+compiled and installed version 0.14.0 successfully, then rejected the installed
+file at the regular-file/link-count/size custody check. The job did not report
+the individual metadata fields, so the specific hosted link count is inferred,
+not directly observed. The run concluded with failure solely in the wasm-pack
+installer. Exact crates.io archive preflight and both native packaging jobs
+passed; dependent jobs were skipped.
+
+Cargo 1.97.1's pinned implementation explains a matching Linux failure:
+[`link_or_copy`](https://github.com/rust-lang/cargo/blob/c980f4866141969fab6254a680546a277789d6f0/crates/cargo-util/src/paths.rs#L642-L671)
+uses hard links outside macOS, while the
+[non-path installer](https://github.com/rust-lang/cargo/blob/c980f4866141969fab6254a680546a277789d6f0/src/cargo/ops/cargo_install.rs#L491-L518)
+renames the executable. An
+[explicitly configured build target](https://github.com/rust-lang/cargo/blob/c980f4866141969fab6254a680546a277789d6f0/src/cargo/ops/cargo_install.rs#L373-L386)
+is retained because
+[cleanup applies only to the fallback target](https://github.com/rust-lang/cargo/blob/c980f4866141969fab6254a680546a277789d6f0/src/cargo/ops/cargo_install.rs#L574-L580).
+A local real-Cargo probe confirmed macOS's distinct copy behavior; it does not
+claim Linux runtime evidence.
+
+The focused test and correction use both existing installer paths:
+
+1. Execute each workflow's actual post-install shell and inline sealer against
+   a real two-link file layout: one installed executable and its private
+   `target/release/deps` alias. Before correction, both wasm-pack and
+   cargo-cyclonedx fail with the exact installed-tool custody diagnostic.
+2. After successful installation, remove only the already-validated dedicated
+   `RELEASE_INSTALL_TARGET` before version checking and sealing. Preserve all
+   regular-file, `nlink == 1`, size, stable-read, no-symlink, digest, source,
+   credential and approval checks. The generic transport is unchanged.
+3. Require the real workflow tail to succeed, preserve executable bytes,
+   remove the private target, emit the exact archive digest, and round-trip
+   through the strict transport with a single-linked executable. Both cases
+   and the existing transport regression suite pass after correction.
+4. Re-run normal workspace quality gates and the current CI-derived guards;
+   independently review the patch and retain exact source hashes. Hosted
+   Ubuntu installer acceptance is still required before calling this a
+   verified provider correction. Do not reuse earlier run approvals for a
+   changed candidate or claim publication from a successful dry run.
+
+The two changed implementation/test paths are already classified core runtime
+adapters: `.github/workflows/release.yml` and
+`tools/test_wasm_npm_package_boundary.sh`. This test-plan addition is EXOCHAIN
+core governance and is committed separately. No Rust implementation, package
+dependency, adjacent surface or imported report changes with this correction.
