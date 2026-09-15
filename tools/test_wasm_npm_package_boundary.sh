@@ -75,6 +75,8 @@ fi
 # or Cargo settings lets ambient executables/configuration cross the boundary.
 "${PYTHON:-python3}" - "$release_workflow" <<'PY'
 import json
+import hashlib
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -185,6 +187,69 @@ with tempfile.TemporaryDirectory(prefix="exochain-installer-environment-") as te
             "--root", environment["RELEASE_INSTALL_ROOT"],
         ]:
             failures.append(f"{package}: probe did not receive the pinned Cargo install invocation")
+
+        # Cargo's non-path installer renames the built executable. On Linux its
+        # inode can still be linked from the explicitly retained target/deps.
+        # Execute the real post-install shell and inline sealer, not a source
+        # text assertion, against that ordinary producer-owned file layout.
+        run = re.search(r"(?m)^        run: \|\n((?:          .*\n|\n)*)", match.group(1))
+        if run is None:
+            raise SystemExit(f"missing installer shell for {package}")
+        shell = textwrap.dedent(run.group(1))
+        installed = re.search(r'(?m)^ +--force --root "\$RELEASE_INSTALL_ROOT"\n', shell)
+        if installed is None:
+            raise SystemExit(f"missing completed Cargo installation boundary for {package}")
+        post_install = shell[installed.end():]
+        case = fixture / f"{package}-retained-target"
+        install_root = case / "install"
+        target = case / "target"
+        executable = install_root / "bin" / package
+        build_alias = target / "release" / "deps" / f"{package}-built"
+        executable.parent.mkdir(parents=True)
+        build_alias.parent.mkdir(parents=True)
+        reported_version = "wasm-pack 0.14.0" if package == "wasm-pack" else "cargo-cyclonedx-cyclonedx 0.5.9"
+        payload = f"#!/bin/sh\nprintf '%s\\n' '{reported_version}'\n".encode()
+        build_alias.write_bytes(payload)
+        build_alias.chmod(0o755)
+        os.link(build_alias, executable)
+        if executable.stat().st_nlink != 2:
+            raise SystemExit("retained Cargo target fixture did not create its two real file links")
+        archive = case / "tool.tar"
+        inventory = case / "tool.inventory"
+        output = case / "outputs"
+        completed = subprocess.run(
+            ["/bin/bash", "--noprofile", "--norc", "-p", "-euc", "set -o pipefail\n" + post_install],
+            cwd=case, env={
+                "PATH": "/usr/bin:/bin",
+                "python_path": sys.executable,
+                "cargo_path": str(executable),
+                "RELEASE_TEMP_ROOT": str(case),
+                "RELEASE_INSTALL_ROOT": str(install_root),
+                "RELEASE_INSTALL_TARGET": str(target),
+                "RELEASE_INSTALL_HOME": str(case / "home"),
+                "RELEASE_INSTALL_CARGO_HOME": str(case / "cargo-home"),
+                "RELEASE_TOOL_ARCHIVE": str(archive),
+                "RELEASE_TOOL_INVENTORY": str(inventory),
+                "GITHUB_OUTPUT": str(output),
+            }, text=True, capture_output=True, timeout=30, check=False,
+        )
+        if completed.returncode != 0:
+            failures.append(f"{package}: retained Cargo build link prevented sealing: {completed.stderr.strip()}")
+            continue
+        if target.exists() or executable.stat().st_nlink != 1 or executable.read_bytes() != payload:
+            failures.append(f"{package}: private build cleanup did not preserve one installed executable")
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        if output.read_text() != f"archive_sha256={digest}\n":
+            failures.append(f"{package}: sealer did not carry the exact archive digest")
+        extracted = case / "extracted"
+        subprocess.run([
+            sys.executable, "-I", "-B", str(Path("tools/transport_release_file_set.py").resolve()),
+            "extract", "--profile", package, "--version", version,
+            "--archive", str(archive), "--inventory", str(inventory),
+            "--expected-sha256", digest, "--output-dir", str(extracted),
+        ], check=True, capture_output=True, text=True, timeout=30)
+        if (extracted / package).read_bytes() != payload or (extracted / package).stat().st_nlink != 1:
+            failures.append(f"{package}: strict transport did not preserve the detached executable")
 if failures:
     raise SystemExit("isolated Cargo installer environment regression:\n" + "\n".join(failures))
 print("isolated Cargo installers expose system cc without inheriting ambient settings")
