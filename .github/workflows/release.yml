@@ -842,6 +842,9 @@ jobs:
             TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8 \
             "$cargo_path" install cargo-cyclonedx --version 0.5.9 --locked \
               --force --root "$RELEASE_INSTALL_ROOT"
+          # Cargo can retain a Linux hard link in this private build target.
+          # Drop only producer-owned build artifacts; keep strict seal checks.
+          /bin/rm -rf -- "$RELEASE_INSTALL_TARGET"
           [ "$(/usr/bin/env -i \
               PATH="$RELEASE_INSTALL_ROOT/bin:/usr/bin:/bin" \
               HOME="$RELEASE_INSTALL_HOME" CARGO_HOME="$RELEASE_INSTALL_CARGO_HOME" \
@@ -2401,6 +2404,9 @@ jobs:
             TZ=UTC LANG=C.UTF-8 LC_ALL=C.UTF-8 \
             "$cargo_path" install wasm-pack --version 0.14.0 --locked \
               --force --root "$RELEASE_INSTALL_ROOT"
+          # Cargo can retain a Linux hard link in this private build target.
+          # Drop only producer-owned build artifacts; keep strict seal checks.
+          /bin/rm -rf -- "$RELEASE_INSTALL_TARGET"
           [ "$(/usr/bin/env -i "$RELEASE_INSTALL_ROOT/bin/wasm-pack" --version)" = "wasm-pack 0.14.0" ]
           archive_sha="$(/usr/bin/env -i "$python_path" -I -B - \
             "$RELEASE_INSTALL_ROOT/bin" wasm-pack wasm-pack 0.14.0 \
