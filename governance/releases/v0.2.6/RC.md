@@ -285,26 +285,29 @@ live:    input version = workspace/manifests = 0.2.6
 ```
 
 Every release checkout must initially be clean, including untracked files.
-Immediately before each release build, archive, SBOM, attestation, Cargo
-dry-run/publish, WASM build/prepare/dry-pack/publish, LYNK
-coverage/build/dry-pack/publish, artifact upload, and GitHub Release side
-effect, the workflow rebinds every trusted identity input from immutable
-workflow expressions at step scope and neutralizes `BASH_ENV`. It loads the
-combined guard and both child guards from the workflow-dispatch commit with Git
-replacement objects disabled, then rechecks the immutable HEAD and applicable
-tag branch. Mutable checkout copies of those guards cannot authorize a side
-effect. The source guard also rejects assume-unchanged and skip-worktree index
-flags that could conceal tracked drift.
-After a step intentionally creates or downloads untracked artifacts, the guard
-still rejects every tracked or staged source change while permitting those
-untracked outputs. Live guards re-fetch the named remote tag and require its
-annotated-tag object ID and peeled commit to equal the signature-verified
-outputs. This object-ID equality binds the downstream check to the exact signed
-tag bytes, not merely its mutable name. The GitHub Release job repeats both the
-source and remote-tag comparison immediately before creation and binds its
-target fallback to the validated commit. A missing, deleted, lightweight,
-unsigned, unverifiable, retargeted, mismatched, or tracked-dirty source fails
-closed. Dry runs emit no tag identity and do not fetch or require a tag.
+Before build or package lifecycle execution, the workflow captures guards and
+transport helpers from the dispatch commit with Git replacement objects
+disabled. Source checks reject tracked/staged drift and assume-unchanged or
+skip-worktree flags; trusted identity inputs are bound at step scope, with
+inherited shell, Git and loader controls neutralized. After lifecycle execution
+starts, that job must not reload Git objects or guards or receive the repository
+token. Its previously captured transport carries bounded output to fresh
+validator and publisher jobs. Those jobs independently verify source identity,
+exact inventories and the expected artifact digests before granting publication
+authority. This separation is enforced by
+`tools/test_release_workflow_ref_binding.sh`; a post-lifecycle guard reload in
+the build job is not the custody mechanism.
+
+Fresh live publishers repeat source and remote-tag checks before registry
+mutations, including each crate retry. Expected untracked artifacts are allowed
+only by the applicable guard mode; tracked or staged drift still fails closed.
+The remote annotated-tag object ID and peeled commit must equal the
+signature-verified outputs, binding the check to exact signed tag bytes rather
+than a mutable name. The GitHub Release job repeats both source and remote-tag
+comparisons immediately before creation and binds its target fallback to the
+validated commit. Missing, deleted, lightweight, unsigned, unverifiable,
+retargeted, mismatched or tracked-dirty source fails closed. Dry runs emit no
+tag identity and do not fetch or require a tag.
 
 The signature-verification keyring must contain exactly one primary key: the
 configured release fingerprint. Legitimate signing subkeys for that primary
@@ -312,16 +315,18 @@ remain supported. Machine-readable `VALIDSIG` evidence must identify the
 configured primary as the actual signer's primary; an additional bundled
 primary or a tag signed by that second signer fails closed.
 
-Native Cargo builds and preflight `cargo publish --dry-run` calls use `--locked`
-and do not permit `--allow-dirty`. Live crate publication does not reconstruct
+Native Cargo builds use `--locked`; preflight packages the workspace with
+`cargo package --workspace --no-verify --locked` and does not permit
+`--allow-dirty`. Live crate publication does not reconstruct
 or repackage source: it sends only the exact preflight `.crate` bytes through a
 captured, no-redirect, bounded-response uploader whose metadata/framing is
 checked against the pinned Cargo 1.97.1 protocol. Each retry revalidates the
 sealed archive hash and metadata without reopening repository manifests.
 `wasm-pack` receives `--locked` through its Cargo options. The
-pinned `cargo-cyclonedx` 0.5.9 CLI does not expose Cargo's `--locked` option,
-so its job first runs locked metadata and rejects any `Cargo.lock` mutation
-before SBOM upload or attestation.
+pinned `cargo-cyclonedx` 0.5.9 CLI does not expose Cargo's `--locked` option.
+Its raw SBOM transport is validated in a fresh job against independently
+derived locked Cargo metadata and the exact-source lockfile. Only canonical
+validated SBOM artifacts proceed to upload and attestation.
 
 ## Version graph
 
