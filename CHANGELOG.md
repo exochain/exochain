@@ -25,6 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-09-16 (release candidate; unpublished)
+
+Release-correction candidate superseding the failed `v0.2.6` release attempt.
+The existing signed `v0.2.6` tag, its source, and the candidate record below are
+preserved. This candidate does not establish a GitHub Release, registry
+publication, deployment, or live runtime activation.
+
+### Release / CI
+
+- Aligns the 32 publishable Rust crates, standalone CGR packages, 158 exact
+  first-party dependency pins, Rust locks, SDKs, WASM, and LLM proxy at `0.2.7`,
+  without upgrading third-party dependencies.
+- Separates signed-tag existence from publication evidence so an unpublished
+  candidate can pass the release contract while its signed source tag exists.
+
 ## [0.2.6] - 2026-08-28 (release candidate; unpublished)
 
 Security-remediation candidate for code-review run 4. This source state is not

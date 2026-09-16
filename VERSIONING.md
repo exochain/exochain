@@ -35,15 +35,19 @@ MAJOR.MINOR.PATCH
 The workspace version is set in `Cargo.toml`:
 ```toml
 [workspace.package]
-version = "0.2.6"
+version = "0.2.7"
 ```
 
-This repository state is the intended, unpublished `0.2.6` security-remediation
-release candidate. The latest published release remains `v0.2.4`. Read-only
-provider checks at `2026-08-29T03:44:56Z` found no `v0.2.5` remote tag or
-GitHub Release, HTTP 404 for `0.2.5` across all 32 publishable Rust packages,
+This repository state is the intended, unpublished `0.2.7` release-correction
+candidate, superseding the failed `v0.2.6` release attempt. The existing signed
+`v0.2.6` tag and its source remain unchanged as historical evidence. A signed tag
+identifies source; it does not establish successful publication.
+
+Historical read-only provider checks at `2026-08-29T03:44:56Z` found no `v0.2.5`
+remote tag or GitHub Release, HTTP 404 for `0.2.5` across all 32 publishable Rust packages,
 and npm E404 for both versioned npm packages; `0.2.4` provider controls were
-reachable. Workspace version alignment is not evidence of a tag, GitHub
+reachable. These checks are a dated snapshot, not a current publication claim.
+Workspace version alignment is not evidence of a tag, GitHub
 Release, registry publication, deployment, or live runtime activation.
 
 ## Release Process
@@ -96,9 +100,9 @@ Create and verify the signed release tag only after the key is configured:
 
 ```bash
 git fetch origin main --tags
-git tag -s v0.2.6 "$(git rev-parse origin/main)" -m "EXOCHAIN v0.2.6"
-git tag -v v0.2.6
-git push origin v0.2.6
+git tag -s v0.2.7 "$(git rev-parse origin/main)" -m "EXOCHAIN v0.2.7"
+git tag -v v0.2.7
+git push origin v0.2.7
 ```
 
 ### Dry Run

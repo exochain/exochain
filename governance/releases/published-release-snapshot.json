@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-09-16T18:29:42Z",
+  "version": "0.2.4",
+  "github": {
+    "release_id": 372519985,
+    "url": "https://github.com/exochain/exochain/releases/tag/v0.2.4",
+    "published_at": "2026-08-18T17:15:29Z",
+    "draft": false,
+    "prerelease": false
+  },
+  "crates_io": {
+    "version": "0.2.4",
+    "packages": [
+      "exochain-core",
+      "exochain-dag-db-api",
+      "exochain-identity",
+      "exochain-api",
+      "exochain-authority",
+      "exochain-pdp",
+      "exochain-avc",
+      "exochain-consent",
+      "exochain-dag-db-core",
+      "exochain-dag-db-graph",
+      "exochain-dag-db-domain",
+      "exochain-dag-db-retrieval",
+      "exochain-dag-db-exchange",
+      "exochain-dag",
+      "exochain-dag-db-postgres",
+      "exochain-gatekeeper",
+      "exochain-proofs",
+      "exochain-governance",
+      "exochain-escalation",
+      "exochain-tenant",
+      "exochain-catapult",
+      "exochain-legal",
+      "exochain-decision-forum",
+      "exochain-consensus",
+      "exochain-dag-db-lab",
+      "exochain-economy",
+      "exochain-gateway",
+      "exochain-messaging",
+      "exochain-root",
+      "exochain-sdk",
+      "exochain-node",
+      "exochain-wasm"
+    ]
+  },
+  "npm": {
+    "version": "0.2.4",
+    "packages": [
+      "@exochain/exochain-wasm",
+      "@exochain/llm-proxy"
+    ]
+  }
+}

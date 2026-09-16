@@ -29,6 +29,8 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 > Run `bash tools/repo_truth.sh` to regenerate native repository facts from source.
 > Capture each workspace test inventory on its named platform; one native run
 > does not measure the other platform.
+> Git tags are not publication evidence. The publication row is a dated provider
+> observation; CI checks its consistency, not the current state of registries.
 >
 > The crate count includes `exo-root`, `exo-catapult`, `exo-consensus`,
 > `exo-messaging`, `exochain-sdk`, `exo-avc`, `exo-economy`, and `exo-pdp`.
@@ -40,7 +42,7 @@ EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity 
 | Workspace tests (Linux) | 6,627 listed | Expected: prior Linux CI inventory (6,622) + five portable identity regressions; current-head Linux CI validation required |
 | Workspace tests (macOS) | 6,631 listed | Measured locally with `cargo test --workspace -- --list` (default debug features) |
 | CI quality gates | 23 | `.github/workflows/ci.yml` numbered gates; required aggregator is separate |
-| Latest published release | `v0.2.4` (GitHub Release published 2026-08-18; release crates plus `@exochain/exochain-wasm` and `@exochain/llm-proxy` resolve the same version) | `gh release list`; crates.io version API; `npm view @exochain/exochain-wasm version`; `npm view @exochain/llm-proxy version` |
+| Last verified published release | `v0.2.4` (observed `2026-09-16T18:29:42Z`; packages listed in snapshot) | [Publication snapshot](governance/releases/published-release-snapshot.json) |
 | License | Apache-2.0 for EXOCHAIN core primitives; commercial terms for Decision Forum, LegalDyne, CyberMedica, LiveSafe, and CrossChecked products | `governance/commercial-product-licensing.json`; product license files where present |
 | Live node health | Not inferred from repository state; verify each target at deploy or release time | `tools/verify_live_node_claim.sh` |
 
