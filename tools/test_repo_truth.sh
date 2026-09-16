@@ -51,6 +51,11 @@ check_readme_test_inventory() {
   ' "$readme_file"
 }
 
+# Publication is a provider observation, not a property of Git tag visibility.
+# Run this even in shallow/untagged checkouts and when local README gates are off.
+python3 tools/test_published_release_claim.py
+python3 tools/check_published_release_claim.py
+
 if grep -n -- 'grep -oP' tools/repo_truth.sh >/tmp/repo_truth_portability.txt; then
   cat /tmp/repo_truth_portability.txt >&2
   fail "tools/repo_truth.sh must not use grep -P; macOS grep does not support it"
@@ -265,7 +270,6 @@ threat_total=$(jq '.threats.total' "$json_file")
 threat_implemented=$(jq '.threats.mitigated' "$json_file")
 threat_partial=$(jq '.threats.partial' "$json_file")
 threat_planned=$(jq '.threats.planned' "$json_file")
-tag_count=$(jq '.releases.tag_count' "$json_file")
 
 if [ "$README_VERACITY_GATE" = "on" ]; then
   grep -F "**Traceability matrix** maps $trace_total requirements" README.md >/dev/null \
@@ -273,15 +277,6 @@ if [ "$README_VERACITY_GATE" = "on" ]; then
 
   grep -F "**Threat model** covers $threat_total threats tracked: $threat_implemented implemented, $threat_partial partial, $threat_planned planned" README.md >/dev/null \
     || fail "README threat count/status is not repo-truth derived"
-fi
-
-if [ "$tag_count" -gt 0 ]; then
-  if grep -F "| Published releases | None (pre-release) | \`git tag -l\` |" README.md >/dev/null; then
-    fail "README must not cite git tags as evidence for no published releases when tags exist"
-  fi
-  latest_release_tag=$(git tag -l 'v*' --sort=-version:refname | head -1)
-  grep -F "| Latest published release | \`$latest_release_tag\`" README.md >/dev/null \
-    || fail "README latest published release does not match the newest version tag"
 fi
 
 if grep -F "No GitHub Release or crates.io publication verified" README.md >/dev/null; then
