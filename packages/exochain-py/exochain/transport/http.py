@@ -29,7 +29,7 @@ import httpx
 
 from ..errors import TransportError
 
-_DEFAULT_USER_AGENT = "exochain-py/0.2.6"
+_DEFAULT_USER_AGENT = "exochain-py/0.2.7"
 _DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024
 _RESPONSE_READ_CHUNK_BYTES = 64 * 1024
 _INVALID_RESPONSE_LIMIT = "max_response_bytes must be a positive built-in int"
