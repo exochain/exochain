@@ -61,6 +61,45 @@ Regression acceptance:
 6. Run `RELEASE_VERSION_EXPECTED=0.2.7 bash tools/test_release_version_alignment.sh`
    before and after the version-only correction, preserving all third-party locks.
 
+## SBOM corpus correction
+
+The first 0.2.7 CI runs (35139889500 and 35139885789) generated all 32
+SBOMs, then correctly rejected the regression suite's stale `--version 0.2.6`.
+Its pinned corpus digest was also still for 0.2.6. The earlier local invocation
+had archived committed HEAD at 0.2.6 while the version bump was uncommitted;
+that pass did not establish validation of the 0.2.7 SBOM corpus.
+
+The test now binds a reviewed 0.2.7 corpus and rejects working-source/archive
+disagreement before generation. This correction changes only EXOCHAIN core
+test tools and this governance record. The production SBOM validator, CI
+workflow, dependencies, source/tag binding and protected approvals are unchanged.
+
+Independent offline generation with cargo-cyclonedx 0.5.9 reproduced the old
+`cb81064f7089` digest
+`d085e1ae94fb41ba802c58ff6a0c40ddb67086e23f1a9649bb2645d4f7768319`.
+Two separate `1a42883a7cc1` source archives produced byte-identical 0.2.7
+canonical files with digest
+`abdb895d4795a54dd5950368ad31da551b211da39ce9361ae669522aebd9ed4f`.
+All 32 documents are identical after narrowly normalizing only first-party
+versions, references/purls and output filenames. All 612 distinct third-party
+component identities and 631 registry lockfile packages are unchanged, as are
+all other fields and dependency edges. The digest is reviewed evidence, not
+automatically accepted from the generator during a test.
+
+Acceptance commands:
+
+- `python3 -B tools/test_release_sbom_fixture.py`: reject unreviewed versions,
+  staged/unstaged source changes and untracked Cargo-discovered source before
+  Cargo or SBOM generation. Run negative fixtures before the fix (RED) and
+  after the source guard (GREEN).
+- `bash tools/test_verify_release_sbom.sh`: validate the complete real corpus,
+  all existing adversarial mutations, repeated output and relocated paths.
+- `bash tools/test_release_sbom_boundary.sh`: preserve the release boundary
+  checks and run the source-fixture regressions in existing CI Gate 9.
+- Repeat version alignment, repository truth, workspace release build/debug
+  tests, all-target Clippy, format and warning-denied documentation locally;
+  require fresh exact-head hosted CI before integration.
+
 ## Integration and release acceptance
 
 Run the inherited required workspace build, debug/release tests, Clippy,
