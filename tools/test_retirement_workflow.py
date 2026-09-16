@@ -36,7 +36,14 @@ def workflow_contract(workflow):
     assert final["runs-on"] == "ubuntu-24.04"
     steps = final["steps"]
     checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["uses"] == "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
     assert checkout["with"] == {"ref": "${{ github.sha }}", "fetch-depth": 0, "persist-credentials": False}
+    python = next(step for step in steps if step.get("id") == "python")
+    assert python["uses"] == "actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548"
+    assert python["with"]["python-version"] == "3.13.7"
+    node = next(step for step in steps if step.get("uses", "").startswith("actions/setup-node@"))
+    assert node["uses"] == "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"
+    assert node["with"]["node-version"] == "22.14.0"
     secret_steps = [step for step in steps if "CARGO_REGISTRY_TOKEN" in json.dumps(step)]
     assert len(secret_steps) == 1
     apply = secret_steps[0]
@@ -57,6 +64,7 @@ def workflow_contract(workflow):
     assert "GITHUB_SHA" not in final["env"]
     artifact = steps[-1]
     assert artifact["if"] == "${{ always() }}"
+    assert artifact["uses"] == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
     assert artifact["with"]["path"] == "${{ runner.temp }}/retirement-023-receipts.jsonl"
 
 
@@ -101,6 +109,36 @@ class WorkflowTests(unittest.TestCase):
 
     def test_mutable_checkout_is_rejected(self):
         self.workflow["jobs"]["retire"]["steps"][0]["with"]["ref"] = "main"
+        with self.assertRaises(AssertionError):
+            workflow_contract(self.workflow)
+
+    def test_checkout_action_sha_downgrade_is_rejected(self):
+        self.workflow["jobs"]["retire"]["steps"][0]["uses"] = "actions/checkout@main"
+        with self.assertRaises(AssertionError):
+            workflow_contract(self.workflow)
+
+    def test_setup_python_action_sha_downgrade_is_rejected(self):
+        self.workflow["jobs"]["retire"]["steps"][1]["uses"] = "actions/setup-python@main"
+        with self.assertRaises(AssertionError):
+            workflow_contract(self.workflow)
+
+    def test_setup_node_action_sha_downgrade_is_rejected(self):
+        self.workflow["jobs"]["retire"]["steps"][2]["uses"] = "actions/setup-node@main"
+        with self.assertRaises(AssertionError):
+            workflow_contract(self.workflow)
+
+    def test_receipt_upload_action_sha_downgrade_is_rejected(self):
+        self.workflow["jobs"]["retire"]["steps"][-1]["uses"] = "actions/upload-artifact@main"
+        with self.assertRaises(AssertionError):
+            workflow_contract(self.workflow)
+
+    def test_python_version_downgrade_is_rejected(self):
+        self.workflow["jobs"]["retire"]["steps"][1]["with"]["python-version"] = "3.13"
+        with self.assertRaises(AssertionError):
+            workflow_contract(self.workflow)
+
+    def test_node_version_downgrade_is_rejected(self):
+        self.workflow["jobs"]["retire"]["steps"][2]["with"]["node-version"] = "22"
         with self.assertRaises(AssertionError):
             workflow_contract(self.workflow)
 
