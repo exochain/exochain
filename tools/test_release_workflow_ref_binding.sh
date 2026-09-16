@@ -446,25 +446,34 @@ fi
 # precondition, then require the source guard to compare committed bytes rather
 # than trusting cached index metadata or checkout configuration.
 tracked_mtime_reference="$fixture_root/tracked-mtime-reference"
-touch -t 200001010000 "$fixture_dir/tracked.txt"
-cp -p "$fixture_dir/tracked.txt" "$tracked_mtime_reference"
-git -C "$fixture_dir" config core.trustctime false
-git -C "$fixture_dir" config core.checkStat minimal
-git -C "$fixture_dir" update-index --really-refresh
-printf 'changed\n' > "$fixture_dir/tracked.txt"
-touch -r "$tracked_mtime_reference" "$fixture_dir/tracked.txt"
-if [ -n "$(git -C "$fixture_dir" status --porcelain=v1 --untracked-files=no)" ]; then
-  fail "stat-cache regression fixture must conceal the same-size tracked mutation from git status"
-fi
-if run_source_guard "$fixture_sha" "$fixture_sha" "$fixture_sha" >/dev/null 2>&1; then
-  fail "source guard must reject tracked byte changes concealed by local trustctime and checkStat settings"
-fi
-git -C "$fixture_dir" restore --source=HEAD --worktree -- tracked.txt
-git -C "$fixture_dir" config --unset core.trustctime
-git -C "$fixture_dir" config --unset core.checkStat
-git -C "$fixture_dir" add -- tracked.txt
-git -C "$fixture_dir" diff --cached --quiet -- tracked.txt \
-  || fail "stat-cache regression cleanup must preserve the committed tracked blob"
+committed_tracked_blob="$(git -C "$fixture_dir" rev-parse "${fixture_sha}:tracked.txt")"
+for stat_cache_timing in immediate delayed; do
+  touch -t 200001010000 "$fixture_dir/tracked.txt"
+  cp -p "$fixture_dir/tracked.txt" "$tracked_mtime_reference"
+  git -C "$fixture_dir" config core.trustctime false
+  git -C "$fixture_dir" config core.checkStat minimal
+  git -C "$fixture_dir" update-index --really-refresh
+  if [ "$stat_cache_timing" = delayed ]; then
+    /bin/sleep 1.1
+  fi
+  printf 'changed\n' > "$fixture_dir/tracked.txt"
+  touch -r "$tracked_mtime_reference" "$fixture_dir/tracked.txt"
+  if [ -n "$(git -C "$fixture_dir" status --porcelain=v1 --untracked-files=no)" ]; then
+    fail "$stat_cache_timing stat-cache fixture must conceal the same-size tracked mutation from git status"
+  fi
+  if run_source_guard "$fixture_sha" "$fixture_sha" "$fixture_sha" >/dev/null 2>&1; then
+    fail "source guard must reject $stat_cache_timing tracked byte changes concealed by local trustctime and checkStat settings"
+  fi
+  rm "$fixture_dir/tracked.txt"
+  git -C "$fixture_dir" restore --source=HEAD --worktree -- tracked.txt
+  git -C "$fixture_dir" config --unset core.trustctime
+  git -C "$fixture_dir" config --unset core.checkStat
+  restored_tracked_blob="$(git -C "$fixture_dir" hash-object --no-filters -- tracked.txt)"
+  [ "$restored_tracked_blob" = "$committed_tracked_blob" ] \
+    || fail "$stat_cache_timing stat-cache cleanup must materialize the committed tracked blob"
+  run_source_guard "$fixture_sha" "$fixture_sha" "$fixture_sha" >/dev/null \
+    || fail "source guard must accept source after $stat_cache_timing stat-cache cleanup"
+done
 
 chmod -x "$fixture_dir/executable.sh"
 if run_source_guard "$fixture_sha" "$fixture_sha" "$fixture_sha" >/dev/null 2>&1; then
