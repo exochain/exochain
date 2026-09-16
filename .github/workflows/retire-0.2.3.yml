@@ -1,0 +1,122 @@
+# Copyright 2026 Exochain Foundation
+# SPDX-License-Identifier: Apache-2.0
+# JSON is a YAML subset, allowing dependency-free structural contract tests.
+{
+  "name": "EXOCHAIN Retire Broken 0.2.3 Crates",
+  "on": {
+    "workflow_dispatch": {
+      "inputs": {
+        "maintenance_tag": {
+          "description": "Signed controller tag v0.2.7-retire-0.2.3.N (dispatch from this same tag)",
+          "required": true,
+          "type": "string"
+        },
+        "dry_run": {
+          "description": "Public preflight only; no registry mutation",
+          "required": true,
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  },
+  "permissions": {"contents": "read"},
+  "concurrency": {"group": "retire-crates-0.2.3", "cancel-in-progress": false},
+  "defaults": {"run": {"shell": "/bin/bash --noprofile --norc -p -e -o pipefail {0}"}},
+  "jobs": {
+    "ci": {
+      "name": "Verify controller with full constitutional CI",
+      "uses": "./.github/workflows/ci.yml",
+      "permissions": {"contents": "read"}
+    },
+    "approve": {
+      "name": "Retirement first independent approval",
+      "runs-on": "ubuntu-24.04",
+      "needs": ["ci"],
+      "permissions": {},
+      "environment": "release",
+      "steps": [{"run": "printf '%s\\n' 'The configured release environment approved this retirement controller.'"}]
+    },
+    "approve-second": {
+      "name": "Retirement second independent approval",
+      "runs-on": "ubuntu-24.04",
+      "needs": ["ci"],
+      "permissions": {},
+      "environment": "release-second",
+      "steps": [{"run": "printf '%s\\n' 'The configured release-second environment approved this retirement controller.'"}]
+    },
+    "retire": {
+      "name": "Verify and retire fixed 31-version inventory",
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 20,
+      "needs": ["ci", "approve", "approve-second"],
+      "permissions": {"contents": "read"},
+      "environment": "release",
+      "env": {
+        "BASH_ENV": "/dev/null",
+        "ENV": "/dev/null",
+        "CDPATH": "",
+        "LD_PRELOAD": "",
+        "LD_AUDIT": "",
+        "LD_LIBRARY_PATH": "",
+        "GLIBC_TUNABLES": "",
+        "GCONV_PATH": "",
+        "LOCPATH": "",
+        "NODE_OPTIONS": "",
+        "NODE_PATH": "",
+        "NODE_EXTRA_CA_CERTS": "",
+        "OPENSSL_CONF": "",
+        "RETIREMENT_TAG": "${{ inputs.maintenance_tag }}",
+        "DRY_RUN": "${{ inputs.dry_run }}",
+        "EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC": "${{ vars.EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC }}",
+        "EXOCHAIN_RELEASE_SIGNING_FINGERPRINT": "${{ vars.EXOCHAIN_RELEASE_SIGNING_FINGERPRINT }}",
+        "EXOCHAIN_CRATES_IO_ALLOWED_OWNERS": "${{ vars.EXOCHAIN_CRATES_IO_ALLOWED_OWNERS }}"
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+          "with": {"ref": "${{ github.sha }}", "fetch-depth": 0, "persist-credentials": false}
+        },
+        {
+          "uses": "actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548",
+          "id": "python",
+          "with": {"python-version": "3.13.7", "cache": ""}
+        },
+        {
+          "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "with": {"node-version": "22.14.0", "cache": ""}
+        },
+        {
+          "name": "Public preflight only",
+          "if": "${{ inputs.dry_run }}",
+          "env": {
+            "RETIREMENT_PYTHON": "${{ steps.python.outputs.python-path }}",
+            "RELEASE_GITHUB_TOKEN": "${{ github.token }}"
+          },
+          "run": "/bin/bash --noprofile --norc -p tools/run_retirement_023.sh"
+        },
+        {
+          "name": "Apply approved fixed-scope retirement",
+          "if": "${{ !inputs.dry_run }}",
+          "env": {
+            "RETIREMENT_PYTHON": "${{ steps.python.outputs.python-path }}",
+            "RELEASE_GITHUB_TOKEN": "${{ github.token }}",
+            "CARGO_REGISTRY_TOKEN": "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+          },
+          "run": "/bin/bash --noprofile --norc -p tools/run_retirement_023.sh"
+        },
+        {
+          "name": "Preserve bounded retirement receipts",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "with": {
+            "name": "retirement-023-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/retirement-023-receipts.jsonl",
+            "if-no-files-found": "ignore",
+            "retention-days": 90
+          }
+        }
+      ]
+    }
+  }
+}
