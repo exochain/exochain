@@ -22,6 +22,23 @@ python_path="$($python_path -c 'import os,sys; print(os.path.realpath(sys.execut
 "$python_path" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
   || fail "Python 3.11 or newer is required"
 
+# The corpus digest is reviewed, not inferred from whichever version is present.
+# This test archives HEAD; refuse to claim coverage of different working inputs.
+reviewed_version=0.2.7
+workspace_version="$("$python_path" -I -B -c \
+  'import pathlib,sys,tomllib; print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text())["workspace"]["package"]["version"])' \
+  "$repo_root/Cargo.toml")"
+[ "$workspace_version" = "$reviewed_version" ] \
+  || fail "workspace version $workspace_version does not match reviewed SBOM corpus version $reviewed_version"
+/usr/bin/git -C "$repo_root" diff --quiet HEAD -- Cargo.toml Cargo.lock crates/ \
+  || fail "SBOM source inputs differ from HEAD; commit the source before testing its archived corpus"
+# Gate 10 has already generated raw .cdx.json files in crates/. Those are not
+# Cargo source inputs; other new files can introduce auto-discovered targets.
+untracked_sources="$(/usr/bin/git -C "$repo_root" ls-files --others --exclude-standard \
+  -- crates/ ':(exclude,glob)crates/**/*.cdx.json')"
+[ -z "$untracked_sources" ] \
+  || fail "untracked SBOM source inputs are absent from HEAD; commit or isolate them before testing"
+
 cargo_path="$(command -v cargo)"
 [ -x "$cargo_path" ] || fail "Cargo is unavailable"
 [ "$("$cargo_path" cyclonedx --version)" = "cargo-cyclonedx-cyclonedx 0.5.9" ] \
@@ -63,7 +80,7 @@ run_validator() {
     --cargo-metadata "$metadata" \
     --cargo-lock "$lock" \
     --output-dir "$output_dir" \
-    --version 0.2.6 \
+    --version "$reviewed_version" \
     --forbid-prefix "$test_root" \
     "$@"
 }
@@ -72,14 +89,11 @@ canonical_one="$test_root/canonical-one"
 canonical_two="$test_root/canonical-two"
 digest_one="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_one")"
 digest_two="$(run_validator "$raw_root" "$metadata_file" "$lock_file" "$canonical_two")"
-# Independently reconciled against source graph 83503ddb5b94 after reproducing
-# the prior a574ee15130b digest exactly. Of 32 canonical SBOMs, 22 are unchanged;
-# 10 replace Rustls 0.23.37 with 0.23.45 and WebPKI 0.103.13 with 0.103.15.
-# Those 10 also add the DAG DB PostgreSQL -> Rustls constraint edge. The DAG
-# postgres feature is disabled in this corpus. Every component/checksum/edge
-# matches the exact Cargo graph; no other field changes. Two independent
-# source archives produce byte-identical output with the unchanged validator.
-expected_digest=d085e1ae94fb41ba802c58ff6a0c40ddb67086e23f1a9649bb2645d4f7768319
+# Reconciled against source 1a42883a7cc1 after reproducing the cb81064f7089
+# 0.2.6 digest d085e1ae94fb41ba802c58ff6a0c40ddb67086e23f1a9649bb2645d4f7768319.
+# Only owned package versions, their references and output filenames change to
+# 0.2.7; third-party components, checksums and graph edges remain unchanged.
+expected_digest=abdb895d4795a54dd5950368ad31da551b211da39ce9361ae669522aebd9ed4f
 [ "$digest_one" = "$expected_digest" ] && [ "$digest_two" = "$expected_digest" ] \
   || fail "exact cargo-cyclonedx 0.5.9 corpus did not produce the reviewed canonical digest"
 /usr/bin/diff -ru "$canonical_one" "$canonical_two" >/dev/null \
