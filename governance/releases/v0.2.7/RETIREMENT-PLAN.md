@@ -88,6 +88,26 @@ checkout. It invokes Task 1's CLI and the existing exact-target namespace guard.
   Open a separate reviewed PR without modifying PR #837's source. No execution
   or issue closure is authorized merely by the existence of this controller.
 
+### Task 3: Deterministic existing source-guard fixture cleanup
+
+**Files:** Modify `tools/test_release_workflow_ref_binding.sh` only.
+
+**Evidence:** Retirement validation observed the existing stat-cache cleanup
+fail after the actual source guard correctly rejected altered bytes. A
+deterministic isolated Git reproduction proved that `git restore` could trust
+the same stale metadata used to conceal the mutation, leaving modified bytes
+behind and allowing subsequent negative tests to fail for the wrong reason.
+
+- [ ] Preserve the raw-byte rejection assertion and all existing negative
+  tests. Make cleanup force materialization of the committed tracked blob,
+  then verify the actual file hash against the immutable fixture commit.
+  Do not use a cached Git status/diff result as the cleanup proof.
+- [ ] Retain the observed failing deterministic reproduction, prove corrected
+  cleanup for both timing conditions, and run the complete source-ref suite.
+  No production helper, product branch, dependency or release tag changes.
+- [ ] Self-review, commit this test-only correction separately with signing,
+  and obtain focused independent review before controller integration.
+
 ## Publication and execution acceptance
 
 After the product release and controller are independently accepted: update
