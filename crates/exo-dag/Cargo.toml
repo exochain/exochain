@@ -37,7 +37,7 @@ default = []
 postgres = ["dep:sqlx", "dep:serde_json", "dep:rustls"]
 
 [dependencies]
-exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.6" }
+exo-core = { package = "exochain-core", path = "../exo-core", version = "=0.2.7" }
 serde = { workspace = true }
 blake3 = { workspace = true }
 ciborium = { workspace = true }
