@@ -906,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-authority"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "blake3",
  "ciborium",
@@ -919,7 +919,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-avc"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "ciborium",
  "exochain-authority",
@@ -931,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-cgr-guest"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "exochain-gatekeeper",
  "exochain-proofs",
@@ -940,7 +940,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-consent"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "blake3",
  "ciborium",
@@ -951,7 +951,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-core"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "blake3",
  "chrono",
@@ -970,7 +970,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "async-trait",
  "blake3",
@@ -984,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-api"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -992,7 +992,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-core"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -1004,7 +1004,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-domain"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "ciborium",
  "exochain-authority",
@@ -1023,7 +1023,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-exchange"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "exochain-authority",
  "exochain-avc",
@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-graph"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "ciborium",
  "exochain-core",
@@ -1055,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-postgres"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "exochain-core",
  "exochain-dag",
@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-dag-db-retrieval"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "exochain-core",
  "exochain-dag-db-api",
@@ -1091,7 +1091,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-gatekeeper"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "blake3",
  "ciborium",
@@ -1107,7 +1107,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-identity"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "blake3",
  "bs58",
@@ -1125,7 +1125,7 @@ dependencies = [
 
 [[package]]
 name = "exochain-proofs"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "blake3",
  "ciborium",

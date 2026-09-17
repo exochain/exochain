@@ -99,4 +99,6 @@ fi
 grep -F 'bash tools/test_release_sbom_boundary.sh' "$ci_workflow" >/dev/null \
   || fail "CI repo hygiene must run the release SBOM boundary guard"
 
+"${PYTHON:-python3}" -B tools/test_release_sbom_fixture.py
+
 printf 'release SBOM boundary test passed\n'
