@@ -25,6 +25,12 @@ name: EXOCHAIN Release
 "on":
   workflow_dispatch:
     inputs:
+      operation:
+        description: "Normal release or fixed original-artifact 0.2.7 recovery"
+        required: true
+        type: choice
+        options: [release, recover-0.2.7]
+        default: release
       version:
         description: "Release version (e.g. 0.2.0)"
         required: true
@@ -68,6 +74,7 @@ jobs:
     permissions:
       contents: read
     outputs:
+      operation: ${{ steps.validate.outputs.operation }}
       version: ${{ steps.validate.outputs.version }}
       tag: ${{ steps.validate.outputs.tag }}
       commit_sha: ${{ steps.validate.outputs.commit_sha }}
@@ -102,6 +109,7 @@ jobs:
           GCONV_PATH: ""
           LOCPATH: ""
           RELEASE_VERSION_INPUT: ${{ inputs.version }}
+          RELEASE_OPERATION_INPUT: ${{ inputs.operation }}
           EXPECTED_COMMIT_SHA: ${{ github.sha }}
           TRUSTED_RELEASE_REF: ${{ github.sha }}
         run: |
@@ -115,7 +123,21 @@ jobs:
           head_sha="$(git rev-parse HEAD)"
           RELEASE_VERSION_EXPECTED="$version" bash tools/test_release_version_alignment.sh
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-          printf 'tag=v%s\n' "$version" >> "$GITHUB_OUTPUT"
+          # BEGIN RELEASE OPERATION VALIDATION
+          case "$RELEASE_OPERATION_INPUT" in
+            release)
+              [[ "$GITHUB_REF" != refs/tags/v0.2.7-recover.* ]] || exit 1
+              printf 'tag=v%s\n' "$version" >> "$GITHUB_OUTPUT"
+              ;;
+            recover-0.2.7)
+              [ "$version" = 0.2.7 ] || exit 1
+              [[ "$GITHUB_REF" =~ ^refs/tags/v0\.2\.7-recover\.[1-9][0-9]*$ ]] || exit 1
+              printf 'tag=%s\n' "${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo 'Unknown release operation' >&2; exit 1 ;;
+          esac
+          printf 'operation=%s\n' "$RELEASE_OPERATION_INPUT" >> "$GITHUB_OUTPUT"
+          # END RELEASE OPERATION VALIDATION
           printf 'commit_sha=%s\n' "$head_sha" >> "$GITHUB_OUTPUT"
           printf 'trusted_ref=%s\n' "$head_sha" >> "$GITHUB_OUTPUT"
 
@@ -210,13 +232,14 @@ jobs:
           GCONV_PATH: ""
           LOCPATH: ""
           DRY_RUN: ${{ inputs.dry_run }}
+          RELEASE_OPERATION: ${{ needs.validate-release-inputs.outputs.operation }}
           RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
           EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
           EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC: ${{ vars.EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC }}
           EXOCHAIN_RELEASE_SIGNING_FINGERPRINT: ${{ vars.EXOCHAIN_RELEASE_SIGNING_FINGERPRINT }}
         run: |
           set -euo pipefail
-          if [ "$DRY_RUN" = "true" ]; then
+          if [ "$DRY_RUN" = "true" ] && [ "$RELEASE_OPERATION" = release ]; then
             printf 'tag_object_sha=\n' >> "$GITHUB_OUTPUT"
             printf 'tag_commit_sha=\n' >> "$GITHUB_OUTPUT"
             echo "Dry run: signed tag requirement is skipped."
@@ -265,6 +288,7 @@ jobs:
   # Build release artifacts
   # -----------------------------------------------------------------------
   release-build:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' }}
     name: "Build Legacy Native ABI Artifacts"
     runs-on: ubuntu-24.04
     needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
@@ -555,6 +579,7 @@ jobs:
           retention-days: 7
 
   package-release:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' }}
     name: "Package Legacy Native ABI Artifacts"
     runs-on: ubuntu-24.04
     needs: [release-build, verify-signed-tag, validate-release-inputs]
@@ -755,10 +780,10 @@ jobs:
   #     --owner exochain
   # -----------------------------------------------------------------------
   install-cargo-cyclonedx:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}
     name: "Build isolated cargo-cyclonedx tool transport"
     runs-on: ubuntu-24.04
     needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
-    if: ${{ !inputs.dry_run }}
     permissions: {}
     outputs:
       archive_sha256: ${{ steps.seal-tool.outputs.archive_sha256 }}
@@ -943,10 +968,10 @@ jobs:
           retention-days: 1
 
   generate-sbom:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}
     name: "Generate Release SBOM"
     runs-on: ubuntu-24.04
     needs: [install-cargo-cyclonedx, verify-signed-tag, validate-release-inputs]
-    if: ${{ !inputs.dry_run }}
     permissions:
       contents: read
     outputs:
@@ -1252,10 +1277,10 @@ jobs:
           retention-days: 1
 
   validate-sbom:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}
     name: "Validate and canonicalize Release SBOM"
     runs-on: ubuntu-24.04
     needs: [generate-sbom, verify-signed-tag, validate-release-inputs]
-    if: ${{ !inputs.dry_run }}
     permissions:
       contents: read
     outputs:
@@ -1491,10 +1516,10 @@ jobs:
   # authority in its environment.
   # -----------------------------------------------------------------------
   attest-release:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}
     name: "Attest Release Archives"
     runs-on: ubuntu-24.04
     needs: [package-release, validate-sbom, verify-signed-tag, validate-release-inputs]
-    if: ${{ !inputs.dry_run }}
     permissions:
       contents: read
       attestations: write
@@ -1612,6 +1637,7 @@ jobs:
   # Preflight every crates.io package without registry credentials.
   # -----------------------------------------------------------------------
   preflight-crates:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' }}
     name: "Preflight Exact crates.io Archives"
     runs-on: ubuntu-24.04
     needs: [package-release, verify-signed-tag, validate-release-inputs]
@@ -1891,10 +1917,10 @@ jobs:
   # untrusted transport consumed only by the fresh credentialed publisher.
   # -----------------------------------------------------------------------
   reproduce-crates:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}
     name: "Reproduce Exact crates.io Candidates"
     runs-on: ubuntu-24.04
     needs: [preflight-crates, verify-signed-tag, validate-release-inputs]
-    if: ${{ !inputs.dry_run }}
     permissions:
       contents: read
     steps:
@@ -2121,6 +2147,7 @@ jobs:
   # this job. Every helper is captured and verified before the first mutation.
   # -----------------------------------------------------------------------
   publish:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}
     name: "Publish Exact crates.io Candidates"
     runs-on: ubuntu-24.04
     environment: release
@@ -2133,7 +2160,6 @@ jobs:
       - attest-release
       - verify-signed-tag
       - validate-release-inputs
-    if: ${{ !inputs.dry_run }}
     permissions:
       contents: read
     steps:
@@ -2320,6 +2346,7 @@ jobs:
             /bin/bash --noprofile --norc -p
 
   install-wasm-pack:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' }}
     name: "Build isolated wasm-pack tool transport"
     runs-on: ubuntu-24.04
     needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
@@ -2496,6 +2523,7 @@ jobs:
           retention-days: 1
 
   build-wasm-npm:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' }}
     name: "Build WASM npm package output"
     runs-on: ubuntu-24.04
     needs: [install-wasm-pack, verify-signed-tag, validate-release-inputs]
@@ -2812,6 +2840,7 @@ jobs:
           retention-days: 7
 
   prepare-wasm-npm:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' }}
     name: "Prepare exact WASM npm package on fresh runner"
     runs-on: ubuntu-24.04
     needs: [build-wasm-npm, verify-signed-tag, validate-release-inputs]
@@ -3091,6 +3120,7 @@ jobs:
   # Publish LYNK LLM proxy package to npm (unless dry run)
   # -----------------------------------------------------------------------
   test-llm-proxy-npm:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' }}
     name: "Test LYNK npm package"
     runs-on: ubuntu-24.04
     needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
@@ -3377,6 +3407,7 @@ jobs:
 
 
   prepare-llm-proxy-npm:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' }}
     name: "Prepare exact LYNK npm package on fresh runner"
     runs-on: ubuntu-24.04
     needs: [test-llm-proxy-npm, verify-signed-tag, validate-release-inputs]
@@ -3661,6 +3692,7 @@ jobs:
   # any package lifecycle code runs, and the packed bytes are bound to a
   # strict reviewed file manifest.
   prepare-sdk-npm:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' }}
     name: "Prepare exact TypeScript SDK npm package"
     runs-on: ubuntu-24.04
     needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
@@ -3918,6 +3950,7 @@ jobs:
   # authority exists. The manifest is the exact digest contract consumed by
   # the later fresh publisher runner.
   prepare-python-package:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' }}
     name: "Prepare exact Python SDK distributions"
     runs-on: ubuntu-24.04
     needs: [approve, approve-second, verify-signed-tag, validate-release-inputs]
@@ -4122,6 +4155,7 @@ jobs:
   # Registry credentials and OIDC are introduced only on fresh runners after
   # both npm tarballs and every crate archive completed token-free preflight.
   publish-wasm-npm:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}
     name: "Publish Exact WASM npm Package"
     runs-on: ubuntu-24.04
     environment: release
@@ -4131,7 +4165,6 @@ jobs:
       - prepare-llm-proxy-npm
       - verify-signed-tag
       - validate-release-inputs
-    if: ${{ !inputs.dry_run }}
     permissions:
       contents: read
       id-token: write
@@ -4358,6 +4391,7 @@ jobs:
               /bin/bash --noprofile --norc -p -s -- wasm
 
   publish-llm-proxy-npm:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}
     name: "Publish Exact LYNK npm Package"
     runs-on: ubuntu-24.04
     environment: release
@@ -4368,7 +4402,6 @@ jobs:
       - prepare-llm-proxy-npm
       - verify-signed-tag
       - validate-release-inputs
-    if: ${{ !inputs.dry_run }}
     permissions:
       contents: read
       id-token: write
@@ -4595,6 +4628,7 @@ jobs:
               /bin/bash --noprofile --norc -p -s -- llm
 
   publish-sdk-npm:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}
     name: "Publish Exact TypeScript SDK npm Package"
     runs-on: ubuntu-24.04
     environment: release
@@ -4605,7 +4639,6 @@ jobs:
       - prepare-python-package
       - verify-signed-tag
       - validate-release-inputs
-    if: ${{ !inputs.dry_run }}
     permissions:
       contents: read
       id-token: write
@@ -4786,6 +4819,7 @@ jobs:
               /bin/bash --noprofile --norc -p -s -- sdk
 
   publish-python-package:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}
     name: "Publish Exact Python SDK Distributions"
     runs-on: ubuntu-24.04
     environment: release
@@ -4794,7 +4828,6 @@ jobs:
       - prepare-python-package
       - verify-signed-tag
       - validate-release-inputs
-    if: ${{ !inputs.dry_run }}
     permissions:
       contents: read
       id-token: write
@@ -5119,10 +5152,10 @@ jobs:
             BASH_ENV=/dev/null /bin/bash --noprofile --norc -p
 
   github-release:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}
     name: "Create GitHub Release"
     runs-on: ubuntu-24.04
     needs: [package-release, validate-sbom, attest-release, publish, publish-wasm-npm, publish-llm-proxy-npm, publish-sdk-npm, publish-python-package, verify-signed-tag, validate-release-inputs]
-    if: ${{ !inputs.dry_run }}
     permissions:
       contents: write
     steps:
@@ -5390,3 +5423,955 @@ jobs:
             ${{ runner.temp }}/exochain-release-assets/archives/*/exochain-${{ needs.validate-release-inputs.outputs.version }}-*.tar.gz
             ${{ runner.temp }}/exochain-release-assets/sbom/exochain-${{ needs.validate-release-inputs.outputs.version }}-*.cdx.json
           draft: false
+
+  # Fixed original-artifact recovery. Product and publisher identities stay separate.
+  recovery-import:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'recover-0.2.7' }}
+    name: "Verify Original 0.2.7 Artifact Custody"
+    runs-on: ubuntu-24.04
+    needs: [ci, approve, approve-second, verify-signed-tag, validate-release-inputs]
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    outputs:
+      artifact_id: ${{ steps.transport.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        id: setup-python
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          python-version: 3.13.7
+          cache: ""
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          node-version: 24.15.0
+          check-latest: false
+      - name: Verify Original 0.2.7 Artifact Custody
+        id: import
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC: ${{ vars.EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC }}
+          EXOCHAIN_RELEASE_SIGNING_FINGERPRINT: ${{ vars.EXOCHAIN_RELEASE_SIGNING_FINGERPRINT }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+          RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
+        run: |
+          set -euo pipefail
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/run_release_recovery_027.sh" | \
+            /bin/bash --noprofile --norc -p -s -- import
+      - name: Transport Strictly Verified Original Files
+        id: transport
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          name: exochain-027-recovery-original-files
+          path: ${{ steps.import.outputs.artifact_directory }}/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Retain Original Custody Verification Evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          name: exochain-027-recovery-custody-evidence
+          path: ${{ steps.import.outputs.evidence_directory }}/
+          if-no-files-found: error
+          retention-days: 30
+
+  recovery-wasm:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'recover-0.2.7' }}
+    name: "Accept Existing 0.2.7 WASM Without Publishing"
+    runs-on: ubuntu-24.04
+    needs: [recovery-import, verify-signed-tag, validate-release-inputs]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        id: setup-python
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          python-version: 3.13.7
+          cache: ""
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          node-version: 24.15.0
+          check-latest: false
+      - name: Download exact verified recovery transport
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          artifact-ids: ${{ needs.recovery-import.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/exochain-recovery-artifacts
+      - name: Accept Existing 0.2.7 WASM Without Publishing
+        id: npm-publication
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC: ${{ vars.EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC }}
+          EXOCHAIN_RELEASE_SIGNING_FINGERPRINT: ${{ vars.EXOCHAIN_RELEASE_SIGNING_FINGERPRINT }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+          RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
+        run: |
+          set -euo pipefail
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/run_release_recovery_027.sh" | \
+            /bin/bash --noprofile --norc -p -s -- npm-wasm
+      - name: Retain Bounded Public Recovery Receipts
+        if: ${{ always() && steps.npm-publication.outputs.receipts_ready == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          name: exochain-027-recovery-npm-wasm-receipts
+          path: |
+            ${{ runner.temp }}/exochain-recovery-receipts/npm-wasm/
+          if-no-files-found: warn
+          retention-days: 30
+
+  recovery-llm:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'recover-0.2.7' && !inputs.dry_run }}
+    name: "Recover Exact 0.2.7 LYNK Publication"
+    runs-on: ubuntu-24.04
+    environment: release
+    needs: [recovery-import, recovery-wasm, verify-signed-tag, validate-release-inputs]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        id: setup-python
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          python-version: 3.13.7
+          cache: ""
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          node-version: 24.15.0
+          check-latest: false
+      - name: Download exact verified recovery transport
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          artifact-ids: ${{ needs.recovery-import.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/exochain-recovery-artifacts
+      - name: Recover Exact 0.2.7 LYNK Publication
+        id: npm-publication
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC: ${{ vars.EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC }}
+          EXOCHAIN_RELEASE_SIGNING_FINGERPRINT: ${{ vars.EXOCHAIN_RELEASE_SIGNING_FINGERPRINT }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+          RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/run_release_recovery_027.sh" | \
+            /bin/bash --noprofile --norc -p -s -- npm-llm
+      - name: Retain Bounded Public Recovery Receipts
+        if: ${{ always() && steps.npm-publication.outputs.receipts_ready == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          name: exochain-027-recovery-npm-llm-receipts
+          path: |
+            ${{ runner.temp }}/exochain-recovery-receipts/npm-llm/
+          if-no-files-found: warn
+          retention-days: 30
+
+  recovery-sdk:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'recover-0.2.7' && !inputs.dry_run }}
+    name: "Recover Exact 0.2.7 TypeScript SDK Publication"
+    runs-on: ubuntu-24.04
+    environment: release
+    needs: [recovery-import, recovery-llm, verify-signed-tag, validate-release-inputs]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        id: setup-python
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          python-version: 3.13.7
+          cache: ""
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          node-version: 24.15.0
+          check-latest: false
+      - name: Download exact verified recovery transport
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          artifact-ids: ${{ needs.recovery-import.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/exochain-recovery-artifacts
+      - name: Recover Exact 0.2.7 TypeScript SDK Publication
+        id: npm-publication
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC: ${{ vars.EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC }}
+          EXOCHAIN_RELEASE_SIGNING_FINGERPRINT: ${{ vars.EXOCHAIN_RELEASE_SIGNING_FINGERPRINT }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+          RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/run_release_recovery_027.sh" | \
+            /bin/bash --noprofile --norc -p -s -- npm-sdk
+      - name: Retain Bounded Public Recovery Receipts
+        if: ${{ always() && steps.npm-publication.outputs.receipts_ready == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          name: exochain-027-recovery-npm-sdk-receipts
+          path: |
+            ${{ runner.temp }}/exochain-recovery-receipts/npm-sdk/
+          if-no-files-found: warn
+          retention-days: 30
+
+  recovery-python:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'recover-0.2.7' && !inputs.dry_run }}
+    name: "Recover Exact 0.2.7 Python Publication"
+    runs-on: ubuntu-24.04
+    environment: release
+    needs: [recovery-import, recovery-sdk, verify-signed-tag, validate-release-inputs]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        id: setup-python
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          python-version: 3.13.7
+          cache: ""
+      - name: Download exact verified recovery transport
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          artifact-ids: ${{ needs.recovery-import.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/exochain-recovery-artifacts
+      - name: Verify Existing Provenance and Stage Only Missing Distributions
+        id: python-preflight
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC: ${{ vars.EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC }}
+          EXOCHAIN_RELEASE_SIGNING_FINGERPRINT: ${{ vars.EXOCHAIN_RELEASE_SIGNING_FINGERPRINT }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+          RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
+        run: |
+          set -euo pipefail
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/run_release_recovery_027.sh" | \
+            /bin/bash --noprofile --norc -p -s -- python-preflight
+      - name: Publish Missing Original Python Distributions
+        if: ${{ steps.python-preflight.outputs.publish_needed == 'true' }}
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          packages-dir: ${{ steps.python-preflight.outputs.packages_dir }}
+          attestations: true
+          skip-existing: false
+          print-hash: true
+      - name: Require Complete Python Artifacts and Genuine PEP 740 Provenance
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC: ${{ vars.EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC }}
+          EXOCHAIN_RELEASE_SIGNING_FINGERPRINT: ${{ vars.EXOCHAIN_RELEASE_SIGNING_FINGERPRINT }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+          RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
+        run: |
+          set -euo pipefail
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/run_release_recovery_027.sh" | \
+            /bin/bash --noprofile --norc -p -s -- python-readback
+      - name: Retain Bounded Public Recovery Receipts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          name: exochain-027-recovery-python-readback-receipts
+          path: |
+            ${{ runner.temp }}/exochain-python-recovery.*/receipts/
+            ${{ runner.temp }}/exochain-recovery-python-state.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  recovery-github:
+    if: ${{ needs.validate-release-inputs.outputs.operation == 'recover-0.2.7' && !inputs.dry_run }}
+    name: "Complete Original v0.2.7 GitHub Release"
+    runs-on: ubuntu-24.04
+    environment: release
+    needs: [recovery-import, recovery-wasm, recovery-llm, recovery-sdk, recovery-python, verify-signed-tag, validate-release-inputs]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          ref: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        id: setup-python
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          python-version: 3.13.7
+          cache: ""
+      - name: Download exact verified recovery transport
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          artifact-ids: ${{ needs.recovery-import.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/exochain-recovery-artifacts
+      - name: Complete Original v0.2.7 GitHub Release
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          EXPECTED_COMMIT_SHA: ${{ needs.validate-release-inputs.outputs.commit_sha }}
+          TRUSTED_RELEASE_REF: ${{ needs.validate-release-inputs.outputs.trusted_ref }}
+          RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.tag }}
+          EXPECTED_TAG_OBJECT_SHA: ${{ needs.verify-signed-tag.outputs.tag_object_sha }}
+          EXPECTED_TAG_COMMIT_SHA: ${{ needs.verify-signed-tag.outputs.tag_commit_sha }}
+          EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC: ${{ vars.EXOCHAIN_RELEASE_SIGNING_PUBLIC_KEY_ASC }}
+          EXOCHAIN_RELEASE_SIGNING_FINGERPRINT: ${{ vars.EXOCHAIN_RELEASE_SIGNING_FINGERPRINT }}
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+          RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
+          RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
+        run: |
+          set -euo pipefail
+          /usr/bin/env -i GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 \
+            /usr/bin/git --no-replace-objects -C "$GITHUB_WORKSPACE" \
+              show "${GITHUB_SHA}:tools/run_release_recovery_027.sh" | \
+            /bin/bash --noprofile --norc -p -s -- github
+      - name: Retain Bounded Public Recovery Receipts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          CDPATH: ""
+          LD_PRELOAD: ""
+          LD_AUDIT: ""
+          LD_LIBRARY_PATH: ""
+          GLIBC_TUNABLES: ""
+          GCONV_PATH: ""
+          LOCPATH: ""
+          NODE_OPTIONS: ""
+          NODE_PATH: ""
+          NODE_EXTRA_CA_CERTS: ""
+          OPENSSL_CONF: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+        with:
+          name: exochain-027-recovery-github-receipts
+          path: |
+            ${{ runner.temp }}/exochain-github-recovery.*/mutation-journal.jsonl
+            ${{ runner.temp }}/exochain-github-recovery.*/release-receipt.json
+          if-no-files-found: warn
+          retention-days: 30

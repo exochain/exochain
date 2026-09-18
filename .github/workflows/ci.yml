@@ -93,6 +93,8 @@ jobs:
         run: "python -m pip --isolated install --disable-pip-version-check --require-hashes --only-binary=:all: --index-url=https://pypi.org/simple -r tools/python-release-requirements.lock"
       - name: Python release archive and provenance verifier boundary
         run: bash tools/test_verify_python_release_package.sh
+      - name: Python partial-publication recovery boundary
+        run: bash tools/test_recover_release_python_027.sh
       - name: Run Python SDK security and regression tests
         run: python -m pytest packages/exochain-py/tests
       - name: Ruff Python SDK
@@ -356,6 +358,14 @@ jobs:
         run: bash tools/test_release_workflow_ref_binding.sh
       - name: Release version input boundary
         run: bash tools/test_release_version_input_boundary.sh
+      - name: Fixed recovery custody and workflow boundaries
+        run: |
+          python3 -B tools/test_release_recovery_027.py
+          python3 -B tools/test_release_recovery_workflow.py
+          python3 -B tools/test_release_recovery_python_stage.py
+          python3 -B tools/test_recover_github_release_027.py
+          python3 -B tools/test_import_release_recovery_027.py
+          bash tools/test_release_recovery_npm.sh
       - name: Release signed-tag trust boundary
         run: bash tools/test_release_signed_tag_trust_boundary.sh
       - name: Release reusable CI boundary

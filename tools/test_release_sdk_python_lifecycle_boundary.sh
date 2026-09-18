@@ -25,9 +25,9 @@ grep -F "sdk) registry_path='%40exochain%2Fsdk'" "$npm_publisher" >/dev/null \
 grep -F -- '--provenance' "$npm_publisher" >/dev/null \
   || fail "npm publication must emit registry provenance"
 for npm_invocation in \
-  'run_authenticated_npm audit signatures --json --include-attestations > "$audit_response"' \
+  'run_public_npm audit signatures --json --include-attestations > "$audit_response"' \
   'run_authenticated_npm whoami --registry=https://registry.npmjs.org' \
-  'run_authenticated_npm owner ls "$package_name" --registry=https://registry.npmjs.org' \
+  'run_public_npm owner ls "$package_name" --registry=https://registry.npmjs.org' \
   '"$registry_verifier" audit' \
   '"$registry_verifier" registry'; do
   grep -F "$npm_invocation" "$npm_publisher" >/dev/null \
@@ -38,7 +38,7 @@ if grep -Eq '(^|[[:space:];])exit[[:space:]]+0([[:space:];]|$)' "$npm_publisher"
 fi
 grep -F 'show "${GITHUB_SHA}:tools/verify_release_side_effect.sh"' "$npm_publisher" >/dev/null \
   || fail "npm publisher does not load the final rebind helper from the immutable commit"
-[[ $(grep -Ec '^  verify_release_binding$|^verify_release_binding$' "$npm_publisher") -eq 2 ]] \
+[[ $(grep -Ec '^[[:space:]]+verify_release_binding$' "$npm_publisher") -eq 2 ]] \
   || fail "npm publisher must invoke release binding before mutation and again before success"
 
 ruby - "$workflow" "$ci_workflow" <<'RUBY'

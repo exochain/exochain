@@ -96,9 +96,31 @@ identity_env=(
   "GNUPGHOME=${GNUPGHOME:-}" "EXOCHAIN_RELEASE_SIGNING_FINGERPRINT=${EXOCHAIN_RELEASE_SIGNING_FINGERPRINT:-}"
   "RELEASE_SOURCE_CLEAN_MODE=all" "RELEASE_ALLOWED_UNTRACKED_PATHS="
 )
-/usr/bin/env -i "${identity_env[@]}" /bin/bash --noprofile --norc -p "$capture/verify_release_source.sh" >&2
 /usr/bin/env -i "$python_path" -I -B "$capture/verify_release_recovery_027.py" \
   manifest --manifest "$capture/RECOVERY-MANIFEST.json" >/dev/null
+
+# The pinned PyPI action uses a Docker-mounted workspace stage and generates a
+# local Docker trampoline. Only this exact validated phase may exempt its exact
+# data files; callers cannot supply paths or relax tracked/index validation.
+case "${RELEASE_RECOVERY_PYTHON_PHASE:-}" in
+  '') ;;
+  staged|readback)
+    trusted_git show "$controller_sha:tools/verify_release_recovery_python_stage.py" \
+      > "$capture/verify_release_recovery_python_stage.py"
+    /bin/chmod 400 "$capture/verify_release_recovery_python_stage.py"
+    /usr/bin/env -i "$python_path" -I -B "$capture/verify_release_recovery_python_stage.py" \
+      --manifest "$capture/RECOVERY-MANIFEST.json" --workspace "$workspace" \
+      --state "$scratch_parent/exochain-recovery-python-state.json" \
+      --phase "$RELEASE_RECOVERY_PYTHON_PHASE" --sha "$controller_sha" --ref "$GITHUB_REF" \
+      > "$capture/python-workspace.json"
+    allowed_paths="$(/usr/bin/env -i "$python_path" -I -B -c \
+      'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["allowed_paths"]))' \
+      "$capture/python-workspace.json")"
+    identity_env+=("RELEASE_SOURCE_CLEAN_MODE=tracked" "RELEASE_ALLOWED_UNTRACKED_PATHS=$allowed_paths")
+    ;;
+  *) fail "unknown Python recovery workspace phase" ;;
+esac
+/usr/bin/env -i "${identity_env[@]}" /bin/bash --noprofile --norc -p "$capture/verify_release_source.sh" >&2
 
 [ "$(trusted_git rev-parse --verify "refs/tags/$controller_tag")" = "$EXPECTED_TAG_OBJECT_SHA" ] \
   || fail "local controller maintenance tag object differs"

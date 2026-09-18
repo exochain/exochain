@@ -41,7 +41,7 @@ for specification in \
 done
 
 for block in "$reproduce_block" "$publish_block" "$wasm_block" "$llm_block" "$sdk_block" "$github_block"; do
-  grep -F 'if: ${{ !inputs.dry_run }}' <<<"$block" >/dev/null \
+  grep -F "if: \${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}" <<<"$block" >/dev/null \
     || fail "every mutating release job must be skipped during dry runs"
   grep -F 'runs-on: ubuntu-24.04' <<<"$block" >/dev/null \
     || fail "every release publisher must use the explicit runner image"
@@ -384,7 +384,7 @@ npm_mutation_block="$(sed -n '/if \[ "$publish_needed" = true \]; then/,/run_aut
 grep -F 'verify_prepublication_npm_authority' <<<"$npm_mutation_block" >/dev/null \
   || fail "npm publisher must prove exact owner authority immediately before publication"
 npm_authority_function="$(sed -n '/^verify_prepublication_npm_authority() {/,/^}/p' "$npm_publisher")"
-grep -F 'run_authenticated_npm owner ls "$package_name"' <<<"$npm_authority_function" >/dev/null \
+grep -F 'run_public_npm owner ls "$package_name"' <<<"$npm_authority_function" >/dev/null \
   && grep -F 'package_registry_url' <<<"$npm_authority_function" >/dev/null \
   && grep -F '404)' <<<"$npm_authority_function" >/dev/null \
   && grep -F '[ "$profile" = sdk ]' <<<"$npm_authority_function" >/dev/null \
@@ -393,8 +393,9 @@ grep -F 'run_authenticated_npm owner ls "$package_name"' <<<"$npm_authority_func
 if grep -F '@exochain/exochain-wasm|@exochain/llm-proxy|@exochain/sdk)' <<<"$npm_authority_function" >/dev/null; then
   fail "established npm packages must not share the SDK first-publication exception"
 fi
-npm_publish_line="$(grep -nF 'run_authenticated_npm publish "$RELEASE_NPM_TARBALL"' "$npm_publisher" | cut -d: -f1)"
-npm_tail="$(sed -n "${npm_publish_line},\$p" "$npm_publisher")"
+npm_orchestration="$(sed -n '/^publish_or_accept_npm() {/,/^}/p' "$npm_publisher")"
+npm_publish_line="$(grep -nF 'run_authenticated_npm publish "$RELEASE_NPM_TARBALL"' <<<"$npm_orchestration" | cut -d: -f1)"
+npm_tail="$(sed -n "${npm_publish_line},\$p" <<<"$npm_orchestration")"
 grep -F 'verify_registry_acceptance' <<<"$npm_tail" >/dev/null \
   && [ "$(grep -cF 'verify_release_binding' <<<"$npm_tail" || true)" -ge 1 ] \
   || fail "npm acceptance must finish with exact registry proof and a final source/tag rebind"
