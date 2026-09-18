@@ -13,6 +13,8 @@ const EXPECTED_REGISTRY = 'https://registry.npmjs.org';
 const PUBLISH_PREDICATE = 'https://github.com/npm/attestation/tree/main/specs/publish/v0.1';
 const PROVENANCE_PREDICATE = 'https://slsa.dev/provenance/v1';
 const GITHUB_ACTIONS_BUILD_TYPE = 'https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1';
+const SIGSTORE_V02 = 'application/vnd.dev.sigstore.bundle+json;version=0.2';
+const SIGSTORE_V03 = 'application/vnd.dev.sigstore.bundle.v0.3+json';
 
 function fail(message) {
   console.error(`npm registry attestation verification failed: ${message}`);
@@ -183,7 +185,7 @@ function canonicalBase64Bytes(value, label) {
 }
 
 function verifyEnvelope(bundle, label) {
-  if (bundle?.mediaType !== 'application/vnd.dev.sigstore.bundle+json;version=0.2') {
+  if (bundle?.mediaType !== SIGSTORE_V02 && bundle?.mediaType !== SIGSTORE_V03) {
     fail(`${label} has an unsupported Sigstore bundle format`);
   }
   const envelope = bundle?.dsseEnvelope;
@@ -193,6 +195,43 @@ function verifyEnvelope(bundle, label) {
   }
   canonicalBase64Bytes(envelope.signatures[0]?.sig, `${label} signature`);
   return decodeStatement(envelope.payload, label);
+}
+
+function provenanceCertificateBytes(bundle) {
+  // npm 10 emits v0.2 certificate chains; npm 11's Sigstore 4 emitter uses
+  // v0.3's single certificate. Do not reinterpret a mismatched or ambiguous
+  // representation. The caller still requires npm's audited bundles and every
+  // exact provenance/subject identity check; this is not a crypto substitute.
+  const material = bundle?.verificationMaterial;
+  const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const legacy = bundle?.mediaType === SIGSTORE_V02;
+  const certificateField = legacy ? 'x509CertificateChain' : 'certificate';
+  const allowedFields = [certificateField, 'tlogEntries', 'timestampVerificationData'];
+  if ((bundle?.mediaType !== SIGSTORE_V02 && bundle?.mediaType !== SIGSTORE_V03)
+      || !isRecord(material)
+      || Object.keys(material).some(key => !allowedFields.includes(key))
+      || !Object.hasOwn(material, certificateField)) {
+    fail('provenance has invalid certificate material for its Sigstore bundle format');
+  }
+  let certificate;
+  if (legacy) {
+    const chain = material.x509CertificateChain;
+    if (!isRecord(chain) || Object.keys(chain).length !== 1
+        || !Array.isArray(chain.certificates) || chain.certificates.length !== 1) {
+      fail('provenance has invalid certificate material for its Sigstore bundle format');
+    }
+    [certificate] = chain.certificates;
+  } else {
+    certificate = material.certificate;
+  }
+  if (!isRecord(certificate) || Object.keys(certificate).length !== 1
+      || !Object.hasOwn(certificate, 'rawBytes')) {
+    fail('provenance has invalid certificate material for its Sigstore bundle format');
+  }
+  if (!Array.isArray(material.tlogEntries) || material.tlogEntries.length === 0) {
+    fail('provenance lacks Fulcio certificate or transparency-log proof');
+  }
+  return canonicalBase64Bytes(certificate.rawBytes, 'provenance Fulcio certificate');
 }
 
 function expectedSubject(name, version, integrity) {
@@ -309,16 +348,7 @@ function verifyAudit(response, name, version, integrity, expectedCommit, expecte
   if (statement?.predicate?.runDetails?.builder?.id !== 'https://github.com/actions/runner/github-hosted') {
     fail('provenance was not created by the GitHub-hosted builder');
   }
-  const material = provenance?.bundle?.verificationMaterial;
-  if (!Array.isArray(material?.x509CertificateChain?.certificates)
-      || material.x509CertificateChain.certificates.length !== 1
-      || !Array.isArray(material?.tlogEntries) || material.tlogEntries.length === 0) {
-    fail('provenance lacks Fulcio certificate or transparency-log proof');
-  }
-  const certificateBytes = canonicalBase64Bytes(
-    material.x509CertificateChain.certificates[0]?.rawBytes,
-    'provenance Fulcio certificate',
-  );
+  const certificateBytes = provenanceCertificateBytes(provenance?.bundle);
   let certificate;
   try {
     certificate = new X509Certificate(certificateBytes);
