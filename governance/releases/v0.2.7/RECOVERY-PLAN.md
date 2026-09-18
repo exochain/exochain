@@ -1,6 +1,6 @@
 # EXOCHAIN 0.2.7 recovery implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Complete the original 0.2.7 publication with verified original bytes and
 an honestly identified, reviewed recovery controller.
@@ -39,10 +39,10 @@ Interface: test script takes explicit Node and npm CLI paths, executes a
 credential-free install/audit of fixed WASM0.2.7 and calls the unchanged registry
 attestation verifier with its actual JSON. It must never invoke publish.
 
-- [ ] Add a regression using the real pinned npm10.9.2 audit and record its
+- [x] Add a regression using the real pinned npm10.9.2 audit and record its
   expected rejection by the existing verifier. Use the exact published SRI and
   source/ref; do not substitute manufactured `verified` records.
-- [ ] Prove exact official Node24.15.0 with bundled npm11.12.1 passes the same
+- [x] Prove exact official Node24.15.0 with bundled npm11.12.1 passes the same
   complete command. Fail on runtime-version mismatch before any test network
   request. Keep isolated user/global configuration files distinct.
 
@@ -53,16 +53,16 @@ env -i PATH=/usr/bin:/bin \
   bash tools/test_release_npm_runtime_contract.sh
 ```
 
-- [ ] Pin only the three credentialed npm publisher runtimes to that exact
+- [x] Pin only the three credentialed npm publisher runtimes to that exact
   proven distribution. Preserve seven Node22.14.0 build/preparation pins and
   their bundled npm10.9.2 packaging contract. Preserve full tool-root capture.
-- [ ] Integrate the actual CLI test into hosted CI before publication; update
+- [x] Integrate the actual CLI test into hosted CI before publication; update
   old guard assumptions to distinguish build and publisher runtimes explicitly.
-- [ ] Extract the visibility polling into a behavior-testable function, with
+- [x] Extract the visibility polling into a behavior-testable function, with
   25 attempts and 15-second sleeps, fail-closed handling of non404/mismatched
   responses, and no repeated upload. Test immediate/delayed/exhausted visibility
   without actually sleeping or contacting an authenticated registry.
-- [ ] Run real positive/negative CLI tests, existing npm registry/config guards,
+- [x] Run real positive/negative CLI tests, existing npm registry/config guards,
   shell syntax and relevant workflow guards. Commit only task files and report
   RED/GREEN commands and retained evidence paths for independent review.
 
@@ -84,13 +84,13 @@ nonzero error, never shell code. The shell wrapper captures helpers from actual
 GITHUB_SHA and composes unchanged controller source/tag/signer checks with
 fixed original-product signature and remote identity checks.
 
-- [ ] Independently review the artifact inventory obtained from original
+- [x] Independently review the artifact inventory obtained from original
   run35257955565/attempts/1, not current attempt2. Record only factual owned
   manifest fields; do not commit downloaded logs/archives/scanner output.
   Artifact API workflow_run metadata does not itself identify a producing job or
   attempt: require explicit attempt1 job membership and the reviewed fixed
   artifact-ID/digest/producer mapping. Never infer this from latest-run metadata.
-- [ ] Write stdlib unittest cases before implementation. Positive fixtures
+- [x] Write stdlib unittest cases before implementation. Positive fixtures
   specify literal values; negative cases change one identity/digest/file/job
   boundary at a time. A wrong original producer must fail even when bytes hash.
 
@@ -98,17 +98,17 @@ fixed original-product signature and remote identity checks.
 python3 -B tools/test_release_recovery_027.py
 ```
 
-- [ ] Implement bounded duplicate-key-rejecting JSON parsing, exact schema and
+- [x] Implement bounded duplicate-key-rejecting JSON parsing, exact schema and
   inventory validation, regular-file/no-link checks, strict safe extraction,
   per-file digest checks and successful original-producer evidence. Use fixed
   HTTPS provider endpoints, never manifest-provided executable commands/URLs.
-- [ ] Verify original product tag object/peel/signature separately without
+- [x] Verify original product tag object/peel/signature separately without
   changing GITHUB_SHA or relaxing verify_release_tag.sh. Test controller/product
   substitution, changed original tag, wrong signer and wrong maintenance tag.
-- [ ] Test each existing public Rust version against its exact original archive
+- [x] Test each existing public Rust version against its exact original archive
   digest with no credential and no Cargo process. Missing/yanked/mismatched
   records fail before remaining registry mutations.
-- [ ] Run full focused tests and original signer/source/tag regression guards;
+- [x] Run full focused tests and original signer/source/tag regression guards;
   commit only task files and submit the immutable diff for review.
 
 ## Task 3: Strict Python partial-publication preflight
@@ -122,16 +122,16 @@ This validates a genuine HTTP200 registry response only; the caller handles404
 separately. It is a metadata preflight, not cryptographic provenance acceptance.
 Keep `registry-response` strict and silent on successful complete acceptance.
 
-- [ ] Add tests for no files, either single file, both files, extra file,
+- [x] Add tests for no files, either single file, both files, extra file,
   duplicate record, wrong package/version/hash/size, boolean size, yanked file
   and malformed response. Assert the actual CLI exit/output, not source text.
   Full-inventory `registry-response` must continue rejecting partial inventory.
-- [ ] Run before implementation and retain the expected unknown-command failure.
-- [ ] Reuse the canonical strict JSON reader/manifest parser and extract common
+- [x] Run before implementation and retain the expected unknown-command failure.
+- [x] Reuse the canonical strict JSON reader/manifest parser and extract common
   registry metadata validation without weakening any existing complete check.
   Reject yanked records; require a real positive integer size (not bool).
   Do not fetch URLs, stage files, install packages or verify signatures here.
-- [ ] Run all existing verifier tests and new partial cases with the repo's
+- [x] Run all existing verifier tests and new partial cases with the repo's
   configured Python test dependencies; retain RED/GREEN commands and outputs.
   Review the exact two-file diff independently before workflow wiring.
 
@@ -144,7 +144,15 @@ bash tools/test_verify_python_release_package.sh
 Files: `.github/workflows/release.yml`, `.github/workflows/ci.yml`,
 `tools/publish_release_npm_package.sh`,
 `tools/test_publish_release_npm_registry_validation.sh`,
-`tools/test_release_recovery_027.py`, and recovery design/manifest records.
+`tools/test_release_recovery_027.py`, `tools/test_release_recovery_npm.sh`,
+`tools/import_release_recovery_027.sh`, `tools/test_import_release_recovery_027.py`,
+`tools/run_release_recovery_027.sh`, `tools/test_release_recovery_workflow.py`,
+`tools/recover_release_python_027.sh`, `tools/test_recover_release_python_027.sh`,
+`tools/verify_release_recovery_python_stage.py`,
+`tools/test_release_recovery_python_stage.py`,
+`tools/recover_github_release_027.py`, `tools/test_recover_github_release_027.py`,
+and recovery design/manifest records. Existing ref-binding, dry-run, publication
+and Python lifecycle guards must explicitly account for these recovery paths.
 
 Interfaces: operation is exactly `release` (default) or `recover-0.2.7`.
 Recovery accepts only version0.2.7 and refs/tags/v0.2.7-recover.N (positive N).
@@ -154,22 +162,22 @@ arbitrary expected-provenance environment overrides. WASM expects original
 source/ref and must be acceptance-only. Newly uploaded LYNK/SDK/Python expect
 the actual controller source/ref. Normal publication retains exact equality.
 
-- [ ] First write workflow DAG and publisher behavioral regressions for mode
+- [x] First write workflow DAG and publisher behavioral regressions for mode
   exclusion, missing CI/approval dependencies, credential leakage, wrong input,
   existing WASM zero upload and missing WASM rejection.
-- [ ] Add the recovery lane to release.yml with unchanged full reusable CI and
+- [x] Add the recovery lane to release.yml with unchanged full reusable CI and
   both protected gates. Pin existing actions by their immutable SHAs. Import
   exact original artifacts in a read-only token/no-OIDC job and verify original
   native attestations. Do not rebuild any payload.
-- [ ] Use fresh protected publication runners and rehash/rebind source, both
+- [x] Use fresh protected publication runners and rehash/rebind source, both
   tags, manifest and bytes immediately before mutation. Preserve exact owner,
   signature and provenance acceptance. Public audit commands use no token.
-- [ ] Keep the existing pinned Python publisher action directly in release.yml.
+- [x] Keep the existing pinned Python publisher action directly in release.yml.
   Consume Task3's `recovery-preflight` exact missing manifest filenames;
   verify every existing file's provenance before staging missing files.
   Invoke the unchanged full-inventory final verifier with actual controller
   source/ref. Test neither/one/both existing distributions and a conflicting file.
-- [ ] Gate original-tag GitHub Release creation on every successful provider
+- [x] Gate original-tag GitHub Release creation on every successful provider
   acceptance; reuse original native archives/SBOMs and include explicit custody
   evidence. Existing assets must match exactly or fail without replacement.
 - [ ] Exercise normal and recovery paths, all focused guards and the complete
@@ -185,3 +193,19 @@ Ordinary resumption stays on one maintenance ref/commit. A later controller may
 not use an arbitrary or either-identity provenance override. Dry-run jobs never
 receive publisher secrets or job-level OIDC. New same-run transport ZIPs are
 verified against original inner-file digests, not the original transport ZIP hash.
+
+## Exact npm emission compatibility
+
+The real audit of the original WASM proves consumption of its v0.2 bundle, not
+the format generated by a new npm 11.12.1 publication. The bundled libnpmpublish
+11.1.3, sigstore 4.1.0 and bundle 4.0.0 generate the v0.3 media type and single
+certificate representation. The v0.2-only verifier rejects that representation.
+
+Before uploading any missing npm version, extend only the canonical verifier
+and its existing tests to admit the exact v0.2/chain and v0.3/single-certificate
+pairs. Reject mixed, ambiguous, extra and malformed certificate layouts; retain
+the actual successful npm cryptographic audit prerequisite and every exact
+subject, source, workflow, ref, SAN and transparency requirement. Use installed
+runtime serialization and real public format evidence separately from explicitly
+labeled structural regression fixtures. No synthetic fixture is publication or
+cryptographic proof. Independently review this repair before publication.
