@@ -161,6 +161,33 @@ finally { if (descriptor !== undefined) fs.closeSync(descriptor); }
 NODE
 }
 
+# A probe returns 1 only while the exact version is absent (HTTP 404).
+# Any other failure is terminal. The callbacks are fixed by the publisher;
+# tests replace only registry I/O and sleeping, never acceptance verification.
+wait_for_npm_registry_visibility() {
+  local probe="$1" pause="$2" attempt status
+  for ((attempt = 1; attempt <= 25; attempt += 1)); do
+    if "$probe"; then
+      return 0
+    else
+      status=$?
+    fi
+    [ "$status" -eq 1 ] || return "$status"
+    if [ "$attempt" -lt 25 ]; then
+      "$pause" 15 || return "$?"
+    fi
+  done
+  return 1
+}
+
+fetch_npm_registry_record() {
+  /usr/bin/env -i \
+    /usr/bin/curl -q --silent --show-error --output "$registry_response" \
+      --write-out '%{http_code}' --proto '=https' --tlsv1.2 \
+      --connect-timeout 15 --max-time 60 --max-filesize 1048576 \
+      "$registry_url"
+}
+
 for required_name in \
   EXPECTED_COMMIT_SHA \
   EXPECTED_TAG_COMMIT_SHA \
@@ -238,8 +265,8 @@ node_path="$(/usr/bin/realpath "$tool_view/node")"
 npm_cli_path="$(/usr/bin/realpath "$tool_view/npm")"
 [ -x "$node_path" ] && [ -f "$npm_cli_path" ] \
   || fail "fresh tool view does not contain usable Node.js and npm entries"
-[ "$RELEASE_TRUSTED_NPM_VERSION" = 10.9.2 ] \
-  || fail "release npm version must remain pinned to 10.9.2"
+[ "$RELEASE_TRUSTED_NPM_VERSION" = 11.12.1 ] \
+  || fail "release npm version must remain pinned to 11.12.1"
 [ "$(/usr/bin/env -i PATH="$TRUSTED_RELEASE_PATH" \
     "$node_path" "$npm_cli_path" --version)" = "$RELEASE_TRUSTED_NPM_VERSION" ] \
   || fail "release npm executable version differs from the pinned runtime"
@@ -403,11 +430,7 @@ verify_prepublication_npm_authority() {
 
 registry_has_exact_tarball() {
   local status
-  status="$(/usr/bin/env -i \
-    /usr/bin/curl -q --silent --show-error --output "$registry_response" \
-      --write-out '%{http_code}' --proto '=https' --tlsv1.2 \
-      --connect-timeout 15 --max-time 60 --max-filesize 1048576 \
-      "$registry_url")" || fail "npm registry lookup failed"
+  status="$(fetch_npm_registry_record)" || fail "npm registry lookup failed"
   case "$status" in
     404) return 1 ;;
     200) ;;
@@ -419,7 +442,8 @@ registry_has_exact_tarball() {
     || fail "published npm version does not match the exact release identity"
   /usr/bin/env -i "$node_path" "$registry_verifier" registry \
     "$registry_response" "$package_name" "$RELEASE_VERSION" "$expected_integrity" \
-    "$expected_maintainer_name" "$expected_maintainer_email"
+    "$expected_maintainer_name" "$expected_maintainer_email" \
+    || fail "published npm registry record failed exact release verification"
 }
 
 verify_registry_signature_and_provenance() {
@@ -481,15 +505,7 @@ if [ "$publish_needed" = true ]; then
   cd /
   run_authenticated_npm publish "$RELEASE_NPM_TARBALL" \
     --access public --provenance --ignore-scripts --registry=https://registry.npmjs.org
-  published_visible=false
-  for registry_attempt in 1 2 3 4 5 6; do
-    if registry_has_exact_tarball; then
-      published_visible=true
-      break
-    fi
-    [ "$registry_attempt" -lt 6 ] && /bin/sleep 10
-  done
-  [ "$published_visible" = true ] \
+  wait_for_npm_registry_visibility registry_has_exact_tarball /bin/sleep \
     || fail "published npm version did not reach the registry with exact preflight integrity"
 fi
 

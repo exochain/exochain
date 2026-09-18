@@ -4197,7 +4197,7 @@ jobs:
           NODE_EXTRA_CA_CERTS: ""
           OPENSSL_CONF: ""
         with:
-          node-version: 22.14.0
+          node-version: 24.15.0
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
         id: setup-python
         env:
@@ -4241,7 +4241,7 @@ jobs:
           GCONV_PATH: ""
           LOCPATH: ""
           RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
-          RELEASE_TRUSTED_NODE_VERSION: 22.14.0
+          RELEASE_TRUSTED_NODE_VERSION: 24.15.0
         run: |
           set -euo pipefail
           unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_NAMESPACE GIT_REPLACE_REF_BASE GIT_NO_REPLACE_OBJECTS GIT_SHALLOW_FILE GIT_GRAFT_FILE GIT_EXEC_PATH GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_ATTR_SOURCE
@@ -4286,8 +4286,8 @@ jobs:
           RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
           RELEASE_TRUSTED_PYTHON_VERSION: 3.13.7
           RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
-          RELEASE_TRUSTED_NODE_VERSION: 22.14.0
-          RELEASE_TRUSTED_NPM_VERSION: 10.9.2
+          RELEASE_TRUSTED_NODE_VERSION: 24.15.0
+          RELEASE_TRUSTED_NPM_VERSION: 11.12.1
           TRUSTED_RELEASE_TOOL_IDENTITY: ${{ steps.trusted-tools.outputs.identity }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GITHUB_ACTIONS: "true"
@@ -4434,7 +4434,7 @@ jobs:
           NODE_EXTRA_CA_CERTS: ""
           OPENSSL_CONF: ""
         with:
-          node-version: 22.14.0
+          node-version: 24.15.0
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
         id: setup-python
         env:
@@ -4478,7 +4478,7 @@ jobs:
           GCONV_PATH: ""
           LOCPATH: ""
           RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
-          RELEASE_TRUSTED_NODE_VERSION: 22.14.0
+          RELEASE_TRUSTED_NODE_VERSION: 24.15.0
         run: |
           set -euo pipefail
           unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_NAMESPACE GIT_REPLACE_REF_BASE GIT_NO_REPLACE_OBJECTS GIT_SHALLOW_FILE GIT_GRAFT_FILE GIT_EXEC_PATH GIT_EXTERNAL_DIFF GIT_DIFF_OPTS GIT_ATTR_SOURCE
@@ -4523,8 +4523,8 @@ jobs:
           RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
           RELEASE_TRUSTED_PYTHON_VERSION: 3.13.7
           RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
-          RELEASE_TRUSTED_NODE_VERSION: 22.14.0
-          RELEASE_TRUSTED_NPM_VERSION: 10.9.2
+          RELEASE_TRUSTED_NODE_VERSION: 24.15.0
+          RELEASE_TRUSTED_NPM_VERSION: 11.12.1
           TRUSTED_RELEASE_TOOL_IDENTITY: ${{ steps.trusted-tools.outputs.identity }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GITHUB_ACTIONS: "true"
@@ -4667,7 +4667,7 @@ jobs:
           NODE_OPTIONS: ""
           NODE_PATH: ""
         with:
-          node-version: 22.14.0
+          node-version: 24.15.0
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
         id: setup-python
         env:
@@ -4722,8 +4722,8 @@ jobs:
           RELEASE_TRUSTED_PYTHON_ROOT: ${{ runner.tool_cache }}/Python/3.13.7/x64
           RELEASE_TRUSTED_PYTHON_VERSION: 3.13.7
           RELEASE_TRUSTED_NODE_ROOT: ${{ runner.tool_cache }}/node
-          RELEASE_TRUSTED_NODE_VERSION: 22.14.0
-          RELEASE_TRUSTED_NPM_VERSION: 10.9.2
+          RELEASE_TRUSTED_NODE_VERSION: 24.15.0
+          RELEASE_TRUSTED_NPM_VERSION: 11.12.1
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GITHUB_ACTIONS: "true"
           GITHUB_EVENT_NAME: ${{ github.event_name }}

@@ -65,6 +65,8 @@ for focused_guard in \
   test_release_sdk_python_lifecycle_boundary.sh \
   test_release_llm_lifecycle_boundary.sh \
   test_release_npm_config_boundary.sh \
+  test_release_npm_runtime_contract.sh \
+  test_npm_registry_visibility.sh \
   test_stage_llm_release_package.sh \
   test_transport_release_build_output.sh \
   test_transport_release_file_set.sh \
@@ -1524,8 +1526,30 @@ for trusted_tool_job in release-build generate-sbom preflight-crates publish bui
 done
 
 node_pin_count=$(grep -cF 'node-version: 22.14.0' "$workflow" || true)
-[ "$node_pin_count" -eq 10 ] \
-  || fail "all ten Node.js release jobs must pin exact Node.js 22.14.0, got $node_pin_count"
+[ "$node_pin_count" -eq 7 ] \
+  || fail "all seven build/preparation jobs must retain Node.js 22.14.0, got $node_pin_count"
+publisher_node_pin_count=$(grep -cF 'node-version: 24.15.0' "$workflow" || true)
+[ "$publisher_node_pin_count" -eq 3 ] \
+  || fail "all three npm publishers must pin Node.js 24.15.0, got $publisher_node_pin_count"
+for node_build_job in preflight-crates publish build-wasm-npm prepare-wasm-npm test-llm-proxy-npm prepare-llm-proxy-npm prepare-sdk-npm; do
+  node_build_block=$(job_block "$node_build_job")
+  grep -F 'node-version: 22.14.0' <<<"$node_build_block" >/dev/null \
+    && grep -F 'RELEASE_TRUSTED_NODE_VERSION: 22.14.0' <<<"$node_build_block" >/dev/null \
+    || fail "job $node_build_job changed its artifact-building Node.js contract"
+  if grep -F '24.15.0' <<<"$node_build_block" >/dev/null; then
+    fail "job $node_build_job must not mix in the publisher runtime"
+  fi
+done
+for npm_publish_job in publish-wasm-npm publish-llm-proxy-npm publish-sdk-npm; do
+  npm_publish_block=$(job_block "$npm_publish_job")
+  grep -F 'node-version: 24.15.0' <<<"$npm_publish_block" >/dev/null \
+    && grep -F 'RELEASE_TRUSTED_NODE_VERSION: 24.15.0' <<<"$npm_publish_block" >/dev/null \
+    && grep -F 'RELEASE_TRUSTED_NPM_VERSION: 11.12.1' <<<"$npm_publish_block" >/dev/null \
+    || fail "job $npm_publish_job must use the verified bundled publisher pair"
+  if grep -E '22\.14\.0|10\.9\.2' <<<"$npm_publish_block" >/dev/null; then
+    fail "job $npm_publish_job must not capture or execute the incompatible build runtime"
+  fi
+done
 rust_pin_count=$(grep -cF 'toolchain: 1.97.1' "$workflow" || true)
 [ "$rust_pin_count" -eq 8 ] \
   || fail "all eight Rust-consuming release jobs must pin exact Rust 1.97.1, got $rust_pin_count"
