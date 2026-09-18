@@ -27,7 +27,7 @@ declare -F validate_npm_registry_response >/dev/null \
 node_path="$(command -v node)"
 [ -x "$node_path" ] || fail "Node.js is unavailable"
 package_name='@exochain/exochain-wasm'
-version=0.2.6
+version=0.2.7
 integrity='sha512-Zml4dHVyZQ=='
 maintainer_name='bob-stewart'
 maintainer_email='stewart@exochain.com'
@@ -87,6 +87,34 @@ text = Path(sys.argv[1]).read_text()
 Path(sys.argv[2]).write_text(text.replace('bob-stewart', 'attacker', 1))
 PY
 expect_rejected "wrong exact npm maintainer" "$wrong_maintainer"
+
+# These metadata fixtures exercise exact identity policy only. Cryptographic
+# acceptance is separately exercised against real npm CLI audit output.
+for mutation in name version publisher extra-owner empty-signatures missing-attestation; do
+  response="$test_root/$mutation.json"
+  /usr/bin/python3 - "$valid" "$response" "$mutation" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+value = json.loads(Path(sys.argv[1]).read_text())
+mutation = sys.argv[3]
+if mutation == "name":
+    value["name"] = "@exochain/sdk"
+elif mutation == "version":
+    value["version"] = "0.2.8"
+elif mutation == "publisher":
+    value["_npmUser"] = {"name": "attacker", "email": "attacker@example.invalid"}
+elif mutation == "extra-owner":
+    value["maintainers"].append({"name": "attacker", "email": "attacker@example.invalid"})
+elif mutation == "empty-signatures":
+    value["dist"]["signatures"] = []
+elif mutation == "missing-attestation":
+    del value["dist"]["attestations"]
+Path(sys.argv[2]).write_text(json.dumps(value))
+PY
+  expect_rejected "mismatched or incomplete registry $mutation" "$response"
+done
 
 oversized="$test_root/oversized.json"
 /usr/bin/python3 - "$oversized" <<'PY'
