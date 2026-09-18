@@ -530,12 +530,12 @@ def verify_provenance(
             fail(f"provenance certificate {label} differs from the exact release")
 
 
-def verify_registry_response(
+def registry_inventory(
     response_path: Path,
     package_name: str,
     version: str,
     manifest_path: Path,
-) -> None:
+) -> tuple[dict[str, tuple[str, int]], dict[str, tuple[str, int]]]:
     validate_identity(package_name, version)
     data = read_regular_file(response_path, MAX_REGISTRY_BYTES, "PyPI registry response")
     payload = parse_strict_json(data, "PyPI registry response")
@@ -544,8 +544,8 @@ def verify_registry_response(
         fail("PyPI registry identity does not match the release")
     expected = {name: (digest, size) for name, digest, size in parse_manifest(manifest_path)}
     urls = payload.get("urls")
-    if not isinstance(urls, list) or len(urls) != len(expected):
-        fail("PyPI registry file inventory does not match the exact release")
+    if not isinstance(urls, list) or len(urls) > len(expected):
+        fail("PyPI registry file inventory exceeds or differs from the release")
     actual: dict[str, tuple[str, int]] = {}
     for item in urls:
         if not isinstance(item, dict):
@@ -557,13 +557,42 @@ def verify_registry_response(
             not isinstance(filename, str)
             or filename in actual
             or not isinstance(digests, dict)
-            or SHA256_RE.fullmatch(str(digests.get("sha256", ""))) is None
-            or not isinstance(size, int)
+            or not isinstance(digests.get("sha256"), str)
+            or SHA256_RE.fullmatch(digests["sha256"]) is None
+            or type(size) is not int
+            or size <= 0
+            or item.get("yanked") is not False
         ):
             fail("PyPI registry file record is malformed or duplicated")
+        if filename not in expected or (digests["sha256"], size) != expected[filename]:
+            fail("PyPI registry artifacts do not match the token-free package digests")
         actual[filename] = (digests["sha256"], size)
+    return expected, actual
+
+
+def verify_registry_response(
+    response_path: Path,
+    package_name: str,
+    version: str,
+    manifest_path: Path,
+) -> None:
+    expected, actual = registry_inventory(response_path, package_name, version, manifest_path)
     if actual != expected:
         fail("PyPI registry artifacts do not match the token-free package digests")
+
+
+def recovery_preflight(
+    response_path: Path,
+    package_name: str,
+    version: str,
+    manifest_path: Path,
+) -> dict[str, list[str]]:
+    """Partition validated metadata; callers must separately verify provenance."""
+    expected, actual = registry_inventory(response_path, package_name, version, manifest_path)
+    return {
+        "existing": [name for name in expected if name in actual],
+        "missing": [name for name in expected if name not in actual],
+    }
 
 
 def main() -> None:
@@ -576,11 +605,12 @@ def main() -> None:
     manifest = artifacts.add_mutually_exclusive_group(required=True)
     manifest.add_argument("--write-manifest", type=Path)
     manifest.add_argument("--expect-manifest", type=Path)
-    registry = subparsers.add_parser("registry-response")
-    registry.add_argument("response", type=Path)
-    registry.add_argument("package_name")
-    registry.add_argument("version")
-    registry.add_argument("manifest", type=Path)
+    for command in ("registry-response", "recovery-preflight"):
+        registry = subparsers.add_parser(command)
+        registry.add_argument("response", type=Path)
+        registry.add_argument("package_name")
+        registry.add_argument("version")
+        registry.add_argument("manifest", type=Path)
     provenance = subparsers.add_parser("provenance")
     provenance.add_argument("response", type=Path)
     provenance.add_argument("artifact", type=Path)
@@ -610,6 +640,9 @@ def main() -> None:
                 fail("Python distributions differ from the token-free artifact manifest")
     elif args.command == "registry-response":
         verify_registry_response(args.response, args.package_name, args.version, args.manifest)
+    elif args.command == "recovery-preflight":
+        result = recovery_preflight(args.response, args.package_name, args.version, args.manifest)
+        print(json.dumps(result, separators=(",", ":")))
     else:
         verify_provenance(
             args.response,

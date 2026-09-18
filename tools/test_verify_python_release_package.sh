@@ -215,7 +215,7 @@ import sys
 urls = []
 for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
     filename, digest, size = line.split("\t")
-    urls.append({"filename": filename, "digests": {"sha256": digest}, "size": int(size)})
+    urls.append({"filename": filename, "digests": {"sha256": digest}, "size": int(size), "yanked": False})
 pathlib.Path(sys.argv[2]).write_text(json.dumps({
     "info": {"name": "exochain", "version": "0.2.6"},
     "urls": urls,
@@ -223,6 +223,108 @@ pathlib.Path(sys.argv[2]).write_text(json.dumps({
 PY
 python3 -I -B "$guard" registry-response "$registry" exochain 0.2.6 "$manifest" \
   || fail "exact PyPI registry response was rejected"
+
+python3 -B - "$guard" "$test_root" <<'PY'
+import copy
+import json
+from pathlib import Path
+import subprocess
+import sys
+import unittest
+
+guard = sys.argv[1]
+root = Path(sys.argv[2])
+wheel_name = "exochain-0.2.7-py3-none-any.whl"
+sdist_name = "exochain-0.2.7.tar.gz"
+manifest = root / "recovery-manifest.tsv"
+manifest.write_text(
+    f"{wheel_name}\t{'a' * 64}\t1\n{sdist_name}\t{'b' * 64}\t2\n"
+)
+wheel_record = {"filename": wheel_name, "digests": {"sha256": "a" * 64}, "size": 1, "yanked": False}
+sdist_record = {"filename": sdist_name, "digests": {"sha256": "b" * 64}, "size": 2, "yanked": False}
+complete = {"info": {"name": "exochain", "version": "0.2.7"}, "urls": [wheel_record, sdist_record]}
+
+
+class RecoveryPreflightTests(unittest.TestCase):
+    def run_cli(self, command, value, *, raw=False):
+        response = root / "recovery-response.json"
+        response.write_text(value if raw else json.dumps(value))
+        return subprocess.run(
+            [sys.executable, "-I", "-B", guard, command, str(response), "exochain", "0.2.7", str(manifest)],
+            capture_output=True, text=True, check=False,
+        )
+
+    def test_partition_and_strict_acceptance(self):
+        # Reversing provider order must not change the manifest-ordered output.
+        cases = (
+            ([], {"existing": [], "missing": [wheel_name, sdist_name]}),
+            ([wheel_record], {"existing": [wheel_name], "missing": [sdist_name]}),
+            ([sdist_record], {"existing": [sdist_name], "missing": [wheel_name]}),
+            ([sdist_record, wheel_record], {"existing": [wheel_name, sdist_name], "missing": []}),
+        )
+        for records, expected in cases:
+            with self.subTest(existing=expected["existing"]):
+                response = {"info": complete["info"], "urls": records}
+                result = self.run_cli("recovery-preflight", response)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, "")
+                self.assertEqual(result.stdout, json.dumps(expected, separators=(",", ":")) + "\n")
+                strict = self.run_cli("registry-response", response)
+                self.assertEqual(strict.stdout, "")
+                if expected["missing"]:
+                    self.assertNotEqual(strict.returncode, 0)
+                else:
+                    self.assertEqual(strict.returncode, 0, strict.stderr)
+                    self.assertEqual(strict.stderr, "")
+
+    def test_rejects_conflicting_and_malformed_metadata_in_both_modes(self):
+        cases = []
+        for field, replacement in (("name", "attacker"), ("version", "0.2.8")):
+            value = copy.deepcopy(complete)
+            value["info"][field] = replacement
+            cases.append((f"wrong {field}", value))
+        for field, replacement in (
+            ("filename", "extra.whl"), ("digests", {"sha256": "c" * 64}),
+            ("digests", {"sha256": "a" * 63}), ("digests", None),
+            ("size", 3), ("size", True), ("size", False), ("size", 0),
+            ("size", -1), ("size", "1"), ("yanked", True),
+            ("yanked", 0), ("yanked", "false"), ("yanked", None),
+        ):
+            value = copy.deepcopy(complete)
+            value["urls"][0][field] = replacement
+            cases.append((f"invalid {field}={replacement!r}", value))
+        missing_yanked = copy.deepcopy(complete)
+        del missing_yanked["urls"][0]["yanked"]
+        cases.extend((
+            ("missing yanked state", missing_yanked),
+            ("extra file", {"info": complete["info"], "urls": [wheel_record, sdist_record, {**wheel_record, "filename": "extra.whl"}]}),
+            ("duplicate file", {"info": complete["info"], "urls": [wheel_record, wheel_record]}),
+            ("nonobject record", {"info": complete["info"], "urls": [None, sdist_record]}),
+            ("nonlist urls", {"info": complete["info"], "urls": {}}),
+            ("missing urls", {"info": complete["info"]}),
+            ("missing info", {"urls": []}),
+            ("nonobject response", []),
+        ))
+        for label, value in cases:
+            for command in ("recovery-preflight", "registry-response"):
+                with self.subTest(case=label, command=command):
+                    result = self.run_cli(command, value)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("Python release package verification failed:", result.stderr)
+
+    def test_rejects_invalid_json_and_duplicate_keys(self):
+        for raw in ("not JSON", '{"info":{"name":"attacker","name":"exochain","version":"0.2.7"},"urls":[]}'):
+            for command in ("recovery-preflight", "registry-response"):
+                with self.subTest(raw=raw, command=command):
+                    result = self.run_cli(command, raw, raw=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("not strict JSON", result.stderr)
+
+
+unittest.main(argv=[sys.argv[0]])
+PY
 
 python3 - "$guard" <<'PY' \
   || fail "unreviewed optional Python dependency metadata was accepted"
