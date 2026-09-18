@@ -1,0 +1,675 @@
+{
+  "schema": "exochain-release-recovery-027/v1",
+  "product": {
+    "version": "0.2.7",
+    "tag": "v0.2.7",
+    "tag_object": "be47589ec7dbefe821ada35ed0a89dedc9751953",
+    "commit": "666c578f719d1e54fce95d6831a3af92ea80df93"
+  },
+  "origin": {
+    "repository": "exochain/exochain",
+    "repository_id": 1116455646,
+    "workflow_id": 248228578,
+    "workflow_path": ".github/workflows/release.yml",
+    "event": "workflow_dispatch",
+    "ref": "refs/tags/v0.2.7",
+    "run_id": 35257955565,
+    "attempt": 1,
+    "jobs_total": 62,
+    "native_attestation_invocation": "https://github.com/exochain/exochain/actions/runs/35257955565/attempts/1"
+  },
+  "ci_jobs": [
+    {
+      "id": 105326205294,
+      "name": "Run CI Pipeline / Gate 4 — Clippy Lint"
+    },
+    {
+      "id": 105326205378,
+      "name": "Run CI Pipeline / Gate 5 — Format Check"
+    },
+    {
+      "id": 105326205381,
+      "name": "Run CI Pipeline / Gate 7 — Cargo Deny"
+    },
+    {
+      "id": 105326205393,
+      "name": "Run CI Pipeline / Private file custody — Windows runtime"
+    },
+    {
+      "id": 105326205477,
+      "name": "Run CI Pipeline / Gate 9 — Repo Hygiene"
+    },
+    {
+      "id": 105326205505,
+      "name": "Run CI Pipeline / Python SDK — CPython 3.11"
+    },
+    {
+      "id": 105326205511,
+      "name": "Run CI Pipeline / Gate 11 — Unused Dependencies (cargo-machete)"
+    },
+    {
+      "id": 105326205544,
+      "name": "Run CI Pipeline / Gate 6 — Cargo Audit"
+    },
+    {
+      "id": 105326205553,
+      "name": "Run CI Pipeline / Gate 1 — Build (release)"
+    },
+    {
+      "id": 105326205582,
+      "name": "Run CI Pipeline / Gate 22 — WASM/JS Export Sync"
+    },
+    {
+      "id": 105326205662,
+      "name": "Run CI Pipeline / Gate 8 — Documentation"
+    },
+    {
+      "id": 105326205781,
+      "name": "Run CI Pipeline / Gate 20 — WASM Build"
+    },
+    {
+      "id": 105326872127,
+      "name": "Run CI Pipeline / Gate 21 — Bridge Verification"
+    },
+    {
+      "id": 105330712517,
+      "name": "Run CI Pipeline / Gate 14 — Consensus Integration Tests"
+    },
+    {
+      "id": 105330712546,
+      "name": "Run CI Pipeline / Gate 2 — Test"
+    },
+    {
+      "id": 105330712610,
+      "name": "Run CI Pipeline / Gate 3 — Coverage (scoped >= 90%)"
+    },
+    {
+      "id": 105330712623,
+      "name": "Run CI Pipeline / Gate 15 — State Sync & Join Tests"
+    },
+    {
+      "id": 105330712651,
+      "name": "Run CI Pipeline / Gate 10 — SBOM Dry-Run"
+    },
+    {
+      "id": 105330712676,
+      "name": "Run CI Pipeline / Gate 17 — 0dentity Module Coverage (>= 80%)"
+    },
+    {
+      "id": 105330712707,
+      "name": "Run CI Pipeline / Gate 16 — Cross-Platform Build (x86_64-unknown-linux-gnu)"
+    },
+    {
+      "id": 105330712711,
+      "name": "Run CI Pipeline / Gate 16 — Cross-Platform Build (aarch64-apple-darwin)"
+    },
+    {
+      "id": 105330712735,
+      "name": "Run CI Pipeline / Gate 18 — Root Genesis Crate Coverage (100%)"
+    },
+    {
+      "id": 105330712752,
+      "name": "Run CI Pipeline / Gate 16 — Cross-Platform Build (aarch64-unknown-linux-gnu)"
+    },
+    {
+      "id": 105330712754,
+      "name": "Run CI Pipeline / Gate 12 — Integration Tests (gateway)"
+    },
+    {
+      "id": 105330712835,
+      "name": "Run CI Pipeline / Gate 13 — DB Integration Tests (production-db)"
+    },
+    {
+      "id": 105330713017,
+      "name": "Run CI Pipeline / Gate 23 — Unaudited Features (unaudited-mcp-simulation-tools)"
+    },
+    {
+      "id": 105330713040,
+      "name": "Run CI Pipeline / Gate 23 — Unaudited Features (unaudited-zerodentity-first-touch-onboarding)"
+    },
+    {
+      "id": 105330713044,
+      "name": "Run CI Pipeline / Gate 23 — Unaudited Features (unaudited-crosschecked-receipt-anchor)"
+    },
+    {
+      "id": 105330713107,
+      "name": "Run CI Pipeline / Gate 23 — Unaudited Features (unaudited-infrastructure-holons)"
+    },
+    {
+      "id": 105330713163,
+      "name": "Run CI Pipeline / Gate 23 — Unaudited Features (unaudited-pedagogical-proofs)"
+    },
+    {
+      "id": 105330713183,
+      "name": "Run CI Pipeline / Gate 23 — Unaudited Features (unaudited-gateway-graphql-api)"
+    },
+    {
+      "id": 105330713205,
+      "name": "Run CI Pipeline / Gate 23 — Unaudited Features (unaudited-admin-governance-shortcut)"
+    },
+    {
+      "id": 105330713225,
+      "name": "Run CI Pipeline / Gate 23 — Unaudited Features (unaudited-zerodentity-device-behavioral-axes)"
+    },
+    {
+      "id": 105330713265,
+      "name": "Run CI Pipeline / Gate 19 — Root Genesis Portal Coverage (100%)"
+    },
+    {
+      "id": 105354489035,
+      "name": "Run CI Pipeline / All Constitutional Gates"
+    }
+  ],
+  "release_jobs": [
+    {
+      "id": 105326205081,
+      "name": "Validate Release Inputs"
+    },
+    {
+      "id": 105354512569,
+      "name": "Release Environment Gate"
+    },
+    {
+      "id": 105354512644,
+      "name": "Release Second Approver Gate"
+    },
+    {
+      "id": 105360992151,
+      "name": "Verify Signed Release Tag"
+    },
+    {
+      "id": 105361305499,
+      "name": "Prepare exact Python SDK distributions"
+    },
+    {
+      "id": 105361305532,
+      "name": "Prepare exact TypeScript SDK npm package"
+    },
+    {
+      "id": 105361305563,
+      "name": "Build isolated wasm-pack tool transport"
+    },
+    {
+      "id": 105361305631,
+      "name": "Build Legacy Native ABI Artifacts (x86_64-unknown-linux-gnu)"
+    },
+    {
+      "id": 105361305658,
+      "name": "Build Legacy Native ABI Artifacts (aarch64-unknown-linux-gnu)"
+    },
+    {
+      "id": 105361305662,
+      "name": "Build isolated cargo-cyclonedx tool transport"
+    },
+    {
+      "id": 105361305779,
+      "name": "Test LYNK npm package"
+    },
+    {
+      "id": 105361719940,
+      "name": "Generate Release SBOM"
+    },
+    {
+      "id": 105361852056,
+      "name": "Build WASM npm package output"
+    },
+    {
+      "id": 105361974338,
+      "name": "Prepare exact LYNK npm package on fresh runner"
+    },
+    {
+      "id": 105362423619,
+      "name": "Validate and canonicalize Release SBOM"
+    },
+    {
+      "id": 105363096810,
+      "name": "Prepare exact WASM npm package on fresh runner"
+    },
+    {
+      "id": 105366330892,
+      "name": "Package Legacy Native ABI Artifacts (x86_64-unknown-linux-gnu)"
+    },
+    {
+      "id": 105366330927,
+      "name": "Package Legacy Native ABI Artifacts (aarch64-unknown-linux-gnu)"
+    },
+    {
+      "id": 105367027273,
+      "name": "Attest Release Archives"
+    },
+    {
+      "id": 105367027277,
+      "name": "Preflight Exact crates.io Archives"
+    },
+    {
+      "id": 105367805474,
+      "name": "Reproduce Exact crates.io Candidates"
+    },
+    {
+      "id": 105368720008,
+      "name": "Publish Exact crates.io Candidates"
+    }
+  ],
+  "artifacts": [
+    {
+      "lane": "npm-wasm",
+      "id": 10518086890,
+      "name": "exochain-wasm-npm-0.2.7",
+      "zip_sha256": "6301b65e721ef242ad950470a7510480ad1a459b996ad2a5ce749ab757a24449",
+      "zip_size": 782255,
+      "producer_job_id": 105363096810,
+      "files": [
+        {
+          "path": "exochain-exochain-wasm-0.2.7.tgz",
+          "size": 782077,
+          "sha256": "a9660cbf0241e8adde6be92cd7a13beea00c0fe258ea6c79ea527750f182d023"
+        }
+      ]
+    },
+    {
+      "lane": "npm-llm",
+      "id": 10517981432,
+      "name": "llm-proxy-npm-0.2.7",
+      "zip_sha256": "c2346214d8ca94a57dfa9236468e899099354dd2a80f51703de900d600b815a3",
+      "zip_size": 41985,
+      "producer_job_id": 105361974338,
+      "files": [
+        {
+          "path": "exochain-llm-proxy-0.2.7.tgz",
+          "size": 41800,
+          "sha256": "22d60086f12aca9a46bab6cf70325e4f38ed73dd046f5438b8d9b984fd54f2e4"
+        }
+      ]
+    },
+    {
+      "lane": "npm-sdk",
+      "id": 10518080916,
+      "name": "exochain-sdk-npm-0.2.7",
+      "zip_sha256": "15645a0145812fc6e550fa29cb2353cd7264164148d5deecb4cb89695990e2c6",
+      "zip_size": 43860,
+      "producer_job_id": 105361305532,
+      "files": [
+        {
+          "path": "exochain-sdk-0.2.7.tgz",
+          "size": 43687,
+          "sha256": "a0b616e5af6a61dc96c12c2166b20e05f71a61f03b257b370aacc02ceebaa003"
+        }
+      ]
+    },
+    {
+      "lane": "python",
+      "id": 10517457207,
+      "name": "exochain-python-0.2.7",
+      "zip_sha256": "9572ce36c8bb686cb9e2b89223f3d508ec42a3e295090f1a7760095468538f4c",
+      "zip_size": 56134,
+      "producer_job_id": 105361305499,
+      "files": [
+        {
+          "path": "artifact-manifest.tsv",
+          "size": 196,
+          "sha256": "10ebbbcce6f27ebc9cf27656f1fe1d2b8a5fbd2b96488641f188606eab334c6d"
+        },
+        {
+          "path": "dist/exochain-0.2.7-py3-none-any.whl",
+          "size": 27899,
+          "sha256": "fc5589113bfd704862f6d6aea1585386a1e6eaf6700790ffc40b4b5b8c88e959"
+        },
+        {
+          "path": "dist/exochain-0.2.7.tar.gz",
+          "size": 27575,
+          "sha256": "d2339a00c8d69f18b0860b7d7ae633d9c56f4bbe4bc0f1be0ece6eae16f763fa"
+        }
+      ]
+    },
+    {
+      "lane": "sbom",
+      "id": 10517966616,
+      "name": "sbom-0.2.7",
+      "zip_sha256": "2d09a50dd629959a78e64c16e24d5eb68d55fe04787220215b67cc7c994dc784",
+      "zip_size": 3833586,
+      "producer_job_id": 105362423619,
+      "files": [
+        {
+          "path": "exochain-0.2.7-exochain-api.cdx.json",
+          "size": 77306,
+          "sha256": "e83a76ed74897d9b314f65005d3c7eec6df87add00d2efc0d9485531d4176c52"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-authority.cdx.json",
+          "size": 76809,
+          "sha256": "77fa84044f2c3e99012a55f481bbae502d691b975a674f338b62364488f23c1f"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-avc.cdx.json",
+          "size": 77422,
+          "sha256": "04c3d07c2a2e8b744d7bb11077758f778e996c0c7436c74cf7aa25fb70eb43e2"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-catapult.cdx.json",
+          "size": 79865,
+          "sha256": "42ba2935594104381d847867be3ba16c2f913822d8b7383ec1f54e8cd9f797c5"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-consensus.cdx.json",
+          "size": 170001,
+          "sha256": "c0cf1319873bbdfc2010b069f9de9a3a3e8e609e04f25ba44263327494044360"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-consent.cdx.json",
+          "size": 68863,
+          "sha256": "8222bc2f1038b82745cb0c76cee2f03edafc4ea90d84304885b7d4f8acd0d53a"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-core.cdx.json",
+          "size": 68253,
+          "sha256": "71af0089f7d8d4b3acfabb7e32757b1af4635f0c5c0e2d5b85ff868208582e05"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-dag-db-api.cdx.json",
+          "size": 6450,
+          "sha256": "6558925455be1ce36faed57958b6df8c714508b8e57a19301fa4b0895a55a1ec"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-dag-db-core.cdx.json",
+          "size": 69379,
+          "sha256": "f1eae4e0c694814b97639e1a043130f9cbf98dbfc35c77190786d39cfdb50914"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-dag-db-domain.cdx.json",
+          "size": 80992,
+          "sha256": "0f47eb1fec7a40d70173956953103d2381de9d5fa47159e52d24e344459123e3"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-dag-db-exchange.cdx.json",
+          "size": 82961,
+          "sha256": "5522be7008fe025fe16e385d19a18771b814343c732060c6fea7d650d5b4d267"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-dag-db-graph.cdx.json",
+          "size": 69455,
+          "sha256": "8c1d7e66466b221ac75a60cc12ba3e63da294fa041e47a7e95fb46a9363b93c0"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-dag-db-lab.cdx.json",
+          "size": 176441,
+          "sha256": "81304bb03594259731b23f1e4648768309ba04a3f678b688d179161275b25a58"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-dag-db-postgres.cdx.json",
+          "size": 164472,
+          "sha256": "1f9d756078df44860d6b5148216dab13db846736e1e80a4d2d2207b62de058cb"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-dag-db-retrieval.cdx.json",
+          "size": 81875,
+          "sha256": "970b90eba7eb840167be5136f3e90615c26e83e460ea324adb5d8ad726433ef6"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-dag.cdx.json",
+          "size": 78022,
+          "sha256": "e119d2e2122e23b2b5faf1be91e0e084451422def4d049934f29ee978b729ddf"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-decision-forum.cdx.json",
+          "size": 169486,
+          "sha256": "ff95bbcbaf1d7dbb769476c781653e9bae7448819923a6e0d19eb5c012366f12"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-escalation.cdx.json",
+          "size": 79050,
+          "sha256": "5f6074ff1e29213ad5d3d37e9c883f75f88943460f4dd5d6cbbf16088ac56c27"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-economy.cdx.json",
+          "size": 68794,
+          "sha256": "68f6fdd0782e721741a6365ae9711c1104647cf7989c36ef70c19869acdf2ccd"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-gatekeeper.cdx.json",
+          "size": 166648,
+          "sha256": "346bf0c44d68aeb2bcaaa819b6ce46639f85471a530cef9b6a5dd2b8d4e8343b"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-gateway.cdx.json",
+          "size": 235671,
+          "sha256": "f5f79d9b9364d366f1c4bea13c084039b4f532bcf74a0af47ca18856e8b9e0b0"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-governance.cdx.json",
+          "size": 78329,
+          "sha256": "57c701eddcfbf588945871d4f0828d1a5a3d7cef78bd69f0291cc0884101ebff"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-identity.cdx.json",
+          "size": 76068,
+          "sha256": "82295d5aff829353bce01d7e93699b70b68b4c5ea16963ade71d7f9640087552"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-legal.cdx.json",
+          "size": 168504,
+          "sha256": "a0539e3555e4f8ce47b72ab9050e964598e412a4d1249d5bf11bb25cd50eb1f2"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-messaging.cdx.json",
+          "size": 78203,
+          "sha256": "7fd61ca8cd921298814b688a92fd27fa688c9232434b314ef18e826a117614f3"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-node.cdx.json",
+          "size": 411236,
+          "sha256": "1a7386bead0511359ae99894ddbec1f186b81185fbfb76113acc4ba7860d2c78"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-pdp.cdx.json",
+          "size": 113207,
+          "sha256": "b1c30e110432a162127defb25eebf6cbd36ced4ab4fec5b1e159f8fb78cab9fa"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-proofs.cdx.json",
+          "size": 137487,
+          "sha256": "5a54ee2fb3b622d47a3fb42048329e201d72dd81c49e89779c85e13872dce60a"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-root.cdx.json",
+          "size": 88533,
+          "sha256": "f4b40d00667fe7e06694bbd299735942c7baddb41a37fb133dc0d6442c8d5f27"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-sdk.cdx.json",
+          "size": 195168,
+          "sha256": "b6127e2f4a779e4cad04c1519b4c0e8c2572e1b2847adb9d86b9879f7a80f568"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-tenant.cdx.json",
+          "size": 76706,
+          "sha256": "2b60c90defde9763dfba6ff0aef5319639764209413b0e485b21bf575ad18b73"
+        },
+        {
+          "path": "exochain-0.2.7-exochain-wasm.cdx.json",
+          "size": 256336,
+          "sha256": "779cb341c79a3269b72d394c3c5233d6036d05654ca52b772f6fb813df4b29d4"
+        }
+      ]
+    },
+    {
+      "lane": "native-x86_64",
+      "id": 10518128532,
+      "name": "exochain-0.2.7-x86_64-unknown-linux-gnu",
+      "zip_sha256": "0637e988fac25a77edac4989ed67851671e9d0df564efea5048503f5965a214e",
+      "zip_size": 71167773,
+      "producer_job_id": 105366330892,
+      "files": [
+        {
+          "path": "exochain-0.2.7-x86_64-unknown-linux-gnu.tar.gz",
+          "size": 71167567,
+          "sha256": "60e774b7de1ebe962a8b24ca4dff0541afa819239ee5045aedd838b877d5fc71"
+        }
+      ]
+    },
+    {
+      "lane": "native-aarch64",
+      "id": 10517978596,
+      "name": "exochain-0.2.7-aarch64-unknown-linux-gnu",
+      "zip_sha256": "43701b6ae7d68e3430808f85bab2b1df09360b05290d6e9dd33b74c249b13702",
+      "zip_size": 71201045,
+      "producer_job_id": 105366330927,
+      "files": [
+        {
+          "path": "exochain-0.2.7-aarch64-unknown-linux-gnu.tar.gz",
+          "size": 71200837,
+          "sha256": "a398da4891320304f8e77fcf203be5338eb5f09264d9ec5b976f7ec72688db18"
+        }
+      ]
+    }
+  ],
+  "rust_preparation": [
+    {
+      "id": 10517459550,
+      "name": "crate-preflight-0.2.7",
+      "zip_sha256": "fe6eb547b385cae6d9f799a87bdff80a7c11ff7a406657cde813a1d1efac2435",
+      "zip_size": 3208616,
+      "producer_job_id": 105367027277,
+      "manifest_path": "exochain-crate-preflight.tsv",
+      "manifest_sha256": "d71cc9b19ae461f87415d9db07e8a59c2f0eefd30e5e5aaa5ae823c270793171"
+    },
+    {
+      "id": 10517854663,
+      "name": "crate-reproduction-0.2.7",
+      "zip_sha256": "4d43c0aa3d13b16b1f9c7835374dd62d466d127aac3ad2c4071ed5e479103ab2",
+      "zip_size": 3208618,
+      "producer_job_id": 105367805474,
+      "manifest_path": "exochain-crate-reproduced.tsv",
+      "manifest_sha256": "d71cc9b19ae461f87415d9db07e8a59c2f0eefd30e5e5aaa5ae823c270793171"
+    }
+  ],
+  "rust_crates": [
+    {
+      "name": "exochain-core",
+      "sha256": "b30534d84bbd92f01e81d720dc54fca0f8a498c97b326094ab21ada847f6d930"
+    },
+    {
+      "name": "exochain-dag-db-api",
+      "sha256": "5a63fe12a6e6bcc0b5e5418a713c63bc8b4021618003be63689113c86fd07dda"
+    },
+    {
+      "name": "exochain-identity",
+      "sha256": "7f8e94425e4b5701d96c052d57aecc6f20ada7fd646ff858b4fd41ceb3b5ba73"
+    },
+    {
+      "name": "exochain-api",
+      "sha256": "d37748e5758583138e105b4d0680df4d327301bb2080c83ee6893f57b98c6b01"
+    },
+    {
+      "name": "exochain-authority",
+      "sha256": "9db380ed9bbc48a9d7a4597f8da2075ecb8b12eec49078b4fdc2916e10d1a741"
+    },
+    {
+      "name": "exochain-pdp",
+      "sha256": "f66e680dc943036f48d7772801fd658727ce3d1583e0c82cc357a6ceda08fc48"
+    },
+    {
+      "name": "exochain-avc",
+      "sha256": "d0e6eda1a1dc8d508fc61adc029444591b54a962912b6449ca62a67424101ee7"
+    },
+    {
+      "name": "exochain-consent",
+      "sha256": "10fbb5f4ea3851ed42056c610524de732e7c510923654aa62c068428e8adda5b"
+    },
+    {
+      "name": "exochain-dag-db-core",
+      "sha256": "ff38381d7b70d99150d1e1207afcaa14e08468c6a7355256dbfc7e8c9cdb6cb6"
+    },
+    {
+      "name": "exochain-dag-db-graph",
+      "sha256": "c81cf5ea8e270dbcf8de7fb22bb9ab22bda3a9ba2ccec03f76a02fc2dc7b1b38"
+    },
+    {
+      "name": "exochain-dag-db-domain",
+      "sha256": "2ae6810d8644c6b68ca7ea91865def6daecea27e3888229d27337ef6ea67f51c"
+    },
+    {
+      "name": "exochain-dag-db-retrieval",
+      "sha256": "835ea92942991fc9f6f9a87717bb7752201babb3601f6b7f22b7253fb2952861"
+    },
+    {
+      "name": "exochain-dag-db-exchange",
+      "sha256": "8b6abce95e39e24b3111f08a76bb4f4ac390ec01f9966f79eec2a9c16e3b39a6"
+    },
+    {
+      "name": "exochain-dag",
+      "sha256": "822f3655c3a72226f3aa7cc63af8f59fadbe21b706d03540a76688793ccb95c0"
+    },
+    {
+      "name": "exochain-dag-db-postgres",
+      "sha256": "acd30ba8ea144b616cd1cadcb070e9adb6c33392e9c142777a0179e9df6150a6"
+    },
+    {
+      "name": "exochain-gatekeeper",
+      "sha256": "fd8957aff5faf3e3949fdae701f6c512edf9c64b3023c943cadb714108c07049"
+    },
+    {
+      "name": "exochain-proofs",
+      "sha256": "de30e8e9a000a9bd981b94e72fb3d363f1312ff53dbaf96d3ec46ac2fa2eb5c3"
+    },
+    {
+      "name": "exochain-governance",
+      "sha256": "eda5da151a08f654e8020c2f38ffa0b4ffb2bf913e1dd289df20f51c9d65f579"
+    },
+    {
+      "name": "exochain-escalation",
+      "sha256": "a2593bd5ef382a48a159622ad697ed4f564f8ec94c6225f3c9404d1ab13e0f88"
+    },
+    {
+      "name": "exochain-tenant",
+      "sha256": "b41b42dedb9c1a7a5bdcf3bd5360d665fa5fbdfe76190d5569f02afb5bcf69b8"
+    },
+    {
+      "name": "exochain-catapult",
+      "sha256": "e9662a446b60980bce866520ec215893ac70aee361517873d490953ac797631a"
+    },
+    {
+      "name": "exochain-legal",
+      "sha256": "d2a4be1583c316c8596173d642101a5a761725e0462e11cc83b96b113841bc4f"
+    },
+    {
+      "name": "exochain-decision-forum",
+      "sha256": "96697bb95ad917d0f3312b444aea9989185ee389c067530570130700480ea460"
+    },
+    {
+      "name": "exochain-consensus",
+      "sha256": "e87238f2135ada91f3f3c8b1eecaf65e3672a6481fde80c30a56ec41e467f1b0"
+    },
+    {
+      "name": "exochain-dag-db-lab",
+      "sha256": "0e31eda57c6747728ae2c2a2b2aaeefbaf79af1995a88fa7a3a0f2522394e497"
+    },
+    {
+      "name": "exochain-economy",
+      "sha256": "fc7cab840da928895e29318a398a6a05c515db91ff5152b84b02dc24d32b8f9c"
+    },
+    {
+      "name": "exochain-gateway",
+      "sha256": "328701cb56dcd1a436d81ea9a34bbd26b31bcb52daa52daaddfadddf69644c14"
+    },
+    {
+      "name": "exochain-messaging",
+      "sha256": "7564aa346b16508f5083b37b393635cdad79b9dbb470539a7d2b5e97879f9d76"
+    },
+    {
+      "name": "exochain-root",
+      "sha256": "edfd262de77b770496a3a37865053e34719ce489513fc4d5725b40045fa7c04f"
+    },
+    {
+      "name": "exochain-sdk",
+      "sha256": "633bb3079263c9ba5660d4f37e019b1714835089eb169afe0d09376e6795bd61"
+    },
+    {
+      "name": "exochain-node",
+      "sha256": "0cefb4c9dde59f0f07327b0edb8a35fe0973d276c0ddfc8913ec6439b9a73a47"
+    },
+    {
+      "name": "exochain-wasm",
+      "sha256": "8e732a7e16439451c8996d1980245a4b7346d5044e6aa722a399f436fc3b4835"
+    }
+  ]
+}
