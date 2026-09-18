@@ -40,7 +40,7 @@ job_block() {
 assert_non_dry_run_job() {
   local job="$1"
   local block="$2"
-  grep -F 'if: ${{ !inputs.dry_run }}' <<<"$block" >/dev/null \
+  grep -F "if: \${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}" <<<"$block" >/dev/null \
     || fail "job $job must be skipped for dry-run releases"
 }
 
@@ -70,10 +70,10 @@ grep -F 'softprops/action-gh-release@' <<<"$github_release_block" >/dev/null \
   || fail "github-release must remain the GitHub Release job for real releases"
 grep -F '"$npm_path" pack' <<<"$wasm_prepare_block" >/dev/null \
   || fail "dry-run releases must still create and validate the exact token-free WASM tarball"
-if grep -F 'if: ${{ !inputs.dry_run }}' <<<"$wasm_prepare_block" >/dev/null; then
+if grep -F '!inputs.dry_run' <<<"$wasm_prepare_block" >/dev/null; then
   fail "token-free WASM package preparation must still run during a dry run"
 fi
-grep -F 'if: ${{ !inputs.dry_run }}' <<<"$wasm_publish_block" >/dev/null \
+grep -F "if: \${{ needs.validate-release-inputs.outputs.operation == 'release' && !inputs.dry_run }}" <<<"$wasm_publish_block" >/dev/null \
   || fail "publish-wasm-npm must guard npm publish for dry-run releases"
 grep -F 'printf '\''tag_object_sha=\n'\'' >> "$GITHUB_OUTPUT"' <<<"$verify_tag_block" >/dev/null \
   || fail "dry-run verification must emit no signed-tag object identity"

@@ -4,6 +4,16 @@
 
 set -euo pipefail
 
+if ! awk '
+  /^  all-gates:$/ { capture = 1; next }
+  capture && /^  [A-Za-z0-9_-]+:$/ { exit }
+  capture && /^      - npm-release-runtime$/ { found = 1 }
+  END { exit !found }
+' .github/workflows/ci.yml; then
+  printf 'release npm config boundary test failed: aggregate CI must require the actual npm runtime contract\n' >&2
+  exit 1
+fi
+
 fail() {
   printf 'release npm config boundary test failed: %s\n' "$1" >&2
   exit 1
@@ -28,9 +38,9 @@ fi
   || fail "all three token-free npm lanes must protect both empty config files"
 [ "$(grep -cF '"$npm_path" --version)" = 10.9.2 ]' "$workflow" || true)" -eq 3 ] \
   || fail "all three token-free npm lanes must execute the exact bundled npm 10.9.2 runtime"
-grep -F '[ "$RELEASE_TRUSTED_NPM_VERSION" = 10.9.2 ]' "$publisher" >/dev/null \
+grep -F '[ "$RELEASE_TRUSTED_NPM_VERSION" = 11.12.1 ]' "$publisher" >/dev/null \
   && grep -F '"$node_path" "$npm_cli_path" --version' "$publisher" >/dev/null \
-  || fail "credentialed npm publication must verify the exact bundled npm 10.9.2 runtime"
+  || fail "credentialed npm publication must verify the exact bundled npm 11.12.1 runtime"
 grep -F 'publisher_user_config="$home_root/user.npmrc"' "$publisher" >/dev/null \
   && grep -F 'publisher_global_config="$home_root/global.npmrc"' "$publisher" >/dev/null \
   && grep -F '/bin/chmod 600 "$publisher_user_config" "$publisher_global_config"' "$publisher" >/dev/null \
@@ -43,62 +53,67 @@ node_path="$(command -v node)"
 npm_path="$(command -v npm)"
 [ -x "$node_path" ] && [ -x "$npm_path" ] \
   || fail "Node.js and npm are required for the pinned npm regression"
-runtime_root="$test_root/npm-runtime"
-bootstrap_home="$test_root/bootstrap-home"
-/bin/mkdir -m 700 -p "$runtime_root" "$bootstrap_home"
-bootstrap_user_config="$bootstrap_home/user.npmrc"
-bootstrap_global_config="$bootstrap_home/global.npmrc"
-: > "$bootstrap_user_config"
-: > "$bootstrap_global_config"
-/bin/chmod 600 "$bootstrap_user_config" "$bootstrap_global_config"
+for npm_version in 10.9.2 11.12.1; do
+  runtime_root="$test_root/npm-runtime-$npm_version"
+  bootstrap_home="$test_root/bootstrap-home-$npm_version"
+  /bin/mkdir -m 700 -p "$runtime_root" "$bootstrap_home"
+  bootstrap_user_config="$bootstrap_home/user.npmrc"
+  bootstrap_global_config="$bootstrap_home/global.npmrc"
+  : > "$bootstrap_user_config"
+  : > "$bootstrap_global_config"
+  /bin/chmod 600 "$bootstrap_user_config" "$bootstrap_global_config"
 
-# Install the exact npm release bundled by actions/setup-node 22.14.0. This is
-# a test dependency only; production uses the commit-pinned setup-node action
-# and verifies the same runtime before any package lifecycle or publication.
-/usr/bin/env -i \
-  PATH="$(dirname "$node_path"):$(dirname "$npm_path"):/usr/bin:/bin" \
-  HOME="$bootstrap_home" \
-  NPM_CONFIG_CACHE="$bootstrap_home/cache" \
-  NPM_CONFIG_USERCONFIG="$bootstrap_user_config" \
-  NPM_CONFIG_GLOBALCONFIG="$bootstrap_global_config" \
-  "$npm_path" install --prefix "$runtime_root" --no-save --package-lock=false \
-    --ignore-scripts --fund=false --audit=false --registry=https://registry.npmjs.org \
-    npm@10.9.2 >/dev/null
+  # Exercise both exact build/publisher npm configuration contracts. These are
+  # private test dependencies; production uses each pinned Node distribution's
+  # bundled npm and never replaces it inside a captured trusted tool root.
+  /usr/bin/env -i \
+    PATH="$(dirname "$node_path"):$(dirname "$npm_path"):/usr/bin:/bin" \
+    HOME="$bootstrap_home" \
+    NPM_CONFIG_CACHE="$bootstrap_home/cache" \
+    NPM_CONFIG_USERCONFIG="$bootstrap_user_config" \
+    NPM_CONFIG_GLOBALCONFIG="$bootstrap_global_config" \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    "$npm_path" install --prefix "$runtime_root" --no-save --package-lock=false \
+      --ignore-scripts --fund=false --audit=false --registry=https://registry.npmjs.org \
+      "npm@$npm_version" >/dev/null
 
-pinned_npm="$runtime_root/node_modules/npm/bin/npm-cli.js"
-[ -f "$pinned_npm" ] && [ ! -L "$pinned_npm" ] \
-  || fail "exact npm 10.9.2 test runtime was not installed as a regular file"
-[ "$(/usr/bin/env -i "$node_path" "$pinned_npm" --version)" = 10.9.2 ] \
-  || fail "installed npm test runtime is not exactly 10.9.2"
+  pinned_npm="$runtime_root/node_modules/npm/bin/npm-cli.js"
+  [ -f "$pinned_npm" ] && [ ! -L "$pinned_npm" ] \
+    || fail "exact npm $npm_version test runtime was not installed as a regular file"
+  [ "$(/usr/bin/env -i "$node_path" "$pinned_npm" --version)" = "$npm_version" ] \
+    || fail "installed npm test runtime is not exactly $npm_version"
 
-runtime_home="$test_root/runtime-home"
-/bin/mkdir -m 700 "$runtime_home"
-same_config="$runtime_home/same.npmrc"
-: > "$same_config"
-/bin/chmod 600 "$same_config"
-collision_output="$test_root/collision.out"
-if /usr/bin/env -i \
-    HOME="$runtime_home" \
-    NPM_CONFIG_USERCONFIG="$same_config" \
-    NPM_CONFIG_GLOBALCONFIG="$same_config" \
-    "$node_path" "$pinned_npm" --version >"$collision_output" 2>&1; then
-  fail "npm 10.9.2 accepted one path for both user and global configuration"
-fi
-grep -E 'config.*loaded twice|double.*config' "$collision_output" >/dev/null \
-  || fail "npm 10.9.2 did not report the expected duplicate-config boundary"
+  runtime_home="$test_root/runtime-home-$npm_version"
+  /bin/mkdir -m 700 "$runtime_home"
+  same_config="$runtime_home/same.npmrc"
+  : > "$same_config"
+  /bin/chmod 600 "$same_config"
+  collision_output="$test_root/collision.out"
+  if /usr/bin/env -i \
+      HOME="$runtime_home" \
+      NPM_CONFIG_USERCONFIG="$same_config" \
+      NPM_CONFIG_GLOBALCONFIG="$same_config" \
+      NPM_CONFIG_UPDATE_NOTIFIER=false \
+      "$node_path" "$pinned_npm" --version >"$collision_output" 2>&1; then
+    fail "npm $npm_version accepted one path for both user and global configuration"
+  fi
+  grep -E 'config.*loaded twice|double.*config' "$collision_output" >/dev/null \
+    || fail "npm $npm_version did not report the expected duplicate-config boundary"
 
-runtime_user_config="$runtime_home/user.npmrc"
-runtime_global_config="$runtime_home/global.npmrc"
-: > "$runtime_user_config"
-: > "$runtime_global_config"
-/bin/chmod 600 "$runtime_user_config" "$runtime_global_config"
-[ "$runtime_user_config" != "$runtime_global_config" ] \
-  || fail "control fixture did not create distinct config paths"
-[ "$(/usr/bin/env -i \
-    HOME="$runtime_home" \
-    NPM_CONFIG_USERCONFIG="$runtime_user_config" \
-    NPM_CONFIG_GLOBALCONFIG="$runtime_global_config" \
-    "$node_path" "$pinned_npm" --version)" = 10.9.2 ] \
-  || fail "npm 10.9.2 failed with distinct empty user/global config files"
+  runtime_user_config="$runtime_home/user.npmrc"
+  runtime_global_config="$runtime_home/global.npmrc"
+  : > "$runtime_user_config"
+  : > "$runtime_global_config"
+  /bin/chmod 600 "$runtime_user_config" "$runtime_global_config"
+  [ "$runtime_user_config" != "$runtime_global_config" ] \
+    || fail "control fixture did not create distinct config paths"
+  [ "$(/usr/bin/env -i \
+      HOME="$runtime_home" \
+      NPM_CONFIG_USERCONFIG="$runtime_user_config" \
+      NPM_CONFIG_GLOBALCONFIG="$runtime_global_config" \
+      NPM_CONFIG_UPDATE_NOTIFIER=false \
+      "$node_path" "$pinned_npm" --version)" = "$npm_version" ] \
+    || fail "npm $npm_version failed with distinct empty user/global config files"
+done
 
 printf 'release npm config boundary test passed\n'

@@ -93,12 +93,46 @@ jobs:
         run: "python -m pip --isolated install --disable-pip-version-check --require-hashes --only-binary=:all: --index-url=https://pypi.org/simple -r tools/python-release-requirements.lock"
       - name: Python release archive and provenance verifier boundary
         run: bash tools/test_verify_python_release_package.sh
+      - name: Python partial-publication recovery boundary
+        run: bash tools/test_recover_release_python_027.sh
       - name: Run Python SDK security and regression tests
         run: python -m pytest packages/exochain-py/tests
       - name: Ruff Python SDK
         run: python -m ruff check packages/exochain-py
       - name: Mypy Python SDK
         run: python -m mypy --config-file packages/exochain-py/pyproject.toml packages/exochain-py/exochain
+
+  # -----------------------------------------------------------------------
+  # Actual npm output is part of the release verifier's input contract.
+  # These public-registry checks receive no publication credentials or OIDC.
+  # -----------------------------------------------------------------------
+  npm-release-runtime:
+    name: "npm release runtime — Node ${{ matrix.node }}"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node: 22.14.0
+            test-argument: --expect-legacy-rejection
+          - node: 24.15.0
+            test-argument: ""
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Real public package signature and provenance contract
+        run: |
+          /usr/bin/env -i PATH=/usr/bin:/bin \
+            RELEASE_TEST_NODE="$(command -v node)" \
+            RELEASE_TEST_NPM="$(readlink -f "$(command -v npm)")" \
+            bash tools/test_release_npm_runtime_contract.sh ${{ matrix.test-argument }}
 
   # -----------------------------------------------------------------------
   # Gate 3: Coverage (scoped 90%+ line coverage required)
@@ -324,6 +358,14 @@ jobs:
         run: bash tools/test_release_workflow_ref_binding.sh
       - name: Release version input boundary
         run: bash tools/test_release_version_input_boundary.sh
+      - name: Fixed recovery custody and workflow boundaries
+        run: |
+          python3 -B tools/test_release_recovery_027.py
+          python3 -B tools/test_release_recovery_workflow.py
+          python3 -B tools/test_release_recovery_python_stage.py
+          python3 -B tools/test_recover_github_release_027.py
+          python3 -B tools/test_import_release_recovery_027.py
+          bash tools/test_release_recovery_npm.sh
       - name: Release signed-tag trust boundary
         run: bash tools/test_release_signed_tag_trust_boundary.sh
       - name: Release reusable CI boundary
@@ -366,8 +408,10 @@ jobs:
         run: bash tools/test_transport_release_file_set.sh
       - name: npm release tarball parser boundary
         run: bash tools/test_verify_npm_release_tarball.sh
-      - name: npm 10.9.2 configuration boundary
+      - name: npm build and publisher configuration boundaries
         run: bash tools/test_release_npm_config_boundary.sh
+      - name: npm registry visibility polling boundary
+        run: bash tools/test_npm_registry_visibility.sh
       - name: Repo truth and public claims
         run: bash tools/test_repo_truth.sh
       - name: Sybil CLI secret boundary
@@ -988,6 +1032,7 @@ jobs:
     name: "All Constitutional Gates"
     runs-on: ubuntu-latest
     needs:
+      - npm-release-runtime
       - build
       - test
       - python-sdk

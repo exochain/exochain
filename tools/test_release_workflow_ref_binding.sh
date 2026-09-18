@@ -65,6 +65,8 @@ for focused_guard in \
   test_release_sdk_python_lifecycle_boundary.sh \
   test_release_llm_lifecycle_boundary.sh \
   test_release_npm_config_boundary.sh \
+  test_release_npm_runtime_contract.sh \
+  test_npm_registry_visibility.sh \
   test_stage_llm_release_package.sh \
   test_transport_release_build_output.sh \
   test_transport_release_file_set.sh \
@@ -232,7 +234,13 @@ expected_permissions = {
   "publish-llm-proxy-npm" => { "contents" => "read", "id-token" => "write" },
   "publish-sdk-npm" => { "contents" => "read", "id-token" => "write" },
   "publish-python-package" => { "contents" => "read", "id-token" => "write" },
-  "github-release" => { "contents" => "write" }
+  "github-release" => { "contents" => "write" },
+  "recovery-import" => { "contents" => "read", "actions" => "read", "attestations" => "read" },
+  "recovery-wasm" => { "contents" => "read" },
+  "recovery-llm" => { "contents" => "read", "id-token" => "write" },
+  "recovery-sdk" => { "contents" => "read", "id-token" => "write" },
+  "recovery-python" => { "contents" => "read", "id-token" => "write" },
+  "recovery-github" => { "contents" => "write" }
 }
 
 job_names = Set.new
@@ -1315,7 +1323,13 @@ expected_needs = {
   "publish-llm-proxy-npm" => %w[publish-wasm-npm publish prepare-wasm-npm prepare-llm-proxy-npm verify-signed-tag validate-release-inputs],
   "publish-sdk-npm" => %w[publish-llm-proxy-npm publish prepare-sdk-npm prepare-python-package verify-signed-tag validate-release-inputs],
   "publish-python-package" => %w[publish-sdk-npm prepare-python-package verify-signed-tag validate-release-inputs],
-  "github-release" => %w[package-release validate-sbom attest-release publish publish-wasm-npm publish-llm-proxy-npm publish-sdk-npm publish-python-package verify-signed-tag validate-release-inputs]
+  "github-release" => %w[package-release validate-sbom attest-release publish publish-wasm-npm publish-llm-proxy-npm publish-sdk-npm publish-python-package verify-signed-tag validate-release-inputs],
+  "recovery-import" => %w[ci approve approve-second verify-signed-tag validate-release-inputs],
+  "recovery-wasm" => %w[recovery-import verify-signed-tag validate-release-inputs],
+  "recovery-llm" => %w[recovery-import recovery-wasm verify-signed-tag validate-release-inputs],
+  "recovery-sdk" => %w[recovery-import recovery-llm verify-signed-tag validate-release-inputs],
+  "recovery-python" => %w[recovery-import recovery-sdk verify-signed-tag validate-release-inputs],
+  "recovery-github" => %w[recovery-import recovery-wasm recovery-llm recovery-sdk recovery-python verify-signed-tag validate-release-inputs]
 }
 
 expected_job_names = ["ci", *expected_needs.keys]
@@ -1524,14 +1538,48 @@ for trusted_tool_job in release-build generate-sbom preflight-crates publish bui
 done
 
 node_pin_count=$(grep -cF 'node-version: 22.14.0' "$workflow" || true)
-[ "$node_pin_count" -eq 10 ] \
-  || fail "all ten Node.js release jobs must pin exact Node.js 22.14.0, got $node_pin_count"
+[ "$node_pin_count" -eq 7 ] \
+  || fail "all seven build/preparation jobs must retain Node.js 22.14.0, got $node_pin_count"
+publisher_node_pin_count=$(grep -cF 'node-version: 24.15.0' "$workflow" || true)
+[ "$publisher_node_pin_count" -eq 7 ] \
+  || fail "three normal publishers and four recovery validators/publishers must pin Node.js 24.15.0, got $publisher_node_pin_count"
+for node_build_job in preflight-crates publish build-wasm-npm prepare-wasm-npm test-llm-proxy-npm prepare-llm-proxy-npm prepare-sdk-npm; do
+  node_build_block=$(job_block "$node_build_job")
+  grep -F 'node-version: 22.14.0' <<<"$node_build_block" >/dev/null \
+    && grep -F 'RELEASE_TRUSTED_NODE_VERSION: 22.14.0' <<<"$node_build_block" >/dev/null \
+    || fail "job $node_build_job changed its artifact-building Node.js contract"
+  if grep -F '24.15.0' <<<"$node_build_block" >/dev/null; then
+    fail "job $node_build_job must not mix in the publisher runtime"
+  fi
+done
+for npm_publish_job in publish-wasm-npm publish-llm-proxy-npm publish-sdk-npm; do
+  npm_publish_block=$(job_block "$npm_publish_job")
+  grep -F 'node-version: 24.15.0' <<<"$npm_publish_block" >/dev/null \
+    && grep -F 'RELEASE_TRUSTED_NODE_VERSION: 24.15.0' <<<"$npm_publish_block" >/dev/null \
+    && grep -F 'RELEASE_TRUSTED_NPM_VERSION: 11.12.1' <<<"$npm_publish_block" >/dev/null \
+    || fail "job $npm_publish_job must use the verified bundled publisher pair"
+  if grep -E '22\.14\.0|10\.9\.2' <<<"$npm_publish_block" >/dev/null; then
+    fail "job $npm_publish_job must not capture or execute the incompatible build runtime"
+  fi
+done
 rust_pin_count=$(grep -cF 'toolchain: 1.97.1' "$workflow" || true)
 [ "$rust_pin_count" -eq 8 ] \
   || fail "all eight Rust-consuming release jobs must pin exact Rust 1.97.1, got $rust_pin_count"
 python_pin_count=$(grep -cF 'python-version: 3.13.7' "$workflow" || true)
-[ "$python_pin_count" -eq 20 ] \
-  || fail "all twenty Python release jobs must pin exact Python 3.13.7, got $python_pin_count"
+[ "$python_pin_count" -eq 26 ] \
+  || fail "twenty normal and six recovery jobs must pin exact Python 3.13.7, got $python_pin_count"
+for recovery_job in recovery-import recovery-wasm recovery-llm recovery-sdk recovery-python recovery-github; do
+  recovery_block=$(job_block "$recovery_job")
+  grep -F 'python-version: 3.13.7' <<<"$recovery_block" >/dev/null \
+    || fail "job $recovery_job must use exact Python 3.13.7"
+  grep -F 'show "${GITHUB_SHA}:tools/run_release_recovery_027.sh"' <<<"$recovery_block" >/dev/null \
+    || fail "job $recovery_job must capture its dispatcher from actual GITHUB_SHA"
+done
+for recovery_node_job in recovery-import recovery-wasm recovery-llm recovery-sdk; do
+  recovery_block=$(job_block "$recovery_node_job")
+  grep -F 'node-version: 24.15.0' <<<"$recovery_block" >/dev/null \
+    || fail "job $recovery_node_job must use exact Node.js 24.15.0"
+done
 if grep -F 'ubuntu-latest' "$workflow" >/dev/null; then
   fail "release jobs must use the explicit ubuntu-24.04 runner image"
 fi

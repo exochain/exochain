@@ -165,11 +165,111 @@ const audit = {
   }],
 };
 fs.writeFileSync(path.join(root, 'audit.json'), JSON.stringify(audit));
+// Actual npm 11.12.1 / sigstore 4.1.0 serialization uses this exact v0.3
+// media type and single-certificate layout. These generated certificate and
+// signature fixtures test structure/identity only, not Sigstore cryptography.
+const modern = structuredClone(audit);
+const modernBundle = modern.verified[0].attestationBundles[1].bundle;
+modernBundle.mediaType = 'application/vnd.dev.sigstore.bundle.v0.3+json';
+modernBundle.verificationMaterial.certificate = { rawBytes: certificate };
+delete modernBundle.verificationMaterial.x509CertificateChain;
+fs.writeFileSync(path.join(root, 'audit-v03.json'), JSON.stringify(modern));
 NODE
 
 node "$verifier" audit "$test_root/audit.json" '@exochain/sdk' 0.2.6 \
   "$integrity" "$(printf '1%.0s' {1..40})" refs/tags/v0.2.6 >/dev/null \
   || fail "exact registry signature and provenance proof was rejected"
+
+node "$verifier" audit "$test_root/audit-v03.json" '@exochain/sdk' 0.2.6 \
+  "$integrity" "$(printf '1%.0s' {1..40})" refs/tags/v0.2.6 >/dev/null \
+  || fail "actual npm v0.3 provenance format fixture was rejected"
+
+node - "$test_root" "$verifier" "$integrity" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const [root, verifier, integrity] = process.argv.slice(2);
+const provenanceType = 'https://slsa.dev/provenance/v1';
+const provenance = value => value.verified[0].attestationBundles.find(item => item.predicateType === provenanceType).bundle;
+const material = value => provenance(value).verificationMaterial;
+const statement = (value, change) => {
+  const envelope = provenance(value).dsseEnvelope;
+  const parsed = JSON.parse(Buffer.from(envelope.payload, 'base64'));
+  change(parsed);
+  envelope.payload = Buffer.from(JSON.stringify(parsed)).toString('base64');
+};
+const cases = [
+  ['invalid-audit', value => value.invalid.push({ name: '@exochain/sdk' }), 'invalid or missing'],
+  ['missing-audit', value => value.missing.push({ name: '@exochain/sdk' }), 'invalid or missing'],
+  ['missing-verified', value => delete value.verified, 'invalid or missing'],
+  ['duplicate-provenance', value => value.verified[0].attestationBundles.push(structuredClone(value.verified[0].attestationBundles[1])), 'one publish and one provenance'],
+  ['wrong-subject', value => statement(value, s => { s.subject[0].digest.sha512 = 'a'.repeat(128); }), 'exact npm tarball'],
+  ['wrong-repository', value => statement(value, s => { s.predicate.buildDefinition.externalParameters.workflow.repository = 'https://github.com/attacker/exochain'; }), 'workflow identity'],
+  ['wrong-workflow', value => statement(value, s => { s.predicate.buildDefinition.externalParameters.workflow.path = '.github/workflows/other.yml'; }), 'workflow identity'],
+  ['wrong-ref', value => statement(value, s => { s.predicate.buildDefinition.externalParameters.workflow.ref = 'refs/tags/v0.2.7'; }), 'workflow identity'],
+  ['wrong-commit', value => statement(value, s => { s.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit = '2'.repeat(40); }), 'exact release commit'],
+  ['wrong-trigger', value => statement(value, s => { s.predicate.buildDefinition.internalParameters.github.event_name = 'pull_request'; }), 'workflow trigger'],
+  ['wrong-runner', value => statement(value, s => { s.predicate.runDetails.builder.id = 'https://github.com/actions/runner/self-hosted'; }), 'GitHub-hosted builder'],
+  ['wrong-san', value => statement(value, s => {
+    s.predicate.buildDefinition.externalParameters.workflow.ref = 'refs/tags/v0.2.7';
+    s.predicate.buildDefinition.resolvedDependencies[0].uri = 'git+https://github.com/exochain/exochain@refs/tags/v0.2.7';
+  }), 'certificate does not bind', 'refs/tags/v0.2.7'],
+  ['missing-tlog', value => delete material(value).tlogEntries, 'certificate or transparency-log'],
+  ['empty-tlog', value => { material(value).tlogEntries = []; }, 'certificate or transparency-log'],
+  ['unknown-material', value => { material(value).unexpected = {}; }, 'certificate material'],
+  ['public-key-conflict', value => { material(value).publicKey = { hint: 'wrong' }; }, 'certificate material'],
+  ['unknown-format', value => { provenance(value).mediaType = 'application/vnd.dev.sigstore.bundle.v0.4+json'; }, 'unsupported Sigstore'],
+  ['unreviewed-v03-alias', value => { provenance(value).mediaType = 'application/vnd.dev.sigstore.bundle+json;version=0.3'; }, 'unsupported Sigstore'],
+];
+let rejected = 0;
+for (const [format, filename] of [['v02', 'audit.json'], ['v03', 'audit-v03.json']]) {
+  const original = JSON.parse(fs.readFileSync(path.join(root, filename)));
+  const certificate = value => format === 'v02' ? material(value).x509CertificateChain.certificates[0] : material(value).certificate;
+  const formatCases = [
+    ['malformed-certificate', value => { certificate(value).rawBytes = 'd3Jvbmc='; }, 'certificate is malformed'],
+    ['noncanonical-certificate', value => { certificate(value).rawBytes += '\n'; }, 'canonical base64'],
+    ['empty-certificate', value => { certificate(value).rawBytes = ''; }, 'canonical base64'],
+    ['extra-certificate-field', value => { certificate(value).unexpected = 'wrong'; }, 'certificate material'],
+    ['mixed-layout', value => {
+      if (format === 'v02') material(value).certificate = structuredClone(certificate(value));
+      else material(value).x509CertificateChain = { certificates: [structuredClone(certificate(value))] };
+    }, 'certificate material'],
+    ['null-foreign-layout', value => {
+      if (format === 'v02') material(value).certificate = null;
+      else material(value).x509CertificateChain = null;
+    }, 'certificate material'],
+    ['swapped-layout', value => {
+      if (format === 'v02') {
+        material(value).certificate = structuredClone(certificate(value));
+        delete material(value).x509CertificateChain;
+      } else {
+        material(value).x509CertificateChain = { certificates: [structuredClone(certificate(value))] };
+        delete material(value).certificate;
+      }
+    }, 'certificate material'],
+    ['array-certificate-container', value => {
+      if (format === 'v02') material(value).x509CertificateChain = [];
+      else material(value).certificate = [];
+    }, 'certificate material'],
+  ];
+  if (format === 'v02') {
+    formatCases.push(['multiple-certificates', value => material(value).x509CertificateChain.certificates.push(structuredClone(certificate(value))), 'certificate material']);
+    formatCases.push(['extra-chain-field', value => { material(value).x509CertificateChain.unexpected = true; }, 'certificate material']);
+  }
+  for (const [label, change, expectedError, expectedRef] of [...cases, ...formatCases]) {
+    const value = structuredClone(original);
+    change(value);
+    const file = path.join(root, `${format}-${label}.json`);
+    fs.writeFileSync(file, JSON.stringify(value));
+    const result = spawnSync(process.execPath, [verifier, 'audit', file, '@exochain/sdk', '0.2.6', integrity, '1'.repeat(40), expectedRef || 'refs/tags/v0.2.6'], { encoding: 'utf8', env: {} });
+    if (result.status !== 1 || !result.stderr.includes(expectedError)) {
+      throw new Error(`${format}/${label} did not fail at its intended boundary: status=${result.status}; ${result.stderr}`);
+    }
+    rejected += 1;
+  }
+}
+console.log(`Both Sigstore certificate formats retained ${rejected} rejection boundaries`);
+NODE
 
 expect_audit_rejected() {
   local label="$1"
