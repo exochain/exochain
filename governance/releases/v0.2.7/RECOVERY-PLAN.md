@@ -74,7 +74,11 @@ Files: `governance/releases/v0.2.7/RECOVERY-MANIFEST.json`,
 
 Interfaces: the JSON manifest records fixed version/tag/source/run/attempt,
 successful producing job IDs/names, artifact IDs/names/zip SHA256 and strict
-per-file names/sizes/SHA256. The Python CLI validates `manifest`, `origin`,
+per-file names/sizes/SHA256. Include the complete successful original reusable
+CI job IDs/names, both original approval jobs and signed-tag gate, native
+attestation job, and exactly 32 Rust archive SHA256 values from column 3 of the
+original preflight TSV (column 4 is not the crates.io archive checksum).
+The Python CLI validates `manifest`, `origin`,
 `artifacts`, `product-tag` and `rust-registry` modes; it returns JSON or a
 nonzero error, never shell code. The shell wrapper captures helpers from actual
 GITHUB_SHA and composes unchanged controller source/tag/signer checks with
@@ -83,6 +87,9 @@ fixed original-product signature and remote identity checks.
 - [ ] Independently review the artifact inventory obtained from original
   run35257955565/attempts/1, not current attempt2. Record only factual owned
   manifest fields; do not commit downloaded logs/archives/scanner output.
+  Artifact API workflow_run metadata does not itself identify a producing job or
+  attempt: require explicit attempt1 job membership and the reviewed fixed
+  artifact-ID/digest/producer mapping. Never infer this from latest-run metadata.
 - [ ] Write stdlib unittest cases before implementation. Positive fixtures
   specify literal values; negative cases change one identity/digest/file/job
   boundary at a time. A wrong original producer must fail even when bytes hash.
