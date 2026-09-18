@@ -111,13 +111,40 @@ python3 -B tools/test_release_recovery_027.py
 - [ ] Run full focused tests and original signer/source/tag regression guards;
   commit only task files and submit the immutable diff for review.
 
-## Task 3: Wire protected recovery, preserve exact publication acceptance
+## Task 3: Strict Python partial-publication preflight
+
+Files: `tools/verify_python_release_package.py` and
+`tools/test_verify_python_release_package.sh`.
+
+Interface: add `recovery-preflight RESPONSE PACKAGE VERSION MANIFEST`, emitting
+bounded JSON `{"existing":[FILENAMES],"missing":[FILENAMES]}` in manifest order.
+This validates a genuine HTTP200 registry response only; the caller handles404
+separately. It is a metadata preflight, not cryptographic provenance acceptance.
+Keep `registry-response` strict and silent on successful complete acceptance.
+
+- [ ] Add tests for no files, either single file, both files, extra file,
+  duplicate record, wrong package/version/hash/size, boolean size, yanked file
+  and malformed response. Assert the actual CLI exit/output, not source text.
+  Full-inventory `registry-response` must continue rejecting partial inventory.
+- [ ] Run before implementation and retain the expected unknown-command failure.
+- [ ] Reuse the canonical strict JSON reader/manifest parser and extract common
+  registry metadata validation without weakening any existing complete check.
+  Reject yanked records; require a real positive integer size (not bool).
+  Do not fetch URLs, stage files, install packages or verify signatures here.
+- [ ] Run all existing verifier tests and new partial cases with the repo's
+  configured Python test dependencies; retain RED/GREEN commands and outputs.
+  Review the exact two-file diff independently before workflow wiring.
+
+```sh
+bash tools/test_verify_python_release_package.sh
+```
+
+## Task 4: Wire protected recovery, preserve exact publication acceptance
 
 Files: `.github/workflows/release.yml`, `.github/workflows/ci.yml`,
 `tools/publish_release_npm_package.sh`,
 `tools/test_publish_release_npm_registry_validation.sh`,
-`tools/test_release_recovery_027.py`, `tools/verify_python_release_package.py`,
-`tools/test_verify_python_release_package.sh`, and recovery design/manifest records.
+`tools/test_release_recovery_027.py`, and recovery design/manifest records.
 
 Interfaces: operation is exactly `release` (default) or `recover-0.2.7`.
 Recovery accepts only version0.2.7 and refs/tags/v0.2.7-recover.N (positive N).
@@ -138,9 +165,8 @@ the actual controller source/ref. Normal publication retains exact equality.
   tags, manifest and bytes immediately before mutation. Preserve exact owner,
   signature and provenance acceptance. Public audit commands use no token.
 - [ ] Keep the existing pinned Python publisher action directly in release.yml.
-  Add a narrowly named `recovery-preflight` operation that returns the exact
-  missing manifest filenames only after rejecting extra/conflicting existing
-  files; verify every existing file's provenance before staging missing files.
+  Consume Task3's `recovery-preflight` exact missing manifest filenames;
+  verify every existing file's provenance before staging missing files.
   Invoke the unchanged full-inventory final verifier with actual controller
   source/ref. Test neither/one/both existing distributions and a conflicting file.
 - [ ] Gate original-tag GitHub Release creation on every successful provider
