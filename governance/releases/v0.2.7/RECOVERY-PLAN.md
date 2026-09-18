@@ -116,7 +116,8 @@ python3 -B tools/test_release_recovery_027.py
 Files: `.github/workflows/release.yml`, `.github/workflows/ci.yml`,
 `tools/publish_release_npm_package.sh`,
 `tools/test_publish_release_npm_registry_validation.sh`,
-`tools/test_release_recovery_027.py`, and recovery design/manifest records.
+`tools/test_release_recovery_027.py`, `tools/verify_python_release_package.py`,
+`tools/test_verify_python_release_package.sh`, and recovery design/manifest records.
 
 Interfaces: operation is exactly `release` (default) or `recover-0.2.7`.
 Recovery accepts only version0.2.7 and refs/tags/v0.2.7-recover.N (positive N).
@@ -137,7 +138,11 @@ the actual controller source/ref. Normal publication retains exact equality.
   tags, manifest and bytes immediately before mutation. Preserve exact owner,
   signature and provenance acceptance. Public audit commands use no token.
 - [ ] Keep the existing pinned Python publisher action directly in release.yml.
-  Invoke the unchanged Python verifier with actual controller source/ref.
+  Add a narrowly named `recovery-preflight` operation that returns the exact
+  missing manifest filenames only after rejecting extra/conflicting existing
+  files; verify every existing file's provenance before staging missing files.
+  Invoke the unchanged full-inventory final verifier with actual controller
+  source/ref. Test neither/one/both existing distributions and a conflicting file.
 - [ ] Gate original-tag GitHub Release creation on every successful provider
   acceptance; reuse original native archives/SBOMs and include explicit custody
   evidence. Existing assets must match exactly or fail without replacement.
@@ -149,3 +154,8 @@ the actual controller source/ref. Normal publication retains exact equality.
   the token-free recovery dry run, then live publication behind actual protected
   approvals. Read back all providers and release assets before reporting done.
   Preserve receipts and continue separately approved issue822 retirement.
+
+Ordinary resumption stays on one maintenance ref/commit. A later controller may
+not use an arbitrary or either-identity provenance override. Dry-run jobs never
+receive publisher secrets or job-level OIDC. New same-run transport ZIPs are
+verified against original inner-file digests, not the original transport ZIP hash.

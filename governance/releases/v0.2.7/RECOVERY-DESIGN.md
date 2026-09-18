@@ -87,8 +87,11 @@ The recovery DAG is:
    SDK use the existing publisher, accepting an existing version only after
    exact owner, integrity, signature and expected provenance validation.
 5. Publish only absent exact Python distributions through the existing pinned
-   PyPI action and retain complete digest and PEP 740 readback. Its expected
-   certificate ref/commit is the real controller identity.
+   PyPI action and retain complete digest and PEP 740 readback. Partial preflight
+   rejects extra/conflicting files, verifies every existing file and provenance,
+   then stages only missing manifest-listed distributions. Do not weaken the
+   existing full-inventory verifier: final acceptance still requires both files.
+   Its expected certificate ref/commit is the real controller identity.
 6. Only after every required acceptance succeeds, create or complete the GitHub
    Release at original v0.2.7 with original native archives, SBOMs and an explicit
    recovery-custody record. Existing conflicting releases/assets fail closed;
@@ -113,6 +116,15 @@ approved execution first observes actual registry state and resumes only from
 positively verified exact existing bytes. Already-published WASM/Rust packages
 are never uploaded by this controller. Missing evidence, expired artifacts or
 an unknown mutation result stops further writes with a retained receipt.
+Ordinary resumption uses the same maintenance ref and commit. A new controller
+may not silently accept earlier-controller publication provenance; doing so
+requires an explicitly reviewed per-package identity record. No arbitrary
+override or either-identity fallback is allowed.
+
+Recovery dry-run import/validation jobs receive no publishing secret or OIDC
+permission. A conditional publish step in an OIDC-enabled job is not a
+token-free dry run. Same-run transport ZIPs may differ from the original ZIPs;
+fresh publishers must verify the original inner-file manifest again.
 
 ## Acceptance
 
