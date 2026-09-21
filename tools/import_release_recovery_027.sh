@@ -116,7 +116,11 @@ class Transport:
     process. Signed storage URLs and authorization values are never receipts.
     """
     def __init__(self, scratch, token, manifest):
-        require(re.fullmatch(r"[A-Za-z0-9_]+", token or "") is not None, "malformed read-only GitHub credential")
+        # Opaque Bearer transport syntax (RFC 6750 section 2.1), not a
+        # GitHub token-prefix/length assumption. This alphabet cannot break
+        # the quoted curl config below: no quotes, backslashes or whitespace.
+        require(re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", token or "") is not None,
+                "malformed read-only GitHub credential")
         self.scratch, self.token = Path(scratch), token
         self.endpoints = fixed_endpoints(manifest)
         self.authenticated = {self.endpoints["run"], *self.endpoints["jobs"],
