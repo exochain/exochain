@@ -81,7 +81,9 @@ class ImportTests(unittest.TestCase):
         self.assertFalse((self.root / "rejected").exists())
 
     def test_curl_github_auth_is_stdin_only_and_public_reads_have_no_credentials(self):
-        transport = self.i.Transport(self.root, "unit_test_readonly_token", self.manifest)
+        # Deliberately synthetic RFC 6750 section 2.1 punctuation, not a secret.
+        token = "unit.test-readonly_token~with+padding/=="
+        transport = self.i.Transport(self.root, token, self.manifest)
         calls = []
 
         def process(argv, **kwargs):
@@ -98,11 +100,54 @@ class ImportTests(unittest.TestCase):
             self.assertEqual(argv[0], "/usr/bin/curl")
             self.assertEqual(argv[argv.index("--request") + 1], "GET")
             self.assertNotIn("--location", argv)
-            self.assertNotIn("unit_test_readonly_token", " ".join(argv))
+            self.assertNotIn(token, " ".join(argv))
             self.assertNotIn("RELEASE_GITHUB_TOKEN", kwargs["env"])
             self.assertNotIn("GH_TOKEN", kwargs["env"])
-        self.assertIn(b"Authorization: Bearer unit_test_readonly_token", calls[0][1]["input"])
+        self.assertIn(b'header = "Authorization: Bearer unit.test-readonly_token~with+padding/=="\n',
+                      calls[0][1]["input"])
         self.assertNotIn(b"Authorization", calls[1][1]["input"])
+
+    def test_bearer_token_is_opaque_and_accepts_the_standard_transport_alphabet(self):
+        # A legacy-prefix/length assumption or rejected Bearer punctuation breaks
+        # this contract. These are invented non-credentials, never real tokens.
+        for token in ("unit_test_readonly_token", "unit.header-payload.signature",
+                      "unit~token+/=", "unit~token+/==", "x" * 4096):
+            with self.subTest(token=token):
+                try:
+                    self.i.Transport(self.root, token, self.manifest)
+                except self.i.ImportFailure:
+                    self.fail("standard Bearer transport token was rejected")
+
+    def test_bearer_token_rejects_config_header_injection_and_malformed_padding(self):
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~+/"
+        invalid = ["", None, "=", "==", "=unit", "unit=token", "unit==token",
+                   "unit\u00e9token", "unit\u2028token", 'unit"\nurl = "https://attacker.invalid/']
+        invalid += ["unit" + chr(code) + "token" for code in range(128) if chr(code) not in alphabet]
+        with patch.object(self.i.subprocess, "run") as process:
+            for token in invalid:
+                with self.subTest(token=token):
+                    with self.assertRaises(self.i.ImportFailure) as failure:
+                        self.i.Transport(self.root, token, self.manifest)
+                    self.assertEqual(str(failure.exception), "malformed read-only GitHub credential")
+        process.assert_not_called()
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_token_contract_cli_never_emits_the_token_and_fails_closed(self):
+        for token, expected_status in (("unit.header-payload.signature", 0),
+                                       ('unit"\nurl = "https://attacker.invalid/', 1), ("", 1)):
+            with self.subTest(expected_status=expected_status):
+                result = subprocess.run([sys.executable, "-I", "-B", str(Path(__file__).resolve()),
+                                         "--token-contract"], env={"RELEASE_GITHUB_TOKEN": token},
+                                        capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, expected_status)
+                if token:
+                    self.assertNotIn(token, result.stdout + result.stderr)
+                if expected_status == 0:
+                    self.assertEqual(result.stdout, "recovery GitHub credential transport contract accepted\n")
+                    self.assertEqual(result.stderr, "")
+                else:
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual(result.stderr, "recovery GitHub credential transport contract rejected\n")
 
     def test_artifact_redirect_is_separate_unauthenticated_and_host_checked(self):
         transport = self.i.Transport(self.root, "unit_test_readonly_token", self.manifest)
@@ -400,8 +445,29 @@ def real_evidence_check():
     print(json.dumps(summary, sort_keys=True))
 
 
+def token_contract_check():
+    """Exercise real transport validation without network or credential output.
+
+    CI supplies only its scoped GitHub token. No credential is decoded, persisted,
+    put in a unittest assertion, or passed to the normal fixture test suite.
+    """
+    token = os.environ.pop("RELEASE_GITHUB_TOKEN", "")
+    importer = importer_module()
+    custody = module_file("token_contract_custody", ROOT / "tools/verify_release_recovery_027.py")
+    manifest = custody.load_manifest(MANIFEST)
+    try:
+        importer.Transport(ROOT, token, manifest)
+    except importer.ImportFailure:
+        print("recovery GitHub credential transport contract rejected", file=sys.stderr)
+        return 1
+    print("recovery GitHub credential transport contract accepted")
+    return 0
+
+
 if __name__ == "__main__":
-    if "--real-evidence" in sys.argv:
+    if sys.argv[1:] == ["--token-contract"]:
+        sys.exit(token_contract_check())
+    elif "--real-evidence" in sys.argv:
         real_evidence_check()
     else:
         unittest.main()

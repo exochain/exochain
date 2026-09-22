@@ -98,6 +98,24 @@ class RecoveryWorkflowTests(unittest.TestCase):
         self.assertLess(block.index("--require-hashes"), block.index(command))
         self.assertLess(block.index("tools/python-release-requirements.lock"), block.index(command))
 
+    def test_hosted_token_contract_is_read_only_and_excluded_from_pr_execution(self):
+        text = (ROOT / ".github/workflows/ci.yml").read_text()
+        jobs = dict(re.findall(r"^  ([a-z][a-z0-9-]+):\n(.*?)(?=^  [a-z][a-z0-9-]+:|\Z)", text.split("jobs:\n", 1)[1], re.M | re.S))
+        command = "python3 -I -B tools/test_import_release_recovery_027.py --token-contract"
+        owners = [name for name, body in jobs.items() if command in body]
+        self.assertEqual(owners, ["hygiene"])
+        block = jobs["hygiene"]
+        self.assertIn("    permissions:\n      contents: read\n", block.split("    steps:", 1)[0])
+        steps = re.split(r"^      - ", block.split("    steps:\n", 1)[1], flags=re.M)
+        contract = next(step for step in steps if command in step)
+        # Source guard: removing this restriction hands a real credential to
+        # PR-controlled Python instead of running credential-free fixtures.
+        self.assertIn("if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'\n", contract)
+        self.assertIn("RELEASE_GITHUB_TOKEN: ${{ github.token }}", contract)
+        self.assertNotIn("secrets.", contract)
+        fixtures = next(step for step in steps if "name: Fixed recovery custody and workflow boundaries\n" in step)
+        self.assertNotIn("RELEASE_GITHUB_TOKEN", fixtures)
+
     def test_exact_source_artifacts_and_direct_python_publisher(self):
         for name in RECOVERY:
             block = self.jobs[name]

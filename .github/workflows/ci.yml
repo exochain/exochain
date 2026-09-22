@@ -287,6 +287,8 @@ jobs:
   hygiene:
     name: "Gate 9 — Repo Hygiene"
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: No tracked node_modules
@@ -358,6 +360,11 @@ jobs:
         run: bash tools/test_release_workflow_ref_binding.sh
       - name: Release version input boundary
         run: bash tools/test_release_version_input_boundary.sh
+      - name: Hosted GitHub credential transport contract
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          RELEASE_GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I -B tools/test_import_release_recovery_027.py --token-contract
       - name: Fixed recovery custody and workflow boundaries
         run: |
           python3 -B tools/test_release_recovery_027.py

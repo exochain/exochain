@@ -80,6 +80,74 @@ Raw provider records, archives, generated test reports and credentials are not
 committed. Failed regression attempts are retained separately from passing
 results; they were not overwritten or relabeled.
 
+## September 21 hosted credential contract repair
+
+Recovery dry run [35374367647](https://github.com/exochain/exochain/actions/runs/35374367647)
+at controller `fd627beb4bd44cac706f9ee03a42e419b5af2b50` passed 41 jobs,
+including both genuinely approved environment gates and signed-tag verification.
+Import then rejected the run-provided credential before any artifact fetch:
+`release recovery import failed: malformed read-only GitHub credential`.
+WASM acceptance and all remaining publication jobs were skipped. No successful
+artifact-custody or publication result is inferred from those earlier gates.
+
+The importer incorrectly restricted the transport token to letters, digits and
+underscores. GitHub's [April 24 token-format notice](https://github.blog/changelog/2026-04-24-notice-about-upcoming-new-format-for-github-app-installation-tokens/)
+documents the variable-length `ghs_APPID_JWT` format for Actions-issued tokens.
+Its punctuation is incompatible with that restriction. The actual credential
+was never extracted or decoded; the failure was reproduced with invented
+Bearer-token fixtures.
+
+The correction accepts opaque [RFC 6750 section 2.1](https://www.rfc-editor.org/rfc/rfc6750.html#section-2.1)
+Bearer transport syntax, without token-prefix, token-content or token-length
+assumptions. Quotes, backslashes, whitespace, controls, non-ASCII input and
+interior padding remain rejected before any network process or file creation.
+Authorization remains on curl's stdin only, restricted to the fixed GitHub
+endpoints and absent from public requests and artifact-storage redirects.
+
+All changed paths are **EXOCHAIN core**: `tools/import_release_recovery_027.sh`,
+its existing import and workflow regression tests, `.github/workflows/ci.yml`, and this governance
+record. No Rust runtime, adjacent surface, product payload, manifest digest,
+dependency, published version, signed product tag, or existing maintenance tag
+changes. Determinism and the eight constitutional invariants are unchanged;
+no authority, consent, approval, signature or custody check is bypassed.
+
+Test and acceptance plan:
+
+1. Reproduce the invalid restriction before changing production code. The new
+   valid-punctuation fixtures failed, while injection-rejection fixtures passed.
+2. Run all 18 import tests, covering legacy and punctuated opaque strings,
+   variable length, malformed padding, injection, credential-free public reads,
+   and constant-output contract-check success/failure. These pass locally.
+3. Run the recovery, retirement, release shell guards and full workspace gates
+   on the integrated-main repair branch with the existing low-disk build cache.
+4. Require exact-head hosted CI, including the new credential-contract step.
+   That step runs only on trusted pushes or workflow dispatches, not PR events,
+   and uses a contents-read-only job token with the real constructor. It makes
+   no requests, persists no token, and prints only acceptance/rejection.
+   Synthetic local tests are not proof of hosted credential acceptance.
+5. Obtain legitimate integration review, then create a new signed maintenance
+   tag for the corrected controller. Preserve `v0.2.7-recover.1` and both product
+   tags. Do not rerun the unchanged failing controller or republish any bytes.
+6. Repeat protected dry acceptance on the new controller, then live recovery
+   only after complete success. Read back every registry and release asset;
+   complete the independently reviewed 0.2.3 retirement before claiming closure.
+
+Local worktree acceptance completed on September 21: all nine core commands
+listed in the September 18 section (including release-mode tests, audit, deny
+and cross-implementation comparison), all 64 CI-derived shell guards, seven
+recovery/retirement Python suites, and fresh old/new npm CLI contract checks
+passed. After the independent review correction, all 18 import tests and all
+8 workflow tests passed again. The cross-implementation result covers one
+Rust/Node hash vector and two identical normalized Rust test runs; an external
+TypeScript implementation was not configured. Existing `block 0.1.6` future-
+compatibility and dependency-policy warning output is retained, not described
+as zero warnings. Evidence is under `/private/tmp/exochain-027-token-validation.o1aU6q`.
+The first core gates recorded base `2a5f59c9222eb309fe1cd3b464eca92b06558101`
+with the repair in the worktree; later gates recorded signed repair commit
+`e3e042b1c29a6eda8129cc9bc9540181f3c47804`. Rust source, dependencies and Cargo
+configuration were identical throughout. This is local worktree validation,
+not a claim of exact-head hosted CI or completed publication.
+
 ## Review and required live acceptance
 
 Independent reviews covered the import/custody boundary, npm recovery receipts,
