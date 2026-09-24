@@ -73,6 +73,9 @@ done
 trusted_git show "$controller_sha:governance/releases/v0.2.7/RECOVERY-MANIFEST.json" \
   > "$capture/RECOVERY-MANIFEST.json"
 /bin/chmod 400 "$capture/RECOVERY-MANIFEST.json"
+trusted_git show "$controller_sha:governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json" \
+  > "$capture/PUBLICATION-IDENTITIES.json"
+/bin/chmod 400 "$capture/PUBLICATION-IDENTITIES.json"
 
 [ -n "${RELEASE_PYTHON:-}" ] && [ -n "${RELEASE_TRUSTED_PYTHON_ROOT:-}" ] \
   && [ "${RELEASE_TRUSTED_PYTHON_VERSION:-}" = 3.13.7 ] \
@@ -98,6 +101,9 @@ identity_env=(
 )
 /usr/bin/env -i "$python_path" -I -B "$capture/verify_release_recovery_027.py" \
   manifest --manifest "$capture/RECOVERY-MANIFEST.json" >/dev/null
+/usr/bin/env -i "$python_path" -I -B "$capture/verify_release_recovery_027.py" \
+  publication --manifest "$capture/RECOVERY-MANIFEST.json" \
+  --identities "$capture/PUBLICATION-IDENTITIES.json" >/dev/null
 
 # The pinned PyPI action uses a Docker-mounted workspace stage and generates a
 # local Docker trampoline. Only this exact validated phase may exempt its exact

@@ -374,6 +374,90 @@ expect_provenance_rejected() {
 expect_provenance_rejected "wrong provenance commit" "$(printf '2%.0s' {1..40})" release
 expect_provenance_rejected "wrong trusted-publisher environment" "$(printf '1%.0s' {1..40})" staging
 
+# These are identity-parser regressions, not cryptographic publication proof.
+python3 -B - "$guard" "$provenance" "$wheel" "$test_root" <<'PY'
+import copy
+import importlib.util
+import json
+from pathlib import Path
+import sys
+import unittest
+
+spec = importlib.util.spec_from_file_location("python_package_guard", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+original = json.loads(Path(sys.argv[2]).read_text())
+wheel = Path(sys.argv[3])
+response = Path(sys.argv[4]) / "publisher-shape.json"
+
+
+class PublisherShapeTests(unittest.TestCase):
+    def verify(self, value, commit="1" * 40, ref="refs/tags/v0.2.6"):
+        response.write_text(json.dumps(value, separators=(",", ":")))
+        module.verify_provenance(
+            response, wheel, "exochain/exochain", "release.yml", "release", ref, commit
+        )
+
+    def without_claims(self):
+        value = copy.deepcopy(original)
+        del value["attestation_bundles"][0]["publisher"]["claims"]
+        return value
+
+    def test_null_and_omitted_claims_are_equivalent(self):
+        self.verify(original)
+        self.verify(self.without_claims())
+
+    def test_nonnull_claims_are_rejected(self):
+        for claims in ({}, {"sub": "unreviewed"}, [], "", "null", False, 0):
+            with self.subTest(claims=claims), self.assertRaises(SystemExit):
+                value = copy.deepcopy(original)
+                value["attestation_bundles"][0]["publisher"]["claims"] = claims
+                self.verify(value)
+
+    def test_identity_fields_remain_required_and_exact(self):
+        for omit_claims in (False, True):
+            for field in ("environment", "kind", "repository", "workflow"):
+                for replacement in (None, "unreviewed", False, [], {}):
+                    with self.subTest(omit_claims=omit_claims, field=field, replacement=replacement):
+                        value = self.without_claims() if omit_claims else copy.deepcopy(original)
+                        value["attestation_bundles"][0]["publisher"][field] = replacement
+                        with self.assertRaises(SystemExit):
+                            self.verify(value)
+                value = self.without_claims() if omit_claims else copy.deepcopy(original)
+                del value["attestation_bundles"][0]["publisher"][field]
+                with self.subTest(omit_claims=omit_claims, missing=field), self.assertRaises(SystemExit):
+                    self.verify(value)
+
+    def test_unknown_publisher_fields_are_rejected(self):
+        for omit_claims in (False, True):
+            value = self.without_claims() if omit_claims else copy.deepcopy(original)
+            value["attestation_bundles"][0]["publisher"]["unexpected"] = None
+            with self.subTest(omit_claims=omit_claims), self.assertRaises(SystemExit):
+                self.verify(value)
+
+    def test_nonobject_publishers_are_rejected(self):
+        for publisher in (None, [], "GitHub", False, 1):
+            value = copy.deepcopy(original)
+            value["attestation_bundles"][0]["publisher"] = publisher
+            with self.subTest(publisher=publisher), self.assertRaises(SystemExit):
+                self.verify(value)
+
+    def test_omitted_claims_do_not_skip_certificate_or_attestation_checks(self):
+        value = self.without_claims()
+        with self.assertRaises(SystemExit):
+            self.verify(value, commit="2" * 40)
+        with self.assertRaises(SystemExit):
+            self.verify(value, ref="refs/tags/v0.2.7-recover.2")
+        for field in ("envelope", "verification_material", "version"):
+            value = self.without_claims()
+            del value["attestation_bundles"][0]["attestations"][0][field]
+            with self.subTest(missing=field), self.assertRaises(SystemExit):
+                self.verify(value)
+
+
+unittest.main(argv=["publisher-shape-regressions"])
+PY
+
 wrong_claims="$test_root/wrong-claims.json"
 python3 - "$provenance" "$wrong_claims" <<'PY'
 import json

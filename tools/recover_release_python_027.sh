@@ -47,8 +47,25 @@ verify_sigstore() {
     --provenance-file "$1" "$2"
 }
 
+publication_identity() {
+  local filename="$1" profile record
+  case "$filename" in
+    exochain-0.2.7-py3-none-any.whl) profile=python-wheel ;;
+    exochain-0.2.7.tar.gz) profile=python-sdist ;;
+    *) fail 'unexpected mapped Python filename' ;;
+  esac
+  record="$(public_command "$tool_python" -I -B "$publication_verifier" publication \
+    --manifest "$publication_manifest" --identities "$publication_identities" --publication "$profile")" \
+    || fail 'publication identity is not the exact reviewed record'
+  public_command "$tool_python" -I -B -c '
+import json,sys
+r=json.loads(sys.argv[1]); assert r["file"]["path"] == "dist/"+sys.argv[2]
+print(r["source"]["commit"], r["source"]["ref"], sep=chr(9))
+' "$record" "$filename"
+}
+
 verify_existing() {
-  local list="$1" attempt="$2" retry_404="$3" filename provenance status before artifact_before list_before
+  local list="$1" attempt="$2" retry_404="$3" filename provenance status before artifact_before list_before identity publication_commit publication_ref
   list_before="$(file_digest "$list")" || fail 'invalid existing inventory file'
   while IFS= read -r filename; do
     [[ "$filename" = exochain-0.2.7-py3-none-any.whl || "$filename" = exochain-0.2.7.tar.gz ]] \
@@ -63,9 +80,13 @@ verify_existing() {
     esac
     before="$(file_digest "$provenance")" || fail 'invalid provenance file'
     artifact_before="$(file_digest "$dist_dir/$filename")" || fail 'invalid artifact file'
+    identity="$(publication_identity "$filename")" || fail 'cannot select exact publication identity'
+    IFS=$'\t' read -r publication_commit publication_ref <<< "$identity"
+    [[ "$publication_commit" =~ ^[0-9a-f]{40}$ && "$publication_ref" = refs/tags/* ]] \
+      || fail 'invalid selected publication identity'
     verify_sigstore "$provenance" "$dist_dir/$filename" || fail 'Sigstore verification failed'
     python_verify provenance "$provenance" "$dist_dir/$filename" \
-      exochain/exochain release.yml release "$GITHUB_REF" "$GITHUB_SHA" \
+      exochain/exochain release.yml release "$publication_ref" "$publication_commit" \
       || fail 'provenance controller identity failed'
     [[ "$(file_digest "$provenance")" = "$before" \
       && "$(file_digest "$dist_dir/$filename")" = "$artifact_before" ]] \
@@ -102,6 +123,7 @@ prepare_publication() {
     *) fail "unexpected registry HTTP status $status" ;;
   esac
   inventory_lists "$response"
+  [[ ! -s "$receipts/missing.txt" ]] || fail 'mapped Python publications must already exist; uploads forbidden'
   # Bind the missing list across untrusted external verification processes.
   missing_before="$(file_digest "$receipts/missing.txt")"
   verify_existing "$receipts/existing.txt" preflight false
@@ -258,7 +280,8 @@ main() {
   captured_paths=(tools/verify_release_recovery_027.sh tools/verify_release_recovery_027.py \
     tools/verify_release_recovery_python_stage.py \
     tools/verify_python_release_package.py tools/python-release-requirements.lock \
-    tools/recover_release_python_027.sh governance/releases/v0.2.7/RECOVERY-MANIFEST.json)
+    tools/recover_release_python_027.sh governance/releases/v0.2.7/RECOVERY-MANIFEST.json \
+    governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json)
   for path in "${captured_paths[@]}"; do
     trusted_git show "$GITHUB_SHA:$path" > "$capture/${path##*/}"
     /bin/chmod 400 "$capture/${path##*/}"
@@ -275,6 +298,9 @@ main() {
     "RELEASE_TRUSTED_PYTHON_VERSION=3.13.7" "GNUPGHOME=${GNUPGHOME:-}"
     "EXOCHAIN_RELEASE_SIGNING_FINGERPRINT=${EXOCHAIN_RELEASE_SIGNING_FINGERPRINT:-}")
   verifier="$capture/verify_python_release_package.py"; tool_python="$python_path"
+  publication_verifier="$capture/verify_release_recovery_027.py"
+  publication_manifest="$capture/RECOVERY-MANIFEST.json"
+  publication_identities="$capture/PUBLICATION-IDENTITIES.json"
   dist_dir="$recovery_dir/python/dist"; manifest="$recovery_dir/python/artifact-manifest.tsv"
   identity_count=0
   python_phase=""

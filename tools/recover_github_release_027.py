@@ -226,6 +226,27 @@ class GitHub:
         return self.json("PATCH", f"/releases/{identifier}", {"draft":False, "make_latest":"true"})
 
 
+def release_metadata(manifest, publications, sha, ref):
+    receipt = {
+        "schema": "exochain-release-recovery-custody/v1",
+        "product": manifest["product"], "origin": manifest["origin"],
+        "controller": {"sha": sha, "ref": ref},
+        "publication_identities": publications,
+        "artifacts": manifest["artifacts"], "rust_crates": manifest["rust_crates"],
+        "native_archive_contents": "29 legacy libexo_*.rlib per archive; no server executables",
+        "attestation_scope": "Original native archives have original build attestations. Package attestations identify the exact prior sources/refs in publication_identities, not this acceptance controller. Observed publishing run/attempt fields are reviewed evidence metadata, not additional invocation constraints enforced by the certificate verifiers. Original payload custody is the fixed reviewed artifact manifest and producer evidence.",
+    }
+    body = (
+        "Security remediation release 0.2.7. Original signed product tag and payload bytes are preserved.\n\n"
+        f"Original artifact source: `{PRODUCT_SHA}`. Acceptance and GitHub Release controller: `{sha}` at `{ref}`. "
+        "See RECOVERY-CUSTODY.json for the prior package publishers and fixed original run, producer, artifact and checksum inventory.\n\n"
+        "All 32 Rust crates and the WASM, LYNK, TypeScript and Python packages passed their exact registry acceptance gates before this release job. "
+        "Native archives contain 29 legacy libexo_*.rlib libraries each, not server executables. Only those native archives have original GitHub build attestations; "
+        "package attestations retain their original publication sources/refs. No package re-upload or runtime deployment is claimed.\n"
+    )
+    return receipt, {"tag_name": "v0.2.7", "target_commitish": PRODUCT_SHA, "name": "EXOCHAIN v0.2.7", "body": body}
+
+
 def main():
     env = os.environ
     require(env.get("RELEASE_OPERATION") == "recover-0.2.7" and env.get("RELEASE_VERSION") == "0.2.7", "wrong recovery operation")
@@ -239,7 +260,7 @@ def main():
     require(temporary.is_absolute() and temporary.is_dir() and not temporary.is_symlink(), "invalid private temporary root")
     capture = Path(tempfile.mkdtemp(prefix="exochain-github-recovery.", dir=temporary))
     git_env = {"PATH":"/usr/bin:/bin", "GIT_CONFIG_GLOBAL":"/dev/null", "GIT_CONFIG_NOSYSTEM":"1", "GIT_NO_REPLACE_OBJECTS":"1"}
-    for path in ("tools/verify_release_recovery_027.py", "tools/verify_release_recovery_027.sh", "governance/releases/v0.2.7/RECOVERY-MANIFEST.json"):
+    for path in ("tools/verify_release_recovery_027.py", "tools/verify_release_recovery_027.sh", "governance/releases/v0.2.7/RECOVERY-MANIFEST.json", "governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json"):
         data = subprocess.check_output(["/usr/bin/git", "--no-replace-objects", "-c", "core.fsmonitor=false", "-C", str(workspace), "show", sha + ":" + path], env=git_env)
         destination = capture / Path(path).name
         with destination.open("xb") as output: output.write(data)
@@ -248,6 +269,7 @@ def main():
     custody = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(custody)
     manifest = custody.load_manifest(capture / "RECOVERY-MANIFEST.json")
+    publications = custody.load_publications(manifest, capture / "PUBLICATION-IDENTITIES.json")
     directory = Path(env["RELEASE_RECOVERY_DIRECTORY"])
     require(directory == temporary / "exochain-recovery-artifacts", "unexpected artifact root")
 
@@ -276,9 +298,8 @@ def main():
             require(len(data) == file["size"] and hashlib.sha256(data).hexdigest() == file["sha256"], "original release asset changed")
             assets[name] = data
     require(len(assets) == 34, "original release must have two native archives and 32 SBOMs")
-    receipt = {"schema":"exochain-release-recovery-custody/v1", "product":manifest["product"], "origin":manifest["origin"], "controller":{"sha":sha, "ref":ref}, "artifacts":manifest["artifacts"], "rust_crates":manifest["rust_crates"], "native_archive_contents":"29 legacy libexo_*.rlib per archive; no server executables", "attestation_scope":"Original native archives have original build attestations. New npm/Python attestations identify this recovery controller; original payload custody is the fixed reviewed manifest and producer evidence."}
+    receipt, expected = release_metadata(manifest, publications, sha, ref)
     assets["RECOVERY-CUSTODY.json"] = (json.dumps(receipt, sort_keys=True, indent=2) + "\n").encode()
-    expected = {"tag_name":"v0.2.7", "target_commitish":PRODUCT_SHA, "name":"EXOCHAIN v0.2.7", "body":f"Security remediation release 0.2.7. Original signed product tag and payload bytes are preserved.\n\nOriginal artifact source: `{PRODUCT_SHA}`. Recovery publisher: `{sha}` at `{ref}`. See RECOVERY-CUSTODY.json for the fixed original run, producer, artifact and checksum inventory.\n\nAll 32 Rust crates and the WASM, LYNK, TypeScript and Python packages passed their exact registry acceptance gates before this release job. Native archives contain 29 legacy libexo_*.rlib libraries each, not server executables. Only those native archives have original GitHub build attestations; newly published npm/Python attestations truthfully identify the recovery controller. No runtime deployment claim is made.\n"}
     journal = Journal(capture / "mutation-journal.jsonl", {"controller_sha":sha, "controller_ref":ref, "original_source":PRODUCT_SHA})
     print("GitHub recovery mutation journal: " + str(journal.path), flush=True)
     result = recover(provider, expected, assets, rebind, journal)

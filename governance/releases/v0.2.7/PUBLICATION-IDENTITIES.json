@@ -1,0 +1,51 @@
+{
+  "schema": "exochain-release-publication-identities-027/v1",
+  "artifact_manifest_sha256": "17c77eafa0ea34fa7437cbc0d6988f561d686e330bee8c17cfe0e6a354e1bec4",
+  "publications": [
+    {
+      "id": "wasm",
+      "package": "@exochain/exochain-wasm",
+      "version": "0.2.7",
+      "lane": "npm-wasm",
+      "file": {"path": "exochain-exochain-wasm-0.2.7.tgz", "size": 782077, "sha256": "a9660cbf0241e8adde6be92cd7a13beea00c0fe258ea6c79ea527750f182d023"},
+      "source": {"commit": "666c578f719d1e54fce95d6831a3af92ea80df93", "ref": "refs/tags/v0.2.7"},
+      "observed_publication": {"run_id": 35257955565, "attempt": 1}
+    },
+    {
+      "id": "llm",
+      "package": "@exochain/llm-proxy",
+      "version": "0.2.7",
+      "lane": "npm-llm",
+      "file": {"path": "exochain-llm-proxy-0.2.7.tgz", "size": 41800, "sha256": "22d60086f12aca9a46bab6cf70325e4f38ed73dd046f5438b8d9b984fd54f2e4"},
+      "source": {"commit": "2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1", "ref": "refs/tags/v0.2.7-recover.2"},
+      "observed_publication": {"run_id": 35754493083, "attempt": 1}
+    },
+    {
+      "id": "sdk",
+      "package": "@exochain/sdk",
+      "version": "0.2.7",
+      "lane": "npm-sdk",
+      "file": {"path": "exochain-sdk-0.2.7.tgz", "size": 43687, "sha256": "a0b616e5af6a61dc96c12c2166b20e05f71a61f03b257b370aacc02ceebaa003"},
+      "source": {"commit": "2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1", "ref": "refs/tags/v0.2.7-recover.2"},
+      "observed_publication": {"run_id": 35754493083, "attempt": 1}
+    },
+    {
+      "id": "python-wheel",
+      "package": "exochain",
+      "version": "0.2.7",
+      "lane": "python",
+      "file": {"path": "dist/exochain-0.2.7-py3-none-any.whl", "size": 27899, "sha256": "fc5589113bfd704862f6d6aea1585386a1e6eaf6700790ffc40b4b5b8c88e959"},
+      "source": {"commit": "2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1", "ref": "refs/tags/v0.2.7-recover.2"},
+      "observed_publication": {"run_id": 35754493083, "attempt": 2}
+    },
+    {
+      "id": "python-sdist",
+      "package": "exochain",
+      "version": "0.2.7",
+      "lane": "python",
+      "file": {"path": "dist/exochain-0.2.7.tar.gz", "size": 27575, "sha256": "d2339a00c8d69f18b0860b7d7ae633d9c56f4bbe4bc0f1be0ece6eae16f763fa"},
+      "source": {"commit": "2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1", "ref": "refs/tags/v0.2.7-recover.2"},
+      "observed_publication": {"run_id": 35754493083, "attempt": 2}
+    }
+  ]
+}

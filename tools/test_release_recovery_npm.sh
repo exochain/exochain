@@ -114,6 +114,43 @@ printf '%s\\n' "$acceptance_only" "$provenance_commit" "$provenance_ref"
                               "printf '%s\\n' \"$acceptance_only\" \"$provenance_commit\" \"$provenance_ref\"")
         self.assertEqual(output.splitlines(), ["false", CONTROLLER, "refs/tags/v0.2.7"])
 
+    def mapping(self):
+        return f"""
+python_path={json.dumps(str(Path(sys.executable).resolve()))}
+recovery_verifier={json.dumps(str(ROOT / 'tools/verify_release_recovery_027.py'))}
+recovery_manifest={json.dumps(str(ROOT / 'governance/releases/v0.2.7/RECOVERY-MANIFEST.json'))}
+recovery_publications={json.dumps(str(ROOT / 'governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json'))}
+resolve_npm_publication_identity
+"""
+
+    def test_successor_uses_one_mapped_identity_without_upload(self):
+        self.env["NODE_AUTH_TOKEN"] = "unit-test-only-token"
+        for profile in ("llm", "sdk"):
+            with self.subTest(profile=profile):
+                self.events.unlink(missing_ok=True)
+                body = self.orchestration(profile, 0).rsplit("publish_or_accept_npm", 1)[0]
+                self.succeeds(body + self.mapping() + "\npublish_or_accept_npm")
+                events = self.events.read_text().splitlines()
+                self.assertEqual(events, ["custody", "registry", "acceptance:2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1:refs/tags/v0.2.7-recover.2", "custody", "binding"])
+                result = json.loads((self.receipt_path / "result.json").read_text())
+                self.assertIs(result["mutation_attempted"], False)
+                self.assertIs(result["acceptance_verified"], True)
+                self.assertEqual(result["controller_commit"], CONTROLLER)
+                self.assertEqual(result["provenance_commit"], "2198e4ef610e9ef6d04adf726f7f4b3e156a3bc1")
+
+    def test_missing_mapped_packages_fail_without_upload(self):
+        self.env["NODE_AUTH_TOKEN"] = "unit-test-only-token"
+        for profile in ("llm", "sdk"):
+            with self.subTest(profile=profile):
+                self.events.unlink(missing_ok=True)
+                body = self.orchestration(profile, 1).rsplit("publish_or_accept_npm", 1)[0]
+                self.rejected(body + self.mapping() + "\npublish_or_accept_npm", "acceptance-only mapped npm version is absent")
+                self.assertEqual(self.events.read_text().splitlines(), ["custody", "registry"])
+
+    def test_mapping_selection_precedes_publication_in_production(self):
+        main = SOURCE.split("\nfor required_name in ", 1)[1]
+        self.assertLess(main.index("\nresolve_npm_publication_identity\n"), main.index("\npublish_or_accept_npm\n"))
+
     def test_wasm_rejects_each_publishing_credential(self):
         for name in ("NODE_AUTH_TOKEN", "NPM_TOKEN", "CARGO_REGISTRY_TOKEN", "TWINE_PASSWORD",
                      "PYPI_TOKEN", "PYPI_API_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL"):
@@ -175,7 +212,7 @@ publish_or_accept_npm
         self.assertFalse((self.receipt_path / "intent.json").exists())
 
     def test_missing_wasm_stops_without_actor_authority_upload_or_acceptance(self):
-        self.rejected(self.orchestration("wasm", 1), "acceptance-only WASM version is absent")
+        self.rejected(self.orchestration("wasm", 1), "acceptance-only mapped npm version is absent")
         self.assertEqual(self.events.read_text().splitlines(), ["custody", "registry"])
 
     def test_non_absence_registry_failure_cannot_trigger_upload(self):
@@ -472,7 +509,8 @@ verify_recovery_npm_files
         (source / "tools").mkdir(parents=True)
         (source / "governance/releases/v0.2.7").mkdir(parents=True)
         files = ["tools/verify_release_recovery_027.py", "tools/verify_release_recovery_027.sh",
-                 "governance/releases/v0.2.7/RECOVERY-MANIFEST.json"]
+                 "governance/releases/v0.2.7/RECOVERY-MANIFEST.json",
+                 "governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json"]
         for name in files:
             shutil.copyfile(ROOT / name, source / name)
         subprocess.run(["git", "init", "-q", str(source)], check=True, capture_output=True)

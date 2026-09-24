@@ -234,7 +234,7 @@ validate_npm_release_context() {
   if [ "$acceptance_only" = false ]; then
     [ -n "${NODE_AUTH_TOKEN:-}" ] || fail "NODE_AUTH_TOKEN is required"
   fi
-  readonly RELEASE_OPERATION provenance_commit provenance_ref acceptance_only
+  readonly RELEASE_OPERATION
 }
 
 run_public_npm() {
@@ -266,7 +266,8 @@ capture_npm_recovery_context() {
   [ "$RELEASE_OPERATION" = recover-0.2.7 ] || return 0
   local source_path target
   for source_path in tools/verify_release_recovery_027.py tools/verify_release_recovery_027.sh \
-    governance/releases/v0.2.7/RECOVERY-MANIFEST.json; do
+    governance/releases/v0.2.7/RECOVERY-MANIFEST.json \
+    governance/releases/v0.2.7/PUBLICATION-IDENTITIES.json; do
     target="$publish_root/${source_path##*/}"
     /usr/bin/env -i PATH=/usr/bin:/bin GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
       GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0 \
@@ -278,7 +279,27 @@ capture_npm_recovery_context() {
   recovery_manifest="$publish_root/RECOVERY-MANIFEST.json"
   recovery_verifier="$publish_root/verify_release_recovery_027.py"
   recovery_binding_verifier="$publish_root/verify_release_recovery_027.sh"
-  readonly recovery_manifest recovery_verifier recovery_binding_verifier
+  recovery_publications="$publish_root/PUBLICATION-IDENTITIES.json"
+  readonly recovery_manifest recovery_verifier recovery_binding_verifier recovery_publications
+}
+
+resolve_npm_publication_identity() {
+  if [ "$RELEASE_OPERATION" = recover-0.2.7 ]; then
+    local record identity
+    record="$(/usr/bin/env -i "$python_path" -I -B "$recovery_verifier" publication \
+      --manifest "$recovery_manifest" --identities "$recovery_publications" --publication "$profile")" \
+      || fail "publication identity is not the exact reviewed record"
+    identity="$(/usr/bin/env -i "$python_path" -I -B -c '
+import json,sys
+r=json.loads(sys.argv[1]); assert r["id"] == sys.argv[2]
+print(r["source"]["commit"], r["source"]["ref"], sep=chr(9))
+' "$record" "$profile")" || fail "cannot decode validated publication identity"
+    IFS=$'\t' read -r provenance_commit provenance_ref <<< "$identity"
+    [[ "$provenance_commit" =~ ^[0-9a-f]{40}$ && "$provenance_ref" = refs/tags/* ]] \
+      || fail "invalid selected publication identity"
+    acceptance_only=true
+  fi
+  readonly provenance_commit provenance_ref acceptance_only
 }
 
 verify_recovery_npm_files() {
@@ -582,7 +603,7 @@ publish_or_accept_npm() {
     [ "$status" -eq 1 ] || fail "npm registry probe failed"
   fi
   if [ "$publish_needed" = true ]; then
-    [ "$acceptance_only" = false ] || fail "acceptance-only WASM version is absent"
+    [ "$acceptance_only" = false ] || fail "acceptance-only mapped npm version is absent"
     # Final source/tag, namespace authority and original bytes before mutation.
     verify_release_binding
     verify_prepublication_npm_authority
@@ -730,6 +751,7 @@ public_global_config="$public_home_root/global.npmrc"
   || fail "public user and global npm config paths must differ"
 
 capture_npm_recovery_context
+resolve_npm_publication_identity
 verify_recovery_npm_files
 initialize_npm_recovery_receipts
 
